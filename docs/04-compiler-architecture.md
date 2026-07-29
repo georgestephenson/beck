@@ -1,0 +1,194 @@
+# 04 — Compiler architecture
+
+## 4.1 Pipeline
+
+```
+  .tier / .sx
+      │
+      ▼
+ ┌──────────────┐
+ │ 1 Lex+Layout │  logos + hand-written INDENT/DEDENT
+ ├──────────────┤
+ │ 2 Parse      │  recursive descent + Pratt  ──▶  Node (homoiconic AST, §2.2)
+ ├──────────────┤
+ │ 3 Expand     │  hygienic macro expansion, fixpoint, Salsa-cached
+ ├──────────────┤
+ │ 4 Resolve    │  modules, imports, name binding, hygiene scopes → resolved AST
+ ├──────────────┤
+ │ 5 Typecheck  │  HM + rows + effect rows + capabilities → typed AST
+ ├──────────────┤
+ │ 6 Lower      │  desugar to CORE: typed SSA-ish ANF, explicit effects,
+ │              │  closures explicit, no surface sugar left
+ ├──────────────┤
+ │ 7 PLACE      │  ◀── the product.  constraint solve → every Core node carries a tier
+ ├──────────────┤
+ │ 8 Split      │  partition Core into per-tier programs; SYNTHESISE boundaries
+ │              │  (RPC stubs, serialisers, subscription wiring, migrations)
+ ├──────────────┤
+ │ 9 Optimise   │  per-tier: inline, specialise, DCE (aggressive on client), fuse queries
+ ├──────────────┤
+ │10 Codegen    │  4 backends, see 05-tier-lowering.md
+ ├──────────────┤
+ │11 Assemble   │  OCI images (apko), k8s object graph, asset manifest, SBOM, signatures
+ └──────────────┘
+      │
+      ▼
+  DeploymentPlan  ──▶  tier deploy  ──▶  server-side apply / Tier operator
+```
+
+Stages 1–6 are a conventional modern compiler front end; do not innovate there. Stages 7–8 are novel
+and are where the engineering budget goes. Stages 10–11 are integration work against the dependencies
+in [`07-dependencies.md`](07-dependencies.md).
+
+## 4.2 Intermediate representations
+
+Three, and no more — every extra IR is a tax on every later feature.
+
+| IR | Shape | Purpose |
+|---|---|---|
+| **`Node`** | Untyped/typed tree, homoiconic, spans | Surface, macros, tooling, formatter, LSP |
+| **`Core`** | Typed ANF/SSA hybrid; explicit closures, explicit effect operations, explicit tier annotation per node; `Query` sub-language kept *symbolic* | Typechecked semantics, placement, splitting, optimisation. The load-bearing IR |
+| **`Target`** | Per-backend: Cranelift IR / LLVM IR / WASM / relational plan / k8s object graph | Codegen only |
+
+Two deliberate choices inside `Core`:
+
+- **Queries stay symbolic** until stage 10. If you lower `Query[T]` to loops early, you can never
+  push it into the database. Keep the relational sub-language as a first-class `Core` node with its
+  own typing rules.
+- **UI trees stay symbolic** too, for the same reason: a component tree that has already become DOM
+  mutation calls cannot be server-side rendered or pre-rendered at build time.
+
+### On MLIR
+
+MLIR is the obvious-looking fit — dialects per tier, progressive lowering, exactly our shape. I still
+recommend **against** it for v1:
+
+- It is C++ with a fast-moving API; the FFI surface from Rust is large and the build becomes an LLVM
+  build. Contributor accessibility drops sharply.
+- Our optimisation needs are *not* the ones MLIR excels at (loop nests, tensors, polyhedral). Ours are
+  inlining, specialisation, DCE, and relational pushdown — all easier in a bespoke typed IR with our
+  effect information attached.
+- Revisit if and when a numeric/tensor tier appears; the `Core` → `Target` seam is where MLIR would
+  slot in without disturbing anything upstream.
+
+## 4.3 The splitting stage in detail
+
+Given placed `Core`, stage 8 does five things:
+
+1. **Partition** into one `Core` program per tier per service. Multi-placed functions are duplicated
+   (and their identity recorded, so `tier explain` can say "compiled into 2 tiers").
+2. **Synthesise boundary stubs.** For each cross-tier call, emit a caller stub and a callee entry:
+   - a stable, content-derived operation id (`sha256(module, name, signature)[..16]`) — *not* a URL a
+     human maintains, and stable across refactors that don't change the signature;
+   - serialiser/deserialiser pairs generated from the types (§4.4);
+   - an authorisation check derived from the callee's `cap.*` effects;
+   - request batching and coalescing by default (one round trip per event-loop turn, Haxl-style),
+     because tierless code makes fine-grained calls *look* free and they are not;
+   - idempotency keys for `db.write` boundaries so retries are safe.
+3. **Wire subscriptions.** `live` expressions become a subscription registration on the client, a
+   read-set record on the server, and invalidation hooks on write paths (§3.8).
+4. **Emit schema artefacts.** Table DDL + migration plan, diffed against the target's deployed schema.
+5. **Emit the infra object graph.** `service`/`deployment` declarations, plus everything inferred from
+   effects: RBAC verbs, network policy peers, volume claims, secret references.
+
+**Boundary versioning** is a hard requirement, not a nicety: during a rolling deploy, old clients talk
+to new servers. Rules: operation ids are content-derived; a removed operation is retained as a
+deprecated shim for N releases (declared in `tier.toml`); the wire format is field-tagged and
+tolerates unknown fields; `tier check --wire-compat <previous-release>` runs in CI and fails on a
+breaking change without an explicit `@breaking` marker. Getting this wrong produces the failure that
+kills adoption — "the deploy worked but every open browser tab broke."
+
+## 4.4 Wire format
+
+- **Internal (Tier↔Tier)**: a compact, field-tagged binary encoding generated from types — schema
+  known on both sides at build time, so no self-describing overhead. `postcard`-class efficiency with
+  tags for compatibility. Zero-copy on read where the type allows.
+- **Bulk/columnar** (query results, analytics, anything > ~1000 rows): **Apache Arrow** IPC. Zero-copy
+  into DataFusion on the server, and Arrow decoding in WASM is fast enough for real data tables.
+- **External (public API)**: generate **OpenAPI + JSON** and **gRPC/Protobuf** from the same types, on
+  request (`@public(rest)`, `@public(grpc)`). Tier's internal format is never a public contract.
+- **Transport**: HTTP/2 (h2 via `hyper`) with HTTP/3 (`quinn`) optional; WebSocket or WebTransport for
+  subscriptions; TLS via `rustls`.
+
+## 4.5 Error messages as a first-class subsystem
+
+For a language whose main feature is inference, error quality *is* the product. Concretely:
+
+- Every `Node` carries a span; every `Core` node carries provenance back to a `Node` (and, for
+  macro-generated code, the *expansion chain*: "in `derive(Json)` expanded at orders.tier:12").
+- Diagnostics are structured values (code, primary span, secondary spans, notes, fix-its), rendered by
+  one renderer shared by CLI and LSP. Model on rustc/Elm.
+- Placement errors get a dedicated explainer that prints the constraint derivation (§3.4).
+- A `tests/ui/` snapshot suite (rustc-style): every diagnostic has a committed expected rendering, so
+  regressions in error quality fail CI. Use `insta` for snapshots. Start this in week two, not year two.
+
+## 4.6 Incrementality and the IDE
+
+Use **Salsa** (the incremental query framework behind rust-analyzer) as the compiler's spine from the
+first commit, not as a later retrofit. Everything is a memoised query:
+
+```
+parse(file)                → Node
+expand(module)             → Node
+signature(item)            → Signature          ◀── the separate-compilation firewall (§3.6)
+typecheck_body(item)       → TypedBody
+core(item)                 → Core
+placement(component)       → Placement
+artifact(tier, service)    → Bytes
+```
+
+Because §3.6 makes signatures the module firewall, editing a function body invalidates
+`typecheck_body` and `core` for that item and nothing upstream — the property that makes both
+sub-second IDE feedback and fast CI builds possible. **One binary** serves `tier build`, `tier check`,
+`tier lsp` and `tier explain`; there is no separate language server implementation to drift.
+
+Targets to hold yourself to: keystroke→diagnostics **< 100 ms** on a 50 kLOC project; incremental
+`tier build` for a one-line change **< 2 s** to a running dev process (hot reload); clean release
+build of 50 kLOC **< 60 s** including WASM and image assembly.
+
+## 4.7 `tier explain` — shipped in v0.1
+
+Non-negotiable, per §1.6's Meteor lesson. Every inferred decision must be interrogable:
+
+```console
+$ tier explain place recent
+recent  →  data tier
+
+  effects   : { db.read(orders) }
+  candidates: data (cost 1.0), server (cost 12.4)
+  chosen    : data
+  because   : expressible as a single relational plan; avoids 1 round trip
+              and ~4.2 KB per call versus server placement
+  emitted as: SELECT o.* FROM orders o WHERE o.customer = $1 AND ... LIMIT $2
+  callers   : OrderPanel (client) → generated op 7f3a1c9e2b04 (batched)
+```
+
+```console
+$ tier explain flow ApiKey
+ApiKey (secret[str]) declared at config.tier:8
+  reaches: charge()          server   ok
+           audit_log()       server   ok
+  BLOCKED: OrderPanel        client   secret[T] is not Sendable
+           └─ would cross boundary at orders.tier:41
+```
+
+Also ship `tier explain wire <op>`, `tier explain query <fn>`, `tier explain deploy <service>`
+(the full object graph and its provenance) and `tier explain cost <fn>`.
+
+## 4.8 Testing strategy for the compiler itself
+
+| Layer | Technique | Tool |
+|---|---|---|
+| Lexer/parser | Round-trip property: `parse(print(parse(src))) == parse(src)`; corpus tests shared with tree-sitter | `proptest`, `insta` |
+| Macro expansion | Golden expansion dumps; hygiene test suite (capture must fail) | `insta` |
+| Typechecker | Positive/negative suites; **principality** property tests; random well-typed program generation | `proptest` |
+| Placement | Property: *no valid program is rejected*; *no `secret` reaches client* (assert over generated programs); determinism and stability properties | `proptest` |
+| Splitting | Differential execution: run the whole program single-process vs. split across tiers, assert identical observable behaviour. **This is the highest-value test in the project** | custom harness |
+| Codegen | Execution tests per backend; WASM vs native differential | harness |
+| Data tier | Query pushdown differential: pushed-down SQL vs in-memory evaluation of the same `Query` | harness + Postgres |
+| Infra | Golden manifests (`insta`), then apply to ephemeral `k3d` clusters in CI and assert reachability/policy | k3s in CI |
+| End-to-end | The running example, deployed to a kind/k3d cluster, driven by a browser | Playwright (pre-installed here) |
+| Fuzzing | Parser and macro expander, continuously | `cargo-fuzz` / AFL++ |
+
+The differential-execution harness (single-process vs split) deserves emphasis: it is the mechanised
+form of the language's central promise. If it is green on a large corpus, the idea works.
