@@ -348,6 +348,44 @@ banned in folds (checked arithmetic, no unwrap-shaped stdlib in fold position); 
 halts only its store; recovery is hotfix-and-replay. **F14** flagship demos mark interactions
 `optimistic` (Mode B) so first contact shows latency compensation, not round trips.
 
+## D15 — Flagship dogfood: beck.dev and the package registry, built in Beck — **DECIDED**
+
+George's framing, adopted: *the best demo is Beck's own website; the real test is the package
+registry built into it, which exercises the backend and data tier.*
+
+**Why the registry is the perfect stress test — the domain is a homomorphism of the semantics.**
+A package registry's requirements *are* Beck's constructs, one for one:
+
+| Registry requirement | Beck construct it exercises |
+|---|---|
+| Published versions are immutable, forever | `retain=forever` (D3) is a *product requirement* here, not a policy choice |
+| Transparency log — every publish auditable | The event log **is** the transparency log; no second system |
+| Yank marks, never deletes | An event, not a deletion — the semantics' native idiom |
+| Publish pipeline: verify signature → scan → index → generate docs, with failure cleanup | A `process` (saga) with explicit compensations ([`15`](15-scale-and-distribution.md) §15.4) |
+| Publisher auth, keyless signing | Identity subsystem (D6) + Sigstore at a CloudEvents ingress |
+| Spam/typosquat abuse | Quotas on by default (D14/F3), namespaces, first-writer ids (F2) — every review-pass defence, live |
+| Package artefacts | The content-addressed blob type (D1) at real scale |
+| Search, download counts, advisories | Read models: full-text index, **high-volume counter folds** (the write-heavy case the todo app never tests), windowed aggregation |
+| Private packages | Per-session filtered signals — the fanout stress (R5) with real authorization |
+| Rebuild the index from history | **Genesis replay as an operational tool**, not just a CI gate |
+| Ecosystem analytics for maintainers | pgwire read models queried by outsiders |
+
+**The website** (beck.dev: docs, playground, registry front-end) exercises the other half: Mode A
+content rendering with SEO/CWV budgets as *public* receipts, WCAG compile-time gates on real pages,
+the playground as a Mode B component wrapping the WASM-compiled compiler — and "view source" links
+to the site's own Beck source, so the site is its own demo.
+
+**The bootstrap fixed point**: the registry serves the packages that build the registry — the
+crates.io/cargo circularity, which reads as credibility. One honest guard: package *hosting* is
+decentralised OCI by design ([`16`](16-packages-and-ecosystem.md) §16.3), so the index is
+availability-critical but not correctness-critical — a static mirror fallback means the ecosystem
+is never hostage to the dogfood app's schedule.
+
+**Sequencing** ([`08`](08-roadmap.md)): playground in Phase 3; beck.dev in early Phase 4; the
+registry through Phases 4–5, and **"the registry runs in production on Beck, serving real
+packages" becomes a Phase 5 exit criterion** — the production application Phase 4 demanded, chosen
+so that shipping the proof and shipping the ecosystem are the same act.
+
 ## Still open (minor, non-blocking)
 
 - Security-headline vs productivity-headline positioning ([`09`](09-risks-and-open-questions.md)

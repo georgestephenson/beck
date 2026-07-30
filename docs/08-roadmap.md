@@ -123,8 +123,9 @@ team a question. Track this literally as the acceptance test.
 - Security review: hygiene escapes, macro sandbox, deserialisation of untrusted wire data, generated
   SQL, the `Sendable`/`secret` proofs. Get external eyes on this.
 
-**Exit**: one real production application — ideally yours — running on it, with an on-call rotation and
-a postmortem or two.
+**Exit**: one real production application running on it, with an on-call rotation and a postmortem
+or two — per [`10`](10-decisions.md) D15 this is **beck.dev**, with the registry entering
+production hardening.
 
 ## Phase 5 — 1.0 (3–4 months)
 
@@ -135,6 +136,9 @@ a postmortem or two.
   the value while the log still orders the updates around it ([`10`](10-decisions.md) D7).
 - Editor support beyond VS Code; debugger integration (DAP) with cross-tier stepping.
 - Package ecosystem seeding; documentation, book, tutorials, and 5–10 non-trivial example apps.
+- **The registry in production, on Beck, serving real packages** — the D15 exit criterion: the
+  flagship dogfood (event-sourced by domain, saga-driven publish pipeline, counter folds, genesis
+  replay as an operational tool) proving the backend and data tier in public.
 - Performance: a published benchmark suite versus a hand-written React+FastAPI+Postgres+Helm baseline —
   latency, payload size, image size, build time, *and* lines of code. That last number is the one that
   travels.
@@ -175,5 +179,7 @@ Kubernetes objects + inferred placement* on the right is the demo that explains 
 5. **`cargo-deny` licence gate** from the first commit, given §7's open-source constraint.
 6. **Write the tutorial as you build**, and treat any sentence that requires an apology ("for now you
    have to…") as a bug report against the design.
-7. **Dogfood.** Build the playground, the docs site, and the project's own dashboards in Beck as soon
-   as it can express them.
+7. **Dogfood, per D15.** The playground, beck.dev, and above all the package registry are built in
+   Beck — the registry's domain is a homomorphism of the semantics (immutable versions = events
+   forever; transparency log = the log; yank = an event), so building it tests exactly the backend
+   and data tier claims, in production, in public.

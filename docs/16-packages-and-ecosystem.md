@@ -108,5 +108,10 @@ neighbours.* Both matter; only one compounds into an ecosystem of our own.
 Phase 3–4 ([`08`](08-roadmap.md)): `beck add`/`publish`/`why`, lockfile resolution, the index +
 generated docs site, effect-diff UX, namespaces, transparency log. Phase 5: feature-package
 conventions hardened by building `@beck/auth` and `@beck/payments-stripe` ourselves (dogfooding
-rule §8.3), generators, and the blessed-layer split. The registry index is a Beck app — it may be
-the first production Beck deployment after the playground.
+rule §8.3), generators, and the blessed-layer split. Per [`10`](10-decisions.md) **D15, the
+registry is the flagship dogfood application**: its domain is event-sourced by nature (immutable
+versions, transparency log, yank-as-event, saga-shaped publish pipeline, counter-heavy read
+models), so shipping it in production *is* the proof of the backend and data tier — and the
+bootstrap fixed point (the registry serves the packages that build the registry) is the
+credibility demo. Hosting stays decentralised OCI, so a static mirror fallback keeps the ecosystem
+independent of the dogfood's schedule.
