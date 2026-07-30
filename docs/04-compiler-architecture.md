@@ -192,7 +192,7 @@ Also ship `tier explain wire <op>`, `tier explain query <fn>`, `tier explain dep
 | Typechecker | Positive/negative suites; **principality** property tests; random well-typed program generation | `proptest` |
 | Placement | Property: *no valid program is rejected*; *no `secret` reaches client* (assert over generated programs); determinism and stability properties | `proptest` |
 | Splitting | Differential execution: run the whole program single-process vs. split across tiers, assert identical observable behaviour. **This is the highest-value test in the project** | custom harness |
-| Determinism/replay | Fold the same recorded log twice (and across dev/release backends); assert bit-identical states and patch streams | harness |
+| Determinism/replay | Fold the same recorded log twice (and across dev/release backends); assert bit-identical states and patch streams. For `retain=forever` stores: **genesis replay** — an archived corpus through the full upcast chain, asserting state equality ([`10`](10-decisions.md) D3) | harness |
 | Codegen | Execution tests per backend; WASM vs native differential | harness |
 | Data tier | Incremental-vs-oracle: every incrementalized view checked against full recompute over the same log; SQL read-model forms checked against both | harness + Postgres |
 | Infra | Golden manifests (`insta`), then apply to ephemeral `k3d` clusters in CI and assert reachability/policy | k3s in CI |

@@ -246,10 +246,11 @@ State schema evolution is a *language* concern, not an ops concern (Lamdera's pr
 - Changing an **event** type requires an **upcaster** `upcast : OldEvent -> Event` (events are
   immutable facts; the log is never rewritten). Exhaustiveness checking on `union Event` is what
   makes a missed case a compile error rather than a 3 a.m. page.
-- Doctrine (the fork is argued in [`09`](09-risks-and-open-questions.md) §9.5): **snapshots are
-  authoritative for liveness; upcasters are required only within the declared log retention
-  window.** Full-history replay from genesis is a per-store opt-in (`retain=forever`), with its
-  cost stated, not the default everyone silently inherits.
+- Doctrine ([`10`](10-decisions.md) D3, decided): **the ledger is the truth.** By default,
+  `retain=forever` — replay from the first event, through the full upcast chain, must always
+  reproduce state (a CI-gated invariant, [`04`](04-compiler-architecture.md) §4.8); snapshots are
+  pure optimisation. A store may opt down to bounded retention (`retain=90.days`), making snapshots
+  authoritative beyond the window and its upcaster obligations finite.
 - Rollout choreography — drain, snapshot, migrate, resume; two versions live simultaneously — is
   the operator's job ([`06`](06-kubernetes-and-packaging.md) §6.4). Wire compatibility of
   command/event types across versions is checked by `tier check --wire-compat` against the

@@ -55,10 +55,13 @@ GDPR/right-to-erasure collides with an immutable log; "the log grows forever."
 **Mitigation**: read models are ordinary Postgres tables, browsable via pgwire — the outside world
 sees tables, not theory ([`05`](05-tier-lowering.md) §5.3); erasure via **crypto-shredding**
 (per-subject envelope encryption; deleting the key erases the subject across log, snapshots and
-backups) plus compaction — needs a worked design in Phase 4, not a FAQ answer; retention is a typed
-policy on `durable` (snapshot-and-compact is "this world's garbage collection"), with
-`retain=forever` an explicit opt-in, not the default. Position the substrate as boring on purpose:
-"your data is in Postgres; Tier is how it got there."
+backups) — a worked design in Phase 4, not a FAQ answer. Per [`10`](10-decisions.md) D3 the default
+is `retain=forever` (the ledger is the truth), so log growth is managed by *tiering*, not
+truncation — old segments archive to Parquet on object storage, doubling as the analytical corpus —
+and permanent upcaster chains are kept honest by the genesis-replay CI gate; stores that want
+bounded liability opt down to `retain=<window>` (snapshot-and-compact as "this world's garbage
+collection"). Position the substrate as boring on purpose: "your data is in Postgres; Tier is how
+it got there."
 
 ### R7 — The merge ceiling
 
@@ -142,7 +145,7 @@ audience it courts.
 | Client default | Thin patch interpreter (Mode A); local WASM (Mode B) opt-in per component | WASM-first everywhere | Low-moderate — modes share one source |
 | Log substrate v1 | Postgres (+ object storage snapshots; redb embedded for dev) | Purpose-built log store | Low — behind the log-engine interface |
 | Incremental views | Differential-dataflow lineage, recompute as oracle | Recompute always / hand-rolled IVM | Moderate — plans are symbolic either way |
-| Migration doctrine | Snapshots-authoritative default, per-store `retain=forever` opt-in | Events-forever as default | Pending D3 confirmation ([`10`](10-decisions.md)) |
+| Migration doctrine | Events-forever default (genesis replay is the invariant); per-store bounded-retention opt-in | Snapshots-authoritative default | Decided — [`10`](10-decisions.md) D3 |
 | Identity | Bundled OSS IdP (Keycloak/Ory) or external OIDC issuer; never own auth | Hand-rolled sessions | Decided — [`10`](10-decisions.md) D6 |
 | Offline | Offline-tolerant v1 (Mode B + queued commands); CRDT-valued types v1.x; peer-to-peer local-first out of scope | Local-first core | Decided — [`10`](10-decisions.md) D7 |
 | Typing | Static, mandatory public signatures | Gradual | High |
@@ -152,16 +155,13 @@ audience it courts.
 
 ## 9.5 Questions for George — answered
 
-The first round of questions was answered; the answers and their reasoning are recorded in
-[`10-decisions.md`](10-decisions.md) (D1–D8). Remaining open:
+All substantive questions are answered; the answers and their reasoning are recorded in
+[`10-decisions.md`](10-decisions.md) (D1–D8, all decided). Remaining open, both non-blocking:
 
-1. **D3 confirmation** — migration doctrine. Explained in plain terms in
-   [`10`](10-decisions.md) D3; recommendation on the table: snapshots-authoritative default with
-   per-store `retain=forever` opt-in. Awaiting a yes / "make B the default".
-2. **Security/least-privilege as marketing headline vs productivity** — not yet answered; defaults
-   to "both, audience-dependent" (§9.3) until directed otherwise.
-3. **Name**: the transcript coins `tier`; searchability is poor. Non-blocking until public
-   artefacts exist.
+1. **Security/least-privilege as marketing headline vs productivity** — defaults to "both,
+   audience-dependent" (§9.3) until directed otherwise.
+2. **Name**: the transcript coins `tier`; searchability is poor. Decide before public artefacts
+   exist.
 
 ## 9.6 Open technical questions (tracked, not blocking)
 

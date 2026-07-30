@@ -40,7 +40,7 @@ the transcript was available; checking it against the original changed three loa
 | 07 | [Dependencies](07-dependencies.md) | Every third-party choice: rationale, licence, benchmarks, rejected alternatives, swap cost |
 | 08 | [Roadmap](08-roadmap.md) | Phase 0 premise-proof, walking skeleton, phased plan, exit criteria, team shape |
 | 09 | [Risks and open questions](09-risks-and-open-questions.md) | Ranked risks, decisions taken, remaining opens |
-| 10 | [Decision log](10-decisions.md) | George's answers D1–D8 recorded with reasoning; **one confirmation pending (D3)** |
+| 10 | [Decision log](10-decisions.md) | George's decisions D1–D8, all settled, recorded with reasoning — including the Git/local-first analysis |
 
 ## The one-paragraph version
 

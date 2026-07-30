@@ -19,7 +19,31 @@ One totally-ordered log per application. Envelope reserves per-entity ordering k
 timestamp fields so sharding is a later implementation upgrade, not a semantics break.
 Collaborative text is out of core v1 (see D7 for how it comes back).
 
-## D3 — Migration doctrine — **explained below; awaiting confirmation**
+## D3 — Migration doctrine — **DECIDED: Option B by default, Option A as per-store opt-in**
+
+George's call, reversing the draft recommendation: **the ledger is the truth**. By default every
+`durable` store carries `retain=forever` — *replaying from the first event must always reproduce
+everything* — and a store may opt **down** to bounded retention where limiting liability matters:
+
+```python
+ledger = durable(fold(...))                     # DEFAULT: events forever, genesis replay invariant
+todos  = durable(fold(...), retain=90.days)     # opt-in: snapshots authoritative beyond the window
+```
+
+Obligations the default creates, now first-class in the plan:
+
+- **Upcasters are permanent** for `forever` stores: every event shape ever shipped keeps its
+  translator. The compiler scaffolds them, and exhaustiveness on `union Event` keeps them honest.
+- **Genesis replay is a CI gate**: for `forever` stores, CI replays an archived corpus through the
+  full upcast chain and asserts state equality ([`04`](04-compiler-architecture.md) §4.8) — an
+  invariant you claim is only real if a machine checks it.
+- **Storage is tiered, not truncated**: old log segments archive to Parquet on object storage
+  (pennies, and they double as the analytical corpus for DataFusion,
+  [`05`](05-tier-lowering.md) §5.3). Snapshots remain pure optimisation for `forever` stores.
+- Erasure stays compatible via D4's crypto-shredding — the erased subject's events remain in the
+  log but are permanently unreadable, which is precisely why that mechanism was chosen.
+
+The original fork, kept for the record:
 
 ### The question, in plain terms
 
@@ -58,21 +82,8 @@ shape you have *ever* shipped, you keep a translator, forever.
   (cheap, not free); and "delete my data" requests are structurally awkward — mitigated by D4's
   crypto-shredding, but the tension is real.
 
-### The recommendation on the table
-
-**Per-store choice, Option A as the default, Option B as an explicit opt-in**:
-
-```python
-todos  = durable(fold(...))                     # default: retain=90.days, snapshots authoritative
-ledger = durable(fold(...), retain=forever)     # opt-in: replay-from-genesis is the invariant
-```
-
-The default gives every app bounded liability; the stores where history is the product declare it
-and pay for it knowingly. The type system enforces the corresponding obligations either way (a
-missing `migrate`/`upcast` is unshippable, [`03`](03-type-and-effect-system.md) §3.9).
-
-**→ Please confirm the default, or pick B-everywhere.** (A-default is my recommendation; B-default
-is defensible if you expect Tier's flagship domains to be audit-heavy.)
+The type system enforces the corresponding obligations either way — a missing `migrate`/`upcast`
+is unshippable ([`03`](03-type-and-effect-system.md) §3.9).
 
 ## D4 — Erasure by crypto-shredding — **DECIDED**
 
@@ -80,7 +91,7 @@ Per-subject envelope encryption; deleting the subject's key erases them across l
 backups at once. Accepted (the Kleppmann-endorsed approach). Worked design lands in Phase 4
 ([`08`](08-roadmap.md)).
 
-## D5 — Rendering modes: the detailed explanation — **DECIDED** (thin default, per-component upgrade)
+## D5 — Rendering modes — **DECIDED** (thin default, per-component upgrade, free mixing confirmed)
 
 Every component's screen is `view(state)` — a pure function. The design question is only *where
 that function runs*, and because it is pure, the same source compiles either way; the choice is
@@ -175,6 +186,55 @@ value*, while the log still totally orders the update events around it — colla
 giving up the referee for everything else. Full peer-to-peer local-first stays a non-goal; if it
 ever matters, it is a different product built on the same pure core.
 
+### Addendum: "isn't this just Git? GitHub has rules about what it accepts"
+
+George's follow-up question, answered here because the analogy is *exactly* right and resolves the
+apparent contradiction.
+
+**Yes — Git is the canonical local-first system**: every user has a full clone, works offline, and
+syncs later. But look at what Git does when two clones edit the same line: it does **not** decide.
+It stops, marks a conflict, and hands the problem to a human. That is a fine answer for source code
+reviewed by professionals and an impossible one for a live application — you cannot pop a
+merge-conflict editor on a user who tapped "buy" on the train. CRDTs are the "never stop, always
+merge automatically" alternative, and their mathematical guarantee is narrower than it sounds: all
+replicas **converge to the same result** — not that the result satisfies your business rules.
+
+**And the GitHub observation cuts to the heart of it.** Branch-protection rules, required CI,
+review approvals — those work because GitHub is a **central chokepoint that can say no** before a
+change reaches `main`. GitHub's acceptance rules *are a referee at a merge point*. The moment teams
+adopted distributed Git at scale, they voluntarily re-centralised integration through a hub —
+because enforcement requires a place where rejection is possible. Pure peer-to-peer Git (patches
+emailed between laptops, no shared upstream) is where "rules about what we accept" stop existing,
+and almost nobody runs Git that way for exactly that reason.
+
+"Unenforceable" was shorthand for: **without a chokepoint, there is no moment at which a rule can
+reject anything.** Concretely — invariant: *seat 14A is sold at most once*. Two offline devices
+each sell 14A; each device's local check passed honestly (locally, the seat *was* free). By the
+time the replicas meet, both users have already been told they succeeded. A CRDT merge will
+faithfully converge — to a state with two sales. No merge function can pick the rightful buyer,
+because "who was first?" refers to an order that never existed. The only exits are (a) a referee
+that *creates* the order before confirming — which is precisely Tier's merge point — or (b) accept
+both and **compensate** (overbook and apologise — airlines do this deliberately; it is a business
+policy, expressible in Tier as a fold that detects oversell and emits a compensation workflow, but
+it must be *chosen*, never defaulted).
+
+**So the resolution: Tier's architecture already is the GitHub-shaped version of Git.**
+
+| Git/GitHub | Tier |
+|---|---|
+| `main`'s commit history | the event log |
+| Protected branch + required checks | the merge point: `validate` |
+| Your local clone with unpushed commits | a Mode B client with optimistic state |
+| `git rebase` onto upstream | reconciliation by `seq` |
+| Push rejected by CI | command rejected by `validate` (UI un-does the optimistic guess) |
+| Patches emailed peer-to-peer, no hub | full local-first — the rung we deliberately don't ship |
+
+What v1 ships (rung 2) is Git-with-GitHub: full local working copies, offline work, ordered
+integration through a referee that enforces the rules. What we decline (rung 3) is Git-without-
+GitHub. And CRDT-valued types (v1.x) are the analogue of a file format that merges itself cleanly —
+usable for fields where order genuinely doesn't matter (text, sets, counters, sketches), inside a
+system that still protects `main` for everything that does.
+
 ## D8 — Effort posture — **DECIDED**
 
 Verbatim directive: *"Do not worry about team size or dev effort. Go for max completeness, clean
@@ -193,8 +253,9 @@ Consequences applied across the plan:
   expedience — purity violations (impure folds, hidden time, unplaced effects) stay *compile
   errors*, not warnings, even where a shortcut would ship faster.
 
-## Still open (minor)
+## Still open (minor, non-blocking)
 
-- **D3 confirmation** (above) — the only blocking item.
-- Naming/searchability of `tier` (09 §9.5 Q10) — unanswered, non-blocking.
+- Security-headline vs productivity-headline positioning ([`09`](09-risks-and-open-questions.md)
+  §9.5).
+- Naming/searchability of `tier` — decide before public artefacts exist.
 - The tracked technical opens in [`09`](09-risks-and-open-questions.md) §9.6.
