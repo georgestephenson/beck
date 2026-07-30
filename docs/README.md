@@ -39,7 +39,8 @@ the transcript was available; checking it against the original changed three loa
 | 06 | [Kubernetes and packaging](06-kubernetes-and-packaging.md) | Images, derived manifests, the operator, deploys-ride-the-stream, dev→prod ladder |
 | 07 | [Dependencies](07-dependencies.md) | Every third-party choice: rationale, licence, benchmarks, rejected alternatives, swap cost |
 | 08 | [Roadmap](08-roadmap.md) | Phase 0 premise-proof, walking skeleton, phased plan, exit criteria, team shape |
-| 09 | [Risks and open questions](09-risks-and-open-questions.md) | Ranked risks, decisions taken, **questions awaiting George** |
+| 09 | [Risks and open questions](09-risks-and-open-questions.md) | Ranked risks, decisions taken, remaining opens |
+| 10 | [Decision log](10-decisions.md) | George's answers D1–D8 recorded with reasoning; **one confirmation pending (D3)** |
 
 ## The one-paragraph version
 

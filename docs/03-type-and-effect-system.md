@@ -163,6 +163,10 @@ model Envelope[T]:
     body: T
 ```
 
+`Session` is minted by the identity subsystem — a bundled OSS IdP or an external OIDC issuer, never
+our own auth code — with verified claims mapped to typed capabilities
+([`10`](10-decisions.md) D6).
+
 v1 semantics: **one totally-ordered log per application**. That is a real throughput/geography
 ceiling, chosen consciously — the honest options at scale (per-entity sharding, logical timestamps,
 CRDTs) are [`09`](09-risks-and-open-questions.md) §9.6's first question.

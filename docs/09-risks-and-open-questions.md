@@ -142,50 +142,26 @@ audience it courts.
 | Client default | Thin patch interpreter (Mode A); local WASM (Mode B) opt-in per component | WASM-first everywhere | Low-moderate — modes share one source |
 | Log substrate v1 | Postgres (+ object storage snapshots; redb embedded for dev) | Purpose-built log store | Low — behind the log-engine interface |
 | Incremental views | Differential-dataflow lineage, recompute as oracle | Recompute always / hand-rolled IVM | Moderate — plans are symbolic either way |
-| Migration doctrine | Snapshots authoritative; upcasters within retention window | Events-forever, replay from genesis | §9.5 Q3 — genuinely open |
+| Migration doctrine | Snapshots-authoritative default, per-store `retain=forever` opt-in | Events-forever as default | Pending D3 confirmation ([`10`](10-decisions.md)) |
+| Identity | Bundled OSS IdP (Keycloak/Ory) or external OIDC issuer; never own auth | Hand-rolled sessions | Decided — [`10`](10-decisions.md) D6 |
+| Offline | Offline-tolerant v1 (Mode B + queued commands); CRDT-valued types v1.x; peer-to-peer local-first out of scope | Local-first core | Decided — [`10`](10-decisions.md) D7 |
 | Typing | Static, mandatory public signatures | Gradual | High |
 | Async | No colouring; compiler inserts awaits | Explicit async/await | Moderate |
 | Infra state | Kubernetes API + Crossplane | Own engine / OpenTofu-first | Low (emitters pluggable) |
 | Images / packages | apko / OCI+ORAS | BuildKit / bespoke registry | Low |
 
-## 9.5 Questions for George
+## 9.5 Questions for George — answered
 
-The premise is now confirmed by [`00`](00-original-idea.md); these are the decisions the transcript
-leaves genuinely open, ranked by how much they bend the plan:
+The first round of questions was answered; the answers and their reasoning are recorded in
+[`10-decisions.md`](10-decisions.md) (D1–D8). Remaining open:
 
-1. **Is *all* state event-sourced, or is hybrid blessed?** Files/blobs, high-churn ephemera
-   (presence, cursors), imported legacy data. Proposal: folds are the native model; `external
-   store` and a blob type (content-addressed, log carries hashes) are first-class escape hatches.
-   Confirm or tighten.
-2. **What consistency ceiling does v1 accept?** One total order per app (simple; single-writer
-   ceiling ~10⁴ events/s; single-region) — with per-entity sharding reserved in the envelope
-   design. OK for the first three years of users? And is collaborative text (CRDT/OT territory)
-   explicitly out of v1 core, per the original's own concession?
-3. **Migration doctrine** (the real fork): snapshots-authoritative with retention-bounded upcasters
-   (my recommendation — bounded liability), or events-forever with replay-from-genesis as the
-   invariant (purer; every event version lives forever)? This decides what `durable` promises and
-   cannot be flipped quietly later.
-4. **Erasure**: is crypto-shredding acceptable as *the* GDPR answer (key deletion = erasure across
-   log/snapshots/backups), or do you want physical compaction rewriting history as well?
-5. **Where does `view` run by default?** Thin-first (my recommendation: Mode A default, `optimistic`
-   /`offline` flips a component to Mode B) — or local-first? Changes Phase 1's shape and the
-   payload/latency trade.
-6. **Sessions and identity**: is `Session` minted by Tier (built-in OIDC client, sessions as
-   capabilities) or delegated to an external IdP with Tier consuming claims? And is *presence*
-   (who's connected now) a first-class `Signal` in v1 — it's the natural demo of per-session
-   fanout, and also its stress test?
-7. **Local-first ambition**: is offline a v1 requirement (pulls CRDT-valued types and Mode B
-   forward, complicates the consistency story) or a post-1.0 direction? The original flirts with
-   it ("browsers are replicas, not terminals") without committing.
-8. **Security/least-privilege as headline** ([`03`](03-type-and-effect-system.md) §3.5,
-   [`06`](06-kubernetes-and-packaging.md) §6.5): lead the pitch with it (pulls toward platform
-   teams) or keep productivity the headline? Still open from the first round.
-9. **Team and horizon** (still open, and it gates everything): 3–6 engineers assumed in
-   [`08`](08-roadmap.md). If this is 1–2 people, I would cut Kubernetes and Mode B entirely until
-   there are users, and ship Phases 0–2 as a "typed tierless framework" — say the word and I'll
-   re-cut the roadmap to that shape.
-10. **Name**: the transcript coins `tier` — keep it (searchability is poor; "tierlang" as the
-    public handle?) or rename before public artefacts exist?
+1. **D3 confirmation** — migration doctrine. Explained in plain terms in
+   [`10`](10-decisions.md) D3; recommendation on the table: snapshots-authoritative default with
+   per-store `retain=forever` opt-in. Awaiting a yes / "make B the default".
+2. **Security/least-privilege as marketing headline vs productivity** — not yet answered; defaults
+   to "both, audience-dependent" (§9.3) until directed otherwise.
+3. **Name**: the transcript coins `tier`; searchability is poor. Non-blocking until public
+   artefacts exist.
 
 ## 9.6 Open technical questions (tracked, not blocking)
 

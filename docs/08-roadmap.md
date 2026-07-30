@@ -4,8 +4,11 @@
 
 A language with five backends is a **multi-year** project. Comparable efforts: Elm reached usable in
 ~2 years with 1–2 people (one tier); Rust took ~9 years to 1.0 with a team; Eliom took a research group
-a decade to industrial quality (two tiers). Estimates below assume **3–6 experienced engineers**;
-halve the team and roughly triple the calendar. Durations are for calibration, not commitment.
+a decade to industrial quality (two tiers). Per George's directive ([`10`](10-decisions.md) D8), the
+plan optimises for **completeness, clean architecture and performance, not schedule**: nothing is
+descoped to fit a team size, and durations below are sequencing calibration, not commitments. What
+survives from schedule discipline is *ordering* — the walking-skeleton rule below — and budgets as
+CI gates, because "optimal performance" is only real if it is measured from Phase 0.
 
 The sequencing rule that matters more than any estimate: **build one thin vertical slice through all
 five tiers before making any single tier good.** The risk in this project is not "can we write a good
@@ -89,6 +92,9 @@ dependencies whose signatures didn't change.
 - Structured concurrency, `Result`/error rows, `match` exhaustiveness, pattern matching completion.
 - Standard library v1: collections, strings, time, money/decimal, HTTP client, JSON, UUID, crypto
   primitives (delegated to `ring`/`aws-lc-rs`, not hand-rolled).
+- **Identity**: OIDC relying-party runtime, `identity = managed()` provisioning (Keycloak/Ory),
+  claims → `Session` capability mapping, dev-mode identity for rung 0, presence as a first-class
+  signal ([`10`](10-decisions.md) D6).
 - LSP: completion, hover with *inferred placement*, go-to-def, rename, inline diagnostics.
 - **The in-browser playground** (§7.7) — highest-leverage adoption artefact.
 - `tier init ci`, apko image build in-process, cosign signing, SBOM.
@@ -120,6 +126,8 @@ a postmortem or two.
 - Language specification written against the S-expression core (this is where that surface earns its
   keep, §2.2).
 - Stability guarantees and a deprecation policy; wire-format stability commitment.
+- **CRDT-valued types**: `Text` and friends (automerge/loro-backed) — concurrent edits merge within
+  the value while the log still orders the updates around it ([`10`](10-decisions.md) D7).
 - Editor support beyond VS Code; debugger integration (DAP) with cross-tier stepping.
 - Package ecosystem seeding; documentation, book, tutorials, and 5–10 non-trivial example apps.
 - Performance: a published benchmark suite versus a hand-written React+FastAPI+Postgres+Helm baseline —

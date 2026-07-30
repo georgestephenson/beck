@@ -58,6 +58,8 @@ component model at the centre of our language. Read their source; don't link the
 | Server-side WASM | **Wasmtime** | Apache-2.0 with LLVM exception | 2026 benchmarks: leads cold start (Winch baseline compiler) *and* steady state, at 2.41× native (from 2.54× in 2025, 2.67× in 2024); 1.12× native on 1 GB SHA-256; reference implementation of the component model/WASI-P2 | **WasmEdge** (AOT reached 1.74× native, 1.08× on SHA-256 — better on long compute; keep as an option); **Wasmer** (LLVM backend wins peak throughput on long-running compute); WAMR (embedded focus) |
 | Tracing | **OpenTelemetry** Rust SDK | Apache-2.0 | The only vendor-neutral standard; automatic cross-tier traces are a headline feature (§5.2) | vendor SDKs (lock-in) |
 | Metrics | **Prometheus** exposition | Apache-2.0 | Universal | statsd (legacy) |
+| Identity provider (`identity = managed()`) | **Keycloak** (default) / **Ory Kratos** (lighter alternative) | Apache-2.0 (both; Keycloak is CNCF) | Never roll our own auth: passkeys, MFA, social login, admin UI inherited from a hardened IdP, provisioned by the InfraGraph ([`10`](10-decisions.md) D6) | Authentik/SuperTokens (open-core ambiguity); Zitadel (verify current licence); hand-rolled auth (never) |
+| OIDC relying party | **`openidconnect`** crate | MIT/Apache-2.0 | Audited, standard code-flow implementation; Tier's runtime does only token verification and typed claims→`Session`-capability mapping | hand-rolled OIDC (a CVE farm) |
 
 Note the deliberate hedge on server-side WASM: because the runtimes trade places depending on workload
 shape, target the **component model / WASI-P2 interface** rather than any runtime's API, and let the

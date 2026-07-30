@@ -83,6 +83,7 @@ From `service api` in §1.3, plus the effect information from §3, the compiler 
 | `PodDisruptionBudget`, `topologySpreadConstraints` | replica count and HA settings |
 | `Job` (pre-upgrade hook) | pending `migrate`/`upcast` plan ([`03`](03-type-and-effect-system.md) §3.9) |
 | `CronJob` | `cron` declarations |
+| Keycloak/Ory deployment, or external-issuer OIDC wiring | `identity = managed()` / `identity = external(issuer=...)` ([`10`](10-decisions.md) D6) |
 | `TierApplication` CR | the whole plan, for the operator to reconcile |
 
 Non-obvious defaults that should be *unavoidable*, because they are what separates "generated YAML" from
