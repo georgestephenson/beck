@@ -141,7 +141,52 @@ this project can produce for adoption. Budget it into Phase 3, not "someday".
 
 No single dependency is unrecoverable. That is the point of writing this table.
 
-## 7.9 Sources
+## 7.9 Versioning and upgrade policy
+
+Many open-source dependencies means version management is a designed system, not a habit.
+
+**Classes.** Every dependency is assigned a class in `deps.toml`, reviewed in PRs:
+
+| Class | Examples | Upgrade rules |
+|---|---|---|
+| **1 — load-bearing** (semantics or security ride on it) | LLVM, Cranelift, Salsa, Wasmtime, timely/differential, Tokio, rustls, kube-rs, Keycloak, Postgres | Dedicated PR per upgrade; full differential + DST + perf suites must pass; changelog reviewed by a named owner; rollback plan noted; majors on a deliberate cadence (LLVM ~annually, Kubernetes per its own N-2 window) |
+| **2 — replaceable library** | logos, insta, ariadne, oci-spec | Batched automated PRs, normal CI |
+| **3 — dev/CI only** | cargo-mutants, criterion | Batched, relaxed |
+
+**Pinning — everything, always.** `Cargo.lock` committed for every workspace; Rust toolchain pinned
+via `rust-toolchain.toml` with an explicit MSRV policy; container base packages pinned by apko to
+exact versions and images by digest (never tags); k3d/Postgres/browser versions in the CI matrix
+pinned and bumped by PR like any dependency. A build that cannot state exactly what it contains
+cannot claim reproducibility ([`12`](12-standards-and-conformance.md) §12.6).
+
+**Provenance and review.**
+- `cargo-deny` (licences, advisories, duplicate-version bans) and `cargo-audit` (RUSTSEC) gate
+  every CI run — the licence policy of §7 is enforced by machine, not memory.
+- **`cargo-vet`**: every new dependency and every upgrade of a Class-1/2 crate carries a recorded
+  human audit (importing the shared Mozilla/Google audit sets where available). This is the
+  supply-chain answer that scales past "we trust crates.io".
+- **No git dependencies** in released artefacts — registry releases only. Needed patches go
+  upstream first; unavoidable forks live under our org, carry a tracking issue with an exit
+  criterion, and are treated as Class 1.
+- SBOM + SLSA provenance regenerated per build (§12.6), so "which versions are in production" is a
+  query, not an investigation.
+
+**Cadence and automation.** Renovate opens batched weekly PRs for Classes 2–3 and individual PRs
+for Class 1; a monthly dependency-review session triages anything unmerged; security advisories
+preempt all cadence (patch within 48h for Critical, with the embargoed-response process documented
+in `SECURITY.md`). A quarterly `cargo update --dry-run` + `-Z minimal-versions` CI job catches both
+over-fresh and under-specified constraints.
+
+**Version skew is abolished internally.** Compiler, runtime, thin client, operator, and stdlib
+version together on a single release train — one version number, tested as one artefact
+([`13`](13-testing.md) §13.3 covers the *user-facing* skew: old deployed apps vs new servers).
+Externally, supported matrices are explicit and CI-enforced: Kubernetes N-2, the two newest
+Postgres majors, evergreen browsers + last-2 Safari.
+
+**Air-gap**: `tier vendor` produces a complete offline dependency set (crates, base packages,
+images) — falls out of the pinning discipline, and regulated adopters will ask on day one.
+
+## 7.10 Sources
 
 Benchmark and licensing claims above draw on:
 

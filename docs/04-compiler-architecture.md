@@ -185,6 +185,10 @@ Also ship `tier explain wire <op>`, `tier explain query <fn>`, `tier explain dep
 
 ## 4.8 Testing strategy for the compiler itself
 
+*(Summary table — the full strategy, including deterministic simulation, Jepsen-style consistency
+testing, TLA+ specs, mutation testing and the meta-testing policies, is
+[`13-testing.md`](13-testing.md).)*
+
 | Layer | Technique | Tool |
 |---|---|---|
 | Lexer/parser | Round-trip property: `parse(print(parse(src))) == parse(src)`; corpus tests shared with tree-sitter | `proptest`, `insta` |
