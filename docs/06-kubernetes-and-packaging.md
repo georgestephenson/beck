@@ -53,8 +53,11 @@ provenance attestation. `tier deploy` then pins by digest, never by tag.
 **Rejected alternatives**: BuildKit (excellent, and the right answer *if* users need arbitrary build
 steps — keep it as `builder = buildkit` for escape-hatch cases, e.g. FFI to a C library needing a
 compile step); Docker/`docker build` (daemon, root, non-reproducible); Kaniko/Buildah (fine, but still
-Dockerfile-shaped, which we don't need); Nix (superb reproducibility, but the learning curve would
-become *our* learning curve).
+Dockerfile-shaped, which we don't need); Nix (superb reproducibility — and the original sketch's
+`tier deploy` "emits a Nix closure" — but its learning curve would become *our* learning curve;
+apko's bit-reproducible builds plus digest-pinned, content-addressed OCI artefacts deliver the
+property the sketch wanted, referentially transparent deploys, with mainstream tooling. A
+`NixPlatform` emitter remains a reasonable community contribution).
 
 Also emit, from the same `InfraGraph`:
 
@@ -69,15 +72,16 @@ From `service api` in §1.3, plus the effect information from §3, the compiler 
 
 | Object | Derived from |
 |---|---|
-| `Deployment` (or `StatefulSet` for stateful services) | `service` declaration; image digest; replica bounds |
+| `Deployment` / `StatefulSet` | `service` declaration; image digest; replica bounds (`StatefulSet` where a service hosts `durable` folds with local state) |
+| `PersistentVolumeClaim` + snapshot `CronJob` | **the `durable` effect** — the original's "sees one durable fold, so it provisions one volume plus snapshotting", verbatim |
 | `Service` | exposed ports |
-| `HTTPRoute` (**Gateway API**, not `Ingress`) | `expose = http(route=...)`; TLS via cert-manager |
+| `HTTPRoute` + websocket route (**Gateway API**, not `Ingress`) | `expose = http(route=...)`; **the `ingress` effect** (`merge_clients()`) is what provisions the websocket path; TLS via cert-manager |
 | `HorizontalPodAutoscaler` / **KEDA** `ScaledObject` | `autoscale = between(...)`; KEDA when the trigger is a queue depth or external metric |
 | `ConfigMap` / `ExternalSecret` | config declarations; `secret[T]` values are *never* inlined into a manifest |
 | `NetworkPolicy` | **the `net.*` effect set** — a service that only talks to Postgres gets exactly that egress rule |
 | `ServiceAccount` + `Role` + `RoleBinding` | **the `cap.*`/k8s effect set** — least privilege, computed |
 | `PodDisruptionBudget`, `topologySpreadConstraints` | replica count and HA settings |
-| `Job` (pre-upgrade hook) | pending migration plan (§3.7) |
+| `Job` (pre-upgrade hook) | pending `migrate`/`upcast` plan ([`03`](03-type-and-effect-system.md) §3.9) |
 | `CronJob` | `cron` declarations |
 | `TierApplication` CR | the whole plan, for the operator to reconcile |
 
@@ -109,8 +113,13 @@ Responsibilities of the operator — deliberately limited to what needs a cluste
 
 1. **Reconcile `TierApplication`** → owned workloads/routes/policies (server-side apply, ownership
    references so deletion cascades).
-2. **Ordered rollout**: run the migration `Job`, wait, then roll the workloads. Handles the
-   "expand → migrate → contract" schema pattern so that old and new code coexist safely.
+2. **Deploys ride the stream** ([`03`](03-type-and-effect-system.md) §3.9): the rollout is the
+   original's choreography made mechanical — quiesce ingress on the old version (commands buffer at
+   the gateway), drain in-flight folds, snapshot, run `migrate` against the snapshot (and register
+   `upcast`ers for the log tail), start the new version folding from migrated snapshot + tail,
+   re-open ingress, let subscribers resume by `(subscription, seq)`. Old and new versions coexist
+   only in the read path during the switch; the write path has exactly one owner at all times. For
+   `external store`s (plain relational tables), fall back to classic expand → migrate → contract.
 3. **Progressive delivery**: canary by traffic percentage using Gateway API weights, promoting on SLO
    metrics; delegate to **Argo Rollouts** rather than reimplementing analysis.
 4. **Boundary-compatibility gate**: refuse a rollout whose wire operations are incompatible with the
@@ -129,12 +138,16 @@ Worth restating on its own because it is the part no existing tool can do. Becau
 precise, checked effect set per service, the generated policy is exact rather than aspirational:
 
 ```
-service api effects: { db.read(orders), db.write(orders), net.out(payments.example.com), log }
+service api effects: { ingress, durable(orders), net.out(payments.example.com), log }
 
 ⇒ NetworkPolicy egress: [ postgres:5432, payments.example.com:443, otel-collector:4317 ]  DENY all else
+⇒ Gateway:              websocket route (the ingress effect), rate-limited at the edge
+⇒ Postgres grants:      INSERT on the log; ALL on api's own read models; nothing else —
+                        no generic UPDATE/DELETE exists anywhere, because state changes
+                        are events by construction
+⇒ Volume + snapshots:   from durable(orders); retention per its declared policy
 ⇒ Role:                 [ ] (no Kubernetes API access needed)
-⇒ Postgres grants:      SELECT, INSERT, UPDATE on orders            (nothing else)
-⇒ No filesystem mounts, readOnlyRootFilesystem: true
+⇒ No filesystem mounts beyond the volume, readOnlyRootFilesystem: true
 ```
 
 Add a network call to the code and the policy changes with it, in the same commit, reviewable in the
@@ -146,7 +159,7 @@ platform team.**
 
 | Rung | Command | Runs | Storage | Startup | Purpose |
 |---|---|---|---|---|---|
-| 0 | `tier run` | one native process; client served from memory | embedded DataFusion / SQLite-class | < 1 s | daily development, hot reload on save |
+| 0 | `tier run` | one native process; client served from memory | in-memory folds + embedded append-only log (replayable) | < 1 s | daily development, hot reload on save |
 | 1 | `tier run --pg` | one process | local Postgres (container or existing) | ~2 s | SQL-fidelity checks |
 | 2 | `tier run --docker` | one container | ditto | ~5 s | image sanity, "works outside my machine" |
 | 3 | `tier up` | local **k3s/k3d** cluster, real operator, real manifests | Postgres in-cluster | ~30 s | test the infra tier, policies, migrations |

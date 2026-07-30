@@ -3,153 +3,170 @@
 Four backends behind one front end. Each section states the target, the runtime we must ship, the
 dependency choice, and the hard problems.
 
-## 5.1 Browser tier → WebAssembly + fine-grained reactivity
+## 5.1 Browser tier — the browser is a patch interpreter (with an upgrade path)
 
-**Target**: WASM (with the GC and reference-types proposals where available; a fallback bump allocator
-otherwise) plus a small JS shim for DOM/host access.
+The original sketch's model ([`00`](00-original-idea.md)): the browser's default job is
+`fold(apply_patch, initial_html, patch_stream)` — "a couple-kilobyte patch interpreter." The sketch
+also marks `page` as `@client`, running `view` locally. Both readings are correct, for different
+components — and because `view` is unplaced-pure, **where it runs is a placement decision**
+([`03`](03-type-and-effect-system.md) §3.4), made per component by the solver or by annotation.
+Either way, the full-circle property holds: hand-written JavaScript never appears in the source —
+"it's compiler residue: the patch interpreter plus the compiled view. You stopped writing it the
+moment the page became a function." Two rendering modes, one source:
 
-**Runtime we must write** (this is real work, ~15–25 kLOC):
+| | **Mode A — thin (default)** | **Mode B — local** |
+|---|---|---|
+| `view` runs on | server | client |
+| Wire carries | DOM patches | data patches (state diffs) |
+| Client payload | **~5–10 KB JS** patch interpreter + input capture | WASM (or JS) build of the component's `view` + `apply_event` + signal runtime |
+| First paint | free — it *is* the SSR output | SSR + hydrate signals |
+| Optimistic UI | no (round trip per interaction) | yes — same fold runs locally, reconciled by `seq` |
+| Offline | no | possible (local log, replay on reconnect) |
+| Server cost | per-session view state (the LiveView cost) | per-session subscription only |
+| Precedent | Phoenix LiveView, Electric | Elm/Lamdera, Leptos |
 
-- **Signals-based reactive core**, not a virtual DOM. A `Signal[T]` is a node in a dependency graph;
-  reading inside an effect subscribes; writing marks dependents dirty; a scheduler flushes once per
-  microtask. This is the SolidJS/Leptos model. Rationale: no diffing work proportional to tree size,
-  no reconciler heuristics, and — decisively — it is *the same abstraction* as §3.8's server-side
-  invalidation, so one concept spans tiers.
-- **DOM binding layer**: generated from the WebIDL surface we support, so it stays honest and small.
-  Direct `externref` calls where available, otherwise a batched command buffer to amortise the JS
-  boundary (many small `wasm→js` calls are the classic WASM-UI performance trap).
-- **Client-side data cache** keyed by generated operation id + argument hash, with the subscription
-  wiring from §4.3.
-- **Router** derived from `service.expose` routes, with typed params.
+Defaults that fall out: content-shaped components (lists, dashboards, forms-that-submit) are Mode A;
+components with `optimistic` interactions, latency-sensitive input (typeahead, drag), or an
+`offline` requirement get Mode B — inferred from those requirements, overridable with
+`@render(server)` / `@render(client)`. A page mixes modes freely; the boundary is per component
+subtree. **v0.1 ships Mode A only** — it makes the walking skeleton drastically smaller (no GC in
+WASM, no size crisis, trivially good Lighthouse scores) — with Mode B in Phase 3
+([`08`](08-roadmap.md)).
 
-**Size is the make-or-break metric.** WASM's reputation problem in the browser is payload size. Budget
-and enforce: **< 150 KB brotli** for a hello-world app, **< 400 KB** for the running example. Levers:
+**Runtime we must write:**
 
-- Aggressive whole-program DCE after splitting (the client partition is usually a small slice of the
-  program — this is a structural advantage over hand-written SPAs where the whole bundle ships).
-- No reflection, no dynamic dispatch unless used, monomorphise then merge identical functions.
-- GC design that doesn't drag a large runtime in; prefer the WASM GC proposal when the browser matrix
-  allows, since it moves the collector out of our payload entirely.
-- `wasm-opt` from **Binaryen** at `-Oz`, plus `wasm-snip`, in the release pipeline.
-- Split the module: eager core + lazily fetched route chunks, driven by the router.
-- A CI gate that fails the build on a size regression > 2%.
+- **The patch protocol**: a compact DOM-diff format (keyed children, text/attr ops, component
+  boundaries as stable frames) applied by the thin client; *the same format* is the SSR hydration
+  seed. Server-side, `Html` values diff structurally — and because views are signal-derived, the
+  differ knows which subtrees *can't* have changed and skips them (this is where fine-grained
+  signals beat blind vdom diffing even server-side).
+- **Input capture**: event handlers in `view` compile to declarative attributes
+  (`on_click → send(Toggle(id))` becomes a serialized command constructor); the thin client posts
+  commands up the same websocket. No user JS runs in Mode A at all — which is also a CSP story:
+  `script-src` can be near-empty.
+- **Mode B kernel** (Phase 3): the component's pure code compiled to WASM (GC proposal where
+  available; Perceus-style refcounting fallback — the Roc/Koka route, given our immutable data),
+  fine-grained signal graph, local speculative fold + `seq`-based reconciliation
+  ([`03`](03-type-and-effect-system.md) §3.7). Size budgets enforced in CI: < 150 KB brotli for a
+  typical Mode-B component bundle; `wasm-opt -Oz` (Binaryen) in the release path.
+- **Connection layer**: one websocket (WebTransport later) multiplexing patch-streams down and
+  commands up; resumable by `(subscription id, last seq)` so a dropped connection or a deploy
+  replays the gap instead of re-rendering the world; sticky-session friendly but not dependent
+  (resume works cross-replica because subscriptions are keyed by log position, not socket).
+- **Router** derived from route declarations; navigation is just another command; scroll/focus
+  preservation handled by frame identity in the patch protocol.
+- **Progressive enhancement**: Mode A degrades to plain forms + full-page responses under
+  `noscript` — generated from the same `view`, since the server can always render.
 
-**Also required**:
-
-- **SSR / prerender**: run the client partition's component tree on the server (it is the same `Core`;
-  place the render on the server, hydrate signals on the client). Needed for first-paint and SEO —
-  and it comes almost free from the tierless design, which is a genuine advantage to advertise.
-- **Progressive enhancement fallback**: forms that work without WASM, for the `noscript` and
-  slow-network cases. Generated from the same component tree.
-- **Debugging**: DWARF in the WASM, source maps to `.tier` files, and a browser devtools extension
-  that shows the signal graph. Without this, nobody debugs the frontend.
-
-**Rejected alternative**: compile the client tier to JavaScript instead of WASM. Cheaper to start
-(smaller payloads today, no GC problem, trivial JS interop) and *worth keeping as a second client
-backend* for size-critical apps — but WASM is the right primary target because it lets the client and
-server partitions share one code generator, one numeric semantics, and one set of guarantees. Diverging
-semantics between tiers would undermine the entire premise. Recommendation: WASM primary, and
-`--client-backend=js` as a supported option from v0.4.
+**Debugging**: source maps from patch frames back to `view` expressions; a devtools extension
+showing the signal graph, patch traffic, and pending (optimistic) state; DWARF for Mode B WASM.
 
 ## 5.2 Service tier → native code (dual backend)
 
-**Target**: native binaries, statically linked, one per `service` declaration.
+The server partition — ingress, `validate`, folds, view evaluation for Mode A sessions, boundary
+endpoints — compiles to native binaries, statically linked, one per `service`.
 
-Codegen strategy — **two backends**, as rustc does, because the evidence is unambiguous in both
-directions:
+**Dual codegen**, as rustc does, because the evidence points both ways:
 
 | Mode | Backend | Evidence |
 |---|---|---|
-| `tier dev`, `tier check`, hot reload | **Cranelift** | Cranelift compiled a Rust workload in 125 CPU-seconds vs LLVM's 211 (≈40% faster), and the code-generation step alone can be ~an order of magnitude faster than an LLVM-based equivalent |
-| `tier build --release` | **LLVM** (via `inkwell`) | Cranelift output measured ~14% slower than LLVM-generated code; and the Perry language's 2026 migration from Cranelift to LLVM took it from behind to beating Node.js by 1.7×–24.6× across benchmarks |
+| `tier dev`, hot reload | **Cranelift** | ~40% faster whole-compiles; codegen step ~an order of magnitude faster than LLVM |
+| `tier build --release` | **LLVM** (inkwell) | Cranelift output ~14% slower; Perry's 2026 Cranelift→LLVM move turned a deficit into 1.7–24.6× wins over Node.js |
 
-The two backends must agree observably; enforce with a differential test suite (§4.8). Keep the
-`Core → Target` interface narrow so a third backend (or MLIR, §4.2) is possible later.
+The two must agree observably — enforced by differential tests ([`04`](04-compiler-architecture.md)
+§4.8). The `Core → Target` seam stays narrow so a third backend (or MLIR) can slot in later.
 
-**Runtime we must ship**:
+**Runtime we must ship** (the "Roc platform" of Tier — an effectful Rust host owning I/O, scheduling
+and memory, executing the pure program):
 
-- **Tokio** for the async executor, **Hyper** for HTTP/1+2, **quinn** for HTTP/3 if enabled, **rustls**
-  for TLS. Structured concurrency is surfaced in the language (§2.6) and mapped onto Tokio tasks; the
-  compiler inserts awaits, so there is no `async` colouring in user code.
-- Connection pooling, retries with jitter, circuit breaking, and deadline propagation on generated
-  boundaries — defaults, not options.
-- **OpenTelemetry** spans emitted automatically at every synthesised boundary. One program ⇒ one
-  distributed trace spanning browser click → server → SQL, with no manual instrumentation. This is a
-  very strong demo; make it the second slide.
-- Graceful shutdown, readiness/liveness endpoints, config from env + mounted secrets — all generated,
-  because they are what makes the k8s tier work (§6).
+- **Tokio** executor; **Hyper** HTTP/1+2; **quinn** HTTP/3 optional; **rustls** TLS.
+- The **log engine client**: append at ingress (envelope stamping, `seq` assignment), fold
+  execution, snapshot writing, subscription fan-out. This component is small but is *the* hot path;
+  it is where [`07`](07-dependencies.md) §7.4's storage choices land.
+- Structured concurrency mapped onto tasks; the compiler inserts awaits — no `async` colouring in
+  user code.
+- Generated boundaries get pooling, retries with jitter, deadlines, idempotency by envelope
+  identity; **OpenTelemetry spans at every synthesized boundary** — one trace from browser click →
+  command → event → fold → patch, no manual instrumentation. Make this the second demo.
+- Graceful drain (finish folds, snapshot, hand off subscriptions), readiness/liveness, config from
+  env + mounted secrets — all generated, because [`06`](06-kubernetes-and-packaging.md) depends on
+  them.
 
 **Optional WASM server target**: compile the service partition to a **WASI Preview 2 component**
-instead of a native binary, for edge/serverless deployment. Runtime: **Wasmtime** — in 2026 benchmarks
-it leads on cold start (its Winch baseline compiler is built for exactly that) and holds a steady-state
-advantage, reaching 2.41× native (improving from 2.54× in 2025 and 2.67× in 2024); on a 1 GB SHA-256
-benchmark it was 1.12× slower than native Rust. For long-running compute-heavy workloads, Wasmer's
-LLVM backend wins peak throughput and WasmEdge's AOT mode reached 1.74× native — so keep the host
-interface behind the **component model / WASI-P2** boundary rather than a Wasmtime-specific API, and
-let the deployment choose. Native remains the default for the `service` tier; WASM is for the `edge`
-tier and for plugin/multi-tenant isolation.
+for edge/serverless/multi-tenant placement. Runtime: **Wasmtime** (leads cold start and steady
+state — 2.41× native in 2026 benchmarks, from 2.67× in 2024). Target the component-model boundary,
+not any runtime's API — WasmEdge's AOT (1.74× native) and Wasmer's LLVM backend win other workload
+shapes, and the deployment should be free to choose.
 
-## 5.3 Data tier → relational plans
+## 5.3 Data tier — the log is the database
 
-Two backends, chosen per store declaration.
+The semantic model is fixed by [`03`](03-type-and-effect-system.md) §3.7: an append-only,
+totally-ordered log of envelopes; `durable` folds as state; views as incrementally-maintained pure
+functions. The lowering question is substrates. **We do not write a storage engine**
+([`01`](01-vision-and-premise.md) §1.5) — we write a small log engine *on top of* proven storage:
 
-**Transactional (default): PostgreSQL.**
+| Concern | v1 substrate | Why |
+|---|---|---|
+| The log | **PostgreSQL** (append-only table per app; `seq` from a sequence; logical decoding for tailing) | Boring, transactional, operable everywhere, PITR for free; licence-clean. A dedicated log store (e.g. NATS JetStream, Apache-2.0) is a post-1.0 option when fan-out demands it — Kafka's JVM weight is unnecessary; Redpanda is BSL, excluded |
+| Snapshots | object storage (S3-compatible) or Postgres large objects | Cheap, versioned, feeds `tier fork` |
+| Read models | generated tables in the same Postgres | One-shot queries and **pgwire access for the outside world**: `psql`, BI tools, DBeaver see materialized views as ordinary tables — the single cheapest trust-builder for adopting teams |
+| Dev (rung 0) | in-memory folds + embedded append-only log (**redb**, MIT/Apache) | `tier run` needs no server; the log file is still replayable |
+| Analytical stores | **Apache DataFusion** over Arrow/Parquet (log archives Parquet-partitioned) | Fastest single-node Parquet engine (ClickBench); designed to be embedded/extended — the right shape for our plans, where DuckDB is a complete system designed to be used as-is |
 
-- The `Query[T]` logical plan (§3.7) lowers to SQL. Postgres because it is the best open-source
-  transactional engine, licence-clean (PostgreSQL License), and universally operable.
-- Access via `tokio-postgres`; prepared statements cached per operation id; `sqlx`-style compile-time
-  verification is unnecessary because *we* generate the SQL from checked types.
-- DDL and migrations generated from `store` declarations (§3.7), applied by the operator (§6.4).
-- Pushdown of user code: functions marked `@sql_pure` compile to SQL expressions; where a function is
-  not pushable, we can optionally emit it as a **WASM UDF** loaded into the database extension —
-  ambitious, post-1.0, but it is the natural endgame of "one language for the database" and worth
-  designing the seam for now.
+**Incremental view maintenance** — "keeping it incremental is the compiler's job":
 
-**Analytical / embedded: Apache DataFusion.**
+- Subscribed/materialized views compile to **differential-dataflow-style incremental plans**
+  (timely/differential are MIT-licensed Rust; DBSP/Feldera is the maintained modern embodiment —
+  [`07`](07-dependencies.md) §7.4). `remaining` updates by ±1 per event; a joined read model
+  updates by delta, not by re-join. Materialize itself validates the approach commercially but is
+  BUSL — excluded as a dependency by the open-source constraint.
+- **Per-session fanout is the scaling problem to design for** ([`03`](03-type-and-effect-system.md)
+  §3.8): a thousand connected users of `todos.map(filter_by(session.user))` must compile to *one*
+  shared dataflow whose final per-session operators (filter, project, diff) run per subscriber —
+  the differential "arrangement" sharing model — not a thousand plans. Subscription count, shared-
+  prefix hit rate, and per-session memory are metrics the runtime exports from day one, because
+  this is where a naive implementation quietly becomes Meteor-at-scale.
+- v0.1 does **not** need the dataflow engine: full recompute per event on in-memory folds is
+  semantically identical and fine at todo-app scale; the incremental plan is an optimisation with
+  an exact correctness oracle (recompute) to test against — a luxurious position for CI
+  ([`04`](04-compiler-architecture.md) §4.8).
+- The comprehension surface also lowers to SQL for one-shot reads against read models, with
+  compile-checked columns; `@sql_pure` user functions push into SQL expressions.
+- Query fusion still matters (a `for` over a view of a view should become one plan, not N+1
+  lookups); it is a plan-rewrite on symbolic `Query` nodes, kept symbolic in `Core` precisely for
+  this ([`04`](04-compiler-architecture.md) §4.2).
 
-- Chosen over DuckDB deliberately. DataFusion is *a query engine framework designed to be embedded and
-  extended* — every major component (table providers, optimiser rules, UDFs) is replaceable, which is
-  exactly what we need to plug in our own logical plans. DuckDB is a complete system designed to be
-  used as-is. On performance, DataFusion is now the fastest single-node engine for querying Parquet in
-  ClickBench — ahead of DuckDB, chDB and ClickHouse on the same hardware — while DuckDB still leads on
-  its own native storage format.
-- Roles: (a) the **embedded store for `tier dev`**, so local development needs no database server at
-  all; (b) the analytical/columnar store for `store x: Analytics[T]`; (c) the evaluator for the
-  differential query test harness (§4.8).
-- Arrow throughout, so results cross the wire zero-copy (§4.4).
-
-**Also**: expose a **pgwire**-compatible endpoint on Tier's own stores so that `psql`, BI tools and
-DBeaver work against a Tier application without special support. Cheap to build, disproportionately
-reassuring to buyers.
+**External stores** (`external store`) — existing databases the team already owns — get generated
+typed access with `external.*` effects, no fold guarantees, and honest documentation that they are
+the adoption ramp, not the model.
 
 ## 5.4 Infrastructure tier → object graph
 
-The infra tier does **not** generate YAML text and shell out to `kubectl`. It builds a typed object
-graph and applies it through the API.
+No YAML text, no `kubectl` shelling. The compiler builds a typed `InfraGraph` — nodes like `Image`,
+`Workload`, `Route`, `LogStore`, `SnapshotSchedule`, `Secret`, `Policy`, `Grant` — **derived from
+program analysis**, exactly as the original sketch demands: a `durable` fold ⇒ a `LogStore` +
+volume + snapshot schedule; `merge_clients()` ⇒ a websocket ingress route; `net.out(host)` ⇒ an
+egress policy entry; a `cron` declaration ⇒ a schedule.
 
 ```
-service/deployment declarations  +  effects of the placed program
+service/deployment declarations  +  effect rows of the placed program
                     │
                     ▼
-        InfraGraph  (typed nodes: Image, Workload, Route, Store, Secret, Policy, Grant)
+            InfraGraph  (typed, diffable, testable — an ordinary Core value)
                     │
         ┌───────────┴────────────┐
         ▼                        ▼
-  KubernetesPlatform      SingleProcessPlatform      (+ later: NomadPlatform, …)
-  k8s objects + CRs        one binary, embedded store
+  KubernetesPlatform      SingleProcessPlatform     (+ later: Nomad, serverless…)
 ```
 
-- `InfraGraph` is a `Core` value like any other, so it is type-checked, diffable, and testable.
-- A `Platform` trait renders the graph to a concrete target. Kubernetes and single-process are the two
-  v1 implementations. Keeping this seam is what stops Kubernetes from leaking into language semantics
-  (§1.5, §6.1).
-- Resources *outside* the cluster (managed Postgres, object storage, DNS, queues) are expressed as
-  `Store`/`Resource` nodes and rendered as **Crossplane** claims — one control plane, one reconciler,
-  no second state engine (§7.6). An **OpenTofu** emitter exists as an escape hatch for estates
-  Crossplane can't reach.
-- **Referencing existing infrastructure**: `import infra` reads a cluster's live objects or an
-  OpenTofu state as *typed, read-only* facts (a VPC id, a DB endpoint), so Tier can be adopted
-  incrementally beside an existing estate rather than demanding a greenfield.
+- The `Platform` trait keeps orchestrators out of language semantics
+  ([`06`](06-kubernetes-and-packaging.md) §6.1). Kubernetes and single-process are the two v1
+  implementations.
+- Off-cluster resources (managed Postgres, buckets, DNS, queues) render as **Crossplane** claims —
+  one control plane, no second state engine; an **OpenTofu** emitter is the escape hatch for
+  estates Crossplane can't reach. (Terraform is BUSL — excluded.)
+- `import infra` reads live cluster objects or OpenTofu state as *typed, read-only facts* (a VPC
+  id, a DB endpoint) so Tier can be adopted beside an existing estate rather than instead of it.
 
-Details of image building, manifest generation, the operator and the dev/prod ladder are in
+Details of images, manifests, the operator, migrations-in-deploys and the dev→prod ladder:
 [`06-kubernetes-and-packaging.md`](06-kubernetes-and-packaging.md).

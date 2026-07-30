@@ -63,27 +63,28 @@ to `.tier`.
 
 ### Side-by-side: the running example
 
-Python surface:
+Python surface (a clause of the canonical example's fold):
 
 ```python
-def place(c: Ref[Customer], total: Money) -> OrderId requires auth(c):
-    return orders.insert(Order(customer=c, total=total))
+def toggle(todos: Map[Id, Todo], e: Toggled) -> Map[Id, Todo]:
+    return todos.update(e.id, lambda t: t.with(done=not t.done))
 ```
 
 Canonical core, printed as S-expressions:
 
 ```clojure
-(def place
-  (params (: c (Ref Customer))
-          (: total Money))
-  (returns OrderId)
-  (requires (auth c))
-  (do
-    (return (. orders insert
-               (new Order :customer c :total total)))))
+(def toggle
+  (params (: todos (Map Id Todo))
+          (: e Toggled))
+  (returns (Map Id Todo))
+  (return (. todos update (. e id)
+             (fn ((: t Todo))
+               (. t with :done (not (. t done)))))))
 ```
 
-Identical `Node` tree. `tier fmt` moves between them mechanically.
+Identical `Node` tree — and within notational distance of the original sketch's
+`(update-at todos id (fn [t] (set t :done (not t.done))))`. `tier fmt` moves between the surfaces
+mechanically.
 
 ## 2.3 The one thing Python is missing: block-passing calls
 
@@ -98,9 +99,9 @@ trivially. In Python, `with transaction():` is a *fixed statement* — you canno
 That one rule buys the entire Lisp special-form vocabulary with Python punctuation:
 
 ```python
-transaction(isolation=serializable):        # user-defined macro, not built-in syntax
-    a = orders.insert(o1)
-    orders.insert(o2, parent=a)
+atomically:                                  # user-defined macro, not built-in syntax:
+    emit(OrderPlaced(...))                   # emit both events at one log position
+    emit(StockReserved(...))                 # (an atomic multi-event append)
 
 retry(times=3, backoff=exponential):
     charge(card, total)
@@ -241,7 +242,9 @@ Two open decisions that are expensive later. My recommendation in bold; see
 [`09-risks-and-open-questions.md`](09-risks-and-open-questions.md) §9.6 for the full trade-off.
 
 - Effect/placement annotations: **`requires`/`uses` clauses in the signature** (`def f(x) -> T uses
-  db.read(orders)`) vs. decorators (`@uses(...)`). Signature clauses read better and are part of the
+  durable(orders)`) vs. decorators (`@uses(...)`). Signature clauses read better and are part of the
   published module interface, which §3.6 requires.
 - UI blocks: **a `ui:` macro producing a typed DOM tree** vs. JSX-like literal syntax. The macro
   keeps the surface small and is implementable by users for other targets (terminal UI, native).
+  Its output is the Hiccup lineage the original sketch used — `[:main [:h1 "todos"] ...]` maps 1:1
+  onto the `ui:` block's `Node` tree, so the sketch's pages *are* these pages.

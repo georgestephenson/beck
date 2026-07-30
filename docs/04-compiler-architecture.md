@@ -23,7 +23,7 @@
  │ 7 PLACE      │  ◀── the product.  constraint solve → every Core node carries a tier
  ├──────────────┤
  │ 8 Split      │  partition Core into per-tier programs; SYNTHESISE boundaries
- │              │  (RPC stubs, serialisers, subscription wiring, migrations)
+ │              │  (signal slicing, patch/command channels, serialisers, migrations)
  ├──────────────┤
  │ 9 Optimise   │  per-tier: inline, specialise, DCE (aggressive on client), fuse queries
  ├──────────────┤
@@ -48,13 +48,13 @@ Three, and no more — every extra IR is a tax on every later feature.
 |---|---|---|
 | **`Node`** | Untyped/typed tree, homoiconic, spans | Surface, macros, tooling, formatter, LSP |
 | **`Core`** | Typed ANF/SSA hybrid; explicit closures, explicit effect operations, explicit tier annotation per node; `Query` sub-language kept *symbolic* | Typechecked semantics, placement, splitting, optimisation. The load-bearing IR |
-| **`Target`** | Per-backend: Cranelift IR / LLVM IR / WASM / relational plan / k8s object graph | Codegen only |
+| **`Target`** | Per-backend: Cranelift IR / LLVM IR / WASM / dataflow+SQL plans / k8s object graph | Codegen only |
 
 Two deliberate choices inside `Core`:
 
-- **Queries stay symbolic** until stage 10. If you lower `Query[T]` to loops early, you can never
-  push it into the database. Keep the relational sub-language as a first-class `Core` node with its
-  own typing rules.
+- **Views/queries stay symbolic** until stage 10. If you lower a view to loops early, you can never
+  compile it to an incremental dataflow plan or a SQL read model. Keep the view sub-language as a
+  first-class `Core` node with its own typing rules.
 - **UI trees stay symbolic** too, for the same reason: a component tree that has already become DOM
   mutation calls cannot be server-side rendered or pre-rendered at build time.
 
@@ -84,10 +84,15 @@ Given placed `Core`, stage 8 does five things:
    - an authorisation check derived from the callee's `cap.*` effects;
    - request batching and coalescing by default (one round trip per event-loop turn, Haxl-style),
      because tierless code makes fine-grained calls *look* free and they are not;
-   - idempotency keys for `db.write` boundaries so retries are safe.
-3. **Wire subscriptions.** `live` expressions become a subscription registration on the client, a
-   read-set record on the server, and invalidation hooks on write paths (§3.8).
-4. **Emit schema artefacts.** Table DDL + migration plan, diffed against the target's deployed schema.
+   - idempotency by envelope identity on the command channel, so client retries are safe.
+3. **Slice the signal graph.** Every signal edge that crosses tiers becomes a subscription: the
+   server side gets a diff operator (DOM patches for Mode-A components, data patches for Mode-B —
+   [`05`](05-tier-lowering.md) §5.1), the client side a resumable `(subscription, seq)` consumer;
+   `send` becomes the upstream command channel into the ingress. There is no cache-invalidation
+   wiring to synthesise — views are downstream of the log by construction (§3.8).
+4. **Emit state artefacts.** Log-store DDL, read-model DDL, snapshot schedules, and — when
+   accumulator or event types changed against the previously deployed signature — the demand for
+   `migrate`/`upcast` functions, refusing to build a deployable plan without them (§3.9).
 5. **Emit the infra object graph.** `service`/`deployment` declarations, plus everything inferred from
    effects: RBAC verbs, network policy peers, volume claims, secret references.
 
@@ -102,7 +107,9 @@ kills adoption — "the deploy worked but every open browser tab broke."
 
 - **Internal (Tier↔Tier)**: a compact, field-tagged binary encoding generated from types — schema
   known on both sides at build time, so no self-describing overhead. `postcard`-class efficiency with
-  tags for compatibility. Zero-copy on read where the type allows.
+  tags for compatibility. Zero-copy on read where the type allows. Envelopes, commands, data
+  patches and DOM patches all ride this one encoding; every patch is tagged with the `seq` it
+  brings the subscriber up to, which is what makes resumption and optimism reconciliation cheap.
 - **Bulk/columnar** (query results, analytics, anything > ~1000 rows): **Apache Arrow** IPC. Zero-copy
   into DataFusion on the server, and Arrow decoding in WASM is fast enough for real data tables.
 - **External (public API)**: generate **OpenAPI + JSON** and **gRPC/Protobuf** from the same types, on
@@ -152,15 +159,16 @@ Non-negotiable, per §1.6's Meteor lesson. Every inferred decision must be inter
 
 ```console
 $ tier explain place recent
-recent  →  data tier
+recent  →  data tier (incremental view over `orders` fold)
 
-  effects   : { db.read(orders) }
-  candidates: data (cost 1.0), server (cost 12.4)
-  chosen    : data
-  because   : expressible as a single relational plan; avoids 1 round trip
-              and ~4.2 KB per call versus server placement
-  emitted as: SELECT o.* FROM orders o WHERE o.customer = $1 AND ... LIMIT $2
-  callers   : OrderPanel (client) → generated op 7f3a1c9e2b04 (batched)
+  effects    : {}  (pure; reads signal `orders`)
+  candidates : data (cost 1.0), server (cost 3.1), client (cost 44.0 — full state crossing)
+  chosen     : data
+  because    : incrementalizable (filter+order+take over a keyed fold);
+               subscribed by OrderPanel, so maintained, not recomputed
+  emitted as : dataflow plan recent_v1; one-shot form: SELECT ... FROM rm_orders
+               WHERE customer = $1 ORDER BY at DESC LIMIT $2
+  subscribers: OrderPanel (Mode A) → DOM-patch stream, shared prefix with 2 other views
 ```
 
 ```console
@@ -184,8 +192,9 @@ Also ship `tier explain wire <op>`, `tier explain query <fn>`, `tier explain dep
 | Typechecker | Positive/negative suites; **principality** property tests; random well-typed program generation | `proptest` |
 | Placement | Property: *no valid program is rejected*; *no `secret` reaches client* (assert over generated programs); determinism and stability properties | `proptest` |
 | Splitting | Differential execution: run the whole program single-process vs. split across tiers, assert identical observable behaviour. **This is the highest-value test in the project** | custom harness |
+| Determinism/replay | Fold the same recorded log twice (and across dev/release backends); assert bit-identical states and patch streams | harness |
 | Codegen | Execution tests per backend; WASM vs native differential | harness |
-| Data tier | Query pushdown differential: pushed-down SQL vs in-memory evaluation of the same `Query` | harness + Postgres |
+| Data tier | Incremental-vs-oracle: every incrementalized view checked against full recompute over the same log; SQL read-model forms checked against both | harness + Postgres |
 | Infra | Golden manifests (`insta`), then apply to ephemeral `k3d` clusters in CI and assert reachability/policy | k3s in CI |
 | End-to-end | The running example, deployed to a kind/k3d cluster, driven by a browser | Playwright (pre-installed here) |
 | Fuzzing | Parser and macro expander, continuously | `cargo-fuzz` / AFL++ |

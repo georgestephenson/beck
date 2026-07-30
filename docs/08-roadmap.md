@@ -14,45 +14,56 @@ that in month 3, not year 2.
 
 ## Phase 0 — Prove the premise (4–6 weeks, 1–2 people)
 
-No compiler. Hand-write, in Rust, the *output* the compiler will eventually generate for §1.3's example:
-a WASM client with a signal runtime, a native service, generated SQL, an apko image, k8s manifests,
-a kube-rs operator stub, deployed to k3d.
+No compiler. Hand-write, in Rust, the *output* the compiler will eventually generate for the todo
+sketch ([`00`](00-original-idea.md)): ingress + envelope stamping, a durable fold over a Postgres
+log (and redb embedded), server-side `view` + structural diff, the thin patch-interpreter client,
+`(subscription, seq)` resumption, an apko image, k8s manifests, a kube-rs operator stub, deployed
+to k3d. Then kill the process mid-stream and replay the log.
 
-**Exit criteria** — you can state, from evidence, not opinion:
-- the client WASM payload for a table-and-button app, brotli-compressed (target < 150 KB);
-- the p50/p99 latency of a generated boundary call, client→server→Postgres;
-- the image size and whether apko builds reproducibly for our artefact shape;
-- edit→visible time for the Cranelift hot-reload path (prototype);
+**Exit criteria** — stated from evidence, not opinion:
+- interaction latency p50/p99 (click → command → event → fold → patch → DOM) on a realistic RTT,
+  Mode A;
+- events/s through a single Postgres-backed sequencer, and fold throughput on replay;
+- per-idle-session server memory with 1k and 10k connected subscribers of a per-session view
+  (the fanout number — this is the one that kills LiveView-shaped systems);
+- thin-client payload (target < 10 KB brotli) and time-to-first-paint (SSR);
+- reconnect-after-deploy behaviour: does resumption actually replay the gap;
+- whether apko builds our artefact reproducibly; image size;
 - a written list of everything that turned out harder than expected.
 
-**Kill/pivot gate.** If the client payload is > 500 KB or hot reload > 10 s, reconsider WASM-primary
-(fall back to JS as the primary client backend, §5.1) *before* building the compiler around it.
+**Kill/pivot gates.** Interaction p99 > ~150 ms on realistic RTT ⇒ Mode B (client-side view) moves
+from Phase 3 into the core plan. Per-idle-session memory that can't be brought under ~50 KB ⇒
+redesign the session/subscription representation before any compiler work builds on it.
 
 ## Phase 1 — Walking skeleton (3–4 months)
 
-The narrowest possible compiler that takes §1.3's example from source to a running k3d deployment.
+The narrowest possible compiler that takes the todo sketch from source to a running k3d deployment.
 Deliberately bad at everything, complete end-to-end.
 
 - Lexer, layout, parser (Python surface + S-expression reader), `Node`, pretty-printer, `tier fmt`.
 - Macro expander with hygiene — **from the start** (§2.4); retrofitting hygiene is a rewrite.
-- Modules, name resolution, HM typechecker: ADTs, records, traits, no effects yet.
-- `Core` IR; **manual placement only** via `@on(...)`.
-- Splitting + RPC synthesis + generated serialisers.
-- Backends: Cranelift (server), WASM (client, minimal signal runtime), SQL (a *tiny* query fragment:
-  filter/project/order/limit on one table), k8s object graph.
+- Modules, name resolution, HM typechecker: ADTs, records, traits, `Stream`/`Signal`/`fold`/
+  `durable` typed; no effect inference yet.
+- `Core` IR; **manual placement only** via `@on(...)` — exactly the original sketch's annotations.
+- Signal-graph slicing + command channel + envelope/patch serialisers (§4.3). Views are **full
+  recompute per event** — semantically final, later made incremental.
+- Backends: Cranelift (server), the thin patch client (plain JS, ~KBs — no WASM in Phase 1),
+  Postgres/redb log engine, k8s object graph.
 - `tier run` (single process) and `tier up` (k3d).
-- Salsa from commit one; `insta` diagnostic snapshots from week two; the **differential single-process
-  vs split harness** (§4.8) from the moment splitting exists.
+- Salsa from commit one; `insta` diagnostic snapshots from week two; the **differential
+  single-process vs split harness** and the **replay-determinism harness** (§4.8) from the moment
+  each is expressible.
 
-**Exit**: `git clone && tier up` yields the working example in a local cluster, with a CI job that
-asserts it, plus the differential harness green.
+**Exit**: `git clone && tier up` yields the working todo app in a local cluster, CI-asserted;
+differential and replay harnesses green; `tier replay` reproduces state from a recorded log.
 
 ## Phase 2 — Effects and placement (3–4 months)
 
 The moat.
 
 - Effect rows, inference, effect polymorphism (§3.2).
-- Placement *verification* against effects (reject `@on(client)` + `db.write`) — valuable on its own.
+- Placement *verification* against effects (reject `@on(client)` + `durable`; reject impure folds —
+  the determinism rule that makes replay exact, §3.7) — valuable on its own.
 - Placement *inference* + the cost solver, with determinism and stability guarantees (§3.4).
 - `tier explain place` / `flow` / `wire` (§4.7).
 - `secret[T]`, `Sendable`, capability effects; the §3.5 security property suite as executable tests.
@@ -67,10 +78,14 @@ dependencies whose signatures didn't change.
 ## Phase 3 — Make it real for developers (4–5 months)
 
 - LLVM release backend + differential tests against Cranelift (§5.2).
-- Real query compiler: joins, aggregates, window functions, **query fusion / N+1 elimination** (§3.7),
-  migration planning and the pre-upgrade Job.
-- Client tier for real: SSR/hydration, router, forms, lazy route chunks, size budget CI gate, devtools
-  extension with signal-graph view.
+- **Incremental views**: compile subscribed/materialized views to differential-dataflow plans with
+  arrangement sharing (per-session fanout, §5.3); recompute stays as the CI oracle; SQL read models
+  + pgwire exposure; query fusion on symbolic plans.
+- **Mode B client**: per-component WASM (view + fold + signal kernel), optimistic application with
+  `seq` reconciliation, freshness-typed pending state; size budget CI gate (< 150 KB brotli per
+  component bundle).
+- Client polish for both modes: router, forms, lazy routes, focus/scroll preservation, devtools
+  extension showing signal graph, patch traffic and pending state.
 - Structured concurrency, `Result`/error rows, `match` exhaustiveness, pattern matching completion.
 - Standard library v1: collections, strings, time, money/decimal, HTTP client, JSON, UUID, crypto
   primitives (delegated to `ring`/`aws-lc-rs`, not hand-rolled).
@@ -83,8 +98,11 @@ team a question. Track this literally as the acceptance test.
 
 ## Phase 4 — Production readiness (4–5 months)
 
-- Tier operator: ordered rollouts, migration hooks, canaries via Gateway API + Argo Rollouts,
-  wire-compat gate, `tier status` with source provenance (§6.4).
+- Tier operator: the deploy-rides-the-stream choreography — quiesce, drain, snapshot, `migrate`/
+  `upcast`, resume (§6.4); canaries via Gateway API + Argo Rollouts; wire-compat gate; `tier
+  status` with source provenance.
+- Replay tooling as product: `tier replay`, `tier fork --from prod --at <time>`, log-backed
+  property tests; GDPR crypto-shredding worked end-to-end (log, snapshots, backups).
 - Effect-derived NetworkPolicy/RBAC/DB grants (§6.5) — the platform-team sales pitch.
 - Crossplane emitter for managed Postgres/buckets/DNS; OpenTofu escape hatch; `import infra`.
 - OpenTelemetry cross-tier tracing on by default; `tier tune` right-sizing.
@@ -129,7 +147,7 @@ Kubernetes objects + inferred placement* on the right is the demo that explains 
 |---|---|---|
 | Language/type-system engineer | 1–2 | §2, §3 — the front end and effect system |
 | Compiler backend engineer | 1 | §5.2 codegen, WASM, optimisation, size budget |
-| Data-tier engineer | 1 | §3.7, §5.3 — query compilation, migrations, pushdown |
+| Data-tier engineer | 1 | §3.7–3.9, §5.3 — log engine, folds, incremental views, migrations |
 | Platform/Kubernetes engineer | 1 | §6 — images, operator, policy generation |
 | Developer-experience engineer | 1 | errors, LSP, playground, docs — **not** a junior role; this is where adoption is won or lost |
 

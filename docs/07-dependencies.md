@@ -65,13 +65,20 @@ deployment pick. That costs little now and avoids a rewrite later.
 
 ## 7.4 Data tier
 
+The semantic model is fixed ([`03`](03-type-and-effect-system.md) §3.7): append-only log, `durable`
+folds, incrementally-maintained views. These are the substrates:
+
 | Need | Choice | Licence | Why | Rejected |
 |---|---|---|---|---|
-| Transactional store | **PostgreSQL** | PostgreSQL License | Best open-source OLTP engine; universal operability; rich enough SQL to be a real compilation target (CTEs, window functions, `LATERAL`, JSONB) | MySQL/MariaDB (weaker SQL surface as a target); CockroachDB (BUSL — excluded); SQLite (kept for dev rung 0 only) |
-| Embeddable query engine | **Apache DataFusion** | Apache-2.0 | *Designed to be embedded and extended* — replaceable table providers, optimiser rules and UDFs, which is exactly what plugging in our own logical plans requires; and now the fastest single-node engine for Parquet in ClickBench, ahead of DuckDB, chDB and ClickHouse on the same hardware | **DuckDB** (MIT; faster on its own storage format, and the better choice if you only need to *query*; but it is a complete system designed to be used as-is, not extended — wrong shape for a compiler backend). Polars (DataFrame-shaped, not plan-shaped) |
-| Columnar interchange | **Apache Arrow** | Apache-2.0 | Zero-copy across the wire and into DataFusion; the industry format (§4.4) | bespoke columnar format (no) |
-| Postgres client | **tokio-postgres** | MIT/Apache-2.0 | Lowest-overhead async Postgres in Rust; we generate SQL so we don't need an ORM or `sqlx`'s macro checking | `sqlx` (great for hand-written SQL — not our case); Diesel (ORM — we *are* the ORM) |
-| External-tool compatibility | **pgwire** protocol server | — | Lets `psql`/BI tools talk to Tier stores (§5.3) | none needed |
+| Durable substrate v1 (log, snapshots, read models) | **PostgreSQL** | PostgreSQL License | Boring, transactional, operable everywhere; PITR for free; read models as ordinary tables makes Tier legible to DBAs and BI. "Your data is in Postgres; Tier is how it got there" | MySQL/MariaDB (weaker SQL surface); CockroachDB (BUSL — excluded); bespoke log-structured store (a storage company's worth of work) |
+| Incremental view maintenance | **timely + differential dataflow** (the Naiad lineage) | MIT | "Keeping it incremental is the compiler's job" made real: views compile to incremental plans with arrangement *sharing* — the mechanism behind per-session fanout at scale (§5.3). **DBSP/Feldera** is the maintained modern embodiment of the same theory — evaluate at adoption (verify its current licence) | **Materialize** (validates the approach commercially; BUSL — excluded); hand-rolled IVM (subtly wrong forever); recompute-always (correct — kept as the CI oracle and the v0.1 semantics, not the endgame) |
+| Dedicated log transport (post-1.0, if fan-out demands) | **NATS JetStream** | Apache-2.0 | Single-binary, small, at-least-once persistent streams | Kafka (Apache-2.0 but JVM-heavy for our need); Redpanda (BSL — excluded) |
+| Embedded dev log (rung 0) | **redb** | MIT/Apache-2.0 | Pure-Rust embedded ordered KV; `tier run` needs no server and the log file still replays | SQLite (fine fallback; C dependency); sled (unmaintained) |
+| Analytical query engine | **Apache DataFusion** | Apache-2.0 | *Designed to be embedded and extended* — replaceable table providers, optimiser rules, UDFs: the right shape for our symbolic plans; fastest single-node Parquet engine in ClickBench (ahead of DuckDB, chDB, ClickHouse). Runs analytics over Parquet-partitioned log archives | **DuckDB** (MIT; faster on its own storage format and the better pick if you only need to *query*; but a complete system designed to be used as-is — wrong shape to embed a compiler into). Polars (DataFrame-shaped, not plan-shaped) |
+| Columnar interchange | **Apache Arrow** | Apache-2.0 | Zero-copy across the wire and into DataFusion; the industry format (§4.4) | bespoke format (no) |
+| Postgres client | **tokio-postgres** | MIT/Apache-2.0 | Lowest-overhead async Postgres in Rust; we generate all SQL, so no ORM and no macro-checked SQL needed | `sqlx`, Diesel (we *are* the ORM) |
+| External-tool compatibility | **pgwire** protocol server | — | `psql`/BI/DBeaver see read models as tables (§5.3) — the cheapest trust-builder for adopting teams | none |
+| CRDT-valued types (post-1.0, collaborative text / local-first) | **automerge** (or **loro**) | MIT | The original's concession — concurrent edits to one value need CRDTs, "no type system absolves you" — met with a typed, library-backed value type rather than folklore | OT server (operationally heavier); hand-rolled CRDTs (research trap) |
 
 ## 7.5 Containers and registry
 
@@ -122,9 +129,10 @@ this project can produce for adoption. Budget it into Phase 3, not "someday".
 | Domain | Load-bearing dependency | If it disappeared tomorrow |
 |---|---|---|
 | Codegen | LLVM | Fall back to Cranelift (already built) — lose ~14% runtime perf |
-| Incrementality | Salsa | Rewrite behind our own query interface — weeks, not months, if the seam is respected |
+| Incrementality (compiler) | Salsa | Rewrite behind our own query interface — weeks, not months, if the seam is respected |
+| Incrementality (views) | differential dataflow | Fall back to full recompute per event — semantically identical (it is the CI oracle), slower; the seam is the symbolic plan, not the engine |
 | WASM host | Wasmtime | Swap for WasmEdge/Wasmer behind the component-model boundary |
-| Data | PostgreSQL | Realistically permanent; DataFusion covers the embedded case |
+| Durable substrate | PostgreSQL | Realistically permanent as default; the log-engine interface admits other substrates (the dev rung already runs on redb) |
 | Images | apko | Fall back to BuildKit — lose bit-reproducibility |
 | Cluster | Kubernetes | The `Platform` trait means single-process still works; a new platform is a bounded project |
 | Cloud resources | Crossplane | OpenTofu emitter escape hatch |
@@ -146,3 +154,4 @@ Benchmark and licensing claims above draw on:
 - [apko — Build OCI images from APK packages directly without Dockerfile](https://github.com/chainguard-dev/apko) · [apko overview](https://rawkode.academy/technology/apko)
 - [kube-rs](https://kube.rs/) · [kube on GitHub](https://github.com/kube-rs/kube) · [Kubernetes Operators in Rust](https://dev.to/speed_engineer/kubernetes-operators-in-rust-control-loops-that-behave-3b86)
 - Tierless-language prior art: [Eliom: A Language for Modular Tierless Web Programming (arXiv 1901.11411)](https://arxiv.org/abs/1901.11411) · [Tierless Web Programming in the Large](https://dl.acm.org/doi/fullHtml/10.1145/3184558.3185953) · [Multitier programming — Wikipedia](https://en.wikipedia.org/wiki/Multitier_programming)
+- Streams/folds lineage: [differential dataflow](https://github.com/TimelyDataflow/differential-dataflow) · [Turning the Database Inside-Out — Kleppmann](https://martin.kleppmann.com/2015/03/04/turning-the-database-inside-out.html) · [Out of the Tar Pit — Moseley & Marks](https://curtclifton.net/papers/MoseleyMarks06a.pdf)

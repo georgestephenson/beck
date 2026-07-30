@@ -4,183 +4,203 @@
 
 ### R1 — Whole-program placement destroys separate compilation *(highest technical risk)*
 
-The recurring finding in the tierless literature is that most such languages have very poor modularity
-and separate compilation. Global placement inference is inherently whole-program, which fights
-incremental builds, library distribution, and IDE latency.
+The recurring finding in the tierless literature: poor modularity and separate compilation. Global
+inference fights incremental builds, library distribution, and IDE latency.
 
-**Mitigation**: §3.6 — placement and effects are part of a module's *published signature*. Inference is
-intra-module; boundaries are declared and checked. This must be designed in Phase 2, not retrofitted;
-Eliom is the existence proof that it is achievable. **Tripwire**: if a one-line body edit ever
-invalidates a downstream module's typecheck, the firewall has a hole — treat as a P0 bug.
+**Mitigation**: placement, effects and event types in published module signatures
+([`03`](03-type-and-effect-system.md) §3.6); inference intra-module only. Designed in Phase 2, not
+retrofitted. **Tripwire**: a body edit that invalidates a downstream module's typecheck is a P0 bug.
 
 ### R2 — "Magic" becomes distrust at scale (the Meteor failure)
 
-Inferred placement is delightful in a demo and terrifying at 200 kLOC when something lands on the wrong
-tier and nobody can say why.
-
-**Mitigation**: `tier explain` shipped in v0.1 (§4.7); placement recorded in `tier.lock` with churn
-reported in CI; `assert place(f) == data` in tests; determinism and stability as *specified properties*
-(§3.4); and ambiguity as a compile error with a suggested annotation rather than a silent guess.
+**Mitigation**: `tier explain` (place / flow / incremental / wire / deploy) shipped in v0.1;
+placement persisted in `tier.lock` with churn reported in CI; `assert place(...)` in tests;
+ambiguity is a compile error with a suggested annotation, never a silent guess; determinism and
+stability are specified solver properties ([`03`](03-type-and-effect-system.md) §3.4).
 
 ### R3 — Scope is five products
 
-A frontend framework, a backend runtime, an ORM/query compiler, an image builder, and a Kubernetes
-control plane. Any one is a startup.
+A UI runtime, a server runtime, a log/IVM engine, an image builder, and a Kubernetes control plane.
 
-**Mitigation**: the walking skeleton first (§8, Phase 1); depend rather than build wherever §7 allows;
-the explicit non-goals in §1.5; and per-tier "good enough for v1" bars written down before work starts.
-The largest genuinely-must-build-ourselves items are the reactive client runtime (§5.2) and the query
-compiler (§3.7) — resource those two properly and buy everything else.
+**Mitigation**: the walking skeleton first ([`08`](08-roadmap.md)); buy everything
+[`07`](07-dependencies.md) allows; non-goals in [`01`](01-vision-and-premise.md) §1.5. The two
+genuinely-must-build items are the **patch/signal runtime** and the **log + incremental-view
+engine's integration** (the engines exist; the integration is ours). Resource those two; everything
+else is assembly. The thin-client decision ([`05`](05-tier-lowering.md) §5.1) deliberately shrinks
+v0.1: no GC-in-WASM, no bundle-size crisis, no hydration matrix.
 
 ### R4 — Ecosystem access
 
-A language that cannot use npm and PyPI starts from zero libraries. This has killed more good languages
-than any technical flaw.
+No npm/PyPI reach = research artefact. **Mitigation**: §9.2; FFI is a Phase 4 headline, not a
+footnote.
 
-**Mitigation**: see §9.2 — treat FFI as a Phase 4 headline feature, not a footnote.
+### R5 — Per-session fanout and connection state (the LiveView cost, squared)
 
-### R5 — Debuggability across tiers
+The original's own admission: real auth means per-session signals, turning one broadcast into
+per-client fanout. Add Mode A's per-session view state and a deploy's thundering reconnect, and
+this is where the runtime lives or dies operationally.
 
-A stack trace that begins in a WASM click handler, crosses a synthesised RPC, and ends inside generated
-SQL is either the best debugging experience in the industry or the worst.
+**Mitigation**: shared-prefix dataflow plans with per-session final operators
+([`05`](05-tier-lowering.md) §5.3); subscriptions resumable by `(id, seq)` so reconnects replay
+gaps, cross-replica, instead of re-rendering the world; per-session memory, subscription counts and
+shared-prefix hit rate exported as metrics from day one; Phase 0 measures memory/connection and
+patch p99 **before** the architecture ossifies ([`08`](08-roadmap.md)). **Tripwire**: if per-idle-
+session server memory exceeds ~50 KB in Phase 1, stop and redesign the session representation.
 
-**Mitigation**: provenance from every `Core` node back to a source span *including macro expansion
-chains* (§4.5); one trace id threaded through every synthesised boundary via OpenTelemetry (§5.2); DWARF
-in the WASM plus source maps; a cross-tier DAP debugger in Phase 5; `tier explain wire`. Budget this as
-a feature with an owner, not as polish.
+### R6 — Event-sourcing estrangement: ops, erasure, and log growth
 
-### R6 — WASM client payload size
+Three familiar objections to log-centric systems, all deserved: DBAs can't see "the database";
+GDPR/right-to-erasure collides with an immutable log; "the log grows forever."
 
-The single most likely reason a developer bounces off the frontend tier.
+**Mitigation**: read models are ordinary Postgres tables, browsable via pgwire — the outside world
+sees tables, not theory ([`05`](05-tier-lowering.md) §5.3); erasure via **crypto-shredding**
+(per-subject envelope encryption; deleting the key erases the subject across log, snapshots and
+backups) plus compaction — needs a worked design in Phase 4, not a FAQ answer; retention is a typed
+policy on `durable` (snapshot-and-compact is "this world's garbage collection"), with
+`retain=forever` an explicit opt-in, not the default. Position the substrate as boring on purpose:
+"your data is in Postgres; Tier is how it got there."
 
-**Mitigation**: budgets as CI gates (§5.1); measure in Phase 0 *before* committing; keep the
-`--client-backend=js` option genuinely working. **Kill gate**: > 500 KB brotli for hello-world in Phase 0
-means JS becomes the primary client backend.
+### R7 — The merge ceiling
 
-### R7 — Kubernetes coupling repels the target audience
+One totally-ordered log per app is a single-sequencer throughput and single-region latency
+ceiling. This is SICP's merge wound resurfacing at scale, and the original concedes the adjacent
+version of it: concurrent edits to the same value need CRDTs/OT — "no type system absolves you."
 
-The Python developer you want does not have a cluster and does not want one. Meanwhile the platform
-engineer who *does* have one already has opinions and existing tooling.
+**Mitigation**: v1 states its ceiling honestly (a single well-implemented sequencer over Postgres
+comfortably clears small-to-mid SaaS: order 10⁴ events/s); the language reserves the seams —
+per-entity ordering keys on `ingress`, logical timestamps in envelopes — so sharding is an
+implementation upgrade, not a semantics break; collaborative-text is out of scope for core v1,
+offered later as a CRDT-valued model type (`Text` as an automerge-backed value) rather than as
+folklore. Decision needed: §9.5 Q2.
 
-**Mitigation**: §6.1 — `tier run` requires nothing; the `Platform` trait keeps k8s optional; emit plain
-manifests for GitOps teams (§6.3); `import infra` for incremental adoption alongside an existing estate.
-Never make hello-world touch a registry.
+### R8 — Licence/governance shift in a load-bearing dependency
 
-### R8 — Licence/governance change in a load-bearing dependency
+Terraform→BUSL is the precedent; Materialize (BUSL) and Redpanda (BSL) already shaped our data-tier
+choices. **Mitigation**: permissive-only policy, `cargo-deny` gate from first commit, foundation-
+governed preferences, and the per-dependency swap costs in [`07`](07-dependencies.md) §7.8.
 
-Terraform's move to BUSL is the cautionary precedent, and it already constrains our choices (§7.6).
+### R9 — Correctness of the split and of incrementalization
 
-**Mitigation**: permissive-only policy with a `cargo-deny` CI gate; prefer foundation-governed projects;
-the documented swap cost per dependency (§7.8).
+Two ways to silently betray the premise: split behaviour ≠ single-process behaviour; incremental
+view ≠ recompute.
 
-### R9 — Correctness of the split
+**Mitigation**: the differential harness (split vs unsplit) and the incremental-vs-recompute oracle
+are the two highest-value test suites in the project ([`04`](04-compiler-architecture.md) §4.8);
+replay determinism (same log twice ⇒ identical states and patches) as a third, nearly-free
+invariant; `Kani` model checking on solver invariants (no `secret` crosses; no valid program
+rejected).
 
-If the split program behaves differently from the unsplit one, the language's core promise is false.
+### R10 — Kubernetes coupling repels the target audience
 
-**Mitigation**: the differential execution harness (§4.8) is the highest-value test in the project;
-property-test generated programs; consider `Kani` model checking for the placement solver's invariants
-(no `secret` crosses to client; no valid program rejected).
+**Mitigation**: `tier run` needs no container, registry, or cluster
+([`06`](06-kubernetes-and-packaging.md) §6.1); `Platform` trait; plain-manifest emission for GitOps
+teams; `import infra` for adoption beside an existing estate. Hello-world never touches a registry.
 
-### R10 — Multi-tenancy and the data tier at scale
+### R11 — Debuggability across tiers
 
-Row-level invalidation, connection pooling under thousands of subscriptions, and per-tenant data
-isolation are where "live queries" projects historically hit a wall (Meteor's `oplog` tailing, again).
-
-**Mitigation**: table-level invalidation in v1 with an explicit, documented scaling ceiling; design the
-subscription registry for sharding from the start; make tenancy a *type* (`Tenant[T]` with the tenant
-key threaded through queries and policy) rather than a convention.
+**Mitigation**: provenance from every `Core` node to source spans including macro chains; one
+OpenTelemetry trace across click → command → event → fold → patch; `seq`-scrubbing time-travel
+debugger (determinism makes it cheap); DWARF/source maps for Mode B; cross-tier DAP in Phase 5.
+Replay (`tier fork --from prod`) turns "cannot reproduce" into a command.
 
 ## 9.2 The ecosystem question, in detail
 
-Three levels, in order of cost and value:
+1. **C ABI FFI both directions** (Phase 3–4). Table stakes.
+2. **JS interop on the client** (Phase 3). Typed bindings generated from TypeScript declaration
+   files; a Mode-B component can wrap a JS widget (charts, maps, editors) behind a typed boundary.
+3. **Python bridge** (Phase 4) — the strategically important one. Recommended shape: an
+   out-of-process **typed sidecar** — a `python_service` declaration generates a Python stub
+   package speaking the internal wire format, rendered as its own container in the pod. Keeps
+   images clean and reproducible, matches how ML workloads deploy, keeps the boundary typed.
+   In-process CPython embedding drags the GIL and runtime into our images; compiling a Python
+   subset is a tar pit — neither recommended.
 
-1. **C ABI FFI both directions** (Phase 3–4). Table stakes; unlocks native libraries.
-2. **JS interop on the client tier** (Phase 3). Necessary in practice — charting, maps, editors. Design
-   it as *typed* bindings generated from TypeScript declaration files, so the boundary keeps its types.
-3. **Python bridge** (Phase 4). The strategically important one, given the audience. Options:
-   - *In-process embedding* of CPython in the server tier — fastest to build, but drags the GIL and the
-     whole Python runtime into our image, and undermines the reproducibility story.
-   - *Out-of-process, typed sidecar* — a generated Python stub package that a Tier service calls over
-     the internal wire format; a `python_service` declaration renders it as its own container in the
-     same pod, with generated types on both sides. **Recommended**: it keeps our images clean, matches
-     how ML workloads actually deploy, and makes the boundary explicit and typed.
-   - *Compile a Python subset to Tier* — do not attempt. Python's semantics are the problem, not the
-     syntax, and a subset that silently diverges is worse than no support.
+Say plainly: Tier is Python-*shaped*, not Python-compatible. Over-promising here burns exactly the
+audience it courts.
 
-Say clearly in the docs: Tier is Python-*flavoured*, not Python-compatible. Over-promising here is the
-fastest way to lose credibility with exactly the audience you want.
+## 9.3 Commercial failure modes (even if the engineering succeeds)
 
-## 9.3 What could make this fail commercially even if the engineering succeeds
+- **The demo is amazing and week two is miserable.** The four "week two" walls — a background job,
+  an external API, an existing database, a non-trivial UI — get first-class tutorials in Phase 3;
+  friction there is a P1 bug.
+- **No incremental adoption path.** `import infra`, `external store`, pgwire read models, GitOps
+  manifest emission, the Python sidecar: adoption features wearing technical clothes. Protect them.
+- **The wrong first audience.** Product teams feel the productivity win; platform teams feel the
+  pain that justifies it and buy the security story
+  ([`03`](03-type-and-effect-system.md) §3.5, [`06`](06-kubernetes-and-packaging.md) §6.5). The
+  playground demo — source left; inferred placement, generated SQL/dataflow, generated Kubernetes
+  objects right — serves both in 60 seconds.
+- **Two dialects form** (Lisp vs Python factions). `tier fmt` normalises committed code to the
+  Python surface; S-expressions are the spec/macro-debugging notation, positioned as such.
 
-- **The demo is amazing and the second week is miserable.** The "one file, whole app" wow is easy; the
-  hard part is week two — adding a background job, an external API, an existing database, a
-  non-trivial UI. Write those four scenarios as first-class tutorials in Phase 3 and treat friction in
-  them as P1 bugs.
-- **No incremental adoption path.** Nobody rewrites a working system. `import infra`, the pgwire
-  endpoint, GitOps manifest emission, and the Python sidecar are all *adoption* features masquerading as
-  technical ones. Protect them in planning.
-- **The wrong first audience.** Solo developers and small teams get the productivity win but don't feel
-  the pain that motivates the tierless design. Platform teams feel it acutely but need the security and
-  policy story (§3.5, §6.5). Recommendation: **lead with the security/least-privilege story to platform
-  teams and the productivity story to product teams**, and build the playground so both can see it in
-  60 seconds.
-- **Two idiomatic dialects form** (Lisp faction vs Python faction). Mitigate with `tier fmt` normalising
-  to the Python surface in all committed code, and S-expressions positioned explicitly as the *spec and
-  macro-debugging* notation (§2.2).
-
-## 9.4 Decisions I made on your behalf
-
-Flagged so you can overrule them cheaply:
+## 9.4 Decisions taken (overrule cheaply, now rather than later)
 
 | Decision | Chosen | Alternative | Cost to change later |
 |---|---|---|---|
+| Semantic core | Event-sourced: commands → validate → events → durable folds → views (per the original) | Relational-first with SQL pushdown | High — it *is* the language now |
 | Host language | Rust | OCaml, Zig | Total rewrite — decide now |
-| Client target | WASM primary, JS optional | JS primary | Moderate (Phase 0 gate exists) |
-| Placement | Inferred, verifiable, overridable | Always explicit annotations | Low — explicit is Phase 1 anyway |
-| Data tier | Postgres + DataFusion | DuckDB, custom storage | Low (behind `store` abstraction) |
-| Static typing | Mandatory, no gradual/dynamic mode | Gradual typing like mypy | High — affects everything |
-| GC | Yes, tracing per tier | Ownership/borrowing in the surface | High |
-| Async | No `async` colouring in the surface | Explicit async/await | Moderate |
-| Infra state | Kubernetes API + Crossplane | Own state engine, OpenTofu | Low (emitters are pluggable) |
-| Images | apko | BuildKit | Low |
-| Package registry | OCI/ORAS | Bespoke registry | Low |
+| Client default | Thin patch interpreter (Mode A); local WASM (Mode B) opt-in per component | WASM-first everywhere | Low-moderate — modes share one source |
+| Log substrate v1 | Postgres (+ object storage snapshots; redb embedded for dev) | Purpose-built log store | Low — behind the log-engine interface |
+| Incremental views | Differential-dataflow lineage, recompute as oracle | Recompute always / hand-rolled IVM | Moderate — plans are symbolic either way |
+| Migration doctrine | Snapshots authoritative; upcasters within retention window | Events-forever, replay from genesis | §9.5 Q3 — genuinely open |
+| Typing | Static, mandatory public signatures | Gradual | High |
+| Async | No colouring; compiler inserts awaits | Explicit async/await | Moderate |
+| Infra state | Kubernetes API + Crossplane | Own engine / OpenTofu-first | Low (emitters pluggable) |
+| Images / packages | apko / OCI+ORAS | BuildKit / bespoke registry | Low |
 
-## 9.5 What I need from you
+## 9.5 Questions for George
 
-1. **The original transcript.** The premise in [`README.md`](README.md) and
-   [`01-vision-and-premise.md`](01-vision-and-premise.md) is a reconstruction from the repo name and
-   your three questions. If your Lisp sketch encoded a *different* central mechanism — staged
-   metaprogramming, a specific data model, an actor/process model, content-addressed code — then §1–§3
-   need revising, and it is much cheaper to do that now than after Phase 1.
-2. **Is the security/least-privilege framing (§3.5, §6.5) interesting to you, or a distraction?** I've
-   promoted it to a headline feature because it is the most defensible claim in the design, but it does
-   pull the roadmap toward platform teams and away from solo developers.
-3. **Ambition setting for the data tier.** "Compiles to SQL against Postgres" (Phase 3, safe) versus
-   "Tier *is* the database, with our own storage engine" (multi-year, and a different company). I've
-   assumed the former throughout.
-4. **Team and horizon.** §8's estimates assume 3–6 engineers. If this is a solo or two-person project,
-   I'd cut scope hard and differently: Phase 1 + Phase 2 only, single-process and Docker platforms,
-   Postgres, **no Kubernetes tier until there are users** — a "typed tierless framework" rather than a
-   platform. Tell me which and I'll rewrite §8 to match.
+The premise is now confirmed by [`00`](00-original-idea.md); these are the decisions the transcript
+leaves genuinely open, ranked by how much they bend the plan:
 
-## 9.6 Open technical questions
+1. **Is *all* state event-sourced, or is hybrid blessed?** Files/blobs, high-churn ephemera
+   (presence, cursors), imported legacy data. Proposal: folds are the native model; `external
+   store` and a blob type (content-addressed, log carries hashes) are first-class escape hatches.
+   Confirm or tighten.
+2. **What consistency ceiling does v1 accept?** One total order per app (simple; single-writer
+   ceiling ~10⁴ events/s; single-region) — with per-entity sharding reserved in the envelope
+   design. OK for the first three years of users? And is collaborative text (CRDT/OT territory)
+   explicitly out of v1 core, per the original's own concession?
+3. **Migration doctrine** (the real fork): snapshots-authoritative with retention-bounded upcasters
+   (my recommendation — bounded liability), or events-forever with replay-from-genesis as the
+   invariant (purer; every event version lives forever)? This decides what `durable` promises and
+   cannot be flipped quietly later.
+4. **Erasure**: is crypto-shredding acceptable as *the* GDPR answer (key deletion = erasure across
+   log/snapshots/backups), or do you want physical compaction rewriting history as well?
+5. **Where does `view` run by default?** Thin-first (my recommendation: Mode A default, `optimistic`
+   /`offline` flips a component to Mode B) — or local-first? Changes Phase 1's shape and the
+   payload/latency trade.
+6. **Sessions and identity**: is `Session` minted by Tier (built-in OIDC client, sessions as
+   capabilities) or delegated to an external IdP with Tier consuming claims? And is *presence*
+   (who's connected now) a first-class `Signal` in v1 — it's the natural demo of per-session
+   fanout, and also its stress test?
+7. **Local-first ambition**: is offline a v1 requirement (pulls CRDT-valued types and Mode B
+   forward, complicates the consistency story) or a post-1.0 direction? The original flirts with
+   it ("browsers are replicas, not terminals") without committing.
+8. **Security/least-privilege as headline** ([`03`](03-type-and-effect-system.md) §3.5,
+   [`06`](06-kubernetes-and-packaging.md) §6.5): lead the pitch with it (pulls toward platform
+   teams) or keep productivity the headline? Still open from the first round.
+9. **Team and horizon** (still open, and it gates everything): 3–6 engineers assumed in
+   [`08`](08-roadmap.md). If this is 1–2 people, I would cut Kubernetes and Mode B entirely until
+   there are users, and ship Phases 0–2 as a "typed tierless framework" — say the word and I'll
+   re-cut the roadmap to that shape.
+10. **Name**: the transcript coins `tier` — keep it (searchability is poor; "tierlang" as the
+    public handle?) or rename before public artefacts exist?
 
-1. **Placement of *data*, not just code.** Should the solver move *values* (cache this list on the
-   client, materialise this view in the DB)? Very powerful, and a large increase in solver complexity.
-   Proposal: v1 places code only; data placement is explicit (`cache`, `materialised`), inferred later.
-2. **Effect granularity.** `db.read(orders)` (table-level) vs `db.read(orders.total)` (column-level)?
-   Column-level gives finer policy and better byte estimates; it also risks signature churn on every
-   refactor. Proposal: table-level in signatures, column-level internally for the cost model.
-3. **Migration safety in a rolling deploy.** Expand/migrate/contract must be *derived*, and some
-   schema changes are genuinely unsafe to automate. Proposal: the planner classifies each step
-   safe/unsafe and refuses unsafe ones without an explicit annotation and a two-phase deploy.
-4. **Subscription semantics under partition.** What does `live` promise when the client is offline?
-   Proposal: explicit, typed staleness (`Signal[T]` carries a freshness state the UI must handle) rather
-   than pretending consistency.
-5. **Where the effect system stops.** Does `log` count? `time`? Over-granular effect rows make every
-   signature noisy. Proposal: an `ambient` set (log, time, metrics, rand) that is implicitly available
-   and elided from signatures, with a strict mode for those who want purity.
-6. **The two syntax decisions from §2.9** — effect clauses vs decorators; `ui:` macro vs JSX-like
-   literal. Cheap to decide now, expensive after Phase 3.
-7. **Naming.** `tier` is a good internal name and a hard one to search for. Worth deciding before public
-   artefacts exist.
+## 9.6 Open technical questions (tracked, not blocking)
+
+1. Effect granularity: value-level (`durable(todos)`) in signatures vs field-level internally for
+   cost/policy — where exactly to draw it.
+2. Ambient effects (`log`, `time`, `metrics`): elided outside folds — is `log` allowed *inside*
+   folds (deterministic replay would re-log) or ingress-only?
+3. Clock signals: what tick granularities are declarable, and how do time-varying views interact
+   with incremental plans (differential handles it via time as input — surface how?).
+4. Data placement (cache this slice client-side, materialise that view) — v1 is explicit
+   (`materialized`, Mode B); when does the solver take it over?
+5. The two syntax decisions from [`02`](02-syntax.md) §2.9: effect clauses vs decorators; `ui:`
+   macro vs JSX-likes. Cheap now, expensive after Phase 3.
+6. Multi-app composition: two Tier apps sharing events — federation of logs, or one app with two
+   deployments? (Touches org boundaries, so it will be asked early.)
+7. Backpressure surfacing: v1 hides it in the runtime contract; when a client can't keep up with
+   its patch stream, what does the *language* say (drop-to-latest for signals is sound — is it
+   ever wrong)?
