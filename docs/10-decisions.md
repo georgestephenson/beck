@@ -2,7 +2,7 @@
 
 George's answers to [`09`](09-risks-and-open-questions.md) §9.5, recorded with the reasoning spelled
 out. Decisions marked **DECIDED** are settled and the other documents assume them. All decisions
-D1–D14 are settled.
+D1–D15 are settled.
 
 ---
 
