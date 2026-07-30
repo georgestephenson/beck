@@ -156,11 +156,10 @@ audience it courts.
 ## 9.5 Questions for George — answered
 
 All substantive questions are answered; the answers and their reasoning are recorded in
-[`10-decisions.md`](10-decisions.md) (D1–D8, all decided). Remaining open, both non-blocking:
+[`10-decisions.md`](10-decisions.md) (D1–D13, all decided — including the marketing headline, D13).
+For the record:
 
-1. **Security/least-privilege as marketing headline vs productivity** — defaults to "both,
-   audience-dependent" (§9.3) until directed otherwise.
-2. **Name**: decided — **Beck** ([`10`](10-decisions.md) D10): Cumbrian for a fast upland stream
+1. **Name**: decided — **Beck** ([`10`](10-decisions.md) D10): Cumbrian for a fast upland stream
    (becks merge into rivers — the merge point), with the second English sense of a summons ("beck
    and call" — a `Command`). Handle `becklang`. Rename executed as one deliberate commit on
    George's word; trademark/domain checks at go-public.
