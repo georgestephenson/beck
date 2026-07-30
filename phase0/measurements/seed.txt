@@ -1,0 +1,2 @@
+[2m2026-07-30T18:21:33.604971Z[0m [32m INFO[0m [2mbeck_p0_server::app[0m[2m:[0m recovered by folding the log [3mstore[0m[2m=[0m"redb" [3mhead[0m[2m=[0m0 [3mtodos[0m[2m=[0m0 [3mmillis[0m[2m=[0m0
+seeded 20000 events in 26.353 s (759 events/s, head 20000)

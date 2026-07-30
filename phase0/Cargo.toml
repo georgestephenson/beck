@@ -1,0 +1,38 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/beck-p0-core",
+    "crates/beck-p0-log",
+    "crates/beck-p0-server",
+    "crates/beck-p0-operator",
+    "crates/beck-p0-bench",
+]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+[workspace.dependencies]
+beck-p0-core = { path = "crates/beck-p0-core" }
+beck-p0-log = { path = "crates/beck-p0-log" }
+
+anyhow = "1"
+blake3 = "1"
+clap = { version = "4", features = ["derive", "env"] }
+futures-util = "0.3"
+postcard = { version = "1", features = ["alloc"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = "0.24"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4", "v7", "serde"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = true

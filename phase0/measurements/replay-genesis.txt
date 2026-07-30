@@ -1,0 +1,5 @@
+store        redb
+replayed to  20000
+todos        20000
+digest       df305b29d5b9d94dbc748a5f4566319b0e2001b03779029a77e385c468d55404
+took         13.361 ms (1496856 events/s)

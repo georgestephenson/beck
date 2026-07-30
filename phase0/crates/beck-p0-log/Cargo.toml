@@ -1,0 +1,22 @@
+[package]
+name = "beck-p0-log"
+description = "Phase 0: the log engine — an append-only total order over Postgres, redb or memory"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+
+[dependencies]
+beck-p0-core.workspace = true
+
+anyhow.workspace = true
+async-trait = "0.1"
+postcard.workspace = true
+redb = "2"
+serde.workspace = true
+tokio.workspace = true
+tokio-postgres = "0.7"
+tracing.workspace = true

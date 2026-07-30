@@ -1,0 +1,14 @@
+---
+apiVersion: beck.dev/v1alpha1
+kind: BeckApplication
+metadata:
+  name: beck-todo
+  namespace: beck-todo
+spec:
+  image: ghcr.io/beck/phase0-todo@sha256:0000000000000000000000000000000000000000000000000000000000000000
+  log:
+    retainDays: 90
+    snapshotEvery: 1000
+  replicas: 2
+  substrate: postgres
+  wireOpsDigest: phase0-todo-v1

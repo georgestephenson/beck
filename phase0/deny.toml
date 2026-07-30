@@ -1,0 +1,47 @@
+# `cargo-deny` licence and advisory gate — §8.3 practice 5: "from the first commit, given §7's
+# open-source constraint".
+#
+#   cargo deny check
+#
+# The policy is §7's, mechanised: permissive or weak-copyleft only, nothing BUSL/SSPL/proprietary.
+
+[licenses]
+# Anything not on this list fails the build, which is the point: the licence policy is enforced by
+# machine, not by memory.
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "MITNFA",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    "CC0-1.0",
+    "MPL-2.0",       # weak copyleft: file-level, acceptable per §7 (OpenTofu is the precedent)
+    "OpenSSL",
+    "BSL-1.0",       # Boost, not Business Source
+]
+confidence-threshold = 0.9
+
+[[licenses.exceptions]]
+# Postgres' own licence is permissive but rarely detected by name.
+name = "postgres-protocol"
+allow = ["MIT", "Apache-2.0"]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# Named exclusions rather than a blanket allow: a BUSL/SSPL dependency must fail loudly.
+deny = []
+
+[advisories]
+yanked = "deny"
+ignore = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+# §7.9: "no git dependencies in released artefacts — registry releases only".
+allow-git = []

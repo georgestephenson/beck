@@ -1,0 +1,19 @@
+{
+  "append": {
+    "events_per_second": 7660.421,
+    "group_commits": 1231,
+    "mean_batch_size": 16.247,
+    "seconds": 2.611
+  },
+  "concurrent_clients": 32,
+  "durable": true,
+  "events": 20000,
+  "measurement": "sequencer throughput and fold replay",
+  "replay": {
+    "events": 20000,
+    "events_per_second": 871086.286,
+    "seconds": 0.023,
+    "todos": 20000
+  },
+  "store": "postgres"
+}

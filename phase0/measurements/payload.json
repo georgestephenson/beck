@@ -1,0 +1,55 @@
+{
+  "measurement": "thin-client payload and first paint",
+  "patch_frames": [
+    {
+      "full_page_html_bytes": 3523,
+      "json_bytes": 71,
+      "ops": 2,
+      "postcard_bytes": 33,
+      "rows": 10
+    },
+    {
+      "full_page_html_bytes": 33044,
+      "json_bytes": 74,
+      "ops": 2,
+      "postcard_bytes": 34,
+      "rows": 100
+    },
+    {
+      "full_page_html_bytes": 328245,
+      "json_bytes": 77,
+      "ops": 2,
+      "postcard_bytes": 37,
+      "rows": 1000
+    }
+  ],
+  "ssr": {
+    "brotli_bytes_estimate": null,
+    "bytes": 98363,
+    "time_to_first_byte_ms": {
+      "max": 3.5,
+      "mean": 1.664,
+      "n": 20,
+      "p50": 1.605,
+      "p90": 1.922,
+      "p99": 3.5
+    },
+    "time_to_last_byte_ms": {
+      "max": 3.526,
+      "mean": 1.716,
+      "n": 20,
+      "p50": 1.641,
+      "p90": 2.01,
+      "p99": 3.526
+    }
+  },
+  "stylesheet": {
+    "brotli_bytes": 174,
+    "raw_bytes": 351
+  },
+  "thin_client": {
+    "brotli_bytes": 1931,
+    "budget_brotli_bytes": 10240,
+    "raw_bytes": 5963
+  }
+}

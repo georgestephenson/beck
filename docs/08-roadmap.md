@@ -15,7 +15,14 @@ five tiers before making any single tier good.** The risk in this project is not
 type checker" — it is "does the tierless partition idea survive contact with a real deployment." Answer
 that in month 3, not year 2.
 
-## Phase 0 — Prove the premise (4–6 weeks, 1–2 people)
+## Phase 0 — Prove the premise (4–6 weeks, 1–2 people) — **BUILT**
+
+> Implemented in [`phase0/`](../phase0/); measurements, gate verdicts and the harder-than-expected
+> list in [`18-phase-0-report.md`](18-phase-0-report.md). The premise holds: interaction p99 is
+> ~1 ms of server work (34 ms at a 25 ms RTT) against the ~150 ms gate, per-idle-session memory is
+> ~5 KB against the ~50 KB tripwire, and replay after SIGKILL is bit-identical. Two items are
+> unproven rather than proven: the apko image and the k3d deployment were never executed, because
+> the environment has no container runtime.
 
 No compiler. Hand-write, in Rust, the *output* the compiler will eventually generate for the todo
 sketch ([`00`](00-original-idea.md)): ingress + envelope stamping, a durable fold over a Postgres
