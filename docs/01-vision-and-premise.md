@@ -273,3 +273,48 @@ $ beck replay --at yesterday  # the whole backend, re-evaluated deterministicall
 …and a staff engineer can read [`03`](03-type-and-effect-system.md) and believe the guarantees; and
 a platform engineer can read the generated policies and find them *stricter* than the hand-written
 ones they replaced.
+
+## 1.8 The competitive claim, stated honestly
+
+Asked directly — will this plan give Beck better performance and features than any alternative? —
+the defensible answer has three parts, and the marketing must never blur them.
+
+**Features: no alternative has the combination; most have one row of this table.**
+
+| Capability | Who else has it |
+|---|---|
+| Placement proofs (secrets provably never reach the client) | Ur/Web (research); no mainstream system |
+| One program → app + database + infra, all derived | Darklang (proprietary, faded), Encore/Winglang (backend/infra only — no frontend or data semantics) |
+| Event-sourced core with compiler-maintained incremental views | Materialize (SQL only, BUSL), Rama (JVM, backend only), Convex (no infra tier, no proofs) |
+| Replay / fork-from-prod / deterministic simulation as *user-facing* features | FoundationDB internally; Antithesis as a paid service; nobody as a language feature |
+| Typed migrations gating deploys | Lamdera (Elm-niche, two tiers) |
+| Least-privilege infrastructure derived from effects | nobody |
+| ~10 KB thin client with per-component local upgrade, solver-chosen | LiveView (thin only), Elm/Lamdera (fat only) |
+| WCAG as a compile-time property | nobody |
+
+Every row exists somewhere; no system has more than two rows. Within its scope, Beck's feature set
+is a strict superset of every alternative. The honest boundary is that scope ([`01`](#15-non-goals)):
+ML/numeric work, systems programming, and ecosystem breadth are conceded and bridged (FFI, sidecar),
+not contested.
+
+**Performance: win where it is structural, concede where it is artisanal.**
+
+1. **Versus what teams actually deploy** (Node/Next, Python, Rails, typical JVM): large, structural
+   wins — LLVM-native services (the Perry precedent: 1.7–24.6× over Node), no interpreter or GIL,
+   kilobytes of client instead of megabytes, incremental views instead of cache-invalidate-recompute,
+   fused queries instead of N+1, boundaries that don't exist and therefore cost nothing.
+2. **Versus the best hand-written artefact at any single layer** (hand-tuned Rust service, artisan
+   bundle, DBA-tuned SQL): a narrow loss, and the plan does not claim otherwise — the escape
+   hatches (FFI for hot paths, raw SQL, `external store`) exist precisely so the 1% can be
+   hand-fed.
+3. **The claim we actually make and benchmark**: real systems lose their performance at the
+   boundaries — serialisation, over-fetch, chattiness, stale-cache recomputation, bundle bloat.
+   Beck deletes the boundaries, so the *shipped system* outperforms the composite that real teams
+   actually produce. Phase 5 publishes the suite against a named baseline stack, with lines of
+   code alongside latency ([`08`](08-roadmap.md)).
+
+**The enforcement**: none of this is self-congratulation — the feature claims are conformance and
+security tests, and the performance claims are CI-gated budgets from Phase 0
+([`12`](12-standards-and-conformance.md) §12.1, [`13`](13-testing.md) §13.7). The features are
+structural moat (a competitor cannot bolt on placement proofs without becoming a language); the
+performance is earned by executing the roadmap, and the gates are what keep it earned.

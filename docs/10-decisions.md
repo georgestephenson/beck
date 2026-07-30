@@ -330,6 +330,13 @@ renderer behind the `Surface` trait", mapping the same `view` onto Jetpack Compo
 critical). v1 pays only two disciplines to keep this cheap: no HTML-isms in the `ui:` core
 vocabulary, and the renderer behind a trait.
 
+## D13 — Marketing headline — **DECIDED**
+
+Productivity leads: *"one file is a whole running system — no routes, no DTOs, no SQL, no
+Dockerfile, no YAML."* Security/least-privilege is the second slide and the enterprise/platform
+pitch: *"the compiler proves the API key can't reach the browser; infra policy is derived from the
+code's effects."* Not in tension — an ordering. The playground demo serves both in 60 seconds.
+
 ## Still open (minor, non-blocking)
 
 - Security-headline vs productivity-headline positioning ([`09`](09-risks-and-open-questions.md)
