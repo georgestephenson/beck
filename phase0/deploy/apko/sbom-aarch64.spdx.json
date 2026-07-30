@@ -1,0 +1,76 @@
+{
+  "SPDXID": "SPDXRef-DOCUMENT",
+  "name": "sbom-sha256:45e3f89f718d6fac4f97a361f3d90a35c36551afe284b9e24c8babb8ca8ddf83",
+  "spdxVersion": "SPDX-2.3",
+  "creationInfo": {
+    "created": "2026-07-08T23:06:13Z",
+    "creators": [
+      "Tool: apko (v0.29.10)",
+      "Organization: Chainguard, Inc"
+    ],
+    "licenseListVersion": "3.16"
+  },
+  "dataLicense": "CC0-1.0",
+  "documentNamespace": "https://spdx.org/spdxdocs/apko/",
+  "documentDescribes": [
+    "SPDXRef-Package-sha256-0d21e80689a52abf1022fdcd083da133a791029aa98c1c672e14b2a36d377f2c"
+  ],
+  "packages": [
+    {
+      "SPDXID": "SPDXRef-Package-sha256-0d21e80689a52abf1022fdcd083da133a791029aa98c1c672e14b2a36d377f2c",
+      "name": "sha256:0d21e80689a52abf1022fdcd083da133a791029aa98c1c672e14b2a36d377f2c",
+      "versionInfo": "sha256:0d21e80689a52abf1022fdcd083da133a791029aa98c1c672e14b2a36d377f2c",
+      "filesAnalyzed": false,
+      "description": "apko container image",
+      "downloadLocation": "NOASSERTION",
+      "supplier": "Organization: Wolfi",
+      "primaryPackagePurpose": "CONTAINER",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "0d21e80689a52abf1022fdcd083da133a791029aa98c1c672e14b2a36d377f2c"
+        }
+      ],
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:oci/base@sha256%3A0d21e80689a52abf1022fdcd083da133a791029aa98c1c672e14b2a36d377f2c?arch=arm64\u0026mediaType=application%2Fvnd.oci.image.manifest.v1%2Bjson\u0026os=linux",
+          "referenceType": "purl"
+        }
+      ]
+    },
+    {
+      "SPDXID": "SPDXRef-Package-sha256-45e3f89f718d6fac4f97a361f3d90a35c36551afe284b9e24c8babb8ca8ddf83",
+      "name": "sha256:45e3f89f718d6fac4f97a361f3d90a35c36551afe284b9e24c8babb8ca8ddf83",
+      "versionInfo": "20230201",
+      "filesAnalyzed": false,
+      "description": "apko operating system layer",
+      "downloadLocation": "NOASSERTION",
+      "supplier": "Organization: Wolfi",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:oci/base@sha256%3A45e3f89f718d6fac4f97a361f3d90a35c36551afe284b9e24c8babb8ca8ddf83?arch=arm64\u0026mediaType=application%2Fvnd.oci.image.layer.v1.tar%2Bgzip\u0026os=linux",
+          "referenceType": "purl"
+        }
+      ]
+    },
+    {
+      "SPDXID": "SPDXRef-OperatingSystem-wolfi",
+      "name": "wolfi",
+      "versionInfo": "20230201",
+      "filesAnalyzed": false,
+      "description": "Operating System",
+      "downloadLocation": "NOASSERTION",
+      "supplier": "Organization: Wolfi",
+      "primaryPackagePurpose": "OPERATING_SYSTEM"
+    }
+  ],
+  "relationships": [
+    {
+      "spdxElementId": "SPDXRef-Package-sha256-0d21e80689a52abf1022fdcd083da133a791029aa98c1c672e14b2a36d377f2c",
+      "relationshipType": "CONTAINS",
+      "relatedSpdxElement": "SPDXRef-Package-sha256-45e3f89f718d6fac4f97a361f3d90a35c36551afe284b9e24c8babb8ca8ddf83"
+    }
+  ]
+}

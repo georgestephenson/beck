@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use beck_core::{Effect, Placed, Tier};
 
-mod k8s;
+pub mod k8s;
 
 pub use k8s::render;
 
@@ -269,6 +269,13 @@ pub fn emit(placed: &Placed, out: &Path) -> Result<Vec<PathBuf>> {
         written.push(path);
     }
 
+    // Two files, in build order: melange turns the binary into a package, apko turns packages into
+    // an image. apko copies nothing from the host — see `k8s::apko` for why that is the point and
+    // not a limitation.
+    let melange = out.join("image.melange.yaml");
+    std::fs::write(&melange, k8s::melange(&graph))?;
+    written.push(melange);
+
     let apko = out.join("image.apko.yaml");
     std::fs::write(&apko, k8s::apko(&graph))?;
     written.push(apko);
@@ -443,6 +450,23 @@ page: Signal[Html] = per_session(st, view)
         let text = g.explain();
         assert!(text.contains("carries `ingress`"), "{text}");
         assert!(text.contains("no `net.out` in the program"), "{text}");
+    }
+
+    #[test]
+    fn the_image_configs_name_the_binary_as_a_package_not_a_host_file() {
+        // apko copies nothing from the host, so a config that hardlinks a path the packages never
+        // created cannot work — the mistake Phase 0's hand-written config made, invisible until
+        // the build was first run (docs/19 §19.5).
+        let g = graph(&compile(PROGRAM));
+        let apko = crate::k8s::apko(&g);
+        assert!(apko.contains("app@local"), "{apko}");
+        assert!(
+            !apko.contains("type: hardlink"),
+            "the binary must arrive as a package, not as a hardlink to a host file:\n{apko}"
+        );
+        let melange = crate::k8s::melange(&g);
+        assert!(melange.contains("install -m755 beck"), "{melange}");
+        assert!(melange.contains("targets.destdir"), "{melange}");
     }
 
     #[test]

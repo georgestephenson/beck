@@ -9,9 +9,9 @@ eight crates; [`compiler/examples/todo.beck`](../compiler/examples/todo.beck) is
 [`00-original-idea.md`](00-original-idea.md), 132 lines, and `beck run` serves it. Every number
 below was measured on the machine described in §19.2.
 
-Three things the roadmap asks for are **not** done, and are named as such rather than implied:
-native codegen (§19.6), effect *inference* (§19.6), and the cluster deployment (§19.5) — the last
-blocked by the environment, not by the design.
+Two things the roadmap asks for are **not** done, and are named as such rather than implied: native
+codegen (§19.6) and effect *inference* (§19.6). A third, the cluster deployment, is now *partly*
+evidenced and §19.5 says exactly where the evidence stops.
 
 ## 19.1 What was built, against what was asked
 
@@ -37,7 +37,7 @@ blocked by the environment, not by the design.
 | Backend: Postgres/redb log engine | done — both, plus in-memory; same contract, same tests | `beck-rt/src/log.rs` |
 | Backend: k8s object graph | done — derived from effects, with provenance on every node | `beck-infra/src/lib.rs` |
 | `beck run` (single process) | done | `beck-cli/src/main.rs` |
-| `beck up` (k3d) | **emits and applies; never applied to a real cluster** (§19.5) | `beck-infra/src/lib.rs` |
+| `beck up` (k3d) | emits and applies — **a real API server accepted every object**; containers do not start here (§19.5) | `beck-infra/src/lib.rs` |
 | Salsa from commit one | done — `parse`/`expand`/`signature` are memoised queries | `beck-db/src/lib.rs` |
 | `insta` diagnostic snapshots | **not used** — diagnostics are asserted by code and message, not by snapshot (§19.6) | — |
 | Differential single-process vs split harness | done, green | `beck-cli/tests/differential.rs` |
@@ -55,7 +55,8 @@ SSR with hydration by `seq`.
 | Toolchain | rustc 1.94.1; `--release` is `lto=thin`, `codegen-units=1` |
 | Substrates | redb 2.x, PostgreSQL 16 (local) |
 | Container runtime | Docker 29.3.1 — **present**, unlike in Phase 0 |
-| Egress | `packages.wolfi.dev` and the Docker registry CDN are blocked by policy (§19.5) |
+| Image tooling | apko 0.29.10, melange 0.29.6, k3d 5.8.3 (k3s v1.31.5), kubectl 1.32.3 |
+| Nesting | this container → dockerd → k3d node → pod sandbox. The innermost level is where §19.5 stops |
 
 The same caveat as Phase 0 applies: a shared 4-core container is not a benchmarking rig. These are
 baselines to regress against, not headline claims.
@@ -115,9 +116,12 @@ replay is exact: two folds agree, and the snapshot path agrees with genesis.
 
 ### The cluster
 
-**Not met.** See §19.5: `beck build` emits the object graph and `beck up` applies it, but no cluster
-was ever created here, because the container registry is blocked by this environment's egress
-policy. This is the one exit criterion Phase 1 does not reach.
+**Partly met, and §19.5 draws the line.** A k3d cluster was created, the compiler's own image was
+imported into it, and **every object `beck build` derives from the effect row was accepted by a real
+API server** — which is the thing Phase 0 could only say "they parse" about. Pods schedule. What
+does not happen is containers *starting*: `runc` fails at the innermost of three nesting levels,
+identically under both the overlayfs and native snapshotters. That is this sandbox's ceiling, not
+the manifests'.
 
 ### One thing done ahead of schedule
 
@@ -204,6 +208,14 @@ In rough order of how much it changed the design.
    where `var` is not yet mutable, a loop is not a missing feature so much as a missing *reason* —
    but the diagnostic has to say that, or it reads as an unimplemented corner.
 
+10. **An image config that reads correctly can be impossible to build.** Phase 0's apko config
+    hardlinks the service binary from a path nothing creates, and `beck build` emitted the same
+    shape. Both are wrong, and neither could be wrong *visibly*, because apko's refusal to copy from
+    the host is exactly the property that makes its builds reproducible — the config looks like a
+    Dockerfile `COPY` and is nothing of the kind. §6.2 describes the reproducibility without
+    mentioning `melange`, which is the tool the property makes necessary. The lesson generalises
+    past apko: **a build step nobody has run is a design document, not a build step** (§19.5).
+
 Two things were *easier* than expected. Reusing Phase 0's runtime was almost free: the differ, the
 patch protocol, the sequencer and the thin client were never domain-specific, so they moved across
 with their tests and only the *inputs* changed from hand-written Rust to compiled `Core` — which is
@@ -215,24 +227,74 @@ rule" is still the easiest test in the project to write.
 
 [`18-phase-0-report.md`](18-phase-0-report.md) §18.7 item 2 says: "Build the image and the cluster
 first. They are the only unproven claims, and they are cheap to prove on a machine with a daemon."
-This environment now **has** a daemon — and both remain unproven, for a different reason.
+They were not cheap, and running them found things reading them could not.
+
+### The image: **proven**
 
 | | Phase 0 | Phase 1 |
 |---|---|---|
-| Container daemon | absent | **present** (Docker 29.3.1) |
-| Static musl binary | not built | **built: 3,947,136 B, static-pie, no dynamic dependencies** |
-| `apko build` | never run | **still never run** — `packages.wolfi.dev` returns 403 from this environment's egress proxy |
-| Image digest reproducibility | claim | still a claim |
-| k3d cluster | never created | **still never created** — the Docker registry CDN returns 403, so no image can be pulled |
+| Container daemon | absent | present (Docker 29.3.1) |
+| Static musl binary | not built | built: **5,266,400 B**, static-pie, no dynamic dependencies |
+| `apko build` | never run | **runs** |
+| Image size | unknown | **3,133,440 B**, containing `/usr/bin/beck` |
+| Digest reproducibility (§6.2) | a claim | **measured: two builds, one digest** — `142cda21…` |
 
-The proxy documents 403 as an organisation policy denial and says not to route around it, so it was
-not routed around. What moved: the artefact the image wraps is now measured rather than estimated —
-a 3.9 MB statically linked binary, confirmed by `file` and `ldd`.
+That last row is the one §6.2 exists for: "because an apko build performs no arbitrary execution,
+the same config and package versions yield the same image digest on any machine." Two builds of the
+same config, byte-identical output. It is no longer a claim.
 
-**This is the Phase 1 exit criterion that is not met**, and it is worth being precise about what is
-and is not evidenced. The manifests are generated from the typed object graph, they carry
-`apiVersion` and `kind`, and a test asserts that; `beck up` runs `kubectl apply` against them. No API
-server has ever reconciled them. Any claim beyond "they are well-formed" is unearned.
+Running it also found a defect that could not have been found by reading, and that Phase 0's config
+and the config `beck build` originally emitted both had:
+
+> **apko copies nothing from the host.** An image's contents come from packages and from nothing
+> else — which is *precisely* what "performs no arbitrary execution" buys. So a `paths:` stanza
+> hardlinking `/usr/bin/beck` to a `/beck` that no package ever creates cannot work, and the build
+> fails with `linking "/beck" -> "/usr/bin/beck": file does not exist` the first time it is run.
+
+The binary therefore has to *be* a package. The tool that makes one is **melange**, which §6.2 does
+not mention at all. `beck build` now emits both configs, in build order — `image.melange.yaml`
+packages the binary, `image.apko.yaml` installs it — and a test asserts the apko config names the
+binary as a package rather than hardlinking a host path, so the mistake cannot come back.
+
+### The cluster: **applied, not run**
+
+This is worth stating precisely, because "not proven" would now be too strong and "proven" would be
+false.
+
+| Step | Result |
+|---|---|
+| `k3d cluster create` | **works** — `kubectl get nodes` reports Ready |
+| Import the compiler's own image into it | **works** |
+| Apply the object graph `beck build` derives from the effect row | **works — a real API server accepted every object** |
+| Schedule | **works** — pods are assigned to a node |
+| Start a container | **fails** — `runc create failed: … can't get final child's PID from pipe: EOF` |
+
+What the API server admitted, from the effects and nothing else: the Namespace, the log store's
+StatefulSet and its volume claim, the snapshot ConfigMap, the credentials Secret, the Deployment
+with its non-root securityContext and probes, the NetworkPolicy, and the grants —
+
+```console
+$ kubectl -n todo get configmap todo-grants -o jsonpath='{.data.grants\.sql}'
+-- derived from the program's effects: it appends and reads, so it may not update or delete
+GRANT SELECT, INSERT ON beck_log TO "todo-app";
+
+$ kubectl -n todo get networkpolicy todo-policy -o jsonpath='{.spec.policyTypes} {.spec.egress[*].to[*].podSelector.matchLabels.app}'
+["Ingress","Egress"] todo-log
+```
+
+Phase 0 could only say its manifests "parse, and carry apiVersion/kind". They are now objects a real
+Kubernetes API server has validated, defaulted and admitted. That is the step this exercise was for.
+
+The remaining failure is not about Beck. There are three levels of container nesting here — this
+sandbox, then dockerd, then the k3d node — and `runc` cannot start a process at the innermost one.
+It fails identically under the overlayfs and native snapshotters, for the pause sandbox as much as
+for the application, so nothing about the image or the manifests is implicated. Two other
+environment frictions had to be worked around first and are worth recording for whoever runs this
+next: the k3d nodes need the egress proxy's CA mounted over their trust store, and their containerd
+must be pointed at that proxy on an address reachable from the node network rather than `127.0.0.1`.
+
+**What is left to prove, therefore, is one thing and it is small**: that a started container serves
+the page. Everything up to the container boundary is now evidenced.
 
 ## 19.6 What Phase 1 is not
 
@@ -274,6 +336,10 @@ server has ever reconciled them. Any claim beyond "they are well-formed" is unea
    load-bearing and sound; the documents should say so.
 4. **The block rule needs its scope written into §2.3.** §2.7 has the rule as a mitigation; it is
    really part of the rule.
-5. **Prove the image and the cluster somewhere with open egress.** Two runs, on a machine that can
-   reach a package repository and a registry, close the last Phase 0 gap and the last Phase 1 exit
-   criterion at once. Nothing in the design is waiting on them — only the evidence is.
+5. **`melange` belongs in [`06`](06-kubernetes-and-packaging.md) §6.2.** The section describes
+   apko's reproducibility without naming the tool that its central property — no arbitrary
+   execution, therefore no copying from the host — makes mandatory for shipping a binary.
+6. **One thing is left to prove about deployment, and it is small.** Every object is admitted by a
+   real API server; what has never happened is a *started container serving the page*, because
+   `runc` cannot start a process at this sandbox's third nesting level (§19.5). One run on a machine
+   that can nest one level less closes it. Nothing in the design is waiting on it.

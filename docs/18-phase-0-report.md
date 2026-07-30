@@ -194,12 +194,18 @@ knowledge that the artefact it wraps is a single binary (3.8 MB, dynamically lin
 path builds `x86_64-unknown-linux-musl` static). This is the first task of Phase 1, and it should
 be done on a machine with a daemon before anything else in that phase.
 
-> **Phase 1 revisit.** Attempted again on a machine that *does* have a daemon
-> ([`19`](19-phase-1-report.md) §19.5). The static musl binary now exists and is measured —
-> **3,947,136 B, static-pie, no dynamic dependencies** — but `apko build` still never ran, because
-> `packages.wolfi.dev` is blocked by that environment's egress policy, and no cluster was created
-> because the container registry is blocked too. Both items therefore stand as unproven for a new
-> reason: not a missing daemon, but a closed network.
+> **Phase 1 revisit — this is now measured** ([`19`](19-phase-1-report.md) §19.5). On a machine
+> with a daemon and open egress, `apko build` runs and **the reproducibility claim holds**: two
+> builds of the same config produce a bit-identical digest, `142cda21…`, for a **3,133,440 B**
+> image containing the statically linked binary at `/usr/bin/beck`. §6.2's "the same config and
+> package versions yield the same image digest on any machine" is no longer a claim.
+>
+> Running it also found a defect this config could never have revealed on paper: **apko copies
+> nothing from the host**, so the `paths:` stanza below — hardlinking `/usr/bin/beck-p0` to a
+> `/beck-p0` that no package ever creates — cannot work. That absence *is* the reproducibility
+> story ("performs no arbitrary execution"), so the binary has to arrive as an APK, built by
+> `melange`, which §6.2 does not mention. The config is left as written, because this document is
+> history; the corrected pair is what `beck build` now emits.
 
 ## 18.4 The kill/pivot gates
 
