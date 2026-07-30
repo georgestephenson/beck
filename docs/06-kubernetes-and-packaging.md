@@ -195,8 +195,9 @@ unchanged, and the server partition is re-JITted with Cranelift. Target < 2 s ed
 A small unification worth taking: use **OCI registries as the package registry** via **ORAS**, rather
 than building a bespoke package host.
 
-- A Beck package version is an OCI artefact: compiled signatures (`.becki`), the source, prebuilt
-  per-tier artefacts, and an SBOM — content-addressed by digest.
+- A Beck package version — a **tarn** ([`16`](16-packages-and-ecosystem.md) §16.2) — is an OCI
+  artefact: compiled signatures (`.becki`), the source, prebuilt per-tier artefacts, and an SBOM —
+  content-addressed by digest.
 - Users authenticate to registries they already run (GHCR, ECR, Harbor, Artifactory); air-gapped and
   regulated environments are supported on day one, which is otherwise a multi-year problem.
 - Signing and provenance reuse Sigstore/cosign — the same machinery as images (§6.2), so supply-chain

@@ -2,7 +2,7 @@
 
 George's answers to [`09`](09-risks-and-open-questions.md) §9.5, recorded with the reasoning spelled
 out. Decisions marked **DECIDED** are settled and the other documents assume them. All decisions
-D1–D15 are settled.
+D1–D16 are settled.
 
 ---
 
@@ -377,7 +377,7 @@ to the site's own Beck source, so the site is its own demo.
 
 **The bootstrap fixed point**: the registry serves the packages that build the registry — the
 crates.io/cargo circularity, which reads as credibility. One honest guard: package *hosting* is
-decentralised OCI by design ([`16`](16-packages-and-ecosystem.md) §16.3), so the index is
+decentralised OCI by design ([`16`](16-packages-and-ecosystem.md) §16.4), so the index is
 availability-critical but not correctness-critical — a static mirror fallback means the ecosystem
 is never hostage to the dogfood app's schedule.
 
@@ -388,6 +388,44 @@ serving real packages" becomes a Phase 5 exit criterion** — the production app
 demanded, chosen so that shipping the proof and shipping the ecosystem are the same act. The triad:
 **playground proves the language, the site proves the web tier, the registry proves the backend
 and data tier.**
+
+## D16 — Package-system vocabulary: **tarns**, **forces**, and **the Mere** — **DECIDED**
+
+Cargo has crates; Bundler has gems. Beck's package system ([`16`](16-packages-and-ecosystem.md))
+takes its nouns from the same landscape the language's name came from (D10) — Cumbrian
+hydrology — so that every term teaches the architecture it names:
+
+- **A package is a `tarn`.** A tarn is a small, high mountain pool — still, clear,
+  self-contained — and it is where becks rise. The metaphor is exact for what a Beck package
+  actually is: immutable, content-addressed, sealed behind a published signature of types and
+  effects ([`16`](16-packages-and-ecosystem.md) §16.6), sitting upstream and feeding the flow.
+  Practically it checks every box an artefact name needs: one syllable, unambiguous spelling and
+  pronunciation, a clean plural, no tech-namespace collision, and "beck tarn" is trivially
+  searchable. `beck add payments-stripe` fetches the `payments-stripe` tarn.
+- **A vertical-slice feature package is a `force`.** In Cumbria a force is a waterfall (Aira
+  Force, High Force) — water dropping *vertically*. A force is a tarn that drops through all five
+  tiers: commands, events, folds, views, infra ([`16`](16-packages-and-ecosystem.md) §16.5). The
+  sharpest ecosystem idea gets its own word instead of the generic "feature package".
+- **The index is `the Mere`.** A mere is the lake the becks gather into (Windermere,
+  Buttermere) — the natural name for the thin central index + docs site where everything published
+  collects ([`16`](16-packages-and-ecosystem.md) §16.4). "Publish to the Mere." Hosting stays
+  decentralised on OCI registries ([`06`](06-kubernetes-and-packaging.md) §6.7); naming the
+  *index* rather than "a registry" states that architecture honestly. The Mere is the flagship
+  dogfood application of D15, running on Beck at beck.dev.
+- **`beck.lock` keeps its plain name.** `cairn` — the stone marker recording the proven path
+  across the fell — is semantically exact for a lockfile, but `.lock` is instantly legible to
+  every newcomer; `cairn` is held in reserve for a future vendored/offline snapshot artefact.
+
+For the record, the runner-up: **`gill`** (a ravine stream feeding a beck) is arguably the better
+metaphor for "packages merge into your app", but loses on practicalities — two competing spellings
+(gill/ghyll), a pronunciation trap (hard *g*, which outsiders will miss), and collisions (fish
+gills, the liquid measure). Artefact names are said out loud constantly; *tarn* has none of these
+problems. Ruled out: *syke* and *dub* (too obscure even by these standards), *spring*/*source*/
+*stream* (generic, unsearchable), and anything "confluence"-shaped (occupied mindshare).
+
+The full sentence the vocabulary makes: **you write Beck; you package tarns; a tarn spanning all
+tiers is a force; everything published gathers in the Mere; `beck.lock` pins the path.** One
+landscape, one metaphor, every term load-bearing.
 
 ## Still open (minor, non-blocking)
 

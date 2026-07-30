@@ -40,13 +40,13 @@ the transcript was available; checking it against the original changed three loa
 | 07 | [Dependencies](07-dependencies.md) | Every third-party choice: rationale, licence, benchmarks, rejected alternatives, swap cost |
 | 08 | [Roadmap](08-roadmap.md) | Phase 0 premise-proof, walking skeleton, phased plan, exit criteria, team shape |
 | 09 | [Risks and open questions](09-risks-and-open-questions.md) | Ranked risks, decisions taken, remaining opens |
-| 10 | [Decision log](10-decisions.md) | George's decisions D1–D15, all settled — including the Git/local-first analysis, the language-not-framework rationale, and the name: **Beck** |
+| 10 | [Decision log](10-decisions.md) | George's decisions D1–D16, all settled — including the Git/local-first analysis, the language-not-framework rationale, and the name: **Beck** |
 | 11 | [Language tour](11-language-tour.md) | What Beck looks like, construct by construct — types, traits, macros, queries, UI, services, in-language tests |
 | 12 | [Standards and conformance](12-standards-and-conformance.md) | The rulesets Beck conforms to, layer by layer — and the test-linked spec discipline that makes conformance real |
 | 13 | [Testing strategy](13-testing.md) | Every applicable kind of test and why — built around the free oracles Beck's semantics manufacture (DST, differentials, TLA+, Jepsen) |
 | 14 | [Review findings](14-review-findings.md) | The adversarial review: ranked security/design findings — all resolved (D14) |
 | 15 | [Scale and distribution](15-scale-and-distribution.md) | The DDIA checklist against Beck's semantics; the scaling ladder (partitioned logs, typed sharding), sagas, and why Beck needs a fabric, not a Redis |
-| 16 | [Packages and ecosystem](16-packages-and-ecosystem.md) | The Rails/npm lessons; Beck's own package system — feature packages, effect-transparent dependencies, no install hooks |
+| 16 | [Packages and ecosystem](16-packages-and-ecosystem.md) | The Rails/npm lessons; Beck's own package system — **tarns** (packages), **forces** (vertical-slice feature packages), **the Mere** (index); effect-transparent dependencies, no install hooks |
 | 17 | [The playground](17-playground.md) | The whole stack in a browser tab (the DST convergence), the cloud rung with the compiler as first sandbox, content-addressed sharing, playground-as-Beck-app |
 
 ## The one-paragraph version
