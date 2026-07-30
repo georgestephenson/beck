@@ -7,37 +7,43 @@
 
 [licenses]
 # Anything not on this list fails the build, which is the point: the licence policy is enforced by
-# machine, not by memory.
+# machine, not by memory. Entries are the licences §7 permits, whether or not today's dependency
+# set happens to use them — this is the policy, not an inventory.
 allow = [
     "Apache-2.0",
     "Apache-2.0 WITH LLVM-exception",
     "MIT",
-    "MITNFA",
     "BSD-2-Clause",
     "BSD-3-Clause",
     "ISC",
     "Unicode-3.0",
     "Zlib",
     "CC0-1.0",
-    "MPL-2.0",       # weak copyleft: file-level, acceptable per §7 (OpenTofu is the precedent)
-    "OpenSSL",
-    "BSL-1.0",       # Boost, not Business Source
+    "MPL-2.0",             # weak copyleft, file-level: allowed by §7 (OpenTofu is the precedent)
+    "BSL-1.0",             # Boost, not Business Source
+    # Covers the Mozilla root CA bundle that `webpki-root-certs` ships (reached via kube's TLS
+    # verifier). It licenses *data*, not code, and is permissive with no reciprocal obligation —
+    # inside §7's constraint, and named explicitly rather than waved through.
+    "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.9
-
-[[licenses.exceptions]]
-# Postgres' own licence is permissive but rarely detected by name.
-name = "postgres-protocol"
-allow = ["MIT", "Apache-2.0"]
+# An allowed licence nobody currently depends on is not a problem to report: the list above states
+# what Beck may take on, and shrinking it to today's graph would make it a changelog instead.
+unused-allowed-license = "allow"
 
 [bans]
 multiple-versions = "warn"
+# No exceptions, including for our own crates: a path dependency carries a version requirement
+# (see the workspace manifest).
 wildcards = "deny"
 # Named exclusions rather than a blanket allow: a BUSL/SSPL dependency must fail loudly.
 deny = []
 
 [advisories]
 yanked = "deny"
+# Empty, and it should stay that way: an advisory is fixed at the root — by dropping the feature
+# or the dependency that pulls it in — rather than muted here. `postcard`'s default features were
+# removed for exactly this reason (RUSTSEC-2023-0089 via heapless → atomic-polyfill).
 ignore = []
 
 [sources]
