@@ -6,7 +6,7 @@ Findings are ranked. **Status** per finding: `FIXED` (doc corrected in this pass
 
 ## Critical — design-level
 
-### F1 — Crypto-shredding contradicts genesis replay (D3 × D4 collision) — `DECIDE`
+### F1 — Crypto-shredding contradicts genesis replay (D3 × D4 collision) — `APPROVED` (structural shredding)
 
 D3 promises *replay from the first event reproduces state bit-for-bit*; D4 promises *deleting a
 subject's key makes their events permanently unreadable*. Both cannot hold naively: shred a
@@ -15,7 +15,7 @@ ever showed. Worse, erasure as currently written doesn't reach **derived data**:
 search indexes, snapshots taken pre-shred, patch streams, OTel traces, and backups all still hold
 plaintext derived from the shredded events.
 
-**Proposed resolution** (needs sign-off): shredding is *structural, not total* — the envelope
+**Resolution (approved by George)**: shredding is *structural, not total* — the envelope
 skeleton (seq, type tag, entity ids) stays readable forever; only the **payload fields** are
 per-subject encrypted and shreddable. Folds then apply a typed *tombstone* deterministically, and
 the invariant is restated honestly: *genesis replay reproduces the post-erasure state* — which is
@@ -39,7 +39,7 @@ check ownership against `actor`. **Language design consequence**: `insert`-shape
 get first-writer semantics as the primitive, and the `requires owns(ref)` capability pattern is the
 documented default for mutating commands — so the secure form is the path of least resistance.
 
-### F3 — Events-forever default turns attacker traffic into permanent storage — `FIXED` (partially), `DECIDE` (quotas)
+### F3 — Events-forever default turns attacker traffic into permanent storage — `FIXED` + quotas `APPROVED` (on by default)
 
 With D3's `retain=forever`, anything that becomes an event is immortal. Two channels: (a) rejected
 garbage — closed by the rule, now explicit in [`03`](03-type-and-effect-system.md) §3.7, that **only
@@ -47,7 +47,7 @@ validated events are durably logged** (command envelopes are transient, kept bri
 idempotency only); (b) *validated* spam from a legitimate but abusive session — permanent by
 design. Remediation for (b): per-actor rate/volume quotas enforced at `validate` (a stdlib
 combinator, on by default with generous limits), and per-actor crypto-shredding as the abuse
-cleanup path. **Decide**: default quota posture (on-with-defaults vs opt-in).
+cleanup path. **Decided**: quotas are **on by default** with generous limits, overridable per command type.
 
 ### F4 — `beck fork --from prod` is a data-exfiltration channel — `DESIGNED`
 
@@ -67,7 +67,7 @@ elevated capability. CI fixtures use synthetic or redacted logs only, lint-enfor
 material) into an immutable log. Now `actor: ActorId` — a stable identity, with the rule stated:
 capabilities and tokens are never persisted ([`03`](03-type-and-effect-system.md) §3.7).
 
-### F6 — Poison events: a fold that panics is a deterministic crash loop — `DECIDE`
+### F6 — Poison events: a fold that panics is a deterministic crash loop — `APPROVED`
 
 Determinism cuts both ways: if a deployed `apply_event` panics on event N (overflow, missed case
 reaching via upcast, stdlib bug), every restart replays into the same crash — availability zero
@@ -76,8 +76,7 @@ folds* like `time`/`rand` already are: no `unwrap`-shaped stdlib in fold positio
 arithmetic, exhaustiveness already enforced; (b) containment — a panic that slips through (compiler
 bug, FFI) halts *that store only*, wedging its subscribers at last-good `seq` while the rest of the
 app serves; (c) recovery — the documented runbook is hotfix-the-fold + redeploy; replay heals state
-because determinism means the fix recomputes correctly. Needs sign-off because (a) constrains the
-stdlib surface available inside folds.
+because determinism means the fix recomputes correctly. Approved: (a)–(c) are the semantics; the constrained fold-position stdlib is accepted.
 
 ### F7 — `validate` returned at most one event; real commands need atomic batches — `FIXED`
 
@@ -135,7 +134,7 @@ The classic generated-policy bug: deny-all egress without kube-dns breaks everyt
 corrected; the platform layer adds infrastructural egress (DNS, telemetry) systematically
 ([`06`](06-kubernetes-and-packaging.md) §6.5).
 
-### F14 — The flagship demo defaults to a round trip per click — `DECIDE` (demo posture)
+### F14 — The flagship demo defaults to a round trip per click — `APPROVED` (demos run Mode B)
 
 Mode A is the right *default*; it is the wrong *first impression* on a 100 ms RTT — reviewers will
 click a todo and feel the network. The demo apps should mark their interactions `optimistic`
@@ -170,6 +169,6 @@ the gateway, metrics exported — folded into R5's mitigation set.
 Direct fixes: [`03`](03-type-and-effect-system.md) (ActorId envelope; validated-events-only
 logging; `list[Event]` atomic batches; id-freshness/ownership obligations),
 [`06`](06-kubernetes-and-packaging.md) (DNS egress), [`13`](13-testing.md) (DST prerequisite).
-Everything `DESIGNED` above is specified here and binds the implementation. **Three items need
-George**: F1 (structural-shredding semantics — the D3×D4 reconciliation), F3 (default quota
-posture), F6 (fold-totality restrictions), plus the one-liner F14 (demo posture).
+Everything `DESIGNED` above is specified here and binds the implementation. All four open
+items (F1, F3, F6, F14) were approved by George as proposed — recorded as
+[`10`](10-decisions.md) D14; nothing in this review remains unresolved.

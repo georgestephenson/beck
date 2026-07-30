@@ -1,8 +1,8 @@
 # 10 — Decision log
 
 George's answers to [`09`](09-risks-and-open-questions.md) §9.5, recorded with the reasoning spelled
-out. Decisions marked **DECIDED** are settled and the other documents assume them. One (D3) is
-explained here and awaits a one-word confirmation.
+out. Decisions marked **DECIDED** are settled and the other documents assume them. All decisions
+D1–D14 are settled.
 
 ---
 
@@ -336,6 +336,17 @@ Productivity leads: *"one file is a whole running system — no routes, no DTOs,
 Dockerfile, no YAML."* Security/least-privilege is the second slide and the enterprise/platform
 pitch: *"the compiler proves the API key can't reach the browser; infra policy is derived from the
 code's effects."* Not in tension — an ordering. The playground demo serves both in 60 seconds.
+
+## D14 — Review-pass resolutions — **DECIDED**
+
+The four open findings of [`14`](14-review-findings.md), approved as proposed: **F1** structural
+shredding — envelope skeletons stay readable, payloads are shreddable, folds apply typed tombstones,
+and the D3 invariant is restated as *genesis replay reproduces the post-erasure state*, with erasure
+a first-class cascading operation (read models, indexes, snapshots, backups). **F3** abuse quotas at
+`validate` are on by default with generous limits. **F6** fold totality: the `partial` effect is
+banned in folds (checked arithmetic, no unwrap-shaped stdlib in fold position); an escaped panic
+halts only its store; recovery is hotfix-and-replay. **F14** flagship demos mark interactions
+`optimistic` (Mode B) so first contact shows latency compensation, not round trips.
 
 ## Still open (minor, non-blocking)
 

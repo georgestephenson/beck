@@ -44,7 +44,9 @@ the transcript was available; checking it against the original changed three loa
 | 11 | [Language tour](11-language-tour.md) | What Beck looks like, construct by construct — types, traits, macros, queries, UI, services, in-language tests |
 | 12 | [Standards and conformance](12-standards-and-conformance.md) | The rulesets Beck conforms to, layer by layer — and the test-linked spec discipline that makes conformance real |
 | 13 | [Testing strategy](13-testing.md) | Every applicable kind of test and why — built around the free oracles Beck's semantics manufacture (DST, differentials, TLA+, Jepsen) |
-| 14 | [Review findings](14-review-findings.md) | The final adversarial pass: ranked security/design findings, what was fixed, what awaits George (F1, F3, F6, F14) |
+| 14 | [Review findings](14-review-findings.md) | The adversarial review: ranked security/design findings — all resolved (D14) |
+| 15 | [Scale and distribution](15-scale-and-distribution.md) | The DDIA checklist against Beck's semantics; the scaling ladder (partitioned logs, typed sharding), sagas, and why Beck needs a fabric, not a Redis |
+| 16 | [Packages and ecosystem](16-packages-and-ecosystem.md) | The Rails/npm lessons; Beck's own package system — feature packages, effect-transparent dependencies, no install hooks |
 
 ## The one-paragraph version
 

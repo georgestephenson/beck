@@ -74,7 +74,8 @@ comfortably clears small-to-mid SaaS: order 10⁴ events/s); the language reserv
 per-entity ordering keys on `ingress`, logical timestamps in envelopes — so sharding is an
 implementation upgrade, not a semantics break; collaborative-text is out of scope for core v1,
 offered later as a CRDT-valued model type (`Text` as an automerge-backed value) rather than as
-folklore. Decision needed: §9.5 Q2.
+folklore. **The full scale-out design — the scaling ladder, typed sharding, sagas, geo-partitions,
+and the DDIA checklist — is now specified in [`15-scale-and-distribution.md`](15-scale-and-distribution.md).**
 
 ### R8 — Licence/governance shift in a load-bearing dependency
 

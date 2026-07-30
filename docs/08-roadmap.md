@@ -107,8 +107,13 @@ team a question. Track this literally as the acceptance test.
 - Beck operator: the deploy-rides-the-stream choreography — quiesce, drain, snapshot, `migrate`/
   `upcast`, resume (§6.4); canaries via Gateway API + Argo Rollouts; wire-compat gate; `beck
   status` with source provenance.
-- Replay tooling as product: `beck replay`, `beck fork --from prod --at <time>`, log-backed
-  property tests; GDPR crypto-shredding worked end-to-end (log, snapshots, backups).
+- Replay tooling as product: `beck replay`, `beck fork --from prod --at <time>` (privileged,
+  audited, default-redacted — F4), log-backed property tests; structural shredding worked
+  end-to-end per D14 (log, snapshots, read models, backups).
+- Package system UX ([`16`](16-packages-and-ecosystem.md)): `beck add`/`publish`/`why` with the
+  effect-diff prompt, namespaces, registry index + transparency log, generated docs site.
+- `process` (sagas) and non-durable folds hardened; internal fan-out fabric (NATS) when
+  multi-node demands it ([`15`](15-scale-and-distribution.md)).
 - Effect-derived NetworkPolicy/RBAC/DB grants (§6.5) — the platform-team sales pitch.
 - Crossplane emitter for managed Postgres/buckets/DNS; OpenTofu escape hatch; `import infra`.
 - OpenTelemetry cross-tier tracing on by default; `beck tune` right-sizing.
