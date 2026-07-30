@@ -3,9 +3,9 @@
 Expands [`04`](04-compiler-architecture.md) §4.8 into the full plan: every kind of test that applies
 here, and *why it applies to this project specifically*. The organising insight first.
 
-## 13.1 The principle: Tier's semantics manufacture test oracles
+## 13.1 The principle: Beck's semantics manufacture test oracles
 
-The hardest problem in testing is knowing the right answer. Tier's design keeps handing us **free
+The hardest problem in testing is knowing the right answer. Beck's design keeps handing us **free
 oracles** — pairs of independent paths that must agree — and the strategy is built around them:
 
 | Oracle pair | Must agree on | Tests the premise that… |
@@ -28,7 +28,7 @@ is marketing** — every spec paragraph, security guarantee, and performance num
 | Kind | What & why |
 |---|---|
 | **Unit tests** | Per pass (lexer, layout, resolver, each typing rule). The baseline. |
-| **Golden/snapshot** (`insta`) | Parse trees, macro expansions, diagnostics *renderings*, `.tieri` signatures, generated manifests. Why: these are human-facing contracts; regressions must be seen in review, not discovered by users. Every diagnostic code has a committed rendering ([`04`](04-compiler-architecture.md) §4.5). |
+| **Golden/snapshot** (`insta`) | Parse trees, macro expansions, diagnostics *renderings*, `.becki` signatures, generated manifests. Why: these are human-facing contracts; regressions must be seen in review, not discovered by users. Every diagnostic code has a committed rendering ([`04`](04-compiler-architecture.md) §4.5). |
 | **Round-trip properties** (`proptest`) | `parse(print(ast)) == ast` for both surfaces; Python↔S-expression fidelity. Why: the dual-surface promise ([`02`](02-syntax.md)) is exactly a round-trip law. |
 | **Grammar-aware fuzzing** (`cargo-fuzz`, continuous) | Parser, layout algorithm, macro expander, `sql"…"`/`html"…"` literal parsers. Why: these consume adversarial input (any text file); crashes and hangs here are CVE-shaped. |
 | **Hygiene suite** | Programs where macro capture *must* fail to compile. Why: hygiene bugs are silent miscompilation of user intent. |
@@ -43,18 +43,18 @@ is marketing** — every spec paragraph, security guarantee, and performance num
 | **Model checking** (`Kani`) | The solver's security invariants as proofs over bounded models: no `secret[T]` flow reaches a client partition; `ingress`/`durable` never placed client-side. Why: these are the claims we market; bounded proof beats sampled testing. |
 | **Adversarial security corpus** | Generated programs that *try* to leak (`secret` through closures, through row projections, through macro expansion, through `Sendable` derivation) — must fail to compile, asserted per CWE claim ([`12`](12-standards-and-conformance.md) §12.7). |
 | **The split differential** | The flagship suite (§13.1 row 1): a corpus of programs run whole vs split, driving identical command scripts, asserting identical event logs, states, and rendered pages. Grows with every bug ever found. |
-| **Wire-compat matrix** | Every release built against the previous N releases' `.tieri` signatures: old client ↔ new server and the reverse, asserting the §4.3 compatibility rules. Why: rolling deploys are the norm, and "the deploy broke every open tab" is the adoption-killing failure. |
+| **Wire-compat matrix** | Every release built against the previous N releases' `.becki` signatures: old client ↔ new server and the reverse, asserting the §4.3 compatibility rules. Why: rolling deploys are the norm, and "the deploy broke every open tab" is the adoption-killing failure. |
 
 ## 13.4 The runtime as a distributed system
 
-This is where most frameworks under-test and where Tier's determinism pays out hardest:
+This is where most frameworks under-test and where Beck's determinism pays out hardest:
 
 - **Deterministic Simulation Testing (DST)** — the FoundationDB discipline, and the crown jewel
   here: because everything downstream of ingress is a deterministic fold, the *entire backend* runs
   inside a simulated scheduler with simulated time, network, and disk. The simulator explores
   interleavings, injects faults (dropped/duplicated/reordered messages, partitions, disk-full,
   process crash at arbitrary points), and — the killer feature — **any failure replays exactly from
-  a seed**. Heisenbugs stop existing as a category. Tier's semantics were practically designed for
+  a seed**. Heisenbugs stop existing as a category. Beck's semantics were practically designed for
   DST; not building it would be negligent.
 - **Crash-recovery tests**: `kill -9` mid-fold, mid-snapshot, mid-migration, mid-patch-flush;
   restart; assert state equals the log's truth and no patch was lost or duplicated
@@ -89,13 +89,13 @@ This is where most frameworks under-test and where Tier's determinism pays out h
 ## 13.6 Product-level
 
 - **End-to-end**: the example apps driven by Playwright (Chromium pre-installed here) through real
-  browsers against `tier up` clusters — including reconnect-after-deploy and offline/reconnect
+  browsers against `beck up` clusters — including reconnect-after-deploy and offline/reconnect
   (Mode B) scripts.
 - **Accessibility**: axe-core against every example app page state, *plus* the compile-time WCAG
   checks' own negative test corpus ([`12`](12-standards-and-conformance.md) §12.4).
 - **Visual regression**: patch-protocol changes can subtly break rendering; screenshot-diff the
   example apps per release.
-- **Upgrade tests**: real `tier deploy` from release N-1 to N with live traffic and open
+- **Upgrade tests**: real `beck deploy` from release N-1 to N with live traffic and open
   websockets, on the k3d matrix (Kubernetes N-2 policy, multiple Postgres majors).
 - **Docs-as-tests**: every code block in the book and tutorials is extracted and compiled/run in CI
   (Rust's `doctest` discipline). Why: stale docs are the "week two" killer ([`09`](09-risks-and-open-questions.md) §9.3).
@@ -130,6 +130,6 @@ The same machinery, surfaced ([`11`](11-language-tour.md) §11.10): `test`/`prop
 shrinking; `assert place(...)` and secret-flow assertions; **fold law checks** auto-generated for
 every `durable` store (replay idempotence, migration round-trips, upcast totality);
 `fork(log=...)` fixtures — production incidents as reproducible test cases; and a per-app DST mode
-(`tier test --simulate`) that runs the user's own app under fault injection. Nobody else can hand
+(`beck test --simulate`) that runs the user's own app under fault injection. Nobody else can hand
 application developers deterministic-simulation testing of their whole stack as a CLI flag; it
 falls out of our semantics.

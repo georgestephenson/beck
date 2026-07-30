@@ -1,5 +1,9 @@
 # 00 — The original idea (source conversation)
 
+> **Naming note**: the sketch below coins the working name `tier`; the language was later renamed
+> **Beck** ([`10-decisions.md`](10-decisions.md) D10). This document keeps the original text
+> verbatim as history.
+
 This is the seed conversation for the project, provided by George (the ending was supplied
 separately after the shared copy cut off). Prose is condensed; **all code is verbatim**. Everything
 else in `docs/` derives from, and defers to, this document.

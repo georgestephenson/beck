@@ -27,7 +27,7 @@ Licences below were correct at time of writing (July 2026) — verify at adoptio
 | Parser | **hand-written** RD + Pratt | — | Error messages and recovery are the top UX property of a new language, and generated parsers are worst at exactly that (§2.8) | `chumsky`/`nom`/LALRPOP/tree-sitter-as-compiler-parser |
 | Editor grammar | **tree-sitter** | MIT | De facto standard for editor highlighting/structure; error-tolerant and fast | TextMate grammars (unstructured) |
 | Release codegen | **LLVM** via `inkwell` | Apache-2.0 with LLVM exception | Best peak code quality available in open source; Cranelift measured ~14% slower, and Perry's 2026 Cranelift→LLVM migration turned a deficit into 1.7×–24.6× wins over Node.js | GCC (GPL + no usable library API); TPDE (promising fast back-end research, too new) |
-| Dev codegen / JIT | **Cranelift** | Apache-2.0 with LLVM exception | ~40% faster whole-compile and ~10× faster codegen step than LLVM; makes `tier dev` hot reload feel instant | LLVM `-O0` (still far slower); interpreter only (too slow for realistic dev) |
+| Dev codegen / JIT | **Cranelift** | Apache-2.0 with LLVM exception | ~40% faster whole-compile and ~10× faster codegen step than LLVM; makes `beck dev` hot reload feel instant | LLVM `-O0` (still far slower); interpreter only (too slow for realistic dev) |
 | WASM optimisation | **Binaryen** (`wasm-opt`) | Apache-2.0 | Standard, and `-Oz` is decisive for the client size budget (§5.1) | LLVM's WASM backend alone (leaves size on the table) |
 | Diagnostics rendering | `ariadne` or `codespan-reporting` | MIT/Apache-2.0 | rustc-quality rendering without writing it | own renderer (do this only if neither fits) |
 
@@ -59,7 +59,7 @@ component model at the centre of our language. Read their source; don't link the
 | Tracing | **OpenTelemetry** Rust SDK | Apache-2.0 | The only vendor-neutral standard; automatic cross-tier traces are a headline feature (§5.2) | vendor SDKs (lock-in) |
 | Metrics | **Prometheus** exposition | Apache-2.0 | Universal | statsd (legacy) |
 | Identity provider (`identity = managed()`) | **Keycloak** (default) / **Ory Kratos** (lighter alternative) | Apache-2.0 (both; Keycloak is CNCF) | Never roll our own auth: passkeys, MFA, social login, admin UI inherited from a hardened IdP, provisioned by the InfraGraph ([`10`](10-decisions.md) D6) | Authentik/SuperTokens (open-core ambiguity); Zitadel (verify current licence); hand-rolled auth (never) |
-| OIDC relying party | **`openidconnect`** crate | MIT/Apache-2.0 | Audited, standard code-flow implementation; Tier's runtime does only token verification and typed claims→`Session`-capability mapping | hand-rolled OIDC (a CVE farm) |
+| OIDC relying party | **`openidconnect`** crate | MIT/Apache-2.0 | Audited, standard code-flow implementation; Beck's runtime does only token verification and typed claims→`Session`-capability mapping | hand-rolled OIDC (a CVE farm) |
 
 Note the deliberate hedge on server-side WASM: because the runtimes trade places depending on workload
 shape, target the **component model / WASI-P2 interface** rather than any runtime's API, and let the
@@ -72,10 +72,10 @@ folds, incrementally-maintained views. These are the substrates:
 
 | Need | Choice | Licence | Why | Rejected |
 |---|---|---|---|---|
-| Durable substrate v1 (log, snapshots, read models) | **PostgreSQL** | PostgreSQL License | Boring, transactional, operable everywhere; PITR for free; read models as ordinary tables makes Tier legible to DBAs and BI. "Your data is in Postgres; Tier is how it got there" | MySQL/MariaDB (weaker SQL surface); CockroachDB (BUSL — excluded); bespoke log-structured store (a storage company's worth of work) |
+| Durable substrate v1 (log, snapshots, read models) | **PostgreSQL** | PostgreSQL License | Boring, transactional, operable everywhere; PITR for free; read models as ordinary tables makes Beck legible to DBAs and BI. "Your data is in Postgres; Beck is how it got there" | MySQL/MariaDB (weaker SQL surface); CockroachDB (BUSL — excluded); bespoke log-structured store (a storage company's worth of work) |
 | Incremental view maintenance | **timely + differential dataflow** (the Naiad lineage) | MIT | "Keeping it incremental is the compiler's job" made real: views compile to incremental plans with arrangement *sharing* — the mechanism behind per-session fanout at scale (§5.3). **DBSP/Feldera** is the maintained modern embodiment of the same theory — evaluate at adoption (verify its current licence) | **Materialize** (validates the approach commercially; BUSL — excluded); hand-rolled IVM (subtly wrong forever); recompute-always (correct — kept as the CI oracle and the v0.1 semantics, not the endgame) |
 | Dedicated log transport (post-1.0, if fan-out demands) | **NATS JetStream** | Apache-2.0 | Single-binary, small, at-least-once persistent streams | Kafka (Apache-2.0 but JVM-heavy for our need); Redpanda (BSL — excluded) |
-| Embedded dev log (rung 0) | **redb** | MIT/Apache-2.0 | Pure-Rust embedded ordered KV; `tier run` needs no server and the log file still replays | SQLite (fine fallback; C dependency); sled (unmaintained) |
+| Embedded dev log (rung 0) | **redb** | MIT/Apache-2.0 | Pure-Rust embedded ordered KV; `beck run` needs no server and the log file still replays | SQLite (fine fallback; C dependency); sled (unmaintained) |
 | Analytical query engine | **Apache DataFusion** | Apache-2.0 | *Designed to be embedded and extended* — replaceable table providers, optimiser rules, UDFs: the right shape for our symbolic plans; fastest single-node Parquet engine in ClickBench (ahead of DuckDB, chDB, ClickHouse). Runs analytics over Parquet-partitioned log archives | **DuckDB** (MIT; faster on its own storage format and the better pick if you only need to *query*; but a complete system designed to be used as-is — wrong shape to embed a compiler into). Polars (DataFrame-shaped, not plan-shaped) |
 | Columnar interchange | **Apache Arrow** | Apache-2.0 | Zero-copy across the wire and into DataFusion; the industry format (§4.4) | bespoke format (no) |
 | Postgres client | **tokio-postgres** | MIT/Apache-2.0 | Lowest-overhead async Postgres in Rust; we generate all SQL, so no ORM and no macro-checked SQL needed | `sqlx`, Diesel (we *are* the ORM) |
@@ -87,7 +87,7 @@ folds, incrementally-maintained views. These are the substrates:
 | Need | Choice | Licence | Why | Rejected |
 |---|---|---|---|---|
 | Image build | **apko** (+ **melange** for native deps) | Apache-2.0 | Declarative, no shell execution, therefore **bit-for-bit reproducible** — same config + package versions ⇒ identical digest on any machine; distroless Wolfi base; SBOM covering complete contents; daemonless and unprivileged. Ideal for our static-binary artefacts (§6.2) | **BuildKit** (Apache-2.0; best general builder — keep as `builder = buildkit` escape hatch); Docker build (daemon, root, non-reproducible); Kaniko/Buildah (Dockerfile-shaped, which we don't need); Nix (best-in-class reproducibility, but its learning curve becomes ours); ko/Jib (language-specific) |
-| OCI read/write/push | `oci-spec` + `oci-client` crates | Apache-2.0/MIT | Removes the last external binary from `tier build` | shelling out permanently |
+| OCI read/write/push | `oci-spec` + `oci-client` crates | Apache-2.0/MIT | Removes the last external binary from `beck build` | shelling out permanently |
 | Signing / provenance | **Sigstore** (`cosign`, `sigstore-rs`) | Apache-2.0 | Keyless signing is the emerging default; pairs with reproducible builds for a real supply-chain story | GPG (key management burden); notation (smaller ecosystem) |
 | Package distribution | **ORAS** / OCI artefacts | Apache-2.0 | Reuse registries users already run; air-gap support on day one; no package host to operate (§6.7) | bespoke registry (a company's worth of work) |
 
@@ -106,7 +106,7 @@ folds, incrementally-maintained views. These are the substrates:
 | Secrets | **External Secrets Operator** | Apache-2.0 | Broad backend support; `secret[T]` types make the wiring safe (§3.5) | Sealed Secrets (weaker rotation story) |
 | Local cluster | **k3s** / **k3d** | Apache-2.0 | Single binary, fast, small — the right rung-3 dev cluster (§6.6) | kind (fine; support both); minikube (heavier) |
 | Network policy / mTLS at scale | **Cilium** | Apache-2.0 | eBPF dataplane, best-in-class policy performance; identity-based policy pairs naturally with effect-derived rules (§6.5) | Istio ambient (Apache-2.0, capable, heavier); Linkerd (Rust dataplane, appealing, but verify current stable-release distribution terms before depending on it) |
-| GitOps interop | **Argo CD** / **Flux** | Apache-2.0 | Emit manifests they can consume; don't compete (§6.3) | requiring `tier deploy` (loses half the market) |
+| GitOps interop | **Argo CD** / **Flux** | Apache-2.0 | Emit manifests they can consume; don't compete (§6.3) | requiring `beck deploy` (loses half the market) |
 
 ## 7.7 Development, testing and release
 
@@ -121,7 +121,7 @@ folds, incrementally-maintained views. These are the substrates:
 | Docs site | `mdBook` | MPL-2.0 |
 | Playground | our WASM build of the compiler | — |
 
-The playground deserves a line of its own: the compiler is in Rust, so `tier` compiles to WASM and
+The playground deserves a line of its own: the compiler is in Rust, so `beck` compiles to WASM and
 runs **entirely in the browser**. A zero-install playground that type-checks, shows placement, and
 displays the generated SQL and Kubernetes objects side by side is the single most persuasive artefact
 this project can produce for adoption. Budget it into Phase 3, not "someday".
@@ -183,7 +183,7 @@ version together on a single release train — one version number, tested as one
 Externally, supported matrices are explicit and CI-enforced: Kubernetes N-2, the two newest
 Postgres majors, evergreen browsers + last-2 Safari.
 
-**Air-gap**: `tier vendor` produces a complete offline dependency set (crates, base packages,
+**Air-gap**: `beck vendor` produces a complete offline dependency set (crates, base packages,
 images) — falls out of the pinning discipline, and regulated adopters will ask on day one.
 
 ## 7.10 Sources

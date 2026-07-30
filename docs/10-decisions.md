@@ -47,7 +47,7 @@ The original fork, kept for the record:
 
 ### The question, in plain terms
 
-Tier's database is two things: a **ledger** (every event that ever happened, in order) and periodic
+Beck's database is two things: a **ledger** (every event that ever happened, in order) and periodic
 **saved games** (snapshots — the folded-up state at some moment). Normally the running state *is*
 the latest snapshot plus the events since. The question is what happens to the ledger's old pages
 when your data changes shape — say `Todo` gains a `due_date` field. Events recorded last year don't
@@ -101,7 +101,7 @@ per-component and reversible.
 
 The server runs `view`, compares the new page to the previous one, and sends the browser a small
 list of change instructions — "replace the text in node 14", "insert a row after node 7". The
-browser runs a tiny fixed program (~10 KB, generated once, same for every Tier app) that applies
+browser runs a tiny fixed program (~10 KB, generated once, same for every Beck app) that applies
 patches and reports clicks/keystrokes back as commands.
 
 - **Feels like**: a normal website that updates live. First paint is instant (it's server-rendered
@@ -133,29 +133,29 @@ server streams *data* changes instead of DOM changes; the browser renders locall
 Mode A is the default. A component is promoted to Mode B when it declares `optimistic`, `offline`,
 or a latency budget the round trip can't meet — or when the placement solver's cost model says the
 crossing is cheaper as data than as patches ([`03`](03-type-and-effect-system.md) §3.4). One page
-mixes modes freely; `tier explain render <component>` prints which mode and why. The original
+mixes modes freely; `beck explain render <component>` prints which mode and why. The original
 sketch contains both readings of where `view` runs — this design makes that ambiguity a *feature*:
 rendering location is just another placement decision on pure code.
 
 ## D6 — Identity: buy, not build — **DECIDED**
 
-Tier never stores passwords and never invents an auth protocol. The language surface is one block
+Beck never stores passwords and never invents an auth protocol. The language surface is one block
 with two implementations:
 
 ```python
-identity = managed()                                  # Tier provisions a bundled OSS IdP
-identity = external(issuer="https://login.acme.com")  # Tier is a relying party to yours
+identity = managed()                                  # Beck provisions a bundled OSS IdP
+identity = external(issuer="https://login.acme.com")  # Beck is a relying party to yours
 ```
 
 - **`managed()`**: the InfraGraph provisions **Keycloak** (Apache-2.0, CNCF) — or the lighter
   **Ory Kratos** (Apache-2.0) as a configurable alternative — wired via OIDC automatically.
   Passkeys, MFA, social login are the IdP's features, inherited, not ours.
 - **`external(...)`**: standard OIDC relying party against Okta/Entra/Auth0/Google/anything.
-- Either way, Tier's runtime does exactly the part that must be language-integrated: the OIDC code
+- Either way, Beck's runtime does exactly the part that must be language-integrated: the OIDC code
   flow (the audited `openidconnect` Rust crate), session-token verification at the websocket
   ingress, and the typed mapping **claims → `Session` capabilities** — so `requires auth(c)` and
   per-session signals ([`03`](03-type-and-effect-system.md) §3.8) hang off verified claims.
-- Rung 0 (`tier run`) uses a dev-mode identity: auto-login as declared test users, zero setup.
+- Rung 0 (`beck run`) uses a dev-mode identity: auto-login as declared test users, zero setup.
 - **Presence** (who is connected now) ships v1 as a first-class non-durable `Signal` — it is both
   the natural demo of per-session fanout and its permanent stress test.
 
@@ -165,7 +165,7 @@ Three rungs of "works without the network", in plain terms:
 
 1. **Online-only**: no connection, no app. (Where LiveView-style systems stop. Mode A alone is
    this.)
-2. **Offline-tolerant** — *what Tier v1 ships*: a Mode B component holds a local copy of its state
+2. **Offline-tolerant** — *what Beck v1 ships*: a Mode B component holds a local copy of its state
    and the pure fold. Offline, you can read everything you had and keep acting; your commands queue.
    On reconnect they flow through the server's `validate` in order, and your optimistic local state
    is reconciled against the authoritative answers. **The server is still the single referee** —
@@ -178,7 +178,7 @@ Three rungs of "works without the network", in plain terms:
    different philosophy: there is no single referee moment, so `validate`-style invariants
    ("balance never negative", "one booking per slot") become **unenforceable at merge time** — no
    type system absolves you, as the original conversation put it. Adopting it wholesale would
-   dissolve Tier's central construct, the single merge point.
+   dissolve Beck's central construct, the single merge point.
 
 **The plan**: rung 2 in v1 (falls out of Mode B + determinism). Then **CRDT-valued types** in v1.x:
 a field declared `notes: Text` (automerge/loro-backed, MIT) merges concurrent edits *within the
@@ -213,14 +213,14 @@ each sell 14A; each device's local check passed honestly (locally, the seat *was
 time the replicas meet, both users have already been told they succeeded. A CRDT merge will
 faithfully converge — to a state with two sales. No merge function can pick the rightful buyer,
 because "who was first?" refers to an order that never existed. The only exits are (a) a referee
-that *creates* the order before confirming — which is precisely Tier's merge point — or (b) accept
+that *creates* the order before confirming — which is precisely Beck's merge point — or (b) accept
 both and **compensate** (overbook and apologise — airlines do this deliberately; it is a business
-policy, expressible in Tier as a fold that detects oversell and emits a compensation workflow, but
+policy, expressible in Beck as a fold that detects oversell and emits a compensation workflow, but
 it must be *chosen*, never defaulted).
 
-**So the resolution: Tier's architecture already is the GitHub-shaped version of Git.**
+**So the resolution: Beck's architecture already is the GitHub-shaped version of Git.**
 
-| Git/GitHub | Tier |
+| Git/GitHub | Beck |
 |---|---|
 | `main`'s commit history | the event log |
 | Protected branch + required checks | the merge point: `validate` |
@@ -277,7 +277,7 @@ homoiconicity, macros, Electric's tier-splitting all live there, and Electric Cl
 proof our semantics are implementable. It is also proof of the ceiling: every guarantee above rests
 on programmer discipline there, and Meteor already taught us what convention-without-proof becomes
 at scale ([`01`](01-vision-and-premise.md) §1.6). The Python version of the answer is shorter: a
-"Tier SDK" for Python would be Meteor-in-Python — the magic without the proofs, plus a 50×
+"Beck SDK" for Python would be Meteor-in-Python — the magic without the proofs, plus a 50×
 performance ceiling.
 
 **What we do reuse — aggressively — is everything below the language**: Tokio, DataFusion,
@@ -305,14 +305,34 @@ George's pick, being Cumbrian. It is on inspection close to a perfect fit:
 - Searchable handle: **becklang** (golang precedent). Known namesakes (the musician, Kent Beck) are
   far from language-tooling search space; trademark/domain checks happen at go-public, not before.
 
-Adoption plan: the repo stays `tier` for now; the rename (CLI, `beck.toml`, `.beck` files, docs) is
-one deliberate commit when George says "thread it through", so history and the seed documents stay
-coherent until then.
+Adoption: **the rename is executed** — CLI (`beck run`), `beck.toml`, `.beck`/`.becki` files, and
+all documents now say Beck; George renames the repository. The seed transcript
+([`00`](00-original-idea.md)) keeps the historical name verbatim, with a note. "tier" survives only
+as the common noun it always was (execution tiers, the data tier) and in the academic term
+*tierless*.
+
+## D11 — The OS is substrate — **CONFIRMED (already in the design)**
+
+George's instinct, checked against the plan: yes, the design already treats the operating system as
+compiler output at the container level. A Beck image is a statically linked binary in a distroless
+base — no shell, no package manager, no distro to patch; the kernel belongs to the platform
+([`06`](06-kubernetes-and-packaging.md) §6.2). The deeper rungs — a microVM/unikernel `Platform`
+(Firecracker-class) and the zero-OS WASI target — are post-1.0 options the current artefact shape
+already permits without change.
+
+## D12 — Mobile as a future surface — **CONFIRMED extensible; explicitly not v1**
+
+The question was extensibility, not scope. Answer: yes — the typed semantic UI tree (not HTML), the
+LLVM-compiled pure core, and Mode B's offline/optimism model mean native Android/iOS are "another
+renderer behind the `Surface` trait", mapping the same `view` onto Jetpack Compose and SwiftUI
+([`05`](05-tier-lowering.md) §5.5). The one genuinely new problem is app-store deploys versus
+"deploys ride the stream" (old clients live for months → wire-compat and upcasters become
+critical). v1 pays only two disciplines to keep this cheap: no HTML-isms in the `ui:` core
+vocabulary, and the renderer behind a trait.
 
 ## Still open (minor, non-blocking)
 
 - Security-headline vs productivity-headline positioning ([`09`](09-risks-and-open-questions.md)
   §9.5).
-- Executing the Beck rename across docs/CLI (D10 — on George's word), plus the routine
-  trademark/domain checks at go-public.
+- Routine Beck trademark/domain checks at go-public (rename itself is done).
 - The tracked technical opens in [`09`](09-risks-and-open-questions.md) §9.6.

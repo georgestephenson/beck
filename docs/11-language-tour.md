@@ -1,4 +1,4 @@
-# 11 — Language tour: what Tier looks like
+# 11 — Language tour: what Beck looks like
 
 The canonical full-app example is in [`01`](01-vision-and-premise.md) §1.3 (the todo sketch,
 translated). This tour shows the rest of the language, construct by construct, as currently
@@ -6,15 +6,15 @@ designed. Everything here follows the rules fixed in [`02-syntax.md`](02-syntax.
 AST, Python-shaped default surface, S-expression second surface, everything an expression.
 
 > **A note on the code fences**: blocks are tagged `python` and `clojure` purely so Markdown
-> renderers apply passable syntax highlighting — none of this is Python or Clojure. Tier is its own
+> renderers apply passable syntax highlighting — none of this is Python or Clojure. Beck is its own
 > language with its own compiler; *why* it must be, rather than a framework on either host, is
-> argued in [`10-decisions.md`](10-decisions.md) D9. (A `tree-sitter-tier` grammar replaces this
+> argued in [`10-decisions.md`](10-decisions.md) D9. (A `tree-sitter-beck` grammar replaces this
 > hack the moment it exists.)
 
 ## 11.1 Modules, values, types
 
 ```python
-# geometry.tier — a module is a file; a package is a directory with tier.toml
+# geometry.beck — a module is a file; a package is a directory with beck.toml
 import std.math (sqrt, tau)
 import shapes.svg as svg                # no wildcard imports, ever
 
@@ -131,7 +131,7 @@ retry(times=3, backoff=exponential):     # any call taking a block: the block ru
     charge(card, total)
 ```
 
-Hygienic by default, capability-restricted at compile time, expansion cached. `tier fmt --sexpr`
+Hygienic by default, capability-restricted at compile time, expansion cached. `beck fmt --sexpr`
 prints any of this as the canonical S-expressions when you want to see the AST you're manipulating.
 
 ## 11.8 Services, deployment, identity

@@ -42,7 +42,7 @@ hand-writing and hand-synchronising:
 | CI pipeline | more YAML | works on my machine |
 
 Eight representations of one idea, six languages, every boundary a place where types are re-declared
-by hand and disagree. The industry's response is better glue (codegen, GraphQL, tRPC, CDKs). Tier's
+by hand and disagree. The industry's response is better glue (codegen, GraphQL, tRPC, CDKs). Beck's
 response is to **delete the boundaries and make them compiler output**.
 
 ## 1.3 What "one language" means precisely — and the canonical example
@@ -73,7 +73,7 @@ construct into the surface syntax that [`02-syntax.md`](02-syntax.md) motivates.
 dropped; only notation changes.
 
 ```python
-# todo.tier — one file: client, server, database, wire, deploy
+# todo.beck — one file: client, server, database, wire, deploy
 
 type Id = Uuid
 model Todo:
@@ -164,7 +164,7 @@ no SQL, no schema migration files, no fetch calls, no Dockerfile. What the compi
 - `durable` ⇒ a persisted log + snapshots ⇒ a volume and a snapshot schedule in the deployment;
   `merge_clients()` ⇒ a websocket ingress route; the whole thing ⇒ OCI image + Kubernetes object
   graph ([`06`](06-kubernetes-and-packaging.md)).
-- If `Todo` changed shape since the last deploy, `tier deploy` **refuses to ship** until a
+- If `Todo` changed shape since the last deploy, `beck deploy` **refuses to ship** until a
   `migrate: OldState -> NewState` exists; the deploy rides the stream — old fold drains, new fold
   resumes from snapshot + log ([`06`](06-kubernetes-and-packaging.md) §6.4).
 
@@ -202,17 +202,17 @@ model makes it a function of the clock *signal* — legal, and visibly time-vary
 3. **Placement is typed.** Explicit `@on(...)` always available; purity means "unplaced — compiles
    anywhere"; what is security-relevant is *proved* (secrets cannot cross to the client)
    ([`03`](03-type-and-effect-system.md)).
-4. **Zero-config must actually be zero.** `tier run app.tier` starts a working app — one process,
+4. **Zero-config must actually be zero.** `beck run app.beck` starts a working app — one process,
    embedded log, no daemon, no cluster, no YAML. Kubernetes appears only when a `deployment` block
    names it ([`06`](06-kubernetes-and-packaging.md) §6.1).
-5. **No new state engine.** The event log is Tier's semantic core, but its *substrate* is boring,
+5. **No new state engine.** The event log is Beck's semantic core, but its *substrate* is boring,
    proven storage (Postgres, object stores); cluster desired-state lives in the Kubernetes API
    server, extended by Crossplane. We write neither a storage engine nor a Terraform.
 6. **Escape hatches at every layer, typed.** External relational stores, raw SQL, raw HTML, raw k8s
    patches, FFI — available, type-checked at the boundary, never required.
 7. **Interop or die.** A language that cannot call the Python and npm ecosystems is a research
    artefact ([`09`](09-risks-and-open-questions.md) §9.2).
-8. **Errors and explanations are the product.** `tier explain` answers "why did this land there /
+8. **Errors and explanations are the product.** `beck explain` answers "why did this land there /
    re-render / re-provision" in prose, with a trace ([`04`](04-compiler-architecture.md) §4.7).
 
 ## 1.5 Non-goals
@@ -232,7 +232,7 @@ model makes it a function of the clock *signal* — legal, and visibly time-vary
 The source conversation ([`00`](00-original-idea.md)) identified most of this map; consolidated with
 what each system teaches us:
 
-| System | Contribution | Lesson for Tier |
+| System | Contribution | Lesson for Beck |
 |---|---|---|
 | **Links / Ur/Web / ML5** | Typed tierless client+server+SQL; placement in the type system | The type-level placement machinery works; the audiences were too narrow. Syntax and ecosystem are adoption problems, not afterthoughts |
 | **Eliom (Ocsigen)** | Industrial multitier OCaml, separate compilation, module system | Signatures must carry placement/effects, or modularity dies ([`03`](03-type-and-effect-system.md) §3.6) |
@@ -250,12 +250,12 @@ what each system teaches us:
 | **Roc (platforms) / Koka** | Pure app handed to an effectful Rust host; Perceus refcounting | The compile-to-Rust-host pattern for our server runtime |
 | **Erlang/OTP / Gleam** | Deploys arrive in-band; `code_change` migrates state | Deploy-as-stream-event is proven at telecom scale |
 | **Obelisk (Haskell/reflex)** | One FRP codebase + Nix deploys, shipping | Closest single artefact to the whole idea; ergonomics kept it niche |
-| **Out of the Tar Pit** | Essential state + pure logic, everything else derived | The manifesto; Tier is an attempt to build it |
+| **Out of the Tar Pit** | Essential state + pure logic, everything else derived | The manifesto; Beck is an attempt to build it |
 
 Two recurring failure modes, now designed against: **(a)** poor modularity/separate compilation in
 tierless languages — countered by placement-and-effects in published module signatures
 ([`03`](03-type-and-effect-system.md) §3.6), non-negotiable from Phase 2; **(b)** magic that cannot
-be inspected (Meteor) — countered by `tier explain` shipped in v0.1
+be inspected (Meteor) — countered by `beck explain` shipped in v0.1
 ([`04`](04-compiler-architecture.md) §4.7).
 
 ## 1.7 What success looks like at 1.0
@@ -263,11 +263,11 @@ be inspected (Meteor) — countered by `tier explain` shipped in v0.1
 A developer who knows Python but has never touched Kubernetes can, in one afternoon:
 
 ```console
-$ tier new shop && cd shop
-$ tier run                    # working app on localhost:3000 — no container, no cluster
-$ tier deploy --to prod       # images built, cluster reconciled, TLS live, state migrated
-$ tier explain place validate # "server: consumes Session capability; feeds the event log"
-$ tier replay --at yesterday  # the whole backend, re-evaluated deterministically
+$ beck new shop && cd shop
+$ beck run                    # working app on localhost:3000 — no container, no cluster
+$ beck deploy --to prod       # images built, cluster reconciled, TLS live, state migrated
+$ beck explain place validate # "server: consumes Session capability; feeds the event log"
+$ beck replay --at yesterday  # the whole backend, re-evaluated deterministically
 ```
 
 …and a staff engineer can read [`03`](03-type-and-effect-system.md) and believe the guarantees; and

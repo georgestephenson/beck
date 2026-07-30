@@ -43,7 +43,7 @@ redesign the session/subscription representation before any compiler work builds
 The narrowest possible compiler that takes the todo sketch from source to a running k3d deployment.
 Deliberately bad at everything, complete end-to-end.
 
-- Lexer, layout, parser (Python surface + S-expression reader), `Node`, pretty-printer, `tier fmt`.
+- Lexer, layout, parser (Python surface + S-expression reader), `Node`, pretty-printer, `beck fmt`.
 - Macro expander with hygiene — **from the start** (§2.4); retrofitting hygiene is a rewrite.
 - Modules, name resolution, HM typechecker: ADTs, records, traits, `Stream`/`Signal`/`fold`/
   `durable` typed; no effect inference yet.
@@ -52,13 +52,13 @@ Deliberately bad at everything, complete end-to-end.
   recompute per event** — semantically final, later made incremental.
 - Backends: Cranelift (server), the thin patch client (plain JS, ~KBs — no WASM in Phase 1),
   Postgres/redb log engine, k8s object graph.
-- `tier run` (single process) and `tier up` (k3d).
+- `beck run` (single process) and `beck up` (k3d).
 - Salsa from commit one; `insta` diagnostic snapshots from week two; the **differential
   single-process vs split harness** and the **replay-determinism harness** (§4.8) from the moment
   each is expressible.
 
-**Exit**: `git clone && tier up` yields the working todo app in a local cluster, CI-asserted;
-differential and replay harnesses green; `tier replay` reproduces state from a recorded log.
+**Exit**: `git clone && beck up` yields the working todo app in a local cluster, CI-asserted;
+differential and replay harnesses green; `beck replay` reproduces state from a recorded log.
 
 ## Phase 2 — Effects and placement (3–4 months)
 
@@ -68,11 +68,11 @@ The moat.
 - Placement *verification* against effects (reject `@on(client)` + `durable`; reject impure folds —
   the determinism rule that makes replay exact, §3.7) — valuable on its own.
 - Placement *inference* + the cost solver, with determinism and stability guarantees (§3.4).
-- `tier explain place` / `flow` / `wire` (§4.7).
+- `beck explain place` / `flow` / `wire` (§4.7).
 - `secret[T]`, `Sendable`, capability effects; the §3.5 security property suite as executable tests.
-- `.tieri` published signatures and separate compilation (§3.6) — **do not slip this**; it is the
+- `.becki` published signatures and separate compilation (§3.6) — **do not slip this**; it is the
   historical failure mode (§1.6).
-- Boundary versioning + `tier check --wire-compat` (§4.3).
+- Boundary versioning + `beck check --wire-compat` (§4.3).
 
 **Exit**: on a corpus of 20+ programs, placement is inferred with no annotations for the common cases;
 every §3.5 property is a passing test; a 3-module project rebuilds incrementally without recompiling
@@ -97,21 +97,21 @@ dependencies whose signatures didn't change.
   signal ([`10`](10-decisions.md) D6).
 - LSP: completion, hover with *inferred placement*, go-to-def, rename, inline diagnostics.
 - **The in-browser playground** (§7.7) — highest-leverage adoption artefact.
-- `tier init ci`, apko image build in-process, cosign signing, SBOM.
+- `beck init ci`, apko image build in-process, cosign signing, SBOM.
 
 **Exit**: an outside developer builds a non-trivial app from documentation alone, without asking the
 team a question. Track this literally as the acceptance test.
 
 ## Phase 4 — Production readiness (4–5 months)
 
-- Tier operator: the deploy-rides-the-stream choreography — quiesce, drain, snapshot, `migrate`/
-  `upcast`, resume (§6.4); canaries via Gateway API + Argo Rollouts; wire-compat gate; `tier
+- Beck operator: the deploy-rides-the-stream choreography — quiesce, drain, snapshot, `migrate`/
+  `upcast`, resume (§6.4); canaries via Gateway API + Argo Rollouts; wire-compat gate; `beck
   status` with source provenance.
-- Replay tooling as product: `tier replay`, `tier fork --from prod --at <time>`, log-backed
+- Replay tooling as product: `beck replay`, `beck fork --from prod --at <time>`, log-backed
   property tests; GDPR crypto-shredding worked end-to-end (log, snapshots, backups).
 - Effect-derived NetworkPolicy/RBAC/DB grants (§6.5) — the platform-team sales pitch.
 - Crossplane emitter for managed Postgres/buckets/DNS; OpenTofu escape hatch; `import infra`.
-- OpenTelemetry cross-tier tracing on by default; `tier tune` right-sizing.
+- OpenTelemetry cross-tier tracing on by default; `beck tune` right-sizing.
 - Multi-arch images; air-gapped install; OCI package registry via ORAS (§6.7).
 - **FFI**: C ABI both directions; JS interop for the client tier; a Python bridge (§9.2) — the
   ecosystem-access question is existential, so give it real headcount.
@@ -170,5 +170,5 @@ Kubernetes objects + inferred placement* on the right is the demo that explains 
 5. **`cargo-deny` licence gate** from the first commit, given §7's open-source constraint.
 6. **Write the tutorial as you build**, and treat any sentence that requires an apology ("for now you
    have to…") as a bug report against the design.
-7. **Dogfood.** Build the playground, the docs site, and the project's own dashboards in Tier as soon
+7. **Dogfood.** Build the playground, the docs site, and the project's own dashboards in Beck as soon
    as it can express them.

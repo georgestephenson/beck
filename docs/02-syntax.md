@@ -30,14 +30,14 @@ its AST is a separate object universe rather than plain values. Those are the th
 ## 2.2 The design: two surfaces, one AST
 
 ```
-   surface/py.tier ──┐                                        ┌── printer.py    ──▶ .tier
+   surface/py.beck ──┐                                        ┌── printer.py    ──▶ .beck
                      ├──▶  Reader  ──▶  Node (canonical AST) ─┤
- surface/sx.tier  ───┘        ▲                               └── printer.sexpr ──▶ .sx
+ surface/sx.beck  ───┘        ▲                               └── printer.sexpr ──▶ .sx
                               │
                     both readers produce identical Node trees
 ```
 
-`Node` is an ordinary Tier value:
+`Node` is an ordinary Beck value:
 
 ```python
 model Node:
@@ -48,7 +48,7 @@ model Node:
 
 Everything else is derived. Consequences:
 
-- `tier fmt --sexpr orders.tier` emits the canonical Lisp form. `tier fmt --py orders.sx` emits the
+- `beck fmt --sexpr orders.beck` emits the canonical Lisp form. `beck fmt --py orders.sx` emits the
   Python form. Round-trip is lossless **modulo formatting** (comments and spans ride in `meta`).
 - The reference manual can present semantics in S-expressions — where they are unambiguous and where
   your idea reads best — while the tutorial presents Python. Same language, no dialect split.
@@ -58,8 +58,8 @@ Everything else is derived. Consequences:
 
 Recommendation: ship the Python surface as the default and the *only* one taught, and keep the
 S-expression surface documented and supported (it is invaluable for macro debugging, for the spec,
-and for generated code). Do not let two idiomatic communities form: `tier fmt` on commit normalises
-to `.tier`.
+and for generated code). Do not let two idiomatic communities form: `beck fmt` on commit normalises
+to `.beck`.
 
 ### Side-by-side: the running example
 
@@ -83,7 +83,7 @@ Canonical core, printed as S-expressions:
 ```
 
 Identical `Node` tree — and within notational distance of the original sketch's
-`(update-at todos id (fn [t] (set t :done (not t.done))))`. `tier fmt` moves between the surfaces
+`(update-at todos id (fn [t] (set t :done (not t.done))))`. `beck fmt` moves between the surfaces
 mechanically.
 
 ## 2.3 The one thing Python is missing: block-passing calls
@@ -123,7 +123,7 @@ Additional block forms, all sugar over the same rule:
 | `q"..."` typed literal | `q_sigil(raw="...", span=...)` expanded at compile time |
 
 `@decorator` deserves emphasis: Python programmers already know and love decorator syntax, but in
-Python a decorator only sees a *function object*. In Tier, `@server`, `@memo`, `@component`,
+Python a decorator only sees a *function object*. In Beck, `@server`, `@memo`, `@component`,
 `@derive(Eq, Json)` receive the **definition's AST** and may rewrite it arbitrarily. Familiar
 notation, Lisp semantics. This is the highest-leverage familiarity/power trade in the design.
 
@@ -137,7 +137,7 @@ macro unless(cond, do):
 
 macro derive(*traits, do):
     ty = do.as_model()
-    impls = [gen_impl(t, ty) for t in traits]     # ordinary Tier code, compile time
+    impls = [gen_impl(t, ty) for t in traits]     # ordinary Beck code, compile time
     return splice([do, *impls])
 ```
 
@@ -150,7 +150,7 @@ Design decisions:
   `Node.meta`; capture is possible but must be explicit (`inject(name)`), and is a lint warning
   outside `unsafe_macro`. Getting hygiene right at the `Node` level from day one is far cheaper than
   retrofitting it (see: Scheme's 20-year history here).
-- **Phase separation.** Macro bodies run at compile time in the compiler's own Tier interpreter, with
+- **Phase separation.** Macro bodies run at compile time in the compiler's own Beck interpreter, with
   a *capability-restricted* environment: pure computation and reads of the declared module graph, no
   ambient filesystem or network. Non-negotiable — build reproducibility and the "compile once, deploy
   many" model depend on it, and it closes a real supply-chain hole that Rust `build.rs` and npm
@@ -193,8 +193,8 @@ parameter-bound (injection is unrepresentable, as in Ur/Web).
 | Concurrency | Structured concurrency (`spawn` inside a nursery block), async is *not* in the surface type | `async`/`await` colouring is a disaster across tier boundaries; the compiler inserts awaits |
 | Pattern matching | `match` with exhaustiveness checking | Needed for `Result`, ADTs, and it is already in Python 3.10+ syntax |
 | Operators | Fixed precedence table; user-defined operators allowed but only at existing precedence levels | Full precedence declarations make tooling and error recovery miserable for marginal gain |
-| Modules | Explicit `import`, no wildcard, module = file, package = directory + `tier.toml` | Separate compilation depends on this (§1.6) |
-| Naming | `snake_case` values, `PascalCase` types, `SCREAMING` consts, enforced by `tier fmt` | One community, one style, zero bikeshedding |
+| Modules | Explicit `import`, no wildcard, module = file, package = directory + `beck.toml` | Separate compilation depends on this (§1.6) |
+| Naming | `snake_case` values, `PascalCase` types, `SCREAMING` consts, enforced by `beck fmt` | One community, one style, zero bikeshedding |
 
 ## 2.7 What you genuinely give up (be honest about this)
 
@@ -203,8 +203,8 @@ Four real losses versus a parenthesised language. All four are, in my judgement,
 1. **Arbitrary reader macros.** You cannot change tokenisation mid-file. Mitigation: typed literal
    macros (§2.5) cover ~95% of real uses (embedded SQL, HTML, regex, JSON, YAML, GraphQL).
 2. **Uniformity of "everything looks like a call."** Python surface has `for`, `if`, `.`, operators,
-   indentation — so a macro author must know that `a.b(c)` is `(. a b c)`. Mitigation: `tier fmt
-   --sexpr` and a `tier ast <expr>` command; macro authors learn the core notation, which is exactly
+   indentation — so a macro author must know that `a.b(c)` is `(. a b c)`. Mitigation: `beck fmt
+   --sexpr` and a `beck ast <expr>` command; macro authors learn the core notation, which is exactly
    the notation your original sketch used. **Your Lisp syntax becomes the macro-author's dialect** —
    that is a feature, not a compromise.
 3. **Some macro shapes get awkward.** Notably macros that want to introduce *new binding forms in
@@ -212,7 +212,7 @@ Four real losses versus a parenthesised language. All four are, in my judgement,
    `with pattern = expr:` covers the common cases; the rest are expressible, just less pretty.
 4. **A trailing-block ambiguity** when a call with a block is itself an argument to another call.
    Mitigation: a hard syntax rule — a block-form call may not appear as a non-final argument;
-   `tier fmt` inserts an explicit `do=quote(...)` when it must.
+   `beck fmt` inserts an explicit `do=quote(...)` when it must.
 
 Nothing here touches the *expressive* power (what programs are writable), only *notational*
 convenience. There is no expressible Lisp program shape that becomes inexpressible.
@@ -228,12 +228,12 @@ convenience. There is no expressible Lisp program shape that becomes inexpressib
   (rustc, Roslyn, TypeScript, Zig) is hand-written for this reason.
 - **A separate [`tree-sitter`](https://tree-sitter.github.io/) grammar** for editors — deliberately
   duplicated, since editor grammars want error tolerance and speed rather than exactness. Keep them
-  honest with a shared corpus test (`tests/corpus/*.tier` parsed by both, ASTs compared modulo
+  honest with a shared corpus test (`tests/corpus/*.beck` parsed by both, ASTs compared modulo
   fidelity).
 - **The S-expression reader is ~300 lines** and should exist from week one: it lets you write compiler
   tests against canonical ASTs without depending on the Python surface being finished, and it is how
   you'll dump intermediate state for the rest of the project's life.
-- **Printer**: a Wadler/Prettier-style pretty-printer over `Node`, shared by `tier fmt`, macro
+- **Printer**: a Wadler/Prettier-style pretty-printer over `Node`, shared by `beck fmt`, macro
   expansion dumps, and error messages. Build it early; every later phase uses it.
 
 ## 2.9 Concrete syntax risk to settle now

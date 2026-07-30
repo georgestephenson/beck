@@ -8,15 +8,15 @@ adoptable.
 
 ## 6.1 The condition: Kubernetes is a backend, never a semantics
 
-If `tier run hello.tier` requires a cluster, a registry, or a running container daemon, the language is
+If `beck run hello.beck` requires a cluster, a registry, or a running container daemon, the language is
 dead on arrival for the Python audience you're targeting. Kubernetes must be *one implementation* of the
 `Platform` trait (§5.4), selected by a single line in a `deployment` block.
 
 ```
-tier run          → single process, in-memory/embedded store, no container, no cluster
-tier run --docker → single OCI container, for parity checks
-tier up           → local k3d/kind cluster, real manifests, real operator
-tier deploy       → remote cluster
+beck run          → single process, in-memory/embedded store, no container, no cluster
+beck run --docker → single OCI container, for parity checks
+beck up           → local k3d/kind cluster, real manifests, real operator
+beck deploy       → remote cluster
 ```
 
 The language's *semantics* — placement, effects, boundaries — are identical in all four. Only the
@@ -28,7 +28,7 @@ Corollary: **no Kubernetes vocabulary in the language surface.** The user writes
 
 ## 6.2 Container images: daemonless, reproducible, distroless
 
-Tier's server artefacts are statically linked binaries (or WASM components). That is the easiest
+Beck's server artefacts are statically linked binaries (or WASM components). That is the easiest
 possible input to a container image, and it means we never need a Dockerfile, a build daemon, or a
 package manager at image-build time.
 
@@ -37,24 +37,36 @@ needed).** Rationale:
 
 - **Declarative, no shell.** An apko config is a package list plus metadata; because the build performs
   no arbitrary execution, images are **bit-for-bit reproducible** — the same config and package
-  versions yield the same image digest on any machine. That property is worth a great deal here: `tier
+  versions yield the same image digest on any machine. That property is worth a great deal here: `beck
   build` becomes a pure function from source to digest, which is what makes the deployment plan
   cacheable, auditable and trustworthy.
-- **Distroless by default** (Wolfi-based): no shell, no package manager, tiny attack surface. A Tier
+- **Distroless by default** (Wolfi-based): no shell, no package manager, tiny attack surface. A Beck
   service image should be ~10–20 MB, not ~900 MB.
 - **SBOM generated automatically**, covering the complete contents.
 - **No daemon, runs unprivileged** — works in CI and in a pod without Docker-in-Docker.
 
+**The OS is substrate too — already.** A Beck service image contains, in effect, no operating
+system: the compiler emits a statically linked binary (no libc dependency), and apko wraps it in a
+distroless Wolfi base — no shell, no package manager, no init system, just CA certificates and
+tzdata. There is no distro to choose, patch, or harden, because the userland *is* compiler output;
+the kernel is the platform's job (the Kubernetes node, or the local machine at rung 0). This is the
+container-shaped version of the MirageOS idea the seed conversation cited — app and OS compiled
+together — without unikernel exoticism. The remaining rung, a **microVM/unikernel `Platform`**
+(Firecracker-class isolation, boot-in-milliseconds), is a clean post-1.0 fit precisely because our
+artefact is already a single static binary with a declared effect surface; nothing in v1 needs to
+change to allow it. Likewise the WASI server target ([`05`](05-tier-lowering.md) §5.2) is the
+zero-OS limit of the same idea.
+
 Implementation: shell out to `apko` initially; move to writing the OCI layout directly from Rust
-(`oci-client`/`oci-spec` crates) once the format is settled, so `tier build` is one process with no
+(`oci-client`/`oci-spec` crates) once the format is settled, so `beck build` is one process with no
 external tools. Push with the registry API; **sign with Sigstore/cosign** and attach the SBOM and a
-provenance attestation. `tier deploy` then pins by digest, never by tag.
+provenance attestation. `beck deploy` then pins by digest, never by tag.
 
 **Rejected alternatives**: BuildKit (excellent, and the right answer *if* users need arbitrary build
 steps — keep it as `builder = buildkit` for escape-hatch cases, e.g. FFI to a C library needing a
 compile step); Docker/`docker build` (daemon, root, non-reproducible); Kaniko/Buildah (fine, but still
 Dockerfile-shaped, which we don't need); Nix (superb reproducibility — and the original sketch's
-`tier deploy` "emits a Nix closure" — but its learning curve would become *our* learning curve;
+`beck deploy` "emits a Nix closure" — but its learning curve would become *our* learning curve;
 apko's bit-reproducible builds plus digest-pinned, content-addressed OCI artefacts deliver the
 property the sketch wanted, referentially transparent deploys, with mainstream tooling. A
 `NixPlatform` emitter remains a reasonable community contribution).
@@ -84,7 +96,7 @@ From `service api` in §1.3, plus the effect information from §3, the compiler 
 | `Job` (pre-upgrade hook) | pending `migrate`/`upcast` plan ([`03`](03-type-and-effect-system.md) §3.9) |
 | `CronJob` | `cron` declarations |
 | Keycloak/Ory deployment, or external-issuer OIDC wiring | `identity = managed()` / `identity = external(issuer=...)` ([`10`](10-decisions.md) D6) |
-| `TierApplication` CR | the whole plan, for the operator to reconcile |
+| `BeckApplication` CR | the whole plan, for the operator to reconcile |
 
 Non-obvious defaults that should be *unavoidable*, because they are what separates "generated YAML" from
 "production-grade generated YAML": non-root + read-only root filesystem + dropped capabilities +
@@ -94,15 +106,15 @@ connection draining; probes wired to the generated readiness endpoints.
 
 **Resource requests** are a genuinely hard inference problem. Plan: v1 uses a per-language-construct
 heuristic plus explicit override; v1.x records actual usage via the operator and OpenTelemetry and
-proposes updated requests (`tier tune`), which is a right-sizing feature nothing in the ecosystem does
+proposes updated requests (`beck tune`), which is a right-sizing feature nothing in the ecosystem does
 from source knowledge.
 
 Rendering: build objects via **typed Rust structs** (`k8s-openapi`), apply with **server-side apply**
-and a field manager, so Tier owns only the fields it sets and coexists with other controllers. Emit the
-plain YAML too (`tier build --emit=manifests`) — teams with GitOps (Argo CD/Flux) must be able to commit
+and a field manager, so Beck owns only the fields it sets and coexists with other controllers. Emit the
+plain YAML too (`beck build --emit=manifests`) — teams with GitOps (Argo CD/Flux) must be able to commit
 it, and refusing them is refusing half the market.
 
-## 6.4 The Tier operator
+## 6.4 The Beck operator
 
 Written with **[kube-rs](https://kube.rs/)** — the Rust Kubernetes client + controller runtime + CRD
 derive macro, a CNCF Sandbox project, modelled on `client-go`/`controller-runtime`/`kubebuilder`.
@@ -112,7 +124,7 @@ consumption). Our operator is also *small*, which is the main thing.
 
 Responsibilities of the operator — deliberately limited to what needs a cluster-side control loop:
 
-1. **Reconcile `TierApplication`** → owned workloads/routes/policies (server-side apply, ownership
+1. **Reconcile `BeckApplication`** → owned workloads/routes/policies (server-side apply, ownership
    references so deletion cascades).
 2. **Deploys ride the stream** ([`03`](03-type-and-effect-system.md) §3.9): the rollout is the
    original's choreography made mechanical — quiesce ingress on the old version (commands buffer at
@@ -125,9 +137,9 @@ Responsibilities of the operator — deliberately limited to what needs a cluste
    metrics; delegate to **Argo Rollouts** rather than reimplementing analysis.
 4. **Boundary-compatibility gate**: refuse a rollout whose wire operations are incompatible with the
    currently-serving version (§4.3), unless overridden. This is the operator earning its existence.
-5. **Status back to the developer**: `tier status` shows real reconciliation state and, on failure, the
+5. **Status back to the developer**: `beck status` shows real reconciliation state and, on failure, the
    *source location* that produced the failing object.
-6. **Right-sizing telemetry** for `tier tune` (§6.3).
+6. **Right-sizing telemetry** for `beck tune` (§6.3).
 
 Explicit non-responsibilities: it does not schedule, autoscale, route, store state, or manage
 certificates. Kubernetes, KEDA, the Gateway implementation, and cert-manager do those. The operator's
@@ -160,12 +172,12 @@ platform team.**
 
 | Rung | Command | Runs | Storage | Startup | Purpose |
 |---|---|---|---|---|---|
-| 0 | `tier run` | one native process; client served from memory | in-memory folds + embedded append-only log (replayable) | < 1 s | daily development, hot reload on save |
-| 1 | `tier run --pg` | one process | local Postgres (container or existing) | ~2 s | SQL-fidelity checks |
-| 2 | `tier run --docker` | one container | ditto | ~5 s | image sanity, "works outside my machine" |
-| 3 | `tier up` | local **k3s/k3d** cluster, real operator, real manifests | Postgres in-cluster | ~30 s | test the infra tier, policies, migrations |
-| 4 | `tier deploy --to staging` | remote cluster | managed Postgres via Crossplane | minutes | pre-production |
-| 5 | `tier deploy --to prod` | remote cluster | ditto, HA | minutes | production |
+| 0 | `beck run` | one native process; client served from memory | in-memory folds + embedded append-only log (replayable) | < 1 s | daily development, hot reload on save |
+| 1 | `beck run --pg` | one process | local Postgres (container or existing) | ~2 s | SQL-fidelity checks |
+| 2 | `beck run --docker` | one container | ditto | ~5 s | image sanity, "works outside my machine" |
+| 3 | `beck up` | local **k3s/k3d** cluster, real operator, real manifests | Postgres in-cluster | ~30 s | test the infra tier, policies, migrations |
+| 4 | `beck deploy --to staging` | remote cluster | managed Postgres via Crossplane | minutes | pre-production |
+| 5 | `beck deploy --to prod` | remote cluster | ditto, HA | minutes | production |
 
 Rungs 0 and 3 are the ones that must be excellent. Rung 0 is where 99% of developer-minutes are spent;
 rung 3 is what makes the Kubernetes claim credible. Use **k3s** (Apache-2.0, single binary, small) via
@@ -180,13 +192,13 @@ unchanged, and the server partition is re-JITted with Cranelift. Target < 2 s ed
 A small unification worth taking: use **OCI registries as the package registry** via **ORAS**, rather
 than building a bespoke package host.
 
-- A Tier package version is an OCI artefact: compiled signatures (`.tieri`), the source, prebuilt
+- A Beck package version is an OCI artefact: compiled signatures (`.becki`), the source, prebuilt
   per-tier artefacts, and an SBOM — content-addressed by digest.
 - Users authenticate to registries they already run (GHCR, ECR, Harbor, Artifactory); air-gapped and
   regulated environments are supported on day one, which is otherwise a multi-year problem.
 - Signing and provenance reuse Sigstore/cosign — the same machinery as images (§6.2), so supply-chain
   verification is one code path rather than two.
-- `tier.lock` pins digests. Combined with the reproducible image builds and the capability-restricted
+- `beck.lock` pins digests. Combined with the reproducible image builds and the capability-restricted
   macro phase (§2.4), the whole pipeline from source to running pod is verifiable — a genuinely
   differentiated position.
 
@@ -195,8 +207,8 @@ than building a bespoke package host.
 - **Not** our own scheduler, service mesh, ingress controller, or certificate manager.
 - **Not** a Helm chart generator as the primary interface (emit manifests + a chart *if* asked; Helm's
   templating model is precisely what we're replacing).
-- **Not** a CI system. Emit a GitHub Actions / GitLab CI workflow (`tier init ci`) that calls
-  `tier build`/`tier deploy`, and stop there.
+- **Not** a CI system. Emit a GitHub Actions / GitLab CI workflow (`beck init ci`) that calls
+  `beck build`/`beck deploy`, and stop there.
 - **Not** a secrets store. Integrate External Secrets Operator / cloud KMS; `secret[T]` types make the
   integration safe (§3.5).
 - **Not** a multi-cloud abstraction layer. Crossplane already is one; wrapping it would add a leak.

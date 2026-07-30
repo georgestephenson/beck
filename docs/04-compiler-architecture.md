@@ -3,7 +3,7 @@
 ## 4.1 Pipeline
 
 ```
-  .tier / .sx
+  .beck / .sx
       │
       ▼
  ┌──────────────┐
@@ -33,7 +33,7 @@
  └──────────────┘
       │
       ▼
-  DeploymentPlan  ──▶  tier deploy  ──▶  server-side apply / Tier operator
+  DeploymentPlan  ──▶  beck deploy  ──▶  server-side apply / Beck operator
 ```
 
 Stages 1–6 are a conventional modern compiler front end; do not innovate there. Stages 7–8 are novel
@@ -76,7 +76,7 @@ recommend **against** it for v1:
 Given placed `Core`, stage 8 does five things:
 
 1. **Partition** into one `Core` program per tier per service. Multi-placed functions are duplicated
-   (and their identity recorded, so `tier explain` can say "compiled into 2 tiers").
+   (and their identity recorded, so `beck explain` can say "compiled into 2 tiers").
 2. **Synthesise boundary stubs.** For each cross-tier call, emit a caller stub and a callee entry:
    - a stable, content-derived operation id (`sha256(module, name, signature)[..16]`) — *not* a URL a
      human maintains, and stable across refactors that don't change the signature;
@@ -98,14 +98,14 @@ Given placed `Core`, stage 8 does five things:
 
 **Boundary versioning** is a hard requirement, not a nicety: during a rolling deploy, old clients talk
 to new servers. Rules: operation ids are content-derived; a removed operation is retained as a
-deprecated shim for N releases (declared in `tier.toml`); the wire format is field-tagged and
-tolerates unknown fields; `tier check --wire-compat <previous-release>` runs in CI and fails on a
+deprecated shim for N releases (declared in `beck.toml`); the wire format is field-tagged and
+tolerates unknown fields; `beck check --wire-compat <previous-release>` runs in CI and fails on a
 breaking change without an explicit `@breaking` marker. Getting this wrong produces the failure that
 kills adoption — "the deploy worked but every open browser tab broke."
 
 ## 4.4 Wire format
 
-- **Internal (Tier↔Tier)**: a compact, field-tagged binary encoding generated from types — schema
+- **Internal (Beck↔Beck)**: a compact, field-tagged binary encoding generated from types — schema
   known on both sides at build time, so no self-describing overhead. `postcard`-class efficiency with
   tags for compatibility. Zero-copy on read where the type allows. Envelopes, commands, data
   patches and DOM patches all ride this one encoding; every patch is tagged with the `seq` it
@@ -113,7 +113,7 @@ kills adoption — "the deploy worked but every open browser tab broke."
 - **Bulk/columnar** (query results, analytics, anything > ~1000 rows): **Apache Arrow** IPC. Zero-copy
   into DataFusion on the server, and Arrow decoding in WASM is fast enough for real data tables.
 - **External (public API)**: generate **OpenAPI + JSON** and **gRPC/Protobuf** from the same types, on
-  request (`@public(rest)`, `@public(grpc)`). Tier's internal format is never a public contract.
+  request (`@public(rest)`, `@public(grpc)`). Beck's internal format is never a public contract.
 - **Transport**: HTTP/2 (h2 via `hyper`) with HTTP/3 (`quinn`) optional; WebSocket or WebTransport for
   subscriptions; TLS via `rustls`.
 
@@ -122,7 +122,7 @@ kills adoption — "the deploy worked but every open browser tab broke."
 For a language whose main feature is inference, error quality *is* the product. Concretely:
 
 - Every `Node` carries a span; every `Core` node carries provenance back to a `Node` (and, for
-  macro-generated code, the *expansion chain*: "in `derive(Json)` expanded at orders.tier:12").
+  macro-generated code, the *expansion chain*: "in `derive(Json)` expanded at orders.beck:12").
 - Diagnostics are structured values (code, primary span, secondary spans, notes, fix-its), rendered by
   one renderer shared by CLI and LSP. Model on rustc/Elm.
 - Placement errors get a dedicated explainer that prints the constraint derivation (§3.4).
@@ -146,19 +146,19 @@ artifact(tier, service)    → Bytes
 
 Because §3.6 makes signatures the module firewall, editing a function body invalidates
 `typecheck_body` and `core` for that item and nothing upstream — the property that makes both
-sub-second IDE feedback and fast CI builds possible. **One binary** serves `tier build`, `tier check`,
-`tier lsp` and `tier explain`; there is no separate language server implementation to drift.
+sub-second IDE feedback and fast CI builds possible. **One binary** serves `beck build`, `beck check`,
+`beck lsp` and `beck explain`; there is no separate language server implementation to drift.
 
 Targets to hold yourself to: keystroke→diagnostics **< 100 ms** on a 50 kLOC project; incremental
-`tier build` for a one-line change **< 2 s** to a running dev process (hot reload); clean release
+`beck build` for a one-line change **< 2 s** to a running dev process (hot reload); clean release
 build of 50 kLOC **< 60 s** including WASM and image assembly.
 
-## 4.7 `tier explain` — shipped in v0.1
+## 4.7 `beck explain` — shipped in v0.1
 
 Non-negotiable, per §1.6's Meteor lesson. Every inferred decision must be interrogable:
 
 ```console
-$ tier explain place recent
+$ beck explain place recent
 recent  →  data tier (incremental view over `orders` fold)
 
   effects    : {}  (pure; reads signal `orders`)
@@ -172,16 +172,16 @@ recent  →  data tier (incremental view over `orders` fold)
 ```
 
 ```console
-$ tier explain flow ApiKey
-ApiKey (secret[str]) declared at config.tier:8
+$ beck explain flow ApiKey
+ApiKey (secret[str]) declared at config.beck:8
   reaches: charge()          server   ok
            audit_log()       server   ok
   BLOCKED: OrderPanel        client   secret[T] is not Sendable
-           └─ would cross boundary at orders.tier:41
+           └─ would cross boundary at orders.beck:41
 ```
 
-Also ship `tier explain wire <op>`, `tier explain query <fn>`, `tier explain deploy <service>`
-(the full object graph and its provenance) and `tier explain cost <fn>`.
+Also ship `beck explain wire <op>`, `beck explain query <fn>`, `beck explain deploy <service>`
+(the full object graph and its provenance) and `beck explain cost <fn>`.
 
 ## 4.8 Testing strategy for the compiler itself
 

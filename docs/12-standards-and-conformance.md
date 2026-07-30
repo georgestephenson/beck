@@ -1,6 +1,6 @@
 # 12 — Standards and conformance
 
-> **The question**: are there rulesets or standards Tier can conform to, so there is rigour that we
+> **The question**: are there rulesets or standards Beck can conform to, so there is rigour that we
 > have done things correctly — not just a scratchpad of ideas?
 
 Yes, at every layer — and the discipline that makes conformance *real* rather than aspirational is
@@ -9,13 +9,13 @@ stated first.
 ## 12.1 The governing rule: a claim is a test or it is marketing
 
 Every standard adopted below enters the project in one form only: **an executable conformance
-artefact wired into CI.** A sentence in documentation ("Tier speaks OIDC") is worth nothing; a test
+artefact wired into CI.** A sentence in documentation ("Beck speaks OIDC") is worth nothing; a test
 suite that fails the build when we drift is the actual standard. Three project-level instruments
 implement this:
 
-1. **The language specification is test-linked.** Every normative paragraph of the Tier spec
+1. **The language specification is test-linked.** Every normative paragraph of the Beck spec
    carries an ID; every ID is referenced by at least one test in the public conformance suite
-   (`tier-conformance`, the [test262](https://github.com/tc39/test262)/WASM-spec-suite model). A
+   (`beck-conformance`, the [test262](https://github.com/tc39/test262)/WASM-spec-suite model). A
    spec change without a test change fails CI. This is the single strongest "not a scratchpad"
    instrument available to a language project.
 2. **An RFC process for language evolution** (Rust's model): design changes are written proposals
@@ -32,8 +32,8 @@ implement this:
 | **Unicode 15+ / UTF-8 everywhere** — normalisation (NFC), segmentation (UAX #29), identifiers (UAX #31) | `str`, source files, identifier rules | conformance suite vectors |
 | **RFC 3339 / ISO 8601** | `Instant`, envelope `at` timestamps, all serialised time | wire golden tests |
 | **RFC 8259 (JSON)** + **JSON Schema 2020-12** | generated public JSON APIs; schemas generated from types | round-trip tests against reference validators |
-| **SemVer 2.0.0** | Tier packages, the compiler itself, and the *wire/log compatibility* rules layered on it ([`04`](04-compiler-architecture.md) §4.3) | `tier check --api` / `--wire-compat` |
-| **TOML 1.0** | `tier.toml` | reference parser tests |
+| **SemVer 2.0.0** | Beck packages, the compiler itself, and the *wire/log compatibility* rules layered on it ([`04`](04-compiler-architecture.md) §4.3) | `beck check --api` / `--wire-compat` |
+| **TOML 1.0** | `beck.toml` | reference parser tests |
 
 ## 12.3 Protocols and interop
 
@@ -46,7 +46,7 @@ implement this:
 | **gRPC / Protobuf** | generated for `@public(grpc)` |
 | **OAuth 2.1 / OpenID Connect Core + Discovery** | the identity subsystem ([`10`](10-decisions.md) D6); validated against the OpenID Foundation conformance suite |
 | **WebAuthn L3** | inherited via the bundled IdP (Keycloak) |
-| **CloudEvents 1.0** | `ingest(source)` — external webhooks/feeds enter the merge point as CloudEvents, so every event bus on earth can feed a Tier app |
+| **CloudEvents 1.0** | `ingest(source)` — external webhooks/feeds enter the merge point as CloudEvents, so every event bus on earth can feed a Beck app |
 | **W3C WebAssembly core + WASI Preview 2 + Component Model** | Mode B client artefacts and the WASM server target; validated with the official spec test suites |
 
 ## 12.4 Web output: accessibility as a compile-time property
@@ -69,19 +69,19 @@ so.
 
 | Standard | Where |
 |---|---|
-| **PostgreSQL wire protocol (pgwire)** | Tier read models are browsable by any Postgres client; verified against `psql`, JDBC and BI drivers in CI |
+| **PostgreSQL wire protocol (pgwire)** | Beck read models are browsable by any Postgres client; verified against `psql`, JDBC and BI drivers in CI |
 | **Apache Arrow + Parquet** | columnar interchange and log archives; verified with official interop test files |
 | **SQL** (PostgreSQL dialect, documented subset) | all generated SQL runs against pinned Postgres majors in CI — we conform to Postgres-as-spec rather than abstract SQL:2023, and say so honestly |
 
 ## 12.6 Containers, supply chain, and the "prove the build" story
 
-This is where Tier's reproducibility premise meets external, auditable yardsticks:
+This is where Beck's reproducibility premise meets external, auditable yardsticks:
 
 | Standard / framework | Target |
 |---|---|
 | **OCI image / distribution / artifact specs** | all images and packages ([`06`](06-kubernetes-and-packaging.md) §6.2, §6.7) |
 | **Reproducible Builds** (reproducible-builds.org definition) | bit-for-bit: CI builds every release twice on independent runners and diffs digests — the definition made executable |
-| **SLSA v1.0 — target Build L3** | provenance attestations for compiler releases and for every user `tier build`; hardened, isolated builders |
+| **SLSA v1.0 — target Build L3** | provenance attestations for compiler releases and for every user `beck build`; hardened, isolated builders |
 | **SPDX 2.3 SBOMs** (CycloneDX emitted on request) | every image and package, generated by apko + `cargo-about` |
 | **Sigstore / cosign + in-toto attestations** | signing for images, packages, SBOMs, provenance |
 | **OpenSSF Best Practices badge + Scorecard** | the project repo itself — branch protection, review, fuzzing, SAST all scored externally |
@@ -89,7 +89,7 @@ This is where Tier's reproducibility premise meets external, auditable yardstick
 
 ## 12.7 Security: map the guarantees to the industry's vocabulary
 
-Tier's type-level guarantees ([`03`](03-type-and-effect-system.md) §3.5) are stated internally in
+Beck's type-level guarantees ([`03`](03-type-and-effect-system.md) §3.5) are stated internally in
 our terms; conformance means restating them in the auditor's terms and testing that mapping:
 
 - **OWASP ASVS 4.x**: a maintained control-by-control matrix — each control marked *unrepresentable
@@ -98,7 +98,7 @@ our terms; conformance means restating them in the auditor's terms and testing t
 - **CWE coverage claims, each backed by a negative test**: CWE-79 (XSS), CWE-89 (SQLi), CWE-915
   (mass assignment), CWE-639 (IDOR — via capability-typed ids), CWE-200 (secret exposure —
   `secret[T]` flow tests), CWE-352 (CSRF — command channel design). The claim "this bug class
-  cannot be written in Tier" appears only where a CI test generates adversarial programs and
+  cannot be written in Beck" appears only where a CI test generates adversarial programs and
   asserts they fail to compile.
 - **NIST SP 800-63B** via the bundled IdP for authenticator requirements; **OWASP ASVS V2/V3**
   delegated likewise.

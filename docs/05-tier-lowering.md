@@ -70,13 +70,13 @@ endpoints — compiles to native binaries, statically linked, one per `service`.
 
 | Mode | Backend | Evidence |
 |---|---|---|
-| `tier dev`, hot reload | **Cranelift** | ~40% faster whole-compiles; codegen step ~an order of magnitude faster than LLVM |
-| `tier build --release` | **LLVM** (inkwell) | Cranelift output ~14% slower; Perry's 2026 Cranelift→LLVM move turned a deficit into 1.7–24.6× wins over Node.js |
+| `beck dev`, hot reload | **Cranelift** | ~40% faster whole-compiles; codegen step ~an order of magnitude faster than LLVM |
+| `beck build --release` | **LLVM** (inkwell) | Cranelift output ~14% slower; Perry's 2026 Cranelift→LLVM move turned a deficit into 1.7–24.6× wins over Node.js |
 
 The two must agree observably — enforced by differential tests ([`04`](04-compiler-architecture.md)
 §4.8). The `Core → Target` seam stays narrow so a third backend (or MLIR) can slot in later.
 
-**Runtime we must ship** (the "Roc platform" of Tier — an effectful Rust host owning I/O, scheduling
+**Runtime we must ship** (the "Roc platform" of Beck — an effectful Rust host owning I/O, scheduling
 and memory, executing the pure program):
 
 - **Tokio** executor; **Hyper** HTTP/1+2; **quinn** HTTP/3 optional; **rustls** TLS.
@@ -108,9 +108,9 @@ functions. The lowering question is substrates. **We do not write a storage engi
 | Concern | v1 substrate | Why |
 |---|---|---|
 | The log | **PostgreSQL** (append-only table per app; `seq` from a sequence; logical decoding for tailing) | Boring, transactional, operable everywhere, PITR for free; licence-clean. A dedicated log store (e.g. NATS JetStream, Apache-2.0) is a post-1.0 option when fan-out demands it — Kafka's JVM weight is unnecessary; Redpanda is BSL, excluded |
-| Snapshots | object storage (S3-compatible) or Postgres large objects | Cheap, versioned, feeds `tier fork` |
+| Snapshots | object storage (S3-compatible) or Postgres large objects | Cheap, versioned, feeds `beck fork` |
 | Read models | generated tables in the same Postgres | One-shot queries and **pgwire access for the outside world**: `psql`, BI tools, DBeaver see materialized views as ordinary tables — the single cheapest trust-builder for adopting teams |
-| Dev (rung 0) | in-memory folds + embedded append-only log (**redb**, MIT/Apache) | `tier run` needs no server; the log file is still replayable |
+| Dev (rung 0) | in-memory folds + embedded append-only log (**redb**, MIT/Apache) | `beck run` needs no server; the log file is still replayable |
 | Analytical stores | **Apache DataFusion** over Arrow/Parquet (log archives Parquet-partitioned) | Fastest single-node Parquet engine (ClickBench); designed to be embedded/extended — the right shape for our plans, where DuckDB is a complete system designed to be used as-is |
 
 **Incremental view maintenance** — "keeping it incremental is the compiler's job":
@@ -166,7 +166,34 @@ service/deployment declarations  +  effect rows of the placed program
   one control plane, no second state engine; an **OpenTofu** emitter is the escape hatch for
   estates Crossplane can't reach. (Terraform is BUSL — excluded.)
 - `import infra` reads live cluster objects or OpenTofu state as *typed, read-only facts* (a VPC
-  id, a DB endpoint) so Tier can be adopted beside an existing estate rather than instead of it.
+  id, a DB endpoint) so Beck can be adopted beside an existing estate rather than instead of it.
 
 Details of images, manifests, the operator, migrations-in-deploys and the dev→prod ladder:
 [`06-kubernetes-and-packaging.md`](06-kubernetes-and-packaging.md).
+
+## 5.5 Future surfaces: is this extensible to native mobile? (not v1)
+
+Yes — by design, and cheaply, because of three properties v1 already has:
+
+1. **`view` emits a typed semantic tree, not HTML strings.** The `ui:` vocabulary (input, button,
+   list, section…) is meaning, not markup; the DOM is merely its first renderer. A mobile backend
+   maps the same tree onto **Jetpack Compose** (Android) and **SwiftUI** (iOS) — both declarative
+   frameworks whose recomposition model matches our signals one-to-one. Native look, native
+   accessibility, same source. (A self-rendered Flutter-style canvas is the rejected default:
+   pixel-consistent but alien to each platform.)
+2. **The pure core needs no browser.** Folds, views, the signal kernel and the wire client compile
+   natively to arm64 through the *existing* LLVM backend — no WASM required on mobile, and the
+   one-semantics-everywhere guarantee (what makes optimism sound) carries over unchanged.
+3. **Mode B is already the mobile shape.** Local state, queued commands, offline tolerance,
+   `seq`-reconciled optimism ([`10`](10-decisions.md) D7) — designed for flaky networks before a
+   phone ever entered the picture. Identity rides the system-browser OIDC pattern; push
+   notifications become one more typed ingress.
+
+The honest new problem is **deploys**: app-store review breaks "deploys ride the stream" — old
+clients live for months, so the wire-compat matrix and upcasters ([`04`](04-compiler-architecture.md)
+§4.3) become mobile-critical, and server-driven (Mode A-style) screens regain value as the
+store-policy-friendly way to change UI without a release.
+
+Cost now, so this stays cheap later: keep the `ui:` core vocabulary free of HTML-isms, and keep the
+renderer behind a `Surface` trait (Dom is implementation #1). Both are v1 disciplines we want
+anyway. Everything else waits for post-1.0.

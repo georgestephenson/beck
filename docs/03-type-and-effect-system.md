@@ -62,7 +62,7 @@ between tiers.
 
 Each tier is defined by the effects it can discharge:
 
-| Tier | Discharges | Cannot |
+| Beck | Discharges | Cannot |
 |---|---|---|
 | `client` | `dom`, `net.out(own-origin)`, local storage, ambient | `ingress`, `durable`, `cap.*` needing server secrets, `fs`, `env` |
 | `server` | `ingress`, `durable`, `net.*`, `fs`, `env`, `spawn`, `cap.*` | `dom` |
@@ -92,8 +92,8 @@ partitioning shape:
   original sketch's deliberate ambiguity about where `view` runs
   ([`05`](05-tier-lowering.md) §5.1).
 - Guardrails, non-negotiable: **determinism** (same input, same solution), **stability** (a
-  one-line edit must not re-place unrelated code; previous solution persisted in `tier.lock`,
-  churn reported in CI), **explainability** (`tier explain place`, §4.7), **assertability**
+  one-line edit must not re-place unrelated code; previous solution persisted in `beck.lock`,
+  churn reported in CI), **explainability** (`beck explain place`, §4.7), **assertability**
   (`assert place(view, OrderPanel) == client` in tests; latency budgets on `service` blocks the
   solver must respect).
 - Ambiguity that survives defaults is a **compile error with a suggested annotation** — never a
@@ -109,14 +109,14 @@ type ApiKey = secret[str]          # secret[T] is not Sendable
 
 | Property | Mechanism |
 |---|---|
-| Secrets cannot reach the browser | Boundary crossings require `Sendable`; `secret[T]` isn't. The leak is a compile error naming the flow (`tier explain flow ApiKey`) |
+| Secrets cannot reach the browser | Boundary crossings require `Sendable`; `secret[T]` isn't. The leak is a compile error naming the flow (`beck explain flow ApiKey`) |
 | Clients can only *propose* | The client's entire write surface is `send(cmd)` into a typed `Command` union. There is no other mutation path — mass assignment and over-posting have no representation |
 | Authority is one chokepoint | Only `validate` (the `ingress` consumer, holding `Session` capabilities) turns commands into events; forgetting an auth check means the `cap.*` effect goes undischarged — a compile error, not a pentest finding |
 | The log and rules never ship to clients | `ingress`/`durable` are undischargeable on `client`; DCE strips server-only code from client artefacts, verified |
 | No injection / no XSS | `sql"..."`/`html"..."` typed literals: interpolation is bind-parameters / escaped by type (Ur/Web's guarantee) |
 | Least-privilege infra, computed | Effect rows → NetworkPolicy, RBAC, store grants ([`06`](06-kubernetes-and-packaging.md) §6.5) |
 | No arbitrary build-time code | Macro phase is capability-restricted ([`02`](02-syntax.md) §2.4) |
-| Tamper-evident history | State is a fold over an append-only log: "how did this row get here" is `tier replay`, not forensics |
+| Tamper-evident history | State is a fold over an append-only log: "how did this row get here" is `beck replay`, not forensics |
 
 "Your compiler proves the API key can't reach the browser, and your audit log is your database" is
 the claim nothing mainstream can make. Lead with it.
@@ -129,7 +129,7 @@ The historical killer of tierless languages ([`01`](01-vision-and-premise.md) §
 > Inference is intra-module; boundaries are declared.
 
 ```python
-# orders.tieri — generated, checked in, reviewed like a .mli
+# orders.becki — generated, checked in, reviewed like a .mli
 command PlaceOrder(customer: Ref[Customer], total: Money) requires auth(customer)
 event   OrderPlaced { id: OrderId, customer: Ref[Customer], total: Money, at: Instant }  # v1
 orders : Signal[Map[OrderId, Order]]  ! { durable }   @on(server)
@@ -138,7 +138,7 @@ recent : (Ref[Customer], int) -> list[Order]  ! {}    @on(any)
 
 Consequences: modules compile against signatures (true separate compilation, parallel builds); body
 edits don't invalidate downstream modules; **effect widening is a breaking API change** flagged by
-`tier check --api` (a library that starts phoning home cannot do so silently — a novel supply-chain
+`beck check --api` (a library that starts phoning home cannot do so silently — a novel supply-chain
 property); and **event types in signatures are the wire/log compatibility surface** — changing one
 without a migration is unshippable (§3.9).
 
@@ -201,7 +201,7 @@ CRDTs or OT, "and no type system absolves you"
 ([`09`](09-risks-and-open-questions.md) §9.5).
 
 **Replay, forked worlds.** Because everything downstream of ingress is deterministic:
-`tier replay --to <seq|time>` reproduces any historical state; `tier fork --from prod --at
+`beck replay --to <seq|time>` reproduces any historical state; `beck fork --from prod --at
 yesterday` starts a local instance folded from a production snapshot; property tests run over
 recorded logs; the time-travel debugger scrubs `seq`. These are features of the *semantics* — they
 cost almost nothing to build once the determinism rule holds, and they are demos nobody else can
@@ -218,7 +218,7 @@ keeping them incremental:
 - The relational comprehension surface (`from o in orders.values() where ... order by ... take n`)
   is sugar for pure functions that are *guaranteed* incrementalizable and also lower to SQL against
   materialized read models for one-shot reads. Arbitrary pure code is incrementalized where
-  analysis allows, recomputed where not — `tier explain incremental <view>` shows which, and why.
+  analysis allows, recomputed where not — `beck explain incremental <view>` shows which, and why.
 - **Invalidation does not exist as a concept.** There are no caches to invalidate — only views
   downstream of the log. What ships to a subscribed client is the patch stream of its view
   ([`05`](05-tier-lowering.md) §5.1). This subsumes the entire cache-key/TTL discipline of
@@ -253,7 +253,7 @@ State schema evolution is a *language* concern, not an ops concern (Lamdera's pr
   authoritative beyond the window and its upcaster obligations finite.
 - Rollout choreography — drain, snapshot, migrate, resume; two versions live simultaneously — is
   the operator's job ([`06`](06-kubernetes-and-packaging.md) §6.4). Wire compatibility of
-  command/event types across versions is checked by `tier check --wire-compat` against the
+  command/event types across versions is checked by `beck check --wire-compat` against the
   previously deployed signature ([`04`](04-compiler-architecture.md) §4.3).
 
 ## 3.10 Staged sequence of work
@@ -262,7 +262,7 @@ State schema evolution is a *language* concern, not an ops concern (Lamdera's pr
    (`@on`), matching the original sketch exactly.
 2. Effect rows inferred; placement manual but **verified** (reject `@on(client)` + `durable`;
    reject impure folds). Already novel, already shippable.
-3. Placement inference for the unannotated middle; `tier explain place`; freshness-typed optimism.
+3. Placement inference for the unannotated middle; `beck explain place`; freshness-typed optimism.
 4. The cost model: rendering placement (DOM-patch vs data-patch, [`05`](05-tier-lowering.md) §5.1)
    chosen per component.
 5. Incremental view compilation (differential lineage); materialized read models; pgwire exposure.

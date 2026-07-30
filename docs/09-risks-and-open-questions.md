@@ -13,8 +13,8 @@ retrofitted. **Tripwire**: a body edit that invalidates a downstream module's ty
 
 ### R2 — "Magic" becomes distrust at scale (the Meteor failure)
 
-**Mitigation**: `tier explain` (place / flow / incremental / wire / deploy) shipped in v0.1;
-placement persisted in `tier.lock` with churn reported in CI; `assert place(...)` in tests;
+**Mitigation**: `beck explain` (place / flow / incremental / wire / deploy) shipped in v0.1;
+placement persisted in `beck.lock` with churn reported in CI; `assert place(...)` in tests;
 ambiguity is a compile error with a suggested annotation, never a silent guess; determinism and
 stability are specified solver properties ([`03`](03-type-and-effect-system.md) §3.4).
 
@@ -60,7 +60,7 @@ is `retain=forever` (the ledger is the truth), so log growth is managed by *tier
 truncation — old segments archive to Parquet on object storage, doubling as the analytical corpus —
 and permanent upcaster chains are kept honest by the genesis-replay CI gate; stores that want
 bounded liability opt down to `retain=<window>` (snapshot-and-compact as "this world's garbage
-collection"). Position the substrate as boring on purpose: "your data is in Postgres; Tier is how
+collection"). Position the substrate as boring on purpose: "your data is in Postgres; Beck is how
 it got there."
 
 ### R7 — The merge ceiling
@@ -95,7 +95,7 @@ rejected).
 
 ### R10 — Kubernetes coupling repels the target audience
 
-**Mitigation**: `tier run` needs no container, registry, or cluster
+**Mitigation**: `beck run` needs no container, registry, or cluster
 ([`06`](06-kubernetes-and-packaging.md) §6.1); `Platform` trait; plain-manifest emission for GitOps
 teams; `import infra` for adoption beside an existing estate. Hello-world never touches a registry.
 
@@ -104,7 +104,7 @@ teams; `import infra` for adoption beside an existing estate. Hello-world never 
 **Mitigation**: provenance from every `Core` node to source spans including macro chains; one
 OpenTelemetry trace across click → command → event → fold → patch; `seq`-scrubbing time-travel
 debugger (determinism makes it cheap); DWARF/source maps for Mode B; cross-tier DAP in Phase 5.
-Replay (`tier fork --from prod`) turns "cannot reproduce" into a command.
+Replay (`beck fork --from prod`) turns "cannot reproduce" into a command.
 
 ## 9.2 The ecosystem question, in detail
 
@@ -118,7 +118,7 @@ Replay (`tier fork --from prod`) turns "cannot reproduce" into a command.
    In-process CPython embedding drags the GIL and runtime into our images; compiling a Python
    subset is a tar pit — neither recommended.
 
-Say plainly: Tier is Python-*shaped*, not Python-compatible. Over-promising here burns exactly the
+Say plainly: Beck is Python-*shaped*, not Python-compatible. Over-promising here burns exactly the
 audience it courts.
 
 ## 9.3 Commercial failure modes (even if the engineering succeeds)
@@ -133,7 +133,7 @@ audience it courts.
   ([`03`](03-type-and-effect-system.md) §3.5, [`06`](06-kubernetes-and-packaging.md) §6.5). The
   playground demo — source left; inferred placement, generated SQL/dataflow, generated Kubernetes
   objects right — serves both in 60 seconds.
-- **Two dialects form** (Lisp vs Python factions). `tier fmt` normalises committed code to the
+- **Two dialects form** (Lisp vs Python factions). `beck fmt` normalises committed code to the
   Python surface; S-expressions are the spec/macro-debugging notation, positioned as such.
 
 ## 9.4 Decisions taken (overrule cheaply, now rather than later)
@@ -177,7 +177,7 @@ All substantive questions are answered; the answers and their reasoning are reco
    (`materialized`, Mode B); when does the solver take it over?
 5. The two syntax decisions from [`02`](02-syntax.md) §2.9: effect clauses vs decorators; `ui:`
    macro vs JSX-likes. Cheap now, expensive after Phase 3.
-6. Multi-app composition: two Tier apps sharing events — federation of logs, or one app with two
+6. Multi-app composition: two Beck apps sharing events — federation of logs, or one app with two
    deployments? (Touches org boundaries, so it will be asked early.)
 7. Backpressure surfacing: v1 hides it in the runtime contract; when a client can't keep up with
    its patch stream, what does the *language* say (drop-to-latest for signals is sound — is it

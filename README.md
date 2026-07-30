@@ -1,13 +1,12 @@
-# tier
+# beck
 
 One language for the frontend, the backend, the database, the container, and the cluster.
 
-> Chosen public name: **Beck** — Cumbrian for a fast upland stream; becks merge into rivers, and
-> "beck" also means a summons, which is what a `Command` is. See
-> [`docs/10-decisions.md`](docs/10-decisions.md) D10; the repo keeps its working name until the
-> rename commit.
+> **Beck** — Cumbrian for a fast upland stream: becks merge into rivers, and "beck" also means a
+> summons ("beck and call"), which is what a `Command` is. Formerly working-named *tier*; see
+> [`docs/10-decisions.md`](docs/10-decisions.md) D10.
 
-Born from SICP: what if a working website were just `(my-javascript (my-css (my-html)))`? In `tier`,
+Born from SICP: what if a working website were just `(my-javascript (my-css (my-html)))`? In `beck`,
 that expression is literal — the page is a pure function of state, the database is a durable fold
 over an event stream, infrastructure is a function of the program, and a deploy is an event on the
 same stream it deploys. The compiler partitions one program into browser patch-streams, native
