@@ -1,0 +1,17 @@
+[package]
+name = "beck-db"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+beck-core.workspace = true
+beck-diag.workspace = true
+beck-infra.workspace = true
+beck-macro.workspace = true
+beck-syntax.workspace = true
+salsa.workspace = true
+
+[lints]
+workspace = true

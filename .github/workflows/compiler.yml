@@ -1,0 +1,124 @@
+name: phase 1
+
+# The same discipline as the Phase 0 workflow (docs/08-roadmap.md §8.3), applied to the compiler.
+#
+# What is a *gate* and what is merely *reported* stays a deliberate distinction (§13.7): the
+# harnesses, the round-trip property and the licence check fail the build; timings are printed but
+# never thresholded, because a shared CI runner cannot hold a timing threshold honestly and "a gate
+# that flakes gets deleted".
+
+on:
+  push:
+    branches: [main]
+    paths: ["compiler/**", ".github/workflows/compiler.yml"]
+  pull_request:
+    paths: ["compiler/**", ".github/workflows/compiler.yml"]
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: compiler
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: compiler
+
+      - name: format
+        run: cargo fmt --all --check
+      - name: clippy
+        run: cargo clippy --workspace --all-targets --all-features
+
+      # The differential harness is §4.8's "highest-value test in the project" and §8.3's "the
+      # project's conscience"; the replay harness is the determinism rule of §3.7, cashed in. They
+      # run with everything else, but they are the reason this job exists.
+      - name: tests, including the differential and replay harnesses
+        run: cargo test --workspace --all-targets
+
+  the-sketch-still-compiles-and-runs:
+    # "Every phase ships a demo that runs. No phase completes on a design document." (§8.3)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: compiler
+
+      - name: build
+        run: cargo build --release
+
+      - name: the sketch typechecks, places and slices
+        run: ./target/release/beck check examples/todo.beck
+
+      - name: `beck fmt` round-trips and is idempotent
+        run: |
+          ./target/release/beck fmt examples/todo.beck > /tmp/a.beck
+          ./target/release/beck fmt /tmp/a.beck        > /tmp/b.beck
+          diff /tmp/a.beck /tmp/b.beck
+          ./target/release/beck check /tmp/a.beck
+          # …and the canonical surface reads the same program.
+          ./target/release/beck fmt examples/todo.beck --surface sexpr > /tmp/a.sx
+          ./target/release/beck check /tmp/a.sx
+
+      - name: the app serves the page it compiled
+        run: |
+          ./target/release/beck run examples/todo.beck --addr 127.0.0.1:8080 --path /tmp/beck.log &
+          for _ in $(seq 1 40); do curl -sf http://127.0.0.1:8080/healthz >/dev/null && break; sleep 0.25; done
+          curl -sf "http://127.0.0.1:8080/?actor=ci" | tee /tmp/page.html | head -c 400
+          # SSR is the data, rendered — not a shell that fetches it.
+          grep -q '<footer>0 remaining</footer>' /tmp/page.html
+          grep -q 'data-b-enter=' /tmp/page.html
+          # No user JavaScript in Mode A: the only script is the patch interpreter.
+          test "$(grep -o '<script' /tmp/page.html | wc -l)" = 1
+          kill %1
+
+      - name: replay is exact
+        run: ./target/release/beck replay examples/todo.beck --path /tmp/beck.log --verify
+
+      - name: the object graph is what the effects imply
+        run: |
+          ./target/release/beck build examples/todo.beck --out /tmp/objects
+          test -f /tmp/objects/explain.txt
+          # `durable` ⇒ a volume and a snapshot schedule; `merge_clients()` ⇒ a websocket route.
+          grep -q 'LogStore/'  /tmp/objects/explain.txt
+          grep -q 'Route/'     /tmp/objects/explain.txt
+          # The grant is append-only because the program is.
+          grep -q 'GRANT SELECT, INSERT' /tmp/objects/*grants.yaml
+          ! grep -q 'DELETE' /tmp/objects/*grants.yaml
+
+  budgets:
+    # Deterministic budgets only — the ones §8.3 calls gates.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: thin-client payload (§5.1 target < 10 KB brotli)
+        run: |
+          f=crates/beck-rt/client/beck-thin.js
+          raw=$(wc -c < "$f")
+          br=$(brotli -c -q 11 "$f" | wc -c)
+          echo "thin client: ${raw} B raw, ${br} B brotli (budget 10240)"
+          test "$br" -lt 10240
+
+  licences:
+    # §8.3: "cargo-deny licence gate from the first commit, given §7's open-source constraint."
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: compiler/Cargo.toml
+          arguments: --workspace
+          command: check licenses bans sources

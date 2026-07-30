@@ -49,6 +49,7 @@ the transcript was available; checking it against the original changed three loa
 | 16 | [Packages and ecosystem](16-packages-and-ecosystem.md) | The Rails/npm lessons; Beck's own package system — **tarns** (packages), **forces** (vertical-slice feature packages), **the Mere** (index); effect-transparent dependencies, no install hooks |
 | 17 | [The playground](17-playground.md) | The whole stack in a browser tab (the DST convergence), the cloud rung with the compiler as first sandbox, content-addressed sharing, playground-as-Beck-app |
 | 18 | [Phase 0 report](18-phase-0-report.md) | **Built.** What [`phase0/`](../phase0/) implements, the measured exit criteria, the kill/pivot gates, and what turned out harder than expected |
+| 19 | [Phase 1 report](19-phase-1-report.md) | **Built.** The compiler in [`compiler/`](../compiler/): what it compiles, the harnesses it passes, what it deliberately does not do, and the corrections Phase 1 makes to these documents |
 
 ## The one-paragraph version
 

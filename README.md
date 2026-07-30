@@ -18,14 +18,26 @@ The design and implementation plan live in **[`docs/`](docs/)**:
   from, sketch preserved verbatim
 - [`docs/README.md`](docs/README.md) — plan overview and index
 
-**Phase 0 is built.** No compiler yet: [`phase0/`](phase0/) is the *output* the compiler will
-generate for the todo sketch, hand-written in Rust so the architecture could be measured before
-anything is built on top of it — ingress and envelope stamping, a durable fold over Postgres and
-redb, server-side `view` with structural diff, a ~2 KB patch-interpreter client, `(subscription,
-seq)` resumption across a killed process, and a Kubernetes object graph derived from the program's
-effects. The measurements, the kill/pivot gates they answer, and the list of what turned out harder
-than expected are in [`docs/18-phase-0-report.md`](docs/18-phase-0-report.md).
+**Phase 0 is built.** [`phase0/`](phase0/) is the *output* the compiler will generate for the todo
+sketch, hand-written in Rust so the architecture could be measured before anything was built on top
+of it — ingress and envelope stamping, a durable fold over Postgres and redb, server-side `view`
+with structural diff, a ~2 KB patch-interpreter client, `(subscription, seq)` resumption across a
+killed process, and a Kubernetes object graph derived from the program's effects. The measurements,
+the kill/pivot gates they answer, and the list of what turned out harder than expected are in
+[`docs/18-phase-0-report.md`](docs/18-phase-0-report.md).
+
+**Phase 1 is built.** [`compiler/`](compiler/) is the compiler: two surfaces onto one homoiconic
+AST, a hygienic macro expander, Hindley–Milner inference, a typed `Core` IR, placement verified
+against effects, and a splitter that slices the signal graph into the roles a runtime drives. The
+todo sketch is now *source* — [`compiler/examples/todo.beck`](compiler/examples/todo.beck), 132
+lines — and the runtime that serves it is Phase 0's, with the application arriving as compiled
+`Core` instead of hand-written Rust. What it deliberately does not do (native codegen, effect
+inference, the cluster) is in [`docs/19-phase-1-report.md`](docs/19-phase-1-report.md).
 
 ```console
-$ cd phase0 && cargo run -p beck-p0-server -- run --store memory
+$ cd compiler
+$ cargo run -- check   examples/todo.beck      # typecheck, place, slice
+$ cargo run -- explain place examples/todo.beck   # where each definition runs, and why
+$ cargo run -- run     examples/todo.beck      # rung 0: no cluster, no container, no registry
+$ cargo run -- replay  examples/todo.beck --verify
 ```

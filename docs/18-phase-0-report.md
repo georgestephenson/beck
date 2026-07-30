@@ -194,6 +194,13 @@ knowledge that the artefact it wraps is a single binary (3.8 MB, dynamically lin
 path builds `x86_64-unknown-linux-musl` static). This is the first task of Phase 1, and it should
 be done on a machine with a daemon before anything else in that phase.
 
+> **Phase 1 revisit.** Attempted again on a machine that *does* have a daemon
+> ([`19`](19-phase-1-report.md) §19.5). The static musl binary now exists and is measured —
+> **3,947,136 B, static-pie, no dynamic dependencies** — but `apko build` still never ran, because
+> `packages.wolfi.dev` is blocked by that environment's egress policy, and no cluster was created
+> because the container registry is blocked too. Both items therefore stand as unproven for a new
+> reason: not a missing daemon, but a closed network.
+
 ## 18.4 The kill/pivot gates
 
 | Gate | Threshold | Measured | Verdict |
