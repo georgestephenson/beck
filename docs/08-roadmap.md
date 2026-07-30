@@ -113,7 +113,7 @@ team a question. Track this literally as the acceptance test.
   audited, default-redacted — F4), log-backed property tests; structural shredding worked
   end-to-end per D14 (log, snapshots, read models, backups).
 - Package system UX ([`16`](16-packages-and-ecosystem.md)): `beck add`/`publish`/`why` with the
-  effect-diff prompt, namespaces, registry index + transparency log, generated docs site.
+  effect-diff prompt, namespaces, the Mere (index + generated docs site) + transparency log.
 - `process` (sagas) and non-durable folds hardened; internal fan-out fabric (NATS) when
   multi-node demands it ([`15`](15-scale-and-distribution.md)).
 - Playground rung C ([`17`](17-playground.md) §17.3): ephemeral TTL'd cloud environments with the
