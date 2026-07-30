@@ -13,6 +13,13 @@
 
 use crate::{InfraGraph, Node};
 
+/// Where the program lives inside the image.
+///
+/// The image ships the *toolchain*; without the program beside it there is nothing to run, and
+/// `beck run` with no source file fails at startup. Obvious in hindsight, invisible until a
+/// container was actually asked to serve a page (docs/19 §19.5).
+pub const APP_SOURCE: &str = "/app/app.beck";
+
 /// Render the graph as a set of named manifest files, ordered so `kubectl apply -f` works.
 pub fn render(graph: &InfraGraph, wire_id: &str) -> Vec<(String, String)> {
     let app = &graph.app;
@@ -56,8 +63,10 @@ pub fn render(graph: &InfraGraph, wire_id: &str) -> Vec<(String, String)> {
                  template:\n    metadata:\n      labels:\n        app: {name}\n    spec:\n      \
                  securityContext:\n        runAsNonRoot: true\n        runAsUser: 65532\n      \
                  containers:\n        - name: app\n          image: {app}:dev\n          \
-                 args: [\"run\", \"--store\", \"postgres\"]\n          ports:\n            \
-                 - containerPort: 8080\n          readinessProbe:\n            httpGet:\n              \
+                 args: [\"run\", \"{APP_SOURCE}\", \"--store\", \"postgres\", \"--addr\", \
+                 \"0.0.0.0:8080\"]\n          env:\n            - name: BECK_POSTGRES_URL\n              \
+                 valueFrom:\n                secretKeyRef:\n                  name: {app}-log-credentials\n                  \
+                 key: url\n          ports:\n            - containerPort: 8080\n          readinessProbe:\n            httpGet:\n              \
                  path: /readyz\n              port: 8080\n          livenessProbe:\n            \
                  httpGet:\n              path: /healthz\n              port: 8080\n          \
                  lifecycle:\n            preStop:\n              sleep:\n                seconds: 5\n"
@@ -180,7 +189,7 @@ pub fn apko(graph: &InfraGraph) -> String {
          - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub\n    - ./local.rsa.pub\n  \
          packages:\n    - ca-certificates-bundle\n    - tzdata\n    - {app}@local\n\n\
          entrypoint:\n  command: /usr/bin/beck\n\n\
-         cmd: run --store postgres --addr 0.0.0.0:8080\n\n\
+         cmd: run {APP_SOURCE} --store postgres --addr 0.0.0.0:8080\n\n\
          # Non-root, matching the generated pod's securityContext exactly. A mismatch here is the\n\
          # classic \"works locally, CrashLoopBackOff in the cluster\".\n\
          accounts:\n  groups:\n    - groupname: nonroot\n      gid: 65532\n  users:\n    \
@@ -206,8 +215,9 @@ pub fn melange(graph: &InfraGraph) -> String {
          environment:\n  contents:\n    repositories:\n      \
          - https://packages.wolfi.dev/os\n    keyring:\n      \
          - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub\n    packages:\n      - busybox\n\n\
-         pipeline:\n  - runs: |\n      mkdir -p \"${{{{targets.destdir}}}}/usr/bin\"\n      \
-         install -m755 beck \"${{{{targets.destdir}}}}/usr/bin/beck\"\n",
+         pipeline:\n  - runs: |\n      mkdir -p \"${{{{targets.destdir}}}}/usr/bin\" \"${{{{targets.destdir}}}}/app\"\n      \
+         install -m755 beck \"${{{{targets.destdir}}}}/usr/bin/beck\"\n      \
+         install -m644 app.beck \"${{{{targets.destdir}}}}{APP_SOURCE}\"\n",
         app = graph.app
     )
 }

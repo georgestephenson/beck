@@ -257,8 +257,12 @@ pub fn derive(app: &str, effects: &[(Effect, String)], serves_ui: bool) -> Infra
     InfraGraph { app, nodes }
 }
 
-/// Write the object graph, the image config and the provenance table.
-pub fn emit(placed: &Placed, out: &Path) -> Result<Vec<PathBuf>> {
+/// Write the object graph, the image configs, the program, and the provenance table.
+///
+/// `source` is the program itself. It has to be here: the image ships the *toolchain*, and a
+/// container told to `beck run` with no source file has nothing to serve. That was invisible until
+/// a container was actually asked to serve a page (docs/19 §19.5).
+pub fn emit(placed: &Placed, source: &str, out: &Path) -> Result<Vec<PathBuf>> {
     let graph = graph(placed);
     std::fs::create_dir_all(out).with_context(|| format!("creating {}", out.display()))?;
     let mut written = Vec::new();
@@ -272,6 +276,12 @@ pub fn emit(placed: &Placed, out: &Path) -> Result<Vec<PathBuf>> {
     // Two files, in build order: melange turns the binary into a package, apko turns packages into
     // an image. apko copies nothing from the host — see `k8s::apko` for why that is the point and
     // not a limitation.
+    // The program, at the name the melange pipeline installs from.
+    let app_source = out.join("app.beck");
+    std::fs::write(&app_source, source)
+        .with_context(|| format!("writing {}", app_source.display()))?;
+    written.push(app_source);
+
     let melange = out.join("image.melange.yaml");
     std::fs::write(&melange, k8s::melange(&graph))?;
     written.push(melange);
@@ -450,6 +460,30 @@ page: Signal[Html] = per_session(st, view)
         let text = g.explain();
         assert!(text.contains("carries `ingress`"), "{text}");
         assert!(text.contains("no `net.out` in the program"), "{text}");
+    }
+
+    #[test]
+    fn the_image_ships_the_program_and_the_workload_runs_it() {
+        // An image with the toolchain and no program is an image that cannot serve anything, and
+        // nothing short of starting a container says so.
+        let g = graph(&compile(PROGRAM));
+        let melange = crate::k8s::melange(&g);
+        assert!(
+            melange.contains(crate::k8s::APP_SOURCE),
+            "the package must install the program:\n{melange}"
+        );
+        let workload = crate::k8s::render(&g, "id")
+            .into_iter()
+            .find(|(n, _)| n.contains("workload"))
+            .map(|(_, b)| b)
+            .expect("a workload exists");
+        assert!(
+            workload.contains(crate::k8s::APP_SOURCE),
+            "the container must be told which program to run:\n{workload}"
+        );
+        // …and it must be able to reach the log store the `durable` effect asked for.
+        assert!(workload.contains("BECK_POSTGRES_URL"), "{workload}");
+        assert!(workload.contains("secretKeyRef"), "{workload}");
     }
 
     #[test]

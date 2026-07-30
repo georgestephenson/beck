@@ -175,7 +175,8 @@ fn main() -> Result<()> {
         } => replay(&file, store, &path, url.as_deref(), genesis, verify, to),
         Cmd::Build { file, out } => {
             let placed = compiled(&file)?;
-            let written = beck_infra::emit(&placed, &out)?;
+            let source = read(&file)?;
+            let written = beck_infra::emit(&placed, &source, &out)?;
             for w in &written {
                 println!("{}", w.display());
             }
@@ -416,7 +417,8 @@ async fn replay(
 
 fn up(file: &Path, out: &Path, dry_run: bool) -> Result<()> {
     let placed = compiled(file)?;
-    let written = beck_infra::emit(&placed, out)?;
+    let source = read(file)?;
+    let written = beck_infra::emit(&placed, &source, out)?;
     eprintln!("emitted {} files to {}", written.len(), out.display());
     if dry_run {
         eprintln!("--dry-run: not touching a cluster");
