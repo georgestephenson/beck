@@ -253,9 +253,66 @@ Consequences applied across the plan:
   expedience — purity violations (impure folds, hidden time, unplaced effects) stay *compile
   errors*, not warnings, even where a shortcut would ship faster.
 
+## D9 — A language, not a framework on Python or Clojure — **DECIDED**
+
+Prompted by the fair challenge: the tour's code fences are tagged `python`/`clojure` (a
+syntax-highlighting hack, [`11`](11-language-tour.md)) — so is this even a separate language? Could
+the goals be met by reusing Python or Clojure?
+
+**The test that decides it: a framework can suggest; only a compiler can refuse.** Walk the
+project's non-negotiable guarantees and ask what each requires:
+
+| Guarantee | Needs | On Python | On Clojure |
+|---|---|---|---|
+| Secrets provably never reach the browser ([`03`](03-type-and-effect-system.md) §3.5) | sound static types + effect rows | mypy is optional and unsound; monkey-patching defeats any flow analysis | dynamically typed — flow proofs unavailable |
+| Folds are replay-pure (the determinism rule behind replay, fork, optimism, DST) | compile-time purity checking | unenforceable — any callee may hide `time.time()` | unenforceable — convention only (Electric's honest position) |
+| Same fold, both tiers, identical results | one code generator, identical numeric semantics | browser Python = Pyodide, ~6–10 MB payload; semantics drift | JVM vs ClojureScript: two runtimes, floats/ints/laziness diverge at the edges |
+| ~10 KB thin client; aggressive per-tier DCE | whole-program compilation we control | no | JVM/CLJS artefacts are not in this class |
+| "Optimal performance" (D8) on the service tier | native codegen (our LLVM path) | 10–100× interpreter penalty on hot paths; GIL | good JIT throughput, but 100–300 MB per service and JVM cold starts vs our ~10–20 MB static binaries — against the distroless/scale-to-zero goals |
+| Views incrementalized by the compiler | analyzable IR of user logic | bytecode analysis of a dynamic language is a tar pit | macros could capture *some* — but untyped plans forfeit the checked-columns/row-size cost model |
+| Migration refusal, exhaustive event matching, WCAG-at-compile-time, effect-widening = breaking API change | a type checker in the build path | no | no |
+
+Clojure deserves the respectful version of the answer: it is the *closest existing world* —
+homoiconicity, macros, Electric's tier-splitting all live there, and Electric Clojure is standing
+proof our semantics are implementable. It is also proof of the ceiling: every guarantee above rests
+on programmer discipline there, and Meteor already taught us what convention-without-proof becomes
+at scale ([`01`](01-vision-and-premise.md) §1.6). The Python version of the answer is shorter: a
+"Tier SDK" for Python would be Meteor-in-Python — the magic without the proofs, plus a 50×
+performance ceiling.
+
+**What we do reuse — aggressively — is everything below the language**: Tokio, DataFusion,
+differential dataflow, Wasmtime, LLVM/Cranelift, Postgres, Kubernetes, Keycloak
+([`07`](07-dependencies.md)). The project is not "forming our own world"; it is building **our own
+front door onto the best engines in the world** — the Materialize shape the original conversation
+identified ("the engine in Rust, the language as its configuration"). The language layer is
+precisely the part that cannot be borrowed, because the guarantees *are* the language.
+
+A prototype-as-Clojure-framework stepping stone was considered and rejected: it would validate the
+parts Electric has already validated and none of the moat (proofs, determinism, codegen), while
+Phase 0 already validates the runtime claims in Rust directly ([`08`](08-roadmap.md)).
+
+## D10 — Name: **Beck** — **DECIDED** (pending routine go-public checks)
+
+George's pick, being Cumbrian. It is on inspection close to a perfect fit:
+
+- A **beck** is a small, fast upland stream — the project's central metaphor, in the dialect of the
+  fells: becks *merge* into rivers (the merge point), and they run.
+- English keeps a second meaning: a **beck** is a summoning gesture — "at your beck and call" —
+  which is literally what a `Command` is. A language of streams and commands, named by a word that
+  means both.
+- Short, typable, and the CLI reads as a sentence: `beck run`, `beck up`, `beck deploy`,
+  `beck replay`.
+- Searchable handle: **becklang** (golang precedent). Known namesakes (the musician, Kent Beck) are
+  far from language-tooling search space; trademark/domain checks happen at go-public, not before.
+
+Adoption plan: the repo stays `tier` for now; the rename (CLI, `beck.toml`, `.beck` files, docs) is
+one deliberate commit when George says "thread it through", so history and the seed documents stay
+coherent until then.
+
 ## Still open (minor, non-blocking)
 
 - Security-headline vs productivity-headline positioning ([`09`](09-risks-and-open-questions.md)
   §9.5).
-- Naming/searchability of `tier` — decide before public artefacts exist.
+- Executing the Beck rename across docs/CLI (D10 — on George's word), plus the routine
+  trademark/domain checks at go-public.
 - The tracked technical opens in [`09`](09-risks-and-open-questions.md) §9.6.

@@ -160,20 +160,10 @@ All substantive questions are answered; the answers and their reasoning are reco
 
 1. **Security/least-privilege as marketing headline vs productivity** — defaults to "both,
    audience-dependent" (§9.3) until directed otherwise.
-2. **Name**: the transcript coins `tier`; searchability is poor. Shortlist on the table:
-   - **Keep Tier, publish as `tierlang`** (the golang precedent) — zero identity cost, fully
-     searchable handle, CLI stays `tier`. *Default recommendation.*
-   - **Weir** — a low dam across a stream that controls its flow: precisely the merge point, the
-     project's central construct. Short, rare, `weir run` reads well; collision: Weir Group
-     (Scottish engineering firm), search as `weirlang`.
-   - **Weft** — the thread woven across the warp to make one fabric from many strands: one
-     language across tiers. Short, rare, clean CLI.
-   - **Strata** — tiers, literally, in geological clothing; evocative but a common word with an
-     O'Reilly-conference past.
-   - **Tarn** / **Beck** — the arbitrary-short-nature-word school (Rust, Zig); `beck` is a
-     dialect word for stream, on-theme.
-   Decide before public artefacts exist; domains/handles should be checked at that moment, not
-   speculatively.
+2. **Name**: decided — **Beck** ([`10`](10-decisions.md) D10): Cumbrian for a fast upland stream
+   (becks merge into rivers — the merge point), with the second English sense of a summons ("beck
+   and call" — a `Command`). Handle `becklang`. Rename executed as one deliberate commit on
+   George's word; trademark/domain checks at go-public.
 
 ## 9.6 Open technical questions (tracked, not blocking)
 

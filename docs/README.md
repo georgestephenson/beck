@@ -40,7 +40,7 @@ the transcript was available; checking it against the original changed three loa
 | 07 | [Dependencies](07-dependencies.md) | Every third-party choice: rationale, licence, benchmarks, rejected alternatives, swap cost |
 | 08 | [Roadmap](08-roadmap.md) | Phase 0 premise-proof, walking skeleton, phased plan, exit criteria, team shape |
 | 09 | [Risks and open questions](09-risks-and-open-questions.md) | Ranked risks, decisions taken, remaining opens |
-| 10 | [Decision log](10-decisions.md) | George's decisions D1–D8, all settled, recorded with reasoning — including the Git/local-first analysis |
+| 10 | [Decision log](10-decisions.md) | George's decisions D1–D10, all settled — including the Git/local-first analysis, the language-not-framework rationale, and the name: **Beck** |
 | 11 | [Language tour](11-language-tour.md) | What Tier looks like, construct by construct — types, traits, macros, queries, UI, services, in-language tests |
 | 12 | [Standards and conformance](12-standards-and-conformance.md) | The rulesets Tier conforms to, layer by layer — and the test-linked spec discipline that makes conformance real |
 | 13 | [Testing strategy](13-testing.md) | Every applicable kind of test and why — built around the free oracles Tier's semantics manufacture (DST, differentials, TLA+, Jepsen) |

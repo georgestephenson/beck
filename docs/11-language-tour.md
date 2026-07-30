@@ -5,6 +5,12 @@ translated). This tour shows the rest of the language, construct by construct, a
 designed. Everything here follows the rules fixed in [`02-syntax.md`](02-syntax.md): one homoiconic
 AST, Python-shaped default surface, S-expression second surface, everything an expression.
 
+> **A note on the code fences**: blocks are tagged `python` and `clojure` purely so Markdown
+> renderers apply passable syntax highlighting — none of this is Python or Clojure. Tier is its own
+> language with its own compiler; *why* it must be, rather than a framework on either host, is
+> argued in [`10-decisions.md`](10-decisions.md) D9. (A `tree-sitter-tier` grammar replaces this
+> hack the moment it exists.)
+
 ## 11.1 Modules, values, types
 
 ```python
