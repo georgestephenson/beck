@@ -159,9 +159,15 @@ the `ingress` effect. At ingress the runtime stamps each occurrence into an enve
 model Envelope[T]:
     seq: Seq            # position in the total order — assigned here, nowhere else
     at: Instant         # wall-clock, captured as data
-    actor: Session      # authenticated origin capability
+    actor: ActorId      # stable authenticated identity — NEVER the live Session capability or token
     body: T
 ```
+
+Two rules the review pass made explicit ([`14`](14-review-findings.md) F5, F3): the envelope
+records a durable *identity*, never the `Session` capability itself — tokens and live capabilities
+must not be persisted into an immutable log; and **only validated events are durably logged** — raw
+command envelopes are transient (retained briefly for idempotency de-duplication, then discarded),
+so an attacker's rejected traffic never becomes permanent storage.
 
 `Session` is minted by the identity subsystem — a bundled OSS IdP or an external OIDC issuer, never
 our own auth code — with verified claims mapped to typed capabilities
@@ -185,7 +191,16 @@ off it: `durable(retain=90.days, snapshot=hourly)` — defaults sane, overridabl
 
 **Commands vs events (CQRS as types).** Clients propose `Command`s; the server's `validate` — the
 sole consumer of ingress, holding the `Session` capability — decides what becomes an `Event`.
-Events are facts: past-tense, immutable, the only input to folds.
+Events are facts: past-tense, immutable, the only input to folds. The general signature is
+`validate : (Session, Command) -> list[Event]` — a command may legitimately yield several events
+(PlaceOrder → OrderPlaced + StockReserved), and the batch is appended **atomically**: contiguous
+`seq`s, all-or-nothing, so no fold ever observes half a command's consequences. The sketch's
+`Option[Event]` is the single-event special case. Two obligations sit on `validate` that the todo
+sketch (deliberately auth-free) does not model, and real programs must
+([`14`](14-review-findings.md) F2): client-minted ids are accepted only if *fresh* (first-writer
+wins — a colliding `Add` is rejected, never an overwrite), and commands referencing existing
+entities check ownership against `actor` — the `Ref[T] requires owns(...)` pattern the orders
+example uses.
 
 **Optimism, derived.** For a command `c`, the client may speculatively apply
 `validate_optimistic(c)`'s expected event to its local view of state **iff** the fold and view

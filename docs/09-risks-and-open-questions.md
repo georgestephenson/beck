@@ -157,7 +157,9 @@ audience it courts.
 
 All substantive questions are answered; the answers and their reasoning are recorded in
 [`10-decisions.md`](10-decisions.md) (D1–D13, all decided — including the marketing headline, D13).
-For the record:
+The final review pass ([`14-review-findings.md`](14-review-findings.md)) added four items
+awaiting George: F1 (erasure vs genesis-replay semantics), F3 (abuse-quota default), F6
+(fold-totality restrictions), F14 (demo posture). For the record:
 
 1. **Name**: decided — **Beck** ([`10`](10-decisions.md) D10): Cumbrian for a fast upland stream
    (becks merge into rivers — the merge point), with the second English sense of a summons ("beck

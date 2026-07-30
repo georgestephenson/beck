@@ -153,7 +153,10 @@ precise, checked effect set per service, the generated policy is exact rather th
 ```
 service api effects: { ingress, durable(orders), net.out(payments.example.com), log }
 
-⇒ NetworkPolicy egress: [ postgres:5432, payments.example.com:443, otel-collector:4317 ]  DENY all else
+⇒ NetworkPolicy egress: [ kube-dns:53, postgres:5432, payments.example.com:443,
+                          otel-collector:4317 ]                              DENY all else
+                        (infrastructural egress — DNS, telemetry — is added by the
+                         platform layer; forgetting DNS is the classic generated-policy bug)
 ⇒ Gateway:              websocket route (the ingress effect), rate-limited at the edge
 ⇒ Postgres grants:      INSERT on the log; ALL on api's own read models; nothing else —
                         no generic UPDATE/DELETE exists anywhere, because state changes

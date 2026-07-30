@@ -44,6 +44,7 @@ the transcript was available; checking it against the original changed three loa
 | 11 | [Language tour](11-language-tour.md) | What Beck looks like, construct by construct — types, traits, macros, queries, UI, services, in-language tests |
 | 12 | [Standards and conformance](12-standards-and-conformance.md) | The rulesets Beck conforms to, layer by layer — and the test-linked spec discipline that makes conformance real |
 | 13 | [Testing strategy](13-testing.md) | Every applicable kind of test and why — built around the free oracles Beck's semantics manufacture (DST, differentials, TLA+, Jepsen) |
+| 14 | [Review findings](14-review-findings.md) | The final adversarial pass: ranked security/design findings, what was fixed, what awaits George (F1, F3, F6, F14) |
 
 ## The one-paragraph version
 

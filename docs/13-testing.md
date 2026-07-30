@@ -55,7 +55,10 @@ This is where most frameworks under-test and where Beck's determinism pays out h
   interleavings, injects faults (dropped/duplicated/reordered messages, partitions, disk-full,
   process crash at arbitrary points), and — the killer feature — **any failure replays exactly from
   a seed**. Heisenbugs stop existing as a category. Beck's semantics were practically designed for
-  DST; not building it would be negligent.
+  DST; not building it would be negligent. **Hard prerequisite** ([`14`](14-review-findings.md)
+  F11): the runtime must be written against virtualized clock/network/disk interfaces **from
+  Phase 1** — FoundationDB's lesson is that DST cannot be retrofitted onto a runtime that calls
+  the real world directly, so this constraint binds the first line of runtime code, not Phase 4.
 - **Crash-recovery tests**: `kill -9` mid-fold, mid-snapshot, mid-migration, mid-patch-flush;
   restart; assert state equals the log's truth and no patch was lost or duplicated
   (`(subscription, seq)` resume contract).
