@@ -68,4 +68,4 @@ annotations:
   org.opencontainers.image.source: https://github.com/georgestephenson/beck
   org.opencontainers.image.description: >-
     Phase 0 of Beck: the todo sketch, hand-written as the output the compiler will generate.
-  org.opencontainers.image.licenses: Apache-2.0
+  org.opencontainers.image.licenses: MIT
