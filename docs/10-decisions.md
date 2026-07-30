@@ -381,10 +381,13 @@ decentralised OCI by design ([`16`](16-packages-and-ecosystem.md) §16.3), so th
 availability-critical but not correctness-critical — a static mirror fallback means the ecosystem
 is never hostage to the dogfood app's schedule.
 
-**Sequencing** ([`08`](08-roadmap.md)): playground in Phase 3; beck.dev in early Phase 4; the
-registry through Phases 4–5, and **"the registry runs in production on Beck, serving real
-packages" becomes a Phase 5 exit criterion** — the production application Phase 4 demanded, chosen
-so that shipping the proof and shipping the ecosystem are the same act.
+**Sequencing** ([`08`](08-roadmap.md)): playground in Phase 3 (its full design — including the
+whole-stack-in-a-tab rung and the cloud rung — is [`17-playground.md`](17-playground.md)); beck.dev
+in early Phase 4; the registry through Phases 4–5, and **"the registry runs in production on Beck,
+serving real packages" becomes a Phase 5 exit criterion** — the production application Phase 4
+demanded, chosen so that shipping the proof and shipping the ecosystem are the same act. The triad:
+**playground proves the language, the site proves the web tier, the registry proves the backend
+and data tier.**
 
 ## Still open (minor, non-blocking)
 

@@ -96,7 +96,9 @@ dependencies whose signatures didn't change.
   claims → `Session` capability mapping, dev-mode identity for rung 0, presence as a first-class
   signal ([`10`](10-decisions.md) D6).
 - LSP: completion, hover with *inferred placement*, go-to-def, rename, inline diagnostics.
-- **The in-browser playground** (§7.7) — highest-leverage adoption artefact.
+- **The playground** ([`17`](17-playground.md)) — highest-leverage adoption artefact: rung A
+  (compile-time, static) and rung B (the whole app in the tab — the worker-server is the rung-0
+  platform compiled to WASM, riding Mode B's kernel work; `seq` scrubber and two-client demos).
 - `beck init ci`, apko image build in-process, cosign signing, SBOM.
 
 **Exit**: an outside developer builds a non-trivial app from documentation alone, without asking the
@@ -114,6 +116,8 @@ team a question. Track this literally as the acceptance test.
   effect-diff prompt, namespaces, registry index + transparency log, generated docs site.
 - `process` (sagas) and non-durable folds hardened; internal fan-out fabric (NATS) when
   multi-node demands it ([`15`](15-scale-and-distribution.md)).
+- Playground rung C ([`17`](17-playground.md) §17.3): ephemeral TTL'd cloud environments with the
+  compiler-as-first-sandbox effect budget — an operator workload, built alongside the operator.
 - Effect-derived NetworkPolicy/RBAC/DB grants (§6.5) — the platform-team sales pitch.
 - Crossplane emitter for managed Postgres/buckets/DNS; OpenTofu escape hatch; `import infra`.
 - OpenTelemetry cross-tier tracing on by default; `beck tune` right-sizing.

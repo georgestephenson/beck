@@ -47,6 +47,7 @@ the transcript was available; checking it against the original changed three loa
 | 14 | [Review findings](14-review-findings.md) | The adversarial review: ranked security/design findings — all resolved (D14) |
 | 15 | [Scale and distribution](15-scale-and-distribution.md) | The DDIA checklist against Beck's semantics; the scaling ladder (partitioned logs, typed sharding), sagas, and why Beck needs a fabric, not a Redis |
 | 16 | [Packages and ecosystem](16-packages-and-ecosystem.md) | The Rails/npm lessons; Beck's own package system — feature packages, effect-transparent dependencies, no install hooks |
+| 17 | [The playground](17-playground.md) | The whole stack in a browser tab (the DST convergence), the cloud rung with the compiler as first sandbox, content-addressed sharing, playground-as-Beck-app |
 
 ## The one-paragraph version
 
