@@ -1,0 +1,123 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: beck-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: beck-operator
+  namespace: beck-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: beck-operator
+rules:
+  - apiGroups:
+      - beck.dev
+    resources:
+      - beckapplications
+      - beckapplications/status
+    verbs:
+      - get
+      - list
+      - watch
+      - patch
+      - update
+  - apiGroups:
+      - apps
+    resources:
+      - deployments
+      - statefulsets
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - patch
+  - apiGroups:
+      - ""
+    resources:
+      - services
+      - configmaps
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - patch
+  - apiGroups:
+      - gateway.networking.k8s.io
+    resources:
+      - httproutes
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - patch
+  - apiGroups:
+      - batch
+    resources:
+      - jobs
+      - cronjobs
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - patch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: beck-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: beck-operator
+subjects:
+  - kind: ServiceAccount
+    name: beck-operator
+    namespace: beck-system
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: beck-operator
+  namespace: beck-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: beck-operator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: beck-operator
+    spec:
+      containers:
+        - args:
+            - run
+          image: ghcr.io/beck/phase0-operator@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          name: beck-operator
+          resources:
+            limits:
+              memory: 128Mi
+            requests:
+              cpu: 50m
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      serviceAccountName: beck-operator

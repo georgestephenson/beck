@@ -48,6 +48,7 @@ the transcript was available; checking it against the original changed three loa
 | 15 | [Scale and distribution](15-scale-and-distribution.md) | The DDIA checklist against Beck's semantics; the scaling ladder (partitioned logs, typed sharding), sagas, and why Beck needs a fabric, not a Redis |
 | 16 | [Packages and ecosystem](16-packages-and-ecosystem.md) | The Rails/npm lessons; Beck's own package system — **tarns** (packages), **forces** (vertical-slice feature packages), **the Mere** (index); effect-transparent dependencies, no install hooks |
 | 17 | [The playground](17-playground.md) | The whole stack in a browser tab (the DST convergence), the cloud rung with the compiler as first sandbox, content-addressed sharing, playground-as-Beck-app |
+| 18 | [Phase 0 report](18-phase-0-report.md) | **Built.** What [`phase0/`](../phase0/) implements, the measured exit criteria, the kill/pivot gates, and what turned out harder than expected |
 
 ## The one-paragraph version
 

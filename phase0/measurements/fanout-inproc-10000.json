@@ -1,0 +1,19 @@
+{
+  "commit_latency_under_fanout_ms": {
+    "max": 36.119,
+    "mean": 21.718,
+    "n": 200,
+    "p50": 25.636,
+    "p90": 28.846,
+    "p99": 34.435
+  },
+  "measurement": "per-idle-session memory (in-process subscriptions)",
+  "note": "in-process subscriptions exclude kernel socket buffers; see the socket-mode run",
+  "per_session_bytes": 23460.25,
+  "per_session_view_bytes_accounted": 1106,
+  "rows_in_shared_state": 20,
+  "rss_baseline_bytes": 5144576,
+  "rss_with_subscribers_bytes": 239747072,
+  "scope": "mine",
+  "subscribers": 10000
+}

@@ -1,0 +1,13 @@
+store              redb
+head               20000
+state digest       df305b29d5b9d94dbc748a5f4566319b0e2001b03779029a77e385c468d55404
+todos              20000
+state fold         0.012 s (1622888 events/s)
+patch limit        2000
+patch digest       b5dd28efd936072e771e9eb12514d8cbce41932b379c82ddd41adb468518dffe
+frames             2000
+patch bytes        670469
+patch fold         5.995 s (334 events/s — full recompute per event, O(events × rows))
+
+replay is exact: state and patch stream are bit-identical, and the
+snapshot path agrees with a fold from genesis.

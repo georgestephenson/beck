@@ -1,0 +1,42 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/beck-p0-core",
+    "crates/beck-p0-log",
+    "crates/beck-p0-server",
+    "crates/beck-p0-operator",
+    "crates/beck-p0-bench",
+]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+# Version as well as path: a path dependency with no version requirement is a wildcard, and §7.9's
+# "pinning — everything, always" does not carve out our own crates.
+beck-p0-core = { path = "crates/beck-p0-core", version = "0.0.0" }
+beck-p0-log = { path = "crates/beck-p0-log", version = "0.0.0" }
+
+anyhow = "1"
+blake3 = "1"
+clap = { version = "4", features = ["derive", "env"] }
+futures-util = "0.3"
+# Default features pull `heapless` 0.7, whose `atomic-polyfill` is unmaintained
+# (RUSTSEC-2023-0089, no safe upgrade). We serialise into `Vec`, so `alloc` is all we need.
+postcard = { version = "1", default-features = false, features = ["alloc"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = "0.24"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4", "v7", "serde"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = true

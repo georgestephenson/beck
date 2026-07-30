@@ -1,0 +1,9 @@
+{
+  "measurement": "per-idle-session memory (real websockets)",
+  "per_session_bytes": 9610.581,
+  "rss_baseline_bytes": 28180480.0,
+  "rss_with_subscribers_bytes": 57012224.0,
+  "scope": "mine",
+  "server_reported_subscriptions": 3000.0,
+  "subscribers": 3000
+}

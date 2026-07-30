@@ -1,0 +1,8 @@
+{
+  "kernel": "Linux 6.18.5",
+  "cpus": 4,
+  "memory_kb": 16461176,
+  "rustc": "rustc 1.94.1 (e408947bf 2026-03-25)",
+  "open_file_limit": 4096,
+  "postgres": "psql (PostgreSQL) 16.13 (Ubuntu 16.13-0ubuntu0.24.04.1)"
+}

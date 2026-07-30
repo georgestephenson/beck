@@ -1,0 +1,154 @@
+name: phase 0
+
+# The cross-cutting practices of docs/08-roadmap.md §8.3, mechanised from the first commit:
+# every phase ships a demo that runs; the harnesses are the project's conscience; size budgets are
+# CI gates, not aspirations; the licence gate runs from commit one.
+#
+# What is a *gate* here and what is merely *reported* is a deliberate distinction (§13.7): budgets
+# that are deterministic (payload size, patch size, manifest freshness) fail the build; latency and
+# throughput are measured and published as artefacts, because a shared CI runner cannot hold a
+# timing threshold honestly, and "a gate that flakes gets deleted".
+
+on:
+  push:
+    branches: [main]
+    paths: ["phase0/**", ".github/workflows/phase0.yml"]
+  pull_request:
+    paths: ["phase0/**", ".github/workflows/phase0.yml"]
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: phase0
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: beck_p0
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      BECK_PG: postgres://postgres:postgres@localhost/beck_p0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: phase0
+
+      - name: format
+        run: cargo fmt --all --check
+      - name: clippy
+        run: cargo clippy --all-targets --all-features
+      - name: tests (all three log substrates)
+        run: cargo test --all-targets
+
+      - name: the manifests are what the effects imply
+        run: cargo run -p beck-p0-operator -- emit --out deploy/k8s --check
+
+      - name: replay is exact
+        run: |
+          cargo build --release -p beck-p0-server
+          ./target/release/beck-p0 seed --store postgres --events 5000
+          ./target/release/beck-p0 verify --store postgres
+
+  budgets:
+    # Deterministic budgets only. These are the ones §8.3 calls gates.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: phase0
+      - name: build
+        run: cargo build --release -p beck-p0-server -p beck-p0-bench
+      - name: thin-client payload budget (< 10 KB brotli)
+        run: |
+          ./target/release/beck-p0 run --store memory --addr 127.0.0.1:8080 &
+          for i in $(seq 50); do curl -sf http://127.0.0.1:8080/healthz && break; sleep 0.2; done
+          ./target/release/beck-p0-bench payload --json payload.json
+          python3 - <<'PY'
+          import json, sys
+          m = json.load(open("payload.json"))
+          size = m["thin_client"]["brotli_bytes"]
+          budget = m["thin_client"]["budget_brotli_bytes"]
+          print(f"thin client: {size} bytes brotli (budget {budget})")
+          sys.exit(0 if size < budget else 1)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: payload
+          path: phase0/payload.json
+
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: phase0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm install -g playwright@1.56.1 && npx playwright install --with-deps chromium
+      - run: cargo build --release -p beck-p0-server
+      - name: the running example, driven by a browser
+        run: NODE_PATH=$(npm root -g) node tests/browser.mjs
+
+  measurements:
+    # Reported, not gated: the numbers in docs/18-phase-0-report.md, refreshed on every run so
+    # drift is visible even where a threshold would flake.
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: beck_p0
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      BECK_PG: postgres://postgres:postgres@localhost/beck_p0
+      # Trimmed for a shared runner: the 100 ms RTT sweep and the 3k-socket fanout add ten minutes
+      # and no information a regression would not also show at these sizes.
+      RTTS: "0 25"
+      SUBSCRIBERS: "1000"
+      INPROC_SUBSCRIBERS: "1000 10000"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: phase0
+      - run: cargo build --release -p beck-p0-server -p beck-p0-bench
+      - run: ./tests/measure.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: measurements
+          path: phase0/measurements/
+
+  supply-chain:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: licence and advisory gate
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: phase0/Cargo.toml
+          command: check

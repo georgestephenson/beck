@@ -1,0 +1,121 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: beckapplications.beck.dev
+spec:
+  group: beck.dev
+  names:
+    kind: BeckApplication
+    plural: beckapplications
+    shortNames:
+      - beckapp
+    singular: beckapplication
+  scope: Namespaced
+  versions:
+    - additionalPrinterColumns:
+        - jsonPath: .status.phase
+          name: Phase
+          type: string
+        - jsonPath: .status.headSeq
+          name: Head
+          type: integer
+        - jsonPath: .spec.image
+          name: Image
+          type: string
+      name: v1alpha1
+      schema:
+        openAPIV3Schema:
+          description: Auto-generated derived type for BeckApplicationSpec via `CustomResource`
+          properties:
+            spec:
+              properties:
+                image:
+                  description: "Pinned by digest, never by tag: `beck build` is a pure function from source to digest\n(§6.2), and a deploy that cannot say exactly what it is running is not a deploy."
+                  type: string
+                log:
+                  properties:
+                    retainDays:
+                      description: "`durable(retain=..., snapshot=...)` — the retention and snapshot policy hanging off the\ndurable effect."
+                      format: uint32
+                      minimum: 0.0
+                      type: integer
+                    snapshotEvery:
+                      format: uint64
+                      minimum: 0.0
+                      type: integer
+                  required:
+                    - retainDays
+                    - snapshotEvery
+                  type: object
+                migration:
+                  description: "Present when accumulator or event types changed since the deployed signature. The build\nrefuses to produce a plan without it (§3.9); the operator refuses to roll without running\nit."
+                  nullable: true
+                  properties:
+                    fromWireOpsDigest:
+                      type: string
+                    migrate:
+                      description: "The `migrate : OldState -> NewState` function this deploy demands."
+                      type: string
+                    upcasters:
+                      default: []
+                      description: Upcasters registered for events already in the log (§3.9).
+                      items:
+                        type: string
+                      type: array
+                  required:
+                    - fromWireOpsDigest
+                    - migrate
+                  type: object
+                replicas:
+                  format: int32
+                  type: integer
+                substrate:
+                  description: "`postgres` or `embedded` — which substrate the durable fold lives on (§5.3)."
+                  type: string
+                wireOpsDigest:
+                  description: "Content-derived digest of the program's wire operations (§4.3). The operator refuses a\nrollout that is incompatible with the version currently serving, unless overridden."
+                  type: string
+              required:
+                - image
+                - log
+                - replicas
+                - substrate
+                - wireOpsDigest
+              type: object
+            status:
+              nullable: true
+              properties:
+                headSeq:
+                  description: The log position the serving version has folded to — `beck status`'s headline number.
+                  format: uint64
+                  minimum: 0.0
+                  nullable: true
+                  type: integer
+                message:
+                  nullable: true
+                  type: string
+                observedGeneration:
+                  format: int64
+                  nullable: true
+                  type: integer
+                phase:
+                  description: Where in §6.4's choreography this application is.
+                  nullable: true
+                  type: string
+                servingWireOpsDigest:
+                  nullable: true
+                  type: string
+                source:
+                  description: Source provenance for whatever went wrong (§6.4 responsibility 5).
+                  nullable: true
+                  type: string
+              type: object
+          required:
+            - spec
+          title: BeckApplication
+          type: object
+      served: true
+      storage: true
+      subresources:
+        status: {}

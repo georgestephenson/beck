@@ -1,0 +1,116 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: beck
+    app.kubernetes.io/name: beck-todo
+  name: beck-todo
+  namespace: beck-todo
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/managed-by: beck
+      app.kubernetes.io/name: beck-todo
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/managed-by: beck
+        app.kubernetes.io/name: beck-todo
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - args:
+            - run
+            - "--store"
+            - postgres
+            - "--addr"
+            - 0.0.0.0:8080
+            - "--snapshot-every"
+            - "1000"
+          env:
+            - name: RUST_LOG
+              value: info
+            - name: BECK_PG
+              valueFrom:
+                secretKeyRef:
+                  key: url
+                  name: beck-postgres
+          image: ghcr.io/beck/phase0-todo@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            periodSeconds: 10
+            timeoutSeconds: 2
+          name: beck-todo
+          ports:
+            - containerPort: 8080
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+            periodSeconds: 5
+            timeoutSeconds: 2
+          resources:
+            limits:
+              memory: 256Mi
+            requests:
+              cpu: 100m
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+          startupProbe:
+            failureThreshold: 30
+            httpGet:
+              path: /readyz
+              port: 8080
+            periodSeconds: 2
+      securityContext:
+        fsGroup: 65532
+        runAsGroup: 65532
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      serviceAccountName: beck-todo
+      terminationGracePeriodSeconds: 30
+      topologySpreadConstraints:
+        - labelSelector:
+            matchLabels:
+              app.kubernetes.io/managed-by: beck
+              app.kubernetes.io/name: beck-todo
+          maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+      volumes:
+        - emptyDir: {}
+          name: tmp
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: beck
+    app.kubernetes.io/name: beck-todo
+  name: beck-todo
+  namespace: beck-todo
+spec:
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+  selector:
+    app.kubernetes.io/managed-by: beck
+    app.kubernetes.io/name: beck-todo

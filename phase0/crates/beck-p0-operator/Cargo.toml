@@ -1,0 +1,24 @@
+[package]
+name = "beck-p0-operator"
+description = "Phase 0: the infrastructure tier — an InfraGraph derived from effects, and a kube-rs operator stub"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "beck-p0-operator"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+futures-util.workspace = true
+k8s-openapi = { version = "0.28", features = ["v1_34"] }
+kube = { version = "4", features = ["client", "derive", "runtime"] }
+schemars = "1"
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

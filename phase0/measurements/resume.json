@@ -1,0 +1,17 @@
+{
+  "events_missed": 25,
+  "fresh_subscription_frame": {
+    "bytes": 82441,
+    "ops": 1
+  },
+  "gap_patch": {
+    "bytes": 7490,
+    "ops": 26
+  },
+  "measurement": "reconnect-after-deploy resumption",
+  "reconnect_to_caught_up_ms": 2.946,
+  "replayed_the_gap": true,
+  "resumed_to_seq": 3625,
+  "server_says": "resumed",
+  "subscribed_at_seq": 3600
+}
