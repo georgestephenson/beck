@@ -57,6 +57,14 @@ pub enum Node {
         replicas: u32,
         /// Emitted only because a signal is placed on `client`: something has to serve it.
         serves_ui: bool,
+        /// Whether this workload connects to a [`Node::LogStore`], and therefore needs the
+        /// credentials for one.
+        ///
+        /// Not cosmetic. The container read `BECK_POSTGRES_URL` from a Secret unconditionally, so
+        /// a program with no `durable` effect emitted a `secretKeyRef` to a Secret nothing derived
+        /// — a pod that sits in `CreateContainerConfigError` forever. Found by the generated-graph
+        /// suite; no program in the corpus lacks a durable fold, so no example test could see it.
+        reads_log: bool,
     },
     /// `merge_clients()` ⇒ a websocket ingress route.
     Route {
@@ -342,6 +350,7 @@ pub fn derive(app: &str, effects: &[(Effect, String)], serves_ui: bool) -> Infra
             name: app.clone(),
             replicas: 1,
             serves_ui,
+            reads_log: has(Effect::Durable).is_some(),
         },
         if serves_ui {
             "a signal is placed on `client`, so the server renders and streams patches"
@@ -486,18 +495,40 @@ pub fn add_resources(b: &mut GraphBuilder, infra: &InfraGraph) {
     }
 }
 
+/// The subdirectory the cluster manifests are written to.
+///
+/// They are on their own, away from the image configs and the program, because the way a person
+/// and a GitOps controller both consume them is `-f <directory>` — and `kubectl apply -f` reads
+/// *every* `.yaml` in a directory. With everything in one place, `image.apko.yaml` was submitted to
+/// the API server as an object with no `apiVersion`, and Argo CD or Flux pointed at the output
+/// would have done the same. Found by the conformance job (docs/21 §21.4 rung 5), which is the
+/// first thing that ever ran `kubectl apply` on this directory.
+pub const MANIFEST_DIR: &str = "k8s";
+
 /// Write the object graph, the image configs, the program, and the provenance table.
+///
+/// The layout is
+///
+/// ```text
+/// <out>/k8s/000-namespace.yaml …   the cluster manifests, and nothing else
+/// <out>/image.apko.yaml            the image, declaratively
+/// <out>/image.melange.yaml         the package the binary ships in
+/// <out>/app.beck                   the program, at the path the package installs from
+/// <out>/explain.txt                why each object exists
+/// ```
 ///
 /// `source` is the program itself. It has to be here: the image ships the *toolchain*, and a
 /// container told to `beck run` with no source file has nothing to serve. That was invisible until
 /// a container was actually asked to serve a page (docs/19 §19.5).
 pub fn emit(placed: &Placed, source: &str, out: &Path) -> Result<Vec<PathBuf>> {
     let graph = graph(placed);
-    std::fs::create_dir_all(out).with_context(|| format!("creating {}", out.display()))?;
+    let manifests = out.join(MANIFEST_DIR);
+    std::fs::create_dir_all(&manifests)
+        .with_context(|| format!("creating {}", manifests.display()))?;
     let mut written = Vec::new();
 
     for (name, body) in k8s::render(&graph, &placed.wire_id) {
-        let path = out.join(&name);
+        let path = manifests.join(&name);
         std::fs::write(&path, body).with_context(|| format!("writing {}", path.display()))?;
         written.push(path);
     }
@@ -528,10 +559,13 @@ pub fn emit(placed: &Placed, source: &str, out: &Path) -> Result<Vec<PathBuf>> {
 
 /// Apply the emitted graph to a local cluster — rung 3 of the parity ladder (§6.6).
 pub fn up(out: &Path) -> Result<()> {
+    // `<out>/k8s`, not `<out>`: the image configs are YAML too, and the API server has no idea what
+    // an apko file is.
+    let manifests = out.join(MANIFEST_DIR);
     let status = std::process::Command::new("kubectl")
         .arg("apply")
         .arg("-f")
-        .arg(out)
+        .arg(&manifests)
         .status()
         .context(
             "running kubectl — `beck up` needs a cluster; `beck run` deliberately needs nothing",
@@ -542,16 +576,38 @@ pub fn up(out: &Path) -> Result<()> {
     Ok(())
 }
 
-fn sanitise(name: &str) -> String {
+/// The longest suffix any derived object name carries: `<app>-log-credentials`.
+///
+/// Every other one is shorter — `-snapshots`, `-policy`, `-grants`, `-route`, `-log`. The budget
+/// below is what keeps the *longest* of them inside the API's limit, which is the only version of
+/// this arithmetic that stays true when a new object is added with a new suffix.
+const LONGEST_SUFFIX: usize = "-log-credentials".len();
+
+/// A Kubernetes object name is an RFC 1123 label: at most 63 characters, lowercase alphanumerics
+/// and dashes, starting and ending with an alphanumeric.
+pub const MAX_NAME: usize = 63;
+
+/// Turn a module name into something Kubernetes will accept as the name of an object *and* as the
+/// stem of every object derived from it.
+///
+/// The length cap is not decoration. A module called `customer-facing-order-management-service`
+/// produces `…-log-credentials`, and the API server rejects a name over 63 characters — so an
+/// application would compile, derive, render, and fail at `kubectl apply` with a message about a
+/// field nobody wrote. Found by the generated-graph suite (`tests/manifest_properties.rs`), which
+/// is exactly the input nobody types by hand.
+pub fn sanitise(name: &str) -> String {
     let cleaned: String = name
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
         .collect();
-    let trimmed = cleaned.trim_matches('-').to_lowercase();
+    let mut trimmed = cleaned.trim_matches('-').to_lowercase();
+    trimmed.truncate(MAX_NAME - LONGEST_SUFFIX);
+    // Truncation can leave the dash that was in the middle of a word at the end of the name.
+    let trimmed = trimmed.trim_end_matches('-');
     if trimmed.is_empty() {
         "beck-app".into()
     } else {
-        trimmed
+        trimmed.to_string()
     }
 }
 

@@ -175,6 +175,7 @@ dependencies = [
  "beck-diag",
  "insta",
  "k8s-openapi",
+ "proptest",
  "serde",
  "serde_json",
  "serde_norway",

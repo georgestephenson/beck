@@ -1,30 +1,33 @@
-//! What the emitted Kubernetes manifests are checked against.
+//! What the emitted Kubernetes manifests are checked against, on the canonical program.
 //!
 //! There are three kinds of wrong a generated manifest can be, and they need three mechanisms.
-//! Only the first is a type system's job, and Phase 2 shipped with none of them:
+//! Phase 2 shipped with none of them:
 //!
 //! 1. **Malformed** — a misspelled field, a missing required one, a number where a string belongs.
 //!    Handled in [`beck_infra::k8s`] by building `k8s-openapi` structs instead of strings, so the
-//!    Rust compiler checks them against the Kubernetes OpenAPI schema. Nothing in this file tests
-//!    that, because a test cannot: the program that would fail does not compile.
+//!    Rust compiler checks them against the Kubernetes OpenAPI schema. Nothing here tests that,
+//!    because a test cannot: the program that would fail does not compile.
 //! 2. **Not the YAML we meant** — well-typed objects, mangled on the way out. The writer is our own
-//!    (see [`beck_infra::yaml`] for why), so it must not be trusted to check itself:
-//!    [`every_object_reads_back_as_the_object_it_was`] parses every document with a third-party
-//!    YAML parser and compares against the original JSON.
+//!    (see [`beck_infra::yaml`] for why), so it is not trusted to check itself: every document is
+//!    parsed back with a third-party YAML parser and compared against the original JSON.
 //! 3. **Individually valid, collectively broken** — a Service whose selector matches no pod, a
 //!    `secretKeyRef` naming a Secret that is never emitted, a route sending to a port nothing
-//!    listens on, a StatefulSet naming a `serviceName` that does not exist. No schema can see any
-//!    of these, and every one of them is a deploy that comes up and does not work. They are the
-//!    bulk of this file, and each is asserted **by walking the objects** rather than by naming the
-//!    string that happens to be right today.
+//!    listens on. No schema can see any of these, and every one is a deploy that comes up and does
+//!    not work.
 //!
-//! And underneath all three, [`insta`] snapshots of the complete manifest set, so that any change
-//! to what gets deployed is a diff a person approves rather than a surprise in a cluster.
+//! The checks for (2) and (3) live in [`invariants`], because they are also what
+//! [`manifest_properties.rs`](manifest_properties.rs) runs over generated graphs. This file calls
+//! them one per test on the program a reader can open, and adds the things only a *known* program
+//! can assert — that the container runs the path the package installs, that deleting an effect
+//! deletes a manifest — plus an `insta` snapshot of the complete set, so a change to what gets
+//! deployed is a diff somebody approves.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use beck_infra::{graph, InfraGraph, Node};
 use serde_json::Value;
+
+mod invariants;
 
 /// A program that exercises every derivation: ingress, a durable fold, a client-placed page.
 const PROGRAM: &str = r#"
@@ -72,481 +75,89 @@ fn objects() -> Vec<(String, Value)> {
 }
 
 // ---------------------------------------------------------------------------------------------
-// 2. The document says what the object said
+// The invariants, one test each
 // ---------------------------------------------------------------------------------------------
+//
+// Every check lives in [`invariants`] and is called from exactly two places: here, on the
+// canonical program, so a failure names the property rather than "the manifests are wrong"; and
+// `manifest_properties.rs`, on generated graphs, so the claim covers programs nobody wrote. There
+// is no third copy, because two copies of an invariant is one invariant and one comment.
 
-#[test]
-fn every_object_reads_back_as_the_object_it_was() {
-    // The writer is ours, so the parser must not be. `serde_norway` is a maintained fork of
-    // `serde_yaml`; if this passes, the emitted bytes are YAML, and they are *this* YAML.
-    let all = objects();
-    assert!(!all.is_empty());
-    for (name, value) in &all {
-        let text = beck_infra::yaml::to_yaml(value);
-        let back: Value = serde_norway::from_str(&text)
-            .unwrap_or_else(|e| panic!("{name} is not YAML: {e}\n{text}"));
-        assert_eq!(
-            &back, value,
-            "{name} did not survive the round trip:\n{text}"
-        );
-    }
-}
-
-#[test]
-fn every_document_declares_a_kind_that_matches_its_api_version() {
-    // A body under the wrong apiVersion is accepted by YAML and rejected by the API server. The
-    // pairs are enumerated so that emitting a new kind is a decision somebody makes on purpose.
-    const KNOWN: &[(&str, &str)] = &[
-        ("v1", "Namespace"),
-        ("v1", "Service"),
-        ("v1", "Secret"),
-        ("v1", "ConfigMap"),
-        ("apps/v1", "Deployment"),
-        ("apps/v1", "StatefulSet"),
-        ("networking.k8s.io/v1", "NetworkPolicy"),
-        ("gateway.networking.k8s.io/v1", "HTTPRoute"),
-    ];
-    for (name, value) in objects() {
-        let api = value["apiVersion"].as_str().unwrap_or_default();
-        let kind = value["kind"].as_str().unwrap_or_default();
-        assert!(
-            KNOWN.contains(&(api, kind)),
-            "{name}: `{api}`/`{kind}` is not a pair this emitter is known to produce"
-        );
-    }
-}
-
-#[test]
-fn every_namespaced_object_says_which_namespace() {
-    // An object with no namespace lands in whatever `kubectl` was pointed at, which is how a
-    // manifest set that works on a laptop deletes something in production.
-    let app = infra().app;
-    for (name, value) in objects() {
-        if value["kind"] == "Namespace" {
-            continue;
-        }
-        assert_eq!(
-            value["metadata"]["namespace"].as_str(),
-            Some(app.as_str()),
-            "{name} does not name its namespace"
-        );
-    }
-}
-
-// ---------------------------------------------------------------------------------------------
-// 3. The objects against each other — what no schema can check
-// ---------------------------------------------------------------------------------------------
-
-/// Every `(kind, name)` the emitter produced.
-fn emitted() -> BTreeSet<(String, String)> {
-    objects()
-        .into_iter()
-        .map(|(_, v)| {
-            (
-                v["kind"].as_str().unwrap_or_default().to_string(),
-                v["metadata"]["name"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_string(),
-            )
-        })
-        .collect()
-}
-
-/// The pod template labels of every workload, by the object that owns them.
-fn pod_templates() -> Vec<(String, BTreeMap<String, String>)> {
-    objects()
-        .into_iter()
-        .filter(|(_, v)| v["kind"] == "Deployment" || v["kind"] == "StatefulSet")
-        .map(|(_, v)| {
-            let name = v["metadata"]["name"]
-                .as_str()
-                .unwrap_or_default()
-                .to_string();
-            (
-                name,
-                string_map(&v["spec"]["template"]["metadata"]["labels"]),
-            )
-        })
-        .collect()
-}
-
-fn string_map(v: &Value) -> BTreeMap<String, String> {
-    v.as_object()
-        .map(|m| {
-            m.iter()
-                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn selects(selector: &BTreeMap<String, String>, labels: &BTreeMap<String, String>) -> bool {
-    !selector.is_empty() && selector.iter().all(|(k, v)| labels.get(k) == Some(v))
-}
-
-#[test]
-fn every_workloads_selector_matches_the_pods_it_creates() {
-    // The one the API server accepts and the cluster never recovers from: a Deployment whose
-    // `matchLabels` does not match its own template's labels rolls out zero ready replicas and
-    // reports nothing wrong. It is unrepresentable here because both maps are built by one
-    // function — this test is what keeps that true.
-    let workloads: Vec<(String, Value)> = objects()
-        .into_iter()
-        .filter(|(_, v)| v["kind"] == "Deployment" || v["kind"] == "StatefulSet")
-        .collect();
-    assert!(!workloads.is_empty(), "no workload to check");
-    for (name, v) in workloads {
-        let selector = string_map(&v["spec"]["selector"]["matchLabels"]);
-        let labels = string_map(&v["spec"]["template"]["metadata"]["labels"]);
-        assert!(
-            selects(&selector, &labels),
-            "{name}: selector {selector:?} matches none of its own pods {labels:?}"
-        );
-    }
-}
-
-#[test]
-fn every_service_selects_pods_that_something_actually_creates() {
-    // A Service with no endpoints is valid YAML, valid to the API server, and a 503.
-    let services: Vec<(String, Value)> = objects()
-        .into_iter()
-        .filter(|(_, v)| v["kind"] == "Service")
-        .collect();
-    assert!(services.len() >= 2, "expected the app and the log store");
-    let templates = pod_templates();
-    for (name, v) in services {
-        let selector = string_map(&v["spec"]["selector"]);
-        assert!(
-            templates
-                .iter()
-                .any(|(_, labels)| selects(&selector, labels)),
-            "{name}: selector {selector:?} matches no pod any workload creates. \
-             Pods: {templates:?}"
-        );
-    }
-}
-
-#[test]
-fn every_service_sends_traffic_to_a_port_a_container_listens_on() {
-    // Three numbers that have to agree — `containerPort`, `targetPort`, and the route's
-    // `backendRefs.port` — each of which reads as correct on its own line.
-    let all = objects();
-    let container_ports: BTreeSet<i64> = all
-        .iter()
-        .filter(|(_, v)| v["kind"] == "Deployment" || v["kind"] == "StatefulSet")
-        .flat_map(|(_, v)| {
-            v["spec"]["template"]["spec"]["containers"]
-                .as_array()
-                .cloned()
-                .unwrap_or_default()
-        })
-        .flat_map(|c| c["ports"].as_array().cloned().unwrap_or_default())
-        .filter_map(|p| p["containerPort"].as_i64())
-        .collect();
-    assert!(!container_ports.is_empty());
-
-    for (name, v) in all.iter().filter(|(_, v)| v["kind"] == "Service") {
-        for p in v["spec"]["ports"].as_array().cloned().unwrap_or_default() {
-            let target = p["targetPort"].as_i64().expect("a numeric targetPort");
-            assert!(
-                container_ports.contains(&target),
-                "{name}: targets port {target}, which no container listens on: {container_ports:?}"
-            );
-        }
-    }
-}
-
-#[test]
-fn the_route_sends_to_a_service_that_exists_on_a_port_that_service_exposes() {
-    let all = objects();
-    let route = all
-        .iter()
-        .find(|(_, v)| v["kind"] == "HTTPRoute")
-        .map(|(_, v)| v.clone())
-        .expect("`ingress` implies a route");
-    let services: BTreeMap<String, BTreeSet<i64>> = all
-        .iter()
-        .filter(|(_, v)| v["kind"] == "Service")
-        .map(|(_, v)| {
-            (
-                v["metadata"]["name"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_string(),
-                v["spec"]["ports"]
-                    .as_array()
-                    .cloned()
-                    .unwrap_or_default()
-                    .iter()
-                    .filter_map(|p| p["port"].as_i64())
-                    .collect(),
-            )
-        })
-        .collect();
-
-    let rules = route["spec"]["rules"].as_array().expect("rules");
-    assert!(!rules.is_empty());
-    for rule in rules {
-        for backend in rule["backendRefs"].as_array().expect("backendRefs") {
-            let name = backend["name"].as_str().expect("a backend name");
-            let port = backend["port"].as_i64().expect("a backend port");
-            let ports = services
-                .get(name)
-                .unwrap_or_else(|| panic!("the route sends to `{name}`, which is not emitted"));
-            assert!(
-                ports.contains(&port),
-                "the route sends to {name}:{port}, which that Service does not expose: {ports:?}"
-            );
-        }
-    }
-}
-
-#[test]
-fn every_secret_key_ref_names_a_secret_that_is_emitted_and_a_key_it_holds() {
-    // docs/19 §19.5's third defect, generalised: a manifest naming an object nobody emits. A pod
-    // whose `secretKeyRef` misses stays in `CreateContainerConfigError` forever.
-    let all = objects();
-    let secrets: BTreeMap<String, BTreeSet<String>> = all
-        .iter()
-        .filter(|(_, v)| v["kind"] == "Secret")
-        .map(|(_, v)| {
-            (
-                v["metadata"]["name"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_string(),
-                v["stringData"]
-                    .as_object()
-                    .map(|m| m.keys().cloned().collect())
-                    .unwrap_or_default(),
-            )
-        })
-        .collect();
-
-    let mut checked = 0;
-    for (file, v) in &all {
-        for c in v["spec"]["template"]["spec"]["containers"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default()
-        {
-            for e in c["env"].as_array().cloned().unwrap_or_default() {
-                let Some(r) = e["valueFrom"]["secretKeyRef"].as_object() else {
-                    continue;
-                };
-                let name = r["name"].as_str().expect("a secret name");
-                let key = r["key"].as_str().expect("a secret key");
-                let keys = secrets
-                    .get(name)
-                    .unwrap_or_else(|| panic!("{file}: `{name}` is referenced but never emitted"));
-                assert!(
-                    keys.contains(key),
-                    "{file}: `{name}` has no key `{key}`: {keys:?}"
-                );
-                checked += 1;
+macro_rules! invariant {
+    ($name:ident, $why:expr) => {
+        #[test]
+        fn $name() {
+            if let Err(e) = invariants::$name(&objects()) {
+                panic!("{}\n\n{}", e, $why);
             }
         }
-    }
-    assert!(
-        checked >= 2,
-        "expected the app and the log store to read credentials"
-    );
+    };
 }
 
-#[test]
-fn a_stateful_sets_service_name_resolves_to_a_headless_service() {
-    // docs/19 §19.5's fourth defect. A StatefulSet's `serviceName` must name a *headless* Service,
-    // or its pods get no stable DNS and the fold cannot find the log across a restart.
-    let all = objects();
-    let headless: BTreeSet<String> = all
-        .iter()
-        .filter(|(_, v)| v["kind"] == "Service" && v["spec"]["clusterIP"] == "None")
-        .map(|(_, v)| {
-            v["metadata"]["name"]
-                .as_str()
-                .unwrap_or_default()
-                .to_string()
-        })
-        .collect();
-    let sets: Vec<&Value> = all
-        .iter()
-        .filter(|(_, v)| v["kind"] == "StatefulSet")
-        .map(|(_, v)| v)
-        .collect();
-    assert!(!sets.is_empty(), "the durable fold implies a StatefulSet");
-    for v in sets {
-        let want = v["spec"]["serviceName"].as_str().expect("a serviceName");
-        assert!(
-            headless.contains(want),
-            "serviceName `{want}` is not a headless Service: {headless:?}"
-        );
-    }
-}
+invariant!(
+    yaml_round_trips,
+    "the writer is ours, so the parser must not be: every document is read back with `serde_norway`"
+);
+invariant!(
+    kinds_are_known,
+    "a body under the wrong apiVersion is accepted by YAML and rejected by the API server"
+);
+invariant!(
+    names_are_legal,
+    "RFC 1123: 63 characters, and `<app>-log-credentials` is sixteen longer than `<app>`"
+);
+invariant!(
+    everything_is_namespaced,
+    "an object with no namespace lands in whatever `kubectl` was pointed at"
+);
+invariant!(
+    file_names_are_unique_and_sorted,
+    "`kubectl apply -f <dir>` reads files in lexical order, so the prefixes have to carry it"
+);
+invariant!(
+    workload_selectors_match_their_own_pods,
+    "a Deployment whose matchLabels miss its own template rolls out zero replicas and says nothing"
+);
+invariant!(
+    service_selectors_match_some_pod,
+    "a Service with no endpoints is valid, admissible, and a 503"
+);
+invariant!(
+    services_target_a_container_port,
+    "containerPort, targetPort and the route's backend port all have to agree"
+);
+invariant!(
+    routes_resolve_to_a_service_and_port,
+    "a route pointing at a Service nobody emits is a 404 the manifests describe in full"
+);
+invariant!(
+    secret_refs_resolve,
+    "a pod whose secretKeyRef misses stays in CreateContainerConfigError forever (docs/19 §19.5)"
+);
+invariant!(
+    stateful_sets_name_a_headless_service,
+    "without a headless Service the log store's pods get no stable DNS (docs/19 §19.5)"
+);
+invariant!(
+    credentials_point_at_an_emitted_service,
+    "§6.6 rung 3 wants the default credentials to work from `git clone`"
+);
+invariant!(
+    egress_peers_are_real,
+    "the check that catches `podSelector: {app: payments.example.com}` — a DNS name is not a label"
+);
+invariant!(
+    ingress_matches_the_routes_gateway,
+    "the gateway sends the traffic and the policy decides whether it arrives"
+);
+invariant!(
+    policy_selects_a_workload,
+    "a policy whose podSelector matches nothing constrains nothing, and looks like it works"
+);
 
-#[test]
-fn the_url_in_the_credentials_resolves_to_the_log_stores_own_service() {
-    // The default credentials have to work from `git clone` (§6.6 rung 3), which means the host in
-    // the URL is a Service that exists — not a plausible-looking string.
-    let all = objects();
-    let url = all
-        .iter()
-        .filter(|(_, v)| v["kind"] == "Secret")
-        .find_map(|(_, v)| v["stringData"]["url"].as_str().map(str::to_string))
-        .expect("the log credentials hold a url");
-    let host = url
-        .rsplit_once('@')
-        .and_then(|(_, rest)| rest.split(':').next())
-        .expect("a host in the url")
-        .to_string();
-    let (service, rest) = host.split_once('.').expect("a service-qualified host");
-    assert!(
-        emitted().contains(&("Service".to_string(), service.to_string())),
-        "the credentials point at `{service}`, which is not emitted"
-    );
-    assert_eq!(rest, format!("{}.svc", infra().app), "{url}");
-
-    let port: i64 = url
-        .rsplit(':')
-        .next()
-        .and_then(|s| s.split('/').next())
-        .and_then(|s| s.parse().ok())
-        .expect("a port in the url");
-    let exposed: BTreeSet<i64> = all
-        .iter()
-        .filter(|(_, v)| v["metadata"]["name"] == service)
-        .flat_map(|(_, v)| v["spec"]["ports"].as_array().cloned().unwrap_or_default())
-        .filter_map(|p| p["port"].as_i64())
-        .collect();
-    assert!(
-        exposed.contains(&port),
-        "{url} names a port {service} does not expose"
-    );
-}
-
-#[test]
-fn every_egress_peer_is_a_pod_that_exists_or_an_address_range_that_is_not_the_cluster() {
-    // §3.5's "least-privilege infra, computed", checked against the emitted object rather than
-    // against the graph that produced it. This is the test that would have caught Phase 1's
-    // `podSelector: {app: payments.example.com}`: a DNS name is not a pod label, and a rule whose
-    // selector matches nothing grants nothing — while rendering as a policy that looks like it
-    // works.
-    let policy = objects()
-        .into_iter()
-        .find(|(_, v)| v["kind"] == "NetworkPolicy")
-        .map(|(_, v)| v)
-        .expect("a policy is always emitted");
-    let templates = pod_templates();
-    let mut pods = 0;
-    let mut blocks = 0;
-    let mut dns = 0;
-    for rule in policy["spec"]["egress"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default()
-    {
-        // Every rule names its ports. An egress rule with no `ports` opens all of them.
-        assert!(
-            rule["ports"].as_array().is_some_and(|p| !p.is_empty()),
-            "an egress rule with no ports is not least privilege: {rule}"
-        );
-        for to in rule["to"].as_array().cloned().unwrap_or_default() {
-            if to["ipBlock"].is_object() {
-                let except = format!("{}", to["ipBlock"]["except"]);
-                for private in [
-                    "10.0.0.0/8",
-                    "172.16.0.0/12",
-                    "192.168.0.0/16",
-                    "169.254.0.0/16",
-                ] {
-                    assert!(
-                        except.contains(private),
-                        "public egress must not reach the cluster or the metadata endpoint: {to}"
-                    );
-                }
-                blocks += 1;
-                continue;
-            }
-            let sel = string_map(&to["podSelector"]["matchLabels"]);
-            if sel.get("k8s-app").is_some_and(|a| a == "kube-dns") {
-                dns += 1;
-                continue;
-            }
-            assert!(
-                templates.iter().any(|(_, labels)| selects(&sel, labels)),
-                "the policy allows egress to {sel:?}, which matches no pod: {templates:?}"
-            );
-            pods += 1;
-        }
-    }
-    assert_eq!(dns, 1, "exactly one DNS rule, and it is not optional");
-    assert!(pods >= 1, "expected the log store to be an egress peer");
-    assert_eq!(
-        blocks, 1,
-        "the program's `net.out` should have opened public egress"
-    );
-}
-
-#[test]
-fn the_namespace_the_policy_admits_is_the_namespace_the_route_comes_from() {
-    // Two objects, one fact. The route points the gateway at this workload; the policy is what
-    // lets the gateway's packets in. Phase 1 wrote `gateway-system` in one and `gateway` in the
-    // other, so the policy admitted a namespace that does not exist — a deploy that applies
-    // cleanly, comes up healthy and serves nothing.
-    let all = objects();
-    let route = all
-        .iter()
-        .find(|(_, v)| v["kind"] == "HTTPRoute")
-        .map(|(_, v)| v.clone())
-        .expect("`ingress` implies a route");
-    let from: BTreeSet<String> = route["spec"]["parentRefs"]
-        .as_array()
-        .expect("parentRefs")
-        .iter()
-        .map(|p| p["namespace"].as_str().unwrap_or_default().to_string())
-        .collect();
-
-    let policy = all
-        .iter()
-        .find(|(_, v)| v["kind"] == "NetworkPolicy")
-        .map(|(_, v)| v.clone())
-        .expect("a policy is always emitted");
-    let admitted: BTreeSet<String> = policy["spec"]["ingress"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default()
-        .iter()
-        .flat_map(|r| r["from"].as_array().cloned().unwrap_or_default())
-        .filter_map(|p| {
-            p["namespaceSelector"]["matchLabels"]["kubernetes.io/metadata.name"]
-                .as_str()
-                .map(str::to_string)
-        })
-        .collect();
-
-    assert!(!from.is_empty() && !admitted.is_empty());
-    assert_eq!(
-        admitted, from,
-        "the policy admits {admitted:?} and the gateway is in {from:?}"
-    );
-}
-
-#[test]
-fn the_policy_selects_the_workload_it_is_meant_to_constrain() {
-    // A NetworkPolicy whose `podSelector` matches nothing constrains nothing — and looks exactly
-    // like a policy that is working.
-    let policy = objects()
-        .into_iter()
-        .find(|(_, v)| v["kind"] == "NetworkPolicy")
-        .map(|(_, v)| v)
-        .expect("a policy is always emitted");
-    let sel = string_map(&policy["spec"]["podSelector"]["matchLabels"]);
-    let templates = pod_templates();
-    assert!(
-        templates.iter().any(|(_, labels)| selects(&sel, labels)),
-        "the policy selects {sel:?}, which is no workload's pods: {templates:?}"
-    );
-}
+// ---------------------------------------------------------------------------------------------
+// What the canonical program says that a generated one cannot
+// ---------------------------------------------------------------------------------------------
 
 #[test]
 fn the_container_runs_the_program_the_image_ships() {
@@ -692,6 +303,7 @@ fn every_kind_of_node_produces_a_manifest_except_the_one_that_is_not_an_object()
                 name: "app".into(),
                 replicas: 1,
                 serves_ui: true,
+                reads_log: true,
             },
             Node::Route {
                 name: "app-route".into(),

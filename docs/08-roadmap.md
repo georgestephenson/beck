@@ -123,6 +123,12 @@ dependencies whose signatures didn't change.
   component bundle).
 - Client polish for both modes: router, forms, lazy routes, focus/scroll preservation, devtools
   extension showing signal graph, patch traffic and pending state.
+- **`test` blocks and inferred mocks** ([`21`](21-tests-in-beck-and-proof.md) §21.2–§21.3): a test
+  is a log, a command and an expectation, so cross-boundary tests need no network and no fixtures;
+  stubs attach to *effect atoms* rather than to interfaces, so "any value" is the default and has no
+  syntax. Depends on one type-directed value generator, which `property` blocks share. This is the
+  first thing an outside developer will reach for, and Phase 2 shipped with no way for them to write
+  a single test about their own program.
 - Structured concurrency, `Result`/error rows, `match` exhaustiveness, pattern matching completion.
 - Standard library v1: collections, strings, time, money/decimal, HTTP client, JSON, UUID, crypto
   primitives (delegated to `ring`/`aws-lc-rs`, not hand-rolled).

@@ -139,8 +139,62 @@ jobs:
           grep -q 'LogStore/'  /tmp/objects/explain.txt
           grep -q 'Route/'     /tmp/objects/explain.txt
           # The grant is append-only because the program is.
-          grep -q 'GRANT SELECT, INSERT' /tmp/objects/*grants.yaml
-          ! grep -q 'DELETE' /tmp/objects/*grants.yaml
+          grep -q 'GRANT SELECT, INSERT' /tmp/objects/k8s/*grants.yaml
+          ! grep -q 'DELETE' /tmp/objects/k8s/*grants.yaml
+          # The cluster manifests are on their own, so `kubectl apply -f` and a GitOps controller
+          # pointed at that directory see manifests and nothing else.
+          ls /tmp/objects/k8s | grep -qv apko
+          test -f /tmp/objects/image.apko.yaml
+
+  conformance:
+    # Rung 5 of the ladder in docs/21 §21.4: the API server is the only authority on whether an
+    # object is admissible, and every other suite reasons about our *model* of Kubernetes. This job
+    # asks Kubernetes.
+    #
+    # BECK_REQUIRE_CLUSTER=1 is the whole point of the job. Without it the conformance tests skip
+    # when no cluster is reachable, which is right on a laptop and would be a silently-absent gate
+    # here — the exact failure docs/19 §19.4 item 10 names, and the one this workflow file has
+    # already committed once.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: compiler
+
+      - name: a throwaway cluster
+        run: |
+          curl -sfL https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh \
+            | TAG=v5.7.4 bash
+          k3d cluster create beck-conformance --wait --timeout 120s
+          kubectl cluster-info
+
+      - name: the Gateway API CRDs
+        # HTTPRoute is the one object k8s-openapi does not carry, so `beck-infra`'s field names for
+        # it are checked here or by nobody.
+        run: |
+          kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.1/standard-install.yaml
+          kubectl wait --for=condition=Established --timeout=60s \
+            crd/httproutes.gateway.networking.k8s.io
+
+      - name: the API server admits what the compiler emits
+        env:
+          BECK_REQUIRE_CLUSTER: "1"
+        run: cargo test -p beck-infra --test conformance -- --nocapture
+
+      - name: and `beck build` output applies as a directory
+        # The same claim at the level a person would run it, because `cargo test` writes the
+        # manifests through the library and a user writes them through the CLI.
+        run: |
+          cargo run --release -- build examples/todo.beck --out /tmp/objects
+          kubectl apply -f /tmp/objects/k8s/000-namespace.yaml
+          kubectl apply --dry-run=server -f /tmp/objects/k8s
+          kubectl delete namespace todo --wait=false
+
+      - name: tear down
+        if: always()
+        run: k3d cluster delete beck-conformance || true
 
   budgets:
     # Deterministic budgets only — the ones §8.3 calls gates.

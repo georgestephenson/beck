@@ -17,6 +17,7 @@ k8s-openapi.workspace = true
 insta.workspace = true
 serde_norway.workspace = true
 beck-core.workspace = true
+proptest.workspace = true
 
 [lints]
 workspace = true

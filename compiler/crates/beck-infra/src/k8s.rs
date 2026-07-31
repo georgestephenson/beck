@@ -155,7 +155,8 @@ pub fn objects(graph: &InfraGraph, wire_id: &str) -> Vec<(String, Value)> {
                 name,
                 replicas,
                 serves_ui,
-            } => to_value(&workload(app, name, *replicas, *serves_ui)),
+                reads_log,
+            } => to_value(&workload(app, name, *replicas, *serves_ui, *reads_log)),
 
             Node::Route {
                 name,
@@ -320,7 +321,7 @@ fn log_store(app: &str, name: &str, volume_gb: u32) -> StatefulSet {
 }
 
 /// The service partition: one binary, told which program to run.
-fn workload(app: &str, name: &str, replicas: u32, serves_ui: bool) -> Deployment {
+fn workload(app: &str, name: &str, replicas: u32, serves_ui: bool, reads_log: bool) -> Deployment {
     let mut metadata = meta(app, name);
     metadata.annotations = Some(BTreeMap::from([(
         "beck.dev/serves-ui".to_string(),
@@ -346,15 +347,16 @@ fn workload(app: &str, name: &str, replicas: u32, serves_ui: bool) -> Deployment
                             "run".to_string(),
                             APP_SOURCE.to_string(),
                             "--store".to_string(),
-                            "postgres".to_string(),
+                            // The store follows the log: a program with no `durable` effect has no
+                            // log store to point at, and telling it to use one is how a pod ends up
+                            // waiting on a Secret nobody emitted.
+                            if reads_log { "postgres" } else { "memory" }.to_string(),
                             "--addr".to_string(),
                             format!("0.0.0.0:{APP_PORT}"),
                         ]),
-                        env: Some(vec![from_secret(
-                            "BECK_POSTGRES_URL",
-                            &credentials(app),
-                            "url",
-                        )]),
+                        env: reads_log.then(|| {
+                            vec![from_secret("BECK_POSTGRES_URL", &credentials(app), "url")]
+                        }),
                         ports: Some(vec![ContainerPort {
                             container_port: APP_PORT,
                             ..Default::default()
