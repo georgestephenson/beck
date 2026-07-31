@@ -196,9 +196,9 @@ pub fn split(program: Program, diags: &mut Diagnostics) -> Option<Placed> {
             params: vec![0, 1],
             body: Box::new(view_body),
         },
-        ty: Ty::Fun(
+        ty: Ty::fun(
             vec![state_ty(&state_decl.ty), Ty::con("Session")],
-            Box::new(Ty::html()),
+            Ty::html(),
         ),
         tier: Tier::Client,
         span: page.span,

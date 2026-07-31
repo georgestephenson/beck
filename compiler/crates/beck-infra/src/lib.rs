@@ -161,12 +161,12 @@ pub fn graph(placed: &Placed) -> InfraGraph {
     let mut effects: Vec<(Effect, String)> = Vec::new();
     for s in &placed.program.signals {
         for e in &s.effects {
-            effects.push((*e, s.name.to_string()));
+            effects.push((e.clone(), s.name.to_string()));
         }
     }
     for name in &placed.program.def_order {
         for e in &placed.program.defs[name].effects {
-            effects.push((*e, name.to_string()));
+            effects.push((e.clone(), name.to_string()));
         }
     }
     let serves_ui = placed

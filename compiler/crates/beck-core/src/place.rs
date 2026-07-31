@@ -200,9 +200,17 @@ fn verify(
                  browser"
             }
             Effect::Dom => "`dom` touches the document, which only the client has",
-            Effect::Nondeterministic => {
+            Effect::Nondet => {
                 "minting ids or reading a clock is not replayable, so the fold engine refuses it"
             }
+            other => match other.family() {
+                "net.out" | "net.in" => "the browser can only reach its own origin",
+                "cap" => {
+                    "a capability is held by the tier that mints sessions, which is the server"
+                }
+                "env" | "fs" => "there is no process environment or filesystem in a browser",
+                _ => "this tier cannot discharge that effect",
+            },
         });
         if let [only] = alternatives.as_slice() {
             d = d.with_fix(format!("`@on({only})` discharges everything this needs"));

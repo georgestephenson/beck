@@ -17,10 +17,17 @@
 //! nominal newtypes, `match` exhaustiveness, mandatory annotations on top-level signatures, and
 //! the `Stream`/`Signal`/`fold`/`durable` types of §3.7.
 //!
-//! Not checked, and named in the Phase 1 report rather than implied: row polymorphism on records,
-//! inferred effect rows (§3.2 — effects are declared and collected, not inferred), trait
-//! constraints on type variables, and `var` mutability (a `var` binding is checked as an ordinary
-//! immutable one).
+//! Phase 2 adds §3.2's **effect inference**. Every definition gets a row *variable* before any body
+//! is checked; checking a body accumulates the latent row of everything it applies; the variable is
+//! then bound to what accumulated. A mere *reference* to a function performs nothing — only
+//! applying one does — which is the difference between inference and Phase 1's syntactic collection,
+//! and the reason `fold(apply_event, …)` is not itself effectful.
+//!
+//! Mutual recursion needs no ordering: `f`'s row may be bound to a row mentioning `g`'s variable and
+//! vice versa, and [`Subst::resolve_row`] computes the least fixed point because a row is a union.
+//!
+//! Not checked, and named rather than implied: row polymorphism on records, trait constraints on
+//! type variables, and `var` mutability (a `var` binding is checked as an ordinary immutable one).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -30,7 +37,7 @@ use beck_syntax::{sym, Lit, Node, ScopeSet, Symbol};
 
 use crate::core::{Arm, Const, Core, CoreKind, Pattern, Prim, VarId};
 use crate::prelude;
-use crate::ty::{Effect, Mismatch, Scheme, Subst, Tier, Ty, TyDecl, Variant};
+use crate::ty::{Effect, Mismatch, Row, RowVarId, Scheme, Subst, Tier, Ty, TyDecl, Variant};
 
 /// A checked module: everything the placement checker, the splitter and the runtime need.
 #[derive(Clone, Debug)]
@@ -52,9 +59,15 @@ pub struct Def {
     /// The whole definition as a lambda, so evaluating the name yields a callable value.
     pub body: Core,
     pub tier: Tier,
-    /// Effects the signature declares with `uses`, unioned with those collected from the body.
+    /// The inferred row's atoms, resolved and sorted — what placement and the infrastructure
+    /// derivation read.
     pub effects: Vec<Effect>,
+    /// The inferred row itself, variables and all. This is the signature §3.6 publishes.
+    pub row: Row,
+    /// What the signature declared with `uses`, if anything.
     pub declared_effects: Vec<Effect>,
+    /// True when the placement was written by hand rather than solved for (§3.4).
+    pub tier_is_annotated: bool,
     pub span: Span,
     pub tier_span: Span,
 }
@@ -67,6 +80,8 @@ pub struct SignalDecl {
     pub expr: Core,
     pub tier: Tier,
     pub effects: Vec<Effect>,
+    pub row: Row,
+    pub tier_is_annotated: bool,
     pub span: Span,
     pub tier_span: Span,
 }
@@ -105,7 +120,13 @@ pub struct Checker<'a> {
     /// Innermost last. Resolution walks it backwards.
     locals: Vec<Binding>,
     globals: Vec<Binding>,
-    def_effects: BTreeMap<Arc<str>, Vec<Effect>>,
+    /// The row each definition's signature declares with `uses`.
+    declared: BTreeMap<Arc<str>, Row>,
+    /// The row *variable* standing for each definition's inferred row, minted before any body is
+    /// checked so that callers can name it and mutual recursion needs no ordering.
+    def_row: BTreeMap<Arc<str>, RowVarId>,
+    /// What the body currently being checked has been seen to perform.
+    row: Row,
     next_var: VarId,
     /// Set while checking a fold's function, so §3.7's determinism rule can be enforced.
     in_fold: bool,
@@ -128,7 +149,9 @@ pub fn check_module(module: &Node, diags: &mut Diagnostics) -> Program {
         prims: BTreeMap::new(),
         locals: Vec::new(),
         globals: Vec::new(),
-        def_effects: BTreeMap::new(),
+        declared: BTreeMap::new(),
+        def_row: BTreeMap::new(),
+        row: Row::empty(),
         next_var: 0,
         in_fold: false,
     };
@@ -158,6 +181,22 @@ impl<'a> Checker<'a> {
         let v = self.next_var;
         self.next_var += 1;
         v
+    }
+
+    /// Record that the body being checked performs this row.
+    fn perform(&mut self, row: &Row) {
+        let acc = std::mem::take(&mut self.row);
+        self.row = acc.union(row);
+    }
+
+    /// Check a sub-expression in its own effect scope, returning what it performed. Used for a
+    /// lambda body (whose effects belong to the lambda's *type*, not to its enclosing function) and
+    /// for each top-level item.
+    fn in_scope<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> (T, Row) {
+        let outer = std::mem::take(&mut self.row);
+        let out = f(self);
+        let inner = std::mem::replace(&mut self.row, outer);
+        (out, inner)
     }
 
     // ------------------------------------------------------------------ declarations
@@ -326,39 +365,48 @@ impl<'a> Checker<'a> {
                     self.subst.fresh()
                 }
             };
-            let declared: Vec<Effect> = item
-                .args
-                .get(3)
-                .map(|u| {
-                    u.args
-                        .iter()
-                        .filter_map(|e| {
-                            let text = e.head_name()?;
-                            match Effect::parse(text) {
-                                Some(eff) => Some(eff),
-                                None => {
-                                    self.error(
-                                        "B0305",
-                                        format!("`{text}` is not an effect"),
-                                        e.span(),
-                                    );
-                                    None
-                                }
-                            }
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
+            let declared = self.declared_row(item.args.get(3));
 
-            self.schemes
-                .insert(name.clone(), Scheme::mono(Ty::Fun(params, Box::new(ret))));
-            self.def_effects.insert(name.clone(), declared);
+            // The definition's latent row is a *variable*, bound once its body has been checked.
+            // Minting it here is what lets any definition call any other in any order.
+            let rv = self.subst.fresh_row_var();
+            self.schemes.insert(
+                name.clone(),
+                Scheme::mono(Ty::fun_eff(params, ret, Row::var(rv))),
+            );
+            self.def_row.insert(name.clone(), rv);
+            self.declared.insert(name.clone(), declared);
             self.globals.push(Binding {
                 name: name.clone(),
                 scopes: ScopeSet::empty(),
                 kind: BindKind::Global(name.clone()),
             });
         }
+    }
+
+    /// The row a `uses` clause declares. §3.2's atoms are written as they print:
+    /// `durable`, `net.out(api.example.com)`, `cap.session`.
+    fn declared_row(&mut self, uses: Option<&Node>) -> Row {
+        let mut row = Row::empty();
+        let Some(u) = uses else { return row };
+        for e in &u.args {
+            // `net.out(host)` and `cap.session` are ordinary dotted syntax by the time they reach
+            // here, so the atom is reassembled from what was written rather than pattern-matched
+            // per shape — which is why adding an atom to §3.2's list costs one line in `row.rs`.
+            let text = written_form(e).unwrap_or_default();
+            match Effect::parse(&text) {
+                Some(atom) => row.add(atom),
+                None => self.error(
+                    "B0305",
+                    format!(
+                        "`{}` is not an effect",
+                        if text.is_empty() { "?" } else { &text }
+                    ),
+                    e.span(),
+                ),
+            }
+        }
+        row
     }
 
     /// Register every top-level signal before checking any of them.
@@ -402,16 +450,17 @@ impl<'a> Checker<'a> {
         let mut tests = Vec::new();
 
         for item in items {
-            let (inner, tier) = self.undecorate(item);
-            let (tier, tier_span) = tier.unwrap_or((Tier::Any, inner.span()));
+            let (inner, annotated) = self.undecorate(item);
+            let tier_is_annotated = annotated.is_some();
+            let (tier, tier_span) = annotated.unwrap_or((Tier::Any, inner.span()));
 
             if inner.is_form(sym::DEF) {
-                if let Some(def) = self.check_def(inner, tier, tier_span) {
+                if let Some(def) = self.check_def(inner, tier, tier_span, tier_is_annotated) {
                     def_order.push(def.name.clone());
                     defs.insert(def.name.clone(), def);
                 }
             } else if inner.is_form(sym::LET) || inner.is_form(sym::VAR) {
-                if let Some(s) = self.check_signal(inner, tier, tier_span) {
+                if let Some(s) = self.check_signal(inner, tier, tier_span, tier_is_annotated) {
                     signals.push(s);
                 }
             } else if inner.is_form(sym::TEST) && inner.args.len() == 2 {
@@ -420,7 +469,7 @@ impl<'a> Checker<'a> {
                     .map(Arc::from)
                     .unwrap_or_else(|| Arc::from("test"));
                 let before = self.locals.len();
-                let body = self.block(&inner.args[1].args, None);
+                let (body, _) = self.in_scope(|ck| ck.block(&inner.args[1].args, None));
                 self.locals.truncate(before);
                 tests.push(TestDef {
                     name: tname,
@@ -453,17 +502,65 @@ impl<'a> Checker<'a> {
         }
 
         // Resolve every recorded type through the substitution so that what leaves the checker is
-        // ground wherever inference succeeded.
+        // ground wherever inference succeeded. Rows resolve here too, and only here: a row bound
+        // during one body may mention a variable another body binds later, so nothing is final
+        // until every body has been seen.
         for def in defs.values_mut() {
             def.ret = self.subst.resolve(&def.ret);
             for p in &mut def.params {
                 p.2 = self.subst.resolve(&p.2);
             }
             resolve_types(&mut def.body, &self.subst);
+            def.row = self.subst.resolve_row(&def.row);
+            def.effects = def.row.atoms.iter().cloned().collect();
         }
         for s in &mut signals {
             s.ty = self.subst.resolve(&s.ty);
             resolve_types(&mut s.expr, &self.subst);
+            s.row = self.subst.resolve_row(&s.row);
+            s.effects = s.row.atoms.iter().cloned().collect();
+        }
+
+        // §3.6: "effect widening is a breaking API change". A `uses` clause is therefore a *bound*,
+        // and a body that exceeds it is an error rather than a silent widening of the signature —
+        // which is the property that makes "a library that starts phoning home cannot do so
+        // silently" true of Beck rather than aspirational.
+        for name in &def_order {
+            let Some(def) = defs.get(name) else { continue };
+            if def.declared_effects.is_empty() {
+                continue;
+            }
+            let undeclared: Vec<Effect> = def
+                .effects
+                .iter()
+                .filter(|e| !e.is_ambient() && !def.declared_effects.contains(e))
+                .cloned()
+                .collect();
+            if undeclared.is_empty() {
+                continue;
+            }
+            let names: Vec<String> = undeclared.iter().map(|e| e.name()).collect();
+            self.diags.push(
+                Diagnostic::error(
+                    "B0370",
+                    format!("`{name}` performs more than its signature declares"),
+                    def.span,
+                )
+                .with_primary_label(format!("undeclared: {}", names.join(", ")))
+                .with_note(
+                    "a `uses` clause is the published bound, and widening it is a breaking API \
+                     change — so the compiler will not widen it for you",
+                )
+                .with_fix(format!(
+                    "declare it: `uses {}`",
+                    def.effects
+                        .iter()
+                        .filter(|e| !e.is_ambient())
+                        .map(|e| e.name())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )),
+            );
         }
 
         Program {
@@ -476,10 +573,16 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn check_def(&mut self, item: &Node, tier: Tier, tier_span: Span) -> Option<Def> {
+    fn check_def(
+        &mut self,
+        item: &Node,
+        tier: Tier,
+        tier_span: Span,
+        tier_is_annotated: bool,
+    ) -> Option<Def> {
         let name = item.args[0].as_var()?.name.clone();
         let scheme = self.schemes.get(&name)?.clone();
-        let Ty::Fun(param_tys, ret) = scheme.ty.clone() else {
+        let Ty::Fun(param_tys, ret, latent) = scheme.ty.clone() else {
             return None;
         };
 
@@ -498,48 +601,57 @@ impl<'a> Checker<'a> {
         }
 
         let body_node = item.args.get(4);
-        let body = match body_node {
-            Some(b) => self.block(&b.args, Some(&ret)),
-            None => Core::new(CoreKind::Const(Const::Unit), Ty::unit(), item.span()),
-        };
+        let span = item.span();
+        let (body, performed) = self.in_scope(|ck| match body_node {
+            Some(b) => ck.block(&b.args, Some(&ret)),
+            None => Core::new(CoreKind::Const(Const::Unit), Ty::unit(), span),
+        });
         self.unify(&body.ty, &ret, body.span, "return type");
         self.locals.truncate(before);
 
-        let declared = self.def_effects.get(&name).cloned().unwrap_or_default();
-        let mut collected = declared.clone();
-        let def_effects = self.def_effects.clone();
-        body.effects(
-            &|n| def_effects.get(n).cloned().unwrap_or_default(),
-            &mut collected,
-        );
-        collected.sort_unstable();
-        collected.dedup();
+        let declared = self.declared.get(&name).cloned().unwrap_or_default();
+        // A declared effect is part of the signature whether or not the body reaches it: a stub
+        // that will phone home later must say so today, or its callers would be re-placed by the
+        // edit that fills the body in.
+        let inferred = performed.union(&declared);
+        if let Some(rv) = self.def_row.get(&name).copied() {
+            self.subst.bind_row(rv, inferred.clone());
+        }
 
-        let span = item.span();
         let lam = Core {
             kind: CoreKind::Lam {
                 params: params.iter().map(|(id, _, _)| *id).collect(),
                 body: Box::new(body),
             },
-            ty: Ty::Fun(param_tys, ret.clone()),
+            ty: Ty::Fun(param_tys, ret.clone(), latent),
             tier,
             span,
         };
 
+        let mut declared_effects: Vec<Effect> = declared.atoms.iter().cloned().collect();
+        declared_effects.sort();
         Some(Def {
             name,
             params,
             ret: *ret,
             body: lam,
             tier,
-            effects: collected,
-            declared_effects: declared,
+            effects: Vec::new(),
+            row: inferred,
+            declared_effects,
+            tier_is_annotated,
             span,
             tier_span,
         })
     }
 
-    fn check_signal(&mut self, item: &Node, tier: Tier, tier_span: Span) -> Option<SignalDecl> {
+    fn check_signal(
+        &mut self,
+        item: &Node,
+        tier: Tier,
+        tier_span: Span,
+        tier_is_annotated: bool,
+    ) -> Option<SignalDecl> {
         let target = &item.args[0];
         let (name_node, annot) = if target.is_form(sym::ANNOT) && target.args.len() == 2 {
             (&target.args[0], Some(&target.args[1]))
@@ -549,19 +661,13 @@ impl<'a> Checker<'a> {
         let name = name_node.as_var()?.name.clone();
         let expected = annot.map(|t| self.ty_from_node(t));
 
-        let expr = self.expr(&item.args[1], expected.as_ref());
+        // A signal is a node in a graph, not a function: its row is what *evaluating its defining
+        // expression* performs. Naming another signal contributes nothing — the dependency is an
+        // edge, and the edge is what placement reasons about.
+        let (expr, row) = self.in_scope(|ck| ck.expr(&item.args[1], expected.as_ref()));
         if let Some(e) = &expected {
             self.unify(&expr.ty, e, expr.span, "declared type");
         }
-
-        let def_effects = self.def_effects.clone();
-        let mut effects = Vec::new();
-        expr.effects(
-            &|n| def_effects.get(n).cloned().unwrap_or_default(),
-            &mut effects,
-        );
-        effects.sort_unstable();
-        effects.dedup();
 
         // The name was pre-registered so the graph could be cyclic; tie the placeholder to what
         // the expression actually produced.
@@ -574,7 +680,9 @@ impl<'a> Checker<'a> {
             ty: expr.ty.clone(),
             expr,
             tier,
-            effects,
+            effects: Vec::new(),
+            row,
+            tier_is_annotated,
             span: item.span(),
             tier_span,
         })
@@ -590,7 +698,10 @@ impl<'a> Checker<'a> {
                 .map(|a| self.ty_from_node(a))
                 .collect();
             let ret = self.ty_from_node(&n.args[n.args.len() - 1]);
-            return Ty::Fun(params, Box::new(ret));
+            // A written function type says nothing about what the function does, so its row is a
+            // variable: `(Todo) -> Bool` accepts a pure predicate and an effectful one alike, and
+            // the enclosing definition inherits whichever it is handed.
+            return Ty::fun_eff(params, ret, self.subst.fresh_row());
         }
         let Some(name) = n.head_name() else {
             self.error("B0308", "expected a type", span);
@@ -631,13 +742,17 @@ impl<'a> Checker<'a> {
     fn unify(&mut self, actual: &Ty, expected: &Ty, span: Span, what: &str) {
         if let Err(e) = self.subst.unify(actual, expected) {
             let msg = match e {
-                Mismatch::Different(a, b) => {
+                Mismatch::Different(pair) => {
+                    let (a, b) = *pair;
                     format!("{what} mismatch: expected `{b}`, found `{a}`")
                 }
                 Mismatch::Arity(a, b) => {
                     format!("{what} takes {b} argument(s), got {a}")
                 }
                 Mismatch::Infinite => format!("{what} would be an infinite type"),
+                Mismatch::Effects(e) => {
+                    format!("{what} may not perform {{{e}}} here")
+                }
             };
             self.error("B0320", msg, span);
         }
@@ -958,7 +1073,9 @@ impl<'a> Checker<'a> {
                 // `map_list` like any other function.
                 let (_, scheme) = self.prims.get(p.name()).cloned().expect("prim registered");
                 let ty = self.subst.instantiate(&scheme);
-                let Ty::Fun(params, ret) = ty.clone() else {
+                // Referencing a function performs nothing; the row rides on the *type* and is
+                // charged to whoever applies it.
+                let Ty::Fun(params, ret, latent) = ty.clone() else {
                     return Core::new(
                         CoreKind::Prim {
                             op: p,
@@ -983,7 +1100,7 @@ impl<'a> Checker<'a> {
                             span,
                         )),
                     },
-                    Ty::Fun(params, ret),
+                    Ty::Fun(params, ret, latent),
                     span,
                 )
             }
@@ -994,7 +1111,7 @@ impl<'a> Checker<'a> {
 
     fn lambda(&mut self, n: &Node, expected: Option<&Ty>, span: Span) -> Core {
         let want: Option<(Vec<Ty>, Ty)> = expected.and_then(|t| match self.subst.resolve(t) {
-            Ty::Fun(ps, r) => Some((ps, *r)),
+            Ty::Fun(ps, r, _) => Some((ps, *r)),
             _ => None,
         });
         let before = self.locals.len();
@@ -1025,7 +1142,9 @@ impl<'a> Checker<'a> {
             tys.push(ty);
         }
         let ret_want = want.as_ref().map(|(_, r)| r.clone());
-        let body = self.body_expr(&n.args[1], ret_want.as_ref());
+        // What a lambda's body does is what the *lambda* does when called, not what the enclosing
+        // definition does by writing it down. `sort_by(xs, lambda t: t.text)` performs nothing.
+        let (body, row) = self.in_scope(|ck| ck.body_expr(&n.args[1], ret_want.as_ref()));
         self.locals.truncate(before);
         let ret = body.ty.clone();
         Core::new(
@@ -1033,7 +1152,7 @@ impl<'a> Checker<'a> {
                 params: ids,
                 body: Box::new(body),
             },
-            Ty::Fun(tys, Box::new(ret)),
+            Ty::fun_eff(tys, ret, row),
             span,
         )
     }
@@ -1429,20 +1548,23 @@ impl<'a> Checker<'a> {
 
     fn apply_fn(&mut self, func: Core, args: &[Node], span: Span) -> Core {
         let ftype = self.subst.resolve(&func.ty);
-        let (param_tys, ret) = match &ftype {
-            Ty::Fun(ps, r) => (ps.clone(), (**r).clone()),
+        let (param_tys, ret, latent) = match &ftype {
+            Ty::Fun(ps, r, row) => (ps.clone(), (**r).clone(), row.clone()),
             _ => {
                 let ps: Vec<Ty> = args.iter().map(|_| self.subst.fresh()).collect();
                 let r = self.subst.fresh();
+                let row = self.subst.fresh_row();
                 self.unify(
                     &func.ty,
-                    &Ty::Fun(ps.clone(), Box::new(r.clone())),
+                    &Ty::fun_eff(ps.clone(), r.clone(), row.clone()),
                     span,
                     "callee",
                 );
-                (ps, r)
+                (ps, r, row)
             }
         };
+        // §3.2's inference, in one line: applying a function performs its row.
+        self.perform(&latent);
         if args.len() != param_tys.len() {
             self.error(
                 "B0351",
@@ -1487,7 +1609,7 @@ impl<'a> Checker<'a> {
     fn prim_call(&mut self, p: Prim, args: &[Node], _expected: Option<&Ty>, span: Span) -> Core {
         let (_, scheme) = self.prims.get(p.name()).cloned().expect("prim registered");
         let ty = self.subst.instantiate(&scheme);
-        let Ty::Fun(param_tys, ret) = ty else {
+        let Ty::Fun(param_tys, ret, latent) = ty else {
             self.error("B0352", format!("`{}` is not callable", p.name()), span);
             return Core::new(CoreKind::Const(Const::Unit), Ty::unit(), span);
         };
@@ -1506,15 +1628,19 @@ impl<'a> Checker<'a> {
 
         // §3.7's determinism rule: "the checker therefore rejects `now()`, `rand()`, `uuid()` and
         // any I/O **inside a fold** — time is data on the envelope".
-        if p == Prim::NewUuid && self.in_fold {
+        if matches!(p, Prim::NewUuid | Prim::Now) && self.in_fold {
             self.diags.push(
-                Diagnostic::error("B0360", "`uuid()` cannot be called inside a fold", span)
-                    .with_primary_label("this would make replay non-deterministic")
-                    .with_note(
-                        "a fold must be replay-pure: time is data on the envelope (`env.at`), and \
+                Diagnostic::error(
+                    "B0360",
+                    format!("`{}()` cannot be called inside a fold", p.name()),
+                    span,
+                )
+                .with_primary_label("this would make replay non-deterministic")
+                .with_note(
+                    "a fold must be replay-pure: time is data on the envelope (`env.at`), and \
                      entity ids are minted at the edge",
-                    )
-                    .with_fix("mint the id in the client's command and read it from the event"),
+                )
+                .with_fix("mint the id in the client's command and read it from the event"),
             );
         }
 
@@ -1524,6 +1650,9 @@ impl<'a> Checker<'a> {
         }
         let checked = self.check_args(args, &param_tys);
         self.in_fold = was_in_fold;
+        // Charged *after* the arguments, so that a row variable in the scheme (`map_list`'s `e`)
+        // has already absorbed whatever the function argument does.
+        self.perform(&latent);
 
         Core::new(
             CoreKind::Prim {
@@ -1622,13 +1751,40 @@ impl<'a> Checker<'a> {
     }
 }
 
+/// A dotted or applied node, back as the text someone wrote — `net.out(api.example.com)`.
+fn written_form(n: &Node) -> Option<String> {
+    if let Some(s) = n.as_var() {
+        return Some(s.as_str().to_string());
+    }
+    if let Some(s) = n.as_str_lit() {
+        return Some(s.to_string());
+    }
+    if n.is_form(sym::DOT) && n.args.len() >= 2 {
+        let base = written_form(&n.args[0])?;
+        let field = n.args[1].as_var()?.as_str().to_string();
+        let rest = &n.args[2..];
+        if rest.is_empty() {
+            return Some(format!("{base}.{field}"));
+        }
+        let args: Vec<String> = rest.iter().filter_map(written_form).collect();
+        return Some(format!("{base}.{field}({})", args.join(", ")));
+    }
+    let head = n.head_name()?;
+    if n.args.is_empty() {
+        return Some(head.to_string());
+    }
+    let args: Vec<String> = n.args.iter().filter_map(written_form).collect();
+    Some(format!("{head}({})", args.join(", ")))
+}
+
 fn substitute(t: &Ty, m: &BTreeMap<u32, Ty>) -> Ty {
     match t {
         Ty::Var(v) => m.get(v).cloned().unwrap_or(Ty::Var(*v)),
         Ty::Con(n, args) => Ty::Con(n.clone(), args.iter().map(|a| substitute(a, m)).collect()),
-        Ty::Fun(ps, r) => Ty::Fun(
+        Ty::Fun(ps, r, row) => Ty::Fun(
             ps.iter().map(|p| substitute(p, m)).collect(),
             Box::new(substitute(r, m)),
+            row.clone(),
         ),
     }
 }
@@ -1638,7 +1794,7 @@ fn max_scheme_var(t: &Ty) -> Option<u32> {
         Ty::Var(v) if *v >= 1_000_000 => Some(*v),
         Ty::Var(_) => None,
         Ty::Con(_, args) => args.iter().filter_map(max_scheme_var).max(),
-        Ty::Fun(ps, r) => ps
+        Ty::Fun(ps, r, _) => ps
             .iter()
             .filter_map(max_scheme_var)
             .chain(max_scheme_var(r))
@@ -1698,5 +1854,181 @@ fn resolve_types(c: &mut Core, s: &Subst) {
     }
     if let CoreKind::With { base, .. } = &mut c.kind {
         resolve_types(base, s);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::check_str;
+    use crate::ty::Effect;
+
+    /// The row inferred for a definition, as printed atom names.
+    fn row_of(src: &str, name: &str) -> Vec<String> {
+        let (program, d, map) = check_str("t.beck", src);
+        assert!(
+            !d.iter()
+                .any(|x| x.code.starts_with("B03") && x.code != "B0370"),
+            "{}",
+            d.render(&map)
+        );
+        program
+            .defs
+            .get(name)
+            .unwrap_or_else(|| panic!("no `{name}` in {:?}", program.defs.keys()))
+            .effects
+            .iter()
+            .map(|e| e.name())
+            .collect()
+    }
+
+    fn codes(src: &str) -> Vec<&'static str> {
+        let (_, d, _) = check_str("t.beck", src);
+        d.iter().map(|x| x.code).collect()
+    }
+
+    #[test]
+    fn an_effect_reached_through_an_undeclared_function_is_still_inferred() {
+        // This is the case Phase 1 could not see. Its collection consulted each global's
+        // *declared* effects, so an intermediate that declared nothing hid everything behind it —
+        // and `mint` declares nothing, because inference is the point of not having to.
+        let src = "\
+def mint() -> Str:
+    return uuid()
+
+def label(prefix: Str) -> Str:
+    return prefix + mint()
+";
+        assert_eq!(row_of(src, "mint"), ["nondet"]);
+        assert_eq!(
+            row_of(src, "label"),
+            ["nondet"],
+            "an effect must travel as far as the calls do"
+        );
+    }
+
+    #[test]
+    fn referencing_a_function_performs_nothing_but_applying_it_performs_everything() {
+        // The distinction that makes inference different from collection — and the reason
+        // `fold(apply_event, …)` is a pure expression even when `apply_event` is not.
+        let src = "\
+def mint() -> Str:
+    return uuid()
+
+def names() -> list[Str]:
+    return map_list([\"a\"], lambda x: x)
+
+def held() -> (Str) -> Str:
+    return lambda x: x + mint()
+
+def used() -> Str:
+    return mint()
+";
+        assert!(row_of(src, "names").is_empty());
+        assert!(
+            row_of(src, "held").is_empty(),
+            "returning a function that would mint an id mints nothing"
+        );
+        assert_eq!(row_of(src, "used"), ["nondet"]);
+    }
+
+    #[test]
+    fn effect_polymorphism_carries_a_lambdas_row_through_map_list() {
+        // §3.2's `map : (list[a], (a -> b ! e)) -> list[b] ! e`, from the caller's side: mapping an
+        // effectful function is effectful, and mapping a pure one is not — with one `map_list`.
+        let src = "\
+def pure_labels(xs: list[Str]) -> list[Str]:
+    return map_list(xs, lambda x: x + \"!\")
+
+def minted_labels(xs: list[Str]) -> list[Str]:
+    return map_list(xs, lambda x: x + uuid())
+";
+        assert!(row_of(src, "pure_labels").is_empty());
+        assert_eq!(row_of(src, "minted_labels"), ["nondet"]);
+    }
+
+    #[test]
+    fn a_user_higher_order_function_is_polymorphic_enough_for_two_call_sites() {
+        // The parameter's row is monomorphic within the module and *subsumes* rather than equates,
+        // so a pure argument at one call and an effectful one at another both check — and `apply`
+        // ends up with the union, which is the sound direction.
+        let src = "\
+def apply(f: (Str) -> Str, x: Str) -> Str:
+    return f(x)
+
+def pure_use() -> Str:
+    return apply(lambda s: s, \"a\")
+
+def impure_use() -> Str:
+    return apply(lambda s: s + uuid(), \"b\")
+";
+        assert_eq!(row_of(src, "apply"), ["nondet"]);
+        assert_eq!(row_of(src, "pure_use"), ["nondet"]);
+        assert_eq!(row_of(src, "impure_use"), ["nondet"]);
+    }
+
+    #[test]
+    fn mutual_recursion_needs_no_ordering() {
+        // `even` calls `odd` calls `even`. A row bound to a row that mentions it resolves to the
+        // least fixed point rather than diverging, which is why no dependency sort is needed.
+        let src = "\
+def ping(n: Int) -> Str:
+    if n < 1:
+        return uuid()
+    return pong(n - 1)
+
+def pong(n: Int) -> Str:
+    return ping(n - 1)
+";
+        assert_eq!(row_of(src, "ping"), ["nondet"]);
+        assert_eq!(row_of(src, "pong"), ["nondet"]);
+    }
+
+    #[test]
+    fn a_declared_row_is_a_bound_and_exceeding_it_is_an_error() {
+        // §3.6: "effect widening is a breaking API change". So the compiler will not widen it.
+        let src = "\
+def charge(amount: Int) -> Str uses net.out(payments.example.com):
+    return uuid()
+";
+        assert!(codes(src).contains(&"B0370"), "{:?}", codes(src));
+
+        // …and declaring it is enough to make it compile.
+        let ok = "\
+def charge(amount: Int) -> Str uses net.out(payments.example.com), nondet:
+    return uuid()
+";
+        assert!(!codes(ok).contains(&"B0370"), "{:?}", codes(ok));
+        let (program, _, _) = check_str("t.beck", ok);
+        let row = &program.defs["charge"].row;
+        assert!(row
+            .atoms
+            .contains(&Effect::NetOut("payments.example.com".into())));
+        assert!(row.atoms.contains(&Effect::Nondet));
+    }
+
+    #[test]
+    fn a_declared_effect_survives_an_empty_body() {
+        // A stub that will phone home later must say so today: otherwise the edit that fills the
+        // body in silently re-places every caller.
+        let src = "\
+def charge(amount: Int) -> Str uses net.out(payments.example.com):
+    return \"receipt\"
+";
+        assert_eq!(row_of(src, "charge"), ["net.out(payments.example.com)"]);
+    }
+
+    #[test]
+    fn ambient_effects_are_carried_but_never_printed_in_a_signature() {
+        let src = "\
+def audit(what: Str) -> Str uses log:
+    return what
+";
+        let (program, _, _) = check_str("t.beck", src);
+        let def = &program.defs["audit"];
+        assert_eq!(def.effects, vec![Effect::Ambient(crate::ty::Ambient::Log)]);
+        assert!(
+            def.row.visible().is_empty(),
+            "§3.2 elides the ambient set from signatures"
+        );
     }
 }

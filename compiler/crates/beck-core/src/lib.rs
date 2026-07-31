@@ -20,6 +20,7 @@ pub mod html;
 pub mod place;
 pub mod pmap;
 pub mod prelude;
+pub mod row;
 pub mod split;
 pub mod ty;
 
@@ -29,8 +30,9 @@ pub use core::{digest, Const, Core, CoreKind, Env, Prim, Value, VarId};
 pub use graph::{DepGraph, EdgeKind, GraphBuilder, GraphNode, NodeId, NodeKind};
 pub use html::Html;
 pub use pmap::PMap;
+pub use row::{Ambient, Effect, Row};
 pub use split::{Placed, Roles};
-pub use ty::{Effect, Tier, Ty, TyDecl};
+pub use ty::{Tier, Ty, TyDecl};
 
 use beck_diag::{Diagnostics, FileId, SourceMap};
 
@@ -48,6 +50,20 @@ pub fn compile(file: FileId, name: &str, src: &str, diags: &mut Diagnostics) -> 
         return None;
     }
     split::split(program, diags)
+}
+
+/// Parse, expand and check one source string, stopping before placement.
+///
+/// The shape a test that is interested in *inference* wants: a program whose rows are known even
+/// when its placement is the thing under test.
+pub fn check_str(name: &str, src: &str) -> (check::Program, Diagnostics, SourceMap) {
+    let mut map = SourceMap::new();
+    let file = map.add(name, src);
+    let mut diags = Diagnostics::new();
+    let parsed = beck_syntax::parse_file(file, name, src, &mut diags);
+    let expanded = beck_macro::expand_module(&parsed, &mut diags);
+    let program = check_module(&expanded, &mut diags);
+    (program, diags, map)
 }
 
 /// Compile one source string against a fresh source map. The shape every test uses.

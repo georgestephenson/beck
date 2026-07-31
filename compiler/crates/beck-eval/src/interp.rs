@@ -46,12 +46,27 @@ impl std::error::Error for EvalError {}
 
 pub type EvalResult = Result<Value, EvalError>;
 
-/// What the evaluator needs from outside itself: the top-level definitions, and the one impure
-/// capability (`uuid`) that the host supplies rather than the program taking.
+/// What the evaluator needs from outside itself: the top-level definitions, and the impure
+/// capabilities that the host supplies rather than the program taking.
+///
+/// Each of these is exactly one effect atom made concrete — `nondet` for the first two, `env` for
+/// the third — so a host that refuses one is refusing an effect, not disabling a feature.
 pub trait Host {
     fn global(&self, name: &str) -> Option<&Core>;
     /// Mint an id. Called only where the checker has proved we are not inside a fold.
     fn new_uuid(&self) -> Arc<str>;
+    /// Read the wall clock. `nondet`, and forbidden inside a fold for the same reason `uuid` is:
+    /// time is data on the envelope.
+    fn now_millis(&self) -> i64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0)
+    }
+    /// Read a secret from the process environment — `env`, which no client tier discharges.
+    fn secret(&self, name: &str) -> Arc<str> {
+        std::env::var(name).unwrap_or_default().into()
+    }
 }
 
 pub struct Interp<'h> {
@@ -576,6 +591,27 @@ impl<'h> Interp<'h> {
             Prim::NewUuid => {
                 want(0)?;
                 Ok(Value::Str(self.host.new_uuid()))
+            }
+            Prim::Now => {
+                want(0)?;
+                Ok(Value::Int(self.host.now_millis()))
+            }
+            Prim::SecretEnv => {
+                want(1)?;
+                let name = args.pop().expect("arity checked");
+                let Some(name) = name.as_str() else {
+                    return Err(EvalError::new("`secret_env` expects a Str", span));
+                };
+                // A `secret[Str]` is a newtype at runtime, which is what keeps it distinguishable
+                // from the `Str` it wraps everywhere the wire format looks at a value.
+                Ok(Value::Data {
+                    ty: Arc::from(beck_core::Ty::SECRET),
+                    variant: None,
+                    fields: Arc::new(std::collections::BTreeMap::from([(
+                        Arc::from("value"),
+                        Value::Str(self.host.secret(name)),
+                    )])),
+                })
             }
             // The signal vocabulary is *declarative*: the splitter reads these nodes out of the
             // program and wires the runtime accordingly (`split.rs`). Reaching one here means a
