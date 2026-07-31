@@ -12,10 +12,10 @@
 //! the same lock as the append. It is simple, it is fast enough, and every property in §18.3.6
 //! depends on it" — and drives it from a *compiled program* instead of from hand-written Rust.
 //!
-//! What changed: `validate`, `apply_event` and `view` are now [`Core`] closures the splitter
-//! handed over, called through the evaluator. Everything else — the batching, the ordering, the
-//! ack-versus-frame protocol rule Phase 0 learned the hard way — is unchanged, because it was
-//! never domain-specific.
+//! What changed: `validate`, `apply_event` and `view` are now `Core` the splitter handed over,
+//! prepared by whichever [`beck_core::backend::Backend`] the process chose. Everything else — the
+//! batching, the ordering, the ack-versus-frame protocol rule Phase 0 learned the hard way — is
+//! unchanged, because it was never domain-specific.
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -23,7 +23,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Result};
-use beck_core::{Placed, Value};
+use beck_core::Value;
 use tokio::sync::{mpsc, oneshot, watch, RwLock};
 
 use crate::log::{Instant, LogStore, Pending, Seq, Snapshot};
@@ -78,12 +78,15 @@ impl App {
     /// Recovery is not a special mode: it is the same fold the runtime always runs, started from
     /// the newest snapshot. A process that has just been SIGKILLed and one that has just been
     /// deployed take exactly this path.
+    ///
+    /// Takes a prepared [`Runtime`] rather than a `Placed`, because building one requires choosing
+    /// a backend, and that choice belongs to whoever assembles the process — not to the sequencer.
     pub async fn start(
-        placed: Placed,
+        runtime: Runtime,
         store: Arc<dyn LogStore>,
         config: AppConfig,
     ) -> Result<Arc<App>> {
-        let runtime = Arc::new(Runtime::new(placed)?);
+        let runtime = Arc::new(runtime);
         let head = store.head().await?;
         let (state, at) = replay_to(&runtime, store.as_ref(), head).await?;
         if at != head {
@@ -218,11 +221,23 @@ async fn sequencer(app: Arc<App>, mut rx: mpsc::Receiver<Proposal>, config: AppC
                     let mut failure: Option<String> = None;
                     for e in events {
                         let seq = base + pending.len() as u64 + 1;
+                        // Encoded *before* the fold advances, so an event that cannot be written
+                        // durably is refused rather than folded into a state the log cannot
+                        // reproduce. A rejection here is a program that should not have compiled —
+                        // Phase 2's effect rows should prove it cannot happen — but until they can,
+                        // the boundary refuses instead of writing something lossy.
+                        let body = match beck_core::core::value_to_repr(&e) {
+                            Ok(body) => body,
+                            Err(why) => {
+                                failure = Some(why.to_string());
+                                break;
+                            }
+                        };
                         let env = crate::log::Envelope {
                             seq,
                             at: p.at,
                             actor: p.actor.clone(),
-                            body: beck_core::core::value_to_repr(&e),
+                            body,
                         };
                         // Apply as we validate, so the next command in the batch sees it:
                         // `Add(x)` followed by `Toggle(x)` in one batch must work.

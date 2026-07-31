@@ -25,7 +25,7 @@ use beck_core::{Html, Placed, Value};
 use beck_rt::{diff, App, AppConfig, MemoryLog, Runtime};
 
 mod support;
-use support::{command, todo_program, ACTORS};
+use support::{command, todo_program, todo_runtime, ACTORS};
 
 /// The program run as one process: no wire, no sequencer, no diff.
 struct SingleProcess {
@@ -36,7 +36,8 @@ struct SingleProcess {
 
 impl SingleProcess {
     fn new(placed: Placed) -> SingleProcess {
-        let runtime = Runtime::new(placed).expect("runtime");
+        let backend = beck_eval::backend(&placed);
+        let runtime = Runtime::new(placed, backend).expect("runtime");
         let state = runtime.initial_state().expect("initial state");
         SingleProcess {
             runtime,
@@ -57,7 +58,7 @@ impl SingleProcess {
                 seq: self.seq,
                 at: beck_rt::Instant(self.seq as i64),
                 actor: actor.to_string(),
-                body: beck_core::core::value_to_repr(&e),
+                body: beck_core::core::value_to_repr(&e).expect("an event is data"),
             };
             self.state = self.runtime.fold(&self.state, &env, e).expect("fold");
         }
@@ -142,7 +143,7 @@ async fn split_execution_is_indistinguishable_from_single_process() {
 
     // ---- the split side: the real runtime, with a client that only ever sees patches ----
     let store = Arc::new(MemoryLog::new());
-    let app = App::start(placed.clone(), store, AppConfig::default())
+    let app = App::start(todo_runtime(), store, AppConfig::default())
         .await
         .expect("app starts");
 
@@ -202,10 +203,13 @@ async fn a_per_session_view_never_shows_another_actors_state() {
     // §3.5: "the log and the business rules never ship to clients". The filter provably runs
     // server-side, so an idle subscriber of a per-session view is not merely *not shown* someone
     // else's todo — it is never sent one.
-    let placed = todo_program();
-    let app = App::start(placed, Arc::new(MemoryLog::new()), AppConfig::default())
-        .await
-        .expect("app starts");
+    let app = App::start(
+        todo_runtime(),
+        Arc::new(MemoryLog::new()),
+        AppConfig::default(),
+    )
+    .await
+    .expect("app starts");
 
     let mut alice_last = app.render("alice").await.expect("render");
     app.propose(

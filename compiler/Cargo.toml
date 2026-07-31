@@ -5,6 +5,7 @@ members = [
     "crates/beck-syntax",
     "crates/beck-macro",
     "crates/beck-core",
+    "crates/beck-eval",
     "crates/beck-rt",
     "crates/beck-infra",
     "crates/beck-db",
@@ -24,6 +25,7 @@ beck-diag = { path = "crates/beck-diag", version = "0.1.0" }
 beck-syntax = { path = "crates/beck-syntax", version = "0.1.0" }
 beck-macro = { path = "crates/beck-macro", version = "0.1.0" }
 beck-core = { path = "crates/beck-core", version = "0.1.0" }
+beck-eval = { path = "crates/beck-eval", version = "0.1.0" }
 beck-rt = { path = "crates/beck-rt", version = "0.1.0" }
 beck-infra = { path = "crates/beck-infra", version = "0.1.0" }
 beck-db = { path = "crates/beck-db", version = "0.1.0" }

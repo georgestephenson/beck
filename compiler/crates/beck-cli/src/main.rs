@@ -547,8 +547,12 @@ async fn run(file: &Path, addr: &str, store: Store, path: &Path, url: Option<&st
     // Built before the app starts and never rebuilt: the program cannot change under a running
     // process, so the dashboard's structural panes are computed once (docs/19 §19.8).
     let dashboard = Arc::new(dashboard(&placed));
+    // The one place the process chooses how the program executes. A native backend is a different
+    // expression here and nothing else (docs/19 §19.8).
+    let backend = beck_eval::backend(&placed);
     let log = open_store(store, path, url).await?;
-    let app = beck_rt::App::start(placed, log, beck_rt::AppConfig::default()).await?;
+    let runtime = beck_rt::Runtime::new(placed, backend)?;
+    let app = beck_rt::App::start(runtime, log, beck_rt::AppConfig::default()).await?;
     let (tx, rx) = tokio::sync::watch::channel(false);
 
     tokio::spawn(async move {
@@ -648,7 +652,8 @@ async fn replay(
 ) -> Result<()> {
     let placed = compiled(file)?;
     let log = open_store(store, path, url).await?;
-    let runtime = beck_rt::Runtime::new(placed)?;
+    let backend = beck_eval::backend(&placed);
+    let runtime = beck_rt::Runtime::new(placed, backend)?;
     let head = log.head().await?;
     let target = to.unwrap_or(head);
 

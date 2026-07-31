@@ -702,27 +702,71 @@ impl fmt::Display for Value {
     }
 }
 
+/// A value that cannot be written to a log.
+///
+/// [`Value`] has four consumers with different requirements — the evaluator, the log, the wire, and
+/// the digest — and three of its variants exist only for the first. Encoding one of those is not a
+/// value to be lowered; it is a program that should not have compiled.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NotStorable {
+    /// Which variant, by name.
+    pub kind: &'static str,
+}
+
+impl fmt::Display for NotStorable {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "a {} cannot be written to the log: it is {}, not data",
+            self.kind,
+            match self.kind {
+                "closure" => "code",
+                "attribute" => "part of a view",
+                _ => "a view",
+            }
+        )
+    }
+}
+
+impl std::error::Error for NotStorable {}
+
 /// A lossless encoding of a [`Value`], for the log and for snapshots.
 ///
 /// [`Value::to_json`] is the *wire* form: it drops the type name of a record and unwraps a
 /// newtype, because that is what a browser wants. The log needs the opposite — a record that can
 /// be read back as exactly the value that was written, because replay compares digests. Hence two
 /// encodings, and a test that says why.
-pub fn value_to_repr(v: &Value) -> serde_json::Value {
+///
+/// # Why this returns a `Result`
+///
+/// It used to encode `Html`, `Attr` and `Closure` as `unit` on the grounds that "neither can appear
+/// in a log". That grounds was an assumption, not a check: nothing stops a program declaring
+/// `model State: cached: Html`, and the encoding would then write `unit` into the *durable* path,
+/// silently, and replay would rebuild a different state. A system whose correctness argument is
+/// "replay is exact" cannot have a lossy branch in the function that makes the log.
+///
+/// Until placement can prove such a type never reaches `durable` (Phase 2's effect rows), refusing
+/// at the boundary is the honest position: the append fails, the process aborts by the same rule as
+/// any other failed append (§18.5 item 6), and nothing unreadable is ever committed.
+pub fn value_to_repr(v: &Value) -> Result<serde_json::Value, NotStorable> {
     use serde_json::{json, Map as JMap, Value as J};
-    match v {
+    Ok(match v {
         Value::Unit => json!({"$": "unit"}),
         Value::Bool(b) => json!({"$": "bool", "v": b}),
         Value::Int(i) => json!({"$": "int", "v": i}),
         Value::Float(bits) => json!({"$": "float", "v": bits.to_string()}),
         Value::Str(s) => json!({"$": "str", "v": s.as_ref()}),
         Value::List(xs) => {
-            json!({"$": "list", "v": xs.iter().map(value_to_repr).collect::<Vec<_>>()})
+            let items: Result<Vec<_>, _> = xs.iter().map(value_to_repr).collect();
+            json!({"$": "list", "v": items?})
         }
-        Value::Map(m) => json!({
-            "$": "map",
-            "v": m.iter().map(|(k, val)| json!([value_to_repr(k), value_to_repr(val)])).collect::<Vec<_>>()
-        }),
+        Value::Map(m) => {
+            let mut pairs = Vec::with_capacity(m.len());
+            for (k, val) in m.iter() {
+                pairs.push(json!([value_to_repr(k)?, value_to_repr(val)?]));
+            }
+            json!({"$": "map", "v": pairs})
+        }
         Value::Data {
             ty,
             variant,
@@ -730,7 +774,7 @@ pub fn value_to_repr(v: &Value) -> serde_json::Value {
         } => {
             let mut f = JMap::new();
             for (k, val) in fields.iter() {
-                f.insert(k.to_string(), value_to_repr(val));
+                f.insert(k.to_string(), value_to_repr(val)?);
             }
             json!({
                 "$": "data",
@@ -739,10 +783,10 @@ pub fn value_to_repr(v: &Value) -> serde_json::Value {
                 "f": J::Object(f)
             })
         }
-        // Neither can appear in a log: an `Html` is a view, and a closure is code.
-        Value::Html(_) => json!({"$": "unit"}),
-        Value::Attr(_) | Value::Closure(_) => json!({"$": "unit"}),
-    }
+        Value::Html(_) => return Err(NotStorable { kind: "view" }),
+        Value::Attr(_) => return Err(NotStorable { kind: "attribute" }),
+        Value::Closure(_) => return Err(NotStorable { kind: "closure" }),
+    })
 }
 
 pub fn value_from_repr(j: &serde_json::Value) -> Option<Value> {
@@ -786,6 +830,74 @@ pub fn value_from_repr(j: &serde_json::Value) -> Option<Value> {
     })
 }
 
+/// Structural digest of a value — the replay-determinism oracle (§4.8).
+///
+/// A property of the *value*, not of whoever produced it: two backends that disagree are
+/// detected by comparing digests, so the digest cannot live in either of them.
+pub fn digest(v: &Value) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    hash_into(v, &mut hasher);
+    *hasher.finalize().as_bytes()
+}
+
+fn hash_into(v: &Value, h: &mut blake3::Hasher) {
+    match v {
+        Value::Unit => h.update(&[0]),
+        Value::Bool(b) => h.update(&[1, *b as u8]),
+        Value::Int(i) => {
+            h.update(&[2]);
+            h.update(&i.to_le_bytes())
+        }
+        Value::Float(bits) => {
+            h.update(&[3]);
+            h.update(&bits.to_le_bytes())
+        }
+        Value::Str(s) => {
+            h.update(&[4]);
+            h.update(&(s.len() as u64).to_le_bytes());
+            h.update(s.as_bytes())
+        }
+        Value::List(xs) => {
+            h.update(&[5]);
+            h.update(&(xs.len() as u64).to_le_bytes());
+            for x in xs.iter() {
+                hash_into(x, h);
+            }
+            h
+        }
+        Value::Map(m) => {
+            h.update(&[6]);
+            h.update(&(m.len() as u64).to_le_bytes());
+            for (k, val) in m.iter() {
+                hash_into(k, h);
+                hash_into(val, h);
+            }
+            h
+        }
+        Value::Data {
+            ty,
+            variant,
+            fields,
+        } => {
+            h.update(&[7]);
+            h.update(ty.as_bytes());
+            h.update(variant.as_deref().unwrap_or("").as_bytes());
+            h.update(&(fields.len() as u64).to_le_bytes());
+            for (k, val) in fields.iter() {
+                h.update(k.as_bytes());
+                hash_into(val, h);
+            }
+            h
+        }
+        Value::Html(html) => {
+            h.update(&[8]);
+            h.update(html.render().as_bytes())
+        }
+        Value::Attr(_) => h.update(&[9]),
+        Value::Closure(_) => h.update(&[10]),
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -812,13 +924,49 @@ mod tests {
                 )])),
             )])),
         };
-        assert_eq!(value_from_repr(&value_to_repr(&v)), Some(v.clone()));
+        assert_eq!(
+            value_from_repr(&value_to_repr(&v).unwrap()),
+            Some(v.clone())
+        );
         let evt = Value::Data {
             ty: Arc::from("Event"),
             variant: Some(Arc::from("Toggled")),
             fields: Arc::new(BTreeMap::from([(Arc::from("id"), Value::str_("x"))])),
         };
-        assert_eq!(value_from_repr(&value_to_repr(&evt)), Some(evt));
+        assert_eq!(value_from_repr(&value_to_repr(&evt).unwrap()), Some(evt));
+    }
+
+    #[test]
+    fn a_value_the_log_cannot_hold_is_refused_rather_than_flattened() {
+        // This used to encode as `unit`, on the assumption that a view never reaches the log.
+        // Nothing checked the assumption: `model State: cached: Html` compiles today, and the
+        // durable path would have written `unit` and replayed a different state — silently, in the
+        // one place this system's correctness argument does not permit silence.
+        let view = Value::Html(Arc::new(crate::html::Html::text("hello")));
+        let err = value_to_repr(&view).expect_err("a view is not data");
+        assert!(
+            err.to_string().contains("cannot be written to the log"),
+            "{err}"
+        );
+
+        // …and nesting does not launder it: a record holding one is refused too.
+        let state = Value::Data {
+            ty: Arc::from("State"),
+            variant: None,
+            fields: Arc::new(BTreeMap::from([(Arc::from("cached"), view.clone())])),
+        };
+        assert!(
+            value_to_repr(&state).is_err(),
+            "a record holding a view is not data"
+        );
+        assert!(
+            value_to_repr(&Value::List(Arc::new(vec![view.clone()]))).is_err(),
+            "a list holding a view is not data"
+        );
+        assert!(
+            value_to_repr(&Value::Map(PMap::new().insert(Value::str_("k"), view))).is_err(),
+            "a map holding a view is not data"
+        );
     }
 
     #[test]

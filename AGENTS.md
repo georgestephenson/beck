@@ -28,7 +28,10 @@ Write the commit message as the author of the change: what changed, and why.
 - Claims in docs are stated from evidence. If you write a number, it must be reproducible —
   `phase0/tests/measure.sh` is where the Phase 0 numbers come from; the Phase 1 numbers come from
   `cargo test` and the commands quoted in [`docs/19-phase-1-report.md`](docs/19-phase-1-report.md).
-- The two harnesses are the project's conscience (§4.8, §8.3): `compiler/crates/beck-cli/tests/`
-  holds the differential and replay-determinism suites. Keep them green.
+- The harnesses are the project's conscience (§4.8, §8.3): `compiler/crates/beck-cli/tests/` holds
+  the differential, replay-determinism, backend-seam and scaling suites. Keep them green.
+- `beck-rt` must not depend on any backend crate. Execution goes through
+  `beck_core::backend::Backend`, and `tests/backend_seam.rs` drives the runtime with an
+  implementation that is not the evaluator so the seam stays load-bearing (docs/19 §19.9).
 - Say plainly when something is written but unproven. "Built" and "runs" and "measured" are three
   different claims.

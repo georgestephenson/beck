@@ -28,9 +28,10 @@ the kill/pivot gates they answer, and the list of what turned out harder than ex
 
 **Phase 1 is built.** [`compiler/`](compiler/) is the compiler: two surfaces onto one homoiconic
 AST, a hygienic macro expander, Hindley–Milner inference, a typed `Core` IR, placement verified
-against effects, and a splitter that slices the signal graph into the roles a runtime drives. The
-todo sketch is now *source* — [`compiler/examples/todo.beck`](compiler/examples/todo.beck), 132
-lines — and the runtime that serves it is Phase 0's, with the application arriving as compiled
+against effects, and a splitter that slices the signal graph into the roles a runtime drives —
+executed by whichever backend the process chooses, behind a `Backend` seam the runtime cannot see
+past. The todo sketch is now *source* —
+[`compiler/examples/todo.beck`](compiler/examples/todo.beck), 132 lines — and the runtime that serves it is Phase 0's, with the application arriving as compiled
 `Core` instead of hand-written Rust. `beck up` puts it in a real cluster, where a killed pod
 recovers by folding the log. What it deliberately does not do — native codegen, effect inference —
 is in [`docs/19-phase-1-report.md`](docs/19-phase-1-report.md), along with the four defects that

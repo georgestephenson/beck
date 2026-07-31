@@ -1,0 +1,13 @@
+[package]
+name = "beck-eval"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Phase 1's Core backend: a tree-walking evaluator behind the Backend seam"
+
+[dependencies]
+beck-core.workspace = true
+beck-diag.workspace = true
+
+[lints]
+workspace = true

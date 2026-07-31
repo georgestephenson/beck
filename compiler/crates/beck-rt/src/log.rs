@@ -146,7 +146,7 @@ impl LogStore for MemoryLog {
                 seq: next,
                 at: p.at,
                 actor: p.actor.clone(),
-                body: beck_core::core::value_to_repr(&p.body),
+                body: beck_core::core::value_to_repr(&p.body)?,
             });
         }
         inner.events.extend(out.iter().cloned());
@@ -245,7 +245,7 @@ impl LogStore for RedbLog {
                     seq: next,
                     at: p.at,
                     actor: p.actor.clone(),
-                    body: beck_core::core::value_to_repr(&p.body),
+                    body: beck_core::core::value_to_repr(&p.body)?,
                 };
                 let bytes = serde_json::to_vec(&env)?;
                 table.insert(next, bytes.as_slice())?;
@@ -276,7 +276,7 @@ impl LogStore for RedbLog {
         let tx = self.db.begin_write()?;
         {
             let mut table = tx.open_table(SNAPSHOTS)?;
-            let bytes = serde_json::to_vec(&beck_core::core::value_to_repr(&snapshot.state))?;
+            let bytes = serde_json::to_vec(&beck_core::core::value_to_repr(&snapshot.state)?)?;
             table.insert(snapshot.seq, bytes.as_slice())?;
         }
         tx.commit()?;
@@ -387,7 +387,7 @@ impl LogStore for PgLog {
             params.push(Box::new(p.at.0));
             params.push(Box::new(p.actor.clone()));
             params.push(Box::new(
-                beck_core::core::value_to_repr(&p.body).to_string(),
+                beck_core::core::value_to_repr(&p.body)?.to_string(),
             ));
         }
         sql.push_str(" RETURNING seq, at, actor, body");
@@ -445,7 +445,7 @@ impl LogStore for PgLog {
                  ON CONFLICT (seq) DO UPDATE SET state = EXCLUDED.state",
                 &[
                     &(snapshot.seq as i64),
-                    &beck_core::core::value_to_repr(&snapshot.state).to_string(),
+                    &beck_core::core::value_to_repr(&snapshot.state)?.to_string(),
                 ],
             )
             .await?;

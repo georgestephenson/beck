@@ -12,9 +12,9 @@
 //! resolved-but-untyped tree would be a fourth. Stages 7 and 8 are [`place`] and [`split`], which
 //! §4.1 calls out as "novel … where the engineering budget goes".
 
+pub mod backend;
 pub mod check;
 pub mod core;
-pub mod eval;
 pub mod graph;
 pub mod html;
 pub mod place;
@@ -23,9 +23,9 @@ pub mod prelude;
 pub mod split;
 pub mod ty;
 
+pub use backend::{Backend, Callable, ExecError};
 pub use check::{check_module, Def, Program, SignalDecl};
-pub use core::{Const, Core, CoreKind, Env, Prim, Value, VarId};
-pub use eval::{digest, EvalError, Host, Interp};
+pub use core::{digest, Const, Core, CoreKind, Env, Prim, Value, VarId};
 pub use graph::{DepGraph, EdgeKind, GraphBuilder, GraphNode, NodeId, NodeKind};
 pub use html::Html;
 pub use pmap::PMap;

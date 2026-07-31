@@ -13,6 +13,7 @@ path = "src/main.rs"
 beck-core.workspace = true
 beck-db.workspace = true
 beck-diag.workspace = true
+beck-eval.workspace = true
 beck-infra.workspace = true
 beck-macro.workspace = true
 beck-rt.workspace = true
@@ -28,6 +29,7 @@ tracing-subscriber.workspace = true
 workspace = true
 
 [dev-dependencies]
+beck-eval.workspace = true
 # The harnesses exercise the compiler and the runtime *together* — §4.8's differential and
 # replay-determinism suites are properties of the whole pipeline, not of any one crate — so they
 # live beside the binary that already depends on all of it.

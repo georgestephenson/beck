@@ -1,4 +1,4 @@
-//! The `Core` evaluator — Phase 1's server backend.
+//! The tree-walker itself. [`crate`] wraps it as a [`beck_core::backend::Backend`].
 //!
 //! Deliberately bad at everything, complete end-to-end
 //! ([`docs/08-roadmap.md`](../../../../docs/08-roadmap.md) Phase 1). It is a tree-walker over
@@ -17,9 +17,9 @@ use std::sync::Arc;
 
 use beck_diag::Span;
 
-use crate::core::{Closure, Const, Core, CoreKind, Env, Pattern, Prim, Value};
-use crate::html::Html;
-use crate::pmap::PMap;
+use beck_core::core::{Closure, Const, Core, CoreKind, Env, Pattern, Prim, Value};
+use beck_core::html::Html;
+use beck_core::PMap;
 
 #[derive(Clone, Debug)]
 pub struct EvalError {
@@ -28,7 +28,7 @@ pub struct EvalError {
 }
 
 impl EvalError {
-    fn new(message: impl Into<String>, span: Span) -> EvalError {
+    pub fn new(message: impl Into<String>, span: Span) -> EvalError {
         EvalError {
             message: message.into(),
             span,
@@ -510,7 +510,7 @@ impl<'h> Interp<'h> {
                 want(2)?;
                 let v = args.pop().expect("arity checked");
                 let k = args.pop().expect("arity checked");
-                Ok(Value::Attr(Arc::new(crate::core::AttrValue::Plain(
+                Ok(Value::Attr(Arc::new(beck_core::core::AttrValue::Plain(
                     Arc::from(k.display()),
                     Arc::from(v.display()),
                 ))))
@@ -519,7 +519,7 @@ impl<'h> Interp<'h> {
                 want(2)?;
                 let cmd = args.pop().expect("arity checked");
                 let ev = args.pop().expect("arity checked");
-                Ok(Value::Attr(Arc::new(crate::core::AttrValue::On(
+                Ok(Value::Attr(Arc::new(beck_core::core::AttrValue::On(
                     Arc::from(ev.display()),
                     cmd,
                 ))))
@@ -527,7 +527,7 @@ impl<'h> Interp<'h> {
             Prim::HtmlKey => {
                 want(1)?;
                 let k = args.pop().expect("arity checked");
-                Ok(Value::Attr(Arc::new(crate::core::AttrValue::Key(
+                Ok(Value::Attr(Arc::new(beck_core::core::AttrValue::Key(
                     Arc::from(k.display()),
                 ))))
             }
@@ -540,17 +540,17 @@ impl<'h> Interp<'h> {
                 for a in attrs.as_list().map(|v| v.as_slice()).unwrap_or(&[]) {
                     match a {
                         Value::Attr(at) => match &**at {
-                            crate::core::AttrValue::Plain(k, v) => {
+                            beck_core::core::AttrValue::Plain(k, v) => {
                                 // An empty attribute value is dropped rather than emitted, so the
                                 // differ has nothing to churn on — Phase 0's `attr_if`.
                                 if !v.is_empty() {
                                     el = el.attr(k.to_string(), v.to_string());
                                 }
                             }
-                            crate::core::AttrValue::On(ev, cmd) => {
+                            beck_core::core::AttrValue::On(ev, cmd) => {
                                 el = el.on(ev, cmd.to_json());
                             }
-                            crate::core::AttrValue::Key(k) => el = el.key(k.to_string()),
+                            beck_core::core::AttrValue::Key(k) => el = el.key(k.to_string()),
                         },
                         other => {
                             return Err(EvalError::new(
@@ -628,75 +628,10 @@ fn match_pattern(p: &Pattern, v: &Value) -> Option<Vec<(u32, Value)>> {
     }
 }
 
-/// Structural digest of a value — the replay-determinism oracle (§4.8).
-pub fn digest(v: &Value) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new();
-    hash_into(v, &mut hasher);
-    *hasher.finalize().as_bytes()
-}
-
-fn hash_into(v: &Value, h: &mut blake3::Hasher) {
-    match v {
-        Value::Unit => h.update(&[0]),
-        Value::Bool(b) => h.update(&[1, *b as u8]),
-        Value::Int(i) => {
-            h.update(&[2]);
-            h.update(&i.to_le_bytes())
-        }
-        Value::Float(bits) => {
-            h.update(&[3]);
-            h.update(&bits.to_le_bytes())
-        }
-        Value::Str(s) => {
-            h.update(&[4]);
-            h.update(&(s.len() as u64).to_le_bytes());
-            h.update(s.as_bytes())
-        }
-        Value::List(xs) => {
-            h.update(&[5]);
-            h.update(&(xs.len() as u64).to_le_bytes());
-            for x in xs.iter() {
-                hash_into(x, h);
-            }
-            h
-        }
-        Value::Map(m) => {
-            h.update(&[6]);
-            h.update(&(m.len() as u64).to_le_bytes());
-            for (k, val) in m.iter() {
-                hash_into(k, h);
-                hash_into(val, h);
-            }
-            h
-        }
-        Value::Data {
-            ty,
-            variant,
-            fields,
-        } => {
-            h.update(&[7]);
-            h.update(ty.as_bytes());
-            h.update(variant.as_deref().unwrap_or("").as_bytes());
-            h.update(&(fields.len() as u64).to_le_bytes());
-            for (k, val) in fields.iter() {
-                h.update(k.as_bytes());
-                hash_into(val, h);
-            }
-            h
-        }
-        Value::Html(html) => {
-            h.update(&[8]);
-            h.update(html.render().as_bytes())
-        }
-        Value::Attr(_) => h.update(&[9]),
-        Value::Closure(_) => h.update(&[10]),
-    };
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ty::Ty;
+    use beck_core::{digest, Ty};
 
     struct NoHost;
     impl Host for NoHost {

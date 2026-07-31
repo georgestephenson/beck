@@ -4,8 +4,7 @@ Phase 1 of [`08-roadmap.md`](08-roadmap.md) asks for "the narrowest possible com
 todo sketch from source to a running deployment. Deliberately bad at everything, complete
 end-to-end."
 
-The compiler exists and the sketch runs. [`compiler/`](../compiler/) is 14,299 lines of Rust across
-eight crates; [`compiler/examples/todo.beck`](../compiler/examples/todo.beck) is the sketch from
+The compiler exists and the sketch runs. [`compiler/`](../compiler/) is Rust across nine crates; [`compiler/examples/todo.beck`](../compiler/examples/todo.beck) is the sketch from
 [`00-original-idea.md`](00-original-idea.md), 132 lines, and `beck run` serves it. Every number
 below was measured on the machine described in §19.2.
 
@@ -33,7 +32,7 @@ implied: native codegen (§19.6) and effect *inference* (§19.6).
 | Signal-graph slicing | done — the graph is walked and inlined into per-role functions | `beck-core/src/split.rs` |
 | Command channel, envelope/patch serialisers | done — content-derived operation id (§4.3) | `beck-core/src/split.rs`, `beck-rt/src/{protocol,patch}.rs` |
 | Views: full recompute per event | done, and it is the dominant cost (§19.4 item 3) | `beck-core/src/split.rs` |
-| Backend: **Cranelift** | **not done** — a `Core` evaluator stands in its place (§19.6) | `beck-core/src/eval.rs` |
+| Backend: **Cranelift** | **not done** — a `Core` evaluator stands in its place, behind the `Backend` seam (§19.6, §19.9) | `beck-eval/` |
 | Backend: thin patch client (plain JS) | done — Phase 0's client, byte for byte, because nothing about it was domain-specific | `beck-rt/client/beck-thin.js` |
 | Backend: Postgres/redb log engine | done — both, plus in-memory; same contract, same tests | `beck-rt/src/log.rs` |
 | Backend: k8s object graph | done — derived from effects, with provenance on every node | `beck-infra/src/lib.rs` |
@@ -407,9 +406,9 @@ None of them are Beck's, but all three cost time:
 - **No native codegen.** The roadmap names Cranelift for the server tier. What is here is a `Core`
   evaluator — the "engine-in-Rust with the language as its configuration" route that
   [`00`](00-original-idea.md) names as one of the three that work for a GC'd functional language on
-  a Rust host. It keeps the `Core → Target` seam narrow, which §5.2 says is what lets a backend slot
-  in later, and it is the reason for §19.4 item 3's numbers. LLVM, and the differential tests
-  between the two backends, are untouched.
+  a Rust host. It is the reason for §19.4 item 3's numbers. LLVM is untouched.
+
+  §5.2's seam, however, now exists as an actual interface rather than as an intention: see §19.9.
 - **No effect inference.** §3.2's rows, effect polymorphism and the wider atom set (`net.out`, `fs`,
   `cap.*`) do not exist. Phase 1 has four atoms — `ingress`, `durable`, `dom`, `nondet` — declared
   with `uses` and *collected* by walking what a body calls. That is enough to decide placement
@@ -568,3 +567,80 @@ The instrumentation earned its place during the work: a hand-written websocket c
 wrong message schema showed up immediately as `bad_messages: 29`, and the first OTLP body reported
 `startTimeUnixNano` *after* `timeUnixNano` — a lazily-initialised start read after the clock — which
 a collector is entitled to drop silently. Both are now tests.
+
+## 19.9 Architecture review: what was fixed, and what is deferred
+
+A review after the exit criterion asked whether the architecture is as clean as it can be. It is
+not, and the honest answer separates *scaffolding that announces itself* — legitimate in a walking
+skeleton — from *scaffolding that lies*, which is a defect whatever the phase.
+
+### Fixed in Phase 1
+
+**1. There was no backend seam.** `beck-rt` constructed the evaluator by name in four places, and
+the evaluator lived in `beck-core` — a backend inside the crate that defines the IR. §5.2 says the
+`Core → Target` seam is what lets a backend slot in later, and §4.8 names a differential test
+*between backends*; neither is possible when there is no interface for two of them to sit behind.
+That made the native backend a refactor rather than an addition, and the cost of leaving it only
+grows.
+
+Now: [`beck-core::backend`](../compiler/crates/beck-core/src/backend.rs) defines `Backend` —
+`constant`, `function`, `name` — where `function` returns a `Callable` rather than a
+backend-specific handle, so there is no downcast and no `Value::Closure` (the tree-walker's own
+representation) in the interface. [`beck-eval`](../compiler/crates/beck-eval/) is a new crate
+holding the evaluator and implementing it. **`beck-rt` depends on no backend crate at all**;
+`Runtime::new(placed, backend)` takes one, and the process chooses. `App::start` now takes a
+prepared `Runtime` rather than a `Placed`, because choosing a backend is not the sequencer's job.
+
+A trait with one implementation is a claim, not a fact, so
+[`tests/backend_seam.rs`](../compiler/crates/beck-cli/tests/backend_seam.rs) drives the whole
+runtime through a backend the runtime has never heard of, asserts the three roles are prepared once
+at startup rather than per event, and stands up §4.8's two-backends-agree harness — comparing state
+*digests* and rendered views after every event. Today both sides are the same evaluator under
+different names, which the test says in its own comment: it proves the harness, ready for the
+implementation it will eventually compare.
+
+`digest` moved to `core.rs` on the way, because it is a property of a `Value` and not of whoever
+produced one — two backends that disagree are detected by comparing digests, so the digest cannot
+live inside either.
+
+**2. The durable path had a silent lie.** `value_to_repr` encoded `Html`, `Attr` and `Closure` as
+`unit`, on the stated grounds that "neither can appear in a log". That was an assumption, not a
+check: `model State: cached: Html` compiles today, and the encoder would have written `unit` into a
+snapshot or an event body — silently — and replay would have rebuilt a different state. A system
+whose correctness argument is *replay is exact* cannot have a lossy branch in the function that
+makes the log.
+
+It now returns `Result` and refuses, at write time, before anything unreadable is committed; the
+sequencer treats a refusal like any other pre-append failure. Phase 2's effect rows should make the
+case unrepresentable, at which point the refusal becomes unreachable — but an unreachable refusal is
+the right thing to have while the proof is missing.
+
+### Deferred, with the phase each belongs to
+
+**`Roles` and the `Inliner` encode one topology — Phase 2.** The splitter produces a fixed
+seven-field struct and inlines four combinators by name. That is the shape `todo.beck` has, and
+§3.7 says the signal graph is a *graph*. What makes this legitimate narrowness rather than a defect
+is that it **announces itself**: nine diagnostics (B0500–B0508, plus placement's B0400–B0403) refuse
+every shape the splitter does not understand, and `split` returns `None` whenever one fires. A test
+pins that — an unsliceable program is refused with a code and a message, never quietly mis-sliced.
+A general slicer belongs with placement inference, since both are about treating the graph as a
+graph.
+
+**`Value` has four consumers with different requirements — Phase 2.** It is the evaluator's runtime
+representation, the log's serialisation domain, the wire form's source, and the digest's input.
+Three of its variants exist only for the first, which is exactly what made defect 2 possible. The
+fix is not another encoder; it is placement proving that a view-valued expression never reaches
+`durable`, which is effect rows. Until then the boundary refuses.
+
+**`check.rs` is 1,702 lines — watch, not fix.** Resolve, typecheck and lower are deliberately one
+pass, because §4.2 permits three IRs and a resolved-but-untyped tree would be a fourth. That
+constraint is right and the file is the price. It is also the file Phase 2's effect inference must
+open, so if the one-pass decision is going to stop paying, that is when it will show.
+
+**`Data` fields are still `Arc<BTreeMap>`, so `With` copies them — not a defect.** It is the same
+shape as §19.4 item 3's map, but a model's field count is fixed at compile time, so the copy is
+`O(1)` in every runtime quantity. Recorded so the question is not re-opened.
+
+**No `insta` diagnostic snapshots — Phase 2.** §4.5 asks for `tests/ui/` from week two. Diagnostics
+are asserted by code and by rendered text, which catches regressions in content but not in
+rendering. Still true, still named.

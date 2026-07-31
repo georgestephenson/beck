@@ -520,4 +520,42 @@ page: Signal[Html] = per_session(todos, view)
         let (_, d, _) = compile_str("t.beck", "def f() -> Int:\n    return 1\n");
         assert!(d.iter().any(|x| x.code == "B0500" && x.fix.is_some()));
     }
+
+    #[test]
+    fn a_shape_the_splitter_cannot_slice_is_refused_rather_than_mis_sliced() {
+        // Phase 1's splitter handles one topology: `merge_clients → decide → durable(fold) →
+        // per_session`. [`Roles`] is a fixed struct and [`Inliner`] knows four combinators by name,
+        // which is a legitimately narrow Phase 1 and is recorded as such in docs/19 §19.6.
+        //
+        // What makes narrowness legitimate rather than a defect is that it *announces itself*. A
+        // compiler that quietly produced the wrong `Roles` for a shape it does not understand would
+        // be worse than one that refuses. This pins the refusal.
+        let unsupported = TODO.replace(
+            "page: Signal[Html] = per_session(todos, view)",
+            "page: Signal[Html] = signal_map(durable(fold(apply_event, State(todos={}), events)), \
+             render_all)",
+        );
+        let unsupported = unsupported.replace(
+            "@on(client)\npage",
+            "def render_all(s: State) -> Html:\n    return ui:\n        main: \"x\"\n\n@on(client)\npage",
+        );
+        let (placed, d, _) = compile_str("t.beck", &unsupported);
+        assert!(
+            placed.is_none(),
+            "an unsliceable shape must not produce roles"
+        );
+        assert!(
+            d.has_errors(),
+            "…and it must say why, rather than failing silently"
+        );
+        // Deliberately not asserting *which* code: this particular shape is caught by placement
+        // (B0401 — `client` cannot discharge `durable`) before the splitter ever sees it, which is
+        // an earlier and better diagnostic than the one B0507 would have given. The property being
+        // pinned is that some stage refuses and names itself, not that a chosen stage does.
+        assert!(
+            d.iter()
+                .any(|x| !x.code.is_empty() && !x.message.is_empty()),
+            "a refusal must carry a code and a message"
+        );
+    }
 }

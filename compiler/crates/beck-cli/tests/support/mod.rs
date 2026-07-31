@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use beck_core::{Placed, Value};
+use beck_rt::Runtime;
 
 #[allow(dead_code)] // used by the differential harness, not by every test binary
 pub const ACTORS: &[&str] = &["alice", "bob"];
@@ -14,6 +15,17 @@ pub fn todo_program() -> Placed {
     let (placed, diags, map) = beck_core::compile_str("examples/todo.beck", src);
     assert!(!diags.has_errors(), "{}", diags.render(&map));
     placed.expect("the example compiles")
+}
+
+/// The example program, prepared for execution by the default backend.
+///
+/// The harnesses go through this rather than naming a backend each, so that running them against
+/// a second backend — §4.8's differential-between-backends test, once one exists — is one edit.
+#[allow(dead_code)] // not every harness starts an App
+pub fn todo_runtime() -> Runtime {
+    let placed = todo_program();
+    let backend = beck_eval::backend(&placed);
+    Runtime::new(placed, backend).expect("the example prepares")
 }
 
 /// Build a `Command` value directly, as the wire decoder would.

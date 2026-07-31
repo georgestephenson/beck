@@ -12,16 +12,15 @@
 use std::sync::Arc;
 
 use beck_core::{digest, Value};
-use beck_rt::{diff, replay_from_genesis, replay_to, App, AppConfig, LogStore, MemoryLog, Runtime};
+use beck_rt::{diff, replay_from_genesis, replay_to, App, AppConfig, LogStore, MemoryLog};
 
 mod support;
-use support::{command, todo_program, ACTORS};
+use support::{command, todo_runtime, ACTORS};
 
 /// Drive a log into existence, then hand back the store.
 async fn recorded_log(events: usize) -> (Arc<MemoryLog>, Vec<u8>) {
-    let placed = todo_program();
     let store = Arc::new(MemoryLog::new());
-    let app = App::start(placed, store.clone(), AppConfig::default())
+    let app = App::start(todo_runtime(), store.clone(), AppConfig::default())
         .await
         .expect("app starts");
 
@@ -61,7 +60,7 @@ async fn recorded_log(events: usize) -> (Arc<MemoryLog>, Vec<u8>) {
 #[tokio::test]
 async fn folding_the_same_log_twice_produces_bit_identical_state() {
     let (store, live_digest) = recorded_log(60).await;
-    let runtime = Runtime::new(todo_program()).expect("runtime");
+    let runtime = todo_runtime();
     let head = store.head().await.expect("head");
     assert!(head > 0, "the harness recorded nothing");
 
@@ -85,7 +84,7 @@ async fn the_snapshot_path_agrees_with_a_fold_from_genesis() {
     // D3's genesis-replay discipline: snapshots are pure optimisation, and one that disagrees with
     // the log is a bug CI should find rather than a fact to trust.
     let (store, _) = recorded_log(40).await;
-    let runtime = Runtime::new(todo_program()).expect("runtime");
+    let runtime = todo_runtime();
     let head = store.head().await.expect("head");
 
     let mid = head / 2;
@@ -114,11 +113,11 @@ async fn the_patch_stream_is_bit_identical_on_replay() {
     // The stronger claim. Re-deriving the patch stream over a log has to produce the same bytes,
     // or time-travel debugging and patch-level property tests are built on sand.
     let (store, _) = recorded_log(30).await;
-    let runtime = Runtime::new(todo_program()).expect("runtime");
+    let runtime = todo_runtime();
     let head = store.head().await.expect("head");
 
     async fn stream(store: &MemoryLog, head: u64, actor: &str) -> Vec<String> {
-        let runtime = Runtime::new(todo_program()).expect("runtime");
+        let runtime = todo_runtime();
         let mut state: Value = runtime.initial_state().expect("initial");
         let mut last = runtime.view(&state, actor).expect("view");
         let mut frames: Vec<String> = Vec::new();
@@ -156,7 +155,7 @@ async fn a_new_process_folding_the_log_lands_where_the_old_one_was() {
     // no destructors. Phase 0 asserted this by SIGKILLing a process; here the *second* `App::start`
     // is the new process, and it recovers by folding.
     let (store, live_digest) = recorded_log(25).await;
-    let reborn = App::start(todo_program(), store.clone(), AppConfig::default())
+    let reborn = App::start(todo_runtime(), store.clone(), AppConfig::default())
         .await
         .expect("recovers");
     assert_eq!(digest(&reborn.state().await).to_vec(), live_digest);

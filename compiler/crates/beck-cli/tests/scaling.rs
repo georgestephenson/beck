@@ -19,15 +19,15 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use beck_rt::{replay_from_genesis, App, AppConfig, LogStore, MemoryLog, Runtime};
+use beck_rt::{replay_from_genesis, App, AppConfig, LogStore, MemoryLog};
 
 mod support;
-use support::{command, todo_program};
+use support::{command, todo_runtime};
 
 /// Record a log of `n` additions, then time a cold fold of it.
 async fn fold_cost_ns_per_event(n: usize) -> (u64, f64) {
     let store = Arc::new(MemoryLog::new());
-    let app = App::start(todo_program(), store.clone(), AppConfig::default())
+    let app = App::start(todo_runtime(), store.clone(), AppConfig::default())
         .await
         .expect("app starts");
 
@@ -52,7 +52,7 @@ async fn fold_cost_ns_per_event(n: usize) -> (u64, f64) {
     // Genesis, not `replay_to`: the sequencer snapshots every 1,000 events, so `replay_to` would
     // load a snapshot and fold nothing — measuring the snapshot path instead of the fold. That
     // mistake made the first version of this test report 1 ns/event and pass.
-    let runtime = Runtime::new(todo_program()).expect("runtime");
+    let runtime = todo_runtime();
     let started = Instant::now();
     let (_, at) = replay_from_genesis(&runtime, store.as_ref())
         .await
@@ -88,7 +88,7 @@ async fn a_view_over_a_large_state_is_still_one_pass() {
     // design and stays that way until Phase 3 makes them incremental. What must *not* happen is
     // the view becoming super-linear in the rows, which is what a copying map would also cause.
     let store = Arc::new(MemoryLog::new());
-    let app = App::start(todo_program(), store, AppConfig::default())
+    let app = App::start(todo_runtime(), store, AppConfig::default())
         .await
         .expect("app starts");
     for i in 0..2_000 {

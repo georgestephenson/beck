@@ -12,65 +12,64 @@
 use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
+use beck_core::backend::{Backend, Callable};
 use beck_core::core::CoreKind;
-use beck_core::{Core, Host, Html, Interp, Placed, Value};
+use beck_core::{Core, Html, Placed, Value};
 
 use crate::log::Envelope;
 
 /// The compiled program plus the capabilities the host holds on its behalf.
+///
+/// Note what is absent: any mention of *how* the program executes. The roles are [`Callable`]s a
+/// [`Backend`] prepared, so a native backend is a different argument to [`Runtime::new`] rather
+/// than a change here — and §4.8's differential test between backends is two `Runtime`s over the
+/// same `Placed`.
 pub struct Runtime {
     placed: Placed,
-    /// Evaluated once: the closures the roles denote.
-    validate: Value,
-    fold_fn: Value,
-    view_fn: Value,
+    backend: Arc<dyn Backend>,
+    /// Prepared once at startup: the roles the splitter sliced out of the signal graph.
+    validate: Callable,
+    fold_fn: Callable,
+    view_fn: Callable,
     init: Value,
     /// The one impure capability the program may reach: minting ids outside a fold.
     uuid: Box<dyn Fn() -> Arc<str> + Send + Sync>,
 }
 
-struct Globals<'a>(&'a beck_core::Program);
-
-impl<'a> Host for Globals<'a> {
-    fn global(&self, name: &str) -> Option<&Core> {
-        self.0.defs.get(name).map(|d| &d.body)
-    }
-    fn new_uuid(&self) -> Arc<str> {
-        // Only reachable from code the checker allowed to mint ids; the runtime replaces this with
-        // its own generator via `Runtime::uuid`.
-        Arc::from(uuid::Uuid::now_v7().to_string())
-    }
-}
-
 impl Runtime {
-    pub fn new(placed: Placed) -> Result<Runtime> {
-        let (validate, fold_fn, view_fn, init) = {
-            let host = Globals(&placed.program);
-            let interp = Interp::new(&host);
-            let env = beck_core::Env::new();
-            (
-                interp
-                    .eval(&placed.roles.validate, &env)
-                    .map_err(|e| anyhow!("evaluating `validate`: {e}"))?,
-                interp
-                    .eval(&placed.roles.fold, &env)
-                    .map_err(|e| anyhow!("evaluating the fold: {e}"))?,
-                interp
-                    .eval(&placed.roles.view, &env)
-                    .map_err(|e| anyhow!("evaluating the view: {e}"))?,
-                interp
-                    .eval(&placed.roles.init, &env)
-                    .map_err(|e| anyhow!("evaluating the initial state: {e}"))?,
-            )
+    /// Prepare a program for execution by a given backend.
+    ///
+    /// The backend is an argument rather than a default because a default is how `beck-rt` ends up
+    /// naming one implementation again. This crate does not depend on any backend crate, and that
+    /// is the property worth keeping.
+    pub fn new(placed: Placed, backend: Arc<dyn Backend>) -> Result<Runtime> {
+        let role = |code: &Core, what: &str| -> Result<Callable> {
+            backend
+                .function(code)
+                .map_err(|e| anyhow!("preparing {what}: {e}"))
         };
+        let validate = role(&placed.roles.validate, "`validate`")?;
+        let fold_fn = role(&placed.roles.fold, "the fold")?;
+        let view_fn = role(&placed.roles.view, "the view")?;
+        let init = backend
+            .constant(&placed.roles.init)
+            .map_err(|e| anyhow!("evaluating the initial state: {e}"))?;
+
         Ok(Runtime {
             placed,
+            backend,
             validate,
             fold_fn,
             view_fn,
             init,
             uuid: Box::new(|| Arc::from(uuid::Uuid::now_v7().to_string())),
         })
+    }
+
+    /// Which backend prepared this program — for a diagnostic, and for the report that says two
+    /// backends disagreed.
+    pub fn backend(&self) -> &'static str {
+        self.backend.name()
     }
 
     pub fn placed(&self) -> &Placed {
@@ -83,10 +82,6 @@ impl Runtime {
 
     pub fn initial_state(&self) -> Result<Value> {
         Ok(self.init.clone())
-    }
-
-    fn interp(&self) -> (Globals<'_>, ()) {
-        (Globals(&self.placed.program), ())
     }
 
     /// Build the `Proposal` record the program's `validate` expects.
@@ -103,15 +98,8 @@ impl Runtime {
 
     /// The authority chokepoint. Returns the events a proposal becomes, or why it was refused.
     pub fn validate(&self, state: &Value, proposal: &Value) -> Result<Vec<Value>, String> {
-        let (host, _) = self.interp();
-        let interp = Interp::new(&host);
-        let out = interp
-            .apply(
-                &self.validate,
-                vec![state.clone(), proposal.clone()],
-                beck_diag::Span::NONE,
-            )
-            .map_err(|e| e.to_string())?;
+        let out =
+            (self.validate)(vec![state.clone(), proposal.clone()]).map_err(|e| e.to_string())?;
         match out.variant() {
             Some("Ok") => match out.field("value").and_then(|v| v.as_list()) {
                 Some(events) => Ok(events.clone()),
@@ -127,27 +115,14 @@ impl Runtime {
 
     /// The replay-pure fold. `env` supplies `seq`, `at` and `actor` **as data** (§3.7).
     pub fn fold(&self, state: &Value, env: &Envelope, event: Value) -> Result<Value> {
-        let (host, _) = self.interp();
-        let interp = Interp::new(&host);
-        interp
-            .apply(
-                &self.fold_fn,
-                vec![state.clone(), env.to_value(event)],
-                beck_diag::Span::NONE,
-            )
+        (self.fold_fn)(vec![state.clone(), env.to_value(event)])
             .map_err(|e| anyhow!("folding at seq {}: {e}", env.seq))
     }
 
     /// The per-session view. In Mode A this runs server-side and its output is diffed (§5.1).
     pub fn view(&self, state: &Value, actor: &str) -> Result<Html> {
-        let (host, _) = self.interp();
-        let interp = Interp::new(&host);
-        let out = interp
-            .apply(
-                &self.view_fn,
-                vec![state.clone(), session(actor)],
-                beck_diag::Span::NONE,
-            )
+        let out = (self.view_fn)(vec![state.clone(), session(actor)])
+            .map_err(|e| anyhow!("{e}"))
             .context("rendering the view")?;
         match out {
             Value::Html(h) => Ok((*h).clone()),
