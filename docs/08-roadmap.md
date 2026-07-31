@@ -87,10 +87,13 @@ differential and replay harnesses green; `beck replay` reproduces state from a r
 > tests; and a three-module project re-checks **one** module after a body edit and three after a
 > signature change. Across a 22-program corpus, 44% of everything placed is unplaced-pure.
 >
-> Two items are *not* what the section below implies, and are named rather than implied: native
-> codegen is still not done (unchanged from Phase 1), and **rendering placement is not a decision
-> yet** — Mode B does not exist, so the cost model is ready for the Mode A/B choice and does not make
-> it ([`20`](20-phase-2-report.md) §20.4 item 1).
+> Three items are *not* what the section below implies, and are named rather than implied. **The
+> general slicer was assigned to this phase and was not built** —
+> [`19`](19-phase-1-report.md) §19.9 put it beside placement inference, and the splitter still
+> understands one topology (it refuses anything else by name rather than mis-slicing it). Native
+> codegen is still not done, unchanged from Phase 1. And **rendering placement is not a decision
+> yet**: Mode B does not exist, so the cost model is ready for the Mode A/B choice and does not make
+> it ([`20`](20-phase-2-report.md) §20.4 item 1). §20.5 has the rest.
 
 The moat.
 

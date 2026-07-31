@@ -30,6 +30,7 @@ workspace = true
 
 [dev-dependencies]
 beck-eval.workspace = true
+proptest.workspace = true
 beck-db.workspace = true
 insta.workspace = true
 beck-diag.workspace = true

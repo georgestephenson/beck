@@ -78,6 +78,10 @@ pub struct Explanation {
     pub key: Key,
     pub chosen: Tier,
     pub row: Row,
+    /// True when the tier was decided by a *rule* rather than by cost — an `@on(...)`, purity, or a
+    /// `Signal[Html]`. The candidate costs below are still real, and for a pinned node the chosen
+    /// one is not required to be the cheapest: that is what pinning means.
+    pub pinned: bool,
     /// Every tier, with the whole program's cost when this node sits there and everything else
     /// stays where the solver put it. §4.7's "candidates : data (cost 1.0), server (cost 3.1), …".
     pub candidates: Vec<(Tier, Cost)>,
@@ -290,12 +294,32 @@ pub fn solve(program: &Program, lock: Option<&Lock>) -> Solution {
                 d.tier,
                 format!("`@on({})`, which always wins", d.tier.name()),
             ))
-        } else if d.row.visible().is_empty() {
+        } else if d.row.atoms.iter().all(|e| Tier::Any.discharges(e)) {
             // §3.3: "Purity means *unplaced*: legal on every tier, compiled to each tier that
             // needs it."
+            //
+            // The test is `Tier::Any.discharges` — every concrete tier can do this — and **not**
+            // "the visible row is empty". They differ on `partial`, which every tier discharges and
+            // which is not ambient, so a function that may diverge was being *placed* despite being
+            // legal everywhere. Found by the generated-program suite
+            // (`tests/placement_properties.rs`), which is exactly the case nobody would have
+            // written by hand.
             Some((
                 Tier::Any,
-                "pure, so it is compiled into every tier that calls it".to_string(),
+                if d.row.atoms.is_empty() {
+                    "pure, so it is compiled into every tier that calls it".to_string()
+                } else {
+                    format!(
+                        "{{{}}} is discharged on every tier, so it is compiled into each one that \
+                         calls it",
+                        d.row
+                            .visible()
+                            .iter()
+                            .map(|e| e.name())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                },
             ))
         } else {
             None
@@ -469,6 +493,7 @@ pub fn solve(program: &Program, lock: Option<&Lock>) -> Solution {
             key: n.key.clone(),
             chosen: assign[i],
             row: n.row.clone(),
+            pinned: n.pinned.is_some(),
             candidates,
             because,
         });

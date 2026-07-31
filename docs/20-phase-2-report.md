@@ -16,9 +16,12 @@ runs** — `ingress` on the server, the fold at the data tier, the page at the b
 pure definitions unplaced so they compile to whichever tier calls them. Across the 22-program
 corpus, 44% of everything placed is unplaced-pure.
 
-Two things this phase is honest about rather than quiet about. Native codegen is still not done
-(§20.7), unchanged from Phase 1. And the placement solver decides *less* than §3.4 implies, for a
-reason that is the design working rather than the solver shirking — §20.4 item 1.
+Three things this phase is honest about rather than quiet about, and §20.5 has the full list.
+**One item assigned to Phase 2 was not built**: the general slicer
+([`19`](19-phase-1-report.md) §19.9 put it here, next to placement inference, because both are about
+treating the graph as a graph). Native codegen is still not done, unchanged from Phase 1. And the
+placement solver decides *less* than §3.4 implies — for a reason that is the design working rather
+than the solver shirking, §20.4 item 1.
 
 ## 20.1 What was built, against what was asked
 
@@ -42,8 +45,12 @@ reason that is the design working rather than the solver shirking — §20.4 ite
 | Separate compilation | done — check against interfaces, link bodies; the firewall measured | `beck-core/src/project.rs`, `beck-db/src/lib.rs` |
 | Boundary versioning + `--wire-compat` | done — three populations, three rules, a reason on every classification | `beck-core/src/compat.rs` |
 | `insta` diagnostic snapshots (§4.5, carried from Phase 1) | done — 16 cases in `tests/ui/` | `beck-cli/tests/ui.rs` |
+| `proptest` over placement (§4.8) | done — no valid program rejected, no secret on the client, determinism, stability, local optimality | `beck-cli/tests/placement_properties.rs` |
+| A general slicer (assigned to Phase 2 by [`19`](19-phase-1-report.md) §19.9) | **not done** — §20.5 | `beck-core/src/split.rs` |
+| `beck explain query`/`cost` (§4.7) | **not done** — §20.5 | — |
+| Deprecated shims and `beck.toml` (§4.3) | **not done** — §20.5 | — |
 
-270 tests, no failures, no compiler warnings, no clippy warnings.
+277 tests, no failures, no compiler warnings, no clippy warnings.
 
 ## 20.2 The machine
 
@@ -358,7 +365,33 @@ is approximately nothing. The distinction becomes cost-separable in Phase 3, whe
 view engine and the SQL read models give the data tier its own address. Recorded as a test
 (`a_big_accumulator_goes_to_the_data_tier_and_a_small_one_does_not_care`) rather than tuned away.
 
-### 10. Inference is a tenth of a compile
+### 10. The properties §4.8 asks for found a defect the corpus could not
+
+§4.8's testing table gives placement `proptest` and three properties: *no valid program is
+rejected*, *no `secret` reaches client*, and determinism and stability "over generated programs".
+Phase 2 nearly shipped with only the first kind of evidence — 22 programs that somebody wrote — and
+the difference showed up immediately.
+
+Generating random *source* is not the way: random text is almost never a program, and random
+well-typed Beck needs a type-directed generator that would itself be a body of code to trust. What
+[`placement_properties.rs`](../compiler/crates/beck-cli/tests/placement_properties.rs) generates is
+the thing the solver reasons about — a call graph of definitions with random effect rows — emitted
+into a real program that goes through the real pipeline.
+
+The first run found that **a definition carrying `partial` was being placed when it should have been
+unplaced**. The pin for §3.3's "purity means unplaced" tested *"the visible row is empty"*, and
+`partial` is not ambient, so it survived that test — even though every tier discharges it. The right
+test is `Tier::Any.discharges` over the whole row, which is what §3.3 actually says, and it is now
+what the code says. Nobody would have written that program by hand: it takes a function that may
+diverge and does nothing else, which is a shape a corpus of realistic programs does not contain.
+
+It also sharpened one thing that was true but unstated: **a pinned node is not required to be at a
+cost minimum.** `page` costs more on the client than on the server and belongs there anyway, because
+a `Signal[Html]` is the browser's subscription. `Explanation` now carries `pinned` so that the
+distinction between "decided by a rule" and "decided by a cost" is visible to a tool and not only to
+a reader.
+
+### 11. Inference is a tenth of a compile
 
 The worry going in was that placement inference would dominate the front end. It does not:
 
@@ -394,6 +427,31 @@ the same conclusion [`19`](19-phase-1-report.md) §19.8 reached about the depend
   argued with rather than tuned in the dark. `beck tune` (Phase 4) is where a measured number would
   replace a stated one, and `ASSUMED_CARDINALITY` is the single place a guess about invisible data
   is made.
+- **The splitter still understands one topology, and this was assigned to Phase 2.**
+  [`19`](19-phase-1-report.md) §19.9 says so explicitly: "`Roles` and the `Inliner` encode one
+  topology — Phase 2 … a general slicer belongs with placement inference, since both are about
+  treating the graph as a graph." Placement inference was built and the slicer was not. It is the
+  one item this phase was handed and did not deliver, and it should be said first rather than last.
+  What makes the narrowness survivable is unchanged from Phase 1: it announces itself, and
+  `split.rs`'s `a_shape_the_splitter_cannot_slice_is_refused_rather_than_mis_sliced` pins the
+  refusal. It is the first thing Phase 3 should pick up, because §5.3's incremental views need the
+  graph treated as a graph too.
+- **`beck explain query <fn>` and `beck explain cost <fn>` are not built.** §4.7 asks for both. The
+  first has nothing to say until §3.8's incremental view compilation exists — the `Query`
+  sub-language is deliberately symbolic and there is no plan to explain — and it belongs with Phase
+  3. The second is largely served by `beck explain place <name>`, which already prints every
+  candidate's cost; whether a separate `cost` view earns its place is a question for when there is a
+  second cost dimension to show.
+- **No deprecated shims and no `beck.toml`.** §4.3's rule is "a removed operation is retained as a
+  deprecated shim for N releases (declared in `beck.toml`)". `--wire-compat` reports a removal as
+  breaking and stops there; retaining the old operation is Phase 4's, with the rollout choreography
+  that needs it. There is no `beck.toml` at all yet.
+- **`check.rs` grew from 1,702 lines to 2,166.** [`19`](19-phase-1-report.md) §19.9 said to watch
+  it, and predicted where the pressure would come from: "it is also the file Phase 2's effect
+  inference must open, so if the one-pass decision is going to stop paying, that is when it will
+  show." It has not stopped paying — resolve, typecheck, lower and infer are still one coherent
+  walk, and the effect work added a row accumulator rather than a stage — but 27% growth on the
+  largest file in the compiler is the number to watch, not a comfort.
 - **No Mode B, no incremental views, no migrations, no operator, no identity beyond a dev-mode
   actor, no `beck fork`, no package system, no LSP, no playground.** All Phase 3 and beyond.
 
@@ -415,7 +473,11 @@ the same conclusion [`19`](19-phase-1-report.md) §19.8 reached about the depend
 5. **A workflow is an artefact.** §8.3's "every phase ships a demo that runs" should be read as
    applying to the thing that runs the demo. Phase 3 should start by executing its own gates once
    by hand.
-6. **The `data`/`server` distinction needs a second address to be worth solving.** §20.4 item 9.
+6. **The general slicer is the debt this phase leaves.** §20.5's first item: it was assigned to
+   Phase 2 and not built. §5.3's incremental views need the signal graph treated as a graph, so
+   Phase 3 pays for it either way — better deliberately than by discovering the splitter refuses the
+   program the new view engine wants.
+7. **The `data`/`server` distinction needs a second address to be worth solving.** §20.4 item 9.
    Until the incremental view engine is a separate thing, half the solver's freedom is over a
    distinction with no consequence — which is fine, and worth knowing before reading too much into
    a placement.
@@ -433,4 +495,4 @@ Applied to the documents in this commit, listed here so the diff is reviewable a
 | [`03`](03-type-and-effect-system.md) §3.10 | Stages 2–4 are done; the staging note updated |
 | [`04`](04-compiler-architecture.md) §4.3 | The operation id is derived from type *structure*, not type names (§20.4 item 4) |
 | [`06`](06-kubernetes-and-packaging.md) §6.2 | `melange` is what apko's no-arbitrary-execution property makes mandatory (from [`19`](19-phase-1-report.md) §19.7 item 5) |
-| [`08`](08-roadmap.md) | Phase 2 marked **BUILT**, with this report as its evidence |
+| [`08`](08-roadmap.md) | Phase 2 marked **BUILT**, with this report as its evidence — and with the one item it did not build named in the same breath |
