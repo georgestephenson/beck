@@ -32,6 +32,7 @@ use std::sync::Arc;
 use beck_diag::Span;
 
 use crate::html::Html;
+use crate::pmap::PMap;
 use crate::ty::{Effect, Tier, Ty};
 
 pub type VarId = u32;
@@ -402,9 +403,12 @@ impl Core {
 
 /// A runtime value.
 ///
-/// `Map` is a `BTreeMap` and `Record` a sorted map, on purpose and for the same reason Phase 0
-/// chose `BTreeMap`: iteration order is part of the rendered view, and replay must reproduce the
-/// *patch stream* bit for bit, not merely the set of values.
+/// `Map` and a record's fields are both *ordered* on purpose and for the same reason Phase 0 chose
+/// `BTreeMap`: iteration order is part of the rendered view, and replay must reproduce the *patch
+/// stream* bit for bit, not merely the set of values.
+///
+/// `Map` is a [`PMap`], not an `Arc<BTreeMap>`, because it is the fold's accumulator: an update
+/// must not copy it. See [`crate::pmap`] for why that structure and not another.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Value {
     Unit,
@@ -415,7 +419,7 @@ pub enum Value {
     Float(u64),
     Str(Arc<str>),
     List(Arc<Vec<Value>>),
-    Map(Arc<BTreeMap<Value, Value>>),
+    Map(PMap<Value, Value>),
     /// A model instance or a union variant. `variant` is `None` for a plain record.
     Data {
         ty: Arc<str>,
@@ -543,7 +547,7 @@ impl Value {
         }
     }
 
-    pub fn as_map(&self) -> Option<&BTreeMap<Value, Value>> {
+    pub fn as_map(&self) -> Option<&PMap<Value, Value>> {
         match self {
             Value::Map(m) => Some(m),
             _ => None,
@@ -757,15 +761,15 @@ pub fn value_from_repr(j: &serde_json::Value) -> Option<Value> {
                 .collect::<Option<Vec<_>>>()?,
         )),
         "map" => {
-            let mut m = BTreeMap::new();
+            let mut m = PMap::new();
             for pair in j.get("v")?.as_array()? {
                 let pair = pair.as_array()?;
-                m.insert(
+                m = m.insert(
                     value_from_repr(pair.first()?)?,
                     value_from_repr(pair.get(1)?)?,
                 );
             }
-            Value::Map(Arc::new(m))
+            Value::Map(m)
         }
         "data" => {
             let mut fields = BTreeMap::new();
@@ -795,7 +799,7 @@ mod tests {
             variant: None,
             fields: Arc::new(BTreeMap::from([(
                 Arc::from("todos"),
-                Value::Map(Arc::new(BTreeMap::from([(
+                Value::Map(PMap::from_iter([(
                     Value::str_("k"),
                     Value::Data {
                         ty: Arc::from("Todo"),
@@ -805,7 +809,7 @@ mod tests {
                             (Arc::from("n"), Value::Int(-3)),
                         ])),
                     },
-                )]))),
+                )])),
             )])),
         };
         assert_eq!(value_from_repr(&value_to_repr(&v)), Some(v.clone()));
@@ -819,10 +823,10 @@ mod tests {
 
     #[test]
     fn maps_order_by_key_so_rendering_is_deterministic() {
-        let mut m = BTreeMap::new();
-        m.insert(Value::str_("b"), Value::Int(2));
-        m.insert(Value::str_("a"), Value::Int(1));
-        let v = Value::Map(Arc::new(m));
+        let m = PMap::new()
+            .insert(Value::str_("b"), Value::Int(2))
+            .insert(Value::str_("a"), Value::Int(1));
+        let v = Value::Map(m);
         assert_eq!(v.display(), "{a: 1, b: 2}");
     }
 

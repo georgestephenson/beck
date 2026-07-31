@@ -171,13 +171,38 @@ In rough order of how much it changed the design.
    | Fold from genesis, 4,818 events | 1.5M events/s | 7,562 events/s |
 
    The *shape* of that second row is the finding. Folding 24× more events cost 7.6× more per event,
-   which is not `O(log n)` — it is the evaluator's `map_insert` cloning the whole accumulator, so a
-   fold over a log is `O(events × rows)`. Phase 0's hand-written fold does not have this problem,
+   which is not `O(log n)` — it was the evaluator's `map_insert` cloning the whole accumulator, so a
+   fold over a log was `O(events × rows)`. Phase 0's hand-written fold does not have this problem,
    and its own comment says why: "written as an in-place update of an owned accumulator: that is the
-   shape the compiler's linear analysis produces for a fold whose previous state is dead". Phase 1
-   has no such analysis, so it pays the copy. **Uniqueness/linearity analysis is not an optimisation
-   for later; it is what makes a `durable` fold's asymptotics correct**, and it belongs with the
-   native backend rather than after it.
+   shape the compiler's linear analysis produces for a fold whose previous state is dead".
+
+   **Fixed, and the first diagnosis was wrong.** The obvious reading — Phase 1 lacks Phase 0's
+   linearity analysis, so it pays the copy — makes an *asymptotic* guarantee contingent on an
+   optimisation firing, which is the wrong shape for a language whose central construct is a fold.
+   The defect was the data structure: `Map[K, V]` was an `Arc<BTreeMap>`, which makes copying the
+   handle cheap and updating expensive, exactly backwards. It is now a persistent weight-balanced
+   tree ([`pmap.rs`](../compiler/crates/beck-core/src/pmap.rs)) whose `insert` rebuilds the `O(log n)`
+   nodes on the root path and shares the rest by pointer, so the fold is `O(E log n)` on every
+   backend, with or without any analysis:
+
+   | log length | per-event fold cost | |
+   |---|---|---|
+   | 500 → 4,000 events (8×) | 31,992 ns → 224,188 ns | **7.01×** — `Arc<BTreeMap>` |
+   | 500 → 4,000 events (8×) | 11,735 ns → 19,051 ns | **1.62×** — persistent map |
+   | 500 → 16,000 events (32×) | 11,656 ns → 13,075 ns | **1.12×** — persistent map |
+
+   `cargo test --release --test scaling -- --nocapture`, and the middle row is a CI gate. Pure
+   `O(log n)` predicts 1.33× over the 8× step; the residual is cache, not algorithm — the 32× step
+   settles it.
+
+   Uniqueness analysis is still worth having: it turns `O(log n)` allocations per event into `O(1)`
+   when the previous state is dead. But it is now a constant-factor optimisation, which is what an
+   optimisation should be, rather than the thing standing between the language and correct
+   asymptotics.
+
+   The other half of the row stands: **full recompute of the view is `O(rows)` per event** and stays
+   that way until Phase 3 makes views incremental. `scaling.rs` pins it as linear so it cannot
+   quietly become worse.
 
 4. **The signal graph is legitimately cyclic, and the checker has to accept that.** `events` is
    decided from `todos`; `todos` is folded from `events`. A checker that resolves top-level
@@ -405,10 +430,11 @@ None of them are Beck's, but all three cost time:
 
 ## 19.7 What this changes for Phase 2
 
-1. **Linearity before, or with, the native backend.** §19.4 item 3 says the fold is `O(events ×
-   rows)` because the accumulator is cloned. A native backend that keeps the clone inherits the
-   asymptotics. The analysis Phase 0's hand-written fold already assumes — "a fold whose previous
-   state is dead" — is the thing to build.
+1. **Linearity is now an optimisation, not a correctness requirement.** §19.4 item 3's fold was
+   `O(events × rows)`; a persistent `Map` made it `O(events × log rows)` unconditionally, so a
+   native backend can no longer inherit the wrong asymptotics. Uniqueness analysis — "a fold whose
+   previous state is dead", which Phase 0's hand-written fold already assumes — remains worth
+   building alongside the native backend, for the constant factor.
 2. **`decide` and `per_session` are language, not runtime.** Both were added under pressure from F2
    and §3.8 and both turned out to be the right shape. They belong in [`03`](03-type-and-effect-system.md)
    §3.7–3.8 as named constructs, not as prose about what `validate` "generally" is.

@@ -19,6 +19,7 @@ use beck_diag::Span;
 
 use crate::core::{Closure, Const, Core, CoreKind, Env, Pattern, Prim, Value};
 use crate::html::Html;
+use crate::pmap::PMap;
 
 #[derive(Clone, Debug)]
 pub struct EvalError {
@@ -228,11 +229,11 @@ impl<'h> Interp<'h> {
                 Ok(Value::List(Arc::new(out)))
             }
             CoreKind::MapLit(kvs) => {
-                let mut out = BTreeMap::new();
+                let mut out = PMap::new();
                 for (k, v) in kvs {
-                    out.insert(self.eval(k, env)?, self.eval(v, env)?);
+                    out = out.insert(self.eval(k, env)?, self.eval(v, env)?);
                 }
-                Ok(Value::Map(Arc::new(out)))
+                Ok(Value::Map(out))
             }
         }
     }
@@ -438,28 +439,27 @@ impl<'h> Interp<'h> {
                     None => Value::none(),
                 })
             }
+            // `insert` and `remove` return a *new* map sharing everything they did not touch, so
+            // they are `O(log n)` in both time and allocation. Copying here instead — which is
+            // what `Arc<BTreeMap>` forced — made every fold `O(events × rows)`.
             Prim::MapInsert => {
                 want(3)?;
                 let v = args.pop().expect("arity checked");
                 let k = args.pop().expect("arity checked");
                 let m = args.pop().expect("arity checked");
-                let mut m = m
+                let m = m
                     .as_map()
-                    .ok_or_else(|| EvalError::new("`map_insert` expects a Map", span))?
-                    .clone();
-                m.insert(k, v);
-                Ok(Value::Map(Arc::new(m)))
+                    .ok_or_else(|| EvalError::new("`map_insert` expects a Map", span))?;
+                Ok(Value::Map(m.insert(k, v)))
             }
             Prim::MapRemove => {
                 want(2)?;
                 let k = args.pop().expect("arity checked");
                 let m = args.pop().expect("arity checked");
-                let mut m = m
+                let m = m
                     .as_map()
-                    .ok_or_else(|| EvalError::new("`map_remove` expects a Map", span))?
-                    .clone();
-                m.remove(&k);
-                Ok(Value::Map(Arc::new(m)))
+                    .ok_or_else(|| EvalError::new("`map_remove` expects a Map", span))?;
+                Ok(Value::Map(m.remove(&k)))
             }
             Prim::MapValues => {
                 want(1)?;

@@ -17,6 +17,7 @@ pub mod core;
 pub mod eval;
 pub mod html;
 pub mod place;
+pub mod pmap;
 pub mod prelude;
 pub mod split;
 pub mod ty;
@@ -25,6 +26,7 @@ pub use check::{check_module, Def, Program, SignalDecl};
 pub use core::{Const, Core, CoreKind, Env, Prim, Value, VarId};
 pub use eval::{digest, EvalError, Host, Interp};
 pub use html::Html;
+pub use pmap::PMap;
 pub use split::{Placed, Roles};
 pub use ty::{Effect, Tier, Ty, TyDecl};
 
