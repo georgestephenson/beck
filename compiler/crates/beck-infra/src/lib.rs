@@ -14,6 +14,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
+use beck_core::graph::{DepGraph, EdgeKind, GraphBuilder, GraphNode, NodeKind};
 use beck_core::{Effect, Placed, Tier};
 
 pub mod k8s;
@@ -80,12 +81,30 @@ pub enum Node {
     },
 }
 
-/// A node plus the reason it exists.
+/// A node plus the reason it exists and what it cannot start without.
 #[derive(Clone, Debug)]
 pub struct Derived {
     pub node: Node,
     /// The program fact that produced it — what `beck explain deploy` prints.
     pub because: String,
+    /// The definition or signal whose effect implied it, as a name rather than as prose, so the
+    /// dependency graph can draw the edge without parsing [`Derived::because`].
+    pub from: Option<String>,
+    /// Other objects, by `Kind/name`, that this one references and therefore cannot work without.
+    ///
+    /// These are the same references the manifests make — a route's `backendRefs`, a stateful set's
+    /// `serviceName`, a container's `secretKeyRef`. Recording them here makes them checkable:
+    /// docs/19 §19.5's third and fourth defects were both a manifest naming an object that was
+    /// never emitted, and neither was visible until a pod tried to resolve it.
+    pub needs: Vec<String>,
+}
+
+/// `Kind/name` — the identity of a node in the object graph.
+///
+/// It has to be both: `Service/todo` and `Workload/todo` are different objects with the same name,
+/// and a graph keyed on the name alone would silently merge them.
+pub fn id_of(n: &Node) -> String {
+    kind_of(n)
 }
 
 #[derive(Clone, Debug, Default)]
@@ -160,19 +179,20 @@ pub fn graph(placed: &Placed) -> InfraGraph {
 /// different, and less interesting, fact.
 pub fn derive(app: &str, effects: &[(Effect, String)], serves_ui: bool) -> InfraGraph {
     let app = app.to_string();
-    let mut nodes = Vec::new();
-    let mut push = |node: Node, because: &str| {
-        nodes.push(Derived {
-            node,
-            because: because.to_string(),
-        })
-    };
+    let mut out = Emit::default();
+    // Named up front so the `needs` edges below read as references rather than as string building.
+    let (svc, log_svc) = (format!("Service/{app}"), format!("Service/{app}-log"));
+    let (image, workload) = (format!("Image/{app}:dev"), format!("Workload/{app}"));
+    let (log, secret) = (
+        format!("LogStore/{app}-log"),
+        format!("Secret/{app}-log-credentials"),
+    );
 
-    push(
+    out.push(
         Node::Namespace { name: app.clone() },
         "every program gets one namespace",
     );
-    push(
+    out.push(
         Node::Image {
             name: format!("{app}:dev"),
             entrypoint: "/usr/bin/beck".into(),
@@ -189,7 +209,7 @@ pub fn derive(app: &str, effects: &[(Effect, String)], serves_ui: bool) -> Infra
 
     // `merge_clients()` ⇒ a websocket ingress route, and something for it to route *to*.
     if let Some(from) = has(Effect::Ingress) {
-        push(
+        out.push(
             Node::Service {
                 name: app.clone(),
                 selector: app.clone(),
@@ -197,34 +217,42 @@ pub fn derive(app: &str, effects: &[(Effect, String)], serves_ui: bool) -> Infra
                 headless: false,
             },
             &format!("`{from}` accepts connections, so the workload needs an address"),
-        );
-        push(
+        )
+        .caused_by(&from)
+        .needing(&[&workload]);
+        out.push(
             Node::Route {
                 name: format!("{app}-route"),
                 host: format!("{app}.beck.localhost"),
                 websocket: true,
             },
             &format!("`{from}` carries `ingress`, so clients need a websocket route"),
-        );
+        )
+        .caused_by(&from)
+        .needing(&[&svc]);
     }
 
     // A `durable` fold ⇒ a log store, a volume, and a snapshot schedule.
     if let Some(from) = has(Effect::Durable) {
-        push(
+        out.push(
             Node::LogStore {
                 name: format!("{app}-log"),
                 volume_gb: 10,
             },
             &format!("`{from}` is `durable`, so the log needs a volume"),
-        );
-        push(
+        )
+        .caused_by(&from)
+        .needing(&[&log_svc, &secret]);
+        out.push(
             Node::SnapshotSchedule {
                 name: format!("{app}-snapshots"),
                 every_events: 1000,
             },
             &format!("`{from}` is a fold, so its accumulator is snapshotted"),
-        );
-        push(
+        )
+        .caused_by(&from)
+        .needing(&[&log]);
+        out.push(
             Node::Service {
                 name: format!("{app}-log"),
                 selector: format!("{app}-log"),
@@ -232,15 +260,18 @@ pub fn derive(app: &str, effects: &[(Effect, String)], serves_ui: bool) -> Infra
                 headless: true,
             },
             &format!("`{from}` needs a log store, and the fold has to be able to resolve it"),
-        );
-        push(
+        )
+        .caused_by(&from)
+        .needing(&[&log]);
+        out.push(
             Node::Secret {
                 name: format!("{app}-log-credentials"),
                 keys: vec!["url".into(), "password".into()],
             },
             "the log store is reached with credentials, never a literal",
-        );
-        push(
+        )
+        .caused_by(&from);
+        out.push(
             Node::Grant {
                 role: format!("{app}-app"),
                 on: "beck_log".into(),
@@ -249,10 +280,18 @@ pub fn derive(app: &str, effects: &[(Effect, String)], serves_ui: bool) -> Infra
                 privileges: vec!["SELECT".into(), "INSERT".into()],
             },
             "the program appends and reads events, and never updates or deletes one",
-        );
+        )
+        .caused_by(&from)
+        .needing(&[&log]);
     }
 
-    push(
+    let mut workload_needs = vec![image.clone()];
+    if has(Effect::Durable).is_some() {
+        // The Deployment reads the log's URL from the secret and resolves the log by service name.
+        workload_needs.push(secret.clone());
+        workload_needs.push(log_svc.clone());
+    }
+    out.push(
         Node::Workload {
             name: app.clone(),
             replicas: 1,
@@ -263,15 +302,23 @@ pub fn derive(app: &str, effects: &[(Effect, String)], serves_ui: bool) -> Infra
         } else {
             "the service partition needs somewhere to run"
         },
+    )
+    .needing(
+        &workload_needs
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
     );
 
     // Effect rows ⇒ least-privilege network policy. Note what is *absent*: no egress rule beyond
     // the log, because no effect in this program reaches any other host.
     let mut egress = Vec::new();
+    let mut policy_needs = vec![workload.clone()];
     if has(Effect::Durable).is_some() {
         egress.push(format!("{app}-log"));
+        policy_needs.push(log_svc.clone());
     }
-    push(
+    out.push(
         Node::Policy {
             name: format!("{app}-policy"),
             allow_ingress_from: if has(Effect::Ingress).is_some() {
@@ -282,9 +329,89 @@ pub fn derive(app: &str, effects: &[(Effect, String)], serves_ui: bool) -> Infra
             allow_egress_to: egress,
         },
         "the policy is the effect row: no `net.out` in the program, no egress rule in the cluster",
-    );
+    )
+    .needing(&policy_needs.iter().map(String::as_str).collect::<Vec<_>>());
 
-    InfraGraph { app, nodes }
+    InfraGraph {
+        app,
+        nodes: out.nodes,
+    }
+}
+
+/// Accumulates derived nodes, so provenance and references can be attached to the node just pushed
+/// without repeating it.
+#[derive(Default)]
+struct Emit {
+    nodes: Vec<Derived>,
+}
+
+impl Emit {
+    fn push(&mut self, node: Node, because: &str) -> &mut Emit {
+        self.nodes.push(Derived {
+            node,
+            because: because.to_string(),
+            from: None,
+            needs: Vec::new(),
+        });
+        self
+    }
+
+    /// The definition whose effect implied the node just pushed.
+    fn caused_by(&mut self, who: &str) -> &mut Emit {
+        if let Some(last) = self.nodes.last_mut() {
+            last.from = Some(who.to_string());
+        }
+        self
+    }
+
+    /// The objects the node just pushed references.
+    fn needing(&mut self, what: &[&str]) -> &mut Emit {
+        if let Some(last) = self.nodes.last_mut() {
+            last.needs = what.iter().map(|s| s.to_string()).collect();
+        }
+        self
+    }
+}
+
+/// The whole system as one graph: every definition, every signal, every type, and every object the
+/// effects imply, with the edges between them.
+///
+/// This is what makes the program its own AppHost. Aspire needs a second program to say that the
+/// web front end references the database; here the `Implies` edges come from the effect that
+/// produced each object and the `Needs` edges from the references the manifests make, so the graph
+/// cannot describe a topology the deployment does not have.
+///
+/// `O(program size + V + E)`, one pass each. See [`beck_core::graph`] for the representation.
+pub fn dependency_graph(placed: &Placed) -> DepGraph {
+    let infra = graph(placed);
+    let mut b = beck_core::graph::from_program(&placed.program);
+    add_resources(&mut b, &infra);
+    b.finish()
+}
+
+/// Add the infrastructure objects to a graph builder that already holds the program.
+pub fn add_resources(b: &mut GraphBuilder, infra: &InfraGraph) {
+    for d in &infra.nodes {
+        b.node(GraphNode {
+            name: id_of(&d.node).into(),
+            kind: NodeKind::Resource,
+            tier: Tier::Any,
+            effects: Vec::new(),
+            because: d.because.clone(),
+            span: Default::default(),
+        });
+    }
+    for d in &infra.nodes {
+        let id = b.id(&id_of(&d.node)).expect("just added");
+        // The object exists *because* of a definition's effect: an edge from the object to the
+        // program, so `impacted_by` on a signal reaches the infrastructure it causes.
+        if let Some(from) = &d.from {
+            b.edge_to_name(id, from, EdgeKind::Implies);
+        }
+        for need in &d.needs {
+            b.edge_to_name(id, need, EdgeKind::Needs);
+        }
+    }
 }
 
 /// Write the object graph, the image configs, the program, and the provenance table.
@@ -524,6 +651,109 @@ page: Signal[Html] = per_session(st, view)
         assert!(
             all.contains("postgres://postgres:beck@app-log.app.svc:5432"),
             "{all}"
+        );
+    }
+
+    /// Every cross-reference the rendered manifests make, as `(kind, name)`: a stateful set's
+    /// `serviceName`, a container's `secretKeyRef`, a route's `backendRefs`.
+    fn manifest_references(yaml: &str) -> Vec<(&'static str, String)> {
+        let mut refs = Vec::new();
+        let mut expecting: Option<&'static str> = None;
+        for line in yaml.lines() {
+            let t = line.trim();
+            if let Some(rest) = t.strip_prefix("serviceName:") {
+                refs.push(("Service", rest.trim().to_string()));
+                continue;
+            }
+            if let Some(kind) = expecting.take() {
+                if let Some(n) = t
+                    .strip_prefix("- name:")
+                    .or_else(|| t.strip_prefix("name:"))
+                {
+                    refs.push((kind, n.trim().to_string()));
+                    continue;
+                }
+            }
+            expecting = match t {
+                "secretKeyRef:" => Some("Secret"),
+                "backendRefs:" => Some("Service"),
+                _ => None,
+            };
+        }
+        refs
+    }
+
+    #[test]
+    fn no_reference_between_objects_dangles() {
+        // Half of docs/19 §19.5: `needs` may not name an object that was never emitted.
+        let g = graph(&compile(PROGRAM));
+        let emitted: Vec<String> = g.nodes.iter().map(|d| id_of(&d.node)).collect();
+        for d in &g.nodes {
+            for need in &d.needs {
+                assert!(
+                    emitted.contains(need),
+                    "{} needs {need}, which is not emitted. Emitted: {emitted:?}",
+                    id_of(&d.node)
+                );
+            }
+        }
+        assert!(
+            g.nodes.iter().any(|d| !d.needs.is_empty()),
+            "no object references any other, so this test proves nothing"
+        );
+    }
+
+    #[test]
+    fn the_manifests_reference_only_what_the_graph_declares() {
+        // The other half, and the direction that actually bit: the YAML named a backend Service and
+        // a `serviceName` that the graph did not contain, and nothing said so until a pod tried to
+        // resolve them. Manifest references ⊆ `needs` ⊆ emitted objects, checked without naming a
+        // single object, so a new reference added to a template cannot slip past.
+        let g = graph(&compile(PROGRAM));
+        let files = crate::k8s::render(&g, "id");
+        let all: String = files.iter().map(|(_, b)| b.as_str()).collect();
+
+        let refs = manifest_references(&all);
+        assert!(
+            refs.len() >= 3,
+            "expected the stateful set, the secrets and the route to reference things: {refs:?}"
+        );
+        let declared: Vec<String> = g.nodes.iter().flat_map(|d| d.needs.clone()).collect();
+        for (kind, name) in &refs {
+            let id = format!("{kind}/{name}");
+            assert!(
+                declared.contains(&id),
+                "the manifests reference {id}, which no object declares needing. \
+                 Declared: {declared:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn changing_a_signal_reaches_the_infrastructure_it_caused() {
+        // The dashboard question — "what does this affect?" — answered across the whole stack,
+        // because the resources are vertices in the same graph as the code that implies them.
+        let placed = compile(PROGRAM);
+        let g = dependency_graph(&placed);
+        let state = g.id("st").expect("the durable signal is a vertex");
+        let impacted: Vec<&str> = g
+            .impacted_by(state)
+            .iter()
+            .map(|n| &*g.node(*n).name)
+            .collect();
+        assert!(
+            impacted.contains(&"LogStore/app-log"),
+            "the durable fold implies the log store: {impacted:?}"
+        );
+        assert!(
+            impacted.contains(&"Snapshots/app-snapshots"),
+            "…and the snapshot schedule: {impacted:?}"
+        );
+        // The namespace exists whatever the program says, so it must *not* be reachable from one
+        // signal — otherwise "impact" degenerates into "everything".
+        assert!(
+            !impacted.contains(&"Namespace/app"),
+            "impact should not include what no effect implied: {impacted:?}"
         );
     }
 

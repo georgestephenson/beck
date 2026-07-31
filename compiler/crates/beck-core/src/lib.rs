@@ -15,6 +15,7 @@
 pub mod check;
 pub mod core;
 pub mod eval;
+pub mod graph;
 pub mod html;
 pub mod place;
 pub mod pmap;
@@ -25,6 +26,7 @@ pub mod ty;
 pub use check::{check_module, Def, Program, SignalDecl};
 pub use core::{Const, Core, CoreKind, Env, Prim, Value, VarId};
 pub use eval::{digest, EvalError, Host, Interp};
+pub use graph::{DepGraph, EdgeKind, GraphBuilder, GraphNode, NodeId, NodeKind};
 pub use html::Html;
 pub use pmap::PMap;
 pub use split::{Placed, Roles};

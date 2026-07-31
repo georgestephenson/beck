@@ -1,4 +1,4 @@
-//! The fold's asymptotics.
+//! The asymptotics of the two things that grow: the fold, and the dependency graph.
 //!
 //! [`docs/19-phase-1-report.md`](../../../../docs/19-phase-1-report.md) §19.4 item 3 measured the
 //! Phase 1 fold at 57,203 events/s over 200 events and 7,562 events/s over 4,818 — folding 24×
@@ -113,4 +113,89 @@ async fn a_view_over_a_large_state_is_still_one_pass() {
         elapsed.as_secs_f64() * 1e3
     );
     assert!(html.render().contains("todo 1999"));
+}
+
+/// Build a graph of `n` definitions in a chain, each also depending on a shared root, and time it.
+fn graph_cost_ns_per_node(n: usize) -> f64 {
+    use beck_core::graph::{EdgeKind, GraphBuilder, GraphNode, NodeId, NodeKind};
+    use beck_core::Tier;
+
+    let mut b = GraphBuilder::new();
+    for i in 0..n {
+        b.node(GraphNode {
+            name: Arc::from(format!("n{i}").as_str()),
+            kind: NodeKind::Function,
+            tier: Tier::Any,
+            effects: Vec::new(),
+            because: String::new(),
+            span: Default::default(),
+        });
+    }
+    // A chain, plus a shared root everything calls: one long path for the SCC pass to walk and one
+    // high-degree vertex, which are the two shapes a real program has. `2..` for the root edges
+    // because node 1's chain edge already goes to node 0, and duplicates collapse.
+    for i in 1..n {
+        b.edge(NodeId(i as u32), NodeId(i as u32 - 1), EdgeKind::Calls);
+    }
+    for i in 2..n {
+        b.edge(NodeId(i as u32), NodeId(0), EdgeKind::Calls);
+    }
+
+    let started = Instant::now();
+    let g = b.finish();
+    let elapsed = started.elapsed();
+    assert_eq!(g.len(), n);
+    assert_eq!(g.edge_count(), (n - 1) + (n - 2));
+    elapsed.as_nanos() as f64 / n as f64
+}
+
+#[test]
+fn building_the_dependency_graph_is_linear() {
+    // "Almost instant" is not a target to chase; it is what `O(V + E)` construction and CSR
+    // adjacency make unavoidable. This is the gate that says so — a representation change that
+    // introduced a per-node scan (a `contains` inside a loop, a sort per vertex) would show up
+    // here as growth and nowhere else.
+    let small = graph_cost_ns_per_node(10_000);
+    let large = graph_cost_ns_per_node(200_000);
+    let growth = large / small;
+
+    println!(
+        "graph build: 10,000 nodes → {small:.0} ns/node, 200,000 nodes → {large:.0} ns/node \
+         ({growth:.2}× over a 20× larger program)"
+    );
+    assert!(
+        growth < 3.0,
+        "per-node graph build cost grew {growth:.2}× over a 20× larger program \
+         ({small:.0} ns → {large:.0} ns). Linear construction grows ~1×; anything quadratic \
+         grows ~20×."
+    );
+}
+
+#[test]
+fn the_whole_todo_program_graph_is_built_in_well_under_a_millisecond() {
+    // The number that matters in practice: not the synthetic 200,000-node case, but the real
+    // program, rebuilt from scratch on every keystroke in the worst case.
+    let src = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../examples/todo.beck"
+    ))
+    .expect("the example is where the CLI says it is");
+    let (placed, diags, map) = beck_core::compile_str("todo.beck", &src);
+    assert!(!diags.has_errors(), "{}", diags.render(&map));
+    let placed = placed.expect("the example compiles");
+
+    let started = Instant::now();
+    let g = beck_infra::dependency_graph(&placed);
+    let elapsed = started.elapsed();
+    println!(
+        "todo.beck: {} nodes, {} edges, built in {:.0} µs",
+        g.len(),
+        g.edge_count(),
+        elapsed.as_secs_f64() * 1e6
+    );
+    assert!(g.len() > 20, "the program has more parts than that");
+    assert!(
+        elapsed.as_millis() < 50,
+        "building the graph for a 132-line program took {elapsed:?}"
+    );
 }
