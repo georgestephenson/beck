@@ -36,6 +36,7 @@ use beck_diag::{Diagnostic, Diagnostics, Span};
 use beck_syntax::{sym, Lit, Node, ScopeSet, Symbol};
 
 use crate::core::{Arm, Const, Core, CoreKind, Pattern, Prim, VarId};
+use crate::iface::Interface;
 use crate::prelude;
 use crate::ty::{Effect, Mismatch, Row, RowVarId, Scheme, Subst, Tier, Ty, TyDecl, Variant};
 
@@ -44,6 +45,11 @@ use crate::ty::{Effect, Mismatch, Row, RowVarId, Scheme, Subst, Tier, Ty, TyDecl
 pub struct Program {
     pub name: String,
     pub types: BTreeMap<Arc<str>, TyDecl>,
+    /// The types *this* module declares, in declaration order. An imported type is usable here and
+    /// published by the module that owns it, never by this one (§3.6).
+    pub own_types: Vec<Arc<str>>,
+    /// The interfaces this module was checked against.
+    pub imports: Vec<String>,
     pub defs: BTreeMap<Arc<str>, Def>,
     /// Source order, so diagnostics and `beck explain` are stable.
     pub def_order: Vec<Arc<str>>,
@@ -68,6 +74,10 @@ pub struct Def {
     pub declared_effects: Vec<Effect>,
     /// True when the placement was written by hand rather than solved for (§3.4).
     pub tier_is_annotated: bool,
+    /// A signature with nothing behind it: a line of a `.becki` interface, or a trait's method.
+    pub is_declaration: bool,
+    /// `@signal` — a declaration that publishes a signal rather than a function (§3.6).
+    pub declares_signal: bool,
     pub span: Span,
     pub tier_span: Span,
 }
@@ -122,6 +132,8 @@ pub struct Checker<'a> {
     globals: Vec<Binding>,
     /// The row each definition's signature declares with `uses`.
     declared: BTreeMap<Arc<str>, Row>,
+    /// Types declared in this module, in source order.
+    own_types: Vec<Arc<str>>,
     /// The row *variable* standing for each definition's inferred row, minted before any body is
     /// checked so that callers can name it and mutual recursion needs no ordering.
     def_row: BTreeMap<Arc<str>, RowVarId>,
@@ -130,10 +142,34 @@ pub struct Checker<'a> {
     next_var: VarId,
     /// Set while checking a fold's function, so §3.7's determinism rule can be enforced.
     in_fold: bool,
+    mode: Mode,
+}
+
+/// What kind of file is being checked.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mode {
+    /// An ordinary `.beck` module: every `def` needs a body.
+    Module,
+    /// A `.becki` interface (§3.6): every `def` is a signature, and none has a body.
+    Interface,
 }
 
 /// Check a module that macro expansion has already run over.
 pub fn check_module(module: &Node, diags: &mut Diagnostics) -> Program {
+    check_module_with(module, Mode::Module, &[], diags)
+}
+
+/// Check a module against the interfaces it imports — §3.6's separate compilation.
+///
+/// The importing module sees signatures and nothing else: types, parameter and result types,
+/// effect rows and placements. It never sees a body, which is exactly why editing one downstream
+/// costs nothing here.
+pub fn check_module_with(
+    module: &Node,
+    mode: Mode,
+    imports: &[(String, Interface)],
+    diags: &mut Diagnostics,
+) -> Program {
     let name = module
         .args
         .first()
@@ -150,10 +186,12 @@ pub fn check_module(module: &Node, diags: &mut Diagnostics) -> Program {
         locals: Vec::new(),
         globals: Vec::new(),
         declared: BTreeMap::new(),
+        own_types: Vec::new(),
         def_row: BTreeMap::new(),
         row: Row::empty(),
         next_var: 0,
         in_fold: false,
+        mode,
     };
     for (name, prim, scheme) in prelude::prims() {
         ck.prims.insert(Arc::from(name), (prim, scheme));
@@ -164,12 +202,33 @@ pub fn check_module(module: &Node, diags: &mut Diagnostics) -> Program {
         });
     }
 
+    // Imported names arrive before anything local is collected, so a local definition may shadow
+    // one and the diagnostic points at the local.
+    for (module_name, iface) in imports {
+        let (types, names) = iface.exports();
+        for (n, d) in types {
+            ck.types.insert(n, d);
+        }
+        for (n, e) in names {
+            ck.schemes.insert(n.clone(), e.scheme);
+            ck.declared.insert(n.clone(), e.row);
+            ck.globals.push(Binding {
+                name: n.clone(),
+                scopes: ScopeSet::empty(),
+                kind: BindKind::Global(n),
+            });
+        }
+        let _ = module_name;
+    }
+
     let items: Vec<&Node> = module.args.iter().skip(1).collect();
     ck.collect_types(&items);
     ck.register_type_constructors();
     ck.collect_signatures(&items);
     ck.collect_signal_names(&items);
-    ck.check_items(&items, name)
+    let mut program = ck.check_items(&items, name);
+    program.imports = imports.iter().map(|(n, _)| n.clone()).collect();
+    program
 }
 
 impl<'a> Checker<'a> {
@@ -203,11 +262,21 @@ impl<'a> Checker<'a> {
 
     /// Strip `@on(...)` decorators, returning the inner item and the tier it names.
     fn undecorate<'n>(&mut self, item: &'n Node) -> (&'n Node, Option<(Tier, Span)>) {
+        self.undecorate_full(item).0
+    }
+
+    /// The same, also reporting whether `@signal` was present — §3.6's marker for a published
+    /// signal, which is a declaration of a *value* rather than of a function.
+    #[allow(clippy::type_complexity)]
+    fn undecorate_full<'n>(&mut self, item: &'n Node) -> ((&'n Node, Option<(Tier, Span)>), bool) {
         let mut inner = item;
         let mut tier = None;
+        let mut is_signal = false;
         while inner.is_form(sym::DECORATE) && inner.args.len() == 2 {
             let deco = &inner.args[0];
-            if deco.has_head(sym::ON) && deco.args.len() == 1 {
+            if deco.head_name() == Some("signal") && deco.args.is_empty() {
+                is_signal = true;
+            } else if deco.has_head(sym::ON) && deco.args.len() == 1 {
                 let span = deco.span();
                 match deco.args[0].as_var().and_then(|s| Tier::parse(s.as_str())) {
                     Some(t) => tier = Some((t, span)),
@@ -228,7 +297,7 @@ impl<'a> Checker<'a> {
             }
             inner = &inner.args[1];
         }
-        (inner, tier)
+        ((inner, tier), is_signal)
     }
 
     fn collect_types(&mut self, items: &[&Node]) {
@@ -284,6 +353,7 @@ impl<'a> Checker<'a> {
             } else {
                 continue;
             };
+            self.own_types.push(name.clone());
             if self.types.insert(name.clone(), decl).is_some() {
                 self.error(
                     "B0302",
@@ -450,12 +520,14 @@ impl<'a> Checker<'a> {
         let mut tests = Vec::new();
 
         for item in items {
-            let (inner, annotated) = self.undecorate(item);
+            let ((inner, annotated), declares_signal) = self.undecorate_full(item);
             let tier_is_annotated = annotated.is_some();
             let (tier, tier_span) = annotated.unwrap_or((Tier::Any, inner.span()));
 
             if inner.is_form(sym::DEF) {
-                if let Some(def) = self.check_def(inner, tier, tier_span, tier_is_annotated) {
+                if let Some(def) =
+                    self.check_def(inner, tier, tier_span, tier_is_annotated, declares_signal)
+                {
                     def_order.push(def.name.clone());
                     defs.insert(def.name.clone(), def);
                 }
@@ -566,6 +638,8 @@ impl<'a> Checker<'a> {
         Program {
             name,
             types: self.types,
+            own_types: self.own_types,
+            imports: Vec::new(),
             defs,
             def_order,
             signals,
@@ -579,6 +653,7 @@ impl<'a> Checker<'a> {
         tier: Tier,
         tier_span: Span,
         tier_is_annotated: bool,
+        declares_signal: bool,
     ) -> Option<Def> {
         let name = item.args[0].as_var()?.name.clone();
         let scheme = self.schemes.get(&name)?.clone();
@@ -602,11 +677,28 @@ impl<'a> Checker<'a> {
 
         let body_node = item.args.get(4);
         let span = item.span();
+        // A `def` with no body is a signature. That is the whole content of a `.becki` (§3.6), and
+        // it is a promise nobody keeps in an ordinary module.
+        if body_node.is_none() && self.mode == Mode::Module {
+            self.diags.push(
+                Diagnostic::error("B0335", format!("`{name}` has no body"), span)
+                    .with_primary_label("a signature with nothing behind it")
+                    .with_note(
+                        "a bodyless `def` is a declaration, which is what a `.becki` interface file \
+                         is made of; an ordinary module has to define what it declares",
+                    ),
+            );
+        }
         let (body, performed) = self.in_scope(|ck| match body_node {
             Some(b) => ck.block(&b.args, Some(&ret)),
-            None => Core::new(CoreKind::Const(Const::Unit), Ty::unit(), span),
+            // A declaration has no body to check against its result type — that is what makes it a
+            // declaration. Standing in a `unit` here and unifying it would report every line of a
+            // `.becki` as a type error.
+            None => Core::new(CoreKind::Const(Const::Unit), ret.as_ref().clone(), span),
         });
-        self.unify(&body.ty, &ret, body.span, "return type");
+        if body_node.is_some() {
+            self.unify(&body.ty, &ret, body.span, "return type");
+        }
         self.locals.truncate(before);
 
         let declared = self.declared.get(&name).cloned().unwrap_or_default();
@@ -640,6 +732,8 @@ impl<'a> Checker<'a> {
             row: inferred,
             declared_effects,
             tier_is_annotated,
+            is_declaration: body_node.is_none(),
+            declares_signal,
             span,
             tier_span,
         })

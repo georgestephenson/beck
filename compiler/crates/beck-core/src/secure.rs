@@ -246,8 +246,32 @@ fn mentions_type(ty: &Ty, name: &str, types: &BTreeMap<Arc<str>, TyDecl>) -> boo
 }
 
 /// Run §3.5's checks over a placed program.
+///
+/// Split in two because the two halves have different *scopes*, which multi-module compilation
+/// made visible and single-file compilation could not:
+///
+/// * **Boundaries** are a property of one module's types and placements. A module that puts a
+///   secret in something the client subscribes to is wrong on its own terms, and should be told so
+///   without waiting for whatever imports it.
+/// * **Capability discharge** is a property of the *whole program*, because the chokepoint is one
+///   `decide` node and it lives wherever the wiring lives. A policy module holding `cap.session`
+///   is not an error; it is a policy module. It becomes an error only if, once linked, nothing
+///   reaches it from the validator.
+///
+/// Running the second per module reported every correctly-factored authority module as a violation
+/// — which is how this distinction was found.
 pub fn check_security(program: &Program, diags: &mut Diagnostics) {
+    check_boundaries(program, diags);
+    check_capabilities(program, diags);
+}
+
+/// The per-module half.
+pub fn check_boundaries(program: &Program, diags: &mut Diagnostics) {
     boundaries(program, diags);
+}
+
+/// The whole-program half — run once, after linking.
+pub fn check_capabilities(program: &Program, diags: &mut Diagnostics) {
     capabilities(program, diags);
 }
 
@@ -371,6 +395,12 @@ fn element(t: &Ty) -> Ty {
 /// nobody can discharge — a requirement with no holder, which is what a missing auth check looks
 /// like from the type system's side.
 fn capabilities(program: &Program, diags: &mut Diagnostics) {
+    // A program with no `decide` node has no chokepoint, so it is a library rather than an
+    // application, and "this capability has no holder" is not a statement anyone can make about it.
+    // The check runs again over the linked program, which is where the question has an answer.
+    if !has_chokepoint(program) {
+        return;
+    }
     let authorised = reachable_from_validator(program);
     for name in &program.def_order {
         let Some(d) = program.defs.get(name) else {
@@ -403,6 +433,19 @@ fn capabilities(program: &Program, diags: &mut Diagnostics) {
             ),
         );
     }
+}
+
+/// Does this program have an authority chokepoint at all?
+fn has_chokepoint(program: &Program) -> bool {
+    program.signals.iter().any(|s| {
+        matches!(
+            &s.expr.kind,
+            CoreKind::Prim {
+                op: Prim::Decide,
+                ..
+            }
+        )
+    })
 }
 
 /// Every definition reachable from the validator `decide` was given.

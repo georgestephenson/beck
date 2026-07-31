@@ -67,6 +67,19 @@ enum Cmd {
         #[arg(long)]
         write: bool,
     },
+    /// Write the module's published signature — the `.becki` of §3.6.
+    ///
+    /// Generated, checked in, and reviewed like an .mli: it is what downstream modules compile
+    /// against, and the file `beck check --wire-compat` compares releases of.
+    Iface {
+        file: PathBuf,
+        /// Where to write it. Defaults to the source file with a `.becki` extension.
+        #[arg(long, short)]
+        out: Option<PathBuf>,
+        /// Print it instead of writing it.
+        #[arg(long)]
+        stdout: bool,
+    },
     /// Dump the canonical AST — the notation macro authors work in (§2.7).
     Ast {
         file: PathBuf,
@@ -196,6 +209,7 @@ fn main() -> Result<()> {
             write,
         } => fmt(&file, surface, write),
         Cmd::Ast { file, expanded } => ast(&file, expanded),
+        Cmd::Iface { file, out, stdout } => iface(&file, out.as_deref(), stdout),
         Cmd::Explain { what } => explain(what),
         Cmd::Graph { file, json, types } => graph_cmd(&file, json, types),
         Cmd::Impact { file, name, json } => impact_cmd(&file, &name, json),
@@ -257,6 +271,73 @@ fn read_lock(file: &Path) -> Option<beck_core::Lock> {
     }
 }
 
+/// Resolve `import x` against the directory the root module lives in.
+///
+/// `x.becki` is the contract and `x.beck` is the code: the first is what downstream *checks*
+/// against, the second what the link step needs (§3.6). Both are loaded when both exist, and the
+/// interface wins for checking — otherwise a checked-in contract would be decorative.
+struct Dir(PathBuf);
+
+impl beck_core::project::Loader for Dir {
+    fn load(&self, name: &str) -> Option<beck_core::Sources> {
+        let module = std::fs::read_to_string(self.0.join(format!("{name}.beck"))).ok();
+        let interface = std::fs::read_to_string(self.0.join(format!("{name}.becki"))).ok();
+        (module.is_some() || interface.is_some())
+            .then_some(beck_core::Sources { module, interface })
+    }
+}
+
+fn module_name(file: &Path) -> String {
+    file.file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "main".into())
+}
+
+/// Check and link, stopping before the slicer.
+///
+/// What `beck check` and `beck iface` need. A module with no merge point is a *library* — a policy
+/// or a domain — and refusing to typecheck it because it is not a whole application would make
+/// §3.6's separate compilation unusable for the modules it exists to serve.
+fn checked_project(
+    file: &Path,
+) -> Result<(Option<beck_core::project::Project>, SourceMap, Diagnostics)> {
+    let name = module_name(file);
+    let mut map = SourceMap::new();
+    let mut diags = Diagnostics::new();
+    let lock = read_lock(file);
+    let dir = Dir(file.parent().unwrap_or(Path::new(".")).to_path_buf());
+    // The root is read from the path it was given, which need not be `<name>.beck` in the same
+    // directory — `beck check /tmp/scratch.beck` has to work.
+    let root_src = read(file)?;
+    let root = Root {
+        name: name.clone(),
+        src: root_src,
+        dir,
+    };
+    let project =
+        beck_core::project::check_project(&name, &root, lock.as_ref(), &mut map, &mut diags);
+    Ok((project, map, diags))
+}
+
+/// The root file, plus the directory everything it imports comes from.
+struct Root {
+    name: String,
+    src: String,
+    dir: Dir,
+}
+
+impl beck_core::project::Loader for Root {
+    fn load(&self, name: &str) -> Option<beck_core::Sources> {
+        if name == self.name {
+            return Some(beck_core::Sources {
+                module: Some(self.src.clone()),
+                interface: None,
+            });
+        }
+        self.dir.load(name)
+    }
+}
+
 fn compile(file: &Path) -> Result<(Option<Placed>, SourceMap, Diagnostics)> {
     let src = read(file)?;
     let name = file.display().to_string();
@@ -264,36 +345,86 @@ fn compile(file: &Path) -> Result<(Option<Placed>, SourceMap, Diagnostics)> {
     let id = map.add(name.clone(), src.clone());
     let mut diags = Diagnostics::new();
     let lock = read_lock(file);
-    let placed = beck_core::compile_with(id, &name, &src, lock.as_ref(), &mut diags);
+
+    // A single-file program is the common case and stays the fast path — one parse, one check, no
+    // directory walk. A program with imports goes through the project pipeline (§3.6).
+    if beck_core::project::imports_of(id, &name, &src).is_empty() {
+        let placed = beck_core::compile_with(id, &name, &src, lock.as_ref(), &mut diags);
+        return Ok((placed, map, diags));
+    }
+
+    let root = Root {
+        name: module_name(file),
+        src: src.clone(),
+        dir: Dir(file.parent().unwrap_or(Path::new(".")).to_path_buf()),
+    };
+    let name = root.name.clone();
+    let placed = beck_core::compile_project(&name, &root, lock.as_ref(), &mut map, &mut diags);
     Ok((placed, map, diags))
+}
+
+/// `beck iface` — write the module's published signature.
+fn iface(file: &Path, out: Option<&Path>, to_stdout: bool) -> Result<()> {
+    let (project, map, diags) = checked_project(file)?;
+    print!("{}", diags.render(&map));
+    let project = project.ok_or_else(|| anyhow::anyhow!("{} does not compile", file.display()))?;
+    let text = project.interface.render();
+    if to_stdout {
+        print!("{text}");
+        return Ok(());
+    }
+    let path = out
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| file.with_extension("becki"));
+    std::fs::write(&path, &text)?;
+    eprintln!("wrote {}", path.display());
+    Ok(())
 }
 
 /// `beck check` — the whole front end, plus §3.4's stability and assertability guardrails.
 fn check(file: &Path, assertions: &[String], write_lock: bool, locked: bool) -> Result<()> {
-    let (placed, map, diags) = compile(file)?;
+    let (project, map, diags) = checked_project(file)?;
     print!("{}", diags.render(&map));
-    let Some(p) = placed else {
+    let Some(project) = project else {
         bail!("{} diagnostic(s)", diags.len());
     };
 
-    println!(
-        "ok: {} definitions, {} signals, wire id {}",
-        p.program.defs.len(),
-        p.program.signals.len(),
-        p.wire_id
-    );
+    let placement = project.solution.clone();
+    let (defs, signals) = (project.program.defs.len(), project.program.signals.len());
+
+    // Slicing is the *application* question, and a module that is not one is still a module.
+    let mut slicing = Diagnostics::new();
+    match beck_core::project::slice(project, &mut slicing) {
+        Some(p) => println!(
+            "ok: {defs} definitions, {signals} signals, wire id {}",
+            p.wire_id
+        ),
+        None if slicing
+            .iter()
+            .all(|d| beck_core::project::NOT_AN_APPLICATION.contains(&d.code)) =>
+        {
+            println!(
+                "ok: {defs} definitions — a library. No merge point, so there is nothing to run; \n\
+                 `beck iface` publishes what it offers."
+            );
+        }
+        None => {
+            print!("{}", slicing.render(&map));
+            bail!("{} diagnostic(s)", slicing.len());
+        }
+    }
 
     // §3.4: "a one-line edit must not re-place unrelated code; previous solution persisted in
     // `beck.lock`, churn reported in CI".
-    if !p.placement.churn.is_empty() {
+    if !placement.churn.is_empty() {
         println!("\nplacement changed against {}:", beck_core::Lock::FILE);
-        for (key, was, now) in &p.placement.churn {
+        for (key, was, now) in &placement.churn {
             println!("  {key:<28} {} → {}", was.name(), now.name());
         }
         if locked {
             bail!(
                 "--locked: {} placement(s) moved. Re-run with --write-lock if that is intended.",
-                p.placement.churn.len()
+                placement.churn.len()
             );
         }
         println!("(re-run with --write-lock to accept)");
@@ -301,7 +432,7 @@ fn check(file: &Path, assertions: &[String], write_lock: bool, locked: bool) -> 
 
     // A tie is not an error — the tie-break is total and deterministic — but it *is* the place a
     // future edit could silently move code, so it is named rather than absorbed.
-    for (key, tied) in &p.placement.ties {
+    for (key, tied) in &placement.ties {
         println!(
             "note: {key} could run on {} at the same cost; `@on(…)` or {} would pin it",
             tied.iter()
@@ -320,7 +451,7 @@ fn check(file: &Path, assertions: &[String], write_lock: bool, locked: bool) -> 
         let Some(want) = beck_core::Tier::parse(want.trim()) else {
             bail!("`{want}` is not a tier");
         };
-        match p.placement.explanation(name.trim()) {
+        match placement.explanation(name.trim()) {
             Some(e) if e.chosen == want => {}
             Some(e) => failed.push(format!(
                 "  {name}: expected {}, runs on {} — {}",
@@ -341,7 +472,7 @@ fn check(file: &Path, assertions: &[String], write_lock: bool, locked: bool) -> 
 
     if write_lock {
         let path = lock_path(file);
-        std::fs::write(&path, beck_core::Lock::of(&p.placement).to_json())?;
+        std::fs::write(&path, beck_core::Lock::of(&placement).to_json())?;
         eprintln!("wrote {}", path.display());
     }
     Ok(())

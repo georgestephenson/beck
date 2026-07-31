@@ -554,7 +554,10 @@ impl fmt::Display for Ty {
 }
 
 /// A user-declared type: a `model` (record), a `union` (ADT), a `newtype`, or an alias.
-#[derive(Clone, Debug)]
+///
+/// Comparable because a `.becki` interface is compared (§3.6, §4.3): two builds agree on a module's
+/// contract exactly when their type declarations are equal.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TyDecl {
     Model {
         name: Arc<str>,
@@ -575,7 +578,7 @@ pub enum TyDecl {
     },
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Variant {
     pub name: Arc<str>,
     pub fields: Vec<(Arc<str>, Ty)>,

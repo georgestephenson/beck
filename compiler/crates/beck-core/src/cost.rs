@@ -28,11 +28,22 @@
 //! | latency, data ↔ client | 26 ms | it goes through the server |
 //! | bytes → cost | ×5 per byte | so a 2 KB crossing (~100 ms) outweighs an RTT, which is the
 //! |   |   | trade a placement decision is actually making |
-//! | state residency off the data tier | 4 000 | the log is at the data tier; a fold elsewhere
-//! |   |   | crosses it once per event, not once per placement |
 //!
-//! The last row is the one that does the work in practice, and it is a physical fact rather than a
-//! preference: the accumulator of a `durable` fold *is* the thing the log stores.
+//! There is no constant for "a fold that is not at the data tier". [`node_cost`] charges such a
+//! fold an *edge to the log*, sized from the accumulator, because that is what it physically pays:
+//! the log is at the data tier, and an accumulator kept elsewhere crosses to it on every event. A
+//! constant would have been a number to tune; an edge is a number to derive.
+//!
+//! # The one rule worth arguing with
+//!
+//! A crossing is charged the **smaller** of its two endpoints' values, and that is not a
+//! simplification — it is §5.1's Mode A/B question, expressed as a cost instead of as a mode.
+//! Between a `Signal[State]` at the data tier and a `Signal[Html]` at the browser, the compiler may
+//! either send the state and render in the browser (Mode B: 2 KB of data patches) or render first
+//! and send the document (Mode A: 1 KB of DOM patches). It will pick the cheaper, so the cheaper is
+//! what the boundary costs. Phase 2 only *implements* Mode A, so today the minimum is a prediction
+//! rather than a choice — and it is the right prediction to be making when Phase 3 makes the choice
+//! real.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -74,29 +85,46 @@ pub fn latency(a: Tier, b: Tier) -> Cost {
 /// The cost of moving one byte across a tier boundary.
 pub const BYTE_UNIT: Cost = 5;
 
-/// What a `durable` accumulator pays for not being where the log is.
-pub const STATE_RESIDENCY: Cost = 4_000;
-
-/// The node cost of putting `row` on `tier`, given how much work the node does.
-pub fn node_cost(tier: Tier, row: &Row, work: i64) -> Cost {
+/// The node cost of putting `row` on `tier`, given how much work the node does and — for a durable
+/// fold — what its accumulator looks like.
+pub fn node_cost(
+    tier: Tier,
+    row: &Row,
+    work: i64,
+    state: Option<&Ty>,
+    types: &BTreeMap<Arc<str>, TyDecl>,
+) -> Cost {
     if !row.atoms.iter().all(|e| tier.discharges(e)) {
         return FORBIDDEN;
     }
     let mut cost = compute_weight(tier) * work;
     // The log lives at the data tier. A fold placed anywhere else does not merely compute
-    // elsewhere; it ships its accumulator across a boundary on every event.
+    // elsewhere; it crosses to the log on every event, carrying its accumulator. That is an edge,
+    // so it is priced as one.
     if row.atoms.contains(&Effect::Durable) && tier != Tier::Data {
-        cost += STATE_RESIDENCY;
+        let bytes = state.map(|t| estimate_bytes(t, types)).unwrap_or(0);
+        cost += latency(tier, Tier::Data) + bytes * BYTE_UNIT;
     }
     cost
 }
 
-/// The cost of an edge between two placed nodes, carrying a value of type `ty`.
-pub fn edge_cost(a: Tier, b: Tier, ty: &Ty, types: &BTreeMap<Arc<str>, TyDecl>) -> Cost {
+/// The cost of an edge between two placed nodes.
+///
+/// The two types are what each *end* produces. The bytes charged are the smaller: see the module
+/// docs — the compiler may compute on either side of a boundary and will send whichever is less, so
+/// the boundary costs the lesser of the two.
+pub fn edge_cost(
+    a: Tier,
+    b: Tier,
+    ty_a: &Ty,
+    ty_b: &Ty,
+    types: &BTreeMap<Arc<str>, TyDecl>,
+) -> Cost {
     if a == b || a == Tier::Any || b == Tier::Any {
         return 0;
     }
-    latency(a, b) + estimate_bytes(ty, types) * BYTE_UNIT
+    let bytes = estimate_bytes(ty_a, types).min(estimate_bytes(ty_b, types));
+    latency(a, b) + bytes * BYTE_UNIT
 }
 
 /// Estimate the wire size of a value of this type — §3.4's "bytes estimated from row types".
@@ -246,22 +274,54 @@ mod tests {
 
     #[test]
     fn a_forbidden_tier_costs_more_than_any_reachable_placement() {
+        let t = types();
         let durable = Row::of([Effect::Durable]);
-        assert_eq!(node_cost(Tier::Client, &durable, 1), FORBIDDEN);
-        // …and the log's residency makes the data tier the cheap place for state, by a margin no
-        // amount of compute can close on a program of realistic size.
-        assert!(node_cost(Tier::Data, &durable, 1_000) < node_cost(Tier::Server, &durable, 1));
+        let state = Ty::map(Ty::str_(), Ty::con("Todo"));
+        assert_eq!(
+            node_cost(Tier::Client, &durable, 1, Some(&state), &t),
+            FORBIDDEN
+        );
+        // …and the log's residency makes the data tier the cheap place for a real accumulator, by a
+        // margin no amount of compute closes: the charge is the accumulator's own size.
+        assert!(
+            node_cost(Tier::Data, &durable, 1_000, Some(&state), &t)
+                < node_cost(Tier::Server, &durable, 1, Some(&state), &t)
+        );
+        // A trivial accumulator is a different matter, and the model says so rather than pretending
+        // otherwise — which is the difference between a derived number and a tuned one.
+        assert!(
+            node_cost(Tier::Server, &durable, 1, Some(&Ty::int()), &t)
+                < node_cost(Tier::Server, &durable, 1, Some(&state), &t)
+        );
     }
 
     #[test]
     fn crossing_to_a_browser_costs_an_rtt_and_crossing_within_a_pod_does_not() {
         let t = types();
-        assert_eq!(edge_cost(Tier::Data, Tier::Data, &Ty::int(), &t), 0);
+        assert_eq!(
+            edge_cost(Tier::Data, Tier::Data, &Ty::int(), &Ty::int(), &t),
+            0
+        );
         assert!(
-            edge_cost(Tier::Server, Tier::Client, &Ty::int(), &t)
-                > edge_cost(Tier::Data, Tier::Server, &Ty::int(), &t)
+            edge_cost(Tier::Server, Tier::Client, &Ty::int(), &Ty::int(), &t)
+                > edge_cost(Tier::Data, Tier::Server, &Ty::int(), &Ty::int(), &t)
         );
         // Unplaced code is duplicated rather than called across a boundary, so it crosses nothing.
-        assert_eq!(edge_cost(Tier::Any, Tier::Client, &Ty::html(), &t), 0);
+        assert_eq!(
+            edge_cost(Tier::Any, Tier::Client, &Ty::html(), &Ty::html(), &t),
+            0
+        );
+    }
+
+    #[test]
+    fn a_crossing_costs_the_smaller_of_its_two_ends() {
+        // §5.1's Mode A/B decision as a cost: between a big state and a smaller rendered document,
+        // the boundary carries the document, because a compiler free to render on either side will.
+        let t = types();
+        let state = Ty::map(Ty::str_(), Ty::con("Todo"));
+        let both = edge_cost(Tier::Data, Tier::Client, &state, &Ty::html(), &t);
+        let doc_only = edge_cost(Tier::Data, Tier::Client, &Ty::html(), &Ty::html(), &t);
+        assert_eq!(both, doc_only);
+        assert!(both < edge_cost(Tier::Data, Tier::Client, &state, &state, &t));
     }
 }

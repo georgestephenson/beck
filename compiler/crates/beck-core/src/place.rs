@@ -339,18 +339,18 @@ pub fn solve(program: &Program, lock: Option<&Lock>) -> Solution {
     }
 
     // Edges: one unordered pair per dependency, so a crossing is charged once however many times it
-    // is named. The type on the edge is what the *dependency* produces, which is the value that
-    // actually moves.
-    let mut edges: Vec<(usize, usize, Ty)> = Vec::new();
+    // is named. The pair is all that is recorded — what a crossing *carries* is decided from both
+    // ends in `cost::edge_cost`, not from whichever end happened to be walked first.
+    let mut edges: Vec<(usize, usize)> = Vec::new();
     {
         let mut seen: BTreeSet<(usize, usize)> = BTreeSet::new();
-        let mut push = |from: usize, to: usize, ty: Ty, edges: &mut Vec<(usize, usize, Ty)>| {
+        let mut push = |from: usize, to: usize, edges: &mut Vec<(usize, usize)>| {
             if from == to {
                 return;
             }
             let pair = if from < to { (from, to) } else { (to, from) };
             if seen.insert(pair) {
-                edges.push((pair.0, pair.1, ty));
+                edges.push(pair);
             }
         };
         for name in &program.def_order {
@@ -361,8 +361,7 @@ pub fn solve(program: &Program, lock: Option<&Lock>) -> Solution {
             mentions(&d.body, &mut names);
             for m in names {
                 if let Some(&j) = index.get(&m) {
-                    let ty = nodes[j].carried.clone();
-                    push(i, j, ty, &mut edges);
+                    push(i, j, &mut edges);
                 }
             }
         }
@@ -374,8 +373,7 @@ pub fn solve(program: &Program, lock: Option<&Lock>) -> Solution {
             mentions(&s.expr, &mut names);
             for m in names {
                 if let Some(&j) = index.get(&m) {
-                    let ty = nodes[j].carried.clone();
-                    push(i, j, ty, &mut edges);
+                    push(i, j, &mut edges);
                 }
             }
         }
@@ -403,10 +401,22 @@ pub fn solve(program: &Program, lock: Option<&Lock>) -> Solution {
     let total_of = |assign: &[Tier]| -> Cost {
         let mut sum: Cost = 0;
         for (i, n) in nodes.iter().enumerate() {
-            sum = sum.saturating_add(cost::node_cost(assign[i], &n.row, n.work));
+            sum = sum.saturating_add(cost::node_cost(
+                assign[i],
+                &n.row,
+                n.work,
+                Some(&n.carried),
+                &program.types,
+            ));
         }
-        for (a, b, ty) in &edges {
-            sum = sum.saturating_add(cost::edge_cost(assign[*a], assign[*b], ty, &program.types));
+        for (a, b) in &edges {
+            sum = sum.saturating_add(cost::edge_cost(
+                assign[*a],
+                assign[*b],
+                &nodes[*a].carried,
+                &nodes[*b].carried,
+                &program.types,
+            ));
         }
         sum
     };
