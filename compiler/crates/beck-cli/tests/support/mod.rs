@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use beck_core::{Placed, Value};
 
+#[allow(dead_code)] // used by the differential harness, not by every test binary
 pub const ACTORS: &[&str] = &["alice", "bob"];
 
 /// The example program, compiled. Every harness runs against the file a reader can open.

@@ -427,7 +427,7 @@ mod tests {
         }
         let next = base.insert(9999, 9999);
 
-        fn nodes<'a, K, V>(link: &'a Link<K, V>, out: &mut Vec<*const Node<K, V>>) {
+        fn nodes<K, V>(link: &Link<K, V>, out: &mut Vec<*const Node<K, V>>) {
             if let Some(n) = link {
                 out.push(Arc::as_ptr(n));
                 nodes(&n.left, out);

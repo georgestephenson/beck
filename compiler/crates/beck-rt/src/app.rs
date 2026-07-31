@@ -28,6 +28,7 @@ use tokio::sync::{mpsc, oneshot, watch, RwLock};
 
 use crate::log::{Instant, LogStore, Pending, Seq, Snapshot};
 use crate::program::Runtime;
+use crate::telemetry::{telemetry, timed};
 
 #[derive(Clone, Debug)]
 pub struct AppConfig {
@@ -89,6 +90,11 @@ impl App {
             bail!("recovery stopped at seq {at} but the log head is {head}");
         }
 
+        telemetry().head.set(head);
+        // The one line that matters at startup: a pod that was just killed and a pod that was just
+        // deployed take exactly this path, and `seq` says which state it came back to.
+        tracing::info!(seq = head, store = store.kind(), "recovered from the log");
+
         let (version, _) = watch::channel(head);
         let (tx, rx) = mpsc::channel::<Proposal>(1024);
         let app = Arc::new(App {
@@ -126,7 +132,7 @@ impl App {
     /// Render a subscriber's view of the current state.
     pub async fn render(&self, actor: &str) -> Result<beck_core::Html> {
         let state = self.state.read().await.clone();
-        self.runtime.view(&state, actor)
+        timed(&telemetry().view, || self.runtime.view(&state, actor))
     }
 
     /// Propose a command. Returns the `seq` its events landed at.
@@ -198,6 +204,7 @@ async fn sequencer(app: Arc<App>, mut rx: mpsc::Receiver<Proposal>, config: AppC
         for p in batch.drain(..) {
             if seen.contains(&p.id) {
                 // Idempotency by envelope identity: a retry after a reconnect is safe (§4.3).
+                telemetry().deduplicated.incr();
                 rejected.push((p.reply, "duplicate".into()));
                 continue;
             }
@@ -219,7 +226,9 @@ async fn sequencer(app: Arc<App>, mut rx: mpsc::Receiver<Proposal>, config: AppC
                         };
                         // Apply as we validate, so the next command in the batch sees it:
                         // `Add(x)` followed by `Toggle(x)` in one batch must work.
-                        match app.runtime.fold(&speculative, &env, e.clone()) {
+                        match timed(&telemetry().fold, || {
+                            app.runtime.fold(&speculative, &env, e.clone())
+                        }) {
                             Ok(next) => speculative = next,
                             Err(err) => {
                                 failure = Some(err.to_string());
@@ -248,13 +257,17 @@ async fn sequencer(app: Arc<App>, mut rx: mpsc::Receiver<Proposal>, config: AppC
         }
 
         for (reply, why) in rejected {
+            telemetry().rejected.incr();
             let _ = reply.send(Err(why));
         }
         if pending.is_empty() {
             continue;
         }
 
-        match app.store.append(&pending).await {
+        let append_started = std::time::Instant::now();
+        let appended = app.store.append(&pending).await;
+        telemetry().append.record(append_started.elapsed());
+        match appended {
             Ok(stamped) => {
                 // The predicted seqs must match what the store assigned. That assertion is how a
                 // second writer would be caught (§18.5 item 5).
@@ -269,6 +282,8 @@ async fn sequencer(app: Arc<App>, mut rx: mpsc::Receiver<Proposal>, config: AppC
                     }
                 }
                 let head = stamped.last().map(|e| e.seq).unwrap_or(base);
+                telemetry().events_appended.add(stamped.len() as u64);
+                telemetry().head.set(head);
                 *state = speculative;
                 app.head.store(head, Ordering::Relaxed);
                 drop(state);
@@ -285,8 +300,18 @@ async fn sequencer(app: Arc<App>, mut rx: mpsc::Receiver<Proposal>, config: AppC
                         seq: head,
                         state: app.state.read().await.clone(),
                     };
-                    if let Err(e) = app.store.put_snapshot(&snapshot).await {
-                        tracing::warn!(error = %e, "snapshot failed; the log is still the truth");
+                    let started = std::time::Instant::now();
+                    let put = app.store.put_snapshot(&snapshot).await;
+                    telemetry().snapshot.record(started.elapsed());
+                    match put {
+                        Ok(()) => tracing::info!(seq = head, "snapshot written"),
+                        Err(e) => {
+                            telemetry().snapshot_failures.incr();
+                            tracing::warn!(
+                                error = %e, seq = head,
+                                "snapshot failed; the log is still the truth"
+                            );
+                        }
                     }
                 }
             }
@@ -294,7 +319,8 @@ async fn sequencer(app: Arc<App>, mut rx: mpsc::Receiver<Proposal>, config: AppC
                 // "A failed append has no repair path, and that is correct." The process's state
                 // is ahead of the durable truth and there is nothing to reconcile: abort, and the
                 // next process folds the log (§18.5 item 6).
-                tracing::error!(error = %e, "append failed after the fold advanced; aborting");
+                telemetry().append_failures.incr();
+                tracing::error!(error = %e, seq = base + 1, "append failed after the fold advanced; aborting");
                 std::process::abort();
             }
         }
@@ -334,11 +360,16 @@ pub async fn replay_to(
 /// D3's genesis-replay discipline: snapshots are an optimisation, and a snapshot that disagrees
 /// with the log is a bug we want CI to find, not a fact we want to trust.
 pub async fn replay_from_genesis(runtime: &Runtime, store: &dyn LogStore) -> Result<(Value, Seq)> {
+    let started = std::time::Instant::now();
     let mut state = runtime.initial_state()?;
     let mut at = 0;
     loop {
         let batch = store.read(at, 4096).await?;
         if batch.is_empty() {
+            // Recorded here rather than per event: a replay is one operation from the operator's
+            // point of view — "how long was this pod down for" — and the per-event cost is what
+            // `tests/scaling.rs` measures.
+            telemetry().replay.record(started.elapsed());
             return Ok((state, at));
         }
         for env in &batch {

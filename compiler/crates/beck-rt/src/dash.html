@@ -1,0 +1,224 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>beck</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #161a21; --line: #262c36; --text: #d7dce5; --dim: #8b95a5;
+    --client: #6aa9ff; --server: #f0a35e; --data: #7fd18a; --any: #9b8ff5; --warn: #f0715e;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f7f8fa; --panel: #fff; --line: #e2e6ec; --text: #1c2230; --dim: #5f6b7d;
+      --client: #1a6fd4; --server: #b8651a; --data: #2f8a45; --any: #5f4fd0; --warn: #c8402a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 13px/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  header {
+    display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap;
+    padding: 12px 18px; border-bottom: 1px solid var(--line); background: var(--panel);
+  }
+  header h1 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: .04em; }
+  header .meta { color: var(--dim); }
+  header .meta b { color: var(--text); font-weight: 600; }
+  main { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--line); }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  section { background: var(--bg); padding: 14px 18px; min-width: 0; }
+  section.wide { grid-column: 1 / -1; }
+  h2 {
+    margin: 0 0 10px; font-size: 11px; font-weight: 600; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--dim);
+  }
+  table { border-collapse: collapse; width: 100%; }
+  td, th { padding: 3px 10px 3px 0; text-align: left; vertical-align: top; }
+  th { color: var(--dim); font-weight: 500; }
+  tbody tr:hover { background: var(--panel); }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .dim { color: var(--dim); }
+  .warn { color: var(--warn); }
+  .tag {
+    display: inline-block; padding: 0 5px; border-radius: 3px; font-size: 11px;
+    border: 1px solid currentColor;
+  }
+  .client { color: var(--client); } .server { color: var(--server); }
+  .data { color: var(--data); } .any { color: var(--any); }
+  .scroll { overflow: auto; max-height: 340px; }
+  .graph { overflow: auto; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); }
+  /* A halo in the panel colour, painted under the glyphs, so an edge passing behind a label does
+     not read as a strikethrough. */
+  svg text {
+    font: 11px ui-monospace, Menlo, monospace; fill: var(--text);
+    paint-order: stroke; stroke: var(--panel); stroke-width: 3px; stroke-linejoin: round;
+  }
+  .legend { color: var(--dim); margin-top: 8px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; }
+  .legend label { color: var(--dim); cursor: pointer; user-select: none; }
+  .legend input { vertical-align: -1px; margin-right: 3px; }
+  code { color: var(--dim); }
+</style>
+
+<header>
+  <h1>beck</h1>
+  <div class="meta" id="meta">connecting…</div>
+</header>
+
+<main>
+  <section class="wide">
+    <h2>dependency graph</h2>
+    <div class="graph"><svg id="svg" width="100%" height="360"></svg></div>
+    <div class="legend">
+      <span class="client">● client</span><span class="server">● server</span>
+      <span class="data">● data</span><span class="any">● any</span>
+      <span>─ calls / reads</span><span class="dim">┈ implies / needs</span>
+      <label><input type="checkbox" id="f-signal" checked>signals</label>
+      <label><input type="checkbox" id="f-resource" checked>resources</label>
+      <label><input type="checkbox" id="f-function" checked>functions</label>
+      <label><input type="checkbox" id="f-type">types</label>
+      <span id="cycles"></span>
+    </div>
+  </section>
+
+  <section>
+    <h2>resources</h2>
+    <div class="scroll"><table id="resources"></table></div>
+  </section>
+
+  <section>
+    <h2>metrics</h2>
+    <table id="counters"></table>
+    <!-- Spelled out: `text-transform: uppercase` renders "µs" as "MS", which reads as
+         milliseconds and is off by a thousand. -->
+    <h2 style="margin-top:14px">latency, microseconds</h2>
+    <table id="histograms"></table>
+  </section>
+
+  <section class="wide">
+    <h2>logs</h2>
+    <div class="scroll"><table id="logs"></table></div>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const get = async p => (await fetch(p)).json();
+
+let GRAPH = null;
+
+function drawGraph() {
+  const g = GRAPH;
+  if (!g) return;
+  const show = k => $('f-' + k).checked;
+  const keep = g.nodes.map(n => show(n.kind));
+
+  // Re-pack layers over the visible nodes only, so hiding types closes the gap it leaves rather
+  // than leaving an empty column.
+  const used = [...new Set(g.nodes.filter((_, i) => keep[i]).map(n => n.layer))].sort((a, b) => a - b);
+  const column = Object.fromEntries(used.map((l, i) => [l, i]));
+
+  const COL = 200, ROW = 26, PAD = 16;
+  const rows = {};
+  const at = g.nodes.map((n, i) => {
+    if (!keep[i]) return null;
+    const c = column[n.layer];
+    const row = (rows[c] = (rows[c] ?? -1) + 1);
+    return { x: PAD + c * COL, y: PAD + row * ROW + 10 };
+  });
+  const width = PAD * 2 + used.length * COL;
+  const height = PAD * 2 + (Math.max(0, ...Object.values(rows)) + 1) * ROW + 16;
+
+  const edges = g.edges.filter(e => keep[e.from] && keep[e.to]).map(e => {
+    const a = at[e.from], b = at[e.to];
+    // Right to left: an edge points from a dependent back at what it depends on.
+    const mid = (a.x + b.x) / 2;
+    const derived = e.kind === 'implies' || e.kind === 'needs';
+    return `<path d="M${a.x} ${a.y - 4} C${mid} ${a.y - 4} ${mid} ${b.y - 4} ${b.x + 6} ${b.y - 4}"
+             fill="none" stroke="currentColor" stroke-opacity="${derived ? .18 : .3}"
+             ${derived ? 'stroke-dasharray="2 3"' : ''}/>`;
+  }).join('');
+
+  const nodes = g.nodes.map((n, i) => {
+    if (!keep[i]) return '';
+    const p = at[i];
+    const label = n.name.length > 23 ? n.name.slice(0, 22) + '…' : n.name;
+    const title = [n.name, n.kind, n.tier !== 'any' ? '@on(' + n.tier + ')' : '',
+                   n.effects.join(' '), n.because].filter(Boolean).join(' — ');
+    return `<g class="${n.tier}"><title>${esc(title)}</title>` +
+      `<circle cx="${p.x}" cy="${p.y - 4}" r="${n.cycle ? 4.5 : 3}" fill="currentColor"` +
+      `${n.kind === 'resource' ? ' fill-opacity=".45"' : ''}/>` +
+      `<text x="${p.x + 8}" y="${p.y}">${esc(label)}</text></g>`;
+  }).join('');
+
+  const svg = $('svg');
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  svg.setAttribute('width', width);
+  svg.setAttribute('height', height);
+  svg.innerHTML = edges + nodes;
+
+  $('cycles').textContent = g.cycles.length
+    ? '↺ ' + g.cycles.map(c => c.join(' ⇄ ')).join(', ')
+    : '';
+}
+
+function resourceTable(rs) {
+  $('resources').innerHTML =
+    '<thead><tr><th>object</th><th>because</th></tr></thead><tbody>' +
+    rs.map(r => `<tr><td>${esc(r.kind)}/<b>${esc(r.name)}</b>` +
+      (r.detail ? `<br><code>${esc(r.detail)}</code>` : '') +
+      `</td><td class="dim">${esc(r.because)}` +
+      (r.needs.length ? `<br>needs ${r.needs.map(esc).join(', ')}` : '') +
+      '</td></tr>').join('') + '</tbody>';
+}
+
+function metricTables(m) {
+  const c = m.metrics.counters, g = m.metrics.gauges;
+  const bad = k => ['rejected', 'append_failures', 'snapshot_failures', 'bad_messages'].includes(k);
+  $('counters').innerHTML =
+    Object.entries({ ...g, ...c })
+      .map(([k, v]) => `<tr><td class="${bad(k) && v > 0 ? 'warn' : 'dim'}">${esc(k)}</td>` +
+        `<td class="num">${v.toLocaleString()}</td></tr>`).join('');
+  $('histograms').innerHTML =
+    '<thead><tr><th></th><th class="num">n</th><th class="num">mean</th>' +
+    '<th class="num">p50</th><th class="num">p99</th></tr></thead><tbody>' +
+    m.metrics.histograms.map(h => `<tr><td class="dim">${esc(h.name)}</td>` +
+      `<td class="num">${h.count.toLocaleString()}</td>` +
+      `<td class="num">${h.count ? h.mean_us.toFixed(0) : '·'}</td>` +
+      `<td class="num">${h.count ? '≤' + h.p50_us : '·'}</td>` +
+      `<td class="num">${h.count ? '≤' + h.p99_us : '·'}</td></tr>`).join('') + '</tbody>';
+
+  $('meta').innerHTML =
+    `<b>${esc(m.app)}</b> · store <b>${esc(m.store)}</b> · head <b>${m.head.toLocaleString()}</b>` +
+    ` · sessions <b>${g.sessions}</b>`;
+}
+
+function logTable(rs) {
+  $('logs').innerHTML = rs.map(r => {
+    const at = new Date(r.at_unix_nanos / 1e6).toISOString().slice(11, 23);
+    return `<tr><td class="dim">${at}</td>` +
+      `<td class="${r.level === 'ERROR' || r.level === 'WARN' ? 'warn' : 'dim'}">${esc(r.level)}</td>` +
+      `<td class="dim">${esc(r.target)}</td>` +
+      `<td>${esc(r.message)}</td>` +
+      `<td class="num dim">${r.seq == null ? '' : 'seq ' + r.seq}</td></tr>`;
+  }).join('');
+}
+
+async function refreshStatic() {
+  GRAPH = await get('/_beck/graph');
+  drawGraph();
+  resourceTable(await get('/_beck/resources'));
+}
+for (const k of ['signal', 'resource', 'function', 'type']) {
+  $('f-' + k).addEventListener('change', drawGraph);
+}
+async function refreshLive() {
+  metricTables(await get('/_beck/metrics'));
+  logTable((await get('/_beck/logs')).records);
+}
+
+refreshStatic();
+refreshLive();
+// The program cannot change while the process runs, so only the live panes refresh.
+setInterval(refreshLive, 1000);
+</script>

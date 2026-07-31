@@ -425,8 +425,10 @@ None of them are Beck's, but all three cost time:
   asserted by code and by rendered text, which catches regressions in *content* but not in
   *rendering*.
 - **No Mode B, no incremental views, no migrations, no operator, no identity beyond a dev-mode
-  actor, no `beck fork`, no OpenTelemetry, no package system, no LSP, no playground.** All Phase 3
-  and beyond, and all named in the roadmap as such.
+  actor, no `beck fork`, no package system, no LSP, no playground.** All Phase 3 and beyond, and all
+  named in the roadmap as such.
+- **The dashboard is one screen, not an observability product.** No collector, no retention, no
+  alerting, no sampling, no spans. §19.8 says what it is and what it deliberately is not.
 
 ## 19.7 What this changes for Phase 2
 
@@ -452,3 +454,117 @@ None of them are Beck's, but all three cost time:
    and a real API server's admission. Every one died the first time something tried to run it.
    §8.3's "every phase ships a demo that runs" is not a morale exercise; it is the only check that
    catches this class, and it should gate each phase rather than conclude it.
+7. **A signal that reads the host is the missing construct.** §19.8: the dashboard is a view over
+   state, which is exactly what Beck exists to express — but its state is a live read of counters
+   and a compile-time graph, not a `durable` fold over an event stream, and Beck cannot say that.
+   Until it can, Beck's own tools cannot be written in Beck.
+8. **Telemetry's boundary is determinism, and it should be in [`03`](03-type-and-effect-system.md).**
+   §19.8 draws the line: the log records what replays, telemetry records what cannot — wall-clock,
+   resource use, and events that never happened. That is not an operational detail; it follows from
+   §4.8's replay-purity requirement, and the design documents should derive it there rather than
+   leaving it to be rediscovered.
+
+## 19.8 The dependency graph, the dashboard, and where OpenTelemetry fits
+
+Three things were added after the exit criterion was met, all following from one observation:
+**the program is its own AppHost.** Aspire can draw a resource graph because you write a second
+program declaring the topology; Beck does not have one, because placement, the splitter and the
+effect-derived object graph already *are* the topology. So the graph does not need collecting — it
+needs reading off what the compiler knows.
+
+### The graph
+
+[`beck-core/src/graph.rs`](../compiler/crates/beck-core/src/graph.rs) holds one graph over every
+type, function, signal and derived infrastructure object, with five edge kinds: `calls`, `reads`,
+`uses`, `implies` (an object exists because of a definition's effect) and `needs` (an object
+references another). Compressed sparse row adjacency in both directions, because the two questions
+worth asking are opposite — *what does this need* and *what breaks if I change it*.
+
+| operation | cost |
+|---|---|
+| build, including components | `O(V + E)` time and space; 4 bytes per edge per direction |
+| `dependencies`, `dependents` | `O(1)` to a contiguous slice |
+| `impact` (transitive dependents, with hop counts) | `O(V' + E')` over the region reached |
+| `layers` (the layered drawing) | `O(V + E)`, one pass over the condensation |
+
+Measured: `todo.beck` is 35 nodes and 67 edges built in **81 µs**, and per-node cost grows **1.12×**
+over a 20× larger program (`cargo test --release --test scaling`). Components come from iterative
+Tarjan rather than a topological sort, because §19.4 item 4's cycle is real: `events` is decided
+from `todos`, `todos` is folded from `events`, and a condensation exists where an ordering does not.
+
+**Memoising the graph is not worth doing, and the measurement says so**: 81 µs against an 848 µs
+full compile is 9.6% of it. The cost is the front end, which is what `beck-db`'s Salsa spine is
+already for. Recorded here so the question does not get re-asked.
+
+The graph found a defect in its own inputs immediately: recording a `Service`'s label selector as a
+`needs` edge made `LogStore/x` and `Service/x` each need the other, and the cycle detector reported
+it. A selector is a label query, not a reference — a Service is valid with no endpoints. `needs`
+now means "cannot start without", and a test asserts that no infrastructure cycle exists at all.
+
+### The dashboard
+
+`beck run` serves `/_beck`: the resource list with the effect that implied each object, the
+dependency graph laid out server-side, live metrics, and a log tail. It is one self-contained page
+with no CDN, no framework and no fonts — asserted by a test, because the network policy this very
+compiler derives has no egress, and a dashboard that is blank in the cluster it monitors is not a
+dashboard.
+
+The same model is available to a *tool* rather than an eye, which is the more useful half:
+
+```console
+$ beck graph  examples/todo.beck [--json] [--types]   # every part, grouped, with dependencies
+$ beck impact examples/todo.beck validate [--json]    # what breaks if this changes
+```
+
+`beck impact validate` answers across the whole stack — three signals and seven Kubernetes objects,
+with hop counts — because the code and the infrastructure are vertices in one graph.
+
+**The page is hand-written HTML and should not stay that way.** It is the same thing
+[`phase0/`](../phase0/) was: output the compiler ought to generate, written by hand because it
+cannot yet. A dashboard is a view over state, which is exactly `page: Signal[Html] =
+per_session(...)`. What blocks it is not the view — `ui:` could express this page today — but that
+the dashboard's state is *not* a durable fold over an event stream. It is a live read of atomic
+counters and a compile-time graph, and Beck has no way to say "a signal whose value comes from the
+host". That missing construct is the language question standing between here and Beck's tools being
+written in Beck.
+
+### OpenTelemetry: valid, and for a specific half
+
+The event log is a durable total order of every state transition, and `replay_to` reconstructs any
+state the system was ever in. That is strictly stronger than what tracing reconstructs by sampling.
+Tracing the fold's internal call tree as spans would re-record, lossily and at cost, what the log
+already records exactly.
+
+So the division is by determinism, and it is sharp:
+
+| | answered by |
+|---|---|
+| what happened, in what order, what state it produced | the log |
+| what state the system was in at any point | the log, by replay |
+| how long the fold, the view, the append took | telemetry |
+| what was **rejected** and never became an event | telemetry |
+| how many sessions are connected; whether a pod died mid-batch | telemetry |
+
+Everything in the telemetry column is wall-clock, resource use, or a *non-event* — precisely what
+the log must not record, because §4.8 requires the fold to be replay-pure and a fold that recorded
+its own duration would not replay identically.
+
+Two consequences worth stating:
+
+1. **Correlation is `seq`, not a trace id.** A trace id identifies a request; `seq` identifies a
+   *state*, and `beck replay --to <seq>` reproduces it. Every telemetry record that concerns a
+   position carries `beck.seq`, so a record in any backend is one command away from a reproducible
+   debugging session. That is a property this architecture has and a service fleet does not.
+2. **Spans belong at the boundaries, not inside the fold.** Ingress, validate, append, fold, view,
+   patch — and no deeper, where the log is the better instrument.
+
+[`beck-rt/src/telemetry.rs`](../compiler/crates/beck-rt/src/telemetry.rs) emits OTLP/HTTP **JSON**,
+a first-class encoding in the OTLP specification with the same field names as the protobuf form —
+so an ordinary collector accepts it, with no `tonic`, no `prost` and no code generation. Recording
+is one relaxed fetch-add into an atomic counter or a power-of-two histogram bucket, so instrumenting
+the fold does not perturb what it measures.
+
+The instrumentation earned its place during the work: a hand-written websocket client using the
+wrong message schema showed up immediately as `bad_messages: 29`, and the first OTLP body reported
+`startTimeUnixNano` *after* `timeUnixNano` — a lazily-initialised start read after the clock — which
+a collector is entitled to drop silently. Both are now tests.

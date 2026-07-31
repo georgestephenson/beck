@@ -16,6 +16,7 @@ use crate::app::App;
 use crate::diff::{diff, Op};
 use crate::patch::PatchFrame;
 use crate::protocol::{ClientMsg, Resumption, ServerMsg};
+use crate::telemetry::telemetry;
 
 /// Anything that behaves like a websocket connection: the upgraded socket in the server, and an
 /// in-memory duplex in the tests.
@@ -35,6 +36,9 @@ impl<T> Socket for T where
 
 /// Drive one subscription until the socket closes.
 pub async fn run<S: Socket>(app: Arc<App>, mut socket: S) -> Result<()> {
+    // A guard, not a pair of calls: a session ends by returning, by erroring, or by the socket
+    // dying, and a gauge that only decrements on the happy path drifts upward forever.
+    let _connected = SessionGuard::new();
     // Subscribe *before* reading the current view, so an event that lands in between wakes us
     // rather than being missed.
     let mut version = app.subscribe();
@@ -102,6 +106,9 @@ async fn drive<S: Socket>(
     initial_ops: Vec<Op>,
     version: &mut tokio::sync::watch::Receiver<u64>,
 ) -> Result<()> {
+    // How a subscriber was brought up to date is exactly the distinction Phase 0 got wrong twice
+    // (§18.5 item 1): an ack means committed, a frame means your view has caught up.
+    tracing::info!(seq, sub = %sub, how = how.label(), "subscribed");
     send_json(socket, &ServerMsg::welcome(&sub, seq, how)).await?;
     if !initial_ops.is_empty() {
         send_json(socket, &PatchFrame::new(seq, initial_ops).to_json()).await?;
@@ -118,7 +125,9 @@ async fn drive<S: Socket>(
                     break; // the application is gone
                 }
                 let view = app.render(&actor).await?;
+                let started = std::time::Instant::now();
                 let ops = diff(&last_view, &view);
+                telemetry().diff.record(started.elapsed());
                 last_view = view;
                 seq = app.head();
                 if !ops.is_empty() {
@@ -168,6 +177,7 @@ async fn drive<S: Socket>(
                     Ok(ClientMsg::Ping) => send_json(socket, &serde_json::json!({"t":"pong"})).await?,
                     Ok(ClientMsg::Hello { .. }) => {}
                     Err(e) => {
+                        telemetry().bad_messages.incr();
                         tracing::debug!(error = %e, "unparseable client message");
                     }
                 }
@@ -184,6 +194,7 @@ async fn wait_for_hello<S: Socket>(socket: &mut S) -> Result<Option<(String, u64
                 Ok(ClientMsg::Hello { sub, seq, actor }) => return Ok(Some((sub, seq, actor))),
                 Ok(_) => continue,
                 Err(e) => {
+                    telemetry().bad_messages.incr();
                     tracing::debug!(error = %e, "unparseable hello");
                     continue;
                 }
@@ -195,7 +206,28 @@ async fn wait_for_hello<S: Socket>(socket: &mut S) -> Result<Option<(String, u64
     Ok(None)
 }
 
+/// Holds the active-session count for as long as a session is running.
+struct SessionGuard;
+
+impl SessionGuard {
+    fn new() -> SessionGuard {
+        telemetry().sessions.incr();
+        SessionGuard
+    }
+}
+
+impl Drop for SessionGuard {
+    fn drop(&mut self) {
+        telemetry().sessions.decr();
+    }
+}
+
 async fn send_json<S: Socket>(socket: &mut S, value: &serde_json::Value) -> Result<()> {
-    socket.send(Message::Text(value.to_string())).await?;
+    let text = value.to_string();
+    // Counted here rather than at each call site: every frame the server sends goes through this
+    // function, so the count cannot drift from what was actually written to a socket.
+    telemetry().patch_frames.incr();
+    telemetry().patch_bytes.add(text.len() as u64);
+    socket.send(Message::Text(text)).await?;
     Ok(())
 }

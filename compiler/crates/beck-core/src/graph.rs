@@ -220,19 +220,55 @@ impl DepGraph {
         &self.order
     }
 
+    /// A layer per node: 0 for something that depends on nothing, otherwise one more than the
+    /// deepest thing it depends on. Cycle members share a layer, because within a cycle there is no
+    /// "deeper".
+    ///
+    /// This is the x-coordinate of a layered drawing — the shape Aspire's graph view has, and the
+    /// reason it is computed here rather than in the browser: the condensation is already in
+    /// topological order, so one pass over it in that order gives every layer. `O(V + E)`, against
+    /// the iterative force-directed relaxation a client-side layout would need.
+    pub fn layers(&self) -> Vec<u32> {
+        let mut scc_layer = vec![0u32; self.scc_offsets.len() - 1];
+        // Components are numbered so that a dependency's component comes first; visiting them in
+        // order means every dependency's layer is final before it is read.
+        for c in 0..scc_layer.len() as u32 {
+            let mut deepest = 0;
+            for &m in self.members_of(c) {
+                for e in self.dependencies(m) {
+                    let d = self.scc_of[e.to.0 as usize];
+                    if d != c {
+                        deepest = deepest.max(scc_layer[d as usize] + 1);
+                    }
+                }
+            }
+            scc_layer[c as usize] = deepest;
+        }
+        self.scc_of.iter().map(|c| scc_layer[*c as usize]).collect()
+    }
+
     /// Everything that transitively depends on `id`, including `id`. Breadth-first over the reverse
     /// edges, so it costs the size of the affected region rather than the size of the program.
     pub fn impacted_by(&self, id: NodeId) -> Vec<NodeId> {
+        self.impact(id).into_iter().map(|(n, _)| n).collect()
+    }
+
+    /// The same, with each node's distance in hops from `id`, and nearest first.
+    ///
+    /// The distance is what makes the answer usable rather than merely correct: "37 things depend
+    /// on this" is a number, and "4 things depend on it directly, and the rest through them" is an
+    /// answer. Breadth-first, so the first time a node is reached is by a shortest path.
+    pub fn impact(&self, id: NodeId) -> Vec<(NodeId, u32)> {
         let mut seen = vec![false; self.nodes.len()];
-        let mut queue = std::collections::VecDeque::from([id]);
+        let mut queue = std::collections::VecDeque::from([(id, 0)]);
         let mut out = Vec::new();
         seen[id.0 as usize] = true;
-        while let Some(v) = queue.pop_front() {
-            out.push(v);
+        while let Some((v, d)) = queue.pop_front() {
+            out.push((v, d));
             for e in self.dependents(v) {
                 if !seen[e.to.0 as usize] {
                     seen[e.to.0 as usize] = true;
-                    queue.push_back(e.to);
+                    queue.push_back((e.to, d + 1));
                 }
             }
         }
@@ -719,12 +755,40 @@ mod tests {
 
         // The other half of the claim: it costs the affected region, not the program.
         assert_eq!(g.impacted_by(g.id("other").unwrap()).len(), 1);
+
+        // Distances separate "depends on this directly" from "depends on it through something".
+        let hops: Vec<(&str, u32)> = g
+            .impact(g.id("util").unwrap())
+            .iter()
+            .map(|(n, d)| (&*g.node(*n).name, *d))
+            .collect();
+        assert_eq!(hops, vec![("util", 0), ("a", 1), ("b", 2)]);
     }
 
     #[test]
     fn a_cycle_reached_from_outside_pulls_in_the_whole_component() {
         let g = graph_of(&["x", "y", "z"], &[("x", "y"), ("y", "x"), ("z", "x")]);
         assert_eq!(g.impacted_by(g.id("y").unwrap()).len(), 3);
+    }
+
+    #[test]
+    fn layers_put_dependencies_to_the_left_and_cycles_in_one_column() {
+        let g = graph_of(
+            &["merge", "events", "todos", "page", "loner"],
+            &[
+                ("events", "merge"),
+                ("events", "todos"),
+                ("todos", "events"),
+                ("page", "todos"),
+            ],
+        );
+        let layers = g.layers();
+        let l = |n: &str| layers[g.id(n).unwrap().0 as usize];
+        assert_eq!(l("merge"), 0, "depends on nothing");
+        assert_eq!(l("loner"), 0);
+        assert_eq!(l("events"), 1);
+        assert_eq!(l("todos"), 1, "a cycle is one column, not two");
+        assert_eq!(l("page"), 2);
     }
 
     #[test]

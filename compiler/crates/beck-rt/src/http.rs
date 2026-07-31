@@ -24,11 +24,26 @@ use tokio_tungstenite::tungstenite::protocol::Role;
 use tokio_tungstenite::WebSocketStream;
 
 use crate::app::App;
+use crate::dash::Dashboard;
 
 pub async fn serve(
     app: Arc<App>,
     addr: SocketAddr,
+    shutdown: tokio::sync::watch::Receiver<bool>,
+) -> Result<()> {
+    serve_with_dashboard(app, addr, shutdown, None).await
+}
+
+/// Serve, optionally with the dashboard mounted under `/_beck`.
+///
+/// Optional because the dashboard needs the infrastructure graph, which `beck-rt` cannot build —
+/// it does not depend on `beck-infra`, and should not: the runtime does not know what Kubernetes
+/// is. Whoever assembles the process knows both, and passes one in.
+pub async fn serve_with_dashboard(
+    app: Arc<App>,
+    addr: SocketAddr,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
+    dashboard: Option<Arc<Dashboard>>,
 ) -> Result<()> {
     let listener = TcpListener::bind(addr).await?;
     tracing::info!(%addr, store = app.store_kind(), "listening");
@@ -48,8 +63,9 @@ pub async fn serve(
         let (stream, _peer) = accepted?;
         stream.set_nodelay(true)?;
         let app = app.clone();
+        let dashboard = dashboard.clone();
         tokio::spawn(async move {
-            let service = service_fn(move |req| route(app.clone(), req));
+            let service = service_fn(move |req| route(app.clone(), dashboard.clone(), req));
             if let Err(e) = hyper::server::conn::http1::Builder::new()
                 .serve_connection(TokioIo::new(stream), service)
                 .with_upgrades()
@@ -66,8 +82,19 @@ pub async fn bind(addr: SocketAddr) -> Result<TcpListener> {
     Ok(TcpListener::bind(addr).await?)
 }
 
-async fn route(app: Arc<App>, req: Request<Incoming>) -> Result<Response<Full<Bytes>>> {
+async fn route(
+    app: Arc<App>,
+    dashboard: Option<Arc<Dashboard>>,
+    req: Request<Incoming>,
+) -> Result<Response<Full<Bytes>>> {
     let path = req.uri().path().to_string();
+    if req.method() == Method::GET {
+        if let Some(d) = &dashboard {
+            if let Some((content_type, body)) = d.route(&path, &app) {
+                return Ok(asset(&body, content_type));
+            }
+        }
+    }
     match (req.method(), path.as_str()) {
         (&Method::GET, "/healthz") | (&Method::GET, "/readyz") => Ok(text("ok")),
         (&Method::GET, "/beck-thin.js") => Ok(asset(crate::THIN_CLIENT, "text/javascript")),

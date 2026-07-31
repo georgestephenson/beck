@@ -11,6 +11,7 @@
 
 pub mod app;
 pub mod css;
+pub mod dash;
 pub mod diff;
 pub mod http;
 pub mod log;
@@ -18,12 +19,15 @@ pub mod patch;
 pub mod program;
 pub mod protocol;
 pub mod session;
+pub mod telemetry;
 
 pub use app::{replay_from_genesis, replay_to, App, AppConfig};
+pub use dash::{Dashboard, ResourceRow};
 pub use diff::{diff, Op, Path};
 pub use log::{Envelope, Instant, LogStore, MemoryLog, PgLog, RedbLog, Seq, Snapshot};
 pub use patch::{Codec, PatchFrame};
 pub use program::Runtime;
+pub use telemetry::{telemetry, timed, Telemetry};
 
 /// The thin client: compiler residue, and the only JavaScript in the system (§5.1).
 ///

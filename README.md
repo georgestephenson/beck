@@ -40,7 +40,18 @@ only running it found.
 $ cd compiler
 $ cargo run -- check   examples/todo.beck      # typecheck, place, slice
 $ cargo run -- explain place examples/todo.beck   # where each definition runs, and why
+$ cargo run -- graph   examples/todo.beck      # every part, and what depends on what
+$ cargo run -- impact  examples/todo.beck validate   # what breaks if this changes
 $ cargo run -- run     examples/todo.beck      # rung 0: no cluster, no container, no registry
 $ cargo run -- replay  examples/todo.beck --verify
 $ cargo run -- build   examples/todo.beck      # the object graph the effects imply, + image configs
 ```
+
+**The program is its own AppHost.** Aspire draws a resource graph because you write a second program
+declaring the topology; Beck has no such program, because placement, the splitter and the
+effect-derived object graph already *are* it. So `beck impact validate` answers across the whole
+stack — three signals and seven Kubernetes objects, with hop counts — and `beck run` serves the same
+model at `/_beck` as a dashboard, alongside live metrics and OTLP export. The graph for the todo
+program is 35 nodes and 67 edges, built in 81 µs. See
+[`docs/19-phase-1-report.md`](docs/19-phase-1-report.md) §19.8, which also draws the line between
+what the event log records and what telemetry has to: the boundary is determinism.

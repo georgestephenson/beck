@@ -96,6 +96,12 @@ pub struct Derived {
     /// `serviceName`, a container's `secretKeyRef`. Recording them here makes them checkable:
     /// docs/19 §19.5's third and fourth defects were both a manifest naming an object that was
     /// never emitted, and neither was visible until a pod tried to resolve it.
+    ///
+    /// A **label selector is not a reference**. A `Service` selects pods by label and is perfectly
+    /// valid with no endpoints, so it does not need its workload; the workload does not need it
+    /// either, unless it resolves it by name. Recording selectors here made `LogStore/x` and
+    /// `Service/x` each need the other, and the dependency graph — correctly — reported a cycle
+    /// that does not exist. What goes here is "cannot start without", not "is related to".
     pub needs: Vec<String>,
 }
 
@@ -218,8 +224,7 @@ pub fn derive(app: &str, effects: &[(Effect, String)], serves_ui: bool) -> Infra
             },
             &format!("`{from}` accepts connections, so the workload needs an address"),
         )
-        .caused_by(&from)
-        .needing(&[&workload]);
+        .caused_by(&from);
         out.push(
             Node::Route {
                 name: format!("{app}-route"),
@@ -261,8 +266,7 @@ pub fn derive(app: &str, effects: &[(Effect, String)], serves_ui: bool) -> Infra
             },
             &format!("`{from}` needs a log store, and the fold has to be able to resolve it"),
         )
-        .caused_by(&from)
-        .needing(&[&log]);
+        .caused_by(&from);
         out.push(
             Node::Secret {
                 name: format!("{app}-log-credentials"),
@@ -727,6 +731,30 @@ page: Signal[Html] = per_session(st, view)
                  Declared: {declared:?}"
             );
         }
+    }
+
+    #[test]
+    fn the_only_cycle_is_the_one_the_architecture_intends() {
+        // The signal graph cycles on purpose: `events` is decided from `todos`, `todos` is folded
+        // from `events` (docs/19 §19.4 item 4). Infrastructure must *not* cycle — an object graph
+        // with a cycle has no start order — and the first version of `needs` produced one by
+        // recording a Service's label selector as if it were a reference to the workload.
+        let g = dependency_graph(&compile(PROGRAM));
+        let cycles: Vec<Vec<&str>> = g
+            .cycles()
+            .map(|c| c.iter().map(|n| &*g.node(*n).name).collect())
+            .collect();
+        for cycle in &cycles {
+            assert!(
+                cycle.iter().all(|n| !n.contains('/')),
+                "infrastructure objects must not depend on each other in a cycle: {cycle:?}"
+            );
+        }
+        assert_eq!(
+            cycles.len(),
+            1,
+            "expected exactly the signal cycle: {cycles:?}"
+        );
     }
 
     #[test]

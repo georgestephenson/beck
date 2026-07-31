@@ -186,16 +186,25 @@ fn the_whole_todo_program_graph_is_built_in_well_under_a_millisecond() {
 
     let started = Instant::now();
     let g = beck_infra::dependency_graph(&placed);
-    let elapsed = started.elapsed();
+    let graph_time = started.elapsed();
+
+    // Against the compile it is derived from, so the comparison decides whether memoising the
+    // graph would be worth anything. It is not the cost; the front end is.
+    let started = Instant::now();
+    let _ = beck_core::compile_str("todo.beck", &src);
+    let compile_time = started.elapsed();
+
     println!(
-        "todo.beck: {} nodes, {} edges, built in {:.0} µs",
+        "todo.beck: {} nodes, {} edges — graph {:.0} µs, full compile {:.0} µs ({:.1}% of it)",
         g.len(),
         g.edge_count(),
-        elapsed.as_secs_f64() * 1e6
+        graph_time.as_secs_f64() * 1e6,
+        compile_time.as_secs_f64() * 1e6,
+        100.0 * graph_time.as_secs_f64() / compile_time.as_secs_f64()
     );
     assert!(g.len() > 20, "the program has more parts than that");
     assert!(
-        elapsed.as_millis() < 50,
-        "building the graph for a 132-line program took {elapsed:?}"
+        graph_time.as_millis() < 50,
+        "building the graph for a 132-line program took {graph_time:?}"
     );
 }
