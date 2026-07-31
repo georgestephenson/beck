@@ -57,6 +57,14 @@ enum Cmd {
         /// stability guardrail.
         #[arg(long)]
         locked: bool,
+        /// Compare this module's contract against a previously released `.becki` and fail on a
+        /// breaking change (§4.3). The check CI runs before a rolling deploy.
+        #[arg(long, value_name = "PREVIOUS.becki")]
+        wire_compat: Option<PathBuf>,
+        /// Accept the breaking changes `--wire-compat` finds. §4.3's explicit marker: a breaking
+        /// release is allowed, and saying so is the point.
+        #[arg(long)]
+        breaking: bool,
     },
     /// Print a program in either surface. `beck fmt` on commit normalises to `.beck` (§2.2).
     Fmt {
@@ -202,7 +210,16 @@ fn main() -> Result<()> {
             assert_place,
             write_lock,
             locked,
-        } => check(&file, &assert_place, write_lock, locked),
+            wire_compat,
+            breaking,
+        } => check(
+            &file,
+            &assert_place,
+            write_lock,
+            locked,
+            wire_compat.as_deref(),
+            breaking,
+        ),
         Cmd::Fmt {
             file,
             surface,
@@ -382,7 +399,15 @@ fn iface(file: &Path, out: Option<&Path>, to_stdout: bool) -> Result<()> {
 }
 
 /// `beck check` — the whole front end, plus §3.4's stability and assertability guardrails.
-fn check(file: &Path, assertions: &[String], write_lock: bool, locked: bool) -> Result<()> {
+#[allow(clippy::too_many_arguments)]
+fn check(
+    file: &Path,
+    assertions: &[String],
+    write_lock: bool,
+    locked: bool,
+    wire_compat: Option<&Path>,
+    accept_breaking: bool,
+) -> Result<()> {
     let (project, map, diags) = checked_project(file)?;
     print!("{}", diags.render(&map));
     let Some(project) = project else {
@@ -390,6 +415,7 @@ fn check(file: &Path, assertions: &[String], write_lock: bool, locked: bool) -> 
     };
 
     let placement = project.solution.clone();
+    let interface = project.interface.clone();
     let (defs, signals) = (project.program.defs.len(), project.program.signals.len());
 
     // Slicing is the *application* question, and a module that is not one is still a module.
@@ -468,6 +494,39 @@ fn check(file: &Path, assertions: &[String], write_lock: bool, locked: bool) -> 
             println!("{f}");
         }
         bail!("{} placement assertion(s) failed", failed.len());
+    }
+
+    // §4.3: "runs in CI and fails on a breaking change without an explicit `@breaking` marker."
+    if let Some(previous) = wire_compat {
+        let text = read(previous)?;
+        let mut pd = Diagnostics::new();
+        let name = module_name(previous);
+        let old = beck_core::Interface::parse(&name, &text, &mut pd);
+        if pd.has_errors() {
+            let mut pmap = SourceMap::new();
+            pmap.add(previous.display().to_string(), text.clone());
+            print!("{}", pd.render(&pmap));
+            bail!("{} is not a readable interface", previous.display());
+        }
+        let changes = beck_core::compare(&old, &interface);
+        println!("\nwire compatibility against {}", previous.display());
+        if changes.is_empty() {
+            println!("  no change to the contract");
+        }
+        for c in &changes {
+            println!("  {c}");
+            println!("      {}", c.because);
+        }
+        if beck_core::is_breaking(&changes) && !accept_breaking {
+            bail!(
+                "{} breaking change(s). An old client talking to a new server would fail. \
+                 Pass --breaking to ship it anyway.",
+                changes
+                    .iter()
+                    .filter(|c| c.severity == beck_core::compat::Severity::Breaking)
+                    .count()
+            );
+        }
     }
 
     if write_lock {

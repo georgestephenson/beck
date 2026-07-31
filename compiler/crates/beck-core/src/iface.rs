@@ -333,6 +333,79 @@ fn item_signature(i: &Item) -> String {
     )
 }
 
+/// A type's structure, transitively — every field of every variant, through every named type it
+/// reaches.
+///
+/// §4.3 asks for an operation id that is "content-derived … stable across refactors that don't
+/// change the signature". A hash of the type's *name* satisfies neither half: it does not move when
+/// a field is added, which is the change that breaks every open tab. This is what content means.
+pub fn structural(ty: &Ty, types: &BTreeMap<Arc<str>, TyDecl>) -> String {
+    fn go(ty: &Ty, types: &BTreeMap<Arc<str>, TyDecl>, seen: &mut Vec<Arc<str>>, out: &mut String) {
+        match ty {
+            Ty::Var(v) => {
+                let _ = write!(out, "?{v}");
+            }
+            Ty::Fun(ps, r, row) => {
+                out.push('(');
+                for p in ps {
+                    go(p, types, seen, out);
+                    out.push(',');
+                }
+                out.push_str(")->");
+                go(r, types, seen, out);
+                let _ = write!(out, "!{row}");
+            }
+            Ty::Con(n, args) => {
+                out.push_str(n);
+                if !args.is_empty() {
+                    out.push('[');
+                    for a in args {
+                        go(a, types, seen, out);
+                        out.push(',');
+                    }
+                    out.push(']');
+                }
+                if seen.iter().any(|s| s == n) {
+                    return;
+                }
+                let Some(decl) = types.get(n.as_ref()) else {
+                    return;
+                };
+                seen.push(n.clone());
+                out.push('{');
+                match decl {
+                    TyDecl::Model { fields, .. } => {
+                        for (f, t) in fields {
+                            let _ = write!(out, "{f}:");
+                            go(t, types, seen, out);
+                            out.push(';');
+                        }
+                    }
+                    TyDecl::Union { variants, .. } => {
+                        for v in variants {
+                            let _ = write!(out, "{}(", v.name);
+                            for (f, t) in &v.fields {
+                                let _ = write!(out, "{f}:");
+                                go(t, types, seen, out);
+                                out.push(',');
+                            }
+                            out.push_str(");");
+                        }
+                    }
+                    TyDecl::Newtype { inner, .. } | TyDecl::Alias { ty: inner, .. } => {
+                        go(inner, types, seen, out)
+                    }
+                }
+                out.push('}');
+                seen.pop();
+            }
+        }
+    }
+    let mut out = String::new();
+    go(ty, types, &mut Vec::new(), &mut out);
+    out
+}
+
 fn type_signature(t: &TyDecl) -> String {
     match t {
         TyDecl::Model { name, fields } => format!(

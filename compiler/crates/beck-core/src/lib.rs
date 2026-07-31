@@ -14,6 +14,7 @@
 
 pub mod backend;
 pub mod check;
+pub mod compat;
 pub mod core;
 pub mod cost;
 pub mod graph;
@@ -30,6 +31,7 @@ pub mod ty;
 
 pub use backend::{Backend, Callable, ExecError};
 pub use check::{check_module, Def, Program, SignalDecl};
+pub use compat::{compare, is_breaking, Change};
 pub use core::{digest, Const, Core, CoreKind, Env, Prim, Value, VarId};
 pub use graph::{DepGraph, EdgeKind, GraphBuilder, GraphNode, NodeId, NodeKind};
 pub use html::Html;

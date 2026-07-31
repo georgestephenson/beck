@@ -214,12 +214,18 @@ pub fn split(program: Program, diags: &mut Diagnostics) -> Option<Placed> {
         .map(|_| Ty::con("Command"))
         .unwrap_or_else(Ty::unit);
 
-    // §4.3: content-derived, stable across refactors that do not change the signature.
+    // §4.3: "a stable, content-derived operation id … *not* a URL a human maintains, and stable
+    // across refactors that don't change the signature".
+    //
+    // **Content**, not name. Hashing `"Event"` would produce an id that never moves — including
+    // when a variant is added, which is precisely the change that breaks every open tab. The three
+    // types are hashed *structurally*, through every field of every variant they reach.
     let mut hasher = blake3::Hasher::new();
     hasher.update(program.name.as_bytes());
-    hasher.update(format!("{}", command_ty).as_bytes());
-    hasher.update(format!("{}", event_ty).as_bytes());
-    hasher.update(format!("{}", state_decl.ty).as_bytes());
+    for t in [&command_ty, &event_ty, &state_decl.ty] {
+        hasher.update(crate::iface::structural(t, &program.types).as_bytes());
+        hasher.update(b"\x00");
+    }
     let wire_id = hasher.finalize().to_hex()[..16].to_string();
 
     Some(Placed {
@@ -524,6 +530,43 @@ page: Signal[Html] = per_session(todos, view)
             b.expect("b").wire_id,
             "a body edit must not change the wire id"
         );
+    }
+
+    #[test]
+    fn the_wire_id_moves_when_the_wire_actually_changes() {
+        // The other half of the same requirement, and the one a name-hash silently fails: adding a
+        // variant to `Event` changes what a subscriber can be sent, so the operation id has to move
+        // or a rolling deploy has no way to notice.
+        let (a, _, _) = compile_str("todo.beck", TODO);
+        let changed = TODO
+            .replace(
+                "    Toggled(id: Id)\n    Deleted(id: Id)",
+                "    Toggled(id: Id)\n    Deleted(id: Id)\n    Starred(id: Id)",
+            )
+            .replace(
+                "        case Deleted(id):\n            return s.with(todos=map_remove(s.todos, id))",
+                "        case Deleted(id):\n            return s.with(todos=map_remove(s.todos, id))\n        case Starred(id):\n            return toggle(s, id)",
+            );
+        let (b, d, map) = compile_str("todo.beck", &changed);
+        assert!(!d.has_errors(), "{}", d.render(&map));
+        assert_ne!(a.expect("a").wire_id, b.expect("b").wire_id);
+
+        // …and a field added to a command moves it too, which a hash of the type's *name* would
+        // not have caught either.
+        let widened = TODO
+            .replace(
+                "    Toggle(id: Id)\n    Delete(id: Id)",
+                "    Toggle(id: Id, at: Int)\n    Delete(id: Id)",
+            )
+            .replace("case Toggle(id):", "case Toggle(id, at):")
+            .replace(
+                "span(on_click=Toggle(id=t.id)): t.text",
+                "span(on_click=Toggle(id=t.id, at=0)): t.text",
+            );
+        let (c, d, map) = compile_str("todo.beck", &widened);
+        assert!(!d.has_errors(), "{}", d.render(&map));
+        let (a, _, _) = compile_str("todo.beck", TODO);
+        assert_ne!(a.expect("a").wire_id, c.expect("c").wire_id);
     }
 
     #[test]
