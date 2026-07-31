@@ -15,6 +15,7 @@
 pub mod backend;
 pub mod check;
 pub mod core;
+pub mod cost;
 pub mod graph;
 pub mod html;
 pub mod place;
@@ -29,6 +30,7 @@ pub use check::{check_module, Def, Program, SignalDecl};
 pub use core::{digest, Const, Core, CoreKind, Env, Prim, Value, VarId};
 pub use graph::{DepGraph, EdgeKind, GraphBuilder, GraphNode, NodeId, NodeKind};
 pub use html::Html;
+pub use place::{Key, Lock, Method, Solution};
 pub use pmap::PMap;
 pub use row::{Ambient, Effect, Row};
 pub use split::{Placed, Roles};
@@ -42,14 +44,31 @@ use beck_diag::{Diagnostics, FileId, SourceMap};
 /// apart — §4.6's "one binary serves `beck build`, `beck check`, `beck lsp` and `beck explain`;
 /// there is no separate language server implementation to drift."
 pub fn compile(file: FileId, name: &str, src: &str, diags: &mut Diagnostics) -> Option<Placed> {
+    compile_with(file, name, src, None, diags)
+}
+
+/// The same, against a previously solved placement — §3.4's stability guardrail.
+pub fn compile_with(
+    file: FileId,
+    name: &str,
+    src: &str,
+    lock: Option<&Lock>,
+    diags: &mut Diagnostics,
+) -> Option<Placed> {
     let parsed = beck_syntax::parse_file(file, name, src, diags);
     let expanded = beck_macro::expand_module(&parsed, diags);
-    let program = check_module(&expanded, diags);
+    let mut program = check_module(&expanded, diags);
+    // Stage 7: solve first, then verify. Verification runs over the *solved* tiers as well as the
+    // written ones, so an annotation and an inference are held to one standard.
+    let solution = place::solve(&program, lock);
+    place::apply(&mut program, &solution);
     place::check_placement(&program, diags);
     if diags.has_errors() {
         return None;
     }
-    split::split(program, diags)
+    let mut placed = split::split(program, diags)?;
+    placed.placement = solution;
+    Some(placed)
 }
 
 /// Parse, expand and check one source string, stopping before placement.

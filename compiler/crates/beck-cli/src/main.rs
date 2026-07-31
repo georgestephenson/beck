@@ -42,8 +42,22 @@ enum Store {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Typecheck, verify placement, and slice the signal graph.
-    Check { file: PathBuf },
+    /// Typecheck, infer and verify placement, and slice the signal graph.
+    Check {
+        file: PathBuf,
+        /// Assert where something runs: `--assert-place page=client`. §3.4's assertability
+        /// guardrail — a placement a test depends on should fail the build when it moves, not
+        /// surface as a latency regression.
+        #[arg(long = "assert-place", value_name = "NAME=TIER")]
+        assert_place: Vec<String>,
+        /// Write the solved placement to `beck.lock`.
+        #[arg(long)]
+        write_lock: bool,
+        /// Fail if the solved placement differs from `beck.lock` — the CI form of §3.4's
+        /// stability guardrail.
+        #[arg(long)]
+        locked: bool,
+    },
     /// Print a program in either surface. `beck fmt` on commit normalises to `.beck` (§2.2).
     Fmt {
         file: PathBuf,
@@ -136,8 +150,12 @@ enum Cmd {
 
 #[derive(Subcommand)]
 enum Explain {
-    /// Where each definition runs, and why.
-    Place { file: PathBuf },
+    /// Where each definition runs, and why (§4.7).
+    Place {
+        file: PathBuf,
+        /// One definition or signal, with its candidates and their costs.
+        name: Option<String>,
+    },
     /// The command channel's content-derived operation id (§4.3).
     Wire { file: PathBuf },
     /// The signal graph, and what the splitter made of it.
@@ -161,22 +179,12 @@ fn main() -> Result<()> {
 
     let cli = Cli::parse();
     match cli.command {
-        Cmd::Check { file } => {
-            let (placed, map, diags) = compile(&file)?;
-            print!("{}", diags.render(&map));
-            match placed {
-                Some(p) => {
-                    println!(
-                        "ok: {} definitions, {} signals, wire id {}",
-                        p.program.defs.len(),
-                        p.program.signals.len(),
-                        p.wire_id
-                    );
-                    Ok(())
-                }
-                None => bail!("{} diagnostic(s)", diags.len()),
-            }
-        }
+        Cmd::Check {
+            file,
+            assert_place,
+            write_lock,
+            locked,
+        } => check(&file, &assert_place, write_lock, locked),
         Cmd::Fmt {
             file,
             surface,
@@ -220,14 +228,185 @@ fn read(file: &Path) -> Result<String> {
     std::fs::read_to_string(file).with_context(|| format!("reading {}", file.display()))
 }
 
+/// The placement lock that sits beside a source file, if there is one.
+///
+/// Beside the *source*, not in the working directory: `beck.lock` records where a particular
+/// program's code runs, and two programs in one directory do not share an answer.
+fn lock_path(file: &Path) -> PathBuf {
+    file.parent()
+        .unwrap_or(Path::new("."))
+        .join(beck_core::Lock::FILE)
+}
+
+fn read_lock(file: &Path) -> Option<beck_core::Lock> {
+    let text = std::fs::read_to_string(lock_path(file)).ok()?;
+    match beck_core::Lock::from_json(&text) {
+        Some(l) => Some(l),
+        None => {
+            eprintln!(
+                "warning: {} is not readable as a lock; solving without it",
+                lock_path(file).display()
+            );
+            None
+        }
+    }
+}
+
 fn compile(file: &Path) -> Result<(Option<Placed>, SourceMap, Diagnostics)> {
     let src = read(file)?;
     let name = file.display().to_string();
     let mut map = SourceMap::new();
     let id = map.add(name.clone(), src.clone());
     let mut diags = Diagnostics::new();
-    let placed = beck_core::compile(id, &name, &src, &mut diags);
+    let lock = read_lock(file);
+    let placed = beck_core::compile_with(id, &name, &src, lock.as_ref(), &mut diags);
     Ok((placed, map, diags))
+}
+
+/// `beck check` — the whole front end, plus §3.4's stability and assertability guardrails.
+fn check(file: &Path, assertions: &[String], write_lock: bool, locked: bool) -> Result<()> {
+    let (placed, map, diags) = compile(file)?;
+    print!("{}", diags.render(&map));
+    let Some(p) = placed else {
+        bail!("{} diagnostic(s)", diags.len());
+    };
+
+    println!(
+        "ok: {} definitions, {} signals, wire id {}",
+        p.program.defs.len(),
+        p.program.signals.len(),
+        p.wire_id
+    );
+
+    // §3.4: "a one-line edit must not re-place unrelated code; previous solution persisted in
+    // `beck.lock`, churn reported in CI".
+    if !p.placement.churn.is_empty() {
+        println!("\nplacement changed against {}:", beck_core::Lock::FILE);
+        for (key, was, now) in &p.placement.churn {
+            println!("  {key:<28} {} → {}", was.name(), now.name());
+        }
+        if locked {
+            bail!(
+                "--locked: {} placement(s) moved. Re-run with --write-lock if that is intended.",
+                p.placement.churn.len()
+            );
+        }
+        println!("(re-run with --write-lock to accept)");
+    }
+
+    // A tie is not an error — the tie-break is total and deterministic — but it *is* the place a
+    // future edit could silently move code, so it is named rather than absorbed.
+    for (key, tied) in &p.placement.ties {
+        println!(
+            "note: {key} could run on {} at the same cost; `@on(…)` or {} would pin it",
+            tied.iter()
+                .map(|t| t.name())
+                .collect::<Vec<_>>()
+                .join(" or "),
+            beck_core::Lock::FILE
+        );
+    }
+
+    let mut failed = Vec::new();
+    for a in assertions {
+        let Some((name, want)) = a.split_once('=') else {
+            bail!("--assert-place takes NAME=TIER, got `{a}`");
+        };
+        let Some(want) = beck_core::Tier::parse(want.trim()) else {
+            bail!("`{want}` is not a tier");
+        };
+        match p.placement.explanation(name.trim()) {
+            Some(e) if e.chosen == want => {}
+            Some(e) => failed.push(format!(
+                "  {name}: expected {}, runs on {} — {}",
+                want.name(),
+                e.chosen.name(),
+                e.because
+            )),
+            None => failed.push(format!("  {name}: no such definition or signal")),
+        }
+    }
+    if !failed.is_empty() {
+        println!("\nplacement assertions failed:");
+        for f in &failed {
+            println!("{f}");
+        }
+        bail!("{} placement assertion(s) failed", failed.len());
+    }
+
+    if write_lock {
+        let path = lock_path(file);
+        std::fs::write(&path, beck_core::Lock::of(&p.placement).to_json())?;
+        eprintln!("wrote {}", path.display());
+    }
+    Ok(())
+}
+
+/// `beck explain place` — §4.7's derivation, not its conclusion.
+fn explain_place(file: &Path, only: Option<&str>) -> Result<()> {
+    use beck_core::cost::FORBIDDEN;
+
+    let placed = compiled(file)?;
+    let solution = &placed.placement;
+
+    if let Some(name) = only {
+        let Some(e) = solution.explanation(name) else {
+            bail!("no `{name}` in this program");
+        };
+        println!("{}  →  {} tier\n", e.key.name(), e.chosen.name());
+        println!(
+            "  effects    : {}",
+            if e.row.visible().is_empty() {
+                "{}  (pure; placeable anywhere)".to_string()
+            } else {
+                format!("{}", e.row)
+            }
+        );
+        let costs: Vec<String> = e
+            .candidates
+            .iter()
+            .map(|(t, c)| {
+                if *c >= FORBIDDEN {
+                    format!("{} (cannot discharge this row)", t.name())
+                } else {
+                    format!("{} (cost {:.1})", t.name(), *c as f64 / 100.0)
+                }
+            })
+            .collect();
+        println!("  candidates : {}", costs.join(", "));
+        println!("  chosen     : {}", e.chosen.name());
+        println!("  because    : {}", e.because);
+        println!(
+            "\ncosts are whole-program: what this program would cost with `{}` on that tier and \n\
+             everything else where it is. Solved {}.",
+            e.key.name(),
+            solution.method.name()
+        );
+        return Ok(());
+    }
+
+    println!("{:<20} {:<8} {:<10} effects", "name", "tier", "kind");
+    for e in &solution.explanations {
+        let kind = match &e.key {
+            beck_core::Key::Def(_) => "definition",
+            beck_core::Key::Signal(_) => "signal",
+        };
+        println!(
+            "{:<20} {:<8} {:<10} {}",
+            e.key.name(),
+            e.chosen.name(),
+            kind,
+            e.row
+        );
+    }
+    println!(
+        "\nunplaced (`any`) means pure, so it compiles to every tier that needs it — that\n\
+         duplication is the payoff, not waste. Solved {}; total cost {:.1}.\n\
+         `beck explain place <file> <name>` shows one decision's candidates and their costs.",
+        solution.method.name(),
+        solution.total as f64 / 100.0
+    );
+    Ok(())
 }
 
 fn compiled(file: &Path) -> Result<Placed> {
@@ -452,41 +631,7 @@ fn impact_cmd(file: &Path, name: &str, json: bool) -> Result<()> {
 
 fn explain(what: Explain) -> Result<()> {
     match what {
-        Explain::Place { file } => {
-            let placed = compiled(&file)?;
-            println!("{:<20} {:<8} effects", "definition", "tier");
-            for name in &placed.program.def_order {
-                let d = &placed.program.defs[name];
-                println!(
-                    "{:<20} {:<8} {{{}}}",
-                    d.name,
-                    d.tier.name(),
-                    d.effects
-                        .iter()
-                        .map(|e| e.name())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                );
-            }
-            for s in &placed.program.signals {
-                println!(
-                    "{:<20} {:<8} {{{}}}   : {}",
-                    s.name,
-                    s.tier.name(),
-                    s.effects
-                        .iter()
-                        .map(|e| e.name())
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                    s.ty
-                );
-            }
-            println!(
-                "\nunplaced (`any`) means pure, so it compiles to every tier that needs it — \
-                 that duplication is the payoff, not waste."
-            );
-            Ok(())
-        }
+        Explain::Place { file, name } => explain_place(&file, name.as_deref()),
         Explain::Wire { file } => {
             let placed = compiled(&file)?;
             println!("operation id  {}", placed.wire_id);

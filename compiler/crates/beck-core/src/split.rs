@@ -47,6 +47,9 @@ pub struct Placed {
     /// operation id (`sha256(module, name, signature)[..16]`) — *not* a URL a human maintains, and
     /// stable across refactors that don't change the signature."
     pub wire_id: String,
+    /// How stage 7 placed the program, kept so that `beck explain place` prints the derivation
+    /// rather than re-deriving it from a second, drifting copy.
+    pub placement: crate::place::Solution,
 }
 
 /// The five things the runtime needs, each a `Core` value it can call.
@@ -220,6 +223,14 @@ pub fn split(program: Program, diags: &mut Diagnostics) -> Option<Placed> {
     let wire_id = hasher.finalize().to_hex()[..16].to_string();
 
     Some(Placed {
+        placement: crate::place::Solution {
+            tiers: Default::default(),
+            explanations: Vec::new(),
+            method: crate::place::Method::Exhaustive,
+            total: 0,
+            churn: Vec::new(),
+            ties: Vec::new(),
+        },
         roles: Roles {
             validate,
             fold,
