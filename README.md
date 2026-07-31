@@ -53,11 +53,24 @@ everything placed is unplaced-pure — code with no tier, compiled to whichever 
 done, and the sixteen things that turned out harder than expected — including the discovery that the
 Phase 1 CI workflow had never run.
 
+**Phase 3 has started**, with one of its twelve bullets built: **tests written in Beck**. A test is
+a log, a command and an expectation, so there is no fixture — state is a fold, and `given [ … ]`
+goes through the program's real `apply_event`. There is no network either: `expect
+page(session("bo")) contains "milk"` renders through the same view the server diffs, because the
+boundary is a placement of one graph rather than a seam between two programs. And there are no mocks
+to write — a stub is a value for an *effect atom*, every external call is stubbed by default with an
+inhabitant the compiler derives from its return type, and `beck test --verbose` prints the complete
+list of what it stubbed, because the compiler already knows it. `expect place(page) == client` is
+answered without running anything, and still passes with every `@on(...)` deleted.
+[`docs/22-phase-3-report.md`](docs/22-phase-3-report.md) has what shipped, the five corrections
+building it made to the design, and the eleven Phase 3 bullets it does **not** cover.
+
 ```console
 $ cd compiler
 $ cargo run -- check   examples/todo.beck      # typecheck, infer effects, place, slice
 $ cargo run -- explain place examples/todo.beck todos   # candidates, costs, and why
 $ cargo run -- explain flow  examples/todo.beck Id      # where a type reaches, and what is blocked
+$ cargo run -- test    examples/todo.beck              # the program's own tests, written in Beck
 $ cargo run -- iface   examples/todo.beck      # the published signature: types, effects, placements
 $ cargo run -- check   examples/todo.beck --wire-compat previous.becki
 $ cargo run -- graph   examples/todo.beck      # every part, and what depends on what

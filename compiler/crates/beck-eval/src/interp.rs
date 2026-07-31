@@ -67,6 +67,14 @@ pub trait Host {
     fn secret(&self, name: &str) -> Arc<str> {
         std::env::var(name).unwrap_or_default().into()
     }
+
+    /// Answer a call to a top-level definition without running its body.
+    ///
+    /// The evaluator's half of [`beck_core::backend::Interceptor`]. Defaulted to "run the real
+    /// thing", so the only host that behaves differently is the one a `beck test` run installs.
+    fn intercept(&self, _name: &str, _args: &[Value]) -> Option<Value> {
+        None
+    }
 }
 
 pub struct Interp<'h> {
@@ -155,11 +163,23 @@ impl<'h> Interp<'h> {
                 env: env.clone(),
             }))),
             CoreKind::App { func, args } => {
-                let f = self.eval(func, env)?;
                 let mut vals = Vec::with_capacity(args.len());
                 for a in args {
                     vals.push(self.eval(a, env)?);
                 }
+                // A stub replaces the *call*, not the value: the arguments are evaluated first,
+                // because §21.3 rule 4 wants to answer "with what?" afterwards, and because a
+                // stubbed function's arguments are ordinary code the test still means to run.
+                //
+                // Only a direct call of a named definition is intercepted. A function passed as a
+                // value has lost its name by the time it is applied, and inventing one would be a
+                // guess; docs/22 records the limit rather than leaving it to be discovered.
+                if let CoreKind::Global(name) = &func.kind {
+                    if let Some(v) = self.host.intercept(name, &vals) {
+                        return Ok(v);
+                    }
+                }
+                let f = self.eval(func, env)?;
                 self.apply(&f, vals, c.span)
             }
             CoreKind::Prim { op, args } => {

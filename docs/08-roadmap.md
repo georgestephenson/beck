@@ -112,7 +112,20 @@ every §3.5 property is a passing test; a 3-module project rebuilds incrementall
 dependencies whose signatures didn't change.
 **Met** ([`20`](20-phase-2-report.md) §20.3).
 
-## Phase 3 — Make it real for developers (4–5 months)
+## Phase 3 — Make it real for developers (4–5 months) — **STARTED**
+
+> One of the twelve bullets below is built: **`test` blocks and inferred mocks**, with
+> [`22`](22-phase-3-report.md) as its evidence. `beck test` runs a program's own tests — a log, a
+> command and an expectation — through the same roles the runtime drives, with no network, no
+> fixture and no mock written by hand; §21.3's "everything is stubbed by default, and the default
+> says what it did" is built, and so is the one type-directed generator that stubs and `property`
+> blocks share. The eleven other bullets are **untouched**, and [`22`](22-phase-3-report.md) §22.6
+> names them one at a time rather than by omission.
+>
+> The debt is unchanged and now carries two phases' names: **the general slicer is still not
+> built**. [`19`](19-phase-1-report.md) §19.9 assigned it to Phase 2, [`20`](20-phase-2-report.md)
+> §20.5 recorded that Phase 2 did not deliver it, and Phase 3 has not either. §5.3's incremental
+> views need the signal graph treated as a graph, so it is the next thing to build.
 
 - LLVM release backend + differential tests against Cranelift (§5.2).
 - **Incremental views**: compile subscribed/materialized views to differential-dataflow plans with
@@ -123,12 +136,14 @@ dependencies whose signatures didn't change.
   component bundle).
 - Client polish for both modes: router, forms, lazy routes, focus/scroll preservation, devtools
   extension showing signal graph, patch traffic and pending state.
-- **`test` blocks and inferred mocks** ([`21`](21-tests-in-beck-and-proof.md) §21.2–§21.3): a test
-  is a log, a command and an expectation, so cross-boundary tests need no network and no fixtures;
-  stubs attach to *effect atoms* rather than to interfaces, so "any value" is the default and has no
-  syntax. Depends on one type-directed value generator, which `property` blocks share. This is the
-  first thing an outside developer will reach for, and Phase 2 shipped with no way for them to write
-  a single test about their own program.
+- **`test` blocks and inferred mocks** ([`21`](21-tests-in-beck-and-proof.md) §21.2–§21.3) —
+  **BUILT** ([`22`](22-phase-3-report.md)): a test is a log, a command and an expectation, so
+  cross-boundary tests need no network and no fixtures; stubs attach to *effect atoms* rather than
+  to interfaces, so "any value" is the default and has no syntax. Depends on one type-directed value
+  generator, which `property` blocks share. This is the first thing an outside developer will reach
+  for, and Phase 2 shipped with no way for them to write a single test about their own program.
+  `case` inside a stub (§21.3 rule 3) and `beck test --update` for page snapshots are the two parts
+  that did not ship.
 - Structured concurrency, `Result`/error rows, `match` exhaustiveness, pattern matching completion.
 - **SQLite as a durable substrate** ([`07`](07-dependencies.md) §7.8.1): a `LogStore`
   implementation beside redb and Postgres. The reason is not speed — the measurements say the
@@ -149,6 +164,9 @@ dependencies whose signatures didn't change.
 
 **Exit**: an outside developer builds a non-trivial app from documentation alone, without asking the
 team a question. Track this literally as the acceptance test.
+**Not met**, and not close — one bullet of twelve ([`22`](22-phase-3-report.md) §22.6). What did
+change is that the first question they would have asked — "how do I test this?" — now has a command
+for an answer.
 
 ## Phase 4 — Production readiness (4–5 months)
 

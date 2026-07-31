@@ -1,9 +1,10 @@
-name: phase 2
+name: phase 3
 
 # The same discipline as the Phase 0 workflow (docs/08-roadmap.md §8.3), applied to the compiler.
 #
-# Phase 2 adds the exit criterion itself as a job: the corpus, checked with no annotations; the
-# security suite; and a three-module project that links. Those are gates, not reports.
+# Phase 2 added the exit criterion itself as a job: the corpus, checked with no annotations; the
+# security suite; and a three-module project that links. Phase 3 adds `beck test` — the programs'
+# *own* tests, run by the command an outside developer runs. Those are gates, not reports.
 #
 # What is a *gate* and what is merely *reported* stays a deliberate distinction (§13.7): the
 # harnesses, the round-trip property and the licence check fail the build; timings are printed but
@@ -89,6 +90,25 @@ jobs:
 
       - name: replay is exact
         run: ./target/release/beck replay examples/todo.beck --path /tmp/beck.log --verify
+
+      - name: the programs' own tests pass
+        # docs/21 §21.2, run the way a person runs it. This is a different claim from `cargo test`:
+        # that suite tests the *compiler*, and this one runs tests written in Beck, about Beck
+        # programs, through the same roles the runtime drives.
+        run: |
+          ./target/release/beck test examples/todo.beck --verbose
+          for f in corpus/*.beck; do
+            # Not every corpus program carries tests; the ones that do must pass.
+            ./target/release/beck test "$f"
+          done
+          # A failing test has to fail the build, or the gate is decorative. This is the property
+          # docs/19 §19.4 item 10 says an unexecuted artefact cannot have.
+          python3 - <<'PY'
+          src = open("examples/todo.beck").read()
+          src += '\ntest "deliberately false":\n    given []\n    expect list_len(events) == 1\n'
+          open("/tmp/failing.beck", "w").write(src)
+          PY
+          ! ./target/release/beck test /tmp/failing.beck
 
       - name: the log substrates are measured, not assumed
         # Reported, never thresholded (§13.7): a shared runner cannot hold a timing gate honestly.

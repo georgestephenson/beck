@@ -136,3 +136,9 @@ every `durable` store (replay idempotence, migration round-trips, upcast totalit
 (`beck test --simulate`) that runs the user's own app under fault injection. Nobody else can hand
 application developers deterministic-simulation testing of their whole stack as a CLI flag; it
 falls out of our semantics.
+
+*Status ([`22`](22-phase-3-report.md)). Built: `test`/`property` blocks with shrinking, `expect
+place(…)`, `expect flow(…) reaches nothing on <tier>`, and effect-atom stubs. Not built: fold law
+checks, `fork(log=…)` fixtures — which need `beck fork`, Phase 4 — and `--simulate`. The
+`Interceptor` seam `beck test` installs stubs through is the shape fault injection needs, so the
+last of those is closer than it was ([`22`](22-phase-3-report.md) §22.7 item 4).*

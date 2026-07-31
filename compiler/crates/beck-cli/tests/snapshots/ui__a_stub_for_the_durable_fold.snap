@@ -1,0 +1,11 @@
+---
+source: crates/beck-cli/tests/ui.rs
+expression: "render(&format!(\"{}\\ntest \\\"the database is real and in memory\\\":\\n    stub durable: True\\n\",\nBASE))"
+---
+error[B0703]: `durable` is not something a stub can stand in for
+  --> t.beck:181:5
+    |
+181 |     stub durable: True
+    |     ^^^^^^^^^^^^^^^^^^
+    |
+  = note: time, ids and persistence are not stubbed in Beck and there is nothing to write: the clock is data on the envelope, ids are minted at the edge, and the durable fold is real and in memory

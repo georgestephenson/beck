@@ -46,3 +46,14 @@ proposals: Stream[Proposal] = merge_clients()
 events: Stream[Event] = decide(proposals, count, validate)
 count: Signal[State] = durable(fold(apply_event, State(n=0), events))
 page: Signal[Html] = per_session(count, view)
+
+test "a counter at zero cannot go lower":
+    given []
+    when Decrement
+    expect Err(error=TooLow)
+
+test "the floor is reachable and the count is a fold":
+    given [Incremented, Incremented]
+    when Decrement
+    expect state == fold_of [Incremented]
+    expect page contains "1"

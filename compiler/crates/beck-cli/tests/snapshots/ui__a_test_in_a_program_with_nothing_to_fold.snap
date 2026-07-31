@@ -1,0 +1,11 @@
+---
+source: crates/beck-cli/tests/ui.rs
+expression: "render(\"def helper(x: Int) -> Int:\\n    return x + 1\\n\\ntest \\\"x\\\":\\n    given []\\n\")"
+---
+error[B0706]: `given` needs `list[Event]`, and this program does not have one
+  --> t.beck:5:5
+  |
+5 |     given []
+  |     ^^^^^^^^
+  |
+  = note: the state a test arranges is a fold over the program's own event stream, so a program with no `merge_clients` → `decide` → `durable(fold(…))` has nothing for `given` and `when` to mean

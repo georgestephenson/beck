@@ -17,6 +17,7 @@ pub mod check;
 pub mod compat;
 pub mod core;
 pub mod cost;
+pub mod gen;
 pub mod graph;
 pub mod html;
 pub mod iface;
@@ -28,6 +29,7 @@ pub mod repr;
 pub mod row;
 pub mod secure;
 pub mod split;
+pub mod testing;
 pub mod ty;
 
 pub use backend::{Backend, Callable, ExecError};
@@ -43,6 +45,7 @@ pub use project::{compile_project, Sources};
 pub use row::{Ambient, Effect, Row};
 pub use secure::{sendable, storable, NotSendable};
 pub use split::{Placed, Roles};
+pub use testing::{Clause, Expectation, TestDef};
 pub use ty::{Tier, Ty, TyDecl};
 
 use beck_diag::{Diagnostics, FileId, SourceMap};

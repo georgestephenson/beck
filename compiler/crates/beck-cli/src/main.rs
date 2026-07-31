@@ -123,6 +123,23 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
+    /// Run the program's own `test` and `property` blocks (§21.2).
+    ///
+    /// A test is a log, a command and an expectation, so this needs no network, no database and no
+    /// browser: the tiers are co-located and the roles are the ones the runtime drives.
+    Test {
+        file: PathBuf,
+        /// Only run tests whose name contains this.
+        #[arg(long, short)]
+        filter: Option<String>,
+        /// Say what was stubbed even when the test passed — §21.3 rule 1's hidden default,
+        /// declaring itself.
+        #[arg(long, short)]
+        verbose: bool,
+        /// Inputs per `property` block.
+        #[arg(long, default_value_t = 100)]
+        runs: u64,
+    },
     /// Run the program in a single process — rung 0 of the parity ladder.
     Run {
         file: PathBuf,
@@ -259,6 +276,12 @@ fn main() -> Result<()> {
                 rt.block_on(bench::run(url.as_deref(), &dir))
             }
         },
+        Cmd::Test {
+            file,
+            filter,
+            verbose,
+            runs,
+        } => test_cmd(&file, filter.as_deref(), verbose, runs),
         Cmd::Graph { file, json, types } => graph_cmd(&file, json, types),
         Cmd::Impact { file, name, json } => impact_cmd(&file, &name, json),
         Cmd::Run {
@@ -1001,6 +1024,34 @@ async fn run(file: &Path, addr: &str, store: Store, path: &Path, url: Option<&st
         app.head()
     );
     beck_rt::http::serve_with_dashboard(app, addr.parse()?, rx, Some(dashboard)).await
+}
+
+/// `beck test` — §21.2's construct, run.
+///
+/// Note what this command does not take: no `--url`, no `--store`, no address. A test performs no
+/// effects (`B0700` is a compile error) and its subject's effects are stubbed, so there is nothing
+/// to point at anything.
+fn test_cmd(file: &Path, filter: Option<&str>, verbose: bool, runs: u64) -> Result<()> {
+    let placed = compiled(file)?;
+    if placed.program.tests.is_empty() {
+        eprintln!("no `test` or `property` blocks in {}", file.display());
+        return Ok(());
+    }
+    let backend = beck_eval::backend(&placed);
+    let opts = beck_rt::testing::Options {
+        filter: filter.map(str::to_string),
+        runs,
+        base_dir: file
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from(".")),
+    };
+    let report = beck_rt::testing::run(&placed, backend, &opts);
+    print!("{}", beck_rt::testing::render(&report, verbose));
+    if !report.ok() {
+        std::process::exit(1);
+    }
+    Ok(())
 }
 
 /// The dashboard's structural half: the dependency graph, and the resources the effects imply.

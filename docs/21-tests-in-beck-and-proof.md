@@ -1,6 +1,7 @@
 # 21. Tests written in Beck, and proof of what Beck writes
 
-*Design. Nothing in §21.2 or §21.3 is built; §21.4 rungs 1–5 are built and §21.5 is not. The
+*§21.2 and §21.3 are **built** — see [`22`](22-phase-3-report.md), which also records the five
+places where building them corrected this document. §21.4 rungs 1–5 are built and §21.5 is not. The
 distinction is stated per section rather than left to be discovered — "built" and "runs" and
 "measured" are three different claims, and "designed" is a fourth.*
 
@@ -8,9 +9,10 @@ Two questions that sound like one:
 
 1. **What tests can somebody write about their own Beck program?** [`11`](11-language-tour.md)
    §11.10 sketches `test`/`property` blocks and [`13`](13-testing.md) §13.9 promises them as a
-   language feature. Neither is built, and the compiler's own suite — the differential harness, the
-   replay harness, the corpus, the security suite — tests *the compiler*, which is a different
-   thing entirely. §21.2 and §21.3 are the design.
+   language feature. Both are built now (`beck test`); the compiler's own suite — the differential
+   harness, the replay harness, the corpus, the security suite — tests *the compiler*, which is a
+   different thing entirely. §21.2 and §21.3 are the design, and
+   [`22`](22-phase-3-report.md) is what got built from it.
 2. **How do we know the files `beck build` writes are correct?** Not "have we tested them" but
    what *kind* of confidence each mechanism buys. §21.4 is the ladder, with the rung each defect in
    [`20`](20-phase-2-report.md) §20.4 item 13 was caught by; §21.5 is what a proof would and would
@@ -39,7 +41,11 @@ The fourth row is the one nobody else can have, and §21.3 is what it buys.
 
 ## 21.2 `test` blocks: cross-boundary by construction
 
-*Design. Not built.*
+*Built ([`22`](22-phase-3-report.md) §22.2). Two pieces of notation below are not what shipped, and
+are marked where they appear: `page(session(…))` and `fold_of` are **clauses**, not expressions
+([`22`](22-phase-3-report.md) §22.5 item 1), and `when session("ana") sends` carries an actor name
+rather than a `Session` expression (§22.5 item 2). Both open questions at the end of this section
+are answered there.*
 
 ### The shape
 
@@ -61,6 +67,11 @@ test "toggling twice is identity":                    # §11.10, unchanged
     when Toggle(id="1"), Toggle(id="1")
     expect state == fold_of [Added(id="1", text="milk", owner="ana")]
 ```
+
+> **As built.** `fold_of` is a clause, not a function: folding a log is what the data tier does, and
+> the runner drives the program's real fold over it. `given` and `fold_of` both take an optional
+> `by "actor"`, because the envelope's actor is what a fold reads as data
+> ([`22`](22-phase-3-report.md) §22.5 item 1).
 
 Four blocks, and each is a value in a type the program already declares:
 
@@ -90,6 +101,13 @@ test "one client's command reaches another client's page":
     expect page(session("bo")) contains "milk"
     expect page(session("ana")) contains "milk"
 ```
+
+> **As built.** The notation is unchanged; what it *is* changed. `expect page(session(…)) contains …`
+> is a clause, not an expression: rendering a page is `per_session(state, view)` applied — a role
+> the runtime drives, not a function a test scope can bind. `session("ana")` likewise names an
+> actor rather than constructing a `Session`, because §3.7 mints one from verified claims and a
+> test that could build one out of an expression would be a way to forge one.
+> [`22`](22-phase-3-report.md) §22.5 items 1–2.
 
 `page(session)` is `per_session(state, view)` applied — the same function the server renders with.
 No network is involved and none is being simulated: the test runs the same `Roles` the runtime
@@ -150,21 +168,36 @@ to be than "retry it three times".
   the one under test is simpler and worse to write. Recommendation: in the module, with the
   stripping asserted by a test of its own — the client-bundle search in `security.rs` is the
   template.
+  **Answered: in the module**, and all three assertions exist — the interface digest is unmoved, the
+  placement problem gains no node, the wire id does not shift, and the bundle search is the template
+  it was said to be ([`22`](22-phase-3-report.md) §22.1).
 * **Do test blocks have effect rows?** They must not: a test that performs a real `net.out` is a
   test that can fail because somebody else's server is down. A `test` block should be checked with
   an empty row, and any effect its subject performs must be discharged by a `stub`. That makes
   "you forgot to stub something" a **compile error naming the effect** rather than a hang.
+  **Answered in two halves**, which pull in opposite directions and are both right: the test
+  block's own row is checked empty (`B0700`, naming the effect), and the *subject's* effects are
+  auto-stubbed per §21.3 rule 1 rather than demanded. So the error a person meets is "you wrote an
+  effect into your test", not "you forgot to stub something"
+  ([`22`](22-phase-3-report.md) §22.5 item 4).
 * **Property tests** (`property "…" (events: list[Event])`, §11.10) need generated values, which is
   the same machinery §21.3 needs for stub returns. Build the generator once.
+  **Built once**, in `beck-core/src/gen.rs`, and used by both.
 * **Golden/snapshot assertions** for pages (`expect page matches snapshot`) need an update flow
   (`beck test --update`). The compiler's own suite uses `insta` for exactly this and it works;
   the risk is snapshot rot, and the mitigation is the same one — review the diff.
+  **Still open — not built.** A page assertion is `contains` and nothing else today
+  ([`22`](22-phase-3-report.md) §22.6).
 
 ---
 
 ## 21.3 Mocks nobody writes
 
-*Design. Not built. This is the section with the most new claim in it.*
+*Built ([`22`](22-phase-3-report.md) §22.3), with two exceptions marked where they appear: rule 3
+(`case` inside a stub) is not built, and rule 1's auto-stubbing excludes `nondet` and `cap.*` for
+reasons §22.3 gives. This section also **understates one rule**: a stub replaces the definition that
+*performs* an atom, not every definition whose row inherits it — see §22.3, because getting that
+wrong replaces the authority chokepoint itself.*
 
 ### The complaint, and why it is a design smell rather than a tooling gap
 
@@ -192,6 +225,11 @@ What is left is the genuinely external: `net.out(host)`, `env`, `external.read/w
 exactly which of them any definition performs.
 
 ### Rule 1 — everything is stubbed by default, so "any value" has no syntax
+
+*Built, with two atoms deliberately excluded from the automatic half: `nondet`, because ids and the
+clock are already data at the edge and the harness supplies them deterministically, and `cap.*`,
+because a capability is discharged by the chokepoint `when` exists to exercise. Both may still be
+stubbed by name ([`22`](22-phase-3-report.md) §22.3).*
 
 The tedious case is the one you do not care about, so it should cost nothing:
 
@@ -232,6 +270,9 @@ monomorphic and the value's type is inferred from the call site the same way any
 is.
 
 ### Rule 3 — matching by value uses the language's own `match`, so there is no mock DSL
+
+*Not built ([`22`](22-phase-3-report.md) §22.6). A stub is a value; matching on the arguments a call
+was made with is the one part of this section that is still design.*
 
 ```python
 test "large charges are declined":

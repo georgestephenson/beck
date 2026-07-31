@@ -230,6 +230,12 @@ impl Py {
                 self.line(&format!("test {name}:"));
                 self.body(&n.args[1]);
             }
+            Some(sym::PROPERTY) if n.args.len() == 3 => {
+                let name = self.expr(&n.args[0]);
+                let params = self.params(&n.args[1]);
+                self.line(&format!("property {name}({params}):"));
+                self.body(&n.args[2]);
+            }
             _ => self.stmt(n),
         }
     }
@@ -400,8 +406,90 @@ impl Py {
                 self.indent -= 1;
             }
             Some(sym::DEF | sym::MACRO | sym::MODEL | sym::UNION | sym::TYPE | sym::NEWTYPE)
-            | Some(sym::TRAIT | sym::IMPL | sym::IMPORT | sym::DECORATE | sym::TEST) => {
-                self.item(n)
+            | Some(sym::TRAIT | sym::IMPL | sym::IMPORT | sym::DECORATE | sym::TEST)
+            | Some(sym::PROPERTY) => self.item(n),
+
+            // ---- §21.2's clauses. Each prints back as the line it was written as, because
+            // `parse(print(parse(src))) == parse(src)` is asserted over the corpus and a test block
+            // is part of the corpus now.
+            Some(sym::GIVEN) if !n.args.is_empty() => {
+                let events = self.expr(&n.args[0]);
+                match n.args.get(1) {
+                    Some(actor) => {
+                        let a = self.expr(actor);
+                        self.line(&format!("given {events} by {a}"));
+                    }
+                    None => self.line(&format!("given {events}")),
+                }
+            }
+            Some(sym::WHEN) if n.args.len() >= 2 => {
+                let cmds: Vec<String> = n.args[1..].iter().map(|a| self.expr(a)).collect();
+                let cmds = cmds.join(", ");
+                match n.args[0].as_str_lit() {
+                    Some(actor) => self.line(&format!("when session(\"{actor}\") sends {cmds}")),
+                    None => self.line(&format!("when {cmds}")),
+                }
+            }
+            Some(sym::EXPECT) if n.args.len() == 1 => {
+                // `expect Ok(…)`/`expect Err(…)` parsed as `result == …`; printing the desugared
+                // form is what makes the round-trip a fixed point rather than an oscillation.
+                let e = self.expr(&n.args[0]);
+                self.line(&format!("expect {e}"));
+            }
+            Some(sym::EXPECT_CONTAINS) if !n.args.is_empty() => {
+                let needle = self.expr(&n.args[0]);
+                match n.args.get(1).and_then(|a| a.as_str_lit()) {
+                    Some(actor) => self.line(&format!(
+                        "expect page(session(\"{actor}\")) contains {needle}"
+                    )),
+                    None => self.line(&format!("expect page contains {needle}")),
+                }
+            }
+            Some(sym::EXPECT_FOLD) if !n.args.is_empty() => {
+                let events = self.expr(&n.args[0]);
+                match n.args.get(1).and_then(|a| a.as_str_lit()) {
+                    Some(actor) => {
+                        self.line(&format!("expect state == fold_of {events} by \"{actor}\""))
+                    }
+                    None => self.line(&format!("expect state == fold_of {events}")),
+                }
+            }
+            Some(sym::EXPECT_PLACE) if n.args.len() == 2 => {
+                let what = self.expr(&n.args[0]);
+                let tier = self.expr(&n.args[1]);
+                self.line(&format!("expect place({what}) == {tier}"));
+            }
+            Some(sym::EXPECT_FLOW) if n.args.len() == 2 => {
+                let ty = self.expr(&n.args[0]);
+                let tier = self.expr(&n.args[1]);
+                self.line(&format!("expect flow({ty}) reaches nothing on {tier}"));
+            }
+            Some(sym::EXPECT_WIRE) if n.args.len() == 1 => {
+                let path = self.expr(&n.args[0]);
+                self.line(&format!("expect wire_compatible_with {path}"));
+            }
+            Some(sym::EXPECT_EFFECT) if n.args.len() == 2 => {
+                let atom = n.args[0].as_str_lit().unwrap_or_default().to_string();
+                let how = &n.args[1];
+                match how.head_name() {
+                    Some("times") if how.args.len() == 1 => {
+                        match how.args[0].as_lit() {
+                            Some(Lit::Int(1)) => self.line(&format!("expect {atom} once")),
+                            Some(Lit::Int(k)) => self.line(&format!("expect {atom} times {k}")),
+                            _ => self.line(&format!("expect {atom} once")),
+                        };
+                    }
+                    Some("with") if how.args.len() == 1 => {
+                        let v = self.expr(&how.args[0]);
+                        self.line(&format!("expect {atom} with {v}"));
+                    }
+                    _ => self.line(&format!("expect no {atom}")),
+                }
+            }
+            Some(sym::STUB) if n.args.len() == 2 => {
+                let atom = n.args[0].as_str_lit().unwrap_or_default().to_string();
+                let v = self.expr(&n.args[1]);
+                self.line(&format!("stub {atom}: {v}"));
             }
             _ => {
                 // A call with a `do=` block prints back in block form; anything else is an
@@ -706,6 +794,12 @@ mod roundtrip {
             (
                 "types",
                 "type Id = newtype[Str]\n\nmodel M:\n    a: Int\n\nunion U:\n    A(x: Int)\n    B\n",
+            ),
+            // §21.2's clauses are part of the surface now, so they are part of the property that
+            // says the surface is a fixed point of printing.
+            (
+                "tests",
+                "test \"a\":\n    given [Added(id=\"1\")] by \"ana\"\n    when session(\"ana\") sends Add(id=\"1\"), Toggle(id=\"1\")\n    stub net.out(payments.example.com): Declined\n    expect page contains \"milk\"\n    expect page(session(\"bo\")) contains \"milk\"\n    expect state == fold_of []\n    expect state == fold_of [Added(id=\"1\")] by \"ana\"\n    expect place(view) == client\n    expect flow(ApiKey) reaches nothing on client\n    expect wire_compatible_with \"o.becki\"\n    expect no net.out\n    expect net.out(h.example.com) once\n    expect net.out(h.example.com) times 3\n    expect net.out(h.example.com) with Charge(amount=1)\n    expect Err(error=BlankText)\n\nproperty \"p\"(events: list[Event]):\n    given events\n    expect list_len(events) >= 0\n",
             ),
         ]
     }
