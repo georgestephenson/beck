@@ -22,6 +22,38 @@ beck deploy       → remote cluster
 The language's *semantics* — placement, effects, boundaries — are identical in all four. Only the
 `Platform` differs. Everything that follows is about the two rightmost columns.
 
+### 6.1.1 The trait, as built
+
+*Added in Phase 2's follow-on work ([`20`](20-phase-2-report.md) §20.4 item 15).*
+
+```rust
+pub trait Platform {
+    fn name(&self) -> &'static str;
+    fn manifest_dir(&self) -> &'static str;
+    fn manifests(&self, graph: &InfraGraph, wire_id: &str) -> Vec<Artefact>;
+    fn build_inputs(&self, graph: &InfraGraph) -> Vec<Artefact>;
+    fn unsupported(&self, graph: &InfraGraph) -> Vec<(String, String)>;
+    fn apply(&self, manifests: &Path) -> Result<()>;
+}
+```
+
+Two implementations — `Kubernetes` and `Compose` — selected by `--platform`. Three things about it
+are worth stating because they are what a second target forced:
+
+1. **A platform renders; it does not derive.** The `InfraGraph` is produced from the program's
+   effects before any platform is chosen, and a platform that decided *which* objects exist would
+   make §5.4's "infrastructure is a function of the program" false. Pinned by a test.
+2. **`unsupported` is not a lint.** Compose cannot express a `NetworkPolicy`, and a Compose file
+   that silently omits one looks exactly like a deployment where the policy is working. So a gap is
+   written into `explain.txt` and printed by `beck up` — visible, not inferable from an absence.
+3. **The manifest directory is the platform's**, because `kubectl apply -f <dir>` wants a directory
+   of manifests and `docker compose -f` wants one file. It used to be a crate constant, which is
+   what a single-implementation interface looks like from the inside.
+
+What Compose does *not* carry is the honest content of §6.6's ladder: no gateway routing, no secret
+store, no egress policy. Rung 2 is for image sanity and SQL fidelity; rung 3 is where the policies
+become real, and that is what rung 3 is for.
+
 Corollary: **no Kubernetes vocabulary in the language surface.** The user writes `service`,
 `autoscale`, `expose`, `store`, `job`, `queue`, `cron` — domain concepts. `Deployment`,
 `HorizontalPodAutoscaler` and `HTTPRoute` are compiler output, in the same way `mov` is compiler output.

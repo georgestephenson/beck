@@ -17,8 +17,13 @@ use anyhow::{Context, Result};
 use beck_core::graph::{DepGraph, EdgeKind, GraphBuilder, GraphNode, NodeKind};
 use beck_core::{Effect, Placed, Tier};
 
+pub mod compose;
 pub mod k8s;
+pub mod platform;
+pub mod substrate;
 pub mod yaml;
+
+pub use platform::Platform;
 
 pub use k8s::render;
 
@@ -41,6 +46,15 @@ pub const APP_PORT: u16 = 8080;
 /// The port the log store listens on, used by its Service, its container, the URL in the
 /// credentials and the egress rule that permits the connection.
 pub const LOG_PORT: u16 = 5432;
+
+/// Where the program lives inside a container, whichever platform put it there.
+///
+/// The image ships the *toolchain*; without the program beside it there is nothing to run, and
+/// `beck run` with no source file fails at startup. Obvious in hindsight, invisible until a
+/// container was actually asked to serve a page (docs/19 §19.5). It is here rather than in `k8s`
+/// because the melange pipeline installs it, the Kubernetes container is told to run it and the
+/// Compose service mounts it — three places, one path.
+pub const APP_SOURCE: &str = "/app/app.beck";
 
 /// A typed infrastructure node. Diffable, testable, and an ordinary value.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -186,6 +200,32 @@ impl InfraGraph {
             out,
             "\nevery line above is derived from the program; nothing is templated."
         );
+        out
+    }
+
+    /// The same table, plus what the chosen platform cannot express.
+    ///
+    /// The second half is the reason [`Platform::unsupported`] exists. A platform that renders
+    /// eight of nine objects produces a deployment that looks like the one the effects asked for,
+    /// and the missing one is a `Policy` — so the gap has to be *in the output a person reads*,
+    /// not inferable from its absence.
+    pub fn explain_for(&self, platform: &dyn Platform) -> String {
+        use std::fmt::Write as _;
+        let mut out = self.explain();
+        let gaps = platform.unsupported(self);
+        let _ = writeln!(out, "\nplatform: {}", platform.name());
+        if gaps.is_empty() {
+            let _ = writeln!(out, "every object above is expressible on this platform.");
+            return out;
+        }
+        let _ = writeln!(
+            out,
+            "\n{} object(s) this platform cannot express, and what that costs:\n",
+            gaps.len()
+        );
+        for (what, why) in gaps {
+            let _ = writeln!(out, "{what:<26} {why}");
+        }
         out
     }
 }
@@ -495,85 +535,86 @@ pub fn add_resources(b: &mut GraphBuilder, infra: &InfraGraph) {
     }
 }
 
-/// The subdirectory the cluster manifests are written to.
+/// The subdirectory the Kubernetes manifests are written to.
 ///
-/// They are on their own, away from the image configs and the program, because the way a person
-/// and a GitOps controller both consume them is `-f <directory>` — and `kubectl apply -f` reads
-/// *every* `.yaml` in a directory. With everything in one place, `image.apko.yaml` was submitted to
-/// the API server as an object with no `apiVersion`, and Argo CD or Flux pointed at the output
-/// would have done the same. Found by the conformance job (docs/21 §21.4 rung 5), which is the
-/// first thing that ever ran `kubectl apply` on this directory.
+/// Kept as a constant because the conformance suite and the CI job name it, and because it is the
+/// default platform's answer. The general question — "which directory holds only the files an apply
+/// consumes" — is [`Platform::manifest_dir`], and it is the platform's to answer: `kubectl apply -f
+/// <dir>` and `docker compose -f <file>` want different things.
 pub const MANIFEST_DIR: &str = "k8s";
 
-/// Write the object graph, the image configs, the program, and the provenance table.
+/// Write everything a deployment needs, for the default platform.
+pub fn emit(placed: &Placed, source: &str, out: &Path) -> Result<Vec<PathBuf>> {
+    emit_with(placed, source, out, platform::default_platform().as_ref())
+}
+
+/// Write everything a deployment needs, for a chosen platform.
 ///
-/// The layout is
+/// The layout, for Kubernetes:
 ///
 /// ```text
-/// <out>/k8s/000-namespace.yaml …   the cluster manifests, and nothing else
+/// <out>/k8s/000-namespace.yaml …   the manifests, and nothing else
 /// <out>/image.apko.yaml            the image, declaratively
 /// <out>/image.melange.yaml         the package the binary ships in
 /// <out>/app.beck                   the program, at the path the package installs from
-/// <out>/explain.txt                why each object exists
+/// <out>/explain.txt                why each object exists — and what this platform cannot express
 /// ```
+///
+/// …and for Compose, `<out>/compose/compose.yaml` with no image configs. The *shape* is the
+/// platform's; what is constant is that the manifest directory holds manifests and nothing else
+/// (docs/20 §20.4 item 14), and that the program travels with them.
 ///
 /// `source` is the program itself. It has to be here: the image ships the *toolchain*, and a
 /// container told to `beck run` with no source file has nothing to serve. That was invisible until
 /// a container was actually asked to serve a page (docs/19 §19.5).
-pub fn emit(placed: &Placed, source: &str, out: &Path) -> Result<Vec<PathBuf>> {
+pub fn emit_with(
+    placed: &Placed,
+    source: &str,
+    out: &Path,
+    platform: &dyn Platform,
+) -> Result<Vec<PathBuf>> {
     let graph = graph(placed);
-    let manifests = out.join(MANIFEST_DIR);
+    let manifests = out.join(platform.manifest_dir());
     std::fs::create_dir_all(&manifests)
         .with_context(|| format!("creating {}", manifests.display()))?;
     let mut written = Vec::new();
 
-    for (name, body) in k8s::render(&graph, &placed.wire_id) {
-        let path = manifests.join(&name);
+    let write = |path: PathBuf, body: String, written: &mut Vec<PathBuf>| -> Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("creating {}", parent.display()))?;
+        }
         std::fs::write(&path, body).with_context(|| format!("writing {}", path.display()))?;
         written.push(path);
+        Ok(())
+    };
+
+    for (name, body) in platform.manifests(&graph, &placed.wire_id) {
+        write(manifests.join(&name), body, &mut written)?;
     }
-
-    // Two files, in build order: melange turns the binary into a package, apko turns packages into
-    // an image. apko copies nothing from the host — see `k8s::apko` for why that is the point and
-    // not a limitation.
-    // The program, at the name the melange pipeline installs from.
-    let app_source = out.join("app.beck");
-    std::fs::write(&app_source, source)
-        .with_context(|| format!("writing {}", app_source.display()))?;
-    written.push(app_source);
-
-    let melange = out.join("image.melange.yaml");
-    std::fs::write(&melange, k8s::melange(&graph))?;
-    written.push(melange);
-
-    let apko = out.join("image.apko.yaml");
-    std::fs::write(&apko, k8s::apko(&graph))?;
-    written.push(apko);
-
-    let explain = out.join("explain.txt");
-    std::fs::write(&explain, graph.explain())?;
-    written.push(explain);
+    for (name, body) in platform.build_inputs(&graph) {
+        write(out.join(&name), body, &mut written)?;
+    }
+    write(out.join("app.beck"), source.to_string(), &mut written)?;
+    write(
+        out.join("explain.txt"),
+        graph.explain_for(platform),
+        &mut written,
+    )?;
 
     Ok(written)
 }
 
-/// Apply the emitted graph to a local cluster — rung 3 of the parity ladder (§6.6).
+/// Apply the emitted graph — rung 3 of the parity ladder (§6.6).
 pub fn up(out: &Path) -> Result<()> {
-    // `<out>/k8s`, not `<out>`: the image configs are YAML too, and the API server has no idea what
-    // an apko file is.
-    let manifests = out.join(MANIFEST_DIR);
-    let status = std::process::Command::new("kubectl")
-        .arg("apply")
-        .arg("-f")
-        .arg(&manifests)
-        .status()
-        .context(
-            "running kubectl — `beck up` needs a cluster; `beck run` deliberately needs nothing",
-        )?;
-    if !status.success() {
-        anyhow::bail!("kubectl apply failed");
-    }
-    Ok(())
+    up_with(out, platform::default_platform().as_ref())
+}
+
+/// Apply the emitted graph to a chosen platform's target.
+pub fn up_with(out: &Path, platform: &dyn Platform) -> Result<()> {
+    // The manifest directory, not the output root: the image configs are YAML too, and no target
+    // has any idea what an apko file is.
+    platform.apply(&out.join(platform.manifest_dir()))
 }
 
 /// The longest suffix any derived object name carries: `<app>-log-credentials`.

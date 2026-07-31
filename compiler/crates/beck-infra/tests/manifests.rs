@@ -24,7 +24,7 @@
 
 use std::collections::BTreeMap;
 
-use beck_infra::{graph, InfraGraph, Node};
+use beck_infra::{graph, InfraGraph, Node, Platform};
 use serde_json::Value;
 
 mod invariants;
@@ -233,6 +233,26 @@ fn the_manifest_set_is_what_it_was() {
         all.push_str(&format!("# {name}\n---\n{body}\n"));
     }
     insta::assert_snapshot!("manifests", all);
+}
+
+#[test]
+fn the_compose_file_is_what_it_was() {
+    // The second platform gets a golden file too, for the same reason the first does: what a
+    // person deploys should change only when somebody approved the diff.
+    let g = infra();
+    let mut all = String::new();
+    for (name, body) in beck_infra::compose::Compose.manifests(&g, WIRE_ID) {
+        all.push_str(&format!("# {name}\n---\n{body}\n"));
+    }
+    all.push_str("\n# explain.txt (platform section)\n");
+    let explain = g.explain_for(&beck_infra::compose::Compose);
+    all.push_str(
+        explain
+            .split("platform: ")
+            .nth(1)
+            .expect("a platform section"),
+    );
+    insta::assert_snapshot!("compose", all);
 }
 
 #[test]

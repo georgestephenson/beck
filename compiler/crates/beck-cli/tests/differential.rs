@@ -58,7 +58,7 @@ impl SingleProcess {
                 seq: self.seq,
                 at: beck_rt::Instant(self.seq as i64),
                 actor: actor.to_string(),
-                body: beck_core::core::value_to_repr(&e).expect("an event is data"),
+                body: e.clone(),
             };
             self.state = self.runtime.fold(&self.state, &env, e).expect("fold");
         }

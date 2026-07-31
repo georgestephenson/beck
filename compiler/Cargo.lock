@@ -138,6 +138,7 @@ dependencies = [
  "beck-macro",
  "beck-syntax",
  "blake3",
+ "postcard",
  "serde",
  "serde_json",
 ]

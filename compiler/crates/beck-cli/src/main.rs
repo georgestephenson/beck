@@ -8,7 +8,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
+
+mod bench;
 use beck_core::Placed;
 use beck_diag::{Diagnostics, SourceMap};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -157,8 +159,16 @@ enum Cmd {
         file: PathBuf,
         #[arg(long, default_value = "target/beck")]
         out: PathBuf,
+        /// Which deployment target to render for (§6.1's `Platform`): `kubernetes` or `compose`.
+        #[arg(long, default_value = "kubernetes")]
+        platform: String,
     },
-    /// Bring the program up on a local cluster — rung 3 (§6.6).
+    /// Measure the log against every substrate, so the store is a decision and not a habit.
+    Bench {
+        #[command(subcommand)]
+        what: Bench,
+    },
+    /// Bring the program up on a local cluster or host — rung 2 or 3 (§6.6).
     Up {
         file: PathBuf,
         #[arg(long, default_value = "target/beck")]
@@ -166,6 +176,21 @@ enum Cmd {
         /// Emit and validate the manifests without touching a cluster.
         #[arg(long)]
         dry_run: bool,
+        #[arg(long, default_value = "kubernetes")]
+        platform: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum Bench {
+    /// Append, read and encode, against memory, redb and — with a URL — PostgreSQL.
+    Log {
+        /// The PostgreSQL log to include. Also read from `BECK_POSTGRES_URL`.
+        #[arg(long, env = "BECK_POSTGRES_URL")]
+        url: Option<String>,
+        /// Where to put the temporary redb file.
+        #[arg(long, default_value = "target/beck")]
+        dir: PathBuf,
     },
 }
 
@@ -228,6 +253,12 @@ fn main() -> Result<()> {
         Cmd::Ast { file, expanded } => ast(&file, expanded),
         Cmd::Iface { file, out, stdout } => iface(&file, out.as_deref(), stdout),
         Cmd::Explain { what } => explain(what),
+        Cmd::Bench { what } => match what {
+            Bench::Log { url, dir } => {
+                let rt = tokio::runtime::Runtime::new()?;
+                rt.block_on(bench::run(url.as_deref(), &dir))
+            }
+        },
         Cmd::Graph { file, json, types } => graph_cmd(&file, json, types),
         Cmd::Impact { file, name, json } => impact_cmd(&file, &name, json),
         Cmd::Run {
@@ -246,17 +277,27 @@ fn main() -> Result<()> {
             verify,
             to,
         } => replay(&file, store, &path, url.as_deref(), genesis, verify, to),
-        Cmd::Build { file, out } => {
+        Cmd::Build {
+            file,
+            out,
+            platform,
+        } => {
+            let platform = platform_named(&platform)?;
             let placed = compiled(&file)?;
             let source = read(&file)?;
-            let written = beck_infra::emit(&placed, &source, &out)?;
+            let written = beck_infra::emit_with(&placed, &source, &out, platform.as_ref())?;
             for w in &written {
                 println!("{}", w.display());
             }
             println!("{} files, wire id {}", written.len(), placed.wire_id);
             Ok(())
         }
-        Cmd::Up { file, out, dry_run } => up(&file, &out, dry_run),
+        Cmd::Up {
+            file,
+            out,
+            dry_run,
+            platform,
+        } => up(&file, &out, dry_run, &platform),
     }
 }
 
@@ -1092,16 +1133,47 @@ async fn replay(
     Ok(())
 }
 
-fn up(file: &Path, out: &Path, dry_run: bool) -> Result<()> {
+/// Resolve `--platform`, listing what there is when the name is wrong.
+///
+/// A closed `ValueEnum` would be tidier and would put the list of platforms in two places. It is
+/// one place — `beck_infra::platform::all()` — so a new `Platform` implementation is reachable from
+/// the command line without editing the CLI, which is most of the point of the trait.
+fn platform_named(name: &str) -> Result<Box<dyn beck_infra::Platform>> {
+    beck_infra::platform::by_name(name).ok_or_else(|| {
+        anyhow!(
+            "unknown platform `{name}`. Known: {}",
+            beck_infra::platform::all()
+                .iter()
+                .map(|p| p.name())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    })
+}
+
+fn up(file: &Path, out: &Path, dry_run: bool, platform: &str) -> Result<()> {
+    let platform = platform_named(platform)?;
     let placed = compiled(file)?;
     let source = read(file)?;
-    let written = beck_infra::emit(&placed, &source, out)?;
-    eprintln!("emitted {} files to {}", written.len(), out.display());
+    let written = beck_infra::emit_with(&placed, &source, out, platform.as_ref())?;
+    eprintln!(
+        "emitted {} files to {} for `{}`",
+        written.len(),
+        out.display(),
+        platform.name()
+    );
+    // Whatever this platform cannot express is said before anything is applied, not after.
+    for (what, why) in platform.unsupported(&beck_infra::graph(&placed)) {
+        eprintln!(
+            "  note: {what} is not expressible on `{}` — {why}",
+            platform.name()
+        );
+    }
     if dry_run {
-        eprintln!("--dry-run: not touching a cluster");
+        eprintln!("--dry-run: not touching a target");
         return Ok(());
     }
-    beck_infra::up(out)
+    beck_infra::up_with(out, platform.as_ref())
 }
 
 async fn open_store(

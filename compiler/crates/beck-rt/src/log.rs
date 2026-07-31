@@ -36,13 +36,19 @@ pub struct Instant(pub i64);
 
 /// A durably logged occurrence. The fields are §3.7's, and `actor` is a stable identity — never
 /// the live `Session` capability or a token (F5).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Envelope {
     pub seq: Seq,
     pub at: Instant,
     pub actor: String,
-    /// The event, as a lossless [`Value`] encoding.
-    pub body: serde_json::Value,
+    /// The event itself.
+    ///
+    /// A `Value`, not a JSON tree. It was the latter through Phase 2, and the cost was paid on
+    /// every append *and* every read: build a `serde_json::Value`, serialise it to text, parse the
+    /// text, walk the tree back into a `Value` — four traversals and two allocations per event, at
+    /// the one point §3.7 makes serial. [`beck_core::repr`] is the encoding now; the JSON repr
+    /// stays for things a person reads.
+    pub body: Value,
 }
 
 impl Envelope {
@@ -60,9 +66,42 @@ impl Envelope {
         }
     }
 
+    /// The event. Kept as a method because every caller had one and the type changed underneath
+    /// them; there is nothing to decode any more.
     pub fn event(&self) -> Result<Value> {
-        beck_core::core::value_from_repr(&self.body).context("decoding a logged event")
+        Ok(self.body.clone())
     }
+
+    /// The bytes a store writes.
+    fn encode(&self) -> Result<Vec<u8>> {
+        let wire = Wire {
+            seq: self.seq,
+            at: self.at,
+            actor: self.actor.clone(),
+            body: beck_core::repr::Repr::of(&self.body)?,
+        };
+        Ok(postcard::to_allocvec(&wire)?)
+    }
+
+    fn decode(bytes: &[u8]) -> Result<Envelope> {
+        let wire: Wire = postcard::from_bytes(bytes).context("decoding a logged event")?;
+        Ok(Envelope {
+            seq: wire.seq,
+            at: wire.at,
+            actor: wire.actor,
+            body: wire.body.to_value(),
+        })
+    }
+}
+
+/// The on-disk shape of an [`Envelope`] — a concrete type, so a non-self-describing codec can
+/// encode it. See [`beck_core::repr`] for why that matters.
+#[derive(Serialize, Deserialize)]
+struct Wire {
+    seq: Seq,
+    at: Instant,
+    actor: String,
+    body: beck_core::repr::Repr,
 }
 
 /// A validated event on its way to the log, before `seq` exists.
@@ -146,7 +185,7 @@ impl LogStore for MemoryLog {
                 seq: next,
                 at: p.at,
                 actor: p.actor.clone(),
-                body: beck_core::core::value_to_repr(&p.body)?,
+                body: p.body.clone(),
             });
         }
         inner.events.extend(out.iter().cloned());
@@ -190,6 +229,8 @@ impl LogStore for MemoryLog {
 
 const EVENTS: redb::TableDefinition<u64, &[u8]> = redb::TableDefinition::new("events");
 const SNAPSHOTS: redb::TableDefinition<u64, &[u8]> = redb::TableDefinition::new("snapshots");
+/// The encoding the two tables above are written in — see [`beck_core::repr::FORMAT`].
+const META: redb::TableDefinition<&str, u32> = redb::TableDefinition::new("meta");
 
 pub struct RedbLog {
     db: redb::Database,
@@ -202,8 +243,36 @@ impl RedbLog {
         // Create the tables eagerly so a read on a fresh database does not fail.
         let tx = db.begin_write()?;
         {
-            let _ = tx.open_table(EVENTS)?;
+            let events = tx.open_table(EVENTS)?;
+            let empty = events.first()?.is_none();
             let _ = tx.open_table(SNAPSHOTS)?;
+            let mut meta = tx.open_table(META)?;
+            // Stamp a fresh store; refuse one written in another encoding. Reading old bytes with
+            // a new decoder does not fail — postcard would happily interpret JSON text as some
+            // `Repr` — and a log that decodes to something other than what was written is the one
+            // outcome an append-only history may not have.
+            let stamped = meta.get("format")?.map(|v| v.value());
+            match stamped {
+                Some(found) if found != beck_core::repr::FORMAT => bail!(
+                    "the log at {} was written in format {found} and this build reads format {}. \
+                     Replay it through the older build and export, or start a fresh log — reading \
+                     it as-is would decode to something that is not what was written",
+                    path.display(),
+                    beck_core::repr::FORMAT
+                ),
+                Some(_) => {}
+                // No stamp and no events is a store this build created; no stamp *with* events is
+                // a Phase 2 log, which is format 1.
+                None if empty => {
+                    meta.insert("format", beck_core::repr::FORMAT)?;
+                }
+                None => bail!(
+                    "the log at {} carries no format stamp, so it was written by a build before \
+                     format {} — its events are JSON text and this build reads postcard",
+                    path.display(),
+                    beck_core::repr::FORMAT
+                ),
+            }
         }
         tx.commit()?;
         Ok(RedbLog { db })
@@ -245,10 +314,9 @@ impl LogStore for RedbLog {
                     seq: next,
                     at: p.at,
                     actor: p.actor.clone(),
-                    body: beck_core::core::value_to_repr(&p.body)?,
+                    body: p.body.clone(),
                 };
-                let bytes = serde_json::to_vec(&env)?;
-                table.insert(next, bytes.as_slice())?;
+                table.insert(next, env.encode()?.as_slice())?;
                 out.push(env);
             }
         }
@@ -264,7 +332,7 @@ impl LogStore for RedbLog {
         let mut out = Vec::new();
         for entry in table.range((after + 1)..)? {
             let (_, v) = entry?;
-            out.push(serde_json::from_slice(v.value())?);
+            out.push(Envelope::decode(v.value())?);
             if out.len() >= limit {
                 break;
             }
@@ -276,7 +344,7 @@ impl LogStore for RedbLog {
         let tx = self.db.begin_write()?;
         {
             let mut table = tx.open_table(SNAPSHOTS)?;
-            let bytes = serde_json::to_vec(&beck_core::core::value_to_repr(&snapshot.state)?)?;
+            let bytes = beck_core::repr::to_bytes(&snapshot.state)?;
             table.insert(snapshot.seq, bytes.as_slice())?;
         }
         tx.commit()?;
@@ -289,8 +357,7 @@ impl LogStore for RedbLog {
         let mut best: Option<Snapshot> = None;
         for entry in table.range(..=seq)? {
             let (k, v) = entry?;
-            let repr: serde_json::Value = serde_json::from_slice(v.value())?;
-            let state = beck_core::core::value_from_repr(&repr).context("decoding a snapshot")?;
+            let state = beck_core::repr::from_bytes(v.value()).context("decoding a snapshot")?;
             best = Some(Snapshot {
                 seq: k.value(),
                 state,
@@ -310,11 +377,24 @@ CREATE TABLE IF NOT EXISTS beck_log (
     seq   BIGSERIAL PRIMARY KEY,
     at    BIGINT      NOT NULL,
     actor TEXT        NOT NULL,
-    body  TEXT        NOT NULL
+    body  BYTEA       NOT NULL
 );
+-- `seq` is append-only and therefore perfectly correlated with physical order, which is the one
+-- case BRIN is built for: a summary per block range instead of a tuple per row. Every read this
+-- store performs is `WHERE seq > $1 ORDER BY seq LIMIT $2`, so the index is scanned as a range and
+-- never probed as a point. The primary key's btree stays because it enforces uniqueness; BRIN is
+-- what the range scans use, and it is kilobytes where the btree is megabytes.
+CREATE INDEX IF NOT EXISTS beck_log_seq_brin ON beck_log USING BRIN (seq);
 CREATE TABLE IF NOT EXISTS beck_snapshot (
     seq   BIGINT PRIMARY KEY,
-    state TEXT   NOT NULL
+    state BYTEA  NOT NULL
+);
+-- The format the two tables above are written in. Checked on open, because a log read back under a
+-- different encoding does not fail — it produces plausible nonsense, and an append-only audit trail
+-- may not have that outcome (`beck_core::repr::FORMAT`).
+CREATE TABLE IF NOT EXISTS beck_meta (
+    id      INT PRIMARY KEY CHECK (id = 1),
+    format  INT NOT NULL
 );
 ";
 
@@ -336,6 +416,7 @@ impl PgLog {
             .batch_execute(DDL)
             .await
             .context("applying the log DDL")?;
+        check_format(&client).await?;
         Ok(PgLog { client })
     }
 
@@ -346,6 +427,40 @@ impl PgLog {
             .await?;
         Ok(())
     }
+}
+
+/// Stamp the store with the encoding it holds, or refuse a store written in another one.
+///
+/// The refusal is the point. Before the log carried a format, an older store's `TEXT` bodies would
+/// have been read as `BYTEA` and decoded as postcard — producing values, not errors. §3.7 makes
+/// replay the only description of a program's history; a history that decodes to something else is
+/// the one failure mode this system cannot tolerate.
+async fn check_format(client: &tokio_postgres::Client) -> Result<()> {
+    let want = beck_core::repr::FORMAT as i32;
+    let row = client
+        .query_opt("SELECT format FROM beck_meta WHERE id = 1", &[])
+        .await?;
+    match row {
+        Some(r) => {
+            let found: i32 = r.get(0);
+            if found != want {
+                bail!(
+                    "this log was written in format {found} and this build reads format {want}. \
+                     Replay it through the older build and export, or point at a fresh store — \
+                     reading it as-is would decode to something that is not what was written"
+                );
+            }
+        }
+        None => {
+            client
+                .execute(
+                    "INSERT INTO beck_meta (id, format) VALUES (1, $1) ON CONFLICT DO NOTHING",
+                    &[&want],
+                )
+                .await?;
+        }
+    }
+    Ok(())
 }
 
 #[async_trait]
@@ -386,24 +501,28 @@ impl LogStore for PgLog {
             sql.push_str(&format!("(${},${},${})", base + 1, base + 2, base + 3));
             params.push(Box::new(p.at.0));
             params.push(Box::new(p.actor.clone()));
-            params.push(Box::new(
-                beck_core::core::value_to_repr(&p.body)?.to_string(),
-            ));
+            params.push(Box::new(beck_core::repr::to_bytes(&p.body)?));
         }
-        sql.push_str(" RETURNING seq, at, actor, body");
+        // Only `seq` comes back. The rest is already in hand, and re-reading it meant decoding
+        // every event the process had just encoded — the same work twice, on the serial path.
+        sql.push_str(" RETURNING seq");
 
         let refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = params
             .iter()
             .map(|p| p.as_ref() as &(dyn tokio_postgres::types::ToSql + Sync))
             .collect();
         let rows = self.client.query(&sql, &refs).await?;
+        if rows.len() != batch.len() {
+            bail!("the log accepted {} of {} events", rows.len(), batch.len());
+        }
         let mut out: Vec<Envelope> = rows
             .iter()
-            .map(|r| Envelope {
+            .zip(batch)
+            .map(|(r, p)| Envelope {
                 seq: r.get::<_, i64>(0) as u64,
-                at: Instant(r.get::<_, i64>(1)),
-                actor: r.get(2),
-                body: serde_json::from_str(r.get::<_, &str>(3)).unwrap_or_default(),
+                at: p.at,
+                actor: p.actor.clone(),
+                body: p.body.clone(),
             })
             .collect();
         out.sort_by_key(|e| e.seq);
@@ -433,7 +552,8 @@ impl LogStore for PgLog {
                 seq: r.get::<_, i64>(0) as u64,
                 at: Instant(r.get::<_, i64>(1)),
                 actor: r.get(2),
-                body: serde_json::from_str(r.get::<_, &str>(3)).unwrap_or_default(),
+                body: beck_core::repr::from_bytes(r.get::<_, &[u8]>(3))
+                    .expect("an event this store wrote decodes"),
             })
             .collect())
     }
@@ -445,7 +565,7 @@ impl LogStore for PgLog {
                  ON CONFLICT (seq) DO UPDATE SET state = EXCLUDED.state",
                 &[
                     &(snapshot.seq as i64),
-                    &beck_core::core::value_to_repr(&snapshot.state)?.to_string(),
+                    &beck_core::repr::to_bytes(&snapshot.state)?,
                 ],
             )
             .await?;
@@ -464,10 +584,8 @@ impl LogStore for PgLog {
             None => Ok(None),
             Some(r) => Ok(Some(Snapshot {
                 seq: r.get::<_, i64>(0) as u64,
-                state: beck_core::core::value_from_repr(&serde_json::from_str(
-                    r.get::<_, &str>(1),
-                )?)
-                .context("decoding a snapshot")?,
+                state: beck_core::repr::from_bytes(r.get::<_, &[u8]>(1))
+                    .context("decoding a snapshot")?,
             })),
         }
     }
@@ -544,5 +662,76 @@ mod tests {
             );
         }
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_log_written_in_another_format_is_refused_rather_than_misread() {
+        // The one failure an append-only history may not have. Postcard is not self-describing, so
+        // handing it a Phase 2 log's JSON text does not error — it decodes to *a* `Repr`, and the
+        // program's history silently becomes something nobody wrote. The stamp is what turns that
+        // into a refusal.
+        let dir = std::env::temp_dir().join("beck-format-stamp");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a temp dir");
+        let path = dir.join("log.redb");
+
+        // A store this build wrote opens again.
+        {
+            let store = RedbLog::open(&path).expect("a fresh log opens");
+            drop(store);
+        }
+        RedbLog::open(&path).expect("and opens again");
+
+        // Rewrite the stamp as if an older build had made it.
+        {
+            let db = redb::Database::create(&path).expect("reopen");
+            let tx = db.begin_write().expect("write");
+            {
+                let mut meta = tx.open_table(META).expect("meta");
+                meta.insert("format", beck_core::repr::FORMAT - 1)
+                    .expect("stamp");
+            }
+            tx.commit().expect("commit");
+        }
+        let said = match RedbLog::open(&path) {
+            Ok(_) => panic!("a foreign format must be refused"),
+            Err(e) => e.to_string(),
+        };
+        assert!(said.contains("format"), "{said}");
+        assert!(
+            said.contains("not what was written"),
+            "the message has to say what the risk is, not just that it stopped: {said}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_unstamped_log_with_events_in_it_is_refused_too() {
+        // The upgrade path from Phase 2, which stamped nothing: an empty unstamped store is one
+        // this build just made, and an unstamped store *with events* is somebody's history in the
+        // old encoding.
+        let dir = std::env::temp_dir().join("beck-format-unstamped");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a temp dir");
+        let path = dir.join("log.redb");
+        {
+            let db = redb::Database::create(&path).expect("create");
+            let tx = db.begin_write().expect("write");
+            {
+                let mut events = tx.open_table(EVENTS).expect("events");
+                events
+                    .insert(1u64, b"{\"seq\":1}".as_slice())
+                    .expect("an old record");
+                let _ = tx.open_table(SNAPSHOTS).expect("snapshots");
+                let _ = tx.open_table(META).expect("meta");
+            }
+            tx.commit().expect("commit");
+        }
+        let said = match RedbLog::open(&path) {
+            Ok(_) => panic!("an unstamped log with events must be refused"),
+            Err(e) => e.to_string(),
+        };
+        assert!(said.contains("no format stamp"), "{said}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

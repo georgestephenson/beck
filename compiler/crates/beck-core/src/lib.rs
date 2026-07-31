@@ -24,6 +24,7 @@ pub mod place;
 pub mod pmap;
 pub mod prelude;
 pub mod project;
+pub mod repr;
 pub mod row;
 pub mod secure;
 pub mod split;

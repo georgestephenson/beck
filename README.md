@@ -50,7 +50,7 @@ The headline: **delete every `@on(...)` from the todo sketch and it still compil
 runs.** Across a 23-program [corpus](compiler/corpus/) carrying no annotations at all, 43% of
 everything placed is unplaced-pure — code with no tier, compiled to whichever tier calls it.
 [`docs/20-phase-2-report.md`](docs/20-phase-2-report.md) has the measurements, what is still not
-done, and the fourteen things that turned out harder than expected — including the discovery that the
+done, and the sixteen things that turned out harder than expected — including the discovery that the
 Phase 1 CI workflow had never run.
 
 ```console

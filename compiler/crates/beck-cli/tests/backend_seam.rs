@@ -175,6 +175,6 @@ fn envelope(seq: u64) -> beck_rt::Envelope {
         seq,
         at: beck_rt::Instant(0),
         actor: "alice".into(),
-        body: serde_json::Value::Null,
+        body: beck_core::Value::Unit,
     }
 }

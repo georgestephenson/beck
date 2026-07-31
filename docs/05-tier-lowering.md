@@ -162,6 +162,13 @@ service/deployment declarations  +  effect rows of the placed program
 - The `Platform` trait keeps orchestrators out of language semantics
   ([`06`](06-kubernetes-and-packaging.md) §6.1). Kubernetes and single-process are the two v1
   implementations.
+
+  *Built* — `beck-infra/src/platform.rs`, with `k8s::Kubernetes` and `compose::Compose` behind it
+  and `--platform` on `beck build`/`beck up`. It was promised in ten places and declared in none
+  until [`20`](20-phase-2-report.md) §20.4 item 15; what made it a day's work rather than a rewrite
+  is that `InfraGraph` never contained a Kubernetes noun, so only the emitter had to move. The
+  second implementation is the point: Compose has no namespaces, no selectors, no CRDs and no
+  network policy, and each absence found somewhere the first target had leaked into the interface.
 - Off-cluster resources (managed Postgres, buckets, DNS, queues) render as **Crossplane** claims —
   one control plane, no second state engine; an **OpenTofu** emitter is the escape hatch for
   estates Crossplane can't reach. (Terraform is BUSL — excluded.)
