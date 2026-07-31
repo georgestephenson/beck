@@ -1,0 +1,68 @@
+# A room, and a per-session view of it: everyone sees the same messages, and each sees their own
+# name highlighted. The fanout point is `per_session`, which is why it is a language construct
+# rather than a runtime convention (docs/19 §19.4 item 6).
+
+type MsgId = newtype[Str]
+
+model Message:
+    id: MsgId
+    author: Str
+    body: Str
+
+model State:
+    messages: Map[MsgId, Message]
+
+union Command:
+    Say(id: MsgId, body: Str)
+    Retract(id: MsgId)
+
+union Event:
+    Said(id: MsgId, author: Str, body: Str)
+    Retracted(id: MsgId)
+
+union Rejection:
+    Empty
+    NotYours
+    NoSuchMessage
+
+def apply_event(s: State, env: Envelope[Event]) -> State:
+    match env.body:
+        case Said(id, author, body):
+            return s.with(messages=map_insert(s.messages, id, Message(id=id, author=author, body=body)))
+        case Retracted(id):
+            return s.with(messages=map_remove(s.messages, id))
+
+def validate(s: State, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Say(id, body):
+            if str_is_empty(str_trim(body)):
+                return Err(error=Empty)
+            return Ok(value=[Said(id=id, author=p.session.actor, body=body)])
+        case Retract(id):
+            return mine_only(s, p, id)
+
+def mine_only(s: State, p: Proposal, id: MsgId) -> Result[list[Event], Rejection] uses cap.session:
+    match map_get(s.messages, id):
+        case Some(value):
+            if value.author != p.session.actor:
+                return Err(error=NotYours)
+            return Ok(value=[Retracted(id=id)])
+        case None:
+            return Err(error=NoSuchMessage)
+
+def line_class(m: Message, session: Session) -> Str:
+    return "mine" if m.author == session.actor else "theirs"
+
+def view(s: State, session: Session) -> Html:
+    return ui:
+        main:
+            h1: "room"
+            ul:
+                for m in map_values(s.messages):
+                    li(key=m.id, class=line_class(m, session)):
+                        span: (m.author + ": " + m.body)
+
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, room, validate)
+room: Signal[State] = durable(fold(apply_event, State(messages={}), events))
+page: Signal[Html] = per_session(room, view)

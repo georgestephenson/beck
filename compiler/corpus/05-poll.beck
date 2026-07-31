@@ -1,0 +1,50 @@
+# One question, many answers, and a tally that is a fold rather than a query. Nobody may vote
+# twice: first-writer-wins on a client-minted id is the check F2 asks of every validator.
+
+model State:
+    votes: Map[Str, Str]
+
+union Command:
+    Vote(option: Str)
+
+union Event:
+    Voted(option: Str)
+
+union Rejection:
+    AlreadyVoted
+    NoSuchOption
+
+def offered(option: Str) -> Bool:
+    return option == "yes" or (option == "no" or option == "abstain")
+
+def apply_event(s: State, env: Envelope[Event]) -> State:
+    match env.body:
+        case Voted(option):
+            return s.with(votes=map_insert(s.votes, env.actor, option))
+
+def validate(s: State, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Vote(option):
+            if not offered(option):
+                return Err(error=NoSuchOption)
+            if map_contains(s.votes, p.session.actor):
+                return Err(error=AlreadyVoted)
+            return Ok(value=[Voted(option=option)])
+
+def tally(s: State, option: Str) -> Int:
+    return list_len(filter_list(map_values(s.votes), lambda v: v == option))
+
+def view(s: State, session: Session) -> Html:
+    return ui:
+        main:
+            h1: "should we?"
+            p: ("yes " + str(tally(s, "yes")))
+            p: ("no " + str(tally(s, "no")))
+            p: ("abstain " + str(tally(s, "abstain")))
+            button(on_click=Vote(option="yes")): "yes"
+            button(on_click=Vote(option="no")): "no"
+
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, poll, validate)
+poll: Signal[State] = durable(fold(apply_event, State(votes={}), events))
+page: Signal[Html] = per_session(poll, view)

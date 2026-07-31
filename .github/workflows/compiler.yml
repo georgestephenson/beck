@@ -1,6 +1,9 @@
-name: phase 1
+name: phase 2
 
 # The same discipline as the Phase 0 workflow (docs/08-roadmap.md §8.3), applied to the compiler.
+#
+# Phase 2 adds the exit criterion itself as a job: the corpus, checked with no annotations; the
+# security suite; and a three-module project that links. Those are gates, not reports.
 #
 # What is a *gate* and what is merely *reported* stays a deliberate distinction (§13.7): the
 # harnesses, the round-trip property and the licence check fail the build; timings are printed but
@@ -62,7 +65,7 @@ jobs:
       - name: the sketch typechecks, places and slices
         run: ./target/release/beck check examples/todo.beck
 
-      - name: `beck fmt` round-trips and is idempotent
+      - name: "`beck fmt` round-trips and is idempotent"
         run: |
           ./target/release/beck fmt examples/todo.beck > /tmp/a.beck
           ./target/release/beck fmt /tmp/a.beck        > /tmp/b.beck
@@ -86,6 +89,47 @@ jobs:
 
       - name: replay is exact
         run: ./target/release/beck replay examples/todo.beck --path /tmp/beck.log --verify
+
+      - name: the sketch places itself with no annotations at all
+        run: |
+          # §3.3: "placement is not a primitive annotation; it is a constraint solution". Strip
+          # every `@on(...)` and the solver has to land on a placement that runs.
+          sed 's/^@on(server)$//;s/^@on(data)$//;s/^@on(client)$//' examples/todo.beck > /tmp/bare.beck
+          ! grep -q '@on' /tmp/bare.beck
+          ./target/release/beck check /tmp/bare.beck \
+            --assert-place page=client \
+            --assert-place todos=data \
+            --assert-place proposals=server \
+            --assert-place apply_event=any
+          ./target/release/beck explain place /tmp/bare.beck todos
+
+      - name: the published interface round-trips, and a body edit does not move it
+        run: |
+          ./target/release/beck iface examples/todo.beck -o /tmp/v1.becki
+          ./target/release/beck check examples/todo.beck --wire-compat /tmp/v1.becki
+          # A body edit is not a wire change (§3.6's firewall).
+          sed 's/"done" if t.done else ""/"done" if t.done else " "/' examples/todo.beck > /tmp/edited.beck
+          ./target/release/beck check /tmp/edited.beck --wire-compat /tmp/v1.becki
+          # Adding an event variant is (§4.3's rolling-deploy rule), and must fail without --breaking.
+          python3 - <<'PY'
+          src = open("examples/todo.beck").read()
+          src = src.replace("    Deleted(id: Id)", "    Deleted(id: Id)\n    Starred(id: Id)")
+          src = src.replace(
+              "        case Deleted(id):\n            return s.with(todos=map_remove(s.todos, id))",
+              "        case Deleted(id):\n            return s.with(todos=map_remove(s.todos, id))\n        case Starred(id):\n            return toggled(s, id)")
+          open("/tmp/v2.beck", "w").write(src)
+          PY
+          ! ./target/release/beck check /tmp/v2.beck --wire-compat /tmp/v1.becki
+          ./target/release/beck check /tmp/v2.beck --wire-compat /tmp/v1.becki --breaking
+
+      - name: every program in the corpus checks, and the project links
+        run: |
+          for f in corpus/*.beck; do
+            echo "== $f"
+            ./target/release/beck check "$f"
+          done
+          ./target/release/beck check corpus/project/app.beck
+          ./target/release/beck iface corpus/project/domain.beck --stdout > /dev/null
 
       - name: the object graph is what the effects imply
         run: |

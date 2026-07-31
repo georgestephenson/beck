@@ -1,0 +1,46 @@
+# Who is here. The interesting part is what is *not* in the log: presence is derived from join and
+# leave events, so a restart rebuilds it by folding rather than by asking anybody.
+
+model State:
+    here: Map[Str, Int]
+
+union Command:
+    Arrive
+    Leave
+
+union Event:
+    Arrived
+    Left
+
+union Rejection:
+    AlreadyHere
+    NotHere
+
+def apply_event(s: State, env: Envelope[Event]) -> State:
+    match env.body:
+        case Arrived:
+            return s.with(here=map_insert(s.here, env.actor, env.at))
+        case Left:
+            return s.with(here=map_remove(s.here, env.actor))
+
+def validate(s: State, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Arrive:
+            if map_contains(s.here, p.session.actor):
+                return Err(error=AlreadyHere)
+            return Ok(value=[Arrived])
+        case Leave:
+            if not map_contains(s.here, p.session.actor):
+                return Err(error=NotHere)
+            return Ok(value=[Left])
+
+def view(s: State, session: Session) -> Html:
+    return ui:
+        main:
+            h1: "who's here"
+            p: (str(map_len(s.here)) + " online")
+
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, room, validate)
+room: Signal[State] = durable(fold(apply_event, State(here={}), events))
+page: Signal[Html] = per_session(room, view)

@@ -1,0 +1,72 @@
+# Pages with revisions, where the accumulator is a map of lists — a state shape that costs more to
+# cross than a scalar, and therefore one the cost model has an opinion about.
+
+type PageId = newtype[Str]
+
+model Revision:
+    author: Str
+    body: Str
+
+model Page:
+    id: PageId
+    title: Str
+    revisions: list[Revision]
+
+model State:
+    pages: Map[PageId, Page]
+
+union Command:
+    Create(id: PageId, title: Str)
+    Edit(id: PageId, body: Str)
+
+union Event:
+    Created(id: PageId, title: Str)
+    Edited(id: PageId, author: Str, body: Str)
+
+union Rejection:
+    NoTitle
+    NoSuchPage
+    Exists
+
+def apply_event(s: State, env: Envelope[Event]) -> State:
+    match env.body:
+        case Created(id, title):
+            return s.with(pages=map_insert(s.pages, id, Page(id=id, title=title, revisions=[])))
+        case Edited(id, author, body):
+            return edited(s, id, Revision(author=author, body=body))
+
+def edited(s: State, id: PageId, r: Revision) -> State:
+    match map_get(s.pages, id):
+        case Some(value):
+            return s.with(pages=map_insert(s.pages, id, value.with(revisions=concat_lists([value.revisions, [r]]))))
+        case None:
+            return s
+
+def validate(s: State, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Create(id, title):
+            if str_is_empty(str_trim(title)):
+                return Err(error=NoTitle)
+            if map_contains(s.pages, id):
+                return Err(error=Exists)
+            return Ok(value=[Created(id=id, title=title)])
+        case Edit(id, body):
+            if not map_contains(s.pages, id):
+                return Err(error=NoSuchPage)
+            return Ok(value=[Edited(id=id, author=p.session.actor, body=body)])
+
+def busiest(s: State) -> list[Page]:
+    return sort_by(map_values(s.pages), lambda p: negate(list_len(p.revisions)))
+
+def view(s: State, session: Session) -> Html:
+    return ui:
+        main:
+            h1: "wiki"
+            ol:
+                for p in busiest(s):
+                    li(key=p.id): (p.title + " (" + str(list_len(p.revisions)) + ")")
+
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, wiki, validate)
+wiki: Signal[State] = durable(fold(apply_event, State(pages={}), events))
+page: Signal[Html] = per_session(wiki, view)

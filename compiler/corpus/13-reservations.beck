@@ -1,0 +1,63 @@
+# Double-booking is the classic thing a validator exists to prevent, and it needs the accumulator
+# to decide — which is why `decide` threads the state through (docs/19 §19.4 item 5) rather than
+# validation being a `filter_map`.
+
+type SlotId = newtype[Str]
+
+model Booking:
+    slot: SlotId
+    who: Str
+
+model State:
+    bookings: Map[SlotId, Booking]
+
+union Command:
+    Book(slot: SlotId)
+    Release(slot: SlotId)
+
+union Event:
+    Booked(slot: SlotId, who: Str)
+    Released(slot: SlotId)
+
+union Rejection:
+    AlreadyTaken
+    NotYours
+    NotBooked
+
+def apply_event(s: State, env: Envelope[Event]) -> State:
+    match env.body:
+        case Booked(slot, who):
+            return s.with(bookings=map_insert(s.bookings, slot, Booking(slot=slot, who=who)))
+        case Released(slot):
+            return s.with(bookings=map_remove(s.bookings, slot))
+
+def validate(s: State, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Book(slot):
+            if map_contains(s.bookings, slot):
+                return Err(error=AlreadyTaken)
+            return Ok(value=[Booked(slot=slot, who=p.session.actor)])
+        case Release(slot):
+            return release(s, p, slot)
+
+def release(s: State, p: Proposal, slot: SlotId) -> Result[list[Event], Rejection] uses cap.session:
+    match map_get(s.bookings, slot):
+        case Some(value):
+            if value.who != p.session.actor:
+                return Err(error=NotYours)
+            return Ok(value=[Released(slot=slot)])
+        case None:
+            return Err(error=NotBooked)
+
+def view(s: State, session: Session) -> Html:
+    return ui:
+        main:
+            h1: "rooms"
+            ul:
+                for b in map_values(s.bookings):
+                    li(key=b.slot): (str(b.slot) + " — " + b.who)
+
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, diary, validate)
+diary: Signal[State] = durable(fold(apply_event, State(bookings={}), events))
+page: Signal[Html] = per_session(diary, view)

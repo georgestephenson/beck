@@ -44,6 +44,10 @@ pub struct Sources {
     /// The `.becki` file, if it is checked in. When present it is what downstream modules see —
     /// which is the point: reviewing the contract is reviewing this file.
     pub interface: Option<String>,
+    /// Where the module text came from, if it was a file. Two things depend on it and both are
+    /// visible to a user: which surface the text is in — `.sx` selects the S-expression reader
+    /// (§2.2) — and what a diagnostic calls the file. Defaults to `<name>.beck`.
+    pub path: Option<String>,
 }
 
 /// Where modules come from.
@@ -180,9 +184,10 @@ pub fn check_project(
             .clone()
             .or_else(|| src.interface.clone())
             .unwrap_or_default();
-        let file = map.add(format!("{name}.beck"), text.clone());
+        let display = src.path.clone().unwrap_or_else(|| format!("{name}.beck"));
+        let file = map.add(display.clone(), text.clone());
         visiting.push(name.to_string());
-        for dep in imports_of(file, name, &text) {
+        for dep in imports_of(file, &display, &text) {
             visit(&dep, loader, map, sources, order, visiting, diags);
         }
         visiting.pop();
@@ -210,9 +215,10 @@ pub fn check_project(
         let Some((src, file)) = sources.get(name) else {
             continue;
         };
+        let display = src.path.clone().unwrap_or_else(|| format!("{name}.beck"));
         let deps: Vec<(String, Interface)> = {
             let text = src.module.clone().or_else(|| src.interface.clone());
-            imports_of(*file, name, text.as_deref().unwrap_or(""))
+            imports_of(*file, &display, text.as_deref().unwrap_or(""))
                 .into_iter()
                 .filter_map(|d| interfaces.get(&d).map(|i| (d, i.clone())))
                 .collect()
@@ -241,7 +247,7 @@ pub fn check_project(
             continue;
         };
 
-        let one = check_one_in(*file, name, module_src, &deps, lock, diags);
+        let one = check_one_in(*file, &display, module_src, &deps, lock, diags);
         // Where both exist, the checked-in interface is the contract and the module must meet it.
         if let Some(published) = interfaces.get(name) {
             if published.digest() != one.interface.digest() {
@@ -443,6 +449,7 @@ page: Signal[Html] = per_session(todos, view)
                 Sources {
                     module: Some(domain.into()),
                     interface: None,
+                    path: None,
                 },
             ),
             (
@@ -450,6 +457,7 @@ page: Signal[Html] = per_session(todos, view)
                 Sources {
                     module: Some(policy.into()),
                     interface: None,
+                    path: None,
                 },
             ),
             (
@@ -457,6 +465,7 @@ page: Signal[Html] = per_session(todos, view)
                 Sources {
                     module: Some(app.into()),
                     interface: None,
+                    path: None,
                 },
             ),
         ])
@@ -581,6 +590,7 @@ page: Signal[Html] = per_session(todos, view)
                 Sources {
                     module: Some("import b\n\ndef f() -> Int:\n    return 1\n".into()),
                     interface: None,
+                    path: None,
                 },
             ),
             (
@@ -588,6 +598,7 @@ page: Signal[Html] = per_session(todos, view)
                 Sources {
                     module: Some("import a\n\ndef g() -> Int:\n    return 2\n".into()),
                     interface: None,
+                    path: None,
                 },
             ),
         ]);
@@ -611,6 +622,7 @@ page: Signal[Html] = per_session(todos, view)
             Sources {
                 module: Some("import nowhere\n\ndef f() -> Int:\n    return 1\n".into()),
                 interface: None,
+                path: None,
             },
         )]);
         let mut map = beck_diag::SourceMap::new();
@@ -632,6 +644,7 @@ page: Signal[Html] = per_session(todos, view)
                 Sources {
                     module: Some("def helper() -> Int:\n    return 1\n".into()),
                     interface: None,
+                    path: None,
                 },
             ),
             (
@@ -639,6 +652,7 @@ page: Signal[Html] = per_session(todos, view)
                 Sources {
                     module: Some("import lib\n\ndef helper() -> Int:\n    return 2\n".into()),
                     interface: None,
+                    path: None,
                 },
             ),
         ]);

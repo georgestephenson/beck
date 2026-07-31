@@ -1,0 +1,48 @@
+# The smallest thing that is still a Beck application: one number, folded.
+#
+# No annotations, and nothing to decide — `ingress` is discharged by one tier and `durable` by one
+# other, so the solver has no freedom at all. It is here as the floor: if placement inference needs
+# a hint for *this*, it needs a hint for everything.
+
+model State:
+    n: Int
+
+union Command:
+    Increment
+    Decrement
+
+union Event:
+    Incremented
+    Decremented
+
+union Rejection:
+    TooLow
+
+def apply_event(s: State, env: Envelope[Event]) -> State:
+    match env.body:
+        case Incremented:
+            return s.with(n=(s.n + 1))
+        case Decremented:
+            return s.with(n=(s.n - 1))
+
+def validate(s: State, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Increment:
+            return Ok(value=[Incremented])
+        case Decrement:
+            if s.n < 1:
+                return Err(error=TooLow)
+            return Ok(value=[Decremented])
+
+def view(s: State, session: Session) -> Html:
+    return ui:
+        main:
+            h1: "counter"
+            p: str(s.n)
+            button(on_click=Increment): "+"
+            button(on_click=Decrement): "-"
+
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, count, validate)
+count: Signal[State] = durable(fold(apply_event, State(n=0), events))
+page: Signal[Html] = per_session(count, view)

@@ -230,7 +230,10 @@ impl Interface {
             }
         }
         let mut iface = Interface::of(&program);
-        iface.module = module.to_string();
+        // Through the same normalisation the parser applies, so a contract read from `orders.becki`
+        // and one derived from `orders.beck` agree on what module they describe — otherwise the
+        // digest would differ for a reason nobody wrote down.
+        iface.module = beck_syntax::module_ident(module);
         // `Interface::of` reads placement off the program, and a parsed interface has no solver
         // behind it — the tiers are the ones written in the file, which is what `@on(…)` means.
         iface

@@ -1,0 +1,57 @@
+# A ledger, where the invariant is that it balances. Every posting is two events appended
+# atomically, which is what §3.7 means by "a command may legitimately yield several events, and the
+# batch is appended atomically: contiguous `seq`s, all-or-nothing".
+
+type Account = newtype[Str]
+
+model State:
+    balances: Map[Account, Int]
+
+union Command:
+    Transfer(from_account: Account, to_account: Account, amount: Int)
+
+union Event:
+    Debited(account: Account, amount: Int)
+    Credited(account: Account, amount: Int)
+
+union Rejection:
+    Insufficient
+    NotAnAmount
+    SameAccount
+
+def balance(s: State, a: Account) -> Int:
+    return unwrap_or(map_get(s.balances, a), 0)
+
+def apply_event(s: State, env: Envelope[Event]) -> State:
+    match env.body:
+        case Debited(account, amount):
+            return s.with(balances=map_insert(s.balances, account, balance(s, account) - amount))
+        case Credited(account, amount):
+            return s.with(balances=map_insert(s.balances, account, balance(s, account) + amount))
+
+def validate(s: State, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Transfer(from_account, to_account, amount):
+            if amount < 1:
+                return Err(error=NotAnAmount)
+            if from_account == to_account:
+                return Err(error=SameAccount)
+            if balance(s, from_account) < amount:
+                return Err(error=Insufficient)
+            return Ok(value=[
+                Debited(account=from_account, amount=amount),
+                Credited(account=to_account, amount=amount)])
+
+def total(s: State) -> Int:
+    return list_len(map_values(s.balances))
+
+def view(s: State, session: Session) -> Html:
+    return ui:
+        main:
+            h1: "ledger"
+            p: (str(total(s)) + " accounts")
+
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, ledger, validate)
+ledger: Signal[State] = durable(fold(apply_event, State(balances={}), events))
+page: Signal[Html] = per_session(ledger, view)

@@ -1,0 +1,88 @@
+# Three columns and a card that moves between them. The query — how many cards are in a column —
+# is a pure function of the state, so it is unplaced and compiled into every tier that asks.
+
+type CardId = newtype[Str]
+
+model Card:
+    id: CardId
+    title: Str
+    column: Str
+    owner: Str
+
+model State:
+    cards: Map[CardId, Card]
+
+union Command:
+    Create(id: CardId, title: Str)
+    Move(id: CardId, column: Str)
+
+union Event:
+    Created(id: CardId, title: Str)
+    Moved(id: CardId, column: Str)
+
+union Rejection:
+    Blank
+    UnknownColumn
+    NotOwner
+    NoSuchCard
+
+def known(column: Str) -> Bool:
+    return column == "todo" or (column == "doing" or column == "done")
+
+def apply_event(s: State, env: Envelope[Event]) -> State:
+    match env.body:
+        case Created(id, title):
+            return s.with(cards=map_insert(s.cards, id, Card(id=id, title=title, column="todo", owner=env.actor)))
+        case Moved(id, column):
+            return moved(s, id, column)
+
+def moved(s: State, id: CardId, column: Str) -> State:
+    match map_get(s.cards, id):
+        case Some(value):
+            return s.with(cards=map_insert(s.cards, id, value.with(column=column)))
+        case None:
+            return s
+
+def validate(s: State, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Create(id, title):
+            if str_is_empty(str_trim(title)):
+                return Err(error=Blank)
+            return Ok(value=[Created(id=id, title=title)])
+        case Move(id, column):
+            if not known(column):
+                return Err(error=UnknownColumn)
+            return owns(s, p, id, column)
+
+def owns(s: State, p: Proposal, id: CardId, column: Str) -> Result[list[Event], Rejection] uses cap.session:
+    match map_get(s.cards, id):
+        case Some(value):
+            if value.owner != p.session.actor:
+                return Err(error=NotOwner)
+            return Ok(value=[Moved(id=id, column=column)])
+        case None:
+            return Err(error=NoSuchCard)
+
+def in_column(s: State, column: Str) -> list[Card]:
+    return filter_list(map_values(s.cards), lambda c: c.column == column)
+
+def column_view(s: State, column: Str) -> Html:
+    return ui:
+        section:
+            h2: (column + " (" + str(list_len(in_column(s, column))) + ")")
+            ul:
+                for c in in_column(s, column):
+                    li(key=c.id): c.title
+
+def view(s: State, session: Session) -> Html:
+    return ui:
+        main:
+            h1: "board"
+            column_view(s, "todo")
+            column_view(s, "doing")
+            column_view(s, "done")
+
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, board, validate)
+board: Signal[State] = durable(fold(apply_event, State(cards={}), events))
+page: Signal[Html] = per_session(board, view)

@@ -297,17 +297,19 @@ struct Dir(PathBuf);
 
 impl beck_core::project::Loader for Dir {
     fn load(&self, name: &str) -> Option<beck_core::Sources> {
-        let module = std::fs::read_to_string(self.0.join(format!("{name}.beck"))).ok();
+        let path = self.0.join(format!("{name}.beck"));
+        let module = std::fs::read_to_string(&path).ok();
         let interface = std::fs::read_to_string(self.0.join(format!("{name}.becki"))).ok();
-        (module.is_some() || interface.is_some())
-            .then_some(beck_core::Sources { module, interface })
+        (module.is_some() || interface.is_some()).then_some(beck_core::Sources {
+            module,
+            interface,
+            path: Some(path.display().to_string()),
+        })
     }
 }
 
 fn module_name(file: &Path) -> String {
-    file.file_stem()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| "main".into())
+    beck_syntax::module_ident(&file.display().to_string())
 }
 
 /// Check and link, stopping before the slicer.
@@ -329,6 +331,7 @@ fn checked_project(
     let root = Root {
         name: name.clone(),
         src: root_src,
+        path: file.display().to_string(),
         dir,
     };
     let project =
@@ -340,6 +343,8 @@ fn checked_project(
 struct Root {
     name: String,
     src: String,
+    /// The path as given, so the surface (`.beck` or `.sx`) and the diagnostics both name it.
+    path: String,
     dir: Dir,
 }
 
@@ -349,6 +354,7 @@ impl beck_core::project::Loader for Root {
             return Some(beck_core::Sources {
                 module: Some(self.src.clone()),
                 interface: None,
+                path: Some(self.path.clone()),
             });
         }
         self.dir.load(name)
@@ -373,6 +379,7 @@ fn compile(file: &Path) -> Result<(Option<Placed>, SourceMap, Diagnostics)> {
     let root = Root {
         name: module_name(file),
         src: src.clone(),
+        path: file.display().to_string(),
         dir: Dir(file.parent().unwrap_or(Path::new(".")).to_path_buf()),
     };
     let name = root.name.clone();

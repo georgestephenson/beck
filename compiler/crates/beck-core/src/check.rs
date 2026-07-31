@@ -435,6 +435,22 @@ impl<'a> Checker<'a> {
                     self.subst.fresh()
                 }
             };
+            // `record(x)` is a record literal however `record` is bound, so a definition with one
+            // of these names would compile and never be reachable. Better a message than a mystery.
+            if sym::RESERVED_FORMS.contains(&name.as_ref()) {
+                self.diags.push(
+                    Diagnostic::error(
+                        "B0312",
+                        format!("`{name}` is a form of the language, so nothing can be named it"),
+                        item.args[0].span(),
+                    )
+                    .with_primary_label("this name is matched as syntax before it is resolved")
+                    .with_note(
+                        "the checker recognises these heads structurally, so a definition with one \
+                         of their names would be shadowed by the form and never called",
+                    ),
+                );
+            }
             let declared = self.declared_row(item.args.get(3));
 
             // The definition's latent row is a *variable*, bound once its body has been checked.

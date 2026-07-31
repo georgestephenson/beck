@@ -1,0 +1,57 @@
+# A secret that must not reach the browser, and a host only the server can call.
+#
+# The whole of §3.5's headline claim in one file: `ApiKey` wraps a `secret[Str]`, so it is not
+# Sendable; `charge` performs `net.out(payments.example.com)`, which a browser cannot discharge;
+# and both land on the server without anybody writing `@on`.
+
+type ApiKey = newtype[secret[Str]]
+
+model Credentials:
+    host: Str
+    key: ApiKey
+
+model State:
+    charged: Int
+    refused: Int
+
+union Command:
+    Charge(amount: Int)
+
+union Event:
+    Charged(amount: Int)
+    Refused(amount: Int)
+
+union Rejection:
+    OverLimit
+
+def credentials() -> Credentials uses env:
+    return Credentials(host="payments.example.com", key=ApiKey(value=secret_env("PAYMENTS_KEY")))
+
+def charge(c: Credentials, amount: Int) -> Bool uses net.out(payments.example.com):
+    return amount > 0
+
+def apply_event(s: State, env: Envelope[Event]) -> State:
+    match env.body:
+        case Charged(amount):
+            return s.with(charged=(s.charged + amount))
+        case Refused(amount):
+            return s.with(refused=(s.refused + 1))
+
+def validate(s: State, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Charge(amount):
+            if amount > 10000:
+                return Err(error=OverLimit)
+            return Ok(value=[Charged(amount=amount)])
+
+def view(s: State, session: Session) -> Html:
+    return ui:
+        main:
+            h1: "billing"
+            p: (str(s.charged) + " charged")
+            p: (str(s.refused) + " refused")
+
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, ledger, validate)
+ledger: Signal[State] = durable(fold(apply_event, State(charged=0, refused=0), events))
+page: Signal[Html] = per_session(ledger, view)

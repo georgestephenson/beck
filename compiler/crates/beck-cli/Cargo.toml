@@ -30,6 +30,8 @@ workspace = true
 
 [dev-dependencies]
 beck-eval.workspace = true
+beck-diag.workspace = true
+beck-syntax.workspace = true
 # The harnesses exercise the compiler and the runtime *together* — §4.8's differential and
 # replay-determinism suites are properties of the whole pipeline, not of any one crate — so they
 # live beside the binary that already depends on all of it.
