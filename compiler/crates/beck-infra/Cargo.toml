@@ -11,6 +11,12 @@ anyhow.workspace = true
 beck-diag.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+k8s-openapi.workspace = true
+
+[dev-dependencies]
+insta.workspace = true
+serde_norway.workspace = true
+beck-core.workspace = true
 
 [lints]
 workspace = true

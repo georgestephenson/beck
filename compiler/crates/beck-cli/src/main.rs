@@ -1016,11 +1016,17 @@ fn detail_of(n: &beck_infra::Node) -> String {
         Policy {
             allow_ingress_from,
             allow_egress_to,
+            allow_egress_hosts,
             ..
         } => format!(
             "ingress from [{}], egress to [{}]",
             allow_ingress_from.join(", "),
-            allow_egress_to.join(", ")
+            allow_egress_to
+                .iter()
+                .map(|p| format!("{}:{}", p.app, p.port))
+                .chain(allow_egress_hosts.iter().cloned())
+                .collect::<Vec<_>>()
+                .join(", ")
         ),
         Grant {
             role,

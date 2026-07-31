@@ -459,26 +459,104 @@ fn the_egress_policy_is_the_programs_net_out_atoms_and_nothing_else() {
         ],
         true,
     );
-    assert!(!egress(&without).contains(&"payments.example.com".to_string()));
-    assert!(egress(&with).contains(&"payments.example.com".to_string()));
+    assert!(!hosts(&without).contains(&"payments.example.com".to_string()));
+    assert!(hosts(&with).contains(&"payments.example.com".to_string()));
     // Removing the effect removes the rule — the easiest test in the project to write, and the one
     // the platform-team pitch rests on.
     assert_eq!(
-        egress(&without).len() + 1,
-        egress(&with).len(),
-        "one effect, one rule"
+        rules(&without) + 1,
+        rules(&with),
+        "one effect, one egress rule in the emitted object"
     );
 }
 
-fn egress(g: &beck_infra::InfraGraph) -> Vec<String> {
+#[test]
+fn a_host_outside_the_cluster_is_never_emitted_as_a_pod_selector() {
+    // The defect this test exists for shipped in Phase 1 and survived Phase 2: a
+    // `net.out(payments.example.com)` was rendered as `podSelector: {app: payments.example.com}`,
+    // which matches no pod. The rule granted nothing, so the policy derived from the program
+    // *denied the program's own network call* — and it rendered as YAML that looked like the
+    // feature working. §3.5's "least-privilege infra, computed" was the claim; "no privilege at
+    // all, silently" was the object.
+    let g = beck_infra::derive(
+        "app",
+        &[
+            (Effect::Ingress, "proposals".into()),
+            (Effect::Durable, "todos".into()),
+            (
+                Effect::NetOut("payments.example.com".into()),
+                "charge".into(),
+            ),
+        ],
+        true,
+    );
+    let policy = rendered_policy(&g);
+    let selectors = format!("{}", policy["spec"]["egress"]);
+    assert!(
+        !selectors.contains("payments.example.com"),
+        "a DNS name is not a pod label:\n{selectors}"
+    );
+    // The host is recorded where a `Platform` that can enforce names will find it…
+    assert_eq!(
+        policy["metadata"]["annotations"]["beck.dev/egress-hosts"],
+        "payments.example.com"
+    );
+    // …and what is emitted excludes the cluster's own address space and the metadata endpoint,
+    // which is the tightest thing a core NetworkPolicy can say about an outbound call.
+    let except = format!("{}", policy["spec"]["egress"]);
+    for private in [
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "169.254.0.0/16",
+    ] {
+        assert!(
+            except.contains(private),
+            "{private} is not excluded:\n{except}"
+        );
+    }
+}
+
+#[test]
+fn a_policy_that_denies_dns_denies_everything_else_too() {
+    // A NetworkPolicy with `policyTypes: [Ingress, Egress]` denies every port it does not name,
+    // including 53. A generated policy that forgets it produces a pod that starts, looks healthy,
+    // and resolves nothing — the classic failure §6.5 warns about, and one the Phase 1 emitter
+    // walked straight into.
+    let g = beck_infra::derive("app", &[(Effect::Durable, "todos".into())], false);
+    let policy = rendered_policy(&g);
+    let egress = format!("{}", policy["spec"]["egress"]);
+    assert!(egress.contains("kube-dns"), "no DNS egress:\n{egress}");
+    assert!(egress.contains("\"UDP\""), "DNS is UDP first:\n{egress}");
+}
+
+/// The hosts outside the cluster the derivation recorded.
+fn hosts(g: &beck_infra::InfraGraph) -> Vec<String> {
     g.nodes
         .iter()
         .find_map(|d| match &d.node {
             beck_infra::Node::Policy {
-                allow_egress_to, ..
-            } => Some(allow_egress_to.clone()),
+                allow_egress_hosts, ..
+            } => Some(allow_egress_hosts.clone()),
             _ => None,
         })
+        .unwrap_or_default()
+}
+
+/// The emitted NetworkPolicy, as an object.
+fn rendered_policy(g: &beck_infra::InfraGraph) -> serde_json::Value {
+    beck_infra::k8s::objects(g, "id")
+        .into_iter()
+        .find(|(_, v)| v["kind"] == "NetworkPolicy")
+        .map(|(_, v)| v)
+        .expect("a policy is always emitted")
+}
+
+/// How many egress rules the emitted policy has.
+fn rules(g: &beck_infra::InfraGraph) -> usize {
+    rendered_policy(g)["spec"]["egress"]
+        .as_array()
+        .map(Vec::len)
         .unwrap_or_default()
 }
 

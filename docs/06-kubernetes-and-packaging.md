@@ -179,6 +179,38 @@ same diff. Today those two facts live in different repositories, owned by differ
 within a week. **Effect-derived least privilege is the feature to lead with when selling this to a
 platform team.**
 
+### 6.5.1 What Kubernetes cannot express, and what is emitted instead
+
+*Corrected in Phase 2 ([`20`](20-phase-2-report.md) §20.4 item 13).*
+
+The sketch above writes `payments.example.com:443` as an egress peer. **A core `NetworkPolicy`
+cannot say that.** Its egress peers are an `ipBlock`, a namespace selector or a pod selector; there
+is no DNS name anywhere in the type. The Phase 1 emitter took the line above literally and produced
+`podSelector: {app: payments.example.com}` — a selector matching no pod, so the rule granted
+nothing, so the policy derived from the program denied the program's own network call. It rendered
+as YAML that looked exactly like the feature working.
+
+What is emitted now, and the claim each part supports:
+
+| the effect says | the object says | enforced by Kubernetes? |
+|---|---|---|
+| `durable` | `podSelector: {app: <log>}`, port 5432 | yes, exactly |
+| `ingress` | ingress from the gateway namespace, port 8080 | yes, exactly |
+| *(nothing — the platform owes it)* | egress to `kube-dns`, port 53 UDP and TCP | yes; forgetting it denies name resolution and is the classic generated-policy bug |
+| `net.out(h)` for any `h` | egress on 443 to `0.0.0.0/0` **except** `10/8`, `172.16/12`, `192.168/16` and `169.254/16`, plus the host list in a `beck.dev/egress-hosts` annotation | partly — see below |
+
+So the supported claim is *the program's `net.out` atoms are what open outbound access at all, and
+removing one removes a rule*. The unsupported claim is *only those hosts are reachable*. The
+exclusions are what makes the weaker version still worth having: a workload with one outbound API
+call cannot reach the rest of the cluster, and cannot reach `169.254.169.254` — the cloud metadata
+endpoint, and the thing an SSRF is usually after.
+
+Enforcing the host list exactly needs a CNI that understands names — Cilium's `toFQDNs`, Calico's
+`NetworkSet` — which is a **`Platform` implementation's** decision and not core Kubernetes'. The
+annotation exists so that such an implementation has the list without re-deriving it. §6.1's
+`Platform` trait is where that belongs; [`20`](20-phase-2-report.md) §20.5 records that the trait
+does not exist yet.
+
 ## 6.6 The dev→prod parity ladder
 
 | Rung | Command | Runs | Storage | Startup | Purpose |

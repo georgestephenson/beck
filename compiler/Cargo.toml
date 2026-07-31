@@ -36,6 +36,9 @@ blake3 = "1"
 clap = { version = "4", features = ["derive", "env"] }
 futures-util = "0.3"
 insta = "1"
+# The Kubernetes API's own types, generated from its OpenAPI schema. `beck-infra` builds objects
+# rather than strings so that a wrong field name is a compile error; see `crates/beck-infra/src/k8s.rs`.
+k8s-openapi = { version = "0.28", features = ["v1_34"] }
 logos = "0.14"
 proptest = "1"
 # Default features pull `heapless` 0.7, whose `atomic-polyfill` is unmaintained
@@ -45,6 +48,10 @@ redb = "2"
 salsa = "0.16"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# A maintained fork of the archived `serde_yaml`, used only in tests: `beck-infra` writes YAML with
+# its own deterministic writer, and reads it back with somebody else's parser so the round-trip is
+# not the writer marking its own homework.
+serde_norway = "0.9"
 tokio = { version = "1", features = ["full"] }
 tokio-postgres = "0.7"
 tokio-tungstenite = "0.24"

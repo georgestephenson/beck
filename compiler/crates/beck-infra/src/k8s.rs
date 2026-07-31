@@ -1,16 +1,64 @@
 //! The Kubernetes rendering of an [`InfraGraph`].
 //!
-//! [`docs/06-kubernetes-and-packaging.md`] §6.1 puts orchestrators behind a `Platform` trait and
-//! keeps them out of language semantics: "Kubernetes under the hood? Yes — as a **compiler
-//! backend** behind a `Platform` trait, never as language semantics." This module is one
-//! implementation of that backend; `beck run` is the other, and it needs no cluster, container or
-//! registry.
+//! [`docs/06-kubernetes-and-packaging.md`](../../../../docs/06-kubernetes-and-packaging.md) §6.1
+//! puts orchestrators behind a `Platform` trait and keeps them out of language semantics:
+//! "Kubernetes under the hood? Yes — as a **compiler backend** behind a `Platform` trait, never as
+//! language semantics." This module is one implementation of that backend; `beck run` is the other,
+//! and it needs no cluster, container or registry.
 //!
-//! Phase 0 built its objects as typed `k8s-openapi` structs, which is the right long-term shape.
-//! Phase 1 renders from the typed [`Node`] graph to YAML directly, because the *derivation* — which
-//! objects exist and why — is what Phase 1 is proving, and that lives one level up in `graph()`.
-//! Swapping the renderer for typed structs changes no test in this crate.
+//! # Objects, not strings
+//!
+//! Phase 1 rendered these manifests with `format!`, and Phase 2 shipped that way. The reasoning
+//! recorded at the time was that "the *derivation* — which objects exist and why — is what is being
+//! proved, and that lives one level up in `graph()`". That is true and it is not sufficient. The
+//! derivation being right does not make the emission right, and the emission had exactly one test:
+//! that each file contained the substrings `apiVersion:` and `kind:`. A manifest with `replias: 1`,
+//! or a `targetPort` under `metadata`, or a `matchLabels` that selects nothing, passes that test
+//! and fails in a cluster.
+//!
+//! So the objects are now [`k8s_openapi`] structs — the Kubernetes API's own types, generated from
+//! its OpenAPI schema — serialised through [`crate::yaml`]. What that buys, precisely:
+//!
+//! * a **misspelled field does not compile**, and a required field left out does not compile;
+//! * a field of the wrong *type* does not compile — `IntOrString` for a `targetPort`, `Quantity`
+//!   for storage, `i32` for `replicas`;
+//! * the apiVersion and kind come from the type rather than from a string, so they cannot drift
+//!   apart from the body.
+//!
+//! # What it does not buy, and what covers the gap
+//!
+//! Two things, named here rather than left to be discovered:
+//!
+//! 1. **Gateway API is a CRD**, so its types are not in `k8s-openapi` and [`gateway`] below defines
+//!    the subset this emitter uses by hand. Those field names are checked by nothing but review.
+//!    The alternative — the `gateway-api` crate — pulls the whole `kube` client (146 crates,
+//!    hyper and tokio) into a compiler that makes no API calls, and pins an older `k8s-openapi`.
+//!    Not worth it for one object; worth revisiting when there are five.
+//! 2. **A schema cannot see a cluster.** Every field being well-typed says nothing about whether a
+//!    Service's selector matches any pod, whether a container's `secretKeyRef` names a Secret that
+//!    is emitted, or whether the port a route sends to is the port the container listens on. Those
+//!    are the failures that actually happen, and they are `tests/manifests.rs` — which parses the
+//!    emitted YAML back with a third-party parser and checks the objects against *each other*.
 
+use std::collections::{BTreeMap, BTreeSet};
+
+use k8s_openapi::api::apps::v1::{Deployment, DeploymentSpec, StatefulSet, StatefulSetSpec};
+use k8s_openapi::api::core::v1::{
+    ConfigMap, Container, ContainerPort, EnvVar, EnvVarSource, HTTPGetAction, Lifecycle,
+    LifecycleHandler, Namespace, PersistentVolumeClaim, PersistentVolumeClaimSpec,
+    PodSecurityContext, PodSpec, PodTemplateSpec, Probe, Secret, SecretKeySelector, Service,
+    ServicePort, ServiceSpec, SleepAction, VolumeMount, VolumeResourceRequirements,
+};
+use k8s_openapi::api::networking::v1::{
+    IPBlock, NetworkPolicy, NetworkPolicyEgressRule, NetworkPolicyIngressRule, NetworkPolicyPeer,
+    NetworkPolicyPort, NetworkPolicySpec,
+};
+use k8s_openapi::apimachinery::pkg::api::resource::Quantity;
+use k8s_openapi::apimachinery::pkg::apis::meta::v1::{LabelSelector, ObjectMeta};
+use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
+use serde_json::Value;
+
+use crate::yaml;
 use crate::{InfraGraph, Node};
 
 /// Where the program lives inside the image.
@@ -20,158 +68,711 @@ use crate::{InfraGraph, Node};
 /// container was actually asked to serve a page (docs/19 §19.5).
 pub const APP_SOURCE: &str = "/app/app.beck";
 
+/// [`crate::APP_PORT`] as the API's own integer type.
+pub const APP_PORT: i32 = crate::APP_PORT as i32;
+
+/// [`crate::LOG_PORT`] as the API's own integer type.
+pub const LOG_PORT: i32 = crate::LOG_PORT as i32;
+
 /// Render the graph as a set of named manifest files, ordered so `kubectl apply -f` works.
 pub fn render(graph: &InfraGraph, wire_id: &str) -> Vec<(String, String)> {
+    objects(graph, wire_id)
+        .into_iter()
+        .map(|(name, value)| (name, yaml::to_yaml(&value)))
+        .collect()
+}
+
+/// The same manifests as objects, before they become text.
+///
+/// Exposed because a test that wants to ask "does this Service select this Deployment's pods"
+/// should not have to scrape YAML to find out, and because `beck explain deploy` may one day want
+/// to diff objects rather than files.
+pub fn objects(graph: &InfraGraph, wire_id: &str) -> Vec<(String, Value)> {
     let app = &graph.app;
     let mut out = Vec::new();
 
-    for (i, d) in graph.nodes.iter().enumerate() {
-        let body = match &d.node {
-            Node::Namespace { name } => format!(
-                "apiVersion: v1\nkind: Namespace\nmetadata:\n  name: {name}\n  labels:\n    \
-                 app.kubernetes.io/name: {name}\n    beck.dev/wire-id: \"{wire_id}\"\n"
-            ),
-            Node::LogStore { name, volume_gb } => format!(
-                "apiVersion: apps/v1\nkind: StatefulSet\nmetadata:\n  name: {name}\n  \
-                 namespace: {app}\nspec:\n  serviceName: {name}\n  replicas: 1\n  selector:\n    \
-                 matchLabels:\n      app: {name}\n  template:\n    metadata:\n      labels:\n        \
-                 app: {name}\n    spec:\n      containers:\n        - name: postgres\n          \
-                 image: postgres:16-alpine\n          env:\n            - name: POSTGRES_PASSWORD\n              \
-                 valueFrom:\n                secretKeyRef:\n                  name: {app}-log-credentials\n                  \
-                 key: password\n            - name: PGDATA\n              \
-                 value: /var/lib/postgresql/data/pgdata\n          ports:\n            - containerPort: 5432\n          \
-                 volumeMounts:\n            - name: data\n              mountPath: /var/lib/postgresql/data\n  \
-                 volumeClaimTemplates:\n    - metadata:\n        name: data\n      spec:\n        \
-                 accessModes: [\"ReadWriteOnce\"]\n        resources:\n          requests:\n            \
-                 storage: {volume_gb}Gi\n"
-            ),
+    for (i, d) in apply_order(graph).into_iter().enumerate() {
+        let value = match &d.node {
+            Node::Namespace { name } => to_value(&Namespace {
+                metadata: ObjectMeta {
+                    name: Some(name.clone()),
+                    labels: Some(labels_with(
+                        name,
+                        [("beck.dev/wire-id".to_string(), wire_id.to_string())],
+                    )),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+
+            Node::LogStore { name, volume_gb } => to_value(&log_store(app, name, *volume_gb)),
+
             Node::Service {
                 name,
                 selector,
                 port,
                 headless,
-            } => {
-                let cluster_ip = if *headless {
-                    "  clusterIP: None\n"
-                } else {
-                    ""
-                };
-                format!(
-                    "apiVersion: v1\nkind: Service\nmetadata:\n  name: {name}\n  \
-                     namespace: {app}\nspec:\n{cluster_ip}  selector:\n    app: {selector}\n  \
-                     ports:\n    - port: {port}\n      targetPort: {port}\n"
-                )
-            }
-            Node::Secret { name, keys } => {
+            } => to_value(&Service {
+                metadata: meta(app, name),
+                spec: Some(ServiceSpec {
+                    // A headless Service is what gives a StatefulSet stable per-pod DNS. The
+                    // literal string is the API's own sentinel, not a placeholder.
+                    cluster_ip: headless.then(|| "None".to_string()),
+                    selector: Some(BTreeMap::from([("app".to_string(), selector.clone())])),
+                    ports: Some(vec![ServicePort {
+                        port: i32::from(*port),
+                        target_port: Some(IntOrString::Int(i32::from(*port))),
+                        ..Default::default()
+                    }]),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+
+            Node::Secret { name, keys } => to_value(&Secret {
+                metadata: meta(app, name),
+                type_: Some("Opaque".to_string()),
                 // A working default, not an empty placeholder: the emitter knows the log store's
                 // service name, so it can write a URL that resolves. §6.6's parity ladder wants
                 // rung 3 to work from `git clone` the way rung 0 does; a production deploy
                 // overwrites this Secret with real credentials.
-                let data: String = keys
-                    .iter()
-                    .map(|k| match k.as_str() {
-                        "url" => format!(
-                            "  url: \"postgres://postgres:beck@{app}-log.{app}.svc:5432/postgres\"\n"
-                        ),
-                        "password" => "  password: \"beck\"\n".to_string(),
-                        other => format!("  {other}: \"\"\n"),
-                    })
-                    .collect();
-                format!(
-                    "apiVersion: v1\nkind: Secret\nmetadata:\n  name: {name}\n  namespace: {app}\n\
-                     type: Opaque\nstringData:\n{data}"
-                )
-            }
+                string_data: Some(
+                    keys.iter()
+                        .map(|k| {
+                            let v = match k.as_str() {
+                                "url" => log_url(app),
+                                "password" => "beck".to_string(),
+                                _ => String::new(),
+                            };
+                            (k.clone(), v)
+                        })
+                        .collect(),
+                ),
+                ..Default::default()
+            }),
+
             Node::Workload {
                 name,
                 replicas,
                 serves_ui,
-            } => format!(
-                "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: {name}\n  \
-                 namespace: {app}\n  annotations:\n    beck.dev/serves-ui: \"{serves_ui}\"\n\
-                 spec:\n  replicas: {replicas}\n  selector:\n    matchLabels:\n      app: {name}\n  \
-                 template:\n    metadata:\n      labels:\n        app: {name}\n    spec:\n      \
-                 securityContext:\n        runAsNonRoot: true\n        runAsUser: 65532\n      \
-                 containers:\n        - name: app\n          image: {app}:dev\n          \
-                 args: [\"run\", \"{APP_SOURCE}\", \"--store\", \"postgres\", \"--addr\", \
-                 \"0.0.0.0:8080\"]\n          env:\n            - name: BECK_POSTGRES_URL\n              \
-                 valueFrom:\n                secretKeyRef:\n                  name: {app}-log-credentials\n                  \
-                 key: url\n          ports:\n            - containerPort: 8080\n          readinessProbe:\n            httpGet:\n              \
-                 path: /readyz\n              port: 8080\n          livenessProbe:\n            \
-                 httpGet:\n              path: /healthz\n              port: 8080\n          \
-                 lifecycle:\n            preStop:\n              sleep:\n                seconds: 5\n"
-            ),
+            } => to_value(&workload(app, name, *replicas, *serves_ui)),
+
             Node::Route {
                 name,
                 host,
                 websocket,
-            } => format!(
-                "apiVersion: gateway.networking.k8s.io/v1\nkind: HTTPRoute\nmetadata:\n  \
-                 name: {name}\n  namespace: {app}\n  annotations:\n    \
-                 beck.dev/websocket: \"{websocket}\"\nspec:\n  parentRefs:\n    - name: beck-gateway\n      \
-                 namespace: gateway-system\n  hostnames:\n    - {host}\n  rules:\n    - matches:\n        \
-                 - path:\n            type: PathPrefix\n            value: /\n      backendRefs:\n        \
-                 - name: {app}\n          port: 8080\n"
-            ),
+            } => to_value(&gateway::http_route(app, name, host, *websocket)),
+
             Node::Policy {
                 name,
                 allow_ingress_from,
                 allow_egress_to,
-            } => {
-                let ingress: String = if allow_ingress_from.is_empty() {
-                    String::new()
-                } else {
-                    let peers: String = allow_ingress_from
-                        .iter()
-                        .map(|p| {
-                            format!(
-                                "        - namespaceSelector:\n            matchLabels:\n              \
-                                 kubernetes.io/metadata.name: {p}\n"
-                            )
-                        })
-                        .collect();
-                    format!("  ingress:\n    - from:\n{peers}")
-                };
-                let egress: String = if allow_egress_to.is_empty() {
-                    String::new()
-                } else {
-                    let peers: String = allow_egress_to
-                        .iter()
-                        .map(|p| {
-                            format!(
-                                "        - podSelector:\n            matchLabels:\n              \
-                                 app: {p}\n"
-                            )
-                        })
-                        .collect();
-                    format!("  egress:\n    - to:\n{peers}")
-                };
-                format!(
-                    "apiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata:\n  \
-                     name: {name}\n  namespace: {app}\nspec:\n  podSelector:\n    matchLabels:\n      \
-                     app: {app}\n  policyTypes: [\"Ingress\", \"Egress\"]\n{ingress}{egress}"
-                )
-            }
-            Node::SnapshotSchedule {
+                allow_egress_hosts,
+            } => to_value(&policy(
+                app,
                 name,
-                every_events,
-            } => format!(
-                "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {name}\n  namespace: {app}\n\
-                 data:\n  snapshot_every_events: \"{every_events}\"\n"
-            ),
-            Node::Grant { role, on, privileges } => format!(
-                "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {app}-grants\n  \
-                 namespace: {app}\ndata:\n  grants.sql: |\n    -- derived from the program's \
-                 effects: it appends and reads, so it may not update or delete\n    \
-                 GRANT {} ON {on} TO \"{role}\";\n",
-                privileges.join(", ")
-            ),
+                allow_ingress_from,
+                allow_egress_to,
+                allow_egress_hosts,
+            )),
+
+            Node::SnapshotSchedule { name, every_events } => to_value(&ConfigMap {
+                metadata: meta(app, name),
+                data: Some(BTreeMap::from([(
+                    "snapshot_every_events".to_string(),
+                    every_events.to_string(),
+                )])),
+                ..Default::default()
+            }),
+
+            Node::Grant {
+                role,
+                on,
+                privileges,
+            } => to_value(&ConfigMap {
+                metadata: meta(app, &format!("{app}-grants")),
+                data: Some(BTreeMap::from([(
+                    "grants.sql".to_string(),
+                    format!(
+                        "-- derived from the program's effects: it appends and reads, so it may \
+                         not update or delete\nGRANT {} ON {on} TO \"{role}\";\n",
+                        privileges.join(", ")
+                    ),
+                )])),
+                ..Default::default()
+            }),
+
             // The image is not a cluster object; it is emitted as an apko config instead.
             Node::Image { .. } => continue,
         };
-        out.push((format!("{:02}-{}.yaml", i * 10, slug(&d.node)), body));
+        // Three digits, not two. `kubectl apply -f <dir>` reads files in *lexical* order, and with
+        // two digits the eleventh object was named `100-…`, which sorts before `20-…`. The prefix
+        // exists to carry the order; a width that overflows silently reverses it.
+        out.push((format!("{:03}-{}.yaml", i * 10, slug(&d.node)), value));
     }
     out
+}
+
+/// The graph's objects, ordered so that nothing is applied before what it references.
+///
+/// `kubectl apply -f <dir>` applies files in lexical order and does not sort by dependency, so the
+/// emitter has to. Kubernetes is eventually consistent and would converge anyway — a StatefulSet
+/// created before its headless Service retries until the Service appears — but "it converges after
+/// a few backoffs" and "it comes up" are different experiences, and the ordering is free.
+///
+/// A stable topological sort over [`crate::Derived::needs`]: ties keep derivation order, so the
+/// file names stay put when an unrelated object is added. `needs` is already known to be acyclic —
+/// `the_only_cycle_is_the_one_the_architecture_intends` in `lib.rs` is the test — and a cycle here
+/// would emit the remaining nodes in derivation order rather than looping.
+pub fn apply_order(graph: &InfraGraph) -> Vec<&crate::Derived> {
+    let mut placed: Vec<bool> = vec![false; graph.nodes.len()];
+    let mut done: BTreeSet<String> = BTreeSet::new();
+    let mut out: Vec<&crate::Derived> = Vec::with_capacity(graph.nodes.len());
+
+    while out.len() < graph.nodes.len() {
+        let ready: Vec<usize> = graph
+            .nodes
+            .iter()
+            .enumerate()
+            .filter(|(i, d)| !placed[*i] && d.needs.iter().all(|n| done.contains(n)))
+            .map(|(i, _)| i)
+            .collect();
+        if ready.is_empty() {
+            // Unreachable for an acyclic graph; emitting the rest in derivation order beats
+            // dropping them, and `lib.rs` is where the acyclicity is asserted.
+            out.extend(
+                graph
+                    .nodes
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| !placed[*i])
+                    .map(|(_, d)| d),
+            );
+            break;
+        }
+        for i in ready {
+            placed[i] = true;
+            done.insert(crate::id_of(&graph.nodes[i].node));
+            out.push(&graph.nodes[i]);
+        }
+    }
+    out
+}
+
+/// The log store: a StatefulSet, because its volume is its identity.
+fn log_store(app: &str, name: &str, volume_gb: u32) -> StatefulSet {
+    StatefulSet {
+        metadata: meta(app, name),
+        spec: Some(StatefulSetSpec {
+            service_name: Some(name.to_string()),
+            replicas: Some(1),
+            selector: selector(name),
+            template: pod(
+                name,
+                PodSpec {
+                    containers: vec![Container {
+                        name: "postgres".to_string(),
+                        image: Some("postgres:16-alpine".to_string()),
+                        env: Some(vec![
+                            from_secret("POSTGRES_PASSWORD", &credentials(app), "password"),
+                            EnvVar {
+                                name: "PGDATA".to_string(),
+                                value: Some("/var/lib/postgresql/data/pgdata".to_string()),
+                                ..Default::default()
+                            },
+                        ]),
+                        ports: Some(vec![ContainerPort {
+                            container_port: LOG_PORT,
+                            ..Default::default()
+                        }]),
+                        volume_mounts: Some(vec![VolumeMount {
+                            name: "data".to_string(),
+                            mount_path: "/var/lib/postgresql/data".to_string(),
+                            ..Default::default()
+                        }]),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+            ),
+            volume_claim_templates: Some(vec![PersistentVolumeClaim {
+                metadata: ObjectMeta {
+                    name: Some("data".to_string()),
+                    ..Default::default()
+                },
+                spec: Some(PersistentVolumeClaimSpec {
+                    access_modes: Some(vec!["ReadWriteOnce".to_string()]),
+                    resources: Some(VolumeResourceRequirements {
+                        requests: Some(BTreeMap::from([(
+                            "storage".to_string(),
+                            Quantity(format!("{volume_gb}Gi")),
+                        )])),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }]),
+            ..Default::default()
+        }),
+        ..Default::default()
+    }
+}
+
+/// The service partition: one binary, told which program to run.
+fn workload(app: &str, name: &str, replicas: u32, serves_ui: bool) -> Deployment {
+    let mut metadata = meta(app, name);
+    metadata.annotations = Some(BTreeMap::from([(
+        "beck.dev/serves-ui".to_string(),
+        serves_ui.to_string(),
+    )]));
+    Deployment {
+        metadata,
+        spec: Some(DeploymentSpec {
+            replicas: Some(replicas as i32),
+            selector: selector(name),
+            template: pod(
+                name,
+                PodSpec {
+                    security_context: Some(PodSecurityContext {
+                        run_as_non_root: Some(true),
+                        run_as_user: Some(65532),
+                        ..Default::default()
+                    }),
+                    containers: vec![Container {
+                        name: "app".to_string(),
+                        image: Some(format!("{app}:dev")),
+                        args: Some(vec![
+                            "run".to_string(),
+                            APP_SOURCE.to_string(),
+                            "--store".to_string(),
+                            "postgres".to_string(),
+                            "--addr".to_string(),
+                            format!("0.0.0.0:{APP_PORT}"),
+                        ]),
+                        env: Some(vec![from_secret(
+                            "BECK_POSTGRES_URL",
+                            &credentials(app),
+                            "url",
+                        )]),
+                        ports: Some(vec![ContainerPort {
+                            container_port: APP_PORT,
+                            ..Default::default()
+                        }]),
+                        readiness_probe: Some(http_probe("/readyz")),
+                        liveness_probe: Some(http_probe("/healthz")),
+                        // Stop accepting before the socket closes, so an in-flight patch stream is
+                        // not cut mid-frame during a rollout.
+                        lifecycle: Some(Lifecycle {
+                            pre_stop: Some(LifecycleHandler {
+                                sleep: Some(SleepAction { seconds: 5 }),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+            ),
+            ..Default::default()
+        }),
+        ..Default::default()
+    }
+}
+
+/// §3.5's "least-privilege infra, computed": the rules are the effect row, plus the two the
+/// platform layer owes every pod.
+///
+/// # Three kinds of peer, and only two of them are the program's
+///
+/// * **In-cluster** — the log store. A pod selector and the port it listens on, which is exactly
+///   what the `durable` effect implies and nothing more.
+/// * **DNS** — not derived from anything the program says, and added anyway. A `NetworkPolicy`
+///   with `policyTypes: [Ingress, Egress]` denies everything it does not name, *including port 53*.
+///   Forgetting it is the classic generated-policy bug: the manifests look strict, the pod comes
+///   up, and nothing resolves. Phase 0 knew this (§6.5) and the Phase 1 emitter did not.
+/// * **External hosts** — and this is where the derivation stops being able to say what it means.
+///
+/// # The honest limit on external egress
+///
+/// A core `NetworkPolicy` egress peer is an `ipBlock`, a namespace selector or a pod selector. It
+/// **cannot name a DNS host**. Phase 1 emitted `podSelector: {app: payments.example.com}` for a
+/// `net.out(payments.example.com)` — a selector matching no pod, so the rule granted nothing, so
+/// the program's own network call was denied by the policy derived from it. It rendered as YAML
+/// that looked exactly like the feature working.
+///
+/// What is emitted instead is the tightest thing the API can actually express: egress on 443 to
+/// everything *except* the cluster's own address space and the cloud metadata endpoint — the
+/// standard SSRF target, and the one address a workload with a `net.out` effect most wants to be
+/// unable to reach. The host list itself is recorded in a `beck.dev/egress-hosts` annotation,
+/// because a CNI that does understand names (Cilium's `toFQDNs`, Calico's `NetworkSet`) can enforce
+/// it exactly — and that is a `Platform` implementation's job, not core Kubernetes'.
+///
+/// So the claim this object supports is: *the program's `net.out` atoms are what open egress at
+/// all, and removing one removes a rule.* The claim it does not support is: *only those hosts are
+/// reachable.* The difference is written here rather than left in a slide.
+fn policy(
+    app: &str,
+    name: &str,
+    allow_ingress_from: &[String],
+    allow_egress_to: &[crate::Peer],
+    allow_egress_hosts: &[String],
+) -> NetworkPolicy {
+    let mut egress = vec![dns_egress()];
+    for peer in allow_egress_to {
+        egress.push(NetworkPolicyEgressRule {
+            to: Some(vec![NetworkPolicyPeer {
+                pod_selector: Some(LabelSelector {
+                    match_labels: Some(BTreeMap::from([("app".to_string(), peer.app.clone())])),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }]),
+            ports: Some(vec![tcp(i32::from(peer.port))]),
+        });
+    }
+    if !allow_egress_hosts.is_empty() {
+        egress.push(external_egress());
+    }
+
+    let mut metadata = meta(app, name);
+    if !allow_egress_hosts.is_empty() {
+        // Provenance in the object, the same idea as `beck explain` (§4.7): a reviewer can see
+        // which hosts the rule below is standing in for, and a `Platform` that can enforce names
+        // has them without re-deriving anything.
+        metadata.annotations = Some(BTreeMap::from([(
+            "beck.dev/egress-hosts".to_string(),
+            allow_egress_hosts.join(","),
+        )]));
+    }
+
+    NetworkPolicy {
+        metadata,
+        spec: Some(NetworkPolicySpec {
+            pod_selector: Some(LabelSelector {
+                match_labels: Some(BTreeMap::from([("app".to_string(), app.to_string())])),
+                ..Default::default()
+            }),
+            // Both listed, so everything not named above is denied.
+            policy_types: Some(vec!["Ingress".to_string(), "Egress".to_string()]),
+            ingress: (!allow_ingress_from.is_empty()).then(|| {
+                vec![NetworkPolicyIngressRule {
+                    from: Some(
+                        allow_ingress_from
+                            .iter()
+                            .map(|p| NetworkPolicyPeer {
+                                namespace_selector: Some(LabelSelector {
+                                    match_labels: Some(BTreeMap::from([(
+                                        "kubernetes.io/metadata.name".to_string(),
+                                        p.clone(),
+                                    )])),
+                                    ..Default::default()
+                                }),
+                                ..Default::default()
+                            })
+                            .collect(),
+                    ),
+                    ports: Some(vec![tcp(APP_PORT)]),
+                }]
+            }),
+            egress: Some(egress),
+        }),
+    }
+}
+
+/// The rule no effect implies and every pod needs.
+fn dns_egress() -> NetworkPolicyEgressRule {
+    NetworkPolicyEgressRule {
+        to: Some(vec![NetworkPolicyPeer {
+            namespace_selector: Some(LabelSelector {
+                match_labels: Some(BTreeMap::from([(
+                    "kubernetes.io/metadata.name".to_string(),
+                    "kube-system".to_string(),
+                )])),
+                ..Default::default()
+            }),
+            pod_selector: Some(LabelSelector {
+                match_labels: Some(BTreeMap::from([(
+                    "k8s-app".to_string(),
+                    "kube-dns".to_string(),
+                )])),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }]),
+        ports: Some(vec![port(53, "UDP"), port(53, "TCP")]),
+    }
+}
+
+/// Public egress on 443, with the cluster's own address space and the metadata endpoint removed.
+///
+/// The exclusions are the point. `0.0.0.0/0` would let a workload with one outbound API call reach
+/// every other pod in the cluster and read the node's cloud credentials from `169.254.169.254`.
+fn external_egress() -> NetworkPolicyEgressRule {
+    NetworkPolicyEgressRule {
+        to: Some(vec![NetworkPolicyPeer {
+            ip_block: Some(IPBlock {
+                cidr: "0.0.0.0/0".to_string(),
+                except: Some(vec![
+                    "10.0.0.0/8".to_string(),
+                    "172.16.0.0/12".to_string(),
+                    "192.168.0.0/16".to_string(),
+                    "169.254.0.0/16".to_string(),
+                ]),
+            }),
+            ..Default::default()
+        }]),
+        ports: Some(vec![tcp(443)]),
+    }
+}
+
+fn tcp(number: i32) -> NetworkPolicyPort {
+    port(number, "TCP")
+}
+
+fn port(number: i32, protocol: &str) -> NetworkPolicyPort {
+    NetworkPolicyPort {
+        port: Some(IntOrString::Int(number)),
+        protocol: Some(protocol.to_string()),
+        ..Default::default()
+    }
+}
+
+/// Gateway API, by hand.
+///
+/// §6.3 chooses Gateway API over `Ingress` deliberately — websockets and timeouts are expressible
+/// there and are annotations everywhere else. The cost is that these are CRDs, so this is the one
+/// place in the emitter where a field name is checked by review rather than by the compiler. The
+/// structs are `Deserialize` as well as `Serialize` so `tests/manifests.rs` can at least prove the
+/// document reads back as the same object.
+pub mod gateway {
+    use serde::{Deserialize, Serialize};
+
+    pub const API_VERSION: &str = "gateway.networking.k8s.io/v1";
+
+    #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct HttpRoute {
+        pub api_version: String,
+        pub kind: String,
+        pub metadata: Metadata,
+        pub spec: HttpRouteSpec,
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct Metadata {
+        pub name: String,
+        pub namespace: String,
+        #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty", default)]
+        pub annotations: std::collections::BTreeMap<String, String>,
+        #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty", default)]
+        pub labels: std::collections::BTreeMap<String, String>,
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct HttpRouteSpec {
+        pub parent_refs: Vec<ParentRef>,
+        pub hostnames: Vec<String>,
+        pub rules: Vec<Rule>,
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct ParentRef {
+        pub name: String,
+        pub namespace: String,
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct Rule {
+        pub matches: Vec<Match>,
+        pub backend_refs: Vec<BackendRef>,
+        /// `"0s"` means no request timeout, which is what a long-lived websocket needs.
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        pub timeouts: Option<Timeouts>,
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct Timeouts {
+        pub request: String,
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct Match {
+        pub path: PathMatch,
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct PathMatch {
+        #[serde(rename = "type")]
+        pub type_: String,
+        pub value: String,
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct BackendRef {
+        pub name: String,
+        pub port: i32,
+    }
+
+    /// The route the `ingress` effect implies: a websocket path, then everything else.
+    ///
+    /// The websocket rule is first because Gateway API matches most-specific-first only within a
+    /// rule; two rules are tried in order, and `PathPrefix: /` would otherwise swallow `/socket`.
+    pub fn http_route(app: &str, name: &str, host: &str, websocket: bool) -> HttpRoute {
+        let backend = vec![BackendRef {
+            name: app.to_string(),
+            port: super::APP_PORT,
+        }];
+        let mut rules = Vec::new();
+        if websocket {
+            rules.push(Rule {
+                matches: vec![Match {
+                    path: PathMatch {
+                        type_: "Exact".to_string(),
+                        value: "/socket".to_string(),
+                    },
+                }],
+                backend_refs: backend.clone(),
+                timeouts: Some(Timeouts {
+                    request: "0s".to_string(),
+                }),
+            });
+        }
+        rules.push(Rule {
+            matches: vec![Match {
+                path: PathMatch {
+                    type_: "PathPrefix".to_string(),
+                    value: "/".to_string(),
+                },
+            }],
+            backend_refs: backend,
+            timeouts: None,
+        });
+        HttpRoute {
+            api_version: API_VERSION.to_string(),
+            kind: "HTTPRoute".to_string(),
+            metadata: Metadata {
+                name: name.to_string(),
+                namespace: app.to_string(),
+                annotations: std::collections::BTreeMap::from([(
+                    "beck.dev/websocket".to_string(),
+                    websocket.to_string(),
+                )]),
+                labels: super::labels(app),
+            },
+            spec: HttpRouteSpec {
+                parent_refs: vec![ParentRef {
+                    name: "beck-gateway".to_string(),
+                    namespace: crate::GATEWAY_NAMESPACE.to_string(),
+                }],
+                hostnames: vec![host.to_string()],
+                rules,
+            },
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// The small pieces every object shares
+// ---------------------------------------------------------------------------------------------
+
+fn to_value<T: serde::Serialize>(object: &T) -> Value {
+    serde_json::to_value(object).expect("kubernetes objects are serialisable")
+}
+
+fn meta(app: &str, name: &str) -> ObjectMeta {
+    ObjectMeta {
+        name: Some(name.to_string()),
+        namespace: Some(app.to_string()),
+        labels: Some(labels(app)),
+        ..Default::default()
+    }
+}
+
+fn labels(app: &str) -> BTreeMap<String, String> {
+    labels_with(app, [])
+}
+
+fn labels_with(
+    app: &str,
+    extra: impl IntoIterator<Item = (String, String)>,
+) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::from([
+        ("app.kubernetes.io/name".to_string(), app.to_string()),
+        (
+            "app.kubernetes.io/managed-by".to_string(),
+            "beck".to_string(),
+        ),
+    ]);
+    out.extend(extra);
+    out
+}
+
+/// The `matchLabels` of a workload and the `labels` of the pods it makes are the same map, built
+/// once. Written twice, they drift, and a Deployment whose selector matches none of its own pods is
+/// accepted by the API server and never becomes ready.
+fn pod_labels(name: &str) -> BTreeMap<String, String> {
+    BTreeMap::from([("app".to_string(), name.to_string())])
+}
+
+fn selector(name: &str) -> LabelSelector {
+    LabelSelector {
+        match_labels: Some(pod_labels(name)),
+        ..Default::default()
+    }
+}
+
+fn pod(name: &str, spec: PodSpec) -> PodTemplateSpec {
+    PodTemplateSpec {
+        metadata: Some(ObjectMeta {
+            labels: Some(pod_labels(name)),
+            ..Default::default()
+        }),
+        spec: Some(spec),
+    }
+}
+
+fn credentials(app: &str) -> String {
+    format!("{app}-log-credentials")
+}
+
+fn log_url(app: &str) -> String {
+    format!("postgres://postgres:beck@{app}-log.{app}.svc:{LOG_PORT}/postgres")
+}
+
+fn from_secret(var: &str, secret: &str, key: &str) -> EnvVar {
+    EnvVar {
+        name: var.to_string(),
+        value_from: Some(EnvVarSource {
+            secret_key_ref: Some(SecretKeySelector {
+                name: secret.to_string(),
+                key: key.to_string(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }),
+        ..Default::default()
+    }
+}
+
+fn http_probe(path: &str) -> Probe {
+    Probe {
+        http_get: Some(HTTPGetAction {
+            path: Some(path.to_string()),
+            port: IntOrString::Int(APP_PORT),
+            ..Default::default()
+        }),
+        ..Default::default()
+    }
 }
 
 fn slug(n: &Node) -> String {
@@ -221,7 +822,7 @@ pub fn apko(graph: &InfraGraph) -> String {
          - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub\n    - ./local.rsa.pub\n  \
          packages:\n    - ca-certificates-bundle\n    - tzdata\n    - {app}@local\n\n\
          entrypoint:\n  command: /usr/bin/beck\n\n\
-         cmd: run {APP_SOURCE} --store postgres --addr 0.0.0.0:8080\n\n\
+         cmd: run {APP_SOURCE} --store postgres --addr 0.0.0.0:{APP_PORT}\n\n\
          # Non-root, matching the generated pod's securityContext exactly. A mismatch here is the\n\
          # classic \"works locally, CrashLoopBackOff in the cluster\".\n\
          accounts:\n  groups:\n    - groupname: nonroot\n      gid: 65532\n  users:\n    \
