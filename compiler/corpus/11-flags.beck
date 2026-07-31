@@ -1,0 +1,55 @@
+# An external store, honestly labelled. §3.8: "existing Postgres/APIs the team already has enter as
+# `external store legacy` with `external.read/write` effects — honest escape hatches with none of
+# the fold guarantees".
+#
+# The effect is what keeps it honest: `legacy_flag` can never be called from the fold, because
+# `external.read` is not replayable and the data tier refuses it.
+
+model State:
+    overrides: Map[Str, Bool]
+
+union Command:
+    Override(flag: Str, on: Bool)
+    Clear(flag: Str)
+
+union Event:
+    Overridden(flag: Str, on: Bool)
+    Cleared(flag: Str)
+
+union Rejection:
+    UnknownFlag
+
+def legacy_flag(name: Str) -> Bool uses external.read(legacy):
+    return False
+
+def known(name: Str) -> Bool:
+    return name == "dark-mode" or name == "new-checkout"
+
+def apply_event(s: State, env: Envelope[Event]) -> State:
+    match env.body:
+        case Overridden(flag, on):
+            return s.with(overrides=map_insert(s.overrides, flag, on))
+        case Cleared(flag):
+            return s.with(overrides=map_remove(s.overrides, flag))
+
+def validate(s: State, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Override(flag, on):
+            if not known(flag):
+                return Err(error=UnknownFlag)
+            return Ok(value=[Overridden(flag=flag, on=on)])
+        case Clear(flag):
+            return Ok(value=[Cleared(flag=flag)])
+
+def view(s: State, session: Session) -> Html:
+    return ui:
+        main:
+            h1: "flags"
+            ul:
+                for f in map_values(s.overrides):
+                    li: str(f)
+
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, flags, validate)
+flags: Signal[State] = durable(fold(apply_event, State(overrides={}), events))
+page: Signal[Html] = per_session(flags, view)

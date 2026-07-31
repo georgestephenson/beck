@@ -1,0 +1,292 @@
+---
+source: crates/beck-infra/tests/manifests.rs
+expression: all
+---
+# 000-namespace.yaml
+---
+apiVersion: "v1"
+kind: "Namespace"
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: "beck"
+    app.kubernetes.io/name: "app"
+    beck.dev/wire-id: "0123456789abcdef"
+  name: "app"
+
+# 020-service.yaml
+---
+apiVersion: "v1"
+kind: "Service"
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: "beck"
+    app.kubernetes.io/name: "app"
+  name: "app"
+  namespace: "app"
+spec:
+  ports:
+    - port: 8080
+      targetPort: 8080
+  selector:
+    app: "app"
+
+# 030-log-service.yaml
+---
+apiVersion: "v1"
+kind: "Service"
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: "beck"
+    app.kubernetes.io/name: "app"
+  name: "app-log"
+  namespace: "app"
+spec:
+  clusterIP: "None"
+  ports:
+    - port: 5432
+      targetPort: 5432
+  selector:
+    app: "app-log"
+
+# 040-secret.yaml
+---
+apiVersion: "v1"
+kind: "Secret"
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: "beck"
+    app.kubernetes.io/name: "app"
+  name: "app-log-credentials"
+  namespace: "app"
+stringData:
+  password: "beck"
+  url: "postgres://postgres:beck@app-log.app.svc:5432/postgres"
+type: "Opaque"
+
+# 050-route.yaml
+---
+apiVersion: "gateway.networking.k8s.io/v1"
+kind: "HTTPRoute"
+metadata:
+  annotations:
+    beck.dev/websocket: "true"
+  labels:
+    app.kubernetes.io/managed-by: "beck"
+    app.kubernetes.io/name: "app"
+  name: "app-route"
+  namespace: "app"
+spec:
+  hostnames:
+    - "app.beck.localhost"
+  parentRefs:
+    - name: "beck-gateway"
+      namespace: "gateway-system"
+  rules:
+    - backendRefs:
+        - name: "app"
+          port: 8080
+      matches:
+        - path:
+            type: "Exact"
+            value: "/socket"
+      timeouts:
+        request: "0s"
+    - backendRefs:
+        - name: "app"
+          port: 8080
+      matches:
+        - path:
+            type: "PathPrefix"
+            value: "/"
+
+# 060-log-store.yaml
+---
+apiVersion: "apps/v1"
+kind: "StatefulSet"
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: "beck"
+    app.kubernetes.io/name: "app"
+  name: "app-log"
+  namespace: "app"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: "app-log"
+  serviceName: "app-log"
+  template:
+    metadata:
+      labels:
+        app: "app-log"
+    spec:
+      containers:
+        - env:
+            - name: "POSTGRES_PASSWORD"
+              valueFrom:
+                secretKeyRef:
+                  key: "password"
+                  name: "app-log-credentials"
+            - name: "PGDATA"
+              value: "/var/lib/postgresql/data/pgdata"
+          image: "postgres:16-alpine"
+          name: "postgres"
+          ports:
+            - containerPort: 5432
+          volumeMounts:
+            - mountPath: "/var/lib/postgresql/data"
+              name: "data"
+  volumeClaimTemplates:
+    - apiVersion: "v1"
+      kind: "PersistentVolumeClaim"
+      metadata:
+        name: "data"
+      spec:
+        accessModes:
+          - "ReadWriteOnce"
+        resources:
+          requests:
+            storage: "10Gi"
+
+# 070-workload.yaml
+---
+apiVersion: "apps/v1"
+kind: "Deployment"
+metadata:
+  annotations:
+    beck.dev/serves-ui: "true"
+  labels:
+    app.kubernetes.io/managed-by: "beck"
+    app.kubernetes.io/name: "app"
+  name: "app"
+  namespace: "app"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: "app"
+  template:
+    metadata:
+      labels:
+        app: "app"
+    spec:
+      containers:
+        - args:
+            - "run"
+            - "/app/app.beck"
+            - "--store"
+            - "postgres"
+            - "--addr"
+            - "0.0.0.0:8080"
+          env:
+            - name: "BECK_POSTGRES_URL"
+              valueFrom:
+                secretKeyRef:
+                  key: "url"
+                  name: "app-log-credentials"
+          image: "app:dev"
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 5
+          livenessProbe:
+            httpGet:
+              path: "/healthz"
+              port: 8080
+          name: "app"
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: "/readyz"
+              port: 8080
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+
+# 080-snapshots.yaml
+---
+apiVersion: "v1"
+data:
+  snapshot_every_events: "1000"
+kind: "ConfigMap"
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: "beck"
+    app.kubernetes.io/name: "app"
+  name: "app-snapshots"
+  namespace: "app"
+
+# 090-grants.yaml
+---
+apiVersion: "v1"
+data:
+  grants.sql: |
+    -- derived from the program's effects: it appends and reads, so it may not update or delete
+    GRANT SELECT, INSERT ON beck_log TO "app-app";
+kind: "ConfigMap"
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: "beck"
+    app.kubernetes.io/name: "app"
+  name: "app-grants"
+  namespace: "app"
+
+# 100-policy.yaml
+---
+apiVersion: "networking.k8s.io/v1"
+kind: "NetworkPolicy"
+metadata:
+  annotations:
+    beck.dev/egress-hosts: "hooks.example.com"
+  labels:
+    app.kubernetes.io/managed-by: "beck"
+    app.kubernetes.io/name: "app"
+  name: "app-policy"
+  namespace: "app"
+spec:
+  egress:
+    - ports:
+        - port: 53
+          protocol: "UDP"
+        - port: 53
+          protocol: "TCP"
+      to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: "kube-system"
+          podSelector:
+            matchLabels:
+              k8s-app: "kube-dns"
+    - ports:
+        - port: 5432
+          protocol: "TCP"
+      to:
+        - podSelector:
+            matchLabels:
+              app: "app-log"
+    - ports:
+        - port: 443
+          protocol: "TCP"
+      to:
+        - ipBlock:
+            cidr: "0.0.0.0/0"
+            except:
+              - "10.0.0.0/8"
+              - "172.16.0.0/12"
+              - "192.168.0.0/16"
+              - "169.254.0.0/16"
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: "gateway-system"
+      ports:
+        - port: 8080
+          protocol: "TCP"
+  podSelector:
+    matchLabels:
+      app: "app"
+  policyTypes:
+    - "Ingress"
+    - "Egress"

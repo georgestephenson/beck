@@ -18,8 +18,29 @@ use beck_core::graph::{DepGraph, EdgeKind, GraphBuilder, GraphNode, NodeKind};
 use beck_core::{Effect, Placed, Tier};
 
 pub mod k8s;
+pub mod yaml;
 
 pub use k8s::render;
+
+/// The namespace the ingress gateway runs in.
+///
+/// Named once because two objects have to agree about it: the route's `parentRefs` points the
+/// gateway at this workload, and the NetworkPolicy's ingress rule is what lets the gateway's
+/// packets in. They disagreed — the route said `gateway-system`, the policy said `gateway` — so
+/// the policy admitted a namespace that does not exist and denied the one that does. Nothing said
+/// so, because each object was correct on its own.
+pub const GATEWAY_NAMESPACE: &str = "gateway-system";
+
+/// The port the service partition listens on.
+///
+/// One constant, used by the container, its Service, the route that sends to it and the ingress
+/// rule that admits it. Written out five times it reads as correct on each line and is a 503 in a
+/// cluster.
+pub const APP_PORT: u16 = 8080;
+
+/// The port the log store listens on, used by its Service, its container, the URL in the
+/// credentials and the egress rule that permits the connection.
+pub const LOG_PORT: u16 = 5432;
 
 /// A typed infrastructure node. Diffable, testable, and an ordinary value.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -36,6 +57,14 @@ pub enum Node {
         replicas: u32,
         /// Emitted only because a signal is placed on `client`: something has to serve it.
         serves_ui: bool,
+        /// Whether this workload connects to a [`Node::LogStore`], and therefore needs the
+        /// credentials for one.
+        ///
+        /// Not cosmetic. The container read `BECK_POSTGRES_URL` from a Secret unconditionally, so
+        /// a program with no `durable` effect emitted a `secretKeyRef` to a Secret nothing derived
+        /// — a pod that sits in `CreateContainerConfigError` forever. Found by the generated-graph
+        /// suite; no program in the corpus lacks a durable fold, so no example test could see it.
+        reads_log: bool,
     },
     /// `merge_clients()` ⇒ a websocket ingress route.
     Route {
@@ -70,8 +99,19 @@ pub enum Node {
     /// Effect rows ⇒ least-privilege network policy (§6.5).
     Policy {
         name: String,
+        /// Namespaces allowed to open a connection to this workload.
         allow_ingress_from: Vec<String>,
-        allow_egress_to: Vec<String>,
+        /// Workloads *inside* the cluster this one may reach, by pod label and port.
+        allow_egress_to: Vec<Peer>,
+        /// Hosts *outside* the cluster, from the program's `net.out` atoms.
+        ///
+        /// Separate from [`Node::Policy::allow_egress_to`] because Kubernetes cannot express them
+        /// the same way, and conflating the two produced a policy that was quietly wrong: a core
+        /// `NetworkPolicy` egress peer is an `ipBlock`, a namespace selector or a pod selector —
+        /// never a DNS name. Phase 1 emitted `podSelector: {app: payments.example.com}`, which
+        /// matches no pod, so the rule the §3.5 claim rests on allowed nothing at all. See
+        /// [`crate::k8s`] for what is emitted instead and what it does not enforce.
+        allow_egress_hosts: Vec<String>,
     },
     /// Effect rows ⇒ database grants.
     Grant {
@@ -79,6 +119,16 @@ pub enum Node {
         on: String,
         privileges: Vec<String>,
     },
+}
+
+/// A workload this one is allowed to reach, and the port it is reached on.
+///
+/// The port is here rather than assumed because "may talk to the log store" and "may open any port
+/// on the log store's pods" are different grants, and only the first is what the program asked for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Peer {
+    pub app: String,
+    pub port: u16,
 }
 
 /// A node plus the reason it exists and what it cannot start without.
@@ -161,12 +211,12 @@ pub fn graph(placed: &Placed) -> InfraGraph {
     let mut effects: Vec<(Effect, String)> = Vec::new();
     for s in &placed.program.signals {
         for e in &s.effects {
-            effects.push((*e, s.name.to_string()));
+            effects.push((e.clone(), s.name.to_string()));
         }
     }
     for name in &placed.program.def_order {
         for e in &placed.program.defs[name].effects {
-            effects.push((*e, name.to_string()));
+            effects.push((e.clone(), name.to_string()));
         }
     }
     let serves_ui = placed
@@ -219,7 +269,7 @@ pub fn derive(app: &str, effects: &[(Effect, String)], serves_ui: bool) -> Infra
             Node::Service {
                 name: app.clone(),
                 selector: app.clone(),
-                port: 8080,
+                port: APP_PORT,
                 headless: false,
             },
             &format!("`{from}` accepts connections, so the workload needs an address"),
@@ -261,7 +311,7 @@ pub fn derive(app: &str, effects: &[(Effect, String)], serves_ui: bool) -> Infra
             Node::Service {
                 name: format!("{app}-log"),
                 selector: format!("{app}-log"),
-                port: 5432,
+                port: LOG_PORT,
                 headless: true,
             },
             &format!("`{from}` needs a log store, and the fold has to be able to resolve it"),
@@ -300,6 +350,7 @@ pub fn derive(app: &str, effects: &[(Effect, String)], serves_ui: bool) -> Infra
             name: app.clone(),
             replicas: 1,
             serves_ui,
+            reads_log: has(Effect::Durable).is_some(),
         },
         if serves_ui {
             "a signal is placed on `client`, so the server renders and streams patches"
@@ -314,25 +365,51 @@ pub fn derive(app: &str, effects: &[(Effect, String)], serves_ui: bool) -> Infra
             .collect::<Vec<_>>(),
     );
 
-    // Effect rows ⇒ least-privilege network policy. Note what is *absent*: no egress rule beyond
-    // the log, because no effect in this program reaches any other host.
-    let mut egress = Vec::new();
+    // Effect rows ⇒ least-privilege network policy. §3.5's "least-privilege infra, computed": the
+    // egress list *is* the program's `net.out` atoms, so a host nobody calls is a host the cluster
+    // will not let this workload reach — and adding a call adds the rule, in the same commit.
+    let mut egress: Vec<Peer> = Vec::new();
     let mut policy_needs = vec![workload.clone()];
     if has(Effect::Durable).is_some() {
-        egress.push(format!("{app}-log"));
+        egress.push(Peer {
+            app: format!("{app}-log"),
+            port: LOG_PORT,
+        });
         policy_needs.push(log_svc.clone());
     }
+    let mut hosts: Vec<String> = effects
+        .iter()
+        .filter_map(|(e, _)| match e {
+            // The own origin is this workload's own Service, which the ingress rule already covers.
+            Effect::NetOut(h) if h.as_ref() != "origin" => Some(h.to_string()),
+            _ => None,
+        })
+        .collect();
+    hosts.sort();
+    hosts.dedup();
+    let derived_from: Vec<String> = effects
+        .iter()
+        .filter(|(e, _)| matches!(e, Effect::NetOut(_)))
+        .map(|(e, w)| format!("`{w}` performs `{}`", e.name()))
+        .collect();
     out.push(
         Node::Policy {
             name: format!("{app}-policy"),
             allow_ingress_from: if has(Effect::Ingress).is_some() {
-                vec!["gateway".into()]
+                vec![GATEWAY_NAMESPACE.into()]
             } else {
                 Vec::new()
             },
             allow_egress_to: egress,
+            allow_egress_hosts: hosts.clone(),
         },
-        "the policy is the effect row: no `net.out` in the program, no egress rule in the cluster",
+        &if derived_from.is_empty() {
+            "the policy is the effect row: no `net.out` in the program, no egress rule in the \
+             cluster"
+                .to_string()
+        } else {
+            format!("the policy is the effect row: {}", derived_from.join("; "))
+        },
     )
     .needing(&policy_needs.iter().map(String::as_str).collect::<Vec<_>>());
 
@@ -418,18 +495,40 @@ pub fn add_resources(b: &mut GraphBuilder, infra: &InfraGraph) {
     }
 }
 
+/// The subdirectory the cluster manifests are written to.
+///
+/// They are on their own, away from the image configs and the program, because the way a person
+/// and a GitOps controller both consume them is `-f <directory>` — and `kubectl apply -f` reads
+/// *every* `.yaml` in a directory. With everything in one place, `image.apko.yaml` was submitted to
+/// the API server as an object with no `apiVersion`, and Argo CD or Flux pointed at the output
+/// would have done the same. Found by the conformance job (docs/21 §21.4 rung 5), which is the
+/// first thing that ever ran `kubectl apply` on this directory.
+pub const MANIFEST_DIR: &str = "k8s";
+
 /// Write the object graph, the image configs, the program, and the provenance table.
+///
+/// The layout is
+///
+/// ```text
+/// <out>/k8s/000-namespace.yaml …   the cluster manifests, and nothing else
+/// <out>/image.apko.yaml            the image, declaratively
+/// <out>/image.melange.yaml         the package the binary ships in
+/// <out>/app.beck                   the program, at the path the package installs from
+/// <out>/explain.txt                why each object exists
+/// ```
 ///
 /// `source` is the program itself. It has to be here: the image ships the *toolchain*, and a
 /// container told to `beck run` with no source file has nothing to serve. That was invisible until
 /// a container was actually asked to serve a page (docs/19 §19.5).
 pub fn emit(placed: &Placed, source: &str, out: &Path) -> Result<Vec<PathBuf>> {
     let graph = graph(placed);
-    std::fs::create_dir_all(out).with_context(|| format!("creating {}", out.display()))?;
+    let manifests = out.join(MANIFEST_DIR);
+    std::fs::create_dir_all(&manifests)
+        .with_context(|| format!("creating {}", manifests.display()))?;
     let mut written = Vec::new();
 
     for (name, body) in k8s::render(&graph, &placed.wire_id) {
-        let path = out.join(&name);
+        let path = manifests.join(&name);
         std::fs::write(&path, body).with_context(|| format!("writing {}", path.display()))?;
         written.push(path);
     }
@@ -460,10 +559,13 @@ pub fn emit(placed: &Placed, source: &str, out: &Path) -> Result<Vec<PathBuf>> {
 
 /// Apply the emitted graph to a local cluster — rung 3 of the parity ladder (§6.6).
 pub fn up(out: &Path) -> Result<()> {
+    // `<out>/k8s`, not `<out>`: the image configs are YAML too, and the API server has no idea what
+    // an apko file is.
+    let manifests = out.join(MANIFEST_DIR);
     let status = std::process::Command::new("kubectl")
         .arg("apply")
         .arg("-f")
-        .arg(out)
+        .arg(&manifests)
         .status()
         .context(
             "running kubectl — `beck up` needs a cluster; `beck run` deliberately needs nothing",
@@ -474,16 +576,38 @@ pub fn up(out: &Path) -> Result<()> {
     Ok(())
 }
 
-fn sanitise(name: &str) -> String {
+/// The longest suffix any derived object name carries: `<app>-log-credentials`.
+///
+/// Every other one is shorter — `-snapshots`, `-policy`, `-grants`, `-route`, `-log`. The budget
+/// below is what keeps the *longest* of them inside the API's limit, which is the only version of
+/// this arithmetic that stays true when a new object is added with a new suffix.
+const LONGEST_SUFFIX: usize = "-log-credentials".len();
+
+/// A Kubernetes object name is an RFC 1123 label: at most 63 characters, lowercase alphanumerics
+/// and dashes, starting and ending with an alphanumeric.
+pub const MAX_NAME: usize = 63;
+
+/// Turn a module name into something Kubernetes will accept as the name of an object *and* as the
+/// stem of every object derived from it.
+///
+/// The length cap is not decoration. A module called `customer-facing-order-management-service`
+/// produces `…-log-credentials`, and the API server rejects a name over 63 characters — so an
+/// application would compile, derive, render, and fail at `kubectl apply` with a message about a
+/// field nobody wrote. Found by the generated-graph suite (`tests/manifest_properties.rs`), which
+/// is exactly the input nobody types by hand.
+pub fn sanitise(name: &str) -> String {
     let cleaned: String = name
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
         .collect();
-    let trimmed = cleaned.trim_matches('-').to_lowercase();
+    let mut trimmed = cleaned.trim_matches('-').to_lowercase();
+    trimmed.truncate(MAX_NAME - LONGEST_SUFFIX);
+    // Truncation can leave the dash that was in the middle of a word at the end of the name.
+    let trimmed = trimmed.trim_end_matches('-');
     if trimmed.is_empty() {
         "beck-app".into()
     } else {
-        trimmed
+        trimmed.to_string()
     }
 }
 
@@ -601,17 +725,29 @@ page: Signal[Html] = per_session(st, view)
     #[test]
     fn no_network_effect_means_no_egress_beyond_the_log() {
         let g = graph(&compile(PROGRAM));
-        let policy = g
+        let (peers, hosts) = g
             .nodes
             .iter()
             .find_map(|d| match &d.node {
                 Node::Policy {
-                    allow_egress_to, ..
-                } => Some(allow_egress_to.clone()),
+                    allow_egress_to,
+                    allow_egress_hosts,
+                    ..
+                } => Some((allow_egress_to.clone(), allow_egress_hosts.clone())),
                 _ => None,
             })
             .expect("a policy exists");
-        assert_eq!(policy, ["app-log"]);
+        assert_eq!(
+            peers,
+            [Peer {
+                app: "app-log".into(),
+                port: LOG_PORT
+            }]
+        );
+        assert!(
+            hosts.is_empty(),
+            "the program calls nothing outside: {hosts:?}"
+        );
     }
 
     #[test]
@@ -624,14 +760,16 @@ page: Signal[Html] = per_session(st, view)
     }
 
     #[test]
-    fn everything_the_manifests_reference_is_also_emitted() {
+    fn everything_the_graph_references_is_also_derived() {
         // The Route named a backend and the StatefulSet named a serviceName; neither existed until
         // a pod tried to resolve them. A graph that points at objects it does not emit is not a
         // graph (docs/19 §19.5).
+        //
+        // This is the *graph* half. The manifest half — that the emitted YAML references only
+        // objects the graph declares, and that a `secretKeyRef`, a `serviceName` and a
+        // `backendRefs.port` all resolve — is `tests/manifests.rs`, where the objects can be walked
+        // instead of the text being scraped.
         let g = graph(&compile(PROGRAM));
-        let files = crate::k8s::render(&g, "id");
-        let all: String = files.iter().map(|(_, b)| b.as_str()).collect();
-
         let emitted: Vec<String> = g
             .nodes
             .iter()
@@ -648,43 +786,6 @@ page: Signal[Html] = per_session(st, view)
             emitted.contains(&"app-log".to_string()),
             "log service: {emitted:?}"
         );
-
-        // The log store is a StatefulSet, so its service must be headless.
-        assert!(all.contains("clusterIP: None"), "{all}");
-        // …and the credentials must actually point somewhere.
-        assert!(
-            all.contains("postgres://postgres:beck@app-log.app.svc:5432"),
-            "{all}"
-        );
-    }
-
-    /// Every cross-reference the rendered manifests make, as `(kind, name)`: a stateful set's
-    /// `serviceName`, a container's `secretKeyRef`, a route's `backendRefs`.
-    fn manifest_references(yaml: &str) -> Vec<(&'static str, String)> {
-        let mut refs = Vec::new();
-        let mut expecting: Option<&'static str> = None;
-        for line in yaml.lines() {
-            let t = line.trim();
-            if let Some(rest) = t.strip_prefix("serviceName:") {
-                refs.push(("Service", rest.trim().to_string()));
-                continue;
-            }
-            if let Some(kind) = expecting.take() {
-                if let Some(n) = t
-                    .strip_prefix("- name:")
-                    .or_else(|| t.strip_prefix("name:"))
-                {
-                    refs.push((kind, n.trim().to_string()));
-                    continue;
-                }
-            }
-            expecting = match t {
-                "secretKeyRef:" => Some("Secret"),
-                "backendRefs:" => Some("Service"),
-                _ => None,
-            };
-        }
-        refs
     }
 
     #[test]
@@ -705,32 +806,6 @@ page: Signal[Html] = per_session(st, view)
             g.nodes.iter().any(|d| !d.needs.is_empty()),
             "no object references any other, so this test proves nothing"
         );
-    }
-
-    #[test]
-    fn the_manifests_reference_only_what_the_graph_declares() {
-        // The other half, and the direction that actually bit: the YAML named a backend Service and
-        // a `serviceName` that the graph did not contain, and nothing said so until a pod tried to
-        // resolve them. Manifest references ⊆ `needs` ⊆ emitted objects, checked without naming a
-        // single object, so a new reference added to a template cannot slip past.
-        let g = graph(&compile(PROGRAM));
-        let files = crate::k8s::render(&g, "id");
-        let all: String = files.iter().map(|(_, b)| b.as_str()).collect();
-
-        let refs = manifest_references(&all);
-        assert!(
-            refs.len() >= 3,
-            "expected the stateful set, the secrets and the route to reference things: {refs:?}"
-        );
-        let declared: Vec<String> = g.nodes.iter().flat_map(|d| d.needs.clone()).collect();
-        for (kind, name) in &refs {
-            let id = format!("{kind}/{name}");
-            assert!(
-                declared.contains(&id),
-                "the manifests reference {id}, which no object declares needing. \
-                 Declared: {declared:?}"
-            );
-        }
     }
 
     #[test]
@@ -786,30 +861,6 @@ page: Signal[Html] = per_session(st, view)
     }
 
     #[test]
-    fn the_image_ships_the_program_and_the_workload_runs_it() {
-        // An image with the toolchain and no program is an image that cannot serve anything, and
-        // nothing short of starting a container says so.
-        let g = graph(&compile(PROGRAM));
-        let melange = crate::k8s::melange(&g);
-        assert!(
-            melange.contains(crate::k8s::APP_SOURCE),
-            "the package must install the program:\n{melange}"
-        );
-        let workload = crate::k8s::render(&g, "id")
-            .into_iter()
-            .find(|(n, _)| n.contains("workload"))
-            .map(|(_, b)| b)
-            .expect("a workload exists");
-        assert!(
-            workload.contains(crate::k8s::APP_SOURCE),
-            "the container must be told which program to run:\n{workload}"
-        );
-        // …and it must be able to reach the log store the `durable` effect asked for.
-        assert!(workload.contains("BECK_POSTGRES_URL"), "{workload}");
-        assert!(workload.contains("secretKeyRef"), "{workload}");
-    }
-
-    #[test]
     fn the_image_configs_name_the_binary_as_a_package_not_a_host_file() {
         // apko copies nothing from the host, so a config that hardlinks a path the packages never
         // created cannot work — the mistake Phase 0's hand-written config made, invisible until
@@ -824,17 +875,5 @@ page: Signal[Html] = per_session(st, view)
         let melange = crate::k8s::melange(&g);
         assert!(melange.contains("install -m755 beck"), "{melange}");
         assert!(melange.contains("targets.destdir"), "{melange}");
-    }
-
-    #[test]
-    fn the_rendered_manifests_parse_as_kubernetes_objects() {
-        let g = graph(&compile(PROGRAM));
-        let files = render(&g, "abc123");
-        assert!(!files.is_empty());
-        for (name, body) in &files {
-            assert!(name.ends_with(".yaml"), "{name}");
-            assert!(body.contains("apiVersion:"), "{name}:\n{body}");
-            assert!(body.contains("kind:"), "{name}:\n{body}");
-        }
     }
 }

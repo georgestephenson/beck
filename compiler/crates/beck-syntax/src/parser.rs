@@ -300,6 +300,18 @@ impl<'a> Parser<'a> {
         let uses_span = uses.first().map(|n| n.span()).unwrap_or(name_span);
         let uses = Node::form("uses", uses, uses_span);
 
+        // A `def` with no body is a **declaration**: a signature with nothing behind it. It is
+        // what a `.becki` interface file is made of (§3.6), and it is an error in an ordinary
+        // module — but that is `check`'s judgement to make, not the parser's, because the parser
+        // does not know which kind of file it is reading.
+        if !self.at(&Raw::Colon) {
+            let span = start.to(uses.span());
+            return Some(Node::form(
+                sym::DEF,
+                vec![Node::sym(name, name_span), params, returns, uses],
+                span,
+            ));
+        }
         self.expect(&Raw::Colon, "`:` before the function body");
         let body = self.block()?;
         let span = start.to(body.span());

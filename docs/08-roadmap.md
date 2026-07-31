@@ -78,7 +78,22 @@ Deliberately bad at everything, complete end-to-end.
 differential and replay harnesses green; `beck replay` reproduces state from a recorded log.
 **Met** ([`19`](19-phase-1-report.md) §19.3, §19.5).
 
-## Phase 2 — Effects and placement (3–4 months)
+## Phase 2 — Effects and placement (3–4 months) — **BUILT**
+
+> Implemented in [`compiler/`](../compiler/); what it does, the measurements, the corrections it
+> makes to these documents, and what it deliberately does not do are in
+> [`20-phase-2-report.md`](20-phase-2-report.md). The exit criteria are met: the todo sketch with
+> **every `@on(...) removed`** compiles, places and runs; all eight of §3.5's properties are passing
+> tests; and a three-module project re-checks **one** module after a body edit and three after a
+> signature change. Across a 22-program corpus, 44% of everything placed is unplaced-pure.
+>
+> Three items are *not* what the section below implies, and are named rather than implied. **The
+> general slicer was assigned to this phase and was not built** —
+> [`19`](19-phase-1-report.md) §19.9 put it beside placement inference, and the splitter still
+> understands one topology (it refuses anything else by name rather than mis-slicing it). Native
+> codegen is still not done, unchanged from Phase 1. And **rendering placement is not a decision
+> yet**: Mode B does not exist, so the cost model is ready for the Mode A/B choice and does not make
+> it ([`20`](20-phase-2-report.md) §20.4 item 1). §20.5 has the rest.
 
 The moat.
 
@@ -95,6 +110,7 @@ The moat.
 **Exit**: on a corpus of 20+ programs, placement is inferred with no annotations for the common cases;
 every §3.5 property is a passing test; a 3-module project rebuilds incrementally without recompiling
 dependencies whose signatures didn't change.
+**Met** ([`20`](20-phase-2-report.md) §20.3).
 
 ## Phase 3 — Make it real for developers (4–5 months)
 
@@ -107,6 +123,12 @@ dependencies whose signatures didn't change.
   component bundle).
 - Client polish for both modes: router, forms, lazy routes, focus/scroll preservation, devtools
   extension showing signal graph, patch traffic and pending state.
+- **`test` blocks and inferred mocks** ([`21`](21-tests-in-beck-and-proof.md) §21.2–§21.3): a test
+  is a log, a command and an expectation, so cross-boundary tests need no network and no fixtures;
+  stubs attach to *effect atoms* rather than to interfaces, so "any value" is the default and has no
+  syntax. Depends on one type-directed value generator, which `property` blocks share. This is the
+  first thing an outside developer will reach for, and Phase 2 shipped with no way for them to write
+  a single test about their own program.
 - Structured concurrency, `Result`/error rows, `match` exhaustiveness, pattern matching completion.
 - Standard library v1: collections, strings, time, money/decimal, HTTP client, JSON, UUID, crypto
   primitives (delegated to `ring`/`aws-lc-rs`, not hand-rolled).
@@ -192,7 +214,11 @@ Kubernetes objects + inferred placement* on the right is the demo that explains 
 
 ## 8.3 Cross-cutting practices from day one
 
-1. **Every phase ships a demo that runs.** No phase completes on a design document.
+1. **Every phase ships a demo that runs** — and so must the thing that runs it. Phase 2 found that
+   the Phase 1 CI workflow had been invalid YAML from the day it was written, so every gate in it was
+   silently absent for a whole phase ([`20`](20-phase-2-report.md) §20.4 item 8). A workflow is an
+   artefact, and [`19`](19-phase-1-report.md) §19.4 item 10 already said what that means: an artefact
+   nobody has executed is a design document. Run the gates by hand once, at the start.
 2. **The differential harness (§4.8) is the project's conscience.** It is the mechanised statement of
    the central promise; keep it green.
 3. **Error-message snapshots in CI** from week two (§4.5).

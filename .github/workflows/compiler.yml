@@ -1,6 +1,9 @@
-name: phase 1
+name: phase 2
 
 # The same discipline as the Phase 0 workflow (docs/08-roadmap.md §8.3), applied to the compiler.
+#
+# Phase 2 adds the exit criterion itself as a job: the corpus, checked with no annotations; the
+# security suite; and a three-module project that links. Those are gates, not reports.
 #
 # What is a *gate* and what is merely *reported* stays a deliberate distinction (§13.7): the
 # harnesses, the round-trip property and the licence check fail the build; timings are printed but
@@ -62,7 +65,7 @@ jobs:
       - name: the sketch typechecks, places and slices
         run: ./target/release/beck check examples/todo.beck
 
-      - name: `beck fmt` round-trips and is idempotent
+      - name: "`beck fmt` round-trips and is idempotent"
         run: |
           ./target/release/beck fmt examples/todo.beck > /tmp/a.beck
           ./target/release/beck fmt /tmp/a.beck        > /tmp/b.beck
@@ -87,6 +90,47 @@ jobs:
       - name: replay is exact
         run: ./target/release/beck replay examples/todo.beck --path /tmp/beck.log --verify
 
+      - name: the sketch places itself with no annotations at all
+        run: |
+          # §3.3: "placement is not a primitive annotation; it is a constraint solution". Strip
+          # every `@on(...)` and the solver has to land on a placement that runs.
+          sed 's/^@on(server)$//;s/^@on(data)$//;s/^@on(client)$//' examples/todo.beck > /tmp/bare.beck
+          ! grep -q '@on' /tmp/bare.beck
+          ./target/release/beck check /tmp/bare.beck \
+            --assert-place page=client \
+            --assert-place todos=data \
+            --assert-place proposals=server \
+            --assert-place apply_event=any
+          ./target/release/beck explain place /tmp/bare.beck todos
+
+      - name: the published interface round-trips, and a body edit does not move it
+        run: |
+          ./target/release/beck iface examples/todo.beck -o /tmp/v1.becki
+          ./target/release/beck check examples/todo.beck --wire-compat /tmp/v1.becki
+          # A body edit is not a wire change (§3.6's firewall).
+          sed 's/"done" if t.done else ""/"done" if t.done else " "/' examples/todo.beck > /tmp/edited.beck
+          ./target/release/beck check /tmp/edited.beck --wire-compat /tmp/v1.becki
+          # Adding an event variant is (§4.3's rolling-deploy rule), and must fail without --breaking.
+          python3 - <<'PY'
+          src = open("examples/todo.beck").read()
+          src = src.replace("    Deleted(id: Id)", "    Deleted(id: Id)\n    Starred(id: Id)")
+          src = src.replace(
+              "        case Deleted(id):\n            return s.with(todos=map_remove(s.todos, id))",
+              "        case Deleted(id):\n            return s.with(todos=map_remove(s.todos, id))\n        case Starred(id):\n            return toggled(s, id)")
+          open("/tmp/v2.beck", "w").write(src)
+          PY
+          ! ./target/release/beck check /tmp/v2.beck --wire-compat /tmp/v1.becki
+          ./target/release/beck check /tmp/v2.beck --wire-compat /tmp/v1.becki --breaking
+
+      - name: every program in the corpus checks, and the project links
+        run: |
+          for f in corpus/*.beck; do
+            echo "== $f"
+            ./target/release/beck check "$f"
+          done
+          ./target/release/beck check corpus/project/app.beck
+          ./target/release/beck iface corpus/project/domain.beck --stdout > /dev/null
+
       - name: the object graph is what the effects imply
         run: |
           ./target/release/beck build examples/todo.beck --out /tmp/objects
@@ -95,8 +139,62 @@ jobs:
           grep -q 'LogStore/'  /tmp/objects/explain.txt
           grep -q 'Route/'     /tmp/objects/explain.txt
           # The grant is append-only because the program is.
-          grep -q 'GRANT SELECT, INSERT' /tmp/objects/*grants.yaml
-          ! grep -q 'DELETE' /tmp/objects/*grants.yaml
+          grep -q 'GRANT SELECT, INSERT' /tmp/objects/k8s/*grants.yaml
+          ! grep -q 'DELETE' /tmp/objects/k8s/*grants.yaml
+          # The cluster manifests are on their own, so `kubectl apply -f` and a GitOps controller
+          # pointed at that directory see manifests and nothing else.
+          ls /tmp/objects/k8s | grep -qv apko
+          test -f /tmp/objects/image.apko.yaml
+
+  conformance:
+    # Rung 5 of the ladder in docs/21 §21.4: the API server is the only authority on whether an
+    # object is admissible, and every other suite reasons about our *model* of Kubernetes. This job
+    # asks Kubernetes.
+    #
+    # BECK_REQUIRE_CLUSTER=1 is the whole point of the job. Without it the conformance tests skip
+    # when no cluster is reachable, which is right on a laptop and would be a silently-absent gate
+    # here — the exact failure docs/19 §19.4 item 10 names, and the one this workflow file has
+    # already committed once.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: compiler
+
+      - name: a throwaway cluster
+        run: |
+          curl -sfL https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh \
+            | TAG=v5.7.4 bash
+          k3d cluster create beck-conformance --wait --timeout 120s
+          kubectl cluster-info
+
+      - name: the Gateway API CRDs
+        # HTTPRoute is the one object k8s-openapi does not carry, so `beck-infra`'s field names for
+        # it are checked here or by nobody.
+        run: |
+          kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.1/standard-install.yaml
+          kubectl wait --for=condition=Established --timeout=60s \
+            crd/httproutes.gateway.networking.k8s.io
+
+      - name: the API server admits what the compiler emits
+        env:
+          BECK_REQUIRE_CLUSTER: "1"
+        run: cargo test -p beck-infra --test conformance -- --nocapture
+
+      - name: and `beck build` output applies as a directory
+        # The same claim at the level a person would run it, because `cargo test` writes the
+        # manifests through the library and a user writes them through the CLI.
+        run: |
+          cargo run --release -- build examples/todo.beck --out /tmp/objects
+          kubectl apply -f /tmp/objects/k8s/000-namespace.yaml
+          kubectl apply --dry-run=server -f /tmp/objects/k8s
+          kubectl delete namespace todo --wait=false
+
+      - name: tear down
+        if: always()
+        run: k3d cluster delete beck-conformance || true
 
   budgets:
     # Deterministic budgets only — the ones §8.3 calls gates.

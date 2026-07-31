@@ -78,8 +78,12 @@ Given placed `Core`, stage 8 does five things:
 1. **Partition** into one `Core` program per tier per service. Multi-placed functions are duplicated
    (and their identity recorded, so `beck explain` can say "compiled into 2 tiers").
 2. **Synthesise boundary stubs.** For each cross-tier call, emit a caller stub and a callee entry:
-   - a stable, content-derived operation id (`sha256(module, name, signature)[..16]`) — *not* a URL a
-     human maintains, and stable across refactors that don't change the signature;
+   - a stable, content-derived operation id (`blake3(module, structure-of-command, structure-of-event,
+     structure-of-state)[..16]`) — *not* a URL a human maintains, and stable across refactors that
+     don't change the signature. **Content means structure, not names**: Phase 1 hashed the *names*
+     of those three types, so the id was stable across adding a field to a command — which is
+     precisely the change that breaks every open tab. It now hashes them transitively through every
+     field of every variant they reach ([`20`](20-phase-2-report.md) §20.4 item 4);
    - serialiser/deserialiser pairs generated from the types (§4.4);
    - an authorisation check derived from the callee's `cap.*` effects;
    - request batching and coalescing by default (one round trip per event-loop turn, Haxl-style),

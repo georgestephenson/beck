@@ -1,0 +1,38 @@
+# The vocabulary: what exists, what may be asked, what is recorded.
+
+type Id = newtype[Str]
+
+model Todo:
+    id: Id
+    text: Str
+    done: Bool
+    owner: Str
+
+model State:
+    todos: Map[Id, Todo]
+
+union Command:
+    Add(id: Id, text: Str)
+    Toggle(id: Id)
+
+union Event:
+    Added(id: Id, text: Str)
+    Toggled(id: Id)
+
+union Rejection:
+    BlankText
+    NotOwner
+
+def apply_event(s: State, env: Envelope[Event]) -> State:
+    match env.body:
+        case Added(id, text):
+            return s.with(todos=map_insert(s.todos, id, Todo(id=id, text=text, done=False, owner=env.actor)))
+        case Toggled(id):
+            return toggled(s, id)
+
+def toggled(s: State, id: Id) -> State:
+    match map_get(s.todos, id):
+        case Some(value):
+            return s.with(todos=map_insert(s.todos, id, value.with(done=not value.done)))
+        case None:
+            return s

@@ -1,0 +1,85 @@
+# Stock that cannot go negative, and a restock only an operator may perform. Two capabilities, and
+# the reason `cap.*` is an effect rather than a runtime check: `restock` cannot be called from the
+# view, because the view is on a tier that does not hold a session.
+
+type Sku = newtype[Str]
+
+model Item:
+    sku: Sku
+    name: Str
+    on_hand: Int
+
+model State:
+    items: Map[Sku, Item]
+
+union Command:
+    Stock(sku: Sku, name: Str, quantity: Int)
+    Take(sku: Sku, quantity: Int)
+
+union Event:
+    Stocked(sku: Sku, name: Str, quantity: Int)
+    Taken(sku: Sku, quantity: Int)
+
+union Rejection:
+    NotEnough
+    NoSuchItem
+    NotAnOperator
+
+def apply_event(s: State, env: Envelope[Event]) -> State:
+    match env.body:
+        case Stocked(sku, name, quantity):
+            return stocked(s, sku, name, quantity)
+        case Taken(sku, quantity):
+            return taken(s, sku, quantity)
+
+def stocked(s: State, sku: Sku, name: Str, quantity: Int) -> State:
+    match map_get(s.items, sku):
+        case Some(value):
+            return s.with(items=map_insert(s.items, sku, value.with(on_hand=(value.on_hand + quantity))))
+        case None:
+            return s.with(items=map_insert(s.items, sku, Item(sku=sku, name=name, on_hand=quantity)))
+
+def taken(s: State, sku: Sku, quantity: Int) -> State:
+    match map_get(s.items, sku):
+        case Some(value):
+            return s.with(items=map_insert(s.items, sku, value.with(on_hand=(value.on_hand - quantity))))
+        case None:
+            return s
+
+def validate(s: State, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Stock(sku, name, quantity):
+            return restock(p, sku, name, quantity)
+        case Take(sku, quantity):
+            return withdraw(s, sku, quantity)
+
+def restock(p: Proposal, sku: Sku, name: Str, quantity: Int) -> Result[list[Event], Rejection] uses cap.operator:
+    if str_is_empty(str_trim(p.session.actor)):
+        return Err(error=NotAnOperator)
+    return Ok(value=[Stocked(sku=sku, name=name, quantity=quantity)])
+
+def withdraw(s: State, sku: Sku, quantity: Int) -> Result[list[Event], Rejection]:
+    match map_get(s.items, sku):
+        case Some(value):
+            if value.on_hand < quantity:
+                return Err(error=NotEnough)
+            return Ok(value=[Taken(sku=sku, quantity=quantity)])
+        case None:
+            return Err(error=NoSuchItem)
+
+def low(s: State) -> list[Item]:
+    return filter_list(map_values(s.items), lambda i: i.on_hand < 5)
+
+def view(s: State, session: Session) -> Html:
+    return ui:
+        main:
+            h1: "inventory"
+            p: (str(list_len(low(s))) + " items running low")
+            ul:
+                for i in map_values(s.items):
+                    li(key=i.sku): (i.name + " x" + str(i.on_hand))
+
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, stock, validate)
+stock: Signal[State] = durable(fold(apply_event, State(items={}), events))
+page: Signal[Html] = per_session(stock, view)

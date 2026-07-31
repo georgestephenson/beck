@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 4614dd72e2baa97e717e281c5941ef6e4f1ceb49df00848debc732d77b488702 # shrinks to g = InfraGraph { app: "a", nodes: [Derived { node: Namespace { name: "a" }, because: "every program gets one namespace", from: None, needs: [] }, Derived { node: Image { name: "a:dev", entrypoint: "/usr/bin/beck" }, because: "the service partition is one binary", from: None, needs: [] }, Derived { node: Workload { name: "a", replicas: 1, serves_ui: false }, because: "the service partition needs somewhere to run", from: None, needs: ["Image/a:dev"] }, Derived { node: Policy { name: "a-policy", allow_ingress_from: [], allow_egress_to: [], allow_egress_hosts: [] }, because: "the policy is the effect row: no `net.out` in the program, no egress rule in the cluster", from: None, needs: ["Workload/a"] }] }
+cc 3d44d2d296e4b09fe89016eb566857e19ea649e771ce07118beccedc4f614622 # shrinks to hosts = ["pod"]

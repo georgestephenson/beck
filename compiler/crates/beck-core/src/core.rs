@@ -81,6 +81,14 @@ pub enum Prim {
     /// entity ids instead, which is "the small tell that browsers here are replicas, not
     /// terminals".
     NewUuid,
+    /// Reads the wall clock. The other half of §3.7's rule: "time is data on the envelope".
+    Now,
+    /// Reads a secret from the process environment, yielding a `secret[Str]` (§3.5).
+    SecretEnv,
+    /// Wraps a value as `internal[T]`: storable, never Sendable.
+    InternalOf,
+    /// Unwraps one. Performs `cap.internal`, so only the authority chokepoint can do it.
+    Reveal,
     // ---- the symbolic signal vocabulary (§3.7) ----
     MergeClients,
     StreamFilterMap,
@@ -138,6 +146,10 @@ impl Prim {
             HtmlOn => "html_on",
             HtmlKey => "html_key",
             NewUuid => "uuid",
+            Now => "now",
+            SecretEnv => "secret_env",
+            InternalOf => "internal_of",
+            Reveal => "reveal",
             MergeClients => "merge_clients",
             StreamFilterMap => "filter_map",
             Fold => "fold",
@@ -149,15 +161,23 @@ impl Prim {
         }
     }
 
-    /// The effect row of this primitive. §3.2's table for the atoms Phase 1 carries.
-    pub fn effects(self) -> &'static [Effect] {
+    /// The atoms this primitive performs *itself*.
+    ///
+    /// The polymorphic half of a primitive's row — `map_list`'s `e`, which is whatever its function
+    /// argument does — lives in the scheme in [`crate::prelude`], because a row variable is not a
+    /// constant. A test holds the two in agreement.
+    pub fn effects(self) -> Vec<Effect> {
         match self {
             // "Every connected client's send!s, interleaved. Arbitrary order — this is the
             // nondeterminism; there is exactly one of these."
-            Prim::MergeClients => &[Effect::Ingress],
-            Prim::Durable => &[Effect::Durable],
-            Prim::NewUuid => &[Effect::Nondeterministic],
-            _ => &[],
+            Prim::MergeClients => vec![Effect::Ingress],
+            Prim::Durable => vec![Effect::Durable],
+            Prim::NewUuid | Prim::Now => vec![Effect::Nondet],
+            Prim::SecretEnv => vec![Effect::Env],
+            // Wrapping is free; *reading* is the privileged half, and the capability is what stops
+            // a view unwrapping one to render it.
+            Prim::Reveal => vec![Effect::Cap(std::sync::Arc::from("internal"))],
+            _ => Vec::new(),
         }
     }
 }
@@ -263,19 +283,19 @@ impl Core {
         }
     }
 
-    /// Every effect this expression's body can perform, by walking what it calls.
+    /// Every effect this expression can perform, by walking what it calls.
     ///
-    /// This is *collection*, not §3.2's inference: there are no effect rows and no effect
-    /// polymorphism, so a call to a user function contributes that function's declared effects
-    /// rather than inferred ones. It is enough to decide the two things Phase 1 must decide —
-    /// whether a placement is legal, and whether a fold is replay-pure — and the Phase 1 report
-    /// says so.
+    /// Phase 1 used this as *the* effect analysis. Phase 2 does not: rows are inferred during
+    /// checking, where a call's latent row is known and a mere *reference* to a function performs
+    /// nothing. What survives is this syntactic over-approximation, used in one place where that is
+    /// the right answer — asking what a fold's function body could reach, including through a
+    /// function value it was handed.
     pub fn effects(&self, globals: &dyn Fn(&str) -> Vec<Effect>, out: &mut Vec<Effect>) {
         match &self.kind {
             CoreKind::Prim { op, args } => {
                 for e in op.effects() {
-                    if !out.contains(e) {
-                        out.push(*e);
+                    if !out.contains(&e) {
+                        out.push(e);
                     }
                 }
                 for a in args {
@@ -1009,14 +1029,21 @@ mod tests {
     }
 
     #[test]
-    fn only_the_three_impure_primitives_carry_effects() {
-        assert_eq!(Prim::MergeClients.effects(), &[Effect::Ingress]);
-        assert_eq!(Prim::Durable.effects(), &[Effect::Durable]);
-        assert_eq!(Prim::NewUuid.effects(), &[Effect::Nondeterministic]);
+    fn only_the_impure_primitives_carry_atoms_of_their_own() {
+        assert_eq!(Prim::MergeClients.effects(), vec![Effect::Ingress]);
+        assert_eq!(Prim::Durable.effects(), vec![Effect::Durable]);
+        assert_eq!(Prim::NewUuid.effects(), vec![Effect::Nondet]);
+        assert_eq!(Prim::Now.effects(), vec![Effect::Nondet]);
+        assert_eq!(Prim::SecretEnv.effects(), vec![Effect::Env]);
         assert!(Prim::Add.effects().is_empty());
         assert!(
             Prim::Fold.effects().is_empty(),
             "a fold is pure; `durable` is the effect"
+        );
+        assert!(
+            Prim::MapList.effects().is_empty(),
+            "`map_list` performs nothing of its own — it performs its argument's row, which is a \
+             variable and lives in the scheme"
         );
     }
 }

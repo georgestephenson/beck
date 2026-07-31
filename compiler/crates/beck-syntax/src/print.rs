@@ -252,15 +252,14 @@ impl Py {
                 format!(" uses {}", items.join(", "))
             })
             .unwrap_or_default();
-        self.line(&format!("def {name}({params}){ret}{uses}:"));
         match n.args.get(4) {
-            Some(body) => self.body(body),
-            None => {
-                // A trait's method signature has no body.
-                self.indent += 1;
-                self.line("pass");
-                self.indent -= 1;
+            Some(body) => {
+                self.line(&format!("def {name}({params}){ret}{uses}:"));
+                self.body(body);
             }
+            // A declaration: a trait's method signature, or a line of a `.becki` interface (§3.6).
+            // It prints without a colon, which is what it parses back from.
+            None => self.line(&format!("def {name}({params}){ret}{uses}")),
         }
     }
 

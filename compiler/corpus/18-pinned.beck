@@ -1,0 +1,45 @@
+# **This file has annotations on purpose** — it is the one that checks §3.3's "explicit `@on(...)`
+# always available and always winning".
+#
+# The solver would put the fold at the data tier, because the log is there. It is pinned to the
+# server instead, and the compiler does what it is told: an override that the solver could quietly
+# discard would not be an override.
+
+model State:
+    n: Int
+
+union Command:
+    Bump
+
+union Event:
+    Bumped
+
+union Rejection:
+    Never
+
+def apply_event(s: State, env: Envelope[Event]) -> State:
+    match env.body:
+        case Bumped:
+            return s.with(n=(s.n + 1))
+
+def validate(s: State, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Bump:
+            return Ok(value=[Bumped])
+
+def view(s: State, session: Session) -> Html:
+    return ui:
+        main:
+            h1: str(s.n)
+
+@on(server)
+proposals: Stream[Proposal] = merge_clients()
+
+@on(server)
+events: Stream[Event] = decide(proposals, count, validate)
+
+@on(server)
+count: Signal[State] = durable(fold(apply_event, State(n=0), events))
+
+@on(client)
+page: Signal[Html] = per_session(count, view)

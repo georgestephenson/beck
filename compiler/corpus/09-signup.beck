@@ -1,0 +1,58 @@
+# Where identity is minted, and where it is not. The client names the account id — that is what
+# makes optimism possible — and the fold never calls `uuid()`, which is what makes replay exact.
+#
+# `suggest_handle` does call it, and lands wherever the callers put it: `nondet` is discharged by
+# the client and the server and refused by the fold engine, which is §3.7 as a placement rule.
+
+type AccountId = newtype[Str]
+
+model Account:
+    id: AccountId
+    handle: Str
+
+model State:
+    accounts: Map[AccountId, Account]
+    handles: Map[Str, AccountId]
+
+union Command:
+    Register(id: AccountId, handle: Str)
+
+union Event:
+    Registered(id: AccountId, handle: Str)
+
+union Rejection:
+    HandleTaken
+    IdTaken
+    BadHandle
+
+def suggest_handle() -> Str:
+    return "user-" + uuid()
+
+def apply_event(s: State, env: Envelope[Event]) -> State:
+    match env.body:
+        case Registered(id, handle):
+            return s.with(
+                accounts=map_insert(s.accounts, id, Account(id=id, handle=handle)),
+                handles=map_insert(s.handles, handle, id))
+
+def validate(s: State, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Register(id, handle):
+            if str_is_empty(str_trim(handle)):
+                return Err(error=BadHandle)
+            if map_contains(s.accounts, id):
+                return Err(error=IdTaken)
+            if map_contains(s.handles, handle):
+                return Err(error=HandleTaken)
+            return Ok(value=[Registered(id=id, handle=handle)])
+
+def view(s: State, session: Session) -> Html:
+    return ui:
+        main:
+            h1: "signup"
+            p: (str(map_len(s.accounts)) + " accounts")
+
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, directory, validate)
+directory: Signal[State] = durable(fold(apply_event, State(accounts={}, handles={}), events))
+page: Signal[Html] = per_session(directory, view)

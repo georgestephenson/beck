@@ -297,6 +297,16 @@ pub mod sym {
     pub const STYLES: &str = "styles";
     pub const DOCUMENT: &str = "document";
     pub const TEST: &str = "test";
+
+    /// Names the checker matches as *forms* before it resolves anything.
+    ///
+    /// A definition called one of these would be shadowed by the form and never called — silently,
+    /// because `record(x)` is a well-formed record literal whatever `record` is bound to. The
+    /// checker rejects such a definition by name rather than letting it be quietly unreachable.
+    pub const RESERVED_FORMS: &[&str] = &[
+        CALL, DO, FN, IF, LIST, MAP, MATCH, QUOTE, RECORD, RETURN, SET, UNQUOTE, SPLICE, KW_ARG,
+        DOT,
+    ];
 }
 
 impl Node {

@@ -1,0 +1,19 @@
+# The wiring, and nothing else.
+
+import domain
+import policy
+
+def view(s: State, session: Session) -> Html:
+    return ui:
+        main:
+            h1: "todos"
+            ul:
+                for t in map_values(s.todos):
+                    li(key=t.id):
+                        span(on_click=Toggle(id=t.id)): t.text
+            footer: (str(map_len(s.todos)) + " todos")
+
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, todos, validate)
+todos: Signal[State] = durable(fold(apply_event, State(todos={}), events))
+page: Signal[Html] = per_session(todos, view)

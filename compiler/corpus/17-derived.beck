@@ -1,0 +1,51 @@
+# An intermediate signal. `summary` is neither the fold nor the page: it is a `signal_map` between
+# them, and the splitter inlines it into the view (`beck explain flow` says so under "inlined").
+#
+# Phase 2 recomputes it per event. Phase 3 makes it a differential-dataflow operator, and nothing
+# in this file changes when it does.
+
+model State:
+    words: Map[Str, Int]
+
+model Summary:
+    distinct: Int
+    total: Int
+
+union Command:
+    Count(word: Str)
+
+union Event:
+    Counted(word: Str)
+
+union Rejection:
+    NotAWord
+
+def apply_event(s: State, env: Envelope[Event]) -> State:
+    match env.body:
+        case Counted(word):
+            return s.with(words=map_insert(s.words, word, unwrap_or(map_get(s.words, word), 0) + 1))
+
+def validate(s: State, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Count(word):
+            if str_is_empty(str_trim(word)):
+                return Err(error=NotAWord)
+            return Ok(value=[Counted(word=word)])
+
+def summarise(s: State) -> Summary:
+    return Summary(
+        distinct=map_len(s.words),
+        total=list_len(concat_lists([map_values(s.words)])))
+
+def render(sm: Summary, session: Session) -> Html:
+    return ui:
+        main:
+            h1: "words"
+            p: (str(sm.distinct) + " distinct")
+            p: (str(sm.total) + " counted")
+
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, counts, validate)
+counts: Signal[State] = durable(fold(apply_event, State(words={}), events))
+summary: Signal[Summary] = signal_map(counts, summarise)
+page: Signal[Html] = per_session(summary, render)

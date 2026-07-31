@@ -1,0 +1,50 @@
+# The own origin, and a named host. §3.3's table gives the client `net.out(own-origin)` and nothing
+# else, so `ping_self` may run in a browser and `notify` may not — a distinction the cost model
+# then gets to make rather than CORS making it in production.
+
+model State:
+    delivered: Int
+    failed: Int
+
+union Command:
+    Deliver(url: Str)
+
+union Event:
+    Delivered(url: Str)
+    Failed(url: Str)
+
+union Rejection:
+    NotAUrl
+
+def ping_self(path: Str) -> Bool uses net.out(origin):
+    return not str_is_empty(path)
+
+def notify(url: Str) -> Bool uses net.out(hooks.example.com):
+    return not str_is_empty(url)
+
+def apply_event(s: State, env: Envelope[Event]) -> State:
+    match env.body:
+        case Delivered(url):
+            return s.with(delivered=(s.delivered + 1))
+        case Failed(url):
+            return s.with(failed=(s.failed + 1))
+
+def validate(s: State, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Deliver(url):
+            if str_is_empty(str_trim(url)):
+                return Err(error=NotAUrl)
+            if notify(url):
+                return Ok(value=[Delivered(url=url)])
+            return Ok(value=[Failed(url=url)])
+
+def view(s: State, session: Session) -> Html:
+    return ui:
+        main:
+            h1: "webhooks"
+            p: (str(s.delivered) + " delivered, " + str(s.failed) + " failed")
+
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, hooks, validate)
+hooks: Signal[State] = durable(fold(apply_event, State(delivered=0, failed=0), events))
+page: Signal[Html] = per_session(hooks, view)

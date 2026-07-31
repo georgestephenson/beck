@@ -28,6 +28,7 @@ pub fn todo_runtime() -> Runtime {
     Runtime::new(placed, backend).expect("the example prepares")
 }
 
+#[allow(dead_code)] // used by the differential harness, not by every test binary
 /// Build a `Command` value directly, as the wire decoder would.
 ///
 /// `Id` is a newtype over `Str`, so its payload is wrapped — nominal in the type system,

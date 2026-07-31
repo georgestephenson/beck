@@ -1,0 +1,16 @@
+---
+source: crates/beck-cli/tests/ui.rs
+expression: "render(&edited(\"@on(data)\\ntodos\", \"@on(client)\\ntodos\"))"
+---
+error[B0401]: `todos` is placed on `client`, which cannot discharge `durable`
+  --> t.beck:128:2
+    |
+128 | @on(client)
+    |  ^^^^^^^^^^ `client` cannot do this
+    |
+  --> t.beck:129:1
+    |
+129 | todos: Signal[State] = durable(fold(apply_event, State(todos={}), events))
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the definition it is placed on
+    |
+  = note: `durable` is the log: placing it on the client would ship the database to the browser

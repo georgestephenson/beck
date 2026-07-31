@@ -1,0 +1,43 @@
+# Ambient effects, and the reason they are elided from a signature (§3.2): `log` is available on
+# every tier and forces no placement, so `record` stays unplaced even though it is not pure.
+#
+# `metrics` is the same. Neither ever appears in `beck explain place`'s effect column, which is the
+# behaviour under test.
+
+model State:
+    entries: Int
+
+union Command:
+    Note(what: Str)
+
+union Event:
+    Noted(what: Str)
+
+union Rejection:
+    Empty
+
+def audited(what: Str) -> Str uses log, metrics:
+    return what
+
+def apply_event(s: State, env: Envelope[Event]) -> State:
+    match env.body:
+        case Noted(what):
+            return s.with(entries=(s.entries + 1))
+
+def validate(s: State, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Note(what):
+            if str_is_empty(str_trim(what)):
+                return Err(error=Empty)
+            return Ok(value=[Noted(what=audited(what))])
+
+def view(s: State, session: Session) -> Html:
+    return ui:
+        main:
+            h1: "audit"
+            p: (str(s.entries) + " entries")
+
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, log_state, validate)
+log_state: Signal[State] = durable(fold(apply_event, State(entries=0), events))
+page: Signal[Html] = per_session(log_state, view)

@@ -1,0 +1,16 @@
+---
+source: crates/beck-cli/tests/ui.rs
+expression: "render(&edited(\"def toggled(s: State, id: Id) -> State:\",\n\"def stamp(id: Id) -> Id:\\n    return Id(value=str(now()))\\n\\ndef toggled(s: State, id: Id) -> State:\").replace(\"return s.with(todos=map_remove(s.todos, id))\",\n\"return s.with(todos=map_remove(s.todos, stamp(id)))\"))"
+---
+error[B0402]: `apply_event` is a fold function, so it must be replay-pure
+  --> t.beck:132:37
+    |
+132 | todos: Signal[State] = durable(fold(apply_event, State(todos={}), events))
+    |                                     ^^^^^^^^^^^ performs {nondet}
+    |
+  --> t.beck:41:1
+   |
+41 | def apply_event(s: State, env: Envelope[Event]) -> State:
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ defined here
+   |
+  = note: replaying the log must reproduce the state bit for bit; time is data on the envelope (`env.at`) and identity is minted at the edge

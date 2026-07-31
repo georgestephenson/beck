@@ -578,7 +578,7 @@ fn add_type_edges(b: &mut GraphBuilder, from: NodeId, ty: &Ty) {
                 add_type_edges(b, from, a);
             }
         }
-        Ty::Fun(args, ret) => {
+        Ty::Fun(args, ret, _) => {
             for a in args {
                 add_type_edges(b, from, a);
             }

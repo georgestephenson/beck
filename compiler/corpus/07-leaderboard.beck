@@ -1,0 +1,54 @@
+# A score board with an ordering, so `sort_by` — and therefore an effect-polymorphic primitive —
+# is on the view path. The comparator is a pure lambda, so the row it contributes is empty and the
+# whole view stays unplaced.
+
+model Player:
+    name: Str
+    score: Int
+
+model State:
+    players: Map[Str, Player]
+
+union Command:
+    Score(points: Int)
+
+union Event:
+    Scored(points: Int)
+
+union Rejection:
+    NotAScore
+
+def apply_event(s: State, env: Envelope[Event]) -> State:
+    match env.body:
+        case Scored(points):
+            return scored(s, env.actor, points)
+
+def scored(s: State, who: Str, points: Int) -> State:
+    match map_get(s.players, who):
+        case Some(value):
+            return s.with(players=map_insert(s.players, who, value.with(score=(value.score + points))))
+        case None:
+            return s.with(players=map_insert(s.players, who, Player(name=who, score=points)))
+
+def validate(s: State, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Score(points):
+            if points < 1:
+                return Err(error=NotAScore)
+            return Ok(value=[Scored(points=points)])
+
+def ranked(s: State) -> list[Player]:
+    return sort_by(map_values(s.players), lambda p: negate(p.score))
+
+def view(s: State, session: Session) -> Html:
+    return ui:
+        main:
+            h1: "leaderboard"
+            ol:
+                for p in ranked(s):
+                    li(key=p.name): (p.name + " " + str(p.score))
+
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, board, validate)
+board: Signal[State] = durable(fold(apply_event, State(players={}), events))
+page: Signal[Html] = per_session(board, view)

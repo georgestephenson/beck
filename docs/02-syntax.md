@@ -92,9 +92,16 @@ This is the crux. In Lisp, `(with-transaction (do-a) (do-b))` passes unevaluated
 trivially. In Python, `with transaction():` is a *fixed statement* — you cannot define a new one, and
 `lambda` cannot hold statements. So we add a single, uniform rule:
 
-> **Block rule.** Any call written `f(args):` followed by an indented block desugars to
+> **Block rule.** A call written `f(args):` **in final position** — as a statement, after `return`,
+> or on the right of a binding — followed by an indented block, desugars to
 > `f(args, do=<block as quoted Node>)`. If the callee is a macro, it receives the AST. If it is a
 > function, it receives a thunk.
+
+The "in final position" clause is part of the rule, not a caveat on it, and Phase 1 found out why
+([`19`](19-phase-1-report.md) §19.4 item 2): applied to *every* `:`, the rule reads `for t in todos:`
+as a block-form call on `todos` and swallows the loop body, and does the same to `if ready:`. §2.7
+records the same restriction as a mitigation for a different problem; it belongs here, because
+without it the rule does not describe a language anyone can parse.
 
 That one rule buys the entire Lisp special-form vocabulary with Python punctuation:
 

@@ -123,8 +123,14 @@ impl SourceMap {
     }
 
     /// 1-based line and column (column counted in characters, not bytes).
+    ///
+    /// A span from a file this map does not hold reports `1:1` rather than panicking. That is a
+    /// compiler defect wherever it happens — a diagnostic that cannot be located is a diagnostic
+    /// nobody can act on — but the failure belongs in the message, not in a crash during rendering.
     pub fn line_col(&self, file: FileId, offset: u32) -> (usize, usize) {
-        let f = &self.files[file.0 as usize];
+        let Some(f) = self.files.get(file.0 as usize) else {
+            return (1, 1);
+        };
         let line = f.line_starts.partition_point(|&s| s <= offset).max(1) - 1;
         let start = f.line_starts[line] as usize;
         let col = f.text[start..(offset as usize).min(f.text.len())]

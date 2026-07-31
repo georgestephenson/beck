@@ -1,0 +1,19 @@
+---
+source: crates/beck-cli/tests/ui.rs
+expression: "render(\"\\\ndef total(xs: list[Int]) -> Int:\n    for x in xs:\n        return x\n    return 0\n\")"
+---
+error[B0320]: return type mismatch: expected `Int`, found `Unit`
+  --> t.beck:2:5
+  |
+2 |     for x in xs:
+  |     ^^^^^^^^^^^^
+  |
+
+error[B0331]: loops are not available in Phase 1
+  --> t.beck:2:5
+  |
+2 |     for x in xs:
+  |     ^^^^^^^^^^^^ no statement-level iteration yet
+  |
+  = note: everything is an expression and `var` is not yet mutable, so a loop has nothing to accumulate into
+  = help: use `map_list`, `filter_list` or `fold`

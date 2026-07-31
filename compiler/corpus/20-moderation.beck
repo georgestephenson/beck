@@ -1,0 +1,65 @@
+# The quadrant `secret[T]` alone leaves empty: recorded forever, never shown.
+#
+# A suspension has a reason, and the reason is the whole point of the record — it is what an appeal
+# is decided against six months later. It also must never reach a browser. `Str` would let any view
+# print it; `secret[Str]` refuses to be written to the log at all (§3.7 F5), which would mean an
+# event that does not say why it happened. `internal[Str]` is the other half of that pair: storable,
+# never Sendable.
+
+model Suspension:
+    account: Str
+    reason: internal[Str]
+
+model State:
+    suspended: Map[Str, Suspension]
+    lifted: Int
+
+union Command:
+    Suspend(account: Str, reason: Str)
+    Restore(account: Str)
+
+union Event:
+    Suspended(account: Str, reason: internal[Str])
+    Restored(account: Str)
+
+union Rejection:
+    NoReason
+    NotSuspended
+
+def apply_event(s: State, env: Envelope[Event]) -> State:
+    match env.body:
+        case Suspended(account, reason):
+            return s.with(suspended=map_insert(s.suspended, account, Suspension(account=account, reason=reason)))
+        case Restored(account):
+            return s.with(suspended=map_remove(s.suspended, account), lifted=(s.lifted + 1))
+
+def validate(s: State, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Suspend(account, reason):
+            if str_is_empty(str_trim(reason)):
+                return Err(error=NoReason)
+            return Ok(value=[Suspended(account=account, reason=internal_of(str_trim(reason)))])
+        case Restore(account):
+            return lift(s, account)
+
+def lift(s: State, account: Str) -> Result[list[Event], Rejection] uses cap.moderator:
+    match map_get(s.suspended, account):
+        case Some(value):
+            return Ok(value=[Restored(account=account)])
+        case None:
+            return Err(error=NotSuspended)
+
+def view(s: State, session: Session) -> Html:
+    return ui:
+        main:
+            h1: "moderation"
+            p: (str(s.lifted) + " lifted")
+            ul:
+                for x in map_values(s.suspended):
+                    li(key=x.account):
+                        span: x.account
+
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, queue, validate)
+queue: Signal[State] = durable(fold(apply_event, State(suspended={}, lifted=0), events))
+page: Signal[Html] = per_session(queue, view)

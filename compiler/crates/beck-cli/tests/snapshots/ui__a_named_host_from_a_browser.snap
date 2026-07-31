@@ -1,0 +1,17 @@
+---
+source: crates/beck-cli/tests/ui.rs
+expression: "render(&edited(\"def done_class(t: Todo) -> Str:\",\n\"def done_class(t: Todo) -> Str uses net.out(telemetry.example.com):\"))"
+---
+error[B0401]: `page` is placed on `client`, which cannot discharge `net.out(telemetry.example.com)`
+  --> t.beck:131:2
+    |
+131 | @on(client)
+    |  ^^^^^^^^^^ `client` cannot do this
+    |
+  --> t.beck:132:1
+    |
+132 | page: Signal[Html] = per_session(todos, view)
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the definition it is placed on
+    |
+  = note: a browser can only reach its own origin; any other host is the server's to call
+  = help: `@on(server)` discharges everything this needs

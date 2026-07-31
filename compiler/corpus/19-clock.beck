@@ -1,0 +1,52 @@
+# Where time may be read, and where it may not.
+#
+# `stamp` calls `now()`, so it carries `nondet` — and the data tier refuses it, which is §3.7's
+# determinism rule showing up as a *placement* rather than as a lint. It is called from the
+# validator, before anything becomes an event; the fold reads `env.at`, which is data.
+
+model Reading:
+    at: Int
+    celsius: Int
+
+model State:
+    readings: list[Reading]
+
+union Command:
+    Record(celsius: Int)
+
+union Event:
+    Recorded(at: Int, celsius: Int)
+
+union Rejection:
+    Implausible
+
+def stamp() -> Int:
+    return now()
+
+def apply_event(s: State, env: Envelope[Event]) -> State:
+    match env.body:
+        case Recorded(at, celsius):
+            return s.with(readings=concat_lists([s.readings, [Reading(at=at, celsius=celsius)]]))
+
+def validate(s: State, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Record(celsius):
+            if celsius < 0 - 90:
+                return Err(error=Implausible)
+            if celsius > 60:
+                return Err(error=Implausible)
+            return Ok(value=[Recorded(at=stamp(), celsius=celsius)])
+
+def latest(s: State) -> Int:
+    return list_len(s.readings)
+
+def view(s: State, session: Session) -> Html:
+    return ui:
+        main:
+            h1: "thermometer"
+            p: (str(latest(s)) + " readings")
+
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, series, validate)
+series: Signal[State] = durable(fold(apply_event, State(readings=[]), events))
+page: Signal[Html] = per_session(series, view)

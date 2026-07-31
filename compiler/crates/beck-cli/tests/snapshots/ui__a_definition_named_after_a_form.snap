@@ -1,0 +1,11 @@
+---
+source: crates/beck-cli/tests/ui.rs
+expression: "render(\"\\\ndef record(x: Int) -> Int:\n    return x\n\")"
+---
+error[B0312]: `record` is a form of the language, so nothing can be named it
+  --> t.beck:1:5
+  |
+1 | def record(x: Int) -> Int:
+  |     ^^^^^^ this name is matched as syntax before it is resolved
+  |
+  = note: the checker recognises these heads structurally, so a definition with one of their names would be shadowed by the form and never called

@@ -1,0 +1,17 @@
+---
+source: crates/beck-cli/tests/ui.rs
+expression: "render(&edited(\"@on(server)\\nproposals\", \"@on(client)\\nproposals\"))"
+---
+error[B0401]: `proposals` is placed on `client`, which cannot discharge `ingress`
+  --> t.beck:122:2
+    |
+122 | @on(client)
+    |  ^^^^^^^^^^ `client` cannot do this
+    |
+  --> t.beck:123:1
+    |
+123 | proposals: Stream[Proposal] = merge_clients()
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the definition it is placed on
+    |
+  = note: `ingress` is the merge point: it admits time and nondeterminism, and only the server holds it
+  = help: `@on(server)` discharges everything this needs

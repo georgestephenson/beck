@@ -1,0 +1,54 @@
+# A shopping cart per shopper, which is a per-session *fold* rather than a per-session view: the
+# state is one map keyed by actor, and the view projects the caller's row out of it.
+
+model Line:
+    sku: Str
+    quantity: Int
+
+model State:
+    carts: Map[Str, Map[Str, Int]]
+
+union Command:
+    Add(sku: Str, quantity: Int)
+    Empty
+
+union Event:
+    Added(sku: Str, quantity: Int)
+    Emptied
+
+union Rejection:
+    NotAQuantity
+
+def apply_event(s: State, env: Envelope[Event]) -> State:
+    match env.body:
+        case Added(sku, quantity):
+            return s.with(carts=map_insert(s.carts, env.actor, put(mine(s, env.actor), sku, quantity)))
+        case Emptied:
+            return s.with(carts=map_remove(s.carts, env.actor))
+
+def mine(s: State, who: Str) -> Map[Str, Int]:
+    return unwrap_or(map_get(s.carts, who), {})
+
+def put(cart: Map[Str, Int], sku: Str, quantity: Int) -> Map[Str, Int]:
+    return map_insert(cart, sku, unwrap_or(map_get(cart, sku), 0) + quantity)
+
+def validate(s: State, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Add(sku, quantity):
+            if quantity < 1:
+                return Err(error=NotAQuantity)
+            return Ok(value=[Added(sku=sku, quantity=quantity)])
+        case Empty:
+            return Ok(value=[Emptied])
+
+def view(s: State, session: Session) -> Html:
+    return ui:
+        main:
+            h1: "cart"
+            p: (str(map_len(mine(s, session.actor))) + " lines")
+            button(on_click=Empty): "empty"
+
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, carts, validate)
+carts: Signal[State] = durable(fold(apply_event, State(carts={}), events))
+page: Signal[Html] = per_session(carts, view)

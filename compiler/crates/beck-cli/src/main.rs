@@ -42,8 +42,30 @@ enum Store {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Typecheck, verify placement, and slice the signal graph.
-    Check { file: PathBuf },
+    /// Typecheck, infer and verify placement, and slice the signal graph.
+    Check {
+        file: PathBuf,
+        /// Assert where something runs: `--assert-place page=client`. §3.4's assertability
+        /// guardrail — a placement a test depends on should fail the build when it moves, not
+        /// surface as a latency regression.
+        #[arg(long = "assert-place", value_name = "NAME=TIER")]
+        assert_place: Vec<String>,
+        /// Write the solved placement to `beck.lock`.
+        #[arg(long)]
+        write_lock: bool,
+        /// Fail if the solved placement differs from `beck.lock` — the CI form of §3.4's
+        /// stability guardrail.
+        #[arg(long)]
+        locked: bool,
+        /// Compare this module's contract against a previously released `.becki` and fail on a
+        /// breaking change (§4.3). The check CI runs before a rolling deploy.
+        #[arg(long, value_name = "PREVIOUS.becki")]
+        wire_compat: Option<PathBuf>,
+        /// Accept the breaking changes `--wire-compat` finds. §4.3's explicit marker: a breaking
+        /// release is allowed, and saying so is the point.
+        #[arg(long)]
+        breaking: bool,
+    },
     /// Print a program in either surface. `beck fmt` on commit normalises to `.beck` (§2.2).
     Fmt {
         file: PathBuf,
@@ -52,6 +74,19 @@ enum Cmd {
         /// Rewrite the file in place.
         #[arg(long)]
         write: bool,
+    },
+    /// Write the module's published signature — the `.becki` of §3.6.
+    ///
+    /// Generated, checked in, and reviewed like an .mli: it is what downstream modules compile
+    /// against, and the file `beck check --wire-compat` compares releases of.
+    Iface {
+        file: PathBuf,
+        /// Where to write it. Defaults to the source file with a `.becki` extension.
+        #[arg(long, short)]
+        out: Option<PathBuf>,
+        /// Print it instead of writing it.
+        #[arg(long)]
+        stdout: bool,
     },
     /// Dump the canonical AST — the notation macro authors work in (§2.7).
     Ast {
@@ -136,12 +171,21 @@ enum Cmd {
 
 #[derive(Subcommand)]
 enum Explain {
-    /// Where each definition runs, and why.
-    Place { file: PathBuf },
+    /// Where each definition runs, and why (§4.7).
+    Place {
+        file: PathBuf,
+        /// One definition or signal, with its candidates and their costs.
+        name: Option<String>,
+    },
     /// The command channel's content-derived operation id (§4.3).
     Wire { file: PathBuf },
-    /// The signal graph, and what the splitter made of it.
-    Flow { file: PathBuf },
+    /// The signal graph, and what the splitter made of it — or, given a type, everywhere that
+    /// type reaches and everywhere it is refused (§4.7).
+    Flow {
+        file: PathBuf,
+        /// A type name: `beck explain flow ApiKey`.
+        ty: Option<String>,
+    },
     /// The infrastructure the program's effects imply (§6.5).
     Deploy { file: PathBuf },
 }
@@ -161,28 +205,28 @@ fn main() -> Result<()> {
 
     let cli = Cli::parse();
     match cli.command {
-        Cmd::Check { file } => {
-            let (placed, map, diags) = compile(&file)?;
-            print!("{}", diags.render(&map));
-            match placed {
-                Some(p) => {
-                    println!(
-                        "ok: {} definitions, {} signals, wire id {}",
-                        p.program.defs.len(),
-                        p.program.signals.len(),
-                        p.wire_id
-                    );
-                    Ok(())
-                }
-                None => bail!("{} diagnostic(s)", diags.len()),
-            }
-        }
+        Cmd::Check {
+            file,
+            assert_place,
+            write_lock,
+            locked,
+            wire_compat,
+            breaking,
+        } => check(
+            &file,
+            &assert_place,
+            write_lock,
+            locked,
+            wire_compat.as_deref(),
+            breaking,
+        ),
         Cmd::Fmt {
             file,
             surface,
             write,
         } => fmt(&file, surface, write),
         Cmd::Ast { file, expanded } => ast(&file, expanded),
+        Cmd::Iface { file, out, stdout } => iface(&file, out.as_deref(), stdout),
         Cmd::Explain { what } => explain(what),
         Cmd::Graph { file, json, types } => graph_cmd(&file, json, types),
         Cmd::Impact { file, name, json } => impact_cmd(&file, &name, json),
@@ -220,14 +264,351 @@ fn read(file: &Path) -> Result<String> {
     std::fs::read_to_string(file).with_context(|| format!("reading {}", file.display()))
 }
 
+/// The placement lock that sits beside a source file, if there is one.
+///
+/// Beside the *source*, not in the working directory: `beck.lock` records where a particular
+/// program's code runs, and two programs in one directory do not share an answer.
+fn lock_path(file: &Path) -> PathBuf {
+    file.parent()
+        .unwrap_or(Path::new("."))
+        .join(beck_core::Lock::FILE)
+}
+
+fn read_lock(file: &Path) -> Option<beck_core::Lock> {
+    let text = std::fs::read_to_string(lock_path(file)).ok()?;
+    match beck_core::Lock::from_json(&text) {
+        Some(l) => Some(l),
+        None => {
+            eprintln!(
+                "warning: {} is not readable as a lock; solving without it",
+                lock_path(file).display()
+            );
+            None
+        }
+    }
+}
+
+/// Resolve `import x` against the directory the root module lives in.
+///
+/// `x.becki` is the contract and `x.beck` is the code: the first is what downstream *checks*
+/// against, the second what the link step needs (§3.6). Both are loaded when both exist, and the
+/// interface wins for checking — otherwise a checked-in contract would be decorative.
+struct Dir(PathBuf);
+
+impl beck_core::project::Loader for Dir {
+    fn load(&self, name: &str) -> Option<beck_core::Sources> {
+        let path = self.0.join(format!("{name}.beck"));
+        let module = std::fs::read_to_string(&path).ok();
+        let interface = std::fs::read_to_string(self.0.join(format!("{name}.becki"))).ok();
+        (module.is_some() || interface.is_some()).then_some(beck_core::Sources {
+            module,
+            interface,
+            path: Some(path.display().to_string()),
+        })
+    }
+}
+
+fn module_name(file: &Path) -> String {
+    beck_syntax::module_ident(&file.display().to_string())
+}
+
+/// Check and link, stopping before the slicer.
+///
+/// What `beck check` and `beck iface` need. A module with no merge point is a *library* — a policy
+/// or a domain — and refusing to typecheck it because it is not a whole application would make
+/// §3.6's separate compilation unusable for the modules it exists to serve.
+fn checked_project(
+    file: &Path,
+) -> Result<(Option<beck_core::project::Project>, SourceMap, Diagnostics)> {
+    let name = module_name(file);
+    let mut map = SourceMap::new();
+    let mut diags = Diagnostics::new();
+    let lock = read_lock(file);
+    let dir = Dir(file.parent().unwrap_or(Path::new(".")).to_path_buf());
+    // The root is read from the path it was given, which need not be `<name>.beck` in the same
+    // directory — `beck check /tmp/scratch.beck` has to work.
+    let root_src = read(file)?;
+    let root = Root {
+        name: name.clone(),
+        src: root_src,
+        path: file.display().to_string(),
+        dir,
+    };
+    let project =
+        beck_core::project::check_project(&name, &root, lock.as_ref(), &mut map, &mut diags);
+    Ok((project, map, diags))
+}
+
+/// The root file, plus the directory everything it imports comes from.
+struct Root {
+    name: String,
+    src: String,
+    /// The path as given, so the surface (`.beck` or `.sx`) and the diagnostics both name it.
+    path: String,
+    dir: Dir,
+}
+
+impl beck_core::project::Loader for Root {
+    fn load(&self, name: &str) -> Option<beck_core::Sources> {
+        if name == self.name {
+            return Some(beck_core::Sources {
+                module: Some(self.src.clone()),
+                interface: None,
+                path: Some(self.path.clone()),
+            });
+        }
+        self.dir.load(name)
+    }
+}
+
 fn compile(file: &Path) -> Result<(Option<Placed>, SourceMap, Diagnostics)> {
     let src = read(file)?;
     let name = file.display().to_string();
     let mut map = SourceMap::new();
     let id = map.add(name.clone(), src.clone());
     let mut diags = Diagnostics::new();
-    let placed = beck_core::compile(id, &name, &src, &mut diags);
+    let lock = read_lock(file);
+
+    // A single-file program is the common case and stays the fast path — one parse, one check, no
+    // directory walk. A program with imports goes through the project pipeline (§3.6).
+    if beck_core::project::imports_of(id, &name, &src).is_empty() {
+        let placed = beck_core::compile_with(id, &name, &src, lock.as_ref(), &mut diags);
+        return Ok((placed, map, diags));
+    }
+
+    let root = Root {
+        name: module_name(file),
+        src: src.clone(),
+        path: file.display().to_string(),
+        dir: Dir(file.parent().unwrap_or(Path::new(".")).to_path_buf()),
+    };
+    let name = root.name.clone();
+    let placed = beck_core::compile_project(&name, &root, lock.as_ref(), &mut map, &mut diags);
     Ok((placed, map, diags))
+}
+
+/// `beck iface` — write the module's published signature.
+fn iface(file: &Path, out: Option<&Path>, to_stdout: bool) -> Result<()> {
+    let (project, map, diags) = checked_project(file)?;
+    print!("{}", diags.render(&map));
+    let project = project.ok_or_else(|| anyhow::anyhow!("{} does not compile", file.display()))?;
+    let text = project.interface.render();
+    if to_stdout {
+        print!("{text}");
+        return Ok(());
+    }
+    let path = out
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| file.with_extension("becki"));
+    std::fs::write(&path, &text)?;
+    eprintln!("wrote {}", path.display());
+    Ok(())
+}
+
+/// `beck check` — the whole front end, plus §3.4's stability and assertability guardrails.
+#[allow(clippy::too_many_arguments)]
+fn check(
+    file: &Path,
+    assertions: &[String],
+    write_lock: bool,
+    locked: bool,
+    wire_compat: Option<&Path>,
+    accept_breaking: bool,
+) -> Result<()> {
+    let (project, map, diags) = checked_project(file)?;
+    print!("{}", diags.render(&map));
+    let Some(project) = project else {
+        bail!("{} diagnostic(s)", diags.len());
+    };
+
+    let placement = project.solution.clone();
+    let interface = project.interface.clone();
+    let (defs, signals) = (project.program.defs.len(), project.program.signals.len());
+
+    // Slicing is the *application* question, and a module that is not one is still a module.
+    let mut slicing = Diagnostics::new();
+    match beck_core::project::slice(project, &mut slicing) {
+        Some(p) => println!(
+            "ok: {defs} definitions, {signals} signals, wire id {}",
+            p.wire_id
+        ),
+        None if slicing
+            .iter()
+            .all(|d| beck_core::project::NOT_AN_APPLICATION.contains(&d.code)) =>
+        {
+            println!(
+                "ok: {defs} definitions — a library. No merge point, so there is nothing to run; \n\
+                 `beck iface` publishes what it offers."
+            );
+        }
+        None => {
+            print!("{}", slicing.render(&map));
+            bail!("{} diagnostic(s)", slicing.len());
+        }
+    }
+
+    // §3.4: "a one-line edit must not re-place unrelated code; previous solution persisted in
+    // `beck.lock`, churn reported in CI".
+    if !placement.churn.is_empty() {
+        println!("\nplacement changed against {}:", beck_core::Lock::FILE);
+        for (key, was, now) in &placement.churn {
+            println!("  {key:<28} {} → {}", was.name(), now.name());
+        }
+        if locked {
+            bail!(
+                "--locked: {} placement(s) moved. Re-run with --write-lock if that is intended.",
+                placement.churn.len()
+            );
+        }
+        println!("(re-run with --write-lock to accept)");
+    }
+
+    // A tie is not an error — the tie-break is total and deterministic — but it *is* the place a
+    // future edit could silently move code, so it is named rather than absorbed.
+    for (key, tied) in &placement.ties {
+        println!(
+            "note: {key} could run on {} at the same cost; `@on(…)` or {} would pin it",
+            tied.iter()
+                .map(|t| t.name())
+                .collect::<Vec<_>>()
+                .join(" or "),
+            beck_core::Lock::FILE
+        );
+    }
+
+    let mut failed = Vec::new();
+    for a in assertions {
+        let Some((name, want)) = a.split_once('=') else {
+            bail!("--assert-place takes NAME=TIER, got `{a}`");
+        };
+        let Some(want) = beck_core::Tier::parse(want.trim()) else {
+            bail!("`{want}` is not a tier");
+        };
+        match placement.explanation(name.trim()) {
+            Some(e) if e.chosen == want => {}
+            Some(e) => failed.push(format!(
+                "  {name}: expected {}, runs on {} — {}",
+                want.name(),
+                e.chosen.name(),
+                e.because
+            )),
+            None => failed.push(format!("  {name}: no such definition or signal")),
+        }
+    }
+    if !failed.is_empty() {
+        println!("\nplacement assertions failed:");
+        for f in &failed {
+            println!("{f}");
+        }
+        bail!("{} placement assertion(s) failed", failed.len());
+    }
+
+    // §4.3: "runs in CI and fails on a breaking change without an explicit `@breaking` marker."
+    if let Some(previous) = wire_compat {
+        let text = read(previous)?;
+        let mut pd = Diagnostics::new();
+        let name = module_name(previous);
+        let old = beck_core::Interface::parse(&name, &text, &mut pd);
+        if pd.has_errors() {
+            let mut pmap = SourceMap::new();
+            pmap.add(previous.display().to_string(), text.clone());
+            print!("{}", pd.render(&pmap));
+            bail!("{} is not a readable interface", previous.display());
+        }
+        let changes = beck_core::compare(&old, &interface);
+        println!("\nwire compatibility against {}", previous.display());
+        if changes.is_empty() {
+            println!("  no change to the contract");
+        }
+        for c in &changes {
+            println!("  {c}");
+            println!("      {}", c.because);
+        }
+        if beck_core::is_breaking(&changes) && !accept_breaking {
+            bail!(
+                "{} breaking change(s). An old client talking to a new server would fail. \
+                 Pass --breaking to ship it anyway.",
+                changes
+                    .iter()
+                    .filter(|c| c.severity == beck_core::compat::Severity::Breaking)
+                    .count()
+            );
+        }
+    }
+
+    if write_lock {
+        let path = lock_path(file);
+        std::fs::write(&path, beck_core::Lock::of(&placement).to_json())?;
+        eprintln!("wrote {}", path.display());
+    }
+    Ok(())
+}
+
+/// `beck explain place` — §4.7's derivation, not its conclusion.
+fn explain_place(file: &Path, only: Option<&str>) -> Result<()> {
+    use beck_core::cost::FORBIDDEN;
+
+    let placed = compiled(file)?;
+    let solution = &placed.placement;
+
+    if let Some(name) = only {
+        let Some(e) = solution.explanation(name) else {
+            bail!("no `{name}` in this program");
+        };
+        println!("{}  →  {} tier\n", e.key.name(), e.chosen.name());
+        println!(
+            "  effects    : {}",
+            if e.row.visible().is_empty() {
+                "{}  (pure; placeable anywhere)".to_string()
+            } else {
+                format!("{}", e.row)
+            }
+        );
+        let costs: Vec<String> = e
+            .candidates
+            .iter()
+            .map(|(t, c)| {
+                if *c >= FORBIDDEN {
+                    format!("{} (cannot discharge this row)", t.name())
+                } else {
+                    format!("{} (cost {:.1})", t.name(), *c as f64 / 100.0)
+                }
+            })
+            .collect();
+        println!("  candidates : {}", costs.join(", "));
+        println!("  chosen     : {}", e.chosen.name());
+        println!("  because    : {}", e.because);
+        println!(
+            "\ncosts are whole-program: what this program would cost with `{}` on that tier and \n\
+             everything else where it is. Solved {}.",
+            e.key.name(),
+            solution.method.name()
+        );
+        return Ok(());
+    }
+
+    println!("{:<20} {:<8} {:<10} effects", "name", "tier", "kind");
+    for e in &solution.explanations {
+        let kind = match &e.key {
+            beck_core::Key::Def(_) => "definition",
+            beck_core::Key::Signal(_) => "signal",
+        };
+        println!(
+            "{:<20} {:<8} {:<10} {}",
+            e.key.name(),
+            e.chosen.name(),
+            kind,
+            e.row
+        );
+    }
+    println!(
+        "\nunplaced (`any`) means pure, so it compiles to every tier that needs it — that\n\
+         duplication is the payoff, not waste. Solved {}; total cost {:.1}.\n\
+         `beck explain place <file> <name>` shows one decision's candidates and their costs.",
+        solution.method.name(),
+        solution.total as f64 / 100.0
+    );
+    Ok(())
 }
 
 fn compiled(file: &Path) -> Result<Placed> {
@@ -452,41 +833,7 @@ fn impact_cmd(file: &Path, name: &str, json: bool) -> Result<()> {
 
 fn explain(what: Explain) -> Result<()> {
     match what {
-        Explain::Place { file } => {
-            let placed = compiled(&file)?;
-            println!("{:<20} {:<8} effects", "definition", "tier");
-            for name in &placed.program.def_order {
-                let d = &placed.program.defs[name];
-                println!(
-                    "{:<20} {:<8} {{{}}}",
-                    d.name,
-                    d.tier.name(),
-                    d.effects
-                        .iter()
-                        .map(|e| e.name())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                );
-            }
-            for s in &placed.program.signals {
-                println!(
-                    "{:<20} {:<8} {{{}}}   : {}",
-                    s.name,
-                    s.tier.name(),
-                    s.effects
-                        .iter()
-                        .map(|e| e.name())
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                    s.ty
-                );
-            }
-            println!(
-                "\nunplaced (`any`) means pure, so it compiles to every tier that needs it — \
-                 that duplication is the payoff, not waste."
-            );
-            Ok(())
-        }
+        Explain::Place { file, name } => explain_place(&file, name.as_deref()),
         Explain::Wire { file } => {
             let placed = compiled(&file)?;
             println!("operation id  {}", placed.wire_id);
@@ -499,7 +846,51 @@ fn explain(what: Explain) -> Result<()> {
             );
             Ok(())
         }
-        Explain::Flow { file } => {
+        Explain::Flow { file, ty: Some(ty) } => {
+            let placed = compiled(&file)?;
+            let program = &placed.program;
+            let Some(decl) = program.types.get(ty.as_str()) else {
+                bail!("no type `{ty}` in this program");
+            };
+            let is_secret =
+                beck_core::secure::sendable(&beck_core::Ty::con(&ty), &program.types).err();
+            println!(
+                "{ty} ({}) — {}",
+                match decl {
+                    beck_core::TyDecl::Model { .. } => "model",
+                    beck_core::TyDecl::Union { .. } => "union",
+                    beck_core::TyDecl::Newtype { .. } => "newtype",
+                    beck_core::TyDecl::Alias { .. } => "alias",
+                },
+                match &is_secret {
+                    Some(bad) => format!("not Sendable: {} at {}", bad.offender, bad.flow()),
+                    None => "Sendable".to_string(),
+                }
+            );
+            let reached = beck_core::secure::flow(program, &ty);
+            if reached.is_empty() {
+                println!("\n  reaches nothing — no signature mentions it");
+                return Ok(());
+            }
+            println!();
+            for r in &reached {
+                match (&r.blocked, &is_secret) {
+                    (Some(why), Some(_)) => {
+                        println!("  BLOCKED: {:<18} {:<8} {why}", r.what, r.tier.name())
+                    }
+                    _ => println!("  reaches: {:<18} {:<8} ok", r.what, r.tier.name()),
+                }
+            }
+            if is_secret.is_some() {
+                println!(
+                    "\na crossing requires Sendable, and `secret[T]` is deliberately not \
+                     (docs/03 §3.5).\nWhat blocks the leak is the placement, so moving one of \
+                     these to the client is the compile error."
+                );
+            }
+            Ok(())
+        }
+        Explain::Flow { file, ty: None } => {
             let placed = compiled(&file)?;
             let r = &placed.roles;
             println!("{:<12} {}", "ingress", r.proposals_name);
@@ -625,11 +1016,17 @@ fn detail_of(n: &beck_infra::Node) -> String {
         Policy {
             allow_ingress_from,
             allow_egress_to,
+            allow_egress_hosts,
             ..
         } => format!(
             "ingress from [{}], egress to [{}]",
             allow_ingress_from.join(", "),
-            allow_egress_to.join(", ")
+            allow_egress_to
+                .iter()
+                .map(|p| format!("{}:{}", p.app, p.port))
+                .chain(allow_egress_hosts.iter().cloned())
+                .collect::<Vec<_>>()
+                .join(", ")
         ),
         Grant {
             role,

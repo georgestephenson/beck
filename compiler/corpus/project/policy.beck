@@ -1,0 +1,21 @@
+# Authority, on its own, over a vocabulary it did not define.
+
+import domain
+
+def validate(s: State, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Add(id, text):
+            if str_is_empty(str_trim(text)):
+                return Err(error=BlankText)
+            return Ok(value=[Added(id=id, text=text)])
+        case Toggle(id):
+            return owned(s, p, id)
+
+def owned(s: State, p: Proposal, id: Id) -> Result[list[Event], Rejection] uses cap.session:
+    match map_get(s.todos, id):
+        case Some(value):
+            if value.owner != p.session.actor:
+                return Err(error=NotOwner)
+            return Ok(value=[Toggled(id=id)])
+        case None:
+            return Err(error=NotOwner)
