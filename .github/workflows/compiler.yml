@@ -90,6 +90,11 @@ jobs:
       - name: replay is exact
         run: ./target/release/beck replay examples/todo.beck --path /tmp/beck.log --verify
 
+      - name: the log substrates are measured, not assumed
+        # Reported, never thresholded (§13.7): a shared runner cannot hold a timing gate honestly.
+        # It runs so that the table in docs/07 §7.8.1 stays reproducible rather than historical.
+        run: ./target/release/beck bench log --dir /tmp/beck-bench
+
       - name: the sketch places itself with no annotations at all
         run: |
           # §3.3: "placement is not a primitive annotation; it is a constraint solution". Strip

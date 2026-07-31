@@ -141,6 +141,77 @@ this project can produce for adoption. Budget it into Phase 3, not "someday".
 
 No single dependency is unrecoverable. That is the point of writing this table.
 
+## 7.8.1 The durable substrate, decided rather than assumed
+
+*Added after Phase 2 ([`20`](20-phase-2-report.md) §20.4 item 16). PostgreSQL was picked offhand in
+the original sketch and had never been argued against what Beck actually asks of a store.*
+
+### What the contract is
+
+`beck_rt::LogStore` is seven methods: monotonic `head`/`floor`, a **batched atomic append at
+contiguous seqs**, a range `read` by `seq`, and a snapshot blob. No joins, no updates, no deletes,
+no secondary indexes, and — because §3.7 gives an application exactly one merge point — **one
+writer**. That is a much narrower contract than "a database", which is why the substrate is
+swappable and also why almost anything satisfies it. The question is therefore not "which store
+*can*" but "which store earns the second implementation".
+
+### What the measurements say
+
+Two runs, and they agree about the shape:
+
+| | Postgres | redb | memory |
+|---|---|---|---|
+| Phase 0, 32 clients through a sequencer ([`18`](18-phase-0-report.md) §18.3.2) | 7,660 ev/s | 8,927 ev/s | 140,608 ev/s |
+| batch × over serial append, same run | — | **11×** | — |
+
+`beck bench log` reproduces the shape against this compiler's runtime. Three conclusions, and every
+substrate decision below follows from them:
+
+1. **The two durable stores are within ~16% of each other.** Swapping the database is worth less
+   than a fifth of a `fsync`.
+2. **Both are an order of magnitude off the non-durable one.** `fsync` is the cost.
+3. **Group commit is worth 6–11×**, which is more than either of the above. It is already built.
+
+So performance is not a reason to change substrate. Everything below is decided on *capability*.
+
+### The reason to keep PostgreSQL, which is not inertia
+
+§3.8 and §5.3 put the **read models in SQL**. If the log lives in the same database, a projection
+update can be in the *same transaction* as the append — which removes the outbox pattern and the
+whole class of "the event was written and the projection wasn't" bugs. No other candidate offers
+that, and it is worth more than any append-throughput number.
+
+### Verdict: what to add
+
+| substrate | verdict | why |
+|---|---|---|
+| **PostgreSQL** | **default, keep** | the read models are SQL and live here; one transaction covers append *and* projection. Licence is permissive; managed everywhere |
+| **SQLite** | **add — Phase 3** | the same "log and read model in one transaction" property at single-node scale, so rungs 0–2 become *semantically* identical to production rather than merely similar. Public domain; Litestream/LiteFS give replication. This is the one addition that changes what a developer can trust about their laptop |
+| **FoundationDB** | **add — Phase 5, with §15's partitioned logs** | ordered keys *are* the `seq` abstraction, with real horizontal scale and serializable transactions. Apache 2.0, and a deterministic-simulation testing culture [`13`](13-testing.md) §13.1 already admires. Costs are real and bounded: 100 KB values and 5 s transactions mean chunking large snapshots, and it is operationally heavy — so it arrives when one writer per application stops being enough, not before |
+| **memory** | keep | tests and measurement |
+| **redb** | keep, role narrows | it works and nothing is gained by removing it. Once SQLite lands, measure and let the number decide which is rung 0's default |
+
+### Verdict: what not to add, and why not
+
+Recorded so the question is settled rather than re-opened on enthusiasm.
+
+| substrate | why not |
+|---|---|
+| **Kafka / Redpanda** | not a store of record. No read-your-writes for the folded state, no point lookups, and retention semantics fight "the log **is** the database" (§5.4) — replay from genesis needs infinite retention, which is not what a broker is for. Redpanda's source-available licence excludes it from §7 regardless. Kafka is a plausible **downstream CDC sink**, which is a feature, not a substrate |
+| **CockroachDB** | licence. Source-available since 2024, which §7's open-source constraint excludes. **YugabyteDB** (Apache 2.0, Postgres wire) is the same idea without the problem, and is the fallback if managed Postgres ever stops being enough before FoundationDB is ready |
+| **Cassandra / ScyllaDB** | eventual consistency fights §3.7's single total order; lightweight transactions restore it and cost more than Postgres |
+| **TigerBeetle** | fixed 128-byte domain records. Purpose-built for ledgers and not a general log — the event type comes from `union Event` in the *program* |
+| **MySQL / MariaDB** | no capability Postgres lacks, and a weaker read-model story (§3.8's plans lean on Postgres features) |
+| **MongoDB / EventStoreDB** | SSPL and ESL respectively — both excluded by §7 |
+| **Object storage (S3 and friends)** | per-append latency is wrong for the hot path. Right for an **archival tier** below the log — which is a tier, not a substrate swap, and belongs with retention policy |
+
+### The one thing that is not a substrate question
+
+`beck bench log` also measures the codec, because the encoding sat on the serial path and nobody had
+looked. Phase 1 and 2 stored every event as JSON text; the binary encoding is **2.55× smaller,
+3.27× faster to encode and 2.14× faster to decode** on the machine that ran it. That is a larger
+factor than any two durable substrates differ by, and it was free. Look there first.
+
 ## 7.9 Versioning and upgrade policy
 
 Many open-source dependencies means version management is a designed system, not a habit.

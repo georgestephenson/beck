@@ -130,6 +130,12 @@ dependencies whose signatures didn't change.
   first thing an outside developer will reach for, and Phase 2 shipped with no way for them to write
   a single test about their own program.
 - Structured concurrency, `Result`/error rows, `match` exhaustiveness, pattern matching completion.
+- **SQLite as a durable substrate** ([`07`](07-dependencies.md) §7.8.1): a `LogStore`
+  implementation beside redb and Postgres. The reason is not speed — the measurements say the
+  durable substrates are within ~16% of each other — it is that SQLite is *also* the read-model
+  engine, so rungs 0–2 get the same "append and project in one transaction" property production
+  has, and a developer's laptop stops being merely similar to production. Measure with `beck bench
+  log` and let the number pick rung 0's default.
 - Standard library v1: collections, strings, time, money/decimal, HTTP client, JSON, UUID, crypto
   primitives (delegated to `ring`/`aws-lc-rs`, not hand-rolled).
 - **Identity**: OIDC relying-party runtime, `identity = managed()` provisioning (Keycloak/Ory),
@@ -178,6 +184,12 @@ production hardening.
 - Stability guarantees and a deprecation policy; wire-format stability commitment.
 - **CRDT-valued types**: `Text` and friends (automerge/loro-backed) — concurrent edits merge within
   the value while the log still orders the updates around it ([`10`](10-decisions.md) D7).
+- **FoundationDB as a durable substrate**, with §15's partitioned logs
+  ([`07`](07-dependencies.md) §7.8.1): ordered keys *are* the `seq` abstraction, so the scaling
+  ladder does not need a second log design. It arrives here rather than earlier because a single
+  application's single writer is not the bottleneck until §15's partitioning is real, and because
+  its costs — chunking above 100 KB values, a 5 s transaction bound, an operationally heavy
+  cluster — buy nothing until then.
 - Editor support beyond VS Code; debugger integration (DAP) with cross-tier stepping.
 - Package ecosystem seeding; documentation, book, tutorials, and 5–10 non-trivial example apps.
 - **The registry in production, on Beck, serving real packages** — the D15 exit criterion: the

@@ -9,6 +9,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Context, Result};
+
+mod bench;
 use beck_core::Placed;
 use beck_diag::{Diagnostics, SourceMap};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -161,6 +163,11 @@ enum Cmd {
         #[arg(long, default_value = "kubernetes")]
         platform: String,
     },
+    /// Measure the log against every substrate, so the store is a decision and not a habit.
+    Bench {
+        #[command(subcommand)]
+        what: Bench,
+    },
     /// Bring the program up on a local cluster or host — rung 2 or 3 (§6.6).
     Up {
         file: PathBuf,
@@ -171,6 +178,19 @@ enum Cmd {
         dry_run: bool,
         #[arg(long, default_value = "kubernetes")]
         platform: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum Bench {
+    /// Append, read and encode, against memory, redb and — with a URL — PostgreSQL.
+    Log {
+        /// The PostgreSQL log to include. Also read from `BECK_POSTGRES_URL`.
+        #[arg(long, env = "BECK_POSTGRES_URL")]
+        url: Option<String>,
+        /// Where to put the temporary redb file.
+        #[arg(long, default_value = "target/beck")]
+        dir: PathBuf,
     },
 }
 
@@ -233,6 +253,12 @@ fn main() -> Result<()> {
         Cmd::Ast { file, expanded } => ast(&file, expanded),
         Cmd::Iface { file, out, stdout } => iface(&file, out.as_deref(), stdout),
         Cmd::Explain { what } => explain(what),
+        Cmd::Bench { what } => match what {
+            Bench::Log { url, dir } => {
+                let rt = tokio::runtime::Runtime::new()?;
+                rt.block_on(bench::run(url.as_deref(), &dir))
+            }
+        },
         Cmd::Graph { file, json, types } => graph_cmd(&file, json, types),
         Cmd::Impact { file, name, json } => impact_cmd(&file, &name, json),
         Cmd::Run {
