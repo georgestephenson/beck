@@ -427,6 +427,42 @@ The full sentence the vocabulary makes: **you write Beck; you package tarns; a t
 tiers is a force; everything published gathers in the Mere; `beck.lock` pins the path.** One
 landscape, one metaphor, every term load-bearing.
 
+## D17 — Observability: the log is the trace; telemetry carries what cannot replay — **DECIDED** (Phase 1, measured)
+
+The question was whether to adopt OpenTelemetry, prompted by wanting an Aspire-style dashboard.
+Answer: **yes for one specific half, and the halves are separated by determinism, not by taste.**
+
+Distributed tracing exists because in a fleet of services nobody knows what happened, so causality
+is reconstructed from sampled, correlated spans. Beck already has something strictly stronger:
+`state = fold(f, init, log[..seq])` is the actual history, durable and total, and `beck replay --to`
+rebuilds any state the system was ever in. Emitting the fold's call tree as spans would re-record —
+lossily, and at a cost the fold pays — what the log records exactly.
+
+So the log answers *what happened, in what order, and what state it produced*. Telemetry answers
+what the log **must not** record, because [`04`](04-compiler-architecture.md) §4.8 requires the fold
+to be replay-pure: wall-clock durations, resource consumption, and **non-events** — a rejected
+proposal, a dropped connection, a failed append. A fold that recorded its own duration would not
+replay identically. The boundary is not a convention; it follows from the replay requirement.
+
+Two consequences:
+
+- **Correlation is `seq`, not a trace id.** A trace id names a request; `seq` names a *state*, and
+  the state is reproducible from it. Every telemetry record about a position carries `beck.seq`, so
+  a line in any backend is one command away from a reproducible debugging session. No service fleet
+  can offer this, and it should be said out loud in the positioning ([`13`](13-testing.md), D13).
+- **Spans stop at the boundaries.** Ingress, validate, append, fold, view, patch — never inside the
+  fold.
+
+Wire format: OTLP over HTTP with **JSON** encoding, which the OTLP specification makes first-class.
+Same field names as protobuf, accepted by ordinary collectors, and no `tonic`, `prost` or code
+generation in the runtime's dependency tree. Built and measured in
+[`19`](19-phase-1-report.md) §19.8.
+
+The corollary for the dashboard: because the program *is* its own AppHost — placement, the splitter
+and the effect-derived object graph already are the topology — the resource list and dependency
+graph need no second declaration and cannot drift from what is deployed. Aspire needs an AppHost
+project; Beck must never grow one.
+
 ## Still open (minor, non-blocking)
 
 - Security-headline vs productivity-headline positioning ([`09`](09-risks-and-open-questions.md)

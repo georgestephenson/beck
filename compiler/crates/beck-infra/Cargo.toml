@@ -1,0 +1,16 @@
+[package]
+name = "beck-infra"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+beck-core.workspace = true
+anyhow.workspace = true
+beck-diag.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

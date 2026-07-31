@@ -1,0 +1,13 @@
+[package]
+name = "beck-macro"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+beck-diag.workspace = true
+beck-syntax.workspace = true
+
+[lints]
+workspace = true

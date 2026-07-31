@@ -18,14 +18,41 @@ The design and implementation plan live in **[`docs/`](docs/)**:
   from, sketch preserved verbatim
 - [`docs/README.md`](docs/README.md) — plan overview and index
 
-**Phase 0 is built.** No compiler yet: [`phase0/`](phase0/) is the *output* the compiler will
-generate for the todo sketch, hand-written in Rust so the architecture could be measured before
-anything is built on top of it — ingress and envelope stamping, a durable fold over Postgres and
-redb, server-side `view` with structural diff, a ~2 KB patch-interpreter client, `(subscription,
-seq)` resumption across a killed process, and a Kubernetes object graph derived from the program's
-effects. The measurements, the kill/pivot gates they answer, and the list of what turned out harder
-than expected are in [`docs/18-phase-0-report.md`](docs/18-phase-0-report.md).
+**Phase 0 is built.** [`phase0/`](phase0/) is the *output* the compiler will generate for the todo
+sketch, hand-written in Rust so the architecture could be measured before anything was built on top
+of it — ingress and envelope stamping, a durable fold over Postgres and redb, server-side `view`
+with structural diff, a ~2 KB patch-interpreter client, `(subscription, seq)` resumption across a
+killed process, and a Kubernetes object graph derived from the program's effects. The measurements,
+the kill/pivot gates they answer, and the list of what turned out harder than expected are in
+[`docs/18-phase-0-report.md`](docs/18-phase-0-report.md).
+
+**Phase 1 is built.** [`compiler/`](compiler/) is the compiler: two surfaces onto one homoiconic
+AST, a hygienic macro expander, Hindley–Milner inference, a typed `Core` IR, placement verified
+against effects, and a splitter that slices the signal graph into the roles a runtime drives —
+executed by whichever backend the process chooses, behind a `Backend` seam the runtime cannot see
+past. The todo sketch is now *source* —
+[`compiler/examples/todo.beck`](compiler/examples/todo.beck), 132 lines — and the runtime that serves it is Phase 0's, with the application arriving as compiled
+`Core` instead of hand-written Rust. `beck up` puts it in a real cluster, where a killed pod
+recovers by folding the log. What it deliberately does not do — native codegen, effect inference —
+is in [`docs/19-phase-1-report.md`](docs/19-phase-1-report.md), along with the four defects that
+only running it found.
 
 ```console
-$ cd phase0 && cargo run -p beck-p0-server -- run --store memory
+$ cd compiler
+$ cargo run -- check   examples/todo.beck      # typecheck, place, slice
+$ cargo run -- explain place examples/todo.beck   # where each definition runs, and why
+$ cargo run -- graph   examples/todo.beck      # every part, and what depends on what
+$ cargo run -- impact  examples/todo.beck validate   # what breaks if this changes
+$ cargo run -- run     examples/todo.beck      # rung 0: no cluster, no container, no registry
+$ cargo run -- replay  examples/todo.beck --verify
+$ cargo run -- build   examples/todo.beck      # the object graph the effects imply, + image configs
 ```
+
+**The program is its own AppHost.** Aspire draws a resource graph because you write a second program
+declaring the topology; Beck has no such program, because placement, the splitter and the
+effect-derived object graph already *are* it. So `beck impact validate` answers across the whole
+stack — three signals and seven Kubernetes objects, with hop counts — and `beck run` serves the same
+model at `/_beck` as a dashboard, alongside live metrics and OTLP export. The graph for the todo
+program is 35 nodes and 67 edges, built in 81 µs. See
+[`docs/19-phase-1-report.md`](docs/19-phase-1-report.md) §19.8, which also draws the line between
+what the event log records and what telemetry has to: the boundary is determinism.

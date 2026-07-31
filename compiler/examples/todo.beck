@@ -1,0 +1,132 @@
+# The todo sketch from docs/00-original-idea.md, in Beck.
+#
+# One file: client, server, database, wire, deploy. Note what is absent — no HTTP routes, no JSON,
+# no SQL, no schema migration files, no fetch calls, no Dockerfile — and note that the JavaScript
+# never appears either. It is compiler residue: the patch interpreter plus the compiled view.
+
+# ---------- Domain: two vocabularies, one trust boundary ----------
+
+type Id = newtype[Str]
+
+model Todo:
+    id: Id
+    text: Str
+    done: Bool
+    owner: Str
+
+model State:
+    todos: Map[Id, Todo]
+
+union Command:                       # what clients may ASK
+    Add(id: Id, text: Str)           # the client names the id — see "optimism"
+    Toggle(id: Id)
+    Delete(id: Id)
+
+union Event:                         # what the server RECORDS
+    Added(id: Id, text: Str)
+    Toggled(id: Id)
+    Deleted(id: Id)
+
+union Rejection:
+    BlankText
+    IdTaken
+    NoSuchTodo
+    NotOwner
+
+# ---------- The database is a fold ----------
+#
+# `apply_event` is pure and unplaced, so it compiles to every tier that needs it. It reads `env.at`
+# and `env.actor` as data and never calls a clock: that is the rule that makes replay exact.
+
+def apply_event(s: State, env: Envelope[Event]) -> State:
+    match env.body:
+        case Added(id, text):
+            return s.with(todos=map_insert(s.todos, id, Todo(id=id, text=text, done=False, owner=env.actor)))
+        case Toggled(id):
+            return toggled(s, id)
+        case Deleted(id):
+            return s.with(todos=map_remove(s.todos, id))
+
+def toggled(s: State, id: Id) -> State:
+    match map_get(s.todos, id):
+        case Some(value):
+            return s.with(todos=map_insert(s.todos, id, value.with(done=not value.done)))
+        case None:
+            return s
+
+# ---------- Authority is one chokepoint ----------
+#
+# `validate` is the sole consumer of ingress and the only place a command becomes an event. It
+# holds the accumulator, so first-writer-wins on client-minted ids and ownership against the
+# envelope's actor are checkable here and nowhere else.
+
+def validate(s: State, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Add(id, text):
+            if str_is_empty(str_trim(text)):
+                return Err(error=BlankText)
+            if map_contains(s.todos, id):
+                return Err(error=IdTaken)
+            return Ok(value=[Added(id=id, text=text)])
+        case Toggle(id):
+            return if_owned(s, p, id, [Toggled(id=id)])
+        case Delete(id):
+            return if_owned(s, p, id, [Deleted(id=id)])
+
+def if_owned(s: State, p: Proposal, id: Id, evs: list[Event]) -> Result[list[Event], Rejection]:
+    match map_get(s.todos, id):
+        case Some(value):
+            if value.owner != p.session.actor:
+                return Err(error=NotOwner)
+            return Ok(value=evs)
+        case None:
+            return Err(error=NoSuchTodo)
+
+# ---------- Queries are pure functions of the signal ----------
+#
+# Keeping them incremental is the compiler's job, not yours. Phase 1 recomputes; the plan is the
+# same either way.
+
+def mine(s: State, session: Session) -> list[Todo]:
+    return sort_by(
+        filter_list(map_values(s.todos), lambda t: t.owner == session.actor),
+        lambda t: t.text)
+
+def remaining(todos: list[Todo]) -> Int:
+    return list_len(filter_list(todos, lambda t: not t.done))
+
+# ---------- The page is a pure function of state ----------
+
+def view(s: State, session: Session) -> Html:
+    todos = mine(s, session)
+    return render(todos, remaining(todos))
+
+def render(todos: list[Todo], left: Int) -> Html:
+    return ui:
+        main:
+            h1: "todos"
+            input(placeholder="what needs doing?", autofocus="on",
+                  on_enter=Add(id=Id(value="$id"), text="$value"))
+            ul:
+                for t in todos:
+                    li(key=t.id, class=done_class(t)):
+                        span(on_click=Toggle(id=t.id)): t.text
+                        button(on_click=Delete(id=t.id)): "x"
+            footer: (str(left) + " remaining")
+
+def done_class(t: Todo) -> Str:
+    return "done" if t.done else ""
+
+# ---------- The wiring: where time enters, and where it stops ----------
+
+@on(server)
+proposals: Stream[Proposal] = merge_clients()
+
+@on(server)
+events: Stream[Event] = decide(proposals, todos, validate)
+
+@on(data)
+todos: Signal[State] = durable(fold(apply_event, State(todos={}), events))
+
+@on(client)
+page: Signal[Html] = per_session(todos, view)

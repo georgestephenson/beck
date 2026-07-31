@@ -15,13 +15,23 @@ Write the commit message as the author of the change: what changed, and why.
   Everything derives from, and defers to, [`docs/00-original-idea.md`](docs/00-original-idea.md).
 - [`phase0/`](phase0/) is the built Phase 0: the output the compiler will eventually generate for
   the todo sketch, hand-written in Rust. [`docs/18-phase-0-report.md`](docs/18-phase-0-report.md)
-  records what it proves and what it does not.
+  records what it proves and what it does not. It is history — a measured baseline — and should not
+  be edited to track the compiler.
+- [`compiler/`](compiler/) is the built Phase 1: the compiler and the runtime it targets.
+  [`docs/19-phase-1-report.md`](docs/19-phase-1-report.md) records what it does, what it refuses to
+  claim, and the corrections Phase 1 makes to the design documents.
 - Design decisions are numbered in [`docs/10-decisions.md`](docs/10-decisions.md). If a change
   contradicts one, say so rather than quietly diverging.
 
 ## Standards for changes
 
 - Claims in docs are stated from evidence. If you write a number, it must be reproducible —
-  `phase0/tests/measure.sh` is where the Phase 0 numbers come from.
+  `phase0/tests/measure.sh` is where the Phase 0 numbers come from; the Phase 1 numbers come from
+  `cargo test` and the commands quoted in [`docs/19-phase-1-report.md`](docs/19-phase-1-report.md).
+- The harnesses are the project's conscience (§4.8, §8.3): `compiler/crates/beck-cli/tests/` holds
+  the differential, replay-determinism, backend-seam and scaling suites. Keep them green.
+- `beck-rt` must not depend on any backend crate. Execution goes through
+  `beck_core::backend::Backend`, and `tests/backend_seam.rs` drives the runtime with an
+  implementation that is not the evaluator so the seam stays load-bearing (docs/19 §19.9).
 - Say plainly when something is written but unproven. "Built" and "runs" and "measured" are three
   different claims.
