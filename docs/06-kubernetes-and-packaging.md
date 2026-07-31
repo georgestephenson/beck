@@ -32,14 +32,22 @@ Beck's server artefacts are statically linked binaries (or WASM components). Tha
 possible input to a container image, and it means we never need a Dockerfile, a build daemon, or a
 package manager at image-build time.
 
-**Recommendation: [apko](https://github.com/chainguard-dev/apko) (+ melange when native deps are
-needed).** Rationale:
+**Recommendation: [apko](https://github.com/chainguard-dev/apko) plus
+[melange](https://github.com/chainguard-dev/melange) — always both.** Rationale:
 
 - **Declarative, no shell.** An apko config is a package list plus metadata; because the build performs
   no arbitrary execution, images are **bit-for-bit reproducible** — the same config and package
-  versions yield the same image digest on any machine. That property is worth a great deal here: `beck
-  build` becomes a pure function from source to digest, which is what makes the deployment plan
-  cacheable, auditable and trustworthy.
+  versions yield the same image digest on any machine. Measured, not assumed: two builds of Phase 1's
+  config produced one digest ([`19`](19-phase-1-report.md) §19.5). That property is worth a great deal
+  here: `beck build` becomes a pure function from source to digest, which is what makes the deployment
+  plan cacheable, auditable and trustworthy.
+- **…and melange is what that property makes mandatory.** This section originally read "(+ melange
+  when native deps are needed)", which is wrong in a way that cannot be seen by reading: **apko copies
+  nothing from the host.** That absence *is* the reproducibility story, so a config that hardlinks a
+  binary from a path no package creates cannot build — it fails with `file does not exist` the first
+  time it is run, and both Phase 0's config and the one `beck build` first emitted had exactly that
+  shape. The binary has to *be* a package, and melange is the tool that makes one. `beck build` emits
+  both configs, in build order ([`19`](19-phase-1-report.md) §19.5).
 - **Distroless by default** (Wolfi-based): no shell, no package manager, tiny attack surface. A Beck
   service image should be ~10–20 MB, not ~900 MB.
 - **SBOM generated automatically**, covering the complete contents.

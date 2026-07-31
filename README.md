@@ -37,10 +37,29 @@ recovers by folding the log. What it deliberately does not do — native codegen
 is in [`docs/19-phase-1-report.md`](docs/19-phase-1-report.md), along with the four defects that
 only running it found.
 
+**Phase 2 is built** — the moat. Effects are now **inferred**, as row-polymorphic rows over a wide
+atom set, so `map_list` is one function whatever its argument does and an effect two calls deep is
+still an effect. Placement is **solved** rather than annotated: candidates come from the row, the
+choice comes from a cost model, and the answer is deterministic, stable across edits (`beck.lock`),
+assertable (`--assert-place`) and explainable (`beck explain place`). `secret[T]` is not Sendable
+and the compiler says which field reaches it; a `.becki` publishes each module's types, effects and
+placements so downstream compiles against a signature and a body edit costs nothing; and
+`beck check --wire-compat` refuses a release that would break an open browser tab.
+
+The headline: **delete every `@on(...)` from the todo sketch and it still compiles, places and
+runs.** Across a 22-program [corpus](compiler/corpus/) carrying no annotations at all, 44% of
+everything placed is unplaced-pure — code with no tier, compiled to whichever tier calls it.
+[`docs/20-phase-2-report.md`](docs/20-phase-2-report.md) has the measurements, what is still not
+done, and the eight things that turned out harder than expected — including the discovery that the
+Phase 1 CI workflow had never run.
+
 ```console
 $ cd compiler
-$ cargo run -- check   examples/todo.beck      # typecheck, place, slice
-$ cargo run -- explain place examples/todo.beck   # where each definition runs, and why
+$ cargo run -- check   examples/todo.beck      # typecheck, infer effects, place, slice
+$ cargo run -- explain place examples/todo.beck todos   # candidates, costs, and why
+$ cargo run -- explain flow  examples/todo.beck Id      # where a type reaches, and what is blocked
+$ cargo run -- iface   examples/todo.beck      # the published signature: types, effects, placements
+$ cargo run -- check   examples/todo.beck --wire-compat previous.becki
 $ cargo run -- graph   examples/todo.beck      # every part, and what depends on what
 $ cargo run -- impact  examples/todo.beck validate   # what breaks if this changes
 $ cargo run -- run     examples/todo.beck      # rung 0: no cluster, no container, no registry

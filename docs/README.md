@@ -40,7 +40,7 @@ the transcript was available; checking it against the original changed three loa
 | 07 | [Dependencies](07-dependencies.md) | Every third-party choice: rationale, licence, benchmarks, rejected alternatives, swap cost |
 | 08 | [Roadmap](08-roadmap.md) | Phase 0 premise-proof, walking skeleton, phased plan, exit criteria, team shape |
 | 09 | [Risks and open questions](09-risks-and-open-questions.md) | Ranked risks, decisions taken, remaining opens |
-| 10 | [Decision log](10-decisions.md) | George's decisions D1–D16, all settled — including the Git/local-first analysis, the language-not-framework rationale, and the name: **Beck** |
+| 10 | [Decision log](10-decisions.md) | George's decisions D1–D17, all settled — including the Git/local-first analysis, the language-not-framework rationale, and the name: **Beck** |
 | 11 | [Language tour](11-language-tour.md) | What Beck looks like, construct by construct — types, traits, macros, queries, UI, services, in-language tests |
 | 12 | [Standards and conformance](12-standards-and-conformance.md) | The rulesets Beck conforms to, layer by layer — and the test-linked spec discipline that makes conformance real |
 | 13 | [Testing strategy](13-testing.md) | Every applicable kind of test and why — built around the free oracles Beck's semantics manufacture (DST, differentials, TLA+, Jepsen) |
@@ -50,6 +50,7 @@ the transcript was available; checking it against the original changed three loa
 | 17 | [The playground](17-playground.md) | The whole stack in a browser tab (the DST convergence), the cloud rung with the compiler as first sandbox, content-addressed sharing, playground-as-Beck-app |
 | 18 | [Phase 0 report](18-phase-0-report.md) | **Built.** What [`phase0/`](../phase0/) implements, the measured exit criteria, the kill/pivot gates, and what turned out harder than expected |
 | 19 | [Phase 1 report](19-phase-1-report.md) | **Built.** The compiler in [`compiler/`](../compiler/): what it compiles, the harnesses it passes, what it deliberately does not do, and the corrections Phase 1 makes to these documents |
+| 20 | [Phase 2 report](20-phase-2-report.md) | **Built.** The moat: effect rows and their inference, placement solved from a cost model, `secret[T]`/`Sendable` with §3.5 as tests, `.becki` and separate compilation, `--wire-compat` — and the corrections Phase 2 makes to these documents |
 
 ## The one-paragraph version
 

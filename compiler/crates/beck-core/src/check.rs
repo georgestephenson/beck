@@ -581,7 +581,12 @@ impl<'a> Checker<'a> {
                             "traits are parsed but not yet checked",
                             inner.span(),
                         )
-                        .with_note("trait resolution arrives with Phase 2's effect work"),
+                        .with_note(
+                            "Phase 2 built the effect system this was once expected to arrive \
+                             with, and trait resolution did not come with it: it is still \
+                             unimplemented, and this warning is the only thing standing between a \
+                             `trait` and silence",
+                        ),
                     );
                 }
             } else {
@@ -600,12 +605,29 @@ impl<'a> Checker<'a> {
             }
             resolve_types(&mut def.body, &self.subst);
             def.row = self.subst.resolve_row(&def.row);
+            // Close the row variables no caller can ever bind.
+            //
+            // A free tail means "plus whatever the caller's function argument does", which is only
+            // a real quantity when the definition *takes* a function. `mine(s: State, session:
+            // Session)` calls `sort_by`, whose scheme is row-polymorphic, and subsumption leaves a
+            // fresh trailing variable behind so a later call site could widen it. For a definition
+            // with no function parameter there is no later call site: the variable is vacuous, and
+            // printing `{e9 | e10}` where the truth is `{}` would make every pure function in
+            // `beck explain place` look effectful.
+            let mut bindable = Vec::new();
+            for (_, _, t) in &def.params {
+                self.subst.free_row_vars(t, &mut bindable);
+            }
+            def.row.tails.retain(|v| bindable.contains(v));
             def.effects = def.row.atoms.iter().cloned().collect();
         }
         for s in &mut signals {
             s.ty = self.subst.resolve(&s.ty);
             resolve_types(&mut s.expr, &self.subst);
             s.row = self.subst.resolve_row(&s.row);
+            // A signal takes no arguments, so nothing can widen its row: every free variable in it
+            // is vacuous.
+            s.row.tails.clear();
             s.effects = s.row.atoms.iter().cloned().collect();
         }
 
