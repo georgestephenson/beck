@@ -1,0 +1,70 @@
+---
+source: crates/beck-infra/tests/manifests.rs
+expression: all
+---
+# compose.yaml
+---
+name: "app"
+services:
+  app:
+    command:
+      - "run"
+      - "/app/app.beck"
+      - "--store"
+      - "postgres"
+      - "--addr"
+      - "0.0.0.0:8080"
+    depends_on:
+      app-log:
+        condition: "service_healthy"
+    environment:
+      BECK_POSTGRES_URL: "postgres://postgres:beck@app-log:5432/postgres"
+      BECK_SNAPSHOT_EVERY_EVENTS: "1000"
+    healthcheck:
+      interval: "2s"
+      retries: 30
+      test:
+        - "CMD"
+        - "wget"
+        - "-qO-"
+        - "http://127.0.0.1:8080/healthz"
+    image: "app:dev"
+    ports:
+      - "8080:8080"
+    volumes:
+      - "..:/app:ro"
+  app-log:
+    environment:
+      PGDATA: "/var/lib/postgresql/data/pgdata"
+      POSTGRES_PASSWORD: "beck"
+    healthcheck:
+      interval: "1s"
+      retries: 30
+      test:
+        - "CMD-SHELL"
+        - "pg_isready -U postgres"
+    image: "postgres:16-alpine"
+    volumes:
+      - "app-log-data:/var/lib/postgresql/data"
+      - "./initdb:/docker-entrypoint-initdb.d:ro"
+volumes:
+  app-log-data: {}
+x-beck:
+  generated-by: "beck build --platform compose"
+  note: "derived from the program's effects; see explain.txt. Do not edit."
+  wire-id: "0123456789abcdef"
+
+# initdb/01-grants.sql
+---
+-- derived from the program's effects: it appends and reads, so it may not update or delete
+GRANT SELECT, INSERT ON beck_log TO "app-app";
+
+
+# explain.txt (platform section)
+compose
+
+3 object(s) this platform cannot express, and what that costs:
+
+Route/app-route            there is no gateway on a single host, so `app.beck.localhost` does not route: the app is published on a port instead.
+Secret/app-log-credentials Compose has no secret store: the development credentials are written into `compose.yaml` as environment variables, which is fine for rung 2 and is not a way to hold a real one.
+Policy/app-policy          Docker Compose has no egress or ingress policy: the effect row's least-privilege rules (§3.5, §6.5) are not enforced on this platform. Use `--platform kubernetes` to test them.

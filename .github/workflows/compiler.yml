@@ -196,6 +196,39 @@ jobs:
         if: always()
         run: k3d cluster delete beck-conformance || true
 
+  the-second-platform:
+    # A `Platform` trait with one implementation is a claim; the seam is only load-bearing if the
+    # other target is exercised too. This job is rung 2 of §6.6's parity ladder — one host, real
+    # containers — and it is what stops `--platform compose` from rotting into a code path nobody
+    # runs.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: compiler
+
+      - name: build
+        run: cargo build --release
+
+      - name: the compose file is valid, and Docker says so rather than us
+        run: |
+          ./target/release/beck build examples/todo.beck --platform compose --out /tmp/compose
+          docker compose -f /tmp/compose/compose/compose.yaml config > /dev/null
+          # The gaps are in the output a person reads, not inferable from an absence.
+          grep -q 'cannot express' /tmp/compose/explain.txt
+          grep -q 'Policy/' /tmp/compose/explain.txt
+
+      - name: the two platforms describe the same program
+        run: |
+          ./target/release/beck build examples/todo.beck --platform kubernetes --out /tmp/k8s
+          # One derivation, two renderings: the provenance table is the platform-neutral part and
+          # must be identical up to the platform section.
+          sed '/^platform: /,$d' /tmp/k8s/explain.txt     > /tmp/a.txt
+          sed '/^platform: /,$d' /tmp/compose/explain.txt > /tmp/b.txt
+          diff /tmp/a.txt /tmp/b.txt
+
   budgets:
     # Deterministic budgets only — the ones §8.3 calls gates.
     runs-on: ubuntu-latest

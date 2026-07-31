@@ -134,9 +134,9 @@ this project can produce for adoption. Budget it into Phase 3, not "someday".
 | Incrementality (compiler) | Salsa | Rewrite behind our own query interface — weeks, not months, if the seam is respected |
 | Incrementality (views) | differential dataflow | Fall back to full recompute per event — semantically identical (it is the CI oracle), slower; the seam is the symbolic plan, not the engine |
 | WASM host | Wasmtime | Swap for WasmEdge/Wasmer behind the component-model boundary |
-| Durable substrate | PostgreSQL | Realistically permanent as default; the log-engine interface admits other substrates (the dev rung already runs on redb) |
+| Durable substrate | PostgreSQL | Realistically permanent as default; the log-engine interface admits other substrates (the dev rung already runs on redb). Both ends are now seams: `beck_rt::LogStore` at runtime, `beck_infra::substrate::Substrate` at deploy time |
 | Images | apko | Fall back to BuildKit — lose bit-reproducibility |
-| Cluster | Kubernetes | The `Platform` trait means single-process still works; a new platform is a bounded project |
+| Cluster | Kubernetes | The `Platform` trait means single-process still works; a new platform is a bounded project. **Built** — `beck_infra::Platform`, with a Compose implementation beside the Kubernetes one ([`20`](20-phase-2-report.md) §20.4 item 15), so "bounded project" is measured rather than estimated: one file, one flag |
 | Cloud resources | Crossplane | OpenTofu emitter escape hatch |
 
 No single dependency is unrecoverable. That is the point of writing this table.

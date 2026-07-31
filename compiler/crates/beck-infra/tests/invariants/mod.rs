@@ -534,3 +534,137 @@ fn str_at(v: &Value, path: &[&str]) -> String {
     }
     cur.as_str().unwrap_or_default().to_string()
 }
+
+// ---------------------------------------------------------------------------------------------
+// Platform-neutral: true of any target, including one this crate has never heard of
+// ---------------------------------------------------------------------------------------------
+
+/// Properties of the *artefacts* a platform produces, whatever they contain.
+///
+/// These are the contract [`beck_infra::platform::Platform`] states and cannot enforce in its
+/// signature: a path that escapes the output directory, two artefacts overwriting each other, or a
+/// gap reported against an object that is not in the graph.
+pub fn platform_artefacts(
+    platform: &dyn beck_infra::Platform,
+    graph: &beck_infra::InfraGraph,
+    wire_id: &str,
+) -> Result<(), String> {
+    let manifests = platform.manifests(graph, wire_id);
+    let inputs = platform.build_inputs(graph);
+
+    let mut seen = BTreeSet::new();
+    for (path, body) in manifests.iter().chain(inputs.iter()) {
+        if path.is_empty() {
+            return Err(format!(
+                "`{}` emitted an artefact with no path",
+                platform.name()
+            ));
+        }
+        if path.starts_with('/') || path.split('/').any(|p| p == "..") {
+            return Err(format!(
+                "`{}` emitted `{path}`, which leaves the output directory",
+                platform.name()
+            ));
+        }
+        if body.is_empty() {
+            return Err(format!("`{}` emitted `{path}` empty", platform.name()));
+        }
+        if !seen.insert(path.clone()) {
+            return Err(format!(
+                "`{}` emitted `{path}` twice, so one overwrites the other",
+                platform.name()
+            ));
+        }
+    }
+    if !graph.nodes.is_empty() && manifests.is_empty() {
+        return Err(format!(
+            "`{}` rendered nothing for a graph of {} objects",
+            platform.name(),
+            graph.nodes.len()
+        ));
+    }
+
+    // A gap has to be about something that exists, or `explain.txt` describes a program nobody
+    // wrote.
+    let ids: BTreeSet<String> = graph
+        .nodes
+        .iter()
+        .map(|d| beck_infra::id_of(&d.node))
+        .collect();
+    for (what, why) in platform.unsupported(graph) {
+        if !ids.contains(&what) {
+            return Err(format!(
+                "`{}` reports `{what}` as unsupported, and no such object is in the graph",
+                platform.name()
+            ));
+        }
+        if why.is_empty() {
+            return Err(format!(
+                "`{}` reports `{what}` as unsupported with no reason, which is a silent drop with \
+                 extra steps",
+                platform.name()
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The Compose file's own cross-object invariants — the analogue of everything above, for a
+/// platform with no selectors and no namespaces.
+///
+/// Compose's failure modes are smaller in number and identical in kind: a service that depends on
+/// one that is not defined, an environment variable pointing at a host nothing runs, a volume
+/// mount naming a volume that does not exist.
+pub fn compose_file_is_consistent(compose: &Value) -> Result<(), String> {
+    let services = compose["services"]
+        .as_object()
+        .ok_or_else(|| "a compose file with no services".to_string())?;
+    let volumes: BTreeSet<String> = compose["volumes"]
+        .as_object()
+        .map(|m| m.keys().cloned().collect())
+        .unwrap_or_default();
+
+    for (name, svc) in services {
+        for dep in svc["depends_on"]
+            .as_object()
+            .map(|m| m.keys().cloned().collect::<Vec<_>>())
+            .unwrap_or_default()
+        {
+            if !services.contains_key(&dep) {
+                return Err(format!(
+                    "`{name}` depends on `{dep}`, which this file does not define"
+                ));
+            }
+        }
+        for v in svc["volumes"].as_array().cloned().unwrap_or_default() {
+            let Some(spec) = v.as_str() else { continue };
+            let Some((source, _)) = spec.split_once(':') else {
+                continue;
+            };
+            // A bind mount starts with `.` or `/`; anything else is a named volume.
+            if source.starts_with('.') || source.starts_with('/') {
+                continue;
+            }
+            if !volumes.contains(source) {
+                return Err(format!(
+                    "`{name}` mounts `{source}`, which is not a declared volume: {volumes:?}"
+                ));
+            }
+        }
+        // The connection string, if there is one, must name a service in this file.
+        let Some(url) = svc["environment"]["BECK_POSTGRES_URL"].as_str() else {
+            continue;
+        };
+        let host = url
+            .rsplit_once('@')
+            .and_then(|(_, rest)| rest.split(':').next())
+            .ok_or_else(|| format!("no host in `{url}`"))?;
+        if !services.contains_key(host) {
+            return Err(format!(
+                "`{name}` connects to `{host}`, which this file does not define: {:?}",
+                services.keys().collect::<Vec<_>>()
+            ));
+        }
+    }
+    Ok(())
+}

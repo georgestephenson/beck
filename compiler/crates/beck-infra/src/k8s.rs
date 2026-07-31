@@ -58,21 +58,65 @@ use k8s_openapi::apimachinery::pkg::apis::meta::v1::{LabelSelector, ObjectMeta};
 use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
 use serde_json::Value;
 
+use crate::substrate::DEFAULT as SUBSTRATE;
 use crate::yaml;
 use crate::{InfraGraph, Node};
 
-/// Where the program lives inside the image.
-///
-/// The image ships the *toolchain*; without the program beside it there is nothing to run, and
-/// `beck run` with no source file fails at startup. Obvious in hindsight, invisible until a
-/// container was actually asked to serve a page (docs/19 §19.5).
-pub const APP_SOURCE: &str = "/app/app.beck";
+/// Where the program lives inside the image — [`crate::APP_SOURCE`], because the Compose platform
+/// mounts it at the same path and two answers would be one bug.
+pub const APP_SOURCE: &str = crate::APP_SOURCE;
 
 /// [`crate::APP_PORT`] as the API's own integer type.
 pub const APP_PORT: i32 = crate::APP_PORT as i32;
 
 /// [`crate::LOG_PORT`] as the API's own integer type.
 pub const LOG_PORT: i32 = crate::LOG_PORT as i32;
+
+/// The Kubernetes target: the one §6.1 chose, and one implementation of [`crate::platform`].
+pub struct Kubernetes;
+
+impl crate::platform::Platform for Kubernetes {
+    fn name(&self) -> &'static str {
+        "kubernetes"
+    }
+
+    fn manifest_dir(&self) -> &'static str {
+        // `kubectl apply -f <dir>` reads every `.yaml` it finds, so the manifests get a directory
+        // to themselves and the image configs stay outside it (docs/20 §20.4 item 14).
+        "k8s"
+    }
+
+    fn manifests(&self, graph: &InfraGraph, wire_id: &str) -> Vec<crate::platform::Artefact> {
+        render(graph, wire_id)
+    }
+
+    fn build_inputs(&self, graph: &InfraGraph) -> Vec<crate::platform::Artefact> {
+        // Two files, in build order: melange turns the binary into a package, apko turns packages
+        // into an image. apko copies nothing from the host — see [`apko`] for why that is the point
+        // and not a limitation.
+        vec![
+            ("image.melange.yaml".to_string(), melange(graph)),
+            ("image.apko.yaml".to_string(), apko(graph)),
+        ]
+    }
+
+    fn apply(&self, manifests: &std::path::Path) -> anyhow::Result<()> {
+        use anyhow::Context as _;
+        let status = std::process::Command::new("kubectl")
+            .arg("apply")
+            .arg("-f")
+            .arg(manifests)
+            .status()
+            .context(
+                "running kubectl — `beck up --platform kubernetes` needs a cluster; `beck run` \
+                 deliberately needs nothing",
+            )?;
+        if !status.success() {
+            anyhow::bail!("kubectl apply failed");
+        }
+        Ok(())
+    }
+}
 
 /// Render the graph as a set of named manifest files, ordered so `kubectl apply -f` works.
 pub fn render(graph: &InfraGraph, wire_id: &str) -> Vec<(String, String)> {
@@ -141,7 +185,7 @@ pub fn objects(graph: &InfraGraph, wire_id: &str) -> Vec<(String, Value)> {
                         .map(|k| {
                             let v = match k.as_str() {
                                 "url" => log_url(app),
-                                "password" => "beck".to_string(),
+                                "password" => SUBSTRATE.dev_password().to_string(),
                                 _ => String::new(),
                             };
                             (k.clone(), v)
@@ -272,23 +316,23 @@ fn log_store(app: &str, name: &str, volume_gb: u32) -> StatefulSet {
                 name,
                 PodSpec {
                     containers: vec![Container {
-                        name: "postgres".to_string(),
-                        image: Some("postgres:16-alpine".to_string()),
+                        name: SUBSTRATE.store.to_string(),
+                        image: Some(SUBSTRATE.image.to_string()),
                         env: Some(vec![
                             from_secret("POSTGRES_PASSWORD", &credentials(app), "password"),
                             EnvVar {
                                 name: "PGDATA".to_string(),
-                                value: Some("/var/lib/postgresql/data/pgdata".to_string()),
+                                value: Some(SUBSTRATE.pgdata()),
                                 ..Default::default()
                             },
                         ]),
                         ports: Some(vec![ContainerPort {
-                            container_port: LOG_PORT,
+                            container_port: i32::from(SUBSTRATE.port),
                             ..Default::default()
                         }]),
                         volume_mounts: Some(vec![VolumeMount {
                             name: "data".to_string(),
-                            mount_path: "/var/lib/postgresql/data".to_string(),
+                            mount_path: SUBSTRATE.data_dir.to_string(),
                             ..Default::default()
                         }]),
                         ..Default::default()
@@ -350,7 +394,7 @@ fn workload(app: &str, name: &str, replicas: u32, serves_ui: bool, reads_log: bo
                             // The store follows the log: a program with no `durable` effect has no
                             // log store to point at, and telling it to use one is how a pod ends up
                             // waiting on a Secret nobody emitted.
-                            if reads_log { "postgres" } else { "memory" }.to_string(),
+                            if reads_log { SUBSTRATE.store } else { "memory" }.to_string(),
                             "--addr".to_string(),
                             format!("0.0.0.0:{APP_PORT}"),
                         ]),
@@ -748,7 +792,7 @@ fn credentials(app: &str) -> String {
 }
 
 fn log_url(app: &str) -> String {
-    format!("postgres://postgres:beck@{app}-log.{app}.svc:{LOG_PORT}/postgres")
+    SUBSTRATE.url(&format!("{app}-log.{app}.svc"))
 }
 
 fn from_secret(var: &str, secret: &str, key: &str) -> EnvVar {
@@ -824,7 +868,7 @@ pub fn apko(graph: &InfraGraph) -> String {
          - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub\n    - ./local.rsa.pub\n  \
          packages:\n    - ca-certificates-bundle\n    - tzdata\n    - {app}@local\n\n\
          entrypoint:\n  command: /usr/bin/beck\n\n\
-         cmd: run {APP_SOURCE} --store postgres --addr 0.0.0.0:{APP_PORT}\n\n\
+         cmd: run {APP_SOURCE} --store {store} --addr 0.0.0.0:{APP_PORT}\n\n\
          # Non-root, matching the generated pod's securityContext exactly. A mismatch here is the\n\
          # classic \"works locally, CrashLoopBackOff in the cluster\".\n\
          accounts:\n  groups:\n    - groupname: nonroot\n      gid: 65532\n  users:\n    \
@@ -832,7 +876,8 @@ pub fn apko(graph: &InfraGraph) -> String {
          archs:\n  - x86_64\n  - aarch64\n\n\
          annotations:\n  org.opencontainers.image.description: >-\n    \
          The {app} application, compiled by Beck.\n",
-        app = graph.app
+        app = graph.app,
+        store = SUBSTRATE.store,
     )
 }
 

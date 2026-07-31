@@ -26,7 +26,7 @@
 //! rendered, and would have failed at `kubectl apply` with a message about a field nobody wrote.
 
 use beck_core::Effect;
-use beck_infra::InfraGraph;
+use beck_infra::{InfraGraph, Platform};
 use proptest::prelude::*;
 
 mod invariants;
@@ -219,6 +219,46 @@ proptest! {
             hosts.iter().collect::<std::collections::BTreeSet<_>>().len(),
             "every host the program names is recorded exactly once"
         );
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 256, ..ProptestConfig::default() })]
+
+    /// The platform-neutral half, over every platform the crate knows.
+    ///
+    /// Not "the manifests are right" — a target this file has never seen renders something this
+    /// file cannot read. It is the *contract*: paths stay inside the output directory and do not
+    /// collide, nothing is emitted empty, and a reported gap is about an object that exists. Each
+    /// of those is a way to produce a broken output tree that no per-platform check would notice,
+    /// because each platform would be individually correct.
+    #[test]
+    fn no_platform_breaks_the_contract_the_trait_states(g in graph()) {
+        for platform in beck_infra::platform::all() {
+            if let Err(why) = invariants::platform_artefacts(platform.as_ref(), &g, "id") {
+                prop_assert!(false, "{why}");
+            }
+        }
+    }
+
+    /// The Compose file's own cross-object invariants, over generated effect rows.
+    ///
+    /// Compose has no selectors and no namespaces, so it has fewer ways to be inconsistent — and
+    /// exactly the same *kinds*: a `depends_on` naming a service nobody defines, a volume mount
+    /// naming a volume nobody declares, a connection string naming a host nothing runs. The
+    /// Kubernetes analogue of the last one is docs/19 §19.5's third defect.
+    #[test]
+    fn the_compose_file_never_references_something_it_does_not_define(g in graph()) {
+        let rendered = beck_infra::compose::Compose.manifests(&g, "id");
+        let (_, body) = rendered
+            .iter()
+            .find(|(name, _)| name == "compose.yaml")
+            .expect("compose always emits its one file");
+        let parsed: serde_json::Value = serde_norway::from_str(body)
+            .map_err(|e| TestCaseError::fail(format!("compose.yaml is not YAML: {e}\n{body}")))?;
+        if let Err(why) = invariants::compose_file_is_consistent(&parsed) {
+            prop_assert!(false, "{why}\n\n{body}");
+        }
     }
 }
 
