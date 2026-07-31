@@ -1,0 +1,7 @@
+---
+source: crates/beck-cli/tests/ui.rs
+expression: "render(\"def helper(x: Int) -> Int:\\n    return x + 1\\n\")"
+---
+error[B0500]: this program has no merge point
+  = note: a Beck application is a fold over an event stream, and the stream starts at `merge_clients()` — the one place time enters
+  = help: add `@on(server)` and `proposals: Stream[Proposal] = merge_clients()`

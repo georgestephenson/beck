@@ -1,0 +1,19 @@
+---
+source: crates/beck-cli/tests/ui.rs
+expression: "render(&edited(\"model State:\\n    todos: Map[Id, Todo]\",\n\"model State:\\n    todos: Map[Id, Todo]\\n    cached: Html\"))"
+---
+error[B0411]: `todos` is durable, so its state must be storable
+  --> t.beck:130:1
+    |
+130 | todos: Signal[State] = durable(fold(apply_event, State(todos={}), events))
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Html` reaches it at `State.cached`
+    |
+  = note: a view is derived from state, so storing one would make replay read it back rather than recompute it
+  = note: the log is the only description of this program's history; a value it cannot read back is a state replay would not reproduce
+
+error[B0351]: `State` takes 2 field(s), got 1
+  --> t.beck:130:50
+    |
+130 | todos: Signal[State] = durable(fold(apply_event, State(todos={}), events))
+    |                                                  ^^^^^^^^^^^^^^^
+    |

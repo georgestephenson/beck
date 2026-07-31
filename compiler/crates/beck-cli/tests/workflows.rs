@@ -83,13 +83,13 @@ fn the_compiler_workflow_still_runs_the_harnesses_it_exists_for() {
         .expect("the compiler workflow is checked in");
     let text = std::fs::read_to_string(path).expect("readable");
     for required in [
-        "cargo test --workspace",  // the differential and replay harnesses
-        "cargo clippy",            // no warnings
-        "cargo fmt",               // one format
+        "cargo test --workspace",        // the differential and replay harnesses
+        "cargo clippy",                  // no warnings
+        "cargo fmt",                     // one format
         "beck check examples/todo.beck", // the demo that runs
-        "corpus/",                 // Phase 2's exit criterion
-        "--wire-compat",           // §4.3's rolling-deploy gate
-        "--assert-place",          // §3.4's assertability guardrail
+        "corpus/",                       // Phase 2's exit criterion
+        "--wire-compat",                 // §4.3's rolling-deploy gate
+        "--assert-place",                // §3.4's assertability guardrail
     ] {
         assert!(
             text.contains(required),

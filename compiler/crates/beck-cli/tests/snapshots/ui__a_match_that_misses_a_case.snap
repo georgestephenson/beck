@@ -1,0 +1,11 @@
+---
+source: crates/beck-cli/tests/ui.rs
+expression: "render(&edited(\"        case Deleted(id):\\n            return s.with(todos=map_remove(s.todos, id))\\n\",\n\"\"))"
+---
+error[B0341]: match is not exhaustive
+  --> t.beck:42:5
+   |
+42 |     match env.body:
+   |     ^^^^^^^^^^^^^^^ missing: Deleted
+   |
+  = note: adding a variant must break every fold that consumes it — that is what makes a missed migration a compile error rather than a 3 a.m. page

@@ -1,0 +1,11 @@
+---
+source: crates/beck-cli/tests/ui.rs
+expression: "render(\"\\\ndef promised(x: Int) -> Int\n\")"
+---
+error[B0335]: `promised` has no body
+  --> t.beck:1:1
+  |
+1 | def promised(x: Int) -> Int
+  | ^^^^^^^^^^^^ a signature with nothing behind it
+  |
+  = note: a bodyless `def` is a declaration, which is what a `.becki` interface file is made of; an ordinary module has to define what it declares
