@@ -10,6 +10,22 @@
 //! | the log holds data, never code or views | [`storable`], checked at compile time |
 //! | authority is one chokepoint | a `cap.*` effect is discharged only inside `decide`'s validator |
 //!
+//! # Two axes, not one
+//!
+//! "Is it stored" and "does it cross" are independent questions, and conflating them is how systems
+//! end up choosing between an incomplete audit trail and a leak. Beck answers them separately:
+//!
+//! | | Sendable | Storable | |
+//! |---|---|---|---|
+//! | ordinary data | ✓ | ✓ | a `Str`, a model of them |
+//! | `Html` | ✓ | ✗ | a patch stream crosses; replay recomputes a view rather than reading it back |
+//! | **`internal[T]`** | ✗ | ✓ | why an account was suspended: recorded forever, never rendered |
+//! | `secret[T]`, a closure | ✗ | ✗ | a token must reach neither the browser nor the log (§3.7 F5) |
+//!
+//! The third row was empty until the question "what if you want a table but not a data object" was
+//! asked directly. Without it, an event that has to record a fact a client must never see forces a
+//! choice between dropping it from the log and trusting that no view renders it.
+//!
 //! The others in that table are checked elsewhere and named in the Phase 2 report: `ingress`/
 //! `durable` being undischargeable on the client is [`crate::place`]; escaping in `html""` is
 //! [`crate::html`]; effect-derived NetworkPolicy and grants are `beck-infra`; the macro phase's
@@ -106,6 +122,16 @@ fn check(ty: &Ty, types: &BTreeMap<Arc<str>, TyDecl>, rule: Rule) -> Result<(), 
                         return fail(
                             format!("{ty}"),
                             "`secret[T]` is deliberately not Sendable: that is the whole mechanism",
+                            path,
+                        )
+                    }
+                    // The other half of the pair, and the only asymmetric case: `internal[T]` is
+                    // *storable* — that is what it exists for — and never crosses.
+                    Ty::INTERNAL if rule == Rule::Sendable => {
+                        return fail(
+                            format!("{ty}"),
+                            "`internal[T]` is recorded and never shown: it may be written to the \
+                             log and may not cross a boundary",
                             path,
                         )
                     }
@@ -343,17 +369,25 @@ fn boundaries(program: &Program, diags: &mut Diagnostics) {
         }
         for t in std::iter::once(&d.ret).chain(d.params.iter().map(|(_, _, t)| t)) {
             if let Err(bad) = sendable(t, &program.types) {
-                if bad.offender.starts_with("secret[") {
-                    reject(
-                        diags,
-                        "B0410",
-                        format!("`{}` runs on the client and handles a secret", d.name),
-                        d.span,
-                        &bad,
-                        "`beck explain flow` shows the whole path; the fix is to keep the \
-                         definition on a tier that can hold it",
-                    );
-                }
+                // Deliberately not "anything unsendable": a client-placed definition may perfectly
+                // well take a closure or return `Html`, and those fail `sendable` for reasons that
+                // have nothing to do with a leak. The two that are leaks are named.
+                let kind = if bad.offender.starts_with("secret[") {
+                    "a secret"
+                } else if bad.offender.starts_with("internal[") {
+                    "an internal fact"
+                } else {
+                    continue;
+                };
+                reject(
+                    diags,
+                    "B0410",
+                    format!("`{}` runs on the client and handles {kind}", d.name),
+                    d.span,
+                    &bad,
+                    "`beck explain flow` shows the whole path; the fix is to keep the \
+                     definition on a tier that can hold it",
+                );
             }
         }
     }
@@ -632,5 +666,59 @@ def host(c: Config) -> Str:
             .map(|r| r.what.to_string())
             .collect();
         assert_eq!(reached, ["load", "host"]);
+    }
+}
+
+#[cfg(test)]
+mod quadrants {
+    use super::*;
+
+    /// The four combinations, asserted as a table, because the point of `internal[T]` is that the
+    /// two axes are *independent* — and a table is the only way to see that they are.
+    #[test]
+    fn the_two_axes_are_independent() {
+        let types: BTreeMap<Arc<str>, TyDecl> = BTreeMap::new();
+        let quad = |t: &Ty| (sendable(t, &types).is_ok(), storable(t, &types).is_ok());
+
+        assert_eq!(quad(&Ty::str_()), (true, true), "ordinary data does both");
+        assert_eq!(
+            quad(&Ty::html()),
+            (true, false),
+            "a view crosses as patches and is never read back from the log"
+        );
+        assert_eq!(
+            quad(&Ty::internal(Ty::str_())),
+            (false, true),
+            "`internal[T]` is the quadrant `secret[T]` alone left empty"
+        );
+        assert_eq!(
+            quad(&Ty::secret(Ty::str_())),
+            (false, false),
+            "a token reaches neither the browser nor the log (§3.7 F5)"
+        );
+        assert_eq!(
+            quad(&Ty::fun(vec![Ty::int()], Ty::int())),
+            (false, false),
+            "code is not data in either direction"
+        );
+    }
+
+    #[test]
+    fn an_internal_field_is_found_however_deeply_it_is_buried() {
+        let types = BTreeMap::from([(
+            Arc::from("Suspension"),
+            TyDecl::Model {
+                name: Arc::from("Suspension"),
+                fields: vec![
+                    (Arc::from("at"), Ty::int()),
+                    (Arc::from("reason"), Ty::internal(Ty::str_())),
+                ],
+            },
+        )]);
+        let bad = sendable(&Ty::list(Ty::con("Suspension")), &types)
+            .expect_err("a list of them still cannot cross");
+        assert_eq!(bad.flow(), "list[Suspension].[0].reason");
+        // …and the same type is perfectly storable, which is the whole point.
+        assert!(storable(&Ty::list(Ty::con("Suspension")), &types).is_ok());
     }
 }

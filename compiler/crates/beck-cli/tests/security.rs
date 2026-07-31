@@ -117,6 +117,106 @@ fn placing_a_secret_handling_function_on_the_client_is_refused() {
 }
 
 // ---------------------------------------------------------------------------------------------
+// 1b. "…and the other half of it: facts that are recorded and never shown"
+//     Mechanism: `internal[T]` is Storable and not Sendable, which is the quadrant `secret[T]`
+//     alone leaves empty. Not one of §3.5's eight rows — it is the answer to a question §3.5 does
+//     not ask, and docs/20 §20.4 item 12 records why it was added.
+// ---------------------------------------------------------------------------------------------
+
+/// The corpus program that exists for this, read as the file a person can open.
+const MODERATION: &str = include_str!("../../../corpus/20-moderation.beck");
+
+#[test]
+fn an_internal_fact_is_written_to_the_log_and_the_page_still_renders() {
+    // The positive half, first, because a check that refuses everything is not a feature: a
+    // `durable` fold whose state reaches an `internal[Str]` is *fine*. That is what it is for.
+    compiles(MODERATION);
+}
+
+#[test]
+fn an_internal_fact_in_a_command_is_refused_the_way_a_secret_is() {
+    // A command is minted in the browser, so an `internal[T]` in one is a value the browser
+    // already had — the same mistake as a secret in a command, caught by the same rule.
+    let src = MODERATION
+        .replace(
+            "    Suspend(account: Str, reason: Str)",
+            "    Suspend(account: Str, reason: internal[Str])",
+        )
+        .replace(
+            "        case Suspend(account, reason):
+            if str_is_empty(str_trim(reason)):
+                return Err(error=NoReason)
+            return Ok(value=[Suspended(account=account, reason=internal_of(str_trim(reason)))])",
+            "        case Suspend(account, reason):
+            return Ok(value=[Suspended(account=account, reason=reason)])",
+        );
+    assert!(codes(&src).contains(&"B0410"), "{:?}", codes(&src));
+
+    let (_, d, map) = compile_str("t.beck", &src);
+    let rendered = d.render(&map);
+    assert!(
+        rendered.contains("internal[Str]") && rendered.contains("Command.Suspend.reason"),
+        "the diagnostic must name the type and the path it travels:\n{rendered}"
+    );
+}
+
+#[test]
+fn an_internal_fact_cannot_be_rendered_into_a_page() {
+    // The attempt the type exists to forbid, written the way someone would write it: read the
+    // reason back and print it. `reveal` carries `cap.internal`, a page is the browser's because
+    // of its type, and no capability is discharged in a browser — so the view does not compile.
+    let src = MODERATION.replace(
+        "                        span: x.account",
+        "                        span: (x.account + \": \" + reveal(x.reason))",
+    );
+    assert!(codes(&src).contains(&"B0401"), "{:?}", codes(&src));
+
+    // And the diagnostic must not send the author to `@on(server)`, which would move the page off
+    // the browser rather than fix the leak. This note is the one that was wrong before this test
+    // existed: an unannotated placement is not automatically a *solved* one.
+    let (_, d, map) = compile_str("t.beck", &src);
+    let rendered = d.render(&map);
+    assert!(
+        rendered.contains("is not a placement an annotation can move"),
+        "a structural pin must say so rather than blame the solver:\n{rendered}"
+    );
+    assert!(
+        !rendered.contains("compiler defect"),
+        "this is the program's mistake, not the compiler's:\n{rendered}"
+    );
+}
+
+#[test]
+fn revealing_an_internal_fact_inside_the_chokepoint_is_exactly_what_it_is_for() {
+    // Authority is one chokepoint (§3.5), and `cap.internal` is a capability like any other: the
+    // validator can hold it, so the rules may decide *on* the reason even though no view may show
+    // it. Refusing this too would make the type useless rather than safe.
+    let src = MODERATION
+        .replace("uses cap.moderator", "uses cap.moderator, cap.internal")
+        .replace(
+            "        case Some(value):
+            return Ok(value=[Restored(account=account)])",
+            "        case Some(value):
+            if str_is_empty(reveal(value.reason)):
+                return Err(error=NotSuspended)
+            return Ok(value=[Restored(account=account)])",
+        );
+    compiles(&src);
+}
+
+#[test]
+fn a_secret_cannot_stand_in_for_an_internal_fact_because_it_is_not_storable() {
+    // The two are not interchangeable, and this is the test that says so: swap `internal[Str]` for
+    // `secret[Str]` in the same program and the *log* refuses it. Which is the reason `internal[T]`
+    // had to exist — without it, recording why an account was suspended has no legal type.
+    let src = MODERATION.replace("internal[Str]", "secret[Str]").replace(
+        "internal_of(str_trim(reason))",
+        "secret_env(str_trim(reason))",
+    );
+    assert!(codes(&src).contains(&"B0411"), "{:?}", codes(&src));
+}
+
+// ---------------------------------------------------------------------------------------------
 // 2. "Clients can only propose"
 //    Mechanism: the client's entire write surface is send(cmd) into a typed Command union.
 // ---------------------------------------------------------------------------------------------

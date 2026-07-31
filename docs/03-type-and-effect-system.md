@@ -131,6 +131,43 @@ type ApiKey = secret[str]          # secret[T] is not Sendable
 "Your compiler proves the API key can't reach the browser, and your audit log is your database" is
 the claim nothing mainstream can make. Lead with it.
 
+### 3.5.1 `Sendable` and `Storable` are two axes, not one
+
+*Added in Phase 2 ([`20`](20-phase-2-report.md) §20.4 item 12), after the question "what if you
+want the table but not the data object" made the gap visible.*
+
+The table above uses `Sendable` for crossing and `Storable` for the log without ever saying they are
+independent. They are, and the four combinations all occur:
+
+| | `Sendable` | `Storable` | |
+|---|---|---|---|
+| ordinary data | ✓ | ✓ | a `str`, a model of them |
+| `Html`, `Attr` | ✓ | ✗ | a patch stream crosses; replay recomputes a view rather than reading one back |
+| **`internal[T]`** | ✗ | ✓ | why an account was suspended: recorded forever, never rendered |
+| `secret[T]`, a function | ✗ | ✗ | a token must reach neither the browser nor the log (§3.7 F5) |
+
+`internal[T]` is the row `secret[T]` alone leaves empty, and an event-sourced system needs it: the
+reason a moderator suspended an account is the fact an appeal is decided against six months later,
+so it belongs in the log — and it must never be rendered into a page. Typing it `str` leaves that to
+review; typing it `secret[str]` refuses to write it down at all, which is an event that does not say
+why it happened.
+
+```python
+model Suspension:
+    account: str
+    reason: internal[str]      # storable, and no view can print it
+
+internal_of : (a) -> internal[a]
+reveal      : (internal[a]) -> a ! {cap.internal}
+```
+
+Reading one back is a capability, so §3.5's chokepoint rule does the enforcement rather than a
+second mechanism: `validate` may hold `cap.internal` and decide *on* the reason, and a
+`Signal[Html]` is the browser's because of its type, so a view that calls `reveal` is a placement
+error. The corpus program is
+[`20-moderation.beck`](../compiler/corpus/20-moderation.beck) and the tests are the `1b` section of
+`security.rs`.
+
 ## 3.6 Modularity and separate compilation (do not defer)
 
 The historical killer of tierless languages ([`01`](01-vision-and-premise.md) §1.6). The rule:

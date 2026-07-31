@@ -7,7 +7,7 @@
 //! | Placement | Property: *no valid program is rejected*; *no `secret` reaches client* (assert over
 //! generated programs); determinism and stability properties | `proptest` |
 //!
-//! The corpus ([`corpus.rs`](corpus.rs)) checks 22 programs someone wrote. This checks programs
+//! The corpus ([`corpus.rs`](corpus.rs)) checks 23 programs someone wrote. This checks programs
 //! nobody wrote, which is the only way to find the case nobody thought of — and it is the row of
 //! §4.8's table that Phase 2 nearly shipped without.
 //!

@@ -321,6 +321,30 @@ pub fn prims() -> Vec<(&'static str, Prim, Scheme)> {
                 Row::of([Effect::Env]),
             )),
         ),
+        // §3.5's missing quadrant: storable, never Sendable.
+        //
+        // Wrapping is pure and free — recording a fact is not an effect. *Reading* one performs
+        // `cap.internal`, which no tier but the server discharges and which
+        // [`crate::secure`] discharges only inside the authority chokepoint. So a view cannot
+        // unwrap one to render it: not because rendering is forbidden, but because the view is not
+        // somewhere a capability is held.
+        (
+            "internal_of",
+            Prim::InternalOf,
+            poly(&[A], fun(vec![v(A)], Ty::internal(v(A)))),
+        ),
+        (
+            "reveal",
+            Prim::Reveal,
+            poly(
+                &[A],
+                fun_eff(
+                    vec![Ty::internal(v(A))],
+                    v(A),
+                    Row::of([Effect::Cap(Arc::from("internal"))]),
+                ),
+            ),
+        ),
         // ---- the signal vocabulary (§3.7) ----
         //
         // `merge_clients : () -> Stream[(Session × Command)] ! { ingress }`. Phase 1 has no tuple
@@ -529,7 +553,13 @@ pub fn types() -> BTreeMap<Arc<str>, TyDecl> {
 pub fn builtin_arity(name: &str) -> Option<usize> {
     Some(match name {
         Ty::INT | Ty::STR | Ty::BOOL | Ty::FLOAT | Ty::UNIT | Ty::HTML | Ty::ATTR => 0,
-        Ty::LIST | Ty::OPTION | Ty::STREAM | Ty::SIGNAL | Ty::ENVELOPE | Ty::SECRET => 1,
+        Ty::LIST
+        | Ty::OPTION
+        | Ty::STREAM
+        | Ty::SIGNAL
+        | Ty::ENVELOPE
+        | Ty::SECRET
+        | Ty::INTERNAL => 1,
         Ty::MAP | Ty::RESULT => 2,
         _ => return None,
     })

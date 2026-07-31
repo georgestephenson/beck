@@ -663,7 +663,11 @@ pub fn check_placement(program: &Program, diags: &mut Diagnostics) {
         verify(
             def.tier,
             &def.row,
-            def.tier_is_annotated,
+            if def.tier_is_annotated {
+                Why::Annotated
+            } else {
+                Why::Solved
+            },
             &format!("`{}`", def.name),
             def.span,
             def.tier_span,
@@ -674,7 +678,13 @@ pub fn check_placement(program: &Program, diags: &mut Diagnostics) {
         verify(
             s.tier,
             &s.row,
-            s.tier_is_annotated,
+            if s.tier_is_annotated {
+                Why::Annotated
+            } else if is_html_signal(&s.ty) {
+                Why::Structural(HTML_IS_THE_BROWSERS)
+            } else {
+                Why::Solved
+            },
             &format!("`{}`", s.name),
             s.span,
             s.tier_span,
@@ -742,10 +752,36 @@ pub fn check_placement(program: &Program, diags: &mut Diagnostics) {
     }
 }
 
+/// Why a node sits on the tier a diagnostic found it on — which decides what the diagnostic is
+/// allowed to claim.
+///
+/// The distinction matters because [`verify`] used to say "this placement was solved rather than
+/// written, so a diagnostic here is a compiler defect" whenever no `@on` was present. That note is
+/// true of a *chosen* placement and false of a **forced** one: a `Signal[Html]` is the browser's
+/// because of its type, so an undischargeable effect under one is a statement about the program.
+/// The first program to hit it was `reveal(...)` inside a view, which is a user error being
+/// reported as a compiler bug.
+#[derive(Clone, Copy)]
+enum Why {
+    /// The program wrote `@on(...)`.
+    Annotated,
+    /// The type decided, and no annotation could have decided otherwise. Carries the sentence that
+    /// says so, and the advice that follows from it.
+    Structural(&'static str),
+    /// The cost model chose, so any refusal here really is the compiler's fault.
+    Solved,
+}
+
+/// The one structural pin there is in Phase 2.
+const HTML_IS_THE_BROWSERS: &str =
+    "a `Signal[Html]` is the browser's because of its type, so this \
+     is not a placement an annotation can move: the effect has to be discharged before the value \
+     reaches the view — in `validate`, which is where the session is";
+
 fn verify(
     tier: Tier,
     row: &Row,
-    annotated: bool,
+    why: Why,
     what: &str,
     span: beck_diag::Span,
     tier_span: beck_diag::Span,
@@ -838,13 +874,18 @@ fn verify(
                 _ => "this tier cannot discharge that effect",
             },
         });
-        if !annotated {
-            d = d.with_note(
-                "this placement was solved rather than written, so a diagnostic here is a compiler \
-                 defect and worth reporting",
-            );
+        match why {
+            Why::Solved => {
+                d = d.with_note(
+                    "this placement was solved rather than written, so a diagnostic here is a \
+                     compiler defect and worth reporting",
+                );
+            }
+            Why::Structural(note) => d = d.with_note(note),
+            Why::Annotated => {}
         }
-        if let [only] = alternatives.as_slice() {
+        // Only worth suggesting where an annotation could actually have made the difference.
+        if let ([only], Why::Annotated | Why::Solved) = (alternatives.as_slice(), why) {
             d = d.with_fix(format!("`@on({only})` discharges everything this needs"));
         }
         diags.push(d);

@@ -1,6 +1,6 @@
 # The corpus
 
-Twenty-two programs, and the Phase 2 exit criterion measured against them:
+Twenty-three programs, and the Phase 2 exit criterion measured against them:
 
 > On a corpus of 20+ programs, placement is inferred with no annotations for the common cases.
 
@@ -15,6 +15,7 @@ of one shape would prove that the shape works, which Phase 1 already did. What v
 - the accumulator: a counter, a map, a list, a record of several;
 - the effect rows: `cap.*` for authority, `env` and `secret[T]` for credentials, `net.out` for a
   named host and for the own origin, `log` for ambient telemetry, `nondet` for ids and clocks;
+- what the log is allowed to hold: `internal[T]` for a fact that is recorded and never rendered;
 - whether the program is an application at all — some are libraries, which have no merge point and
   publish a `.becki` instead of running;
 - how many modules it takes.

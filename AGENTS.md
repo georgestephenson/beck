@@ -21,7 +21,7 @@ Write the commit message as the author of the change: what changed, and why.
   [`docs/19-phase-1-report.md`](docs/19-phase-1-report.md) and
   [`docs/20-phase-2-report.md`](docs/20-phase-2-report.md) record what each phase does, what it
   refuses to claim, and the corrections it makes to the design documents.
-- [`compiler/corpus/`](compiler/corpus/) is 22 programs carrying **no placement annotations**, and
+- [`compiler/corpus/`](compiler/corpus/) is 23 programs carrying **no placement annotations**, and
   the measurement behind Phase 2's exit criterion. A program added there has to place itself.
 - Design decisions are numbered in [`docs/10-decisions.md`](docs/10-decisions.md). If a change
   contradicts one, say so rather than quietly diverging.

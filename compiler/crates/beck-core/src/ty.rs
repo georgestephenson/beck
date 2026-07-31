@@ -161,6 +161,16 @@ impl Ty {
     /// §3.5: "`secret[T]` is not Sendable". The one type constructor whose whole purpose is to fail
     /// a boundary check.
     pub const SECRET: &'static str = "secret";
+    /// The other half of that story, and the quadrant `secret[T]` alone leaves empty: **may be
+    /// written to the log, may never cross a boundary**.
+    ///
+    /// An event-sourced system has to record what happened, including facts a client must never
+    /// see — why an account was suspended, which rule fired, what an upstream vendor called the
+    /// customer. `secret[T]` cannot express that, because a secret is *also* not storable (§3.7's
+    /// F5: tokens must never be persisted into an immutable log). Without `internal[T]` the choice
+    /// is between dropping the fact from the audit trail and trusting that no view ever renders it,
+    /// and "trusting" is the word this language exists to delete.
+    pub const INTERNAL: &'static str = "internal";
 
     pub fn int() -> Ty {
         Ty::con(Ty::INT)
@@ -194,6 +204,9 @@ impl Ty {
     }
     pub fn secret(t: Ty) -> Ty {
         Ty::app(Ty::SECRET, vec![t])
+    }
+    pub fn internal(t: Ty) -> Ty {
+        Ty::app(Ty::INTERNAL, vec![t])
     }
 
     pub fn con_name(&self) -> Option<&str> {

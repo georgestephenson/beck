@@ -596,6 +596,24 @@ impl<'h> Interp<'h> {
                 want(0)?;
                 Ok(Value::Int(self.host.now_millis()))
             }
+            // `internal[T]` is a wrapper at runtime for the same reason `secret[T]` is: the wire
+            // encoder and the digest have to be able to tell one from the `T` it holds.
+            Prim::InternalOf => {
+                want(1)?;
+                let v = args.pop().expect("arity checked");
+                Ok(Value::Data {
+                    ty: Arc::from(beck_core::Ty::INTERNAL),
+                    variant: None,
+                    fields: Arc::new(std::collections::BTreeMap::from([(Arc::from("value"), v)])),
+                })
+            }
+            Prim::Reveal => {
+                want(1)?;
+                let v = args.pop().expect("arity checked");
+                v.field("value")
+                    .cloned()
+                    .ok_or_else(|| EvalError::new("`reveal` expects an `internal[T]`", span))
+            }
             Prim::SecretEnv => {
                 want(1)?;
                 let name = args.pop().expect("arity checked");

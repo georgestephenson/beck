@@ -203,6 +203,7 @@ const FOLDS: &[(&str, &str)] = &[
     ("16-money.beck", "signal/ledger"),
     ("17-derived.beck", "signal/counts"),
     ("19-clock.beck", "signal/series"),
+    ("20-moderation.beck", "signal/queue"),
 ];
 
 #[test]
@@ -261,6 +262,7 @@ fn an_effect_that_only_one_tier_discharges_pins_its_definition() {
         ("12-webhooks.beck", "def/notify", Tier::Server),
         // `cap.*` is held where sessions are minted.
         ("02-chat.beck", "def/mine_only", Tier::Server),
+        ("20-moderation.beck", "def/lift", Tier::Server),
         ("06-inventory.beck", "def/restock", Tier::Server),
         ("13-reservations.beck", "def/release", Tier::Server),
         // `external.read` is an escape hatch, and the fold engine refuses it.

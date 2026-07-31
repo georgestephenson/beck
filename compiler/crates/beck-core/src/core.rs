@@ -85,6 +85,10 @@ pub enum Prim {
     Now,
     /// Reads a secret from the process environment, yielding a `secret[Str]` (§3.5).
     SecretEnv,
+    /// Wraps a value as `internal[T]`: storable, never Sendable.
+    InternalOf,
+    /// Unwraps one. Performs `cap.internal`, so only the authority chokepoint can do it.
+    Reveal,
     // ---- the symbolic signal vocabulary (§3.7) ----
     MergeClients,
     StreamFilterMap,
@@ -144,6 +148,8 @@ impl Prim {
             NewUuid => "uuid",
             Now => "now",
             SecretEnv => "secret_env",
+            InternalOf => "internal_of",
+            Reveal => "reveal",
             MergeClients => "merge_clients",
             StreamFilterMap => "filter_map",
             Fold => "fold",
@@ -168,6 +174,9 @@ impl Prim {
             Prim::Durable => vec![Effect::Durable],
             Prim::NewUuid | Prim::Now => vec![Effect::Nondet],
             Prim::SecretEnv => vec![Effect::Env],
+            // Wrapping is free; *reading* is the privileged half, and the capability is what stops
+            // a view unwrapping one to render it.
+            Prim::Reveal => vec![Effect::Cap(std::sync::Arc::from("internal"))],
             _ => Vec::new(),
         }
     }

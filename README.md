@@ -47,10 +47,10 @@ placements so downstream compiles against a signature and a body edit costs noth
 `beck check --wire-compat` refuses a release that would break an open browser tab.
 
 The headline: **delete every `@on(...)` from the todo sketch and it still compiles, places and
-runs.** Across a 22-program [corpus](compiler/corpus/) carrying no annotations at all, 44% of
+runs.** Across a 23-program [corpus](compiler/corpus/) carrying no annotations at all, 43% of
 everything placed is unplaced-pure — code with no tier, compiled to whichever tier calls it.
 [`docs/20-phase-2-report.md`](docs/20-phase-2-report.md) has the measurements, what is still not
-done, and the eight things that turned out harder than expected — including the discovery that the
+done, and the twelve things that turned out harder than expected — including the discovery that the
 Phase 1 CI workflow had never run.
 
 ```console
