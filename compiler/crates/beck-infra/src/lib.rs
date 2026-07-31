@@ -314,14 +314,31 @@ pub fn derive(app: &str, effects: &[(Effect, String)], serves_ui: bool) -> Infra
             .collect::<Vec<_>>(),
     );
 
-    // Effect rows ⇒ least-privilege network policy. Note what is *absent*: no egress rule beyond
-    // the log, because no effect in this program reaches any other host.
+    // Effect rows ⇒ least-privilege network policy. §3.5's "least-privilege infra, computed": the
+    // egress list *is* the program's `net.out` atoms, so a host nobody calls is a host the cluster
+    // will not let this workload reach — and adding a call adds the rule, in the same commit.
     let mut egress = Vec::new();
     let mut policy_needs = vec![workload.clone()];
     if has(Effect::Durable).is_some() {
         egress.push(format!("{app}-log"));
         policy_needs.push(log_svc.clone());
     }
+    let mut hosts: Vec<String> = effects
+        .iter()
+        .filter_map(|(e, _)| match e {
+            // The own origin is this workload's own Service, which the ingress rule already covers.
+            Effect::NetOut(h) if h.as_ref() != "origin" => Some(h.to_string()),
+            _ => None,
+        })
+        .collect();
+    hosts.sort();
+    hosts.dedup();
+    let derived_from: Vec<String> = effects
+        .iter()
+        .filter(|(e, _)| matches!(e, Effect::NetOut(_)))
+        .map(|(e, w)| format!("`{w}` performs `{}`", e.name()))
+        .collect();
+    egress.extend(hosts.iter().cloned());
     out.push(
         Node::Policy {
             name: format!("{app}-policy"),
@@ -332,7 +349,13 @@ pub fn derive(app: &str, effects: &[(Effect, String)], serves_ui: bool) -> Infra
             },
             allow_egress_to: egress,
         },
-        "the policy is the effect row: no `net.out` in the program, no egress rule in the cluster",
+        &if derived_from.is_empty() {
+            "the policy is the effect row: no `net.out` in the program, no egress rule in the \
+             cluster"
+                .to_string()
+        } else {
+            format!("the policy is the effect row: {}", derived_from.join("; "))
+        },
     )
     .needing(&policy_needs.iter().map(String::as_str).collect::<Vec<_>>());
 

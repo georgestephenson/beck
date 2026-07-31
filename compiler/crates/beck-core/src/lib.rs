@@ -22,6 +22,7 @@ pub mod place;
 pub mod pmap;
 pub mod prelude;
 pub mod row;
+pub mod secure;
 pub mod split;
 pub mod ty;
 
@@ -33,6 +34,7 @@ pub use html::Html;
 pub use place::{Key, Lock, Method, Solution};
 pub use pmap::PMap;
 pub use row::{Ambient, Effect, Row};
+pub use secure::{sendable, storable, NotSendable};
 pub use split::{Placed, Roles};
 pub use ty::{Tier, Ty, TyDecl};
 
@@ -63,6 +65,7 @@ pub fn compile_with(
     let solution = place::solve(&program, lock);
     place::apply(&mut program, &solution);
     place::check_placement(&program, diags);
+    secure::check_security(&program, diags);
     if diags.has_errors() {
         return None;
     }

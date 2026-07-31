@@ -158,8 +158,13 @@ enum Explain {
     },
     /// The command channel's content-derived operation id (§4.3).
     Wire { file: PathBuf },
-    /// The signal graph, and what the splitter made of it.
-    Flow { file: PathBuf },
+    /// The signal graph, and what the splitter made of it — or, given a type, everywhere that
+    /// type reaches and everywhere it is refused (§4.7).
+    Flow {
+        file: PathBuf,
+        /// A type name: `beck explain flow ApiKey`.
+        ty: Option<String>,
+    },
     /// The infrastructure the program's effects imply (§6.5).
     Deploy { file: PathBuf },
 }
@@ -644,7 +649,51 @@ fn explain(what: Explain) -> Result<()> {
             );
             Ok(())
         }
-        Explain::Flow { file } => {
+        Explain::Flow { file, ty: Some(ty) } => {
+            let placed = compiled(&file)?;
+            let program = &placed.program;
+            let Some(decl) = program.types.get(ty.as_str()) else {
+                bail!("no type `{ty}` in this program");
+            };
+            let is_secret =
+                beck_core::secure::sendable(&beck_core::Ty::con(&ty), &program.types).err();
+            println!(
+                "{ty} ({}) — {}",
+                match decl {
+                    beck_core::TyDecl::Model { .. } => "model",
+                    beck_core::TyDecl::Union { .. } => "union",
+                    beck_core::TyDecl::Newtype { .. } => "newtype",
+                    beck_core::TyDecl::Alias { .. } => "alias",
+                },
+                match &is_secret {
+                    Some(bad) => format!("not Sendable: {} at {}", bad.offender, bad.flow()),
+                    None => "Sendable".to_string(),
+                }
+            );
+            let reached = beck_core::secure::flow(program, &ty);
+            if reached.is_empty() {
+                println!("\n  reaches nothing — no signature mentions it");
+                return Ok(());
+            }
+            println!();
+            for r in &reached {
+                match (&r.blocked, &is_secret) {
+                    (Some(why), Some(_)) => {
+                        println!("  BLOCKED: {:<18} {:<8} {why}", r.what, r.tier.name())
+                    }
+                    _ => println!("  reaches: {:<18} {:<8} ok", r.what, r.tier.name()),
+                }
+            }
+            if is_secret.is_some() {
+                println!(
+                    "\na crossing requires Sendable, and `secret[T]` is deliberately not \
+                     (docs/03 §3.5).\nWhat blocks the leak is the placement, so moving one of \
+                     these to the client is the compile error."
+                );
+            }
+            Ok(())
+        }
+        Explain::Flow { file, ty: None } => {
             let placed = compiled(&file)?;
             let r = &placed.roles;
             println!("{:<12} {}", "ingress", r.proposals_name);
