@@ -42,6 +42,17 @@ pub enum Node {
         host: String,
         websocket: bool,
     },
+    /// Something has to be addressable before anything can route to it. A `Route` needs a backend,
+    /// and a `StatefulSet` needs the headless service its `serviceName` names — both were missing
+    /// until a pod tried to resolve them (docs/19 §19.5).
+    Service {
+        name: String,
+        selector: String,
+        port: u16,
+        /// Headless services give a StatefulSet stable per-pod DNS; a workload's service wants a
+        /// cluster IP.
+        headless: bool,
+    },
     /// A `durable` fold ⇒ a log store, a volume, and a snapshot schedule.
     LogStore {
         name: String,
@@ -113,6 +124,7 @@ fn kind_of(n: &Node) -> String {
         Node::LogStore { name, .. } => format!("LogStore/{name}"),
         Node::SnapshotSchedule { name, .. } => format!("Snapshots/{name}"),
         Node::Secret { name, .. } => format!("Secret/{name}"),
+        Node::Service { name, .. } => format!("Service/{name}"),
         Node::Policy { name, .. } => format!("Policy/{name}"),
         Node::Grant { role, .. } => format!("Grant/{role}"),
     }
@@ -175,8 +187,17 @@ pub fn derive(app: &str, effects: &[(Effect, String)], serves_ui: bool) -> Infra
             .map(|(_, w)| w.clone())
     };
 
-    // `merge_clients()` ⇒ a websocket ingress route.
+    // `merge_clients()` ⇒ a websocket ingress route, and something for it to route *to*.
     if let Some(from) = has(Effect::Ingress) {
+        push(
+            Node::Service {
+                name: app.clone(),
+                selector: app.clone(),
+                port: 8080,
+                headless: false,
+            },
+            &format!("`{from}` accepts connections, so the workload needs an address"),
+        );
         push(
             Node::Route {
                 name: format!("{app}-route"),
@@ -202,6 +223,15 @@ pub fn derive(app: &str, effects: &[(Effect, String)], serves_ui: bool) -> Infra
                 every_events: 1000,
             },
             &format!("`{from}` is a fold, so its accumulator is snapshotted"),
+        );
+        push(
+            Node::Service {
+                name: format!("{app}-log"),
+                selector: format!("{app}-log"),
+                port: 5432,
+                headless: true,
+            },
+            &format!("`{from}` needs a log store, and the fold has to be able to resolve it"),
         );
         push(
             Node::Secret {
@@ -460,6 +490,41 @@ page: Signal[Html] = per_session(st, view)
         let text = g.explain();
         assert!(text.contains("carries `ingress`"), "{text}");
         assert!(text.contains("no `net.out` in the program"), "{text}");
+    }
+
+    #[test]
+    fn everything_the_manifests_reference_is_also_emitted() {
+        // The Route named a backend and the StatefulSet named a serviceName; neither existed until
+        // a pod tried to resolve them. A graph that points at objects it does not emit is not a
+        // graph (docs/19 §19.5).
+        let g = graph(&compile(PROGRAM));
+        let files = crate::k8s::render(&g, "id");
+        let all: String = files.iter().map(|(_, b)| b.as_str()).collect();
+
+        let emitted: Vec<String> = g
+            .nodes
+            .iter()
+            .filter_map(|d| match &d.node {
+                Node::Service { name, .. } => Some(name.clone()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            emitted.contains(&"app".to_string()),
+            "workload service: {emitted:?}"
+        );
+        assert!(
+            emitted.contains(&"app-log".to_string()),
+            "log service: {emitted:?}"
+        );
+
+        // The log store is a StatefulSet, so its service must be headless.
+        assert!(all.contains("clusterIP: None"), "{all}");
+        // …and the credentials must actually point somewhere.
+        assert!(
+            all.contains("postgres://postgres:beck@app-log.app.svc:5432"),
+            "{all}"
+        );
     }
 
     #[test]

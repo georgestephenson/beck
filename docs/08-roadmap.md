@@ -52,10 +52,10 @@ redesign the session/subscription representation before any compiler work builds
 > compiles and runs: `beck run examples/todo.beck` serves it, `beck replay --verify` reproduces its
 > state, and the differential and replay-determinism harnesses are green. Three items are **not**
 > done and are named as such: native codegen (a `Core` evaluator stands in for Cranelift) and effect
-> inference (effects are declared and collected, not inferred). A third, deployment, is partly
-> evidenced: the apko image builds reproducibly and a real API server accepts every object the
-> effect row implies, but no container starts in this environment ([`19`](19-phase-1-report.md)
-> §19.5).
+> inference (effects are declared and collected, not inferred). Deployment **is** done: the app runs
+> in a real cluster, serving the page from a pod with its events in the Postgres its own `durable`
+> effect provisioned, and a killed pod recovers by folding the log
+> ([`19`](19-phase-1-report.md) §19.5).
 
 The narrowest possible compiler that takes the todo sketch from source to a running k3d deployment.
 Deliberately bad at everything, complete end-to-end.
@@ -76,8 +76,7 @@ Deliberately bad at everything, complete end-to-end.
 
 **Exit**: `git clone && beck up` yields the working todo app in a local cluster, CI-asserted;
 differential and replay harnesses green; `beck replay` reproduces state from a recorded log.
-*Met except for a container actually starting in the cluster* ([`19`](19-phase-1-report.md) §19.3,
-§19.5).
+**Met** ([`19`](19-phase-1-report.md) §19.3, §19.5).
 
 ## Phase 2 — Effects and placement (3–4 months)
 

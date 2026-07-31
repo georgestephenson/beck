@@ -9,11 +9,10 @@ eight crates; [`compiler/examples/todo.beck`](../compiler/examples/todo.beck) is
 [`00-original-idea.md`](00-original-idea.md), 132 lines, and `beck run` serves it. Every number
 below was measured on the machine described in §19.2.
 
-Two things the roadmap asks for are **not** done, and are named as such rather than implied: native
-codegen (§19.6) and effect *inference* (§19.6). A third, deployment, is evidenced up to one narrow
-step: the image builds reproducibly, **a container built from it serves the page**, and a real API
-server accepts every object the program's effects imply — but kubelet does not start the pod
-sandbox in this environment. §19.5 says exactly which explanations were ruled out.
+**The exit criterion is met**: the compiled sketch runs in a real Kubernetes cluster, serving the
+page from a pod, with its events durable in the Postgres its own `durable` effect provisioned
+(§19.5). Two things the roadmap asks for are **not** done, and are named as such rather than
+implied: native codegen (§19.6) and effect *inference* (§19.6).
 
 ## 19.1 What was built, against what was asked
 
@@ -39,7 +38,7 @@ sandbox in this environment. §19.5 says exactly which explanations were ruled o
 | Backend: Postgres/redb log engine | done — both, plus in-memory; same contract, same tests | `beck-rt/src/log.rs` |
 | Backend: k8s object graph | done — derived from effects, with provenance on every node | `beck-infra/src/lib.rs` |
 | `beck run` (single process) | done | `beck-cli/src/main.rs` |
-| `beck up` (k3d) | emits and applies — **a real API server accepts every object, and the image serves the page under `docker run`**; kubelet's sandbox does not start here (§19.5) | `beck-infra/src/lib.rs` |
+| `beck up` | done — **the app runs in a cluster and serves the page**; a killed pod recovers by folding the log (§19.5) | `beck-infra/src/lib.rs` |
 | Salsa from commit one | done — `parse`/`expand`/`signature` are memoised queries | `beck-db/src/lib.rs` |
 | `insta` diagnostic snapshots | **not used** — diagnostics are asserted by code and message, not by snapshot (§19.6) | — |
 | Differential single-process vs split harness | done, green | `beck-cli/tests/differential.rs` |
@@ -116,14 +115,23 @@ replay is exact: two folds agree, and the snapshot path agrees with genesis.
 
 110 tests, no failures, no compiler warnings, no clippy warnings.
 
-### The cluster
+### The cluster: **met**
 
-**Partly met, and §19.5 draws the line.** A k3d cluster was created, the compiler's own image was
-imported into it, and **every object `beck build` derives from the effect row was accepted by a real
-API server** — which is the thing Phase 0 could only say "they parse" about. Pods schedule. What
-does not happen is containers *starting*: `runc` fails at the innermost of three nesting levels,
-identically under both the overlayfs and native snapshotters. That is this sandbox's ceiling, not
-the manifests'.
+```console
+$ kubectl -n todo get all
+pod/todo-7f8dbfb868-xzbqf   1/1   Running
+pod/todo-log-0              1/1   Running
+service/todo                ClusterIP   10.43.162.70   8080/TCP
+service/todo-log            ClusterIP   None           5432/TCP
+deployment.apps/todo        1/1   1   1
+
+$ curl -s 'http://todo/?actor=alice' | grep -o '<ul>.*</ul>'
+<ul><li class="done" data-b-k="k1"><span data-b-click='{"c":"Toggle","id":"k1"}'>deployed to a cluster</span>…
+```
+
+Four commands over the websocket, two of which the program's own `validate` refuses; the events
+land in the Postgres the `durable` effect provisioned; a killed pod comes back with an identical
+view, rebuilt by folding. §19.5 has the whole run, and the four defects getting there exposed.
 
 ### One thing done ahead of schedule
 
@@ -210,14 +218,13 @@ In rough order of how much it changed the design.
    where `var` is not yet mutable, a loop is not a missing feature so much as a missing *reason* —
    but the diagnostic has to say that, or it reads as an unimplemented corner.
 
-10. **An image can be built, reproducible, signed — and contain no program.** `beck build` emitted
-    an image with `/usr/bin/beck` in it and a Deployment that ran `beck run --store postgres` with
-    no source file. Every check passed: the config was valid, the build was reproducible, the
-    manifests were admitted by a real API server. The container simply had nothing to serve. It
-    took *starting a container* to notice, and the fix — package the program beside the binary,
-    name it in the args, wire the store's URL from the Secret — is three lines of emitter and three
-    tests. The general lesson is the same one as the item below and worth stating once:
-    **artefacts that are never executed accumulate defects that no amount of checking finds.**
+10. **Four defects survived every check that is not "run it".** An apko config that could not
+    build; an image containing the toolchain and no program; a graph whose `HTTPRoute` and
+    `StatefulSet` referenced Services it never emitted; a credentials Secret holding `""`. All four
+    passed review and typechecking, and the manifests among them were admitted by a real Kubernetes
+    API server. All four died the first time something tried to run. They are enumerated with their
+    fixes in §19.5, and the pattern is worth naming once: **an artefact nobody has executed is a
+    design document.**
 
 11. **An image config that reads correctly can be impossible to build.** Phase 0's apko config
     hardlinks the service binary from a path nothing creates, and `beck build` emitted the same
@@ -298,55 +305,77 @@ $ beck replay examples/todo.beck --store redb --path ./vol/beck.log --verify
 head 2 · digest 4fd87eff… · replay is exact
 ```
 
-### The cluster: **applied, not scheduled into a running container**
-
-| Step | Result |
-|---|---|
-| `k3d cluster create`, and `k3s server` directly on the host | **works** — `kubectl get nodes` reports Ready |
-| Import the compiler's own image | **works** |
-| Apply the object graph `beck build` derives from the effect row | **works — a real API server accepted every object** |
-| Schedule | **works** — pods are assigned to a node |
-| Start the pod sandbox | **fails** — `runc create failed: … can't get final child's PID from pipe: EOF` |
-
-What the API server admitted, from the effects and nothing else: the Namespace, the log store's
-StatefulSet and its volume claim, the snapshot ConfigMap, the credentials Secret, the Deployment
-with its non-root securityContext and probes, the NetworkPolicy, and the grants —
+### The cluster: **the app runs in it**
 
 ```console
-$ kubectl -n todo get configmap todo-grants -o jsonpath='{.data.grants\.sql}'
--- derived from the program's effects: it appends and reads, so it may not update or delete
-GRANT SELECT, INSERT ON beck_log TO "todo-app";
+$ kubectl -n todo get pods
+todo-7f8dbfb868-xzbqf   1/1   Running          # the compiled program
+todo-log-0              1/1   Running          # the Postgres its `durable` effect provisioned
 
-$ kubectl -n todo get networkpolicy todo-policy -o jsonpath='{.spec.policyTypes} {.spec.egress[*].to[*].podSelector.matchLabels.app}'
-["Ingress","Egress"] todo-log
+$ curl -s 'http://todo:8080/?actor=alice'
+<!doctype html>…<main><h1>todos</h1><input placeholder="what needs doing?"…
+
+# four commands over the websocket; two refused by the program's own `validate`
+acks 2 | nacks BlankText,IdTaken | patch frames 3
+
+$ kubectl -n todo exec todo-log-0 -- psql -U postgres -tAc 'select seq, actor from beck_log'
+1|alice
+2|alice
 ```
 
-Phase 0 could only say its manifests "parse, and carry apiVersion/kind". They are now objects a real
-Kubernetes API server has validated, defaulted and admitted. That is the step this exercise was for.
+Then the operational property, in the cluster rather than in a test:
 
-That last row was chased rather than assumed, and four plausible explanations were ruled out:
+```console
+$ kubectl -n todo delete pod -l app=todo --force --grace-period=0
+$ curl -s 'http://todo:8080/?actor=alice' | grep -o '<ul>.*</ul>'
+<ul><li class="done" data-b-k="k1">…deployed to a cluster…      # a new pod, folded from the log
 
-| Hypothesis | Test | Verdict |
-|---|---|---|
-| Too many nesting levels | ran `k3s server` on the host, one level fewer | **no** — identical failure |
-| `runc` is broken here | ran k3s's own `runc` on a bundle, including with kubelet's `/kubepods/…` cgroup path | **no** — it works |
-| The missing `cpuset` controller (k3s warns about it) | mounted it; the warning went away | **no** — identical failure |
-| Namespaces are restricted | `unshare --net`, `unshare --user` | **no** — both work |
+$ kubectl -n todo exec <pod> -- beck replay /app/app.beck --store postgres --verify
+head 2 · digest 6ca7c137… · replay is exact
+```
 
-What remains is specific to containerd's CRI sandbox path, and the decisive fact sits beside it:
-**the same image, on the same host, at the same nesting depth, runs perfectly under `docker run`**
-and serves the page. So neither the image nor the manifests are implicated, and neither is Beck.
+A pod that never existed before serves a view identical to the one its predecessor served, having
+computed it from nothing but the log — and `beck replay --verify` agrees, running *inside* the
+cluster against the cluster's own database.
 
-Three environment frictions had to be solved on the way and are worth recording for whoever runs
-this next: the k3d nodes need the egress proxy's CA mounted over their trust store; their containerd
-must be pointed at that proxy on an address reachable from the node network rather than `127.0.0.1`;
-and the host's `cpuset` cgroup controller is enabled in the kernel but unmounted, so `mount -t cgroup
--o cpuset cgroup /sys/fs/cgroup/cpuset` is needed before k3s will stop warning about it.
+### Getting there found four defects, and none of them were visible on paper
 
-**What is left to prove is one thing, and it is narrow**: that *kubelet* starts the container, as
-opposed to the container starting. Everything else on the path — the image, the program inside it,
-the process, the page it serves, the log it writes, and every object the effect row implies — is
-evidenced.
+Each survived every check that does not involve running the thing.
+
+1. **The apko config could not build.** It hardlinked the binary from a path no package creates.
+   apko copies nothing from the host — that absence *is* the reproducibility story — so the binary
+   has to arrive as an APK, which needs `melange`, which §6.2 never mentions.
+2. **The image contained no program.** `beck build` emitted a container that ran `beck run --store
+   postgres` with no source file, and an image holding `/usr/bin/beck` and nothing to feed it. The
+   config was valid, the build reproducible, the manifests admitted by a real API server, and the
+   container had nothing to serve.
+3. **The graph pointed at objects it did not emit.** The `HTTPRoute` named a backend Service that
+   did not exist; the log store's `StatefulSet` declared a `serviceName` that did not exist, so the
+   fold could never have resolved its own database.
+4. **The credentials Secret was empty.** `url: ""`, so even with the Service the app had nothing to
+   connect to — while the emitter knew the log store's service name all along.
+
+All four are fixed and held by tests: the package installs the program, the workload runs it and can
+reach the store, every Service the manifests reference is emitted, and the Secret carries a URL that
+resolves. §6.6's parity ladder asks for rung 3 to work from `git clone` the way rung 0 does, and
+these were the four things standing between it and that.
+
+### And three environment accommodations, for whoever runs this next
+
+None of them are Beck's, but all three cost time:
+
+* **`cpuset` is enabled in the kernel and not mounted.** k3s warns about it; `mount -t cgroup -o
+  cpuset cgroup /sys/fs/cgroup/cpuset` fixes it. (It was not the cause of the failure below, but
+  it is a real prerequisite.)
+* **`CAP_SYS_RESOURCE` is masked out of this sandbox.** Kubelet asks for `oomScoreAdj: -998` on
+  every pod sandbox, lowering `oom_score_adj` requires that capability, and without it runc's
+  `nsexec` bails — surfacing as `can't get final child's PID from pipe: EOF`, which names neither
+  the capability nor the field. Clamping the request to the ambient `oom_score_adj` makes pods
+  start. Finding it took wrapping runc to capture the log containerd writes to a file and then
+  deletes: the CRI error is three layers away from the cause.
+* **Container images must be pulled through the egress proxy.** dockerd and k3d nodes both go
+  direct by default; the nodes also need the proxy's CA over their trust store, and its address has
+  to be reachable from the node network rather than `127.0.0.1`.
 
 ## 19.6 What Phase 1 is not
 
@@ -391,7 +420,9 @@ evidenced.
 5. **`melange` belongs in [`06`](06-kubernetes-and-packaging.md) §6.2.** The section describes
    apko's reproducibility without naming the tool that its central property — no arbitrary
    execution, therefore no copying from the host — makes mandatory for shipping a binary.
-6. **One thing is left to prove about deployment, and it is small.** Every object is admitted by a
-   real API server; what has never happened is a *started container serving the page*, because
-   `runc` cannot start a process at this sandbox's third nesting level (§19.5). One run on a machine
-   that can nest one level less closes it. Nothing in the design is waiting on it.
+6. **Artefacts that are never executed accumulate defects that no amount of checking finds.**
+   Four of them, in §19.5 — an unbuildable image config, an image with no program in it, a graph
+   referencing objects it never emitted, and empty credentials. Every one passed review, typecheck
+   and a real API server's admission. Every one died the first time something tried to run it.
+   §8.3's "every phase ships a demo that runs" is not a morale exercise; it is the only check that
+   catches this class, and it should gate each phase rather than conclude it.

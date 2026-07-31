@@ -31,8 +31,10 @@ AST, a hygienic macro expander, Hindley–Milner inference, a typed `Core` IR, p
 against effects, and a splitter that slices the signal graph into the roles a runtime drives. The
 todo sketch is now *source* — [`compiler/examples/todo.beck`](compiler/examples/todo.beck), 132
 lines — and the runtime that serves it is Phase 0's, with the application arriving as compiled
-`Core` instead of hand-written Rust. What it deliberately does not do (native codegen, effect
-inference, the cluster) is in [`docs/19-phase-1-report.md`](docs/19-phase-1-report.md).
+`Core` instead of hand-written Rust. `beck up` puts it in a real cluster, where a killed pod
+recovers by folding the log. What it deliberately does not do — native codegen, effect inference —
+is in [`docs/19-phase-1-report.md`](docs/19-phase-1-report.md), along with the four defects that
+only running it found.
 
 ```console
 $ cd compiler
@@ -40,4 +42,5 @@ $ cargo run -- check   examples/todo.beck      # typecheck, place, slice
 $ cargo run -- explain place examples/todo.beck   # where each definition runs, and why
 $ cargo run -- run     examples/todo.beck      # rung 0: no cluster, no container, no registry
 $ cargo run -- replay  examples/todo.beck --verify
+$ cargo run -- build   examples/todo.beck      # the object graph the effects imply, + image configs
 ```

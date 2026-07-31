@@ -36,16 +36,46 @@ pub fn render(graph: &InfraGraph, wire_id: &str) -> Vec<(String, String)> {
                  namespace: {app}\nspec:\n  serviceName: {name}\n  replicas: 1\n  selector:\n    \
                  matchLabels:\n      app: {name}\n  template:\n    metadata:\n      labels:\n        \
                  app: {name}\n    spec:\n      containers:\n        - name: postgres\n          \
-                 image: postgres:16-alpine\n          ports:\n            - containerPort: 5432\n          \
+                 image: postgres:16-alpine\n          env:\n            - name: POSTGRES_PASSWORD\n              \
+                 valueFrom:\n                secretKeyRef:\n                  name: {app}-log-credentials\n                  \
+                 key: password\n            - name: PGDATA\n              \
+                 value: /var/lib/postgresql/data/pgdata\n          ports:\n            - containerPort: 5432\n          \
                  volumeMounts:\n            - name: data\n              mountPath: /var/lib/postgresql/data\n  \
                  volumeClaimTemplates:\n    - metadata:\n        name: data\n      spec:\n        \
                  accessModes: [\"ReadWriteOnce\"]\n        resources:\n          requests:\n            \
                  storage: {volume_gb}Gi\n"
             ),
+            Node::Service {
+                name,
+                selector,
+                port,
+                headless,
+            } => {
+                let cluster_ip = if *headless {
+                    "  clusterIP: None\n"
+                } else {
+                    ""
+                };
+                format!(
+                    "apiVersion: v1\nkind: Service\nmetadata:\n  name: {name}\n  \
+                     namespace: {app}\nspec:\n{cluster_ip}  selector:\n    app: {selector}\n  \
+                     ports:\n    - port: {port}\n      targetPort: {port}\n"
+                )
+            }
             Node::Secret { name, keys } => {
+                // A working default, not an empty placeholder: the emitter knows the log store's
+                // service name, so it can write a URL that resolves. §6.6's parity ladder wants
+                // rung 3 to work from `git clone` the way rung 0 does; a production deploy
+                // overwrites this Secret with real credentials.
                 let data: String = keys
                     .iter()
-                    .map(|k| format!("  {k}: \"\"\n"))
+                    .map(|k| match k.as_str() {
+                        "url" => format!(
+                            "  url: \"postgres://postgres:beck@{app}-log.{app}.svc:5432/postgres\"\n"
+                        ),
+                        "password" => "  password: \"beck\"\n".to_string(),
+                        other => format!("  {other}: \"\"\n"),
+                    })
                     .collect();
                 format!(
                     "apiVersion: v1\nkind: Secret\nmetadata:\n  name: {name}\n  namespace: {app}\n\
@@ -155,6 +185,8 @@ fn slug(n: &Node) -> String {
         Node::Secret { .. } => "secret".into(),
         Node::Policy { .. } => "policy".into(),
         Node::Grant { .. } => "grants".into(),
+        Node::Service { headless: true, .. } => "log-service".into(),
+        Node::Service { .. } => "service".into(),
     }
 }
 
