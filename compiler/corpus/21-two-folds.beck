@@ -1,0 +1,93 @@
+# Two durable folds over one log.
+#
+# The corner this file exists for: until the general slicer, a program with a second `durable`
+# was *accepted* and mis-sliced — both folds were lowered to the same accumulator, so `render`
+# was handed a `Tally` where it expected a `Roster`, and the failure surfaced at render time as
+# "rendering the view". `beck check` said `ok`. See docs/23 §23.2.
+#
+# What it compiles to now: one accumulator with a field per fold, because §3.7 fixes one
+# totally-ordered log per application — two folds are two projections of that log, not two logs.
+# `beck explain flow` prints the fusion and names the fields.
+
+model Tally:
+    joins: Int
+    leaves: Int
+
+model Roster:
+    here: Map[Str, Str]
+
+union Command:
+    Arrive(who: Str)
+    Depart(who: Str)
+
+union Event:
+    Arrived(who: Str)
+    Departed(who: Str)
+
+union Rejection:
+    Anonymous
+    NotHere
+
+def apply_event(t: Tally, env: Envelope[Event]) -> Tally:
+    match env.body:
+        case Arrived(who):
+            return t.with(joins=t.joins + 1)
+        case Departed(who):
+            return t.with(leaves=t.leaves + 1)
+
+def apply_presence(r: Roster, env: Envelope[Event]) -> Roster:
+    match env.body:
+        case Arrived(who):
+            return r.with(here=map_insert(r.here, who, who))
+        case Departed(who):
+            return r.with(here=map_remove(r.here, who))
+
+def validate(r: Roster, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Arrive(who):
+            if str_is_empty(str_trim(who)):
+                return Err(error=Anonymous)
+            return Ok(value=[Arrived(who=who)])
+        case Depart(who):
+            if not map_contains(r.here, who):
+                return Err(error=NotHere)
+            return Ok(value=[Departed(who=who)])
+
+def render(t: Tally, r: Roster) -> Html:
+    return ui:
+        main:
+            h1: "the room"
+            p: (str(map_len(r.here)) + " here")
+            p: (str(t.joins) + " arrivals")
+            p: (str(t.leaves) + " departures")
+
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, roster, validate)
+tally: Signal[Tally] = durable(fold(apply_event, Tally(joins=0, leaves=0), events))
+roster: Signal[Roster] = durable(fold(apply_presence, Roster(here={}), events))
+page: Signal[Html] = map2(render, tally, roster)
+
+test "each fold sees the same log and keeps its own answer":
+    given [Arrived(who="ana"), Arrived(who="bo"), Departed(who="ana")]
+    expect page contains "1 here"
+    expect page contains "2 arrivals"
+    expect page contains "1 departure"
+
+test "the chokepoint reads the fold it was given, not whichever came first":
+    # `decide(proposals, roster, validate)` names `roster`, and `validate` checks `r.here`. If the
+    # slicer passed the other accumulator this would be a type error at render time rather than a
+    # rejection, which is exactly how the old defect showed itself.
+    given []
+    when Depart(who="ana")
+    expect Err(error=NotHere)
+
+test "a blank arrival never reaches the log":
+    given []
+    when Arrive(who="   ")
+    expect Err(error=Anonymous)
+
+test "the accumulator is one record with a field per fold":
+    # `$State` is a type the compiler made, and a test sees it by the names the program used.
+    given [Arrived(who="ana"), Arrived(who="bo"), Departed(who="ana")]
+    expect state.tally.joins == 2
+    expect state == fold_of [Arrived(who="ana"), Arrived(who="bo"), Departed(who="ana")]

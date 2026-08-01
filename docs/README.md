@@ -53,6 +53,7 @@ the transcript was available; checking it against the original changed three loa
 | 20 | [Phase 2 report](20-phase-2-report.md) | **Built.** The moat: effect rows and their inference, placement solved from a cost model, `secret[T]`/`Sendable` with §3.5 as tests, `.becki` and separate compilation, `--wire-compat` — and the corrections Phase 2 makes to these documents |
 | 21 | [Tests in Beck, and proof](21-tests-in-beck-and-proof.md) | **§21.2–§21.3 built** (see 22). `test` blocks that cross the boundary without a network, mocks derived from the effect row instead of written out — and the six-rung ladder that says how we know a generated manifest is right, with what a proof would and would not add |
 | 22 | [Phase 3 report, part 1](22-phase-3-report.md) | **Built.** Tests written in Beck: `test`/`property` blocks, `beck test`, effect-atom stubs nobody writes, one type-directed generator — one bullet of Phase 3's twelve, with the other eleven named rather than implied |
+| 23 | [Phase 3 report, part 2](23-general-slicer-report.md) | **Built.** The general slicer: the signal graph as a graph, several durable folds fused into one accumulator, shared computations bound once, every tier crossing enumerated — the debt two phases carried, and the silent mis-slice it was hiding. Plus `beck explain incremental`, the analysis §3.8 asks for and the plan is the input to — with the view engine still unbuilt, and the report saying so first |
 
 ## The one-paragraph version
 

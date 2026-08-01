@@ -1,0 +1,78 @@
+# A derived signal read by two consumers.
+#
+# `tally` is read by `digest` and by `page`. Until the general slicer the splitter inlined a signal
+# once per use, so a program of this shape computed `summarise` twice per event and nothing
+# recorded that the two were the same computation. It is now bound once — `beck explain flow` lists
+# it under "shared" — which is §5.3's shared prefix stated at compile time.
+#
+# It is still a full recompute per event. The point is that the plan now *says* what would be
+# shared, which is the input a differential-dataflow arrangement needs and the reason the slicer
+# had to come before the view engine.
+#
+# `digest` is also the corpus's first sink that is not the page: a signal nothing reads, which is
+# what a materialised read model is. It stays behind the boundary, and the placement says so.
+
+model State:
+    votes: Map[Str, Int]
+
+model Tally:
+    options: Int
+    open: Bool
+
+model Digest:
+    line: Str
+
+union Command:
+    Vote(option: Str)
+
+union Event:
+    Voted(option: Str)
+
+union Rejection:
+    NoSuchOption
+
+def apply_event(s: State, env: Envelope[Event]) -> State:
+    match env.body:
+        case Voted(option):
+            return s.with(votes=map_insert(s.votes, option, unwrap_or(map_get(s.votes, option), 0) + 1))
+
+def validate(s: State, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Vote(option):
+            if str_is_empty(str_trim(option)):
+                return Err(error=NoSuchOption)
+            return Ok(value=[Voted(option=option)])
+
+def summarise(s: State) -> Tally:
+    return Tally(options=map_len(s.votes), open=map_len(s.votes) > 0)
+
+def digest_of(t: Tally) -> Digest:
+    return Digest(line=(str(t.options) + " options"))
+
+def render(t: Tally, session: Session) -> Html:
+    return ui:
+        main:
+            h1: "poll"
+            p: ("open" if t.open else "closed")
+            p: (str(t.options) + " options")
+
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, ballot, validate)
+ballot: Signal[State] = durable(fold(apply_event, State(votes={}), events))
+tally: Signal[Tally] = signal_map(ballot, summarise)
+digest: Signal[Digest] = signal_map(tally, digest_of)
+page: Signal[Html] = per_session(tally, render)
+
+test "an empty ballot is closed":
+    given []
+    expect page contains "closed"
+
+test "a vote opens it, and both readers of the tally see the same one":
+    given [Voted(option="red"), Voted(option="blue")]
+    expect page contains "open"
+    expect page contains "2 options"
+
+test "a blank option never reaches the log":
+    given []
+    when Vote(option="  ")
+    expect Err(error=NoSuchOption)

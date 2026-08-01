@@ -1,6 +1,6 @@
 # The corpus
 
-Twenty-three programs, and the Phase 2 exit criterion measured against them:
+Twenty-six programs, and the Phase 2 exit criterion measured against them:
 
 > On a corpus of 20+ programs, placement is inferred with no annotations for the common cases.
 
@@ -18,7 +18,11 @@ of one shape would prove that the shape works, which Phase 1 already did. What v
 - what the log is allowed to hold: `internal[T]` for a fact that is recorded and never rendered;
 - whether the program is an application at all — some are libraries, which have no merge point and
   publish a `.becki` instead of running;
-- how many modules it takes.
+- how many modules it takes;
+- **the shape of the signal graph**: one fold or two, a derived signal read once or twice, a
+  `filter_map` between the chokepoint and a fold. Programs 21–23 exist for the general slicer
+  ([`docs/23`](../../docs/23-general-slicer-report.md)), and until it was built every one of them
+  was either refused or — in 21's case — silently mis-sliced.
 
 Every file is a program someone could plausibly write. Where one exists to exercise a corner, its
 first comment says which corner and why.

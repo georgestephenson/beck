@@ -228,6 +228,15 @@ enum Explain {
         /// A type name: `beck explain flow ApiKey`.
         ty: Option<String>,
     },
+    /// Which views a dataflow plan could maintain by delta, and why the rest could not (§3.8).
+    ///
+    /// The analysis, not the engine: every view is a full recompute per event today, and the
+    /// report says so before it says anything else.
+    Incremental {
+        file: PathBuf,
+        /// One view, by the name `beck explain flow` gives it.
+        view: Option<String>,
+    },
     /// The infrastructure the program's effects imply (§6.5).
     Deploy { file: PathBuf },
 }
@@ -956,35 +965,14 @@ fn explain(what: Explain) -> Result<()> {
         }
         Explain::Flow { file, ty: None } => {
             let placed = compiled(&file)?;
-            let r = &placed.roles;
-            println!("{:<12} {}", "ingress", r.proposals_name);
-            println!("{:<12} {}  (validate)", "events", r.events_name);
-            println!("{:<12} {}  (durable fold)", "state", r.state_name);
-            println!(
-                "{:<12} {}  ({})",
-                "page",
-                r.page_name,
-                if r.view_is_per_session {
-                    "per-session view"
-                } else {
-                    "broadcast view"
-                }
-            );
-            if !r.inlined.is_empty() {
-                println!(
-                    "\ninlined into the view: {}",
-                    r.inlined
-                        .iter()
-                        .map(|s| s.to_string())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                );
-                println!("(full recompute per event; Phase 3 makes these incremental)");
-            }
-            println!(
-                "\none tier crossing: `{}` is @on(client) over state that is @on(data), so the \
-                 edge is a single subscription carrying DOM patches.",
-                r.page_name
+            print!("{}", beck_core::split::flow_report(&placed));
+            Ok(())
+        }
+        Explain::Incremental { file, view } => {
+            let placed = compiled(&file)?;
+            print!(
+                "{}",
+                beck_core::incremental::report(&placed, view.as_deref())
             );
             Ok(())
         }

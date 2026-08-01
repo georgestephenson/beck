@@ -1,0 +1,98 @@
+# Two folds taking different slices of one log.
+#
+# `ledger` folds every event. `escalations` folds only the ones `only_flagged` keeps, through a
+# `filter_map` between the chokepoint and the fold. That is a stream operator on the *fold* path
+# rather than the view path, and the old splitter refused it: `decide` had to be the fold's
+# immediate input or the program was not an application.
+#
+# What it compiles to: one fused accumulator whose `escalations` field is stepped only when the
+# filter yields. The runtime still appends one totally-ordered log and folds it once — the filter
+# moved into the step, which is the only place it could go if replay is to stay a function of the
+# log (§3.7).
+
+model Ledger:
+    charges: Int
+    refunds: Int
+
+model Escalations:
+    seen: Map[Str, Int]
+
+union Command:
+    Charge(who: Str, amount: Int)
+    Refund(who: Str, amount: Int)
+
+union Event:
+    Charged(who: Str, amount: Int)
+    Refunded(who: Str, amount: Int)
+
+union Rejection:
+    NotPositive
+    Nobody
+
+def apply_event(l: Ledger, env: Envelope[Event]) -> Ledger:
+    match env.body:
+        case Charged(who, amount):
+            return l.with(charges=l.charges + 1)
+        case Refunded(who, amount):
+            return l.with(refunds=l.refunds + 1)
+
+# The slice: a refund over a threshold is the only thing the escalation fold is about.
+def only_flagged(e: Event) -> Option[Event]:
+    match e:
+        case Charged(who, amount):
+            return None
+        case Refunded(who, amount):
+            return Some(value=e) if amount > 100 else None
+
+def apply_escalation(x: Escalations, env: Envelope[Event]) -> Escalations:
+    match env.body:
+        case Charged(who, amount):
+            return x
+        case Refunded(who, amount):
+            return x.with(seen=map_insert(x.seen, who, unwrap_or(map_get(x.seen, who), 0) + 1))
+
+def validate(l: Ledger, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Charge(who, amount):
+            if amount <= 0:
+                return Err(error=NotPositive)
+            if str_is_empty(str_trim(who)):
+                return Err(error=Nobody)
+            return Ok(value=[Charged(who=who, amount=amount)])
+        case Refund(who, amount):
+            if amount <= 0:
+                return Err(error=NotPositive)
+            return Ok(value=[Refunded(who=who, amount=amount)])
+
+def render(l: Ledger, x: Escalations) -> Html:
+    return ui:
+        main:
+            h1: "ledger"
+            p: (str(l.charges) + " charges")
+            p: (str(l.refunds) + " refunds")
+            p: (str(map_len(x.seen)) + " escalated")
+
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, ledger, validate)
+ledger: Signal[Ledger] = durable(fold(apply_event, Ledger(charges=0, refunds=0), events))
+flagged: Stream[Event] = filter_map(events, only_flagged)
+escalations: Signal[Escalations] = durable(fold(apply_escalation, Escalations(seen={}), flagged))
+page: Signal[Html] = map2(render, ledger, escalations)
+
+test "every event reaches the ledger and only the flagged ones reach the escalations":
+    given [
+        Charged(who="ana", amount=500),
+        Refunded(who="ana", amount=20),
+        Refunded(who="bo", amount=900)]
+    expect page contains "1 charges"
+    expect page contains "2 refunds"
+    expect page contains "1 escalated"
+
+test "a refund under the threshold escalates nothing":
+    given [Refunded(who="ana", amount=1)]
+    expect page contains "0 escalated"
+
+test "a charge of nothing never reaches the log":
+    given []
+    when Charge(who="ana", amount=0)
+    expect Err(error=NotPositive)

@@ -126,6 +126,11 @@ functions. The lowering question is substrates. **We do not write a storage engi
   the differential "arrangement" sharing model — not a thousand plans. Subscription count, shared-
   prefix hit rate, and per-session memory are metrics the runtime exports from day one, because
   this is where a naive implementation quietly becomes Meteor-at-scale.
+
+  *The compile-time half exists* — the signal graph is a graph and a computation read by two
+  consumers is identified as one ([`23`](23-general-slicer-report.md) §23.5). That is what an
+  arrangement needs to be shareable; the dataflow engine that would share it is not built, and
+  views are still full recompute per event.
 - v0.1 does **not** need the dataflow engine: full recompute per event on in-memory folds is
   semantically identical and fine at todo-app scale; the incremental plan is an optimisation with
   an exact correctness oracle (recompute) to test against — a luxurious position for CI

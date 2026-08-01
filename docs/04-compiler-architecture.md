@@ -94,6 +94,11 @@ Given placed `Core`, stage 8 does five things:
    [`05`](05-tier-lowering.md) §5.1), the client side a resumable `(subscription, seq)` consumer;
    `send` becomes the upstream command channel into the ingress. There is no cache-invalidation
    wiring to synthesise — views are downstream of the log by construction (§3.8).
+
+   *Built* — `beck-core/src/{signal,split}.rs`, and "every … edge" is literal: the crossings are
+   enumerated with a content-derived id each, which `beck explain flow` prints
+   ([`23`](23-general-slicer-report.md) §23.3). The todo sketch has three, and both earlier reports
+   said it had one.
 4. **Emit state artefacts.** Log-store DDL, read-model DDL, snapshot schedules, and — when
    accumulator or event types changed against the previously deployed signature — the demand for
    `migrate`/`upcast` functions, refusing to build a deployable plan without them (§3.9).
@@ -186,6 +191,11 @@ ApiKey (secret[str]) declared at config.beck:8
 
 Also ship `beck explain wire <op>`, `beck explain query <fn>`, `beck explain deploy <service>`
 (the full object graph and its provenance) and `beck explain cost <fn>`.
+
+*Built*: `place`, `flow`, `wire`, `deploy`, and — with the general slicer, which gave it a plan to
+read — `beck explain incremental <view>`, which [`03`](03-type-and-effect-system.md) §3.8 asks for
+([`23`](23-general-slicer-report.md) §23.8). `query` and `cost` are not, and
+[`23`](23-general-slicer-report.md) §23.9 says why each is still waiting.
 
 ## 4.8 Testing strategy for the compiler itself
 

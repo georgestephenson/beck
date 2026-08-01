@@ -94,6 +94,10 @@ differential and replay harnesses green; `beck replay` reproduces state from a r
 > codegen is still not done, unchanged from Phase 1. And **rendering placement is not a decision
 > yet**: Mode B does not exist, so the cost model is ready for the Mode A/B choice and does not make
 > it ([`20`](20-phase-2-report.md) §20.4 item 1). §20.5 has the rest.
+>
+> *The slicer was built in Phase 3 — [`23`](23-general-slicer-report.md). The parenthesis above is
+> also corrected there: it did **not** refuse everything it could not slice. A program with two
+> `durable` folds was accepted and sliced with both folds reading one accumulator (§23.2).*
 
 The moat.
 
@@ -114,23 +118,38 @@ dependencies whose signatures didn't change.
 
 ## Phase 3 — Make it real for developers (4–5 months) — **STARTED**
 
-> One of the twelve bullets below is built: **`test` blocks and inferred mocks**, with
-> [`22`](22-phase-3-report.md) as its evidence. `beck test` runs a program's own tests — a log, a
-> command and an expectation — through the same roles the runtime drives, with no network, no
-> fixture and no mock written by hand; §21.3's "everything is stubbed by default, and the default
-> says what it did" is built, and so is the one type-directed generator that stubs and `property`
-> blocks share. The eleven other bullets are **untouched**, and [`22`](22-phase-3-report.md) §22.6
-> names them one at a time rather than by omission.
+> Two of the twelve bullets below are built, each with its own report.
 >
-> The debt is unchanged and now carries two phases' names: **the general slicer is still not
-> built**. [`19`](19-phase-1-report.md) §19.9 assigned it to Phase 2, [`20`](20-phase-2-report.md)
-> §20.5 recorded that Phase 2 did not deliver it, and Phase 3 has not either. §5.3's incremental
-> views need the signal graph treated as a graph, so it is the next thing to build.
+> **`test` blocks and inferred mocks**, with [`22`](22-phase-3-report.md) as its evidence. `beck
+> test` runs a program's own tests — a log, a command and an expectation — through the same roles
+> the runtime drives, with no network, no fixture and no mock written by hand; §21.3's "everything
+> is stubbed by default, and the default says what it did" is built, and so is the one type-directed
+> generator that stubs and `property` blocks share.
+>
+> **The general slicer**, with [`23`](23-general-slicer-report.md) as its evidence — the debt
+> [`19`](19-phase-1-report.md) §19.9 assigned to Phase 2 and [`20`](20-phase-2-report.md) §20.5
+> recorded as undelivered. The signal graph is now built as a graph rather than recognised as a
+> shape: any number of `durable` folds (fused into one accumulator, because §3.7 fixes one log per
+> application), any depth and any sharing above them, a `filter_map` on the fold path, and every
+> tier crossing enumerated with the id §4.3 says a subscription is keyed by. It is a **precondition**
+> for the incremental-views bullet below, not a down payment on it: views are still full recompute
+> per event. What it did make possible immediately is `beck explain incremental` — the analysis
+> §3.8 names, which says which views a plan could maintain and why the rest could not, over a
+> program none of whose views are maintained (§23.8).
+>
+> Building it falsified the sentence both earlier reports used to justify the narrowness. The old
+> splitter did not refuse what it could not slice: two `durable` folds compiled, and both were
+> lowered to the same accumulator ([`23`](23-general-slicer-report.md) §23.2).
+>
+> The ten other bullets are **untouched**, and [`23`](23-general-slicer-report.md) §23.9 names them
+> one at a time rather than by omission.
 
 - LLVM release backend + differential tests against Cranelift (§5.2).
 - **Incremental views**: compile subscribed/materialized views to differential-dataflow plans with
   arrangement sharing (per-session fanout, §5.3); recompute stays as the CI oracle; SQL read models
-  + pgwire exposure; query fusion on symbolic plans.
+  + pgwire exposure; query fusion on symbolic plans. *Its precondition — the signal graph as a
+  graph, with shared computations identified — is built ([`23`](23-general-slicer-report.md)); the
+  engine is not.*
 - **Mode B client**: per-component WASM (view + fold + signal kernel), optimistic application with
   `seq` reconciliation, freshness-typed pending state; size budget CI gate (< 150 KB brotli per
   component bundle).

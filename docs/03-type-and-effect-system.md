@@ -261,6 +261,13 @@ administration story" — and it is an *effect*, so infrastructure derivation
 ([`06`](06-kubernetes-and-packaging.md) §6.5) and RBAC can see it. Retention/snapshot policy hangs
 off it: `durable(retain=90.days, snapshot=hourly)` — defaults sane, overridable.
 
+A program may declare **several** `durable` folds, and that is not several logs. The rule above is
+one totally-ordered log per application, so several folds are several *projections* of it: the
+compiler fuses them into one accumulator with a field per fold, and the runtime persists and
+snapshots exactly what it did before ([`23`](23-general-slicer-report.md) §23.4). A fold may also
+read a slice of the log rather than all of it, by naming a `filter_map` between the chokepoint and
+itself; the filter is compiled into the step, because replay has to stay a function of the log.
+
 **The signal graph is a graph, not a pipeline.** This section reads top-to-bottom, and the programs
 it describes do not: `events` is decided from the state, and the state is folded from `events`. The
 cycle is real and it is sound — validation reads the accumulator under the same lock as the append —
@@ -332,6 +339,10 @@ keeping them incremental:
   is sugar for pure functions that are *guaranteed* incrementalizable and also lower to SQL against
   materialized read models for one-shot reads. Arbitrary pure code is incrementalized where
   analysis allows, recomputed where not — `beck explain incremental <view>` shows which, and why.
+
+  *The command is built* — `beck-core/src/incremental.rs`, and it is the **analysis only**: it says
+  which views a plan could maintain and which the rules cannot reach, over a program whose views
+  are all still full recompute per event ([`23`](23-general-slicer-report.md) §23.8).
 - **Invalidation does not exist as a concept.** There are no caches to invalidate — only views
   downstream of the log. What ships to a subscribed client is the patch stream of its view
   ([`05`](05-tier-lowering.md) §5.1). This subsumes the entire cache-key/TTL discipline of
