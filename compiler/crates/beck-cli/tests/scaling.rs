@@ -84,9 +84,11 @@ async fn folding_a_log_is_not_quadratic() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_view_over_a_large_state_is_still_one_pass() {
-    // The other half of §19.4 item 3: views are full recompute per event, which is O(rows) by
-    // design and stays that way until Phase 3 makes them incremental. What must *not* happen is
-    // the view becoming super-linear in the rows, which is what a copying map would also cause.
+    // The other half of §19.4 item 3, about the path that is still a full recompute: `App::render`
+    // is what serves the first document and what reconstructs a resuming subscriber's old view, and
+    // it is O(rows) by design. A live subscription maintains its view instead (docs/24); what must
+    // *not* happen on either path is the view becoming super-linear in the rows, which is what a
+    // copying map would also cause.
     let store = Arc::new(MemoryLog::new());
     let app = App::start(todo_runtime(), store, AppConfig::default())
         .await

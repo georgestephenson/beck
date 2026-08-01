@@ -118,7 +118,7 @@ dependencies whose signatures didn't change.
 
 ## Phase 3 — Make it real for developers (4–5 months) — **STARTED**
 
-> Two of the twelve bullets below are built, each with its own report.
+> Two of the twelve bullets below are built, each with its own report, and a third has its engine.
 >
 > **`test` blocks and inferred mocks**, with [`22`](22-phase-3-report.md) as its evidence. `beck
 > test` runs a program's own tests — a log, a command and an expectation — through the same roles
@@ -141,15 +141,31 @@ dependencies whose signatures didn't change.
 > splitter did not refuse what it could not slice: two `durable` folds compiled, and both were
 > lowered to the same accumulator ([`23`](23-general-slicer-report.md) §23.2).
 >
-> The ten other bullets are **untouched**, and [`23`](23-general-slicer-report.md) §23.9 names them
-> one at a time rather than by omission.
+> **The incremental view engine**, with [`24`](24-incremental-views-report.md) as its evidence — the
+> bullet the slicer unblocked. A view is compiled into a dataflow of operators and maintained from
+> the change rather than recomputed: `remaining` updates by ±1 per event over a collection of any
+> size, the `for` loop of a `ui:` block re-renders one row rather than all of them, and everything
+> the decomposition cannot enter falls back to a full recompute of that operator, so a program the
+> analysis does not understand is slow and never wrong. Recompute is now the **oracle**: every
+> corpus program, every event of a generated log, maintained page against recomputed page, byte for
+> byte.
+>
+> It is the engine and not the bullet. Per event the delta work does not grow with the collection,
+> but assembling the page's children still does, so the measured end-to-end win is a 3–5× constant
+> factor rather than a change of asymptote; and a maintained subscription costs about four times the
+> memory it already held for its page. §5.3's arrangement *sharing* between subscribers is identified
+> per operator and not implemented, and the SQL read models, pgwire and query fusion in the bullet
+> below are untouched.
+>
+> The nine other bullets are **untouched**, and [`24`](24-incremental-views-report.md) §24.10 names
+> them one at a time rather than by omission.
 
 - LLVM release backend + differential tests against Cranelift (§5.2).
 - **Incremental views**: compile subscribed/materialized views to differential-dataflow plans with
   arrangement sharing (per-session fanout, §5.3); recompute stays as the CI oracle; SQL read models
-  + pgwire exposure; query fusion on symbolic plans. *Its precondition — the signal graph as a
-  graph, with shared computations identified — is built ([`23`](23-general-slicer-report.md)); the
-  engine is not.*
+  + pgwire exposure; query fusion on symbolic plans. *The plans and the oracle are **built**
+  ([`24`](24-incremental-views-report.md)). Arrangement sharing between subscribers is identified per
+  operator and held once per subscriber; the read models, pgwire and the fusion are untouched.*
 - **Mode B client**: per-component WASM (view + fold + signal kernel), optimistic application with
   `seq` reconciliation, freshness-typed pending state; size budget CI gate (< 150 KB brotli per
   component bundle).
@@ -182,9 +198,10 @@ dependencies whose signatures didn't change.
 
 **Exit**: an outside developer builds a non-trivial app from documentation alone, without asking the
 team a question. Track this literally as the acceptance test.
-**Not met**, and not close — one bullet of twelve ([`22`](22-phase-3-report.md) §22.6). What did
-change is that the first question they would have asked — "how do I test this?" — now has a command
-for an answer.
+**Not met**, and not close — two bullets of twelve and a third's engine
+([`24`](24-incremental-views-report.md) §24.10). What did change is that the first question they
+would have asked — "how do I test this?" — now has a command for an answer, and the second — "will
+this recount a million rows every time somebody clicks?" — has a command *and* a number.
 
 ## Phase 4 — Production readiness (4–5 months)
 

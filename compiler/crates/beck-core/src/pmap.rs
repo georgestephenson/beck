@@ -156,6 +156,19 @@ impl<K: Ord + Clone, V: Clone> PMap<K, V> {
         self.get(key).is_some()
     }
 
+    /// Whether two maps are *the same tree*, not merely equal ones.
+    ///
+    /// `O(1)`, and the answer the incremental engine needs when deciding whether an event moved a
+    /// map at all: structural equality would be `O(n)` per event, which is the cost the engine
+    /// exists to avoid. A `false` here means "it may have changed", never "it did".
+    pub fn same_root(&self, other: &PMap<K, V>) -> bool {
+        match (&self.root, &other.root) {
+            (None, None) => true,
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            _ => false,
+        }
+    }
+
     /// Insert, returning a new map. Shares every subtree the new key did not pass through.
     pub fn insert(&self, key: K, value: V) -> PMap<K, V> {
         PMap {
@@ -183,6 +196,169 @@ impl<K: Ord + Clone, V: Clone> PMap<K, V> {
 
     pub fn values(&self) -> impl Iterator<Item = &V> {
         self.iter().map(|(_, v)| v)
+    }
+}
+
+/// What happened to one key between two versions of a map.
+///
+/// `old` and `new` are both present for an update, one of them for an insert or a remove. Both
+/// absent never occurs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Change<K, V> {
+    pub key: K,
+    pub old: Option<V>,
+    pub new: Option<V>,
+}
+
+impl<K: Ord + Clone, V: Clone + PartialEq> PMap<K, V> {
+    /// The entries that differ between two versions, in key order.
+    ///
+    /// # Why this is `O(δ log n)` rather than `O(n)`
+    ///
+    /// This is the operation the whole incremental view engine rests on
+    /// ([`docs/24-incremental-views-report.md`](../../../../docs/24-incremental-views-report.md)):
+    /// a fold produces a *whole new accumulator* per event, and a dataflow plan consumes *deltas*,
+    /// so something has to turn one into the other. Comparing entry by entry would be `O(n)` per
+    /// event, which is the recount §3.8 exists to abolish — the plan downstream would be
+    /// incremental and the thing feeding it would not.
+    ///
+    /// [`insert`](PMap::insert) rebuilds only the path to the key and shares every subtree that
+    /// path did not pass through, by `Arc`. So two versions of a map that differ by one insert
+    /// share `n - O(log n)` nodes *by pointer*, and a diff that can recognise a shared subtree can
+    /// skip all of its entries at once.
+    ///
+    /// The traversal is an ordered merge of the two trees, with one extra rule: when the heads of
+    /// the two remaining sequences are the same subtree by pointer, both are dropped. That is sound
+    /// for a reason worth stating, because it is the correctness of the engine: pointer-identical
+    /// subtrees hold identical entries, so the two remaining *sorted sequences* share that prefix
+    /// exactly, and a merge over sorted sequences reports nothing for a shared prefix. It holds
+    /// whatever rebalancing did to the position of that subtree in either tree.
+    pub fn diff(&self, next: &PMap<K, V>) -> Vec<Change<K, V>> {
+        let mut out = Vec::new();
+        let mut a = Walk::new(&self.root);
+        let mut b = Walk::new(&next.root);
+        loop {
+            // The pointer rule, applied before either side is expanded into entries.
+            a.skip_shared(&mut b);
+            match (a.peek(), b.peek()) {
+                (None, None) => return out,
+                (Some((k, v)), None) => {
+                    out.push(Change {
+                        key: k.clone(),
+                        old: Some(v.clone()),
+                        new: None,
+                    });
+                    a.bump();
+                }
+                (None, Some((k, v))) => {
+                    out.push(Change {
+                        key: k.clone(),
+                        old: None,
+                        new: Some(v.clone()),
+                    });
+                    b.bump();
+                }
+                (Some((ka, va)), Some((kb, vb))) => match ka.cmp(kb) {
+                    Ordering::Less => {
+                        out.push(Change {
+                            key: ka.clone(),
+                            old: Some(va.clone()),
+                            new: None,
+                        });
+                        a.bump();
+                    }
+                    Ordering::Greater => {
+                        out.push(Change {
+                            key: kb.clone(),
+                            old: None,
+                            new: Some(vb.clone()),
+                        });
+                        b.bump();
+                    }
+                    Ordering::Equal => {
+                        if va != vb {
+                            out.push(Change {
+                                key: ka.clone(),
+                                old: Some(va.clone()),
+                                new: Some(vb.clone()),
+                            });
+                        }
+                        a.bump();
+                        b.bump();
+                    }
+                },
+            }
+        }
+    }
+}
+
+/// An in-order traversal that can be asked whether its next *subtree* is one another traversal is
+/// also about to yield.
+///
+/// The ordinary [`Iter`] pushes the left spine eagerly, which destroys exactly the information the
+/// diff needs: once a subtree has been expanded into a stack of nodes, "these two are the same
+/// subtree" is no longer a question that can be asked. This keeps unexpanded subtrees on the stack
+/// and expands one only when the merge actually needs an entry from it.
+struct Walk<'a, K, V> {
+    stack: Vec<Task<'a, K, V>>,
+}
+
+enum Task<'a, K, V> {
+    Sub(&'a Arc<Node<K, V>>),
+    Ent(&'a K, &'a V),
+}
+
+impl<'a, K, V> Walk<'a, K, V> {
+    fn new(root: &'a Link<K, V>) -> Walk<'a, K, V> {
+        let mut stack = Vec::new();
+        if let Some(n) = root {
+            stack.push(Task::Sub(n));
+        }
+        Walk { stack }
+    }
+
+    /// Drop any subtree both traversals are about to yield.
+    ///
+    /// Repeated, because skipping one shared subtree can expose another underneath it — which is
+    /// what happens on the second and later events, when the two versions share several whole
+    /// branches rather than one.
+    fn skip_shared(&mut self, other: &mut Walk<'a, K, V>) {
+        loop {
+            let (Some(Task::Sub(x)), Some(Task::Sub(y))) = (self.stack.last(), other.stack.last())
+            else {
+                return;
+            };
+            if !Arc::ptr_eq(*x, *y) {
+                return;
+            }
+            self.stack.pop();
+            other.stack.pop();
+        }
+    }
+
+    /// The next entry, expanding subtrees as needed. Leaves it on the stack.
+    fn peek(&mut self) -> Option<(&'a K, &'a V)> {
+        loop {
+            match self.stack.last()? {
+                Task::Ent(k, v) => return Some((*k, *v)),
+                Task::Sub(n) => {
+                    let n = *n;
+                    self.stack.pop();
+                    // In-order: right subtree deepest, then this entry, then the left subtree.
+                    if let Some(r) = &n.right {
+                        self.stack.push(Task::Sub(r));
+                    }
+                    self.stack.push(Task::Ent(&n.key, &n.value));
+                    if let Some(l) = &n.left {
+                        self.stack.push(Task::Sub(l));
+                    }
+                }
+            }
+        }
+    }
+
+    fn bump(&mut self) {
+        self.stack.pop();
     }
 }
 
@@ -574,6 +750,173 @@ mod tests {
         // One much larger keyspace, so the tree is deep and mostly-distinct keys rather than a
         // small set churned repeatedly.
         random_history(0xDEAD_BEEF, 20_000, 8_192);
+    }
+
+    #[test]
+    fn a_diff_reports_exactly_what_changed() {
+        let base: PMap<i32, i32> = (0..100).map(|i| (i, i)).collect();
+        assert!(base.diff(&base).is_empty());
+
+        let inserted = base.insert(1000, 7);
+        assert_eq!(
+            base.diff(&inserted),
+            vec![Change {
+                key: 1000,
+                old: None,
+                new: Some(7)
+            }]
+        );
+        assert_eq!(
+            inserted.diff(&base),
+            vec![Change {
+                key: 1000,
+                old: Some(7),
+                new: None
+            }]
+        );
+
+        let updated = base.insert(50, -1);
+        assert_eq!(
+            base.diff(&updated),
+            vec![Change {
+                key: 50,
+                old: Some(50),
+                new: Some(-1)
+            }]
+        );
+        // Re-inserting the value it already has is not a change: the engine downstream must not be
+        // told to redo work for an event that moved nothing.
+        assert!(base.diff(&base.insert(50, 50)).is_empty());
+
+        let removed = base.remove(&3);
+        assert_eq!(
+            base.diff(&removed),
+            vec![Change {
+                key: 3,
+                old: Some(3),
+                new: None
+            }]
+        );
+    }
+
+    #[test]
+    fn a_diff_against_an_empty_map_is_every_entry() {
+        let m: PMap<i32, i32> = (0..10).map(|i| (i, i * 2)).collect();
+        let empty = PMap::new();
+        let inserts = empty.diff(&m);
+        assert_eq!(inserts.len(), 10);
+        assert!(inserts.iter().all(|c| c.old.is_none()));
+        // In key order, so a downstream operator can build an ordered arrangement from it without
+        // sorting.
+        assert!(inserts.windows(2).all(|w| w[0].key < w[1].key));
+        assert_eq!(m.diff(&empty).len(), 10);
+    }
+
+    /// The property the incremental view engine's asymptotics rest on: diffing two versions that
+    /// differ by one insert visits `O(log n)` nodes, not `n`.
+    ///
+    /// Counted rather than timed, because a wall-clock assertion in CI is a flake. The counter is
+    /// the number of *entries* the merge had to look at, which is what an `O(n)` implementation
+    /// would drive to `n`.
+    #[test]
+    fn diffing_two_versions_that_share_structure_visits_a_handful_of_entries() {
+        let mut base: PMap<u32, u32> = PMap::new();
+        for i in 0..8192 {
+            base = base.insert(i, i);
+        }
+        let next = base.insert(4096, 999);
+
+        // `Walk` yields entries; count how many either side had to expand.
+        let mut visited = 0usize;
+        let mut a = Walk::new(&base.root);
+        let mut b = Walk::new(&next.root);
+        loop {
+            a.skip_shared(&mut b);
+            match (a.peek(), b.peek()) {
+                (None, None) => break,
+                (Some(_), None) => {
+                    visited += 1;
+                    a.bump();
+                }
+                (None, Some(_)) => {
+                    visited += 1;
+                    b.bump();
+                }
+                (Some((ka, _)), Some((kb, _))) => {
+                    visited += 1;
+                    match ka.cmp(kb) {
+                        Ordering::Less => a.bump(),
+                        Ordering::Greater => b.bump(),
+                        Ordering::Equal => {
+                            a.bump();
+                            b.bump();
+                        }
+                    }
+                }
+            }
+        }
+        // Printed so that docs/24 §24.2's number is reproducible rather than remembered.
+        println!("diffing an 8,192-entry map after one insert looked at {visited} entries");
+        assert!(
+            visited < 64,
+            "diffing an 8192-entry map after one insert looked at {visited} entries; \
+             O(log n) is a few dozen, O(n) would be 8192"
+        );
+        assert_eq!(base.diff(&next).len(), 1);
+    }
+
+    #[test]
+    fn a_diff_matches_a_btreemap_oracle_over_random_histories() {
+        use std::collections::BTreeMap;
+        let mut s = 0x5EED_1234u64;
+        let mut rand = move || {
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            s
+        };
+        for _ in 0..64 {
+            let mut ours: PMap<u32, u32> = PMap::new();
+            let mut oracle: BTreeMap<u32, u32> = BTreeMap::new();
+            for _ in 0..200 {
+                let k = (rand() % 64) as u32;
+                if rand() % 100 < 60 {
+                    ours = ours.insert(k, (rand() % 8) as u32);
+                    oracle.insert(k, *ours.get(&k).unwrap());
+                } else {
+                    ours = ours.remove(&k);
+                    oracle.remove(&k);
+                }
+            }
+            // A second history from the same start, so the two maps differ in many places at once
+            // rather than by a single path.
+            let mut other = ours.clone();
+            let mut other_oracle = oracle.clone();
+            for _ in 0..60 {
+                let k = (rand() % 64) as u32;
+                if rand() % 100 < 50 {
+                    other = other.insert(k, (rand() % 8) as u32);
+                    other_oracle.insert(k, *other.get(&k).unwrap());
+                } else {
+                    other = other.remove(&k);
+                    other_oracle.remove(&k);
+                }
+            }
+
+            let mut expected: Vec<Change<u32, u32>> = Vec::new();
+            for k in oracle
+                .keys()
+                .chain(other_oracle.keys())
+                .copied()
+                .collect::<std::collections::BTreeSet<_>>()
+            {
+                let (old, new) = (oracle.get(&k).copied(), other_oracle.get(&k).copied());
+                if old != new {
+                    expected.push(Change { key: k, old, new });
+                }
+            }
+            assert_eq!(ours.diff(&other), expected);
+        }
     }
 
     #[test]

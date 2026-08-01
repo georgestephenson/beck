@@ -129,17 +129,23 @@ jobs:
           ! ./target/release/beck check /tmp/two-pages.beck
           ./target/release/beck check /tmp/two-pages.beck 2>&1 | grep -q 'B0510'
 
-      - name: the incremental analysis says what is true today, first
-        # docs/23 §23.8. A command called `explain incremental` that let a reader believe their
-        # view was being maintained would be the most misleading output in the compiler, so the
-        # gate is the disclaimer as much as the analysis.
+      - name: views are maintained, and the report says so about each program
+        # docs/24. The gate is the *first line*, as it was when the answer was "nothing is
+        # maintained" (docs/23 §23.8): a command called `explain incremental` that let a reader
+        # believe their view was being maintained when it is not would be the most misleading
+        # output in the compiler.
         run: |
           ./target/release/beck explain incremental examples/todo.beck | tee /tmp/inc.txt
-          head -1 /tmp/inc.txt | grep -q 'full recompute per event'
-          grep -q 'the engine that would maintain them is not built' /tmp/inc.txt
+          head -1 /tmp/inc.txt | grep -q 'maintained by delta'
+          # …and the same headline names what is still not incremental.
+          grep -q 'assembled in full every time' /tmp/inc.txt
+          # §3.8's own example, decomposed: `remaining` is a count over an arrangement.
+          grep -q 'list_len' /tmp/inc.txt
+          # A program whose view holds no collection maintains nothing, and says that instead.
+          ./target/release/beck explain incremental corpus/22-shared.beck | tee /tmp/inc2.txt
+          head -1 /tmp/inc2.txt | grep -q 'Nothing in this view is maintained'
           # §5.3's two halves, named about a real program.
-          ./target/release/beck explain incremental corpus/22-shared.beck \
-            | grep -q 'shared arrangement: tally'
+          grep -q 'shared arrangement: tally' /tmp/inc2.txt
           # Every view in the corpus is relational and therefore maintainable; that the analysis
           # *discriminates* is asserted in tests/incremental.rs, on programs written to produce
           # each verdict, because a corpus-only check would pass with an analysis that always

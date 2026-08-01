@@ -1,10 +1,11 @@
 //! `beck explain incremental` — which views a plan could maintain, and why the rest could not.
 //!
 //! [`docs/03-type-and-effect-system.md`] §3.8 asks for this command by name and
-//! [`docs/20-phase-2-report.md`] §20.5 recorded it as unbuilt. It is the analysis, not the engine:
-//! every view is a full recompute per event, and the first thing this harness asserts is that the
-//! report says so — because a command called `explain incremental` that let a reader believe their
-//! view was being maintained would be worse than no command.
+//! [`docs/20-phase-2-report.md`] §20.5 recorded it as unbuilt. It was the analysis with nothing
+//! behind it; there is now an engine ([`docs/24-incremental-views-report.md`]), and the obligation
+//! this harness enforces has not changed: the first line must be true of *this program*, because a
+//! command called `explain incremental` that let a reader believe their view was being maintained
+//! when it is not would be worse than no command.
 //!
 //! The three verdicts are asserted on programs that produce them, rather than on the corpus alone.
 //! Every corpus program's views happen to be relational — lists, maps, counts and `ui:` — so a
@@ -76,17 +77,30 @@ page: Signal[Html] = per_session(chosen, show)
 }
 
 #[test]
-fn the_report_says_what_is_true_today_before_it_says_anything_else() {
+fn the_report_says_what_is_true_of_this_program_before_it_says_anything_else() {
+    // The sketch's view holds a collection, so operators are maintained and the first line says so.
     let p = corpus("../examples/todo.beck");
     let text = report(&p, None);
     let first = text.lines().next().unwrap_or_default();
     assert!(
-        first.contains("full recompute per event"),
+        first.contains("maintained by delta"),
         "the first line has to be the honest one: {first:?}"
     );
+    // …and the same line says what is still not incremental, in the same breath.
     assert!(
-        text.contains("the engine that would maintain them is not built"),
-        "{text}"
+        text.contains("assembled in full every time"),
+        "the headline hides the O(n) that remains: {text}"
+    );
+
+    // A program whose view holds no collection has nothing maintained, and the first line has to
+    // say *that* rather than repeat the feature. This is the assertion that would have failed if
+    // the report had been written about the engine instead of about the program.
+    let p = corpus("22-shared.beck");
+    let text = report(&p, None);
+    let first = text.lines().next().unwrap_or_default();
+    assert!(
+        first.contains("Nothing in this view is maintained"),
+        "{first:?}"
     );
 }
 
@@ -283,6 +297,14 @@ fn every_corpus_program_is_assessable_and_none_of_them_is_a_mystery() {
                 Verdict::Effectful { effects } => assert!(!effects.is_empty()),
             }
         }
-        assert!(report(&placed, None).contains("full recompute per event"));
+        let text = report(&placed, None);
+        assert!(
+            text.contains("maintained by delta") || text.contains("Nothing in this view"),
+            "{name}: the report does not lead with what is true of this program:\n{text}"
+        );
+        assert!(
+            text.contains("the operators the view compiles to"),
+            "{name}"
+        );
     }
 }
