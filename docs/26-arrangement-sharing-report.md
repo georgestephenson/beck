@@ -1,4 +1,4 @@
-# 25 — Phase 3 report, part 4: one shared dataflow
+# 26 — Phase 3 report, part 4: one shared dataflow
 
 [`24`](24-incremental-views-report.md) §24.7 ended with a sentence that was a promise rather than a
 finding:
@@ -22,14 +22,15 @@ numbers are **1.4×** and **1.3×**. A report that quoted only the first would b
 different program.
 
 Along the way this found a defect in the engine [`24`](24-incremental-views-report.md) shipped, in
-the half of it that report was most confident about (§25.6), and closed one item from §24.10 that is
+the half of it that report was most confident about (§26.6), and closed one item from §24.10 that is
 not about sharing at all: §5.3's per-session memory is now an **exported metric** rather than a
-number in a report (§25.7).
+number in a report (§26.7).
 
-459 tests, no failures, no compiler warnings, no clippy warnings — up from
-[`24`](24-incremental-views-report.md)'s 444.
+466 tests, no failures, no compiler warnings, no clippy warnings — up from the 451 this merges
+with, which is [`24`](24-incremental-views-report.md)'s 444 plus [`25`](25-benchmarks-and-expressiveness.md)'s
+SICP suite.
 
-## 25.1 What was asked, and what is answered
+## 26.1 What was asked, and what is answered
 
 [`05`](05-tier-lowering.md) §5.3:
 
@@ -41,16 +42,16 @@ number in a report (§25.7).
 | asked for | status | where |
 |---|---|---|
 | The operators that do not read the session held **once** for every subscriber | done | `beck-core/src/engine.rs`, `SharedDataflow` |
-| Advanced once per event rather than once per connection | done, and **counted**: 64 subscribers, 11 versions, 11 advances | §25.3 |
-| A subscriber that renders at a different time from the others | done — a bounded history of what moved, per version | §25.2 |
-| A subscriber that fell so far behind the history cannot serve it | done — it rebuilds, which the engine's `rebuilt` contagion already knew how to do | §25.2 |
-| Recompute still the oracle, over the shared path too | done — every corpus program, every event, every lag from 1 to past the history's end | §25.4 |
-| Per-session memory as an exported metric | done, in **entries** rather than bytes, and split into the half paid once and the half paid per connection | §25.7 |
-| The runtime actually uses it | done — on by default, `AppConfig::share_arrangements` switches it off | §25.5 |
-| §24.6's `O(n)` page assembly | **still there** — but on a program whose page is above the cut it is now paid once for the whole fanout, which is not the same as removing it | §25.5 |
-| SQL read models, pgwire, query fusion | **not done** | §25.9 |
+| Advanced once per event rather than once per connection | done, and **counted**: 64 subscribers, 11 versions, 11 advances | §26.3 |
+| A subscriber that renders at a different time from the others | done — a bounded history of what moved, per version | §26.2 |
+| A subscriber that fell so far behind the history cannot serve it | done — it rebuilds, which the engine's `rebuilt` contagion already knew how to do | §26.2 |
+| Recompute still the oracle, over the shared path too | done — every corpus program, every event, every lag from 1 to past the history's end | §26.4 |
+| Per-session memory as an exported metric | done, in **entries** rather than bytes, and split into the half paid once and the half paid per connection | §26.7 |
+| The runtime actually uses it | done — on by default, `AppConfig::share_arrangements` switches it off | §26.5 |
+| §24.6's `O(n)` page assembly | **still there** — but on a program whose page is above the cut it is now paid once for the whole fanout, which is not the same as removing it | §26.5 |
+| SQL read models, pgwire, query fusion | **not done** | §26.9 |
 
-## 25.2 The three choices, and why each went the way it did
+## 26.2 The three choices, and why each went the way it did
 
 The analysis was never the hard part. `Plan::per_session` has been correct since
 [`24`](24-incremental-views-report.md): a node is per-session exactly when it transitively reads the
@@ -96,7 +97,7 @@ arrangement's materialised list is a `OnceLock` rather than an `Option`. A point
 its input as a `list`, that list is built on demand, and with an `Option` the cache would need the
 *write* lock — serialising every subscriber behind the first. With a `OnceLock` the first subscriber
 to need it builds it and the rest get the same `Arc`, through a shared reference. That turned out to
-matter more than it looked (§25.5).
+matter more than it looked (§26.5).
 
 ### What happens to a subscriber that fell behind
 
@@ -127,7 +128,7 @@ Two details decide whether that history is affordable:
   moved twice is applied twice and lands where the second one put it. Coalescing would save one
   application per repeated key and cost a pass over the window; the window is a handful of deltas.
 
-## 25.3 One dataflow, as a number
+## 26.3 One dataflow, as a number
 
 §5.3's claim is that a thousand connected users compile to *one* shared dataflow, and "one" is a
 number, so it is a counter rather than a description. `SharedDataflow::advances` counts advances, not
@@ -146,7 +147,7 @@ subscriber's `arranged_shared()` is **zero** — it holds no arrangement that do
 — and that the shared and per-subscriber halves *add up* to what one standalone engine held. The
 second assertion is the one that would catch entries quietly going missing rather than moving.
 
-## 25.4 The oracle, extended rather than trusted
+## 26.4 The oracle, extended rather than trusted
 
 Sharing an arrangement between subscribers is exactly the sort of optimisation that is right for one
 subscriber and wrong for two, so the shared path is checked against recompute everywhere the
@@ -161,7 +162,7 @@ everything that is only true of sharing:
 | A subscriber that skipped versions keeps a row the accumulator dropped | every lag from 1 to 9 and one of 200 — past the history's end, so the rebuild path — over every corpus program: **4,566 pages** |
 | A subscriber joining a warm dataflow with cold operators of its own | a late subscriber against one that was there from the start |
 | An empty window is mistaken for "nothing to render" | three renders at one version, at every version |
-| A subscriber asking for a version the shared side has passed | asserted to be served the newer one, and the version comes back to the caller (§25.5) |
+| A subscriber asking for a version the shared side has passed | asserted to be served the newer one, and the version comes back to the caller (§26.5) |
 | One subscriber's rows reaching another's page | three sessions, interleaved in a different order at every version, on programs whose filter is the session |
 
 The last of those is the failure a shared arrangement makes newly possible, and the sketch is the
@@ -174,7 +175,7 @@ literally in one process — now drives the shared path, and the edit was two li
 the configuration asks for. So the strongest existing check on the runtime as a whole came across for
 free.
 
-## 25.5 What it costs, and on which program
+## 26.5 What it costs, and on which program
 
 Two programs, because the answer is a property of the program and quoting one number would be quoting
 the more flattering one. Both carry 200 rows. `fanout_footprint` walks the accumulator, the shared
@@ -291,7 +292,7 @@ shared side in between. Serving the newer page is the deliberate choice: unwindi
 an older version would need a history of values rather than of changes, and the subscriber is about to
 be woken for the newer version anyway. What makes it safe is that the number comes back to the caller.
 
-## 25.6 The defect this found in the engine `24` shipped
+## 26.6 The defect this found in the engine `24` shipped
 
 `map_list`, `filter_list` and `sort_by` have an early return for the case where nothing arrived and
 nothing forced a rebuild. It cleared `changed` and cleared `changes` and **did not clear `rebuilt`**.
@@ -330,7 +331,7 @@ path, and one that failed to report a rebuild it did perform would leave them ho
 entries — the first is slow, the second is a wrong page, and 4,566 compared pages is where the second
 one would surface.
 
-## 25.7 Per-session memory, exported
+## 26.7 Per-session memory, exported
 
 [`24`](24-incremental-views-report.md) §24.10: "A stub for the arrangement's memory is not a plan.
 §5.3 asks for per-session memory as an exported metric and `Engine::footprint` computes it; nothing
@@ -369,19 +370,19 @@ There is still **no gate** on either number. A subscription over a thousand rows
 [`24`](24-incremental-views-report.md) §24.7 and no gate covered that case; it is now observable and
 still ungated.
 
-## 25.8 The corrections this makes to the design documents
+## 26.8 The corrections this makes to the design documents
 
 | Document | Correction |
 |---|---|
-| [`24`](24-incremental-views-report.md) §24.7 | "identified per operator, held once per subscriber, and the runtime design for sharing it is not written" — no longer true. The design is §25.2 and the counter is §25.3 |
-| [`24`](24-incremental-views-report.md) §24.7's table | The `of it shared` column measured what a standalone engine holds redundantly. A subscriber attached to a shared dataflow holds **none** of it; the fanout tables in §25.5 replace it, and the per-subscriber table in `measure_incremental.rs` now says which engine it is describing |
-| [`24`](24-incremental-views-report.md) §24.5's table | It is a **single subscriber**, and the sort it measures moves on the event it measures — so the stale-`rebuilt` defect of §25.6 could not appear in it. The numbers in it are unchanged and were never wrong; what they could not show is what the same program costs a fanout |
-| [`24`](24-incremental-views-report.md) §24.10 | "§5.3 asks for per-session memory as an exported metric … nothing exports it" — two gauges do (§25.7). No gate, still |
+| [`24`](24-incremental-views-report.md) §24.7 | "identified per operator, held once per subscriber, and the runtime design for sharing it is not written" — no longer true. The design is §26.2 and the counter is §26.3 |
+| [`24`](24-incremental-views-report.md) §24.7's table | The `of it shared` column measured what a standalone engine holds redundantly. A subscriber attached to a shared dataflow holds **none** of it; the fanout tables in §26.5 replace it, and the per-subscriber table in `measure_incremental.rs` now says which engine it is describing |
+| [`24`](24-incremental-views-report.md) §24.5's table | It is a **single subscriber**, and the sort it measures moves on the event it measures — so the stale-`rebuilt` defect of §26.6 could not appear in it. The numbers in it are unchanged and were never wrong; what they could not show is what the same program costs a fanout |
+| [`24`](24-incremental-views-report.md) §24.10 | "§5.3 asks for per-session memory as an exported metric … nothing exports it" — two gauges do (§26.7). No gate, still |
 | [`05`](05-tier-lowering.md) §5.3 | The shared dataflow is advanced **lazily by the first subscriber to render at a new version**, not "under a lock the sequencer already holds". Putting it on the write path would charge every command for the views of every session, and would maintain a dataflow nobody is watching |
-| [`04`](04-compiler-architecture.md) §4.3 | A patch frame's `seq` is the version the *page* reflects, which is not always the log head at the moment the frame is written. The runtime read the head separately from the state and could label a frame with a version its page did not show (§25.5) |
+| [`04`](04-compiler-architecture.md) §4.3 | A patch frame's `seq` is the version the *page* reflects, which is not always the log head at the moment the frame is written. The runtime read the head separately from the state and could label a frame with a version its page did not show (§26.5) |
 | [`08`](08-roadmap.md) | Phase 3's incremental-views bullet: arrangement sharing is built; SQL read models, pgwire and query fusion are not |
 
-## 25.9 What Phase 3 is still not
+## 26.9 What Phase 3 is still not
 
 **Two bullets of twelve are built, and a third is now most of the way.** The phase's exit criterion —
 "an outside developer builds a non-trivial app from documentation alone" — is not met.
@@ -394,7 +395,7 @@ still ungated.
   still unbuilt too.
 - **The page is still assembled and diffed, not streamed as deltas.** [`24`](24-incremental-views-report.md)
   §24.6, unchanged. On a program whose page is above the session cut it is now paid once for the whole
-  fanout instead of once per subscriber (§25.5), which is a different fact from removing it, and on a
+  fanout instead of once per subscriber (§26.5), which is a different fact from removing it, and on a
   program like the sketch it is paid per subscriber exactly as before.
 - **The shared dataflow is never released.** It holds its arrangements whether or not anybody is
   subscribed. A process that had a fanout and now has none keeps the accumulator's arrangements warm
@@ -416,9 +417,9 @@ still ungated.
   [`24`](24-incremental-views-report.md) — the expensive part had already been paid by whoever made
   `per_session` a field on a plan node.
 
-## 25.10 What this changes for the rest of Phase 3
+## 26.10 What this changes for the rest of Phase 3
 
-1. **The cut is a thing a developer can move, and now has a reason to.** §25.5's two programs differ by
+1. **The cut is a thing a developer can move, and now has a reason to.** §26.5's two programs differ by
    55× in per-event fanout cost and the difference is where they read the session. That is a
    *language-level* performance property, visible in `beck explain incremental`, decided by ordinary
    program structure rather than by a directive — which is the shape §3.8 always claimed for
@@ -428,7 +429,7 @@ still ungated.
    also a *runtime* boundary with a lock, a version and a change history on it — which is most of what
    a client kernel needs from the server side, because a client that applies deltas is a subscriber
    that fell behind and catches up.
-3. **A performance bug hid behind a correctness oracle for a whole report.** §25.6 was invisible to
+3. **A performance bug hid behind a correctness oracle for a whole report.** §26.6 was invisible to
    every test in the suite, because a rebuild is right. The lesson is not "test performance" but the
    narrower one: the single-subscriber measurement could not have shown it, and the fanout measurement
    showed it immediately — as soon as the per-subscriber numbers were printed rather than summed. An

@@ -1,0 +1,66 @@
+# Blocks: §1.2.1's thesis, and every iterative process in the book.
+#
+# §1.2.1 — "Linear Recursion and Iteration" — is the first idea in SICP that is about *cost* rather
+# than about meaning. Two procedures compute the same function; one builds a chain of deferred
+# operations and one does not; the second runs in constant space. SICP is explicit that this is a
+# property of the implementation, not of the syntax: "an implementation with this property is said
+# to be tail-recursive", and R5RS/R7RS require it of every Scheme.
+#
+# Beck's evaluator is not tail-recursive. `count_to` below is in tail position and consumes a Rust
+# stack frame per call anyway, so the distinction chapter 1 is built around is not observable —
+# both processes are linear in space, and the iterative one simply dies later.
+#
+# It does not fail with a diagnostic. It aborts:
+#
+#   thread 'main' has overflowed its stack
+#   fatal runtime error: stack overflow, aborting
+#
+# Measured on this container: 3,000 frames succeed, 4,000 abort. So the ceiling on any iterative
+# process in Beck today is somewhere under four thousand steps, and reaching it kills the process
+# rather than producing an error a program could catch or a user could read. `sicp.rs` asserts the
+# abort so that fixing it is visible as a test that starts failing.
+
+model State:
+    last: Int
+
+union Command:
+    Ask(n: Int)
+
+union Event:
+    Asked(n: Int)
+
+union Rejection:
+    Negative
+
+def count_to(acc: Int, n: Int) -> Int:
+    if n == 0:
+        return acc
+    return count_to(acc + 1, n - 1)
+
+def apply_event(s: State, env: Envelope[Event]) -> State:
+    match env.body:
+        case Asked(n):
+            return s.with(last=n)
+
+def validate(s: State, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Ask(n):
+            if n < 0:
+                return Err(error=Negative)
+            return Ok(value=[Asked(n=n)])
+
+def render(s: State, session: Session) -> Html:
+    return ui:
+        main:
+            p: str(s.last)
+
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, state, validate)
+state: Signal[State] = durable(fold(apply_event, State(last=0), events))
+page: Signal[Html] = per_session(state, render)
+
+test "a tail call, three thousand deep":
+    expect count_to(0, 3000) == 3000
+
+test "a tail call, eight thousand deep — this is the one that aborts":
+    expect count_to(0, 8000) == 8000

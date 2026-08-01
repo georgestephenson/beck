@@ -271,7 +271,7 @@ pub struct Telemetry {
 
     // --- what a fanout costs, which §5.3 names as a metric and nothing exported until now ---
     /// Arrangement entries held by the **one** shared dataflow: the operators that do not read the
-    /// session, maintained once however many subscribers there are (docs/25).
+    /// session, maintained once however many subscribers there are (docs/26).
     ///
     /// Entries rather than bytes. Bytes would need `Engine::footprint`, which walks the accumulator
     /// to charge shared structure to the fold — right for a report, far too expensive to sample on

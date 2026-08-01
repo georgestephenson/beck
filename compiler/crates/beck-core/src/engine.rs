@@ -1142,7 +1142,7 @@ struct SharedInner {
 ///
 /// The *page* is per-session in every corpus program, so what is shared is the prefix below the
 /// session, not the render. `24-feed.beck` is the case where that prefix is most of the plan and
-/// the sketch is the case where it is least; `docs/25` has the table.
+/// the sketch is the case where it is least; `docs/26` has the table.
 pub struct SharedDataflow {
     inner: RwLock<SharedInner>,
     /// How many versions of changes to remember. Beyond this a lagging subscriber rebuilds.
@@ -1538,7 +1538,7 @@ impl Engine {
 /// Summing [`Engine::footprint`] over the subscribers is the wrong number once there is a shared
 /// dataflow, and wrong in the direction that flatters nothing: two subscribers' pages hold the same
 /// `ul` by `Arc`, so charging both would report sharing as costing what it saves. This is the
-/// number a fanout estimate should be built from, and `docs/25` is where it is.
+/// number a fanout estimate should be built from, and `docs/26` is where it is.
 pub fn fanout_footprint(
     base: &Value,
     shared: Option<&SharedDataflow>,

@@ -2,7 +2,7 @@
 
 George's answers to [`09`](09-risks-and-open-questions.md) §9.5, recorded with the reasoning spelled
 out. Decisions marked **DECIDED** are settled and the other documents assume them. All decisions
-D1–D16 are settled.
+D1–D18 are settled.
 
 ---
 
@@ -462,6 +462,79 @@ The corollary for the dashboard: because the program *is* its own AppHost — pl
 and the effect-derived object graph already are the topology — the resource list and dependency
 graph need no second declaration and cannot drift from what is deployed. Aspire needs an AppHost
 project; Beck must never grow one.
+
+## D18 — Benchmarks are third-party, and the premise is falsifiable — **DECIDED**
+
+The two questions were: are there standard tests to measure Beck's performance against
+alternatives, and what if the SICP exercises were written in Beck as an *expressiveness* test — on
+the claim that Beck should have Scheme's full means of combination and abstraction while being no
+more verbose. Both are adopted. [`25`](25-benchmarks-and-expressiveness.md) is the analysis,
+[`08`](08-roadmap.md) §8.4 is the schedule, [`12`](12-standards-and-conformance.md) §12.9–§12.10
+folds both into the conformance discipline.
+
+**Performance: somebody else's rules.** §12.9 already committed to a public benchmark methodology
+"versus a named baseline stack"; the decision here is that the yardsticks are **third-party suites
+that alternatives already have numbers on** — TechEmpower and js-framework-benchmark for the
+shipped system, Are We Fast Yet and CLBG for the core, YCSB, TPC-H/ClickBench, Sightglass,
+Lighthouse. A suite we design and win proves nothing. Three riders, each written down because each
+is a place a number could be published dishonestly: **TPC-C is excluded** (it assumes
+update-in-place OLTP, which is not our data model, and entering it would be a claim we do not
+make); js-framework-benchmark is published as three columns and never averaged, because Mode A puts
+a network in a loop every other entrant runs in the tab; and **incremental view maintenance has no
+standard suite**, which §25.2 records as a gap we would be defining rather than borrowing.
+
+**And the numbers arrive before they are good.** §8.4's sequencing rule — stand every harness up a
+phase before its number is publishable — means the first published figures will be bad, because
+§25.3 measures the tree-walking evaluator at roughly 33× CPython on `fib(30)` and native codegen is
+unbuilt. That is the cost of a trend line that predates the backend, and it is accepted: a
+benchmark adopted at 1.0 to support a launch claim has no regression-detecting power, which is the
+only thing a benchmark is actually for.
+
+**Expressiveness: the premise had no test.** [`01`](01-vision-and-premise.md) §1.1 says Beck is
+SICP's three moves made into a language and D9 says the Python surface loses none of Lisp's power.
+Nothing in four phases could have falsified either — the corpus measures placement, the
+differential measures splitting, and every program in both is shaped like the todo sketch. SICP is
+the right instrument for three reasons and not for sentiment: it is the project's own origin
+([`00`](00-original-idea.md)'s first line), it supplies an **oracle** because the book states its
+answers, and the verbosity claim has a rigorous form in **Felleisen's criterion** (1991) — which is
+checkable rather than rhetorical here, because Beck's hygienic macros make "recovered as a local
+rewrite" a thing a test can assert.
+
+Three constraints on how it is run, without which it would be self-congratulation:
+
+- **The pass rate is not the metric.** Every exercise lands in one of three registers —
+  *translated*, *re-expressed*, *refused* — and the counts are the result. Chapters 3.1–3.4 and 5
+  are expected to be mostly the latter two, because they are about mutable state and machine models
+  Beck refuses on purpose; transliterating them would measure how well Beck imitates a design it
+  rejects. A silent omission is a bug in the suite.
+- **The losses are forecast in advance and published.** §25.5 already records where Beck should
+  lose: §2.4–2.5's generic operations (a three-line dispatch table against a trait with impls) and
+  chapter 4's evaluator. If the eventual report does not concede those rows it was not run
+  honestly.
+- **The refusals are asserted, not just described.** [`compiler/sicp/refusals/`](../compiler/sicp/)
+  holds one program per wall and the harness asserts each wall still stands, so progress is a
+  failing test rather than a fact somebody notices.
+
+**Three further candidates, assessed in §25.8 and decided here.** **Nand2Tetris** is *declined as a
+performance test* — a gate-level simulator sits inside the scope §1.5 concedes, so a number there
+is evidence about a claim we do not make, and Are We Fast Yet already supplies a fair branch- and
+array-heavy workload. Its projects 6–11 are recorded as a **stage-5 expressiveness option
+conditional on SICP chapter 4**, since they need what chapter 4 needs and would largely re-test it.
+**LeetCode** is *declined as a benchmark* on methodology — no published harness, no fixed workload,
+no controlled hardware, and results that move when strangers submit — but **adopted as an
+ergonomics smoke test of 30–50 problems**, because it targets the half of D9 that SICP structurally
+cannot: not Lisp's power but Python's mass appeal. §25.8 measures that "Two Sum" cannot currently be
+written at all, in four diagnostics. **DDIA** is *not a benchmark* and is adopted as a **conformance
+matrix** ([`15`](15-scale-and-distribution.md) §15.6) on §12.7's ASVS pattern — with the explicit
+finding that "solutions to all the problems" is not achievable and should not be claimed, since the
+book raises impossible ones, ones Beck declines, and ones that are business trade-offs. Its
+*Conceded* rows are the valuable ones.
+
+The decision has already paid for itself, twice. Ninety minutes of SICP chapter 1 surfaced a
+row-unification defect in the checker (§25.6 item 6); one LeetCode problem surfaced that the
+imperative idiom is missing as a category from a language whose surface is advertised as Python's.
+26 corpus programs and four harnesses had found neither, because every one of them is an
+event-sourced application shaped like the todo sketch.
 
 ## Still open (minor, non-blocking)
 

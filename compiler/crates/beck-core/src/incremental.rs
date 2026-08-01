@@ -487,7 +487,7 @@ pub fn report(placed: &Placed, only: Option<&str>) -> String {
             "  in the plan:        {shared_ops} of {} operators do not read the session, and the \n\
              \x20                     runtime holds those once for every subscriber — one shared \n\
              \x20                     dataflow, advanced per event rather than per connection \n\
-             \x20                     (docs/25). The other {} run per subscriber.",
+             \x20                     (docs/26). The other {} run per subscriber.",
             plan.nodes.len(),
             plan.nodes.len() - shared_ops,
         );

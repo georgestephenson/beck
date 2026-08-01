@@ -12,6 +12,10 @@ the DDIA problem list against the design, then gives the scale-out architecture.
 
 ## 15.1 The DDIA checklist against Beck's semantics
 
+*Seven rows of prose, and by [`12`](12-standards-and-conformance.md) §12.1's own rule that makes
+them claims rather than tests. §15.6 is the executable form — every row carrying a verdict and the
+evidence that discharges it, indexed against the second edition.*
+
 | DDIA problem | Beck's answer | Where |
 |---|---|---|
 | **Unreliable clocks** (skew, leap seconds, NTP) | Ordering **never** comes from wall clocks: `seq` — a logical position assigned at the sequencer — is the only order anything depends on. `at` on the envelope is data for humans and views, not a coordination primitive. Timeouts and schedules enter as *ingress events* (a timer fires → an event with a `seq`), so "time-based" logic is replayable and clock-skew-immune | [`03`](03-type-and-effect-system.md) §3.7 |
@@ -106,3 +110,50 @@ p99 under partition-of-a-replica chaos); the Jepsen-style suite ([`13`](13-testi
 against the *stated* consistency model per rung and published; and the rung-2 design validated by
 DST with simulated partitions before it ships. Roadmap: rung 1 hardened through Phase 4; rung 2 is
 the flagship post-1.0 milestone; rung 3 follows customer geography.
+
+## 15.6 The DDIA matrix: §15.1 made executable
+
+§15.1 is seven rows of prose. By [`12`](12-standards-and-conformance.md) §12.1's own rule that is a
+scratchpad — **a claim without a test** — which is precisely the position the expressiveness
+premise was in before [`10`](10-decisions.md) D18, and it is fixed the same way.
+
+The question that prompted this was whether Beck can "implement solutions for all the problems
+raised in DDIA". The honest answer is **no, and the reason matters**: the book raises problems that
+are provably impossible (exactly-once delivery), problems Beck deliberately declines (active-active
+writes to one key), and problems that are business trade-offs rather than technical ones (how stale
+a read may be). A document claiming to solve all of them would be untrustworthy on its face. §15.1's
+strongest rows are already the ones that say *"Not claimed"*.
+
+What is achievable is to make **every row executable or explicitly conceded**, and the pattern to
+copy is in this repository already: [`12`](12-standards-and-conformance.md) §12.7's OWASP ASVS
+matrix, where each control is marked *unrepresentable by construction* — with the test that proves
+it — or *generated*, or *the user's responsibility*. Applied here, every DDIA problem carries one of
+four verdicts:
+
+| Verdict | Meaning | Evidence required |
+|---|---|---|
+| **Dissolved** | The problem cannot arise, because the semantics do not admit it | The test that proves it — a `Kani` model, a compile-fail case, or a property |
+| **Handled** | The problem is real and there is a mechanism | The mechanism *and* the test that exercises it under fault injection |
+| **Bounded** | Handled only within a stated scope | The scope, and the test that demonstrates the boundary — including what happens *outside* it |
+| **Conceded** | Not solved, and not going to be | Why, and what a user should do instead |
+
+Three properties this matrix must have to be worth building, each learned from §12.7's version:
+
+1. **Indexed against the second edition** — Kleppmann and **Riccomini**, whose chapter numbering
+   differs from the first edition's and whose new material (nonfunctional requirements, the
+   rewritten consistency-and-consensus treatment) is exactly where Beck's claims are most exposed.
+   Pin the chapter numbers against the published book rather than from memory.
+2. **The instruments already exist in the plan.** Nothing here needs a new kind of test:
+   [`13`](13-testing.md) §13.4 has Jepsen for the consistency rows, deterministic simulation for the
+   fault rows, and soak tests for the resource rows; §13.5 has TLA+ for the three protocols with
+   real concurrency. The matrix's job is to say *which row each existing test discharges*, and to
+   make the rows with no test visible.
+3. **A row without evidence is a bug, not a blank.** The failure mode of a conformance matrix is
+   that it becomes a table of intentions. Every row is either evidenced or marked *Conceded* — and
+   "we intend to" is not one of the four verdicts.
+
+The value is asymmetric and worth stating: the **Conceded** and **Bounded** rows are the ones a
+platform team actually reads, and they are the ones no competitor publishes.
+[`25`](25-benchmarks-and-expressiveness.md) §25.8 is where this was decided; the roadmap slot is
+Phase 4, beside the Jepsen work it depends on, because a matrix written before the tests exist would
+be the table of intentions it must not become.

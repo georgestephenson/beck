@@ -24,9 +24,9 @@ Write the commit message as the author of the change: what changed, and why.
   [`docs/22-phase-3-report.md`](docs/22-phase-3-report.md),
   [`docs/23-general-slicer-report.md`](docs/23-general-slicer-report.md),
   [`docs/24-incremental-views-report.md`](docs/24-incremental-views-report.md) and
-  [`docs/25-arrangement-sharing-report.md`](docs/25-arrangement-sharing-report.md) record what each
+  [`docs/26-arrangement-sharing-report.md`](docs/26-arrangement-sharing-report.md) record what each
   phase does, what it refuses to claim, and the corrections it makes to the design documents.
-  Phase 3 is **two bullets of twelve plus most of a third**; docs/25 §25.9 names the nine bullets
+  Phase 3 is **two bullets of twelve plus most of a third**; docs/26 §26.9 names the nine bullets
   that are untouched and the parts of the incremental-views bullet that are not built. Reports
   are history: a later phase's correction to an earlier one goes in the later report, not into the
   earlier text.
@@ -47,7 +47,7 @@ Write the commit message as the author of the change: what changed, and why.
   commands quoted in [`docs/22-phase-3-report.md`](docs/22-phase-3-report.md),
   [`docs/23-general-slicer-report.md`](docs/23-general-slicer-report.md),
   [`docs/24-incremental-views-report.md`](docs/24-incremental-views-report.md) and
-  [`docs/25-arrangement-sharing-report.md`](docs/25-arrangement-sharing-report.md).
+  [`docs/26-arrangement-sharing-report.md`](docs/26-arrangement-sharing-report.md).
 - The harnesses are the project's conscience (§4.8, §8.3): `compiler/crates/beck-cli/tests/` holds
   the differential, replay-determinism, backend-seam, scaling, security, corpus, general-slicer,
   incremental-analysis, incremental-engine, shared-arrangement, subscription, view-metrics and

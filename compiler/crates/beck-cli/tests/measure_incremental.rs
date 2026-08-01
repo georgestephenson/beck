@@ -259,7 +259,7 @@ fn how_much_of_each_corpus_program_is_maintained() {
     );
 }
 
-/// The measurement `docs/25-arrangement-sharing-report.md` quotes: what a fanout costs with §5.3's
+/// The measurement `docs/26-arrangement-sharing-report.md` quotes: what a fanout costs with §5.3's
 /// shared dataflow and what it cost without one.
 ///
 /// Two programs, because the answer is entirely a property of the program and quoting one number

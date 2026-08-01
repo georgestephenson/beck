@@ -283,7 +283,7 @@ async fn two_live_subscriptions_over_one_shared_dataflow_get_their_own_pages() {
 #[tokio::test]
 async fn a_subscription_serves_the_same_page_with_sharing_switched_off() {
     // The other half of the switch tested above. With `share_arrangements` off every subscription
-    // computes the whole plan itself, which is what every subscription did before docs/25 — and the
+    // computes the whole plan itself, which is what every subscription did before docs/26 — and the
     // failure of a switch nobody exercises is silent, because the page still renders.
     let app = App::start(
         todo_runtime(),

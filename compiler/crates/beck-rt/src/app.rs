@@ -56,7 +56,7 @@ pub struct AppConfig {
     /// are the same computation for all of them. How much that is depends entirely on the program:
     /// a view that filters by the session immediately below the fold shares almost nothing, and one
     /// that sorts a public feed and personalises only the greeting shares almost everything
-    /// ([`docs/25-arrangement-sharing-report.md`](../../../../docs/25-arrangement-sharing-report.md)).
+    /// ([`docs/26-arrangement-sharing-report.md`](../../../../docs/26-arrangement-sharing-report.md)).
     ///
     /// Ignored when `maintain_views` is off: there are no arrangements to share.
     pub share_arrangements: bool,
@@ -178,7 +178,7 @@ impl App {
     ///
     /// With sharing on it owns only the per-session operators; the rest arrive from the one shared
     /// dataflow. With it off it owns the whole plan, which is what every subscription did before
-    /// [`docs/25-arrangement-sharing-report.md`].
+    /// [`docs/26-arrangement-sharing-report.md`].
     pub fn view_engine(&self) -> Result<beck_core::engine::Engine> {
         if self.config.share_arrangements {
             Ok(self.shared.subscriber())
