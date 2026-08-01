@@ -1,0 +1,300 @@
+# SICP chapter 1 — "Building Abstractions with Procedures" — in Beck, as far as it goes today.
+#
+# Evidence for [`docs/24-benchmarks-and-expressiveness.md`](../../docs/24-benchmarks-and-expressiveness.md).
+# Every `test` below is an exercise's own answer from the book, so `beck test sicp/ch1.beck` is the
+# oracle: SICP states the value, and the value either comes out or it does not.
+#
+# ---------------------------------------------------------------------------------------------
+# Read the next twenty lines first, because they are the finding.
+#
+# Everything in chapter 1 is a *library*: pure procedures over numbers, and nothing else. Beck
+# cannot run a library (`docs/22` §22.6, last-but-two bullet), and `beck test` refuses one with
+# B0500 — "this program has no merge point". So this file carries a five-declaration application
+# that nothing in the chapter uses, purely so that the chapter can be executed at all.
+#
+# The wrapper is not a stylistic complaint. It is the first item of work the suite asks for, and
+# it is deliberately left in view rather than tidied away: `sicp/refusals/library.beck` is the same
+# procedures without it, and the harness asserts that they still cannot be run.
+# ---------------------------------------------------------------------------------------------
+
+model State:
+    last: Int
+
+union Command:
+    Ask(n: Int)
+
+union Event:
+    Asked(n: Int)
+
+union Rejection:
+    Negative
+
+# ---------------------------------------------------------------------------------------------
+# 1.2.1 Linear recursion and iteration
+# ---------------------------------------------------------------------------------------------
+
+def factorial(n: Int) -> Int:
+    if n == 0:
+        return 1
+    return n * factorial(n - 1)
+
+# The same function as a linear *iterative* process. SICP's whole point here is that this one runs
+# in constant space and the one above does not. In Beck today they are the same shape and the same
+# cost: see `sicp/refusals/tail.beck`, and §24.6 of the report.
+def fact_iter(product: Int, counter: Int, max_count: Int) -> Int:
+    if counter > max_count:
+        return product
+    return fact_iter(counter * product, counter + 1, max_count)
+
+def factorial_iterative(n: Int) -> Int:
+    return fact_iter(1, 1, n)
+
+# ---------------------------------------------------------------------------------------------
+# 1.2.2 Tree recursion
+# ---------------------------------------------------------------------------------------------
+
+def fib(n: Int) -> Int:
+    if n < 2:
+        return n
+    return fib(n - 1) + fib(n - 2)
+
+def first_denomination(kinds: Int) -> Int:
+    if kinds == 1:
+        return 1
+    if kinds == 2:
+        return 5
+    if kinds == 3:
+        return 10
+    if kinds == 4:
+        return 25
+    return 50
+
+def cc(amount: Int, kinds: Int) -> Int:
+    if amount == 0:
+        return 1
+    if amount < 0 or kinds == 0:
+        return 0
+    return cc(amount, kinds - 1) + cc(amount - first_denomination(kinds), kinds)
+
+def count_change(amount: Int) -> Int:
+    return cc(amount, 5)
+
+# Exercise 1.11, both ways round — the exercise exists to be written twice.
+def ex_1_11_recursive(n: Int) -> Int:
+    if n < 3:
+        return n
+    return ex_1_11_recursive(n - 1) + 2 * ex_1_11_recursive(n - 2) + 3 * ex_1_11_recursive(n - 3)
+
+def ex_1_11_iter(a: Int, b: Int, c: Int, count: Int) -> Int:
+    if count == 0:
+        return a
+    return ex_1_11_iter(a + 2 * b + 3 * c, a, b, count - 1)
+
+def ex_1_11_iterative(n: Int) -> Int:
+    if n < 3:
+        return n
+    return ex_1_11_iter(2, 1, 0, n - 2)
+
+# Exercise 1.12 — Pascal's triangle, by the recurrence.
+def pascal(row: Int, col: Int) -> Int:
+    if col == 0 or col == row:
+        return 1
+    return pascal(row - 1, col - 1) + pascal(row - 1, col)
+
+# ---------------------------------------------------------------------------------------------
+# 1.2.4 Exponentiation, 1.2.5 GCD, 1.2.6 primality
+# ---------------------------------------------------------------------------------------------
+
+def square(x: Int) -> Int:
+    return x * x
+
+def even(n: Int) -> Bool:
+    return n % 2 == 0
+
+def fast_expt(b: Int, n: Int) -> Int:
+    if n == 0:
+        return 1
+    if even(n):
+        return square(fast_expt(b, n / 2))
+    return b * fast_expt(b, n - 1)
+
+# Exercise 1.16 — the same, as an iterative process with an invariant.
+def expt_iter(b: Int, n: Int, a: Int) -> Int:
+    if n == 0:
+        return a
+    if even(n):
+        return expt_iter(square(b), n / 2, a)
+    return expt_iter(b, n - 1, a * b)
+
+def fast_expt_iterative(b: Int, n: Int) -> Int:
+    return expt_iter(b, n, 1)
+
+def gcd(a: Int, b: Int) -> Int:
+    if b == 0:
+        return a
+    return gcd(b, a % b)
+
+def divides(a: Int, b: Int) -> Bool:
+    return b % a == 0
+
+def find_divisor(n: Int, test: Int) -> Int:
+    if square(test) > n:
+        return n
+    if divides(test, n):
+        return test
+    return find_divisor(n, test + 1)
+
+def smallest_divisor(n: Int) -> Int:
+    return find_divisor(n, 2)
+
+def is_prime(n: Int) -> Bool:
+    return n > 1 and smallest_divisor(n) == n
+
+# ---------------------------------------------------------------------------------------------
+# 1.3.1 Procedures as arguments
+# ---------------------------------------------------------------------------------------------
+
+def inc(n: Int) -> Int:
+    return n + 1
+
+def identity(n: Int) -> Int:
+    return n
+
+def cube(n: Int) -> Int:
+    return n * n * n
+
+def sum(term: Int -> Int, a: Int, next: Int -> Int, b: Int) -> Int:
+    if a > b:
+        return 0
+    return term(a) + sum(term, next(a), next, b)
+
+def sum_cubes(a: Int, b: Int) -> Int:
+    return sum(cube, a, inc, b)
+
+def sum_integers(a: Int, b: Int) -> Int:
+    return sum(identity, a, inc, b)
+
+# Exercise 1.31 — the same abstraction over multiplication, and factorial falling out of it.
+def product(term: Int -> Int, a: Int, next: Int -> Int, b: Int) -> Int:
+    if a > b:
+        return 1
+    return term(a) * product(term, next(a), next, b)
+
+def factorial_via_product(n: Int) -> Int:
+    return product(identity, 1, inc, n)
+
+# Exercise 1.32 — and both of those over one accumulator.
+def accumulate(
+    combiner: (Int, Int) -> Int,
+    null_value: Int,
+    term: Int -> Int,
+    a: Int,
+    next: Int -> Int,
+    b: Int,
+) -> Int:
+    if a > b:
+        return null_value
+    return combiner(term(a), accumulate(combiner, null_value, term, next(a), next, b))
+
+def sum_via_accumulate(term: Int -> Int, a: Int, next: Int -> Int, b: Int) -> Int:
+    return accumulate(lambda x, y: x + y, 0, term, a, next, b)
+
+def product_via_accumulate(term: Int -> Int, a: Int, next: Int -> Int, b: Int) -> Int:
+    return accumulate(lambda x, y: x * y, 1, term, a, next, b)
+
+# ---------------------------------------------------------------------------------------------
+# 1.3.2 Constructing procedures with lambda, 1.3.4 Procedures as returned values
+# ---------------------------------------------------------------------------------------------
+
+def sum_squares(a: Int, b: Int) -> Int:
+    return sum(lambda x: x * x, a, inc, b)
+
+# Exercise 1.42
+def compose(f: Int -> Int, g: Int -> Int) -> Int -> Int:
+    return lambda x: f(g(x))
+
+# Exercise 1.43 — `repeated` — is not here. It does not compile, and the reason is a defect rather
+# than a missing feature: an `if` whose branches are both function values fails to typecheck as
+# soon as one of them is the result of a call. `sicp/refusals/higher-order.beck` is the smallest
+# case, with the diagnostic; §24.6 of the report is the write-up.
+
+# ---------------------------------------------------------------------------------------------
+# The wrapper. Nothing above refers to anything below.
+# ---------------------------------------------------------------------------------------------
+
+def apply_event(s: State, env: Envelope[Event]) -> State:
+    match env.body:
+        case Asked(n):
+            return s.with(last=factorial(n))
+
+def validate(s: State, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Ask(n):
+            if n < 0:
+                return Err(error=Negative)
+            return Ok(value=[Asked(n=n)])
+
+def render(s: State, session: Session) -> Html:
+    return ui:
+        main:
+            p: str(s.last)
+
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, state, validate)
+state: Signal[State] = durable(fold(apply_event, State(last=0), events))
+page: Signal[Html] = per_session(state, render)
+
+# ---------------------------------------------------------------------------------------------
+# The book's own answers, as the oracle.
+# ---------------------------------------------------------------------------------------------
+
+test "1.2.1 — factorial, recursive and iterative, agree":
+    expect factorial(6) == 720
+    expect factorial_iterative(6) == 720
+
+test "1.2.2 — tree recursion, Fibonacci":
+    expect fib(10) == 55
+
+test "1.2.2 — counting change: SICP's 292 ways to make a dollar":
+    expect count_change(100) == 292
+
+test "1.11 — the recurrence, written twice, agreeing":
+    expect ex_1_11_recursive(10) == 1892
+    expect ex_1_11_iterative(10) == 1892
+
+test "1.12 — Pascal's triangle":
+    expect pascal(4, 2) == 6
+    expect pascal(6, 3) == 20
+
+test "1.16 — fast exponentiation, recursive and iterative":
+    expect fast_expt(2, 10) == 1024
+    expect fast_expt_iterative(2, 10) == 1024
+    expect fast_expt(3, 5) == 243
+
+test "1.2.5 — Euclid's algorithm":
+    expect gcd(206, 40) == 2
+
+test "1.2.6 — the smallest divisor, and primality":
+    expect smallest_divisor(199) == 199
+    expect smallest_divisor(1999) == 1999
+    expect smallest_divisor(19999) == 7
+    expect is_prime(1999)
+    expect not is_prime(19999)
+
+test "1.3.1 — sum, as a higher-order procedure":
+    expect sum_cubes(1, 10) == 3025
+    expect sum_integers(1, 10) == 55
+
+test "1.31 — product, and factorial from it":
+    expect factorial_via_product(6) == 720
+
+test "1.32 — sum and product are both accumulate":
+    expect sum_via_accumulate(identity, 1, inc, 10) == 55
+    expect product_via_accumulate(identity, 1, inc, 6) == 720
+
+test "1.3.2 — the same, with an anonymous procedure":
+    expect sum_squares(1, 10) == 385
+
+test "1.42 — compose":
+    expect compose(square, inc)(6) == 49
+    expect compose(inc, square)(6) == 37

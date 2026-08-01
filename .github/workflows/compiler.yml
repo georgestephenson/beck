@@ -101,6 +101,9 @@ jobs:
             # Not every corpus program carries tests; the ones that do must pass.
             ./target/release/beck test "$f"
           done
+          # docs/24 §24.6: SICP chapter 1, asserted against the answers the book states. The walls
+          # beyond it are held by tests/sicp.rs, which `cargo test` above already runs.
+          ./target/release/beck test sicp/ch1.beck
           # A failing test has to fail the build, or the gate is decorative. This is the property
           # docs/19 §19.4 item 10 says an unexecuted artefact cannot have.
           python3 - <<'PY'

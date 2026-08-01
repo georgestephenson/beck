@@ -1,0 +1,21 @@
+# Blocks: every exercise in the book.
+#
+# Chapter 1 is procedures over numbers and nothing else — the definition of a library. Beck
+# compiles one happily and cannot run one, so an exercise's own answer cannot be asserted without
+# an application wrapped around it. `sicp/ch1.beck` carries that wrapper, five declarations of it,
+# used by nothing.
+#
+# `beck check` on this file: ok, "a library. No merge point, so there is nothing to run".
+# `beck test` on this file: error[B0500] — "this program has no merge point".
+#
+# Known: docs/22 §22.6 — "a library module … cannot have its tests run … a real gap for exactly
+# the modules that most want unit tests." The SICP suite is 356 exercises' worth of exactly those
+# modules, which is why the report puts this first.
+
+def factorial(n: Int) -> Int:
+    if n == 0:
+        return 1
+    return n * factorial(n - 1)
+
+test "1.2.1 — factorial":
+    expect factorial(6) == 720
