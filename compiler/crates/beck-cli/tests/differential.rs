@@ -12,9 +12,14 @@
 //!   command, call `validate`, fold the events it yields, and evaluate `view`. This is the program
 //!   as written, read literally.
 //! * **Split.** The real runtime: commands go through the ingress channel into the sequencer, are
-//!   validated under the write lock, appended to a log, folded, and the resulting view is *diffed*
-//!   against the previous one. A client applies the patches with `diff::apply` and holds a DOM it
-//!   built from nothing but patches.
+//!   validated under the write lock, appended to a log, folded, and the resulting view is
+//!   **maintained by delta** for each subscriber (§5.3, docs/24) and *diffed* against the previous
+//!   one. A client applies the patches with `diff::apply` and holds a DOM it built from nothing but
+//!   patches.
+//!
+//!   The subscriber's engine is the one `beck-rt`'s subscription loop uses, and it is on this side
+//!   on purpose: the incremental engine is an optimisation of the split path, so the highest-value
+//!   test in the project should be the one that would notice it going wrong.
 //!
 //! The assertion is that the client's reconstructed DOM equals the single-process view, at every
 //! step. If that holds, the tier split is not observable — which is the whole claim of the language.
@@ -147,15 +152,17 @@ async fn split_execution_is_indistinguishable_from_single_process() {
         .await
         .expect("app starts");
 
-    let mut clients: Vec<(String, PatchClient, Html)> = Vec::new();
+    // One engine per subscription, exactly as `beck_rt::session::run` holds one.
+    let mut clients: Vec<(String, PatchClient, Html, beck_core::engine::Engine)> = Vec::new();
     for actor in ACTORS {
-        let view = app.render(actor).await.expect("render");
+        let mut engine = app.runtime().view_engine().expect("an engine");
+        let view = app.maintain(&mut engine, actor).await.expect("render");
         let mut client = PatchClient::new();
         client.apply(&[diff::Op::Replace {
             path: vec![],
             html: view.clone(),
         }]);
-        clients.push((actor.to_string(), client, view));
+        clients.push((actor.to_string(), client, view, engine));
     }
 
     // ---- the single-process side: the program read literally ----
@@ -173,8 +180,8 @@ async fn split_execution_is_indistinguishable_from_single_process() {
         );
 
         // Every subscriber wakes, re-renders, and is sent the difference.
-        for (subscriber, client, last) in clients.iter_mut() {
-            let now = app.render(subscriber).await.expect("render");
+        for (subscriber, client, last, engine) in clients.iter_mut() {
+            let now = app.maintain(engine, subscriber).await.expect("render");
             let ops = diff(last, &now);
             if !ops.is_empty() {
                 client.apply(&ops);
@@ -192,7 +199,7 @@ async fn split_execution_is_indistinguishable_from_single_process() {
     // A subscriber who never received a byte of application logic still holds the right page.
     let alice = clients
         .iter()
-        .find(|(a, _, _)| a == "alice")
+        .find(|(a, _, _, _)| a == "alice")
         .expect("alice");
     assert!(alice.1.rendered().contains("aaa sorts first"));
     assert!(!alice.1.rendered().contains("write the fold"), "deleted");

@@ -1,6 +1,6 @@
 # The corpus
 
-Twenty-six programs, and the Phase 2 exit criterion measured against them:
+Twenty-seven programs, and the Phase 2 exit criterion measured against them:
 
 > On a corpus of 20+ programs, placement is inferred with no annotations for the common cases.
 
@@ -22,7 +22,12 @@ of one shape would prove that the shape works, which Phase 1 already did. What v
 - **the shape of the signal graph**: one fold or two, a derived signal read once or twice, a
   `filter_map` between the chokepoint and a fold. Programs 21–23 exist for the general slicer
   ([`docs/23`](../../docs/23-general-slicer-report.md)), and until it was built every one of them
-  was either refused or — in 21's case — silently mis-sliced.
+  was either refused or — in 21's case — silently mis-sliced;
+- **the shape of the view**: a nested loop, a conditional among an element's children, a list read
+  by two operators, and a computation that does not read the session even though it sits inside a
+  `per_session`. Program 24 exists for the incremental view engine
+  ([`docs/24`](../../docs/24-incremental-views-report.md)) and every one of those shapes is a way
+  for a maintained view to disagree with the recomputed one.
 
 Every file is a program someone could plausibly write. Where one exists to exercise a corner, its
 first comment says which corner and why.

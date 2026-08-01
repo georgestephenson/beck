@@ -39,3 +39,8 @@ beck-syntax.workspace = true
 # replay-determinism suites are properties of the whole pipeline, not of any one crate — so they
 # live beside the binary that already depends on all of it.
 tokio = { workspace = true }
+# The subscription harness drives `beck_rt::session::run` over an in-memory socket, which is what
+# the `Socket` trait was written for: "the upgraded socket in the server, and an in-memory duplex in
+# the tests".
+futures-util.workspace = true
+tokio-tungstenite.workspace = true

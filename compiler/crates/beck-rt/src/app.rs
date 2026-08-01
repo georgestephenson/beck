@@ -39,6 +39,15 @@ pub struct AppConfig {
     pub max_batch: usize,
     /// How many recent command ids to remember for idempotency (§4.3).
     pub dedup_capacity: usize,
+    /// Whether a subscription maintains its view by delta rather than recomputing it (§5.3).
+    ///
+    /// On by default, because it is what §3.8 asks for and it is ~5× faster per event. It is a
+    /// *switch* rather than a fact because it is also a memory-for-time trade — about 4× the bytes
+    /// a subscription already held for its page
+    /// ([`docs/24-incremental-views-report.md`](../../../../docs/24-incremental-views-report.md)
+    /// §24.6) — and an operator running a fanout of a hundred thousand idle sessions over a large
+    /// accumulator should be able to decide that differently without recompiling.
+    pub maintain_views: bool,
 }
 
 impl Default for AppConfig {
@@ -47,6 +56,7 @@ impl Default for AppConfig {
             snapshot_every: 1000,
             max_batch: 256,
             dedup_capacity: 16_384,
+            maintain_views: true,
         }
     }
 }
@@ -70,6 +80,7 @@ pub struct App {
     version: watch::Sender<Seq>,
     ingress: mpsc::Sender<Proposal>,
     head: AtomicU64,
+    config: AppConfig,
 }
 
 impl App {
@@ -107,6 +118,7 @@ impl App {
             version,
             ingress: tx,
             head: AtomicU64::new(head),
+            config: config.clone(),
         });
         tokio::spawn(sequencer(app.clone(), rx, config));
         Ok(app)
@@ -132,10 +144,40 @@ impl App {
         self.state.read().await.clone()
     }
 
-    /// Render a subscriber's view of the current state.
+    /// Render a subscriber's view of the current state, by full recompute.
+    ///
+    /// Kept for the two callers that render a state nobody is subscribed to: the server-side render
+    /// of the first document, and the resumption path's reconstruction of the view as of an old
+    /// `seq`. A live subscription goes through [`App::maintain`] instead.
     pub async fn render(&self, actor: &str) -> Result<beck_core::Html> {
         let state = self.state.read().await.clone();
         timed(&telemetry().view, || self.runtime.view(&state, actor))
+    }
+
+    /// Render a subscriber's view of the current state, by maintaining it.
+    ///
+    /// The engine belongs to the subscription, so its arrangements survive between events and the
+    /// per-event work is proportional to what the event changed (§5.3). The state is cloned under
+    /// the read lock and the engine runs outside it — an `Arc` bump under the lock, and no
+    /// rendering while the sequencer wants to write.
+    pub async fn maintain(
+        &self,
+        engine: &mut beck_core::engine::Engine,
+        actor: &str,
+    ) -> Result<beck_core::Html> {
+        let state = self.state.read().await.clone();
+        timed(&telemetry().view, || {
+            if self.config.maintain_views {
+                self.runtime.render(engine, &state, actor)
+            } else {
+                self.runtime.view(&state, actor)
+            }
+        })
+    }
+
+    /// Whether subscriptions maintain their views (§5.3) or recompute them.
+    pub fn maintains_views(&self) -> bool {
+        self.config.maintain_views
     }
 
     /// Propose a command. Returns the `seq` its events landed at.

@@ -1,0 +1,121 @@
+# A view written to embarrass the incremental engine.
+#
+# docs/23 §23.10 item 4: "Every remaining Phase 3 bullet should ship with the program that would
+# embarrass it." Four shapes, each of which the plan has to get right or produce a wrong page:
+#
+#   * a **nested loop** — `for t in post.tags` inside `for post in posts`. The inner one lives
+#     inside the outer's per-element function rather than becoming an operator of its own, so a tag
+#     arriving re-renders exactly one post and moves nothing else;
+#   * an **`if` in the middle of the children**, which no delta can be pushed through, so the plan
+#     has to fall back for that one operator and keep maintaining the ones around it;
+#   * a **list read twice** — `posts` feeds both the loop and the count — so the arrangement is
+#     shared rather than built once per reader;
+#   * a **shared computation inside a per-session view**. `visible` does not read the session even
+#     though it is called from a `per_session`, so §5.3's "one shared dataflow whose final
+#     per-session operators run per subscriber" is a fact about *this* program's operators rather
+#     than about its signals. `beck explain incremental` says which side of the cut each is on.
+#
+# Like every program here it carries no placement annotations and has to place itself.
+
+model Post:
+    id: Str
+    author: Str
+    text: Str
+    tags: list[Str]
+
+model State:
+    posts: Map[Str, Post]
+
+union Command:
+    Publish(id: Str, text: Str)
+    Tag(id: Str, tag: Str)
+
+union Event:
+    Published(id: Str, text: Str)
+    Tagged(id: Str, tag: Str)
+
+union Rejection:
+    Blank
+    NoSuchPost
+    NotYours
+
+def apply_event(s: State, env: Envelope[Event]) -> State:
+    match env.body:
+        case Published(id, text):
+            return s.with(posts=map_insert(s.posts, id, Post(id=id, author=env.actor, text=text, tags=[])))
+        case Tagged(id, tag):
+            return tagged(s, id, tag)
+
+def tagged(s: State, id: Str, tag: Str) -> State:
+    match map_get(s.posts, id):
+        case Some(value):
+            return s.with(posts=map_insert(s.posts, id, value.with(tags=concat_lists([value.tags, [tag]]))))
+        case None:
+            return s
+
+def validate(s: State, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Publish(id, text):
+            if str_is_empty(str_trim(text)):
+                return Err(error=Blank)
+            return Ok(value=[Published(id=id, text=text)])
+        case Tag(id, tag):
+            return if_yours(s, p, id, tag)
+
+def if_yours(s: State, p: Proposal, id: Str, tag: Str) -> Result[list[Event], Rejection]:
+    match map_get(s.posts, id):
+        case Some(value):
+            if value.author != p.session.actor:
+                return Err(error=NotYours)
+            return Ok(value=[Tagged(id=id, tag=tag)])
+        case None:
+            return Err(error=NoSuchPost)
+
+# Reads the state and not the session, so every subscriber's plan computes the same thing — which
+# is the definition of §5.3's shared prefix, stated here about a function rather than about a
+# signal.
+def visible(s: State) -> list[Post]:
+    return sort_by(map_values(s.posts), lambda p: p.text)
+
+def render(s: State, session: Session) -> Html:
+    posts = visible(s)
+    return ui:
+        main:
+            h1: ("feed for " + session.actor)
+            if list_is_empty(posts):
+                p: "nothing yet"
+            ul:
+                for post in posts:
+                    li(key=post.id):
+                        span: post.text
+                        for t in post.tags:
+                            em: t
+            footer: (str(list_len(posts)) + " posts")
+
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, feed, validate)
+feed: Signal[State] = durable(fold(apply_event, State(posts={}), events))
+page: Signal[Html] = per_session(feed, render)
+
+test "an empty feed says so":
+    given []
+    expect page contains "nothing yet"
+
+test "a post appears with its tags, in text order":
+    given [Published(id="b", text="beta"), Published(id="a", text="alpha"), Tagged(id="a", tag="news")] by "ana"
+    expect page(session("ana")) contains "news"
+    expect page(session("ana")) contains "2 posts"
+
+test "a tag on somebody else's post is refused":
+    given [Published(id="a", text="alpha")] by "ana"
+    when session("bo") sends Tag(id="a", tag="spam")
+    expect Err(error=NotYours)
+
+test "a blank post never reaches the log":
+    given []
+    when Publish(id="x", text="   ")
+    expect Err(error=Blank)
+
+property "no log this program can produce makes the page unrenderable"(log: list[Event]):
+    given log
+    expect page contains "posts"

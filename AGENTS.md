@@ -18,16 +18,18 @@ Write the commit message as the author of the change: what changed, and why.
   records what it proves and what it does not. It is history — a measured baseline — and should not
   be edited to track the compiler.
 - [`compiler/`](compiler/) is the built compiler and the runtime it targets, through Phase 2 plus
-  Phase 3's test construct and its general slicer.
+  Phase 3's test construct, its general slicer and its incremental view engine.
   [`docs/19-phase-1-report.md`](docs/19-phase-1-report.md),
   [`docs/20-phase-2-report.md`](docs/20-phase-2-report.md),
-  [`docs/22-phase-3-report.md`](docs/22-phase-3-report.md) and
-  [`docs/23-general-slicer-report.md`](docs/23-general-slicer-report.md) record what each phase
-  does, what it refuses to claim, and the corrections it makes to the design documents. Phase 3 is
-  **two bullets of twelve**; docs/23 §23.9 names the ten that are untouched. Reports are history:
-  a later phase's correction to an earlier one goes in the later report, not into the earlier
-  text.
-- [`compiler/corpus/`](compiler/corpus/) is 26 programs carrying **no placement annotations**, and
+  [`docs/22-phase-3-report.md`](docs/22-phase-3-report.md),
+  [`docs/23-general-slicer-report.md`](docs/23-general-slicer-report.md) and
+  [`docs/24-incremental-views-report.md`](docs/24-incremental-views-report.md) record what each
+  phase does, what it refuses to claim, and the corrections it makes to the design documents.
+  Phase 3 is **two bullets of twelve plus the view engine**; docs/24 §24.10 names the nine bullets
+  that are untouched and the parts of the incremental-views bullet that are not built. Reports
+  are history: a later phase's correction to an earlier one goes in the later report, not into the
+  earlier text.
+- [`compiler/corpus/`](compiler/corpus/) is 27 programs carrying **no placement annotations**, and
   the measurement behind Phase 2's exit criterion. A program added there has to place itself.
 - Design decisions are numbered in [`docs/10-decisions.md`](docs/10-decisions.md). If a change
   contradicts one, say so rather than quietly diverging.
@@ -39,12 +41,14 @@ Write the commit message as the author of the change: what changed, and why.
   `cargo test` and the commands quoted in [`docs/19-phase-1-report.md`](docs/19-phase-1-report.md);
   the Phase 2 numbers come from `cargo test --release --test measure_phase2 -- --nocapture` and the
   commands quoted in [`docs/20-phase-2-report.md`](docs/20-phase-2-report.md); the Phase 3 numbers
-  come from `cargo test --workspace` and the commands quoted in
-  [`docs/22-phase-3-report.md`](docs/22-phase-3-report.md) and
-  [`docs/23-general-slicer-report.md`](docs/23-general-slicer-report.md).
+  come from `cargo test --workspace`, from `cargo test --release --test measure_incremental --
+  --nocapture`, and from the commands quoted in
+  [`docs/22-phase-3-report.md`](docs/22-phase-3-report.md),
+  [`docs/23-general-slicer-report.md`](docs/23-general-slicer-report.md) and
+  [`docs/24-incremental-views-report.md`](docs/24-incremental-views-report.md).
 - The harnesses are the project's conscience (§4.8, §8.3): `compiler/crates/beck-cli/tests/` holds
   the differential, replay-determinism, backend-seam, scaling, security, corpus, general-slicer,
-  incremental-analysis and diagnostic-snapshot suites. Keep them green.
+  incremental-analysis, incremental-engine, subscription and diagnostic-snapshot suites. Keep them green.
 - The CI workflow is an artefact too, and Phase 2 found that it had never run
   ([`docs/20-phase-2-report.md`](docs/20-phase-2-report.md) §20.4 item 8). If you change
   `.github/workflows/`, run the steps you changed by hand before trusting them.
