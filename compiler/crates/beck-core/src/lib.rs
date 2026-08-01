@@ -21,6 +21,7 @@ pub mod gen;
 pub mod graph;
 pub mod html;
 pub mod iface;
+pub mod incremental;
 pub mod place;
 pub mod pmap;
 pub mod prelude;

@@ -133,7 +133,9 @@ dependencies whose signatures didn't change.
 > application), any depth and any sharing above them, a `filter_map` on the fold path, and every
 > tier crossing enumerated with the id §4.3 says a subscription is keyed by. It is a **precondition**
 > for the incremental-views bullet below, not a down payment on it: views are still full recompute
-> per event.
+> per event. What it did make possible immediately is `beck explain incremental` — the analysis
+> §3.8 names, which says which views a plan could maintain and why the rest could not, over a
+> program none of whose views are maintained (§23.10).
 >
 > Building it falsified the sentence both earlier reports used to justify the narrowness. The old
 > splitter did not refuse what it could not slice: two `durable` folds compiled, and both were

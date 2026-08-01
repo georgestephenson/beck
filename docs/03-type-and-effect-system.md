@@ -339,6 +339,10 @@ keeping them incremental:
   is sugar for pure functions that are *guaranteed* incrementalizable and also lower to SQL against
   materialized read models for one-shot reads. Arbitrary pure code is incrementalized where
   analysis allows, recomputed where not — `beck explain incremental <view>` shows which, and why.
+
+  *The command is built* — `beck-core/src/incremental.rs`, and it is the **analysis only**: it says
+  which views a plan could maintain and which the rules cannot reach, over a program whose views
+  are all still full recompute per event ([`23`](23-general-slicer-report.md) §23.10).
 - **Invalidation does not exist as a concept.** There are no caches to invalidate — only views
   downstream of the log. What ships to a subscribed client is the patch stream of its view
   ([`05`](05-tier-lowering.md) §5.1). This subsumes the entire cache-key/TTL discipline of

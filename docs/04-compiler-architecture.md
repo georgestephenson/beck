@@ -192,6 +192,11 @@ ApiKey (secret[str]) declared at config.beck:8
 Also ship `beck explain wire <op>`, `beck explain query <fn>`, `beck explain deploy <service>`
 (the full object graph and its provenance) and `beck explain cost <fn>`.
 
+*Built*: `place`, `flow`, `wire`, `deploy`, and — with the general slicer, which gave it a plan to
+read — `beck explain incremental <view>`, which [`03`](03-type-and-effect-system.md) §3.8 asks for
+([`23`](23-general-slicer-report.md) §23.10). `query` and `cost` are not, and
+[`23`](23-general-slicer-report.md) §23.8 says why each is still waiting.
+
 ## 4.8 Testing strategy for the compiler itself
 
 *(Summary table — the full strategy, including deterministic simulation, Jepsen-style consistency

@@ -228,6 +228,15 @@ enum Explain {
         /// A type name: `beck explain flow ApiKey`.
         ty: Option<String>,
     },
+    /// Which views a dataflow plan could maintain by delta, and why the rest could not (§3.8).
+    ///
+    /// The analysis, not the engine: every view is a full recompute per event today, and the
+    /// report says so before it says anything else.
+    Incremental {
+        file: PathBuf,
+        /// One view, by the name `beck explain flow` gives it.
+        view: Option<String>,
+    },
     /// The infrastructure the program's effects imply (§6.5).
     Deploy { file: PathBuf },
 }
@@ -957,6 +966,14 @@ fn explain(what: Explain) -> Result<()> {
         Explain::Flow { file, ty: None } => {
             let placed = compiled(&file)?;
             print!("{}", beck_core::split::flow_report(&placed));
+            Ok(())
+        }
+        Explain::Incremental { file, view } => {
+            let placed = compiled(&file)?;
+            print!(
+                "{}",
+                beck_core::incremental::report(&placed, view.as_deref())
+            );
             Ok(())
         }
         Explain::Deploy { file } => {

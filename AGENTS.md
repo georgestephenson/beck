@@ -43,8 +43,8 @@ Write the commit message as the author of the change: what changed, and why.
   [`docs/22-phase-3-report.md`](docs/22-phase-3-report.md) and
   [`docs/23-general-slicer-report.md`](docs/23-general-slicer-report.md).
 - The harnesses are the project's conscience (§4.8, §8.3): `compiler/crates/beck-cli/tests/` holds
-  the differential, replay-determinism, backend-seam, scaling, security, corpus, general-slicer
-  and diagnostic-snapshot suites. Keep them green.
+  the differential, replay-determinism, backend-seam, scaling, security, corpus, general-slicer,
+  incremental-analysis and diagnostic-snapshot suites. Keep them green.
 - The CI workflow is an artefact too, and Phase 2 found that it had never run
   ([`docs/20-phase-2-report.md`](docs/20-phase-2-report.md) §20.4 item 8). If you change
   `.github/workflows/`, run the steps you changed by hand before trusting them.

@@ -129,6 +129,23 @@ jobs:
           ! ./target/release/beck check /tmp/two-pages.beck
           ./target/release/beck check /tmp/two-pages.beck 2>&1 | grep -q 'B0510'
 
+      - name: the incremental analysis says what is true today, first
+        # docs/23 §23.10. A command called `explain incremental` that let a reader believe their
+        # view was being maintained would be the most misleading output in the compiler, so the
+        # gate is the disclaimer as much as the analysis.
+        run: |
+          ./target/release/beck explain incremental examples/todo.beck | tee /tmp/inc.txt
+          head -1 /tmp/inc.txt | grep -q 'full recompute per event'
+          grep -q 'the engine that would maintain them is not built' /tmp/inc.txt
+          # §5.3's two halves, named about a real program.
+          ./target/release/beck explain incremental corpus/22-shared.beck \
+            | grep -q 'shared arrangement: tally'
+          # Every view in the corpus is relational and therefore maintainable; that the analysis
+          # *discriminates* is asserted in tests/incremental.rs, on programs written to produce
+          # each verdict, because a corpus-only check would pass with an analysis that always
+          # answered "incremental".
+          for f in corpus/*.beck; do ./target/release/beck explain incremental "$f" > /dev/null; done
+
       - name: the log substrates are measured, not assumed
         # Reported, never thresholded (§13.7): a shared runner cannot hold a timing gate honestly.
         # It runs so that the table in docs/07 §7.8.1 stays reproducible rather than historical.

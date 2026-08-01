@@ -1,4 +1,4 @@
-# 23 — Phase 3 report, part 2: the general slicer
+# 23 — Phase 3 report, part 2: the general slicer, and the analysis it unblocks
 
 [`22`](22-phase-3-report.md) §22.6 opens its list of what Phase 3 is not with this:
 
@@ -7,10 +7,17 @@
 > named it as the one item that phase was handed and did not deliver, and §20.6 item 6 said "Phase 3
 > pays for it either way". Phase 3 has not. … **It should be the next thing built.**
 
-It is built. This report says what it does, what building it found, and what it still refuses.
+It is built. So is the first thing that needed it: `beck explain incremental`, which
+[`03`](03-type-and-effect-system.md) §3.8 asks for by name and [`20`](20-phase-2-report.md) §20.5
+recorded as unbuilt "because there is nothing to say until §3.8's incremental view compilation
+exists". That was half right. There is nothing to *maintain* until the engine exists; there is
+plenty to *say*, and saying it needs a plan rather than an inlined expression. §23.10.
+
+This report says what both do, what building them found, and what they still refuse.
 
 It is **part 2**, and the title says so for the same reason [`22`](22-phase-3-report.md)'s did:
-Phase 3 is twelve bullets, two of them are now built, and ten are not. §23.8 lists the ten.
+Phase 3 is twelve bullets, two of them are now built, and ten are not. §23.8 lists the ten — and
+the analysis in §23.10 is a *piece* of one of the ten, not the bullet.
 
 ## 23.1 What was asked for, and what is there
 
@@ -31,8 +38,9 @@ Phase 3 is twelve bullets, two of them are now built, and ten are not. §23.8 li
 | Every tier crossing enumerated, with the id §4.3 says a subscription is keyed by | done — replaces one hard-coded sentence | `signal.rs::Cut` |
 | `beck explain flow` printing the graph rather than four names | done | `split.rs::flow_report` |
 | The runtime driving several accumulators or several pages natively | **not done** — §23.6 | — |
+| `beck explain incremental <view>` (§3.8, §4.7 — not part of the slicer's brief, and the first thing that needed it) | done — the analysis; the engine is not built | `beck-core/src/incremental.rs` |
 
-418 tests, no failures, no compiler warnings, no clippy warnings — up from
+429 tests, no failures, no compiler warnings, no clippy warnings — up from
 [`22`](22-phase-3-report.md)'s 396. The corpus is 26 programs, up from 23; three of them exist for
 this work, and each carries its own tests written in Beck.
 
@@ -264,14 +272,16 @@ edited into [`19`](19-phase-1-report.md) and [`20`](20-phase-2-report.md), which
 **Two bullets of twelve are built.** Nothing below has been started, and the phase's exit criterion
 — "an outside developer builds a non-trivial app from documentation alone" — is not met.
 
-- **No incremental views, still.** This is the bullet the slicer *unblocks*, not the bullet it
-  delivers. There is no differential-dataflow plan, no arrangement, no SQL read model, no pgwire, no
-  query fusion. Views are full recompute per event. What changed is that `beck explain flow` now
-  prints what would be shared and what would be recomputed, so the next step has an input and a
-  reference oracle instead of an inlined expression.
-- **`beck explain query` and `beck explain cost` are still unbuilt**, for the reason
-  [`20`](20-phase-2-report.md) §20.5 gave: the first has nothing to say until §3.8's incremental view
-  compilation exists.
+- **No incremental view engine.** This is the bullet the slicer *unblocks*, not the bullet it
+  delivers. There is no differential-dataflow plan, no arrangement, no delta stream, no SQL read
+  model, no pgwire, no query fusion. **Every view is a full recompute per event**, exactly as it
+  was. What exists now is the analysis (§23.10) — which views *could* be maintained, and why the
+  rest could not — and it says that sentence before it says anything else.
+- **`beck explain query` is still unbuilt**, for the reason [`20`](20-phase-2-report.md) §20.5
+  gave: the `Query` sub-language is deliberately symbolic and there is no plan to explain until the
+  engine compiles one. `beck explain cost` is still unbuilt too, and still for §20.5's reason —
+  `beck explain place` prints every candidate's cost, and a second view earns its place when there
+  is a second cost dimension to show.
 - **The runtime drives one accumulator and one page.** Fusion means a program may declare several
   folds; it does not mean the runtime holds several. Several pages is `B0510` and needs a router.
   Both limits are the runtime's and both now say so.
@@ -312,3 +322,101 @@ edited into [`19`](19-phase-1-report.md) and [`20`](20-phase-2-report.md), which
    mis-slice survived two reports that quoted the refusal it was supposed to fall under. It took
    forty lines of Beck to find. Every remaining Phase 3 bullet should ship with the program that
    would embarrass it.
+
+## 23.10 The analysis, not the engine: `beck explain incremental`
+
+[`03`](03-type-and-effect-system.md) §3.8, in the sentence that names the command:
+
+> Arbitrary pure code is incrementalized where analysis allows, recomputed where not — **`beck
+> explain incremental <view>` shows which, and why**.
+
+[`20`](20-phase-2-report.md) §20.6 item 3 said the input already existed — "a view whose row is
+empty is a pure function of the signal — which is §3.8's precondition for compiling it to a
+differential-dataflow plan" — and §20.5 said the command was not built. The missing piece was not
+the row; it was the *plan*. An inlined view is one expression, and "which views are incremental" is
+not a question one expression can answer. That is why this arrives with the slicer and not before.
+
+```console
+$ beck explain incremental corpus/22-shared.beck
+Every view below is a **full recompute per event** today. This is the analysis §3.8 asks
+for — which views a differential-dataflow plan could maintain by delta, and why the rest
+could not — and the engine that would maintain them is not built (docs/23 §23.8).
+
+  tally   incremental    (shared)
+            map_len        ±1 per insert or remove
+            >              pointwise
+  digest  incremental
+            +              pointwise
+            str            pointwise
+  page    incremental    (per session)
+            html_el        a subtree delta — what the patch protocol already streams
+            html_text      a text patch
+            +              pointwise
+            str            pointwise
+
+the shape a plan would have (§5.3)
+  shared arrangement: tally
+  per subscriber:     page  (one plan, these operators per connected session)
+
+3 of 3 views could be maintained by delta.
+```
+
+**The first line is the deliverable as much as the table is.** A command called `explain
+incremental` that let a reader believe their view was being maintained would be the most misleading
+output in the compiler, and `the_report_says_what_is_true_today_before_it_says_anything_else`
+asserts that the disclaimer is literally the first line rather than a footnote.
+
+### The rule, in the order the answers are useful
+
+1. **The row is empty** — §3.8's precondition, from the inference Phase 2 built. A view that
+   performs an effect is re-evaluated when the effect says so, and no delta rule applies. Ambient
+   effects (§3.2's `log`, `metrics`) do not count, because they force nothing.
+2. **Every operation has a delta rule.** `RULES` is the table, and like [`cost.rs`](../compiler/crates/beck-core/src/cost.rs)'s
+   numbers it is **stated, not measured**: each entry is a rule the differential-dataflow
+   literature already has, written down so it can be argued with. Nothing in the module claims an
+   implementation of any of them.
+3. **It is a view at all** — a vertex applying a function between the folds and a sink. The
+   ingress, the chokepoint and the folds are not assessed; a fold is not maintained by delta, it is
+   what *produces* the deltas.
+
+The blocker is reported by name, and it is the *first* one in source order, because the first is
+the one to fix:
+
+```console
+  chosen  recompute
+            a `match` on the input picks which computation runs, and a delta can move it between arms
+```
+
+A `match` is the interesting refusal. Differential dataflow does handle branching — the scrutinee
+becomes a collection and each arm a branch of the plan — and that is a real technique that is not in
+this table. Calling it "recompute" is the conservative answer and the message says which rule was
+missing rather than "unsupported".
+
+### What it says about §5.3's shape
+
+The last block is the one the slicer was built for. [`05`](05-tier-lowering.md) §5.3:
+
+> a thousand connected users of `todos.map(filter_by(session.user))` must compile to *one* shared
+> dataflow whose final per-session operators (filter, project, diff) run per subscriber
+
+Both halves of that sentence are now things the compiler can point at: the **shared arrangement** is
+the set of vertices read by more than one consumer, and the **per-subscriber** set is the closure
+below `per_session`. In `22-shared.beck` the answer is "share `tally`, run `page` per connection",
+which is the plan §5.3 describes, stated by the compiler about a program rather than by a document
+about a hypothetical.
+
+### What this deliberately does not do
+
+* **It does not maintain anything.** Repeating that here because it is the only claim worth
+  guarding.
+* **It does not check the table.** Every rule in `RULES` is an assertion about what a view engine
+  could do, and the only test on them is that none is empty or duplicated. The oracle that would
+  check them — recompute, which [`05`](05-tier-lowering.md) §5.3 calls "a luxurious position for
+  CI" — needs an incremental plan to compare against, and there is not one.
+* **It says nothing about cost.** "Incremental" is not "fast": a maintained plan has memory the
+  recompute does not, and §5.3's per-session memory is one of the three metrics that section says
+  to export. Neither number exists.
+* **Every corpus view comes back `incremental`, and that is a fact about the corpus.** They are
+  list, map, count and `ui:` computations, which is what the delta rules cover. The harness
+  therefore asserts the three verdicts on programs written to produce them, because a corpus-only
+  test would pass with an analysis that answered "incremental" to everything.
