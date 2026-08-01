@@ -118,7 +118,14 @@ dependencies whose signatures didn't change.
 
 ## Phase 3 — Make it real for developers (4–5 months) — **STARTED**
 
-> Two of the twelve bullets below are built, each with its own report.
+> Two of the bullets below are built, each with its own report.
+>
+> *The list was twelve when [`22`](22-phase-3-report.md) and [`23`](23-general-slicer-report.md)
+> were written, and both count against that number. It is **fourteen** now: D18 adds the
+> expressiveness suite, and [`24`](24-benchmarks-and-expressiveness.md) §24.6 found that the
+> language's own means of abstraction — recursive types, user-written polymorphism, tail calls —
+> had never been exercised by anything and had to be named as work rather than assumed. The reports
+> are history and keep their arithmetic; this list keeps its accuracy.*
 >
 > **`test` blocks and inferred mocks**, with [`22`](22-phase-3-report.md) as its evidence. `beck
 > test` runs a program's own tests — a log, a command and an expectation — through the same roles
@@ -141,8 +148,8 @@ dependencies whose signatures didn't change.
 > splitter did not refuse what it could not slice: two `durable` folds compiled, and both were
 > lowered to the same accumulator ([`23`](23-general-slicer-report.md) §23.2).
 >
-> The ten other bullets are **untouched**, and [`23`](23-general-slicer-report.md) §23.9 names them
-> one at a time rather than by omission.
+> The ten other bullets [`23`](23-general-slicer-report.md) §23.9 names one at a time are
+> **untouched**, and so are the two added since.
 
 - LLVM release backend + differential tests against Cranelift (§5.2).
 - **Incremental views**: compile subscribed/materialized views to differential-dataflow plans with
@@ -170,7 +177,19 @@ dependencies whose signatures didn't change.
   has, and a developer's laptop stops being merely similar to production. Measure with `beck bench
   log` and let the number pick rung 0's default.
 - Standard library v1: collections, strings, time, money/decimal, HTTP client, JSON, UUID, crypto
-  primitives (delegated to `ring`/`aws-lc-rs`, not hand-rolled).
+  primitives (delegated to `ring`/`aws-lc-rs`, not hand-rolled). **Reals first**, because §24.6
+  measures that §1.1.7 of SICP — the first substantial program in the book — does not typecheck
+  without them.
+- **The language's own means of abstraction, which four phases have never been pointed at**
+  ([`24`](24-benchmarks-and-expressiveness.md) §24.6, measured): recursive and forward-referencing
+  types; user-written polymorphic definitions; proper tail calls in the evaluator, or a bounded-depth
+  diagnostic in the interim, because a Beck program can currently abort its own process with a
+  recursion the user cannot bound; running a module with no merge point; and the `B0320`
+  row-unification defect that refuses an `if` over two function values. §24.7 orders them. Every
+  corpus program is shaped like the todo sketch, which is why none of these had surfaced.
+- **The expressiveness suite** ([`24`](24-benchmarks-and-expressiveness.md) §24.5, D18): SICP
+  stage 1, and Felleisen's criterion answered for the special forms the book introduces. It needs
+  macros and nothing else, so it starts now and does not wait on the bullet above.
 - **Identity**: OIDC relying-party runtime, `identity = managed()` provisioning (Keycloak/Ory),
   claims → `Session` capability mapping, dev-mode identity for rung 0, presence as a first-class
   signal ([`10`](10-decisions.md) D6).
@@ -233,7 +252,14 @@ production hardening.
   replay as an operational tool) proving the backend and data tier in public.
 - Performance: a published benchmark suite versus a hand-written React+FastAPI+Postgres+Helm baseline —
   latency, payload size, image size, build time, *and* lines of code. That last number is the one that
-  travels.
+  travels. **Published on third-party suites, not only on ours** — TechEmpower, js-framework-benchmark,
+  Are We Fast Yet — per §8.4, whose harnesses have been running since Phase 3 so the numbers arrive
+  with a history rather than as a launch claim.
+- **The expressiveness result** ([`24`](24-benchmarks-and-expressiveness.md) §24.5): the SICP suite
+  through chapter 4, and Felleisen's criterion answered — every special form the book introduces
+  either recovered as a Beck macro or recorded as requiring a global reorganisation. This is the
+  premise of [`01`](01-vision-and-premise.md) §1.1 and [`10`](10-decisions.md) D9, either cashed or
+  conceded, and it belongs beside the language specification because it is the same claim.
 
 ## 8.1 Milestone dependency graph
 
@@ -271,7 +297,9 @@ Kubernetes objects + inferred placement* on the right is the demo that explains 
    the central promise; keep it green.
 3. **Error-message snapshots in CI** from week two (§4.5).
 4. **Size and latency budgets are CI gates**, not aspirations: client payload, image size, cold start,
-   incremental build time, keystroke→diagnostic.
+   incremental build time, keystroke→diagnostic. Those are *our* yardsticks; §8.4 schedules the ones
+   somebody else chose, on the rule that a harness is stood up a phase before its number is
+   publishable.
 5. **`cargo-deny` licence gate** from the first commit, given §7's open-source constraint.
 6. **Write the tutorial as you build**, and treat any sentence that requires an apology ("for now you
    have to…") as a bug report against the design.
@@ -279,3 +307,33 @@ Kubernetes objects + inferred placement* on the right is the demo that explains 
    Beck — the registry's domain is a homomorphism of the semantics (immutable versions = events
    forever; transparency log = the log; yank = an event), so building it tests exactly the backend
    and data tier claims, in production, in public.
+
+## 8.4 Benchmarks and expressiveness, by phase
+
+[`24`](24-benchmarks-and-expressiveness.md) answers two questions — which third-party performance
+suites apply, and how the expressiveness premise gets falsified — and D18 adopts both. The plan for
+them is one table rather than bullets scattered through five phases, because the sequencing rule
+matters more than any individual suite:
+
+> **Stand every harness up one phase before its number is publishable.** A suite acquired after the
+> thing it measures gets good has no history and therefore no regression-detecting power. Phase 0's
+> measurements are worth more today than the day they were taken for exactly this reason
+> ([`18`](18-phase-0-report.md)); a benchmark adopted at 1.0 to support a launch claim is worth
+> nothing at all.
+
+The consequence, stated so it cannot be quietly dropped: **the first numbers we publish will be
+bad**, because §24.3 measures the tree-walking evaluator at roughly 33× CPython on `fib(30)` and
+native codegen is unbuilt. Publishing them anyway is the point.
+
+| Phase | Stand up | Publish |
+|---|---|---|
+| **3** | The **expressiveness** work, which needs nothing that is not built: SICP stage 1 (chapter 1 complete) and the **Felleisen macro-expressibility table**. Macros are built and hygienic ([`19`](19-phase-1-report.md)), so this is independent of §24.7's six walls and is the cheapest item on this table. Also: the compile-speed budgets §13.7 already lists, on the rustc-perf model | Chapter 1's line-count comparison against the pinned Scheme baseline — the first honest number in either half of §24 |
+| **3** (with the standard library and the LLVM backend) | **Are We Fast Yet** and **CLBG** harnesses, run against the evaluator | Nothing comparative. The interpreter-vs-Cranelift-vs-LLVM differential ([`13`](13-testing.md) §13.1) and the first honest compute number arrive together, and not before |
+| **4** | **TechEmpower** (the five tests that map without argument; the two that assume update-in-place stated as run against a read model), **js-framework-benchmark** (three columns — Mode A at a stated RTT, Mode A at RTT 0, Mode B — never averaged), **YCSB** against the log, **Lighthouse/Core Web Vitals** as gates on the example apps. SICP stages 2–3. **The DDIA matrix** ([`15`](15-scale-and-distribution.md) §15.6) — beside the Jepsen and simulation work that discharges its rows, never before it, because a matrix written ahead of its tests is the table of intentions it exists not to be | The whole-system numbers, unflattering, with the methodology notes of §24.2 attached to each. This is [`01`](01-vision-and-premise.md) §1.5 item 3 measured by somebody else's harness rather than ours |
+| **5** | **TPC-H/ClickBench** on read models once §5.3's engine exists; the incremental-view workload §24.2 records as having *no* standard, which we would be defining rather than borrowing. SICP stage 4 | The Phase 5 suite above, and the expressiveness result — including the rows §24.5 forecasts Beck will lose (§2.4–2.5 generic operations, chapter 4's evaluator), which are published or the exercise was not run honestly |
+
+Two things this table deliberately does not do. It does not put **TPC-C** anywhere: it assumes
+update-in-place OLTP, which is not Beck's data model, and entering it would be a claim we do not
+make. And it does not treat the SICP suite's pass rate as a metric — §24.5's three registers
+(translated / re-expressed / refused) are the result, and chapters 3.1–3.4 and 5 are expected to
+land mostly in the last two.

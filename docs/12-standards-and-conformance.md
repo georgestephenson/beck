@@ -124,4 +124,43 @@ our terms; conformance means restating them in the auditor's terms and testing t
   implementation — the spec's teeth outlive us.
 - **Public benchmark methodology**: versus a named baseline stack, reproducible from a repo, with
   the harness published — performance claims follow the same "test or marketing" rule as
-  everything else.
+  everything else. **The suites are named and third-party**
+  ([`24`](24-benchmarks-and-expressiveness.md) §24.2, adopted as D18): TechEmpower and
+  js-framework-benchmark for the shipped system, Are We Fast Yet and the Computer Language
+  Benchmarks Game for the core, YCSB for the log, TPC-H/ClickBench for read models, Sightglass for
+  WASM, Lighthouse for the page. A suite we designed ourselves and won is worth nothing; the whole
+  value of a standard one is that somebody else chose the workload and the alternatives already
+  have numbers on it. §24.2 also records where the honest answer is that **no standard exists** —
+  incremental view maintenance — and §24.2's three methodology notes are part of the commitment,
+  not commentary on it. [`08`](08-roadmap.md) §8.4 schedules them.
+
+## 12.10 Expressiveness: the premise, made falsifiable
+
+Every standard above measures a shipped artefact. None of them measures what
+[`01`](01-vision-and-premise.md) §1.1 and [`10`](10-decisions.md) D9 actually claim — that Beck is
+SICP's three moves made into a language, and that a Python-shaped surface carries Lisp's power
+without losing any of it. Until [`24`](24-benchmarks-and-expressiveness.md) there was **no artefact
+that could falsify either**, which by §12.1's own rule makes them marketing.
+
+Two instruments, adopted as D18:
+
+- **Felleisen's criterion** (*On the Expressive Power of Programming Languages*, 1991) is the
+  formal half, and it is checkable rather than rhetorical because Beck's macros are hygienic and
+  operate on the same `Node` AST as everything else: every special form SICP introduces is either
+  recovered as a Beck macro — a *local* rewrite — or recorded as requiring a global reorganisation,
+  which is exactly the 1991 definition of being less expressive. Passing it makes the line count a
+  question about ergonomics rather than about power, which is the separation that stops the
+  exercise collapsing into an argument about syntax.
+- **The SICP suite** is the empirical half, and it has an oracle: the book states its answers, so
+  §13.1's "the hardest problem in testing is knowing the right answer" does not apply. It enters
+  CI the same way every other standard here does — as an executable artefact
+  ([`compiler/sicp/`](../compiler/sicp/), gated by
+  [`beck-cli/tests/sicp.rs`](../compiler/crates/beck-cli/tests/sicp.rs)) — and its **refusals are
+  asserted as well as its passes**, so a wall coming down is a failing test rather than something
+  somebody notices.
+
+The counting protocol (§24.5) is part of the standard, because lines of code is a real metric and
+an easy lie: a third-party Scheme baseline pinned by commit, the same algorithm on both sides or
+the exercise does not count, and three counts published together — lines, tokens, and lines
+excluding type signatures — since Beck is typed and Scheme is not. A single headline number is the
+tell that somebody chose.

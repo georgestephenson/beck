@@ -10,6 +10,15 @@
 > third-party suites layer by layer, says which of them would be honest to run today and which
 > would measure a placeholder, and then designs the SICP suite — with the part of it that runs
 > today already checked in, measured, and gated.
+>
+> **Both are adopted** — [`10`](10-decisions.md) D18. [`08`](08-roadmap.md) §8.4 is the schedule and
+> [`12`](12-standards-and-conformance.md) §12.9–§12.10 folds them into the conformance discipline;
+> §24.9 below is the one-screen version.
+>
+> Three further candidates — **Nand2Tetris**, **LeetCode** and **DDIA** — are assessed in §24.8, and
+> so is the [teachyourselfcs](https://teachyourselfcs.com/) curriculum the three of them turn out to
+> come from. Two of the three are declined *as performance tests* and adopted for something else;
+> the short version is that each was right about a gap, and wrong about which one.
 
 ## 24.1 The rule, and what is already committed
 
@@ -258,6 +267,13 @@ than about arithmetic or about cost translates without argument. It also round-t
 off that file — which is [`02`](02-syntax.md) §2.2's dual-surface claim, checked for the first time
 against code that is *about* abstraction rather than about a signal graph.
 
+**User-written macros work, and that is what makes §24.9 schedulable.** No corpus program and no
+example defines one, so it was an open question whether the expander built in Phase 1 was reachable
+from a user's program at all. It is: a `macro unless(cond, do)` with a `return quote:` body expands,
+controls flow, and passes tests, and so does §4.1.2's `and` written as a derived expression. That
+matters more than it looks — the Felleisen half of the exercise needs macros and needs *nothing
+else*, so it is independent of all six walls below and can start immediately.
+
 Six walls stand between that and the rest of the book. Each has a file in
 [`sicp/refusals/`](../compiler/sicp/refusals/) and a test that asserts it is still there.
 
@@ -345,7 +361,175 @@ that exist); stand up TechEmpower and js-framework-benchmark harnesses with publ
 numbers as soon as Mode A is complete enough to enter honestly; hold CLBG and Are We Fast Yet until
 there is a backend for them to be about.
 
-## 24.8 What this document does not claim
+## 24.8 Further proposals, assessed
+
+Three more were raised as candidate suites — Nand2Tetris, LeetCode and DDIA — and they get three
+different answers. Two are declined *as performance tests* for the same reason D18 excludes TPC-C:
+a benchmark inside the scope [`01`](01-vision-and-premise.md) §1.5 explicitly concedes generates
+evidence about a claim we do not make. Both are then adopted for something else, because the
+instinct behind each was right about *a* gap, just not the one it named.
+
+### Nand2Tetris — declined as a performance test
+
+The natural workload is the Hack CPU emulator from projects 5–6: a tight loop over a 32K-word
+mutable array with bit manipulation. It is a reasonable language benchmark in the abstract, and it
+is the wrong one here, for two reasons that are worth separating.
+
+**The shallow reason** is that it cannot be written. Beck has no mutable arrays, no bitwise
+operators at all (the lexer has no `&`, `^`, `<<` or `>>`), and no fixed-width integer types. That
+is a large amount of language surface to add for a benchmark.
+
+**The reason that would still hold if all of that existed** is that a gate-level simulator sits
+squarely inside the scope [`01`](01-vision-and-premise.md) §1.5 explicitly *concedes*: "ML/numeric
+work, systems programming, and ecosystem breadth are conceded and bridged (FFI, sidecar), not
+contested." Publishing a number there would be generating evidence about a claim we decline to
+make — the mirror image of the TPC-C exclusion in D18. And if the goal is a branch-heavy,
+array-heavy workload specifically, **Are We Fast Yet already is one**: DeltaBlue, Richards, CD and
+Havlak were chosen by researchers to be fair across language implementations, which is more than a
+hand-rolled emulator could claim.
+
+**Where it does have value, and it is real:** projects 6–11 are an assembler, a VM translator and a
+compiler for the Jack language, against a written specification, with supplied `.cmp` files and a
+test scripting language — so, like SICP, **it has an oracle**. That makes it a strong
+*expressiveness-at-scale* candidate: SICP §4.1's evaluator is a few hundred lines, and a Jack
+compiler is a few thousand written to somebody else's spec. It needs everything chapter 4 needs
+plus mutable arrays and file I/O, and it largely re-tests what chapter 4 would already have
+settled. **Recorded as a stage-5 option, conditional on SICP chapter 4 being green first** — and if
+chapter 4 is green, the honest question is whether this adds a result or a second copy of one.
+
+### LeetCode — declined as a performance test, adopted as the ergonomics test SICP cannot be
+
+As a performance instrument this fails earlier than Nand2Tetris does, and on methodology rather
+than on scope. LeetCode has **no published harness, no fixed workload set and no controlled
+hardware**; its runtimes are relative to whatever else has been submitted in the same language, and
+they move when strangers submit. [`12`](12-standards-and-conformance.md) §12.9 requires a benchmark
+be "reproducible from a repo, with the harness published", and this is the precise opposite: it is
+a leaderboard, not a suite. There is also no Beck judge, so every problem would run on a harness we
+wrote — at which point it is a private benchmark whose problems were chosen by an interview-prep
+site, strictly worse than CLBG, which at least publishes a fixed workload. And the workload profile
+— in-place array updates, index arithmetic, hash maps, dynamic programming — is the same conceded
+zone as Nand2Tetris. Are We Fast Yet already covers it, chosen by researchers to be fair.
+
+**But the instinct is right about something SICP structurally cannot test.** [`10`](10-decisions.md)
+D9 makes two claims: Lisp's power, *and* Python's mass appeal. SICP tests the first. Nothing tests
+the second — whether a working programmer can write ordinary code without fighting the language —
+and that is [`09`](09-risks-and-open-questions.md) §9.3's "week two" risk and Phase 3's literal exit
+criterion.
+
+Measured, because it is a stronger finding than an opinion. **LeetCode 1, "Two Sum" — the most
+commonly written first program in any language — cannot be written in Beck at all**, and it takes
+four separate diagnostics to say so:
+
+```console
+error[B0331]: loops are not available in Phase 1   # no statement-level iteration
+error[B0320]: indexing mismatch: expected `Map[Int, ?0]`, found `list[Int]`
+error[B0346]: cannot tell which model this record builds     # `{}` with nothing to infer from
+error[B0320]: return type mismatch: expected `list[Int]`, found `Unit`   # a `var`-only body
+```
+
+No loops, no list indexing, no inferable empty map, and a mutable local that does not compose into
+a value. That is not one missing feature; it is the imperative idiom missing as a *category*, in a
+language whose surface is advertised as Python's. It is also invisible to every other artefact in
+the repository, because the corpus is 26 event-sourced applications and SICP chapter 1 is pure
+recursion — neither shape ever reaches for a loop.
+
+So: **adopt 30–50 problems as an ergonomics smoke test, not a benchmark.** They have oracles
+(expected outputs), they are cheap, and they target exactly the half of D9 that SICP leaves
+untested. The pairing is the point — SICP holds the Lisp inheritance to account, LeetCode holds the
+Python surface to account, and D9 claims both. It is not adopted by D18 and does not appear in
+§24.9's table; it is a recommendation with the evidence attached, and the evidence above is
+reproducible by pasting the four lines it took to produce it.
+
+### DDIA — adopted, but as a conformance matrix rather than a benchmark
+
+This one is not a suite at all, and treating it as one would be the mistake.
+[`15`](15-scale-and-distribution.md) §15.1 already walks a DDIA problem list against the semantics —
+seven rows, in prose. By §12.1's own rule that is currently a scratchpad: **a claim without a test**,
+which is exactly the position the expressiveness premise was in before D18.
+
+So the answer to "can we implement solutions for all the problems DDIA raises" is: *implement*, no,
+and it is important to say why not — DDIA raises problems that are impossible (exactly-once
+delivery), problems Beck deliberately declines (active-active writes to one key), and problems that
+are business trade-offs rather than technical ones. **The concessions are the most valuable rows in
+the matrix**, and §15.1's best existing entries are already the ones that say "Not claimed."
+
+What *is* achievable is to make every row executable, and the pattern to copy is already in this
+repository: [`12`](12-standards-and-conformance.md) §12.7's OWASP ASVS matrix, where each control is
+marked *unrepresentable by construction* (with the test that proves it), *generated*, or *the user's
+responsibility*. [`15`](15-scale-and-distribution.md) §15.6 applies that shape to DDIA, indexed by
+the second edition — Kleppmann and **Riccomini**, whose chapter numbering differs from the first
+edition's and should be pinned rather than remembered. The instruments it needs are already planned
+rather than new: Jepsen for the consistency claims, deterministic simulation for the fault-injection
+claims, and TLA+ for the three protocols ([`13`](13-testing.md) §13.4–§13.5).
+
+### The curriculum behind all three
+
+SICP, Nand2Tetris and DDIA are three of the nine subjects on
+[teachyourselfcs.com](https://teachyourselfcs.com/), arrived at independently and one at a time.
+That is worth noticing rather than treating as coincidence: the curriculum is a decent map of what
+a language project has to be answerable to. So the remaining six were walked, with one question
+asked of each — **does this subject yield a test, or a lesson?** Most yield lessons, and two of the
+lessons bear directly on gaps §24.6 measured this week.
+
+| Subject | Canonical text | Test or lesson |
+|---|---|---|
+| Programming | **SICP** | **Test** — adopted, D18 |
+| Distributed systems | **DDIA** | **Test** — adopted as a matrix, [`15`](15-scale-and-distribution.md) §15.6 |
+| Algorithms | **The Algorithm Design Manual** / CLRS | **A requirements list, not a benchmark.** Beck's collections are `list` and `Map` and nothing else — no set, no deque, no priority queue, no graph. This is LeetCode's serious cousin and it produces the same verdict: the value is the gap list, and it feeds Phase 3's "standard library v1" bullet directly |
+| Languages and compilers | **Crafting Interpreters** | **Lesson, and the most immediately useful one.** Nystrom's closure/upvalue and tail-call chapters are §24.6 items 5 and 6 — the two defects the SICP work surfaced — treated at length. The jlox→clox transition *is* the Phase 3 work of replacing the `Core` evaluator, and its measured speedups are the honest expectation-setter for §24.3's 33× |
+| Operating systems | **OSTEP** | **Lesson, and under-exploited.** `durable(fold(…))` plus snapshots plus a log is a journaling filesystem's problem restated, and OSTEP's crash-consistency chapters are the direct source for what [`13`](13-testing.md) §13.4's `kill -9` tests must actually cover — ordering, fsync semantics, and the difference between a torn write and a lost one |
+| Computer architecture | **CS:APP**, Nand2Tetris | **Lesson.** CS:APP, not Nand2Tetris, is where the performance lessons live — the memory hierarchy is *why* a tree-walking interpreter costs 33×, and what the LLVM backend has to exploit |
+| Databases | **Readings in Database Systems** ("the Red Book"), *Architecture of a Database System* | **Lesson**, and half-inherited already via [`05`](05-tier-lowering.md) and [`07`](07-dependencies.md) §7.8. Hellerstein and Stonebraker are the source for the read-model and query-planner design that §5.3's incremental views still need |
+| Computer networking | **Kurose & Ross** | **Lesson.** The patch channel is a flow-control problem with forty years of prior art: backpressure, head-of-line blocking, drop-to-latest. [`13`](13-testing.md) §13.4 lists the tests; the *design* should be borrowed rather than reinvented |
+| Mathematics for CS | **Lehman, Leighton & Meyer** | **Nothing direct.** The nearest connection is that the type-directed generator (`gen.rs`) and DST's state-space exploration are both sampling problems, and neither is currently reasoned about as one |
+
+The summary worth keeping: **three subjects yield executable tests and one yields a requirements
+list; the other five yield design lessons** — and the two most valuable of those five, Crafting
+Interpreters and OSTEP, are about work already on the plan rather than about new scope.
+
+## 24.9 Where this lands in the plan
+
+Adopted as [`10`](10-decisions.md) D18; scheduled in [`08`](08-roadmap.md) §8.4. The sequencing rule
+is one sentence — **stand every harness up one phase before its number is publishable** — and its
+uncomfortable consequence is stated rather than discovered: the first numbers published will be
+bad, because §24.3 measures a placeholder. A benchmark adopted at 1.0 to support a launch claim has
+no regression-detecting power, which is the only thing a benchmark is for.
+
+| Phase | Stood up | Published |
+|---|---|---|
+| **3** | SICP stage 1; the Felleisen table (below); compile-speed budgets; Are We Fast Yet and CLBG harnesses against the evaluator | Chapter 1's line comparison. **No compute number** until the LLVM backend gives §13.1 its differential |
+| **4** | TechEmpower, js-framework-benchmark, YCSB, Lighthouse; SICP stages 2–3; **the DDIA matrix** ([`15`](15-scale-and-distribution.md) §15.6), beside the Jepsen work that discharges its rows | The whole-system numbers, with §24.2's methodology notes attached |
+| **5** | TPC-H/ClickBench on read models; the incremental-view workload nobody has standardised; SICP stage 4 | The Phase 5 suite, and the expressiveness result — **including the rows §24.5 forecasts we lose**. The DDIA matrix's **Conceded** and **Bounded** rows, which are the ones a platform team reads |
+
+Not in the table, deliberately: **LeetCode** is a recommendation rather than an adopted commitment
+(§24.8), and **Nand2Tetris** is conditional on SICP chapter 4 being green first, at which point the
+question is whether it adds a result or a second copy of one.
+
+### The Felleisen deliverable, stated concretely
+
+The formal half is not "read the 1991 paper and form a view". It is a table, and it is the cheapest
+item in §8.4 because §24.6 measured that user macros work today — so unlike everything else here it
+waits on none of the six walls.
+
+For every special form SICP introduces, one of two verdicts: **recovered** (a Beck macro — a local
+rewrite, which is Felleisen's definition of no loss of expressive power) or **global** (it cannot
+be, and the reorganisation it forces is described). The forecast, recorded now so being wrong about
+it is visible:
+
+| SICP form | Where | Forecast |
+|---|---|---|
+| `cond`, `and`, `or`, `not` | §1.1, derived in §4.1.2 | **Recovered.** §24.6 already ran `and` as a derived expression through a user macro |
+| `let`, `let*` | §1.3.2, §4.1.6 | **Recovered** — Beck has local bindings and lambdas |
+| `delay` / `force`, `cons-stream` | §3.5.1 | **The interesting one.** It is a special form in Scheme *precisely because* it must not evaluate its argument, which is the textbook case for a macro. Beck has closures, so `delay` should be a thunk and `cons-stream` a record holding one. If this one fails, the expressiveness claim is in real trouble |
+| `quote`, quasiquote | §2.3.1 | **Blocked, not global** — Beck's macros already quote, but a *program's* symbolic data needs a symbol type and recursive types (§24.6 items 2) |
+| `set!`, `begin` | §3.1 | **Refused by design** — D1. Not an expressiveness loss to be measured but a decision to be cited |
+| `amb` | §4.3 | **Expected `global`.** Backtracking needs continuations; Beck has none, and a macro cannot manufacture them. This is the row where Scheme is likely more expressive in the strict 1991 sense, and the report should say so plainly rather than redefine the term |
+| `define-syntax`, derived expressions generally | §4.1.2 | **Recovered, and stronger** — SICP derives these *inside its evaluator*; Beck derives them in the language, which is the larger claim |
+
+One row expected to be conceded out of seven is a result worth publishing. Seven out of seven
+recovered would be a result worth double-checking.
+
+## 24.10 What this document does not claim
 
 - **No comparison has been run.** No Scheme baseline has been pinned, no line has been counted, and
   no number in §24.6 is a comparative claim. §24.5 is a design; §24.6 is a measurement of Beck
@@ -357,5 +541,5 @@ there is a backend for them to be about.
   checked against the pinned baseline when one is chosen.
 - **The forecasts in §24.5 are forecasts.** They are recorded so that being wrong about them is
   visible.
-- **`sicp/` is not on the roadmap.** Nothing in [`08`](08-roadmap.md) has been changed by this
-  document, and adopting the suite is a decision that has not been taken.
+- **The schedule is a schedule.** §24.9 and [`08`](08-roadmap.md) §8.4 place this work in phases;
+  none of it is done beyond what §24.6 measures.

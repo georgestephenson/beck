@@ -40,12 +40,12 @@ the transcript was available; checking it against the original changed three loa
 | 07 | [Dependencies](07-dependencies.md) | Every third-party choice: rationale, licence, benchmarks, rejected alternatives, swap cost |
 | 08 | [Roadmap](08-roadmap.md) | Phase 0 premise-proof, walking skeleton, phased plan, exit criteria, team shape |
 | 09 | [Risks and open questions](09-risks-and-open-questions.md) | Ranked risks, decisions taken, remaining opens |
-| 10 | [Decision log](10-decisions.md) | George's decisions D1–D17, all settled — including the Git/local-first analysis, the language-not-framework rationale, and the name: **Beck** |
+| 10 | [Decision log](10-decisions.md) | George's decisions D1–D18, all settled — including the Git/local-first analysis, the language-not-framework rationale, and the name: **Beck** |
 | 11 | [Language tour](11-language-tour.md) | What Beck looks like, construct by construct — types, traits, macros, queries, UI, services, in-language tests |
 | 12 | [Standards and conformance](12-standards-and-conformance.md) | The rulesets Beck conforms to, layer by layer — and the test-linked spec discipline that makes conformance real |
 | 13 | [Testing strategy](13-testing.md) | Every applicable kind of test and why — built around the free oracles Beck's semantics manufacture (DST, differentials, TLA+, Jepsen) |
 | 14 | [Review findings](14-review-findings.md) | The adversarial review: ranked security/design findings — all resolved (D14) |
-| 15 | [Scale and distribution](15-scale-and-distribution.md) | The DDIA checklist against Beck's semantics; the scaling ladder (partitioned logs, typed sharding), sagas, and why Beck needs a fabric, not a Redis |
+| 15 | [Scale and distribution](15-scale-and-distribution.md) | The DDIA checklist against Beck's semantics; the scaling ladder (partitioned logs, typed sharding), sagas, and why Beck needs a fabric, not a Redis — with that checklist made executable as a four-verdict conformance matrix (§15.6) |
 | 16 | [Packages and ecosystem](16-packages-and-ecosystem.md) | The Rails/npm lessons; Beck's own package system — **tarns** (packages), **forces** (vertical-slice feature packages), **the Mere** (index); effect-transparent dependencies, no install hooks |
 | 17 | [The playground](17-playground.md) | The whole stack in a browser tab (the DST convergence), the cloud rung with the compiler as first sandbox, content-addressed sharing, playground-as-Beck-app |
 | 18 | [Phase 0 report](18-phase-0-report.md) | **Built.** What [`phase0/`](../phase0/) implements, the measured exit criteria, the kill/pivot gates, and what turned out harder than expected |
@@ -54,7 +54,7 @@ the transcript was available; checking it against the original changed three loa
 | 21 | [Tests in Beck, and proof](21-tests-in-beck-and-proof.md) | **§21.2–§21.3 built** (see 22). `test` blocks that cross the boundary without a network, mocks derived from the effect row instead of written out — and the six-rung ladder that says how we know a generated manifest is right, with what a proof would and would not add |
 | 22 | [Phase 3 report, part 1](22-phase-3-report.md) | **Built.** Tests written in Beck: `test`/`property` blocks, `beck test`, effect-atom stubs nobody writes, one type-directed generator — one bullet of Phase 3's twelve, with the other eleven named rather than implied |
 | 23 | [Phase 3 report, part 2](23-general-slicer-report.md) | **Built.** The general slicer: the signal graph as a graph, several durable folds fused into one accumulator, shared computations bound once, every tier crossing enumerated — the debt two phases carried, and the silent mis-slice it was hiding. Plus `beck explain incremental`, the analysis §3.8 asks for and the plan is the input to — with the view engine still unbuilt, and the report saying so first |
-| 24 | [Benchmarks and expressiveness](24-benchmarks-and-expressiveness.md) | The third-party performance suites, layer by layer, and which would measure a placeholder today — plus SICP as the expressiveness benchmark the premise has never had, with chapter 1 running and the six walls beyond it measured |
+| 24 | [Benchmarks and expressiveness](24-benchmarks-and-expressiveness.md) | The third-party performance suites, layer by layer, and which would measure a placeholder today — plus SICP as the expressiveness benchmark the premise has never had, with chapter 1 running and the six walls beyond it measured. Nand2Tetris, LeetCode, DDIA and the curriculum behind them assessed: which yield a test, which a lesson |
 
 ## The one-paragraph version
 
