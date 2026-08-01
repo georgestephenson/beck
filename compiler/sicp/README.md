@@ -1,13 +1,13 @@
 # SICP in Beck
 
 The expressiveness suite proposed in
-[`docs/24-benchmarks-and-expressiveness.md`](../../docs/24-benchmarks-and-expressiveness.md),
+[`docs/25-benchmarks-and-expressiveness.md`](../../docs/25-benchmarks-and-expressiveness.md),
 started. [`docs/00-original-idea.md`](../../docs/00-original-idea.md) opens with "I read SICP and
 had this idea"; this directory is that sentence turned into something that can fail.
 
 The claim under test is not performance. It is that Beck kept Scheme's means of combination and
 means of abstraction while gaining a Python surface and a type system — and that it is no more
-verbose for it. §24.5 sets out the protocol; nothing here is a comparison yet.
+verbose for it. §25.5 sets out the protocol; nothing here is a comparison yet.
 
 ## What is here
 
@@ -29,7 +29,7 @@ $ ./target/release/beck test sicp/ch1.beck
 
 Every SICP solution is a library: pure procedures, no merge point. Beck cannot run a library, so
 `ch1.beck` carries a five-declaration application that nothing in the chapter uses, purely to be
-executable. It is left visible on purpose — deleting it is item 1 of §24.7.
+executable. It is left visible on purpose — deleting it is item 1 of §25.7.
 
 ## Why this is not in `corpus/`
 
@@ -39,7 +39,7 @@ different questions and they get different directories.
 
 ## The register an exercise lands in
 
-Per §24.5, and it matters more than the pass rate: **translated** (same algorithm, book's answer
+Per §25.5, and it matters more than the pass rate: **translated** (same algorithm, book's answer
 asserted, counts toward the line comparison), **re-expressed** (same problem in Beck's idiom,
 because a transliteration would be a caricature — shown both ways, argued, counted in neither), or
 **refused** (Beck cannot, and the report says whether that is a gap or a decision). An exercise

@@ -14,6 +14,8 @@ use std::sync::Arc;
 use anyhow::{anyhow, Context, Result};
 use beck_core::backend::{Backend, Callable};
 use beck_core::core::CoreKind;
+use beck_core::engine::{Engine, Prepared};
+use beck_core::plan::Plan;
 use beck_core::{Core, Html, Placed, Value};
 
 use crate::log::Envelope;
@@ -31,6 +33,10 @@ pub struct Runtime {
     validate: Callable,
     fold_fn: Callable,
     view_fn: Callable,
+    /// The same view as a dataflow plan (§5.3), with every operator prepared. Compiled once and
+    /// shared by every subscription: an [`Engine`] per subscriber holds the arrangements, and this
+    /// holds the code.
+    plan: Arc<Prepared>,
     init: Value,
     /// The one impure capability the program may reach: minting ids outside a fold.
     uuid: Box<dyn Fn() -> Arc<str> + Send + Sync>,
@@ -51,6 +57,10 @@ impl Runtime {
         let validate = role(&placed.roles.validate, "`validate`")?;
         let fold_fn = role(&placed.roles.fold, "the fold")?;
         let view_fn = role(&placed.roles.view, "the view")?;
+        let plan = Arc::new(
+            Prepared::compile(&placed, backend.as_ref())
+                .map_err(|e| anyhow!("compiling the view plan: {e}"))?,
+        );
         let init = backend
             .constant(&placed.roles.init)
             .map_err(|e| anyhow!("evaluating the initial state: {e}"))?;
@@ -61,6 +71,7 @@ impl Runtime {
             validate,
             fold_fn,
             view_fn,
+            plan,
             init,
             uuid: Box::new(|| Arc::from(uuid::Uuid::now_v7().to_string())),
         })
@@ -144,6 +155,40 @@ impl Runtime {
         }
     }
 
+    /// The view as a dataflow plan — what `beck explain incremental` reports on.
+    pub fn plan(&self) -> &Arc<Plan> {
+        self.plan.plan()
+    }
+
+    /// A maintained view for one subscriber.
+    ///
+    /// One per subscription, because §3.8's per-session views are "the norm, not the exception" and
+    /// an arrangement below a `per_session` is that subscriber's. Everything *above* it is the same
+    /// computation for everybody — [`Plan::shared`] says which nodes — and the engine does not yet
+    /// share it; [`docs/24-incremental-views-report.md`] §24.7 says so rather than implying
+    /// otherwise.
+    pub fn view_engine(&self) -> Result<Engine> {
+        Ok(Engine::new(self.plan.clone()))
+    }
+
+    /// Render a subscriber's view by maintaining it, rather than by recomputing it.
+    ///
+    /// Identical output to [`Runtime::view`] — `beck-cli/tests/incremental_engine.rs` is the gate,
+    /// over every corpus program and every event of a generated log.
+    pub fn render(&self, engine: &mut Engine, state: &Value, actor: &str) -> Result<Html> {
+        let out = engine
+            .render(state, &session(actor))
+            .map_err(|e| anyhow!("{e}"))
+            .context("maintaining the view")?;
+        match out {
+            Value::Html(h) => Ok((*h).clone()),
+            other => Err(anyhow!(
+                "the view produced {} rather than Html",
+                other.display()
+            )),
+        }
+    }
+
     /// Prepare an arbitrary `Core` lambda for calling, through the same backend the roles use.
     ///
     /// The one caller is the test runner (§21.2), which has to evaluate an `expect` expression with
@@ -153,6 +198,15 @@ impl Runtime {
         self.backend
             .function(code)
             .map_err(|e| anyhow!("preparing an expression: {e}"))
+    }
+
+    /// The `Session` value a subscriber's view is rendered against.
+    ///
+    /// Public because the incremental view engine takes it as an input rather than receiving it
+    /// through [`Runtime::view`]: a plan's session is a *node*, and everything not downstream of it
+    /// is what §5.3 shares between subscribers.
+    pub fn session(&self, actor: &str) -> Value {
+        session(actor)
     }
 
     /// Mint an id at the edge. Never called inside a fold — the checker guarantees that.

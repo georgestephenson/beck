@@ -1,4 +1,4 @@
-# 24 — Benchmarks and expressiveness
+# 25 — Benchmarks and expressiveness
 
 > **Two questions.** Are there standard tests we can measure Beck's performance against
 > alternatives with? And: what if the solutions to every SICP exercise were written in Beck — not
@@ -13,14 +13,14 @@
 >
 > **Both are adopted** — [`10`](10-decisions.md) D18. [`08`](08-roadmap.md) §8.4 is the schedule and
 > [`12`](12-standards-and-conformance.md) §12.9–§12.10 folds them into the conformance discipline;
-> §24.9 below is the one-screen version.
+> §25.9 below is the one-screen version.
 >
-> Three further candidates — **Nand2Tetris**, **LeetCode** and **DDIA** — are assessed in §24.8, and
+> Three further candidates — **Nand2Tetris**, **LeetCode** and **DDIA** — are assessed in §25.8, and
 > so is the [teachyourselfcs](https://teachyourselfcs.com/) curriculum the three of them turn out to
 > come from. Two of the three are declined *as performance tests* and adopted for something else;
 > the short version is that each was right about a gap, and wrong about which one.
 
-## 24.1 The rule, and what is already committed
+## 25.1 The rule, and what is already committed
 
 Nothing here is a new policy. [`12`](12-standards-and-conformance.md) §12.1 fixes the rule — **a
 claim is a test or it is marketing** — and §12.9 already commits to "a public benchmark
@@ -34,11 +34,11 @@ layer.
 
 So the open question was never *whether* to measure. It is **whose rules**. A suite we design
 ourselves and win is worth nothing; the value of a standard suite is that somebody else chose the
-workload, and that the alternatives already have published numbers on it. §24.2 is that list.
+workload, and that the alternatives already have published numbers on it. §25.2 is that list.
 [`13`](13-testing.md) §13.7 is where the resulting harnesses live, as budgets rather than as
 press releases.
 
-## 24.2 The standard suites, layer by layer
+## 25.2 The standard suites, layer by layer
 
 Beck is five tiers in one program, so there is no single suite — there is one per tier, and the
 composite claim (§1.5 item 3) needs its own. Ordered by how load-bearing they are for what Beck
@@ -51,10 +51,10 @@ actually asserts.
 | **Page quality** | **Lighthouse / Core Web Vitals** (LCP, INP, CLS) | User-perceived performance | Already committed, [`12`](12-standards-and-conformance.md) §12.4, as CI gates on the example apps |
 | **The language core** | **Are We Fast Yet** (Marr, Daloze, Mössenböck, DLS '16) — 9 micro- and 5 macro-benchmarks written against a *common subset* of language features | Compiler effectiveness across languages, deliberately constructed so that the comparison is of implementations rather than of standard libraries | The methodologically strongest choice for Beck's core, and much harder to game than the alternative below |
 | **The language core, popularly** | **Computer Language Benchmarks Game** — binary-trees, fannkuch-redux, fasta, k-nucleotide, mandelbrot, n-body, pidigits, regex-redux, reverse-complement, spectral-norm | Raw compute, per language, as tuned by whoever cared most | Widely quoted and widely misused: entries are hand-tuned, so it measures effort as much as compilers. Worth running for the trend line; not worth citing |
-| **Functional compilers** | **nofib** (Haskell), the **R7RS/Larceny Scheme benchmark set** | Allocation-heavy, closure-heavy, recursion-heavy workloads | Closer to Beck's shape than CLBG is, and the Scheme set pairs directly with §24.5 |
+| **Functional compilers** | **nofib** (Haskell), the **R7RS/Larceny Scheme benchmark set** | Allocation-heavy, closure-heavy, recursion-heavy workloads | Closer to Beck's shape than CLBG is, and the Scheme set pairs directly with §25.5 |
 | **The log** | **YCSB** workloads A–F | Append and point-read throughput, latency distributions | Maps cleanly onto the durable log. `beck bench log` already exists as the seed ([`08`](08-roadmap.md) Phase 3) |
 | **Read models** | **TPC-H**, **ClickBench** | Analytical query latency over a fixed dataset | For the read-model tier once [`05`](05-tier-lowering.md) §5.3 exists. **TPC-C is not a fit** and should not be attempted: it assumes update-in-place OLTP, which is not Beck's data model |
-| **Incremental views** | *No standard exists* | — | The nearest published sets are DBToaster's and Noria's query workloads, and TPC-H run under a stream of updates. This is a **gap**, and one Beck is unusually well placed to define a yardstick for rather than borrow one |
+| **Incremental views** | *No standard exists* | — | The nearest published sets are DBToaster's and Noria's query workloads, and TPC-H run under a stream of updates. This is a **gap**, and one Beck is unusually well placed to define a yardstick for rather than borrow one — now more so, because the engine landed while this document was being written ([`24`](24-incremental-views-report.md)) and reports a 3–5× constant factor rather than a change of asymptote. That is exactly the kind of number a third-party workload exists to put in context, and there is none to put it in |
 | **WASM** | **Sightglass** (Bytecode Alliance), PolyBenchC | Runtime and compile-time cost of WASM modules | For Mode B and the server-side WASM target ([`07`](07-dependencies.md) §7's Wasmtime choice) |
 | **Compile speed** | *No standard exists*; **rustc-perf** is the model | Clean build, incremental build, keystroke-to-diagnostic | Copy the instrument, not a suite. [`13`](13-testing.md) §13.7 already lists these budgets |
 | **Conciseness** | **TodoMVC**; **Rosetta Code** as a corpus; Prechelt (2000) as the methodological precedent | Lines of code for a fixed task, across implementations | [`00`](00-original-idea.md) already names the calibration pointers: "Electric Clojure's TodoMVC and Lamdera's, read side by side with the sketch" |
@@ -77,9 +77,9 @@ in a form somebody else's harness measures.
 
 **Lines of code is a real metric and an easy lie.** It only means something with the counting rule
 fixed in advance, the same algorithm on both sides, and the comparison stated in more than one
-unit. §24.5 sets that protocol out, because the SICP suite is where LOC does the most work.
+unit. §25.5 sets that protocol out, because the SICP suite is where LOC does the most work.
 
-## 24.3 What a number from Beck would mean today
+## 25.3 What a number from Beck would mean today
 
 It would mean almost nothing, and that is worth stating precisely rather than discovering later.
 
@@ -119,9 +119,9 @@ deferral:
    *before* CLBG, even though CLBG is the one people ask about. The suite that measures the claim
    we make outranks the suite that measures the claim we explicitly decline to make.
 
-## 24.4 What none of those suites measures
+## 25.4 What none of those suites measures
 
-Every suite in §24.2 measures a shipped artefact. Not one of them measures the property the project
+Every suite in §25.2 measures a shipped artefact. Not one of them measures the property the project
 was founded on.
 
 [`01`](01-vision-and-premise.md) §1.1 does not say Beck is fast. It says Beck is SICP's three moves
@@ -155,7 +155,7 @@ SICP introduces can be recovered as a Beck macro, Beck is at least as expressive
 sense, and the line count is then a question about ergonomics rather than about power.** That
 separation is what stops the exercise collapsing into an argument about braces.
 
-## 24.5 The SICP suite, designed
+## 25.5 The SICP suite, designed
 
 ### The shape
 
@@ -197,7 +197,7 @@ Fixed before any solution is written, because every one of these is a place to c
    tell that someone chose.
 4. **`beck fmt` decides the formatting**, on both surfaces, so line counts are the formatter's
    opinion and not the author's.
-5. **The refusals are published as prominently as the wins.** §24.6 is written that way already.
+5. **The refusals are published as prominently as the wins.** §25.6 is written that way already.
 
 ### Where it lives, and the gate
 
@@ -220,7 +220,7 @@ measuring, is what makes the result worth reading.
 
 | Chapter | What it needs | Forecast |
 |---|---|---|
-| **1** — procedures | Recursion, HOFs, `lambda`, closures, reals, **proper tail calls** | Beck should be **level with Scheme, or slightly longer** — type signatures cost a line each and buy exhaustiveness. Runs today except for reals and tail calls (§24.6) |
+| **1** — procedures | Recursion, HOFs, `lambda`, closures, reals, **proper tail calls** | Beck should be **level with Scheme, or slightly longer** — type signatures cost a line each and buy exhaustiveness. Runs today except for reals and tail calls (§25.6) |
 | **2.1–2.3** — data | Recursive types, symbols and quotation, user-written polymorphism, rationals | The chapter that decides whether §2's dual-surface claim survives. **Blocked** on recursive types today |
 | **2.4–2.5** — generic operations | Data-directed dispatch, type tags, coercion | **Beck should lose on lines and win on safety, and should say so first.** Scheme's `put`/`get` table is three lines and unchecked; a trait with impls is longer and total. If the report does not concede this row it is not being run honestly |
 | **3.1–3.4** — state | `set!`, `set-car!`, local state, the environment model, serialisers | Mostly **refused** and **re-expressed** — this is the design Beck exists to replace, and D-numbered decisions say so. A representative dozen, argued in prose; not 60 files |
@@ -245,7 +245,7 @@ promise:
 Chapters 3.1–3.4 and 5 are the `refused`/`re-expressed` register throughout: prose plus a
 representative handful, not 130 files.
 
-## 24.6 What runs today, measured
+## 25.6 What runs today, measured
 
 [`compiler/sicp/`](../compiler/sicp/) is stage 1, started, and the results are the useful part of
 this document because they were produced rather than predicted. Reproduce with:
@@ -267,7 +267,7 @@ than about arithmetic or about cost translates without argument. It also round-t
 off that file — which is [`02`](02-syntax.md) §2.2's dual-surface claim, checked for the first time
 against code that is *about* abstraction rather than about a signal graph.
 
-**User-written macros work, and that is what makes §24.9 schedulable.** No corpus program and no
+**User-written macros work, and that is what makes §25.9 schedulable.** No corpus program and no
 example defines one, so it was an open question whether the expander built in Phase 1 was reachable
 from a user's program at all. It is: a `macro unless(cond, do)` with a `return quote:` body expands,
 controls flow, and passes tests, and so does §4.1.2's `and` written as a derived expression. That
@@ -337,7 +337,7 @@ is a program shaped like the todo sketch. **Ninety minutes of chapter 1 did**, b
 relentlessly about the one thing this compiler has never been pointed at: building abstractions out
 of procedures.
 
-## 24.7 The order of work this implies
+## 25.7 The order of work this implies
 
 The suite is a prioritised list before it is a benchmark. In dependency order:
 
@@ -347,7 +347,7 @@ The suite is a prioritised list before it is a benchmark. In dependency order:
 2. **Recursive and forward-referencing types.** Two passes over declarations instead of one. Every
    pass downstream already expects them. This unblocks chapter 2, and it is the single highest-value
    item on the list for reasons that have nothing to do with SICP.
-3. **The `B0320` defect in §24.6 item 6.** A row-unification bug in `check.rs` that any program
+3. **The `B0320` defect in §25.6 item 6.** A row-unification bug in `check.rs` that any program
    returning functions from branches will hit.
 4. **Proper tail calls in the evaluator**, or an explicit bounded-depth diagnostic in the interim.
    A process abort is not an acceptable outcome for user code, independently of chapter 1.
@@ -356,12 +356,12 @@ The suite is a prioritised list before it is a benchmark. In dependency order:
 6. **User-written polymorphism.** The largest of the six, and the one most entangled with
    [`03`](03-type-and-effect-system.md).
 
-For §24.2, the order is: adopt Lighthouse and the compile-time budgets now (they measure things
+For §25.2, the order is: adopt Lighthouse and the compile-time budgets now (they measure things
 that exist); stand up TechEmpower and js-framework-benchmark harnesses with published, unflattering
 numbers as soon as Mode A is complete enough to enter honestly; hold CLBG and Are We Fast Yet until
 there is a backend for them to be about.
 
-## 24.8 Further proposals, assessed
+## 25.8 Further proposals, assessed
 
 Three more were raised as candidate suites — Nand2Tetris, LeetCode and DDIA — and they get three
 different answers. Two are declined *as performance tests* for the same reason D18 excludes TPC-C:
@@ -437,7 +437,7 @@ So: **adopt 30–50 problems as an ergonomics smoke test, not a benchmark.** The
 (expected outputs), they are cheap, and they target exactly the half of D9 that SICP leaves
 untested. The pairing is the point — SICP holds the Lisp inheritance to account, LeetCode holds the
 Python surface to account, and D9 claims both. It is not adopted by D18 and does not appear in
-§24.9's table; it is a recommendation with the evidence attached, and the evidence above is
+§25.9's table; it is a recommendation with the evidence attached, and the evidence above is
 reproducible by pasting the four lines it took to produce it.
 
 ### DDIA — adopted, but as a conformance matrix rather than a benchmark
@@ -469,14 +469,14 @@ SICP, Nand2Tetris and DDIA are three of the nine subjects on
 That is worth noticing rather than treating as coincidence: the curriculum is a decent map of what
 a language project has to be answerable to. So the remaining six were walked, with one question
 asked of each — **does this subject yield a test, or a lesson?** Most yield lessons, and two of the
-lessons bear directly on gaps §24.6 measured this week.
+lessons bear directly on gaps §25.6 measured this week.
 
 | Subject | Canonical text | Test or lesson |
 |---|---|---|
 | Programming | **SICP** | **Test** — adopted, D18 |
 | Distributed systems | **DDIA** | **Test** — adopted as a matrix, [`15`](15-scale-and-distribution.md) §15.6 |
 | Algorithms | **The Algorithm Design Manual** / CLRS | **A requirements list, not a benchmark.** Beck's collections are `list` and `Map` and nothing else — no set, no deque, no priority queue, no graph. This is LeetCode's serious cousin and it produces the same verdict: the value is the gap list, and it feeds Phase 3's "standard library v1" bullet directly |
-| Languages and compilers | **Crafting Interpreters** | **Lesson, and the most immediately useful one.** Nystrom's closure/upvalue and tail-call chapters are §24.6 items 5 and 6 — the two defects the SICP work surfaced — treated at length. The jlox→clox transition *is* the Phase 3 work of replacing the `Core` evaluator, and its measured speedups are the honest expectation-setter for §24.3's 33× |
+| Languages and compilers | **Crafting Interpreters** | **Lesson, and the most immediately useful one.** Nystrom's closure/upvalue and tail-call chapters are §25.6 items 5 and 6 — the two defects the SICP work surfaced — treated at length. The jlox→clox transition *is* the Phase 3 work of replacing the `Core` evaluator, and its measured speedups are the honest expectation-setter for §25.3's 33× |
 | Operating systems | **OSTEP** | **Lesson, and under-exploited.** `durable(fold(…))` plus snapshots plus a log is a journaling filesystem's problem restated, and OSTEP's crash-consistency chapters are the direct source for what [`13`](13-testing.md) §13.4's `kill -9` tests must actually cover — ordering, fsync semantics, and the difference between a torn write and a lost one |
 | Computer architecture | **CS:APP**, Nand2Tetris | **Lesson.** CS:APP, not Nand2Tetris, is where the performance lessons live — the memory hierarchy is *why* a tree-walking interpreter costs 33×, and what the LLVM backend has to exploit |
 | Databases | **Readings in Database Systems** ("the Red Book"), *Architecture of a Database System* | **Lesson**, and half-inherited already via [`05`](05-tier-lowering.md) and [`07`](07-dependencies.md) §7.8. Hellerstein and Stonebraker are the source for the read-model and query-planner design that §5.3's incremental views still need |
@@ -487,28 +487,28 @@ The summary worth keeping: **three subjects yield executable tests and one yield
 list; the other five yield design lessons** — and the two most valuable of those five, Crafting
 Interpreters and OSTEP, are about work already on the plan rather than about new scope.
 
-## 24.9 Where this lands in the plan
+## 25.9 Where this lands in the plan
 
 Adopted as [`10`](10-decisions.md) D18; scheduled in [`08`](08-roadmap.md) §8.4. The sequencing rule
 is one sentence — **stand every harness up one phase before its number is publishable** — and its
 uncomfortable consequence is stated rather than discovered: the first numbers published will be
-bad, because §24.3 measures a placeholder. A benchmark adopted at 1.0 to support a launch claim has
+bad, because §25.3 measures a placeholder. A benchmark adopted at 1.0 to support a launch claim has
 no regression-detecting power, which is the only thing a benchmark is for.
 
 | Phase | Stood up | Published |
 |---|---|---|
 | **3** | SICP stage 1; the Felleisen table (below); compile-speed budgets; Are We Fast Yet and CLBG harnesses against the evaluator | Chapter 1's line comparison. **No compute number** until the LLVM backend gives §13.1 its differential |
-| **4** | TechEmpower, js-framework-benchmark, YCSB, Lighthouse; SICP stages 2–3; **the DDIA matrix** ([`15`](15-scale-and-distribution.md) §15.6), beside the Jepsen work that discharges its rows | The whole-system numbers, with §24.2's methodology notes attached |
-| **5** | TPC-H/ClickBench on read models; the incremental-view workload nobody has standardised; SICP stage 4 | The Phase 5 suite, and the expressiveness result — **including the rows §24.5 forecasts we lose**. The DDIA matrix's **Conceded** and **Bounded** rows, which are the ones a platform team reads |
+| **4** | TechEmpower, js-framework-benchmark, YCSB, Lighthouse; SICP stages 2–3; **the DDIA matrix** ([`15`](15-scale-and-distribution.md) §15.6), beside the Jepsen work that discharges its rows | The whole-system numbers, with §25.2's methodology notes attached |
+| **5** | TPC-H/ClickBench on read models; the incremental-view workload nobody has standardised; SICP stage 4 | The Phase 5 suite, and the expressiveness result — **including the rows §25.5 forecasts we lose**. The DDIA matrix's **Conceded** and **Bounded** rows, which are the ones a platform team reads |
 
 Not in the table, deliberately: **LeetCode** is a recommendation rather than an adopted commitment
-(§24.8), and **Nand2Tetris** is conditional on SICP chapter 4 being green first, at which point the
+(§25.8), and **Nand2Tetris** is conditional on SICP chapter 4 being green first, at which point the
 question is whether it adds a result or a second copy of one.
 
 ### The Felleisen deliverable, stated concretely
 
 The formal half is not "read the 1991 paper and form a view". It is a table, and it is the cheapest
-item in §8.4 because §24.6 measured that user macros work today — so unlike everything else here it
+item in §8.4 because §25.6 measured that user macros work today — so unlike everything else here it
 waits on none of the six walls.
 
 For every special form SICP introduces, one of two verdicts: **recovered** (a Beck macro — a local
@@ -518,10 +518,10 @@ it is visible:
 
 | SICP form | Where | Forecast |
 |---|---|---|
-| `cond`, `and`, `or`, `not` | §1.1, derived in §4.1.2 | **Recovered.** §24.6 already ran `and` as a derived expression through a user macro |
+| `cond`, `and`, `or`, `not` | §1.1, derived in §4.1.2 | **Recovered.** §25.6 already ran `and` as a derived expression through a user macro |
 | `let`, `let*` | §1.3.2, §4.1.6 | **Recovered** — Beck has local bindings and lambdas |
 | `delay` / `force`, `cons-stream` | §3.5.1 | **The interesting one.** It is a special form in Scheme *precisely because* it must not evaluate its argument, which is the textbook case for a macro. Beck has closures, so `delay` should be a thunk and `cons-stream` a record holding one. If this one fails, the expressiveness claim is in real trouble |
-| `quote`, quasiquote | §2.3.1 | **Blocked, not global** — Beck's macros already quote, but a *program's* symbolic data needs a symbol type and recursive types (§24.6 items 2) |
+| `quote`, quasiquote | §2.3.1 | **Blocked, not global** — Beck's macros already quote, but a *program's* symbolic data needs a symbol type and recursive types (§25.6 items 2) |
 | `set!`, `begin` | §3.1 | **Refused by design** — D1. Not an expressiveness loss to be measured but a decision to be cited |
 | `amb` | §4.3 | **Expected `global`.** Backtracking needs continuations; Beck has none, and a macro cannot manufacture them. This is the row where Scheme is likely more expressive in the strict 1991 sense, and the report should say so plainly rather than redefine the term |
 | `define-syntax`, derived expressions generally | §4.1.2 | **Recovered, and stronger** — SICP derives these *inside its evaluator*; Beck derives them in the language, which is the larger claim |
@@ -529,17 +529,17 @@ it is visible:
 One row expected to be conceded out of seven is a result worth publishing. Seven out of seven
 recovered would be a result worth double-checking.
 
-## 24.10 What this document does not claim
+## 25.10 What this document does not claim
 
 - **No comparison has been run.** No Scheme baseline has been pinned, no line has been counted, and
-  no number in §24.6 is a comparative claim. §24.5 is a design; §24.6 is a measurement of Beck
+  no number in §25.6 is a comparative claim. §25.5 is a design; §25.6 is a measurement of Beck
   alone.
 - **Chapter 1 is not complete.** Thirteen tests over roughly a dozen exercises of 46, chosen for
   being expressible, which is a biased sample by construction — the arithmetic-heavy exercises are
   absent because they cannot compile, not because they were finished.
 - **The exercise counts are conventional**, taken from the second edition's numbering, and should be
   checked against the pinned baseline when one is chosen.
-- **The forecasts in §24.5 are forecasts.** They are recorded so that being wrong about them is
+- **The forecasts in §25.5 are forecasts.** They are recorded so that being wrong about them is
   visible.
-- **The schedule is a schedule.** §24.9 and [`08`](08-roadmap.md) §8.4 place this work in phases;
-  none of it is done beyond what §24.6 measures.
+- **The schedule is a schedule.** §25.9 and [`08`](08-roadmap.md) §8.4 place this work in phases;
+  none of it is done beyond what §25.6 measures.

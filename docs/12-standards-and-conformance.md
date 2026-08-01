@@ -125,13 +125,13 @@ our terms; conformance means restating them in the auditor's terms and testing t
 - **Public benchmark methodology**: versus a named baseline stack, reproducible from a repo, with
   the harness published — performance claims follow the same "test or marketing" rule as
   everything else. **The suites are named and third-party**
-  ([`24`](24-benchmarks-and-expressiveness.md) §24.2, adopted as D18): TechEmpower and
+  ([`25`](25-benchmarks-and-expressiveness.md) §25.2, adopted as D18): TechEmpower and
   js-framework-benchmark for the shipped system, Are We Fast Yet and the Computer Language
   Benchmarks Game for the core, YCSB for the log, TPC-H/ClickBench for read models, Sightglass for
   WASM, Lighthouse for the page. A suite we designed ourselves and won is worth nothing; the whole
   value of a standard one is that somebody else chose the workload and the alternatives already
-  have numbers on it. §24.2 also records where the honest answer is that **no standard exists** —
-  incremental view maintenance — and §24.2's three methodology notes are part of the commitment,
+  have numbers on it. §25.2 also records where the honest answer is that **no standard exists** —
+  incremental view maintenance — and §25.2's three methodology notes are part of the commitment,
   not commentary on it. [`08`](08-roadmap.md) §8.4 schedules them.
 
 ## 12.10 Expressiveness: the premise, made falsifiable
@@ -139,7 +139,7 @@ our terms; conformance means restating them in the auditor's terms and testing t
 Every standard above measures a shipped artefact. None of them measures what
 [`01`](01-vision-and-premise.md) §1.1 and [`10`](10-decisions.md) D9 actually claim — that Beck is
 SICP's three moves made into a language, and that a Python-shaped surface carries Lisp's power
-without losing any of it. Until [`24`](24-benchmarks-and-expressiveness.md) there was **no artefact
+without losing any of it. Until [`25`](25-benchmarks-and-expressiveness.md) there was **no artefact
 that could falsify either**, which by §12.1's own rule makes them marketing.
 
 Two instruments, adopted as D18:
@@ -159,7 +159,7 @@ Two instruments, adopted as D18:
   asserted as well as its passes**, so a wall coming down is a failing test rather than something
   somebody notices.
 
-The counting protocol (§24.5) is part of the standard, because lines of code is a real metric and
+The counting protocol (§25.5) is part of the standard, because lines of code is a real metric and
 an easy lie: a third-party Scheme baseline pinned by commit, the same algorithm on both sides or
 the exercise does not count, and three counts published together — lines, tokens, and lines
 excluding type signatures — since Beck is typed and Scheme is not. A single headline number is the

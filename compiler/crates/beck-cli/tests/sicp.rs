@@ -1,9 +1,9 @@
 //! The SICP suite's first chapter, and the walls the rest of it hits.
 //!
-//! [`docs/24-benchmarks-and-expressiveness.md`] proposes SICP as Beck's expressiveness benchmark,
+//! [`docs/25-benchmarks-and-expressiveness.md`] proposes SICP as Beck's expressiveness benchmark,
 //! on the grounds that the project's own premise ([`docs/01`] §1.1) is that Beck is SICP's three
 //! moves made into a language. A proposal is not evidence, so this harness holds the report's
-//! claims to the standard `AGENTS.md` sets: every number in §24.6 is produced by something here.
+//! claims to the standard `AGENTS.md` sets: every number in §25.6 is produced by something here.
 //!
 //! Two halves, and the second is the point:
 //!
@@ -43,35 +43,57 @@ fn errors(name: &str, src: &str) -> String {
 
 const CH1: &str = include_str!("../../../sicp/ch1.beck");
 
+/// Chapter 1 needs more stack than `libtest` hands a test thread, and *that is the finding*.
+///
+/// §25.6 item 5: the evaluator has no proper tail calls and spends host stack per Beck-level call.
+/// A debug build spends several times more of it per frame, and `libtest` runs each test on a
+/// thread with ~2 MiB rather than the main thread's 8 — so `beck test sicp/ch1.beck` passes from
+/// the command line, in both profiles, while the same thirteen tests abort inside the harness.
+/// That combination is worth stating plainly: **the suite's own evidence for the missing-tail-call
+/// gap is that collecting the evidence trips over it.**
+///
+/// Raising the stack here is the honest fix rather than shrinking the exercises: `count_change(100)`
+/// is 292 because SICP says it is 292, and trimming the book's own answer to fit an interpreter's
+/// frame size would be measuring the harness instead of the language. When tail calls land, this
+/// wrapper goes away and the `RUST_MIN_STACK`-shaped workaround goes with it.
+const CH1_STACK: usize = 32 * 1024 * 1024;
+
 #[test]
 fn chapter_one_passes_against_the_books_own_answers() {
-    let (placed, rendered) = compile("sicp/ch1.beck", CH1);
-    let placed = placed.unwrap_or_else(|| panic!("chapter 1 compiles:\n{rendered}"));
+    std::thread::Builder::new()
+        .stack_size(CH1_STACK)
+        .spawn(|| {
+            let (placed, rendered) = compile("sicp/ch1.beck", CH1);
+            let placed = placed.unwrap_or_else(|| panic!("chapter 1 compiles:\n{rendered}"));
 
-    let backend = beck_eval::backend(&placed);
-    let report = beck_rt::testing::run(&placed, backend, &Options::default());
+            let backend = beck_eval::backend(&placed);
+            let report = beck_rt::testing::run(&placed, backend, &Options::default());
 
-    assert!(
-        report.cases.len() >= 13,
-        "chapter 1 is the evidence for §24.6 and has to carry the exercises it claims"
-    );
-    assert_eq!(
-        report.failed(),
-        0,
-        "{}",
-        beck_rt::testing::render(&report, true)
-    );
-    assert_eq!(
-        report.skipped(),
-        0,
-        "nothing in chapter 1 performs an effect"
-    );
+            assert!(
+                report.cases.len() >= 13,
+                "chapter 1 is the evidence for §25.6 and has to carry the exercises it claims"
+            );
+            assert_eq!(
+                report.failed(),
+                0,
+                "{}",
+                beck_rt::testing::render(&report, true)
+            );
+            assert_eq!(
+                report.skipped(),
+                0,
+                "nothing in chapter 1 performs an effect"
+            );
+        })
+        .expect("a thread")
+        .join()
+        .expect("chapter 1 runs without exhausting a 32 MiB stack");
 }
 
 #[test]
 fn chapter_one_needs_an_application_wrapped_around_it_to_run_at_all() {
     // The wrapper in `ch1.beck` is not decoration: strip it and the same procedures, with the
-    // same tests, cannot be run. This is the suite's first ask (§24.7 item 1), and it is asserted
+    // same tests, cannot be run. This is the suite's first ask (§25.7 item 1), and it is asserted
     // rather than asserted-about.
     let src = include_str!("../../../sicp/refusals/library.beck");
     let (placed, rendered) = compile("library.beck", src);
@@ -101,7 +123,7 @@ fn chapter_one_needs_an_application_wrapped_around_it_to_run_at_all() {
         .expect("the compiler is built");
     assert!(
         !test.status.success(),
-        "`beck test` cannot run one — docs/22 §22.6, and §24.7 item 1"
+        "`beck test` cannot run one — docs/22 §22.6, and §25.7 item 1"
     );
 }
 
@@ -154,7 +176,7 @@ fn an_if_over_two_function_values_is_refused_when_one_of_them_is_a_calls_result(
     assert!(out.contains("B0320"), "{out}");
     assert!(
         out.contains("may not perform {}"),
-        "§24.6 quotes this rendering as evidence that it is unactionable:\n{out}"
+        "§25.6 quotes this rendering as evidence that it is unactionable:\n{out}"
     );
 }
 
@@ -172,7 +194,7 @@ fn a_tail_call_consumes_stack_so_an_iterative_process_is_not_iterative() {
     assert!(
         !out.status.success(),
         "a tail call eight thousand deep is expected to die; if this passes, Beck grew proper \
-         tail calls and §24.6 needs rewriting (happily)"
+         tail calls and §25.6 needs rewriting (happily)"
     );
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(

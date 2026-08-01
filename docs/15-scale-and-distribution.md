@@ -154,6 +154,6 @@ Three properties this matrix must have to be worth building, each learned from �
 
 The value is asymmetric and worth stating: the **Conceded** and **Bounded** rows are the ones a
 platform team actually reads, and they are the ones no competitor publishes.
-[`24`](24-benchmarks-and-expressiveness.md) §24.8 is where this was decided; the roadmap slot is
+[`25`](25-benchmarks-and-expressiveness.md) §25.8 is where this was decided; the roadmap slot is
 Phase 4, beside the Jepsen work it depends on, because a matrix written before the tests exist would
 be the table of intentions it must not become.

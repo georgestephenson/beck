@@ -64,13 +64,42 @@ async fn the_runtime_drives_a_backend_it_has_never_heard_of() {
     // The runtime reports whichever backend it was given — the hook a differential report needs to
     // say *which* of two backends produced the answer that differed.
     assert_eq!(runtime.backend(), "counting");
-    // Three roles prepared once each, at startup and not per event. A backend that compiles
-    // depends on this being true.
+    // Everything the runtime will ever call is prepared once, at startup: the three roles, plus
+    // every operator of the view's dataflow plan (§5.3). A backend that compiles depends on this,
+    // and so does the fanout — preparing the plan per *subscription* cost about 90 KB each until
+    // `Prepared` was split out of `Engine` (docs/24 §24.6).
+    let plan = runtime.plan();
+    let operators = plan
+        .nodes
+        .iter()
+        .filter(|n| {
+            matches!(
+                n.op,
+                beck_core::plan::Op::Pointwise { .. }
+                    | beck_core::plan::Op::MapList { .. }
+                    | beck_core::plan::Op::FilterList { .. }
+                    | beck_core::plan::Op::SortBy { .. }
+            )
+        })
+        .count();
+    let at_startup = counting.prepared.load(Ordering::Relaxed);
+    assert_eq!(
+        at_startup,
+        3 + operators,
+        "validate, the fold, the view, and {operators} plan operators"
+    );
+
+    // A hundred subscriptions prepare nothing: they share the prepared plan and hold only their
+    // own arrangements.
+    let engines: Vec<_> = (0..100)
+        .map(|_| runtime.view_engine().expect("an engine"))
+        .collect();
     assert_eq!(
         counting.prepared.load(Ordering::Relaxed),
-        3,
-        "validate, the fold and the view"
+        at_startup,
+        "a subscription prepared code of its own"
     );
+    drop(engines);
 
     let app = App::start(runtime, Arc::new(MemoryLog::new()), AppConfig::default())
         .await
@@ -91,6 +120,11 @@ async fn the_runtime_drives_a_backend_it_has_never_heard_of() {
 
     // …and the whole stack works over it: validate ran, the fold ran, the view rendered.
     assert_eq!(app.head(), 5);
+    assert_eq!(
+        counting.prepared.load(Ordering::Relaxed),
+        at_startup,
+        "an event prepared code"
+    );
     let html = app.render("alice").await.expect("render").render();
     assert!(html.contains("todo 4"), "{html}");
 

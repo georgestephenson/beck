@@ -1,6 +1,6 @@
 # SICP chapter 1 — "Building Abstractions with Procedures" — in Beck, as far as it goes today.
 #
-# Evidence for [`docs/24-benchmarks-and-expressiveness.md`](../../docs/24-benchmarks-and-expressiveness.md).
+# Evidence for [`docs/25-benchmarks-and-expressiveness.md`](../../docs/25-benchmarks-and-expressiveness.md).
 # Every `test` below is an exercise's own answer from the book, so `beck test sicp/ch1.beck` is the
 # oracle: SICP states the value, and the value either comes out or it does not.
 #
@@ -40,7 +40,7 @@ def factorial(n: Int) -> Int:
 
 # The same function as a linear *iterative* process. SICP's whole point here is that this one runs
 # in constant space and the one above does not. In Beck today they are the same shape and the same
-# cost: see `sicp/refusals/tail.beck`, and §24.6 of the report.
+# cost: see `sicp/refusals/tail.beck`, and §25.6 of the report.
 def fact_iter(product: Int, counter: Int, max_count: Int) -> Int:
     if counter > max_count:
         return product
@@ -216,7 +216,7 @@ def compose(f: Int -> Int, g: Int -> Int) -> Int -> Int:
 # Exercise 1.43 — `repeated` — is not here. It does not compile, and the reason is a defect rather
 # than a missing feature: an `if` whose branches are both function values fails to typecheck as
 # soon as one of them is the result of a call. `sicp/refusals/higher-order.beck` is the smallest
-# case, with the diagnostic; §24.6 of the report is the write-up.
+# case, with the diagnostic; §25.6 of the report is the write-up.
 
 # ---------------------------------------------------------------------------------------------
 # The wrapper. Nothing above refers to anything below.

@@ -62,7 +62,11 @@ pub async fn run<S: Socket>(app: Arc<App>, mut socket: S) -> Result<()> {
         }
     };
 
-    let view_now = app.render(&actor).await?;
+    // One engine per subscription: §5.3's per-subscriber operators, and the arrangements they
+    // hold. It is created before the first render so that render is the engine's own cold start
+    // rather than a recompute the engine then has to catch up with.
+    let mut engine = app.runtime().view_engine()?;
+    let view_now = app.maintain(&mut engine, &actor).await?;
     let seq = app.head();
 
     let ops = match how {
@@ -90,6 +94,7 @@ pub async fn run<S: Socket>(app: Arc<App>, mut socket: S) -> Result<()> {
         how,
         ops,
         &mut version,
+        &mut engine,
     )
     .await
 }
@@ -105,6 +110,7 @@ async fn drive<S: Socket>(
     how: Resumption,
     initial_ops: Vec<Op>,
     version: &mut tokio::sync::watch::Receiver<u64>,
+    engine: &mut beck_core::engine::Engine,
 ) -> Result<()> {
     // How a subscriber was brought up to date is exactly the distinction Phase 0 got wrong twice
     // (§18.5 item 1): an ack means committed, a frame means your view has caught up.
@@ -124,7 +130,7 @@ async fn drive<S: Socket>(
                 if changed.is_err() {
                     break; // the application is gone
                 }
-                let view = app.render(&actor).await?;
+                let view = app.maintain(engine, &actor).await?;
                 let started = std::time::Instant::now();
                 let ops = diff(&last_view, &view);
                 telemetry().diff.record(started.elapsed());

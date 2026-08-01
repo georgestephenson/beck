@@ -122,10 +122,12 @@ dependencies = [
  "beck-rt",
  "beck-syntax",
  "clap",
+ "futures-util",
  "insta",
  "proptest",
  "serde_json",
  "tokio",
+ "tokio-tungstenite",
  "tracing",
  "tracing-subscriber",
 ]

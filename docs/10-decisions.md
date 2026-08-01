@@ -468,7 +468,7 @@ project; Beck must never grow one.
 The two questions were: are there standard tests to measure Beck's performance against
 alternatives, and what if the SICP exercises were written in Beck as an *expressiveness* test — on
 the claim that Beck should have Scheme's full means of combination and abstraction while being no
-more verbose. Both are adopted. [`24`](24-benchmarks-and-expressiveness.md) is the analysis,
+more verbose. Both are adopted. [`25`](25-benchmarks-and-expressiveness.md) is the analysis,
 [`08`](08-roadmap.md) §8.4 is the schedule, [`12`](12-standards-and-conformance.md) §12.9–§12.10
 folds both into the conformance discipline.
 
@@ -481,11 +481,11 @@ is a place a number could be published dishonestly: **TPC-C is excluded** (it as
 update-in-place OLTP, which is not our data model, and entering it would be a claim we do not
 make); js-framework-benchmark is published as three columns and never averaged, because Mode A puts
 a network in a loop every other entrant runs in the tab; and **incremental view maintenance has no
-standard suite**, which §24.2 records as a gap we would be defining rather than borrowing.
+standard suite**, which §25.2 records as a gap we would be defining rather than borrowing.
 
 **And the numbers arrive before they are good.** §8.4's sequencing rule — stand every harness up a
 phase before its number is publishable — means the first published figures will be bad, because
-§24.3 measures the tree-walking evaluator at roughly 33× CPython on `fib(30)` and native codegen is
+§25.3 measures the tree-walking evaluator at roughly 33× CPython on `fib(30)` and native codegen is
 unbuilt. That is the cost of a trend line that predates the backend, and it is accepted: a
 benchmark adopted at 1.0 to support a launch claim has no regression-detecting power, which is the
 only thing a benchmark is actually for.
@@ -507,7 +507,7 @@ Three constraints on how it is run, without which it would be self-congratulatio
   are expected to be mostly the latter two, because they are about mutable state and machine models
   Beck refuses on purpose; transliterating them would measure how well Beck imitates a design it
   rejects. A silent omission is a bug in the suite.
-- **The losses are forecast in advance and published.** §24.5 already records where Beck should
+- **The losses are forecast in advance and published.** §25.5 already records where Beck should
   lose: §2.4–2.5's generic operations (a three-line dispatch table against a trait with impls) and
   chapter 4's evaluator. If the eventual report does not concede those rows it was not run
   honestly.
@@ -515,7 +515,7 @@ Three constraints on how it is run, without which it would be self-congratulatio
   holds one program per wall and the harness asserts each wall still stands, so progress is a
   failing test rather than a fact somebody notices.
 
-**Three further candidates, assessed in §24.8 and decided here.** **Nand2Tetris** is *declined as a
+**Three further candidates, assessed in §25.8 and decided here.** **Nand2Tetris** is *declined as a
 performance test* — a gate-level simulator sits inside the scope §1.5 concedes, so a number there
 is evidence about a claim we do not make, and Are We Fast Yet already supplies a fair branch- and
 array-heavy workload. Its projects 6–11 are recorded as a **stage-5 expressiveness option
@@ -523,7 +523,7 @@ conditional on SICP chapter 4**, since they need what chapter 4 needs and would 
 **LeetCode** is *declined as a benchmark* on methodology — no published harness, no fixed workload,
 no controlled hardware, and results that move when strangers submit — but **adopted as an
 ergonomics smoke test of 30–50 problems**, because it targets the half of D9 that SICP structurally
-cannot: not Lisp's power but Python's mass appeal. §24.8 measures that "Two Sum" cannot currently be
+cannot: not Lisp's power but Python's mass appeal. §25.8 measures that "Two Sum" cannot currently be
 written at all, in four diagnostics. **DDIA** is *not a benchmark* and is adopted as a **conformance
 matrix** ([`15`](15-scale-and-distribution.md) §15.6) on §12.7's ASVS pattern — with the explicit
 finding that "solutions to all the problems" is not achievable and should not be claimed, since the
@@ -531,7 +531,7 @@ book raises impossible ones, ones Beck declines, and ones that are business trad
 *Conceded* rows are the valuable ones.
 
 The decision has already paid for itself, twice. Ninety minutes of SICP chapter 1 surfaced a
-row-unification defect in the checker (§24.6 item 6); one LeetCode problem surfaced that the
+row-unification defect in the checker (§25.6 item 6); one LeetCode problem surfaced that the
 imperative idiom is missing as a category from a language whose surface is advertised as Python's.
 26 corpus programs and four harnesses had found neither, because every one of them is an
 event-sourced application shaped like the todo sketch.

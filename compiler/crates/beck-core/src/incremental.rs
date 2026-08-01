@@ -13,17 +13,25 @@
 //! ask about: an inlined view is one expression, and "which vertices are incremental" is not a
 //! question an expression can answer.
 //!
-//! # What this is, and firmly is not
+//! # What this is, and what now sits beside it
 //!
-//! It is the **analysis**. There is no differential-dataflow engine, no arrangement, no delta
-//! stream; every view in the compiler is still a full recompute per event, and
-//! [`23`](../../../../docs/23-general-slicer-report.md) §23.9 says so first. What this produces is
-//! the verdict a view engine would consume and the sentence a developer needs before writing a
-//! view that quietly costs a recount per event over a million rows.
+//! It is the **analysis**: a verdict per *view*, from the shape of what that view computes. When it
+//! was written there was nothing behind it — every view was a full recompute per event and the
+//! report said so in its first line, because a command called `explain incremental` that printed
+//! "incremental" about a recompute would be the most misleading output in the compiler.
 //!
-//! Saying that plainly matters more here than elsewhere, because a command called `explain
-//! incremental` that printed "incremental" about a full recompute would be the most misleading
-//! output in the compiler. Every report this module produces leads with what is true today.
+//! There is now an engine ([`crate::plan`], [`crate::engine`]), and the report's first line changed
+//! with it rather than before it. The two answer different questions and the report gives both:
+//!
+//! * this module asks whether a **view** — a vertex of the signal graph — is a pure function built
+//!   only from operations with delta rules;
+//! * [`crate::plan`] decomposes what the view *does* into operators, so a view this module calls
+//!   `recompute` because it contains a `match` may still have its collections maintained around
+//!   that `match`.
+//!
+//! The plan is the truth about what runs. This is the truth about what a view is, which is the
+//! answer a developer needs before writing one that quietly costs a recount per event over a
+//! million rows.
 //!
 //! # The rule, and where it comes from
 //!
@@ -49,6 +57,7 @@ use std::sync::Arc;
 
 use crate::check::Program;
 use crate::core::{Core, CoreKind, Prim};
+use crate::plan::Plan;
 use crate::signal::{Op, SigId};
 use crate::split::Placed;
 use crate::ty::Effect;
@@ -359,20 +368,21 @@ pub fn report(placed: &Placed, only: Option<&str>) -> String {
         }
     }
 
-    // The disclaimer is first because it is the thing a reader most needs and least expects.
-    let _ = writeln!(
-        out,
-        "Every view below is a **full recompute per event** today. This is the analysis §3.8 asks\n\
-         for — which views a differential-dataflow plan could maintain by delta, and why the rest\n\
-         could not — and the engine that would maintain them is not built (docs/23 §23.9).\n"
-    );
+    // The first line is what is true of this program *now*, because that is the thing a reader
+    // most needs and least expects. It was "every view is a full recompute" until the engine
+    // existed; it says what the engine does because the engine does it (docs/24).
+    let plan = Plan::compile(placed);
+    let (maintained, recomputed) = plan.counts();
+    let _ = writeln!(out, "{}\n", headline(maintained, recomputed));
 
     if rows.is_empty() {
         let _ = writeln!(
             out,
             "This program has no views: the page reads the accumulator directly, so there is\n\
-             nothing between the fold and the browser to maintain."
+             nothing between the fold and the browser that is a view in §3.8's sense. What the\n\
+             page itself does is still decomposed — see the operators below."
         );
+        let _ = write!(out, "{}", plan_section(&plan));
         return out;
     }
 
@@ -448,7 +458,8 @@ pub fn report(placed: &Placed, only: Option<&str>) -> String {
             .filter(|a| a.per_session)
             .map(|a| a.label.as_ref())
             .collect();
-        let _ = writeln!(out, "\nthe shape a plan would have (§5.3)");
+        let _ = write!(out, "{}", plan_section(&plan));
+        let _ = writeln!(out, "\nthe shape of the signal graph (§5.3)");
         let _ = writeln!(
             out,
             "  shared arrangement: {}",
@@ -469,6 +480,14 @@ pub fn report(placed: &Placed, only: Option<&str>) -> String {
                     fanout.join(", ")
                 )
             }
+        );
+        let shared_ops = plan.shared().len();
+        let _ = writeln!(
+            out,
+            "  in the plan:        {shared_ops} of {} operators do not read the session, and the \n\
+             \x20                     engine holds them once per subscriber rather than once \n\
+             \x20                     (docs/24 §24.7)",
+            plan.nodes.len()
         );
         let n = rows.len();
         let inc = rows
@@ -496,6 +515,99 @@ pub fn report(placed: &Placed, only: Option<&str>) -> String {
         }
         let _ = writeln!(out, ".");
     }
+    out
+}
+
+/// The first line, which has to be true of *this* program rather than of the feature.
+///
+/// It said "every view below is a full recompute per event" until there was an engine, and the
+/// obligation has not changed now that there is one: a program whose view holds no collection has
+/// nothing maintained, and a report that led with the feature would tell its reader otherwise.
+fn headline(maintained: usize, recomputed: usize) -> String {
+    if maintained == 0 {
+        return format!(
+            "**Nothing in this view is maintained by delta.** The plan found no collection for a\n\
+             delta to flow through, so all {recomputed} of its operators are recomputed — each one\n\
+             only when an input actually moved, which is what a plan buys even here."
+        );
+    }
+    format!(
+        "Views are **maintained by delta** as far as the plan can decompose them: {maintained} of\n\
+         this view's {} operators update from the change itself, {recomputed} are recomputed when\n\
+         an input moves, and the page's children are still assembled in full every time\n\
+         (docs/24 §24.6).",
+        maintained + recomputed
+    )
+}
+
+/// What the compiled plan actually does — the half of the report that is about the engine rather
+/// than about the analysis.
+///
+/// A view this module calls `recompute` can still have most of its work maintained, because the
+/// decomposition goes *inside* the view: `match` on a field blocks the vertex, not the
+/// `filter_list` above it. Printing both is what stops the two answers being mistaken for one.
+fn plan_section(plan: &Plan) -> String {
+    use std::fmt::Write;
+    let mut out = String::new();
+    let (maintained, recomputed) = plan.counts();
+    let _ = writeln!(out, "\nthe operators the view compiles to");
+
+    let mut kinds: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
+    for node in &plan.nodes {
+        let e = kinds.entry(node.op.name()).or_default();
+        e.0 += 1;
+        if !node.per_session {
+            e.1 += 1;
+        }
+    }
+    for (name, (n, shared)) in &kinds {
+        let example = plan
+            .nodes
+            .iter()
+            .find(|x| x.op.name() == *name)
+            .map(|x| &x.op);
+        let kind = match example {
+            Some(op) if op.is_source() => "source",
+            Some(op) if op.maintained() => "maintained",
+            _ => "recomputed",
+        };
+        let _ = writeln!(
+            out,
+            "  {:<14} ×{:<4} {:<11} {}",
+            name,
+            n,
+            kind,
+            if *shared == 0 {
+                "per session".to_string()
+            } else if shared == n {
+                "shared".to_string()
+            } else {
+                format!("{shared} of {n} shared")
+            }
+        );
+    }
+
+    // The reasons, deduplicated: a plan with twenty pointwise operators has three reasons, and a
+    // list of twenty would bury them.
+    let mut reasons: Vec<&str> = plan
+        .nodes
+        .iter()
+        .filter_map(|n| n.because.as_deref())
+        .collect();
+    reasons.sort();
+    reasons.dedup();
+    if !reasons.is_empty() {
+        let _ = writeln!(out, "\n  what could not be pushed a delta through");
+        for r in reasons {
+            let _ = writeln!(out, "    {r}");
+        }
+    }
+    let _ = writeln!(
+        out,
+        "\n  {maintained} maintained, {recomputed} recomputed. A recomputed operator is\n  \
+         re-evaluated only when one of its inputs moved, which is what a plan buys even where a\n  \
+         delta rule does not exist."
+    );
     out
 }
 
