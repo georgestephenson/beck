@@ -23,6 +23,7 @@
 //! | how long did the append wait on Postgres | **here** |
 //! | what was rejected, and never became an event | **here** |
 //! | how many sessions are connected | **here** |
+//! | what the maintained views cost, shared and per session | **here** |
 //! | did the pod get killed mid-batch | **here** |
 //!
 //! Everything in the right column is either wall-clock, resource use, or a *non-event*: something
@@ -186,6 +187,24 @@ impl Gauge {
     pub fn set(&self, n: u64) {
         self.0.store(n, Ordering::Relaxed);
     }
+    /// Replace one contributor's share: subtract what it held, add what it holds now.
+    ///
+    /// A gauge that aggregates over many things — the entries every connected subscription is
+    /// arranging — cannot be `set` by any one of them, and re-summing them all on every render is
+    /// the scan the number exists to avoid. Saturating, because a contributor that reports its
+    /// departure twice must not wrap the gauge to `u64::MAX`.
+    pub fn adjust(&self, was: u64, now: u64) {
+        if now >= was {
+            self.0.fetch_add(now - was, Ordering::Relaxed);
+        } else {
+            let d = was - now;
+            let _ = self
+                .0
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                    Some(v.saturating_sub(d))
+                });
+        }
+    }
     pub fn get(&self) -> u64 {
         self.0.load(Ordering::Relaxed)
     }
@@ -249,6 +268,21 @@ pub struct Telemetry {
     /// The `seq` the process has folded to. A gauge in spirit; stored so the dashboard has it
     /// without touching the app.
     pub head: Gauge,
+
+    // --- what a fanout costs, which §5.3 names as a metric and nothing exported until now ---
+    /// Arrangement entries held by the **one** shared dataflow: the operators that do not read the
+    /// session, maintained once however many subscribers there are (docs/25).
+    ///
+    /// Entries rather than bytes. Bytes would need `Engine::footprint`, which walks the accumulator
+    /// to charge shared structure to the fold — right for a report, far too expensive to sample on
+    /// a live process. Entries are `O(operators)` to read and they are the number that scales.
+    pub shared_arranged: Gauge,
+    /// Arrangement entries held by connected subscriptions, between them.
+    ///
+    /// This is the one that multiplies by the fanout, and putting the two side by side is the whole
+    /// operational question: `shared_arranged` is paid once, `session_arranged` is paid per
+    /// connection. A program whose second number dwarfs the first has its cut in the wrong place.
+    pub session_arranged: Gauge,
 }
 
 /// How many log records to keep. Bounded so a long-running process does not accumulate; the log
@@ -299,7 +333,12 @@ impl Telemetry {
                 "patch_frames": self.patch_frames.get(),
                 "patch_bytes": self.patch_bytes.get(),
             },
-            "gauges": { "sessions": self.sessions.get(), "head": self.head.get() },
+            "gauges": {
+                "sessions": self.sessions.get(),
+                "head": self.head.get(),
+                "shared_arranged": self.shared_arranged.get(),
+                "session_arranged": self.session_arranged.get(),
+            },
             "histograms": [
                 hist("fold", &self.fold),
                 hist("view", &self.view),
@@ -378,6 +417,8 @@ impl Telemetry {
                         sum("beck.patch.bytes", self.patch_bytes.get(), true),
                         gauge("beck.sessions.active", self.sessions.get()),
                         gauge("beck.log.head", self.head.get()),
+                        gauge("beck.views.shared_arranged", self.shared_arranged.get()),
+                        gauge("beck.views.session_arranged", self.session_arranged.get()),
                         histogram("beck.fold.duration", &self.fold),
                         histogram("beck.view.duration", &self.view),
                         histogram("beck.diff.duration", &self.diff),

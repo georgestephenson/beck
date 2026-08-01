@@ -48,6 +48,18 @@ pub struct AppConfig {
     /// §24.6) — and an operator running a fanout of a hundred thousand idle sessions over a large
     /// accumulator should be able to decide that differently without recompiling.
     pub maintain_views: bool,
+    /// Whether the operators that do not read the session are held **once** for every subscriber
+    /// rather than once per subscriber (§5.3).
+    ///
+    /// On by default. It costs one lock acquisition per render — a read lock, so subscribers do not
+    /// block each other — and saves every subscriber the arrangements below the accumulator that
+    /// are the same computation for all of them. How much that is depends entirely on the program:
+    /// a view that filters by the session immediately below the fold shares almost nothing, and one
+    /// that sorts a public feed and personalises only the greeting shares almost everything
+    /// ([`docs/25-arrangement-sharing-report.md`](../../../../docs/25-arrangement-sharing-report.md)).
+    ///
+    /// Ignored when `maintain_views` is off: there are no arrangements to share.
+    pub share_arrangements: bool,
 }
 
 impl Default for AppConfig {
@@ -57,6 +69,7 @@ impl Default for AppConfig {
             max_batch: 256,
             dedup_capacity: 16_384,
             maintain_views: true,
+            share_arrangements: true,
         }
     }
 }
@@ -81,6 +94,11 @@ pub struct App {
     ingress: mpsc::Sender<Proposal>,
     head: AtomicU64,
     config: AppConfig,
+    /// §5.3's one shared dataflow: the plan's operators that do not read the session, maintained
+    /// once for every subscription rather than once inside each. Advanced lazily by whichever
+    /// subscriber renders first at a new version, so a process with no subscribers does no view
+    /// work at all.
+    shared: Arc<beck_core::engine::SharedDataflow>,
 }
 
 impl App {
@@ -111,6 +129,7 @@ impl App {
 
         let (version, _) = watch::channel(head);
         let (tx, rx) = mpsc::channel::<Proposal>(1024);
+        let shared = runtime.shared_dataflow();
         let app = Arc::new(App {
             runtime,
             store,
@@ -119,6 +138,7 @@ impl App {
             ingress: tx,
             head: AtomicU64::new(head),
             config: config.clone(),
+            shared,
         });
         tokio::spawn(sequencer(app.clone(), rx, config));
         Ok(app)
@@ -154,23 +174,50 @@ impl App {
         timed(&telemetry().view, || self.runtime.view(&state, actor))
     }
 
-    /// Render a subscriber's view of the current state, by maintaining it.
+    /// An engine for one new subscription, of whichever kind this application is configured for.
+    ///
+    /// With sharing on it owns only the per-session operators; the rest arrive from the one shared
+    /// dataflow. With it off it owns the whole plan, which is what every subscription did before
+    /// [`docs/25-arrangement-sharing-report.md`].
+    pub fn view_engine(&self) -> Result<beck_core::engine::Engine> {
+        if self.config.share_arrangements {
+            Ok(self.shared.subscriber())
+        } else {
+            self.runtime.view_engine()
+        }
+    }
+
+    /// Render a subscriber's view of the current state, by maintaining it. Returns the page **and
+    /// the version it reflects**.
     ///
     /// The engine belongs to the subscription, so its arrangements survive between events and the
     /// per-event work is proportional to what the event changed (§5.3). The state is cloned under
     /// the read lock and the engine runs outside it — an `Arc` bump under the lock, and no
     /// rendering while the sequencer wants to write.
+    ///
+    /// The version is read **under the same lock** as the state, because the sequencer publishes
+    /// both under its write lock, and a page paired with a `seq` it does not reflect is a wrong DOM
+    /// after the client's next reconnect: a resuming client is served the difference from the `seq`
+    /// its last frame carried. This used to be `app.head()` sampled after the render, which is a
+    /// larger number whenever an event landed in between.
     pub async fn maintain(
         &self,
         engine: &mut beck_core::engine::Engine,
         actor: &str,
-    ) -> Result<beck_core::Html> {
-        let state = self.state.read().await.clone();
+    ) -> Result<(beck_core::Html, Seq)> {
+        let (state, version) = {
+            let guard = self.state.read().await;
+            (guard.clone(), self.head.load(Ordering::Relaxed))
+        };
         timed(&telemetry().view, || {
-            if self.config.maintain_views {
-                self.runtime.render(engine, &state, actor)
+            if !self.config.maintain_views {
+                return Ok((self.runtime.view(&state, actor)?, version));
+            }
+            if self.config.share_arrangements {
+                self.runtime
+                    .render_shared(&self.shared, engine, &state, version, actor)
             } else {
-                self.runtime.view(&state, actor)
+                Ok((self.runtime.render(engine, &state, actor)?, version))
             }
         })
     }
@@ -178,6 +225,16 @@ impl App {
     /// Whether subscriptions maintain their views (§5.3) or recompute them.
     pub fn maintains_views(&self) -> bool {
         self.config.maintain_views
+    }
+
+    /// Whether the operators that do not read the session are held once between subscribers.
+    pub fn shares_arrangements(&self) -> bool {
+        self.config.maintain_views && self.config.share_arrangements
+    }
+
+    /// The shared dataflow, for a measurement that wants to know what it holds.
+    pub fn shared_dataflow(&self) -> &Arc<beck_core::engine::SharedDataflow> {
+        &self.shared
     }
 
     /// Propose a command. Returns the `seq` its events landed at.

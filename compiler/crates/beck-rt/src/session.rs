@@ -63,11 +63,19 @@ pub async fn run<S: Socket>(app: Arc<App>, mut socket: S) -> Result<()> {
     };
 
     // One engine per subscription: §5.3's per-subscriber operators, and the arrangements they
-    // hold. It is created before the first render so that render is the engine's own cold start
-    // rather than a recompute the engine then has to catch up with.
-    let mut engine = app.runtime().view_engine()?;
-    let view_now = app.maintain(&mut engine, &actor).await?;
-    let seq = app.head();
+    // hold. With sharing on that is *only* the per-session operators — everything above them is one
+    // dataflow the application holds. It is created before the first render so that render is the
+    // engine's own cold start rather than a recompute the engine then has to catch up with.
+    let mut engine = app.view_engine()?;
+    let mut arranged = Arranged::new();
+    // `seq` comes back from the render rather than from `app.head()` afterwards: it is the version
+    // the page reflects, and this frame will be the one a resuming client asks for the difference
+    // from.
+    let (view_now, seq) = app.maintain(&mut engine, &actor).await?;
+    arranged.update(engine.arranged());
+    telemetry()
+        .shared_arranged
+        .set(app.shared_dataflow().arranged());
 
     let ops = match how {
         // The client has nothing we can trust: hand it the whole frame. Same format, same
@@ -95,6 +103,7 @@ pub async fn run<S: Socket>(app: Arc<App>, mut socket: S) -> Result<()> {
         ops,
         &mut version,
         &mut engine,
+        &mut arranged,
     )
     .await
 }
@@ -111,6 +120,7 @@ async fn drive<S: Socket>(
     initial_ops: Vec<Op>,
     version: &mut tokio::sync::watch::Receiver<u64>,
     engine: &mut beck_core::engine::Engine,
+    arranged: &mut Arranged,
 ) -> Result<()> {
     // How a subscriber was brought up to date is exactly the distinction Phase 0 got wrong twice
     // (§18.5 item 1): an ack means committed, a frame means your view has caught up.
@@ -130,12 +140,16 @@ async fn drive<S: Socket>(
                 if changed.is_err() {
                     break; // the application is gone
                 }
-                let view = app.maintain(engine, &actor).await?;
+                let (view, at) = app.maintain(engine, &actor).await?;
+                arranged.update(engine.arranged());
+                telemetry()
+                    .shared_arranged
+                    .set(app.shared_dataflow().arranged());
                 let started = std::time::Instant::now();
                 let ops = diff(&last_view, &view);
                 telemetry().diff.record(started.elapsed());
                 last_view = view;
-                seq = app.head();
+                seq = at;
                 if !ops.is_empty() {
                     send_json(socket, &PatchFrame::new(seq, ops).to_json()).await?;
                     awaiting = awaiting.filter(|w| *w > seq);
@@ -210,6 +224,35 @@ async fn wait_for_hello<S: Socket>(socket: &mut S) -> Result<Option<(String, u64
         }
     }
     Ok(None)
+}
+
+/// Holds this subscription's share of the arranged-entries gauge.
+///
+/// §5.3 names per-session memory as a metric to export, and [`docs/24-incremental-views-report.md`]
+/// §24.10 recorded that `Engine::footprint` computed one and nothing exported it. This exports the
+/// unit that scales — arrangement *entries*, `O(operators)` to read — rather than bytes, which
+/// would need a walk of the accumulator on every render.
+///
+/// A guard rather than a pair of calls, for the same reason [`SessionGuard`] is one: a subscription
+/// ends by returning, by erroring or by its socket dying, and a gauge that only releases its share
+/// on the happy path drifts upward until it is describing connections that closed hours ago.
+struct Arranged(u64);
+
+impl Arranged {
+    fn new() -> Arranged {
+        Arranged(0)
+    }
+
+    fn update(&mut self, now: u64) {
+        telemetry().session_arranged.adjust(self.0, now);
+        self.0 = now;
+    }
+}
+
+impl Drop for Arranged {
+    fn drop(&mut self) {
+        telemetry().session_arranged.adjust(self.0, 0);
+    }
 }
 
 /// Holds the active-session count for as long as a session is running.

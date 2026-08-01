@@ -118,7 +118,8 @@ dependencies whose signatures didn't change.
 
 ## Phase 3 — Make it real for developers (4–5 months) — **STARTED**
 
-> Two of the twelve bullets below are built, each with its own report, and a third has its engine.
+> Two of the twelve bullets below are built, each with its own report, and a third is most of the
+> way there.
 >
 > **`test` blocks and inferred mocks**, with [`22`](22-phase-3-report.md) as its evidence. `beck
 > test` runs a program's own tests — a log, a command and an expectation — through the same roles
@@ -153,19 +154,34 @@ dependencies whose signatures didn't change.
 > It is the engine and not the bullet. Per event the delta work does not grow with the collection,
 > but assembling the page's children still does, so the measured end-to-end win is a 3–5× constant
 > factor rather than a change of asymptote; and a maintained subscription costs about four times the
-> memory it already held for its page. §5.3's arrangement *sharing* between subscribers is identified
-> per operator and not implemented, and the SQL read models, pgwire and query fusion in the bullet
-> below are untouched.
+> memory it already held for its page.
 >
-> The nine other bullets are **untouched**, and [`24`](24-incremental-views-report.md) §24.10 names
+> **The shared dataflow**, with [`25`](25-arrangement-sharing-report.md) as its evidence — §5.3's
+> "a thousand connected users … must compile to *one* shared dataflow", which
+> [`24`](24-incremental-views-report.md) §24.7 identified per operator and held once per subscriber.
+> The operators that do not read the session now live in one dataflow the application holds,
+> advanced by the first subscriber to render at a new version rather than by the sequencer, with a
+> bounded history of what moved so a subscriber woken late updates by delta and one woken very late
+> rebuilds. 64 subscribers over 11 versions advance it 11 times, and the counter is the test.
+>
+> What it is worth is a property of the program and not of the feature, so the report gives both
+> ends: 256 subscribers of a public feed do **55× less work per event** and hold 4.3× less; 256
+> subscribers of the todo sketch, which filters by the session immediately below the accumulator, do
+> 1.3× less. Where a program reads the session is what decides its fanout cost, and `beck explain
+> incremental` is where a developer can see which side of that cut each operator is on. §5.3's
+> per-session memory is exported for the first time, in entries rather than bytes and split into the
+> half paid once and the half paid per connection. The SQL read models, pgwire and query fusion in
+> the bullet below are still untouched.
+>
+> The nine other bullets are **untouched**, and [`25`](25-arrangement-sharing-report.md) §25.9 names
 > them one at a time rather than by omission.
 
 - LLVM release backend + differential tests against Cranelift (§5.2).
 - **Incremental views**: compile subscribed/materialized views to differential-dataflow plans with
   arrangement sharing (per-session fanout, §5.3); recompute stays as the CI oracle; SQL read models
   + pgwire exposure; query fusion on symbolic plans. *The plans and the oracle are **built**
-  ([`24`](24-incremental-views-report.md)). Arrangement sharing between subscribers is identified per
-  operator and held once per subscriber; the read models, pgwire and the fusion are untouched.*
+  ([`24`](24-incremental-views-report.md)); so is arrangement sharing between subscribers
+  ([`25`](25-arrangement-sharing-report.md)). The read models, pgwire and the fusion are untouched.*
 - **Mode B client**: per-component WASM (view + fold + signal kernel), optimistic application with
   `seq` reconciliation, freshness-typed pending state; size budget CI gate (< 150 KB brotli per
   component bundle).

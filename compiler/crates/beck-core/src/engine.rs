@@ -44,8 +44,8 @@
 //! scalars compare by value, collections and rendered trees by pointer. It answers "unchanged" only
 //! when it is certain, and "changed" costs a recompute that the old runtime did unconditionally.
 
-use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::sync::{Arc, OnceLock, RwLock};
 
 use beck_diag::Span;
 
@@ -75,12 +75,36 @@ struct Arrangement {
     /// arrangement moves. This is the boundary between the maintained region and the rest: a
     /// consumer that only asks for the *size* never forces it, which is exactly why `list_len` is
     /// an operator rather than a pointwise call.
-    listed: Option<Value>,
+    ///
+    /// A `OnceLock` rather than an `Option` because a *shared* arrangement is read by many
+    /// subscribers at once, through a read lock ([`SharedDataflow`]): the first one to need the
+    /// list builds it, and the rest get the same `Arc`. With an `Option` the cache would need the
+    /// write lock, which would serialise every subscriber behind the first — and the list is the
+    /// one thing worth sharing most, because building it is the `O(n)` §24.6 named.
+    listed: OnceLock<Value>,
 }
 
 impl Arrangement {
     fn touch(&mut self) {
-        self.listed = None;
+        self.listed = OnceLock::new();
+    }
+
+    /// The list this arrangement stands for, and how many entries had to be copied to build it —
+    /// zero when another reader already had.
+    fn listed_value(&self) -> (Value, u64) {
+        if let Some(v) = self.listed.get() {
+            return (v.clone(), 0);
+        }
+        let listed = Value::List(Arc::new(self.entries.values().cloned().collect()));
+        // A race loses the loser's copy and keeps the winner's; both are the same list, so which
+        // one wins is not observable. `get_or_init` would be neater and would hold a lock.
+        match self.listed.set(listed.clone()) {
+            Ok(()) => (listed, self.entries.len() as u64),
+            Err(_) => (
+                self.listed.get().cloned().unwrap_or(listed),
+                self.entries.len() as u64,
+            ),
+        }
     }
 }
 
@@ -204,29 +228,63 @@ impl Prepared {
 pub struct Engine {
     prepared: Arc<Prepared>,
     cells: Vec<Cell>,
+    /// Which of the plan's operators this engine computes and holds.
+    ///
+    /// All of them for a standalone engine. For a subscriber attached to a [`SharedDataflow`] it is
+    /// exactly the `per_session` nodes: the rest arrive from upstream, held once between every
+    /// subscriber, which is §5.3's sentence.
+    owns: Arc<[bool]>,
     /// Whether any state at all has been established. Cleared by an error, so the next render
     /// rebuilds rather than trusting a half-updated arrangement.
     warm: bool,
+    /// The shared version this engine last rendered against, so the changes it has not yet seen can
+    /// be found. Meaningless for a standalone engine, which has no upstream to lag behind.
+    seen: u64,
     work: Work,
 }
 
 impl Engine {
-    /// A fresh subscriber's view over a plan the program prepared once.
+    /// A fresh subscriber's view over a plan the program prepared once, computing every operator
+    /// itself.
     pub fn new(prepared: Arc<Prepared>) -> Engine {
+        let owns: Arc<[bool]> = (0..prepared.plan.nodes.len()).map(|_| true).collect();
+        Engine::for_nodes(prepared, owns)
+    }
+
+    /// A subscriber's half of a plan whose shared prefix a [`SharedDataflow`] maintains.
+    ///
+    /// It owns the `per_session` operators and nothing else. Rendering it requires the shared side
+    /// — [`SharedDataflow::render`] — because the operators it does not own are where its inputs
+    /// come from.
+    pub fn subscriber(prepared: Arc<Prepared>) -> Engine {
+        let owns: Arc<[bool]> = prepared.plan.nodes.iter().map(|n| n.per_session).collect();
+        Engine::for_nodes(prepared, owns)
+    }
+
+    fn for_nodes(prepared: Arc<Prepared>, owns: Arc<[bool]>) -> Engine {
         let mut cells: Vec<Cell> = (0..prepared.plan.nodes.len())
             .map(|_| Cell::default())
             .collect();
         for (i, v) in prepared.consts.iter().enumerate() {
             if let Some(v) = v {
-                cells[i].out = Out::Val(v.clone());
+                if owns[i] {
+                    cells[i].out = Out::Val(v.clone());
+                }
             }
         }
         Engine {
             prepared,
             cells,
+            owns,
             warm: false,
+            seen: 0,
             work: Work::default(),
         }
+    }
+
+    /// Whether this engine computes an operator itself, rather than reading it from upstream.
+    fn owns(&self, id: OpId) -> bool {
+        self.owns[id]
     }
 
     pub fn plan(&self) -> &Arc<Plan> {
@@ -246,9 +304,9 @@ impl Engine {
 
     /// The same count, restricted to arrangements that do **not** read the session.
     ///
-    /// This is the part §5.3 says a thousand subscribers should hold *once* between them, and the
-    /// engine holds once *each*. Reporting it separately is what keeps the gap between the plan's
-    /// claim and the engine's behaviour a number rather than a caveat.
+    /// This is the part §5.3 says a thousand subscribers should hold *once* between them. A
+    /// subscriber attached to a [`SharedDataflow`] does not own those operators at all, so this is
+    /// zero for it and the entries are counted once, on [`SharedDataflow::arranged`].
     pub fn arranged_shared(&self) -> u64 {
         self.arrangement_entries(|per_session| !per_session)
     }
@@ -257,6 +315,7 @@ impl Engine {
         self.cells
             .iter()
             .enumerate()
+            .filter(|(i, _)| self.owns[*i])
             .map(|(i, c)| match &c.out {
                 Out::Arr(a) if want(self.prepared.plan.nodes[i].per_session) => {
                     a.entries.len() as u64
@@ -272,10 +331,13 @@ impl Engine {
             *cell = Cell::default();
             // A constant's value is still valid — only the arrangements are suspect.
             if let Some(v) = &self.prepared.consts[i] {
-                cell.out = Out::Val(v.clone());
+                if self.owns[i] {
+                    cell.out = Out::Val(v.clone());
+                }
             }
         }
         self.warm = false;
+        self.seen = 0;
     }
 
     /// Render this subscriber's view of a state, maintaining whatever the plan can maintain.
@@ -285,8 +347,21 @@ impl Engine {
     /// an older state (`beck-rt`'s resumption path), and an engine that assumed monotonic progress
     /// would quietly serve it the wrong page.
     pub fn render(&mut self, state: &Value, session: &Value) -> Result<Value, ExecError> {
+        self.render_from(None, state, session)
+    }
+
+    /// The same render, with the operators this engine does not own arriving from upstream.
+    fn render_from(
+        &mut self,
+        up: Option<Upstream<'_>>,
+        state: &Value,
+        session: &Value,
+    ) -> Result<Value, ExecError> {
         self.work = Work::default();
-        match self.tick(state, session) {
+        match self
+            .tick(up, state, session)
+            .and_then(|()| self.materialise(up, self.prepared.plan.root))
+        {
             Ok(v) => {
                 self.warm = true;
                 Ok(v)
@@ -300,13 +375,40 @@ impl Engine {
         }
     }
 
-    fn tick(&mut self, state: &Value, session: &Value) -> Result<Value, ExecError> {
+    /// Advance the operators this engine owns, without assembling a page from them.
+    ///
+    /// This is the shared half of [`SharedDataflow`]: the root of the plan is per-session and this
+    /// engine does not own it, so there is nothing at the top to materialise.
+    fn advance(&mut self, state: &Value) -> Result<(), ExecError> {
+        self.work = Work::default();
+        match self.tick(None, state, &Value::Unit) {
+            Ok(()) => {
+                self.warm = true;
+                Ok(())
+            }
+            Err(e) => {
+                self.reset();
+                Err(e)
+            }
+        }
+    }
+
+    fn tick(
+        &mut self,
+        up: Option<Upstream<'_>>,
+        state: &Value,
+        session: &Value,
+    ) -> Result<(), ExecError> {
         let cold = !self.warm;
         // The plan is behind an `Arc`, so this is one refcount rather than a clone of every
         // operator's `Core` — which is what matching on `self.plan` directly would have cost, once
         // per node per event.
         let plan = self.prepared.plan.clone();
         for id in 0..plan.nodes.len() {
+            // Not ours: it belongs to the shared dataflow, and reading it goes through `up`.
+            if !self.owns(id) {
+                continue;
+            }
             match &plan.nodes[id].op {
                 Op::State => {
                     self.cells[id].rebuilt = false;
@@ -328,34 +430,39 @@ impl Engine {
                     self.cells[id].rebuilt = false;
                     self.cells[id].changed = cold;
                 }
-                Op::Pointwise { .. } => self.pointwise(id, cold)?,
-                Op::MapValues => self.map_values(id, cold)?,
-                Op::MapList { f } => self.map_list(id, f, cold)?,
-                Op::FilterList { f } => self.filter_list(id, f, cold)?,
-                Op::SortBy { f } => self.sort_by(id, f, cold)?,
-                Op::Concat => self.concat(id, cold)?,
-                Op::Flatten => self.flatten(id, cold)?,
-                Op::Count => self.aggregate(id, cold, false)?,
-                Op::IsEmpty => self.aggregate(id, cold, true)?,
+                Op::Pointwise { .. } => self.pointwise(up, id, cold)?,
+                Op::MapValues => self.map_values(up, id, cold)?,
+                Op::MapList { f } => self.map_list(up, id, f, cold)?,
+                Op::FilterList { f } => self.filter_list(up, id, f, cold)?,
+                Op::SortBy { f } => self.sort_by(up, id, f, cold)?,
+                Op::Concat => self.concat(up, id, cold)?,
+                Op::Flatten => self.flatten(up, id, cold)?,
+                Op::Count => self.aggregate(up, id, cold, false)?,
+                Op::IsEmpty => self.aggregate(up, id, cold, true)?,
             }
         }
-        self.materialise(plan.root)
+        Ok(())
     }
 
     // ---------------------------------------------------------------------------------------
     // Operators
     // ---------------------------------------------------------------------------------------
 
-    fn pointwise(&mut self, id: OpId, cold: bool) -> Result<(), ExecError> {
+    fn pointwise(
+        &mut self,
+        up: Option<Upstream<'_>>,
+        id: OpId,
+        cold: bool,
+    ) -> Result<(), ExecError> {
         self.cells[id].rebuilt = false;
         let inputs = self.prepared.plan.nodes[id].inputs.clone();
-        if !cold && !inputs.iter().any(|&i| self.cells[i].changed) {
+        if !cold && !inputs.iter().any(|&i| self.changed_of(up, i)) {
             self.cells[id].changed = false;
             return Ok(());
         }
         let mut args = Vec::with_capacity(inputs.len());
         for i in inputs {
-            args.push(self.materialise(i)?);
+            args.push(self.materialise(up, i)?);
         }
         let f = self.prepared.code[id]
             .as_ref()
@@ -373,22 +480,27 @@ impl Engine {
     }
 
     /// `map_values(m)` — the source. Every other operator's deltas descend from this one.
-    fn map_values(&mut self, id: OpId, cold: bool) -> Result<(), ExecError> {
+    fn map_values(
+        &mut self,
+        up: Option<Upstream<'_>>,
+        id: OpId,
+        cold: bool,
+    ) -> Result<(), ExecError> {
         let input = self.prepared.plan.nodes[id].inputs[0];
-        if !cold && !self.cells[input].changed {
+        if !cold && !self.changed_of(up, input) {
             self.cells[id].changed = false;
             self.cells[id].changes.clear();
             self.cells[id].rebuilt = false;
             return Ok(());
         }
-        let source = match &self.cells[input].out {
+        let source = match self.out_of(up, input)? {
             Out::Val(Value::Map(m)) => Some(m.clone()),
             // Not a map. The plan said this was `map_values`, so the only way here is a program the
             // checker would have refused; rebuild wholesale rather than guess.
             _ => None,
         };
         let Some(next) = source else {
-            let whole = self.materialise(input)?;
+            let whole = self.materialise(up, input)?;
             let entries = list_entries(&whole);
             return self.replace(id, entries);
         };
@@ -427,15 +539,27 @@ impl Engine {
         Ok(())
     }
 
-    fn map_list(&mut self, id: OpId, f: &Fun, cold: bool) -> Result<(), ExecError> {
-        let (incoming, rebuild) = self.incoming(id, 0, f, cold)?;
+    fn map_list(
+        &mut self,
+        up: Option<Upstream<'_>>,
+        id: OpId,
+        f: &Fun,
+        cold: bool,
+    ) -> Result<(), ExecError> {
+        let (incoming, rebuild) = self.incoming(up, id, 0, f, cold)?;
         if incoming.is_empty() && !rebuild {
             self.cells[id].changed = false;
             self.cells[id].changes.clear();
+            // Cleared, and this is not housekeeping. `rebuilt` means "threw its arrangement away
+            // *this tick*"; leaving the cold start's `true` here made it mean "has ever rebuilt",
+            // and a rebuild is contagious downstream — so every operator below a collection that
+            // had stopped changing rebuilt on every event, for the life of the subscription.
+            // `concat` and `flatten` always cleared it; these three never did.
+            self.cells[id].rebuilt = false;
             return Ok(());
         }
         let call = self.fun_of(id)?;
-        let captured = self.captures(f)?;
+        let captured = self.captures(up, f)?;
         let mut arr = self.take_arrangement(id, rebuild);
         let mut changes = Vec::new();
         for c in incoming {
@@ -468,15 +592,27 @@ impl Engine {
         Ok(())
     }
 
-    fn filter_list(&mut self, id: OpId, f: &Fun, cold: bool) -> Result<(), ExecError> {
-        let (incoming, rebuild) = self.incoming(id, 0, f, cold)?;
+    fn filter_list(
+        &mut self,
+        up: Option<Upstream<'_>>,
+        id: OpId,
+        f: &Fun,
+        cold: bool,
+    ) -> Result<(), ExecError> {
+        let (incoming, rebuild) = self.incoming(up, id, 0, f, cold)?;
         if incoming.is_empty() && !rebuild {
             self.cells[id].changed = false;
             self.cells[id].changes.clear();
+            // Cleared, and this is not housekeeping. `rebuilt` means "threw its arrangement away
+            // *this tick*"; leaving the cold start's `true` here made it mean "has ever rebuilt",
+            // and a rebuild is contagious downstream — so every operator below a collection that
+            // had stopped changing rebuilt on every event, for the life of the subscription.
+            // `concat` and `flatten` always cleared it; these three never did.
+            self.cells[id].rebuilt = false;
             return Ok(());
         }
         let call = self.fun_of(id)?;
-        let captured = self.captures(f)?;
+        let captured = self.captures(up, f)?;
         let mut arr = self.take_arrangement(id, rebuild);
         let mut changes = Vec::new();
         for c in incoming {
@@ -515,15 +651,27 @@ impl Engine {
     /// The output key is `k(x)` followed by the input's key. That second component is what makes
     /// the sort *stable* in the same way the recompute's is: two elements with equal keys keep the
     /// order they had at the input, and "the order they had" is exactly the input's key.
-    fn sort_by(&mut self, id: OpId, f: &Fun, cold: bool) -> Result<(), ExecError> {
-        let (incoming, rebuild) = self.incoming(id, 0, f, cold)?;
+    fn sort_by(
+        &mut self,
+        up: Option<Upstream<'_>>,
+        id: OpId,
+        f: &Fun,
+        cold: bool,
+    ) -> Result<(), ExecError> {
+        let (incoming, rebuild) = self.incoming(up, id, 0, f, cold)?;
         if incoming.is_empty() && !rebuild {
             self.cells[id].changed = false;
             self.cells[id].changes.clear();
+            // Cleared, and this is not housekeeping. `rebuilt` means "threw its arrangement away
+            // *this tick*"; leaving the cold start's `true` here made it mean "has ever rebuilt",
+            // and a rebuild is contagious downstream — so every operator below a collection that
+            // had stopped changing rebuilt on every event, for the life of the subscription.
+            // `concat` and `flatten` always cleared it; these three never did.
+            self.cells[id].rebuilt = false;
             return Ok(());
         }
         let call = self.fun_of(id)?;
-        let captured = self.captures(f)?;
+        let captured = self.captures(up, f)?;
         let mut arr = self.take_arrangement(id, rebuild);
         if rebuild {
             self.cells[id].positions.clear();
@@ -562,13 +710,13 @@ impl Engine {
     }
 
     /// `concat_lists([a, b, …])` — a union of delta streams, keyed by which stream.
-    fn concat(&mut self, id: OpId, cold: bool) -> Result<(), ExecError> {
+    fn concat(&mut self, up: Option<Upstream<'_>>, id: OpId, cold: bool) -> Result<(), ExecError> {
         let inputs = self.prepared.plan.nodes[id].inputs.clone();
-        let rebuild = cold || inputs.iter().any(|&i| self.cells[i].rebuilt);
+        let rebuild = cold || inputs.iter().any(|&i| self.rebuilt_of(up, i));
         let mut arr = self.take_arrangement(id, rebuild);
         let mut changes = Vec::new();
         for (slot, input) in inputs.iter().copied().enumerate() {
-            let incoming = self.feed(id, slot, input, rebuild)?;
+            let incoming = self.feed(up, id, slot, input, rebuild)?;
             for c in incoming {
                 let mut key: Vec<Value> = vec![Value::Int(slot as i64)];
                 key.extend(c.key.iter().cloned());
@@ -611,10 +759,10 @@ impl Engine {
     /// The output key is the input's key followed by the position inside that element's list, so
     /// one row's children move without disturbing anybody else's, and the order is the order the
     /// recompute would have produced.
-    fn flatten(&mut self, id: OpId, cold: bool) -> Result<(), ExecError> {
+    fn flatten(&mut self, up: Option<Upstream<'_>>, id: OpId, cold: bool) -> Result<(), ExecError> {
         let input = self.prepared.plan.nodes[id].inputs[0];
-        let rebuild = cold || self.cells[input].rebuilt;
-        let incoming = self.feed(id, 0, input, rebuild)?;
+        let rebuild = cold || self.rebuilt_of(up, input);
+        let incoming = self.feed(up, id, 0, input, rebuild)?;
         if incoming.is_empty() && !rebuild {
             self.cells[id].changed = false;
             self.cells[id].changes.clear();
@@ -663,19 +811,25 @@ impl Engine {
     /// This is §3.8's sentence, mechanised. It reads `entries.len()` — `O(1)` — and, crucially,
     /// never calls [`Engine::materialise`], so a program that only asks how many there are never
     /// pays for a list of them.
-    fn aggregate(&mut self, id: OpId, cold: bool, emptiness: bool) -> Result<(), ExecError> {
+    fn aggregate(
+        &mut self,
+        up: Option<Upstream<'_>>,
+        id: OpId,
+        cold: bool,
+        emptiness: bool,
+    ) -> Result<(), ExecError> {
         self.cells[id].rebuilt = false;
         let input = self.prepared.plan.nodes[id].inputs[0];
-        if !cold && !self.cells[input].changed {
+        if !cold && !self.changed_of(up, input) {
             self.cells[id].changed = false;
             return Ok(());
         }
-        let n = match &self.cells[input].out {
+        let n = match self.out_of(up, input)? {
             Out::Arr(a) => a.entries.len(),
             Out::Val(Value::List(xs)) => xs.len(),
             Out::Val(Value::Map(m)) => m.len(),
             Out::Val(_) => {
-                let whole = self.materialise(input)?;
+                let whole = self.materialise(up, input)?;
                 whole.as_list().map(|l| l.len()).unwrap_or(0)
             }
         };
@@ -709,36 +863,39 @@ impl Engine {
     /// * the engine is cold.
     fn incoming(
         &mut self,
+        up: Option<Upstream<'_>>,
         id: OpId,
         slot: usize,
         f: &Fun,
         cold: bool,
     ) -> Result<(Vec<Change>, bool), ExecError> {
         let input = self.prepared.plan.nodes[id].inputs[slot];
-        let rebuild =
-            cold || self.cells[input].rebuilt || f.captures.iter().any(|&c| self.cells[c].changed);
-        let changes = self.feed(id, slot, input, rebuild)?;
+        let rebuild = cold
+            || self.rebuilt_of(up, input)
+            || f.captures.iter().any(|&c| self.changed_of(up, c));
+        let changes = self.feed(up, id, slot, input, rebuild)?;
         Ok((changes, rebuild))
     }
 
     /// Changes at one input, whether it is an arrangement or a plain list.
     fn feed(
         &mut self,
+        up: Option<Upstream<'_>>,
         id: OpId,
         slot: usize,
         input: OpId,
         whole: bool,
     ) -> Result<Vec<Change>, ExecError> {
-        let is_arr = matches!(self.cells[input].out, Out::Arr(_));
+        let is_arr = matches!(self.out_of(up, input)?, Out::Arr(_));
         if is_arr && !whole {
-            return Ok(if self.cells[input].changed {
-                self.cells[input].changes.clone()
+            return Ok(if self.changed_of(up, input) {
+                self.changes_of(up, input)
             } else {
                 Vec::new()
             });
         }
         if is_arr {
-            let entries: Vec<(Key, Value)> = match &self.cells[input].out {
+            let entries: Vec<(Key, Value)> = match self.out_of(up, input)? {
                 Out::Arr(a) => a
                     .entries
                     .iter()
@@ -762,10 +919,10 @@ impl Engine {
         // A plain list: no deltas of its own, so this operator makes them by comparing against the
         // copy it last saw. `O(n)` in the list's length — which is the honest cost of a collection
         // that arrived from a `match` or an `if` rather than from an arrangement.
-        if !whole && !self.cells[input].changed {
+        if !whole && !self.changed_of(up, input) {
             return Ok(Vec::new());
         }
-        let value = self.materialise(input)?;
+        let value = self.materialise(up, input)?;
         let next: BTreeMap<Key, Value> = list_entries(&value).into_iter().collect();
         while self.cells[id].shadow.len() <= slot {
             self.cells[id].shadow.push(BTreeMap::new());
@@ -840,10 +997,10 @@ impl Engine {
         })
     }
 
-    fn captures(&mut self, f: &Fun) -> Result<Vec<Value>, ExecError> {
+    fn captures(&mut self, up: Option<Upstream<'_>>, f: &Fun) -> Result<Vec<Value>, ExecError> {
         let mut out = Vec::with_capacity(f.captures.len());
         for &c in &f.captures {
-            out.push(self.materialise(c)?);
+            out.push(self.materialise(up, c)?);
         }
         Ok(out)
     }
@@ -854,20 +1011,360 @@ impl Engine {
     /// elements into a `Value::List` for a pointwise consumer copies `n` handles per event even
     /// when one of them moved. What it does *not* do is re-derive the elements — those came from
     /// the arrangement, and only the changed ones were computed.
-    fn materialise(&mut self, id: OpId) -> Result<Value, ExecError> {
-        let (listed, n) = match &mut self.cells[id].out {
+    ///
+    /// For a *shared* arrangement it is also copied only once between every subscriber, because the
+    /// cache lives beside the arrangement rather than in the engine that asked.
+    fn materialise(&mut self, up: Option<Upstream<'_>>, id: OpId) -> Result<Value, ExecError> {
+        let (listed, n) = match self.out_of(up, id)? {
             Out::Val(v) => return Ok(v.clone()),
-            Out::Arr(a) => {
-                if let Some(v) = &a.listed {
-                    return Ok(v.clone());
-                }
-                let listed = Value::List(Arc::new(a.entries.values().cloned().collect()));
-                a.listed = Some(listed.clone());
-                (listed, a.entries.len() as u64)
-            }
+            Out::Arr(a) => a.listed_value(),
         };
         self.work.materialised += n;
         Ok(listed)
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Reading a node this engine may not own
+    // ---------------------------------------------------------------------------------------
+
+    /// A node's output, from this engine's own cells or from the shared dataflow above it.
+    fn out_of<'e>(&'e self, up: Option<Upstream<'e>>, id: OpId) -> Result<&'e Out, ExecError> {
+        if self.owns(id) {
+            return Ok(&self.cells[id].out);
+        }
+        match up {
+            Some(u) => Ok(u.out(id)),
+            None => Err(missing_upstream(id)),
+        }
+    }
+
+    /// Whether a node moved since this engine last looked at it.
+    ///
+    /// For an upstream node that is "since the version this subscriber last rendered", not "at the
+    /// latest version" — a subscriber that skipped three events has to see all three, or an
+    /// operator below it would keep an entry the shared side has already withdrawn.
+    fn changed_of(&self, up: Option<Upstream<'_>>, id: OpId) -> bool {
+        if self.owns(id) {
+            return self.cells[id].changed;
+        }
+        // No upstream where one is needed is an error the caller will raise when it reads the
+        // value; answering "changed" here keeps it on the path that does.
+        up.map(|u| u.changed(id)).unwrap_or(true)
+    }
+
+    fn rebuilt_of(&self, up: Option<Upstream<'_>>, id: OpId) -> bool {
+        if self.owns(id) {
+            return self.cells[id].rebuilt;
+        }
+        up.map(|u| u.rebuilt(id)).unwrap_or(true)
+    }
+
+    fn changes_of(&self, up: Option<Upstream<'_>>, id: OpId) -> Vec<Change> {
+        if self.owns(id) {
+            return self.cells[id].changes.clone();
+        }
+        up.map(|u| u.changes(id)).unwrap_or_default()
+    }
+}
+
+fn missing_upstream(id: OpId) -> ExecError {
+    ExecError::new(
+        format!("operator {id} belongs to the shared dataflow, and none was supplied"),
+        Span::NONE,
+    )
+}
+
+// -------------------------------------------------------------------------------------------
+// The shared dataflow (§5.3)
+// -------------------------------------------------------------------------------------------
+
+/// What the shared dataflow did in advancing from one state version to the next.
+///
+/// A subscriber renders when it is woken, not when the fold moves, so it can be several versions
+/// behind by the time it looks. Its per-session operators need every change since *its* last
+/// render, not the latest one — an entry withdrawn at version 8 and never mentioned again would
+/// otherwise survive in a subscriber that last rendered at version 7 and next renders at 9.
+///
+/// A rebuilt operator's changes are deliberately **not** kept: a consumer downstream of a rebuild
+/// re-reads the whole arrangement instead of applying changes, so storing them would retain a copy
+/// of the collection per remembered version for nothing.
+struct Step {
+    from: u64,
+    to: u64,
+    changed: BTreeSet<OpId>,
+    rebuilt: BTreeSet<OpId>,
+    changes: BTreeMap<OpId, Arc<[Change]>>,
+}
+
+struct SharedInner {
+    engine: Engine,
+    version: u64,
+    /// Whether the shared prefix has been computed at all.
+    ///
+    /// Separate from `version` because a freshly recovered application is at version 0 with a real
+    /// accumulator behind it — an empty log is a state, not the absence of one — so "already at the
+    /// version you asked for" and "never advanced" are different facts and only one of them means
+    /// there is nothing to do.
+    started: bool,
+    /// Oldest first, and contiguous: `history[k].to == history[k + 1].from`.
+    history: VecDeque<Step>,
+}
+
+/// The operators of a plan that do not read the session, arranged **once** for every subscriber.
+///
+/// [`docs/05-tier-lowering.md`](../../../../docs/05-tier-lowering.md) §5.3:
+///
+/// > a thousand connected users of `todos.map(filter_by(session.user))` must compile to *one*
+/// > shared dataflow whose final per-session operators (filter, project, diff) run per subscriber
+///
+/// [`crate::plan::Plan`] has said which nodes those are since the plan existed — `per_session` is
+/// false for exactly the operators reachable from the accumulator without passing through the
+/// session. What was missing was somewhere for them to live that is not one subscriber's engine.
+///
+/// # The three choices §24.7 said this design had in it
+///
+/// 1. **Who advances it.** Not the sequencer: that would put view maintenance on the write path and
+///    do it for a state nobody is looking at. The *first subscriber to render at a new version*
+///    advances it, under a write lock, and every subscriber that renders at that version afterwards
+///    finds it done. So the work happens once per version, is paid by a renderer that was about to
+///    do it anyway, and does not happen at all when nobody is subscribed.
+/// 2. **What a subscriber holds while it renders.** A read lock, for the whole of its own render.
+///    Readers do not block readers, so a thousand subscribers render concurrently; the only writer
+///    is the advance, which is `O(δ)`. The alternative — publishing an immutable snapshot per
+///    version — has to copy any arrangement that moved, which is the `O(n)` this engine exists to
+///    remove.
+/// 3. **What happens to a subscriber that fell behind.** It replays the changes it missed, from a
+///    bounded history of recent versions ([`Step`]). Beyond that history it rebuilds — correct at
+///    any lag, because a rebuild reads the current arrangement whole and a rebuild is already
+///    contagious downstream ([`Cell::rebuilt`]).
+///
+/// # What is still not shared
+///
+/// The *page* is per-session in every corpus program, so what is shared is the prefix below the
+/// session, not the render. `24-feed.beck` is the case where that prefix is most of the plan and
+/// the sketch is the case where it is least; `docs/25` has the table.
+pub struct SharedDataflow {
+    inner: RwLock<SharedInner>,
+    /// How many versions of changes to remember. Beyond this a lagging subscriber rebuilds.
+    depth: usize,
+    /// How many times the shared prefix has actually been advanced.
+    ///
+    /// The metric the whole design turns on: a thousand subscribers rendering at one version must
+    /// advance it *once*, and a counter is how that is a test rather than a claim.
+    advances: std::sync::atomic::AtomicU64,
+}
+
+/// How many versions of change history a shared dataflow keeps.
+///
+/// The cost is one `Change` per entry that moved per remembered version — a delta, not a
+/// collection, because a rebuilt operator's changes are not kept. The benefit is that a subscriber
+/// this many events behind still updates by delta rather than rebuilding. 64 is well past the point
+/// where a subscriber that far behind is the bottleneck.
+const HISTORY: usize = 64;
+
+impl SharedDataflow {
+    pub fn new(prepared: Arc<Prepared>) -> SharedDataflow {
+        let owns: Arc<[bool]> = prepared.plan.nodes.iter().map(|n| !n.per_session).collect();
+        SharedDataflow {
+            inner: RwLock::new(SharedInner {
+                engine: Engine::for_nodes(prepared, owns),
+                version: 0,
+                started: false,
+                history: VecDeque::new(),
+            }),
+            depth: HISTORY,
+            advances: std::sync::atomic::AtomicU64::new(0),
+        }
+    }
+
+    /// A subscriber's engine over the same plan: the per-session operators, and nothing else.
+    pub fn subscriber(&self) -> Engine {
+        let inner = self.read();
+        Engine::subscriber(inner.engine.prepared.clone())
+    }
+
+    /// Render one subscriber's page, maintaining the shared prefix once for all of them.
+    ///
+    /// `version` identifies the state: two calls with the same `version` must pass the same
+    /// `state`, because the second is served from what the first computed. Returns the page and the
+    /// version it actually reflects, which may be **newer** than the one asked for — another
+    /// subscriber may have advanced the shared side in between, and rendering the newer state is
+    /// correct where rendering the older one would mean unwinding an arrangement.
+    ///
+    /// That returned version is not a courtesy. A patch frame is labelled with a `seq` and a
+    /// resuming client is served the difference from it (§4.3), so a frame labelled with a state
+    /// the page does not reflect is a wrong DOM after the next reconnect.
+    pub fn render(
+        &self,
+        engine: &mut Engine,
+        state: &Value,
+        version: u64,
+        session: &Value,
+    ) -> Result<(Value, u64), ExecError> {
+        self.advance(state, version)?;
+        let inner = self.read();
+        let up = Upstream::new(&inner, engine.seen);
+        let page = engine.render_from(Some(up), state, session)?;
+        engine.seen = inner.version;
+        Ok((page, inner.version))
+    }
+
+    /// Bring the shared prefix up to `version`, if some other subscriber has not already.
+    fn advance(&self, state: &Value, version: u64) -> Result<(), ExecError> {
+        {
+            let inner = self.read();
+            if inner.started && inner.version >= version {
+                return Ok(());
+            }
+        }
+        let mut inner = self
+            .inner
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // Checked again under the write lock: between the read above and here, another subscriber
+        // may have done exactly this.
+        if inner.started && inner.version >= version {
+            return Ok(());
+        }
+        let from = inner.version;
+        if let Err(e) = inner.engine.advance(state) {
+            // The engine has already discarded its arrangements. The history describes a dataflow
+            // that no longer exists, so it goes too, and every subscriber rebuilds.
+            inner.history.clear();
+            inner.started = false;
+            inner.version = 0;
+            return Err(e);
+        }
+        inner.started = true;
+        self.advances
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let step = inner.engine.step(from, version);
+        inner.history.push_back(step);
+        while inner.history.len() > self.depth {
+            inner.history.pop_front();
+        }
+        inner.version = version;
+        Ok(())
+    }
+
+    /// The version the shared prefix currently reflects.
+    pub fn version(&self) -> u64 {
+        self.read().version
+    }
+
+    /// How many times the shared prefix has been advanced since the process started.
+    ///
+    /// §5.3's claim is that a thousand subscribers of one view share one dataflow. This is the
+    /// number that says so: it counts advances, not renders, so it stays flat as subscribers are
+    /// added and moves only when the fold does.
+    pub fn advances(&self) -> u64 {
+        self.advances.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Entries across every shared arrangement — held once, however many subscribers there are.
+    pub fn arranged(&self) -> u64 {
+        self.read().engine.arranged()
+    }
+
+    /// What the shared prefix retains beyond the accumulator — once, for every subscriber.
+    pub fn footprint(&self, base: &Value) -> Footprint {
+        self.read().engine.footprint(base)
+    }
+
+    pub fn work(&self) -> Work {
+        self.read().engine.work()
+    }
+
+    fn read(&self) -> std::sync::RwLockReadGuard<'_, SharedInner> {
+        self.inner
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+impl Engine {
+    /// What this engine's owned operators did in one advance, as a replayable step.
+    fn step(&self, from: u64, to: u64) -> Step {
+        let mut changed = BTreeSet::new();
+        let mut rebuilt = BTreeSet::new();
+        let mut changes = BTreeMap::new();
+        for (id, cell) in self.cells.iter().enumerate() {
+            if !self.owns[id] {
+                continue;
+            }
+            if cell.changed {
+                changed.insert(id);
+            }
+            if cell.rebuilt {
+                rebuilt.insert(id);
+            } else if !cell.changes.is_empty() {
+                changes.insert(id, Arc::<[Change]>::from(cell.changes.clone()));
+            }
+        }
+        Step {
+            from,
+            to,
+            changed,
+            rebuilt,
+            changes,
+        }
+    }
+}
+
+/// One subscriber's window onto the shared dataflow: its arrangements now, and everything that
+/// moved since this subscriber last looked.
+#[derive(Clone, Copy)]
+struct Upstream<'a> {
+    inner: &'a SharedInner,
+    since: u64,
+    /// Whether the history still covers `since`. When it does not, every upstream node reads as
+    /// changed *and* rebuilt, so the subscriber re-reads the arrangements whole — slow, and right.
+    resolvable: bool,
+}
+
+impl<'a> Upstream<'a> {
+    fn new(inner: &'a SharedInner, since: u64) -> Upstream<'a> {
+        let resolvable = since == inner.version
+            || inner
+                .history
+                .iter()
+                .find(|s| s.to > since)
+                .is_some_and(|s| s.from == since);
+        Upstream {
+            inner,
+            since,
+            resolvable,
+        }
+    }
+
+    fn out(&self, id: OpId) -> &'a Out {
+        &self.inner.engine.cells[id].out
+    }
+
+    fn window(&self) -> impl Iterator<Item = &'a Step> {
+        let since = self.since;
+        self.inner.history.iter().filter(move |s| s.to > since)
+    }
+
+    fn changed(&self, id: OpId) -> bool {
+        !self.resolvable || self.window().any(|s| s.changed.contains(&id))
+    }
+
+    fn rebuilt(&self, id: OpId) -> bool {
+        !self.resolvable || self.window().any(|s| s.rebuilt.contains(&id))
+    }
+
+    /// Everything that moved at this node since `since`, in the order it moved.
+    ///
+    /// Concatenation rather than coalescing: a consumer applies changes in order, so a key that
+    /// moved twice is applied twice and lands where the second one put it. Coalescing would save a
+    /// consumer one application per repeat and cost a pass over the window; the window is a handful
+    /// of deltas.
+    fn changes(&self, id: OpId) -> Vec<Change> {
+        self.window()
+            .filter_map(|s| s.changes.get(&id))
+            .flat_map(|c| c.iter().cloned())
+            .collect()
     }
 }
 
@@ -960,6 +1457,7 @@ pub fn same(a: &Value, b: &Value) -> bool {
 ///
 /// What it excludes, and therefore under-reports: allocator overhead per allocation, which for many
 /// small allocations is substantial. It is a floor on the true cost, not a ceiling.
+#[derive(Clone, Copy, Debug, Default)]
 pub struct Footprint {
     /// Bytes retained by this engine's cells, arrangements and keys.
     pub bytes: u64,
@@ -979,15 +1477,31 @@ impl Engine {
     ///
     /// See [`Footprint`] for what the number does and does not include.
     pub fn footprint(&self, base: &Value) -> Footprint {
-        let mut seen = std::collections::BTreeSet::new();
+        let mut seen = BTreeSet::new();
         value_bytes(base, &mut seen);
-        let mut bytes = 0u64;
-        let mut shared_bytes = 0u64;
-        let mut entries = 0u64;
+        let mut acc = Footprint::default();
+        self.footprint_into(&mut seen, &mut acc);
+        acc
+    }
+
+    /// The same walk, against an exclusion set some other engine has already contributed to.
+    ///
+    /// Separate from [`Engine::footprint`] because summing per-engine footprints across a fanout
+    /// over-reports, and over-reports **exactly the thing this work is about**: with a shared
+    /// dataflow, two subscribers' pages hold the same `ul` by `Arc`, and charging both of them for
+    /// it would report the sharing as costing what it saves.
+    fn footprint_into(&self, seen: &mut BTreeSet<usize>, acc: &mut Footprint) {
+        let (mut bytes, mut shared_bytes, mut entries) = (0u64, 0u64, 0u64);
         for (i, cell) in self.cells.iter().enumerate() {
+            // An operator this engine does not own costs it nothing: the shared dataflow holds it,
+            // and `SharedDataflow::footprint` is where it is charged — once, not once per
+            // subscriber, which is the whole point of the split.
+            if !self.owns[i] {
+                continue;
+            }
             let mut here = std::mem::size_of::<Cell>() as u64;
             match &cell.out {
-                Out::Val(v) => here += value_bytes(v, &mut seen),
+                Out::Val(v) => here += value_bytes(v, seen),
                 Out::Arr(a) => {
                     entries += a.entries.len() as u64;
                     for (k, v) in &a.entries {
@@ -996,10 +1510,10 @@ impl Engine {
                         here +=
                             (std::mem::size_of::<Key>() + std::mem::size_of::<Value>() + 24) as u64;
                         here += k.len() as u64 * std::mem::size_of::<Value>() as u64;
-                        here += value_bytes(v, &mut seen);
+                        here += value_bytes(v, seen);
                     }
-                    if let Some(listed) = &a.listed {
-                        here += value_bytes(listed, &mut seen);
+                    if let Some(listed) = a.listed.get() {
+                        here += value_bytes(listed, seen);
                     }
                 }
             }
@@ -1011,12 +1525,35 @@ impl Engine {
                 shared_bytes += here;
             }
         }
-        Footprint {
-            bytes,
-            shared_bytes,
-            entries,
-        }
+        acc.bytes += bytes;
+        acc.shared_bytes += shared_bytes;
+        acc.entries += entries;
     }
+}
+
+/// What a whole fanout retains: the accumulator once, the shared dataflow once, and each
+/// subscriber's own operators — with every shared allocation counted **exactly once across all of
+/// them**.
+///
+/// Summing [`Engine::footprint`] over the subscribers is the wrong number once there is a shared
+/// dataflow, and wrong in the direction that flatters nothing: two subscribers' pages hold the same
+/// `ul` by `Arc`, so charging both would report sharing as costing what it saves. This is the
+/// number a fanout estimate should be built from, and `docs/25` is where it is.
+pub fn fanout_footprint(
+    base: &Value,
+    shared: Option<&SharedDataflow>,
+    engines: &[&Engine],
+) -> Footprint {
+    let mut seen = BTreeSet::new();
+    value_bytes(base, &mut seen);
+    let mut acc = Footprint::default();
+    if let Some(shared) = shared {
+        shared.read().engine.footprint_into(&mut seen, &mut acc);
+    }
+    for engine in engines {
+        engine.footprint_into(&mut seen, &mut acc);
+    }
+    acc
 }
 
 /// Bytes behind a value, counting each shared allocation once.

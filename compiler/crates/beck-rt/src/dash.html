@@ -190,7 +190,11 @@ function metricTables(m) {
 
   $('meta').innerHTML =
     `<b>${esc(m.app)}</b> · store <b>${esc(m.store)}</b> · head <b>${m.head.toLocaleString()}</b>` +
-    ` · sessions <b>${g.sessions}</b>`;
+    ` · sessions <b>${g.sessions}</b>` +
+    // The two halves of what a fanout of maintained views costs: the first is paid once however
+    // many connections there are, the second is paid per connection (docs/25).
+    ` · arranged <b>${(g.shared_arranged ?? 0).toLocaleString()}</b> shared` +
+    ` / <b>${(g.session_arranged ?? 0).toLocaleString()}</b> per session`;
 }
 
 function logTable(rs) {

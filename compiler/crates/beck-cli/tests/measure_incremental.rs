@@ -48,7 +48,48 @@ impl Bench {
         state
     }
 
+    /// `n` posts on `24-feed.beck`, which has a different `Event` union from the sketch's.
+    fn feed_with(&self, n: usize) -> Value {
+        let mut state = self.runtime.initial_state().expect("initial");
+        for i in 0..n as u64 {
+            let event = Value::Data {
+                ty: Arc::from("Event"),
+                variant: Some(Arc::from("Published")),
+                fields: Arc::new(std::collections::BTreeMap::from([
+                    (Arc::from("id"), Value::str_(format!("p{i:05}"))),
+                    (Arc::from("text"), Value::str_(format!("post {i}"))),
+                ])),
+            };
+            let env = Envelope {
+                seq: i + 1,
+                at: At(i as i64 + 1),
+                actor: "ana".to_string(),
+                body: event.clone(),
+            };
+            state = self.runtime.fold(&state, &env, event).expect("fold");
+        }
+        state
+    }
+
+    /// `rows` todos spread over `owners` actors — §5.3's `todos.map(filter_by(session.user))`,
+    /// where every connected subscriber's filter actually keeps something.
+    ///
+    /// `state_with` puts every todo on one actor, which is right for the per-event tables above and
+    /// wrong for a fanout: a subscriber whose filter is empty has no per-session work to compare
+    /// against, and the sharing would look better than it is.
+    fn state_across(&self, rows: usize, owners: usize) -> Value {
+        let mut state = self.runtime.initial_state().expect("initial");
+        for i in 0..rows as u64 {
+            state = self.add_by(&state, i + 1, &format!("u{}", i as usize % owners));
+        }
+        state
+    }
+
     fn add(&self, state: &Value, n: u64) -> Value {
+        self.add_by(state, n, "ana")
+    }
+
+    fn add_by(&self, state: &Value, n: u64, actor: &str) -> Value {
         let id = Value::Data {
             ty: Arc::from("Id"),
             variant: None,
@@ -68,7 +109,7 @@ impl Bench {
         let env = Envelope {
             seq: n,
             at: At(n as i64),
-            actor: "ana".to_string(),
+            actor: actor.to_string(),
             body: event.clone(),
         };
         self.runtime.fold(state, &env, event).expect("fold")
@@ -175,8 +216,8 @@ fn what_a_subscriber_holds() {
            engine KB    — bytes this subscription retains beyond the accumulator itself, which it\n  \
                           shares by `Arc` rather than copies.\n  \
            of it shared — the part in operators that do not read the session, which §5.3 says a\n  \
-                          thousand subscribers should hold once between them and this engine holds\n  \
-                          once each (docs/24 §24.7).\n  \
+                          thousand subscribers hold once between them. This engine is standalone,\n  \
+                          so it holds them itself; the fanout table below is the shared one.\n  \
            page KB      — the rendered page alone, which a subscription already held for the diff.\n  \
            {shared} of this plan's {} operators do not read the session.",
         bench.plan.nodes.len()
@@ -215,5 +256,164 @@ fn how_much_of_each_corpus_program_is_maintained() {
     println!(
         "\n  {} maintained operators and {} recomputed ones across the corpus.",
         totals.0, totals.1
+    );
+}
+
+/// The measurement `docs/25-arrangement-sharing-report.md` quotes: what a fanout costs with §5.3's
+/// shared dataflow and what it cost without one.
+///
+/// Two programs, because the answer is entirely a property of the program and quoting one number
+/// would be quoting the more flattering one. The sketch filters by `session.actor` immediately
+/// below the accumulator, so almost nothing is above the cut; `24-feed.beck` sorts a public feed
+/// and personalises only the greeting, so almost everything is.
+///
+/// Bytes are `fanout_footprint`, which walks the accumulator, the shared side and every subscriber
+/// with **one** exclusion set — summing per-subscriber footprints would charge every subscriber for
+/// the page subtrees they now hold by `Arc` between them, which is the saving under measurement.
+#[test]
+fn what_a_fanout_costs_with_and_without_a_shared_dataflow() {
+    use beck_core::engine::{fanout_footprint, SharedDataflow};
+
+    for (label, placed, feed) in [
+        ("examples/todo.beck", support::todo_program(), false),
+        ("24-feed.beck", feed_program(), true),
+    ] {
+        const ROWS: usize = 200;
+        const OWNERS: usize = 8;
+        let bench = Bench::new(placed);
+        let state = if feed {
+            bench.feed_with(ROWS)
+        } else {
+            bench.state_across(ROWS, OWNERS)
+        };
+        let plan = bench.plan.clone();
+        println!(
+            "\n{label}, {ROWS} rows: {} of {} operators do not read the session",
+            plan.shared().len(),
+            plan.nodes.len()
+        );
+        println!(
+            "{:>12}  {:>12} {:>12} {:>8}  {:>12} {:>12}",
+            "subscribers", "unshared KB", "shared KB", "×", "unshared µs", "shared µs"
+        );
+        for n in [1usize, 8, 64, 256] {
+            // Subscribers drawn from the same actors that own the rows, so every per-session
+            // filter keeps a share of the collection rather than nothing.
+            let sessions: Vec<Value> = (0..n)
+                .map(|i| bench.runtime.session(&format!("u{}", i % OWNERS)))
+                .collect();
+
+            let mut alone: Vec<Engine> = (0..n).map(|_| bench.engine()).collect();
+            let started = Instant::now();
+            for (e, s) in alone.iter_mut().zip(&sessions) {
+                e.render(&state, s).expect("a standalone render");
+            }
+            let alone_us = started.elapsed().as_micros();
+            let unshared = fanout_footprint(&state, None, &alone.iter().collect::<Vec<_>>()).bytes;
+
+            let dataflow = SharedDataflow::new(bench.prepared.clone());
+            let mut engines: Vec<Engine> = (0..n).map(|_| dataflow.subscriber()).collect();
+            let started = Instant::now();
+            for (e, s) in engines.iter_mut().zip(&sessions) {
+                dataflow.render(e, &state, 1, s).expect("a shared render");
+            }
+            let shared_us = started.elapsed().as_micros();
+            let shared =
+                fanout_footprint(&state, Some(&dataflow), &engines.iter().collect::<Vec<_>>())
+                    .bytes;
+
+            println!(
+                "{n:>12}  {:>12} {:>12} {:>7.1}×  {alone_us:>12} {shared_us:>12}",
+                unshared / 1024,
+                shared / 1024,
+                unshared as f64 / shared.max(1) as f64,
+            );
+        }
+    }
+    println!(
+        "\n  A cold fanout: every subscriber's first render. The steady-state question — what one\n  \
+         event costs a connected fanout — is the table above this one, per subscriber, times the\n  \
+         subscribers, minus the shared prefix, which is advanced once."
+    );
+}
+
+fn feed_program() -> Placed {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/24-feed.beck");
+    let src = std::fs::read_to_string(&path).expect("24-feed.beck is in the corpus");
+    let (placed, d, map) = beck_core::compile_str("24-feed.beck", &src);
+    assert!(!d.has_errors(), "{}", d.render(&map));
+    placed.expect("24-feed.beck slices")
+}
+
+/// What **one event** costs a fanout that is already connected — the number an operator running a
+/// thousand sessions actually pays, and the one the cold table above does not answer.
+///
+/// With no sharing, every subscriber flows the delta through its own copy of the whole plan, so the
+/// per-event cost of the shared prefix is paid `n` times. With sharing it is paid once and every
+/// subscriber pays only what is below the session.
+#[test]
+fn what_one_event_costs_a_connected_fanout() {
+    use beck_core::engine::SharedDataflow;
+
+    for (label, placed, feed) in [
+        ("examples/todo.beck", support::todo_program(), false),
+        ("24-feed.beck", feed_program(), true),
+    ] {
+        const ROWS: usize = 200;
+        const OWNERS: usize = 8;
+        let bench = Bench::new(placed);
+        let (state, next) = if feed {
+            (bench.feed_with(ROWS), bench.feed_with(ROWS + 1))
+        } else {
+            let s = bench.state_across(ROWS, OWNERS);
+            let n = bench.add_by(&s, ROWS as u64 + 1, "u0");
+            (s, n)
+        };
+        println!("\n{label}, one event over {ROWS} rows");
+        println!(
+            "{:>12}  {:>12} {:>12} {:>8}  {:>12} {:>12} {:>8}",
+            "subscribers", "unshared µs", "shared µs", "×", "unshared work", "shared work", "×"
+        );
+        for n in [1usize, 8, 64, 256] {
+            let sessions: Vec<Value> = (0..n)
+                .map(|i| bench.runtime.session(&format!("u{}", i % OWNERS)))
+                .collect();
+
+            let mut alone: Vec<Engine> = (0..n).map(|_| bench.engine()).collect();
+            for (e, s) in alone.iter_mut().zip(&sessions) {
+                e.render(&state, s).expect("warm");
+            }
+            let started = Instant::now();
+            for (e, s) in alone.iter_mut().zip(&sessions) {
+                e.render(&next, s).expect("step");
+            }
+            let alone_us = started.elapsed().as_micros();
+            let alone_work: u64 = alone.iter().map(|e| e.work().total()).sum();
+
+            let dataflow = SharedDataflow::new(bench.prepared.clone());
+            let mut engines: Vec<Engine> = (0..n).map(|_| dataflow.subscriber()).collect();
+            for (e, s) in engines.iter_mut().zip(&sessions) {
+                dataflow.render(e, &state, 1, s).expect("warm");
+            }
+            let started = Instant::now();
+            for (e, s) in engines.iter_mut().zip(&sessions) {
+                dataflow.render(e, &next, 2, s).expect("step");
+            }
+            let shared_us = started.elapsed().as_micros();
+            let shared_work: u64 =
+                dataflow.work().total() + engines.iter().map(|e| e.work().total()).sum::<u64>();
+
+            println!(
+                "{n:>12}  {alone_us:>12} {shared_us:>12} {:>7.1}×  {alone_work:>13} \
+                 {shared_work:>11} {:>7.1}×",
+                alone_us as f64 / shared_us.max(1) as f64,
+                alone_work as f64 / shared_work.max(1) as f64,
+            );
+        }
+    }
+    println!(
+        "\n  work — `Engine::work().total()`: per-element applications, arrangement entries moved,\n  \
+                entries copied into a `list`, and pointwise operators re-evaluated. A count rather\n  \
+                than a duration, so it is the same on any machine (§13.7)."
     );
 }
