@@ -1,0 +1,314 @@
+# 23 — Phase 3 report, part 2: the general slicer
+
+[`22`](22-phase-3-report.md) §22.6 opens its list of what Phase 3 is not with this:
+
+> **The general slicer is still not built**, and it is now debt with two phases' names on it.
+> [`19`](19-phase-1-report.md) §19.9 assigned it to Phase 2; [`20`](20-phase-2-report.md) §20.5
+> named it as the one item that phase was handed and did not deliver, and §20.6 item 6 said "Phase 3
+> pays for it either way". Phase 3 has not. … **It should be the next thing built.**
+
+It is built. This report says what it does, what building it found, and what it still refuses.
+
+It is **part 2**, and the title says so for the same reason [`22`](22-phase-3-report.md)'s did:
+Phase 3 is twelve bullets, two of them are now built, and ten are not. §23.8 lists the ten.
+
+## 23.1 What was asked for, and what is there
+
+[`19`](19-phase-1-report.md) §19.9 stated the debt precisely:
+
+> **`Roles` and the `Inliner` encode one topology — Phase 2.** The splitter produces a fixed
+> seven-field struct and inlines four combinators by name. That is the shape `todo.beck` has, and
+> §3.7 says the signal graph is a *graph*. … A general slicer belongs with placement inference,
+> since both are about treating the graph as a graph.
+
+| Asked for | Status | Where |
+|---|---|---|
+| The signal graph as a graph, not a recognised shape | done — one vertex per signal *operation*, including the ones nested inside a declaration | `beck-core/src/signal.rs` |
+| Any number of durable folds | done — **fused** into one accumulator, one field per fold | `split.rs::fuse` |
+| Any depth and any sharing between the fold and the page | done — a signal read twice is bound once, not inlined twice | `split.rs::Slicer` |
+| A `filter_map` between the chokepoint and a fold | done — the filter moves into the fused step | `split.rs::fold_field` |
+| Cycles handled as cycles | done — SCCs via the existing condensation, with "every cycle contains a fold" as the rule that makes slicing terminate | `signal.rs::Graph::build` |
+| Every tier crossing enumerated, with the id §4.3 says a subscription is keyed by | done — replaces one hard-coded sentence | `signal.rs::Cut` |
+| `beck explain flow` printing the graph rather than four names | done | `split.rs::flow_report` |
+| The runtime driving several accumulators or several pages natively | **not done** — §23.6 | — |
+
+418 tests, no failures, no compiler warnings, no clippy warnings — up from
+[`22`](22-phase-3-report.md)'s 396. The corpus is 26 programs, up from 23; three of them exist for
+this work, and each carries its own tests written in Beck.
+
+## 23.2 The defect the debt was hiding
+
+Two phases described the narrowness the same way, and both descriptions were generous:
+
+> What makes this legitimate narrowness rather than a defect is that it **announces itself**: nine
+> diagnostics (B0500–B0508, plus placement's B0400–B0403) refuse every shape the splitter does not
+> understand, and `split` returns `None` whenever one fires. A test pins that — an unsliceable
+> program is refused with a code and a message, never quietly mis-sliced.
+> — [`19`](19-phase-1-report.md) §19.9, quoted again by [`20`](20-phase-2-report.md) §20.5
+
+That claim was false, and here is the program that falsifies it:
+
+```python
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, roster, validate)
+tally: Signal[Tally] = durable(fold(apply_event, Tally(joins=0, leaves=0), events))
+roster: Signal[Roster] = durable(fold(apply_presence, Roster(here={}), events))
+page: Signal[Html] = map2(render, tally, roster)
+```
+
+The old splitter found the durable fold with `signals.iter().find(|s| … Prim::Durable)` — the
+**first** one — and its `Inliner` lowered *every* reference to a durable signal to the same state
+parameter. So `render` was handed a `Tally` where it expected a `Roster`, the second fold's step
+function was never called at all, and `beck check` printed:
+
+```console
+ok: 4 definitions, 5 signals, wire id cdfd5bd1e157edab
+```
+
+The failure surfaced at render time as `rendering the page for 'test': rendering the view` — a
+message about the wrong thing, three stages away from the cause. This is exactly the outcome the
+narrowness was justified by preventing, and it went unnoticed for two phases because no program in
+the corpus had two folds. A refusal that is never exercised on the shape it exists to refuse is a
+claim, not a check.
+
+Two smaller versions of the same pattern were in the same function. `find(Prim::MergeClients)` took
+the first ingress — harmless, because placement's `B0403` already refuses a second. And the page was
+`signals.iter().find(|s| s.tier == Tier::Client)`, the first *client-placed signal*, which is not
+the same thing as the page: in the program above, placement puts an intermediate `Signal[Html]` on
+the client too, and the splitter would take that as the page and never slice the real one. The
+general slicer takes the client-placed **sink** — a vertex nothing reads — which is what "the page"
+actually means.
+
+[`compiler/corpus/21-two-folds.beck`](../compiler/corpus/21-two-folds.beck) is that program, with
+its own tests, and `two_durable_folds_are_fused_rather_than_confused` and
+`each_fused_fold_folds_its_own_events_and_the_view_reads_the_right_one` are the two halves of the
+regression: one asserts the shape, the other runs it. The second is the one that matters — "it has
+two fields" is a claim a compiler that filled both from one fold would also pass.
+
+## 23.3 What a vertex is
+
+The graph has one vertex per signal *operation*, not per declaration. `todos: Signal[State] =
+durable(fold(apply_event, empty, events))` is **two** vertices, a `Durable` over a `Fold`, because
+the fold is a node in the dataflow whether or not the program gave it a name. Only the outermost
+carries the declared name; the inner one is labelled `todos·fold`, and `beck explain flow` prints it:
+
+```console
+$ beck explain flow examples/todo.beck
+signal graph — 5 vertices, 1 cycle, 3 tier crossings
+
+  proposals   merge_clients()           server
+  todos·fold  fold(events)              data     ↺
+  todos       durable(todos·fold)       data     ↺
+  events      decide(proposals, todos)  server   ↺
+  page        per_session(todos)        client   ← the page, per session
+
+accumulator
+  one durable fold — `todos` : State
+
+the view recomputes, per event
+  nothing between the accumulator and the page
+  shared: —  (no signal is read by two consumers, so nothing is bound twice)
+  (§5.3 makes these incremental; today every one is a full recompute)
+
+tier crossings — each is one subscription, resumable by (id, seq) (§4.3)
+  todos → events       data → server  carries State  01b13586d89df8b7
+  todos → page         data → client  carries State  1f4e63cda7c3a8e8
+  events → todos·fold  server → data  carries Event  7c389d7f875d517a
+```
+
+That is the difference between a graph and a pattern: `map2(f, durable(fold(…)), summary)` needs no
+new case, because there was never a case to begin with. It is also why the anonymous vertices had to
+be labelled rather than left nameless — a diagnostic about a fold the program did not name still has
+to point at something a reader can find.
+
+**Three crossings, not one.** The old report line said "one tier crossing", and the sketch has
+three. Two of them are in the cycle — the chokepoint reads the accumulator and the fold reads the
+chokepoint's output — and §4.3 is explicit that *every* edge crossing tiers is a subscription. The
+sentence was true of the edge the author was thinking about and false of the program.
+
+## 23.4 Fusion, and why it is the right answer rather than a workaround
+
+§3.7 fixes "**one totally-ordered log per application**". A program with two `durable` folds has not
+asked for two logs; it has asked for two projections of one. So the slicer compiles them into a
+single accumulator — a synthetic record with a field per fold, named for the signal that declared it
+— and synthesises the step:
+
+```text
+$State = { tally : Tally, roster : Roster }
+
+step(s, env) = $State{ tally  = apply_event(s.tally, env),
+                       roster = apply_presence(s.roster, env) }
+init         = $State{ tally = Tally(joins=0, leaves=0), roster = Roster(here={}) }
+```
+
+Three consequences, each of them the point:
+
+* **The runtime is untouched.** `Roles` is still the five things `beck-rt` drives, the log still
+  holds one totally-ordered stream, and snapshots, digests, `beck replay --verify` and the
+  determinism argument are unchanged — because the thing they are about is unchanged.
+  `a_fused_accumulator_replays_bit_for_bit` drives a fused program through the real ingress and
+  asserts that a fold from genesis, a fold to head and the live process's state all agree.
+* **A one-fold program is bit-for-bit what it was.** No wrapper, no synthetic type, the program's
+  own `State` is the accumulator and `roles.fold` is still `Global("apply_event")` rather than a
+  synthesised lambda. `a_single_fold_program_is_untouched_by_fusion` pins that, because a
+  generalisation that changes the common case is a migration, not a generalisation.
+* **`$State` is unwritable and unpublished.** The name cannot be typed in the surface syntax, and it
+  is registered in `program.types` but not in `own_types`, so no `.becki` carries it. It *is* hashed
+  into the wire id, structurally, which is correct: adding a fold changes what a subscriber can be
+  sent.
+
+**The chokepoint keeps reading the fold it named.** `decide(proposals, roster, validate)` names one
+accumulator, and `validate` takes that one's type. With a fused state the slicer has to project the
+right field out, and picking the wrong one is a defect no type in the sliced `Core` would catch —
+`Core` is not re-typechecked after lowering. `the_chokepoint_reads_the_fold_it_was_given` declares
+the folds in the *opposite* order from the one the chokepoint uses, so a slicer that took "the first
+fold" fails it.
+
+### A fold can take a slice of the log
+
+`filter_map` between the chokepoint and a fold used to be refused: `decide` had to be the fold's
+immediate input. It is now compiled, by moving the filter into the step —
+
+```text
+let o = only_flagged(env.body) in
+if is_some(o) then apply_escalation(s.escalations, env with body = o.value)
+              else s.escalations
+```
+
+— which is the only place it could go if replay is to stay a function of the log. The runtime still
+appends one stream and folds it once; the filter decides which folds advance.
+[`compiler/corpus/23-slices.beck`](../compiler/corpus/23-slices.beck) is a ledger that folds
+everything and an escalation register that folds only large refunds, and its tests assert that the
+two disagree in the right direction.
+
+It is written with `Option`'s two answers and the language's own `if`, rather than a synthesised
+`Match`: a `Match` arm carries a pattern, and this needs no pattern.
+
+## 23.5 Sharing, and what it is for
+
+A signal read by two consumers is now bound once:
+
+```text
+the view recomputes, per event
+  tally
+  shared: tally  (read by more than one consumer, so computed once)
+```
+
+The old splitter inlined per use, so a program whose page and read model both read `tally`
+recomputed `summarise` twice per event, and nothing in the compiler recorded that the two were the
+same computation. `a_signal_read_twice_is_computed_once` asserts both halves: `roles.shared` names
+it, and `summarise` is applied exactly once in the sliced `Core`.
+
+This is a constant-factor improvement today and it is not why it was built.
+[`05`](05-tier-lowering.md) §5.3:
+
+> a thousand connected users of `todos.map(filter_by(session.user))` must compile to *one* shared
+> dataflow whose final per-session operators (filter, project, diff) run per subscriber — the
+> differential "arrangement" sharing model — not a thousand plans.
+
+An arrangement can only be shared if something knows which computations are the same one. Under an
+inlining splitter that information was destroyed at the point where it was needed; under a plan it
+is written down. That is the whole reason [`20`](20-phase-2-report.md) §20.6 item 6 said Phase 3
+pays for the slicer either way.
+
+### What the type system was already doing
+
+Building the graph builder's refusals found that most of them cannot fire. `Signal[T]` and
+`Stream[T]` are ordinary types, so unification already rejects `per_session(events, view)` — a view
+reading a stream — with a type error, before the slicer sees it. `B0507`'s view arm and most of
+`B0508` are therefore refusals that *should* be unreachable, which is the same position
+[`19`](19-phase-1-report.md) §19.7 took about the durable path's refusal: "an unreachable refusal is
+the right thing to have while the proof is missing." The shapes that do reach the graph builder are
+the ones the types permit and the dataflow does not — a conditional between two signals, a cycle
+with no fold in it, a fold nobody made durable. The tests assert which stage refuses only where the
+answer is interesting, and otherwise assert only that *some* stage names itself.
+
+## 23.6 What it still refuses, and why each refusal is about meaning
+
+The narrowness that remains is not "the slicer understands N shapes". Every refusal below is a
+statement about what a program would mean:
+
+| Code | Refuses | Because |
+|---|---|---|
+| `B0509` | a cycle with no fold in it | a fold is where a cycle bottoms out — an accumulator is a value the slicer can take as a parameter. Without one there is no first value to compute, and a slicer that did not check would recurse until the stack ran out |
+| `B0510` | two client-placed sinks | the slicer slices both; the runtime serves one document per connection, and choosing between them is **routing** — a Phase 3 client bullet that is not built. The diagnostic says so rather than implying the slicer cannot |
+| `B0511` | a second `decide` | §3.5 rests on authority being one place. Two chokepoints are two answers to "may this actor do this", and the log records whichever ran |
+| `B0513` | a `fold` nobody made `durable` | the log is what survives; an accumulator outside `durable` would be rebuilt from nothing on every deploy |
+| `B0504` | a fold whose stream is not the chokepoint's output | the log holds what the chokepoint decided |
+| `B0512` | a `decide` reading something that is not a durable fold | `decide` threads *the accumulator*, which is what makes first-writer-wins and ownership decidable (§3.7) |
+
+`B0510` is the one worth reading twice, because it is the first diagnostic in the compiler that
+names the **runtime** as the limit rather than the compiler. That distinction is now expressible,
+and it was not before: under the old splitter "the slicer cannot" and "the runtime cannot" were the
+same sentence.
+
+## 23.7 The corrections this makes to the design documents
+
+Applied to those documents in this commit, listed here so the diff is reviewable as a set:
+
+| Document | Correction |
+|---|---|
+| [`03`](03-type-and-effect-system.md) §3.7 | Several `durable` folds are one accumulator, not several logs — the sentence "one totally-ordered log per application" now has a compilation rule attached to it |
+| [`04`](04-compiler-architecture.md) §4.3 | "Every signal edge that crosses tiers becomes a subscription" is enumerated and given content-derived ids, rather than being one crossing named in prose |
+| [`05`](05-tier-lowering.md) §5.3 | Arrangement sharing has its compile-time input: the plan says which computations are one computation |
+| [`08`](08-roadmap.md) | The general slicer is marked built, against Phase 2's bullet where it was assigned and Phase 3's where it was paid |
+| [`19`](19-phase-1-report.md) §19.9 | The claim that the narrow splitter "never quietly mis-sliced" was false; §23.2 is the program |
+| [`20`](20-phase-2-report.md) §20.5 | Repeated the same claim; same correction |
+
+Reports are history and are not rewritten. The two corrections above are recorded here rather than
+edited into [`19`](19-phase-1-report.md) and [`20`](20-phase-2-report.md), which is the convention
+[`18`](18-phase-0-report.md) established and [`AGENTS.md`](../AGENTS.md) states.
+
+## 23.8 What Phase 3 is still not
+
+**Two bullets of twelve are built.** Nothing below has been started, and the phase's exit criterion
+— "an outside developer builds a non-trivial app from documentation alone" — is not met.
+
+- **No incremental views, still.** This is the bullet the slicer *unblocks*, not the bullet it
+  delivers. There is no differential-dataflow plan, no arrangement, no SQL read model, no pgwire, no
+  query fusion. Views are full recompute per event. What changed is that `beck explain flow` now
+  prints what would be shared and what would be recomputed, so the next step has an input and a
+  reference oracle instead of an inlined expression.
+- **`beck explain query` and `beck explain cost` are still unbuilt**, for the reason
+  [`20`](20-phase-2-report.md) §20.5 gave: the first has nothing to say until §3.8's incremental view
+  compilation exists.
+- **The runtime drives one accumulator and one page.** Fusion means a program may declare several
+  folds; it does not mean the runtime holds several. Several pages is `B0510` and needs a router.
+  Both limits are the runtime's and both now say so.
+- **A non-durable fold has no meaning yet.** `B0513` refuses it. §3.7 describes `fold` without
+  `durable` as a perfectly ordinary signal operation, and the honest position is that the runtime
+  has nowhere to keep one — not that the language should not have it.
+- **No LLVM backend and no native codegen**, unchanged from Phases 1, 2 and 3-part-1.
+- **No Mode B, no client polish, no `test --update`, no structured concurrency, no `Result`/error
+  rows, no SQLite substrate, no standard library v1, no identity beyond a dev-mode actor, no LSP, no
+  playground, no supply-chain tooling.** All Phase 3 bullets, all untouched.
+- **`check.rs` is 2,806 lines.** [`22`](22-phase-3-report.md) §22.6 recorded 2,644 and asked the
+  next phase to open that file to *move* something out rather than add to it. This work added
+  fifteen lines — the fused accumulator's test subject, delegated to `signal::durables` so the
+  checker and the slicer cannot disagree about how many folds a program has — and moved nothing.
+  The test-checking pass §22.6 named is still there, and moving it is still the right next edit.
+  (The 2,644 → 2,791 step between the two reports is the stub-body commit, not this one.)
+- **`split.rs` grew from 615 lines to 1,400, and gained `signal.rs`'s 564 beside it.** That is the
+  honest cost: excluding tests, 396 lines became 1,133 plus a new module. About a third of the new
+  volume is diagnostics and their notes, and about a third is `beck explain flow`, which used to be
+  eleven lines of `println!` in the CLI printing four names. What the split into two modules buys
+  is that the graph is now a separate concern from the slice — `signal.rs` knows nothing about
+  roles, and `split.rs` does no pattern-matching on program shape.
+
+## 23.9 What this changes for the rest of Phase 3
+
+1. **The incremental view engine has a plan to compile.** §5.3's arrangement sharing needs to know
+   which computations are shared; §3.8's `beck explain incremental <view>` needs to know which
+   vertices are pure functions of a signal. Both are vertex properties of `signal::Graph`, and both
+   were unrepresentable in an inlined expression.
+2. **Recompute is the oracle, and it is now a *comparable* one.** [`05`](05-tier-lowering.md) §5.3
+   calls full recompute "an optimisation with an exact correctness oracle (recompute) to test
+   against — a luxurious position for CI". Testing an incremental plan against a recompute needs
+   both to be *plans*; one of them now is.
+3. **The corpus has a third dimension.** It measured placement, then behaviour, and now topology.
+   Adding a program with an unusual signal graph is the cheapest way to find out whether the slicer
+   is as general as this report says.
+4. **A defect found by writing the program down is worth three found by reading the code.** §23.2's
+   mis-slice survived two reports that quoted the refusal it was supposed to fall under. It took
+   forty lines of Beck to find. Every remaining Phase 3 bullet should ship with the program that
+   would embarrass it.

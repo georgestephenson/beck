@@ -261,6 +261,13 @@ administration story" — and it is an *effect*, so infrastructure derivation
 ([`06`](06-kubernetes-and-packaging.md) §6.5) and RBAC can see it. Retention/snapshot policy hangs
 off it: `durable(retain=90.days, snapshot=hourly)` — defaults sane, overridable.
 
+A program may declare **several** `durable` folds, and that is not several logs. The rule above is
+one totally-ordered log per application, so several folds are several *projections* of it: the
+compiler fuses them into one accumulator with a field per fold, and the runtime persists and
+snapshots exactly what it did before ([`23`](23-general-slicer-report.md) §23.4). A fold may also
+read a slice of the log rather than all of it, by naming a `filter_map` between the chokepoint and
+itself; the filter is compiled into the step, because replay has to stay a function of the log.
+
 **The signal graph is a graph, not a pipeline.** This section reads top-to-bottom, and the programs
 it describes do not: `events` is decided from the state, and the state is folded from `events`. The
 cycle is real and it is sound — validation reads the accumulator under the same lock as the append —

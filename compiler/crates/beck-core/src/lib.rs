@@ -28,6 +28,7 @@ pub mod project;
 pub mod repr;
 pub mod row;
 pub mod secure;
+pub mod signal;
 pub mod split;
 pub mod testing;
 pub mod ty;
@@ -44,7 +45,8 @@ pub use pmap::PMap;
 pub use project::{compile_project, Sources};
 pub use row::{Ambient, Effect, Row};
 pub use secure::{sendable, storable, NotSendable};
-pub use split::{Placed, Roles};
+pub use signal::{Cut, Graph as SignalGraph, Op as SignalOp, SigId};
+pub use split::{Placed, Roles, StateRole};
 pub use testing::{Clause, Expectation, TestDef};
 pub use ty::{Tier, Ty, TyDecl};
 

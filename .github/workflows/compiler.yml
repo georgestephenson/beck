@@ -110,6 +110,25 @@ jobs:
           PY
           ! ./target/release/beck test /tmp/failing.beck
 
+      - name: the signal graph is sliced as a graph
+        # docs/23. Two `durable` folds compiled and were mis-sliced for two phases, so the gate is
+        # that such a program now *runs*, and that `beck explain flow` reports the graph the slicer
+        # actually read rather than a fixed four-line summary.
+        run: |
+          ./target/release/beck explain flow corpus/21-two-folds.beck | tee /tmp/flow.txt
+          grep -q '2 durable folds, fused into one record' /tmp/flow.txt
+          grep -q 'tier crossings' /tmp/flow.txt
+          # A computation read by two consumers is named as shared — §5.3's input.
+          ./target/release/beck explain flow corpus/22-shared.beck | grep -q 'shared: tally'
+          # And the shapes that are still refused are refused *by name*, not by silence.
+          python3 - <<'PY'
+          src = open("corpus/21-two-folds.beck").read()
+          src += '\nadmin: Signal[Html] = map2(render, tally, roster)\n'
+          open("/tmp/two-pages.beck", "w").write(src)
+          PY
+          ! ./target/release/beck check /tmp/two-pages.beck
+          ./target/release/beck check /tmp/two-pages.beck 2>&1 | grep -q 'B0510'
+
       - name: the log substrates are measured, not assumed
         # Reported, never thresholded (§13.7): a shared runner cannot hold a timing gate honestly.
         # It runs so that the table in docs/07 §7.8.1 stays reproducible rather than historical.

@@ -727,10 +727,25 @@ impl<'a> Checker<'a> {
                 .iter()
                 .find(|s| matches!(&s.expr.kind, CoreKind::Prim { op: o, .. } if *o == op))
         };
-        let state = find(Prim::Durable).map(|s| match self.subst.resolve(&s.ty) {
-            Ty::Con(n, args) if n.as_ref() == Ty::SIGNAL && args.len() == 1 => args[0].clone(),
-            other => other,
-        });
+        // `state` is the *accumulator*, which is the program's own type when it declares one
+        // `durable` fold and the fused record when it declares several — see
+        // [`docs/23-general-slicer-report.md`] §23.4. The checker has to know which before a signal
+        // graph exists, so both it and the slicer ask [`crate::signal::durables`].
+        let folds = {
+            let subst = &self.subst;
+            crate::signal::durables(signals, &mut |t| subst.resolve(t))
+        };
+        let state = match folds.len() {
+            0 => None,
+            1 => Some(folds[0].1.clone()),
+            _ => {
+                self.types.insert(
+                    Arc::from(crate::signal::FUSED_STATE),
+                    crate::signal::fused_state_decl(&folds),
+                );
+                Some(Ty::con(crate::signal::FUSED_STATE))
+            }
+        };
         let decide = find(Prim::Decide);
         let event = decide.map(|s| match self.subst.resolve(&s.ty) {
             Ty::Con(n, args)

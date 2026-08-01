@@ -204,6 +204,11 @@ const FOLDS: &[(&str, &str)] = &[
     ("17-derived.beck", "signal/counts"),
     ("19-clock.beck", "signal/series"),
     ("20-moderation.beck", "signal/queue"),
+    // The general slicer's three. `21` and `23` each declare two folds; the entry names the one
+    // the chokepoint reads, which is the one this table is about.
+    ("21-two-folds.beck", "signal/roster"),
+    ("22-shared.beck", "signal/ballot"),
+    ("23-slices.beck", "signal/ledger"),
 ];
 
 #[test]
