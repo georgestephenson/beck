@@ -166,6 +166,12 @@ python_service scorer:                                    # typed sidecar, own c
 
 ## 11.10 Tests are part of the language
 
+*Built, and the notation moved. This sketch predates the design in
+[`21`](21-tests-in-beck-and-proof.md) §21.2 and the implementation in
+[`22`](22-phase-3-report.md); the shipped form is below it.*
+
+The sketch as first written:
+
 ```python
 test "toggling twice is identity":
     s0 = {id: Todo(id, "milk", done=False)}
@@ -182,6 +188,28 @@ test "placement is what we think":
 test "the incident, replayed" (world = fork(log="tests/logs/incident-42.log")):
     assert world.at(seq=1041).remaining == 3              # determinism makes history a fixture
 ```
+
+What `beck test` actually runs. The change is `s0 = {…}` becoming `given [ … ]`: a state is not
+built, it is *folded*, so a test cannot arrange one the program could not reach —
+[`21`](21-tests-in-beck-and-proof.md) §21.1.
+
+```python
+test "toggling twice is identity":
+    given [Added(id=Id("1"), text="milk")] by "ana"
+    when session("ana") sends Toggle(id=Id("1")), Toggle(id=Id("1"))
+    expect state == fold_of [Added(id=Id("1"), text="milk")] by "ana"
+
+property "no log the program can produce makes the page unrenderable"(log: list[Event]):
+    given log
+    expect page contains "remaining"
+
+test "placement is what we think":
+    expect place(validate) == server                      # answered without running anything
+    expect flow(ApiKey) reaches nothing on client         # §3.5, as an executable assertion
+```
+
+`fork(log=…)` fixtures are Phase 4's, with `beck fork` itself
+([`08`](08-roadmap.md)); everything else above runs today.
 
 The full testing strategy — including what the *compiler's own* test suite looks like — is
 [`13-testing.md`](13-testing.md).

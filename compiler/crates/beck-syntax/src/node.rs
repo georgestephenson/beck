@@ -296,7 +296,37 @@ pub mod sym {
     pub const SERVICE: &str = "service";
     pub const STYLES: &str = "styles";
     pub const DOCUMENT: &str = "document";
+
+    // ---- §21.2's test construct. A test is a log, a command and an expectation, so each of the
+    // three is a form of its own rather than a call the checker would have to recognise by name.
     pub const TEST: &str = "test";
+    /// `(property "name" (params …) (do …))` — §11.10's generated-input sibling of `test`.
+    pub const PROPERTY: &str = "property";
+    /// `(given <list[Event]> <actor?>)` — the state, as the log that reaches it.
+    pub const GIVEN: &str = "given";
+    /// `(when <session|_> <command> …)` — proposals through the real `validate`.
+    pub const WHEN: &str = "when";
+    /// `(expect <Bool>)`.
+    pub const EXPECT: &str = "expect";
+    /// `(expect-contains <Str> <actor?>)` — `expect page contains "milk"`. The subject is always
+    /// the rendered page, for the actor named or the test's default one.
+    pub const EXPECT_CONTAINS: &str = "expect-contains";
+    /// `(expect-fold <list[Event]> <actor?>)` — `expect state == fold_of [ … ]`.
+    pub const EXPECT_FOLD: &str = "expect-fold";
+    /// `(expect-place <name> <tier>)` — answered without running anything.
+    pub const EXPECT_PLACE: &str = "expect-place";
+    /// `(expect-flow <Type> <tier>)`.
+    pub const EXPECT_FLOW: &str = "expect-flow";
+    /// `(expect-wire "previous.becki")`.
+    pub const EXPECT_WIRE: &str = "expect-wire";
+    /// `(expect-effect "<atom>" (none|once|times <n>|with <expr>))` — §21.3 rule 4: verification is
+    /// a query over what happened, not an expectation set in advance.
+    pub const EXPECT_EFFECT: &str = "expect-effect";
+    /// `(stub "<atom>" <value>)` — §21.3 rule 2: name the effect, not the shape.
+    pub const STUB: &str = "stub";
+    /// `(stub "<atom>" (arms (case …) …))` — §21.3 rule 3. The arms have no scrutinee written
+    /// because only the checker knows what performs the effect, and therefore what its argument is.
+    pub const STUB_ARMS: &str = "arms";
 
     /// Names the checker matches as *forms* before it resolves anything.
     ///

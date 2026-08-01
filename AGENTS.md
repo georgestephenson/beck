@@ -17,10 +17,13 @@ Write the commit message as the author of the change: what changed, and why.
   the todo sketch, hand-written in Rust. [`docs/18-phase-0-report.md`](docs/18-phase-0-report.md)
   records what it proves and what it does not. It is history — a measured baseline — and should not
   be edited to track the compiler.
-- [`compiler/`](compiler/) is the built compiler and the runtime it targets, through Phase 2.
-  [`docs/19-phase-1-report.md`](docs/19-phase-1-report.md) and
-  [`docs/20-phase-2-report.md`](docs/20-phase-2-report.md) record what each phase does, what it
-  refuses to claim, and the corrections it makes to the design documents.
+- [`compiler/`](compiler/) is the built compiler and the runtime it targets, through Phase 2 plus
+  Phase 3's test construct. [`docs/19-phase-1-report.md`](docs/19-phase-1-report.md),
+  [`docs/20-phase-2-report.md`](docs/20-phase-2-report.md) and
+  [`docs/22-phase-3-report.md`](docs/22-phase-3-report.md) record what each phase does, what it
+  refuses to claim, and the corrections it makes to the design documents. Phase 3 is **one bullet of
+  twelve**; docs/22 §22.6 names the eleven that are untouched, and the general slicer is debt with
+  two phases' names on it.
 - [`compiler/corpus/`](compiler/corpus/) is 23 programs carrying **no placement annotations**, and
   the measurement behind Phase 2's exit criterion. A program added there has to place itself.
 - Design decisions are numbered in [`docs/10-decisions.md`](docs/10-decisions.md). If a change
@@ -32,7 +35,9 @@ Write the commit message as the author of the change: what changed, and why.
   `phase0/tests/measure.sh` is where the Phase 0 numbers come from; the Phase 1 numbers come from
   `cargo test` and the commands quoted in [`docs/19-phase-1-report.md`](docs/19-phase-1-report.md);
   the Phase 2 numbers come from `cargo test --release --test measure_phase2 -- --nocapture` and the
-  commands quoted in [`docs/20-phase-2-report.md`](docs/20-phase-2-report.md).
+  commands quoted in [`docs/20-phase-2-report.md`](docs/20-phase-2-report.md); the Phase 3 numbers
+  come from `cargo test --workspace` and the commands quoted in
+  [`docs/22-phase-3-report.md`](docs/22-phase-3-report.md).
 - The harnesses are the project's conscience (§4.8, §8.3): `compiler/crates/beck-cli/tests/` holds
   the differential, replay-determinism, backend-seam, scaling, security, corpus and
   diagnostic-snapshot suites. Keep them green.
@@ -42,5 +47,9 @@ Write the commit message as the author of the change: what changed, and why.
 - `beck-rt` must not depend on any backend crate. Execution goes through
   `beck_core::backend::Backend`, and `tests/backend_seam.rs` drives the runtime with an
   implementation that is not the evaluator so the seam stays load-bearing (docs/19 §19.9).
+- A program's own behaviour is asserted in Beck, not only in Rust. `beck test` runs `test` and
+  `property` blocks ([`docs/21-tests-in-beck-and-proof.md`](docs/21-tests-in-beck-and-proof.md)
+  §21.2–§21.3); a change to what a program *means* should move a test in the program, and
+  `compiler/crates/beck-cli/tests/tests_in_beck.rs` is where the construct itself is held to account.
 - Say plainly when something is written but unproven. "Built" and "runs" and "measured" are three
   different claims.

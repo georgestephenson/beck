@@ -448,3 +448,36 @@ fn each_library_in_the_project_publishes_a_contract_without_being_an_application
         );
     }
 }
+
+#[test]
+fn every_test_written_in_a_corpus_program_passes() {
+    // §21.2's construct, measured the way the corpus measures placement: on programs a reader can
+    // open, not on strings inside this file. A corpus program that carries `test` blocks is a
+    // program whose *behaviour* is asserted in Beck, by the same command an outside developer runs.
+    let mut programs = 0;
+    let mut cases = 0;
+    for path in single_files() {
+        let src = std::fs::read_to_string(&path).expect("readable");
+        let (placed, d, map) = beck_core::compile_str(&name_of(&path), &src);
+        assert!(!d.has_errors(), "{}:\n{}", name_of(&path), d.render(&map));
+        let placed = placed.expect("it slices");
+        if placed.program.tests.is_empty() {
+            continue;
+        }
+        programs += 1;
+        let backend = beck_eval::backend(&placed);
+        let report = beck_rt::testing::run(&placed, backend, &beck_rt::testing::Options::default());
+        cases += report.cases.len();
+        assert!(
+            report.ok() && report.skipped() == 0,
+            "{}:\n{}",
+            name_of(&path),
+            beck_rt::testing::render(&report, true)
+        );
+    }
+    assert!(
+        programs >= 2 && cases >= 6,
+        "the corpus carries {cases} tests across {programs} programs, which is not evidence of \
+         anything"
+    );
+}

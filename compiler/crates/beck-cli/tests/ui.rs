@@ -194,3 +194,75 @@ ui!(
     a_program_that_is_not_an_application,
     "def helper(x: Int) -> Int:\n    return x + 1\n"
 );
+
+// ---------------------------------------------------------------------------------------------
+// Tests written in Beck, §21.2–§21.3
+//
+// A test construct is the first thing an outside developer reaches for, so its refusals are the
+// first diagnostics they see. Each of these is a mistake somebody will make on their first day.
+// ---------------------------------------------------------------------------------------------
+
+ui!(
+    a_test_that_performs_an_effect,
+    &format!(
+        "{}\ndef phone_home() -> Bool uses net.out(status.example.com):\n    return True\n\n\
+         test \"is the world still there\":\n    expect phone_home()\n",
+        BASE
+    )
+);
+
+ui!(
+    a_stub_for_something_nothing_performs,
+    &format!(
+        "{}\ntest \"a stub with nowhere to go\":\n    stub net.out(nobody.example.com): True\n",
+        BASE
+    )
+);
+
+ui!(
+    a_stub_for_the_durable_fold,
+    &format!(
+        "{}\ntest \"the database is real and in memory\":\n    stub durable: True\n",
+        BASE
+    )
+);
+
+ui!(
+    a_given_that_is_not_this_programs_log,
+    &format!(
+        "{}\ntest \"a fixture, not a log\":\n    given [1, 2, 3]\n",
+        BASE
+    )
+);
+
+ui!(
+    a_statement_that_is_not_a_clause,
+    &format!(
+        "{}\ntest \"a setUp that is not one\":\n    fixture = 1\n    expect list_len(events) == 0\n",
+        BASE
+    )
+);
+
+ui!(
+    a_test_in_a_program_with_nothing_to_fold,
+    "def helper(x: Int) -> Int:\n    return x + 1\n\ntest \"x\":\n    given []\n"
+);
+
+ui!(
+    a_stub_body_where_two_definitions_perform_the_effect,
+    &format!(
+        "{}\ndef charge(n: Int) -> Bool uses net.out(pay.example.com):\n    return True\n\n\
+         def refund(n: Int) -> Bool uses net.out(pay.example.com):\n    return True\n\n\
+         test \"which one's arguments?\":\n    stub net.out(pay.example.com):\n        return n > 1\n",
+        BASE
+    )
+);
+
+ui!(
+    bare_case_arms_with_more_than_one_argument,
+    &format!(
+        "{}\ndef charge(n: Int, tries: Int) -> Bool uses net.out(pay.example.com):\n    return True\n\n\
+         test \"what is the scrutinee?\":\n    stub net.out(pay.example.com):\n        case 1:\n            return True\n        case _:\n            return False\n",
+        BASE
+    )
+);

@@ -96,6 +96,17 @@ impl Runtime {
         }
     }
 
+    /// The authority chokepoint, as the program wrote it: the whole
+    /// `Result[list[Event], Rejection]`.
+    ///
+    /// [`Runtime::validate`] narrows this to "events, or a message", which is what an ingress
+    /// handler needs and what a test cannot use: §21.2's `expect Err(BlankText)` is an assertion
+    /// about the *rejection value*, and rendering it to a string first would make the assertion a
+    /// string comparison.
+    pub fn decide(&self, state: &Value, proposal: &Value) -> Result<Value, String> {
+        (self.validate)(vec![state.clone(), proposal.clone()]).map_err(|e| e.to_string())
+    }
+
     /// The authority chokepoint. Returns the events a proposal becomes, or why it was refused.
     pub fn validate(&self, state: &Value, proposal: &Value) -> Result<Vec<Value>, String> {
         let out =
@@ -131,6 +142,17 @@ impl Runtime {
                 other.display()
             )),
         }
+    }
+
+    /// Prepare an arbitrary `Core` lambda for calling, through the same backend the roles use.
+    ///
+    /// The one caller is the test runner (§21.2), which has to evaluate an `expect` expression with
+    /// `state`, `events` and `result` bound. It goes through [`Backend::function`] rather than
+    /// reaching into an evaluator, so a compiling backend serves it unchanged.
+    pub fn prepare(&self, code: &Core) -> Result<Callable> {
+        self.backend
+            .function(code)
+            .map_err(|e| anyhow!("preparing an expression: {e}"))
     }
 
     /// Mint an id at the edge. Never called inside a fold — the checker guarantees that.

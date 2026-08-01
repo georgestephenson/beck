@@ -20,6 +20,7 @@ pub mod program;
 pub mod protocol;
 pub mod session;
 pub mod telemetry;
+pub mod testing;
 
 pub use app::{replay_from_genesis, replay_to, App, AppConfig};
 pub use dash::{Dashboard, ResourceRow};
@@ -28,6 +29,7 @@ pub use log::{Envelope, Instant, LogStore, MemoryLog, PgLog, RedbLog, Seq, Snaps
 pub use patch::{Codec, PatchFrame};
 pub use program::Runtime;
 pub use telemetry::{telemetry, timed, Telemetry};
+pub use testing::{run as run_tests, Case, Options as TestOptions, Outcome, Report as TestReport};
 
 /// The thin client: compiler residue, and the only JavaScript in the system (§5.1).
 ///

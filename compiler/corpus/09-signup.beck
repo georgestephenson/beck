@@ -56,3 +56,25 @@ proposals: Stream[Proposal] = merge_clients()
 events: Stream[Event] = decide(proposals, directory, validate)
 directory: Signal[State] = durable(fold(apply_event, State(accounts={}, handles={}), events))
 page: Signal[Html] = per_session(directory, view)
+
+test "a handle nobody has taken is registered":
+    given []
+    when Register(id=AccountId("a"), handle="ana")
+    expect list_len(events) == 1
+    expect page contains "1 accounts"
+
+test "the same handle twice loses, and so does the same id":
+    given [Registered(id=AccountId("a"), handle="ana")]
+    when Register(id=AccountId("b"), handle="ana")
+    expect Err(error=HandleTaken)
+
+test "a blank handle never reaches the log":
+    given []
+    when Register(id=AccountId("a"), handle="   ")
+    expect Err(error=BadHandle)
+    expect state == fold_of []
+
+test "the fold is unplaced-pure, and minting an id keeps it off the fold engine":
+    expect place(apply_event) == any
+    expect place(directory) == data
+    expect place(suggest_handle) == server

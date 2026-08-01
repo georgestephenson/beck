@@ -30,6 +30,10 @@ pub struct Parser<'a> {
     poisoned: bool,
     /// Set by [`Parser::attach_block`] so the statement parser knows the expression is finished.
     attached_block: bool,
+    /// Non-zero inside a `test`/`property` body, where `given`, `when`, `expect` and `stub` are
+    /// clause keywords. They are *not* reserved anywhere else: a program with a function called
+    /// `expect` keeps working, and §21.2's construct does not cost the language four words.
+    in_test: usize,
 }
 
 /// Parse a whole module.
@@ -42,6 +46,7 @@ pub fn parse_module(file: FileId, name: &str, src: &str, diags: &mut Diagnostics
         file,
         poisoned: false,
         attached_block: false,
+        in_test: 0,
     };
     let mut items = vec![Node::sym(name, Span::new(file, 0..0))];
     while !p.at_eof() {
@@ -67,6 +72,7 @@ pub fn parse_expr_str(file: FileId, src: &str, diags: &mut Diagnostics) -> Optio
         file,
         poisoned: false,
         attached_block: false,
+        in_test: 0,
     };
     p.skip_newlines();
     p.expr()
@@ -236,24 +242,28 @@ impl<'a> Parser<'a> {
         }
         if self.at_kw("test") {
             self.bump();
-            let name_span = self.span();
-            let name = match self.cur().raw() {
-                Some(Raw::Str(s)) => {
-                    let s = s.clone();
-                    self.bump();
-                    s
-                }
-                _ => {
-                    self.error("expected a test name in quotes");
-                    return None;
-                }
-            };
+            let (name, name_span) = self.quoted_name("a test name")?;
             self.expect(&Raw::Colon, "`:`");
-            let body = self.block()?;
+            let body = self.test_body()?;
             let span = start.to(body.span());
             return Some(Node::form(
                 sym::TEST,
                 vec![Node::lit(Lit::Str(name.into()), name_span), body],
+                span,
+            ));
+        }
+        // `property "…" (events: list[Event]):` — §11.10. The same clauses as a `test`, with the
+        // parameters supplied by the generator instead of written out.
+        if self.at_kw("property") && matches!(self.peek_raw(1), Some(Raw::Str(_))) {
+            self.bump();
+            let (name, name_span) = self.quoted_name("a property name")?;
+            let params = self.params()?;
+            self.expect(&Raw::Colon, "`:`");
+            let body = self.test_body()?;
+            let span = start.to(body.span());
+            return Some(Node::form(
+                sym::PROPERTY,
+                vec![Node::lit(Lit::Str(name.into()), name_span), params, body],
                 span,
             ));
         }
@@ -478,6 +488,414 @@ impl<'a> Parser<'a> {
 
     // ---------------------------------------------------------------- statements
 
+    fn peek_raw(&self, n: usize) -> Option<&Raw> {
+        self.toks
+            .get((self.pos + n).min(self.toks.len() - 1))?
+            .raw()
+    }
+
+    fn quoted_name(&mut self, what: &str) -> Option<(String, Span)> {
+        let span = self.span();
+        match self.cur().raw() {
+            Some(Raw::Str(s)) => {
+                let s = s.clone();
+                self.bump();
+                Some((s, span))
+            }
+            _ => {
+                self.error(format!("expected {what} in quotes"));
+                None
+            }
+        }
+    }
+
+    /// A `test`/`property` body: an ordinary block, parsed with the four clause keywords live.
+    fn test_body(&mut self) -> Option<Node> {
+        self.in_test += 1;
+        let out = self.block();
+        self.in_test -= 1;
+        out
+    }
+
+    // ------------------------------------------------------------ §21.2's clauses
+    //
+    // A test names a log, an input and an expectation, so each is a clause rather than a call: the
+    // checker binds `state`, `events`, `result` and `page` around them, and none of the four words
+    // is reserved outside a test body.
+
+    /// `given <list[Event]>` or `given <list[Event]> by "actor"`.
+    fn given_clause(&mut self) -> Option<Node> {
+        let start = self.span();
+        self.bump(); // given
+        let events = self.expr()?;
+        let mut args = vec![events];
+        if self.eat_kw("by") {
+            let (actor, span) = self.quoted_name("an actor name")?;
+            args.push(Node::lit(Lit::Str(actor.into()), span));
+        }
+        let span = start.to(args.last().map(|a| a.span()).unwrap_or(start));
+        self.end_of_line();
+        Some(Node::form(sym::GIVEN, args, span))
+    }
+
+    /// `when c1, c2` or `when session("ana") sends c1, c2`.
+    ///
+    /// The session slot is always present — `_` when the test did not name one — so the form has
+    /// one shape and the printer has one case. It holds the *actor*, a string literal, rather than
+    /// a `Session` expression: a session is minted by the identity subsystem (§3.7) and a test that
+    /// could build one out of an expression would be a way to forge one.
+    fn when_clause(&mut self) -> Option<Node> {
+        let start = self.span();
+        self.bump(); // when
+                     // `session("ana") sends c` — look ahead for `sends` rather than committing, so that a
+                     // command called `session` is still a command.
+        let session = if self.at_kw("session") && self.line_has_ident("sends") {
+            let (actor, span) = self.session_actor()?;
+            if !self.eat_kw("sends") {
+                self.error("expected `sends` after the session");
+                return None;
+            }
+            Node::lit(Lit::Str(actor.into()), span)
+        } else {
+            Node::sym(sym::WILDCARD, start)
+        };
+        let mut args = vec![session];
+        loop {
+            args.push(self.expr()?);
+            if !self.eat(&Raw::Comma) {
+                break;
+            }
+        }
+        let span = start.to(args.last().map(|a| a.span()).unwrap_or(start));
+        self.end_of_line();
+        Some(Node::form(sym::WHEN, args, span))
+    }
+
+    /// `stub <effect atom>: <value>`, or a block that answers from the call's arguments.
+    ///
+    /// §21.3 rule 2 is the one-line form; rule 3 is the block:
+    ///
+    /// ```text
+    /// stub net.out(payments.example.com):
+    ///     case Charge(amount): Declined
+    ///     case _: Approved
+    /// ```
+    ///
+    /// A block of `case` arms matches on the stubbed definition's parameter — "ordinary Beck
+    /// pattern matching … there is nothing to learn, nothing that composes differently from the
+    /// rest of the language, and no `Expression<Func<…>>` to satisfy". A block of anything else is
+    /// an ordinary body with those parameters in scope, which is the general form the `case` sugar
+    /// is a case of.
+    fn stub_clause(&mut self) -> Option<Node> {
+        let start = self.span();
+        self.bump(); // stub
+        let (atom, atom_span) = self.effect_atom()?;
+        self.expect(&Raw::Colon, "`:`");
+
+        let value = if matches!(self.cur().tok, Tok::Newline) {
+            // `case` directly under `stub` is the doc's notation and has no scrutinee written: the
+            // checker supplies it, because only the checker knows what performs the effect.
+            if self.block_starts_with("case") {
+                self.skip_newlines();
+                self.bump(); // INDENT
+                let arms = self.case_arms()?;
+                Node::form(sym::STUB_ARMS, arms, start.to(self.span()))
+            } else {
+                self.block()?
+            }
+        } else {
+            let e = self.expr()?;
+            self.end_of_line();
+            e
+        };
+
+        let span = start.to(value.span());
+        Some(Node::form(
+            sym::STUB,
+            vec![Node::lit(Lit::Str(atom.into()), atom_span), value],
+            span,
+        ))
+    }
+
+    /// The six shapes of `expect`. Five are decided by a leading keyword; the sixth is an ordinary
+    /// `Bool` expression, optionally followed by `contains`.
+    fn expect_clause(&mut self) -> Option<Node> {
+        let start = self.span();
+        self.bump(); // expect
+
+        // `expect no net.out` — §21.3 rule 4.
+        if self.at_kw("no") {
+            self.bump();
+            let (atom, _) = self.effect_atom()?;
+            let span = start.to(self.span());
+            self.end_of_line();
+            return Some(Node::form(
+                sym::EXPECT_EFFECT,
+                vec![
+                    Node::lit(Lit::Str(atom.into()), span),
+                    Node::sym("none", span),
+                ],
+                span,
+            ));
+        }
+
+        // `expect wire_compatible_with "orders.v1.becki"` — answered from `beck check --wire-compat`'s
+        // own data, without running anything.
+        if self.at_kw("wire_compatible_with") {
+            self.bump();
+            let (path, pspan) = self.quoted_name("a `.becki` path")?;
+            let span = start.to(pspan);
+            self.end_of_line();
+            return Some(Node::form(
+                sym::EXPECT_WIRE,
+                vec![Node::lit(Lit::Str(path.into()), pspan)],
+                span,
+            ));
+        }
+
+        // `expect place(charge) == server` — §3.4's assertability guardrail, beside the code.
+        if self.at_kw("place") && matches!(self.peek_raw(1), Some(Raw::LParen)) {
+            self.bump();
+            self.expect(&Raw::LParen, "`(`");
+            let (name, nspan) = self.ident("a definition or signal name")?;
+            self.expect(&Raw::RParen, "`)`");
+            if !self.eat(&Raw::EqEq) {
+                self.error("expected `==` and a tier");
+                return None;
+            }
+            let (tier, tspan) = self.ident("a tier")?;
+            let span = start.to(tspan);
+            self.end_of_line();
+            return Some(Node::form(
+                sym::EXPECT_PLACE,
+                vec![Node::sym(name, nspan), Node::sym(tier, tspan)],
+                span,
+            ));
+        }
+
+        // `expect flow(ApiKey) reaches nothing on client`.
+        if self.at_kw("flow") && matches!(self.peek_raw(1), Some(Raw::LParen)) {
+            self.bump();
+            self.expect(&Raw::LParen, "`(`");
+            let (name, nspan) = self.ident("a type name")?;
+            self.expect(&Raw::RParen, "`)`");
+            if !(self.eat_kw("reaches") && self.eat_kw("nothing") && self.eat_kw("on")) {
+                self.error("expected `reaches nothing on <tier>`");
+                return None;
+            }
+            let (tier, tspan) = self.ident("a tier")?;
+            let span = start.to(tspan);
+            self.end_of_line();
+            return Some(Node::form(
+                sym::EXPECT_FLOW,
+                vec![Node::sym(name, nspan), Node::sym(tier, tspan)],
+                span,
+            ));
+        }
+
+        // `expect net.out(h) once` / `… times 2` / `… with Charge(amount=2000)`.
+        if self.at_effect_atom() {
+            let (atom, aspan) = self.effect_atom()?;
+            let how = if self.eat_kw("once") {
+                Node::form(
+                    "times",
+                    vec![Node::lit(Lit::Int(1), self.span())],
+                    self.span(),
+                )
+            } else if self.eat_kw("times") {
+                let span = self.span();
+                match self.cur().raw() {
+                    Some(Raw::Int(n)) => {
+                        let n = *n;
+                        self.bump();
+                        Node::form("times", vec![Node::lit(Lit::Int(n), span)], span)
+                    }
+                    _ => {
+                        self.error("expected a count after `times`");
+                        return None;
+                    }
+                }
+            } else if self.eat_kw("with") {
+                let e = self.expr()?;
+                let s = e.span();
+                Node::form("with", vec![e], s)
+            } else {
+                self.error("expected `once`, `times <n>` or `with <value>` after an effect atom");
+                return None;
+            };
+            let span = start.to(how.span());
+            self.end_of_line();
+            return Some(Node::form(
+                sym::EXPECT_EFFECT,
+                vec![Node::lit(Lit::Str(atom.into()), aspan), how],
+                span,
+            ));
+        }
+
+        // `expect page contains "milk"` / `expect page(session("bo")) contains "milk"`. The page is
+        // the subject rather than an expression because rendering one is `per_session(state, view)`
+        // applied — a role the runtime drives, not a function the test scope can hold.
+        if self.at_kw("page") {
+            self.bump();
+            let mut args = Vec::new();
+            if self.at(&Raw::LParen) {
+                self.bump();
+                if !self.eat_kw("session") {
+                    self.error("expected `session(\"actor\")`");
+                    return None;
+                }
+                let (actor, aspan) = self.parenthesised_string("an actor name")?;
+                self.expect(&Raw::RParen, "`)`");
+                args.push(Node::lit(Lit::Str(actor.into()), aspan));
+            }
+            if !self.eat_kw("contains") {
+                self.error("expected `contains` and a string");
+                return None;
+            }
+            let needle = self.expr()?;
+            let span = start.to(needle.span());
+            self.end_of_line();
+            args.insert(0, needle);
+            return Some(Node::form(sym::EXPECT_CONTAINS, args, span));
+        }
+
+        // `expect state == fold_of [ … ]` — §21.2's identity test. Folding a log is what the data
+        // tier does, so the comparison names the log and lets the harness fold it.
+        if self.at_kw("state")
+            && matches!(self.peek_raw(1), Some(Raw::EqEq))
+            && matches!(self.peek_raw(2), Some(Raw::Ident(s)) if s == "fold_of")
+        {
+            self.bump(); // state
+            self.bump(); // ==
+            self.bump(); // fold_of
+            let events = self.expr()?;
+            let mut args = vec![events];
+            if self.eat_kw("by") {
+                let (actor, span) = self.quoted_name("an actor name")?;
+                args.push(Node::lit(Lit::Str(actor.into()), span));
+            }
+            let span = start.to(args.last().map(|a| a.span()).unwrap_or(start));
+            self.end_of_line();
+            return Some(Node::form(sym::EXPECT_FOLD, args, span));
+        }
+
+        // The ordinary case: a `Bool` expression, in a scope where `state`, `events` and `result`
+        // are bound. `expect Ok(…)`/`expect Err(…)` is shorthand for `result == …`.
+        let e = self.expr()?;
+        let e = match e.head_name() {
+            Some("Ok" | "Err") if e.applied => {
+                let span = e.span();
+                Node::form("==", vec![Node::sym("result", span), e], span)
+            }
+            _ => e,
+        };
+        let span = start.to(e.span());
+        self.end_of_line();
+        Some(Node::form(sym::EXPECT, vec![e], span))
+    }
+
+    /// The heads an effect atom can start with. Deliberately a closed list: it is what makes
+    /// `expect net.out(h) once` and `expect is_done(state)` decidable without backtracking.
+    const EFFECT_HEADS: &'static [&'static str] = &[
+        "ingress", "durable", "dom", "nondet", "net", "fs", "env", "spawn", "cap", "partial",
+        "external", "log", "metrics",
+    ];
+
+    fn at_effect_atom(&self) -> bool {
+        match self.cur().raw() {
+            Some(Raw::Ident(s)) => Self::EFFECT_HEADS.contains(&s.as_str()),
+            _ => false,
+        }
+    }
+
+    /// `net.out(payments.example.com)`, `cap.session`, `fs(/tmp)`, `env`.
+    ///
+    /// Reassembled from tokens rather than sliced from the source, because the parser does not hold
+    /// the source; the atom vocabulary is small enough that this is exact.
+    fn effect_atom(&mut self) -> Option<(String, Span)> {
+        let start = self.span();
+        let (head, _) = self.ident("an effect atom")?;
+        let mut out = head;
+        while self.at(&Raw::Dot) {
+            self.bump();
+            let (seg, _) = self.ident("an effect atom")?;
+            out.push('.');
+            out.push_str(&seg);
+        }
+        let mut end = self.span();
+        if self.at(&Raw::LParen) {
+            self.bump();
+            out.push('(');
+            let mut depth = 1;
+            loop {
+                match self.cur().raw() {
+                    Some(Raw::LParen) => depth += 1,
+                    Some(Raw::RParen) => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end = self.span();
+                            self.bump();
+                            break;
+                        }
+                    }
+                    None => {
+                        self.error("unterminated effect atom");
+                        return None;
+                    }
+                    _ => {}
+                }
+                out.push_str(&token_text(self.cur()));
+                self.bump();
+            }
+            out.push(')');
+        }
+        Some((out, start.to(end)))
+    }
+
+    /// Does the block about to be parsed — newlines, then `INDENT` — open with this keyword?
+    ///
+    /// Lookahead without consuming, because the caller may still want [`Parser::block`] to handle
+    /// the layout tokens itself.
+    fn block_starts_with(&self, kw: &str) -> bool {
+        let mut i = self.pos;
+        while matches!(self.toks.get(i).map(|t| &t.tok), Some(Tok::Newline)) {
+            i += 1;
+        }
+        if !matches!(self.toks.get(i).map(|t| &t.tok), Some(Tok::Indent)) {
+            return false;
+        }
+        matches!(self.toks.get(i + 1).and_then(|t| t.raw()), Some(Raw::Ident(s)) if s == kw)
+    }
+
+    /// `session("ana")`, already known to be there.
+    fn session_actor(&mut self) -> Option<(String, Span)> {
+        self.bump(); // session
+        self.parenthesised_string("an actor name")
+    }
+
+    /// `("ana")` — the parentheses and the string inside them.
+    fn parenthesised_string(&mut self, what: &str) -> Option<(String, Span)> {
+        self.expect(&Raw::LParen, "`(`");
+        let out = self.quoted_name(what)?;
+        self.expect(&Raw::RParen, "`)`");
+        Some(out)
+    }
+
+    /// Is `name` an identifier on the rest of this logical line, outside brackets?
+    fn line_has_ident(&self, name: &str) -> bool {
+        let mut depth = 0i32;
+        for t in &self.toks[self.pos..] {
+            match &t.tok {
+                Tok::Newline | Tok::Indent | Tok::Dedent | Tok::Eof if depth == 0 => return false,
+                Tok::Raw(Raw::LParen | Raw::LBracket | Raw::LBrace) => depth += 1,
+                Tok::Raw(Raw::RParen | Raw::RBracket | Raw::RBrace) => depth -= 1,
+                Tok::Raw(Raw::Ident(s)) if depth == 0 && s == name => return true,
+                _ => {}
+            }
+        }
+        false
+    }
+
     fn block(&mut self) -> Option<Node> {
         let start = self.span();
         // `f(x): expr` — the single-line form of the block rule (§2.3).
@@ -602,6 +1020,7 @@ impl<'a> Parser<'a> {
             file: self.file,
             poisoned: false,
             attached_block: false,
+            in_test: self.in_test,
         }
     }
 
@@ -631,6 +1050,22 @@ impl<'a> Parser<'a> {
 
     fn statement(&mut self) -> Option<Node> {
         let start = self.span();
+
+        // §21.2's clauses, live only inside a `test`/`property` body.
+        if self.in_test > 0 {
+            if self.at_kw("given") {
+                return self.given_clause();
+            }
+            if self.at_kw("when") {
+                return self.when_clause();
+            }
+            if self.at_kw("expect") {
+                return self.expect_clause();
+            }
+            if self.at_kw("stub") {
+                return self.stub_clause();
+            }
+        }
 
         if self.at(&Raw::At) {
             return self.decorated();
@@ -781,6 +1216,17 @@ impl<'a> Parser<'a> {
         }
         self.bump();
         let mut arms = vec![scrutinee];
+        arms.extend(self.case_arms()?);
+        let span = start.to(self.span());
+        Some(Node::form(sym::MATCH, arms, span))
+    }
+
+    /// The `case` arms of a block whose `INDENT` has already been consumed.
+    ///
+    /// Shared by `match` and by §21.3 rule 3's `stub`, so a stub's arms are the language's own
+    /// pattern matching rather than a second, drifting notation.
+    fn case_arms(&mut self) -> Option<Vec<Node>> {
+        let mut arms = Vec::new();
         loop {
             self.skip_newlines();
             match self.cur().tok {
@@ -805,8 +1251,7 @@ impl<'a> Parser<'a> {
             let span = arm_start.to(body.span());
             arms.push(Node::form(sym::CASE, vec![pat, body], span));
         }
-        let span = start.to(self.span());
-        Some(Node::form(sym::MATCH, arms, span))
+        Some(arms)
     }
 
     // ---------------------------------------------------------------- expressions (Pratt)
@@ -1232,6 +1677,25 @@ impl<'a> Parser<'a> {
     }
 }
 
+/// A token's source text, for the one place the parser has to reassemble it: the inside of an
+/// effect atom's parentheses, where `payments.example.com` is three tokens and one host name.
+fn token_text(t: &Token) -> String {
+    match &t.tok {
+        Tok::Raw(Raw::Ident(s)) => s.clone(),
+        Tok::Raw(Raw::Str(s)) => s.clone(),
+        Tok::Raw(Raw::Keyword(s)) => format!(":{s}"),
+        Tok::Raw(Raw::Int(n)) => n.to_string(),
+        Tok::Raw(Raw::Float(n)) => n.to_string(),
+        Tok::Raw(Raw::Dot) => ".".into(),
+        Tok::Raw(Raw::Slash) => "/".into(),
+        Tok::Raw(Raw::Minus) => "-".into(),
+        Tok::Raw(Raw::Star) => "*".into(),
+        Tok::Raw(Raw::Comma) => ",".into(),
+        Tok::Raw(Raw::Colon) => ":".into(),
+        _ => String::new(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1362,6 +1826,100 @@ mod tests {
         assert!(
             names.contains(&"b".to_string()),
             "the definition after the error must still be parsed, got {names:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod test_clause_tests {
+    use super::*;
+
+    fn sx(src: &str) -> String {
+        let mut map = beck_diag::SourceMap::new();
+        let f = map.add("t.beck", src);
+        let mut d = Diagnostics::new();
+        let n = parse_module(f, "t", src, &mut d);
+        assert!(!d.has_errors(), "{}", d.render(&map));
+        crate::print::to_sexpr(&n.args[1])
+    }
+
+    #[test]
+    fn the_four_clauses_read_as_forms() {
+        assert_eq!(
+            sx("test \"x\":\n    given []\n"),
+            "(test \"x\" (do (given (list))))"
+        );
+        assert_eq!(
+            sx("test \"x\":\n    given [a] by \"ana\"\n"),
+            "(test \"x\" (do (given (list a) \"ana\")))"
+        );
+        assert_eq!(
+            sx("test \"x\":\n    when A(id=1), B(id=2)\n"),
+            "(test \"x\" (do (when _ (A (kw id 1)) (B (kw id 2)))))"
+        );
+        assert_eq!(
+            sx("test \"x\":\n    when session(\"ana\") sends A(id=1)\n"),
+            "(test \"x\" (do (when \"ana\" (A (kw id 1)))))"
+        );
+        assert_eq!(
+            sx("test \"x\":\n    stub net.out(payments.example.com): Declined\n"),
+            "(test \"x\" (do (stub \"net.out(payments.example.com)\" Declined)))"
+        );
+    }
+
+    #[test]
+    fn expect_has_six_shapes_and_they_are_decided_without_backtracking() {
+        assert_eq!(
+            sx("test \"x\":\n    expect page contains \"milk\"\n"),
+            "(test \"x\" (do (expect-contains \"milk\")))"
+        );
+        assert_eq!(
+            sx("test \"x\":\n    expect place(charge) == server\n"),
+            "(test \"x\" (do (expect-place charge server)))"
+        );
+        assert_eq!(
+            sx("test \"x\":\n    expect flow(ApiKey) reaches nothing on client\n"),
+            "(test \"x\" (do (expect-flow ApiKey client)))"
+        );
+        assert_eq!(
+            sx("test \"x\":\n    expect wire_compatible_with \"o.becki\"\n"),
+            "(test \"x\" (do (expect-wire \"o.becki\")))"
+        );
+        assert_eq!(
+            sx("test \"x\":\n    expect no net.out\n"),
+            "(test \"x\" (do (expect-effect \"net.out\" none)))"
+        );
+        assert_eq!(
+            sx("test \"x\":\n    expect net.out(h.example.com) once\n"),
+            "(test \"x\" (do (expect-effect \"net.out(h.example.com)\" (times 1))))"
+        );
+        // …and the ordinary case is an ordinary expression.
+        assert_eq!(
+            sx("test \"x\":\n    expect list_len(events) == 1\n"),
+            "(test \"x\" (do (expect (== (list_len events) 1))))"
+        );
+        // `expect Err(...)` is shorthand for `result == Err(...)`.
+        assert_eq!(
+            sx("test \"x\":\n    expect Err(error=BlankText)\n"),
+            "(test \"x\" (do (expect (== result (Err (kw error BlankText))))))"
+        );
+    }
+
+    #[test]
+    fn the_clause_keywords_are_not_reserved_outside_a_test() {
+        // A program with a definition called `expect` still parses as a call, because the four
+        // words are live only inside a `test` body.
+        assert_eq!(
+            sx("def f() -> Int:\n    return expect(1)\n"),
+            "(def f (params) (returns Int) (uses) (do (return (expect 1))))"
+        );
+    }
+
+    #[test]
+    fn a_property_carries_its_generated_parameters() {
+        assert_eq!(
+            sx("property \"p\"(events: list[Event]):\n    given events\n"),
+            "(property \"p\" (params (: events (list Event))) (do (given events)))"
         );
     }
 }

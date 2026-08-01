@@ -130,3 +130,49 @@ todos: Signal[State] = durable(fold(apply_event, State(todos={}), events))
 
 @on(client)
 page: Signal[Html] = per_session(todos, view)
+
+# ---------- Tests: a log, a command, an expectation ----------
+#
+# Every test below runs the *same* roles the runtime drives, with the tiers co-located. There is no
+# fixture, because the state is a fold; no network, because the boundary is a placement of one
+# graph; and no mocks, because nothing here touches the world.
+
+test "an empty todo is rejected":
+    given []
+    when Add(id=Id("1"), text="   ")
+    expect Err(error=BlankText)
+
+test "the client names the id, and the second one loses":
+    given [Added(id=Id("1"), text="milk")]
+    when Add(id=Id("1"), text="bread")
+    expect Err(error=IdTaken)
+
+test "adding a todo shows it on the page":
+    given [Added(id=Id("1"), text="milk")] by "ana"
+    expect page(session("ana")) contains "milk"
+
+test "toggling twice is identity":
+    given [Added(id=Id("1"), text="milk")] by "ana"
+    when session("ana") sends Toggle(id=Id("1")), Toggle(id=Id("1"))
+    expect state == fold_of [Added(id=Id("1"), text="milk")] by "ana"
+
+test "one client's command reaches another client's page":
+    given []
+    when session("ana") sends Add(id=Id("1"), text="milk")
+    expect page(session("ana")) contains "milk"
+    expect list_len(events) == 1
+
+test "a todo is nobody else's to toggle":
+    given [Added(id=Id("1"), text="milk")] by "ana"
+    when session("bo") sends Toggle(id=Id("1"))
+    expect Err(error=NotOwner)
+    expect page(session("bo")) contains "0 remaining"
+
+test "the page is the browser's job and the fold is the data tier's":
+    expect place(page) == client
+    expect place(todos) == data
+    expect place(apply_event) == any
+
+property "no log the program can produce makes the page unrenderable"(log: list[Event]):
+    given log
+    expect page contains "remaining"

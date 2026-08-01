@@ -29,7 +29,7 @@ pub mod interp;
 
 use std::sync::Arc;
 
-use beck_core::backend::{Backend, Callable, ExecError};
+use beck_core::backend::{Backend, Callable, ExecError, Interceptor};
 use beck_core::{Core, Env, Program, Value};
 
 pub use interp::{EvalError, Host, Interp};
@@ -44,6 +44,9 @@ pub struct Evaluator {
     /// The one impure capability the program may reach. Injected, so a test can make ids
     /// deterministic and a replay can refuse to mint them at all.
     uuid: Arc<dyn Fn() -> Arc<str> + Send + Sync>,
+    /// Installed by `beck test` (§21.3). `None` in every other run, and the branch that consults it
+    /// is one `Option` check per call of a named definition.
+    interceptor: Option<Arc<dyn Interceptor>>,
 }
 
 impl Evaluator {
@@ -51,6 +54,7 @@ impl Evaluator {
         Evaluator {
             program,
             uuid: Arc::new(|| Arc::from(uuid_v7())),
+            interceptor: None,
         }
     }
 
@@ -66,6 +70,7 @@ impl Evaluator {
 struct Globals {
     program: Arc<Program>,
     uuid: Arc<dyn Fn() -> Arc<str> + Send + Sync>,
+    interceptor: Option<Arc<dyn Interceptor>>,
 }
 
 impl Host for Globals {
@@ -74,6 +79,9 @@ impl Host for Globals {
     }
     fn new_uuid(&self) -> Arc<str> {
         (self.uuid)()
+    }
+    fn intercept(&self, name: &str, args: &[Value]) -> Option<Value> {
+        self.interceptor.as_ref()?.intercept(name, args)
     }
 }
 
@@ -86,10 +94,19 @@ impl Backend for Evaluator {
         let host = Globals {
             program: self.program.clone(),
             uuid: self.uuid.clone(),
+            interceptor: self.interceptor.clone(),
         };
         Interp::new(&host)
             .eval(code, &Env::new())
             .map_err(into_exec)
+    }
+
+    fn intercepting(&self, by: Arc<dyn Interceptor>) -> Option<Arc<dyn Backend>> {
+        Some(Arc::new(Evaluator {
+            program: self.program.clone(),
+            uuid: self.uuid.clone(),
+            interceptor: Some(by),
+        }))
     }
 
     fn function(&self, code: &Core) -> Result<Callable, ExecError> {
@@ -99,10 +116,12 @@ impl Backend for Evaluator {
         let closure = self.constant(code)?;
         let program = self.program.clone();
         let uuid = self.uuid.clone();
+        let interceptor = self.interceptor.clone();
         Ok(Arc::new(move |args: Vec<Value>| {
             let host = Globals {
                 program: program.clone(),
                 uuid: uuid.clone(),
+                interceptor: interceptor.clone(),
             };
             Interp::new(&host)
                 .apply(&closure, args, beck_diag::Span::NONE)

@@ -63,6 +63,23 @@ impl std::error::Error for ExecError {}
 /// runtime.
 pub type Callable = Arc<dyn Fn(Vec<Value>) -> Result<Value, ExecError> + Send + Sync>;
 
+/// Something that answers a call *instead of* the definition it names.
+///
+/// This exists for exactly one caller, and the reason it is on the seam rather than inside a
+/// backend is [`docs/21-tests-in-beck-and-proof.md`] §21.3: "**A mock is not a stand-in for an
+/// object. It is a value for an effect.**" A stub is therefore not a program transformation the
+/// compiler can do once — the *complete list* of what got stubbed has to be reportable per test,
+/// with the arguments each stubbed call was passed, because §21.3 rule 4 makes verification a query
+/// over what happened rather than an expectation set in advance.
+///
+/// A backend that cannot offer this says so by returning `None` from [`Backend::intercepting`], and
+/// the harness reports that stubs are unavailable rather than running the test and lying about it.
+pub trait Interceptor: Send + Sync {
+    /// Called before a top-level definition named `name` is applied to `args`. Returning `Some`
+    /// replaces the call; returning `None` runs the real body.
+    fn intercept(&self, name: &str, args: &[Value]) -> Option<Value>;
+}
+
 /// A way to execute `Core`.
 pub trait Backend: Send + Sync {
     /// What to call this in a diagnostic or on a dashboard. Two backends running differentially
@@ -77,4 +94,14 @@ pub trait Backend: Send + Sync {
     /// Called once per role at startup, so a backend that compiles is free to do the expensive
     /// thing here rather than on every event.
     fn function(&self, code: &Core) -> Result<Callable, ExecError>;
+
+    /// The same program, executed with an [`Interceptor`] consulted at every call of a top-level
+    /// definition. `None` — the default — means this backend cannot do it.
+    ///
+    /// Defaulted rather than required because it is not part of *executing a program*: a backend
+    /// that only ever runs an application in production has no reason to carry it, and the seam
+    /// should not grow a method every host must implement to serve one command.
+    fn intercepting(&self, _by: Arc<dyn Interceptor>) -> Option<Arc<dyn Backend>> {
+        None
+    }
 }
