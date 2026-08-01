@@ -1020,7 +1020,13 @@ async fn run(file: &Path, addr: &str, store: Store, path: &Path, url: Option<&st
 /// effects (`B0700` is a compile error) and its subject's effects are stubbed, so there is nothing
 /// to point at anything.
 fn test_cmd(file: &Path, filter: Option<&str>, verbose: bool, runs: u64) -> Result<()> {
-    let placed = compiled(file)?;
+    // Not `compiled`: a module with no merge point is a **library**, and a library's tests are the
+    // ones a developer most wants to run (docs/22 §22.6, docs/25 §25.6 item 1, docs/27 §27.4).
+    // `slice_or_library` gives one back instead of refusing it; every other diagnostic still does.
+    let (project, map, mut diags) = checked_project(file)?;
+    let placed = project.and_then(|p| beck_core::project::slice_or_library(p, &mut diags));
+    print!("{}", diags.render(&map));
+    let placed = placed.ok_or_else(|| anyhow::anyhow!("{} does not compile", file.display()))?;
     if placed.program.tests.is_empty() {
         eprintln!("no `test` or `property` blocks in {}", file.display());
         return Ok(());

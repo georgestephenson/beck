@@ -212,17 +212,22 @@ dependencies whose signatures didn't change.
 - Standard library v1: collections, strings, time, money/decimal, HTTP client, JSON, UUID, crypto
   primitives (delegated to `ring`/`aws-lc-rs`, not hand-rolled). **Reals first**, because §25.6
   measures that §1.1.7 of SICP — the first substantial program in the book — does not typecheck
-  without them.
-- **The language's own means of abstraction, which four phases have never been pointed at**
-  ([`25`](25-benchmarks-and-expressiveness.md) §25.6, measured): recursive and forward-referencing
-  types; user-written polymorphic definitions; proper tail calls in the evaluator, or a bounded-depth
-  diagnostic in the interim, because a Beck program can currently abort its own process with a
-  recursion the user cannot bound; running a module with no merge point; and the `B0320`
-  row-unification defect that refuses an `if` over two function values. §25.7 orders them. Every
-  corpus program is shaped like the todo sketch, which is why none of these had surfaced.
+  without them, and because the three items §25.7 put ahead of it are now done
+  ([`27`](27-walls-report.md)).
+- **The language's own means of abstraction, which four phases had never been pointed at**
+  ([`25`](25-benchmarks-and-expressiveness.md) §25.6, measured; §25.7 orders them). Every corpus
+  program is shaped like the todo sketch, which is why none of these had surfaced. *Three of the six
+  are **built** ([`27`](27-walls-report.md)): running a module with no merge point, recursive and
+  forward-referencing types, and the `B0320` row-unification defect that refused an `if` over two
+  function values. Three remain — user-written polymorphic definitions; proper tail calls in the
+  evaluator, or a bounded-depth diagnostic in the interim, because a Beck program can currently abort
+  its own process with a recursion the user cannot bound; and the numeric tower, which is the
+  standard-library bullet below.*
 - **The expressiveness suite** ([`25`](25-benchmarks-and-expressiveness.md) §25.5, D18): SICP
   stage 1, and Felleisen's criterion answered for the special forms the book introduces. It needs
-  macros and nothing else, so it starts now and does not wait on the bullet above.
+  macros and nothing else, so it starts now and does not wait on the bullet above. *Chapter 1 is
+  complete and chapter 2 reaches §2.2's closure property ([`27`](27-walls-report.md)); both run as
+  **libraries**, with no application wrapped around them. Felleisen's table is not written.*
 - **Identity**: OIDC relying-party runtime, `identity = managed()` provisioning (Keycloak/Ory),
   claims → `Session` capability mapping, dev-mode identity for rung 0, presence as a first-class
   signal ([`10`](10-decisions.md) D6).

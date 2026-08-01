@@ -224,6 +224,11 @@ pub fn check_module_with(
     }
 
     let items: Vec<&Node> = module.args.iter().skip(1).collect();
+    // Three passes over the declarations, and the split is what lets a type mention itself or
+    // anything declared later (docs/27 §27.3): names, then aliases in dependency order, then every
+    // declaration's field types against the complete set of names.
+    ck.declare_type_names(&items);
+    ck.collect_aliases(&items);
     ck.collect_types(&items);
     ck.register_type_constructors();
     ck.collect_signatures(&items);
@@ -302,6 +307,189 @@ impl<'a> Checker<'a> {
         ((inner, tier), is_signal)
     }
 
+    /// Register every declared type's *name* before resolving any declaration's field types.
+    ///
+    /// [`Checker::collect_types`] used to resolve each declaration as it walked the file, so a type
+    /// could only mention types declared above it, and could never mention itself:
+    ///
+    /// ```text
+    /// union Tree:
+    ///     Leaf(value: Int)
+    ///     Node(left: Tree, right: Tree)   error[B0310]: cannot find type `Tree`
+    /// ```
+    ///
+    /// which is [`docs/25-benchmarks-and-expressiveness.md`] §25.6 item 2 — §2.2 of SICP *is* "the
+    /// closure property", so this ended chapter 2 at §2.2 and took chapters 4 and 5 with it. It is
+    /// also the reason no Beck program could describe a tree, a comment thread or an expression.
+    ///
+    /// The fix is the one [`Checker::collect_signatures`] already made for definitions — "register
+    /// every top-level `def`'s signature before checking any body, so definitions may refer to each
+    /// other in any order" — applied one layer down. Names first, bodies second.
+    ///
+    /// Aliases are the exception and are resolved in between (see [`Checker::collect_aliases`]),
+    /// because they are *transparent*: `ty_from_node` replaces an alias with its target, so the
+    /// target has to be known before any declaration that mentions it is resolved.
+    fn declare_type_names(&mut self, items: &[&Node]) {
+        for item in items {
+            let (item, _) = self.undecorate(item);
+            let Some(name) = item
+                .args
+                .first()
+                .and_then(|n| n.as_var())
+                .map(|s| s.name.clone())
+            else {
+                continue;
+            };
+            // A placeholder, so that `ty_from_node`'s "cannot find type" check passes while the
+            // real declaration is still being built. It is never observed: `collect_types`
+            // overwrites every one of them, and a name that reaches a later pass unfilled would be
+            // a name no declaration produced.
+            let placeholder = if item.is_form(sym::MODEL) {
+                TyDecl::Model {
+                    name: name.clone(),
+                    fields: Vec::new(),
+                }
+            } else if item.is_form(sym::UNION) {
+                TyDecl::Union {
+                    name: name.clone(),
+                    variants: Vec::new(),
+                }
+            } else if item.is_form(sym::NEWTYPE) {
+                TyDecl::Newtype {
+                    name: name.clone(),
+                    inner: Ty::unit(),
+                }
+            } else {
+                // An alias is deliberately *not* registered here. `ty_from_node` expands an alias
+                // the moment it sees one, so registering a placeholder would expand every mention
+                // of it to the placeholder's target. `collect_aliases` fills them in next.
+                continue;
+            };
+            if self.types.insert(name.clone(), placeholder).is_some() {
+                self.error(
+                    "B0302",
+                    format!("type `{name}` is declared twice"),
+                    item.span(),
+                );
+            }
+            self.own_types.push(name.clone());
+        }
+    }
+
+    /// Resolve `type` aliases, in dependency order, before anything else reads a type.
+    ///
+    /// An alias is transparent, so it must be *expanded* rather than referenced, and expanding it
+    /// needs its target. Ordering that by hand would put the burden back on the source order this
+    /// pass exists to remove, so instead each alias is resolved on demand and the ones it names are
+    /// resolved first.
+    ///
+    /// A cycle is the one case that cannot be resolved rather than merely reordered: `type A = B`
+    /// and `type B = A` describe no type at all, and `type Chain = list[Chain]` is an infinitely
+    /// large one. A *union* may be recursive because its variants are a finite tag plus fields; an
+    /// alias has no such boundary, which is why the two are different passes and only one of them
+    /// refuses a cycle.
+    fn collect_aliases(&mut self, items: &[&Node]) {
+        let mut pending: BTreeMap<Arc<str>, (Node, Span)> = BTreeMap::new();
+        let mut order: Vec<Arc<str>> = Vec::new();
+        for item in items {
+            let (item, _) = self.undecorate(item);
+            if !item.is_form(sym::TYPE) || item.args.len() < 2 {
+                continue;
+            }
+            let Some(name) = item.args[0].as_var().map(|s| s.name.clone()) else {
+                continue;
+            };
+            if self.types.contains_key(&name) || pending.contains_key(&name) {
+                self.error(
+                    "B0302",
+                    format!("type `{name}` is declared twice"),
+                    item.span(),
+                );
+                continue;
+            }
+            pending.insert(name.clone(), (item.args[1].clone(), item.span()));
+            order.push(name);
+        }
+        let mut resolving: Vec<Arc<str>> = Vec::new();
+        for name in order {
+            self.resolve_alias(&name, &pending, &mut resolving);
+        }
+    }
+
+    fn resolve_alias(
+        &mut self,
+        name: &Arc<str>,
+        pending: &BTreeMap<Arc<str>, (Node, Span)>,
+        resolving: &mut Vec<Arc<str>>,
+    ) {
+        if self.types.contains_key(name) {
+            return;
+        }
+        let Some((node, span)) = pending.get(name) else {
+            return;
+        };
+        if resolving.contains(name) {
+            self.error(
+                "B0312",
+                format!(
+                    "type alias `{name}` is defined in terms of itself — an alias is transparent, \
+                     so this describes no type; a `union` may be recursive, an alias may not"
+                ),
+                *span,
+            );
+            // Registered as an alias for a fresh variable, so that every *other* mention of it
+            // reports nothing further: one cycle is one diagnostic.
+            let ty = self.subst.fresh();
+            self.types.insert(
+                name.clone(),
+                TyDecl::Alias {
+                    name: name.clone(),
+                    ty,
+                },
+            );
+            return;
+        }
+        resolving.push(name.clone());
+        for referenced in Self::type_names_in(node) {
+            if pending.contains_key(&referenced) {
+                self.resolve_alias(&referenced, pending, resolving);
+            }
+        }
+        resolving.pop();
+        if self.types.contains_key(name) {
+            return; // the cycle branch above already filled it in
+        }
+        let ty = self.ty_from_node(node);
+        self.types.insert(
+            name.clone(),
+            TyDecl::Alias {
+                name: name.clone(),
+                ty,
+            },
+        );
+        self.own_types.push(name.clone());
+    }
+
+    /// Every type name a type expression mentions, so an alias can be resolved after the aliases it
+    /// names.
+    ///
+    /// Deliberately over-approximate: it reports the head of every application, including builtins like
+    /// `list`, and the caller keeps only the ones that are pending aliases. A name it missed would be an
+    /// alias resolved too early, which is why it errs the other way.
+    fn type_names_in(n: &Node) -> Vec<Arc<str>> {
+        let mut out = Vec::new();
+        fn walk(n: &Node, out: &mut Vec<Arc<str>>) {
+            if let Some(name) = n.head_name() {
+                out.push(Arc::from(name));
+            }
+            for a in &n.args {
+                walk(a, out);
+            }
+        }
+        walk(n, &mut out);
+        out
+    }
+
     fn collect_types(&mut self, items: &[&Node]) {
         for item in items {
             let (item, _) = self.undecorate(item);
@@ -347,22 +535,15 @@ impl<'a> Checker<'a> {
                     name: name.clone(),
                     inner: self.ty_from_node(&item.args[1]),
                 }
-            } else if item.is_form(sym::TYPE) {
-                TyDecl::Alias {
-                    name: name.clone(),
-                    ty: self.ty_from_node(&item.args[1]),
-                }
             } else {
+                // `type` aliases were resolved by `collect_aliases`, and everything else is not a
+                // type declaration.
                 continue;
             };
-            self.own_types.push(name.clone());
-            if self.types.insert(name.clone(), decl).is_some() {
-                self.error(
-                    "B0302",
-                    format!("type `{name}` is declared twice"),
-                    item.span(),
-                );
-            }
+            // Overwrites the placeholder `declare_type_names` left. Duplicates were reported there,
+            // where both declarations are still in view; reporting them again here would double
+            // every message.
+            self.types.insert(name.clone(), decl);
         }
     }
 
@@ -1454,22 +1635,49 @@ impl<'a> Checker<'a> {
         Ty::Con(Arc::from(name), args)
     }
 
+    /// The type of two alternatives, neither of which is the other's expectation.
+    ///
+    /// The branches of an `if` are not actual-and-expected, and typing them as though they were is
+    /// what refused exercise 1.43 (docs/25 §25.6 item 6): a branch whose row is closed became the
+    /// standard a branch whose row is still a variable had to meet. [`crate::ty::Subst::unify_join`]
+    /// is the join; this is where its failure becomes a diagnostic.
+    fn join(&mut self, then: &Ty, alt: &Ty, span: Span) -> Ty {
+        match self.subst.unify_join(then, alt) {
+            Ok(ty) => ty,
+            Err(e) => {
+                let msg = self.mismatch(e, "the two branches");
+                self.error("B0320", msg, span);
+                then.clone()
+            }
+        }
+    }
+
     fn unify(&mut self, actual: &Ty, expected: &Ty, span: Span, what: &str) {
         if let Err(e) = self.subst.unify(actual, expected) {
-            let msg = match e {
-                Mismatch::Different(pair) => {
-                    let (a, b) = *pair;
-                    format!("{what} mismatch: expected `{b}`, found `{a}`")
-                }
-                Mismatch::Arity(a, b) => {
-                    format!("{what} takes {b} argument(s), got {a}")
-                }
-                Mismatch::Infinite => format!("{what} would be an infinite type"),
-                Mismatch::Effects(e) => {
-                    format!("{what} may not perform {{{e}}} here")
-                }
-            };
+            let msg = self.mismatch(e, what);
             self.error("B0320", msg, span);
+        }
+    }
+
+    fn mismatch(&self, e: Mismatch, what: &str) -> String {
+        match e {
+            Mismatch::Different(pair) => {
+                let (a, b) = *pair;
+                format!("{what} mismatch: expected `{b}`, found `{a}`")
+            }
+            Mismatch::Arity(a, b) => {
+                format!("{what} takes {b} argument(s), got {a}")
+            }
+            Mismatch::Infinite => format!("{what} would be an infinite type"),
+            Mismatch::Effects(e) => {
+                format!("{what} may not perform {{{e}}} here")
+            }
+            Mismatch::UnknownEffects => {
+                format!(
+                    "{what} may perform effects this context does not allow: one side's effects \
+                     are not decided here, and the other's are fixed and empty"
+                )
+            }
         }
     }
 
@@ -1576,8 +1784,7 @@ impl<'a> Checker<'a> {
                 }
                 None => self.block_from(rest, expected, span),
             };
-            self.unify(&alt.ty, &then.ty, then.span, "the two branches");
-            let ty = then.ty.clone();
+            let ty = self.join(&then.ty, &alt.ty, then.span);
             return Core::new(
                 CoreKind::If {
                     cond: Box::new(cond),
@@ -1657,8 +1864,7 @@ impl<'a> Checker<'a> {
                     Some(a) => self.body_expr(a, expected),
                     None => Core::new(CoreKind::Const(Const::Unit), Ty::unit(), span),
                 };
-                self.unify(&alt.ty, &then.ty, alt.span, "the two branches");
-                let ty = then.ty.clone();
+                let ty = self.join(&then.ty, &alt.ty, alt.span);
                 Core::new(
                     CoreKind::If {
                         cond: Box::new(cond),

@@ -341,6 +341,65 @@ impl Subst {
         subst_vars(&s.ty, &tys, &rows)
     }
 
+    /// Unify two types that are **alternatives** rather than actual-and-expected, and return the
+    /// type of whichever one runs.
+    ///
+    /// [`Subst::unify`] is asymmetric on purpose: its first argument is the actual type and its
+    /// second the expected one, and [`Subst::subsume_row`] leans on that so a function which does
+    /// less than its context allows is accepted. The two branches of an `if` are neither. Making one
+    /// of them the "expected" type of the other says that a branch returning `identity` — inferred
+    /// pure, so its row is closed — is the standard the other branch has to meet, and the other
+    /// branch returning a call's result carries a row *variable*. A variable is not a subset of the
+    /// empty row, so the two are reported as a conflict, with nothing missing to name:
+    ///
+    /// ```text
+    /// error[B0320]: the two branches may not perform {} here
+    /// ```
+    ///
+    /// which is [`docs/25-benchmarks-and-expressiveness.md`] §25.6 item 6, and what exercise 1.43
+    /// costs. The answer is the one every row-typed language reaches: the alternatives do not meet
+    /// each other, they both flow into a **fresh row**, and the result performs whatever either of
+    /// them might. Sound in the direction §3.2 requires — the join contains both branches' atoms, so
+    /// an effect can never be lost — and it leaves a free tail, exactly as a written function type
+    /// does, so a later context may widen it again.
+    pub fn unify_join(&self, a: &Ty, b: &Ty) -> Result<Ty, Mismatch> {
+        let (ra, rb) = (self.resolve_shallow(a), self.resolve_shallow(b));
+        match (&ra, &rb) {
+            // A variable on either side: nothing to join yet, and binding it is what `unify`
+            // already does correctly.
+            (Ty::Var(_), _) | (_, Ty::Var(_)) => {
+                self.unify(&ra, &rb)?;
+                Ok(self.resolve_shallow(&ra))
+            }
+            (Ty::Con(n1, a1), Ty::Con(n2, a2)) if n1 == n2 && a1.len() == a2.len() => {
+                let mut args = Vec::with_capacity(a1.len());
+                for (x, y) in a1.iter().zip(a2) {
+                    args.push(self.unify_join(x, y)?);
+                }
+                Ok(Ty::Con(n1.clone(), args))
+            }
+            (Ty::Fun(p1, r1, e1), Ty::Fun(p2, r2, e2)) => {
+                if p1.len() != p2.len() {
+                    return Err(Mismatch::Arity(p1.len(), p2.len()));
+                }
+                // Parameters are contravariant, so joining them would be unsound in the other
+                // direction. Two alternatives must accept the same arguments: ordinary unification.
+                for (x, y) in p1.iter().zip(p2) {
+                    self.unify(x, y)?;
+                }
+                let ret = self.unify_join(r1, r2)?;
+                let row = Row::var(self.fresh_row_var());
+                self.subsume_row(e1, &row)?;
+                self.subsume_row(e2, &row)?;
+                Ok(Ty::Fun(p1.clone(), Box::new(ret), row))
+            }
+            _ => {
+                self.unify(&ra, &rb)?;
+                Ok(self.resolve_shallow(&ra))
+            }
+        }
+    }
+
     pub fn unify(&self, a: &Ty, b: &Ty) -> Result<(), Mismatch> {
         let (ra, rb) = (self.resolve_shallow(a), self.resolve_shallow(b));
         match (&ra, &rb) {
@@ -409,6 +468,14 @@ impl Subst {
         // Deterministically the lowest-numbered free variable, so the same program always produces
         // the same solution — §3.4's determinism guardrail starts here, not at the solver.
         let Some(v) = e.tails.iter().next().copied() else {
+            // Naming what is missing is only possible when something *is*. When the actual side's
+            // extra is a row **variable** — an unknown row, from a call whose effects are not
+            // decided here — the honest report is that the expected side is closed, not a list of
+            // nothing. `Effects("")` used to render as "may not perform {}", which fails §4.5 on
+            // its own terms: no user can act on it (docs/25 §25.6 item 6).
+            if missing.is_empty() {
+                return Err(Mismatch::UnknownEffects);
+            }
             return Err(Mismatch::Effects(
                 missing
                     .iter()
@@ -513,6 +580,10 @@ pub enum Mismatch {
     Infinite,
     /// Two function types agree on their arguments and result but not on what they do.
     Effects(String),
+    /// The same, where what the actual side may do is not yet known — an unsolved row variable
+    /// against a context whose row is closed. Distinct from [`Mismatch::Effects`] because there is
+    /// no effect to name, and a message that names none is one no user can act on.
+    UnknownEffects,
 }
 
 impl Mismatch {

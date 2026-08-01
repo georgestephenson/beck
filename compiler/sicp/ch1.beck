@@ -5,29 +5,16 @@
 # oracle: SICP states the value, and the value either comes out or it does not.
 #
 # ---------------------------------------------------------------------------------------------
-# Read the next twenty lines first, because they are the finding.
+# This file used to open with twenty lines about a wrapper.
 #
 # Everything in chapter 1 is a *library*: pure procedures over numbers, and nothing else. Beck
-# cannot run a library (`docs/22` §22.6, last-but-two bullet), and `beck test` refuses one with
-# B0500 — "this program has no merge point". So this file carries a five-declaration application
-# that nothing in the chapter uses, purely so that the chapter can be executed at all.
+# could not run a library (`docs/22` §22.6, `docs/25` §25.6 item 1), so this file carried a
+# five-declaration application that nothing in the chapter used, purely to be executable — and the
+# report put removing it first on its list of six.
 #
-# The wrapper is not a stylistic complaint. It is the first item of work the suite asks for, and
-# it is deliberately left in view rather than tidied away: `sicp/refusals/library.beck` is the same
-# procedures without it, and the harness asserts that they still cannot be run.
+# It is gone. `beck test sicp/ch1.beck` runs the exercises below with no application anywhere near
+# them (docs/27 §27.4). What is left is the chapter.
 # ---------------------------------------------------------------------------------------------
-
-model State:
-    last: Int
-
-union Command:
-    Ask(n: Int)
-
-union Event:
-    Asked(n: Int)
-
-union Rejection:
-    Negative
 
 # ---------------------------------------------------------------------------------------------
 # 1.2.1 Linear recursion and iteration
@@ -213,40 +200,15 @@ def sum_squares(a: Int, b: Int) -> Int:
 def compose(f: Int -> Int, g: Int -> Int) -> Int -> Int:
     return lambda x: f(g(x))
 
-# Exercise 1.43 — `repeated` — is not here. It does not compile, and the reason is a defect rather
-# than a missing feature: an `if` whose branches are both function values fails to typecheck as
-# soon as one of them is the result of a call. `sicp/refusals/higher-order.beck` is the smallest
-# case, with the diagnostic; §25.6 of the report is the write-up.
-
-# ---------------------------------------------------------------------------------------------
-# The wrapper. Nothing above refers to anything below.
-# ---------------------------------------------------------------------------------------------
-
-def apply_event(s: State, env: Envelope[Event]) -> State:
-    match env.body:
-        case Asked(n):
-            return s.with(last=factorial(n))
-
-def validate(s: State, p: Proposal) -> Result[list[Event], Rejection]:
-    match p.command:
-        case Ask(n):
-            if n < 0:
-                return Err(error=Negative)
-            return Ok(value=[Asked(n=n)])
-
-def render(s: State, session: Session) -> Html:
-    return ui:
-        main:
-            p: str(s.last)
-
-proposals: Stream[Proposal] = merge_clients()
-events: Stream[Event] = decide(proposals, state, validate)
-state: Signal[State] = durable(fold(apply_event, State(last=0), events))
-page: Signal[Html] = per_session(state, render)
-
-# ---------------------------------------------------------------------------------------------
-# The book's own answers, as the oracle.
-# ---------------------------------------------------------------------------------------------
+# Exercise 1.43. This is the one the suite paid for: it did not compile when the chapter was first
+# written, and the reason was a defect rather than a missing feature — an `if` whose branches are
+# both function values was typed by making one branch the *expectation* of the other, so a branch
+# returning a pure named definition (closed row) refused a branch returning a call's result (row
+# variable). docs/25 §25.6 item 6 is the write-up and docs/27 §27.2 is the fix.
+def repeated(f: Int -> Int, n: Int) -> Int -> Int:
+    if n == 0:
+        return identity
+    return compose(f, repeated(f, n - 1))
 
 test "1.2.1 — factorial, recursive and iterative, agree":
     expect factorial(6) == 720
@@ -298,3 +260,8 @@ test "1.3.2 — the same, with an anonymous procedure":
 test "1.42 — compose":
     expect compose(square, inc)(6) == 49
     expect compose(inc, square)(6) == 37
+
+test "1.43 — repeated, the exercise the suite was written to find":
+    expect repeated(square, 2)(5) == 625
+    expect repeated(inc, 4)(0) == 4
+    expect repeated(identity, 3)(9) == 9

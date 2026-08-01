@@ -305,6 +305,36 @@ pub fn slice(project: Project, diags: &mut Diagnostics) -> Option<Placed> {
     })
 }
 
+/// Slice a project, or wrap it as a library if the only thing wrong with it is that it is one.
+///
+/// [`slice`] answers the *application* question and a module that is not an application is still a
+/// module — `beck check` has said so since Phase 2. What it could not do was give that module back
+/// to a caller, so a library had no way to run its own tests
+/// ([`docs/22-phase-3-report.md`] §22.6, [`docs/25-benchmarks-and-expressiveness.md`] §25.6 item 1).
+///
+/// The B0500/B0501/B0505 diagnostics are **dropped** on that path rather than downgraded to
+/// warnings, because they are answers to a question this caller did not ask. Every other diagnostic
+/// is kept and the result is `None`: a library with a type error is a broken module, not a library.
+pub fn slice_or_library(project: Project, diags: &mut Diagnostics) -> Option<Placed> {
+    let program = project.program.clone();
+    let solution = project.solution.clone();
+    let mut slicing = Diagnostics::new();
+    if let Some(mut placed) = crate::split::split(project.program, &mut slicing) {
+        diags.extend(slicing);
+        placed.placement = solution;
+        return Some(placed);
+    }
+    if !slicing.iter().all(|d| NOT_AN_APPLICATION.contains(&d.code)) {
+        diags.extend(slicing);
+        return None;
+    }
+    // The graph is rebuilt rather than kept from the failed slice, because `split` consumed the
+    // program. A graph that cannot be built is a real error and lands in `diags`.
+    let graph = crate::signal::Graph::build(&program, diags)?;
+    let wire_id = format!("lib:{}", program.name);
+    Some(Placed::library(program, graph, wire_id))
+}
+
 /// The diagnostics that mean "this module is a library", not "this module is wrong".
 ///
 /// Each is the slicer reporting a missing *application* part — a merge point, a durable fold, a
