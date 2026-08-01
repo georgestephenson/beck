@@ -24,7 +24,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use beck_core::backend::{Backend, Interceptor};
+use beck_core::backend::{Backend, Callable, Interceptor};
 use beck_core::core::{Core, CoreKind, VarId};
 use beck_core::testing::{Clause, Count, Expectation, TestDef};
 use beck_core::{digest, Effect, Placed, Tier, Ty, Value};
@@ -115,22 +115,38 @@ impl Outcome {
 pub struct Stubbed {
     pub def: Arc<str>,
     pub atom: String,
-    pub returned: Value,
+    /// What it answered. `None` for a stub that answers from the call (§21.3 rule 3) and was never
+    /// called — there is no single value to name, and inventing one for the report would be the
+    /// same mistake the stub itself exists to avoid.
+    pub returned: Option<Value>,
     pub calls: usize,
     /// True when the test named it, false when §21.3 rule 1 supplied it.
     pub explicit: bool,
+    /// True when the stub is a body over the call's arguments rather than a fixed value.
+    pub from_the_call: bool,
 }
 
 // ---------------------------------------------------------------------------------------------
 // The stub table
 // ---------------------------------------------------------------------------------------------
 
+/// What a stub answers with.
+///
+/// §21.3 rule 2 is a value: "no parameter list, because parameters are not how the stub is
+/// selected". Rule 3 is a *body* over the stubbed definition's parameters, so that "matching by
+/// value uses the language's own `match`, and there is no mock DSL". The second is prepared through
+/// [`Backend::function`] like any other code, and by the *base* backend — a stub is test code, and
+/// stubbing a stub would be a loop.
+enum Answer {
+    Value(Value),
+    FromTheCall(Callable),
+}
+
 /// One entry per definition a stub stands in for. The unit is a *definition* because that is what
 /// gets called; the *identity* is the effect atom, which is what the test names.
-#[derive(Clone, Debug)]
 struct Entry {
     atom: Effect,
-    value: Value,
+    answer: Answer,
     explicit: bool,
     /// Set when the generator refused to invent a return value. §21.3 rule 5: "it can refuse, with
     /// a diagnostic, for a type with no inhabitant it can construct". The refusal has to reach the
@@ -139,27 +155,51 @@ struct Entry {
     refused: Option<String>,
 }
 
-#[derive(Debug, Default)]
+/// One recorded performance of an effect: what was called, with what, and what it answered.
+struct Call {
+    def: Arc<str>,
+    args: Vec<Value>,
+    returned: Value,
+}
+
+#[derive(Default)]
 struct Recorder {
     entries: BTreeMap<Arc<str>, Entry>,
-    calls: Mutex<Vec<(Arc<str>, Vec<Value>)>>,
-    demanded: Mutex<Vec<String>>,
+    calls: Mutex<Vec<Call>>,
+    /// Anything that went wrong *inside* the stub machinery, reported as a failure of the test that
+    /// reached it rather than swallowed.
+    problems: Mutex<Vec<String>>,
 }
 
 impl Interceptor for Recorder {
     fn intercept(&self, name: &str, args: &[Value]) -> Option<Value> {
         let e = self.entries.get(name)?;
         if let Some(why) = &e.refused {
-            self.demanded
-                .lock()
-                .expect("stub log")
-                .push(format!("`{name}` ({}): {why}", e.atom.name()));
+            let atom = e.atom.name();
+            self.problems.lock().expect("stub log").push(format!(
+                "the generator cannot invent a return value for `{name}` ({atom}): {why}\n  \
+                 write the stub out: `stub {atom}: <value>`"
+            ));
         }
-        self.calls
-            .lock()
-            .expect("stub log")
-            .push((Arc::from(name), args.to_vec()));
-        Some(e.value.clone())
+        let returned = match &e.answer {
+            Answer::Value(v) => v.clone(),
+            Answer::FromTheCall(f) => match f(args.to_vec()) {
+                Ok(v) => v,
+                Err(err) => {
+                    self.problems
+                        .lock()
+                        .expect("stub log")
+                        .push(format!("the stub for `{}` failed: {err}", e.atom.name()));
+                    Value::Unit
+                }
+            },
+        };
+        self.calls.lock().expect("stub log").push(Call {
+            def: Arc::from(name),
+            args: args.to_vec(),
+            returned: returned.clone(),
+        });
+        Some(returned)
     }
 }
 
@@ -169,7 +209,7 @@ impl Recorder {
             .lock()
             .expect("stub log")
             .iter()
-            .filter(|(n, _)| self.entries.get(n).map(|e| &e.atom) == Some(atom))
+            .filter(|c| self.entries.get(&c.def).map(|e| &e.atom) == Some(atom))
             .count()
     }
 
@@ -179,8 +219,8 @@ impl Recorder {
             .lock()
             .expect("stub log")
             .iter()
-            .filter(|(n, _)| self.entries.get(n).map(|e| &e.atom) == Some(atom))
-            .any(|(_, args)| args.iter().any(|a| digest(a) == want))
+            .filter(|c| self.entries.get(&c.def).map(|e| &e.atom) == Some(atom))
+            .any(|c| c.args.iter().any(|a| digest(a) == want))
     }
 
     fn report(&self) -> Vec<Stubbed> {
@@ -188,12 +228,21 @@ impl Recorder {
         let mut out: Vec<Stubbed> = self
             .entries
             .iter()
-            .map(|(def, e)| Stubbed {
-                def: def.clone(),
-                atom: e.atom.name(),
-                returned: e.value.clone(),
-                calls: calls.iter().filter(|(n, _)| n == def).count(),
-                explicit: e.explicit,
+            .map(|(def, e)| {
+                let mine: Vec<&Call> = calls.iter().filter(|c| c.def == *def).collect();
+                Stubbed {
+                    def: def.clone(),
+                    atom: e.atom.name(),
+                    returned: match &e.answer {
+                        Answer::Value(v) => Some(v.clone()),
+                        // The last answer it gave, which is the only honest single value a stub
+                        // that varies with the call has.
+                        Answer::FromTheCall(_) => mine.last().map(|c| c.returned.clone()),
+                    },
+                    calls: mine.len(),
+                    explicit: e.explicit,
+                    from_the_call: matches!(e.answer, Answer::FromTheCall(_)),
+                }
             })
             .collect();
         out.sort_by(|a, b| a.def.cmp(&b.def));
@@ -318,16 +367,12 @@ fn run_one(placed: &Placed, backend: Arc<dyn Backend>, t: &TestDef, opts: &Optio
         }
     }
 
-    let demanded = recorder.demanded.lock().expect("stub log").clone();
-    if !demanded.is_empty() {
+    let problems = recorder.problems.lock().expect("stub log").clone();
+    if !problems.is_empty() {
         return Case {
             name: t.name.clone(),
             outcome: Outcome::Failed {
-                why: format!(
-                    "the generator cannot invent a return value for {}\n  write the stub out: \
-                     `stub <atom>: <value>`",
-                    demanded.join("; ")
-                ),
+                why: problems.join("\n"),
             },
             stubbed: recorder.report(),
             runs: ran,
@@ -349,13 +394,40 @@ fn build_stubs(
     t: &TestDef,
 ) -> Result<Recorder, String> {
     let program = &placed.program;
-    let mut explicit: BTreeMap<Effect, Value> = BTreeMap::new();
+    // The stubs the test named. A plain value is evaluated once, here; a body over the call's
+    // arguments (§21.3 rule 3) is prepared as a function and called per interception.
+    let mut explicit: BTreeMap<Effect, Answer> = BTreeMap::new();
     for c in &t.clauses {
-        if let Clause::Stub { atom, value, .. } = c {
-            let v = backend
-                .constant(value)
-                .map_err(|e| format!("evaluating the stub for `{}`: {e}", atom.name()))?;
-            explicit.insert(atom.clone(), v);
+        if let Clause::Stub {
+            atom,
+            params,
+            value,
+            ..
+        } = c
+        {
+            let answer = if params.is_empty() {
+                Answer::Value(
+                    backend
+                        .constant(value)
+                        .map_err(|e| format!("evaluating the stub for `{}`: {e}", atom.name()))?,
+                )
+            } else {
+                let lam = Core {
+                    kind: CoreKind::Lam {
+                        params: params.clone(),
+                        body: Box::new(value.clone()),
+                    },
+                    ty: Ty::fun(Vec::new(), value.ty.clone()),
+                    tier: Tier::Any,
+                    span: value.span,
+                };
+                Answer::FromTheCall(
+                    backend
+                        .function(&lam)
+                        .map_err(|e| format!("preparing the stub for `{}`: {e}", atom.name()))?,
+                )
+            };
+            explicit.insert(atom.clone(), answer);
         }
     }
 
@@ -380,18 +452,19 @@ fn build_stubs(
                     .find(|e| beck_core::testing::is_auto_stubbable(e))
             });
         let Some(atom) = atom.cloned() else { continue };
-        let (value, refused, is_explicit) = match explicit.get(&atom) {
-            Some(v) => (v.clone(), None, true),
+        let (answer, refused, is_explicit) = match explicit.get(&atom) {
+            Some(Answer::Value(v)) => (Answer::Value(v.clone()), None, true),
+            Some(Answer::FromTheCall(f)) => (Answer::FromTheCall(f.clone()), None, true),
             None => match beck_core::gen::canonical(&def.ret, &program.types) {
-                Ok(v) => (v, None, false),
-                Err(e) => (Value::Unit, Some(e.to_string()), false),
+                Ok(v) => (Answer::Value(v), None, false),
+                Err(e) => (Answer::Value(Value::Unit), Some(e.to_string()), false),
             },
         };
         entries.insert(
             name.clone(),
             Entry {
                 atom,
-                value,
+                answer,
                 explicit: is_explicit,
                 refused,
             },
@@ -816,13 +889,18 @@ pub fn render(report: &Report, verbose: bool) -> String {
         if !shown.is_empty() && (verbose || matches!(c.outcome, Outcome::Failed { .. })) {
             out.push_str("  stubbed:\n");
             for s in shown {
-                let how = if s.explicit { "named" } else { "automatically" };
+                let how = match (s.explicit, s.from_the_call) {
+                    (true, true) => "named, from the call",
+                    (true, false) => "named",
+                    (false, _) => "automatically",
+                };
+                let answered = match &s.returned {
+                    Some(v) => v.display(),
+                    None => "—".into(),
+                };
                 out.push_str(&format!(
-                    "    {:<24} by `{}`  → {}   called {}× ({how})\n",
-                    s.atom,
-                    s.def,
-                    s.returned.display(),
-                    s.calls
+                    "    {:<24} by `{}`  → {answered}   called {}× ({how})\n",
+                    s.atom, s.def, s.calls
                 ));
             }
         }

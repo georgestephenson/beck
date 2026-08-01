@@ -1054,61 +1054,181 @@ impl<'a> Checker<'a> {
         // *Performs*, not *mentions*: a row propagates to callers, so `validate` inherits its
         // payment gateway's `net.out`. See [`crate::testing::performs_itself`] for why stubbing the
         // caller would be a bug rather than a broader match.
-        let mut candidates: Vec<(&Arc<str>, Ty)> = Vec::new();
-        for (name, d) in defs {
-            if crate::testing::performs_itself(d, &atom) {
-                let ret = self.subst.resolve(&d.ret);
-                if !candidates.iter().any(|(_, t)| *t == ret) {
-                    candidates.push((name, ret));
-                }
+        let performers: Vec<&Def> = defs
+            .values()
+            .filter(|d| crate::testing::performs_itself(d, &atom))
+            .collect();
+        let mut returns: Vec<(&Arc<str>, Ty)> = Vec::new();
+        for d in &performers {
+            let ret = self.subst.resolve(&d.ret);
+            if !returns.iter().any(|(_, t)| *t == ret) {
+                returns.push((&d.name, ret));
             }
         }
-        let want = match candidates.len() {
-            0 => {
-                self.diags.push(
-                    Diagnostic::error(
-                        "B0704",
-                        format!("nothing in this program performs `{}`", atom.name()),
-                        span,
-                    )
-                    .with_primary_label("this stub would never be reached")
-                    .with_note(
-                        "the complete list of what a program touches is its effect rows, and this \
-                         atom is not among them",
+
+        let body = &stmt.args[1];
+        let answers_from_the_call = body.is_form(sym::STUB_ARMS) || body.is_form(sym::DO);
+
+        if performers.is_empty() {
+            self.diags.push(
+                Diagnostic::error(
+                    "B0704",
+                    format!("nothing in this program performs `{}`", atom.name()),
+                    span,
+                )
+                .with_primary_label("this stub would never be reached")
+                .with_note(
+                    "the complete list of what a program touches is its effect rows, and this \
+                     atom is not among them",
+                ),
+            );
+            let value = self.expr(body_expr_of(body), None);
+            return Some(crate::testing::Clause::Stub {
+                atom,
+                params: Vec::new(),
+                value,
+                span,
+            });
+        }
+
+        // §21.3 rule 3: a stub that answers *from* the call needs one call to answer from. Two
+        // definitions performing one atom can share a *value*, because a value does not look at
+        // anything; they cannot share a body, because the body names parameters and there is no
+        // reason theirs agree. The fix is the one the effect vocabulary already offers — a second
+        // host, a second store — and the diagnostic says so.
+        if answers_from_the_call && performers.len() > 1 {
+            let names: Vec<String> = performers.iter().map(|d| format!("`{}`", d.name)).collect();
+            self.diags.push(
+                Diagnostic::error(
+                    "B0707",
+                    format!(
+                        "`{}` is performed by more than one definition, so a stub cannot answer \
+                         from the call",
+                        atom.name()
                     ),
-                );
-                None
+                    span,
+                )
+                .with_primary_label(format!(
+                    "{} {} perform it",
+                    names.join(", "),
+                    if performers.len() == 2 { "both" } else { "all" }
+                ))
+                .with_note(
+                    "a stub that matches on arguments has to know whose arguments they are; a \
+                     stub that is a plain value does not, and still works here",
+                )
+                .with_fix(
+                    "give the one you mean its own atom — a second host or a second store — or \
+                     stub a value instead of a block",
+                ),
+            );
+            return None;
+        }
+
+        let want = if returns.len() == 1 {
+            Some(returns[0].1.clone())
+        } else {
+            let names: Vec<String> = returns
+                .iter()
+                .map(|(n, t)| format!("`{n}` returns {t}"))
+                .collect();
+            self.diags.push(
+                Diagnostic::error(
+                    "B0704",
+                    format!(
+                        "`{}` is performed by definitions with different return types",
+                        atom.name()
+                    ),
+                    span,
+                )
+                .with_primary_label(names.join("; "))
+                .with_note(
+                    "one stub is one value for one effect, so the effect has to have one \
+                     answer — split the atom (a second host, a second store) or stub nothing \
+                     and let the canonical inhabitant stand in",
+                ),
+            );
+            None
+        };
+
+        if !answers_from_the_call {
+            let value = self.expr(body, want.as_ref());
+            if let Some(w) = &want {
+                self.unify(&value.ty, w, value.span, "the stub's value");
             }
-            1 => Some(candidates[0].1.clone()),
-            _ => {
-                let names: Vec<String> = candidates
+            return Some(crate::testing::Clause::Stub {
+                atom,
+                params: Vec::new(),
+                value,
+                span,
+            });
+        }
+
+        // The block form. The stubbed definition's parameters come into scope under their own
+        // names, so the stub is written the way the definition is read — and `match`, `if`, and
+        // every other expression in the language work inside it without a mock DSL.
+        let target = performers[0];
+        let before = self.locals.len();
+        let mut params = Vec::new();
+        for (_, pname, pty) in &target.params {
+            let id = self.fresh_var();
+            let pty = self.subst.resolve(pty);
+            params.push(id);
+            self.locals.push(Binding {
+                name: pname.clone(),
+                scopes: ScopeSet::empty(),
+                kind: BindKind::Local(id, pty),
+            });
+        }
+
+        let value = if body.is_form(sym::STUB_ARMS) {
+            // `case` arms with no scrutinee written: the scrutinee is the parameter, which only
+            // the compiler knows. A definition with two of them has to say which.
+            if target.params.len() != 1 {
+                let names: Vec<String> = target
+                    .params
                     .iter()
-                    .map(|(n, t)| format!("`{n}` returns {t}"))
+                    .map(|(_, n, t)| format!("`{n}: {t}`"))
                     .collect();
                 self.diags.push(
                     Diagnostic::error(
-                        "B0704",
+                        "B0707",
                         format!(
-                            "`{}` is performed by definitions with different return types",
-                            atom.name()
+                            "`{}` takes {} arguments, so bare `case` arms do not say what to \
+                             match on",
+                            target.name,
+                            target.params.len()
                         ),
                         span,
                     )
-                    .with_primary_label(names.join("; "))
-                    .with_note(
-                        "one stub is one value for one effect, so the effect has to have one \
-                         answer — split the atom (a second host, a second store) or stub nothing \
-                         and let the canonical inhabitant stand in",
-                    ),
+                    .with_primary_label(if names.is_empty() {
+                        "it takes none".to_string()
+                    } else {
+                        names.join(", ")
+                    })
+                    .with_fix("write the `match` out: `match <argument>:` inside the stub"),
                 );
-                None
+                self.locals.truncate(before);
+                return None;
             }
+            let scrutinee = Node::sym(target.params[0].1.as_ref(), span);
+            let mut arms = vec![scrutinee];
+            arms.extend(body.args.iter().cloned());
+            let as_match = Node::form(sym::MATCH, arms, span);
+            self.expr(&as_match, want.as_ref())
+        } else {
+            self.block(&body.args, want.as_ref())
         };
-        let value = self.expr(&stmt.args[1], want.as_ref());
+        self.locals.truncate(before);
         if let Some(w) = &want {
             self.unify(&value.ty, w, value.span, "the stub's value");
         }
-        Some(crate::testing::Clause::Stub { atom, value, span })
+        Some(crate::testing::Clause::Stub {
+            atom,
+            params,
+            value,
+            span,
+        })
     }
 
     fn test_atom(&mut self, n: &Node, span: Span) -> Option<Effect> {
@@ -2383,6 +2503,17 @@ fn max_scheme_var(t: &Ty) -> Option<u32> {
 }
 
 /// Walk a `Core` tree applying the final substitution to every recorded type.
+/// The expression inside a stub whose atom nothing performs, so that a second error is not stacked
+/// on the first. A block has no single expression, and `unit` is as good an answer as any when the
+/// clause has already been refused.
+fn body_expr_of(body: &Node) -> &Node {
+    if body.is_form(sym::STUB_ARMS) || body.is_form(sym::DO) {
+        body.args.first().unwrap_or(body)
+    } else {
+        body
+    }
+}
+
 /// A clause that needs a type the program does not have — `given` in a program with no event
 /// stream — is one error here rather than four confusing ones downstream.
 fn require_subject(

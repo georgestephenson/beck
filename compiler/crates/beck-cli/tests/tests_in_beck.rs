@@ -193,7 +193,10 @@ fn a_test_that_mentions_no_effect_still_performs_none() {
     assert_eq!(c.stubbed[0].calls, 1);
     assert!(!c.stubbed[0].explicit);
     // The canonical inhabitant of `Answer` is its first variant, and nothing had to say so.
-    assert_eq!(c.stubbed[0].returned.variant(), Some("Approved"));
+    assert_eq!(
+        c.stubbed[0].returned.as_ref().and_then(|v| v.variant()),
+        Some("Approved")
+    );
 }
 
 #[test]
@@ -239,6 +242,75 @@ fn a_stub_replaces_what_performs_the_effect_not_everything_that_inherits_it() {
         .map(|s| s.def.as_ref())
         .collect();
     assert_eq!(stubbed, vec!["charge"]);
+}
+
+#[test]
+fn a_stub_can_answer_from_the_call_itself() {
+    // §21.3 rule 3: "matching by value uses the language's own `match`, so there is no mock DSL".
+    // The same stub, written once, declines one order and approves another — because it looks at
+    // what it was called with.
+    let src = format!(
+        "{ORDERS}\n\
+         test \"a large order is declined\":\n\
+         \x20   stub net.out(payments.example.com):\n\
+         \x20       case 1:\n\
+         \x20           return Approved\n\
+         \x20       case _:\n\
+         \x20           return Declined\n\
+         \x20   when Place(sku=Sku(\"yacht\"), qty=9)\n\
+         \x20   expect Err(error=PaymentDeclined)\n\
+         \ntest \"a small one is not\":\n\
+         \x20   stub net.out(payments.example.com):\n\
+         \x20       case 1:\n\
+         \x20           return Approved\n\
+         \x20       case _:\n\
+         \x20           return Declined\n\
+         \x20   when Place(sku=Sku(\"milk\"), qty=1)\n\
+         \x20   expect list_len(events) == 1\n"
+    );
+    let placed = compile(&src);
+    let report = run(&placed);
+    assert!(
+        outcome(&report, "large order").is_pass() && outcome(&report, "small one").is_pass(),
+        "{}",
+        beck_rt::testing::render(&report, true)
+    );
+
+    // The report says it answered from the call, and what it last answered — the only honest single
+    // value a stub that varies can be described by.
+    let c = case(&report, "large order");
+    assert!(c.stubbed[0].from_the_call);
+    assert!(c.stubbed[0].explicit);
+    assert_eq!(
+        c.stubbed[0].returned.as_ref().and_then(|v| v.variant()),
+        Some("Declined")
+    );
+    assert_eq!(
+        case(&report, "small one").stubbed[0]
+            .returned
+            .as_ref()
+            .and_then(|v| v.variant()),
+        Some("Approved")
+    );
+}
+
+#[test]
+fn the_general_form_of_a_stub_body_is_an_ordinary_expression() {
+    // The `case` sugar is a case of this: the stubbed definition's parameters are in scope, and
+    // every expression in the language works. A threshold reads as a threshold.
+    let src = format!(
+        "{ORDERS}\n\
+         test \"a threshold reads as a threshold\":\n\
+         \x20   stub net.out(payments.example.com):\n\
+         \x20       return Declined if qty > 5 else Approved\n\
+         \x20   when Place(sku=Sku(\"yacht\"), qty=9)\n\
+         \x20   expect Err(error=PaymentDeclined)\n\
+         \x20   expect net.out(payments.example.com) with 9\n"
+    );
+    assert!(
+        outcome(&run(&compile(&src)), "threshold").is_pass(),
+        "the parameters of the stubbed definition are in scope by name"
+    );
 }
 
 #[test]

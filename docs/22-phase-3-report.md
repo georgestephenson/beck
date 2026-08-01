@@ -38,7 +38,7 @@ last.
 | …a test block's row must be empty (§21.2's open question) | done — `B0700`, naming the effect | `beck-core/src/check.rs` |
 | `stub <atom>: <value>` — name the effect, not the shape (§21.3 rule 2) | done | `beck-core/src/check.rs` |
 | Everything stubbed by default; "any value" has no syntax (rule 1) | done, **and it says what it did** | `beck-rt/src/testing.rs` |
-| Matching stub arguments with `case`/guards (rule 3) | **not done** — §22.6 | — |
+| Matching stub arguments with `case`/guards (rule 3) | done — the arms match the stubbed definition's parameter, and a block of anything else is an ordinary body with its parameters in scope | `beck-core/src/check.rs`, `beck-rt/src/testing.rs` |
 | Interaction assertions as queries: `expect no net.out`, `… once`, `… with` (rule 4) | done | `beck-rt/src/testing.rs` |
 | One type-directed generator for stubs, properties and gaps (rule 5) | done — canonical, arbitrary, shrinking, and a refusal for `secret[T]` | `beck-core/src/gen.rs` |
 | `property` blocks with generated inputs (§11.10, §21.2) | done — 100 inputs, shrunk counterexample | `beck-core/src/gen.rs`, `beck-rt/src/testing.rs` |
@@ -46,7 +46,7 @@ last.
 | A `Backend` seam that can install stubs (**not** a §21 item) | added — `Backend::intercepting`, defaulted to "cannot", so a backend that cannot is *skipped* rather than silently run for real | `beck-core/src/backend.rs` |
 | `beck test` as a command, and as a CI gate (§8.3) | done, and the gate was executed by hand before being trusted | `beck-cli/src/main.rs`, `.github/workflows/compiler.yml` |
 
-388 tests, no failures, no compiler warnings, no clippy warnings — up from Phase 2's 340.
+396 tests, no failures, no compiler warnings, no clippy warnings — up from Phase 2's 340.
 
 ## 22.2 The construct, as it is actually written
 
@@ -142,6 +142,47 @@ And verification is a query over what happened rather than an expectation arrang
     expect net.out(payments.example.com) once
     expect net.out(payments.example.com) with 2
 ```
+
+### Answering from the call, without a mock DSL
+
+§21.3 rule 3 asks for a stub that matches on what it was called with. The stubbed definition's
+parameters come into scope under their own names, so a stub is written the way the definition is
+read — and `match`, `if` and every other expression in the language work inside it. Against
+`def gateway(req: Request) -> Answer uses net.out(payments.example.com)`:
+
+```python
+test "large charges are declined":
+    stub net.out(payments.example.com):
+        case Charge(amount):
+            return Declined if amount > 10000 else Approved
+        case Refund(amount):
+            return Approved
+    when Place(sku=Sku("yacht"), qty=3)
+    expect Err(error=PaymentDeclined)
+    expect net.out(payments.example.com) with Charge(amount=15000)
+```
+
+Bare `case` arms are sugar: there is no scrutinee written because only the compiler knows what
+performs the effect, and therefore what its argument is. The general form is a block of anything —
+
+```python
+    stub net.out(payments.example.com):
+        return Declined if amount > 10000 else Approved
+```
+
+— which is what makes this "the language's own `match`" rather than a mock language. Two things the
+design leaves implicit are decided here, both as diagnostics rather than as guesses (`B0707`):
+
+* **A body needs one definition to take arguments from.** Two definitions can share a stub *value*,
+  because a value looks at nothing; they cannot share a body, because a body names parameters and
+  there is no reason theirs agree. The fix is the one the effect vocabulary already offers, and the
+  diagnostic says it: give the one you mean its own atom — a second host, a second store.
+* **Bare `case` arms need one argument to be about.** A definition taking two is told to write the
+  `match` out.
+
+A stub body is *test code*: it is checked in the test's own effect scope, so a stub that tried to
+perform something is `B0700` like any other expression in a test, and it is prepared by the base
+backend rather than the intercepting one — stubbing a stub would be a loop.
 
 ### The rule §21.3 does not state, and without which the whole thing is a lie
 
@@ -268,10 +309,16 @@ and is not close.
 - **No `test --update`, and no page snapshots.** §21.2 lists golden assertions as an open question
   with a known answer (`insta`'s update flow, which the compiler's own suite already uses); a page
   assertion is `contains` and nothing else today.
-- **No `case` in a stub** — §21.3 rule 3. `stub net.out(h): Declined` is a value; matching on the
-  arguments a call was made with is not built. The machinery it needs is a pattern match over
-  argument types the checker does not currently thread into a stub, and it is the one part of §21.3
-  that is design rather than code.
+- **A stub cannot vary with the call *sequence*.** Rule 3 makes a stub a function of the
+  arguments, and nothing more: there is no "fail the first time, succeed the second", because a
+  stub body is checked with an empty effect row and therefore cannot hold state. Retry logic is
+  testable only through the arguments it passes. Whether that is a limit or the point is a real
+  question — a stateful stub is a small step from a mock framework — and it is recorded as open
+  rather than decided.
+- **A stub cannot name a definition, and cannot replace a pure one.** The unit is the effect atom,
+  so `stub charge: …` is `B0702`. That is §21.3's position rather than an omission — the granularity
+  of an interface-mock is what makes mocking tedious — but it means two definitions performing one
+  atom cannot be told apart except by splitting the atom.
 - **Interception is only at a direct call of a named definition.** A function passed as a value has
   lost its name by the time it is applied, so a program that stores its payment gateway in a record
   and calls it through a field would not be stubbed. Nothing in the corpus does this; the limit is
@@ -355,5 +402,5 @@ claim reaching a construct that did not exist when it was made.
 | Document | Correction |
 |---|---|
 | [`21`](21-tests-in-beck-and-proof.md) §21.2 | `page(session(…))` and `fold_of` are clauses, not expressions; `when session("ana") sends` carries an actor, not a `Session`; the two open questions about rows and about where tests live are answered (§22.5) |
-| [`21`](21-tests-in-beck-and-proof.md) §21.3 | A stub replaces what *performs* an atom, not what inherits it; `nondet` and `cap.*` are not auto-stubbed; rule 3 is named as unbuilt (§22.3) |
+| [`21`](21-tests-in-beck-and-proof.md) §21.3 | A stub replaces what *performs* an atom, not what inherits it; `nondet` and `cap.*` are not auto-stubbed; rule 3's arms match the stubbed definition's parameter, and its guard is the language's conditional rather than a clause on `case` (§22.3) |
 | [`08`](08-roadmap.md) | Phase 3's `test` bullet marked built, with this report as its evidence — and with the eleven bullets it does not cover named in the same breath |

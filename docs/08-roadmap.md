@@ -142,8 +142,7 @@ dependencies whose signatures didn't change.
   to interfaces, so "any value" is the default and has no syntax. Depends on one type-directed value
   generator, which `property` blocks share. This is the first thing an outside developer will reach
   for, and Phase 2 shipped with no way for them to write a single test about their own program.
-  `case` inside a stub (§21.3 rule 3) and `beck test --update` for page snapshots are the two parts
-  that did not ship.
+  `beck test --update` for page snapshots is the part that did not ship.
 - Structured concurrency, `Result`/error rows, `match` exhaustiveness, pattern matching completion.
 - **SQLite as a durable substrate** ([`07`](07-dependencies.md) §7.8.1): a `LogStore`
   implementation beside redb and Postgres. The reason is not speed — the measurements say the

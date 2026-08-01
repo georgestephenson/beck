@@ -83,9 +83,12 @@ pub enum Clause {
         commands: Vec<Core>,
         span: Span,
     },
-    /// `stub net.out(payments.example.com): Declined` — §21.3 rule 2.
+    /// `stub net.out(payments.example.com): Declined` — §21.3 rules 2 and 3.
     Stub {
         atom: Effect,
+        /// The stubbed definition's parameters, when the stub answers *from* them (rule 3).
+        /// Empty for a plain value (rule 2), which is evaluated once and does not see the call.
+        params: Vec<VarId>,
         value: Core,
         span: Span,
     },
@@ -263,6 +266,75 @@ mod tests {
         );
         let (_, d, _) = check_str("todo.beck", &src);
         assert!(d.has_errors());
+    }
+
+    #[test]
+    fn a_stub_can_answer_from_the_call_and_the_arguments_are_in_scope_by_name() {
+        // §21.3 rule 3. The stubbed definition's parameters are bound under their own names, so a
+        // stub is written the way the definition is read — and `match`, `if` and everything else in
+        // the language work inside it without a mock DSL.
+        let src = format!(
+            "{TODO}\ndef charge(amount: Int) -> Bool uses net.out(pay.example.com):\n    return True\n\ntest \"x\":\n    stub net.out(pay.example.com):\n        return amount > 10\n"
+        );
+        let (p, d, m) = check_str("todo.beck", &src);
+        assert!(!d.has_errors(), "{}", d.render(&m));
+        match &p.tests[0].clauses[0] {
+            super::Clause::Stub { params, .. } => assert_eq!(params.len(), 1),
+            other => panic!("{other:?}"),
+        }
+
+        // …and the body is typechecked against the definition's return type like any other code.
+        let src = format!(
+            "{TODO}\ndef charge(amount: Int) -> Bool uses net.out(pay.example.com):\n    return True\n\ntest \"x\":\n    stub net.out(pay.example.com):\n        return amount\n"
+        );
+        let (_, d, _) = check_str("todo.beck", &src);
+        assert!(d.has_errors(), "an Int is not a Bool");
+    }
+
+    #[test]
+    fn bare_case_arms_match_on_the_one_argument_there_is() {
+        let src = format!(
+            "{TODO}\ndef charge(amount: Int) -> Bool uses net.out(pay.example.com):\n    return True\n\ntest \"x\":\n    stub net.out(pay.example.com):\n        case 1:\n            return True\n        case _:\n            return False\n"
+        );
+        let (p, d, m) = check_str("todo.beck", &src);
+        assert!(!d.has_errors(), "{}", d.render(&m));
+        assert!(matches!(p.tests[0].clauses[0], super::Clause::Stub { .. }));
+
+        // Two arguments and no scrutinee written is a refusal, not a guess.
+        let src = format!(
+            "{TODO}\ndef charge(amount: Int, tries: Int) -> Bool uses net.out(pay.example.com):\n    return True\n\ntest \"x\":\n    stub net.out(pay.example.com):\n        case 1:\n            return True\n        case _:\n            return False\n"
+        );
+        let (_, d, _) = check_str("todo.beck", &src);
+        assert!(d.iter().any(|x| x.code == "B0707"));
+    }
+
+    #[test]
+    fn a_stub_that_answers_from_the_call_needs_one_definition_to_take_it_from() {
+        // Two definitions can share a stub *value* — a value looks at nothing. They cannot share a
+        // body, because a body names parameters and there is no reason theirs agree.
+        let two = format!(
+            "{TODO}\ndef charge(amount: Int) -> Bool uses net.out(pay.example.com):\n    return True\n\ndef refund(amount: Int) -> Bool uses net.out(pay.example.com):\n    return True\n"
+        );
+        let (_, d, m) = check_str(
+            "todo.beck",
+            &format!("{two}\ntest \"x\":\n    stub net.out(pay.example.com): True\n"),
+        );
+        assert!(!d.has_errors(), "a value still works: {}", d.render(&m));
+
+        let (_, d, _) = check_str(
+            "todo.beck",
+            &format!("{two}\ntest \"x\":\n    stub net.out(pay.example.com):\n        return amount > 1\n"),
+        );
+        assert!(d.iter().any(|x| x.code == "B0707"), "a body cannot");
+    }
+
+    #[test]
+    fn a_stub_body_is_test_code_and_may_not_perform_anything_either() {
+        let src = format!(
+            "{TODO}\ndef charge(amount: Int) -> Bool uses net.out(pay.example.com):\n    return True\n\ndef ping() -> Bool uses net.out(other.example.com):\n    return True\n\ntest \"x\":\n    stub net.out(pay.example.com):\n        return ping()\n"
+        );
+        let (_, d, _) = check_str("todo.beck", &src);
+        assert!(d.iter().any(|x| x.code == "B0700"));
     }
 
     #[test]

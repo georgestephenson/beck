@@ -271,8 +271,11 @@ is.
 
 ### Rule 3 — matching by value uses the language's own `match`, so there is no mock DSL
 
-*Not built ([`22`](22-phase-3-report.md) §22.6). A stub is a value; matching on the arguments a call
-was made with is the one part of this section that is still design.*
+*Built ([`22`](22-phase-3-report.md) §22.3). Two things the notation below leaves implicit are
+decided there: the arms match the **stubbed definition's parameter**, so the atom has to be
+performed by exactly one definition for a body to have arguments to take (`B0707`); and a guard is
+written as Beck's conditional expression, since `match` has no `if` clause. The general form — an
+ordinary body with those parameters in scope — is what the `case` sugar is a case of.*
 
 ```python
 test "large charges are declined":
@@ -286,6 +289,21 @@ test "large charges are declined":
 `case`/guard is ordinary Beck pattern matching (§11). There is nothing to learn, nothing that
 composes differently from the rest of the language, and no `Expression<Func<…>>` to satisfy —
 because Beck has no expression-tree type and never needs one: the compiler already has the AST.
+
+> **As built.** Against `def gateway(req: Request) -> Answer uses net.out(payments.example.com)`,
+> the shipped form is:
+>
+> ```python
+> stub net.out(payments.example.com):
+>     case Charge(amount):
+>         return Declined if amount > 10000 else Approved
+>     case Refund(amount):
+>         return Approved
+> ```
+>
+> — the guard is the language's conditional rather than a `if` clause on `case`, because `match` has
+> no such clause and giving the stub one would be the mock DSL this rule exists to avoid. A block of
+> anything else is the general form: the stubbed definition's parameters in scope, any expression.
 
 ### Rule 4 — interaction assertions are queries over what happened, not expectations set in advance
 

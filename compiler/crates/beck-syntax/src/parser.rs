@@ -571,15 +571,45 @@ impl<'a> Parser<'a> {
         Some(Node::form(sym::WHEN, args, span))
     }
 
-    /// `stub <effect atom>: <value>`.
+    /// `stub <effect atom>: <value>`, or a block that answers from the call's arguments.
+    ///
+    /// §21.3 rule 2 is the one-line form; rule 3 is the block:
+    ///
+    /// ```text
+    /// stub net.out(payments.example.com):
+    ///     case Charge(amount): Declined
+    ///     case _: Approved
+    /// ```
+    ///
+    /// A block of `case` arms matches on the stubbed definition's parameter — "ordinary Beck
+    /// pattern matching … there is nothing to learn, nothing that composes differently from the
+    /// rest of the language, and no `Expression<Func<…>>` to satisfy". A block of anything else is
+    /// an ordinary body with those parameters in scope, which is the general form the `case` sugar
+    /// is a case of.
     fn stub_clause(&mut self) -> Option<Node> {
         let start = self.span();
         self.bump(); // stub
         let (atom, atom_span) = self.effect_atom()?;
         self.expect(&Raw::Colon, "`:`");
-        let value = self.expr()?;
+
+        let value = if matches!(self.cur().tok, Tok::Newline) {
+            // `case` directly under `stub` is the doc's notation and has no scrutinee written: the
+            // checker supplies it, because only the checker knows what performs the effect.
+            if self.block_starts_with("case") {
+                self.skip_newlines();
+                self.bump(); // INDENT
+                let arms = self.case_arms()?;
+                Node::form(sym::STUB_ARMS, arms, start.to(self.span()))
+            } else {
+                self.block()?
+            }
+        } else {
+            let e = self.expr()?;
+            self.end_of_line();
+            e
+        };
+
         let span = start.to(value.span());
-        self.end_of_line();
         Some(Node::form(
             sym::STUB,
             vec![Node::lit(Lit::Str(atom.into()), atom_span), value],
@@ -820,6 +850,21 @@ impl<'a> Parser<'a> {
             out.push(')');
         }
         Some((out, start.to(end)))
+    }
+
+    /// Does the block about to be parsed — newlines, then `INDENT` — open with this keyword?
+    ///
+    /// Lookahead without consuming, because the caller may still want [`Parser::block`] to handle
+    /// the layout tokens itself.
+    fn block_starts_with(&self, kw: &str) -> bool {
+        let mut i = self.pos;
+        while matches!(self.toks.get(i).map(|t| &t.tok), Some(Tok::Newline)) {
+            i += 1;
+        }
+        if !matches!(self.toks.get(i).map(|t| &t.tok), Some(Tok::Indent)) {
+            return false;
+        }
+        matches!(self.toks.get(i + 1).and_then(|t| t.raw()), Some(Raw::Ident(s)) if s == kw)
     }
 
     /// `session("ana")`, already known to be there.
@@ -1171,6 +1216,17 @@ impl<'a> Parser<'a> {
         }
         self.bump();
         let mut arms = vec![scrutinee];
+        arms.extend(self.case_arms()?);
+        let span = start.to(self.span());
+        Some(Node::form(sym::MATCH, arms, span))
+    }
+
+    /// The `case` arms of a block whose `INDENT` has already been consumed.
+    ///
+    /// Shared by `match` and by §21.3 rule 3's `stub`, so a stub's arms are the language's own
+    /// pattern matching rather than a second, drifting notation.
+    fn case_arms(&mut self) -> Option<Vec<Node>> {
+        let mut arms = Vec::new();
         loop {
             self.skip_newlines();
             match self.cur().tok {
@@ -1195,8 +1251,7 @@ impl<'a> Parser<'a> {
             let span = arm_start.to(body.span());
             arms.push(Node::form(sym::CASE, vec![pat, body], span));
         }
-        let span = start.to(self.span());
-        Some(Node::form(sym::MATCH, arms, span))
+        Some(arms)
     }
 
     // ---------------------------------------------------------------- expressions (Pratt)

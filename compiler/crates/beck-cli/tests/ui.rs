@@ -247,3 +247,22 @@ ui!(
     a_test_in_a_program_with_nothing_to_fold,
     "def helper(x: Int) -> Int:\n    return x + 1\n\ntest \"x\":\n    given []\n"
 );
+
+ui!(
+    a_stub_body_where_two_definitions_perform_the_effect,
+    &format!(
+        "{}\ndef charge(n: Int) -> Bool uses net.out(pay.example.com):\n    return True\n\n\
+         def refund(n: Int) -> Bool uses net.out(pay.example.com):\n    return True\n\n\
+         test \"which one's arguments?\":\n    stub net.out(pay.example.com):\n        return n > 1\n",
+        BASE
+    )
+);
+
+ui!(
+    bare_case_arms_with_more_than_one_argument,
+    &format!(
+        "{}\ndef charge(n: Int, tries: Int) -> Bool uses net.out(pay.example.com):\n    return True\n\n\
+         test \"what is the scrutinee?\":\n    stub net.out(pay.example.com):\n        case 1:\n            return True\n        case _:\n            return False\n",
+        BASE
+    )
+);

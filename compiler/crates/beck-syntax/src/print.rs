@@ -488,8 +488,23 @@ impl Py {
             }
             Some(sym::STUB) if n.args.len() == 2 => {
                 let atom = n.args[0].as_str_lit().unwrap_or_default().to_string();
-                let v = self.expr(&n.args[1]);
-                self.line(&format!("stub {atom}: {v}"));
+                let body = &n.args[1];
+                if body.is_form(sym::STUB_ARMS) {
+                    self.line(&format!("stub {atom}:"));
+                    self.indent += 1;
+                    for arm in &body.args {
+                        let pat = self.expr(&arm.args[0]);
+                        self.line(&format!("case {pat}:"));
+                        self.body(&arm.args[1]);
+                    }
+                    self.indent -= 1;
+                } else if body.is_form(sym::DO) {
+                    self.line(&format!("stub {atom}:"));
+                    self.body(body);
+                } else {
+                    let v = self.expr(body);
+                    self.line(&format!("stub {atom}: {v}"));
+                }
             }
             _ => {
                 // A call with a `do=` block prints back in block form; anything else is an
@@ -799,7 +814,7 @@ mod roundtrip {
             // says the surface is a fixed point of printing.
             (
                 "tests",
-                "test \"a\":\n    given [Added(id=\"1\")] by \"ana\"\n    when session(\"ana\") sends Add(id=\"1\"), Toggle(id=\"1\")\n    stub net.out(payments.example.com): Declined\n    expect page contains \"milk\"\n    expect page(session(\"bo\")) contains \"milk\"\n    expect state == fold_of []\n    expect state == fold_of [Added(id=\"1\")] by \"ana\"\n    expect place(view) == client\n    expect flow(ApiKey) reaches nothing on client\n    expect wire_compatible_with \"o.becki\"\n    expect no net.out\n    expect net.out(h.example.com) once\n    expect net.out(h.example.com) times 3\n    expect net.out(h.example.com) with Charge(amount=1)\n    expect Err(error=BlankText)\n\nproperty \"p\"(events: list[Event]):\n    given events\n    expect list_len(events) >= 0\n",
+                "test \"a\":\n    given [Added(id=\"1\")] by \"ana\"\n    when session(\"ana\") sends Add(id=\"1\"), Toggle(id=\"1\")\n    stub net.out(payments.example.com): Declined\n    stub net.out(a.example.com):\n        case Charge(amount):\n            return Declined\n        case _:\n            return Approved\n    stub net.out(b.example.com):\n        x = 1\n        return Approved\n    expect page contains \"milk\"\n    expect page(session(\"bo\")) contains \"milk\"\n    expect state == fold_of []\n    expect state == fold_of [Added(id=\"1\")] by \"ana\"\n    expect place(view) == client\n    expect flow(ApiKey) reaches nothing on client\n    expect wire_compatible_with \"o.becki\"\n    expect no net.out\n    expect net.out(h.example.com) once\n    expect net.out(h.example.com) times 3\n    expect net.out(h.example.com) with Charge(amount=1)\n    expect Err(error=BlankText)\n\nproperty \"p\"(events: list[Event]):\n    given events\n    expect list_len(events) >= 0\n",
             ),
         ]
     }

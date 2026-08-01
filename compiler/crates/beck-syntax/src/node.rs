@@ -324,6 +324,9 @@ pub mod sym {
     pub const EXPECT_EFFECT: &str = "expect-effect";
     /// `(stub "<atom>" <value>)` — §21.3 rule 2: name the effect, not the shape.
     pub const STUB: &str = "stub";
+    /// `(stub "<atom>" (arms (case …) …))` — §21.3 rule 3. The arms have no scrutinee written
+    /// because only the checker knows what performs the effect, and therefore what its argument is.
+    pub const STUB_ARMS: &str = "arms";
 
     /// Names the checker matches as *forms* before it resolves anything.
     ///
