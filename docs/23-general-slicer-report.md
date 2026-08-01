@@ -11,13 +11,13 @@ It is built. So is the first thing that needed it: `beck explain incremental`, w
 [`03`](03-type-and-effect-system.md) §3.8 asks for by name and [`20`](20-phase-2-report.md) §20.5
 recorded as unbuilt "because there is nothing to say until §3.8's incremental view compilation
 exists". That was half right. There is nothing to *maintain* until the engine exists; there is
-plenty to *say*, and saying it needs a plan rather than an inlined expression. §23.10.
+plenty to *say*, and saying it needs a plan rather than an inlined expression. §23.8.
 
 This report says what both do, what building them found, and what they still refuse.
 
 It is **part 2**, and the title says so for the same reason [`22`](22-phase-3-report.md)'s did:
-Phase 3 is twelve bullets, two of them are now built, and ten are not. §23.8 lists the ten — and
-the analysis in §23.10 is a *piece* of one of the ten, not the bullet.
+Phase 3 is twelve bullets, two of them are now built, and ten are not. §23.9 lists the ten — and
+the analysis in §23.8 is a *piece* of one of the ten, not the bullet.
 
 ## 23.1 What was asked for, and what is there
 
@@ -66,18 +66,45 @@ page: Signal[Html] = map2(render, tally, roster)
 
 The old splitter found the durable fold with `signals.iter().find(|s| … Prim::Durable)` — the
 **first** one — and its `Inliner` lowered *every* reference to a durable signal to the same state
-parameter. So `render` was handed a `Tally` where it expected a `Roster`, the second fold's step
-function was never called at all, and `beck check` printed:
+parameter. So `render` was handed a `Tally` where it expected a `Roster`, and the second fold's step
+function was never called at all. Here is the compiler at commit `233d532`, on that file:
 
 ```console
-ok: 4 definitions, 5 signals, wire id cdfd5bd1e157edab
+$ beck check 21-two-folds.beck
+ok: 4 definitions, 5 signals, wire id f66ea4ec97d9f651
+
+$ beck explain flow 21-two-folds.beck
+ingress      proposals
+events       events  (validate)
+state        tally  (durable fold)
+page         page  (broadcast view)
+
+inlined into the view: roster
+(full recompute per event; Phase 3 makes these incremental)
+
+one tier crossing: `page` is @on(client) over state that is @on(data), so the edge is a
+single subscription carrying DOM patches.
 ```
 
-The failure surfaced at render time as `rendering the page for 'test': rendering the view` — a
-message about the wrong thing, three stages away from the cause. This is exactly the outcome the
+`state` is `tally`, and `roster` is listed as "inlined into the view" — inlined, that is, *as
+`tally`*. The report of the mis-slice is right there in the output, and it reads as normal. Add one
+of the file's own tests and the whole of what a developer would learn is:
+
+```console
+$ beck test 21-two-folds.beck
+test "each fold sees the same log and keeps its own answer" … FAILED
+  rendering the page for `test`: rendering the view
+```
+
+A message about the wrong thing, three stages from the cause. This is exactly the outcome the
 narrowness was justified by preventing, and it went unnoticed for two phases because no program in
 the corpus had two folds. A refusal that is never exercised on the shape it exists to refuse is a
 claim, not a check.
+
+(Both transcripts are reproducible: `git worktree add … 233d532`, copy
+[`corpus/21-two-folds.beck`](../compiler/corpus/21-two-folds.beck) in with its `test` blocks removed
+— that compiler has no `state.field` in a test, which is §23.4's other half — and run the two
+commands.)
 
 Two smaller versions of the same pattern were in the same function. `find(Prim::MergeClients)` took
 the first ingress — harmless, because placement's `B0403` already refuses a second. And the page was
@@ -267,63 +294,7 @@ Reports are history and are not rewritten. The two corrections above are recorde
 edited into [`19`](19-phase-1-report.md) and [`20`](20-phase-2-report.md), which is the convention
 [`18`](18-phase-0-report.md) established and [`AGENTS.md`](../AGENTS.md) states.
 
-## 23.8 What Phase 3 is still not
-
-**Two bullets of twelve are built.** Nothing below has been started, and the phase's exit criterion
-— "an outside developer builds a non-trivial app from documentation alone" — is not met.
-
-- **No incremental view engine.** This is the bullet the slicer *unblocks*, not the bullet it
-  delivers. There is no differential-dataflow plan, no arrangement, no delta stream, no SQL read
-  model, no pgwire, no query fusion. **Every view is a full recompute per event**, exactly as it
-  was. What exists now is the analysis (§23.10) — which views *could* be maintained, and why the
-  rest could not — and it says that sentence before it says anything else.
-- **`beck explain query` is still unbuilt**, for the reason [`20`](20-phase-2-report.md) §20.5
-  gave: the `Query` sub-language is deliberately symbolic and there is no plan to explain until the
-  engine compiles one. `beck explain cost` is still unbuilt too, and still for §20.5's reason —
-  `beck explain place` prints every candidate's cost, and a second view earns its place when there
-  is a second cost dimension to show.
-- **The runtime drives one accumulator and one page.** Fusion means a program may declare several
-  folds; it does not mean the runtime holds several. Several pages is `B0510` and needs a router.
-  Both limits are the runtime's and both now say so.
-- **A non-durable fold has no meaning yet.** `B0513` refuses it. §3.7 describes `fold` without
-  `durable` as a perfectly ordinary signal operation, and the honest position is that the runtime
-  has nowhere to keep one — not that the language should not have it.
-- **No LLVM backend and no native codegen**, unchanged from Phases 1, 2 and 3-part-1.
-- **No Mode B, no client polish, no `test --update`, no structured concurrency, no `Result`/error
-  rows, no SQLite substrate, no standard library v1, no identity beyond a dev-mode actor, no LSP, no
-  playground, no supply-chain tooling.** All Phase 3 bullets, all untouched.
-- **`check.rs` is 2,806 lines.** [`22`](22-phase-3-report.md) §22.6 recorded 2,644 and asked the
-  next phase to open that file to *move* something out rather than add to it. This work added
-  fifteen lines — the fused accumulator's test subject, delegated to `signal::durables` so the
-  checker and the slicer cannot disagree about how many folds a program has — and moved nothing.
-  The test-checking pass §22.6 named is still there, and moving it is still the right next edit.
-  (The 2,644 → 2,791 step between the two reports is the stub-body commit, not this one.)
-- **`split.rs` grew from 615 lines to 1,400, and gained `signal.rs`'s 564 beside it.** That is the
-  honest cost: excluding tests, 396 lines became 1,133 plus a new module. About a third of the new
-  volume is diagnostics and their notes, and about a third is `beck explain flow`, which used to be
-  eleven lines of `println!` in the CLI printing four names. What the split into two modules buys
-  is that the graph is now a separate concern from the slice — `signal.rs` knows nothing about
-  roles, and `split.rs` does no pattern-matching on program shape.
-
-## 23.9 What this changes for the rest of Phase 3
-
-1. **The incremental view engine has a plan to compile.** §5.3's arrangement sharing needs to know
-   which computations are shared; §3.8's `beck explain incremental <view>` needs to know which
-   vertices are pure functions of a signal. Both are vertex properties of `signal::Graph`, and both
-   were unrepresentable in an inlined expression.
-2. **Recompute is the oracle, and it is now a *comparable* one.** [`05`](05-tier-lowering.md) §5.3
-   calls full recompute "an optimisation with an exact correctness oracle (recompute) to test
-   against — a luxurious position for CI". Testing an incremental plan against a recompute needs
-   both to be *plans*; one of them now is.
-3. **The corpus has a third dimension.** It measured placement, then behaviour, and now topology.
-   Adding a program with an unusual signal graph is the cheapest way to find out whether the slicer
-   is as general as this report says.
-4. **A defect found by writing the program down is worth three found by reading the code.** §23.2's
-   mis-slice survived two reports that quoted the refusal it was supposed to fall under. It took
-   forty lines of Beck to find. Every remaining Phase 3 bullet should ship with the program that
-   would embarrass it.
-
-## 23.10 The analysis, not the engine: `beck explain incremental`
+## 23.8 The analysis, not the engine: `beck explain incremental`
 
 [`03`](03-type-and-effect-system.md) §3.8, in the sentence that names the command:
 
@@ -340,7 +311,7 @@ not a question one expression can answer. That is why this arrives with the slic
 $ beck explain incremental corpus/22-shared.beck
 Every view below is a **full recompute per event** today. This is the analysis §3.8 asks
 for — which views a differential-dataflow plan could maintain by delta, and why the rest
-could not — and the engine that would maintain them is not built (docs/23 §23.8).
+could not — and the engine that would maintain them is not built (docs/23 §23.9).
 
   tally   incremental    (shared)
             map_len        ±1 per insert or remove
@@ -420,3 +391,61 @@ about a hypothetical.
   list, map, count and `ui:` computations, which is what the delta rules cover. The harness
   therefore asserts the three verdicts on programs written to produce them, because a corpus-only
   test would pass with an analysis that answered "incremental" to everything.
+
+## 23.9 What Phase 3 is still not
+
+**Two bullets of twelve are built.** Nothing below has been started, and the phase's exit criterion
+— "an outside developer builds a non-trivial app from documentation alone" — is not met.
+
+- **No incremental view engine.** This is the bullet the slicer *unblocks*, not the bullet it
+  delivers. There is no differential-dataflow plan, no arrangement, no delta stream, no SQL read
+  model, no pgwire, no query fusion. **Every view is a full recompute per event**, exactly as it
+  was. What exists now is the analysis (§23.8) — which views *could* be maintained, and why the
+  rest could not — and it says that sentence before it says anything else.
+- **`beck explain query` is still unbuilt**, for the reason [`20`](20-phase-2-report.md) §20.5
+  gave: the `Query` sub-language is deliberately symbolic and there is no plan to explain until the
+  engine compiles one. `beck explain cost` is still unbuilt too, and still for §20.5's reason —
+  `beck explain place` prints every candidate's cost, and a second view earns its place when there
+  is a second cost dimension to show.
+- **The runtime drives one accumulator and one page.** Fusion means a program may declare several
+  folds; it does not mean the runtime holds several. Several pages is `B0510` and needs a router.
+  Both limits are the runtime's and both now say so.
+- **A non-durable fold has no meaning yet.** `B0513` refuses it. §3.7 describes `fold` without
+  `durable` as a perfectly ordinary signal operation, and the honest position is that the runtime
+  has nowhere to keep one — not that the language should not have it.
+- **No LLVM backend and no native codegen**, unchanged from Phases 1, 2 and 3-part-1.
+- **No Mode B, no client polish, no `test --update`, no structured concurrency, no `Result`/error
+  rows, no SQLite substrate, no standard library v1, no identity beyond a dev-mode actor, no LSP, no
+  playground, no supply-chain tooling.** All Phase 3 bullets, all untouched.
+- **`check.rs` is 2,806 lines.** [`22`](22-phase-3-report.md) §22.6 recorded 2,644 and asked the
+  next phase to open that file to *move* something out rather than add to it. This work added
+  fifteen lines — the fused accumulator's test subject, delegated to `signal::durables` so the
+  checker and the slicer cannot disagree about how many folds a program has — and moved nothing.
+  The test-checking pass §22.6 named is still there, and moving it is still the right next edit.
+  (The 2,644 → 2,791 step between the two reports is the stub-body commit, not this one.)
+- **`split.rs` grew from 615 lines to 1,400, and gained `signal.rs`'s 564 and
+  `incremental.rs`'s 508 beside it.** That is the honest cost: excluding tests, 396 lines became
+  1,133 plus two new modules. A large share of the new volume is diagnostics and their notes, and
+  `beck explain flow` — eleven lines of `println!` printing four names — became a report derived
+  from the graph. What the split into modules buys is that the graph is a separate concern from the
+  slice and from the analysis: `signal.rs` knows nothing about roles, `split.rs` does no
+  pattern-matching on program shape, and `incremental.rs` reads the plan rather than the program.
+
+## 23.10 What this changes for the rest of Phase 3
+
+1. **The incremental view engine has a plan to compile.** §5.3's arrangement sharing needs to know
+   which computations are shared; §3.8's `beck explain incremental <view>` needs to know which
+   vertices are pure functions of a signal. Both are vertex properties of `signal::Graph`, and both
+   were unrepresentable in an inlined expression.
+2. **Recompute is the oracle, and it is now a *comparable* one.** [`05`](05-tier-lowering.md) §5.3
+   calls full recompute "an optimisation with an exact correctness oracle (recompute) to test
+   against — a luxurious position for CI". Testing an incremental plan against a recompute needs
+   both to be *plans*; one of them now is.
+3. **The corpus has a third dimension.** It measured placement, then behaviour, and now topology.
+   Adding a program with an unusual signal graph is the cheapest way to find out whether the slicer
+   is as general as this report says.
+4. **A defect found by writing the program down is worth three found by reading the code.** §23.2's
+   mis-slice survived two reports that quoted the refusal it was supposed to fall under. It took
+   forty lines of Beck to find. Every remaining Phase 3 bullet should ship with the program that
+   would embarrass it.
+

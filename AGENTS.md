@@ -24,7 +24,7 @@ Write the commit message as the author of the change: what changed, and why.
   [`docs/22-phase-3-report.md`](docs/22-phase-3-report.md) and
   [`docs/23-general-slicer-report.md`](docs/23-general-slicer-report.md) record what each phase
   does, what it refuses to claim, and the corrections it makes to the design documents. Phase 3 is
-  **two bullets of twelve**; docs/23 §23.8 names the ten that are untouched. Reports are history:
+  **two bullets of twelve**; docs/23 §23.9 names the ten that are untouched. Reports are history:
   a later phase's correction to an earlier one goes in the later report, not into the earlier
   text.
 - [`compiler/corpus/`](compiler/corpus/) is 26 programs carrying **no placement annotations**, and

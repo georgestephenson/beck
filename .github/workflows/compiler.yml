@@ -130,7 +130,7 @@ jobs:
           ./target/release/beck check /tmp/two-pages.beck 2>&1 | grep -q 'B0510'
 
       - name: the incremental analysis says what is true today, first
-        # docs/23 §23.10. A command called `explain incremental` that let a reader believe their
+        # docs/23 §23.8. A command called `explain incremental` that let a reader believe their
         # view was being maintained would be the most misleading output in the compiler, so the
         # gate is the disclaimer as much as the analysis.
         run: |

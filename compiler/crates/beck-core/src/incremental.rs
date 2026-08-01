@@ -17,7 +17,7 @@
 //!
 //! It is the **analysis**. There is no differential-dataflow engine, no arrangement, no delta
 //! stream; every view in the compiler is still a full recompute per event, and
-//! [`23`](../../../../docs/23-general-slicer-report.md) §23.8 says so first. What this produces is
+//! [`23`](../../../../docs/23-general-slicer-report.md) §23.9 says so first. What this produces is
 //! the verdict a view engine would consume and the sentence a developer needs before writing a
 //! view that quietly costs a recount per event over a million rows.
 //!
@@ -364,7 +364,7 @@ pub fn report(placed: &Placed, only: Option<&str>) -> String {
         out,
         "Every view below is a **full recompute per event** today. This is the analysis §3.8 asks\n\
          for — which views a differential-dataflow plan could maintain by delta, and why the rest\n\
-         could not — and the engine that would maintain them is not built (docs/23 §23.8).\n"
+         could not — and the engine that would maintain them is not built (docs/23 §23.9).\n"
     );
 
     if rows.is_empty() {

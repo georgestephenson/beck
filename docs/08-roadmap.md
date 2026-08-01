@@ -135,13 +135,13 @@ dependencies whose signatures didn't change.
 > for the incremental-views bullet below, not a down payment on it: views are still full recompute
 > per event. What it did make possible immediately is `beck explain incremental` — the analysis
 > §3.8 names, which says which views a plan could maintain and why the rest could not, over a
-> program none of whose views are maintained (§23.10).
+> program none of whose views are maintained (§23.8).
 >
 > Building it falsified the sentence both earlier reports used to justify the narrowness. The old
 > splitter did not refuse what it could not slice: two `durable` folds compiled, and both were
 > lowered to the same accumulator ([`23`](23-general-slicer-report.md) §23.2).
 >
-> The ten other bullets are **untouched**, and [`23`](23-general-slicer-report.md) §23.8 names them
+> The ten other bullets are **untouched**, and [`23`](23-general-slicer-report.md) §23.9 names them
 > one at a time rather than by omission.
 
 - LLVM release backend + differential tests against Cranelift (§5.2).
