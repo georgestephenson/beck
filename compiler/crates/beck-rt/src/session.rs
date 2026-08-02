@@ -43,9 +43,24 @@ pub async fn run<S: Socket>(app: Arc<App>, mut socket: S) -> Result<()> {
     // rather than being missed.
     let mut version = app.subscribe();
 
-    let Some((sub, from, actor)) = wait_for_hello(&mut socket).await? else {
+    let Some((sub, from, claimed)) = wait_for_hello(&mut socket).await? else {
         return Ok(());
     };
+
+    // The one place a socket's actor is decided. Before this existed the claim *was* the actor,
+    // and every ownership check in every program was enforced against a value the caller chose
+    // (`docs/42` §42.6, `docs/43` §43.4).
+    let actor = match app.identity().verify(&claimed) {
+        Ok(a) => a,
+        Err(why) => {
+            // The operator learns which refusal it was; the client learns that it was refused.
+            tracing::warn!(sub = %sub, reason = why.reason(), "identity refused");
+            telemetry().unauthenticated.incr();
+            send_json(&mut socket, &ServerMsg::error(why.message())).await?;
+            return Ok(());
+        }
+    };
+    let actor = actor.name().to_string();
 
     let floor = app.floor().await?;
     let head = app.head();

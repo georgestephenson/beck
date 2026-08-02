@@ -73,27 +73,57 @@ fn mentions(needles: &[&str]) -> Vec<String> {
 // Identity — Phase 3's own bullet, and the one that makes every ownership check conditional
 // ---------------------------------------------------------------------------------------------
 
-/// The actor is self-asserted: it arrives in the client's own `hello` frame and is believed.
+/// The **default** is still to believe the client, and D6's OIDC relying party is still unbuilt.
 ///
-/// [`docs/42`](../../../../docs/42-security-assurance.md) §42.5 is the sentence this test exists to
-/// stop anybody from misquoting: "a capability required outside the chokepoint has no holder" is
-/// true and proven by `security.rs`; "only the owner may toggle their todo" is enforced against a
-/// string the caller chose. The two read alike in a slide deck and are different guarantees.
+/// This is narrower than it was. [`docs/48`](../../../../docs/48-identity-report.md) made identity
+/// a seam with a verifying implementation, so "the actor is whatever the client says" is now a
+/// property of `DevIdentity` — a choice an operator makes — rather than of the protocol. What
+/// remains absent, and what this asserts, is that the default is that choice, and that nothing
+/// here speaks OIDC.
 #[test]
-fn the_actor_is_whatever_the_client_says_it_is() {
-    let msg = beck_rt::protocol::ClientMsg::parse(
-        r#"{"t":"hello","sub":"s1","seq":0,"actor":"the-auditor"}"#,
-    )
-    .expect("the frame parses");
-    let claimed = match msg {
-        beck_rt::protocol::ClientMsg::Hello { actor, .. } => actor,
-        _ => panic!("that is a hello"),
+fn identity_defaults_to_believing_the_client() {
+    let config = beck_rt::AppConfig::default();
+    assert!(
+        !config.identity.verifies(),
+        "the default provider verifies something now — say so in docs/43 §43.4 and §42.1's table, \
+         and rewrite this test to assert whatever the new default is"
+    );
+    assert_eq!(config.identity.kind(), "dev");
+}
+
+/// No OIDC relying party: no JWKS, no issuer or audience validation, no asymmetric signature.
+///
+/// `SignedIdentity` is symmetric — everything that can verify a credential can also mint one —
+/// which suits a gateway in front of a Beck process and does not suit a public identity provider.
+/// D6 asks for the second.
+#[test]
+fn nothing_here_speaks_oidc() {
+    let sites = mentions(&["jwks", "Jwks", "id_token", "issuer", "RS256"]);
+    assert!(
+        sites.is_empty(),
+        "an OIDC relying party appears to exist now ({sites:?}) — delete this test, and correct \
+         docs/48 §48.5, docs/43 §43.4 and the roadmap's identity bullet"
+    );
+}
+
+/// And the claims a verified identity carries do not reach the program yet.
+///
+/// D6 asks for "claims → `Session` capability mapping". The verification half is built; the
+/// mapping half is not, because the actor travels through the view path as a `String`
+/// ([`48`](../../../../docs/48-identity-report.md) §48.5).
+#[test]
+fn a_verified_identitys_claims_do_not_reach_the_program() {
+    let session = beck_core::prelude::types()
+        .get("Session")
+        .cloned()
+        .expect("the prelude declares a Session");
+    let fields = match session {
+        beck_core::ty::TyDecl::Model { fields, .. } => fields,
+        _ => panic!("Session is a model"),
     };
-    assert_eq!(
-        claimed, "the-auditor",
-        "identity is dev-mode: the runtime takes the actor from the frame. When D6's OIDC relying \
-         party lands, this test goes red — delete it, and correct §42.1's table, §42.6's first \
-         bullet and the roadmap's identity bullet in the same change"
+    assert!(
+        !fields.iter().any(|(n, _)| n.as_ref() == "claims"),
+        "`Session` carries claims now — delete this test and correct docs/48 §48.5"
     );
 }
 

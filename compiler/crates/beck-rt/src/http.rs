@@ -107,19 +107,45 @@ async fn route(
     }
 }
 
-/// Which actor this request is for. Dev-mode identity, exactly as Phase 0 had it: `?actor=alice`.
-fn actor_of(req: &Request<Incoming>) -> String {
+/// What this request *claims* to be — `?actor=alice`, or nothing.
+///
+/// A claim, not an actor. [`crate::identity`] is what turns one into the other, and this function
+/// deliberately does no defaulting: "nobody said" and "somebody said `dev`" are different facts,
+/// and the provider is what decides whether the first is acceptable.
+fn claimed_actor(req: &Request<Incoming>) -> String {
     req.uri()
         .query()
         .and_then(|q| {
             q.split('&')
                 .find_map(|kv| kv.strip_prefix("actor=").map(|v| v.to_string()))
         })
-        .unwrap_or_else(|| "dev".to_string())
+        .unwrap_or_default()
 }
 
 async fn document(app: Arc<App>, req: Request<Incoming>) -> Result<Response<Full<Bytes>>> {
-    let actor = actor_of(&req);
+    // The server-rendered document is a *view*, so it is behind the same question the socket is:
+    // rendering a page for whoever asked would leak exactly what a per-session view exists to keep
+    // separate. Under `DevIdentity` a claim of `dev` is what an unauthenticated laptop gets, and
+    // that default lives in one place.
+    let claimed = claimed_actor(&req);
+    let claimed = if claimed.is_empty() && !app.identity().verifies() {
+        "dev".to_string()
+    } else {
+        claimed
+    };
+    let actor = match app.identity().verify(&claimed) {
+        Ok(a) => a.name().to_string(),
+        Err(why) => {
+            tracing::warn!(
+                reason = why.reason(),
+                "identity refused for a document request"
+            );
+            crate::telemetry::telemetry().unauthenticated.incr();
+            return Ok(Response::builder()
+                .status(StatusCode::UNAUTHORIZED)
+                .body(Full::new(Bytes::from_static(b"unauthenticated")))?);
+        }
+    };
     let seq = app.head();
     let body = app.render(&actor).await?.render();
 

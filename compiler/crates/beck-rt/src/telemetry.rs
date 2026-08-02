@@ -253,6 +253,12 @@ pub struct Telemetry {
     pub snapshot_failures: Counter,
     /// Client messages that did not parse.
     pub bad_messages: Counter,
+    /// Connections refused because the identity did not verify.
+    ///
+    /// Counted separately from `rejected`, which is `validate` refusing a *command*: one is "who
+    /// are you" and the other is "you may not do that", and an operator watching for an attack
+    /// needs to tell them apart.
+    pub unauthenticated: Counter,
 
     // --- what the log does record, counted here so a rate is available without folding ---
     pub events_appended: Counter,
@@ -325,6 +331,7 @@ impl Telemetry {
             "counters": {
                 "events_appended": self.events_appended.get(),
                 "rejected": self.rejected.get(),
+                "unauthenticated": self.unauthenticated.get(),
                 "deduplicated": self.deduplicated.get(),
                 "append_failures": self.append_failures.get(),
                 "snapshot_failures": self.snapshot_failures.get(),
@@ -408,6 +415,11 @@ impl Telemetry {
                     "metrics": [
                         sum("beck.events.appended", self.events_appended.get(), true),
                         sum("beck.proposals.rejected", self.rejected.get(), true),
+                        sum(
+                            "beck.connections.unauthenticated",
+                            self.unauthenticated.get(),
+                            true,
+                        ),
                         sum("beck.proposals.deduplicated", self.deduplicated.get(), true),
                         sum("beck.log.append.failures", self.append_failures.get(), true),
                         sum("beck.snapshot.failures", self.snapshot_failures.get(), true),

@@ -66,6 +66,13 @@ pub struct AppConfig {
     /// is that a clock is supplied and never ambient; `beck_core::clock` says why, and says what is
     /// deliberately not on the seam yet.
     pub clock: Arc<dyn beck_core::clock::Clock>,
+    /// How a claimed identity becomes a verified one.
+    ///
+    /// A dependency rather than a tunable, for the same reason the clock is one, and here because
+    /// the merge point is where a proposal acquires its actor. `DevIdentity` by default: `beck run`
+    /// on a laptop must not need a secret, and `crate::identity` is where the consequences of that
+    /// default are written down.
+    pub identity: Arc<dyn crate::identity::Identity>,
 }
 
 impl Default for AppConfig {
@@ -77,6 +84,7 @@ impl Default for AppConfig {
             maintain_views: true,
             share_arrangements: true,
             clock: Arc::new(beck_core::clock::SystemClock),
+            identity: Arc::new(crate::identity::DevIdentity),
         }
     }
 }
@@ -230,6 +238,16 @@ impl App {
     }
 
     /// Whether subscriptions maintain their views (§5.3) or recompute them.
+    /// How this process decides who is asking.
+    ///
+    /// Public because both edges — the socket and the document handler — have to ask the same
+    /// question, and because the dashboard and the startup line have to be able to *say* which
+    /// provider is in force. An operator who cannot tell from the logs whether authentication is
+    /// on does not have authentication (`docs/48` §48.3).
+    pub fn identity(&self) -> &Arc<dyn crate::identity::Identity> {
+        &self.config.identity
+    }
+
     pub fn maintains_views(&self) -> bool {
         self.config.maintain_views
     }
