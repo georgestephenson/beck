@@ -1,0 +1,4 @@
+# The published documentation site, assembled by `.github/workflows/docs.yml` from the reference,
+# the module pages and rustdoc. Built on every run; never checked in. What *is* checked in is
+# `docs/reference/`, the markdown the drift gate compares against (docs/adr/0007).
+site/

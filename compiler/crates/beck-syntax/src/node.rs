@@ -212,6 +212,13 @@ pub struct Meta {
     pub span: Span,
     /// The macro expansion chain this node came out of, innermost last. Empty for source code.
     pub expansion: Vec<(Arc<str>, Span)>,
+    /// The `##` doc comment written immediately above this node, lines joined by `\n` with the
+    /// marker and one leading space stripped ([`crate::doc`]).
+    ///
+    /// Metadata rather than a form, for the same reason a span is: a doc comment is not part of a
+    /// node's identity ([`Node::structurally_eq`]), so every pass that matches on `def` or `model`
+    /// keeps working and a doc-only edit is not a change of meaning.
+    pub doc: Option<Arc<str>>,
 }
 
 impl Meta {
@@ -219,6 +226,7 @@ impl Meta {
         Meta {
             span,
             expansion: Vec::new(),
+            doc: None,
         }
     }
 }

@@ -49,7 +49,7 @@
 //!
 //! # What this is not
 //!
-//! It is not a *query* plan. §4.2 keeps the `Query` sub-language symbolic and [`20`] §20.5 says
+//! It is not a *query* plan. §4.2 keeps the `Query` sub-language symbolic and `docs/20` §20.5 says
 //! `beck explain query` waits for an engine to compile one; this compiles the signal graph, which
 //! is a different thing that happens to share the word.
 

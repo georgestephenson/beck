@@ -1,8 +1,8 @@
 //! `beck explain incremental` — which views a plan could maintain, and why the rest could not.
 //!
-//! [`docs/03-type-and-effect-system.md`] §3.8 asks for this command by name and
-//! [`docs/20-phase-2-report.md`] §20.5 recorded it as unbuilt. It was the analysis with nothing
-//! behind it; there is now an engine ([`docs/24-incremental-views-report.md`]), and the obligation
+//! `docs/03-type-and-effect-system.md` §3.8 asks for this command by name and
+//! `docs/20-phase-2-report.md` §20.5 recorded it as unbuilt. It was the analysis with nothing
+//! behind it; there is now an engine (`docs/24-incremental-views-report.md`), and the obligation
 //! this harness enforces has not changed: the first line must be true of *this program*, because a
 //! command called `explain incremental` that let a reader believe their view was being maintained
 //! when it is not would be worse than no command.

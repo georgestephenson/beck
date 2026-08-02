@@ -3,7 +3,7 @@
 //! # Why this is its own crate
 //!
 //! The roadmap names Cranelift as Phase 1's server backend; what exists is this. That is stated in
-//! [`docs/19-phase-1-report.md`] §19.6 and is a legitimate choice — [`docs/00-original-idea.md`]
+//! `docs/19-phase-1-report.md` §19.6 and is a legitimate choice — `docs/00-original-idea.md`
 //! names "engine-in-Rust with the language as its configuration" as one of the three routes that
 //! work for a GC'd functional language on a Rust host.
 //!

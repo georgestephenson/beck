@@ -307,10 +307,10 @@ pub fn slice(project: Project, diags: &mut Diagnostics) -> Option<Placed> {
 
 /// Slice a project, or wrap it as a library if the only thing wrong with it is that it is one.
 ///
-/// [`slice`] answers the *application* question and a module that is not an application is still a
+/// [`slice()`] answers the *application* question and a module that is not an application is still a
 /// module — `beck check` has said so since Phase 2. What it could not do was give that module back
 /// to a caller, so a library had no way to run its own tests
-/// ([`docs/22-phase-3-report.md`] §22.6, [`docs/25-benchmarks-and-expressiveness.md`] §25.6 item 1).
+/// (`docs/22-phase-3-report.md` §22.6, `docs/25-benchmarks-and-expressiveness.md` §25.6 item 1).
 ///
 /// The B0500/B0501/B0505 diagnostics are **dropped** on that path rather than downgraded to
 /// warnings, because they are answers to a question this caller did not ask. Every other diagnostic

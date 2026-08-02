@@ -24,3 +24,4 @@ The split this directory creates:
 | [0006](0006-ci-measurements-lane.md) | A release-profile measurements lane in CI |
 | [0007](0007-evaluator-stack-is-declared-not-discovered.md) | The evaluator's recursion bound is a count, and its stack is declared on the backend seam |
 | [0008](0008-numeric-operators-resolved-ad-hoc.md) | Numeric operators are resolved from their operands, not from a type class |
+| [0009](0009-generated-reference-documentation.md) | Reference documentation is generated from the compiler, and checked in |

@@ -1,6 +1,6 @@
 //! One type-directed value generator, used by three features.
 //!
-//! [`docs/21-tests-in-beck-and-proof.md`] §21.3 rule 5: "Stub return values, property-test inputs
+//! `docs/21-tests-in-beck-and-proof.md` §21.3 rule 5: "Stub return values, property-test inputs
 //! and `given` gaps are the same problem: produce an inhabitant of a known type. The compiler has
 //! the full type, including `newtype`s, unions and records, so it can derive:
 //!

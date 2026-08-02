@@ -1,6 +1,6 @@
 //! The harness for §21.2's `test` construct — the tests about tests.
 //!
-//! [`docs/21-tests-in-beck-and-proof.md`] is the design; this asserts the parts of it that a claim
+//! `docs/21-tests-in-beck-and-proof.md` is the design; this asserts the parts of it that a claim
 //! could otherwise be made about without evidence:
 //!
 //! * the sketch's own tests pass, running the roles the runtime drives;

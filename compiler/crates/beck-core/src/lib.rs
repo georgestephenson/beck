@@ -17,6 +17,7 @@ pub mod check;
 pub mod compat;
 pub mod core;
 pub mod cost;
+pub mod docgen;
 pub mod engine;
 pub mod gen;
 pub mod graph;

@@ -1,17 +1,39 @@
 name: docs
 
-# The docs are the design and the plan (AGENTS.md), dense with relative cross-links. This gate
-# is deliberately narrow (§13.7; a linter that fires on valid files gets deleted): one
+# Three jobs, in increasing cost.
+#
+# `links` is the original gate (§13.7; a linter that fires on valid files gets deleted): one
 # deterministic property — every relative link in tracked markdown resolves — with no view on
 # prose, style or external URLs. Code spans and fenced blocks are stripped first, because
 # `def map[T, U](…)` in backticks is not a link.
+#
+# `generated` is the drift gate. `docs/reference/` is generated from the compiler's own tables —
+# the diagnostic codes it can emit, the predicate the placement solver evaluates, the schemes
+# inference reads, and the CLI's own command tree — and checked in so a change to any of them
+# shows up in a diff. `beck doc reference --check` regenerates in memory and fails on a
+# difference. It is also a `cargo test` (`beck-cli/tests/docs.rs`), so it cannot be skipped by
+# deleting this job.
+#
+# `publish` builds the site: the reference, two module pages, and rustdoc for the nine crates.
+# Only from `main` — a pull request builds it and throws it away, which is enough to know it
+# builds.
 
 on:
   push:
     branches: [main]
-    paths: ["**/*.md", ".github/workflows/docs.yml"]
+    paths:
+      - "**/*.md"
+      - ".github/workflows/docs.yml"
+      - "compiler/crates/**"
+      - "compiler/examples/**"
+      - "docs/reference/**"
   pull_request:
-    paths: ["**/*.md", ".github/workflows/docs.yml"]
+    paths:
+      - "**/*.md"
+      - ".github/workflows/docs.yml"
+      - "compiler/crates/**"
+      - "compiler/examples/**"
+      - "docs/reference/**"
   workflow_dispatch:
 
 permissions:
@@ -20,6 +42,10 @@ permissions:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
 
 jobs:
   links:
@@ -53,3 +79,79 @@ jobs:
           print("\n".join(bad) or f"all relative links resolve across {len(files)} markdown files")
           sys.exit(1 if bad else 0)
           PY
+
+  generated:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: compiler
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: compiler
+      - name: build
+        run: cargo build --locked
+      # The gate itself. Everything under `docs/reference/` is derived, so a compiler change that
+      # changes what the reference says has to land with the regenerated file.
+      - name: the checked-in reference is what the compiler generates
+        run: ./target/debug/beck doc reference --out ../docs/reference --check
+      # Belt and braces: the same property as a test, plus the error-index completeness check and
+      # `beck doc` over the whole corpus.
+      - name: the documentation gates
+        run: cargo test --locked -p beck-cli --test docs
+      # Not published from here, but a rustdoc build that warns is a rustdoc build nobody reads.
+      - name: rustdoc is warning-free
+        run: cargo doc --locked --workspace --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  publish:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: [links, generated]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    defaults:
+      run:
+        working-directory: compiler
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: compiler
+      - name: build
+        run: cargo build --release --locked
+      - name: the language reference
+        run: ./target/release/beck doc reference --out ../site --format html
+      # Two module pages: the sketch the project grew from, and the library written to show what a
+      # doc comment adds to a page that is otherwise entirely derived.
+      - name: module pages
+        run: |
+          ./target/release/beck doc module examples/todo.beck       --out ../site/module --format html
+          ./target/release/beck doc module examples/documented.beck --out ../site/module --format html
+      - name: rustdoc
+        run: cargo doc --release --locked --workspace --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+      - name: assemble the site
+        run: |
+          mkdir -p ../site/api
+          cp -r target/doc/. ../site/api/
+          test -f ../site/index.html
+          test -f ../site/errors.html
+          test -f ../site/module/todo.html
+          test -f ../site/api/beck_core/index.html
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4

@@ -1,7 +1,7 @@
 //! Macro expansion, hygienic from the first commit.
 //!
 //! [`docs/08-roadmap.md`](../../../../docs/08-roadmap.md) Phase 1: "Macro expander with hygiene —
-//! **from the start** (§2.4); retrofitting hygiene is a rewrite." [`docs/02-syntax.md`] §2.4:
+//! **from the start** (§2.4); retrofitting hygiene is a rewrite." `docs/02-syntax.md` §2.4:
 //! "Identifiers introduced inside a `quote` get a fresh hygiene scope in `Node.meta`; capture is
 //! possible but must be explicit (`inject(name)`)."
 //!

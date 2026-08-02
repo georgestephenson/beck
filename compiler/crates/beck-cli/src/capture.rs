@@ -7,7 +7,7 @@
 //! It lives in the CLI rather than in `beck-rt` so the runtime crate does not depend on subscriber
 //! machinery: the runtime *emits*, and whoever assembles a process decides where records go.
 //!
-//! The one field it looks for is `seq`. [`beck_rt::telemetry`] explains why: a sequence number is
+//! The one field it looks for is `seq`. [`mod@beck_rt::telemetry`] explains why: a sequence number is
 //! not a correlation id, it is a reproducible state, so a record that has one is worth more than a
 //! record that does not.
 

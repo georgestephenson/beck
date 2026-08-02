@@ -5,7 +5,7 @@
 //! stops the *interface* from being shaped so that only a tree-walker could satisfy it.
 //!
 //! So this harness drives the whole runtime through a backend the runtime has never heard of. When
-//! [`docs/04-compiler-architecture.md`] §4.8's differential test between a native backend and this
+//! `docs/04-compiler-architecture.md` §4.8's differential test between a native backend and this
 //! one gets written, it is this file's shape: two `Runtime`s over one `Placed`, and an assertion
 //! that they cannot be told apart.
 

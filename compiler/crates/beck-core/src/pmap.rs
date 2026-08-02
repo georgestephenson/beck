@@ -18,7 +18,7 @@
 //! `im` and `rpds` are both MPL-2.0, which `deny.toml` does not allow. More to the point, a
 //! persistent map is not a third-party concern for a functional language — it is `Map[K, V]`, a
 //! type in the surface language, and its performance characteristics are part of the semantics.
-//! [`docs/01-vision-and-premise.md`] §1.5's "we do not write a storage engine" is about substrates,
+//! `docs/01-vision-and-premise.md` §1.5's "we do not write a storage engine" is about substrates,
 //! not about the standard library's own data structures.
 //!
 //! # Why *this* structure

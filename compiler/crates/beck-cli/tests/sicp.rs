@@ -1,7 +1,7 @@
 //! The SICP suite's first chapter, and the walls the rest of it hits.
 //!
-//! [`docs/25-benchmarks-and-expressiveness.md`] proposes SICP as Beck's expressiveness benchmark,
-//! on the grounds that the project's own premise ([`docs/01`] §1.1) is that Beck is SICP's three
+//! `docs/25-benchmarks-and-expressiveness.md` proposes SICP as Beck's expressiveness benchmark,
+//! on the grounds that the project's own premise (`docs/01` §1.1) is that Beck is SICP's three
 //! moves made into a language. A proposal is not evidence, so this harness holds the report's
 //! claims to the standard `AGENTS.md` sets: every number in §25.6 is produced by something here.
 //!

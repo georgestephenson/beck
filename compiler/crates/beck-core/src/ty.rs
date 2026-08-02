@@ -385,7 +385,7 @@ impl Subst {
     /// error[B0320]: the two branches may not perform {} here
     /// ```
     ///
-    /// which is [`docs/25-benchmarks-and-expressiveness.md`] §25.6 item 6, and what exercise 1.43
+    /// which is `docs/25-benchmarks-and-expressiveness.md` §25.6 item 6, and what exercise 1.43
     /// costs. The answer is the one every row-typed language reaches: the alternatives do not meet
     /// each other, they both flow into a **fresh row**, and the result performs whatever either of
     /// them might. Sound in the direction §3.2 requires — the join contains both branches' atoms, so

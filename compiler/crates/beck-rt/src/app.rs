@@ -7,7 +7,7 @@
 //!              enters, §3.7)              (§3.7)                         fewer, bigger patches)
 //! ```
 //!
-//! Phase 0 wrote this by hand to find out what it costs; Phase 1 keeps the shape — [`docs/18`]
+//! Phase 0 wrote this by hand to find out what it costs; Phase 1 keeps the shape — `docs/18`
 //! §18.7 item 1: "Keep the sequencer shape. One merge point, one writer, group commit, fold under
 //! the same lock as the append. It is simple, it is fast enough, and every property in §18.3.6
 //! depends on it" — and drives it from a *compiled program* instead of from hand-written Rust.
@@ -178,7 +178,7 @@ impl App {
     ///
     /// With sharing on it owns only the per-session operators; the rest arrive from the one shared
     /// dataflow. With it off it owns the whole plan, which is what every subscription did before
-    /// [`docs/26-arrangement-sharing-report.md`].
+    /// `docs/26-arrangement-sharing-report.md`.
     pub fn view_engine(&self) -> Result<beck_core::engine::Engine> {
         if self.config.share_arrangements {
             Ok(self.shared.subscriber())

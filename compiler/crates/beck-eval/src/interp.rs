@@ -15,7 +15,7 @@
 //! To which a fourth was added by [`docs/31-tail-calls-report.md`](../../../../docs/31-tail-calls-report.md):
 //!
 //! * **A call in tail position does not grow the host stack, and no program aborts the process.**
-//!   [`Interp::eval`] is a trampoline: [`Interp::step`] walks the tail positions of a body without
+//!   [`Interp::eval`] is a trampoline: `Interp::step` walks the tail positions of a body without
 //!   recursing and hands the call it lands on back to the loop, so an iterative process is
 //!   iterative (SICP §1.2.1, R7RS §3.5). Recursion that is *not* in tail position still spends a
 //!   host frame, so it is bounded by a counted depth — deterministically, because a limit read off

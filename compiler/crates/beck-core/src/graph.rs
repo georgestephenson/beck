@@ -35,7 +35,7 @@
 //!
 //! # Cycles are not errors here
 //!
-//! [`docs/19-phase-1-report.md`] §19.4 item 4: the signal graph is *legitimately* cyclic —
+//! `docs/19-phase-1-report.md` §19.4 item 4: the signal graph is *legitimately* cyclic —
 //! `events` is decided from `todos`, `todos` is folded from `events` — and §3.7 makes the cycle
 //! sound. So this does not topologically sort the vertices, which would be impossible. It computes
 //! strongly connected components with Tarjan's algorithm and topologically sorts the *condensation*,

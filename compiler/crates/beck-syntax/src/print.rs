@@ -94,16 +94,26 @@ fn write_sexpr(out: &mut String, n: &Node) {
 
 fn write_sexpr_pretty(out: &mut String, n: &Node, indent: usize) {
     let flat = to_sexpr(n);
-    if !n.applied || flat.len() + indent <= 96 {
+    // A documented argument forces the broken form: a comment needs a line of its own, so a form
+    // short enough to print flat still has to be broken to keep its documentation.
+    let documented = n.args.iter().any(|a| a.meta.doc.is_some());
+    if !n.applied || (flat.len() + indent <= 96 && !documented) {
         out.push_str(&flat);
         return;
     }
     out.push('(');
     write_atom(out, n);
     let inner = indent + 2;
+    let pad = " ".repeat(inner);
     for a in &n.args {
+        if let Some(doc) = &a.meta.doc {
+            for line in crate::doc::render(doc, crate::doc::SEXPR_MARKER, &pad).lines() {
+                out.push('\n');
+                out.push_str(line);
+            }
+        }
         out.push('\n');
-        out.push_str(&" ".repeat(inner));
+        out.push_str(&pad);
         write_sexpr_pretty(out, a, inner);
     }
     out.push(')');
@@ -144,7 +154,21 @@ impl Py {
         self.out.push('\n');
     }
 
+    /// Emit the node's doc comment, if it has one, at the current indentation.
+    ///
+    /// Ordinary comments are dropped by the lexer and so cannot survive `beck fmt`; a doc comment
+    /// is [`crate::Meta`], so it can, and formatting a documented module has to give it back.
+    fn docs(&mut self, n: &Node) {
+        let Some(doc) = n.meta.doc.clone() else {
+            return;
+        };
+        let indent = "    ".repeat(self.indent);
+        self.out
+            .push_str(&crate::doc::render(&doc, crate::doc::PY_MARKER, &indent));
+    }
+
     fn item(&mut self, n: &Node) {
+        self.docs(n);
         match n.head_name() {
             Some(sym::DECORATE) => {
                 let deco = self.expr(&n.args[0]);
@@ -166,6 +190,7 @@ impl Py {
                     self.line("pass");
                 }
                 for f in &n.args[1..] {
+                    self.docs(f);
                     let fname = self.expr(&f.args[0]);
                     let fty = self.type_expr(&f.args[1]);
                     self.line(&format!("{fname}: {fty}"));
@@ -177,6 +202,7 @@ impl Py {
                 self.line(&format!("union {name}:"));
                 self.indent += 1;
                 for v in &n.args[1..] {
+                    self.docs(v);
                     let vname = self.expr(&v.args[0]);
                     if v.args.len() == 1 {
                         self.line(&vname);

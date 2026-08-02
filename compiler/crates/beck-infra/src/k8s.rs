@@ -841,7 +841,7 @@ fn slug(n: &Node) -> String {
 ///
 /// §6.2: because an apko build performs no arbitrary execution, the same config and package
 /// versions yield the same digest on any machine. That property is measured — two builds of this
-/// config produce a bit-identical digest ([`docs/19-phase-1-report.md`] §19.5).
+/// config produce a bit-identical digest (`docs/19-phase-1-report.md` §19.5).
 ///
 /// It is also the reason for the shape below. **apko has no way to copy a file from the host**: an
 /// image's contents come from packages and from nothing else, which is exactly what "performs no
