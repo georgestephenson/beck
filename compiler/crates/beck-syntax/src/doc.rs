@@ -336,7 +336,7 @@ def add(a: Int, b: Int) -> Int:
     fn model_fields_are_documented_too() {
         let n = parse("model Todo:\n    ## What it says.\n    text: Str\n");
         let model = &n.args[1];
-        let field = &model.args[1];
+        let field = &model.args[2];
         assert_eq!(field.meta.doc.as_deref(), Some("What it says."));
     }
 }

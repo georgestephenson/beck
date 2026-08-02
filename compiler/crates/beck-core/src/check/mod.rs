@@ -38,7 +38,7 @@ use beck_syntax::{sym, Lit, Node, ScopeSet, Symbol};
 use crate::core::{Arm, Const, Core, CoreKind, Pattern, Prim, VarId};
 use crate::iface::Interface;
 use crate::prelude;
-use crate::ty::{Effect, Mismatch, Row, RowVarId, Scheme, Subst, Tier, Ty, TyDecl, Variant};
+use crate::ty::{self, Effect, Mismatch, Row, RowVarId, Scheme, Subst, Tier, Ty, TyDecl, Variant};
 
 /// A checked module: everything the placement checker, the splitter and the runtime need.
 #[derive(Clone, Debug)]
@@ -86,6 +86,14 @@ pub struct Def {
     pub row: Row,
     /// What the signature declared with `uses`, if anything.
     pub declared_effects: Vec<Effect>,
+    /// True when the signature **stated** its row — so an empty one is a bound of "performs
+    /// nothing" rather than an absent declaration.
+    ///
+    /// A hand-written `def` with no `uses` has this false, because writing nothing means "infer
+    /// it". A trait method's row is stated by the trait, empty or not, so every impl method has it
+    /// true: otherwise `def show(self) -> Str` would let one implementation reach for a clock and
+    /// every caller of `show` would inherit it silently.
+    pub row_is_declared: bool,
     /// True when the placement was written by hand rather than solved for (§3.4).
     pub tier_is_annotated: bool,
     /// A signature with nothing behind it: a line of a `.becki` interface, or a trait's method.
@@ -110,7 +118,8 @@ pub struct SignalDecl {
     pub tier_span: Span,
 }
 
-/// The four types a test's clauses are checked against — see [`Checker::test_subjects`].
+/// The four types a test's clauses are checked against — see
+/// [`Checker::test_subjects`](Checker::test_subjects).
 #[derive(Clone, Debug, Default)]
 struct TestSubjects {
     state: Option<Ty>,
@@ -124,6 +133,8 @@ enum BindKind {
     Local(VarId, Ty),
     Global(Arc<str>),
     Prim(Prim),
+    /// A trait method, resolved to an impl from the type of its receiver at each call site.
+    TraitMethod(Arc<str>),
     /// A union variant; carries the union it belongs to.
     Ctor(Arc<str>, Arc<str>),
     /// A model, used as a constructor: `Todo(id=…, text=…)`.
@@ -164,6 +175,20 @@ pub struct Checker<'a> {
     /// The type parameters of the `def` whose signature or body is being read. Empty everywhere
     /// else, which is why a monomorphic program cannot accidentally see one (`docs/32` §32.7).
     typarams: BTreeSet<Arc<str>>,
+    /// The type parameters of the `model`, `union`, `newtype` or `type` whose fields are being
+    /// read, mapped to their position. Empty everywhere else, and never in scope at the same time
+    /// as `typarams`: a declaration has no body and a definition has no fields.
+    decl_typarams: BTreeMap<Arc<str>, u32>,
+    /// Every `trait` this module declares, by name.
+    traits: BTreeMap<Arc<str>, traits::TraitDecl>,
+    /// Which trait a method name belongs to. One entry per method, because a name may belong to
+    /// only one trait — see [`Checker::collect_traits`].
+    trait_methods: BTreeMap<Arc<str>, Arc<str>>,
+    /// The impls, keyed by trait and by the *head* constructor of the target type.
+    impls: BTreeMap<(Arc<str>, Arc<str>), traits::ImplDecl>,
+    /// The mangled names `expand_impls` produced, so that a definition standing in for a trait
+    /// method can be told from one somebody wrote.
+    impl_methods: BTreeSet<Arc<str>>,
     mode: Mode,
 }
 
@@ -214,6 +239,11 @@ pub fn check_module_with(
         next_var: 0,
         in_fold: false,
         typarams: BTreeSet::new(),
+        decl_typarams: BTreeMap::new(),
+        traits: BTreeMap::new(),
+        trait_methods: BTreeMap::new(),
+        impls: BTreeMap::new(),
+        impl_methods: BTreeSet::new(),
         generic_rows: BTreeMap::new(),
         mode,
     };
@@ -253,12 +283,23 @@ pub fn check_module_with(
     ck.collect_aliases(&items);
     ck.collect_types(&items);
     ck.register_type_constructors();
+    // Traits before impls, and impls before any signature: an `impl` is *desugared* into ordinary
+    // definitions, so by the time `collect_signatures` runs there is nothing trait-shaped left for
+    // it — or for placement, or for the splitter, or for the evaluator — to know about.
+    ck.collect_traits(&items);
+    let expanded = ck.expand_impls(&items);
+    let items: Vec<&Node> = items.into_iter().chain(expanded.iter()).collect();
     ck.collect_signatures(&items);
     ck.collect_signal_names(&items);
     let mut program = ck.check_items(&items, name);
     program.imports = imports.iter().map(|(n, _)| n.clone()).collect();
     program
 }
+
+mod tests_in_beck;
+mod traits;
+
+pub use traits::is_impl_method;
 
 impl<'a> Checker<'a> {
     fn error(&mut self, code: &'static str, msg: impl Into<String>, span: Span) {
@@ -362,23 +403,31 @@ impl<'a> Checker<'a> {
             else {
                 continue;
             };
-            // A placeholder, so that `ty_from_node`'s "cannot find type" check passes while the
-            // real declaration is still being built. It is never observed: `collect_types`
-            // overwrites every one of them, and a name that reaches a later pass unfilled would be
-            // a name no declaration produced.
+            // The placeholder carries the declaration's *parameters*, unlike its fields: a
+            // recursive mention resolved while the real declaration is still being built —
+            // `Node(kids: list[Tree[T]])` — is arity-checked against this, so the placeholder has
+            // to know that `Tree` takes one argument even though it does not yet know what a
+            // `Tree` contains.
+            let params = Self::typaram_names(item);
+            // Otherwise a placeholder is never observed: `collect_types` overwrites every one of
+            // them, and a name that reaches a later pass unfilled would be a name no declaration
+            // produced.
             let placeholder = if item.is_form(sym::MODEL) {
                 TyDecl::Model {
                     name: name.clone(),
+                    params,
                     fields: Vec::new(),
                 }
             } else if item.is_form(sym::UNION) {
                 TyDecl::Union {
                     name: name.clone(),
+                    params,
                     variants: Vec::new(),
                 }
             } else if item.is_form(sym::NEWTYPE) {
                 TyDecl::Newtype {
                     name: name.clone(),
+                    params,
                     inner: Ty::unit(),
                 }
             } else {
@@ -398,6 +447,76 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// The names in a declaration's `(typarams …)` list, as written.
+    ///
+    /// Unvalidated on purpose: this runs while the set of type names is still being built, so it
+    /// cannot yet tell a parameter that shadows a type from one that does not.
+    /// [`Checker::bind_decl_typarams`] does that once, when every name is known.
+    fn typaram_names(item: &Node) -> Vec<Arc<str>> {
+        item.args
+            .get(1)
+            .filter(|n| n.is_form(sym::TYPARAMS))
+            .map(|n| {
+                n.args
+                    .iter()
+                    .filter_map(|p| p.as_var().map(|s| s.name.clone()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Put a *declaration's* type parameters in scope, numbered from [`ty::SCHEME_BASE`].
+    ///
+    /// This is the difference between a declaration and a definition. A `def`'s parameter is
+    /// **rigid** — `Ty::con("T")`, which unifies with itself and nothing else, so the body is
+    /// forced to work for every `T` (`docs/32` §32.7). A declaration has no body to constrain, and
+    /// its parameter has to survive into the stored `TyDecl` so that every later mention of
+    /// `Tree[Str]` can substitute for it. A positional variable does both: it cannot be unified
+    /// with by accident, because the checker's own variables are numbered from zero, and it is an
+    /// index into the arguments of whatever type mentions the name.
+    fn bind_decl_typarams(&mut self, item: &Node, decl_name: &str) -> Vec<Arc<str>> {
+        self.decl_typarams.clear();
+        let mut out: Vec<Arc<str>> = Vec::new();
+        let Some(list) = item.args.get(1).filter(|n| n.is_form(sym::TYPARAMS)) else {
+            return out;
+        };
+        for p in &list.args {
+            let Some(s) = p.as_var() else { continue };
+            let name = s.name.clone();
+            if self.types.contains_key(&name) || prelude::builtin_arity(&name).is_some() {
+                self.diags.push(
+                    Diagnostic::error(
+                        "B0314",
+                        format!(
+                            "`{name}` is already a type, so `{decl_name}` cannot take it as a \
+                             parameter"
+                        ),
+                        p.span(),
+                    )
+                    .with_primary_label("this name already names a type")
+                    .with_note(
+                        "a type parameter is a name the declaration invents, and one that shadowed \
+                         an existing type would make its fields read as though they mentioned that \
+                         type",
+                    ),
+                );
+                continue;
+            }
+            if out.contains(&name) {
+                self.error(
+                    "B0315",
+                    format!("`{name}` is repeated in `{decl_name}`'s type parameters"),
+                    p.span(),
+                );
+                continue;
+            }
+            self.decl_typarams
+                .insert(name.clone(), ty::SCHEME_BASE + out.len() as u32);
+            out.push(name);
+        }
+        out
+    }
+
     /// Resolve `type` aliases, in dependency order, before anything else reads a type.
     ///
     /// An alias is transparent, so it must be *expanded* rather than referenced, and expanding it
@@ -415,7 +534,7 @@ impl<'a> Checker<'a> {
         let mut order: Vec<Arc<str>> = Vec::new();
         for item in items {
             let (item, _) = self.undecorate(item);
-            if !item.is_form(sym::TYPE) || item.args.len() < 2 {
+            if !item.is_form(sym::TYPE) || item.args.len() < 3 {
                 continue;
             }
             let Some(name) = item.args[0].as_var().map(|s| s.name.clone()) else {
@@ -429,7 +548,9 @@ impl<'a> Checker<'a> {
                 );
                 continue;
             }
-            pending.insert(name.clone(), (item.args[1].clone(), item.span()));
+            // The whole item, not just its target: an alias may be parameterised, and its
+            // parameters have to be in scope when the target is read.
+            pending.insert(name.clone(), (item.clone(), item.span()));
             order.push(name);
         }
         let mut resolving: Vec<Arc<str>> = Vec::new();
@@ -447,9 +568,11 @@ impl<'a> Checker<'a> {
         if self.types.contains_key(name) {
             return;
         }
-        let Some((node, span)) = pending.get(name) else {
+        let Some((item, span)) = pending.get(name) else {
             return;
         };
+        let (item, span) = (item.clone(), *span);
+        let node = &item.args[2];
         if resolving.contains(name) {
             self.error(
                 "B0312",
@@ -457,7 +580,7 @@ impl<'a> Checker<'a> {
                     "type alias `{name}` is defined in terms of itself — an alias is transparent, \
                      so this describes no type; a `union` may be recursive, an alias may not"
                 ),
-                *span,
+                span,
             );
             // Registered as an alias for a fresh variable, so that every *other* mention of it
             // reports nothing further: one cycle is one diagnostic.
@@ -466,6 +589,7 @@ impl<'a> Checker<'a> {
                 name.clone(),
                 TyDecl::Alias {
                     name: name.clone(),
+                    params: Self::typaram_names(&item),
                     ty,
                 },
             );
@@ -481,11 +605,16 @@ impl<'a> Checker<'a> {
         if self.types.contains_key(name) {
             return; // the cycle branch above already filled it in
         }
+        // Bound *after* the aliases this one names are resolved, because resolving them rebinds
+        // the same scope.
+        let params = self.bind_decl_typarams(&item, name);
         let ty = self.ty_from_node(node);
+        self.decl_typarams.clear();
         self.types.insert(
             name.clone(),
             TyDecl::Alias {
                 name: name.clone(),
+                params,
                 ty,
             },
         );
@@ -523,17 +652,27 @@ impl<'a> Checker<'a> {
             else {
                 continue;
             };
+            if !item.is_form(sym::MODEL) && !item.is_form(sym::UNION) && !item.is_form(sym::NEWTYPE)
+            {
+                // `type` aliases were resolved by `collect_aliases`, and everything else is not a
+                // type declaration.
+                continue;
+            }
+            // In scope for every field type below, and only for those: a parameter belongs to the
+            // declaration that introduced it.
+            let params = self.bind_decl_typarams(item, &name);
             let decl = if item.is_form(sym::MODEL) {
-                let fields = item.args[1..]
+                let fields = item.args[2..]
                     .iter()
                     .filter_map(|f| self.field_decl(f))
                     .collect();
                 TyDecl::Model {
                     name: name.clone(),
+                    params,
                     fields,
                 }
             } else if item.is_form(sym::UNION) {
-                let variants = item.args[1..]
+                let variants = item.args[2..]
                     .iter()
                     .map(|vn| Variant {
                         name: vn
@@ -550,18 +689,17 @@ impl<'a> Checker<'a> {
                     .collect();
                 TyDecl::Union {
                     name: name.clone(),
+                    params,
                     variants,
                 }
-            } else if item.is_form(sym::NEWTYPE) {
+            } else {
                 TyDecl::Newtype {
                     name: name.clone(),
-                    inner: self.ty_from_node(&item.args[1]),
+                    params,
+                    inner: self.ty_from_node(&item.args[2]),
                 }
-            } else {
-                // `type` aliases were resolved by `collect_aliases`, and everything else is not a
-                // type declaration.
-                continue;
             };
+            self.decl_typarams.clear();
             // Overwrites the placeholder `declare_type_names` left. Duplicates were reported there,
             // where both declarations are still in view; reporting them again here would double
             // every message.
@@ -581,7 +719,7 @@ impl<'a> Checker<'a> {
         let decls: Vec<TyDecl> = self.types.values().cloned().collect();
         for d in decls {
             match &d {
-                TyDecl::Union { name, variants } => {
+                TyDecl::Union { name, variants, .. } => {
                     for v in variants {
                         self.globals.push(Binding {
                             name: v.name.clone(),
@@ -853,23 +991,9 @@ impl<'a> Checker<'a> {
                 || inner.is_form(sym::TRAIT)
                 || inner.is_form(sym::IMPL)
             {
-                // Declarations; already collected, or (traits/impls) parsed and carried but not
-                // yet given semantics — see the Phase 1 report.
-                if inner.is_form(sym::TRAIT) || inner.is_form(sym::IMPL) {
-                    self.diags.push(
-                        Diagnostic::warning(
-                            "B0306",
-                            "traits are parsed but not yet checked",
-                            inner.span(),
-                        )
-                        .with_note(
-                            "Phase 2 built the effect system this was once expected to arrive \
-                             with, and trait resolution did not come with it: it is still \
-                             unimplemented, and this warning is the only thing standing between a \
-                             `trait` and silence",
-                        ),
-                    );
-                }
+                // Declarations, all of them already collected. A `trait` was read by
+                // `collect_traits` and an `impl` was expanded into the `def`s this loop is
+                // checking, so neither has anything left to do here.
             } else {
                 self.error("B0307", "unsupported top-level item", inner.span());
             }
@@ -947,7 +1071,7 @@ impl<'a> Checker<'a> {
         // silently" true of Beck rather than aspirational.
         for name in &def_order {
             let Some(def) = defs.get(name) else { continue };
-            if def.declared_effects.is_empty() {
+            if !def.row_is_declared {
                 continue;
             }
             let undeclared: Vec<Effect> = def
@@ -1004,557 +1128,6 @@ impl<'a> Checker<'a> {
     /// the fold's stream is a `Stream[Event]`, and `result` is `validate`'s return type because
     /// `when` goes through `validate`. A program with no merge point has none of them, and saying
     /// so once here is better than four confusing type errors later.
-    fn test_subjects(
-        &mut self,
-        signals: &[SignalDecl],
-        defs: &BTreeMap<Arc<str>, Def>,
-    ) -> TestSubjects {
-        let find = |op: Prim| -> Option<&SignalDecl> {
-            signals
-                .iter()
-                .find(|s| matches!(&s.expr.kind, CoreKind::Prim { op: o, .. } if *o == op))
-        };
-        // `state` is the *accumulator*, which is the program's own type when it declares one
-        // `durable` fold and the fused record when it declares several — see
-        // `docs/23-general-slicer-report.md` §23.4. The checker has to know which before a signal
-        // graph exists, so both it and the slicer ask [`crate::signal::durables`].
-        let folds = {
-            let subst = &self.subst;
-            crate::signal::durables(signals, &mut |t| subst.resolve(t))
-        };
-        let state = match folds.len() {
-            0 => None,
-            1 => Some(folds[0].1.clone()),
-            _ => {
-                self.types.insert(
-                    Arc::from(crate::signal::FUSED_STATE),
-                    crate::signal::fused_state_decl(&folds),
-                );
-                Some(Ty::con(crate::signal::FUSED_STATE))
-            }
-        };
-        let decide = find(Prim::Decide);
-        let event = decide.map(|s| match self.subst.resolve(&s.ty) {
-            Ty::Con(n, args)
-                if (n.as_ref() == Ty::STREAM || n.as_ref() == Ty::SIGNAL) && args.len() == 1 =>
-            {
-                args[0].clone()
-            }
-            other => other,
-        });
-        // `decide(proposals, state, validate)` — the third argument names the chokepoint, and its
-        // return type is what `result` is.
-        let result = decide
-            .and_then(|s| match &s.expr.kind {
-                CoreKind::Prim { args, .. } => args.get(2).cloned(),
-                _ => None,
-            })
-            .and_then(|v| match &v.kind {
-                CoreKind::Global(n) => defs.get(n).map(|d| self.subst.resolve(&d.ret)),
-                _ => Some(self.subst.resolve(&v.ty)),
-            });
-        let command = self
-            .types
-            .contains_key("Command")
-            .then(|| Ty::con("Command"));
-        TestSubjects {
-            state,
-            event,
-            result,
-            command,
-        }
-    }
-
-    fn check_test(
-        &mut self,
-        item: &Node,
-        subjects: &TestSubjects,
-        defs: &BTreeMap<Arc<str>, Def>,
-    ) -> Option<crate::testing::TestDef> {
-        use crate::testing::{Clause, Count, Expectation, TestDef};
-
-        let is_property = item.is_form(sym::PROPERTY);
-        let name: Arc<str> = item.args.first()?.as_str_lit().map(Arc::from)?;
-        let body = item.args.get(if is_property { 2 } else { 1 })?;
-        let span = item.span();
-
-        let before = self.locals.len();
-
-        // A `property`'s parameters are generated (§21.3 rule 5), so they are ordinary bindings
-        // with written types — the generator's contract is the type and nothing else.
-        let mut params = Vec::new();
-        if is_property {
-            for p in &item.args[1].args {
-                let (target, annot) = if p.is_form(sym::ANNOT) && p.args.len() == 2 {
-                    (&p.args[0], Some(&p.args[1]))
-                } else {
-                    (p, None)
-                };
-                let Some(s) = target.as_var() else { continue };
-                let Some(t) = annot else {
-                    self.error(
-                        "B0701",
-                        format!("`{}` needs a type for the generator to work from", s.name),
-                        p.span(),
-                    );
-                    continue;
-                };
-                let ty = self.ty_from_node(t);
-                let id = self.fresh_var();
-                params.push((id, s.name.clone(), ty.clone()));
-                self.locals.push(Binding {
-                    name: s.name.clone(),
-                    scopes: s.scopes.clone(),
-                    kind: BindKind::Local(id, ty),
-                });
-            }
-            if params.is_empty() {
-                self.error(
-                    "B0701",
-                    format!("`property {name}` generates nothing"),
-                    span,
-                );
-            }
-        }
-
-        // `state`, `events` and `result` — plain data, bound around every expectation.
-        let bindings = crate::testing::Bindings {
-            state: self.fresh_var(),
-            events: self.fresh_var(),
-            result: self.fresh_var(),
-        };
-        let bind = |ck: &mut Self, name: &str, id: VarId, ty: Option<Ty>| {
-            if let Some(ty) = ty {
-                ck.locals.push(Binding {
-                    name: Arc::from(name),
-                    scopes: beck_syntax::ScopeSet::empty(),
-                    kind: BindKind::Local(id, ty),
-                });
-            }
-        };
-        bind(self, "state", bindings.state, subjects.state.clone());
-        bind(
-            self,
-            "events",
-            bindings.events,
-            subjects.event.clone().map(Ty::list),
-        );
-        bind(self, "result", bindings.result, subjects.result.clone());
-
-        let (clauses, row) = self.in_scope(|ck| {
-            let mut clauses = Vec::new();
-            for stmt in &body.args {
-                let cspan = stmt.span();
-                let clause = match stmt.head_name() {
-                    Some(sym::GIVEN) if !stmt.args.is_empty() => {
-                        let want = require_subject(
-                            ck,
-                            subjects.event.clone().map(Ty::list),
-                            "given",
-                            "`list[Event]`",
-                            cspan,
-                        );
-                        let events = ck.expr(&stmt.args[0], want.as_ref());
-                        if let Some(w) = &want {
-                            ck.unify(&events.ty, w, events.span, "`given`");
-                        }
-                        Clause::Given {
-                            events,
-                            actor: stmt.args.get(1).and_then(|a| a.as_str_lit()).map(Arc::from),
-                            span: cspan,
-                        }
-                    }
-                    Some(sym::WHEN) if stmt.args.len() >= 2 => {
-                        let want = require_subject(
-                            ck,
-                            subjects.command.clone(),
-                            "when",
-                            "a `Command`",
-                            cspan,
-                        );
-                        let commands = stmt.args[1..]
-                            .iter()
-                            .map(|c| {
-                                let core = ck.expr(c, want.as_ref());
-                                if let Some(w) = &want {
-                                    ck.unify(&core.ty, w, core.span, "`when`");
-                                }
-                                core
-                            })
-                            .collect();
-                        Clause::When {
-                            actor: stmt.args[0].as_str_lit().map(Arc::from),
-                            commands,
-                            span: cspan,
-                        }
-                    }
-                    Some(sym::STUB) if stmt.args.len() == 2 => ck.check_stub(stmt, defs, cspan)?,
-                    Some(sym::EXPECT) if stmt.args.len() == 1 => {
-                        let e = ck.expr(&stmt.args[0], Some(&Ty::bool_()));
-                        ck.unify(&e.ty, &Ty::bool_(), e.span, "`expect`");
-                        Clause::Expect {
-                            what: Expectation::Holds(e),
-                            span: cspan,
-                        }
-                    }
-                    Some(sym::EXPECT_CONTAINS) if !stmt.args.is_empty() => {
-                        let needle = ck.expr(&stmt.args[0], Some(&Ty::str_()));
-                        ck.unify(&needle.ty, &Ty::str_(), needle.span, "`contains`");
-                        Clause::Expect {
-                            what: Expectation::PageContains {
-                                needle,
-                                actor: stmt.args.get(1).and_then(|a| a.as_str_lit()).map(Arc::from),
-                            },
-                            span: cspan,
-                        }
-                    }
-                    Some(sym::EXPECT_FOLD) if !stmt.args.is_empty() => {
-                        let want = require_subject(
-                            ck,
-                            subjects.event.clone().map(Ty::list),
-                            "fold_of",
-                            "`list[Event]`",
-                            cspan,
-                        );
-                        let events = ck.expr(&stmt.args[0], want.as_ref());
-                        if let Some(w) = &want {
-                            ck.unify(&events.ty, w, events.span, "`fold_of`");
-                        }
-                        Clause::Expect {
-                            what: Expectation::FoldEquals {
-                                events,
-                                actor: stmt.args.get(1).and_then(|a| a.as_str_lit()).map(Arc::from),
-                            },
-                            span: cspan,
-                        }
-                    }
-                    Some(sym::EXPECT_PLACE) if stmt.args.len() == 2 => {
-                        let what: Arc<str> = stmt.args[0].as_var()?.name.clone();
-                        let tier = ck.test_tier(&stmt.args[1])?;
-                        Clause::Expect {
-                            what: Expectation::Place { what, tier },
-                            span: cspan,
-                        }
-                    }
-                    Some(sym::EXPECT_FLOW) if stmt.args.len() == 2 => {
-                        let ty: Arc<str> = stmt.args[0].as_var()?.name.clone();
-                        let tier = ck.test_tier(&stmt.args[1])?;
-                        Clause::Expect {
-                            what: Expectation::Flow { ty, tier },
-                            span: cspan,
-                        }
-                    }
-                    Some(sym::EXPECT_WIRE) if stmt.args.len() == 1 => Clause::Expect {
-                        what: Expectation::WireCompatible {
-                            path: Arc::from(stmt.args[0].as_str_lit().unwrap_or_default()),
-                        },
-                        span: cspan,
-                    },
-                    Some(sym::EXPECT_EFFECT) if stmt.args.len() == 2 => {
-                        let Some(atom) = ck.test_atom(&stmt.args[0], cspan) else {
-                            continue;
-                        };
-                        let how = &stmt.args[1];
-                        let how = match how.head_name() {
-                            Some("times") if how.args.len() == 1 => match how.args[0].as_lit() {
-                                Some(Lit::Int(n)) => Count::Times(*n),
-                                _ => Count::Times(1),
-                            },
-                            Some("with") if how.args.len() == 1 => {
-                                Count::With(ck.expr(&how.args[0], None))
-                            }
-                            _ => Count::Never,
-                        };
-                        Clause::Expect {
-                            what: Expectation::Performed { atom, how },
-                            span: cspan,
-                        }
-                    }
-                    _ => {
-                        ck.diags.push(
-                            Diagnostic::error(
-                                "B0705",
-                                "only `given`, `when`, `stub` and `expect` may appear in a test",
-                                cspan,
-                            )
-                            .with_note(
-                                "§21.2: a test names a log, an input and an expectation — there is \
-                                 no fixture to build and no `setUp` to write",
-                            ),
-                        );
-                        continue;
-                    }
-                };
-                clauses.push(clause);
-            }
-            Some(clauses)
-        });
-        self.locals.truncate(before);
-        let clauses = clauses?;
-
-        // §21.2's open question, settled as an error: "a test that performs a real `net.out` is a
-        // test that can fail because somebody else's server is down".
-        let leaked: Vec<Effect> = self
-            .subst
-            .resolve_row(&row)
-            .atoms
-            .iter()
-            .filter(|e| !e.is_ambient())
-            .cloned()
-            .collect();
-        if !leaked.is_empty() {
-            let names: Vec<String> = leaked.iter().map(|e| e.name()).collect();
-            self.diags.push(
-                Diagnostic::error(
-                    "B0700",
-                    format!("`test {name}` performs {}", names.join(", ")),
-                    span,
-                )
-                .with_primary_label("a test block's own row must be empty")
-                .with_note(
-                    "an expectation is a pure question about a state, a log and a page; effects \
-                     belong to the *subject*, and §21.3 stubs those",
-                ),
-            );
-        }
-
-        Some(TestDef {
-            name,
-            params,
-            clauses,
-            bindings,
-            span,
-        })
-    }
-
-    fn check_stub(
-        &mut self,
-        stmt: &Node,
-        defs: &BTreeMap<Arc<str>, Def>,
-        span: Span,
-    ) -> Option<crate::testing::Clause> {
-        let atom = self.test_atom(&stmt.args[0], span)?;
-        if !crate::testing::is_stubbable(&atom) {
-            self.diags.push(
-                Diagnostic::error(
-                    "B0703",
-                    format!("`{}` is not something a stub can stand in for", atom.name()),
-                    span,
-                )
-                .with_note(
-                    "time, ids and persistence are not stubbed in Beck and there is nothing to \
-                     write: the clock is data on the envelope, ids are minted at the edge, and the \
-                     durable fold is real and in memory",
-                ),
-            );
-            return None;
-        }
-
-        // The stub's type is the return type of what performs the effect — §21.3's whole claim:
-        // "no parameter list, because parameters are not how the stub is selected".
-        //
-        // *Performs*, not *mentions*: a row propagates to callers, so `validate` inherits its
-        // payment gateway's `net.out`. See [`crate::testing::performs_itself`] for why stubbing the
-        // caller would be a bug rather than a broader match.
-        let performers: Vec<&Def> = defs
-            .values()
-            .filter(|d| crate::testing::performs_itself(d, &atom))
-            .collect();
-        let mut returns: Vec<(&Arc<str>, Ty)> = Vec::new();
-        for d in &performers {
-            let ret = self.subst.resolve(&d.ret);
-            if !returns.iter().any(|(_, t)| *t == ret) {
-                returns.push((&d.name, ret));
-            }
-        }
-
-        let body = &stmt.args[1];
-        let answers_from_the_call = body.is_form(sym::STUB_ARMS) || body.is_form(sym::DO);
-
-        if performers.is_empty() {
-            self.diags.push(
-                Diagnostic::error(
-                    "B0704",
-                    format!("nothing in this program performs `{}`", atom.name()),
-                    span,
-                )
-                .with_primary_label("this stub would never be reached")
-                .with_note(
-                    "the complete list of what a program touches is its effect rows, and this \
-                     atom is not among them",
-                ),
-            );
-            let value = self.expr(body_expr_of(body), None);
-            return Some(crate::testing::Clause::Stub {
-                atom,
-                params: Vec::new(),
-                value,
-                span,
-            });
-        }
-
-        // §21.3 rule 3: a stub that answers *from* the call needs one call to answer from. Two
-        // definitions performing one atom can share a *value*, because a value does not look at
-        // anything; they cannot share a body, because the body names parameters and there is no
-        // reason theirs agree. The fix is the one the effect vocabulary already offers — a second
-        // host, a second store — and the diagnostic says so.
-        if answers_from_the_call && performers.len() > 1 {
-            let names: Vec<String> = performers.iter().map(|d| format!("`{}`", d.name)).collect();
-            self.diags.push(
-                Diagnostic::error(
-                    "B0707",
-                    format!(
-                        "`{}` is performed by more than one definition, so a stub cannot answer \
-                         from the call",
-                        atom.name()
-                    ),
-                    span,
-                )
-                .with_primary_label(format!(
-                    "{} {} perform it",
-                    names.join(", "),
-                    if performers.len() == 2 { "both" } else { "all" }
-                ))
-                .with_note(
-                    "a stub that matches on arguments has to know whose arguments they are; a \
-                     stub that is a plain value does not, and still works here",
-                )
-                .with_fix(
-                    "give the one you mean its own atom — a second host or a second store — or \
-                     stub a value instead of a block",
-                ),
-            );
-            return None;
-        }
-
-        let want = if returns.len() == 1 {
-            Some(returns[0].1.clone())
-        } else {
-            let names: Vec<String> = returns
-                .iter()
-                .map(|(n, t)| format!("`{n}` returns {t}"))
-                .collect();
-            self.diags.push(
-                Diagnostic::error(
-                    "B0704",
-                    format!(
-                        "`{}` is performed by definitions with different return types",
-                        atom.name()
-                    ),
-                    span,
-                )
-                .with_primary_label(names.join("; "))
-                .with_note(
-                    "one stub is one value for one effect, so the effect has to have one \
-                     answer — split the atom (a second host, a second store) or stub nothing \
-                     and let the canonical inhabitant stand in",
-                ),
-            );
-            None
-        };
-
-        if !answers_from_the_call {
-            let value = self.expr(body, want.as_ref());
-            if let Some(w) = &want {
-                self.unify(&value.ty, w, value.span, "the stub's value");
-            }
-            return Some(crate::testing::Clause::Stub {
-                atom,
-                params: Vec::new(),
-                value,
-                span,
-            });
-        }
-
-        // The block form. The stubbed definition's parameters come into scope under their own
-        // names, so the stub is written the way the definition is read — and `match`, `if`, and
-        // every other expression in the language work inside it without a mock DSL.
-        let target = performers[0];
-        let before = self.locals.len();
-        let mut params = Vec::new();
-        for (_, pname, pty) in &target.params {
-            let id = self.fresh_var();
-            let pty = self.subst.resolve(pty);
-            params.push(id);
-            self.locals.push(Binding {
-                name: pname.clone(),
-                scopes: ScopeSet::empty(),
-                kind: BindKind::Local(id, pty),
-            });
-        }
-
-        let value = if body.is_form(sym::STUB_ARMS) {
-            // `case` arms with no scrutinee written: the scrutinee is the parameter, which only
-            // the compiler knows. A definition with two of them has to say which.
-            if target.params.len() != 1 {
-                let names: Vec<String> = target
-                    .params
-                    .iter()
-                    .map(|(_, n, t)| format!("`{n}: {t}`"))
-                    .collect();
-                self.diags.push(
-                    Diagnostic::error(
-                        "B0707",
-                        format!(
-                            "`{}` takes {} arguments, so bare `case` arms do not say what to \
-                             match on",
-                            target.name,
-                            target.params.len()
-                        ),
-                        span,
-                    )
-                    .with_primary_label(if names.is_empty() {
-                        "it takes none".to_string()
-                    } else {
-                        names.join(", ")
-                    })
-                    .with_fix("write the `match` out: `match <argument>:` inside the stub"),
-                );
-                self.locals.truncate(before);
-                return None;
-            }
-            let scrutinee = Node::sym(target.params[0].1.as_ref(), span);
-            let mut arms = vec![scrutinee];
-            arms.extend(body.args.iter().cloned());
-            let as_match = Node::form(sym::MATCH, arms, span);
-            self.expr(&as_match, want.as_ref())
-        } else {
-            self.block(&body.args, want.as_ref())
-        };
-        self.locals.truncate(before);
-        if let Some(w) = &want {
-            self.unify(&value.ty, w, value.span, "the stub's value");
-        }
-        Some(crate::testing::Clause::Stub {
-            atom,
-            params,
-            value,
-            span,
-        })
-    }
-
-    fn test_atom(&mut self, n: &Node, span: Span) -> Option<Effect> {
-        let text = n.as_str_lit().unwrap_or_default();
-        match Effect::parse(text) {
-            Some(e) => Some(e),
-            None => {
-                self.error("B0702", format!("`{text}` is not an effect atom"), span);
-                None
-            }
-        }
-    }
-
-    fn test_tier(&mut self, n: &Node) -> Option<Tier> {
-        let name = n.as_var()?.name.clone();
-        match Tier::parse(&name) {
-            Some(t) => Some(t),
-            None => {
-                self.error("B0702", format!("`{name}` is not a tier"), n.span());
-                None
-            }
-        }
-    }
-
     fn check_def(
         &mut self,
         item: &Node,
@@ -1646,6 +1219,7 @@ impl<'a> Checker<'a> {
 
         let mut declared_effects: Vec<Effect> = declared.atoms.iter().cloned().collect();
         declared_effects.sort();
+        let row_is_declared = !declared_effects.is_empty() || self.impl_methods.contains(&name);
         Some(Def {
             name,
             typarams: scheme.params.clone(),
@@ -1656,6 +1230,7 @@ impl<'a> Checker<'a> {
             effects: Vec::new(),
             row: inferred,
             declared_effects,
+            row_is_declared,
             tier_is_annotated,
             is_declaration: body_node.is_none(),
             declares_signal,
@@ -1740,37 +1315,73 @@ impl<'a> Checker<'a> {
             }
             return Ty::con(name);
         }
+        // A type parameter of the *declaration* being read — positional rather than rigid, because
+        // it has to survive into the stored `TyDecl` and be substituted for at every mention of the
+        // declaration. See [`Checker::bind_decl_typarams`].
+        if let Some(v) = self.decl_typarams.get(name).copied() {
+            if !n.args.is_empty() {
+                self.error(
+                    "B0313",
+                    format!("`{name}` is a type parameter, so it takes no type arguments"),
+                    span,
+                );
+            }
+            return Ty::Var(v);
+        }
 
         let args: Vec<Ty> = n.args.iter().map(|a| self.ty_from_node(a)).collect();
 
         // Aliases are transparent; newtypes are not — that is what "ids of different entities must
-        // not be interchangeable" (§3.1) means.
-        if let Some(TyDecl::Alias { ty, .. }) = self.types.get(name) {
-            let ty = ty.clone();
-            if !args.is_empty() {
-                self.error("B0309", format!("`{name}` takes no type arguments"), span);
+        // not be interchangeable" (§3.1) means. A parameterised alias is expanded *and* applied:
+        // `type Pairs[A] = list[Pair[A, A]]` names no type of its own, so `Pairs[Int]` has to be
+        // `list[Pair[Int, Int]]` by the time anything else sees it.
+        if let Some(TyDecl::Alias { ty, params, .. }) = self.types.get(name) {
+            let (ty, arity) = (ty.clone(), params.len());
+            if !self.check_arity(name, arity, args.len(), span) {
+                return self.subst.fresh();
             }
-            return ty;
+            return ty::instantiate_decl(&ty, &args);
         }
 
-        let known = prelude::builtin_arity(name);
-        if known.is_none() && !self.types.contains_key(name) {
-            self.error("B0310", format!("cannot find type `{name}`"), span);
+        let arity = match prelude::builtin_arity(name) {
+            Some(a) => a,
+            None => match self.types.get(name) {
+                Some(d) => d.arity(),
+                None => {
+                    self.error("B0310", format!("cannot find type `{name}`"), span);
+                    return self.subst.fresh();
+                }
+            },
+        };
+        if !self.check_arity(name, arity, args.len(), span) {
             return self.subst.fresh();
         }
-        if let Some(arity) = known {
-            if args.len() != arity {
-                self.error(
-                    "B0311",
-                    format!(
-                        "`{name}` takes {arity} type argument(s), got {}",
-                        args.len()
-                    ),
-                    span,
-                );
-            }
-        }
         Ty::Con(Arc::from(name), args)
+    }
+
+    /// A mention of a type carries exactly as many arguments as the declaration has parameters.
+    ///
+    /// Reported here rather than left to unification, because `Tree` with its argument missing
+    /// would otherwise unify with `Tree[Int]` and the error would surface as a mismatch somewhere
+    /// downstream of the line that is actually wrong.
+    fn check_arity(&mut self, name: &str, arity: usize, got: usize, span: Span) -> bool {
+        if arity == got {
+            return true;
+        }
+        let d = Diagnostic::error(
+            "B0311",
+            format!("`{name}` takes {arity} type argument(s), got {got}"),
+            span,
+        );
+        self.diags.push(if arity == 0 {
+            d.with_primary_label("this type takes no arguments")
+        } else {
+            d.with_primary_label(format!(
+                "write `{name}[{}]`",
+                (0..arity).map(|_| "_").collect::<Vec<_>>().join(", ")
+            ))
+        });
+        false
     }
 
     /// The type of two alternatives, neither of which is the other's expectation.
@@ -2201,6 +1812,28 @@ impl<'a> Checker<'a> {
         };
         match b.kind {
             BindKind::Local(id, ty) => Core::new(CoreKind::Var(id), ty, span),
+            // A trait method is resolved from the type of its receiver, so there is nothing to
+            // hand over until it is applied. `map_list(xs, show)` would need a dictionary.
+            BindKind::TraitMethod(m) => {
+                let owner = self.trait_methods.get(&m).cloned();
+                self.diags.push(
+                    Diagnostic::error(
+                        "B0386",
+                        format!("`{m}` is a trait method and cannot be used as a value"),
+                        span,
+                    )
+                    .with_primary_label(match &owner {
+                        Some(t) => format!("declared by trait `{t}`"),
+                        None => "a trait method".into(),
+                    })
+                    .with_note(
+                        "which implementation it means is decided by the type of its receiver, so \
+                         it has to be called rather than passed; passing one needs bounds on a type \
+                         parameter, which is not built",
+                    ),
+                );
+                Core::new(CoreKind::Const(Const::Unit), self.subst.fresh(), span)
+            }
             BindKind::Global(name) => {
                 let ty = self
                     .schemes
@@ -2570,18 +2203,16 @@ impl<'a> Checker<'a> {
         union: &str,
         fields: &[(Arc<str>, Ty)],
     ) -> BTreeMap<Arc<str>, Ty> {
-        let mut mapping: BTreeMap<u32, Ty> = BTreeMap::new();
-        if let Ty::Con(name, args) = self.subst.resolve(scrut) {
+        // The scrutinee's own arguments: matching `Leaf(v)` against a `Tree[Str]` binds `v: Str`.
+        let mut args: Vec<Ty> = Vec::new();
+        if let Ty::Con(name, xs) = self.subst.resolve(scrut) {
             if name.as_ref() == union {
-                // Declared type parameters appear as the prelude's `A`, `B` variables in order.
-                for (i, a) in args.iter().enumerate() {
-                    mapping.insert(1_000_000 + i as u32, a.clone());
-                }
+                args = xs;
             }
         }
         fields
             .iter()
-            .map(|(n, t)| (n.clone(), substitute(t, &mapping)))
+            .map(|(n, t)| (n.clone(), ty::instantiate_decl(t, &args)))
             .collect()
     }
 
@@ -2712,40 +2343,19 @@ impl<'a> Checker<'a> {
         Core::new(CoreKind::Const(Const::Unit), Ty::unit(), span)
     }
 
-    /// How many type parameters a declaration has, counted over every field of every variant.
-    fn decl_arity(&self, decl: &Option<TyDecl>) -> usize {
-        let fields: Vec<&Ty> = match decl {
-            Some(TyDecl::Union { variants, .. }) => variants
-                .iter()
-                .flat_map(|v| v.fields.iter().map(|(_, t)| t))
-                .collect(),
-            Some(TyDecl::Model { fields, .. }) => fields.iter().map(|(_, t)| t).collect(),
-            Some(TyDecl::Newtype { inner, .. }) => vec![inner],
-            _ => Vec::new(),
-        };
-        fields
-            .into_iter()
-            .filter_map(max_scheme_var)
-            .max()
-            .map(|m| (m - 1_000_000 + 1) as usize)
-            .unwrap_or(0)
-    }
-
     fn model_fields(&self, ty: &Ty) -> BTreeMap<Arc<str>, Ty> {
         let Some(name) = ty.con_name() else {
             return BTreeMap::new();
         };
         match self.types.get(name) {
             Some(TyDecl::Model { fields, .. }) => {
-                let mut mapping = BTreeMap::new();
-                if let Ty::Con(_, args) = ty {
-                    for (i, a) in args.iter().enumerate() {
-                        mapping.insert(1_000_000 + i as u32, a.clone());
-                    }
-                }
+                let args: &[Ty] = match ty {
+                    Ty::Con(_, args) => args,
+                    _ => &[],
+                };
                 fields
                     .iter()
-                    .map(|(n, t)| (n.clone(), substitute(t, &mapping)))
+                    .map(|(n, t)| (n.clone(), ty::instantiate_decl(t, args)))
                     .collect()
             }
             Some(TyDecl::Newtype { inner, .. }) => {
@@ -2766,6 +2376,7 @@ impl<'a> Checker<'a> {
 
         match self.resolve(&head).cloned().map(|b| b.kind) {
             Some(BindKind::Prim(p)) => self.prim_call(p, &n.args, expected, span),
+            Some(BindKind::TraitMethod(m)) => self.trait_call(&m, &n.args, span),
             Some(BindKind::Ctor(union, variant)) => {
                 self.make(&union, Some(&variant), &n.args, span)
             }
@@ -2788,6 +2399,57 @@ impl<'a> Checker<'a> {
                 Core::new(CoreKind::Const(Const::Unit), self.subst.fresh(), span)
             }
         }
+    }
+
+    /// [`Checker::apply_fn`] where one argument has already been checked.
+    ///
+    /// A trait call has to type its receiver *before* it can tell which function is being called,
+    /// so by the time there is a callee that argument is a `Core` and not a `Node`. Re-checking it
+    /// would report anything wrong with it twice.
+    fn apply_fn_with(
+        &mut self,
+        func: Core,
+        done: Core,
+        at: usize,
+        args: &[Node],
+        span: Span,
+    ) -> Core {
+        let ftype = self.subst.resolve(&func.ty);
+        let Ty::Fun(param_tys, ret, latent) = ftype else {
+            return self.apply_fn(func, args, span);
+        };
+        self.perform(&latent);
+        if args.len() != param_tys.len() {
+            self.error(
+                "B0351",
+                format!(
+                    "expected {} argument(s), got {}",
+                    param_tys.len(),
+                    args.len()
+                ),
+                span,
+            );
+        }
+        if let Some(want) = param_tys.get(at) {
+            self.unify(&done.ty, want, done.span, "receiver");
+        }
+        let mut checked = Vec::with_capacity(args.len());
+        for (i, a) in args.iter().enumerate() {
+            if i == at {
+                checked.push(done.clone());
+                continue;
+            }
+            let one = self.check_args(std::slice::from_ref(a), &param_tys[i..]);
+            checked.extend(one);
+        }
+        Core::new(
+            CoreKind::App {
+                func: Box::new(func),
+                args: checked,
+            },
+            *ret,
+            span,
+        )
     }
 
     fn apply_fn(&mut self, func: Core, args: &[Node], span: Span) -> Core {
@@ -2933,16 +2595,11 @@ impl<'a> Checker<'a> {
 
         // Fresh type arguments for each declared parameter, so `Some(1)` is `Option[Int]`.
         //
-        // The arity comes from the whole declaration, not from this one variant: `Err` mentions
-        // only `Result`'s second parameter, and reading the arity off it would build a
+        // The arity comes from the declaration, not from this one variant: `Err` mentions only
+        // `Result`'s second parameter, and reading the arity off it would build a
         // `Result[Rejection]` that then fails to unify with `Result[list[Event], Rejection]`.
-        let param_count = self.decl_arity(&decl);
+        let param_count = decl.as_ref().map(|d| d.arity()).unwrap_or(0);
         let ty_args: Vec<Ty> = (0..param_count).map(|_| self.subst.fresh()).collect();
-        let mapping: BTreeMap<u32, Ty> = ty_args
-            .iter()
-            .enumerate()
-            .map(|(i, t)| (1_000_000 + i as u32, t.clone()))
-            .collect();
 
         if args.len() != arity {
             self.error(
@@ -2970,7 +2627,7 @@ impl<'a> Checker<'a> {
             let want = declared
                 .iter()
                 .find(|(n, _)| *n == fname)
-                .map(|(_, t)| substitute(t, &mapping));
+                .map(|(_, t)| ty::instantiate_decl(t, &ty_args));
             let value = self.expr(value_node, want.as_ref());
             match want {
                 Some(w) => self.unify(&value.ty, &w, value.span, &format!("field `{fname}`")),
@@ -3021,69 +2678,6 @@ fn written_form(n: &Node) -> Option<String> {
     Some(format!("{head}({})", args.join(", ")))
 }
 
-fn substitute(t: &Ty, m: &BTreeMap<u32, Ty>) -> Ty {
-    match t {
-        Ty::Var(v) => m.get(v).cloned().unwrap_or(Ty::Var(*v)),
-        Ty::Con(n, args) => Ty::Con(n.clone(), args.iter().map(|a| substitute(a, m)).collect()),
-        Ty::Fun(ps, r, row) => Ty::Fun(
-            ps.iter().map(|p| substitute(p, m)).collect(),
-            Box::new(substitute(r, m)),
-            row.clone(),
-        ),
-    }
-}
-
-fn max_scheme_var(t: &Ty) -> Option<u32> {
-    match t {
-        Ty::Var(v) if *v >= 1_000_000 => Some(*v),
-        Ty::Var(_) => None,
-        Ty::Con(_, args) => args.iter().filter_map(max_scheme_var).max(),
-        Ty::Fun(ps, r, _) => ps
-            .iter()
-            .filter_map(max_scheme_var)
-            .chain(max_scheme_var(r))
-            .max(),
-    }
-}
-
-/// Walk a `Core` tree applying the final substitution to every recorded type.
-/// The expression inside a stub whose atom nothing performs, so that a second error is not stacked
-/// on the first. A block has no single expression, and `unit` is as good an answer as any when the
-/// clause has already been refused.
-fn body_expr_of(body: &Node) -> &Node {
-    if body.is_form(sym::STUB_ARMS) || body.is_form(sym::DO) {
-        body.args.first().unwrap_or(body)
-    } else {
-        body
-    }
-}
-
-/// A clause that needs a type the program does not have — `given` in a program with no event
-/// stream — is one error here rather than four confusing ones downstream.
-fn require_subject(
-    ck: &mut Checker<'_>,
-    ty: Option<Ty>,
-    clause: &str,
-    what: &str,
-    span: Span,
-) -> Option<Ty> {
-    if ty.is_none() {
-        ck.diags.push(
-            Diagnostic::error(
-                "B0706",
-                format!("`{clause}` needs {what}, and this program does not have one"),
-                span,
-            )
-            .with_note(
-                "the state a test arranges is a fold over the program's own event stream, so a \
-                 program with no `merge_clients` → `decide` → `durable(fold(…))` has nothing for \
-                 `given` and `when` to mean",
-            ),
-        );
-    }
-    ty
-}
-
 /// Every `Core` a clause holds, for the resolution pass.
 fn clause_cores_mut(c: &mut crate::testing::Clause) -> Vec<&mut Core> {
     use crate::testing::{Clause, Count, Expectation};
@@ -3104,6 +2698,7 @@ fn clause_cores_mut(c: &mut crate::testing::Clause) -> Vec<&mut Core> {
     }
 }
 
+/// Walk a `Core` tree applying the final substitution to every recorded type.
 fn resolve_types(c: &mut Core, s: &Subst) {
     c.ty = s.resolve(&c.ty);
     match &mut c.kind {
@@ -3433,5 +3028,142 @@ def audit(what: Str) -> Str uses log:
             def.row.visible().is_empty(),
             "§3.2 elides the ambient set from signatures"
         );
+    }
+
+    // --------------------------------------------------------------- parameterised declarations
+
+    const TREE: &str = "\
+union Tree[T]:
+    Leaf(value: T)
+    Node(kids: list[Tree[T]])
+
+def count[T](t: Tree[T]) -> Int:
+    match t:
+        case Leaf(value):
+            return 1
+        case Node(kids):
+            return list_len(kids)
+";
+
+    #[test]
+    fn a_declaration_may_take_a_type_parameter_and_mention_itself_under_one() {
+        assert_eq!(codes(TREE), Vec::<&str>::new());
+    }
+
+    #[test]
+    fn a_parameterised_declaration_is_a_different_type_at_each_argument() {
+        // The point of the whole feature, and the thing a compiler that ignored the arguments
+        // would still compile: `Tree[Int]` and `Tree[Str]` do not unify.
+        let src = format!(
+            "{TREE}
+def ints() -> Tree[Int]:
+    return Leaf(value=1)
+
+def strs() -> Tree[Str]:
+    return ints()
+"
+        );
+        assert!(codes(&src).contains(&"B0320"), "{:?}", codes(&src));
+    }
+
+    #[test]
+    fn a_pattern_binds_the_argument_the_scrutinee_carries() {
+        // `case Leaf(value)` over a `Tree[Str]` binds a `Str`, not the declaration's parameter.
+        let ok = format!(
+            "{TREE}
+def first(t: Tree[Str]) -> Str:
+    match t:
+        case Leaf(value):
+            return value
+        case Node(kids):
+            return \"\"
+"
+        );
+        assert_eq!(codes(&ok), Vec::<&str>::new());
+
+        let bad = ok.replace("return value", "return value + 1");
+        assert!(!codes(&bad).is_empty(), "a `Str` is not an `Int`");
+    }
+
+    #[test]
+    fn a_mention_carries_one_argument_per_declared_parameter() {
+        for (src, why) in [
+            ("union Box[T]:\n    Held(value: T)\n\ndef f(b: Box) -> Int:\n    return 1\n", "none"),
+            (
+                "union Box[T]:\n    Held(value: T)\n\ndef f(b: Box[Int, Str]) -> Int:\n    return 1\n",
+                "two",
+            ),
+        ] {
+            assert!(codes(src).contains(&"B0311"), "{why}: {:?}", codes(src));
+        }
+    }
+
+    #[test]
+    fn a_parameter_a_declaration_never_mentions_is_still_a_parameter() {
+        // Arity is declared, not inferred from the fields that happen to use it — so a phantom
+        // parameter still distinguishes `Tag[Int]` from `Tag[Str]`, and still has to be written.
+        let src = "\
+model Tag[T]:
+    label: Str
+
+def a() -> Tag[Int]:
+    return Tag(label=\"a\")
+
+def b() -> Tag[Str]:
+    return a()
+";
+        assert!(codes(src).contains(&"B0320"), "{:?}", codes(src));
+        let bare = src.replace("Tag[Int]", "Tag");
+        assert!(codes(&bare).contains(&"B0311"), "{:?}", codes(&bare));
+    }
+
+    #[test]
+    fn a_type_parameter_may_not_shadow_a_type_or_repeat_itself() {
+        let shadow = "model Note:\n    text: Str\n\nmodel Box[Note]:\n    held: Note\n";
+        assert!(codes(shadow).contains(&"B0314"), "{:?}", codes(shadow));
+
+        let repeat = "model Pair[T, T]:\n    a: T\n    b: T\n";
+        assert!(codes(repeat).contains(&"B0315"), "{:?}", codes(repeat));
+    }
+
+    #[test]
+    fn a_parameterised_alias_is_expanded_and_applied() {
+        // An alias names no type of its own, so `Pairs[Int]` has to *be* `list[Map[Int, Int]]` by
+        // the time anything else sees it — including a mismatch report.
+        let src = "\
+type Pairs[T] = list[Map[T, T]]
+
+def f(xs: Pairs[Int]) -> Int:
+    return list_len(xs)
+
+def g(xs: Pairs[Str]) -> Int:
+    return f(xs)
+";
+        let (_, d, map) = check_str("t.beck", src);
+        let text = d.render(&map);
+        assert!(text.contains("B0320"), "{text}");
+        assert!(
+            !text.contains("Pairs"),
+            "an alias is transparent, so nothing downstream should still be talking about it:\n{text}"
+        );
+    }
+
+    #[test]
+    fn a_definitions_parameter_and_a_declarations_parameter_do_not_meet() {
+        // A `def`'s `T` is rigid and a declaration's is positional. The same letter in both is two
+        // different things, and the body of the `def` may not assume they are the same.
+        let src = "\
+union Box[T]:
+    Held(value: T)
+
+def unwrap[T](b: Box[T]) -> T:
+    match b:
+        case Held(value):
+            return value
+";
+        assert_eq!(codes(src), Vec::<&str>::new());
+
+        let bad = src.replace("-> T:", "-> Int:");
+        assert!(!codes(&bad).is_empty(), "a `T` is not an `Int`");
     }
 }

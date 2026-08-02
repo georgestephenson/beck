@@ -173,9 +173,7 @@ impl<'a> Reader<'a> {
         let head = items.remove(0);
         match head.head {
             Head::Sym(s) if head.args.is_empty() => {
-                if s.as_str() == crate::node::sym::DEF {
-                    normalise_def(&mut items, span);
-                }
+                normalise_typarams(s.as_str(), &mut items, span);
                 Some(Node::form_sym(s, items, span))
             }
             _ => {
@@ -283,20 +281,35 @@ pub fn atom_node(text: &str, span: Span) -> Node {
     Node::symbol(Symbol::new(text), span)
 }
 
-/// Give a hand-written `def` the empty type-parameter list the Python surface always writes.
+/// Give a hand-written declaration the empty type-parameter list the Python surface always writes.
 ///
 /// `(def f (params …) (returns …) (uses) body)` is what the S-expression surface has always looked
 /// like, and §2.3 makes that surface a notation people write by hand for macro debugging. Requiring
 /// `(typarams)` on every one of them would be a tax on the notation for a feature most definitions
 /// do not use, so the reader normalises instead — and the AST keeps one shape, which is what every
 /// pass downstream indexes into (`docs/32` §32.7).
-fn normalise_def(items: &mut Vec<Node>, span: beck_diag::Span) {
+///
+/// The same holds of the four forms that may now be quantified: a `model`, a `union` and a `type`
+/// carry the list in the same position a `def` does, so `(model Todo (field id Id))` still reads.
+fn normalise_typarams(head: &str, items: &mut Vec<Node>, span: beck_diag::Span) {
+    use crate::node::sym;
+    // The minimum length is what distinguishes a form that has a name and something after it from
+    // a truncated one the parser should report rather than silently reshape.
+    let min = match head {
+        sym::DEF => 4,
+        sym::MODEL | sym::UNION => 1,
+        sym::NEWTYPE | sym::TYPE => 2,
+        // `(impl Show (typarams) Point …)` — the list follows the *trait* name in the node even
+        // though the surface writes it before, because `args[1]` is where every other form keeps it.
+        sym::IMPL => 2,
+        _ => return,
+    };
     let already = items
         .get(1)
-        .map(|n| n.is_form(crate::node::sym::TYPARAMS))
+        .map(|n| n.is_form(sym::TYPARAMS))
         .unwrap_or(false);
-    if items.len() >= 4 && !already {
-        items.insert(1, Node::form(crate::node::sym::TYPARAMS, Vec::new(), span));
+    if items.len() >= min && !already {
+        items.insert(1, Node::form(sym::TYPARAMS, Vec::new(), span));
     }
 }
 

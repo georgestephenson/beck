@@ -14,7 +14,7 @@ verbose for it. §25.5 sets out the protocol; nothing here is a comparison yet.
 | | |
 |---|---|
 | [`ch1.beck`](ch1.beck) | Chapter 1: §1.1.7, §1.2 and §1.3. Twenty-one `test` blocks, all but one asserting an answer the book states — four of them a printed double, digit for digit. The exception asserts the *property* §1.2.1 states instead: that an iterative process runs in constant space |
-| [`ch2.beck`](ch2.beck) | Chapter 2's §2.2 — the sequence abstractions the reader is asked to build (`map`, `filter`, `accumulate`, `append`, `length`, `reverse`), the closure property, and §2.2.3's conventional interfaces. §2.1's rationals need *exact* rationals, which reals are not |
+| [`ch2.beck`](ch2.beck) | Chapter 2's §2.2 — the sequence abstractions the reader is asked to build (`map`, `filter`, `accumulate`, `append`, `length`, `reverse`), the closure property at the book's own generality (`Tree[T]`, used at three element types including `Tree[Tree[Int]]`), and §2.2.3's conventional interfaces. §2.1's rationals need *exact* rationals, which reals are not |
 | [`refusals/`](refusals/) | One file per wall still standing between here and the rest of the book. Each is the smallest program that hits it, with the diagnostic in its header comment |
 
 The harness is [`../crates/beck-cli/tests/sicp.rs`](../crates/beck-cli/tests/sicp.rs). It runs both
@@ -41,11 +41,12 @@ process and is now `ch1.beck`'s §1.2.1 exercise asserting that one a quarter of
 not.
 
 What is in `refusals/` now was written by the removals rather than by §25.6, which is the suite
-working rather than the suite running out:
-[`rational.beck`](refusals/rational.beck) — §2.1.1 needs *exact* arithmetic, and a new numeric type
-cannot join the resolution `+` goes through — and
-[`generic-type.beck`](refusals/generic-type.beck) — a `def` may take a type parameter and a `union`
-may not. Both headers end at the same place: **traits**.
+working rather than the suite running out. `generic-type.beck` stood here until
+[`docs/36`](../../docs/36-parameterised-types-report.md) gave a `union` the type-parameter list a
+`def` already had; what replaced it is `ch2.beck`'s `Tree[T]`, asserted at three element types.
+[`rational.beck`](refusals/rational.beck) is what is left — §2.1.1 needs *exact* arithmetic, and a
+new numeric type cannot join the resolution `+` goes through. Its header ends where four reports
+now do: **traits**.
 
 ## Why this is not in `corpus/`
 

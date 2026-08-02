@@ -184,12 +184,13 @@ impl Py {
             }
             Some(sym::MODEL) => {
                 let name = self.expr(&n.args[0]);
-                self.line(&format!("model {name}:"));
+                let typarams = self.typarams(n);
+                self.line(&format!("model {name}{typarams}:"));
                 self.indent += 1;
-                if n.args.len() == 1 {
+                if n.args.len() == 2 {
                     self.line("pass");
                 }
-                for f in &n.args[1..] {
+                for f in &n.args[2..] {
                     self.docs(f);
                     let fname = self.expr(&f.args[0]);
                     let fty = self.type_expr(&f.args[1]);
@@ -199,9 +200,10 @@ impl Py {
             }
             Some(sym::UNION) => {
                 let name = self.expr(&n.args[0]);
-                self.line(&format!("union {name}:"));
+                let typarams = self.typarams(n);
+                self.line(&format!("union {name}{typarams}:"));
                 self.indent += 1;
-                for v in &n.args[1..] {
+                for v in &n.args[2..] {
                     self.docs(v);
                     let vname = self.expr(&v.args[0]);
                     if v.args.len() == 1 {
@@ -229,23 +231,26 @@ impl Py {
             }
             Some(sym::IMPL) => {
                 let name = self.expr(&n.args[0]);
-                let ty = self.type_expr(&n.args[1]);
-                self.line(&format!("impl {name} for {ty}:"));
+                let typarams = self.typarams(n);
+                let ty = self.type_expr(&n.args[2]);
+                self.line(&format!("impl{typarams} {name} for {ty}:"));
                 self.indent += 1;
-                for m in &n.args[2..] {
+                for m in &n.args[3..] {
                     self.item(m);
                 }
                 self.indent -= 1;
             }
             Some(sym::TYPE) => {
                 let name = self.expr(&n.args[0]);
-                let ty = self.type_expr(&n.args[1]);
-                self.line(&format!("type {name} = {ty}"));
+                let typarams = self.typarams(n);
+                let ty = self.type_expr(&n.args[2]);
+                self.line(&format!("type {name}{typarams} = {ty}"));
             }
             Some(sym::NEWTYPE) => {
                 let name = self.expr(&n.args[0]);
-                let ty = self.type_expr(&n.args[1]);
-                self.line(&format!("type {name} = newtype[{ty}]"));
+                let typarams = self.typarams(n);
+                let ty = self.type_expr(&n.args[2]);
+                self.line(&format!("type {name}{typarams} = newtype[{ty}]"));
             }
             Some(sym::IMPORT) => {
                 let path = self.expr(&n.args[0]);
@@ -266,17 +271,18 @@ impl Py {
         }
     }
 
+    /// `[T, U]` from the list at `args[1]`, or the empty string when there is nothing to quantify.
+    fn typarams(&mut self, n: &Node) -> String {
+        let Some(t) = n.args.get(1).filter(|t| !t.args.is_empty()) else {
+            return String::new();
+        };
+        let names: Vec<String> = t.args.clone().iter().map(|a| self.expr(a)).collect();
+        format!("[{}]", names.join(", "))
+    }
+
     fn def(&mut self, n: &Node) {
         let name = self.expr(&n.args[0]);
-        let typarams = n
-            .args
-            .get(1)
-            .filter(|t| !t.args.is_empty())
-            .map(|t| {
-                let names: Vec<String> = t.args.iter().map(|a| self.expr(a)).collect();
-                format!("[{}]", names.join(", "))
-            })
-            .unwrap_or_default();
+        let typarams = self.typarams(n);
         let params = self.params(&n.args[2]);
         let ret = n
             .args

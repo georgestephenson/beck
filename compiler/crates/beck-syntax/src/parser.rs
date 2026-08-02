@@ -360,6 +360,9 @@ impl<'a> Parser<'a> {
 
     /// `[T, U]`, or nothing. A type parameter is a bare name: there are no bounds to write,
     /// because there are no traits to bound it by (`docs/32` §32.9).
+    ///
+    /// The same list follows the name of a `def`, a `model`, a `union` and a `type`, so a
+    /// declaration and a definition are quantified by the same notation.
     fn typarams(&mut self, at: Span) -> Node {
         let start = self.span();
         if !self.at(&Raw::LBracket) {
@@ -413,8 +416,9 @@ impl<'a> Parser<'a> {
         let start = self.span();
         self.bump(); // model
         let (name, name_span) = self.ident("a model name")?;
+        let typarams = self.typarams(name_span);
         self.expect(&Raw::Colon, "`:`");
-        let mut fields = vec![Node::sym(name, name_span)];
+        let mut fields = vec![Node::sym(name, name_span), typarams];
         for line in self.indented_lines()? {
             let mut p = self.sub(line);
             if let Some(f) = p.field_decl() {
@@ -428,8 +432,9 @@ impl<'a> Parser<'a> {
         let start = self.span();
         self.bump(); // union
         let (name, name_span) = self.ident("a union name")?;
+        let typarams = self.typarams(name_span);
         self.expect(&Raw::Colon, "`:`");
-        let mut variants = vec![Node::sym(name, name_span)];
+        let mut variants = vec![Node::sym(name, name_span), typarams];
         for line in self.indented_lines()? {
             let mut p = self.sub(line);
             if let Some(v) = p.variant_decl() {
@@ -450,9 +455,14 @@ impl<'a> Parser<'a> {
         Some(Node::form(sym::TRAIT, items, start))
     }
 
+    /// `impl[T] Show for Tree[T]:` — the list binds the names the *target* is written in terms of.
+    ///
+    /// It goes after `impl` rather than after the trait name because that is what it quantifies:
+    /// `Tree[T]` is one impl covering every `T`, and `Show` is not parameterised at all.
     fn impl_item(&mut self) -> Option<Node> {
         let start = self.span();
         self.bump(); // impl
+        let typarams = self.typarams(start);
         let (trait_name, tspan) = self.ident("a trait name")?;
         if !self.eat_kw("for") {
             self.error("expected `for` in an impl declaration");
@@ -461,7 +471,7 @@ impl<'a> Parser<'a> {
         let ty = self.type_expr()?;
         self.expect(&Raw::Colon, "`:`");
         let body = self.block()?;
-        let mut items = vec![Node::sym(trait_name, tspan), ty];
+        let mut items = vec![Node::sym(trait_name, tspan), typarams, ty];
         items.extend(body.args);
         Some(Node::form(sym::IMPL, items, start))
     }
@@ -470,6 +480,7 @@ impl<'a> Parser<'a> {
         let start = self.span();
         self.bump(); // type
         let (name, name_span) = self.ident("a type name")?;
+        let typarams = self.typarams(name_span);
         self.expect(&Raw::Eq, "`=`");
         // `type CustomerId = newtype[u64]` — §3.1's zero-cost nominal newtype.
         if self.at_kw("newtype") {
@@ -480,7 +491,7 @@ impl<'a> Parser<'a> {
             self.end_of_line();
             return Some(Node::form(
                 sym::NEWTYPE,
-                vec![Node::sym(name, name_span), inner],
+                vec![Node::sym(name, name_span), typarams, inner],
                 start,
             ));
         }
@@ -488,7 +499,7 @@ impl<'a> Parser<'a> {
         self.end_of_line();
         Some(Node::form(
             sym::TYPE,
-            vec![Node::sym(name, name_span), ty],
+            vec![Node::sym(name, name_span), typarams, ty],
             start,
         ))
     }
@@ -1817,14 +1828,21 @@ mod tests {
     fn models_unions_and_newtypes() {
         assert_eq!(
             sx("model Todo:\n    id: Id\n    done: Bool\n"),
-            "(model Todo (field id Id) (field done Bool))"
+            "(model Todo (typarams) (field id Id) (field done Bool))"
         );
         assert_eq!(
             sx("union Event:\n    Added(id: Id, text: Str)\n    Toggled(id: Id)\n"),
-            "(union Event (variant Added (field id Id) (field text Str)) (variant Toggled (field id Id)))"
+            "(union Event (typarams) (variant Added (field id Id) (field text Str)) \
+             (variant Toggled (field id Id)))"
         );
-        assert_eq!(sx("type Id = newtype[Uuid]\n"), "(newtype Id Uuid)");
-        assert_eq!(sx("type Ids = list[Id]\n"), "(type Ids (list Id))");
+        assert_eq!(
+            sx("type Id = newtype[Uuid]\n"),
+            "(newtype Id (typarams) Uuid)"
+        );
+        assert_eq!(
+            sx("type Ids = list[Id]\n"),
+            "(type Ids (typarams) (list Id))"
+        );
     }
 
     #[test]

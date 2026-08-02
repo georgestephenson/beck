@@ -684,27 +684,45 @@ impl fmt::Display for Ty {
     }
 }
 
+/// The base a declaration's type parameters are numbered from.
+///
+/// The *n*th parameter of a declaration is `Ty::Var(SCHEME_BASE + n)` wherever it appears in that
+/// declaration's field types, so instantiating `Tree[Str]` is an index rather than a search. The
+/// base is far above any unification variable the checker will mint, which is what lets one `Ty`
+/// carry both without a tag.
+pub const SCHEME_BASE: u32 = 1_000_000;
+
 /// A user-declared type: a `model` (record), a `union` (ADT), a `newtype`, or an alias.
 ///
 /// Comparable because a `.becki` interface is compared (§3.6, §4.3): two builds agree on a module's
 /// contract exactly when their type declarations are equal.
+///
+/// `params` is the declaration's type-parameter *names*, in order — `union Tree[T]` has `["T"]`.
+/// The names are what a `.becki` renders and what a doc page shows; the field types refer to the
+/// parameters positionally through [`SCHEME_BASE`], so a rename is a rename and nothing more.
+/// Arity is `params.len()`, declared rather than inferred from use: a parameter no field mentions
+/// is still a parameter, and `Phantom[Int]` and `Phantom[Str]` are still different types.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TyDecl {
     Model {
         name: Arc<str>,
+        params: Vec<Arc<str>>,
         fields: Vec<(Arc<str>, Ty)>,
     },
     Union {
         name: Arc<str>,
+        params: Vec<Arc<str>>,
         variants: Vec<Variant>,
     },
     /// §3.1's "zero-cost nominal newtype": ids of different entities must not be interchangeable.
     Newtype {
         name: Arc<str>,
+        params: Vec<Arc<str>>,
         inner: Ty,
     },
     Alias {
         name: Arc<str>,
+        params: Vec<Arc<str>>,
         ty: Ty,
     },
 }
@@ -723,6 +741,72 @@ impl TyDecl {
             | TyDecl::Newtype { name, .. }
             | TyDecl::Alias { name, .. } => name,
         }
+    }
+
+    pub fn params(&self) -> &[Arc<str>] {
+        match self {
+            TyDecl::Model { params, .. }
+            | TyDecl::Union { params, .. }
+            | TyDecl::Newtype { params, .. }
+            | TyDecl::Alias { params, .. } => params,
+        }
+    }
+
+    /// How many type arguments a mention of this name must carry.
+    pub fn arity(&self) -> usize {
+        self.params().len()
+    }
+
+    /// `[T, U]`, or the empty string when there is nothing to quantify.
+    pub fn param_brackets(&self) -> String {
+        if self.params().is_empty() {
+            return String::new();
+        }
+        format!(
+            "[{}]",
+            self.params()
+                .iter()
+                .map(|p| p.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    }
+
+    /// One of this declaration's field types as the declaration wrote it: the positional
+    /// parameters put back under the names they were given.
+    ///
+    /// Everything downstream of a `TyDecl` holds its parameters positionally, which is what makes
+    /// instantiation an index. Rendering is the one place that has to undo it — a `.becki` is
+    /// *source*, and `value: ?1000000` is not something the parser can read back.
+    pub fn as_written(&self, t: &Ty) -> Ty {
+        if self.params().is_empty() {
+            return t.clone();
+        }
+        let args: Vec<Ty> = self.params().iter().map(|p| Ty::con(p)).collect();
+        instantiate_decl(t, &args)
+    }
+}
+
+/// Replace the positional parameters of a declaration with `args`.
+///
+/// A field type of `Some(value: ?1000000)` under `Option[Int]` is `value: Int`, and every pass that
+/// reads a declaration's fields against a concrete type goes through here.
+pub fn instantiate_decl(t: &Ty, args: &[Ty]) -> Ty {
+    match t {
+        Ty::Var(v) if *v >= SCHEME_BASE => args
+            .get((*v - SCHEME_BASE) as usize)
+            .cloned()
+            .unwrap_or_else(|| t.clone()),
+        Ty::Var(_) => t.clone(),
+        Ty::Con(n, xs) => Ty::Con(
+            n.clone(),
+            xs.iter().map(|x| instantiate_decl(x, args)).collect(),
+        ),
+        Ty::Fun(ps, r, row) => Ty::Fun(
+            ps.iter().map(|x| instantiate_decl(x, args)).collect(),
+            Box::new(instantiate_decl(r, args)),
+            row.clone(),
+        ),
     }
 }
 

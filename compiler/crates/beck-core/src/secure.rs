@@ -523,6 +523,7 @@ mod tests {
                 Arc::from("Config"),
                 TyDecl::Model {
                     name: Arc::from("Config"),
+                    params: Vec::new(),
                     fields: vec![
                         (Arc::from("host"), Ty::str_()),
                         (Arc::from("key"), Ty::secret(Ty::str_())),
@@ -533,6 +534,7 @@ mod tests {
                 Arc::from("State"),
                 TyDecl::Model {
                     name: Arc::from("State"),
+                    params: Vec::new(),
                     fields: vec![(Arc::from("config"), Ty::con("Config"))],
                 },
             ),
@@ -568,6 +570,7 @@ mod tests {
             Arc::from("Tree"),
             TyDecl::Model {
                 name: Arc::from("Tree"),
+                params: Vec::new(),
                 fields: vec![(Arc::from("kids"), Ty::list(Ty::con("Tree")))],
             },
         )]);
@@ -709,6 +712,7 @@ mod quadrants {
             Arc::from("Suspension"),
             TyDecl::Model {
                 name: Arc::from("Suspension"),
+                params: Vec::new(),
                 fields: vec![
                     (Arc::from("at"), Ty::int()),
                     (Arc::from("reason"), Ty::internal(Ty::str_())),

@@ -16,9 +16,9 @@
 //!
 //! All six §25.6 measured are down, and each left a test pointing the other way rather than no test
 //! at all: docs/27 for the first three, docs/31 for tail calls, docs/32 for the reals and for
-//! user-written polymorphism. What is in `refusals/` now is the wall the last of them made visible
-//! — a `list[T]` cannot be taken apart — which is the suite working as intended rather than the
-//! suite running out.
+//! user-written polymorphism, docs/33 for taking a `list[T]` apart, docs/36 for a `union` that
+//! takes a type parameter. What is in `refusals/` now is what those removals wrote rather than what
+//! §25.6 measured, which is the suite working as intended rather than the suite running out.
 
 use std::process::Command;
 
@@ -565,10 +565,12 @@ test \"one fold, two element types\":
     assert!(out.contains("B0346"), "{out}");
 }
 
-/// Two walls named in docs/32 §32.9 that had no file, given one — because a wall a report describes
-/// and a wall a test asserts are different things, and this suite's whole argument is the second.
+/// The one wall docs/32 §32.9 named that still stands, asserted rather than described.
+///
+/// `generic-type.beck` stood beside it until docs/36: a `union` may take a type parameter now, and
+/// what asserted the refusal is `ch2.beck`'s `Tree[T]` at three element types.
 #[test]
-fn exact_rationals_and_parameterised_types_are_still_refused() {
+fn exact_rationals_are_still_refused() {
     // §2.1.1 needs *exact* arithmetic, which reals are not. The wall is that a new numeric type
     // cannot join the ad-hoc resolution `+` goes through — which is traits, again.
     let out = errors(
@@ -579,17 +581,6 @@ fn exact_rationals_and_parameterised_types_are_still_refused() {
     assert!(
         out.contains("found `Rational`"),
         "the wall is that `+` does not reach a user's numeric type:\n{out}"
-    );
-
-    // A `def` may take a type parameter; a `union` may not, so `ch2.beck`'s tree holds `Int`.
-    let out = errors(
-        "generic-type.beck",
-        include_str!("../../../sicp/refusals/generic-type.beck"),
-    );
-    assert!(out.contains("B0120"), "{out}");
-    assert!(
-        out.contains("expected `:`, found `[`"),
-        "and it is refused by the *parser*, exactly as `def map[T, U]` was before docs/32:\n{out}"
     );
 }
 

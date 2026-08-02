@@ -226,7 +226,7 @@ fn build(
             let fields = fields.clone();
             let mut out = BTreeMap::new();
             for (i, (fname, fty)) in fields.iter().enumerate() {
-                let fty = substitute(fty, name, args, types);
+                let fty = crate::ty::instantiate_decl(fty, args);
                 out.insert(
                     fname.clone(),
                     build(&fty, types, reborrow(&mut rng), depth + 1 + i)?,
@@ -258,7 +258,7 @@ fn build(
             let v = &variants[idx];
             let mut out = BTreeMap::new();
             for (i, (fname, fty)) in v.fields.iter().enumerate() {
-                let fty = substitute(fty, name, args, types);
+                let fty = crate::ty::instantiate_decl(fty, args);
                 out.insert(
                     fname.clone(),
                     build(&fty, types, reborrow(&mut rng), depth + 1 + i)?,
@@ -279,36 +279,6 @@ fn build(
 
 fn reborrow<'a, 'b: 'a>(r: &'a mut Option<&'b mut Rng>) -> Option<&'a mut Rng> {
     r.as_deref_mut()
-}
-
-/// Substitute a declaration's type parameters. `Option`'s `Some(value: a)` under `Option[Int]` has
-/// a `value: Int`, and the generator has to see that to build one.
-fn substitute(field: &Ty, _name: &str, args: &[Ty], _types: &Types) -> Ty {
-    if args.is_empty() {
-        return field.clone();
-    }
-    go(field, args)
-}
-
-/// Declaration type parameters are numbered from a private base — the same one
-/// [`crate::prelude`] uses for scheme variables — so the *n*th parameter is `Var(BASE + n)` and
-/// substitution is an index rather than a search.
-const SCHEME_BASE: u32 = 1_000_000;
-
-fn go(t: &Ty, args: &[Ty]) -> Ty {
-    match t {
-        Ty::Var(v) if *v >= SCHEME_BASE => args
-            .get((*v - SCHEME_BASE) as usize)
-            .cloned()
-            .unwrap_or_else(|| t.clone()),
-        Ty::Var(_) => t.clone(),
-        Ty::Con(n, xs) => Ty::Con(n.clone(), xs.iter().map(|x| go(x, args)).collect()),
-        Ty::Fun(ps, r, row) => Ty::Fun(
-            ps.iter().map(|x| go(x, args)).collect(),
-            Box::new(go(r, args)),
-            row.clone(),
-        ),
-    }
 }
 
 /// Smaller candidates for a failing input, most-shrunk first.
@@ -420,6 +390,7 @@ mod tests {
             Arc::from("Id"),
             TyDecl::Newtype {
                 name: Arc::from("Id"),
+                params: Vec::new(),
                 inner: Ty::str_(),
             },
         );
@@ -427,6 +398,7 @@ mod tests {
             Arc::from("Event"),
             TyDecl::Union {
                 name: Arc::from("Event"),
+                params: Vec::new(),
                 variants: vec![
                     Variant {
                         name: Arc::from("Added"),
@@ -469,6 +441,7 @@ mod tests {
             Arc::from("Creds"),
             TyDecl::Model {
                 name: Arc::from("Creds"),
+                params: Vec::new(),
                 fields: vec![(Arc::from("key"), Ty::secret(Ty::str_()))],
             },
         );
@@ -496,6 +469,7 @@ mod tests {
             Arc::from("Tree"),
             TyDecl::Union {
                 name: Arc::from("Tree"),
+                params: Vec::new(),
                 variants: vec![
                     Variant {
                         name: Arc::from("Node"),

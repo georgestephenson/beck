@@ -19,11 +19,11 @@
 #   * §2.1.1's rational numbers need *exact rationals*. Reals landed in docs/32 and are not the same
 #     thing: §2.1.1's whole point is that 1/3 + 1/3 is 2/3 and not 0.6666666666666666
 #     (`sicp/refusals/rational.beck`);
-#   * §2.3.4's Huffman trees need exact rationals for their weights and a generic tree for their
-#     nodes;
-#   * and a *type* still cannot take a parameter — `union Tree[T]` is not writable — so the tree
-#     below is a tree of `Int` where the book's is a tree of anything
-#     (`sicp/refusals/generic-type.beck`, docs/33 §33.7).
+#   * §2.3.4's Huffman trees need exact rationals for their weights, and a `case` that is more than
+#     one level deep for their decoder (docs/33 §33.7).
+#
+# The tree below is the book's — `Tree[T]`, at whatever element type a caller wants, which
+# `sicp/refusals/generic-type.beck` asserted was unwritable until docs/36.
 
 # ---------------------------------------------------------------------------------------------
 # 2.2.1 Representing sequences — the abstractions the reader is asked to *build*
@@ -142,7 +142,7 @@ def fib_iter(a: Int, b: Int, n: Int) -> Int:
     return fib_iter(b, a + b, n - 1)
 
 # `sum-odd-squares`, over a tree — the first of the section's two programs.
-def sum_odd_squares(t: Tree) -> Int:
+def sum_odd_squares(t: Tree[Int]) -> Int:
     return sum(map(filter(fringe(t), odd), square))
 
 # `even-fibs`, over an interval — the second, which is the same four stages.
@@ -173,12 +173,13 @@ def square_list(xs: list[Int]) -> list[Int]:
 # ---------------------------------------------------------------------------------------------
 
 # A tree is a leaf or a list of trees. The second variant is what "closure" means: the combining
-# means (`Node`) produces something the same means can combine again.
-union Tree:
-    Leaf(value: Int)
-    Node(kids: list[Tree])
+# means (`Node`) produces something the same means can combine again — and `T` is the other half of
+# the same idea, because the book's trees hold whatever their leaves hold and are still trees.
+union Tree[T]:
+    Leaf(value: T)
+    Node(kids: list[Tree[T]])
 
-def leaves(t: Tree) -> list[Tree]:
+def leaves[T](t: Tree[T]) -> list[Tree[T]]:
     match t:
         case Leaf(value):
             return [t]
@@ -186,31 +187,32 @@ def leaves(t: Tree) -> list[Tree]:
             return concat_lists(map_list(kids, leaves))
 
 # `count-leaves`, SICP's first procedure over a hierarchical structure.
-def count_leaves(t: Tree) -> Int:
+def count_leaves[T](t: Tree[T]) -> Int:
     return list_len(leaves(t))
 
 # Exercise 2.25-ish in spirit: the fringe of a tree, left to right. SICP's `fringe` returns the
 # leaves in order, and the book's own example is `(fringe (list x x))` over `x = (list 1 2)`.
-def fringe(t: Tree) -> list[Int]:
-    return map_list(leaves(t), leaf_value)
-
-def leaf_value(t: Tree) -> Int:
+#
+# It is written from the structure rather than through a `leaf_value` helper, which is what the type
+# parameter bought: a helper returning the value of a `Node` had to invent one, and `0` is a number
+# no tree contains. There is no `0` to reach for at `T`, so the fudge does not typecheck.
+def fringe[T](t: Tree[T]) -> list[T]:
     match t:
         case Leaf(value):
-            return value
+            return [value]
         case Node(kids):
-            return 0
+            return concat_lists(map_list(kids, fringe))
 
 # Exercise 2.30 / 2.31 — `square-tree`, written directly and then as a general `tree-map`. The book
-# asks for both so that the second can be shown to subsume the first; Beck cannot yet abstract over
-# the element type, so `tree_map` takes `Int -> Int` where SICP's takes any procedure.
-def square_tree(t: Tree) -> Tree:
+# asks for both so that the second can be shown to subsume the first, and `tree_map` is now the
+# book's: any procedure, at any element type, including one that changes it.
+def square_tree(t: Tree[Int]) -> Tree[Int]:
     return tree_map(t, square)
 
 def square(n: Int) -> Int:
     return n * n
 
-def tree_map(t: Tree, f: Int -> Int) -> Tree:
+def tree_map[T, U](t: Tree[T], f: T -> U) -> Tree[U]:
     match t:
         case Leaf(value):
             return Leaf(value=f(value))
@@ -222,7 +224,7 @@ def tree_map(t: Tree, f: Int -> Int) -> Tree:
 # does work — lifting a flat list into the tree — so that the property below has a way to build a
 # tree of any size. Naming it `subsets` would have been the sort of thing this suite exists to
 # catch.
-def as_leaves(xs: list[Int]) -> list[Tree]:
+def as_leaves[T](xs: list[T]) -> list[Tree[T]]:
     return map_list(xs, lambda x: Leaf(value=x))
 
 # ---------------------------------------------------------------------------------------------
@@ -230,7 +232,7 @@ def as_leaves(xs: list[Int]) -> list[Tree]:
 # ---------------------------------------------------------------------------------------------
 
 # `(cons (list 1 2) (list 3 4))` — the tree §2.2.2 opens with, whose `count-leaves` is 4.
-def example() -> Tree:
+def example() -> Tree[Int]:
     return Node(kids=[
         Node(kids=[Leaf(value=1), Leaf(value=2)]),
         Leaf(value=3),
@@ -239,14 +241,29 @@ def example() -> Tree:
 
 # `x = (list 1 2)`, `(list x x)` — the tree §2.2.2's `fringe` example uses, whose fringe is
 # `(1 2 1 2)` and whose `count-leaves` is 4.
-def pair() -> Tree:
+def pair() -> Tree[Int]:
     return Node(kids=[Leaf(value=1), Leaf(value=2)])
 
-def doubled() -> Tree:
+def doubled() -> Tree[Int]:
     return Node(kids=[pair(), pair()])
 
-def deep() -> Tree:
+def deep() -> Tree[Int]:
     return Node(kids=[Node(kids=[Node(kids=[Leaf(value=7)])])])
+
+# The same shape at a different element type, which is what `union Tree[T]` is for. SICP's trees
+# hold whatever the reader puts in them; before docs/36 this needed a second `union` and a second
+# `count_leaves`, and here it needs neither.
+def words() -> Tree[Str]:
+    return Node(kids=[
+        Leaf(value="the"),
+        Node(kids=[Leaf(value="closure"), Leaf(value="property")]),
+    ])
+
+# And a tree whose leaves are trees — the closure property taken at the type level rather than at
+# the value level. `Tree[Tree[Int]]` is a different type from `Tree[Int]`, and `count_leaves` is
+# still the one definition.
+def nested() -> Tree[Tree[Int]]:
+    return Node(kids=[Leaf(value=pair()), Leaf(value=deep())])
 
 test "2.2.1 — one `map`, written once, used at three element types":
     expect map([1, 2, 3], square) == [1, 4, 9]
@@ -308,6 +325,20 @@ test "2.30/2.31 — square-tree, and tree-map subsuming it":
 test "2.2.1 and 2.2.2 together — the generic `map` over a tree's own fringe":
     expect map(fringe(example()), square) == [1, 4, 9, 16]
     expect length(filter(fringe(example()), lambda n: n % 2 == 0)) == 2
+
+test "2.2.2 — one tree, one `count-leaves`, three element types":
+    expect count_leaves(words()) == 3
+    expect fringe(words()) == ["the", "closure", "property"]
+    expect count_leaves(nested()) == 2
+    # The leaves of the outer tree are themselves trees, so the inner `count-leaves` is the same
+    # definition applied one level down.
+    expect map_list(fringe(nested()), count_leaves) == [2, 1]
+
+test "2.31 — `tree-map` at the book's generality: a procedure that changes the element type":
+    expect fringe(tree_map(example(), str)) == ["1", "2", "3", "4"]
+    expect fringe(tree_map(words(), str_is_empty)) == [false, false, false]
+    expect count_leaves(tree_map(deep(), lambda n: n > 0)) == 1
+    expect fringe(tree_map(deep(), lambda n: n > 0)) == [true]
 
 test "the closure property: a combining means whose result it can combine again":
     expect count_leaves(Node(kids=[example(), example()])) == 8

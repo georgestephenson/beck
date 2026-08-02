@@ -1,0 +1,206 @@
+# The program that would embarrass parameterised types (docs/36).
+#
+# `25-thread.beck` is this file's precedent and says why a corpus program is the right place for it:
+# every pass this project has walks a type, and a shape that only `sicp/` exercises is a shape the
+# passes never see. A `union Tree[T]` in a library proves the checker; a `model Stamped[T]` in the
+# *state of an application* proves the fold, the plan, the slicer, the incremental engine against
+# its recompute oracle, the replay harness, `Repr` and the wire, the value generator behind
+# `property`, the cost model, `Sendable`, and `beck iface`.
+#
+# Every kind of declaration is parameterised here, on purpose, because each reaches a different
+# pass:
+#
+#   * a **model** with a parameter, held in the durable state — so the accumulator's own type
+#     carries an instantiation, and the wire encodes one;
+#   * a **union** with a parameter, matched on in the view — so exhaustiveness and the plan's
+#     decomposition see one;
+#   * an **alias** with a parameter, which is expanded *and* applied at every mention;
+#   * the same declaration at **two different arguments** — `Stamped[Note]` and `Stamped[Str]` —
+#     which is the case a compiler that ignored the arguments would still compile and get wrong.
+#
+# Like every program here it carries no placement annotations and has to place itself.
+
+model State:
+    notes: Map[Str, Stamped[Note]]
+    verdicts: Map[Str, Verdict[Note]]
+    recent: Trail[Str]
+
+model Note:
+    id: Str
+    text: Str
+
+# What happened, and when, and to what. The parameter is the payload: the same record stamps a
+# `Note` in `notes` and a plain `Str` in `recent`, and those are different types.
+model Stamped[T]:
+    at: Int
+    actor: Str
+    what: T
+
+union Verdict[T]:
+    Waiting(item: T)
+    Passed(item: T)
+    Failed(item: T, why: Str)
+
+# An alias is transparent, so this is `list[Stamped[T]]` everywhere it is written — including in
+# `State` above, where it is applied to `Str` before anything else sees it.
+type Trail[T] = list[Stamped[T]]
+
+union Command:
+    Submit(id: Str, text: Str)
+    Judge(id: Str, ok: Bool, why: Str)
+
+union Event:
+    Submitted(id: Str, text: Str)
+    Judged(id: Str, ok: Bool, why: Str)
+
+union Rejection:
+    Blank
+    NoSuchNote
+    AlreadyJudged
+
+# Written once, used at `Note` and at `Str`.
+def stamp[T](env: Envelope[Event], what: T) -> Stamped[T]:
+    return Stamped(at=env.at, actor=env.actor, what=what)
+
+def payload[T](s: Stamped[T]) -> T:
+    return s.what
+
+def judge[T](item: T, ok: Bool, why: Str) -> Verdict[T]:
+    if ok:
+        return Passed(item=item)
+    return Failed(item=item, why=why)
+
+def apply_event(s: State, env: Envelope[Event]) -> State:
+    match env.body:
+        case Submitted(id, text):
+            return submitted(s, env, Note(id=id, text=text))
+        case Judged(id, ok, why):
+            return judged(s, id, ok, why)
+
+def submitted(s: State, env: Envelope[Event], note: Note) -> State:
+    return remembered(pending(noted(s, env, note), note), stamp(env, note.id))
+
+def noted(s: State, env: Envelope[Event], note: Note) -> State:
+    return s.with(notes=map_insert(s.notes, note.id, stamp(env, note)))
+
+def pending(s: State, note: Note) -> State:
+    return s.with(verdicts=map_insert(s.verdicts, note.id, Waiting(item=note)))
+
+# `Stamped[Str]`, where the line above is `Stamped[Note]` — the same declaration, two types.
+def remembered(s: State, entry: Stamped[Str]) -> State:
+    return s.with(recent=concat_lists([s.recent, [entry]]))
+
+def judged(s: State, id: Str, ok: Bool, why: Str) -> State:
+    match map_get(s.notes, id):
+        case Some(value):
+            return s.with(verdicts=map_insert(s.verdicts, id, judge(payload(value), ok, why)))
+        case None:
+            return s
+
+def validate(s: State, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Submit(id, text):
+            if str_is_empty(str_trim(text)):
+                return Err(error=Blank)
+            return Ok(value=[Submitted(id=id, text=text)])
+        case Judge(id, ok, why):
+            return if_unjudged(s, id, ok, why)
+
+def if_unjudged(s: State, id: Str, ok: Bool, why: Str) -> Result[list[Event], Rejection]:
+    if not map_contains(s.notes, id):
+        return Err(error=NoSuchNote)
+    if settled(s, id):
+        return Err(error=AlreadyJudged)
+    return Ok(value=[Judged(id=id, ok=ok, why=why)])
+
+def settled(s: State, id: Str) -> Bool:
+    match map_get(s.verdicts, id):
+        case Some(value):
+            return not waiting(value)
+        case None:
+            return false
+
+def waiting[T](v: Verdict[T]) -> Bool:
+    match v:
+        case Waiting(item):
+            return true
+        case Passed(item):
+            return false
+        case Failed(item, why):
+            return false
+
+# The view matches on a parameterised union, so the plan's decomposition and the exhaustiveness
+# check both see one. `show` is what a caller supplies for the element type, which is the whole
+# reason the parameter is on the union rather than on three copies of it.
+def describe[T](v: Verdict[T], show: T -> Str) -> Str:
+    match v:
+        case Waiting(item):
+            return "waiting — " + show(item)
+        case Passed(item):
+            return "passed — " + show(item)
+        case Failed(item, why):
+            return "failed — " + show(item) + " (" + why + ")"
+
+def note_text(n: Note) -> Str:
+    return n.text
+
+def verdict_for(s: State, id: Str) -> Str:
+    match map_get(s.verdicts, id):
+        case Some(value):
+            return describe(value, note_text)
+        case None:
+            return "unknown"
+
+def submissions(s: State) -> list[Stamped[Note]]:
+    return sort_by(map_values(s.notes), lambda e: e.what.id)
+
+def view(s: State, session: Session) -> Html:
+    return ui:
+        main:
+            h1: ("review queue for " + session.actor)
+            ul:
+                for e in submissions(s):
+                    li:
+                        span: (payload(e).text + " — by " + e.actor)
+                        span: verdict_for(s, payload(e).id)
+            p: (str(list_len(s.recent)) + " submitted")
+
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, queue, validate)
+queue: Signal[State] = durable(fold(apply_event, State(notes={}, verdicts={}, recent=[]), events))
+page: Signal[Html] = per_session(queue, view)
+
+test "a submission is stamped, and its verdict starts as waiting":
+    given [Submitted(id="n1", text="please review")] by "ana"
+    expect page contains "please review — by ana"
+    expect page contains "waiting — please review"
+    expect page contains "1 submitted"
+
+test "the same record stamps a note and a plain string":
+    given [Submitted(id="n1", text="first"), Submitted(id="n2", text="second")] by "ana"
+    expect page contains "first — by ana"
+    expect page contains "second — by ana"
+    expect page contains "2 submitted"
+
+test "a verdict carries the reason it was refused":
+    given [Submitted(id="n1", text="thin"), Judged(id="n1", ok=false, why="needs detail")]
+    expect page contains "failed — thin (needs detail)"
+
+test "judging twice is refused":
+    given [Submitted(id="n1", text="ok"), Judged(id="n1", ok=true, why="")]
+    when Judge(id="n1", ok=false, why="changed my mind")
+    expect Err(error=AlreadyJudged)
+
+test "a verdict on nothing is refused":
+    given []
+    when Judge(id="nope", ok=true, why="")
+    expect Err(error=NoSuchNote)
+
+test "a blank submission never reaches the log":
+    given []
+    when Submit(id="n1", text="   ")
+    expect Err(error=Blank)
+
+property "no log this program can produce makes the page unrenderable"(log: list[Event]):
+    given log
+    expect page contains "review queue for"

@@ -4,7 +4,7 @@
 
 Every diagnostic the compiler can raise carries a stable code. `beck explain error B0341` prints one of these entries at the terminal.
 
-The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans every non-test source file for a `"Bnnnn"` literal and fails if the set differs from this table in either direction. **95 codes.**
+The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans every non-test source file for a `"Bnnnn"` literal and fails if the set differs from this table in either direction. **101 codes.**
 
 
 ## Reading the source — `B0100–B0120`
@@ -37,7 +37,7 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0211` | error | **`ui` block is empty** — A view must produce exactly one root element. |
 | `B0212` | error | **`ui` block has more than one root** — An `Html` value is a single tree. Wrap the elements in one — a `div:` or `main:` block. |
 
-## Names, types and effects — `B0300–B0370`
+## Names, types and effects — `B0300–B0387`
 
 | Code | | Meaning |
 |---|---|---|
@@ -47,16 +47,14 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0303` | error | **a top-level parameter needs a type annotation** — Inference is intra-module and boundaries are declared (§3.6): a top-level definition's parameters are part of its published signature, so they are written rather than guessed. |
 | `B0304` | error | **needs a return type** — Same reason as B0303: a top-level definition's result type is part of its contract. |
 | `B0305` | error | **not an effect** — A `uses` clause names effect atoms, and this is not one of them. `beck doc reference` lists the atom set. |
-| `B0306` | warning | **traits are parsed but not yet checked** — Trait resolution is unimplemented. Phase 2 built the effect system this was once expected to arrive with and did not bring trait resolution with it; this warning is the only thing standing between a `trait` and silence. |
 | `B0307` | error | **unsupported top-level item** — This form is not something a module may contain at top level. |
 | `B0308` | error | **expected a type** — A type position holds something that is not a type expression. |
-| `B0309` | error | **takes no type arguments** — An alias is transparent and this one is not parameterised, so `Name[…]` says nothing. |
 | `B0310` | error | **cannot find type** — No declaration, import or builtin of that name is in scope. |
-| `B0311` | error | **wrong number of type arguments** — The arity comes from the whole declaration, not from one variant: `Result` has two parameters even where a variant mentions one. |
+| `B0311` | error | **wrong number of type arguments** — A mention of a type carries one argument per declared parameter — `union Tree[T]` is written `Tree[Int]`, never bare `Tree`. |
 | `B0312` | error | **a type alias defined in terms of itself, or a name the language reserves** — An alias is transparent, so a self-referential one describes no type — a `union` may be recursive, an alias may not. The same code covers a definition named after a reserved form such as `record`, which would compile and never be reachable. |
-| `B0313` | error | **a type parameter takes no type arguments** — A definition's own type parameter names an unknown type, so it has no structure to apply arguments to: `T[Int]` says nothing, whatever `T` turns out to be at the call site. |
-| `B0314` | error | **a type parameter shadows an existing type** — A type parameter is a name the definition invents, and one that shadowed an existing type would make its signature read as though it mentioned that type. |
-| `B0315` | error | **a type parameter is repeated** — The same name appears twice in one definition's type parameter list, where the second would silently shadow the first. |
+| `B0313` | error | **a type parameter takes no type arguments** — A type parameter of the definition or declaration being read names an unknown type, so it has no structure to apply arguments to: `T[Int]` says nothing, whatever `T` turns out to be at the call site. |
+| `B0314` | error | **a type parameter shadows an existing type** — A type parameter is a name the definition or declaration invents, and one that shadowed an existing type would make its fields or its signature read as though they mentioned that type. |
+| `B0315` | error | **a type parameter is repeated** — The same name appears twice in one type-parameter list, where the second would silently shadow the first. |
 | `B0320` | error | **type mismatch** — Unification failed; the message names what was being unified — an argument, a field, a result, or the two branches of an `if`. The branches of an `if` are reported as two alternatives rather than as actual-and-expected: typing one as the other's expectation is what refused SICP exercise 1.43 (docs/27 §27.3). |
 | `B0330` | warning | **statements after `return` are unreachable** — A `return` ends its block; anything after it never runs. |
 | `B0331` | error | **loops are not available in Phase 1** — Everything is an expression and `var` is not yet mutable, so a loop has nothing to accumulate into. Use `map_list`, `filter_list` or `fold`. |
@@ -81,6 +79,14 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0354` | error | **cannot construct this type** — The name is a type, but not one with a constructor — an alias or a builtin. |
 | `B0360` | error | **cannot be called inside a fold** — A fold must be replay-pure, and this would make replay non-deterministic. Time is data on the envelope (`env.at`) and entity ids are minted at the edge: mint the id in the client's command and read it from the event. |
 | `B0370` | error | **performs more than its signature declares** — The undeclared atoms are listed. A `uses` clause is the published bound, and widening it is a breaking API change — so the compiler will not widen it for you. |
+| `B0380` | error | **a trait cannot be declared here** — The name already belongs to a type, the trait is declared twice, or the file is a `.becki` — a trait does not cross a module boundary, so an interface may not hold one. |
+| `B0381` | error | **a trait declaration is wrong** — A trait holds `def` signatures with no bodies, each mentioning `Self` in a parameter so that a call has something to dispatch on. A method name belongs to one trait only. |
+| `B0382` | error | **an impl does not match its trait** — An impl writes bodies and parameter *names*; the types, the return type and the effect row are the trait's. Every method must be implemented, exactly once, and no others. |
+| `B0383` | error | **cannot find the trait or the type this impl names** — Both halves of `impl Trait for Type` have to resolve before the impl can be registered. |
+| `B0384` | error | **conflicting implementations** — Coherence: one impl per trait per type constructor, and no blanket impl over a type parameter — so what a call means never depends on which impls happen to be in scope. |
+| `B0385` | error | **orphan impl** — An impl belongs with the trait or with the type. Implementing somebody else's trait for somebody else's type is what lets two modules supply one and disagree. |
+| `B0386` | error | **a trait method needs a concrete receiver** — Dispatch is static and resolved from the receiver's type. A trait method cannot be passed as a value, and generic code cannot call one: both need bounds on a type parameter, which is not built. |
+| `B0387` | error | **the type does not implement the trait** — There is no `impl Trait for Type` in scope for the receiver's type. |
 
 ## Placement — `B0400–B0404`
 
