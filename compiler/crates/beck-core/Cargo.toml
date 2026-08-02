@@ -14,5 +14,8 @@ serde.workspace = true
 serde_json.workspace = true
 postcard.workspace = true
 
+[dev-dependencies]
+beck-diag = { workspace = true, features = ["probe"] }
+
 [lints]
 workspace = true

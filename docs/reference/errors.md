@@ -4,10 +4,10 @@
 
 Every diagnostic the compiler can raise carries a stable code. `beck explain error B0341` prints one of these entries at the terminal.
 
-The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans every non-test source file for a `"Bnnnn"` literal and fails if the set differs from this table in either direction. **102 codes.**
+The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans every non-test source file for a `"Bnnnn"` literal and fails if the set differs from this table in either direction. **105 codes.**
 
 
-## Reading the source — `B0100–B0120`
+## Reading the source — `B0100–B0121`
 
 | Code | | Meaning |
 |---|---|---|
@@ -21,8 +21,9 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0115` | error | **unclosed string** — A string literal opened and the line or file ended before the closing quote. Beck string literals do not span lines. |
 | `B0116` | error | **unreadable character** — The S-expression reader cannot begin an atom with this character. |
 | `B0120` | error | **unexpected token** — The Python-surface parser expected something else here; the message names what. One error per item: the parser recovers to the next top-level item, so a bad line does not make the rest of the file unparseable. |
+| `B0121` | error | **nesting is too deep to read** — The source nests deeper than the front end follows — `beck_diag::depth::MAX_NESTING` levels of brackets, indentation or S-expression lists. The bound is a fixed count rather than a reading of the stack, so the same file is accepted or refused identically in every build; without it, deep enough input aborted the process with no span at all. |
 
-## Macro expansion — `B0200–B0212`
+## Macro expansion — `B0200–B0213`
 
 | Code | | Meaning |
 |---|---|---|
@@ -36,8 +37,9 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0210` | error | **`ui` needs an indented block** — Write `ui:` followed by an indented element. |
 | `B0211` | error | **`ui` block is empty** — A view must produce exactly one root element. |
 | `B0212` | error | **`ui` block has more than one root** — An `Html` value is a single tree. Wrap the elements in one — a `div:` or `main:` block. |
+| `B0213` | error | **the form nests too deep to expand** — The expander walks a form's arguments as deeply as they nest, and stops at the count the reader stops at. This is not `B0201`: nothing here says a macro failed to terminate — the two were one counter until they were separated, and a deep expression with no macros in it reported the wrong one. |
 
-## Names, types and effects — `B0300–B0387`
+## Names, types and effects — `B0300–B0390`
 
 | Code | | Meaning |
 |---|---|---|
@@ -88,6 +90,7 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0385` | error | **orphan impl** — An impl belongs with the trait or with the type. Implementing somebody else's trait for somebody else's type is what lets two modules supply one and disagree. |
 | `B0386` | error | **no implementation can be chosen here** — An implementation comes from a concrete type or from a bound on a type parameter — write `[T: Trait]` to say the parameter has one. A trait method and a bounded definition are both called rather than passed: the implementation is supplied at the call site, so a reference that is never called has nowhere to receive it. |
 | `B0387` | error | **the type does not implement the trait** — There is no `impl Trait for Type` in scope for the receiver's type. |
+| `B0390` | error | **the expression nests too deep to check** — The checker walks an expression and a type as deeply as they nest, and stops at `beck_diag::depth::MAX_NESTING` levels — the same count the reader stops at, because the checker can be handed a tree a macro produced rather than one anybody typed. Everything downstream walks the `Core` this pass built, so it is bounded by the same number. |
 
 ## Placement — `B0400–B0404`
 

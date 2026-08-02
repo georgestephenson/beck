@@ -197,6 +197,15 @@ pub const INDEX: &[CodeEntry] = &[
          error per item: the parser recovers to the next top-level item, so a bad line does not \
          make the rest of the file unparseable.",
     ),
+    e(
+        "B0121",
+        Stage::Syntax,
+        "nesting is too deep to read",
+        "The source nests deeper than the front end follows — `beck_diag::depth::MAX_NESTING` \
+         levels of brackets, indentation or S-expression lists. The bound is a fixed count rather \
+         than a reading of the stack, so the same file is accepted or refused identically in every \
+         build; without it, deep enough input aborted the process with no span at all.",
+    ),
     // ------------------------------------------------------------------------ B02xx: macros
     e(
         "B0200",
@@ -259,6 +268,15 @@ pub const INDEX: &[CodeEntry] = &[
         Stage::Macros,
         "`ui` block has more than one root",
         "An `Html` value is a single tree. Wrap the elements in one — a `div:` or `main:` block.",
+    ),
+    e(
+        "B0213",
+        Stage::Macros,
+        "the form nests too deep to expand",
+        "The expander walks a form's arguments as deeply as they nest, and stops at the count the \
+         reader stops at. This is not `B0201`: nothing here says a macro failed to terminate — the \
+         two were one counter until they were separated, and a deep expression with no macros in \
+         it reported the wrong one.",
     ),
     // ------------------------------------------------------- B03xx: names, types and effects
     e(
@@ -580,6 +598,15 @@ pub const INDEX: &[CodeEntry] = &[
         Stage::Types,
         "the type does not implement the trait",
         "There is no `impl Trait for Type` in scope for the receiver's type.",
+    ),
+    e(
+        "B0390",
+        Stage::Types,
+        "the expression nests too deep to check",
+        "The checker walks an expression and a type as deeply as they nest, and stops at \
+         `beck_diag::depth::MAX_NESTING` levels — the same count the reader stops at, because the \
+         checker can be handed a tree a macro produced rather than one anybody typed. Everything \
+         downstream walks the `Core` this pass built, so it is bounded by the same number.",
     ),
     // -------------------------------------------------------------------- B04xx: placement
     e(

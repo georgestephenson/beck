@@ -32,6 +32,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use beck_diag::depth::Nesting;
 use beck_diag::{Diagnostic, Diagnostics, Span};
 use beck_syntax::{sym, Lit, Node, ScopeSet, Symbol};
 
@@ -208,6 +209,10 @@ pub struct Checker<'a> {
     /// The dictionary parameters `expand_bounds` appended, per definition, in order. A call site
     /// reads this to know how many of the callee's parameters it has to supply itself.
     dicts: BTreeMap<Arc<str>, Vec<traits::DictParam>>,
+    /// How deep this pass is inside an expression or a type, against the ceiling the reader
+    /// counts against. The reader's bound does not cover this one: a macro can expand into a tree
+    /// deeper than the one that was written, and the checker is the first pass to see it.
+    nesting: Nesting,
     mode: Mode,
 }
 
@@ -267,6 +272,7 @@ pub fn check_module_with(
         impl_methods: BTreeSet::new(),
         dicts: BTreeMap::new(),
         generic_rows: BTreeMap::new(),
+        nesting: Nesting::new(),
         mode,
     };
     for (name, prim, scheme) in prelude::prims() {
@@ -1364,6 +1370,35 @@ impl<'a> Checker<'a> {
     // ------------------------------------------------------------------ types from syntax
 
     fn ty_from_node(&mut self, n: &Node) -> Ty {
+        if !self.enter(n.span()) {
+            return self.subst.fresh();
+        }
+        let out = self.ty_from_node_inner(n);
+        self.nesting.leave();
+        out
+    }
+
+    /// Descend one level of the tree, or refuse.
+    ///
+    /// `false` means the ceiling is reached: the caller returns whatever it returns for an
+    /// expression it could not check — a fresh variable, which unifies with anything and so raises
+    /// no second error — without recursing and without leaving.
+    fn enter(&mut self, span: Span) -> bool {
+        if self.nesting.enter() {
+            return true;
+        }
+        if self.nesting.should_report() {
+            let note = self.nesting.note();
+            self.diags.push(
+                Diagnostic::error("B0390", "the expression nests too deep to check", span)
+                    .with_primary_label("the checker gave up here")
+                    .with_note(note),
+            );
+        }
+        false
+    }
+
+    fn ty_from_node_inner(&mut self, n: &Node) -> Ty {
         let span = n.span();
         if n.has_head("fn-type") && n.args.len() >= 2 {
             let params: Vec<Ty> = n.args[..n.args.len() - 1]
@@ -1658,6 +1693,15 @@ impl<'a> Checker<'a> {
     // ------------------------------------------------------------------ expressions
 
     fn expr(&mut self, n: &Node, expected: Option<&Ty>) -> Core {
+        if !self.enter(n.span()) {
+            return Core::new(CoreKind::Const(Const::Unit), self.subst.fresh(), n.span());
+        }
+        let out = self.expr_inner(n, expected);
+        self.nesting.leave();
+        out
+    }
+
+    fn expr_inner(&mut self, n: &Node, expected: Option<&Ty>) -> Core {
         let span = n.span();
 
         if let Some(l) = n.as_lit() {
@@ -3341,5 +3385,88 @@ def unwrap[T](b: Box[T]) -> T:
 
         let bad = src.replace("-> T:", "-> Int:");
         assert!(!codes(&bad).is_empty(), "a `T` is not an `Int`");
+    }
+}
+
+/// The checker's half of the front end's recursion bound.
+///
+/// The reader's bound does not cover this one. A macro expands into a tree nobody typed, and the
+/// checker is the first pass to walk it — so it counts for itself, against the same ceiling.
+#[cfg(test)]
+mod nesting_tests {
+    use crate::check_str;
+    use beck_diag::depth::{MAX_NESTING, STACK_BYTES};
+
+    /// A type nested `n` deep — `list[list[…Int…]]` — which is the checker's *other* recursion.
+    fn nested_type(n: usize) -> String {
+        let mut ty = String::from("Int");
+        for _ in 0..n {
+            ty = format!("list[{ty}]");
+        }
+        format!("def f(x: {ty}) -> Int:\n    return 1\n")
+    }
+
+    fn nested_expr(n: usize) -> String {
+        format!(
+            "def f() -> Int:\n    return {}1{}\n",
+            "(".repeat(n),
+            ")".repeat(n)
+        )
+    }
+
+    fn codes(src: &str) -> Vec<String> {
+        beck_diag::depth::on_the_front_end_stack(|| {
+            let (_, d, _) = check_str("deep.beck", src);
+            d.iter().map(|x| x.code.to_string()).collect()
+        })
+    }
+
+    #[test]
+    fn a_type_past_the_ceiling_is_a_diagnostic_rather_than_an_abort() {
+        let found = codes(&nested_type(MAX_NESTING as usize + 8));
+        assert!(
+            found.contains(&"B0390".to_string()),
+            "expected the checker's own refusal, got {found:?}"
+        );
+    }
+
+    #[test]
+    fn an_expression_past_the_ceiling_is_refused_by_whichever_pass_reaches_it_first() {
+        // The reader gets there first for an expression, which is the point of bounding all three:
+        // whichever pass is handed the deep tree is the one that refuses it.
+        let found = codes(&nested_expr(MAX_NESTING as usize + 8));
+        assert!(
+            found.iter().any(|c| c == "B0121" || c == "B0390"),
+            "expected a nesting refusal, got {found:?}"
+        );
+    }
+
+    #[test]
+    fn nesting_a_person_would_write_still_checks() {
+        assert!(codes(&nested_type(16)).is_empty());
+    }
+
+    #[test]
+    fn the_ceiling_fits_the_declared_stack() {
+        const PROBE_DEPTH: usize = 100;
+        let spent = std::thread::Builder::new()
+            .stack_size(256 * 1024 * 1024)
+            .spawn(|| {
+                let src = nested_type(PROBE_DEPTH);
+                beck_diag::depth::probe::stack_spent(|| check_str("probe.beck", &src))
+            })
+            .expect("a thread")
+            .join()
+            .expect("the probe checks");
+
+        let per_level = spent / PROBE_DEPTH;
+        println!("checker: {spent} bytes for {PROBE_DEPTH} levels ({per_level} per level)");
+        let needed = MAX_NESTING as usize * per_level * 2;
+        assert!(
+            needed < STACK_BYTES,
+            "a ceiling of {MAX_NESTING} levels at {per_level} bytes each needs {needed} bytes \
+             with the margin, against a declared STACK_BYTES of {STACK_BYTES} — raise the \
+             declaration or lower the ceiling"
+        );
     }
 }

@@ -9,5 +9,8 @@ publish.workspace = true
 beck-diag.workspace = true
 logos.workspace = true
 
+[dev-dependencies]
+beck-diag = { workspace = true, features = ["probe"] }
+
 [lints]
 workspace = true
