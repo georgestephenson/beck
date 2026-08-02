@@ -70,6 +70,84 @@ pub struct Placed {
     /// The signal graph itself, kept so that `beck explain flow`, the incremental analysis and any
     /// later view engine read what the slicer read rather than re-deriving it.
     pub graph: Graph,
+    /// Whether this is an application or a **library** — a module with no merge point, whose
+    /// [`Placed::roles`] are placeholders rather than a slice of anything.
+    ///
+    /// A library used to have no `Placed` at all, which meant it had no way to run its own tests
+    /// ([`docs/22`] §22.6, [`docs/25`] §25.6 item 1): every SICP exercise is a library, and so is
+    /// every domain module a real project would most want unit tests for. It has one now — but a
+    /// placeholder role is a lie a caller must not be able to tell by accident, so the flag is on
+    /// the struct and [`Placed::is_application`] is what the paths that drive a *program* ask.
+    pub kind: Kind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    /// A merge point, a durable fold and a page: something [`crate::backend`] can drive.
+    Application,
+    /// Definitions and types, and no application parts. `beck check` has always said "a library";
+    /// this is that answer as a value rather than as a sentence.
+    Library,
+}
+
+impl Placed {
+    pub fn is_application(&self) -> bool {
+        self.kind == Kind::Application
+    }
+
+    /// A module with no merge point, wrapped so that the parts of the toolchain that do not need
+    /// one can still reach it.
+    ///
+    /// The four roles are placeholders and they are chosen to be *inert* rather than plausible: the
+    /// fold returns its accumulator unchanged, `validate` refuses everything, the view renders
+    /// nothing and the initial state is unit. Nothing should ever call them — [`Kind::Library`] is
+    /// the flag that says so, and `beck test` refuses a `given`, a `when` or a page expectation
+    /// against a library by name rather than running one of these and reporting a confusing pass.
+    pub fn library(program: Program, graph: Graph, wire_id: String) -> Placed {
+        let span = beck_diag::Span::NONE;
+        let unit = || Core::new(CoreKind::Const(crate::core::Const::Unit), Ty::unit(), span);
+        let lam = |n: usize, body: Core| {
+            Core::new(
+                CoreKind::Lam {
+                    params: (0..n as VarId).collect(),
+                    body: Box::new(body),
+                },
+                Ty::fun((0..n).map(|_| Ty::unit()).collect(), Ty::unit()),
+                span,
+            )
+        };
+        Placed {
+            roles: Roles {
+                validate: lam(2, unit()),
+                fold: lam(2, Core::new(CoreKind::Var(0), Ty::unit(), span)),
+                init: unit(),
+                view: lam(2, unit()),
+                state_ty: Ty::unit(),
+                event_ty: Ty::unit(),
+                command_ty: Ty::unit(),
+                proposals_name: Arc::from(""),
+                events_name: Arc::from(""),
+                state_name: Arc::from(""),
+                page_name: Arc::from(""),
+                inlined: Vec::new(),
+                shared: Vec::new(),
+                states: Vec::new(),
+                view_is_per_session: false,
+            },
+            program,
+            wire_id,
+            placement: crate::place::Solution {
+                tiers: Default::default(),
+                explanations: Vec::new(),
+                method: crate::place::Method::Exhaustive,
+                total: 0,
+                churn: Vec::new(),
+                ties: Vec::new(),
+            },
+            graph,
+            kind: Kind::Library,
+        }
+    }
 }
 
 /// One durable accumulator the program declared.
@@ -442,6 +520,7 @@ pub fn split(mut program: Program, diags: &mut Diagnostics) -> Option<Placed> {
     let wire_id = hasher.finalize().to_hex()[..16].to_string();
 
     Some(Placed {
+        kind: Kind::Application,
         placement: crate::place::Solution {
             tiers: Default::default(),
             explanations: Vec::new(),

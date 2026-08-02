@@ -14,7 +14,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, Context, Result};
 use beck_core::backend::{Backend, Callable};
 use beck_core::core::CoreKind;
-use beck_core::engine::{Engine, Prepared};
+use beck_core::engine::{Engine, Prepared, SharedDataflow};
 use beck_core::plan::Plan;
 use beck_core::{Core, Html, Placed, Value};
 
@@ -160,15 +160,23 @@ impl Runtime {
         self.plan.plan()
     }
 
-    /// A maintained view for one subscriber.
+    /// A maintained view for one subscriber, computing the whole plan itself.
     ///
     /// One per subscription, because §3.8's per-session views are "the norm, not the exception" and
     /// an arrangement below a `per_session` is that subscriber's. Everything *above* it is the same
-    /// computation for everybody — [`Plan::shared`] says which nodes — and the engine does not yet
-    /// share it; [`docs/24-incremental-views-report.md`] §24.7 says so rather than implying
-    /// otherwise.
+    /// computation for everybody — [`Plan::shared`] says which nodes — and this engine holds a copy
+    /// of it. [`Runtime::shared_dataflow`] is the one that does not.
     pub fn view_engine(&self) -> Result<Engine> {
         Ok(Engine::new(self.plan.clone()))
+    }
+
+    /// The shared half of the plan — §5.3's "one shared dataflow" — for a process to hold one of.
+    ///
+    /// It is created per [`crate::App`] rather than per `Runtime` because what it holds is derived
+    /// from the accumulator, and the accumulator belongs to the application. A `Runtime` with no
+    /// application driving it (`beck test`, the differential harness) never makes one.
+    pub fn shared_dataflow(&self) -> Arc<SharedDataflow> {
+        Arc::new(SharedDataflow::new(self.plan.clone()))
     }
 
     /// Render a subscriber's view by maintaining it, rather than by recomputing it.
@@ -182,6 +190,33 @@ impl Runtime {
             .context("maintaining the view")?;
         match out {
             Value::Html(h) => Ok((*h).clone()),
+            other => Err(anyhow!(
+                "the view produced {} rather than Html",
+                other.display()
+            )),
+        }
+    }
+
+    /// The same maintained render, with the operators that do not read the session taken from a
+    /// dataflow shared with every other subscriber (§5.3).
+    ///
+    /// Returns the version the page reflects, which may be newer than `version`: another subscriber
+    /// may have advanced the shared side first, and a page of the newer state is right where
+    /// unwinding an arrangement back to the older one is not.
+    pub fn render_shared(
+        &self,
+        shared: &SharedDataflow,
+        engine: &mut Engine,
+        state: &Value,
+        version: u64,
+        actor: &str,
+    ) -> Result<(Html, u64)> {
+        let (out, at) = shared
+            .render(engine, state, version, &session(actor))
+            .map_err(|e| anyhow!("{e}"))
+            .context("maintaining the view")?;
+        match out {
+            Value::Html(h) => Ok(((*h).clone(), at)),
             other => Err(anyhow!(
                 "the view produced {} rather than Html",
                 other.display()

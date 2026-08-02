@@ -268,7 +268,57 @@ pub fn run(placed: &Placed, backend: Arc<dyn Backend>, opts: &Options) -> Report
     Report { cases }
 }
 
+/// Which of a test's clauses need an *application*, and are therefore not available to a library.
+///
+/// A library has no merge point, so it has no log to fold, no `validate` to propose through and no
+/// page to render. Its `Placed` carries placeholder roles ([`beck_core::split::Placed::library`]),
+/// and running one of those would report a pass for a test that asserted nothing — which is worse
+/// than the refusal it replaced. So the clause is named and refused.
+///
+/// Everything else works: `expect <Bool>` over the module's own definitions, `property` blocks and
+/// their generated inputs, `stub`, and the static expectations. That is the whole of a unit test for
+/// a domain module, and it is what docs/22 §22.6 said was missing "for exactly the modules that most
+/// want unit tests".
+fn needs_an_application(t: &TestDef) -> Option<&'static str> {
+    for clause in &t.clauses {
+        match clause {
+            Clause::Given { .. } => return Some("`given` folds a log, and a library has none"),
+            Clause::When { .. } => {
+                return Some("`when` proposes a command through `validate`, and a library has none")
+            }
+            Clause::Expect { what, .. } => match what {
+                Expectation::PageContains { .. } => {
+                    return Some("`page` is the view of an application, and a library has none")
+                }
+                Expectation::FoldEquals { .. } => {
+                    return Some("`fold_of` folds a log, and a library has none")
+                }
+                _ => {}
+            },
+            Clause::Stub { .. } => {}
+        }
+    }
+    None
+}
+
 fn run_one(placed: &Placed, backend: Arc<dyn Backend>, t: &TestDef, opts: &Options) -> Case {
+    if !placed.is_application() {
+        if let Some(why) = needs_an_application(t) {
+            return Case {
+                name: t.name.clone(),
+                outcome: Outcome::Failed {
+                    why: format!(
+                        "{why}. This module has no merge point, so it is a library: add \
+                         `proposals: Stream[Proposal] = merge_clients()` and a `durable` fold to \
+                         make it an application, or write this test over the module's own \
+                         definitions"
+                    ),
+                },
+                stubbed: Vec::new(),
+                runs: 0,
+            };
+        }
+    }
     let stubs = match build_stubs(placed, &backend, t) {
         Ok(s) => s,
         Err(why) => {

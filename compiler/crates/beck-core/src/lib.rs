@@ -103,6 +103,38 @@ pub fn check_str(name: &str, src: &str) -> (check::Program, Diagnostics, SourceM
     (program, diags, map)
 }
 
+/// The same, admitting a **library**: a module with no merge point comes back as a
+/// [`split::Placed`] whose roles are placeholders rather than as `None`.
+///
+/// Separate from [`compile_str`] rather than replacing it, because "this compiled" and "this is an
+/// application" are different questions and every existing caller is asking the second. `beck test`
+/// asks the first (docs/27 §27.4); so does anything that only wants the module's definitions.
+pub fn compile_or_library_str(name: &str, src: &str) -> (Option<Placed>, Diagnostics, SourceMap) {
+    let mut map = SourceMap::new();
+    let file = map.add(name, src);
+    let mut diags = Diagnostics::new();
+    let parsed = beck_syntax::parse_file(file, name, src, &mut diags);
+    let expanded = beck_macro::expand_module(&parsed, &mut diags);
+    let mut program = check_module(&expanded, &mut diags);
+    let solution = place::solve(&program, None);
+    place::apply(&mut program, &solution);
+    place::check_placement(&program, &mut diags);
+    secure::check_security(&program, &mut diags);
+    if diags.has_errors() {
+        return (None, diags, map);
+    }
+    let interface = iface::Interface::of(&program);
+    let placed = project::slice_or_library(
+        project::Project {
+            program,
+            solution,
+            interface,
+        },
+        &mut diags,
+    );
+    (placed, diags, map)
+}
+
 /// Compile one source string against a fresh source map. The shape every test uses.
 pub fn compile_str(name: &str, src: &str) -> (Option<Placed>, Diagnostics, SourceMap) {
     let mut map = SourceMap::new();

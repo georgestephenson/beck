@@ -21,7 +21,7 @@
 
 use std::sync::Arc;
 
-use beck_core::engine::{Engine, Prepared};
+use beck_core::engine::{Engine, Prepared, SharedDataflow};
 use beck_core::gen::{arbitrary, Rng};
 use beck_core::plan::{Op, Plan};
 use beck_core::{Placed, Ty, Value};
@@ -48,12 +48,19 @@ fn compile(name: &str, src: &str) -> Placed {
     placed.unwrap_or_else(|| panic!("{name} did not slice"))
 }
 
-/// A program, its recompute oracle, and one engine per subscriber.
+/// A program, its recompute oracle, and one engine per subscriber — twice over.
+///
+/// `engines` are standalone: each computes the whole plan. `shared` holds §5.3's one shared
+/// dataflow and `subscribers` are the per-session halves attached to it. Both are compared with
+/// recompute at every event, because sharing an arrangement between subscribers is exactly the sort
+/// of optimisation that is right for one subscriber and wrong for two.
 struct Subject {
     name: String,
     runtime: Runtime,
     prepared: Arc<Prepared>,
     engines: Vec<Engine>,
+    shared: Arc<SharedDataflow>,
+    subscribers: Vec<Engine>,
     state: Value,
     seq: u64,
 }
@@ -67,6 +74,8 @@ impl Subject {
             .iter()
             .map(|_| Engine::new(prepared.clone()))
             .collect();
+        let shared = Arc::new(SharedDataflow::new(prepared.clone()));
+        let subscribers = ACTORS.iter().map(|_| shared.subscriber()).collect();
         let runtime = Runtime::new(placed, backend).expect("the program prepares");
         let state = runtime.initial_state().expect("an initial accumulator");
         Subject {
@@ -74,6 +83,8 @@ impl Subject {
             runtime,
             prepared,
             engines,
+            shared,
+            subscribers,
             state,
             seq: 0,
         }
@@ -99,23 +110,44 @@ impl Subject {
             let expected = self
                 .runtime
                 .view(&self.state, actor)
-                .unwrap_or_else(|e| panic!("{}: recompute: {e}", self.name));
+                .unwrap_or_else(|e| panic!("{}: recompute: {e}", self.name))
+                .render();
             let state = self.state.clone();
             let session = self.runtime.session(actor);
             let got = self.engines[i]
                 .render(&state, &session)
                 .unwrap_or_else(|e| panic!("{}: engine: {e}", self.name));
-            let Value::Html(got) = got else {
-                panic!("{}: the engine produced {}", self.name, got.display());
-            };
             assert_eq!(
-                got.render(),
-                expected.render(),
+                page(&self.name, got),
+                expected,
                 "{} at {at}, subscriber `{actor}`: the maintained view is not the recomputed one",
                 self.name
             );
+            let (got, version) = self
+                .shared
+                .render(&mut self.subscribers[i], &state, self.seq, &session)
+                .unwrap_or_else(|e| panic!("{}: shared engine: {e}", self.name));
+            assert_eq!(
+                page(&self.name, got),
+                expected,
+                "{} at {at}, subscriber `{actor}`: the view maintained over a *shared* dataflow is \
+                 not the recomputed one",
+                self.name
+            );
+            assert_eq!(
+                version, self.seq,
+                "{}: the shared dataflow rendered a version nobody asked for",
+                self.name
+            );
         }
-        ACTORS.len()
+        ACTORS.len() * 2
+    }
+}
+
+fn page(name: &str, v: Value) -> String {
+    match v {
+        Value::Html(h) => h.render(),
+        other => panic!("{name}: the engine produced {}", other.display()),
     }
 }
 

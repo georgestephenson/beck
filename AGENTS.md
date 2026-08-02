@@ -18,19 +18,27 @@ Write the commit message as the author of the change: what changed, and why.
   records what it proves and what it does not. It is history — a measured baseline — and should not
   be edited to track the compiler.
 - [`compiler/`](compiler/) is the built compiler and the runtime it targets, through Phase 2 plus
-  Phase 3's test construct, its general slicer and its incremental view engine.
-  [`docs/19-phase-1-report.md`](docs/19-phase-1-report.md),
+  Phase 3's test construct, its general slicer, its incremental view engine and that engine's
+  shared dataflow. [`docs/19-phase-1-report.md`](docs/19-phase-1-report.md),
   [`docs/20-phase-2-report.md`](docs/20-phase-2-report.md),
   [`docs/22-phase-3-report.md`](docs/22-phase-3-report.md),
-  [`docs/23-general-slicer-report.md`](docs/23-general-slicer-report.md) and
-  [`docs/24-incremental-views-report.md`](docs/24-incremental-views-report.md) record what each
+  [`docs/23-general-slicer-report.md`](docs/23-general-slicer-report.md),
+  [`docs/24-incremental-views-report.md`](docs/24-incremental-views-report.md) and
+  [`docs/26-arrangement-sharing-report.md`](docs/26-arrangement-sharing-report.md) and
+  [`docs/27-walls-report.md`](docs/27-walls-report.md) record what each
   phase does, what it refuses to claim, and the corrections it makes to the design documents.
-  Phase 3 is **two bullets of twelve plus the view engine**; docs/24 §24.10 names the nine bullets
-  that are untouched and the parts of the incremental-views bullet that are not built. Reports
+  Phase 3 is **two bullets of twelve plus most of a third**; docs/26 §26.9 names the nine bullets
+  that are untouched and the parts of the incremental-views bullet that are not built, and docs/27
+  §27.7 names the three of [`docs/25`](docs/25-benchmarks-and-expressiveness.md)'s six walls that
+  still stand. Reports
   are history: a later phase's correction to an earlier one goes in the later report, not into the
   earlier text.
-- [`compiler/corpus/`](compiler/corpus/) is 27 programs carrying **no placement annotations**, and
+- [`compiler/corpus/`](compiler/corpus/) is 28 programs carrying **no placement annotations**, and
   the measurement behind Phase 2's exit criterion. A program added there has to place itself.
+- [`compiler/sicp/`](compiler/sicp/) is the expressiveness benchmark
+  ([`docs/25`](docs/25-benchmarks-and-expressiveness.md) §25.5): chapters of SICP in Beck, with the
+  book's own stated answers as the oracle, and one file per remaining wall in `sicp/refusals/` whose
+  test asserts the wall is still there. A wall coming down is a test that starts failing.
 - Design decisions are numbered in [`docs/10-decisions.md`](docs/10-decisions.md). If a change
   contradicts one, say so rather than quietly diverging.
 
@@ -42,13 +50,17 @@ Write the commit message as the author of the change: what changed, and why.
   the Phase 2 numbers come from `cargo test --release --test measure_phase2 -- --nocapture` and the
   commands quoted in [`docs/20-phase-2-report.md`](docs/20-phase-2-report.md); the Phase 3 numbers
   come from `cargo test --workspace`, from `cargo test --release --test measure_incremental --
-  --nocapture`, and from the commands quoted in
-  [`docs/22-phase-3-report.md`](docs/22-phase-3-report.md),
-  [`docs/23-general-slicer-report.md`](docs/23-general-slicer-report.md) and
-  [`docs/24-incremental-views-report.md`](docs/24-incremental-views-report.md).
+  --nocapture`, from `cargo test --release --test shared_arrangements -- --nocapture`, and from the
+  commands quoted in [`docs/22-phase-3-report.md`](docs/22-phase-3-report.md),
+  [`docs/23-general-slicer-report.md`](docs/23-general-slicer-report.md),
+  [`docs/24-incremental-views-report.md`](docs/24-incremental-views-report.md) and
+  [`docs/26-arrangement-sharing-report.md`](docs/26-arrangement-sharing-report.md); the SICP numbers
+  come from `cargo test --release --test sicp` and from `beck test sicp/ch1.beck` and
+  `beck test sicp/ch2.beck`, quoted in [`docs/27-walls-report.md`](docs/27-walls-report.md) §27.5.
 - The harnesses are the project's conscience (§4.8, §8.3): `compiler/crates/beck-cli/tests/` holds
   the differential, replay-determinism, backend-seam, scaling, security, corpus, general-slicer,
-  incremental-analysis, incremental-engine, subscription and diagnostic-snapshot suites. Keep them green.
+  incremental-analysis, incremental-engine, shared-arrangement, subscription, view-metrics, SICP and
+  diagnostic-snapshot suites. Keep them green.
 - The CI workflow is an artefact too, and Phase 2 found that it had never run
   ([`docs/20-phase-2-report.md`](docs/20-phase-2-report.md) §20.4 item 8). If you change
   `.github/workflows/`, run the steps you changed by hand before trusting them.

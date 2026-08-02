@@ -1,0 +1,132 @@
+# SICP chapter 2 — "Building Abstractions with Data" — §2.2, as far as it goes today.
+#
+# Evidence for [`docs/27-walls-report.md`](../../docs/27-walls-report.md). This file could not have
+# existed a day before it was written, for two separate reasons that had to be removed in the same
+# change:
+#
+#   * §2.2 is "Hierarchical Data and the Closure Property", and the closure property is a *recursive
+#     type*. `docs/25` §25.6 item 2 measured that a Beck type could not mention itself, which ended
+#     chapter 2 at §2.2 and took chapters 4 and 5 with it. §27.3 is the fix;
+#   * and every SICP exercise is a **library**, which `beck test` could not run at all. Chapter 1
+#     carried a five-declaration application nobody used, purely to be executable. §27.4 removed the
+#     need, and this file has never had one.
+#
+# Every `test` is an exercise's own answer from the book, so `beck test sicp/ch2.beck` is the oracle.
+#
+# What is *not* here, and why, because a chapter file that quietly skipped the hard half would be
+# the thing this suite exists to prevent:
+#
+#   * §2.1.1's rational numbers need a numeric tower — `docs/25` §25.6 item 3, still standing;
+#   * §2.2.1's `map`, `filter` and `accumulate` are asked to be *built* by the reader, and a user
+#     cannot write a polymorphic definition — §25.6 item 4, still standing. So the exercises below
+#     are monomorphic at `Tree` and `Int` where the book is generic, which is a real loss and is
+#     recorded as one rather than papered over;
+#   * §2.3.4's Huffman trees need the same two.
+
+# ---------------------------------------------------------------------------------------------
+# 2.2.2 Hierarchical structures — the closure property, which is the whole point of the section
+# ---------------------------------------------------------------------------------------------
+
+# A tree is a leaf or a list of trees. The second variant is what "closure" means: the combining
+# means (`Node`) produces something the same means can combine again.
+union Tree:
+    Leaf(value: Int)
+    Node(kids: list[Tree])
+
+def leaves(t: Tree) -> list[Tree]:
+    match t:
+        case Leaf(value):
+            return [t]
+        case Node(kids):
+            return concat_lists(map_list(kids, leaves))
+
+# `count-leaves`, SICP's first procedure over a hierarchical structure.
+def count_leaves(t: Tree) -> Int:
+    return list_len(leaves(t))
+
+# Exercise 2.25-ish in spirit: the fringe of a tree, left to right. SICP's `fringe` returns the
+# leaves in order, and the book's own example is `(fringe (list x x))` over `x = (list 1 2)`.
+def fringe(t: Tree) -> list[Int]:
+    return map_list(leaves(t), leaf_value)
+
+def leaf_value(t: Tree) -> Int:
+    match t:
+        case Leaf(value):
+            return value
+        case Node(kids):
+            return 0
+
+# Exercise 2.30 / 2.31 — `square-tree`, written directly and then as a general `tree-map`. The book
+# asks for both so that the second can be shown to subsume the first; Beck cannot yet abstract over
+# the element type, so `tree_map` takes `Int -> Int` where SICP's takes any procedure.
+def square_tree(t: Tree) -> Tree:
+    return tree_map(t, square)
+
+def square(n: Int) -> Int:
+    return n * n
+
+def tree_map(t: Tree, f: Int -> Int) -> Tree:
+    match t:
+        case Leaf(value):
+            return Leaf(value=f(value))
+        case Node(kids):
+            return Node(kids=map_list(kids, lambda k: tree_map(k, f)))
+
+# Exercise 2.32's `subsets` is not here: it needs `list[list[Int]]` and a fold over lists, and the
+# prelude has `concat_lists` and `map_list` and no fold. What is here is the one line of it that
+# does work — lifting a flat list into the tree — so that the property below has a way to build a
+# tree of any size. Naming it `subsets` would have been the sort of thing this suite exists to
+# catch.
+def as_leaves(xs: list[Int]) -> list[Tree]:
+    return map_list(xs, lambda x: Leaf(value=x))
+
+# ---------------------------------------------------------------------------------------------
+# The book's own examples, as trees
+# ---------------------------------------------------------------------------------------------
+
+# `(cons (list 1 2) (list 3 4))` — the tree §2.2.2 opens with, whose `count-leaves` is 4.
+def example() -> Tree:
+    return Node(kids=[
+        Node(kids=[Leaf(value=1), Leaf(value=2)]),
+        Leaf(value=3),
+        Leaf(value=4),
+    ])
+
+# `x = (list 1 2)`, `(list x x)` — the tree §2.2.2's `fringe` example uses, whose fringe is
+# `(1 2 1 2)` and whose `count-leaves` is 4.
+def pair() -> Tree:
+    return Node(kids=[Leaf(value=1), Leaf(value=2)])
+
+def doubled() -> Tree:
+    return Node(kids=[pair(), pair()])
+
+def deep() -> Tree:
+    return Node(kids=[Node(kids=[Node(kids=[Leaf(value=7)])])])
+
+test "2.2.2 — count-leaves, on the section's own tree":
+    expect count_leaves(example()) == 4
+    expect count_leaves(pair()) == 2
+    expect count_leaves(doubled()) == 4
+    expect count_leaves(deep()) == 1
+
+test "2.2.2 — fringe, in order":
+    expect list_len(fringe(doubled())) == 4
+    expect fringe(doubled()) == [1, 2, 1, 2]
+    expect fringe(example()) == [1, 2, 3, 4]
+
+test "2.30/2.31 — square-tree, and tree-map subsuming it":
+    expect fringe(square_tree(example())) == [1, 4, 9, 16]
+    expect fringe(tree_map(doubled(), square)) == [1, 4, 1, 4]
+    expect count_leaves(square_tree(deep())) == 1
+    expect fringe(square_tree(deep())) == [49]
+
+test "the closure property: a combining means whose result it can combine again":
+    expect count_leaves(Node(kids=[example(), example()])) == 8
+    expect count_leaves(Node(kids=[Node(kids=[doubled()]), deep()])) == 5
+
+test "a tree built from a list is still a tree":
+    expect list_len(as_leaves([1, 2, 3])) == 3
+    expect count_leaves(Node(kids=as_leaves([1, 2, 3]))) == 3
+
+property "count-leaves is the length of the fringe, for any tree this program can build"(xs: list[Int]):
+    expect count_leaves(Node(kids=as_leaves(xs))) == list_len(xs)

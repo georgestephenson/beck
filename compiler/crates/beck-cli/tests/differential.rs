@@ -155,8 +155,8 @@ async fn split_execution_is_indistinguishable_from_single_process() {
     // One engine per subscription, exactly as `beck_rt::session::run` holds one.
     let mut clients: Vec<(String, PatchClient, Html, beck_core::engine::Engine)> = Vec::new();
     for actor in ACTORS {
-        let mut engine = app.runtime().view_engine().expect("an engine");
-        let view = app.maintain(&mut engine, actor).await.expect("render");
+        let mut engine = app.view_engine().expect("an engine");
+        let (view, _) = app.maintain(&mut engine, actor).await.expect("render");
         let mut client = PatchClient::new();
         client.apply(&[diff::Op::Replace {
             path: vec![],
@@ -181,7 +181,7 @@ async fn split_execution_is_indistinguishable_from_single_process() {
 
         // Every subscriber wakes, re-renders, and is sent the difference.
         for (subscriber, client, last, engine) in clients.iter_mut() {
-            let now = app.maintain(engine, subscriber).await.expect("render");
+            let (now, _) = app.maintain(engine, subscriber).await.expect("render");
             let ops = diff(last, &now);
             if !ops.is_empty() {
                 client.apply(&ops);

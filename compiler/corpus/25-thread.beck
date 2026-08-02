@@ -1,0 +1,171 @@
+# The program that would embarrass recursive types (docs/23 §23.10 item 4).
+#
+# Until docs/27 §27.3 a Beck type could not mention itself, so no program in this corpus described a
+# tree, a comment thread, or an expression — SICP §2.2's closure property, which is the ability of a
+# combining means to produce something the same means can combine again. Compiling one is the easy
+# half; the reason this file is in the *corpus* rather than in `sicp/` is the other half.
+#
+# A corpus program is carried through every pass this project has: placement with no annotations,
+# effect inference, the slicer, the plan, the incremental engine against its recompute oracle, the
+# replay-determinism harness, `Repr`, the value generator behind `property` blocks, the cost model,
+# `Sendable`, and `beck iface`. Each of those walks a type, and each is a place a type that contains
+# itself can loop forever. This file is how we know none of them does.
+#
+# Four recursive shapes on purpose:
+#
+#   * a **union that mentions itself through a list** — `Node.replies: list[Comment]`;
+#   * a **model and a union that mention each other**, so there is a forward reference in one
+#     direction however the file is ordered and reordering cannot fix it;
+#   * a **type used by a declaration above it**, which is the plain forward reference;
+#   * **recursive functions over the recursive type**, in the fold *and* in the view. The view's
+#     matters on its own: `plan.rs` decomposes a view by inlining definitions, and this is the
+#     program that makes its recursion guard load-bearing rather than theoretical.
+#
+# Like every program here it carries no placement annotations and has to place itself.
+
+model State:
+    threads: Map[Str, Thread]
+
+# Declared before `Comment`, which is declared before `Body`. Nothing here is in dependency order,
+# and that is the point.
+model Thread:
+    id: Str
+    title: Str
+    root: Comment
+
+union Comment:
+    Node(author: Str, body: Body, replies: list[Comment])
+
+# Mutually recursive with `Comment`: a body may quote comments, and those have bodies.
+model Body:
+    text: Str
+    quoting: list[Comment]
+
+union Command:
+    Start(id: Str, title: Str, text: Str)
+    Reply(id: Str, to: Str, text: Str)
+
+union Event:
+    Started(id: Str, title: Str, text: Str)
+    Replied(id: Str, to: Str, text: Str)
+
+union Rejection:
+    Blank
+    NoSuchThread
+
+def leaf(author: Str, text: Str) -> Comment:
+    return Node(author=author, body=Body(text=text, quoting=[]), replies=[])
+
+def apply_event(s: State, env: Envelope[Event]) -> State:
+    match env.body:
+        case Started(id, title, text):
+            return s.with(threads=map_insert(s.threads, id, Thread(id=id, title=title, root=leaf(env.actor, text))))
+        case Replied(id, to, text):
+            return replied(s, env.actor, id, to, text)
+
+def replied(s: State, actor: Str, id: Str, to: Str, text: Str) -> State:
+    match map_get(s.threads, id):
+        case Some(value):
+            return s.with(threads=map_insert(s.threads, id, value.with(root=under(value.root, to, leaf(actor, text)))))
+        case None:
+            return s
+
+# Recursive over the recursive type, inside the fold: reply beneath everything `to` said. Total by
+# construction — every comment is visited, none can fail — because a fold may not be partial (§3.7).
+def under(c: Comment, to: Str, reply: Comment) -> Comment:
+    match c:
+        case Node(author, body, replies):
+            if author == to:
+                return Node(author=author, body=body, replies=concat_lists([replies, [reply]]))
+            return Node(author=author, body=body, replies=map_list(replies, lambda r: under(r, to, reply)))
+
+# The closure property, used: a tree flattened into a list of itself. `count` is `list_len` of it,
+# which is also how the page's total is computed without a fold over lists.
+def flatten(c: Comment) -> list[Comment]:
+    match c:
+        case Node(author, body, replies):
+            return concat_lists([[c], flatten_all(replies)])
+
+def flatten_all(cs: list[Comment]) -> list[Comment]:
+    return concat_lists(map_list(cs, flatten))
+
+def count_comments(c: Comment) -> Int:
+    return list_len(flatten(c))
+
+def validate(s: State, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Start(id, title, text):
+            if str_is_empty(str_trim(text)):
+                return Err(error=Blank)
+            return Ok(value=[Started(id=id, title=title, text=text)])
+        case Reply(id, to, text):
+            return if_thread(s, id, to, text)
+
+def if_thread(s: State, id: Str, to: Str, text: Str) -> Result[list[Event], Rejection]:
+    match map_get(s.threads, id):
+        case Some(value):
+            if str_is_empty(str_trim(text)):
+                return Err(error=Blank)
+            return Ok(value=[Replied(id=id, to=to, text=text)])
+        case None:
+            return Err(error=NoSuchThread)
+
+def threads(s: State) -> list[Thread]:
+    return sort_by(map_values(s.threads), lambda t: t.title)
+
+# Recursive in the *view*. A plan decomposes a view by inlining definitions; this one cannot be
+# inlined, so it becomes one opaque operator and the page is still right.
+def render_comment(c: Comment) -> Html:
+    match c:
+        case Node(author, body, replies):
+            return ui:
+                li:
+                    span: (author + ": " + body.text)
+                    ul:
+                        for r in replies:
+                            render_comment(r)
+
+def render_thread(t: Thread) -> Html:
+    return ui:
+        li:
+            h2: t.title
+            ul:
+                render_comment(t.root)
+            span: (str(count_comments(t.root)) + " comments")
+
+def view(s: State, session: Session) -> Html:
+    return ui:
+        main:
+            h1: ("threads for " + session.actor)
+            ul:
+                for t in threads(s):
+                    render_thread(t)
+
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, board, validate)
+board: Signal[State] = durable(fold(apply_event, State(threads={}), events))
+page: Signal[Html] = per_session(board, view)
+
+test "a thread starts with one comment":
+    given [Started(id="t1", title="hello", text="first")] by "ana"
+    expect page contains "1 comments"
+    expect page contains "ana: first"
+
+test "a reply nests under what its author said":
+    given [Started(id="t1", title="hello", text="first"), Replied(id="t1", to="ana", text="second")] by "ana"
+    expect page contains "2 comments"
+    expect page contains "ana: second"
+
+test "a reply to a thread nobody started is refused":
+    given []
+    when Reply(id="nope", to="ana", text="hi")
+    expect Err(error=NoSuchThread)
+
+test "a blank comment never reaches the log":
+    given []
+    when Start(id="t1", title="hello", text="   ")
+    expect Err(error=Blank)
+
+property "no log this program can produce makes the page unrenderable"(log: list[Event]):
+    given log
+    expect page contains "threads for"

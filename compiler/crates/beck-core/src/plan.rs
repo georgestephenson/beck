@@ -240,12 +240,25 @@ impl Plan {
         b.state = b.push(Op::State, Vec::new(), None);
         b.session = b.push(Op::Session, Vec::new(), None);
 
-        let page = graph
-            .by_name
-            .get(&placed.roles.page_name)
-            .copied()
-            .unwrap_or(0);
-        let root = b.vertex(graph, page);
+        let root = match graph.by_name.get(&placed.roles.page_name).copied() {
+            Some(page) if page < graph.nodes.len() => b.vertex(graph, page),
+            // A **library** has no page, and an empty graph to look it up in. Its plan is its two
+            // sources and a unit — nothing renders it, and the `unwrap_or(0)` this replaced indexed
+            // vertex zero of a graph with no vertices (docs/27 §27.4).
+            _ => {
+                let id = b.push(Op::Const, Vec::new(), None);
+                b.constants.insert(
+                    id,
+                    Core {
+                        kind: CoreKind::Const(crate::core::Const::Unit),
+                        ty: Ty::unit(),
+                        tier: Tier::Any,
+                        span: beck_diag::Span::NONE,
+                    },
+                );
+                id
+            }
+        };
 
         let mut signals: Vec<(Arc<str>, OpId)> = Vec::new();
         for (&sig, &id) in &b.vertices {
