@@ -32,8 +32,8 @@ $ ./target/release/beck test sicp/ch2.beck
 §25.7 put the six in dependency order and all six are built: running a module with no merge point,
 recursive and forward-referencing types and the `B0320` defect
 ([`docs/27`](../../docs/27-walls-report.md)); proper tail calls
-([`docs/28`](../../docs/28-tail-calls-report.md)); reals and user-written polymorphism
-([`docs/29`](../../docs/29-numeric-tower-and-polymorphism-report.md)).
+([`docs/31`](../../docs/31-tail-calls-report.md)); reals and user-written polymorphism
+([`docs/32`](../../docs/32-numeric-tower-and-polymorphism-report.md)).
 
 Each wall that came down left a test pointing the other way rather than no test at all. The clearest
 example is `refusals/tail.beck`, which asserted that a tail call eight thousand deep aborts the

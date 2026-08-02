@@ -14,10 +14,21 @@ name: phase 3
 on:
   push:
     branches: [main]
-    paths: ["compiler/**", ".github/workflows/compiler.yml"]
+    # All of .github/workflows/: the workflow checks here scan every workflow file, so they must
+    # run when any of them changes (docs/adr/0005).
+    paths: ["compiler/**", ".github/workflows/**"]
   pull_request:
-    paths: ["compiler/**", ".github/workflows/compiler.yml"]
+    paths: ["compiler/**", ".github/workflows/**"]
   workflow_dispatch:
+
+# None of these jobs writes to the repository.
+permissions:
+  contents: read
+
+# A superseded push to a PR cancels the runs it superseded; `main` never cancels.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 defaults:
   run:
@@ -28,13 +39,46 @@ env:
   RUSTFLAGS: -D warnings
 
 jobs:
-  check:
+  the-workflows-are-yaml:
+    # Every workflow file through a real parser, in both workflows: if this file is the broken
+    # one, GitHub refuses it and only phase0.yml's copy can say so, and vice versa (docs/adr/0005).
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+      - name: every workflow file parses
+        working-directory: .
+        run: |
+          python3 - <<'PY'
+          import glob, sys, yaml
+          files = sorted(glob.glob(".github/workflows/*.yml") + glob.glob(".github/workflows/*.yaml"))
+          assert files, "no workflow files found — the glob is wrong, not the repo"
+          for f in files:
+              yaml.safe_load(open(f))
+              print(f, "parses")
+          PY
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: beck_ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      # beck-rt's log contract runs against a live Postgres; REQUIRE makes a missing server a
+      # failure rather than a silent skip.
+      BECK_PG: postgres://postgres:postgres@localhost/beck_ci
+      BECK_REQUIRE_PG: "1"
+    steps:
+      - uses: actions/checkout@v4
+      # rust-toolchain.toml's pin (1.94.1, with components) wins over the default this action
+      # sets; the action only ensures rustup is present and current.
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: compiler
@@ -53,6 +97,7 @@ jobs:
   the-sketch-still-compiles-and-runs:
     # "Every phase ships a demo that runs. No phase completes on a design document." (§8.3)
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -107,7 +152,7 @@ jobs:
           # beyond them are held by tests/sicp.rs, which `cargo test` above already runs.
           ./target/release/beck test sicp/ch1.beck
           ./target/release/beck test sicp/ch2.beck
-          # docs/28: a recursion the user cannot bound must end in a diagnostic and a live process.
+          # docs/31: a recursion the user cannot bound must end in a diagnostic and a live process.
           # An exit status of 134 (SIGABRT) or 139 (SIGSEGV) is the failure this replaced, and it is
           # exactly the thing a `! cmd` gate would have accepted, so the status is checked rather
           # than only the failure.
@@ -142,7 +187,7 @@ jobs:
               '    expect up(0, 1000000) == 1000000\n')
           PY
           ./target/release/beck test /tmp/iterative.beck
-          # docs/29: the last two walls. Reals reproduce the doubles SICP prints, and a user-written
+          # docs/32: the last two walls. Reals reproduce the doubles SICP prints, and a user-written
           # polymorphic definition is instantiated afresh at every call — asserted here through the
           # binary because `cargo test` above asserts it through the library, and the claim is that
           # a person gets it too.
@@ -166,7 +211,7 @@ jobs:
           PY
           ! ./target/release/beck check /tmp/rigid.beck
           ./target/release/beck check /tmp/rigid.beck 2>&1 | grep -q 'found `T`'
-          # docs/30: a list can be taken apart, and a `match` on one has to cover both shapes.
+          # docs/33: a list can be taken apart, and a `match` on one has to cover both shapes.
           python3 - <<'PY'
           open("/tmp/fold.beck", "w").write(
               'def accumulate[T, U](xs: list[T], seed: U, combine: (T, U) -> U) -> U:\n'
@@ -188,7 +233,7 @@ jobs:
           ./target/release/beck test /tmp/fold.beck
           ! ./target/release/beck check /tmp/partial.beck
           ./target/release/beck check /tmp/partial.beck 2>&1 | grep -q 'B0341'
-          # docs/30: and a pure caller of a generic higher-order definition stays pure, however
+          # docs/33: and a pure caller of a generic higher-order definition stays pure, however
           # another caller uses it. Read off the *published contract*, which is where it was wrong.
           python3 - <<'PY'
           open("/tmp/rows.beck", "w").write(
@@ -325,7 +370,11 @@ jobs:
     # when no cluster is reachable, which is right on a laptop and would be a silently-absent gate
     # here — the exact failure docs/19 §19.4 item 10 names, and the one this workflow file has
     # already committed once.
+    #
+    # The timeout matters here: this job fetches k3d, CRDs and images from the network, and a hang
+    # would otherwise sit at GitHub's six-hour default, neither passed nor failed.
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -372,6 +421,7 @@ jobs:
     # containers — and it is what stops `--platform compose` from rotting into a code path nobody
     # runs.
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -402,24 +452,52 @@ jobs:
   budgets:
     # Deterministic budgets only — the ones §8.3 calls gates.
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - name: thin-client payload (§5.1 target < 10 KB brotli)
+        # `shell: bash` turns on pipefail — without it a missing `brotli` makes `br` zero and the
+        # gate passes at 0 bytes. `command -v` names that failure.
+        shell: bash
         run: |
+          command -v brotli
           f=crates/beck-rt/client/beck-thin.js
           raw=$(wc -c < "$f")
           br=$(brotli -c -q 11 "$f" | wc -c)
           echo "thin client: ${raw} B raw, ${br} B brotli (budget 10240)"
           test "$br" -lt 10240
 
-  licences:
-    # §8.3: "cargo-deny licence gate from the first commit, given §7's open-source constraint."
+  measurements:
+    # Reported, never thresholded (§13.7): the release-profile runs the phase reports quote, so
+    # the published numbers stay reproducible (docs/adr/0006).
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: compiler
+      - name: the phase 2 and phase 3 measurements, printed
+        run: |
+          cargo test --release --test measure_phase2 -- --nocapture
+          cargo test --release --test measure_incremental -- --nocapture
+          cargo test --release --test shared_arrangements -- --nocapture
+          # The evaluator's host stack per level of non-tail recursion, in both profiles — the
+          # number `beck_eval::STACK_BYTES` is chosen from, and the equality that says a tail call
+          # costs nothing (docs/31 §31.3, §31.5). It prints in release and gates in either.
+          cargo test -p beck-eval -- --nocapture
+          cargo test --release -p beck-eval -- --nocapture
+
+  licences:
+    # §8.3 practice 5. The full `check`, advisories included (docs/adr/0004). cargo-deny ships
+    # its own binary, so no Rust toolchain is installed here.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           manifest-path: compiler/Cargo.toml
           arguments: --workspace
-          command: check licenses bans sources
+          command: check

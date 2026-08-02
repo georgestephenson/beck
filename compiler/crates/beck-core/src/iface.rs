@@ -75,7 +75,7 @@ pub struct Item {
 pub enum Kind {
     Function {
         /// The names a generic definition quantifies over, in the order written. Empty for the
-        /// monomorphic case, which is every definition written before `docs/29`.
+        /// monomorphic case, which is every definition written before `docs/32`.
         typarams: Vec<Arc<str>>,
         params: Vec<(Arc<str>, Ty)>,
         ret: Ty,

@@ -1,13 +1,13 @@
-# 29 — Phase 3 report, part 7: the last two walls
+# 32 — Phase 3 report, part 7: the last two walls
 
 [`25`](25-benchmarks-and-expressiveness.md) §25.6 measured six walls between Beck and the rest of
 SICP and §25.7 put them in dependency order. [`27`](27-walls-report.md) took the first three,
-[`28`](28-tail-calls-report.md) the fourth. This is the last two:
+[`31`](31-tail-calls-report.md) the fourth. This is the last two:
 
 | §25.7 | wall | status |
 |---|---|---|
-| 5 | **The numeric tower** — "reals first, then rationals and bignums" | **reals built** — §29.1–§29.5. Rationals and bignums are not, and §29.9 says so |
-| 6 | **User-written polymorphism** — "the largest of the six" | **built** — §29.7–§29.8 |
+| 5 | **The numeric tower** — "reals first, then rationals and bignums" | **reals built** — §32.1–§32.5. Rationals and bignums are not, and §32.9 says so |
+| 6 | **User-written polymorphism** — "the largest of the six" | **built** — §32.7–§32.8 |
 
 **The strongest oracle in the suite came out of the first one, and it is an equality.** SICP prints
 the value of `(sqrt 9)` as `3.00009155413138`. `beck test sicp/ch1.beck` now prints
@@ -21,29 +21,29 @@ running the same sequence of operations. Three more of the book's printed reals 
 element types, and `filter`, `append` and `length` are beside it.
 
 Along the way the reals found a defect nothing in SICP would have caught — `<` answered backwards
-for every negative real, because the fold's total order was the order of `f64::to_bits` (§29.2) —
+for every negative real, because the fold's total order was the order of `f64::to_bits` (§32.2) —
 and removing the last wall made a **new** one visible, which now has a refusal file of its own: a
 `list[T]` cannot be taken apart, so §2.2.1's `accumulate` still cannot be written, for a reason that
-has nothing to do with polymorphism (§29.10).
+has nothing to do with polymorphism (§32.10).
 
 482 tests, no failures, no compiler warnings, no clippy warnings — up from
-[`28`](28-tail-calls-report.md)'s 478. Chapter 1 is 21 tests (was 15), chapter 2 is 10 (was 6).
+[`31`](31-tail-calls-report.md)'s 478. Chapter 1 is 21 tests (was 15), chapter 2 is 10 (was 6).
 
-## 29.1 What was asked, and what is answered
+## 32.1 What was asked, and what is answered
 
 | asked for | status | where |
 |---|---|---|
-| Reals: `+ - * /`, comparison, `abs` | done, resolved from the operands rather than from a type class | §29.3 |
-| §1.1.7 Newton's method, §1.3.3 fixed points, §1.3.4 derivatives | done — nine new tests in `ch1.beck` | §29.5 |
-| The book's own printed doubles | done, **as equalities** rather than tolerances | §29.5 |
-| A real in a durable fold, on the wire, through `Repr` and replay | done — `corpus/26-sensors.beck` | §29.6 |
-| Exact rationals, bignums | **not done**. §2.1.1 still cannot be written, and reals are not a substitute for it | §29.9 |
-| `def map[T, U](…)` — a user-written polymorphic definition | done, with the parameter **rigid** inside the body | §29.7 |
-| Instantiated afresh at every call | done, and measured across a `.becki` boundary rather than believed | §29.8 |
-| Type parameters on a `model` or `union` | **not done** — `union Tree[T]` is not writable | §29.9 |
-| Effect polymorphism for a user's higher-order definition | **not done, and now conspicuous** — a pure caller of a generic `map` inherits an effectful caller's row | §29.9 |
+| Reals: `+ - * /`, comparison, `abs` | done, resolved from the operands rather than from a type class | §32.3 |
+| §1.1.7 Newton's method, §1.3.3 fixed points, §1.3.4 derivatives | done — nine new tests in `ch1.beck` | §32.5 |
+| The book's own printed doubles | done, **as equalities** rather than tolerances | §32.5 |
+| A real in a durable fold, on the wire, through `Repr` and replay | done — `corpus/26-sensors.beck` | §32.6 |
+| Exact rationals, bignums | **not done**. §2.1.1 still cannot be written, and reals are not a substitute for it | §32.9 |
+| `def map[T, U](…)` — a user-written polymorphic definition | done, with the parameter **rigid** inside the body | §32.7 |
+| Instantiated afresh at every call | done, and measured across a `.becki` boundary rather than believed | §32.8 |
+| Type parameters on a `model` or `union` | **not done** — `union Tree[T]` is not writable | §32.9 |
+| Effect polymorphism for a user's higher-order definition | **not done, and now conspicuous** — a pure caller of a generic `map` inherits an effectful caller's row | §32.9 |
 
-## 29.2 The ordering defect, which no SICP exercise would have found
+## 32.2 The ordering defect, which no SICP exercise would have found
 
 `Value::Float` is a `u64` and always has been, with a comment saying why: a fold's accumulator is a
 map key and a component of the state digest, so it needs a total order, and `f64` has none. What it
@@ -71,7 +71,7 @@ is `Eq` and `Ord` and neither survives them: `-0.0` becomes `0.0`, and every NaN
 **Beck's `==` on reals is therefore structural, and `NaN == NaN`** — a deviation from IEEE 754 that
 somebody porting numeric code has to know about, stated here rather than discovered.
 
-## 29.3 Reals without a numeric type class
+## 32.3 Reals without a numeric type class
 
 Phase 1 already had one ad-hoc operator, and said why:
 
@@ -83,7 +83,7 @@ The tower needs the same answer with one more tier. `+`, `-`, `*`, `/`, unary `-
 resolved from their operands: whichever of the two operands and the expectation *first* resolves to
 `Int` or `Float` decides, and an expression with nothing known about it defaults to `Int` — so every
 program written before reals existed still means what it meant. Comparison needed nothing: `<` and
-friends have been `(a, a) -> Bool` since Phase 1, and §29.2 is what made them right.
+friends have been `(a, a) -> Bool` since Phase 1, and §32.2 is what made them right.
 
 Three things this deliberately does **not** do.
 
@@ -109,7 +109,7 @@ there even though SICP *builds* it, and `ch1.beck` shadows it with the book's ow
 which a `def` may do, and which is worth one line of the chapter's header because it looks like a
 mistake and is not.
 
-## 29.4 What the reals cost the rest of the compiler
+## 32.4 What the reals cost the rest of the compiler
 
 Almost nothing, and the almost is the interesting part. Placement already sized a `Float` at 8
 bytes; the value generator already produced and shrank one; the wire encoder already had a case for
@@ -127,7 +127,7 @@ evidence: every number in chapter 1 lives and dies inside one pure procedure, an
 the plan, the incremental engine against its recompute oracle, replay determinism, `Repr`, the value
 generator, the cost model, `Sendable` and `beck iface`.
 
-## 29.5 The book's own doubles, as equalities
+## 32.5 The book's own doubles, as equalities
 
 Nine tests went into `ch1.beck`: §1.1.7's square roots, §1.3.3's fixed points and average damping,
 §1.3.4's derivative, Newton transform and `fixed-point-of-transform`, and exercise 1.35's golden
@@ -153,22 +153,22 @@ Two of the nine are the other kind: `sqrt_damped`, `cube_root`, `sqrt_newton` an
 values and inventing a digit string would be asserting the implementation against itself.
 
 Every iterative procedure in the new sections — `sqrt_iter`, `fixed_point` — is a tail call, so
-[`28`](28-tail-calls-report.md) is load-bearing here rather than incidental: `fixed_point` iterates
+[`31`](31-tail-calls-report.md) is load-bearing here rather than incidental: `fixed_point` iterates
 until it converges, and how many times that is is not a number the author of the chapter knows.
 
-## 29.6 A real in the accumulator
+## 32.6 A real in the accumulator
 
 [`corpus/26-sensors.beck`](../compiler/corpus/26-sensors.beck) is the twenty-sixth single-file
 corpus program: readings folded into a `Map[Str, Float]` with a running total, a mean, and a
 `sort_by` over the reals themselves.
 
 Three claims no SICP exercise could make. A `Float` round-trips through `Repr` and the log, so
-`beck replay` reproduces it. A *command* carrying one decodes from the wire — §29.4's gap, with a
+`beck replay` reproduces it. A *command* carrying one decodes from the wire — §32.4's gap, with a
 test on it. And `sort_by` over a list with negatives in it produces the order a person expects,
-which is §29.2 asserted in the one place where getting it wrong would corrupt a rendered page rather
+which is §32.2 asserted in the one place where getting it wrong would corrupt a rendered page rather
 than an expression.
 
-## 29.7 A type parameter that is rigid where it should be and fresh where it should be
+## 32.7 A type parameter that is rigid where it should be and fresh where it should be
 
 `def map[T, U](xs: list[T], f: T -> U) -> list[U]` is four things: syntax, a scope, a
 representation, and a scheme.
@@ -212,7 +212,7 @@ rather than one over-constrained one. The prelude's schemes still quantify over 
 because nobody reads their source; a user's quantifies over names, because the name is what the body
 is checked against, what a diagnostic prints, and what `beck iface` publishes.
 
-## 29.8 Across a `.becki`, which is where it would have failed silently
+## 32.8 Across a `.becki`, which is where it would have failed silently
 
 [`27`](27-walls-report.md) §27.7 named the shape of this gap for its own feature:
 
@@ -233,14 +233,14 @@ failed to link, while every single-module test in the suite went on passing. `be
 --wire-compat` treats a change to the type-parameter list as a breaking change, because `map[T, U]`
 and `map[T]` are different contracts.
 
-## 29.9 What is still not
+## 32.9 What is still not
 
 - **The tower is one tier of three.** Reals are built; **exact rationals and bignums are not**.
   §2.1.1 of SICP is *about* exact rationals — its point is that 1/3 + 1/3 is 2/3 — and reals are not
   a substitute for it, they are the thing it is written against. `factorial` and `fast_expt`
   overflow `i64` exactly as before, with an error rather than a wrap.
 - **No numeric type class.** `square` and `square_real` are two definitions of one function in the
-  most-read file in the suite (§29.3). Traits are the fix and traits are still parsed-and-not-checked,
+  most-read file in the suite (§32.3). Traits are the fix and traits are still parsed-and-not-checked,
   which is now the oldest unpaid debt in the compiler: Phase 1 named it, Phase 2 shipped the effect
   system it was expected to arrive with, and four reports since have not touched it.
 - **A *type* still cannot take a parameter.** `def map[T]` is built; `union Tree[T]` and `model
@@ -269,13 +269,13 @@ and `map[T]` are different contracts.
 - **`check.rs` is 3,170 lines**, up from 3,012. §22.6's request to move the test-checking pass out of
   it is still not done, for the sixth report running, and this added two resolutions and a scope
   rather than moving anything.
-- Everything [`26`](26-arrangement-sharing-report.md) §26.9 and [`28`](28-tail-calls-report.md) §28.7
+- Everything [`26`](26-arrangement-sharing-report.md) §26.9 and [`31`](31-tail-calls-report.md) §31.7
   list is unchanged: no LLVM backend, no native codegen, no Mode B, no client polish, no `test
   --update`, no structured concurrency, no `Result`/error rows, no SQLite substrate, no standard
   library v1 beyond these three primitives, no identity beyond a dev-mode actor, no LSP, no
   playground, no supply-chain tooling. SQL read models, pgwire and query fusion are still nothing.
 
-## 29.10 The wall that removing the last wall made visible
+## 32.10 The wall that removing the last wall made visible
 
 §2.2.1 asks the reader to build `map`, then `filter`, then `accumulate`. Two of those three now
 work. `accumulate` does not, and the reason is not polymorphism:
@@ -287,27 +287,30 @@ recursion the book writes — "the empty list, or the first element combined wit
 the rest" — has nothing to recurse on, and all of §2.2.3 ("Sequences as Conventional Interfaces")
 goes with it.
 
-[`sicp/refusals/list-destructuring.beck`](../compiler/sicp/refusals/list-destructuring.beck) is that
-wall, written the day the last of §25.6's six fell, with its two diagnostics and the decision it
-poses: `head`/`tail` primitives returning `Option[T]` and `list[T]` would let all of it be written,
+`sicp/refusals/list-destructuring.beck` is that wall, written the day the last of §25.6's six fell,
+with its two diagnostics and the decision it poses: `head`/`tail` primitives returning `Option[T]` and `list[T]` would let all of it be written,
 but the shape that matches the rest of the language is **list patterns in `match`**, because that is
 how every other constructor in Beck is taken apart.
+
+*The file is gone: [`33`](33-effect-polymorphism-and-list-patterns-report.md) took the wall down
+and the filename is left here unlinked, because a report is history and the sentence above was true
+when it was written.*
 
 That the refusals directory is not empty is the suite working, not the suite running out. Six walls
 measured, six removed, one discovered — and the discovered one was invisible from where §25.6 was
 standing, because the wall in front of it was taller.
 
-## 29.11 What this changes for the rest of Phase 3
+## 32.11 What this changes for the rest of Phase 3
 
 1. **The expressiveness bullet is done and the standard-library bullet has started.** §25.6's list
    was "the language's own means of abstraction, which four phases had never been pointed at". All
    six are answered. What replaces it on the roadmap is not a seventh wall of the same kind — it is
-   the standard library, and §29.10 has named its first item.
-2. **Traits are now the thing everything is waiting for.** §29.3's two `square`s, §29.9's numeric
+   the standard library, and §32.10 has named its first item.
+2. **Traits are now the thing everything is waiting for.** §32.3's two `square`s, §32.9's numeric
    tower, and §2.4–§2.5 of SICP ("Systems with Generic Operations") are one missing feature wearing
    three hats. Parametric polymorphism was the larger *implementation* and it turned out to be the
    smaller *unlock*: it quantifies, and what these need is to constrain.
-3. **A defect can hide behind a benchmark as well as behind a test.** §29.2's ordering bug survived
+3. **A defect can hide behind a benchmark as well as behind a test.** §32.2's ordering bug survived
    every SICP number because the book's numbers are positive. "The suite found it" is an argument
    this project has made twice and it is not an argument that a suite finds everything — the
    representation review found this one, and the test was written afterwards.

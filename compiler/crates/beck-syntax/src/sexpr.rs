@@ -289,7 +289,7 @@ pub fn atom_node(text: &str, span: Span) -> Node {
 /// like, and §2.3 makes that surface a notation people write by hand for macro debugging. Requiring
 /// `(typarams)` on every one of them would be a tax on the notation for a feature most definitions
 /// do not use, so the reader normalises instead — and the AST keeps one shape, which is what every
-/// pass downstream indexes into (`docs/29` §29.7).
+/// pass downstream indexes into (`docs/32` §32.7).
 fn normalise_def(items: &mut Vec<Node>, span: beck_diag::Span) {
     let already = items
         .get(1)

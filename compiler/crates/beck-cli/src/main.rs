@@ -258,7 +258,7 @@ fn main() -> Result<()> {
     // Every command below may end up evaluating Beck code, and the evaluator spends host stack on
     // recursion that is not in tail position. It says how much it needs; this is where a `beck`
     // process supplies it, so that a deep program gets `beck-eval`'s diagnostic rather than the
-    // process getting a SIGSEGV (`docs/28` §28.3).
+    // process getting a SIGSEGV (`docs/31` §31.3).
     beck_eval::on_the_evaluator_stack(move || dispatch(cli))
 }
 

@@ -41,7 +41,7 @@ def toggled(s: State, id: Id) -> State:
 # than in `sicp/`: a generic signature that crosses a `.becki` boundary is a different claim from
 # one that does not. `beck iface` publishes `[T]`, the importing module instantiates it afresh per
 # call, and `app.beck` uses both at two different element types — which is the thing that would
-# silently over-constrain if the published scheme were monomorphic (docs/29 §29.8).
+# silently over-constrain if the published scheme were monomorphic (docs/32 §32.8).
 
 def only[T](xs: list[T], keep: T -> Bool) -> list[T]:
     return filter_list(xs, keep)

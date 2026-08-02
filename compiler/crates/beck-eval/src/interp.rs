@@ -12,7 +12,7 @@
 //! * **Errors are values, not panics.** A partial operation returns an [`EvalError`] carrying the
 //!   span, because a language server has to survive evaluating half-written code.
 //!
-//! To which a fourth was added by [`docs/28-tail-calls-report.md`](../../../../docs/28-tail-calls-report.md):
+//! To which a fourth was added by [`docs/31-tail-calls-report.md`](../../../../docs/31-tail-calls-report.md):
 //!
 //! * **A call in tail position does not grow the host stack, and no program aborts the process.**
 //!   [`Interp::eval`] is a trampoline: [`Interp::step`] walks the tail positions of a body without
@@ -220,7 +220,7 @@ impl<'h> Interp<'h> {
     /// One host frame is taken here, and a call in tail position replaces the loop's state rather
     /// than nesting inside it — so `fact_iter`, `gcd` and `find_divisor` run in constant space and
     /// SICP §1.2.1's distinction between a recursive and an iterative *process* is observable
-    /// (`docs/28` §28.2).
+    /// (`docs/31` §31.2).
     pub fn eval(&self, c: &Core, env: &Env) -> EvalResult {
         let _frame = self.enter(c.span)?;
         let mut step = self.step(c, env)?;
@@ -243,7 +243,7 @@ impl<'h> Interp<'h> {
     ///
     /// This is where most of the trampoline's cost was paid back. Routing *every* subexpression
     /// through [`Interp::eval`] put a second host frame and a loop under each of them, and a real
-    /// program is mostly these nodes. `docs/28` §28.5 has what the trampoline cost in the end.
+    /// program is mostly these nodes. `docs/31` §31.5 has what the trampoline cost in the end.
     #[inline]
     fn operand(&self, c: &Core, env: &Env) -> EvalResult {
         match &c.kind {
@@ -355,7 +355,7 @@ impl<'h> Interp<'h> {
                 // Not a tail position, but a *transparent* one: the value of a reference to a
                 // top-level definition is the value of its body, in no environment at all. Walking
                 // into it here rather than recursing saves a host frame on every call a program
-                // makes, which is most of what the trampoline would otherwise have cost (§28.5).
+                // makes, which is most of what the trampoline would otherwise have cost (§31.5).
                 CoreKind::Global(name) => {
                     let Some(body) = self.host.global(name) else {
                         return Err(EvalError::new(
@@ -380,7 +380,7 @@ impl<'h> Interp<'h> {
     /// Every arm with a local of its own is a separate `#[inline(never)]` method rather than a
     /// block, and that is not tidiness: an unoptimised build gives each arm's temporaries their own
     /// slot in the enclosing frame, so a single fat `match` on the recursive path was costing every
-    /// level of a program's recursion the sum of the arms it did not take (`docs/28` §28.4).
+    /// level of a program's recursion the sum of the arms it did not take (`docs/31` §31.4).
     fn leaf(&self, c: &Core, env: &Env) -> EvalResult {
         match &c.kind {
             CoreKind::Const(k) => Ok(constant(k)),
@@ -515,7 +515,7 @@ impl<'h> Interp<'h> {
         // difference between the two tiers of the tower: `i64` overflow has no representable
         // answer, so it is an error, while IEEE 754 defines one for every real operation —
         // including division by zero, whose answer is an infinity. Making `1.0 / 0.0` an error
-        // would be inventing a rule the format already has (`docs/29` §29.3).
+        // would be inventing a rule the format already has (`docs/32` §32.3).
         macro_rules! arith {
             ($int:expr, $real:expr) => {{
                 want(2)?;
@@ -1014,7 +1014,7 @@ fn match_pattern(p: &Pattern, v: &Value) -> Option<Vec<(u32, Value)>> {
             }
             if let Some(Some(id)) = rest {
                 // The tail is a fresh list. `Arc<Vec<_>>` cannot share a suffix, so this is `O(n)`
-                // per step and a fold written over it is `O(n²)` — stated in `docs/30` §30.6
+                // per step and a fold written over it is `O(n²)` — stated in `docs/33` §33.6
                 // rather than discovered on a long list.
                 out.push((*id, Value::List(Arc::new(xs[binds.len()..].to_vec()))));
             }

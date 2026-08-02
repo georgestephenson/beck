@@ -1,12 +1,12 @@
-# 30 — Phase 3 report, part 8: two findings, fixed
+# 33 — Phase 3 report, part 8: two findings, fixed
 
-[`29`](29-numeric-tower-and-polymorphism-report.md) closed §25.6's six walls and ended with two
+[`32`](32-numeric-tower-and-polymorphism-report.md) closed §25.6's six walls and ended with two
 things it had found rather than fixed. This is both of them.
 
 | finding | where it was named | status |
 |---|---|---|
-| A generic higher-order definition's row is shared by every call site, so a **pure caller** of it is published as effectful because *another* caller passed an effectful function | §29.9, called "the clearest next item this report produces" | **fixed** — §30.2 |
-| A `list[T]` cannot be taken apart, so §2.2.1's `accumulate` and all of §2.2.3 cannot be written | §29.10, the wall removing wall 6 made visible | **fixed** — §30.5 |
+| A generic higher-order definition's row is shared by every call site, so a **pure caller** of it is published as effectful because *another* caller passed an effectful function | §32.9, called "the clearest next item this report produces" | **fixed** — §33.2 |
+| A `list[T]` cannot be taken apart, so §2.2.1's `accumulate` and all of §2.2.3 cannot be written | §32.10, the wall removing wall 6 made visible | **fixed** — §33.5 |
 
 **The first is §3.2's own sentence, finally true of a definition a user wrote.** `map : (list[a], (a
 -> b ! e)) -> list[b] ! e` has been in the design since the beginning and in `prelude.rs` since
@@ -27,27 +27,36 @@ exercise is for.
 A `match` on a list is checked for **exhaustiveness**, which lists did not get for free: a union got
 one because its variants are declared, and a list's two shapes had to be taught.
 
-`sicp/refusals/` is not empty and that is deliberate. Two walls [`29`](29-numeric-tower-and-polymorphism-report.md)
-§29.9 described in prose now have files and tests: exact rationals, and a type that takes a
-parameter (§30.7).
+`sicp/refusals/` is not empty and that is deliberate. Two walls [`32`](32-numeric-tower-and-polymorphism-report.md)
+§32.9 described in prose now have files and tests: exact rationals, and a type that takes a
+parameter (§33.7).
 
 486 tests, no failures, no compiler warnings, no clippy warnings — up from
-[`29`](29-numeric-tower-and-polymorphism-report.md)'s 482. Chapter 2 is 13 tests, up from 10.
+[`32`](32-numeric-tower-and-polymorphism-report.md)'s 482. Chapter 2 is 13 tests, up from 10.
 
-## 30.1 What was asked, and what is answered
+*Merging `main` afterwards brings the workspace to **488**: the two extra are its, not this report's.
+The same merge moved this trilogy from 28–30 to 31–33, because `main` had claimed those three numbers
+for [`28`](28-releases-and-deployment.md), [`29`](29-domain-driven-design.md) and
+[`30`](30-bounded-contexts-and-microservices.md) in the meantime. It also moved the evaluator's
+host stack per level of non-tail recursion — [`31`](31-tail-calls-report.md) §31.3 measured 6,595
+bytes in a debug build and 1,233 in a release one, and after `main`'s dependency bumps the same
+harness reports **6,596** and **1,281**. The ceiling still fits `STACK_BYTES` with the factor of
+two over it that the test asserts, which is what the test is for.*
+
+## 33.1 What was asked, and what is answered
 
 | asked for | status | where |
 |---|---|---|
-| A pure caller of a generic higher-order definition stays pure | done | §30.2 |
-| The effect still arrives somewhere — the caller that supplied it | done, tested in both directions | §30.2 |
-| Effect polymorphism across a `.becki` | **not done**, and unchanged from Phase 2 | §30.4 |
-| A definition that *returns* a function | **not generalised** — the one shape the fix cannot reach, with the test that says so | §30.3 |
-| `accumulate`, and §2.2.3's sequence interface | done — `sicp/ch2.beck` | §30.5, §30.6 |
-| Exhaustiveness for a `match` on a list | done, with a diagnostic that names the missing shape | §30.5 |
-| Nested patterns (`case [Added(id), *rest]`) | **not done** — patterns stay shallow | §30.7 |
-| The two walls §29.9 described in prose | given files and tests | §30.7 |
+| A pure caller of a generic higher-order definition stays pure | done | §33.2 |
+| The effect still arrives somewhere — the caller that supplied it | done, tested in both directions | §33.2 |
+| Effect polymorphism across a `.becki` | **not done**, and unchanged from Phase 2 | §33.4 |
+| A definition that *returns* a function | **not generalised** — the one shape the fix cannot reach, with the test that says so | §33.3 |
+| `accumulate`, and §2.2.3's sequence interface | done — `sicp/ch2.beck` | §33.5, §33.6 |
+| Exhaustiveness for a `match` on a list | done, with a diagnostic that names the missing shape | §33.5 |
+| Nested patterns (`case [Added(id), *rest]`) | **not done** — patterns stay shallow | §33.7 |
+| The two walls §32.9 described in prose | given files and tests | §33.7 |
 
-## 30.2 A row per call site
+## 33.2 A row per call site
 
 The defect, stated exactly. A definition's signature mints one row variable per written function
 type, and that variable lived in the checker's substitution rather than in the definition's scheme.
@@ -79,7 +88,7 @@ than deleted, with its old comment quoted in the new one. A second test asserts 
 which is the one a mistake here would break silently: the effect has to arrive at the caller that
 supplied it, and `stamped` is charged `nondet` while `plain` is not.
 
-## 30.3 What is over-approximated, and the one shape that is not generalised
+## 33.3 What is over-approximated, and the one shape that is not generalised
 
 **Over-approximated:** a definition promises to perform whatever its function-typed parameters may
 perform, whether or not it calls them.
@@ -117,7 +126,7 @@ dependency order — SCCs of the call graph, generalising after each. That is a 
 checker's shape and it would also change the order diagnostics are emitted in, which the snapshot
 suite would notice. It is the next thing here, and it is a different size of job from this one.
 
-## 30.4 The module boundary, unchanged
+## 33.4 The module boundary, unchanged
 
 Effect polymorphism still does not cross a `.becki`. `iface.rs` has said so since Phase 2 and the
 reason has not changed: a published row variable's *number* comes from the order the checker minted
@@ -126,12 +135,12 @@ it in, so two compilations of an unchanged module would publish different-lookin
 closed, and an importer passing an effectful argument where the contract says pure is refused.
 
 What is new is that this is now the *only* place the old behaviour survives, and that there is a
-precedent for fixing it: [`29`](29-numeric-tower-and-polymorphism-report.md) §29.7 published *named*
+precedent for fixing it: [`32`](32-numeric-tower-and-polymorphism-report.md) §32.7 published *named*
 type parameters, and a canonically-named row parameter — `f: (T) -> Bool ! e0`, numbered by first
 appearance — is the same idea one dimension over. It needs surface syntax for a row inside a type,
 which [`03`](03-type-and-effect-system.md) §3.2 already writes and the parser does not read.
 
-## 30.5 A list, taken apart
+## 33.5 A list, taken apart
 
 `match` gained two shapes, and stopped there on purpose:
 
@@ -178,7 +187,7 @@ three files instead of a defect in none.
 carry it through the slicer, the plan, the recompute oracle and replay — which is what would have
 caught the paragraph above if it had been wrong.
 
-## 30.6 Chapter 2's second half, and what it costs
+## 33.6 Chapter 2's second half, and what it costs
 
 `sicp/ch2.beck` is 13 tests. §2.2.1's `map`, `filter`, `accumulate`, `append`, `length`,
 `last-pair`, `reverse` and `list-ref` are written the way the book writes them — structural
@@ -198,43 +207,43 @@ a chapter of exercises and it is not fine for a standard library, and the fix is
 with a shared tail — which is a change to `Value`, the wire format and the digest, not a change to
 the pattern. `ch2.beck` says so where somebody reading the fold will see it.
 
-## 30.7 What is still not
+## 33.7 What is still not
 
-- **Effect polymorphism does not cross a module boundary** (§30.4) and **is not generalised for a
-  definition that returns a function** (§30.3). Both have tests that assert the current behaviour,
+- **Effect polymorphism does not cross a module boundary** (§33.4) and **is not generalised for a
+  definition that returns a function** (§33.3). Both have tests that assert the current behaviour,
   so both become visible the day they are lifted.
 - **Patterns are still one level deep.** `case [Added(id), *rest]` is refused, as `case Node(Leaf(v))`
   always has been. Every fold in SICP chapter 2 is writable without it; §2.3.4's Huffman decoder is
   the first thing that wants it.
-- **A list is `O(n)` to take apart** (§30.6). Nothing in the compiler warns about it.
-- **Two walls named in [`29`](29-numeric-tower-and-polymorphism-report.md) §29.9 now have files
+- **A list is `O(n)` to take apart** (§33.6). Nothing in the compiler warns about it.
+- **Two walls named in [`32`](32-numeric-tower-and-polymorphism-report.md) §32.9 now have files
   rather than fixes**, which is the point of a refusal file:
   [`rational.beck`](../compiler/sicp/refusals/rational.beck) — §2.1.1 needs *exact* arithmetic, and
   a new numeric type cannot join the ad-hoc resolution `+` goes through, which is traits again; and
   [`generic-type.beck`](../compiler/sicp/refusals/generic-type.beck) — `def map[T]` is writable and
   `union Tree[T]` is not, refused by the parser exactly as `def map[T, U]` was before
-  [`29`](29-numeric-tower-and-polymorphism-report.md).
+  [`32`](32-numeric-tower-and-polymorphism-report.md).
 - **Traits are still parsed and not checked**, which is now named by two refusal files, two reports
   and a warning the compiler emits. It is the oldest unpaid debt in the project.
 - **`check.rs` is 3,410 lines**, up from 3,170. §22.6's request to move the test-checking pass out of
   it is unmet for the seventh report running, and this added a pattern kind, an exhaustiveness rule
   and a generalisation pass rather than moving anything. At some point the sentence in these reports
   has to become a change.
-- Everything [`26`](26-arrangement-sharing-report.md) §26.9, [`28`](28-tail-calls-report.md) §28.7
-  and [`29`](29-numeric-tower-and-polymorphism-report.md) §29.9 list is unchanged: no LLVM backend,
+- Everything [`26`](26-arrangement-sharing-report.md) §26.9, [`31`](31-tail-calls-report.md) §31.7
+  and [`32`](32-numeric-tower-and-polymorphism-report.md) §32.9 list is unchanged: no LLVM backend,
   no native codegen, no Mode B, no client polish, no `test --update`, no structured concurrency, no
   `Result`/error rows, no SQLite substrate, no standard library v1, no identity beyond a dev-mode
   actor, no LSP, no playground, no supply-chain tooling, no SQL read models, no pgwire, no query
   fusion.
 
-## 30.8 What this changes for the rest of Phase 3
+## 33.8 What this changes for the rest of Phase 3
 
 1. **§3.2's headline sentence is true of user code now, not just of the prelude.** "Effect
    polymorphism is what keeps one standard library" was written about `map_list`; a standard library
    is going to be mostly *Beck*, and until this report a Beck library could not have been written
    without every caller inheriting every other caller's effects. The standard-library bullet was
    blocked on this and nobody had listed it.
-2. **A `_ => {}` in a match over a compiler IR is a latent defect with a date on it.** §30.5's
+2. **A `_ => {}` in a match over a compiler IR is a latent defect with a date on it.** §33.5's
    `Pattern::binders` is the second time this project has found one: [`23`](23-general-slicer-report.md)
    §23.2 found a splitter that accepted a shape it could not handle rather than refusing it. Both
    were invisible until a program used the shape. Exhaustive matches over IR enums are worth the

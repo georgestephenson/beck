@@ -455,13 +455,15 @@ impl Engine {
         cold: bool,
     ) -> Result<(), ExecError> {
         self.cells[id].rebuilt = false;
-        let inputs = self.prepared.plan.nodes[id].inputs.clone();
+        // An `Arc` bump, not a copy: this runs for every pointwise operator on every tick.
+        let plan = self.prepared.plan.clone();
+        let inputs = &plan.nodes[id].inputs;
         if !cold && !inputs.iter().any(|&i| self.changed_of(up, i)) {
             self.cells[id].changed = false;
             return Ok(());
         }
         let mut args = Vec::with_capacity(inputs.len());
-        for i in inputs {
+        for &i in inputs {
             args.push(self.materialise(up, i)?);
         }
         let f = self.prepared.code[id]
@@ -711,7 +713,8 @@ impl Engine {
 
     /// `concat_lists([a, b, …])` — a union of delta streams, keyed by which stream.
     fn concat(&mut self, up: Option<Upstream<'_>>, id: OpId, cold: bool) -> Result<(), ExecError> {
-        let inputs = self.prepared.plan.nodes[id].inputs.clone();
+        let plan = self.prepared.plan.clone();
+        let inputs = &plan.nodes[id].inputs;
         let rebuild = cold || inputs.iter().any(|&i| self.rebuilt_of(up, i));
         let mut arr = self.take_arrangement(id, rebuild);
         let mut changes = Vec::new();
@@ -895,11 +898,15 @@ impl Engine {
             });
         }
         if is_arr {
-            let entries: Vec<(Key, Value)> = match self.out_of(up, input)? {
+            let changes: Vec<Change> = match self.out_of(up, input)? {
                 Out::Arr(a) => a
                     .entries
                     .iter()
-                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .map(|(k, v)| Change {
+                        key: k.clone(),
+                        old: None,
+                        new: Some(v.clone()),
+                    })
                     .collect(),
                 Out::Val(_) => Vec::new(),
             };
@@ -907,14 +914,7 @@ impl Engine {
                 self.cells[id].shadow.push(BTreeMap::new());
             }
             self.cells[id].shadow[slot].clear();
-            return Ok(entries
-                .into_iter()
-                .map(|(key, v)| Change {
-                    key,
-                    old: None,
-                    new: Some(v),
-                })
-                .collect());
+            return Ok(changes);
         }
         // A plain list: no deltas of its own, so this operator makes them by comparing against the
         // copy it last saw. `O(n)` in the list's length — which is the honest cost of a collection
@@ -930,7 +930,8 @@ impl Engine {
         if whole {
             self.cells[id].shadow[slot].clear();
         }
-        let prev = std::mem::replace(&mut self.cells[id].shadow[slot], next.clone());
+        // Diff before storing, so `next` moves into the shadow rather than being cloned into it.
+        let prev = &self.cells[id].shadow[slot];
         let mut changes = Vec::new();
         for (key, v) in &next {
             match prev.get(key) {
@@ -942,7 +943,7 @@ impl Engine {
                 }),
             }
         }
-        for (key, before) in &prev {
+        for (key, before) in prev {
             if !next.contains_key(key) {
                 changes.push(Change {
                     key: key.clone(),
@@ -952,6 +953,7 @@ impl Engine {
             }
         }
         changes.sort_by(|a, b| a.key.cmp(&b.key));
+        self.cells[id].shadow[slot] = next;
         Ok(changes)
     }
 
@@ -1298,7 +1300,8 @@ impl Engine {
             if cell.rebuilt {
                 rebuilt.insert(id);
             } else if !cell.changes.is_empty() {
-                changes.insert(id, Arc::<[Change]>::from(cell.changes.clone()));
+                // From the slice, one copy: this runs under the shared dataflow's write lock.
+                changes.insert(id, Arc::<[Change]>::from(cell.changes.as_slice()));
             }
         }
         Step {
@@ -1399,7 +1402,9 @@ fn list_entries(v: &Value) -> Vec<(Key, Value)> {
 /// performed unconditionally. Records compare field by field, because that is how a program's own
 /// small values — a `Summary`, a `Tally` — are built, and the whole point of a plan is that an
 /// event which does not move the summary does not re-render the page below it.
-pub fn same(a: &Value, b: &Value) -> bool {
+// Not `pub`: this is a *conservative* changed-test — `Arc::ptr_eq` for lists and Html — and a
+// caller reading it as equality would be misled.
+fn same(a: &Value, b: &Value) -> bool {
     match (a, b) {
         (Value::Unit, Value::Unit) => true,
         (Value::Bool(x), Value::Bool(y)) => x == y,

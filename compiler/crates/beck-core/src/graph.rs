@@ -631,7 +631,12 @@ fn walk(core: &Core, f: &mut impl FnMut(&Core)) {
             walk(scrutinee, f);
             arms.iter().for_each(|a| walk(&a.body, f));
         }
-        CoreKind::Make { fields, .. } | CoreKind::With { fields, .. } => {
+        CoreKind::Make { fields, .. } => {
+            fields.iter().for_each(|(_, v)| walk(v, f));
+        }
+        // Not merged with `Make`: a `Make | With` or-pattern binding `fields` would drop `base`.
+        CoreKind::With { base, fields } => {
+            walk(base, f);
             fields.iter().for_each(|(_, v)| walk(v, f));
         }
         CoreKind::Field { base, .. } => walk(base, f),
@@ -814,5 +819,27 @@ mod tests {
         assert_eq!(g.cycles().count(), 0);
         // A 100,000-long chain is one long topological order, and every node is impacted by the last.
         assert_eq!(g.impacted_by(NodeId(99_999)).len(), 100_000);
+    }
+
+    #[test]
+    fn a_walk_reaches_the_base_of_a_with() {
+        // A global referenced only through a `with`'s base must still be reached.
+        let global =
+            |name: &str| Core::new(CoreKind::Global(Arc::from(name)), Ty::unit(), Span::NONE);
+        let with = Core::new(
+            CoreKind::With {
+                base: Box::new(global("through_the_base")),
+                fields: vec![(Arc::from("f"), global("through_a_field"))],
+            },
+            Ty::unit(),
+            Span::NONE,
+        );
+        let mut seen = Vec::new();
+        walk(&with, &mut |c| {
+            if let CoreKind::Global(name) = &c.kind {
+                seen.push(name.to_string());
+            }
+        });
+        assert_eq!(seen, ["through_the_base", "through_a_field"]);
     }
 }

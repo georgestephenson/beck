@@ -47,7 +47,7 @@ pub enum Prim {
     Rem,
     Neg,
     /// `abs`, `sqrt` and `Int` → `Float`, which are the three the numeric tower needs before any
-    /// of SICP §1.1.7 will run (`docs/29` §29.1). `Abs` is resolved from its operand the way the
+    /// of SICP §1.1.7 will run (`docs/32` §32.1). `Abs` is resolved from its operand the way the
     /// arithmetic operators are; the other two are monomorphic.
     Abs,
     Sqrt,
@@ -224,7 +224,7 @@ pub enum Pattern {
     /// Shallow, like every other pattern here: `binds` is one binder (or a wildcard) per fixed
     /// element, and `rest` is the optional tail binder. A pattern with no `rest` matches a list of
     /// exactly `binds.len()` elements; one with a `rest` matches any list at least that long.
-    /// `docs/30` §30.5 says why this shape and not nested patterns.
+    /// `docs/33` §33.5 says why this shape and not nested patterns.
     List {
         binds: Vec<Option<VarId>>,
         rest: Option<Option<VarId>>,
@@ -237,7 +237,7 @@ impl Pattern {
     /// One method rather than a `match` at each of the three call sites, because those three were
     /// `Bind`/`Ctor`/`_ => {}` — and a new pattern kind falling into the `_` would have been a
     /// silent miscount in the splitter's variable supply and a false *free* variable in the plan's
-    /// analysis. Neither would have failed a test until a program used one (`docs/30` §30.5).
+    /// analysis. Neither would have failed a test until a program used one (`docs/33` §33.5).
     pub fn binders(&self) -> Vec<VarId> {
         match self {
             Pattern::Wildcard | Pattern::Const(_) => Vec::new(),
@@ -480,7 +480,7 @@ pub enum Value {
     /// than `1.0`, so `<` answered backwards for every negative number and `sort_by` sorted the
     /// negatives in reverse. [`Value::float`] applies the standard monotone transform instead
     /// (flip the sign bit for a positive, invert every bit for a negative), which makes the two
-    /// orders the same order. `docs/29` §29.2.
+    /// orders the same order. `docs/32` §32.2.
     Float(u64),
     Str(Arc<str>),
     List(Arc<Vec<Value>>),
@@ -592,7 +592,7 @@ impl Value {
     /// `-0.0` becomes `0.0` and every NaN becomes one NaN, because [`Value`] is `Eq` and `Ord` and
     /// a fold's accumulator is compared, hashed and used as a map key. IEEE 754 says `NaN != NaN`
     /// and `-0.0 == 0.0`; both are irreconcilable with a total order, and the total order is the
-    /// one §3.7 needs. So Beck's `==` on reals is *structural*, and `docs/29` §29.2 says so where
+    /// one §3.7 needs. So Beck's `==` on reals is *structural*, and `docs/32` §32.2 says so where
     /// somebody porting numeric code will read it.
     pub fn float(f: f64) -> Value {
         let f = if f.is_nan() {
@@ -1003,7 +1003,7 @@ mod tests {
     /// order arithmetic uses are one order.
     ///
     /// `f64::to_bits` does not have it — `(-1.0).to_bits()` is larger than `(1.0).to_bits()`
-    /// because the sign bit is the top one — and that is the defect docs/29 §29.2 records. This is
+    /// because the sign bit is the top one — and that is the defect docs/32 §32.2 records. This is
     /// the test that would have caught it, checked across the sign, the zeroes and the infinities
     /// rather than on one example.
     #[test]

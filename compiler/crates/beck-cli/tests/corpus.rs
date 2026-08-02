@@ -426,7 +426,7 @@ fn the_three_module_project_checks_links_and_places() {
 fn a_polymorphic_definition_crosses_a_becki_boundary_and_is_fresh_at_every_call() {
     // docs/27 §27.7 named the shape of this gap for recursive types: "no *project* test imports a
     // module whose published type is recursive, so separate compilation over recursive types is
-    // compiled-and-believed rather than measured". User-written polymorphism (docs/29) would have
+    // compiled-and-believed rather than measured". User-written polymorphism (docs/32) would have
     // had exactly the same gap, so the project carries it instead of the SICP suite.
     //
     // `domain.beck` defines `only[T]` and `count_where[T]`; `app.beck` imports them and uses them

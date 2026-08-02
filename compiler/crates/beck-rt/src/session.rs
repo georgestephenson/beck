@@ -277,6 +277,6 @@ async fn send_json<S: Socket>(socket: &mut S, value: &serde_json::Value) -> Resu
     // function, so the count cannot drift from what was actually written to a socket.
     telemetry().patch_frames.incr();
     telemetry().patch_bytes.add(text.len() as u64);
-    socket.send(Message::Text(text)).await?;
+    socket.send(Message::Text(text.into())).await?;
     Ok(())
 }

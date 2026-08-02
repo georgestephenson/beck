@@ -109,7 +109,7 @@ pub trait Backend: Send + Sync {
     ///
     /// Zero — the default — means "whatever the caller has", which is the honest answer for a
     /// backend that compiles to a machine-code loop and never nests host frames on the program's
-    /// recursion. A tree-walker does nest, and needs to say so: `docs/28` §28.3 records what
+    /// recursion. A tree-walker does nest, and needs to say so: `docs/31` §31.3 records what
     /// leaving it unsaid cost, which was a `SIGSEGV` where a diagnostic belonged.
     ///
     /// It is part of the seam rather than of one crate because the *runtime* is what spawns

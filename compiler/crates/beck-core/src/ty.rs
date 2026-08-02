@@ -239,7 +239,7 @@ pub struct Scheme {
     /// the body each of these is a *rigid* `Ty::Con(name, [])` — an opaque type that unifies with
     /// itself and nothing else, which is exactly the property that makes the definition honest
     /// about being polymorphic. [`Subst::instantiate`] turns them back into fresh variables at
-    /// every call site. `docs/29` §29.7.
+    /// every call site. `docs/32` §32.7.
     pub params: Vec<Arc<str>>,
     pub ty: Ty,
 }
@@ -604,7 +604,7 @@ fn subst_vars(t: &Ty, m: &BTreeMap<TyVarId, Ty>, rows: &BTreeMap<RowVarId, RowVa
 ///
 /// A parameter is a nullary `Con`, so this is a leaf substitution: `list[T]` becomes `list[?7]` and
 /// a `T` that happens to be applied to arguments is left alone, because a type parameter cannot be
-/// a type *constructor* — §29.9 records that as a limit rather than working round it.
+/// a type *constructor* — §32.9 records that as a limit rather than working round it.
 fn subst_named(t: &Ty, m: &BTreeMap<Arc<str>, Ty>) -> Ty {
     match t {
         Ty::Var(v) => Ty::Var(*v),

@@ -16,28 +16,28 @@
 # What is *not* here, and why, because a chapter file that quietly skipped the hard half would be
 # the thing this suite exists to prevent:
 #
-#   * §2.1.1's rational numbers need *exact rationals*. Reals landed in docs/29 and are not the same
+#   * §2.1.1's rational numbers need *exact rationals*. Reals landed in docs/32 and are not the same
 #     thing: §2.1.1's whole point is that 1/3 + 1/3 is 2/3 and not 0.6666666666666666
 #     (`sicp/refusals/rational.beck`);
 #   * §2.3.4's Huffman trees need exact rationals for their weights and a generic tree for their
 #     nodes;
 #   * and a *type* still cannot take a parameter — `union Tree[T]` is not writable — so the tree
 #     below is a tree of `Int` where the book's is a tree of anything
-#     (`sicp/refusals/generic-type.beck`, docs/30 §30.7).
+#     (`sicp/refusals/generic-type.beck`, docs/33 §33.7).
 
 # ---------------------------------------------------------------------------------------------
 # 2.2.1 Representing sequences — the abstractions the reader is asked to *build*
 #
 # `sicp/refusals/generic.beck` held exactly this `map` and asserted that it did not parse, because
 # "the parser has no type-parameter list on `def`, so every user-defined abstraction is
-# monomorphic". docs/29 gave `def` a type-parameter list, so the exercise is an exercise again:
+# monomorphic". docs/32 gave `def` a type-parameter list, so the exercise is an exercise again:
 # each of these is written once, and the tests below use each at more than one element type. That
 # is the whole content of §2.2.1 and the reason it is worth a section rather than a footnote.
 # ---------------------------------------------------------------------------------------------
 
 # `cons`, which SICP has as a primitive and Beck does not. Everything below is built from it and
 # from `match`, so each of these is the book's own definition rather than a rename of a builtin —
-# which is what the exercise is for. `docs/30` §30.6 records what it costs: a `list[T]` cannot share
+# which is what the exercise is for. `docs/33` §33.6 records what it costs: a `list[T]` cannot share
 # a suffix, so this copies, and a fold written over it is quadratic.
 def cons[T](x: T, xs: list[T]) -> list[T]:
     return concat_lists([[x], xs])

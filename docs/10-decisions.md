@@ -2,7 +2,8 @@
 
 George's answers to [`09`](09-risks-and-open-questions.md) §9.5, recorded with the reasoning spelled
 out. Decisions marked **DECIDED** are settled and the other documents assume them. All decisions
-D1–D18 are settled.
+D1–D20 are settled. A decision that revises an earlier one says so in both directions rather than
+quietly diverging (D20 revises D2).
 
 ---
 
@@ -18,6 +19,10 @@ non-durable folds — same semantics, no log persistence.
 One totally-ordered log per application. Envelope reserves per-entity ordering keys and logical-
 timestamp fields so sharding is a later implementation upgrade, not a semantics break.
 Collaborative text is out of core v1 (see D7 for how it comes back).
+
+*Revised by D20*: the unit is now the **context** — one totally-ordered log per context, an
+application being one or more contexts, with a context-free program having exactly one. Everything
+else here stands, per context.
 
 ## D3 — Migration doctrine — **DECIDED: Option B by default, Option A as per-store opt-in**
 
@@ -535,6 +540,72 @@ row-unification defect in the checker (§25.6 item 6); one LeetCode problem surf
 imperative idiom is missing as a category from a language whose surface is advertised as Python's.
 26 corpus programs and four harnesses had found neither, because every one of them is an
 event-sourced application shaped like the todo sketch.
+
+## D19 — DDD alignment: claim the equivalence, refuse the jargon; BDD renders prose, never parses it — **DECIDED**
+
+Prompted by the question of whether Beck should be designed for high compatibility with
+domain-driven design, with native BDD/Gherkin support in `test` blocks, perhaps as a .NET-style
+layer of packages. [`29`](29-domain-driven-design.md) is the analysis; the decision is in three
+parts:
+
+**Tactical DDD needs claiming, not building.** The mapping (§29.1) shows the tactical patterns are
+either native with stronger guarantees than the pattern book asks for (aggregate = checked fold,
+domain event = the substrate, CQRS read model = compiler-maintained view) or *dissolved* —
+repository, factory, outbox exist to compensate for problems Beck's semantics do not admit. The
+dissolved column is the claim. No DDD vocabulary enters the language surface: by D9's own test, a
+convention must not rename a refusable construct after itself. A DDD-dialect tarn is legitimate
+ecosystem material and nothing for the core to ship; the core owes the translation — a
+practitioner-facing mapping page — not the jargon.
+
+**BDD: the test is the spec; prose is derived, not parsed.** `given`/`when`/`expect` is
+Given/When/Then load-bearing, bound by type instead of by regex. Gherkin's cost is its
+step-definition glue layer, and parsing `.feature` files would reintroduce it — so that is
+**refused**, and §29.3 is the recorded reason. Accepted instead: `beck test --explain` rendering
+test blocks as stakeholder-facing prose (the `beck explain` instrument family), and a
+`feature`/`scenario` grouping sugar with no new semantics. Migration from Cucumber is by
+transcription, exercised once in public via the benchmark below.
+
+**The benchmark is Evans's own.** Per D18's pattern — somebody else's workload, their stated
+answers as the oracle, refusals checked in — the cargo-shipping system (the DDD book's running
+example, with the DDDSample reference implementation as the published oracle) is adopted as the
+DDD expressiveness test (§29.4). Its single-context subset belongs in the corpus now; its full
+form needs two contexts and an external routing system, which makes it the forcing function and
+acceptance test for D20. The number that travels is the dissolved column made quantitative: how
+much of the reference implementation is plumbing the Beck version does not contain.
+
+## D20 — Bounded contexts: one log per context, contexts as deployables, the outside world on a ladder — **DECIDED** (design settled; build staged per [`30`](30-bounded-contexts-and-microservices.md) §30.9)
+
+The strategic-DDD gap in §29.1, plus three requirements stated with it: microservices supported
+natively; external microservices and systems easy to connect, because "your entire architecture as
+one Beck project" is the ideal and the real world makes it imperfect; heterogeneous hosting for
+contexts within one project — ideally one Kubernetes cluster — without surrendering the
+supersedes-IaC claim. [`30`](30-bounded-contexts-and-microservices.md) is the design.
+
+**This revises D2, explicitly**: "one totally-ordered log per application" becomes **one
+totally-ordered log per context; an application is one or more contexts**. A program that declares
+no context has exactly one, so nothing built changes meaning, and D2's envelope reservations and
+rung-2 partitioning compose per context. Contexts divide the project into *models* (partitioning
+divides a model's keyspace); cross-context state reads are a compile error; the only cross-context
+write path is published events and sagas, which promotes [`15`](15-scale-and-distribution.md)
+§15.4's `process` to load-bearing boundary semantics.
+
+The load-bearing choices, each argued in [`30`](30-bounded-contexts-and-microservices.md):
+contexts are the unit of deployment, with the context map lowered to derived least-privilege
+NetworkPolicy and per-context deploy cadence gated by two-sided wire-compat (§30.3); the outside
+world is a three-rung ladder — context in-project, another Beck project via exchanged `.becki`,
+foreign system via declared protocol with a compiler-demanded translation layer (the
+anti-corruption layer as typed code) — with the guarantees kept and forfeited stated per rung and
+`beck explain` obliged to say which boundaries are proved and which are rented (§30.4, §30.6);
+hosting choices are **constraints on derivation, never patches on output** — per-context node,
+architecture and region constraints live in the deploy target and feed the solver, because the
+moment a team hand-edits generated manifests the IaC-supersession claim dies (§30.5). One cluster
+is the recommended and tested shape; multi-cluster arrives with rung 3's geo-homes, not before.
+
+The property that pays for the construct: a full microservices architecture — several models,
+several logs, eventual consistency between them — develops and tests as one process with
+deterministic cross-context tests and no network, then deploys per-context *without changing the
+program*. The microservices tax (integration environments, Pact-style contract infrastructure,
+mesh configuration) is either derived or dissolved.
 
 ## Still open (minor, non-blocking)
 

@@ -15,7 +15,7 @@
 //!   somebody notices.
 //!
 //! All six §25.6 measured are down, and each left a test pointing the other way rather than no test
-//! at all: docs/27 for the first three, docs/28 for tail calls, docs/29 for the reals and for
+//! at all: docs/27 for the first three, docs/31 for tail calls, docs/32 for the reals and for
 //! user-written polymorphism. What is in `refusals/` now is the wall the last of them made visible
 //! — a `list[T]` cannot be taken apart — which is the suite working as intended rather than the
 //! suite running out.
@@ -53,19 +53,12 @@ fn errors(name: &str, src: &str) -> String {
 const CH1: &str = include_str!("../../../sicp/ch1.beck");
 const CH2: &str = include_str!("../../../sicp/ch2.beck");
 
-/// Chapter 1 used to be wrapped in a 32 MiB thread here, with twelve lines explaining why.
+/// Chapter 1, in-process, on whatever stack `libtest` hands this thread.
 ///
-/// The explanation was that the evaluator had no proper tail calls, spent host stack per
-/// Beck-level call, and needed more of it than `libtest` hands a test thread — so the same
-/// thirteen tests passed from the command line and aborted inside the harness. It ended: "when
-/// tail calls land, this wrapper goes away".
-///
-/// Tail calls landed (docs/28) and half of that came true. The wrapper is gone from *here*,
-/// because `beck_rt::testing::run` now asks the backend how much stack it needs and provides it
-/// (docs/28 §28.3) — but it did not go away, it moved to where it can be stated once and tested.
-/// A tree-walker still spends a host frame on recursion that is not in tail position, and no
-/// amount of tail-call optimisation changes that; what changed is that the requirement is declared
-/// by the backend, and that exceeding it is `beck-eval`'s diagnostic rather than a `SIGSEGV`.
+/// It needs no thread of its own: `beck_rt::testing::run` asks the backend how much host stack it
+/// requires and provides it. A tree-walker spends a frame on recursion that is not in tail
+/// position, so the requirement is real — it is declared on the seam rather than left to the
+/// caller, and exceeding it is a diagnostic. `docs/31` §31.3–§31.4.
 #[test]
 fn chapter_one_passes_against_the_books_own_answers() {
     let (placed, rendered) = compile_module("sicp/ch1.beck", CH1);
@@ -318,11 +311,10 @@ union R4:
 fn what_bounds_a_recursive_types_depth_is_the_evaluator_and_not_the_checker() {
     // The honest limit, so that §27.3's "nothing bounds depth" is not read as "nothing at all".
     // A recursive *type* is unbounded; a recursive *value* built by recursion that is not in tail
-    // position is bounded by `beck-eval`'s depth ceiling — and since docs/28 that bound is a
-    // *diagnostic*. This test used to assert the `SIGABRT`; the assertion it makes now is the
-    // difference between the two.
+    // position is bounded by `beck-eval`'s depth ceiling, and that bound is a *diagnostic*
+    // (`docs/31` §31.3).
     //
-    // Still through the binary, because the thing being checked is that the process survives.
+    // Through the binary, because the thing being checked is that the process survives.
     let program = |depth: u32| {
         format!(
             "
@@ -439,7 +431,7 @@ fn a_recursive_type_survives_every_pass_a_corpus_program_is_carried_through() {
     );
 }
 
-/// Wall 6 down (docs/29) — the last of §25.6's six, and the one §25.7 called "the largest".
+/// Wall 6 down (docs/32) — the last of §25.6's six, and the one §25.7 called "the largest".
 ///
 /// `sicp/refusals/generic.beck` held `def map[T, U]` and asserted `B0120: expected \`(\`, found
 /// \`[\``. The definition is now in `ch2.beck` and used at four element types. What this asserts is
@@ -504,7 +496,7 @@ test \"instantiated afresh\":
     assert!(errors("dup.beck", "def f[T, T](x: T) -> T:\n    return x\n").contains("B0315"));
 }
 
-/// The wall docs/29 §29.10 named, down the report after it named it.
+/// The wall docs/32 §32.10 named, down the report after it named it.
 ///
 /// `sicp/refusals/list-destructuring.beck` held `accumulate` and asserted `B0343: \`list\` is not a
 /// constructor`. `accumulate` is now in `ch2.beck`, and §2.2.3 — "Sequences as Conventional
@@ -573,7 +565,7 @@ test \"one fold, two element types\":
     assert!(out.contains("B0346"), "{out}");
 }
 
-/// Two walls named in docs/29 §29.9 that had no file, given one — because a wall a report describes
+/// Two walls named in docs/32 §32.9 that had no file, given one — because a wall a report describes
 /// and a wall a test asserts are different things, and this suite's whole argument is the second.
 #[test]
 fn exact_rationals_and_parameterised_types_are_still_refused() {
@@ -597,11 +589,11 @@ fn exact_rationals_and_parameterised_types_are_still_refused() {
     assert!(out.contains("B0120"), "{out}");
     assert!(
         out.contains("expected `:`, found `[`"),
-        "and it is refused by the *parser*, exactly as `def map[T, U]` was before docs/29:\n{out}"
+        "and it is refused by the *parser*, exactly as `def map[T, U]` was before docs/32:\n{out}"
     );
 }
 
-/// Wall 5 down (docs/29)/// Wall 5 down (docs/29), and the strongest oracle in the suite.
+/// Wall 5 down (docs/32)/// Wall 5 down (docs/32), and the strongest oracle in the suite.
 ///
 /// `sicp/refusals/real.beck` asserted that Newton's method did not typecheck. What replaced it is
 /// not "it typechecks" — it is that `sqrt(9.0)` prints **3.00009155413138**, which is the number on
@@ -643,7 +635,7 @@ test \"the tiers coexist\":
     );
 
     // Ad-hoc resolution is not coercion. `1 + 1.0` has no answer, and inventing one — promoting the
-    // `Int`, the way C does — is the decision this deliberately does not take (docs/29 §29.3).
+    // `Int`, the way C does — is the decision this deliberately does not take (docs/32 §32.3).
     let out = errors(
         "mixed.beck",
         "def f(n: Int, x: Float) -> Float:\n    return n + x\n",
@@ -659,7 +651,7 @@ test \"the tiers coexist\":
 ///
 /// `Value::Float` is a `u64` because a fold's accumulator needs a total order. It used to hold
 /// `f64::to_bits`, which orders `-1.0` *above* `1.0` — so `<` answered backwards for every negative
-/// real and `sort_by` reversed them. docs/29 §29.2. The fix is an order-preserving key, and this is
+/// real and `sort_by` reversed them. docs/32 §32.2. The fix is an order-preserving key, and this is
 /// what says it stayed fixed.
 #[test]
 fn comparing_and_sorting_reals_agrees_with_arithmetic() {
@@ -753,13 +745,11 @@ def pick(b: Bool) -> Int:
 
 #[test]
 fn a_tail_call_costs_nothing_so_an_iterative_process_is_iterative() {
-    // §1.2.1's distinction, which Beck could not make until docs/28. `sicp/refusals/tail.beck`
-    // used to live here asserting the `SIGABRT`; it is now the `count_to` exercise in `ch1.beck`,
-    // and this test is what turned round.
+    // §1.2.1's distinction, which `docs/31` built and `ch1.beck`'s `count_to` exercise asserts
+    // from the language's side.
     //
-    // Still run through the binary rather than in-process, for the reason the refusal was: if the
-    // trampoline ever regresses the failure is a dead process rather than a `Result`, and a
-    // subprocess is what can tell the difference between the two.
+    // Run through the binary rather than in-process: if the trampoline regresses the failure is a
+    // dead process rather than a `Result`, and a subprocess is what can tell the two apart.
     let deep = "
 def count_to(acc: Int, n: Int) -> Int:
     if n == 0:

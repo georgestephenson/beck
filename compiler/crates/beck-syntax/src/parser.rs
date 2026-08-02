@@ -289,7 +289,7 @@ impl<'a> Parser<'a> {
         let (name, name_span) = self.ident("a function name")?;
         // `def map[T, U](…)` — §3.1's "full inference inside bodies; mandatory annotations on
         // public signatures", which means a *user's* abstraction says what it is polymorphic in
-        // rather than having it guessed (`docs/29` §29.7).
+        // rather than having it guessed (`docs/32` §32.7).
         let typarams = self.typarams(name_span);
         let params = self.params()?;
         let returns = if self.eat(&Raw::Arrow) {
@@ -359,7 +359,7 @@ impl<'a> Parser<'a> {
     }
 
     /// `[T, U]`, or nothing. A type parameter is a bare name: there are no bounds to write,
-    /// because there are no traits to bound it by (`docs/29` §29.9).
+    /// because there are no traits to bound it by (`docs/32` §32.9).
     fn typarams(&mut self, at: Span) -> Node {
         let start = self.span();
         if !self.at(&Raw::LBracket) {
@@ -1605,7 +1605,7 @@ impl<'a> Parser<'a> {
                     // a separate pattern grammar because §2.6's patterns *are* expressions:
                     // "`Added(id, text)` is the form `(Added id text)` … Nothing new to
                     // represent". The checker is what refuses it outside a pattern
-                    // (`docs/30` §30.5).
+                    // (`docs/33` §33.5).
                     if self.at(&Raw::Star) {
                         let star = self.span();
                         self.bump();

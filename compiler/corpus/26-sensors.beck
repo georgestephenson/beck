@@ -1,6 +1,6 @@
 # A real number in a durable fold — the corpus's first.
 #
-# Reals landed in docs/29, and chapter 1 of SICP is the wrong place to find out whether they survive
+# Reals landed in docs/32, and chapter 1 of SICP is the wrong place to find out whether they survive
 # the rest of the compiler: every number in it lives and dies inside one pure procedure. A `Float`
 # in the *accumulator* is a different question, and it is the one the corpus harnesses ask, because
 # a program here is carried through placement, the slicer, the plan, the incremental engine against
@@ -9,8 +9,8 @@
 #
 # Four things this asserts that no SICP exercise could: that a `Float` round-trips through `Repr`
 # and the log so `beck replay` reproduces it; that a *command* carrying one decodes from the wire;
-# that `sort_by` over reals sorts them as numbers, which is the defect docs/29 §29.2 found; and
-# that a **list pattern** survives the slicer, the plan and the incremental engine (docs/30 §30.5).
+# that `sort_by` over reals sorts them as numbers, which is the defect docs/32 §32.2 found; and
+# that a **list pattern** survives the slicer, the plan and the incremental engine (docs/33 §33.5).
 
 model State:
     latest: Map[Str, Float]
@@ -56,16 +56,16 @@ def mean_of(s: State) -> Float:
     return s.total / float(s.count)
 
 # Coldest first. Ordinary `sort_by` on the reals themselves — which is the assertion: before
-# docs/29 this put the negatives in reverse and the page would have been wrong rather than the
+# docs/32 this put the negatives in reverse and the page would have been wrong rather than the
 # expression.
 def coldest_first(s: State) -> list[Float]:
     return sort_by(map_values(s.latest), lambda c: c)
 
 # …and the first of them, which is a *list pattern* inside a signal the incremental engine
-# maintains. docs/30 added those, and a `match` on a list in a pure expression is a different claim
+# maintains. docs/33 added those, and a `match` on a list in a pure expression is a different claim
 # from one on the path the slicer, the plan and the recompute oracle all walk: `Pattern::binders`
 # is what those three read, and a pattern kind they did not know about would have been a silent
-# miscount rather than a failure (docs/30 §30.5).
+# miscount rather than a failure (docs/33 §33.5).
 def coldest(s: State) -> Float:
     match coldest_first(s):
         case []:

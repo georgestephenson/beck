@@ -26,15 +26,15 @@ Write the commit message as the author of the change: what changed, and why.
   [`docs/24-incremental-views-report.md`](docs/24-incremental-views-report.md),
   [`docs/26-arrangement-sharing-report.md`](docs/26-arrangement-sharing-report.md),
   [`docs/27-walls-report.md`](docs/27-walls-report.md),
-  [`docs/28-tail-calls-report.md`](docs/28-tail-calls-report.md) and
-  [`docs/29-numeric-tower-and-polymorphism-report.md`](docs/29-numeric-tower-and-polymorphism-report.md)
+  [`docs/31-tail-calls-report.md`](docs/31-tail-calls-report.md) and
+  [`docs/32-numeric-tower-and-polymorphism-report.md`](docs/32-numeric-tower-and-polymorphism-report.md)
   and
-  [`docs/30-effect-polymorphism-and-list-patterns-report.md`](docs/30-effect-polymorphism-and-list-patterns-report.md)
+  [`docs/33-effect-polymorphism-and-list-patterns-report.md`](docs/33-effect-polymorphism-and-list-patterns-report.md)
   record what each
   phase does, what it refuses to claim, and the corrections it makes to the design documents.
   Phase 3 is **two bullets of twelve plus most of a third**; docs/26 §26.9 names the nine bullets
   that are untouched and the parts of the incremental-views bullet that are not built. All six of
-  [`docs/25`](docs/25-benchmarks-and-expressiveness.md)'s walls are down, and docs/30 §30.7 names
+  [`docs/25`](docs/25-benchmarks-and-expressiveness.md)'s walls are down, and docs/33 §33.7 names
   what stands in their place. Reports
   are history: a later phase's correction to an earlier one goes in the later report, not into the
   earlier text.
@@ -45,9 +45,10 @@ Write the commit message as the author of the change: what changed, and why.
   book's own stated answers as the oracle, and one file per remaining wall in `sicp/refusals/` whose
   test asserts the wall is still there. A wall coming down is a test that starts failing. All six
   §25.6 measured are down; what is in `refusals/` now was written by the removals rather than by
-  docs/25 (docs/30 §30.7).
+  docs/25 (docs/33 §33.7).
 - Design decisions are numbered in [`docs/10-decisions.md`](docs/10-decisions.md). If a change
-  contradicts one, say so rather than quietly diverging.
+  contradicts one, say so rather than quietly diverging. Engineering decisions — a dependency
+  taken or refused, a gate's shape, an upgrade path — are recorded in [`docs/adr/`](docs/adr/).
 
 ## Standards for changes
 
@@ -65,11 +66,11 @@ Write the commit message as the author of the change: what changed, and why.
   [`docs/26-arrangement-sharing-report.md`](docs/26-arrangement-sharing-report.md); the SICP numbers
   come from `cargo test --release --test sicp` and from `beck test sicp/ch1.beck` and
   `beck test sicp/ch2.beck`, quoted in [`docs/27-walls-report.md`](docs/27-walls-report.md) §27.5,
-  [`docs/28-tail-calls-report.md`](docs/28-tail-calls-report.md) §28.5–§28.6 and
-  [`docs/29-numeric-tower-and-polymorphism-report.md`](docs/29-numeric-tower-and-polymorphism-report.md)
-  §29.5 and
-  [`docs/30-effect-polymorphism-and-list-patterns-report.md`](docs/30-effect-polymorphism-and-list-patterns-report.md)
-  §30.6.
+  [`docs/31-tail-calls-report.md`](docs/31-tail-calls-report.md) §31.5–§31.6 and
+  [`docs/32-numeric-tower-and-polymorphism-report.md`](docs/32-numeric-tower-and-polymorphism-report.md)
+  §32.5 and
+  [`docs/33-effect-polymorphism-and-list-patterns-report.md`](docs/33-effect-polymorphism-and-list-patterns-report.md)
+  §33.6.
 - The harnesses are the project's conscience (§4.8, §8.3): `compiler/crates/beck-cli/tests/` holds
   the differential, replay-determinism, backend-seam, scaling, security, corpus, general-slicer,
   incremental-analysis, incremental-engine, shared-arrangement, subscription, view-metrics, SICP and
@@ -81,10 +82,39 @@ Write the commit message as the author of the change: what changed, and why.
   `beck_core::backend::Backend`, and `tests/backend_seam.rs` drives the runtime with an
   implementation that is not the evaluator so the seam stays load-bearing (docs/19 §19.9). Anything
   the runtime needs to *know* about a backend goes on that trait — `Backend::stack_bytes` is how the
-  runtime sizes a thread for the tree-walker without naming it (docs/28 §28.3).
+  runtime sizes a thread for the tree-walker without naming it (docs/31 §31.3).
 - A program's own behaviour is asserted in Beck, not only in Rust. `beck test` runs `test` and
   `property` blocks ([`docs/21-tests-in-beck-and-proof.md`](docs/21-tests-in-beck-and-proof.md)
   §21.2–§21.3); a change to what a program *means* should move a test in the program, and
   `compiler/crates/beck-cli/tests/tests_in_beck.rs` is where the construct itself is held to account.
 - Say plainly when something is written but unproven. "Built" and "runs" and "measured" are three
   different claims.
+- A code comment states the point — a constraint, an invariant, a non-obvious why — and the
+  context a reader needs, nothing else. Never narrate history ("this was broken, now it works"),
+  a review, or a conversation ("we decided…"); that belongs in the commit message, an ADR
+  ([`docs/adr/`](docs/adr/)), or a report. Docs and comments are the current state of things.
+
+## Working in an isolated or cloud environment
+
+- **The first `cargo` command downloads the pinned toolchain** (`rust-toolchain.toml`, 1.94.1,
+  ~2 minutes). Do not run a second `cargo` or `rustup` process until it finishes: concurrent
+  first-runs race inside rustup and corrupt the install. Repair:
+  `rustup toolchain uninstall 1.94.1 && rustup toolchain install 1.94.1`.
+- **Verification, cheapest first** (from `compiler/`): `cargo test -p <crate>`, then
+  `cargo test --workspace --all-targets`, `cargo clippy --workspace --all-targets` and
+  `cargo fmt --all --check` before pushing. CI denies warnings.
+- **Environment-dependent suites degrade by skipping, and a skip prints itself** — read the
+  output for it:
+  - Kubernetes conformance (`beck-infra/tests/conformance.rs`): skips without a cluster;
+    `BECK_REQUIRE_CLUSTER=1` forbids the skip. Do not claim this rung ran without one.
+  - Postgres log contract (`beck-rt/src/log.rs`): runs only with `BECK_PG=<url>`
+    (`BECK_REQUIRE_PG=1` forbids the skip). A local server works: `initdb`/`pg_ctl` as the
+    `postgres` user, in a directory that user can traverse (`/tmp`, not a root-owned dir).
+  - Compose parity needs Docker; the thin-client budget needs `brotli` (apt-installable).
+- **The measurement suites are release-only by convention**: the reproducible form is
+  `cargo test --release --test <suite> -- --nocapture`. They also run in debug under the full
+  suite with their tables swallowed; that is expected.
+- **The network is proxied and partial.** crates.io and the toolchain host work; docs hosts may
+  not. Read a dependency's API from its vendored source under `~/.cargo/registry/src/`.
+- **Run CI steps you change by hand** (the §20.4 rule above): the deterministic gates need only
+  `python3` (with PyYAML) and git, so they run anywhere.

@@ -1,4 +1,4 @@
-# 28 — Phase 3 report, part 6: proper tail calls, and a diagnostic where the abort was
+# 31 — Phase 3 report, part 6: proper tail calls, and a diagnostic where the abort was
 
 [`25`](25-benchmarks-and-expressiveness.md) §25.7 item 4 is the fourth of the six walls, and it is
 the only one on the list written as an either/or:
@@ -21,26 +21,26 @@ million levels of it as an exercise, and `sicp/refusals/tail.beck`, which existe
 **Wall 4 is down. Two of six stand**: the numeric tower and user-written polymorphism.
 
 It cost throughput, and the number is here rather than in a footnote: **+13% wall clock and +6.7%
-instructions** on a tree-recursive benchmark (§28.5). Two structural fixes took that down from what
+instructions** on a tree-recursive benchmark (§31.5). Two structural fixes took that down from what
 the first working trampoline cost; nothing took it to zero, and nothing is claimed to have.
 
 478 tests, no failures, no compiler warnings, no clippy warnings — up from
 [`27`](27-walls-report.md)'s 473.
 
-## 28.1 What was asked, and what is answered
+## 31.1 What was asked, and what is answered
 
 | asked for | status | where |
 |---|---|---|
-| A call in tail position costs no host stack | done, and **measured as an equality** at depths forty times apart | §28.2, §28.5 |
-| An iterative process observably differs from a recursive one | done — `ch1.beck`'s new §1.2.1 test, a quarter of a million levels | §28.6 |
-| No user program aborts the process | done — a counted depth ceiling with a diagnostic, and a declared host stack to make the count reachable | §28.3 |
-| The bound is deterministic | done, and it is why the ceiling is a **count** rather than a reading of the stack pointer (§3.7) | §28.3 |
-| The runtime provides the stack rather than hoping for it | done — `Backend::stack_bytes`, on the seam, asked by the runtime and by the CLI | §28.3 |
-| `sicp.rs`'s 32 MiB wrapper goes away | **half**: gone from `sicp.rs`, moved to where it can be stated once and tested. [`27`](27-walls-report.md)'s prediction is corrected in §28.4 | §28.4 |
-| Chapter 1's tail-recursive exercises run in constant space | done — `fact_iter`, `expt_iter`, `ex_1_11_iter`, `gcd` and `find_divisor` are all tail calls | §28.6 |
-| Non-tail recursion becomes unbounded | **no**, and it should not: a recursive process needs space linear in its depth, which is SICP's point. It is bounded at 4,000 nested evaluations and says so | §28.3, §28.7 |
+| A call in tail position costs no host stack | done, and **measured as an equality** at depths forty times apart | §31.2, §31.5 |
+| An iterative process observably differs from a recursive one | done — `ch1.beck`'s new §1.2.1 test, a quarter of a million levels | §31.6 |
+| No user program aborts the process | done — a counted depth ceiling with a diagnostic, and a declared host stack to make the count reachable | §31.3 |
+| The bound is deterministic | done, and it is why the ceiling is a **count** rather than a reading of the stack pointer (§3.7) | §31.3 |
+| The runtime provides the stack rather than hoping for it | done — `Backend::stack_bytes`, on the seam, asked by the runtime and by the CLI | §31.3 |
+| `sicp.rs`'s 32 MiB wrapper goes away | **half**: gone from `sicp.rs`, moved to where it can be stated once and tested. [`27`](27-walls-report.md)'s prediction is corrected in §31.4 | §31.4 |
+| Chapter 1's tail-recursive exercises run in constant space | done — `fact_iter`, `expt_iter`, `ex_1_11_iter`, `gcd` and `find_divisor` are all tail calls | §31.6 |
+| Non-tail recursion becomes unbounded | **no**, and it should not: a recursive process needs space linear in its depth, which is SICP's point. It is bounded at 4,000 nested evaluations and says so | §31.3, §31.7 |
 
-## 28.2 What a tail position is, and what the trampoline does with it
+## 31.2 What a tail position is, and what the trampoline does with it
 
 `Core` has fourteen kinds and four of them have a tail position in them: the branches of an `If`, the
 body of a `Let`, the body of a matched arm, and — the one that matters — the body of the closure an
@@ -69,9 +69,9 @@ The body a tail call jumps into lives inside an `Arc<Closure>` that the loop has
 ownership of, and a `&Core` pointing into a local that the loop then reassigns is not something safe
 Rust will write. Returning the call to `eval` and re-entering `step` costs **one host frame per
 call**, which is a constant — not per level of recursion, which is the number that had to be zero.
-The measurement in §28.5 is what says the constant is a constant.
+The measurement in §31.5 is what says the constant is a constant.
 
-## 28.3 The abort, and the three things it took to remove it
+## 31.3 The abort, and the three things it took to remove it
 
 The abort was never really about tail calls. It was about a tree-walker whose only bound on host
 stack was the host's stack:
@@ -133,13 +133,13 @@ the caller has", the right answer for a backend that compiles to a loop and neve
   `#[tokio::main]` cannot say that, and folds and views run on those threads;
 - `beck_rt::testing::run`, which asks the backend it was handed and spawns accordingly, so `beck
   test` and every in-process harness get it without knowing the number;
-- nothing else, which §28.7 states as the limit it is.
+- nothing else, which §31.7 states as the limit it is.
 
 `backend_seam.rs` holds the seam to account for it, including the two ways a second backend would
 get it wrong: a wrapper that forgets to forward the number, and the intercepting backend `beck test`
 swaps in.
 
-## 28.4 The wrapper that did not go away
+## 31.4 The wrapper that did not go away
 
 [`27`](27-walls-report.md) shipped `sicp.rs` with a 32 MiB thread around chapter 1 and twelve lines
 explaining it, ending:
@@ -158,7 +158,7 @@ component that needs it, measured by a test rather than guessed, asked for throu
 everything that spawns a thread, and backed by a diagnostic when a program exceeds what it buys.
 The old wrapper was a harness working around a runtime; this is a runtime with a stated requirement.
 
-## 28.5 What it cost
+## 31.5 What it cost
 
 A trampoline is not free, and the first working one was not close to free. Two structural things
 paid most of it back, and this section is the honest arithmetic.
@@ -235,7 +235,7 @@ charged every level of a program's recursion for the arms it did not take; split
 measured debug cost per level by about a third, and the `cfg_attr` keeps the release build free to
 inline it all back. The declared stack is sized from the debug figure because that is the worse one.
 
-## 28.6 What turned round
+## 31.6 What turned round
 
 Three tests changed direction rather than being deleted, which is the discipline
 [`27`](27-walls-report.md) §27.1 argued for and the reason a wall coming down is visible.
@@ -259,7 +259,7 @@ what stops it is a counted ceiling rather than whatever stack the process happen
 Chapter 1 is 15 tests, up from 13. `beck test sicp/ch1.beck` runs them, including the quarter of a
 million tail calls, in **0.43 s**.
 
-## 28.7 What is still not
+## 31.7 What is still not
 
 - **Non-tail recursion is bounded at 4,000 nested evaluations**, and a program that needs more gets
   a diagnostic rather than an answer. That is the right shape — a recursive process needs space
@@ -295,7 +295,7 @@ million tail calls, in **0.43 s**.
   actor, no LSP, no playground, no supply-chain tooling. Nine Phase 3 bullets, untouched. SQL read
   models, pgwire and query fusion are still nothing.
 
-## 28.8 What this changes for the rest of Phase 3
+## 31.8 What this changes for the rest of Phase 3
 
 1. **The evaluator now has two bounds, and neither is the host's.** Fuel bounds time, depth bounds
    space, both are counts, and both are functions of the program and the log. That is the property

@@ -101,7 +101,7 @@ pub fn prims() -> Vec<(&'static str, Prim, Scheme)> {
         ),
         // The reals. `abs` is written for both tiers in SICP and is resolved from its operand in
         // `check`, exactly as `+` is; the scheme here is its `Int` form, which is what a reference
-        // to it *as a value* gets (`docs/29` §29.3).
+        // to it *as a value* gets (`docs/32` §32.3).
         (
             "abs",
             Prim::Abs,
