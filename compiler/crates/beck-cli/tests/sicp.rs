@@ -270,6 +270,125 @@ model Inner:
 }
 
 #[test]
+fn the_three_passes_are_stages_and_not_a_depth_limit() {
+    // §27.3 resolves declarations in three passes where there was one, and "three" is a count of
+    // *stages* rather than of how far a chain or a cycle may reach. Nothing in the design bounds
+    // depth, and the pass that could plausibly have bounded it — `collect_aliases`, which resolves
+    // each alias by resolving the aliases it names first — is exactly the one that recurses.
+    //
+    // Both halves are built to be long enough that an implementation with a fixed budget would
+    // fail rather than pass slowly.
+    let mut chain = String::new();
+    for i in 0..40 {
+        // Declared in ascending order so that every link is a *forward* reference: the wall this
+        // replaced would have refused link zero.
+        chain.push_str(&format!("type A{i} = A{}\n", i + 1));
+    }
+    chain.push_str("type A40 = Int\n");
+    chain.push_str("def use(n: A0) -> Int:\n    return n + 1\n");
+    let (_, rendered) = compile_module("alias-chain.beck", &chain);
+    assert!(
+        !rendered.contains("error["),
+        "a forty-link alias chain:\n{rendered}"
+    );
+
+    // Six declarations, unions and models alternating, mutually recursive in a ring and in none of
+    // the orders a single source-order pass could have accepted.
+    let ring = "
+union R0:
+    Z
+    S(next: R1)
+
+model R1:
+    a: R2
+    b: list[R0]
+
+union R2:
+    Q
+    T(m: R3, n: R1)
+
+model R3:
+    c: R4
+
+union R4:
+    W(back: R0)
+";
+    let (_, rendered) = compile_module("ring.beck", ring);
+    assert!(
+        !rendered.contains("error["),
+        "six mutually recursive declarations:\n{rendered}"
+    );
+}
+
+#[test]
+fn what_bounds_a_recursive_types_depth_is_the_evaluator_and_not_the_checker() {
+    // The honest limit, so that §27.3's "nothing bounds depth" is not read as "nothing at all".
+    // A recursive *type* is unbounded; a recursive *value* is bounded by the host stack the
+    // evaluator spends per Beck-level call, which is §25.6 item 5 — wall 4, still standing.
+    //
+    // Run through the binary because the far end of it is a `SIGABRT` rather than a `Result`, which
+    // is the same finding `a_tail_call_consumes_stack_…` records for a different program shape.
+    let program = |depth: u32| {
+        format!(
+            "
+union Tree:
+    Leaf(value: Int)
+    Node(kids: list[Tree])
+
+def build(n: Int) -> Tree:
+    if n == 0:
+        return Leaf(value=1)
+    return Node(kids=[build(n - 1)])
+
+def leaves(t: Tree) -> list[Tree]:
+    match t:
+        case Leaf(value):
+            return [t]
+        case Node(kids):
+            return concat_lists(map_list(kids, leaves))
+
+test \"a spine\":
+    expect list_len(leaves(build({depth}))) == 1
+"
+        )
+    };
+    let run = |src: &str, name: &str| {
+        let file = std::env::temp_dir().join(name);
+        std::fs::write(&file, src).expect("a scratch file");
+        let out = Command::new(env!("CARGO_BIN_EXE_beck"))
+            .args(["test", file.to_str().expect("a path")])
+            .output()
+            .expect("the compiler is built");
+        let _ = std::fs::remove_file(&file);
+        out
+    };
+
+    // 100 rather than a rounder number, because the depth that fits is a property of the *profile*
+    // and not of the language: a debug build spends several times more host stack per Beck-level
+    // call than a release one, and this harness runs whichever `cargo test` was asked for. The
+    // release binary carries 500 comfortably. That the number moves with the build is itself wall
+    // 4 — a language with proper tail calls would not have one.
+    let shallow = run(&program(100), "beck-spine-shallow.beck");
+    assert!(
+        shallow.status.success(),
+        "a tree 100 deep is an ordinary value:\n{}{}",
+        String::from_utf8_lossy(&shallow.stdout),
+        String::from_utf8_lossy(&shallow.stderr)
+    );
+
+    let deep = run(&program(50_000), "beck-spine-deep.beck");
+    assert!(
+        !deep.status.success(),
+        "a tree 50,000 deep is expected to exhaust the host stack; if this passes, Beck grew proper \
+         tail calls and wall 4 is down (happily)"
+    );
+    assert!(
+        String::from_utf8_lossy(&deep.stderr).contains("overflowed its stack"),
+        "and to die by the evaluator's stack rather than by anything the checker did"
+    );
+}
+
+#[test]
 fn an_alias_that_is_defined_in_terms_of_itself_is_still_refused() {
     // The one cycle that is not a feature. A `union` may be recursive because a variant is a finite
     // tag plus fields; an alias is *transparent*, so `type A = list[A]` describes an infinitely

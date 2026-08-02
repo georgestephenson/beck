@@ -19,7 +19,7 @@ needed *both* of the first two fixes and could not have been written for either 
 And [`corpus/25-thread.beck`](../compiler/corpus/25-thread.beck) is the twenty-eighth corpus program
 — a comment thread, which is the first program in this project to describe a tree.
 
-471 tests, no failures, no compiler warnings, no clippy warnings — up from
+473 tests, no failures, no compiler warnings, no clippy warnings — up from
 [`26`](26-arrangement-sharing-report.md)'s 466.
 
 ## 27.1 What "the suite found it" is worth, measured twice
@@ -117,6 +117,22 @@ it is the one place the design has a genuine asymmetry in it. An alias is **tran
 expand every mention of it to the placeholder's target. It has to be resolved before anything that
 mentions it, and "before" cannot mean source order or the pass has achieved nothing. So each alias
 resolves the aliases it names first, recursively.
+
+### "Three passes" is a count of stages, not a budget
+
+Worth saying plainly, because the sentence invites the other reading: three is how many times the
+compiler sweeps the declaration list, not how far a chain or a ring may reach. Nothing in the design
+bounds depth, and the pass that could plausibly have bounded it is the one that recurses — a
+forty-link alias chain declared so that every link is a forward reference resolves, and so do six
+mutually recursive declarations in none of the orders a single source-order pass could have taken.
+`the_three_passes_are_stages_and_not_a_depth_limit` is both.
+
+What *is* bounded is a recursive **value**, and by the evaluator rather than by the checker. A `Tree`
+spine 500 deep is an ordinary value in a release build and 50,000 aborts the process — which is wall
+4 (§25.6 item 5) reached from a different direction than §1.2.1's iterative process, and reached by a
+program a user could plausibly write. `what_bounds_a_recursive_types_depth_is_the_evaluator_and_not_the_checker`
+asserts both ends, at 100 rather than 500, because the depth that fits moves with the build profile —
+and *that* it moves with the build profile is the finding, not the number.
 
 That makes cycles reachable, and cycles are where a union and an alias part company: **a union may be
 recursive and an alias may not.** A variant is a finite tag plus fields, so `union Chain: End,
@@ -217,7 +233,7 @@ blurred the two.
 ## 27.5 What is measured, and how to reproduce it
 
 ```console
-$ cd compiler && cargo test --workspace          # 471 tests
+$ cd compiler && cargo test --workspace          # 473 tests
 $ cargo test --release --test sicp               # the suite and the walls
 $ ./target/release/beck test sicp/ch1.beck       # 14 passed  (13, plus exercise 1.43)
 $ ./target/release/beck test sicp/ch2.beck       # 6 passed   (new)
