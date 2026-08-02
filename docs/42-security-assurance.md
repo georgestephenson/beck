@@ -12,7 +12,7 @@ the concept, cite the source, build nothing yet), **watch** (a dated pin with a 
 
 It differs from those two surveys in one way. They looked outward; this one had to look inward
 first, because a security posture cannot be assessed from a design document — only from what the
-code does. So §42.1 is a **reading of the tree** at `0e5473e` and §42.2 is a **measurement**, with
+code does. So §42.1 is a **reading of the tree** at `0853b79` and §42.2 is a **measurement**, with
 the commands that reproduce it; everything after them is the outside record checked against those
 two rather than against the design documents. The external
 statuses were confirmed by web search in August 2026 and are dated claims: a regulation's
@@ -23,7 +23,8 @@ things a project either has or does not: a **threat model** that says what is in
 not, **mechanised evidence** for each claim inside that scope, and a **gate that goes red** when a
 claim stops being true. Beck has the third instinct better than most projects its age —
 `security.rs` tests each §3.5 property by writing the program it forbids — and has neither of the
-other two written down. That is the shape of the gap, and §42.11 is the ladder out of it.
+other two written down. That is the shape of the gap; §42.11 says what each fix has to produce,
+and [`08`](08-roadmap.md) §8.5 says in what order.
 
 ## 42.1 The posture today, measured
 
@@ -66,7 +67,8 @@ smoke test rather than as one of the project's measurements. It is worth recordi
 reasons. It says something real about the lexer and the resolver, which is where a hand-written
 layout algorithm would be expected to break first. And it is the reason §42.2 exists: random
 mutation cannot *generate structure*, so the one crash class the front end actually has is
-precisely the one this method is blind to. Rung 5 of §42.11 is the version of this that counts.
+precisely the one this method is blind to. §42.11's grammar-aware fuzzing row is the version of
+this that counts.
 
 ## 42.2 The front end has no recursion bound, and ADR 0007 already argued why it needs one
 
@@ -76,18 +78,22 @@ locals in that file are bracket- and indent-balance counters serving error recov
 algorithm, not recursion limits.
 
 ```
-$ python3 -c "open('deep.beck','w').write('def f() -> Int:\n    return ' + '('*3015 + '1' + ')'*3015 + '\n')"
+$ python3 -c "open('deep.beck','w').write('def f() -> Int:\n    return ' + '('*3785 + '1' + ')'*3785 + '\n')"
 $ beck check deep.beck
-thread 'beck-eval' (25046) has overflowed its stack
+thread 'beck-eval' has overflowed its stack
 fatal runtime error: stack overflow, aborting
 ```
 
-Measured thresholds, bisected on `0e5473e`:
+Measured thresholds, bisected on `0853b79`:
 
 | Profile | Deepest accepted | Aborts by | Source size at the threshold |
 |---|---|---|---|
-| debug | 3,000 | 3,015 | ~6 KB |
+| debug | 3,642 | 3,785 | ~7.6 KB |
 | release | 50,000 | 55,000 | ~110 KB |
+
+The debug figure is not stable across commits — it was ~3,000 one commit earlier, and moved when
+[`39`](39-bounds-report.md)'s work changed the checker's frames. That instability is not an aside;
+it is the defect, restated as a number.
 
 Three observations, in increasing order of how much they should sting.
 
@@ -101,7 +107,7 @@ recursion site, not at the grammar rule somebody happened to think of first.
 
 **It is in Beck's own threat model already.** [`17`](17-playground.md) §17.3 says "the compiler is
 the first sandbox" for playground submissions. A playground is a service that compiles source
-chosen by an anonymous stranger; a ~6 KB file that aborts the process is a denial of service on
+chosen by an anonymous stranger; an ~8 KB file that aborts the process is a denial of service on
 that service, and no amount of gVisor or Firecracker underneath makes the crash not happen — it
 only contains it. In OWASP's 2025 revision this is A10, *Mishandling of Exceptional Conditions*, a
 category added because this failure shape is common enough in production to deserve its own row.
@@ -117,14 +123,15 @@ nothing catchable.
 
 Worse, and this is the sharpest way to state it: `beck-eval::STACK_BYTES` is 64 MiB and
 `DEFAULT_MAX_DEPTH` is 4,000, and the thread named in the crash above is that same declared
-stack. **The 64 MiB sized to hold 4,000 evaluator frames is exhausted by 3,000 parser frames in a
-debug build.** The declaration is not merely incomplete; in one profile it is already false,
-because only one of the two recursive consumers of that stack counts itself.
+stack. **The 64 MiB sized to hold 4,000 evaluator frames is exhausted by roughly 3,600 parser
+frames in a debug build.** The declaration is not merely incomplete; in one profile it is already
+false, because only one of the two recursive consumers of that stack counts itself — and the margin
+by which it is false moves every time the checker changes.
 
 The bound belongs wherever the front end recurses over user-controlled structure — the parser, the
 checker's type walk, and lowering — and it should be a count, for ADR 0007's reason, with the
 ceiling and the stack it implies held to each other by a test the way the evaluator's already is.
-Verdict: **adopt**, and §42.11 puts it first.
+Verdict: **adopt**, and [`08`](08-roadmap.md) §8.5 puts it first in Wave 0.
 
 ## 42.3 Memory safety: the posture is right, and the 2026 record says what it is worth
 
@@ -208,7 +215,7 @@ non-interference theorem. Beck's `secret[T]`, its internal facts and its declass
 are a two-point lattice with an explicit declassifier; that is a textbook object, and today it is
 defended by twenty-five examples rather than by a statement over the calculus. Verdict:
 **borrow now, adopt at Phase 5** — state non-interference over the core calculus in the spec, cite
-the lineage, and let §42.11's Kani work discharge the bounded version of it against the solver.
+the lineage, and let §42.11's Kani row discharge the bounded version of it against the solver.
 
 **Placement is not identity, and the suite can be misread as covering both.** Every §3.5 test is
 about where code and data may live. None is about *who is asking* — and the runtime has no answer
@@ -240,8 +247,8 @@ What an untrusted client can do to a running Beck app today:
 
 None of this is surprising for a project at Phase 3, and none of it should be fixed by writing code
 today. What it should do is stop being invisible: these are four F-numbers whose status in
-[`14`](14-review-findings.md) is a word, and whose status in the code is silence. §42.11's second
-rung makes the silence audible.
+[`14`](14-review-findings.md) is a word, and whose status in the code is silence. §42.11's
+`pending_security` row makes the silence audible.
 
 One smaller item, recorded so it does not rot: `dash.html`'s `esc` escapes `&<>` only, and the
 graph renderer interpolates `class="${n.tier}"` into an attribute without it. The value is a
@@ -354,38 +361,28 @@ side channels; safety of arbitrary FFI; or any statement about a program's *sema
 rather than its *flows* being contained. Writing that sentence down is part of being watertight,
 not an admission against it.
 
-## 42.11 The ladder
+## 42.11 What each verdict needs before it counts
 
-Ordered by value per unit of work, not by ambition. Each rung names the artefact and the gate,
-because §12.1's rule applies to this document as much as to any other.
+§12.1's rule applies to this document as much as to any other: a verdict enters the project as an
+executable artefact, not as a paragraph. So each **adopt** above is written out here as the artefact
+it requires and the gate that keeps it true. **The order they should be built in is not here** — it
+is [`08`](08-roadmap.md) §8.5, with the rest of the project's outstanding work, because a survey
+that carries its own schedule competes with the roadmap instead of feeding it.
 
-1. **Bound the front end's recursion** (§42.2). Artefact: a counted depth in the parser, the
-   checker's type walk and lowering, with a diagnostic code and a span. Gate: a test that a
-   nesting one past the ceiling is a *diagnostic*, and a test that the declared stack holds the
-   ceiling — the pair `beck-eval` already has. This is the only live defect in this document, and
-   it should be an ADR of its own: the front end's bound is a count, for the reason ADR 0007 gave.
-2. **Write the threat model and the disclosure policy** (§42.8, §42.10). Artefact: a short charter
-   section — in scope, out of scope, adversaries — plus `SECURITY.md` aligned to ISO/IEC 29147 and
-   30111. Gate: none needed; this is prose whose absence is the defect.
-3. **Make the absent controls fail loudly** (§42.6). Artefact: a `pending_security` suite asserting
-   that the actor is self-asserted, that no message limit is configured, that no quota exists — the
-   `sicp/refusals/` pattern, applied to security debt. Gate: the day somebody builds one of them,
-   its test goes red and forces the doc update. This is the single most house-consistent idea in
-   this document and costs an afternoon.
-4. **Inject the clock** (§42.4). Artefact: a time source on the seam; no simulator yet. Gate: a
-   lint or test that `SystemTime::now()` appears in exactly one place.
-5. **Grammar-aware fuzzing** (§42.2). Artefact: `cargo-fuzz` targets for the parser and the macro
-   expander with a structure-aware generator over the corpus. Gate: CI runs a bounded budget per
-   pull request; the corpus of found inputs is checked in.
-6. **Kani on the solver's invariants** (§42.3). Artefact: two or three bounded proofs of the claims
-   §3.5 markets. Gate: CI, on the solver's crate only.
-7. **Supply-chain rows retargeted, then built** (§42.7). Artefact: §12.6 updated to SLSA v1.2 and
-   the 2026 SBOM elements; trusted publishing configured before the first publish. Gate:
-   [`28`](28-releases-and-deployment.md)'s pipeline, when it exists.
+| Verdict | Artefact | Gate |
+|---|---|---|
+| Bound the front end's recursion (§42.2) | A counted depth in the parser, the checker's type walk and lowering, with a diagnostic code and a span — plus an ADR making [`adr/0007`](adr/0007-evaluator-stack-is-declared-not-discovered.md)'s argument for the front end | A nesting one past the ceiling is a *diagnostic*; and the declared stack holds the ceiling. The pair `beck-eval` already has |
+| Threat model and disclosure policy (§42.8, §42.10) | A charter section — adversaries, in scope, explicitly out of scope — plus `SECURITY.md` aligned to ISO/IEC 29147 and 30111 | None needed: this is prose whose absence is the defect |
+| Make the absent controls fail loudly (§42.6) | A `pending_security` suite asserting that the actor is self-asserted, that no message limit is configured, that no quota exists — `sicp/refusals/`'s pattern applied to security debt | The day somebody builds one of them its test goes red, forcing the doc update |
+| Inject the clock (§42.4) | A time source on the seam; no simulator yet | A test that `SystemTime::now()` appears in exactly one place |
+| The memory-safety roadmap (§42.3) | One paragraph in CISA's terms, stating what the workspace already guarantees and where the dependency graph is the answer instead | None; its absence is the defect |
+| Grammar-aware fuzzing (§42.2) | `cargo-fuzz` targets for the parser and the macro expander, with a structure-aware generator over the corpus | A bounded budget per pull request; found inputs checked in |
+| Kani on the solver's invariants (§42.3) | Two or three bounded proofs of the claims §3.5 markets | CI, on the solver's crate only |
+| Supply-chain rows (§42.7) | §12.6 retargeted at SLSA v1.2 and the 2026 SBOM elements; trusted publishing configured before the first publish | [`28`](28-releases-and-deployment.md)'s pipeline, when it exists |
 
-Rungs 1–4 are days of work between them and would move more of this document from *absent* to
-*structural* than rungs 5–7 combined. Rungs 5–7 are where the word "watertight" starts to be
-earned, and none of them is worth starting before rung 2 says what is being made watertight
+The first four are days of work between them and would move more of §42.1's table from *absent* to
+*structural* than the last four combined. The last four are where the word "watertight" starts to be
+earned, and none is worth starting before the threat model says what is being made watertight
 against.
 
 ## 42.12 What this document is not
