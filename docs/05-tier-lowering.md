@@ -127,10 +127,15 @@ functions. The lowering question is substrates. **We do not write a storage engi
   prefix hit rate, and per-session memory are metrics the runtime exports from day one, because
   this is where a naive implementation quietly becomes Meteor-at-scale.
 
-  *The compile-time half exists* — the signal graph is a graph and a computation read by two
-  consumers is identified as one ([`23`](23-general-slicer-report.md) §23.5). That is what an
-  arrangement needs to be shareable; the dataflow engine that would share it is not built, and
-  views are still full recompute per event.
+  *Both halves exist.* The signal graph is a graph and a computation read by two consumers is
+  identified as one ([`23`](23-general-slicer-report.md) §23.5), which is what an arrangement needs
+  to be shareable; the dataflow engine that shares it is built
+  ([`24`](24-incremental-views-report.md), [`26`](26-arrangement-sharing-report.md)), and the
+  operators above the session cut are held once for the whole fanout rather than once per
+  subscriber. What that is worth is a property of the program: 55× less work per event on a public
+  feed, 1.3× on the todo sketch, because where a program reads the session decides its fanout cost.
+  Per-session memory is exported ([`26`](26-arrangement-sharing-report.md) §26.7); the SQL read
+  models and pgwire exposure below are not built.
 - v0.1 does **not** need the dataflow engine: full recompute per event on in-memory folds is
   semantically identical and fine at todo-app scale; the incremental plan is an optimisation with
   an exact correctness oracle (recompute) to test against — a luxurious position for CI

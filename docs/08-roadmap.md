@@ -118,8 +118,11 @@ dependencies whose signatures didn't change.
 
 ## Phase 3 — Make it real for developers (4–5 months) — **STARTED**
 
-> Two of the twelve bullets below are built, each with its own report, and a third is most of the
-> way there.
+> Three of Phase 3's bullets are built, each with its own reports: `test` blocks, the general
+> slicer — Phase 2's debt, delivered here rather than listed below — and the language's own means
+> of abstraction. A fourth, incremental views, has its engine and its shared dataflow but not its
+> read models, its pgwire exposure or its fusion. A fifth, the expressiveness suite, has started
+> and runs two chapters. Of the fourteen below, nine are untouched.
 >
 > *Twelve was the count when [`22`](22-phase-3-report.md), [`23`](23-general-slicer-report.md) and
 > [`24`](24-incremental-views-report.md) were written, and all three count against it. It is
@@ -185,28 +188,27 @@ dependencies whose signatures didn't change.
 > them one at a time rather than by omission. Of the two added since (§8.4), the
 > means-of-abstraction bullet is **done** — all six walls
 > ([`27`](27-walls-report.md), [`31`](31-tail-calls-report.md),
-> [`32`](32-numeric-tower-and-polymorphism-report.md)) — and the expressiveness suite runs two
-> chapters of SICP against the book's own answers.
+> [`32`](32-numeric-tower-and-polymorphism-report.md)), and the three that removing them wrote
+> ([`33`](33-effect-polymorphism-and-list-patterns-report.md),
+> [`36`](36-parameterised-types-report.md), [`41`](41-generic-arithmetic-report.md)), with traits
+> across [`37`](37-traits-report.md), [`39`](39-bounds-report.md) and
+> [`40`](40-traits-across-modules-report.md) — and the expressiveness suite runs two chapters of
+> SICP against the book's own answers.
 >
-> Removing the six walls wrote two more, which [`33`](33-effect-polymorphism-and-list-patterns-report.md)
-> and [`36`](36-parameterised-types-report.md) then removed: a `list[T]` may be taken apart, and a
-> `model`, a `union`, a `newtype` and a `type` may take a type parameter. One refusal file is left
-> in `sicp/refusals/`, and it says **traits** — declarations, impls, coherence and static dispatch
-<<<<<<< HEAD
-> in [`37`](37-traits-report.md), bounds and dictionary passing in [`39`](39-bounds-report.md). What
-> is left of it is one decision and one boundary: `+` does not resolve through a trait, so §2.1.1's
-> exact rationals still refuse ([`39`](39-bounds-report.md) §38.7 sets out the options), and a trait
-> does not cross a `.becki`, which is what now stands between the language and a standard library.
-=======
-> in [`37`](37-traits-report.md), bounds and dictionary passing in [`39`](39-bounds-report.md). What
-> declarations, impls, coherence and static dispatch in [`37`](37-traits-report.md), bounds and
-> dictionary passing in [`39`](39-bounds-report.md), the module boundary in
-> [`40`](40-traits-across-modules-report.md), and the operators in
-> [`41`](41-generic-arithmetic-report.md) — which empties `sicp/refusals/` and gives §2.1.1 its
-> exact rationals. The standard-library bullet has no remaining blocker and is work rather than
+> Removing the six walls wrote three more, and all three came down too: a `list[T]` may be taken
+> apart ([`33`](33-effect-polymorphism-and-list-patterns-report.md)), a `model`, a `union`, a
+> `newtype` and a `type` may take a type parameter ([`36`](36-parameterised-types-report.md)), and
+> `+` reaches a type the compiler does not know about
+> ([`41`](41-generic-arithmetic-report.md)). The last refusal file said **traits**, and four reports
+> answered it: declarations, impls, coherence and static dispatch in
+> [`37`](37-traits-report.md), bounds and dictionary passing in [`39`](39-bounds-report.md), the
+> module boundary in [`40`](40-traits-across-modules-report.md), and the operators in
+> [`41`](41-generic-arithmetic-report.md) — which gives §2.1.1 its exact rationals and leaves
+> `sicp/refusals/` **empty**. That is the narrow claim that every wall this project has *found* has
+> been removed, not that Beck expresses SICP, and `sicp/refusals/README.md` is where the difference
+> is written down. The standard-library bullet has no remaining blocker and is work rather than
 > design; what the expressiveness suite needs next is more of the book, and chapter 3 is state and
 > time, which is the part of SICP closest to what Beck is for.
->>>>>>> 88c9a81 (feat(traits): a trait, its impls and its bounds cross a `.becki`)
 
 - LLVM release backend + differential tests against Cranelift (§5.2).
 - **Incremental views**: compile subscribed/materialized views to differential-dataflow plans with
@@ -241,7 +243,11 @@ dependencies whose signatures didn't change.
   of SICP is about the first of those rather than about reals. Collections, strings, time,
   money/decimal, HTTP, JSON, UUID and crypto are untouched. A fold over a list *can* now be written
   ([`33`](33-effect-polymorphism-and-list-patterns-report.md)) — and so can a library whose callers
-  do not inherit each other's effects, which §33.8 records as the precondition nobody had listed.*
+  do not inherit each other's effects, which §33.8 records as the precondition nobody had listed.
+  Exact rationals are now expressible as a user's type rather than a compiler's, because `+`
+  resolves through the prelude trait `Num` ([`41`](41-generic-arithmetic-report.md)) — which is a
+  mechanism the standard library can be built on and not a standard library. Bignums are still not
+  built, and neither is coercion between numeric types.*
 - **The language's own means of abstraction, which four phases had never been pointed at**
   ([`25`](25-benchmarks-and-expressiveness.md) §25.6, measured; §25.7 orders them). Every corpus
   program is shaped like the todo sketch, which is why none of these had surfaced. ***All six are
@@ -250,10 +256,15 @@ dependencies whose signatures didn't change.
   ([`27`](27-walls-report.md)); proper tail calls, with the bounded-depth diagnostic **as well as**
   rather than instead of them, so no Beck program aborts its own process any more
   ([`31`](31-tail-calls-report.md)); and reals plus user-written polymorphic definitions
-  ([`32`](32-numeric-tower-and-polymorphism-report.md)). Two of the four things that stood in their
-  place are also built — effect polymorphism for a user's higher-order definition, and a way to take
-  a `list[T]` apart ([`33`](33-effect-polymorphism-and-list-patterns-report.md)). What is left is
-  **traits**, and type parameters on a `model` or `union`; docs/33 §33.7 has the rest.*
+  ([`32`](32-numeric-tower-and-polymorphism-report.md)). Everything that stood in their place is
+  built too: effect polymorphism for a user's higher-order definition and a way to take a `list[T]`
+  apart ([`33`](33-effect-polymorphism-and-list-patterns-report.md)), type parameters on a `model`,
+  a `union`, a `newtype` and a `type` ([`36`](36-parameterised-types-report.md)), and traits —
+  declarations and impls ([`37`](37-traits-report.md)), bounds
+  ([`39`](39-bounds-report.md)), the `.becki` boundary
+  ([`40`](40-traits-across-modules-report.md)) and the operators
+  ([`41`](41-generic-arithmetic-report.md)). This bullet is **done**; what the suite below needs
+  next is more of the book rather than more of the language.*
 - **The expressiveness suite** ([`25`](25-benchmarks-and-expressiveness.md) §25.5, D18): SICP
   stage 1, and Felleisen's criterion answered for the special forms the book introduces. It needs
   macros and nothing else, so it starts now and does not wait on the bullet above. *Chapter 1 is
@@ -275,10 +286,14 @@ dependencies whose signatures didn't change.
 
 **Exit**: an outside developer builds a non-trivial app from documentation alone, without asking the
 team a question. Track this literally as the acceptance test.
-**Not met**, and not close — two bullets of twelve and a third's engine
-([`24`](24-incremental-views-report.md) §24.10). What did change is that the first question they
-would have asked — "how do I test this?" — now has a command for an answer, and the second — "will
-this recount a million rows every time somebody clicks?" — has a command *and* a number.
+**Not met**, and not close — three bullets of fourteen, a fourth's engine
+([`24`](24-incremental-views-report.md) §24.10) and a fifth that has started. What did change is
+that the first question they would have asked — "how do I test this?" — now has a command for an
+answer; the second — "will this recount a million rows every time somebody clicks?" — has a command
+*and* a number; and the third — "can I write my own abstractions, or only the ones the todo sketch
+needed?" — has nine walls down and an empty `sicp/refusals/` for an answer. What none of them has
+is documentation an outside developer could build from, which is what this criterion actually
+measures.
 
 ## Phase 4 — Production readiness (4–5 months)
 

@@ -383,7 +383,12 @@ State schema evolution is a *language* concern, not an ops concern (Lamdera's pr
 ## 3.10 Staged sequence of work
 
 1. HM + ADTs + traits; `Stream`/`Signal`/`fold`/`durable` typed but **placement fully manual**
-   (`@on`), matching the original sketch exactly. — **Phase 1**, except traits, which parse and warn.
+   (`@on`), matching the original sketch exactly. — **Phase 1**, except traits, which parsed and
+   warned until Phase 3 checked them: declarations and impls ([`37`](37-traits-report.md)), bounds
+   on a type parameter ([`39`](39-bounds-report.md)), the `.becki` boundary
+   ([`40`](40-traits-across-modules-report.md)) and the arithmetic operators
+   ([`41`](41-generic-arithmetic-report.md)). Dispatch is static and an impl desugars to ordinary
+   definitions, so the IR and the evaluator are unchanged.
 2. Effect rows inferred; placement manual but **verified** (reject `@on(client)` + `durable`;
    reject impure folds). Already novel, already shippable. — **Phase 2**.
 3. Placement inference for the unannotated middle; `beck explain place`; freshness-typed optimism.
@@ -394,6 +399,8 @@ State schema evolution is a *language* concern, not an ops concern (Lamdera's pr
    does is charge a crossing the *smaller* of its two ends, which is that choice expressed as a cost
    and ready for the second lowering ([`20`](20-phase-2-report.md) §20.4 item 1).
 5. Incremental view compilation (differential lineage); materialized read models; pgwire exposure.
+   — **the view compilation is Phase 3** ([`24`](24-incremental-views-report.md),
+   [`26`](26-arrangement-sharing-report.md)); the read models and pgwire are untouched.
 6. Migrations/upcasters + operator choreography; replay/fork tooling.
 
 Stages 1–2 are a "typed tierless framework" someone could adopt. Stages 3–6 are the moat.

@@ -157,7 +157,7 @@ audience it courts.
 ## 9.5 Questions for George — answered
 
 All substantive questions are answered; the answers and their reasoning are recorded in
-[`10-decisions.md`](10-decisions.md) (D1–D13, all decided — including the marketing headline, D13).
+[`10-decisions.md`](10-decisions.md) (D1–D20, all decided — including the marketing headline, D13).
 The final review pass ([`14-review-findings.md`](14-review-findings.md)) added four items
 awaiting George: F1 (erasure vs genesis-replay semantics), F3 (abuse-quota default), F6
 (fold-totality restrictions), F14 (demo posture). For the record:

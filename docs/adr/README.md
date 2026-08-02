@@ -8,7 +8,7 @@ The split this directory creates:
 - **Main docs and code comments state the current truth.** No "this used to be", no "we decided
   after discussion" — a comment or doc says what is, and links here when the why needs history.
 - **ADRs hold the why.** The circumstances, the alternatives, the reason.
-- **[`docs/10-decisions.md`](../10-decisions.md) (D1–D18) stays as is** — the design decisions
+- **[`docs/10-decisions.md`](../10-decisions.md) (D1–D20) stays as is** — the design decisions
   that shaped the language, made before this convention existed. New *design* decisions may still
   earn a D-number; ADRs record *engineering* decisions: a dependency taken or refused, a gate's
   shape, an upgrade path.
