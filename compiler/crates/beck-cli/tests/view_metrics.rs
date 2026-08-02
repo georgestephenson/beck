@@ -96,7 +96,7 @@ async fn what_the_views_cost_is_exported_while_the_process_is_running() {
         let task = tokio::spawn(beck_rt::session::run(app.clone(), socket));
         client_tx
             .send(Message::Text(
-                serde_json::json!({"t":"hello","sub":sub,"seq":0,"actor":actor}).to_string(),
+                serde_json::json!({"t":"hello","sub":sub,"seq":0,"actor":actor}).to_string().into(),
             ))
             .expect("hello");
         drain(&mut client_rx).await;
