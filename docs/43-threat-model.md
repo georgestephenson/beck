@@ -46,6 +46,7 @@ harness goes red, **absent** means it is not there and §43.4 says so by name.
 | A macro cannot read the disk or the network | A1, A3 | structural | The expander has no I/O to offer |
 | Time enters at the merge point and nowhere else | A2, A4 | tested | `beck_core::clock`; `clock.rs`'s one-reader gate |
 | Text in a page is escaped, in both text and attribute context | A2, A4 | tested | `beck-core/src/html.rs`; the dashboard's own escaper |
+| An actor is a decision of the runtime, not a claim of the client | A2 | tested | `beck_rt::identity`; `identity.rs` drives the socket loop. **Only with a verifying provider** — the default verifies nothing, which is §43.4 |
 
 ## 43.3 What is explicitly **not** defended
 
@@ -76,11 +77,13 @@ decision.
 
 The controls a reader would reasonably assume exist, that do not:
 
-- **Identity.** The actor arrives in the client's own `hello` frame and is believed. Every
-  ownership check in every corpus program is therefore enforced against a value the caller chose.
-  This is Phase 3's identity bullet and is correctly sequenced, but it is *absent*, and the
-  distinction between it and §3.5's proven properties is the most likely misquotation of this
-  project's security story ([`42`](42-security-assurance.md) §42.5).
+- **Identity, under the default provider.** Narrowed by [`48`](48-identity-report.md): identity is
+  now a seam, an `Actor` is something only a provider can mint, and `SignedIdentity` verifies a
+  credential. What remains is that the **default** is `DevIdentity`, which believes the claim — so
+  a deployment that has not chosen a provider has the old behaviour, deliberately rather than
+  structurally. **OIDC is still absent** (no JWKS, no asymmetric signature, no issuer or audience
+  validation), and so is the claims → `Session` mapping: claims are verified at the edge and do not
+  reach the program.
 - **Per-actor quotas** (F3, `APPROVED` and unbuilt), **subscription and connection quotas** (F15),
   and **the deploy choreography's bounded buffer** (F12).
 - **Message size limits and origin checks** on the websocket: the limits are the library's
@@ -127,7 +130,7 @@ named so the edit is not left to somebody noticing:
 
 | Event | What has to change here |
 |---|---|
-| Identity lands | §43.4's first bullet moves to §43.2; A2 splits into authenticated and anonymous |
+| ~~Identity lands~~ | **Half done** ([`48`](48-identity-report.md)): §43.2 has the row, §43.4 keeps the narrower gap. A2 splits into authenticated and anonymous when a *default* provider verifies, which is not yet |
 | The playground ships | A1 stops being hypothetical; the isolation story (§17.3) enters §43.2 |
 | The registry ships | A3 stops being anticipated; tarn signing and effect diffs enter §43.2 |
 | Any quota is built | §43.4 loses a bullet, `pending_security.rs` loses a test, both in one change |

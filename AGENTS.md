@@ -32,7 +32,8 @@ Write the commit message as the author of the change: what changed, and why.
   [`39`](docs/39-bounds-report.md), [`40`](docs/40-traits-across-modules-report.md),
   [`41`](docs/41-generic-arithmetic-report.md), [`44`](docs/44-wave-0-report.md),
   [`45`](docs/45-error-rows-report.md), [`46`](docs/46-standard-library-report.md) and
-  [`47`](docs/47-effect-polymorphic-traits-report.md), indexed in
+  [`47`](docs/47-effect-polymorphic-traits-report.md) and [`48`](docs/48-identity-report.md),
+  indexed in
   [`docs/README.md`](docs/README.md) — record what each
   phase does, what it refuses to claim, and the corrections it makes to the design documents.
   Add a new report to that list and to the index; do not extend it with another "and".
@@ -41,7 +42,8 @@ Write the commit message as the author of the change: what changed, and why.
   bullet and `Result`/error rows are built; the standard library has its first half and a wall of
   its own (docs/46); the incremental-views bullet has its engine but not its read models, pgwire
   or fusion; the expressiveness suite runs two chapters of SICP. Seven of the fourteen are
-  untouched, and docs/26 §26.9 names them one at a time. **Wave 0** (docs/08 §8.5.4) is also
+  untouched — identity has its seam but not its OIDC relying party (docs/48) — and docs/26 §26.9
+  names them one at a time. **Wave 0** (docs/08 §8.5.4) is also
   built — a bounded front end, an injected clock, a threat model, a disclosure policy and an
   identifier profile — and is debt rather than a phase bullet, so it is in docs/44 and not in that
   list. All six of

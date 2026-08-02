@@ -300,7 +300,11 @@ dependencies whose signatures didn't change.
   written.*
 - **Identity**: OIDC relying-party runtime, `identity = managed()` provisioning (Keycloak/Ory),
   claims → `Session` capability mapping, dev-mode identity for rung 0, presence as a first-class
-  signal ([`10`](10-decisions.md) D6).
+  signal ([`10`](10-decisions.md) D6). *The **seam** is built ([`48`](48-identity-report.md)):
+  dev-mode identity is named rather than implied, a verifying provider exists, and both edges
+  refuse before rendering — so an ownership check compares against something the caller did not
+  choose. The OIDC relying party, `managed()` provisioning, the claims mapping and presence are
+  not, and §48.5 says so row by row.*
 - LSP: completion, hover with *inferred placement*, go-to-def, rename, inline diagnostics.
 - **The playground** ([`17`](17-playground.md)) — highest-leverage adoption artefact: rung A
   (compile-time, static) and rung B (the whole app in the tab — the worker-server is the rung-0
@@ -599,10 +603,17 @@ that could only read atoms was wrong about exactly the forward references a prog
 and it catches the failure its signature names while the others travel, instead of refusing a block
 that can fail two ways.*
 
-**Wave 3 — months.** Identity beyond the dev-mode actor — which is also the item that empties four
-of `pending_security.rs`'s tests and edits [`43`](43-threat-model.md) §43.4 — then the playground
-rungs A and B (whose safety predecessor landed in Wave 0), then Phase 3's exit criterion, which
-cannot honestly be attempted before either.
+**Wave 3 — months. ✅ First half built** ([`48`](48-identity-report.md)). Identity is a **seam**:
+an `Actor` only a provider can mint, `DevIdentity` as the named default, and a `SignedIdentity`
+that verifies a keyed-BLAKE3 credential — so an ownership check compares against something the
+caller did not choose. **Unbuilt**: the OIDC relying party (JWKS, asymmetric signatures, issuer and
+audience validation — it needs an HTTP client and a signature library, so it is an ADR rather than
+a module), `identity = managed()` provisioning, the claims → `Session` mapping, and presence. §48.5
+is the row-by-row list and `pending_security.rs` asserts each gap.
+
+Then the playground rungs A and B (whose safety predecessor landed in Wave 0), then Phase 3's exit
+criterion — which still cannot honestly be attempted, and now for one reason rather than two: what
+it measures is documentation an outside developer could build from, and there is none.
 
 **Wave 4 — free-standing, in parallel with Waves 2–3.** LLVM backend and native codegen; Mode B and
 client polish; the LSP; SQL read models, pgwire and query fusion; `test --update`; the SQLite
