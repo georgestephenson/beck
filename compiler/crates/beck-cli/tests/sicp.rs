@@ -778,3 +778,111 @@ test \"a tail call, a million deep\":
         String::from_utf8_lossy(&out.stdout)
     );
 }
+
+/// A tail loop, at a depth, as a program `beck test` will run.
+#[cfg(target_os = "linux")]
+fn tail_loop(n: u64) -> String {
+    format!(
+        "
+def count_to(acc: Int, n: Int) -> Int:
+    if n == 0:
+        return acc
+    return count_to(acc + 1, n - 1)
+
+test \"a tail call, {n} deep\":
+    expect count_to(0, {n}) == {n}
+"
+    )
+}
+
+/// The peak resident memory of a `beck test` run, in KiB, sampled while the run is alive.
+///
+/// `VmHWM` is the kernel's own high-water mark and only ever moves up, so the last reading taken
+/// before the child exits is that run's peak. `None` means no reading was taken at all — the run
+/// finished inside the first sampling interval — which is a reason to conclude nothing rather than
+/// to conclude the memory was flat.
+#[cfg(target_os = "linux")]
+fn peak_rss_kib(source: &str, scratch: &str) -> Option<u64> {
+    let file = std::env::temp_dir().join(scratch);
+    std::fs::write(&file, source).expect("a scratch file");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_beck"))
+        .args(["test", file.to_str().expect("a path")])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("the compiler is built");
+
+    let status = format!("/proc/{}/status", child.id());
+    let mut peak = None;
+    loop {
+        if let Ok(text) = std::fs::read_to_string(&status) {
+            if let Some(kib) = text
+                .lines()
+                .find_map(|line| line.strip_prefix("VmHWM:"))
+                .and_then(|rest| rest.split_whitespace().next())
+                .and_then(|kib| kib.parse::<u64>().ok())
+            {
+                peak = Some(kib);
+            }
+        }
+        // Sampled before the liveness check, so the last successful reading is one taken while the
+        // child still had a `/proc` entry.
+        if child.try_wait().expect("the child is ours").is_some() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+
+    let done = child.wait().expect("the child is ours");
+    let _ = std::fs::remove_file(&file);
+    assert!(
+        done.success(),
+        "the probe loop must run at all before its memory means anything: {scratch} exited \
+         {done} with {peak:?} KiB resident — a tail loop that cannot finish is the same \
+         regression this measures, reached by its other end"
+    );
+    peak
+}
+
+/// The heap half of the same property, which the host-stack measurement in `beck-eval` does not
+/// reach.
+///
+/// A tail call that extended the *caller's* environment rather than the closure's would spend no
+/// host stack and a linear amount of heap instead — the same unbounded growth wearing a different
+/// hat (`docs/31` §31.2). `bind` extends the closure's, so the environment chain is as short on the
+/// millionth iteration as on the first, and resident memory does not move. Nothing else asserts
+/// that; the stack test above would pass with the chain growing under it.
+#[test]
+fn a_tail_call_holds_no_heap_either() {
+    #[cfg(not(target_os = "linux"))]
+    println!(
+        "skipping: resident memory is read from /proc, which this target does not have — the \
+         heap half of the tail-call property is unmeasured here"
+    );
+
+    #[cfg(target_os = "linux")]
+    {
+        // Ten times apart, because "small" and "constant" are different claims and only the second
+        // one is a proper tail call. A chain that grew per level would cost the deep run hundreds
+        // of megabytes against the shallow one's.
+        let (shallow, deep) = (
+            peak_rss_kib(&tail_loop(100_000), "beck-heap-shallow.beck"),
+            peak_rss_kib(&tail_loop(1_000_000), "beck-heap-deep.beck"),
+        );
+        let (Some(shallow), Some(deep)) = (shallow, deep) else {
+            println!("skipping: the probe runs finished before resident memory could be sampled");
+            return;
+        };
+
+        // A window, not an equality: resident memory is what the allocator asked the kernel for
+        // rather than what the evaluator holds, and it drifts by a few hundred KiB between runs.
+        // The growth this exists to catch is two orders of magnitude larger than the window.
+        const WINDOW_KIB: u64 = 4 * 1024;
+        println!("tail: {shallow} KiB resident at 100,000 levels, {deep} at 1,000,000");
+        assert!(
+            deep < shallow + WINDOW_KIB,
+            "ten times the tail calls must not cost resident memory: 100,000 levels held \
+             {shallow} KiB and 1,000,000 held {deep}, which is growth rather than drift"
+        );
+    }
+}
