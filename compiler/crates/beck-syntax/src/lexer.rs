@@ -16,8 +16,7 @@ use logos::Logos;
 
 #[derive(Clone, Debug, PartialEq, Logos)]
 #[logos(skip r"[ \t]+")]
-// A comment runs to the end of its line; the greedy sweep is the meaning, so logos 0.16's
-// unbounded-repetition lint is answered rather than suppressed.
+// A comment runs to the end of its line — the greedy sweep is the meaning.
 #[logos(skip(r"#[^\n]*", allow_greedy = true))]
 pub enum Raw {
     #[regex(r"\n")]

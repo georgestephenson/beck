@@ -1,14 +1,10 @@
 name: docs
 
-# The docs are the design and the plan (AGENTS.md), dense with relative cross-links between
-# numbered documents, reports and source — and until this workflow, a docs-only change ran nothing
-# at all: no trigger matched it, so a renamed file or a broken reference merged silently.
-#
-# The gate is deliberately narrow (§13.7's rule, and the warning in `workflows.rs`: a
-# half-understood linter that fires on valid files gets deleted). It checks exactly one
-# deterministic property — every relative link in tracked markdown resolves to a file that exists —
-# and takes no view on prose, style or external URLs. Code spans and fenced blocks are stripped
-# first, because `def map[T, U](…)` in backticks is not a link.
+# The docs are the design and the plan (AGENTS.md), dense with relative cross-links. This gate
+# is deliberately narrow (§13.7; a linter that fires on valid files gets deleted): one
+# deterministic property — every relative link in tracked markdown resolves — with no view on
+# prose, style or external URLs. Code spans and fenced blocks are stripped first, because
+# `def map[T, U](…)` in backticks is not a link.
 
 on:
   push:

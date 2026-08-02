@@ -12,9 +12,8 @@ name: phase 0
 on:
   push:
     branches: [main]
-    # All of .github/workflows/: the YAML-validity job below checks every workflow file, and it has
-    # to run when any of them changes — including compiler.yml, whose own copy of the job cannot
-    # fire if compiler.yml itself is the broken file.
+    # All of .github/workflows/: the YAML-validity job below checks every workflow file, so it
+    # must run when any of them changes (docs/adr/0005).
     paths: ["phase0/**", ".github/workflows/**"]
   pull_request:
     paths: ["phase0/**", ".github/workflows/**"]
@@ -39,11 +38,8 @@ env:
 
 jobs:
   the-workflows-are-yaml:
-    # The same job compiler.yml carries, and deliberately so: each workflow parses *every*
-    # workflow file, so whichever file is broken, the other file's copy of this job reports it.
-    # Phase 2 found the Phase 1 workflow had been invalid YAML from the day it was written
-    # (docs/20 §20.4 item 8); the in-workspace test that guards against that cannot run when the
-    # file GitHub refuses is the one that would have triggered it.
+    # Each workflow parses every workflow file, so whichever file is broken, the other file's
+    # copy of this job reports it (docs/adr/0005).
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

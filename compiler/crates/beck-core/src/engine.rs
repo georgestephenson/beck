@@ -455,8 +455,7 @@ impl Engine {
         cold: bool,
     ) -> Result<(), ExecError> {
         self.cells[id].rebuilt = false;
-        // An `Arc` bump rather than a copy of the input list: this runs for every pointwise
-        // operator on every tick, and the plan is immutable.
+        // An `Arc` bump, not a copy: this runs for every pointwise operator on every tick.
         let plan = self.prepared.plan.clone();
         let inputs = &plan.nodes[id].inputs;
         if !cold && !inputs.iter().any(|&i| self.changed_of(up, i)) {
@@ -1301,8 +1300,7 @@ impl Engine {
             if cell.rebuilt {
                 rebuilt.insert(id);
             } else if !cell.changes.is_empty() {
-                // One copy, not two: `Vec::clone` then `Arc::from(Vec)` would allocate twice, and
-                // this runs under the shared dataflow's write lock.
+                // From the slice, one copy: this runs under the shared dataflow's write lock.
                 changes.insert(id, Arc::<[Change]>::from(cell.changes.as_slice()));
             }
         }
@@ -1404,8 +1402,8 @@ fn list_entries(v: &Value) -> Vec<(Key, Value)> {
 /// performed unconditionally. Records compare field by field, because that is how a program's own
 /// small values — a `Summary`, a `Tally` — are built, and the whole point of a plan is that an
 /// event which does not move the summary does not re-render the page below it.
-// Not `pub`: "same" is the engine's *conservative* changed-test — `Arc::ptr_eq` for lists and
-// Html — and a caller reading it as equality would be misled. Nothing outside this module uses it.
+// Not `pub`: this is a *conservative* changed-test — `Arc::ptr_eq` for lists and Html — and a
+// caller reading it as equality would be misled.
 fn same(a: &Value, b: &Value) -> bool {
     match (a, b) {
         (Value::Unit, Value::Unit) => true,

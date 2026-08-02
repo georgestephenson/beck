@@ -22,10 +22,9 @@
 //! whole mechanism, which is why [`beck_core::Interface`] closes its rows and hashes its meaning
 //! rather than its rendering.
 //!
-//! Salsa 0.28 phrases inputs as entities rather than string-keyed queries, so a [`Source`] is an
-//! input struct and the name→source lookup lives on the [`Compiler`] trait. The lookup is add-only
-//! and un-tracked, which preserves the old behaviour exactly: a module that is imported but never
-//! `set` was a panic before and is a panic now.
+//! Salsa phrases inputs as entities rather than string-keyed queries, so a [`Source`] is an input
+//! struct and the name→source lookup lives on the [`Compiler`] trait. The lookup is add-only and
+//! un-tracked; a module imported but never `set` is a panic (ADR-0002).
 
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};

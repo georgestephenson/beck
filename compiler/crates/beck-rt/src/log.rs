@@ -635,11 +635,9 @@ mod tests {
         contract(&MemoryLog::new()).await;
     }
 
-    /// The same contract, against a real Postgres — the substrate `beck run --store postgres`
-    /// trusts and, until this test, the one substrate nothing executed: `beck bench log` skips it
-    /// without a URL, and CI started no server. The pattern is `beck-infra`'s conformance suite:
-    /// no `BECK_PG` is a skip, which is right on a laptop, and `BECK_REQUIRE_PG=1` makes the
-    /// absence a failure, so the gate cannot go silently missing from CI.
+    /// The same contract against a real Postgres — the substrate `beck run --store postgres`
+    /// uses. No `BECK_PG` is a skip (right on a laptop); `BECK_REQUIRE_PG=1` makes the absence a
+    /// failure, so the gate cannot go silently missing from CI (the conformance suite's pattern).
     #[tokio::test]
     async fn postgres_keeps_the_same_contract() {
         let required = std::env::var("BECK_REQUIRE_PG").is_ok_and(|v| v == "1");

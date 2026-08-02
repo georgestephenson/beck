@@ -634,9 +634,7 @@ fn walk(core: &Core, f: &mut impl FnMut(&Core)) {
         CoreKind::Make { fields, .. } => {
             fields.iter().for_each(|(_, v)| walk(v, f));
         }
-        // Not merged with `Make`: the or-pattern would drop `base`, and did — a global reachable
-        // only through the base of a `with` produced no edge, so `beck graph` and `beck impact`
-        // under-reported. `check.rs::resolve_types` compensates for the same trap by hand.
+        // Not merged with `Make`: a `Make | With` or-pattern binding `fields` would drop `base`.
         CoreKind::With { base, fields } => {
             walk(base, f);
             fields.iter().for_each(|(_, v)| walk(v, f));
@@ -825,8 +823,7 @@ mod tests {
 
     #[test]
     fn a_walk_reaches_the_base_of_a_with() {
-        // Regression: `Make` and `With` shared an or-pattern that bound `fields` and silently
-        // dropped `With`'s `base`, so a global referenced only there produced no dependency edge.
+        // A global referenced only through a `with`'s base must still be reached.
         let global =
             |name: &str| Core::new(CoreKind::Global(Arc::from(name)), Ty::unit(), Span::NONE);
         let with = Core::new(
