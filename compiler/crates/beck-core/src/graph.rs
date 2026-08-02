@@ -827,13 +827,8 @@ mod tests {
     fn a_walk_reaches_the_base_of_a_with() {
         // Regression: `Make` and `With` shared an or-pattern that bound `fields` and silently
         // dropped `With`'s `base`, so a global referenced only there produced no dependency edge.
-        let global = |name: &str| {
-            Core::new(
-                CoreKind::Global(Arc::from(name)),
-                Ty::unit(),
-                Span::NONE,
-            )
-        };
+        let global =
+            |name: &str| Core::new(CoreKind::Global(Arc::from(name)), Ty::unit(), Span::NONE);
         let with = Core::new(
             CoreKind::With {
                 base: Box::new(global("through_the_base")),

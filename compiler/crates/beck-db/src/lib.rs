@@ -58,7 +58,7 @@ fn parse(db: &dyn Compiler, file: Source) -> Arc<Node> {
     let mut map = SourceMap::new();
     let f = map.add(name.to_string(), src.to_string());
     let mut diags = Diagnostics::new();
-    Arc::new(beck_syntax::parse_file(f, &name, &src, &mut diags))
+    Arc::new(beck_syntax::parse_file(f, name, src, &mut diags))
 }
 
 /// `expand(module) → Node`
@@ -111,8 +111,8 @@ fn checked(db: &dyn Compiler, file: Source) -> Arc<Outcome> {
     let name = file.name(db);
     let src = file.text(db);
     let mut diags = Diagnostics::new();
-    observe(&name);
-    let Checked { interface, .. } = check_one(&name, &src, &deps, None, &mut diags);
+    observe(name);
+    let Checked { interface, .. } = check_one(name, src, &deps, None, &mut diags);
     Arc::new(Outcome {
         interface,
         diagnostics: diags.iter().map(|d| (d.code, d.message.clone())).collect(),
