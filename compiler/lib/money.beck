@@ -6,10 +6,10 @@
 # is exact integer arithmetic with a scale and a rounding rule — and if Beck cannot express that in
 # Beck, then §1.1's claim about means of abstraction is not one this project is entitled to make.
 #
-# So `Money` is a `model` over minor units and its operations are ordinary definitions. It was
-# *meant* to be an `impl Num`, the same shape SICP §2.5.1's rationals take in `sicp/ch2.beck` — and
-# writing it found the reason it cannot be, which is recorded at `plus` below and is the most
-# valuable thing in this file.
+# So `Money` is a `model` over minor units with an `impl Num`, the same shape SICP §2.5.1's
+# rationals take in `sicp/ch2.beck`. Writing it found the reason it could not be, once — a trait's
+# row was a ceiling and adding two currencies has to fail — and that finding became `docs/47`.
+# This file is what the fix is for.
 #
 # What it deliberately is *not*: a general decimal. There is no arbitrary precision (that is Wave
 # 2's bignum item, unbuilt), no currency conversion, and no locale. A `Money` is a whole number of
@@ -31,6 +31,9 @@ union MoneyError:
     MixedCurrency(left: Str, right: Str)
     ## A negative or zero number of parts, which is not a division of anything.
     BadSplit(parts: Int)
+    ## Money times money, or money divided by money. Neither is an amount of anything, and `Num`
+    ## asks for four methods — so the two that have no meaning say so instead of inventing one.
+    NotAnAmount(op: Str)
 
 def money(units: Int, currency: Str) -> Money:
     return Money(units=units, currency=currency)
@@ -49,27 +52,33 @@ def same_currency(a: Money, b: Money) -> Str uses raises(MoneyError):
         raise MixedCurrency(left=a.currency, right=b.currency)
     return a.currency
 
-# `plus` and `minus` are functions rather than `impl Num for Money`, and **that is a wall, not a
-# preference.** A trait's declared effect row is a bound every impl is held to (`docs/37` §37.5),
-# the prelude's `Num` declares a *pure* row, and adding two amounts in different currencies has to
-# fail. So the operator is unavailable to any type whose operation can fail — which is most of the
-# interesting ones, and is the first thing writing a library found that writing a compiler had not.
+# `+` and `-` on `Money`, through the prelude trait `Num` (`docs/41`).
 #
-# The fix is a trait whose method signatures carry a row *variable*, so an impl may be as effectful
-# as its own type requires and a caller inherits exactly that. `docs/33` did precisely this for a
-# user's higher-order definitions; nothing has done it for traits.
-# `stdlib.rs::a_trait_method_may_not_be_more_effectful_than_its_trait` is the refusal, asserted, so
-# the day it lands this file can drop four lines and gain an operator.
-def plus(a: Money, b: Money) -> Money uses raises(MoneyError):
-    return Money(units=a.units + b.units, currency=same_currency(a, b))
+# This file is the reason effect-polymorphic traits exist (`docs/47`). Until they did, a trait's
+# declared row was a *ceiling* every impl was held to, `Num` is pure, and adding two amounts in
+# different currencies has to fail — so an operator was unavailable to any type whose operation
+# could fail, which is most of the interesting ones. The row is now inferred per impl and travels
+# to whoever calls it: `add`'s `raises(MoneyError)` is in this impl's published header, and a
+# caller of `a + b` performs it.
+#
+# `mul` and `div` are the awkward half and are honest about it. Money times money is not money —
+# £2 × £3 is not an amount of anything — so both refuse, which is a thing a `raises` row lets a
+# method *say* rather than a reason not to implement the trait.
+impl Num for Money:
+    def add(self, other):
+        return Money(units=self.units + other.units, currency=same_currency(self, other))
 
-def minus(a: Money, b: Money) -> Money uses raises(MoneyError):
-    return Money(units=a.units - b.units, currency=same_currency(a, b))
+    def sub(self, other):
+        return Money(units=self.units - other.units, currency=same_currency(self, other))
 
-## An amount times a plain number: `price * quantity`.
-##
-## Money times money is not money — £2 × £3 is not an amount of anything — so there is no such
-## operation here at all, which is the other half of why `Num` is the wrong shape for this type.
+    def mul(self, other):
+        raise NotAnAmount(op="*")
+
+    def div(self, other):
+        raise NotAnAmount(op="/")
+
+## An amount times a plain number: `price * quantity`, which is the multiplication that means
+## something.
 def times(m: Money, n: Int) -> Money:
     return Money(units=m.units * n, currency=m.currency)
 
@@ -77,7 +86,7 @@ def is_negative(m: Money) -> Bool:
     return m.units < 0
 
 def total(amounts: list[Money], currency: Str) -> Money uses raises(MoneyError):
-    return list_fold(amounts, zero_of(currency), plus)
+    return list_fold(amounts, zero_of(currency), lambda acc, m: acc + m)
 
 ## Split an amount into `parts` as evenly as an integer allows, largest remainder first.
 ##
@@ -127,11 +136,11 @@ def render(m: Money) -> Str:
 # ---------------------------------------------------------------------------------------------
 
 test "amounts in one currency add and subtract":
-    expect (try: plus(money(250, "GBP"), money(175, "GBP"))) == Ok(value=money(425, "GBP"))
-    expect (try: minus(money(250, "GBP"), money(175, "GBP"))) == Ok(value=money(75, "GBP"))
+    expect (try: money(250, "GBP") + money(175, "GBP")) == Ok(value=money(425, "GBP"))
+    expect (try: money(250, "GBP") - money(175, "GBP")) == Ok(value=money(75, "GBP"))
 
 test "and amounts in two currencies do not":
-    expect (try: plus(money(250, "GBP"), money(175, "EUR"))) == Err(error=MixedCurrency(left="GBP", right="EUR"))
+    expect (try: money(250, "GBP") + money(175, "EUR")) == Err(error=MixedCurrency(left="GBP", right="EUR"))
 
 test "a total is a fold, and it carries the same refusal":
     expect (try: total([money(100, "GBP"), money(250, "GBP")], "GBP")) == Ok(value=money(350, "GBP"))
@@ -152,5 +161,6 @@ test "rendering puts the point where the currency does":
     expect render(money(-250, "GBP")) == "-2.50"
     expect render(money(0, "GBP")) == "0.00"
 
-test "a price times a quantity is a price":
+test "a price times a quantity is a price, and money times money is not":
     expect times(money(250, "GBP"), 3) == money(750, "GBP")
+    expect (try: money(250, "GBP") * money(3, "GBP")) == Err(error=NotAnAmount(op="*"))

@@ -346,9 +346,15 @@ pub fn check_module_with(
         .enumerate()
         .filter_map(|(i, it)| ck.expand_bounds(it).map(|n| (i, n)))
         .collect();
-    let mut items: Vec<&Node> = items.into_iter().chain(expanded.iter()).collect();
+    // The impl's methods go **first**, and the order is load-bearing rather than tidy. A row is
+    // solved as its definition is checked, so a `try:` in a caller can only see what has already
+    // been decided — and a trait method is the one thing every operator call in the module goes
+    // through. Checking `Num::add@Money` before the definitions that write `a + b` is what lets a
+    // handler discharge the failure that impl performs rather than carrying it as an unresolved
+    // tail (`docs/47` §47.4).
+    let mut items: Vec<&Node> = expanded.iter().chain(items).collect();
     for (i, node) in &bounded {
-        items[*i] = node;
+        items[expanded.len() + *i] = node;
     }
     ck.collect_signatures(&items);
     ck.collect_signal_names(&items);
@@ -1228,10 +1234,35 @@ impl<'a> Checker<'a> {
             .iter()
             .filter_map(|n| self.traits.get(n).map(|d| d.sig.clone()))
             .collect();
+        // The header, plus what each of its methods turned out to perform. An impl's row is
+        // inferred rather than taken from the trait (`docs/47`), so a module that publishes an
+        // impl has to publish the rows too — a caller in another module has nowhere else to get
+        // them, and taking them off the trait is exactly the unsoundness this closes.
         let impls: Vec<ty::ImplSig> = self
             .own_impls
             .iter()
             .filter_map(|k| self.impls.get(k).map(|d| d.sig.clone()))
+            .map(|mut sig| {
+                let head = sig.head();
+                if let Some(decl) = self.traits.get(&sig.trait_name) {
+                    for m in &decl.sig.methods {
+                        let mangled = traits::mangle(&sig.trait_name, &m.name, &head);
+                        let Some(def) = defs.get(&mangled) else {
+                            continue;
+                        };
+                        let row: Vec<Effect> = def
+                            .effects
+                            .iter()
+                            .filter(|e| !e.is_ambient())
+                            .cloned()
+                            .collect();
+                        if !row.is_empty() {
+                            sig.effects.push((m.name.clone(), row));
+                        }
+                    }
+                }
+                sig
+            })
             .collect();
 
         Program {
@@ -1348,7 +1379,15 @@ impl<'a> Checker<'a> {
 
         let mut declared_effects: Vec<Effect> = declared.atoms.iter().cloned().collect();
         declared_effects.sort();
-        let row_is_declared = !declared_effects.is_empty() || self.impl_methods.contains(&name);
+        // An impl method's row is **inferred**, not bounded by the trait's.
+        //
+        // It was bounded until `docs/46` §46.5: a trait's declared row was a ceiling every impl was
+        // held to, which meant a fallible operation could not be a trait method and `Money` could
+        // not have `+`. A trait's row is now a floor and a piece of documentation — what a caller
+        // of an *unknown* impl may assume — and what a caller of a known one performs is what that
+        // impl performs. `.becki` publishes it per impl, so the boundary is not where this
+        // becomes untrue.
+        let row_is_declared = !declared_effects.is_empty();
         let bounds = self.bounds_of_def(&name);
         Some(Def {
             name,
@@ -2179,73 +2218,96 @@ impl<'a> Checker<'a> {
         )
     }
 
-    /// `try: block` — run the block, and reify its failure as a `Result[T, E]`.
+    /// `try: block` — run the block, and reify one failure as a `Result[T, E]`.
     ///
     /// This is the handler, and it is a *form*: lexically scoped by construction, with no dynamic
-    /// search for who handles what (POPL 2019's result, `docs/38` §38.4). It discharges exactly the
-    /// `raises(E)` atoms the block's row carries and leaves everything else — including the row
-    /// *variables*, which stand for a caller's effects and may hide a failure this handler has no
-    /// type for. That last point is why the primitive is given the name of what it catches.
+    /// search for who handles what (POPL 2019's result, `docs/38` §38.4).
+    ///
+    /// **It catches one error type and lets every other failure travel**, which is what makes it
+    /// composable rather than a barrier. `E` comes from the expectation where there is one — a
+    /// `try:` almost always flows into something whose type says `Result[T, E]` — and from the
+    /// block's own row where there is not. Taking it from the expectation is not a convenience: a
+    /// row is decided lazily, so a call to a definition declared *later* in the file contributes a
+    /// row *variable* at this point and a handler that could only read atoms would be wrong about
+    /// exactly the forward references a program is made of.
+    ///
+    /// Whatever is not caught stays in the enclosing row — other `raises` atoms, every other
+    /// effect, and the row variables, which may hide a failure this handler has no type for. That
+    /// last point is why the primitive is given the name of what it catches: the runtime compares.
     fn try_expr(&mut self, body: &Node, expected: Option<&Ty>, span: Span) -> Core {
-        // The `Result[T, _]` a caller expects tells the block what its own value type should be.
-        let inner_expected = match expected.map(|t| self.subst.resolve(t)) {
-            Some(Ty::Con(c, args)) if c.as_ref() == Ty::RESULT && args.len() == 2 => {
-                Some(args[0].clone())
-            }
-            _ => None,
+        // The `Result[T, E]` a caller expects tells the block both halves: what its value type
+        // should be, and which failure this handler is for.
+        let (inner_expected, expected_error) = match expected.map(|t| self.subst.resolve(t)) {
+            Some(Ty::Con(c, args)) if c.as_ref() == Ty::RESULT && args.len() == 2 => (
+                Some(args[0].clone()),
+                match self.subst.resolve(&args[1]) {
+                    Ty::Con(e, es) if es.is_empty() => Some(e),
+                    _ => None,
+                },
+            ),
+            _ => (None, None),
         };
 
         let outer = std::mem::take(&mut self.row);
         let before = self.locals.len();
         let core = self.body_expr(body, inner_expected.as_ref());
         self.locals.truncate(before);
-        let inner = std::mem::replace(&mut self.row, outer);
+        // Resolved, not raw: a call to something whose row is still a variable contributes a tail,
+        // and the atoms behind it are only visible once the substitution has caught up.
+        let inner = self
+            .subst
+            .resolve_row(&std::mem::replace(&mut self.row, outer));
 
         let mut raised: Vec<Arc<str>> = Vec::new();
-        let mut rest = Row::empty();
-        rest.tails = inner.tails.clone();
         for atom in &inner.atoms {
-            match atom {
-                Effect::Raises(t) => {
-                    if !raised.contains(t) {
-                        raised.push(t.clone());
-                    }
-                }
-                other => {
-                    rest.atoms.insert(other.clone());
+            if let Effect::Raises(t) = atom {
+                if !raised.contains(t) {
+                    raised.push(t.clone());
                 }
             }
         }
-        // Everything the block did except fail is still done, and the enclosing definition still
-        // performs it. A handler catches failure; it does not launder a `durable`.
-        self.perform(&rest);
+        raised.sort();
 
-        let error = match raised.len() {
-            1 => raised.remove(0),
-            0 => {
-                self.error(
-                    "B0392",
-                    "nothing in this block can fail, so there is no failure to reify",
-                    span,
-                );
-                return core;
-            }
-            _ => {
-                raised.sort();
-                let names: Vec<String> = raised.iter().map(|t| format!("`{t}`")).collect();
-                self.error(
-                    "B0393",
-                    format!(
-                        "this block can fail in {} different ways ({}), and a `Result` has one \
-                         error type — declare a union over them and raise that",
-                        raised.len(),
-                        names.join(", ")
-                    ),
-                    span,
-                );
-                raised.remove(0)
-            }
+        let error = match expected_error {
+            Some(e) => e,
+            None => match raised.len() {
+                1 => raised[0].clone(),
+                0 => {
+                    self.error(
+                        "B0392",
+                        "nothing here can fail, and nothing says what this would catch",
+                        span,
+                    );
+                    return core;
+                }
+                _ => {
+                    let names: Vec<String> = raised.iter().map(|t| format!("`{t}`")).collect();
+                    self.error(
+                        "B0393",
+                        format!(
+                            "this block can fail in {} ways ({}), so say which one to catch — a \
+                             `Result[T, E]` on the enclosing signature is how",
+                            raised.len(),
+                            names.join(", ")
+                        ),
+                        span,
+                    );
+                    raised[0].clone()
+                }
+            },
         };
+
+        // Everything except the failure being caught is still performed by the enclosing
+        // definition. A handler catches one failure; it does not launder a `durable`, and it does
+        // not silently swallow a second error type.
+        let mut rest = Row::empty();
+        rest.tails = inner.tails.clone();
+        for atom in &inner.atoms {
+            if !matches!(atom, Effect::Raises(t) if *t == error) {
+                rest.atoms.insert(atom.clone());
+            }
+        }
+        self.perform(&rest);
 
         let value_ty = core.ty.clone();
         let result_ty = Ty::app(Ty::RESULT, vec![value_ty, Ty::con(&error)]);

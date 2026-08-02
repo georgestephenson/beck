@@ -845,6 +845,14 @@ pub struct ImplSig {
     pub params: Vec<Arc<str>>,
     /// The target, with those parameters as rigid names — `Bundle[T]`.
     pub target: Ty,
+    /// What each method actually performs, by name, for the methods that perform anything.
+    ///
+    /// The trait declares an abstract signature; this impl's methods may be **more** effectful than
+    /// it (`docs/47`), so a caller in another module cannot take the row off the trait. It has to
+    /// be published with the impl, and this is where it crosses. Empty rows are omitted: most
+    /// impls are pure and a `.becki` full of `uses` clauses saying nothing is a `.becki` nobody
+    /// reviews.
+    pub effects: Vec<(Arc<str>, Vec<Effect>)>,
 }
 
 impl ImplSig {

@@ -35,10 +35,11 @@ Collections beyond the primitives, an HTTP client, UUID beyond `uuid()`, crypto,
 numeric coercion. [`46`](../../docs/46-standard-library-report.md) §46.6 says which of those are
 waiting on a language feature and which are simply unwritten.
 
-**One wall is recorded rather than worked around silently.** `money.beck` was meant to be an
-`impl Num for Money` so that `+` would work on it, the way `sicp/ch2.beck`'s rationals do. It
-cannot be: a trait's declared effect row is a bound on every impl, the prelude's `Num` is pure, and
-adding two amounts in different currencies has to fail. The refusal is asserted in
-`stdlib.rs::a_trait_method_may_not_be_more_effectful_than_its_trait`, in the pattern
-`sicp/refusals/` used — so the day effect-polymorphic traits land, that test goes red and this
-directory gains an operator.
+**One wall was found here and removed from here.** `money.beck` was meant to be an
+`impl Num for Money` so that `+` would work on it, the way `sicp/ch2.beck`'s rationals do. It could
+not be: a trait's declared effect row was a *ceiling* every impl was held to, the prelude's `Num` is
+pure, and adding two amounts in different currencies has to fail. That refusal was asserted as a
+wall in `sicp/refusals/`'s pattern, and [`47`](../../docs/47-effect-polymorphic-traits-report.md)
+took it down a day later — a trait's row is now a floor, an impl's row is inferred and published,
+and `money.beck` has its operator. `stdlib.rs` asserts the property from this side, so a regression
+reads as "money lost its operator" rather than as a type error three files away.

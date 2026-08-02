@@ -527,24 +527,44 @@ impl Checker<'_> {
                 trait_name: trait_name.clone(),
                 params: param_names.clone(),
                 target: target_ty,
+                // Filled in after the bodies are checked — this is the header, and what its
+                // methods perform is not known until they have been read.
+                effects: Vec::new(),
             }
         };
 
         // An interface publishes the header and not the bodies, exactly as it publishes a `def`'s
-        // signature and not its body.
+        // signature and not its body. What it *does* publish about a method is its **row**, since
+        // `docs/47` made that a property of the impl rather than of the trait: a caller in another
+        // module has nowhere else to learn it.
         if self.mode == super::Mode::Interface {
-            if item.args.len() > 3 {
-                self.diags.push(
-                    Diagnostic::error(
-                        "B0382",
-                        "an impl in a `.becki` publishes its header, not its methods",
-                        span,
-                    )
-                    .with_note(
-                        "the implementation stays in the module that wrote it; what crosses is \
-                         that it exists, which is what a call in another module needs to resolve",
-                    ),
-                );
+            let mut sig = sig;
+            for m in &item.args[3..] {
+                let (m, _) = self.undecorate(m);
+                // `def add uses raises(MoneyError)` — a bodyless `def` carrying only a row, which
+                // is what `render_impl` writes.
+                if !m.is_form(sym::DEF) || m.args.len() > 5 {
+                    self.diags.push(
+                        Diagnostic::error(
+                            "B0382",
+                            "an impl in a `.becki` publishes its methods' effects, not their bodies",
+                            m.span(),
+                        )
+                        .with_note(
+                            "the implementation stays in the module that wrote it; what crosses is \
+                             that it exists and what it performs, which is what a call in another \
+                             module needs to resolve",
+                        ),
+                    );
+                    continue;
+                }
+                let Some(name) = m.args[0].as_var().map(|s| s.name.clone()) else {
+                    continue;
+                };
+                let row = self.declared_row(m.args.get(4));
+                if !row.atoms.is_empty() {
+                    sig.effects.push((name, row.atoms.into_iter().collect()));
+                }
             }
             self.register_impl(key, target.clone(), sig, span);
             return;
@@ -1032,18 +1052,25 @@ impl Checker<'_> {
                 continue;
             };
             for m in &decl.sig.methods {
-                // The signature the importing module will call through: the trait's, with `Self`
-                // replaced by this impl's target. Its row is the trait's declared one, which may be
-                // wider than what the implementation actually does — the safe direction, and the
-                // one §37.5 already made the published bound.
+                // The signature the importing module will call through: the trait's shape, with
+                // `Self` replaced by this impl's target, and **this impl's** row rather than the
+                // trait's. `docs/47` inverted that: a trait's row is a floor and an impl may be
+                // more effectful, so taking the row off the trait here would let a fallible method
+                // arrive in another module looking pure.
                 let name = mangle(&i.trait_name, &m.name, &head);
+                let row = i
+                    .effects
+                    .iter()
+                    .find(|(n, _)| *n == m.name)
+                    .map(|(_, r)| Row::of(r.iter().cloned()))
+                    .unwrap_or_else(|| Row::of(m.effects.iter().cloned()));
                 let params: Vec<Ty> = m
                     .params
                     .iter()
                     .map(|(_, t)| substitute_self_ty(t, &i.target))
                     .collect();
                 let ret = substitute_self_ty(&m.ret, &i.target);
-                let ty = Ty::fun_eff(params, ret, Row::of(m.effects.iter().cloned()));
+                let ty = Ty::fun_eff(params, ret, row);
                 self.schemes
                     .insert(name.clone(), Scheme::generic(i.params.clone(), ty));
             }
@@ -1081,13 +1108,18 @@ impl Checker<'_> {
                     continue;
                 };
                 for m in &decl.sig.methods {
+                    // A **fresh row variable**, matching what `expand_bounds` mints locally: a
+                    // bounded definition is effect-polymorphic in its bounds, so a caller that
+                    // supplies a pure impl stays pure and one that supplies a fallible impl
+                    // inherits exactly its failure (`docs/33` §33.2, `docs/47` §47.2).
+                    let row = self.subst.fresh_row();
                     params.push(Ty::fun_eff(
                         m.params
                             .iter()
                             .map(|(_, ty)| substitute_self_ty(ty, &at))
                             .collect(),
                         substitute_self_ty(&m.ret, &at),
-                        Row::of(m.effects.iter().cloned()),
+                        row,
                     ));
                     specs.push(DictParam {
                         param: param.clone(),
@@ -1402,10 +1434,14 @@ impl Show for Point:
         }
     }
 
+    /// An impl may perform more than its trait declares, and the caller inherits it.
+    ///
+    /// This **reverses** what `docs/37` §37.5 built, and `docs/47` says why: a trait's row as a
+    /// ceiling meant a fallible operation could not be a trait method, so `Money` could not have
+    /// `+`. The row is now inferred per impl. Nothing is lost, because what a caller sees is what
+    /// the impl does rather than what the trait guessed.
     #[test]
-    fn an_impl_may_not_perform_more_than_the_trait_declares() {
-        // The effect row is the trait's, and B0370's "a `uses` clause is the published bound"
-        // applies to it exactly as it applies to a hand-written signature.
+    fn an_impl_may_perform_more_than_its_trait_declares_and_the_caller_inherits_it() {
         let src = "\
 trait Show:
     def show(self) -> Str
@@ -1415,11 +1451,77 @@ model Point:
 
 impl Show for Point:
     def show(self):
-        return uuid()
+        return str(uuid())
+
+def label(p: Point) -> Str:
+    return p.show()
 ";
-        let text = errors(src);
-        assert!(text.contains("B0370"), "{text}");
-        assert!(text.contains("nondet"), "{text}");
+        let (program, d, map) = crate::check_str("t.beck", src);
+        assert!(!d.has_errors(), "{}", d.render(&map));
+        let row: Vec<String> = program
+            .defs
+            .get("label")
+            .expect("label")
+            .effects
+            .iter()
+            .map(|e| e.name())
+            .collect();
+        assert_eq!(
+            row,
+            vec!["nondet"],
+            "a caller of a trait method performs what the *impl* performs"
+        );
+    }
+
+    /// And a bounded caller is polymorphic in it: the same generic definition is pure with a pure
+    /// impl and effectful with an effectful one, which is `docs/33`'s property applied to a bound.
+    #[test]
+    fn a_bounded_definition_inherits_the_row_of_whichever_impl_it_is_given() {
+        let src = "\
+trait Show:
+    def show(self) -> Str
+
+model Quiet:
+    x: Int
+
+model Loud:
+    x: Int
+
+impl Show for Quiet:
+    def show(self):
+        return str(self.x)
+
+impl Show for Loud:
+    def show(self):
+        return str(uuid())
+
+def label[T: Show](x: T) -> Str:
+    return x.show()
+
+def quiet(q: Quiet) -> Str:
+    return label(q)
+
+def loud(l: Loud) -> Str:
+    return label(l)
+";
+        let (program, d, map) = crate::check_str("t.beck", src);
+        assert!(!d.has_errors(), "{}", d.render(&map));
+        let row = |name: &str| -> Vec<String> {
+            program
+                .defs
+                .get(name)
+                .unwrap_or_else(|| panic!("no `{name}`"))
+                .effects
+                .iter()
+                .map(|e| e.name())
+                .collect()
+        };
+        assert!(
+            row("quiet").is_empty(),
+            "a pure impl leaves its caller pure: {:?}",
+            row("quiet")
+        );
+        assert_eq!(row("loud"), vec!["nondet"]);
     }
 
     #[test]

@@ -209,20 +209,17 @@ fn a_time_with_an_offset_is_refused_rather_than_shifted() {
 // The wall
 // ---------------------------------------------------------------------------------------------
 
-/// A trait's declared row is a bound on every impl, so a fallible operation cannot be a method of a
-/// pure trait.
+/// An impl may be **more effectful than its trait**, and the caller inherits it.
 ///
-/// This is why `lib/money.beck` has `plus` and `minus` rather than `impl Num for Money`, and it is
-/// the first thing writing a *library* found that four phases of writing a compiler had not. The
-/// fix is a trait whose method signatures carry a row variable — which
-/// [`33`](../../../../docs/33-effect-polymorphism-and-list-patterns-report.md) did for a user's
-/// higher-order definitions and nothing has done for traits.
+/// This is what `lib/money.beck` needed and could not have until `docs/47`: a trait's declared row
+/// was a ceiling, `Num` is pure, and adding two amounts in different currencies has to fail — so an
+/// operator was unavailable to every type whose operation can fail. The row is now inferred per
+/// impl.
 ///
-/// Asserted in `sicp/refusals/`'s pattern: **the day it lands, this test goes red**, and whoever
-/// lands it deletes it, deletes four lines of `money.beck`, and corrects
-/// [`46`](../../../../docs/46-standard-library-report.md) §46.5 in the same change.
+/// It is asserted here, in the harness of the library that found the wall, so that a regression
+/// shows up as "money lost its operator" rather than as a type error three files away.
 #[test]
-fn a_trait_method_may_not_be_more_effectful_than_its_trait() {
+fn an_impl_may_be_more_effectful_than_its_trait_and_money_has_its_operator() {
     let src = "\
 model Money:
     units: Int
@@ -245,12 +242,71 @@ impl Num for Money:
 
     def div(self, other):
         return self
+
+def sum2(a: Money, b: Money) -> Money:
+    return a + b
+
+def checked(a: Money, b: Money) -> Result[Money, MoneyError]:
+    return try: a + b
 ";
-    let (_, d, map) = beck_core::check_str("wall.beck", src);
-    assert!(
-        d.iter().any(|x| x.code == "B0370"),
-        "a raising trait method is accepted now — the wall is down, so delete this test, give \
-         `lib/money.beck` its `impl Num`, and say so in docs/46 §46.5:\n{}",
-        d.render(&map)
+    let (program, d, map) = beck_core::check_str("money.beck", src);
+    assert!(!d.has_errors(), "{}", d.render(&map));
+
+    let row = |name: &str| -> Vec<String> {
+        program
+            .defs
+            .get(name)
+            .unwrap_or_else(|| panic!("no `{name}`"))
+            .effects
+            .iter()
+            .map(|e| e.name())
+            .collect()
+    };
+    assert_eq!(
+        row("sum2"),
+        vec!["raises(MoneyError)"],
+        "a caller of `+` performs what the impl performs"
     );
+    assert!(
+        row("checked").is_empty(),
+        "and a handler discharges it: {:?}",
+        row("checked")
+    );
+}
+
+/// The row crosses a module. A `.becki` publishes what each impl method performs, because the
+/// trait cannot be asked any more — and a fallible method arriving in another module looking pure
+/// is the unsoundness this closes.
+#[test]
+fn an_impls_row_is_published_with_the_impl() {
+    let src = "\
+model Money:
+    units: Int
+    currency: Str
+
+union MoneyError:
+    MixedCurrency(left: Str, right: Str)
+
+impl Num for Money:
+    def add(self, other):
+        raise MixedCurrency(left=self.currency, right=other.currency)
+
+    def sub(self, other):
+        return self
+
+    def mul(self, other):
+        return self
+
+    def div(self, other):
+        return self
+";
+    let (program, d, map) = beck_core::check_str("money.beck", src);
+    assert!(!d.has_errors(), "{}", d.render(&map));
+    let text = beck_core::iface::Interface::of(&program).render();
+    assert!(
+        text.contains("impl Num for Money:") && text.contains("def add() uses raises(MoneyError)"),
+        "the published header has to carry the row:\n{text}"
+    );
+    // And a pure method says nothing, so an impl of a pure trait reads as it always did.
+    assert!(!text.contains("def sub()"), "{text}");
 }

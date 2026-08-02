@@ -637,19 +637,20 @@ pub const INDEX: &[CodeEntry] = &[
     e(
         "B0392",
         Stage::Types,
-        "nothing in this block can fail",
-        "A `try:` reifies a failure into a `Result`, and this block's row carries no `raises(...)` \
-         to reify. Either the call you meant to make is not there, or the `try:` is left over from \
-         a signature that has stopped failing — which is the good case, and the diagnostic is how \
-         you find out.",
+        "nothing here can fail, and nothing says what this would catch",
+        "A `try:` reifies one failure into a `Result`, and it takes the error type from the \
+         enclosing signature's `Result[T, E]` where there is one and from the block's own row \
+         where there is not. Neither said anything here. Either the call you meant to make is not \
+         there, or the `try:` is left over from a signature that has stopped failing — which is \
+         the good case, and the diagnostic is how you find out.",
     ),
     e(
         "B0393",
         Stage::Types,
-        "the block can fail in more than one way",
-        "A `Result[T, E]` has one error type. Declare a union over the failures and raise that — \
-         which is the same advice as for any sum, and keeps the handler's `E` a type the caller \
-         can match on exhaustively.",
+        "the block can fail in more than one way, and nothing says which to catch",
+        "A `Result[T, E]` has one error type, and a `try:` catches one — the rest keep travelling, \
+         which is what makes a handler composable. Here nothing named which: give the enclosing \
+         definition a `Result[T, E]` return type, and the handler catches that `E`.",
     ),
     e(
         "B0394",

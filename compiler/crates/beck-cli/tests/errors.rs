@@ -187,10 +187,14 @@ def checked(text: Str) -> Result[Str, Refusal]:
     assert!(codes(src).contains(&"B0392"), "{:?}", codes(src));
 }
 
-/// A `Result` has one error type, so a block that can fail two ways has to say which. The
-/// diagnostic names both and asks for the union, which is the answer in every case.
+/// A `Result` has one error type. A block that can fail two ways is fine — the handler catches the
+/// one its signature names, and **the other keeps travelling**, which the caller's row then says.
+///
+/// This is what makes `try:` composable rather than a barrier, and it is a correction to what this
+/// suite asserted when the handler was first built: it refused two failures and asked for a union.
+/// Precision was available and a refusal was not the right answer.
 #[test]
-fn a_block_that_fails_two_ways_is_refused_by_name() {
+fn a_handler_catches_the_failure_it_names_and_the_other_travels() {
     let src = "\
 union Parse:
     NotANumber
@@ -206,9 +210,36 @@ def both(text: Str) -> Int:
 def checked(text: Str) -> Result[Int, Parse]:
     return try: both(text)
 ";
+    assert_eq!(
+        row_of(src, "checked"),
+        vec!["raises(Budget)"],
+        "the `Parse` is caught and reified; the `Budget` is not, and the signature says so"
+    );
+}
+
+/// With no signature to name one, a block that fails two ways has nothing to choose from and is
+/// refused by name.
+#[test]
+fn a_handler_with_nothing_to_go_on_is_refused_by_name() {
+    let src = "\
+union Parse:
+    NotANumber
+
+union Budget:
+    Over
+
+def both(text: Str) -> Int:
+    if str_is_empty(text):
+        raise NotANumber
+    raise Over
+
+def checked(text: Str) -> Bool:
+    x = try: both(text)
+    return true
+";
     let (_, d, map) = check_str("t.beck", src);
     let rendered = d.render(&map);
-    assert!(d.iter().any(|x| x.code == "B0393"), "{}", rendered);
+    assert!(d.iter().any(|x| x.code == "B0393"), "{rendered}");
     assert!(
         rendered.contains("`Budget`") && rendered.contains("`Parse`"),
         "the diagnostic must name both ways it can fail:\n{rendered}"
@@ -240,13 +271,10 @@ def outer(text: Str) -> Result[Int, Parse]:
     return try:
         inner(text)
 ";
-    // The block raises `Budget` and the handler is asked for a `Parse`, so the two disagree — and
-    // the checker says so rather than the runtime silently mistyping an `Err`.
-    let found = codes(src);
-    assert!(
-        found.contains(&"B0320") || found.contains(&"B0393"),
-        "{found:?}"
-    );
+    // The handler is for a `Parse` and the block raises a `Budget`. Nothing is caught, and the
+    // signature says the failure travelled — which is the static half. The runtime half is the
+    // type name the primitive carries: a raise unwinds past a handler that is not for it.
+    assert_eq!(row_of(src, "outer"), vec!["raises(Budget)"]);
 }
 
 // ---------------------------------------------------------------------------------------------
