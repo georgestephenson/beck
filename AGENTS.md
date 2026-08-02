@@ -31,7 +31,8 @@ Write the commit message as the author of the change: what changed, and why.
   [`36`](docs/36-parameterised-types-report.md), [`37`](docs/37-traits-report.md),
   [`39`](docs/39-bounds-report.md), [`40`](docs/40-traits-across-modules-report.md),
   [`41`](docs/41-generic-arithmetic-report.md), [`44`](docs/44-wave-0-report.md),
-  [`45`](docs/45-error-rows-report.md) and [`46`](docs/46-standard-library-report.md), indexed in
+  [`45`](docs/45-error-rows-report.md), [`46`](docs/46-standard-library-report.md) and
+  [`47`](docs/47-effect-polymorphic-traits-report.md), indexed in
   [`docs/README.md`](docs/README.md) — record what each
   phase does, what it refuses to claim, and the corrections it makes to the design documents.
   Add a new report to that list and to the index; do not extend it with another "and".
@@ -46,8 +47,9 @@ Write the commit message as the author of the change: what changed, and why.
   list. All six of
   [`docs/25`](docs/25-benchmarks-and-expressiveness.md)'s walls are down, and so are the three that
   removing them wrote (docs/33, docs/36, docs/41); docs/41 §41.7 names what stands in their place —
-  and docs/46 §46.5 has added one more, found by writing a library rather than a compiler: a
-  trait's declared row is a bound, so a fallible operation cannot be a trait method.
+  and docs/46 §46.5 added one more, found by writing a library rather than a compiler — a trait's
+  declared row was a ceiling, so a fallible operation could not be a trait method — which docs/47
+  removed the next day.
   Reports are history: a later phase's correction to an earlier one goes in the later report, not
   into the earlier text.
 - [`docs/reference/`](docs/reference/README.md) is **generated** by `beck doc reference` from the

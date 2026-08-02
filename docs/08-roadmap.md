@@ -269,7 +269,8 @@ dependencies whose signatures didn't change.
   collections, JSON and time as thirty-one primitives, plus `compiler/lib/` — the half written in
   Beck, three libraries with their own tests. HTTP, crypto, decimal, bignums and numeric coercion
   are untouched, and §46.6 is the item-by-item list. The `Num` mechanism turned out not to be
-  enough for money: §46.5 is the wall.*
+  enough for money — §46.5 is the wall — and [`47`](47-effect-polymorphic-traits-report.md) took it
+  down: an impl may now be more effectful than its trait, so `Money` has its operator.*
 - **The language's own means of abstraction, which four phases had never been pointed at**
   ([`25`](25-benchmarks-and-expressiveness.md) §25.6, measured; §25.7 orders them). Every corpus
   program is shaped like the todo sketch, which is why none of these had surfaced. ***All six are
@@ -583,13 +584,20 @@ trait's method signatures, which [`33`](33-effect-polymorphism-and-list-patterns
 for a user's higher-order definitions and nothing has built for traits. It is asserted as a
 refusal, so it is a test that goes red rather than a paragraph.*
 
-**Wave 2b — the wall Wave 2 wrote.** Effect-polymorphic traits: a `trait` whose method signatures
-carry a row variable, so an impl may be as effectful as its type requires and a caller inherits
-exactly that. It has one successor that matters — every numeric or fallible type that wants an
-operator — and it is Lane A, so it is the head of the language queue the moment the rest of the
-standard library stops being the thing in front of it. This is a wave because it did not exist when
-§8.5.4 was written: it was *written by* Wave 2, which is the third time a completed wave has
-rewritten the ordering below it.
+**Wave 2b — the wall Wave 2 wrote. ✅ Built** ([`47`](47-effect-polymorphic-traits-report.md)). A
+trait's declared row is a floor rather than a ceiling: an impl's row is inferred, published with
+the impl so it crosses a module, and inherited by whoever calls it — so `Money` has its `+` and
+every numeric or fallible type can have one. It cost one line of the checker plus the module
+boundary, because bounded generics had been effect-polymorphic since
+[`39`](39-bounds-report.md) and nothing had noticed. This wave existed for a day: Wave 2 wrote it
+and Wave 2b closed it, which is the shortest a wave has been and the argument for recording a wall
+the moment it is found rather than at the end of the work that found it.
+
+*Two corrections to Wave 1 came with it, both making `try:` more precise: it resolves the row
+before reading it — a call to something declared later contributes a row *variable*, and a handler
+that could only read atoms was wrong about exactly the forward references a program is made of —
+and it catches the failure its signature names while the others travel, instead of refusing a block
+that can fail two ways.*
 
 **Wave 3 — months.** Identity beyond the dev-mode actor — which is also the item that empties four
 of `pending_security.rs`'s tests and edits [`43`](43-threat-model.md) §43.4 — then the playground
