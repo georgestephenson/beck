@@ -68,6 +68,12 @@ pub struct Program {
 #[derive(Clone, Debug)]
 pub struct Def {
     pub name: Arc<str>,
+    /// The names in `def map[T, U](…)`, in the order written.
+    ///
+    /// Carried on the `Def` rather than left in the scheme because `beck iface` publishes it: a
+    /// `.becki` line that dropped the `[T, U]` would read back as a signature mentioning two types
+    /// nobody declared (`docs/32` §32.8).
+    pub typarams: Vec<Arc<str>>,
     pub params: Vec<(VarId, Arc<str>, Ty)>,
     pub ret: Ty,
     /// The whole definition as a lambda, so evaluating the name yields a callable value.
@@ -147,11 +153,17 @@ pub struct Checker<'a> {
     /// The row *variable* standing for each definition's inferred row, minted before any body is
     /// checked so that callers can name it and mutual recursion needs no ordering.
     def_row: BTreeMap<Arc<str>, RowVarId>,
+    /// The row variables each definition's scheme quantifies over — §3.2's `e`, for a definition a
+    /// user wrote rather than one the prelude declares.
+    generic_rows: BTreeMap<Arc<str>, Vec<RowVarId>>,
     /// What the body currently being checked has been seen to perform.
     row: Row,
     next_var: VarId,
     /// Set while checking a fold's function, so §3.7's determinism rule can be enforced.
     in_fold: bool,
+    /// The type parameters of the `def` whose signature or body is being read. Empty everywhere
+    /// else, which is why a monomorphic program cannot accidentally see one (`docs/32` §32.7).
+    typarams: BTreeSet<Arc<str>>,
     mode: Mode,
 }
 
@@ -201,6 +213,8 @@ pub fn check_module_with(
         row: Row::empty(),
         next_var: 0,
         in_fold: false,
+        typarams: BTreeSet::new(),
+        generic_rows: BTreeMap::new(),
         mode,
     };
     for (name, prim, scheme) in prelude::prims() {
@@ -593,13 +607,16 @@ impl<'a> Checker<'a> {
     fn collect_signatures(&mut self, items: &[&Node]) {
         for item in items {
             let (item, _) = self.undecorate(item);
-            if !item.is_form(sym::DEF) || item.args.len() < 4 {
+            if !item.is_form(sym::DEF) || item.args.len() < 5 {
                 continue;
             }
             let Some(name) = item.args[0].as_var().map(|s| s.name.clone()) else {
                 continue;
             };
-            let params: Vec<Ty> = item.args[1]
+            // The type parameters go into scope *before* the signature is read, so that `T` in
+            // `xs: list[T]` resolves to the rigid `T` rather than to `cannot find type`.
+            let typarams = self.bind_typarams(&item.args[1], &name);
+            let params: Vec<Ty> = item.args[2]
                 .args
                 .iter()
                 .map(|p| {
@@ -615,7 +632,7 @@ impl<'a> Checker<'a> {
                     }
                 })
                 .collect();
-            let ret = match item.args[2].args.first() {
+            let ret = match item.args[3].args.first() {
                 Some(t) => self.ty_from_node(t),
                 None => {
                     self.error(
@@ -626,6 +643,7 @@ impl<'a> Checker<'a> {
                     self.subst.fresh()
                 }
             };
+            self.typarams.clear();
             // `record(x)` is a record literal however `record` is bound, so a definition with one
             // of these names would compile and never be reachable. Better a message than a mystery.
             if sym::RESERVED_FORMS.contains(&name.as_ref()) {
@@ -642,16 +660,29 @@ impl<'a> Checker<'a> {
                     ),
                 );
             }
-            let declared = self.declared_row(item.args.get(3));
+            let declared = self.declared_row(item.args.get(4));
 
             // The definition's latent row is a *variable*, bound once its body has been checked.
             // Minting it here is what lets any definition call any other in any order.
             let rv = self.subst.fresh_row_var();
+            // §3.2's `map : (list[a], (a -> b ! e)) -> list[b] ! e`, for a definition a *user*
+            // wrote. The row variables the signature's function-typed parameters carry are
+            // quantified, so each call site gets its own — without which one caller passing an
+            // effectful function makes every other caller effectful too (`docs/33` §33.2).
+            let generic_rows = self.generalisable_rows(&params, &ret);
+            let mut latent = Row::var(rv);
+            latent.tails.extend(generic_rows.iter().copied());
             self.schemes.insert(
                 name.clone(),
-                Scheme::mono(Ty::fun_eff(params, ret, Row::var(rv))),
+                Scheme {
+                    vars: Vec::new(),
+                    row_vars: generic_rows.clone(),
+                    params: typarams,
+                    ty: Ty::fun_eff(params, ret, latent),
+                },
             );
             self.def_row.insert(name.clone(), rv);
+            self.generic_rows.insert(name.clone(), generic_rows);
             self.declared.insert(name.clone(), declared);
             self.globals.push(Binding {
                 name: name.clone(),
@@ -659,6 +690,71 @@ impl<'a> Checker<'a> {
                 kind: BindKind::Global(name.clone()),
             });
         }
+    }
+
+    /// The row variables a definition's signature may quantify over.
+    ///
+    /// Those written into its *parameters*, and only when the return type carries none of its own.
+    /// The restriction is not conservatism for its own sake: a variable quantified in the scheme is
+    /// renamed by `instantiate` wherever it appears **syntactically**, and a return type whose row
+    /// is bound — through the substitution — to a parameter's would keep the generic variable on
+    /// one side of the call and the fresh one on the other. `docs/33` §33.3 says what that costs
+    /// and what would lift it.
+    fn generalisable_rows(&self, params: &[Ty], ret: &Ty) -> Vec<RowVarId> {
+        let mut in_ret = Vec::new();
+        row_vars_of(ret, &mut in_ret);
+        if !in_ret.is_empty() {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        for p in params {
+            row_vars_of(p, &mut out);
+        }
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+
+    /// Put a `def`'s `[T, U]` into scope, and answer with the names in order.
+    ///
+    /// Order matters because it is the order [`Subst::instantiate`] and `beck iface` both use, and
+    /// a set would not have one. Shadowing is refused rather than resolved: a type parameter named
+    /// after a `model` in the same module is far more likely to be a mistake than an intention, and
+    /// there is no syntax to disambiguate it afterwards.
+    fn bind_typarams(&mut self, node: &Node, def_name: &str) -> Vec<Arc<str>> {
+        self.typarams.clear();
+        let mut out: Vec<Arc<str>> = Vec::new();
+        for p in &node.args {
+            let Some(s) = p.as_var() else { continue };
+            let name = s.name.clone();
+            if self.types.contains_key(&name) || prelude::builtin_arity(&name).is_some() {
+                self.diags.push(
+                    Diagnostic::error(
+                        "B0314",
+                        format!("`{name}` is already a type, so `{def_name}` cannot take it as a parameter"),
+                        p.span(),
+                    )
+                    .with_primary_label("this name already names a type")
+                    .with_note(
+                        "a type parameter is a name the definition invents, and one that shadowed \
+                         an existing type would make its signature read as though it mentioned that \
+                         type",
+                    ),
+                );
+                continue;
+            }
+            if out.contains(&name) {
+                self.error(
+                    "B0315",
+                    format!("`{name}` is repeated in `{def_name}`'s type parameters"),
+                    p.span(),
+                );
+                continue;
+            }
+            out.push(name.clone());
+            self.typarams.insert(name);
+        }
+        out
     }
 
     /// The row a `uses` clause declares. §3.2's atoms are written as they print:
@@ -1472,10 +1568,13 @@ impl<'a> Checker<'a> {
         let Ty::Fun(param_tys, ret, latent) = scheme.ty.clone() else {
             return None;
         };
+        // The same rigid names the signature was read with, so an annotation *inside* the body may
+        // mention them too — and so that a diagnostic about one prints `T` and not `?7`.
+        self.typarams = scheme.params.iter().cloned().collect();
 
         let before = self.locals.len();
         let mut params = Vec::new();
-        for (p, ty) in item.args[1].args.iter().zip(&param_tys) {
+        for (p, ty) in item.args[2].args.iter().zip(&param_tys) {
             let target = if p.is_form(sym::ANNOT) { &p.args[0] } else { p };
             let Some(s) = target.as_var() else { continue };
             let id = self.fresh_var();
@@ -1487,7 +1586,7 @@ impl<'a> Checker<'a> {
             });
         }
 
-        let body_node = item.args.get(4);
+        let body_node = item.args.get(5);
         let span = item.span();
         // A `def` with no body is a signature. That is the whole content of a `.becki` (§3.6), and
         // it is a promise nobody keeps in an ordinary module.
@@ -1512,6 +1611,7 @@ impl<'a> Checker<'a> {
             self.unify(&body.ty, &ret, body.span, "return type");
         }
         self.locals.truncate(before);
+        self.typarams.clear();
 
         let declared = self.declared.get(&name).cloned().unwrap_or_default();
         // A declared effect is part of the signature whether or not the body reaches it: a stub
@@ -1519,7 +1619,19 @@ impl<'a> Checker<'a> {
         // edit that fills the body in.
         let inferred = performed.union(&declared);
         if let Some(rv) = self.def_row.get(&name).copied() {
-            self.subst.bind_row(rv, inferred.clone());
+            // What the body performs *itself*, with the quantified tails taken out — they are
+            // already in the scheme's latent row, and leaving them in `rv` as well would put the
+            // *generic* variable into every instantiated call rather than the call's own copy of
+            // it. Resolved first, because a tail reached through `map_list`'s own row variable is
+            // still that tail (`docs/33` §33.2).
+            let generic: &[RowVarId] = self
+                .generic_rows
+                .get(&name)
+                .map(|v| v.as_slice())
+                .unwrap_or(&[]);
+            let mut own = self.subst.resolve_row(&inferred);
+            own.tails.retain(|t| !generic.contains(t));
+            self.subst.bind_row(rv, own);
         }
 
         let lam = Core {
@@ -1536,6 +1648,7 @@ impl<'a> Checker<'a> {
         declared_effects.sort();
         Some(Def {
             name,
+            typarams: scheme.params.clone(),
             params,
             ret: *ret,
             body: lam,
@@ -1613,6 +1726,21 @@ impl<'a> Checker<'a> {
             self.error("B0308", "expected a type", span);
             return self.subst.fresh();
         };
+        // A type parameter of the definition being read. It is rigid — `Ty::Con(name, [])` unifies
+        // with itself and nothing else — which is what makes the body of `def first[T](xs: list[T])
+        // -> T` provably work for every `T` rather than for whichever one the body happened to
+        // force (`docs/32` §32.7).
+        if self.typarams.contains(name) {
+            if !n.args.is_empty() {
+                self.error(
+                    "B0313",
+                    format!("`{name}` is a type parameter, so it takes no type arguments"),
+                    span,
+                );
+            }
+            return Ty::con(name);
+        }
+
         let args: Vec<Ty> = n.args.iter().map(|a| self.ty_from_node(a)).collect();
 
         // Aliases are transparent; newtypes are not — that is what "ids of different entities must
@@ -1944,24 +2072,42 @@ impl<'a> Checker<'a> {
                     span,
                 )
             }
-            "+" if n.args.len() == 2 => {
-                // Ad-hoc, bidirectional: `+` is Int addition unless one side is already known to
-                // be a Str, in which case it concatenates. Phase 1 has no numeric type class, and
-                // a `(a, a) -> a` scheme would let `Bool + Bool` typecheck.
-                let lhs = self.expr(&n.args[0], None);
-                let rhs = self.expr(&n.args[1], None);
-                let is_str = self.subst.resolve(&lhs.ty).con_name() == Some(Ty::STR)
-                    || self.subst.resolve(&rhs.ty).con_name() == Some(Ty::STR)
-                    || expected
-                        .map(|t| t.con_name() == Some(Ty::STR))
-                        .unwrap_or(false);
-                let want = if is_str { Ty::str_() } else { Ty::int() };
-                self.unify(&lhs.ty, &want, lhs.span, "operand of `+`");
-                self.unify(&rhs.ty, &want, rhs.span, "operand of `+`");
+            "+" | "-" | "*" | "/" if n.args.len() == 2 => {
+                let op = match head {
+                    "+" => Prim::Add,
+                    "-" => Prim::Sub,
+                    "*" => Prim::Mul,
+                    _ => Prim::Div,
+                };
+                self.arith(op, &n.args[0], &n.args[1], expected, span)
+            }
+            "negate" if n.args.len() == 1 => {
+                let arg = self.expr(&n.args[0], expected);
+                let want = self.numeric_of(&arg.ty, expected).unwrap_or_else(Ty::int);
+                self.unify(&arg.ty, &want, arg.span, "operand of `-`");
                 Core::new(
                     CoreKind::Prim {
-                        op: Prim::Add,
-                        args: vec![lhs, rhs],
+                        op: Prim::Neg,
+                        args: vec![arg],
+                    },
+                    want,
+                    span,
+                )
+            }
+            "abs" if n.args.len() == 1 && n.applied => {
+                // The one *named* member of the tower that is resolved rather than declared. SICP
+                // writes `abs` at both tiers, and a scheme cannot say "Int or Float" without a
+                // numeric class; `docs/32` §32.3 argues why the class is not worth it yet.
+                let arg = self.expr(&n.args[0], expected);
+                let want = match self.numeric_of(&arg.ty, expected) {
+                    Some(t) => t,
+                    None => Ty::int(),
+                };
+                self.unify(&arg.ty, &want, arg.span, "operand of `abs`");
+                Core::new(
+                    CoreKind::Prim {
+                        op: Prim::Abs,
+                        args: vec![arg],
                     },
                     want,
                     span,
@@ -1981,6 +2127,70 @@ impl<'a> Checker<'a> {
                 Core::new(CoreKind::Const(Const::Unit), Ty::unit(), span)
             }
         }
+    }
+
+    /// The arithmetic operators, resolved from their operands rather than from a type class.
+    ///
+    /// Phase 1 gave `+` this treatment already, for `Str` concatenation: "a `(a, a) -> a` scheme
+    /// would let `Bool + Bool` typecheck". The numeric tower needs the same answer for the same
+    /// reason and one more tier — a real — and `docs/32` §32.3 sets out why an ad-hoc resolution is
+    /// the honest thing to build before traits exist rather than a stand-in for them.
+    ///
+    /// The rule is: whichever of the two operands and the expectation *first* resolves to a numeric
+    /// type decides, and `Int` is what an expression with nothing known about it defaults to — so
+    /// every program written before reals existed still means what it meant.
+    fn arith(
+        &mut self,
+        op: Prim,
+        lhs_node: &Node,
+        rhs_node: &Node,
+        expected: Option<&Ty>,
+        span: Span,
+    ) -> Core {
+        let lhs = self.expr(lhs_node, None);
+        let rhs = self.expr(rhs_node, None);
+        // `+` alone also concatenates, which is what the sketch's footer wants.
+        let is_str = op == Prim::Add
+            && (self.subst.resolve(&lhs.ty).con_name() == Some(Ty::STR)
+                || self.subst.resolve(&rhs.ty).con_name() == Some(Ty::STR)
+                || expected
+                    .map(|t| t.con_name() == Some(Ty::STR))
+                    .unwrap_or(false));
+        let want = if is_str {
+            Ty::str_()
+        } else {
+            self.numeric_of(&lhs.ty, None)
+                .or_else(|| self.numeric_of(&rhs.ty, None))
+                .or_else(|| expected.and_then(|t| self.numeric_of(t, None)))
+                .unwrap_or_else(Ty::int)
+        };
+        let label = format!("operand of `{}`", op.name());
+        self.unify(&lhs.ty, &want, lhs.span, &label);
+        self.unify(&rhs.ty, &want, rhs.span, &label);
+        Core::new(
+            CoreKind::Prim {
+                op,
+                args: vec![lhs, rhs],
+            },
+            want,
+            span,
+        )
+    }
+
+    /// `Int` or `Float` if either is what this type already is, otherwise nothing.
+    ///
+    /// "Otherwise nothing" rather than "otherwise Int" matters: an unresolved variable must not
+    /// commit the expression, or `abs(x)` inside a `Float -> Float` definition would fix `x` to
+    /// `Int` before the parameter's annotation had been consulted.
+    fn numeric_of(&mut self, ty: &Ty, expected: Option<&Ty>) -> Option<Ty> {
+        for candidate in [Some(ty), expected].into_iter().flatten() {
+            match self.subst.resolve(candidate).con_name() {
+                Some(Ty::INT) => return Some(Ty::int()),
+                Some(Ty::FLOAT) => return Some(Ty::con(Ty::FLOAT)),
+                _ => {}
+            }
+        }
+        None
     }
 
     fn var_ref(&mut self, s: &Symbol, span: Span) -> Core {
@@ -2115,6 +2325,31 @@ impl<'a> Checker<'a> {
 
         // §3.1: "a fold over a `union Event` that misses a case is a compile error — this single
         // check carries the migration story" (§3.9).
+        // A `match` on a list is exhaustive when it covers the empty list and a non-empty one.
+        // Two cases, because the pattern language has two shapes that partition a list — which is
+        // the whole reason it has exactly those two shapes (`docs/33` §33.5).
+        if !irrefutable && scrut_ty.con_name() == Some(Ty::LIST) {
+            let has_empty = covered.contains(LIST_EMPTY);
+            let has_tail = covered.contains(LIST_NONEMPTY);
+            if !(has_empty && has_tail) {
+                let missing = if has_empty {
+                    "a list with elements — `case [first, *rest]`"
+                } else if has_tail {
+                    "the empty list — `case []`"
+                } else {
+                    "the empty list and a list with elements — `case []` and `case [first, *rest]`"
+                };
+                self.diags.push(
+                    Diagnostic::error("B0341", "match is not exhaustive", span)
+                        .with_primary_label(format!("missing: {missing}"))
+                        .with_note(
+                            "a list is empty or it is not, and a fold that handles only one of \
+                             those is a fold that fails on the input nobody tested",
+                        ),
+                );
+            }
+        }
+
         if !irrefutable {
             if let Some(TyDecl::Union { variants, .. }) =
                 scrut_ty.con_name().and_then(|c| self.types.get(c))
@@ -2189,6 +2424,84 @@ impl<'a> Checker<'a> {
                 kind: BindKind::Local(id, scrut.clone()),
             });
             return Pattern::Bind(id);
+        }
+
+        // `[]`, `[x]`, `[first, *rest]` — a list taken apart. The scrutinee decides the element
+        // type, so the binders need no annotation (`docs/33` §33.5).
+        if p.is_form(sym::LIST) {
+            let elem = self.subst.fresh();
+            self.unify(
+                scrut,
+                &Ty::list(elem.clone()),
+                span,
+                "a list pattern matches a list",
+            );
+            let mut binds = Vec::new();
+            let mut rest = None;
+            for (i, item) in p.args.iter().enumerate() {
+                let is_rest = item.is_form(sym::REST) && item.args.len() == 1;
+                let target = if is_rest { &item.args[0] } else { item };
+                if is_rest && i + 1 != p.args.len() {
+                    self.error(
+                        "B0346",
+                        "`*rest` has to be the last element of a list pattern",
+                        item.span(),
+                    );
+                    continue;
+                }
+                let ty = if is_rest {
+                    Ty::list(elem.clone())
+                } else {
+                    elem.clone()
+                };
+                let bound = match target.as_var() {
+                    Some(s) if s.as_str() == sym::WILDCARD => None,
+                    Some(s) => {
+                        let id = self.fresh_var();
+                        self.locals.push(Binding {
+                            name: s.name.clone(),
+                            scopes: s.scopes.clone(),
+                            kind: BindKind::Local(id, ty),
+                        });
+                        Some(id)
+                    }
+                    None => {
+                        self.error(
+                            "B0345",
+                            "nested patterns are not available in Phase 1",
+                            target.span(),
+                        );
+                        None
+                    }
+                };
+                if is_rest {
+                    rest = Some(bound);
+                } else {
+                    binds.push(bound);
+                }
+            }
+            // `[*rest]` alone matches every list, and so does a bare binder. Nothing else does, so
+            // nothing else makes the match irrefutable.
+            if binds.is_empty() && rest.is_some() {
+                *irrefutable = true;
+            }
+            covered.insert(Arc::from(if rest.is_some() {
+                LIST_NONEMPTY
+            } else if binds.is_empty() {
+                LIST_EMPTY
+            } else {
+                LIST_FIXED
+            }));
+            return Pattern::List { binds, rest };
+        }
+
+        if p.is_form(sym::REST) {
+            self.error(
+                "B0347",
+                "`*name` is only meaningful inside a list pattern",
+                span,
+            );
+            return Pattern::Wildcard;
         }
 
         let Some(head) = p.head_sym().cloned() else {
@@ -2845,6 +3158,31 @@ fn resolve_types(c: &mut Core, s: &Subst) {
     }
 }
 
+/// The three shapes a list pattern can have, as keys in the `covered` set the exhaustiveness check
+/// reads. Not type names: they never escape this module.
+const LIST_EMPTY: &str = "[]";
+const LIST_FIXED: &str = "[…]";
+const LIST_NONEMPTY: &str = "[…, *rest]";
+
+/// Every row variable written into a type, in no particular order.
+fn row_vars_of(t: &Ty, out: &mut Vec<RowVarId>) {
+    match t {
+        Ty::Var(_) => {}
+        Ty::Con(_, args) => {
+            for a in args {
+                row_vars_of(a, out);
+            }
+        }
+        Ty::Fun(ps, r, row) => {
+            for p in ps {
+                row_vars_of(p, out);
+            }
+            row_vars_of(r, out);
+            out.extend(row.tails.iter().copied());
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::check_str;
@@ -2934,11 +3272,13 @@ def minted_labels(xs: list[Str]) -> list[Str]:
         assert_eq!(row_of(src, "minted_labels"), ["nondet"]);
     }
 
+    /// §3.2's `map : (list[a], (a -> b ! e)) -> list[b] ! e`, for a definition a *user* wrote.
+    ///
+    /// A parameter's row is quantified in the definition's scheme, so each call site instantiates
+    /// its own: a caller that passes a pure function is pure whatever another caller passes.
+    /// `docs/33` §33.2 has why a shared variable was both sound and wrong.
     #[test]
-    fn a_user_higher_order_function_is_polymorphic_enough_for_two_call_sites() {
-        // The parameter's row is monomorphic within the module and *subsumes* rather than equates,
-        // so a pure argument at one call and an effectful one at another both check — and `apply`
-        // ends up with the union, which is the sound direction.
+    fn a_user_higher_order_function_is_polymorphic_over_its_arguments_row() {
         let src = "\
 def apply(f: (Str) -> Str, x: Str) -> Str:
     return f(x)
@@ -2949,9 +3289,84 @@ def pure_use() -> Str:
 def impure_use() -> Str:
     return apply(lambda s: s + uuid(), \"b\")
 ";
-        assert_eq!(row_of(src, "apply"), ["nondet"]);
-        assert_eq!(row_of(src, "pure_use"), ["nondet"]);
-        assert_eq!(row_of(src, "impure_use"), ["nondet"]);
+        assert!(
+            row_of(src, "apply").is_empty(),
+            "`apply` performs nothing of its own: {:?}",
+            row_of(src, "apply")
+        );
+        assert!(
+            row_of(src, "pure_use").is_empty(),
+            "and a pure caller stays pure however another caller uses it: {:?}",
+            row_of(src, "pure_use")
+        );
+        assert_eq!(
+            row_of(src, "impure_use"),
+            ["nondet"],
+            "while the effectful caller is charged for exactly what it passed"
+        );
+    }
+
+    #[test]
+    fn a_generalised_row_is_still_charged_to_whoever_supplies_it() {
+        // The other direction, which is the one a mistake here would break silently: the effect has
+        // to arrive *somewhere*. `render` is a view, so `nondet` reaching it is a placement error
+        // rather than a lost effect — and the caller is where it lands.
+        let src = "\
+def twice(f: (Int) -> Int, n: Int) -> Int:
+    return f(f(n))
+
+def stamped(n: Int) -> Int:
+    return twice(lambda m: m + now(), n)
+
+def plain(n: Int) -> Int:
+    return twice(lambda m: m + 1, n)
+";
+        assert!(row_of(src, "twice").is_empty());
+        assert_eq!(row_of(src, "stamped"), ["nondet"]);
+        assert!(row_of(src, "plain").is_empty());
+    }
+
+    #[test]
+    fn a_quantified_row_is_charged_even_when_the_body_never_calls_the_argument() {
+        // The over-approximation docs/33 §33.3 names, asserted so that it is a decision rather than
+        // a surprise. `ignore` never calls `f`, and a caller passing an effectful one is charged
+        // anyway — because the row is quantified from the *signature*, before any body is read.
+        //
+        // It is the safe direction (an effect too many forces a stricter placement; an effect too
+        // few would let a fold read a clock), and it is the same rule `uses` already followed: "a
+        // declared effect is part of the signature whether or not the body reaches it".
+        let src = "\
+def ignore(xs: list[Int], f: (Int) -> Int) -> Int:
+    return list_len(xs)
+
+def caller(xs: list[Int]) -> Int:
+    return ignore(xs, lambda n: now())
+";
+        assert!(row_of(src, "ignore").is_empty());
+        assert_eq!(row_of(src, "caller"), ["nondet"]);
+    }
+
+    #[test]
+    fn a_definition_that_returns_a_function_keeps_the_older_monomorphic_row() {
+        // The limit docs/33 §33.3 names, asserted rather than described. A row variable that also
+        // reaches the *return* type is not quantified, because `instantiate` renames syntactic
+        // occurrences and the return's row is bound to the parameter's through the substitution —
+        // so one side of the call would be renamed and the other would not.
+        let src = "\
+def hold(f: (Int) -> Int) -> (Int) -> Int:
+    return f
+
+def use_pure(n: Int) -> Int:
+    return hold(lambda m: m + 1)(n)
+
+def use_impure(n: Int) -> Int:
+    return hold(lambda m: m + now())(n)
+";
+        assert_eq!(
+            row_of(src, "use_pure"),
+            ["nondet"],
+            "still contaminated, and this is the test that will start failing when it is not"
+        );
     }
 
     #[test]

@@ -348,6 +348,27 @@ pub const INDEX: &[CodeEntry] = &[
          form such as `record`, which would compile and never be reachable.",
     ),
     e(
+        "B0313",
+        Stage::Types,
+        "a type parameter takes no type arguments",
+        "A definition's own type parameter names an unknown type, so it has no structure to apply \
+         arguments to: `T[Int]` says nothing, whatever `T` turns out to be at the call site.",
+    ),
+    e(
+        "B0314",
+        Stage::Types,
+        "a type parameter shadows an existing type",
+        "A type parameter is a name the definition invents, and one that shadowed an existing type \
+         would make its signature read as though it mentioned that type.",
+    ),
+    e(
+        "B0315",
+        Stage::Types,
+        "a type parameter is repeated",
+        "The same name appears twice in one definition's type parameter list, where the second \
+         would silently shadow the first.",
+    ),
+    e(
         "B0320",
         Stage::Types,
         "type mismatch",

@@ -11,6 +11,16 @@
 //!   the same log render identically — Phase 0 §18.5 item 4 learned this the hard way.
 //! * **Errors are values, not panics.** A partial operation returns an [`EvalError`] carrying the
 //!   span, because a language server has to survive evaluating half-written code.
+//!
+//! To which a fourth was added by [`docs/31-tail-calls-report.md`](../../../../docs/31-tail-calls-report.md):
+//!
+//! * **A call in tail position does not grow the host stack, and no program aborts the process.**
+//!   [`Interp::eval`] is a trampoline: `Interp::step` walks the tail positions of a body without
+//!   recursing and hands the call it lands on back to the loop, so an iterative process is
+//!   iterative (SICP §1.2.1, R7RS §3.5). Recursion that is *not* in tail position still spends a
+//!   host frame, so it is bounded by a counted depth — deterministically, because a limit read off
+//!   the host's remaining stack would make a fold's outcome depend on the build profile and §3.7
+//!   needs it to depend only on the log.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -81,23 +91,73 @@ pub struct Interp<'h> {
     pub host: &'h dyn Host,
     /// Bounded so that a non-terminating program in a request handler cannot wedge the server.
     fuel: std::cell::Cell<u64>,
+    /// How many host frames the evaluator is currently holding, and the ceiling on that number.
+    ///
+    /// Fuel bounds *time*; this bounds *space*, and they are not the same failure. A program can
+    /// spend a trivial amount of fuel and still recurse past the end of the thread's stack — which
+    /// used to abort the process, taking the server and any diagnostic with it.
+    depth: std::cell::Cell<u32>,
+    max_depth: u32,
 }
 
 const DEFAULT_FUEL: u64 = 50_000_000;
 
+/// The ceiling on non-tail evaluator nesting.
+///
+/// It is a *count*, not a measurement of the host stack, and that is the load-bearing choice: a
+/// budget read from the stack pointer would let the same program and the same log evaluate in a
+/// release build and refuse in a debug one, and §3.7 requires that a fold's result be a function
+/// of the log alone. Two runs of `beck replay` on the same log agree about this the way they agree
+/// about everything else.
+///
+/// The number the *host* has to supply so that this count is reachable is
+/// [`crate::STACK_BYTES`], and `the_depth_ceiling_fits_the_smallest_stack_we_run_on` measures the
+/// bytes one level actually costs rather than assuming them.
+pub const DEFAULT_MAX_DEPTH: u32 = 4_000;
+
+/// One step of evaluation: a finished value, or a call in tail position that
+/// [`Interp::eval`]'s loop should make *instead of* the one it is already making.
+enum Step {
+    Done(Value),
+    Tail {
+        callee: Arc<Closure>,
+        args: Vec<Value>,
+        span: Span,
+    },
+}
+
+/// Decrements the depth counter however the frame it guards is left, including by `?`.
+struct Frame<'i, 'h> {
+    interp: &'i Interp<'h>,
+}
+
+impl Drop for Frame<'_, '_> {
+    fn drop(&mut self) {
+        self.interp
+            .depth
+            .set(self.interp.depth.get().saturating_sub(1));
+    }
+}
+
 impl<'h> Interp<'h> {
     pub fn new(host: &'h dyn Host) -> Interp<'h> {
-        Interp {
-            host,
-            fuel: std::cell::Cell::new(DEFAULT_FUEL),
-        }
+        Interp::with_fuel(host, DEFAULT_FUEL)
     }
 
     pub fn with_fuel(host: &'h dyn Host, fuel: u64) -> Interp<'h> {
         Interp {
             host,
             fuel: std::cell::Cell::new(fuel),
+            depth: std::cell::Cell::new(0),
+            max_depth: DEFAULT_MAX_DEPTH,
         }
+    }
+
+    /// Lower the depth ceiling. Only the harnesses use it: raising it is not offered, because the
+    /// number that is safe is a property of the host stack rather than of the program.
+    pub fn with_max_depth(mut self, max_depth: u32) -> Interp<'h> {
+        self.max_depth = max_depth.min(DEFAULT_MAX_DEPTH);
+        self
     }
 
     pub fn reset_fuel(&self) {
@@ -113,18 +173,31 @@ impl<'h> Interp<'h> {
         Ok(())
     }
 
+    /// Take one level of host stack, or refuse — with a diagnostic a program can print, which is
+    /// the whole difference from the abort this replaced.
+    fn enter(&self, span: Span) -> Result<Frame<'_, 'h>, EvalError> {
+        let depth = self.depth.get() + 1;
+        if depth > self.max_depth {
+            return Err(EvalError::new(
+                format!(
+                    "evaluation nested {} deep, which is the evaluator's limit — a call in *tail \
+                     position* does not nest and has no limit, so a recursive process this deep \
+                     has to be written as an iterative one (SICP \u{a7}1.2.1)",
+                    self.max_depth
+                ),
+                span,
+            ));
+        }
+        self.depth.set(depth);
+        Ok(Frame { interp: self })
+    }
+
     /// Apply a callable value to arguments — the entry point the runtime uses for `validate`,
     /// `apply_event` and `view`.
     pub fn apply(&self, f: &Value, args: Vec<Value>, span: Span) -> EvalResult {
         match f {
             Value::Closure(c) => {
-                if c.params.len() != args.len() {
-                    return Err(EvalError::new(
-                        format!("expected {} arguments, got {}", c.params.len(), args.len()),
-                        span,
-                    ));
-                }
-                let env = c.env.extend(c.params.iter().copied().zip(args).collect());
+                let env = bind(c, args, span)?;
                 self.eval(&c.body, &env)
             }
             other => Err(EvalError::new(
@@ -142,16 +215,175 @@ impl<'h> Interp<'h> {
         }
     }
 
+    /// The trampoline.
+    ///
+    /// One host frame is taken here, and a call in tail position replaces the loop's state rather
+    /// than nesting inside it — so `fact_iter`, `gcd` and `find_divisor` run in constant space and
+    /// SICP §1.2.1's distinction between a recursive and an iterative *process* is observable
+    /// (`docs/31` §31.2).
     pub fn eval(&self, c: &Core, env: &Env) -> EvalResult {
-        self.burn(c.span)?;
+        let _frame = self.enter(c.span)?;
+        let mut step = self.step(c, env)?;
+        loop {
+            let (callee, args, span) = match step {
+                Step::Done(v) => return Ok(v),
+                Step::Tail { callee, args, span } => (callee, args, span),
+            };
+            let env = bind(&callee, args, span)?;
+            step = self.step(&callee.body, &env)?;
+        }
+    }
+
+    /// Evaluate a subexpression that is *not* in tail position.
+    ///
+    /// Only five of `Core`'s kinds have a tail position in them — `If`, `Let`, `Match`, `App` and
+    /// `Global` — and only those need the trampoline. Everything else can go straight to
+    /// [`Interp::leaf`], and a constant or a variable can be answered here without so much as a
+    /// depth check, because neither can contain a call and so neither can nest.
+    ///
+    /// This is where most of the trampoline's cost was paid back. Routing *every* subexpression
+    /// through [`Interp::eval`] put a second host frame and a loop under each of them, and a real
+    /// program is mostly these nodes. `docs/31` §31.5 has what the trampoline cost in the end.
+    #[inline]
+    fn operand(&self, c: &Core, env: &Env) -> EvalResult {
         match &c.kind {
-            CoreKind::Const(k) => Ok(match k {
-                Const::Unit => Value::Unit,
-                Const::Bool(b) => Value::Bool(*b),
-                Const::Int(i) => Value::Int(*i),
-                Const::Float(f) => Value::float(*f),
-                Const::Str(s) => Value::Str(s.clone()),
-            }),
+            CoreKind::Const(k) => {
+                self.burn(c.span)?;
+                Ok(constant(k))
+            }
+            CoreKind::Var(v) => {
+                self.burn(c.span)?;
+                env.get(*v).cloned().ok_or_else(|| {
+                    EvalError::new(format!("unbound variable {v} at runtime"), c.span)
+                })
+            }
+            CoreKind::If { .. }
+            | CoreKind::Let { .. }
+            | CoreKind::Match { .. }
+            | CoreKind::App { .. }
+            | CoreKind::Global(_) => self.eval(c, env),
+            _ => {
+                // A frame, because these do evaluate subexpressions and so do nest.
+                let _frame = self.enter(c.span)?;
+                self.burn(c.span)?;
+                self.leaf(c, env)
+            }
+        }
+    }
+
+    /// Walk a body's tail positions without recursing, and stop at the first thing that is either
+    /// a value or a call.
+    ///
+    /// The subexpressions that are *not* in tail position — a condition, a `let`'s value, an
+    /// argument — go through [`Interp::operand`] and may spend a frame, which is correct: their
+    /// results are still needed when they return.
+    ///
+    /// This is a separate function from [`Interp::eval`] rather than one loop because of what
+    /// `cur` borrows from. A tail call's body lives inside an `Arc<Closure>` the loop has just
+    /// taken ownership of, and a `&Core` into a local the loop then reassigns is not something
+    /// safe Rust will write. Returning the call to `eval` and re-entering here costs one host
+    /// frame per *call* — not per level of recursion, which is the number that had to be zero.
+    fn step<'a>(&'a self, c: &'a Core, env0: &Env) -> Result<Step, EvalError> {
+        let mut cur: &'a Core = c;
+        // The environment is only *replaced* by a `let` or a matched arm, and most nodes replace
+        // nothing. Holding the caller's by reference until something extends it keeps two atomic
+        // refcount operations off every node that does not — which is most of them.
+        let mut owned: Option<Env> = None;
+        loop {
+            let env: &Env = owned.as_ref().unwrap_or(env0);
+            self.burn(cur.span)?;
+            match &cur.kind {
+                CoreKind::If { cond, then, alt } => {
+                    let c0 = self.operand(cond, env)?;
+                    cur = match c0.as_bool() {
+                        Some(true) => then,
+                        Some(false) => alt,
+                        None => return Err(EvalError::new("condition is not a Bool", cond.span)),
+                    };
+                }
+                CoreKind::Let { var, value, body } => {
+                    let v = self.operand(value, env)?;
+                    let next = env.extend(vec![(*var, v)]);
+                    owned = Some(next);
+                    cur = body;
+                }
+                CoreKind::Match { scrutinee, arms } => {
+                    let v = self.operand(scrutinee, env)?;
+                    let hit = arms
+                        .iter()
+                        .find_map(|arm| match_pattern(&arm.pattern, &v).map(|b| (b, &arm.body)));
+                    let Some((bindings, body)) = hit else {
+                        return Err(EvalError::new(
+                            format!("no match arm applies to {}", v.display()),
+                            cur.span,
+                        ));
+                    };
+                    let next = env.extend(bindings);
+                    owned = Some(next);
+                    cur = body;
+                }
+                CoreKind::App { func, args } => {
+                    let mut vals = Vec::with_capacity(args.len());
+                    for a in args {
+                        vals.push(self.operand(a, env)?);
+                    }
+                    // A stub replaces the *call*, not the value: the arguments are evaluated first,
+                    // because §21.3 rule 4 wants to answer "with what?" afterwards, and because a
+                    // stubbed function's arguments are ordinary code the test still means to run.
+                    //
+                    // Only a direct call of a named definition is intercepted. A function passed as
+                    // a value has lost its name by the time it is applied, and inventing one would
+                    // be a guess; docs/22 records the limit rather than leaving it to be discovered.
+                    if let CoreKind::Global(name) = &func.kind {
+                        if let Some(v) = self.host.intercept(name, &vals) {
+                            return Ok(Step::Done(v));
+                        }
+                    }
+                    let f = self.operand(func, env)?;
+                    let Value::Closure(callee) = f else {
+                        return Err(EvalError::new(
+                            format!("not callable: {}", f.display()),
+                            cur.span,
+                        ));
+                    };
+                    return Ok(Step::Tail {
+                        callee,
+                        args: vals,
+                        span: cur.span,
+                    });
+                }
+                // Not a tail position, but a *transparent* one: the value of a reference to a
+                // top-level definition is the value of its body, in no environment at all. Walking
+                // into it here rather than recursing saves a host frame on every call a program
+                // makes, which is most of what the trampoline would otherwise have cost (§31.5).
+                CoreKind::Global(name) => {
+                    let Some(body) = self.host.global(name) else {
+                        return Err(EvalError::new(
+                            format!("no such definition: {name}"),
+                            cur.span,
+                        ));
+                    };
+                    owned = Some(Env::new());
+                    cur = body;
+                }
+                CoreKind::Prim { op, args } => {
+                    return self.eval_prim(*op, args, env, cur.span).map(Step::Done)
+                }
+                _ => return self.leaf(cur, env).map(Step::Done),
+            }
+        }
+    }
+
+    /// Everything with no tail position in it. Fuel has already been burnt for `c` by
+    /// [`Interp::step`].
+    ///
+    /// Every arm with a local of its own is a separate `#[inline(never)]` method rather than a
+    /// block, and that is not tidiness: an unoptimised build gives each arm's temporaries their own
+    /// slot in the enclosing frame, so a single fat `match` on the recursive path was costing every
+    /// level of a program's recursion the sum of the arms it did not take (`docs/31` §31.4).
+    fn leaf(&self, c: &Core, env: &Env) -> EvalResult {
+        match &c.kind {
+            CoreKind::Const(k) => Ok(constant(k)),
             CoreKind::Var(v) => env
                 .get(*v)
                 .cloned()
@@ -162,115 +394,109 @@ impl<'h> Interp<'h> {
                 body: (**body).clone(),
                 env: env.clone(),
             }))),
-            CoreKind::App { func, args } => {
-                let mut vals = Vec::with_capacity(args.len());
-                for a in args {
-                    vals.push(self.eval(a, env)?);
-                }
-                // A stub replaces the *call*, not the value: the arguments are evaluated first,
-                // because §21.3 rule 4 wants to answer "with what?" afterwards, and because a
-                // stubbed function's arguments are ordinary code the test still means to run.
-                //
-                // Only a direct call of a named definition is intercepted. A function passed as a
-                // value has lost its name by the time it is applied, and inventing one would be a
-                // guess; docs/22 records the limit rather than leaving it to be discovered.
-                if let CoreKind::Global(name) = &func.kind {
-                    if let Some(v) = self.host.intercept(name, &vals) {
-                        return Ok(v);
-                    }
-                }
-                let f = self.eval(func, env)?;
-                self.apply(&f, vals, c.span)
-            }
-            CoreKind::Prim { op, args } => {
-                let mut vals = Vec::with_capacity(args.len());
-                for a in args {
-                    vals.push(self.eval(a, env)?);
-                }
-                self.prim(*op, vals, c.span)
-            }
-            CoreKind::Let { var, value, body } => {
-                let v = self.eval(value, env)?;
-                let inner = env.extend(vec![(*var, v)]);
-                self.eval(body, &inner)
-            }
-            CoreKind::If { cond, then, alt } => {
-                let c0 = self.eval(cond, env)?;
-                match c0.as_bool() {
-                    Some(true) => self.eval(then, env),
-                    Some(false) => self.eval(alt, env),
-                    None => Err(EvalError::new("condition is not a Bool", cond.span)),
-                }
-            }
-            CoreKind::Match { scrutinee, arms } => {
-                let v = self.eval(scrutinee, env)?;
-                for arm in arms {
-                    if let Some(bindings) = match_pattern(&arm.pattern, &v) {
-                        let inner = env.extend(bindings);
-                        return self.eval(&arm.body, &inner);
-                    }
-                }
-                Err(EvalError::new(
-                    format!("no match arm applies to {}", v.display()),
-                    c.span,
-                ))
-            }
+            CoreKind::Prim { op, args } => self.eval_prim(*op, args, env, c.span),
             CoreKind::Make {
                 ty,
                 variant,
                 fields,
-            } => {
-                let mut map = BTreeMap::new();
-                for (name, expr) in fields {
-                    map.insert(name.clone(), self.eval(expr, env)?);
-                }
-                Ok(Value::Data {
-                    ty: ty.clone(),
-                    variant: variant.clone(),
-                    fields: Arc::new(map),
-                })
-            }
-            CoreKind::Field { base, name } => {
-                let v = self.eval(base, env)?;
-                v.field(name).cloned().ok_or_else(|| {
-                    EvalError::new(format!("no field `{name}` on {}", v.display()), c.span)
-                })
-            }
-            CoreKind::With { base, fields } => {
-                let v = self.eval(base, env)?;
-                let Value::Data {
-                    ty,
-                    variant,
-                    fields: old,
-                } = v
-                else {
-                    return Err(EvalError::new("`with` expects a record", c.span));
-                };
-                let mut map = (*old).clone();
-                for (name, expr) in fields {
-                    map.insert(name.clone(), self.eval(expr, env)?);
-                }
-                Ok(Value::Data {
-                    ty,
-                    variant,
-                    fields: Arc::new(map),
-                })
-            }
-            CoreKind::ListLit(items) => {
-                let mut out = Vec::with_capacity(items.len());
-                for i in items {
-                    out.push(self.eval(i, env)?);
-                }
-                Ok(Value::List(Arc::new(out)))
-            }
-            CoreKind::MapLit(kvs) => {
-                let mut out = PMap::new();
-                for (k, v) in kvs {
-                    out = out.insert(self.eval(k, env)?, self.eval(v, env)?);
-                }
-                Ok(Value::Map(out))
-            }
+            } => self.eval_make(ty, variant.as_ref(), fields, env),
+            CoreKind::Field { base, name } => self.eval_field(base, name, env, c.span),
+            CoreKind::With { base, fields } => self.eval_with(base, fields, env, c.span),
+            CoreKind::ListLit(items) => self.eval_list(items, env),
+            CoreKind::MapLit(kvs) => self.eval_map(kvs, env),
+            // `App`, `If`, `Let` and `Match` are the four kinds with a tail position in them, and
+            // they never reach here: [`Interp::step`] consumes them without recursing, which is
+            // what makes a tail call cost nothing.
+            CoreKind::App { .. }
+            | CoreKind::If { .. }
+            | CoreKind::Let { .. }
+            | CoreKind::Match { .. } => Err(EvalError::new(
+                "internal: a tail-position node reached the leaf evaluator",
+                c.span,
+            )),
         }
+    }
+
+    #[cfg_attr(debug_assertions, inline(never))]
+    fn eval_prim(&self, op: Prim, args: &[Core], env: &Env, span: Span) -> EvalResult {
+        let mut vals = Vec::with_capacity(args.len());
+        for a in args {
+            vals.push(self.operand(a, env)?);
+        }
+        self.prim(op, vals, span)
+    }
+
+    #[cfg_attr(debug_assertions, inline(never))]
+    fn eval_make(
+        &self,
+        ty: &Arc<str>,
+        variant: Option<&Arc<str>>,
+        fields: &[(Arc<str>, Core)],
+        env: &Env,
+    ) -> EvalResult {
+        let mut map = BTreeMap::new();
+        for (name, expr) in fields {
+            map.insert(name.clone(), self.operand(expr, env)?);
+        }
+        Ok(Value::Data {
+            ty: ty.clone(),
+            variant: variant.cloned(),
+            fields: Arc::new(map),
+        })
+    }
+
+    #[cfg_attr(debug_assertions, inline(never))]
+    fn eval_field(&self, base: &Core, name: &Arc<str>, env: &Env, span: Span) -> EvalResult {
+        let v = self.operand(base, env)?;
+        v.field(name)
+            .cloned()
+            .ok_or_else(|| EvalError::new(format!("no field `{name}` on {}", v.display()), span))
+    }
+
+    #[cfg_attr(debug_assertions, inline(never))]
+    fn eval_with(
+        &self,
+        base: &Core,
+        fields: &[(Arc<str>, Core)],
+        env: &Env,
+        span: Span,
+    ) -> EvalResult {
+        let v = self.operand(base, env)?;
+        let Value::Data {
+            ty,
+            variant,
+            fields: old,
+        } = v
+        else {
+            return Err(EvalError::new("`with` expects a record", span));
+        };
+        let mut map = (*old).clone();
+        for (name, expr) in fields {
+            map.insert(name.clone(), self.operand(expr, env)?);
+        }
+        Ok(Value::Data {
+            ty,
+            variant,
+            fields: Arc::new(map),
+        })
+    }
+
+    #[cfg_attr(debug_assertions, inline(never))]
+    fn eval_list(&self, items: &[Core], env: &Env) -> EvalResult {
+        let mut out = Vec::with_capacity(items.len());
+        for i in items {
+            out.push(self.operand(i, env)?);
+        }
+        Ok(Value::List(Arc::new(out)))
+    }
+
+    #[cfg_attr(debug_assertions, inline(never))]
+    fn eval_map(&self, kvs: &[(Core, Core)], env: &Env) -> EvalResult {
+        let mut out = PMap::new();
+        for (k, v) in kvs {
+            out = out.insert(self.operand(k, env)?, self.operand(v, env)?);
+        }
+        Ok(Value::Map(out))
     }
 
     fn prim(&self, op: Prim, mut args: Vec<Value>, span: Span) -> EvalResult {
@@ -285,14 +511,19 @@ impl<'h> Interp<'h> {
             }
         };
 
+        // An `Int` operation is checked and a `Float` one is not, and that asymmetry is the whole
+        // difference between the two tiers of the tower: `i64` overflow has no representable
+        // answer, so it is an error, while IEEE 754 defines one for every real operation —
+        // including division by zero, whose answer is an infinity. Making `1.0 / 0.0` an error
+        // would be inventing a rule the format already has (`docs/32` §32.3).
         macro_rules! arith {
-            ($f:expr) => {{
+            ($int:expr, $real:expr) => {{
                 want(2)?;
                 let b = args.pop().expect("arity checked");
                 let a = args.pop().expect("arity checked");
                 match (&a, &b) {
                     (Value::Int(x), Value::Int(y)) => {
-                        let f: fn(i64, i64) -> Option<i64> = $f;
+                        let f: fn(i64, i64) -> Option<i64> = $int;
                         f(*x, *y).map(Value::Int).ok_or_else(|| {
                             EvalError::new(
                                 format!("`{}` overflowed or divided by zero", op.name()),
@@ -300,8 +531,15 @@ impl<'h> Interp<'h> {
                             )
                         })
                     }
+                    (Value::Float(_), Value::Float(_)) => {
+                        let f: fn(f64, f64) -> f64 = $real;
+                        Ok(Value::float(f(
+                            a.as_f64().expect("a Float"),
+                            b.as_f64().expect("a Float"),
+                        )))
+                    }
                     _ => Err(EvalError::new(
-                        format!("`{}` expects two Ints", op.name()),
+                        format!("`{}` expects two Ints or two Floats", op.name()),
                         span,
                     )),
                 }
@@ -318,20 +556,56 @@ impl<'h> Interp<'h> {
                         .checked_add(*y)
                         .map(Value::Int)
                         .ok_or_else(|| EvalError::new("`+` overflowed", span)),
+                    (Value::Float(_), Value::Float(_)) => Ok(Value::float(
+                        a.as_f64().expect("a Float") + b.as_f64().expect("a Float"),
+                    )),
                     // `+` on strings concatenates, which is what the sketch's footer wants.
                     (Value::Str(x), Value::Str(y)) => Ok(Value::str_(format!("{x}{y}"))),
-                    _ => Err(EvalError::new("`+` expects two Ints or two Strs", span)),
+                    _ => Err(EvalError::new(
+                        "`+` expects two Ints, two Floats or two Strs",
+                        span,
+                    )),
                 }
             }
-            Prim::Sub => arith!(i64::checked_sub),
-            Prim::Mul => arith!(i64::checked_mul),
-            Prim::Div => arith!(i64::checked_div),
-            Prim::Rem => arith!(i64::checked_rem),
+            Prim::Sub => arith!(i64::checked_sub, |x, y| x - y),
+            Prim::Mul => arith!(i64::checked_mul, |x, y| x * y),
+            Prim::Div => arith!(i64::checked_div, |x, y| x / y),
+            // `%` stays Int-only. `f64::rem` exists, but SICP never asks for it and a remainder
+            // whose sign follows the dividend is a decision nothing here needs to take.
+            Prim::Rem => arith!(i64::checked_rem, |x, _| x),
             Prim::Neg => {
                 want(1)?;
-                match args.pop().expect("arity checked") {
+                let v = args.pop().expect("arity checked");
+                match v {
                     Value::Int(x) => Ok(Value::Int(-x)),
-                    _ => Err(EvalError::new("`-` expects an Int", span)),
+                    Value::Float(_) => Ok(Value::float(-v.as_f64().expect("a Float"))),
+                    _ => Err(EvalError::new("`-` expects an Int or a Float", span)),
+                }
+            }
+            Prim::Abs => {
+                want(1)?;
+                let v = args.pop().expect("arity checked");
+                match v {
+                    Value::Int(x) => x
+                        .checked_abs()
+                        .map(Value::Int)
+                        .ok_or_else(|| EvalError::new("`abs` overflowed", span)),
+                    Value::Float(_) => Ok(Value::float(v.as_f64().expect("a Float").abs())),
+                    _ => Err(EvalError::new("`abs` expects an Int or a Float", span)),
+                }
+            }
+            Prim::Sqrt => {
+                want(1)?;
+                let v = args.pop().expect("arity checked");
+                v.as_f64()
+                    .map(|f| Value::float(f.sqrt()))
+                    .ok_or_else(|| EvalError::new("`sqrt` expects a Float", span))
+            }
+            Prim::ToFloat => {
+                want(1)?;
+                match args.pop().expect("arity checked") {
+                    Value::Int(x) => Ok(Value::float(x as f64)),
+                    _ => Err(EvalError::new("`float` expects an Int", span)),
                 }
             }
             Prim::Eq | Prim::Ne | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge => {
@@ -673,6 +947,31 @@ impl<'h> Interp<'h> {
     }
 }
 
+/// Bind a closure's parameters to arguments, giving the environment its body runs in.
+///
+/// The new frame extends the *closure's* environment, not the caller's, so a tail call replaces
+/// the frame it returns into rather than stacking on top of it — the environment chain stays as
+/// short at the ten-thousandth iteration as at the first.
+fn bind(c: &Closure, args: Vec<Value>, span: Span) -> Result<Env, EvalError> {
+    if c.params.len() != args.len() {
+        return Err(EvalError::new(
+            format!("expected {} arguments, got {}", c.params.len(), args.len()),
+            span,
+        ));
+    }
+    Ok(c.env.extend(c.params.iter().copied().zip(args).collect()))
+}
+
+fn constant(k: &Const) -> Value {
+    match k {
+        Const::Unit => Value::Unit,
+        Const::Bool(b) => Value::Bool(*b),
+        Const::Int(i) => Value::Int(*i),
+        Const::Float(f) => Value::float(*f),
+        Const::Str(s) => Value::Str(s.clone()),
+    }
+}
+
 /// Try a pattern against a value, returning the bindings it makes.
 fn match_pattern(p: &Pattern, v: &Value) -> Option<Vec<(u32, Value)>> {
     match p {
@@ -696,6 +995,28 @@ fn match_pattern(p: &Pattern, v: &Value) -> Option<Vec<(u32, Value)>> {
             let mut out = Vec::with_capacity(binds.len());
             for (field, id) in binds {
                 out.push((*id, v.field(field)?.clone()));
+            }
+            Some(out)
+        }
+        Pattern::List { binds, rest } => {
+            let xs = v.as_list()?;
+            // No tail binder means an exact length; a tail binder means "at least this many".
+            match rest {
+                None if xs.len() != binds.len() => return None,
+                Some(_) if xs.len() < binds.len() => return None,
+                _ => {}
+            }
+            let mut out = Vec::with_capacity(binds.len() + 1);
+            for (b, x) in binds.iter().zip(xs.iter()) {
+                if let Some(id) = b {
+                    out.push((*id, x.clone()));
+                }
+            }
+            if let Some(Some(id)) = rest {
+                // The tail is a fresh list. `Arc<Vec<_>>` cannot share a suffix, so this is `O(n)`
+                // per step and a fold written over it is `O(n²)` — stated in `docs/33` §33.6
+                // rather than discovered on a long list.
+                out.push((*id, Value::List(Arc::new(xs[binds.len()..].to_vec()))));
             }
             Some(out)
         }
@@ -796,6 +1117,258 @@ mod tests {
             .map(|v| v.field("n").unwrap().as_int().unwrap())
             .collect();
         assert_eq!(ns, [1, 2], "a stable sort keeps input order for equal keys");
+    }
+
+    /// A host that answers one global and records how much stack the evaluator had spent by the
+    /// time it reached the bottom of the recursion. `new_uuid` is the probe because it is the one
+    /// primitive that calls back out to the host from wherever evaluation happens to be.
+    struct Probe {
+        f: Core,
+        deepest: std::cell::Cell<usize>,
+    }
+
+    impl Host for Probe {
+        fn global(&self, name: &str) -> Option<&Core> {
+            (name == "f").then_some(&self.f)
+        }
+        fn new_uuid(&self) -> Arc<str> {
+            let here = 0u8;
+            self.deepest.set(std::ptr::addr_of!(here) as usize);
+            Arc::from("bottom")
+        }
+    }
+
+    fn core(kind: CoreKind) -> Core {
+        Core::new(kind, Ty::str_(), Span::NONE)
+    }
+
+    /// `def f(n): if n == 0: return uuid(); return f(n - 1) + "x"` — recursion that is *not* in
+    /// tail position, so every level costs a host frame.
+    fn non_tail_recursion() -> Core {
+        let n = || Core::new(CoreKind::Var(0), Ty::int(), Span::NONE);
+        core(CoreKind::Lam {
+            params: vec![0],
+            body: Box::new(core(CoreKind::If {
+                cond: Box::new(Core::new(
+                    CoreKind::Prim {
+                        op: Prim::Eq,
+                        args: vec![n(), int(0)],
+                    },
+                    Ty::bool_(),
+                    Span::NONE,
+                )),
+                then: Box::new(core(CoreKind::Prim {
+                    op: Prim::NewUuid,
+                    args: vec![],
+                })),
+                alt: Box::new(core(CoreKind::Prim {
+                    op: Prim::Add,
+                    args: vec![
+                        core(CoreKind::App {
+                            func: Box::new(core(CoreKind::Global(Arc::from("f")))),
+                            args: vec![prim(Prim::Sub, vec![n(), int(1)])],
+                        }),
+                        core(CoreKind::Const(Const::Str(Arc::from("x")))),
+                    ],
+                })),
+            })),
+        })
+    }
+
+    /// `def g(n): if n == 0: return uuid(); return g(n - 1)` — the same recursion in tail
+    /// position, which is the one that must cost nothing.
+    fn tail_recursion() -> Core {
+        let n = || Core::new(CoreKind::Var(0), Ty::int(), Span::NONE);
+        core(CoreKind::Lam {
+            params: vec![0],
+            body: Box::new(core(CoreKind::If {
+                cond: Box::new(Core::new(
+                    CoreKind::Prim {
+                        op: Prim::Eq,
+                        args: vec![n(), int(0)],
+                    },
+                    Ty::bool_(),
+                    Span::NONE,
+                )),
+                then: Box::new(core(CoreKind::Prim {
+                    op: Prim::NewUuid,
+                    args: vec![],
+                })),
+                alt: Box::new(core(CoreKind::App {
+                    func: Box::new(core(CoreKind::Global(Arc::from("f")))),
+                    args: vec![prim(Prim::Sub, vec![n(), int(1)])],
+                })),
+            })),
+        })
+    }
+
+    /// Call `f(depth)` and report the host bytes the evaluator had spent at the bottom.
+    fn stack_spent(f: Core, depth: i64) -> usize {
+        let host = Probe {
+            f,
+            deepest: std::cell::Cell::new(0),
+        };
+        let top = 0u8;
+        let top = std::ptr::addr_of!(top) as usize;
+        let interp = Interp::new(&host);
+        let call = core(CoreKind::App {
+            func: Box::new(core(CoreKind::Global(Arc::from("f")))),
+            args: vec![int(depth)],
+        });
+        interp
+            .eval(&call, &Env::new())
+            .expect("the probe recursion evaluates");
+        let deepest = host.deepest.get();
+        assert!(
+            deepest < top,
+            "the host stack is expected to grow downwards"
+        );
+        top - deepest
+    }
+
+    /// The measurement [`crate::STACK_BYTES`] is chosen from, run rather than quoted.
+    ///
+    /// It answers two questions at once: what one level of *non-tail* recursion costs in host stack
+    /// — which is what the declared stack has to cover, at the ceiling — and what one level of
+    /// *tail* recursion costs, which must be nothing at all. The second is measured at two depths
+    /// forty times apart, because "small" and "constant" are different claims and only the second
+    /// one is proper tail calls.
+    #[test]
+    fn the_depth_ceiling_fits_the_smallest_stack_we_run_on() {
+        const DEPTH: i64 = 1_500;
+        // The measurement must not itself be the thing that overflows, so it is taken on a stack
+        // far larger than the one whose adequacy is being concluded.
+        let (non_tail, tail_shallow, tail_deep) = std::thread::Builder::new()
+            .stack_size(128 * 1024 * 1024)
+            .spawn(|| {
+                (
+                    stack_spent(non_tail_recursion(), DEPTH),
+                    stack_spent(tail_recursion(), DEPTH),
+                    stack_spent(tail_recursion(), DEPTH * 40),
+                )
+            })
+            .expect("a thread")
+            .join()
+            .expect("the probe runs");
+
+        let per_level = non_tail / DEPTH as usize;
+        println!(
+            "non-tail: {non_tail} bytes for {DEPTH} levels ({per_level} per level)\n\
+             tail: {tail_shallow} bytes for {DEPTH} levels, {tail_deep} for {} levels",
+            DEPTH * 40
+        );
+
+        assert_eq!(
+            tail_shallow,
+            tail_deep,
+            "a tail call must cost *no* host stack: {} tail calls spent {tail_deep} bytes and \
+             {DEPTH} spent {tail_shallow}, so the cost is not constant",
+            DEPTH * 40
+        );
+        assert!(
+            tail_deep < per_level * 40,
+            "and the constant it costs must be a handful of frames, not a hidden budget: \
+             {tail_deep} bytes against {per_level} for one non-tail level"
+        );
+
+        // Twice over, so that whoever drives the evaluator has as much stack again above the
+        // ceiling as the ceiling itself needs.
+        let needed = DEFAULT_MAX_DEPTH as usize * per_level * 2;
+        assert!(
+            needed < crate::STACK_BYTES,
+            "a ceiling of {DEFAULT_MAX_DEPTH} levels at {per_level} bytes each needs {needed} \
+             bytes with the margin, against a declared STACK_BYTES of {} — raise the declaration \
+             or lower the ceiling",
+            crate::STACK_BYTES
+        );
+    }
+
+    /// Both of the next two drive the evaluator to its ceiling, so both run on the stack the
+    /// evaluator declares it needs — which is the contract [`crate::on_the_evaluator_stack`]
+    /// exists to make checkable rather than assumed.
+    #[test]
+    fn a_tail_call_is_bounded_by_fuel_and_not_by_depth() {
+        crate::on_the_evaluator_stack(|| {
+            let host = Probe {
+                f: tail_recursion(),
+                deepest: std::cell::Cell::new(0),
+            };
+            let interp = Interp::new(&host);
+            let call = core(CoreKind::App {
+                func: Box::new(core(CoreKind::Global(Arc::from("f")))),
+                args: vec![int(DEFAULT_MAX_DEPTH as i64 * 10)],
+            });
+            assert_eq!(
+                interp.eval(&call, &Env::new()).unwrap(),
+                Value::str_("bottom"),
+                "ten times the depth ceiling, in tail position, is not deep at all"
+            );
+        })
+    }
+
+    /// The ceiling can be lowered but not raised, because the stack it is safe against is
+    /// [`crate::STACK_BYTES`] and a caller who wanted more of it would have to supply more of that.
+    #[test]
+    fn the_depth_ceiling_can_be_lowered_and_not_raised() {
+        let host = Probe {
+            f: non_tail_recursion(),
+            deepest: std::cell::Cell::new(0),
+        };
+        let call = |n: i64| {
+            core(CoreKind::App {
+                func: Box::new(core(CoreKind::Global(Arc::from("f")))),
+                args: vec![int(n)],
+            })
+        };
+
+        let shallow = Interp::new(&host).with_max_depth(100);
+        assert!(
+            shallow.eval(&call(200), &Env::new()).is_err(),
+            "a lowered ceiling is the one that applies"
+        );
+        assert!(
+            shallow.eval(&call(20), &Env::new()).is_ok(),
+            "and it applies only past itself"
+        );
+
+        crate::on_the_evaluator_stack(|| {
+            let host = Probe {
+                f: non_tail_recursion(),
+                deepest: std::cell::Cell::new(0),
+            };
+            let greedy = Interp::new(&host).with_max_depth(u32::MAX);
+            let deep = core(CoreKind::App {
+                func: Box::new(core(CoreKind::Global(Arc::from("f")))),
+                args: vec![int(DEFAULT_MAX_DEPTH as i64 * 4)],
+            });
+            assert!(
+                greedy.eval(&deep, &Env::new()).is_err(),
+                "asking for more than the declared stack can hold does not get it"
+            );
+        });
+    }
+
+    #[test]
+    fn non_tail_recursion_is_a_diagnostic_rather_than_an_abort() {
+        crate::on_the_evaluator_stack(|| {
+            let host = Probe {
+                f: non_tail_recursion(),
+                deepest: std::cell::Cell::new(0),
+            };
+            let interp = Interp::new(&host);
+            let call = core(CoreKind::App {
+                func: Box::new(core(CoreKind::Global(Arc::from("f")))),
+                args: vec![int(DEFAULT_MAX_DEPTH as i64 * 10)],
+            });
+            let err = interp
+                .eval(&call, &Env::new())
+                .expect_err("past the ceiling");
+            assert!(
+                err.message.contains("which is the evaluator's limit"),
+                "{}",
+                err.message
+            );
+        })
     }
 
     #[test]

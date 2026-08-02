@@ -1,0 +1,41 @@
+# Blocks: §2.2.2's tree at any element type but `Int`, §2.3.3's sets, §2.3.4's Huffman trees, and
+# every structure in chapters 3–5 that the book builds once and uses at several element types.
+#
+# docs/29 gave `def` a type-parameter list, so a *function* may be written once for every type.
+# A `model` and a `union` may not. `sicp/ch2.beck`'s `Tree` is therefore a tree of `Int`, where the
+# book's holds anything — including other trees, which is the closure property the section is named
+# after — and `count_leaves` over a tree of strings needs a second `union`.
+#
+# It does not reach the checker at all — the parser has no bracket list on a `union` or a `model`,
+# the way it had none on a `def` before docs/29:
+#
+#   error[B0120]: expected `:`, found `[`
+#
+# and everything after it is that one line's fallout: `cannot find type Tree`, `Leaf is not a
+# constructor`.
+#
+# The half that is built is the harder half to have got wrong: quantification, instantiation, and a
+# parameter that is rigid inside the body it belongs to (docs/29 §29.7). What a parameterised
+# *type* adds is that the parameter has to reach the constructors, the field types, the
+# exhaustiveness check, the wire encoding and `beck iface`'s published contract — so a `union
+# Tree[T]` crossing a `.becki` publishes a shape rather than a type, and `--wire-compat` has to say
+# whether `Tree[Int]` and `Tree[Str]` are the same boundary. That is a decision, and this file
+# exists so it is taken deliberately rather than by whoever needs it first.
+
+union Tree[T]:
+    Leaf(value: T)
+    Node(kids: list[Tree[T]])
+
+def count_leaves[T](t: Tree[T]) -> Int:
+    match t:
+        case Leaf(value):
+            return 1
+        case Node(kids):
+            return sum_of(map_list(kids, count_leaves))
+
+def sum_of(ns: list[Int]) -> Int:
+    match ns:
+        case []:
+            return 0
+        case [first, *rest]:
+            return first + sum_of(rest)

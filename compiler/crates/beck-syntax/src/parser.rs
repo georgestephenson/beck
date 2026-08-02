@@ -287,6 +287,10 @@ impl<'a> Parser<'a> {
         let start = self.span();
         self.bump(); // def
         let (name, name_span) = self.ident("a function name")?;
+        // `def map[T, U](…)` — §3.1's "full inference inside bodies; mandatory annotations on
+        // public signatures", which means a *user's* abstraction says what it is polymorphic in
+        // rather than having it guessed (`docs/32` §32.7).
+        let typarams = self.typarams(name_span);
         let params = self.params()?;
         let returns = if self.eat(&Raw::Arrow) {
             let t = self.type_expr()?;
@@ -318,7 +322,7 @@ impl<'a> Parser<'a> {
             let span = start.to(uses.span());
             return Some(Node::form(
                 sym::DEF,
-                vec![Node::sym(name, name_span), params, returns, uses],
+                vec![Node::sym(name, name_span), typarams, params, returns, uses],
                 span,
             ));
         }
@@ -327,7 +331,14 @@ impl<'a> Parser<'a> {
         let span = start.to(body.span());
         Some(Node::form(
             sym::DEF,
-            vec![Node::sym(name, name_span), params, returns, uses, body],
+            vec![
+                Node::sym(name, name_span),
+                typarams,
+                params,
+                returns,
+                uses,
+                body,
+            ],
             span,
         ))
     }
@@ -345,6 +356,29 @@ impl<'a> Parser<'a> {
             vec![Node::sym(name, name_span), params, body],
             span,
         ))
+    }
+
+    /// `[T, U]`, or nothing. A type parameter is a bare name: there are no bounds to write,
+    /// because there are no traits to bound it by (`docs/32` §32.9).
+    fn typarams(&mut self, at: Span) -> Node {
+        let start = self.span();
+        if !self.at(&Raw::LBracket) {
+            return Node::form(sym::TYPARAMS, Vec::new(), at);
+        }
+        self.bump();
+        let mut out = Vec::new();
+        while !self.at(&Raw::RBracket) && !self.at_eof() {
+            match self.ident("a type parameter") {
+                Some((name, span)) => out.push(Node::sym(name, span)),
+                None => break,
+            }
+            if !self.eat(&Raw::Comma) {
+                break;
+            }
+        }
+        let end = self.span();
+        self.expect(&Raw::RBracket, "`]`");
+        Node::form(sym::TYPARAMS, out, start.to(end))
     }
 
     fn params(&mut self) -> Option<Node> {
@@ -1567,7 +1601,20 @@ impl<'a> Parser<'a> {
                 self.bump();
                 let mut items = Vec::new();
                 while !self.at(&Raw::RBracket) && !self.at_eof() {
-                    items.push(self.expr()?);
+                    // `*rest` — only meaningful in a `case` pattern, and parsed here rather than in
+                    // a separate pattern grammar because §2.6's patterns *are* expressions:
+                    // "`Added(id, text)` is the form `(Added id text)` … Nothing new to
+                    // represent". The checker is what refuses it outside a pattern
+                    // (`docs/33` §33.5).
+                    if self.at(&Raw::Star) {
+                        let star = self.span();
+                        self.bump();
+                        let e = self.postfix(false)?;
+                        let sp = star.to(e.span());
+                        items.push(Node::form(sym::REST, vec![e], sp));
+                    } else {
+                        items.push(self.expr()?);
+                    }
                     if !self.eat(&Raw::Comma) {
                         break;
                     }
@@ -1720,7 +1767,7 @@ mod tests {
     fn a_def_carries_params_returns_and_effects() {
         assert_eq!(
             sx("def toggle(t: Todo) -> Todo uses durable:\n    return t\n"),
-            "(def toggle (params (: t Todo)) (returns Todo) (uses durable) (do (return t)))"
+            "(def toggle (typarams) (params (: t Todo)) (returns Todo) (uses durable) (do (return t)))"
         );
     }
 
@@ -1730,7 +1777,7 @@ mod tests {
         assert_eq!(
             sx("def toggle(todos: Map[Id, Todo], e: Toggled) -> Map[Id, Todo]:\n\
                 \x20   return todos.update(e.id, lambda t: t.with(done=not t.done))\n"),
-            "(def toggle (params (: todos (Map Id Todo)) (: e Toggled)) (returns (Map Id Todo)) \
+            "(def toggle (typarams) (params (: todos (Map Id Todo)) (: e Toggled)) (returns (Map Id Todo)) \
              (uses) (do (return (. todos update (. e id) (fn (params t) (do (. t with (kw done (not (. t done)))))))))) "
                 .trim_end()
         );
@@ -1762,7 +1809,7 @@ mod tests {
     fn decorators_receive_the_definitions_ast() {
         assert_eq!(
             sx("@on(server)\ndef f() -> Int:\n    return 1\n"),
-            "(decorate (on server) (def f (params) (returns Int) (uses) (do (return 1))))"
+            "(decorate (on server) (def f (typarams) (params) (returns Int) (uses) (do (return 1))))"
         );
     }
 
@@ -1911,7 +1958,7 @@ mod test_clause_tests {
         // words are live only inside a `test` body.
         assert_eq!(
             sx("def f() -> Int:\n    return expect(1)\n"),
-            "(def f (params) (returns Int) (uses) (do (return (expect 1))))"
+            "(def f (typarams) (params) (returns Int) (uses) (do (return (expect 1))))"
         );
     }
 

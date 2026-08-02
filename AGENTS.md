@@ -23,28 +23,35 @@ Write the commit message as the author of the change: what changed, and why.
   [`docs/20-phase-2-report.md`](docs/20-phase-2-report.md),
   [`docs/22-phase-3-report.md`](docs/22-phase-3-report.md),
   [`docs/23-general-slicer-report.md`](docs/23-general-slicer-report.md),
-  [`docs/24-incremental-views-report.md`](docs/24-incremental-views-report.md) and
-  [`docs/26-arrangement-sharing-report.md`](docs/26-arrangement-sharing-report.md) and
-  [`docs/27-walls-report.md`](docs/27-walls-report.md) record what each
+  [`docs/24-incremental-views-report.md`](docs/24-incremental-views-report.md),
+  [`docs/26-arrangement-sharing-report.md`](docs/26-arrangement-sharing-report.md),
+  [`docs/27-walls-report.md`](docs/27-walls-report.md),
+  [`docs/31-tail-calls-report.md`](docs/31-tail-calls-report.md) and
+  [`docs/32-numeric-tower-and-polymorphism-report.md`](docs/32-numeric-tower-and-polymorphism-report.md)
+  and
+  [`docs/33-effect-polymorphism-and-list-patterns-report.md`](docs/33-effect-polymorphism-and-list-patterns-report.md)
+  record what each
   phase does, what it refuses to claim, and the corrections it makes to the design documents.
   Phase 3 is **two bullets of twelve plus most of a third**; docs/26 §26.9 names the nine bullets
-  that are untouched and the parts of the incremental-views bullet that are not built, and docs/27
-  §27.7 names the three of [`docs/25`](docs/25-benchmarks-and-expressiveness.md)'s six walls that
-  still stand. Reports
+  that are untouched and the parts of the incremental-views bullet that are not built. All six of
+  [`docs/25`](docs/25-benchmarks-and-expressiveness.md)'s walls are down, and docs/33 §33.7 names
+  what stands in their place. Reports
   are history: a later phase's correction to an earlier one goes in the later report, not into the
   earlier text.
 - [`docs/reference/`](docs/reference/README.md) is **generated** by `beck doc reference` from the
   compiler's own tables and checked in. Never edit it by hand: change the compiler, then run
   `beck doc reference --out ../docs/reference` from `compiler/` and commit the result in the same
   change. A new diagnostic code needs an entry in `beck-diag/src/index.rs` or `cargo test` fails.
-  [`docs/31-generated-documentation-report.md`](docs/31-generated-documentation-report.md) records
+  [`docs/34-generated-documentation-report.md`](docs/34-generated-documentation-report.md) records
   what is generated, what is written, and what it does not do.
-- [`compiler/corpus/`](compiler/corpus/) is 28 programs carrying **no placement annotations**, and
+- [`compiler/corpus/`](compiler/corpus/) is 29 programs carrying **no placement annotations**, and
   the measurement behind Phase 2's exit criterion. A program added there has to place itself.
 - [`compiler/sicp/`](compiler/sicp/) is the expressiveness benchmark
   ([`docs/25`](docs/25-benchmarks-and-expressiveness.md) §25.5): chapters of SICP in Beck, with the
   book's own stated answers as the oracle, and one file per remaining wall in `sicp/refusals/` whose
-  test asserts the wall is still there. A wall coming down is a test that starts failing.
+  test asserts the wall is still there. A wall coming down is a test that starts failing. All six
+  §25.6 measured are down; what is in `refusals/` now was written by the removals rather than by
+  docs/25 (docs/33 §33.7).
 - Design decisions are numbered in [`docs/10-decisions.md`](docs/10-decisions.md). If a change
   contradicts one, say so rather than quietly diverging. Engineering decisions — a dependency
   taken or refused, a gate's shape, an upgrade path — are recorded in [`docs/adr/`](docs/adr/).
@@ -57,13 +64,19 @@ Write the commit message as the author of the change: what changed, and why.
   the Phase 2 numbers come from `cargo test --release --test measure_phase2 -- --nocapture` and the
   commands quoted in [`docs/20-phase-2-report.md`](docs/20-phase-2-report.md); the Phase 3 numbers
   come from `cargo test --workspace`, from `cargo test --release --test measure_incremental --
-  --nocapture`, from `cargo test --release --test shared_arrangements -- --nocapture`, and from the
+  --nocapture`, from `cargo test --release --test shared_arrangements -- --nocapture`, from
+  `cargo test -p beck-eval -- --nocapture` (the evaluator's stack-per-level figures), and from the
   commands quoted in [`docs/22-phase-3-report.md`](docs/22-phase-3-report.md),
   [`docs/23-general-slicer-report.md`](docs/23-general-slicer-report.md),
   [`docs/24-incremental-views-report.md`](docs/24-incremental-views-report.md) and
   [`docs/26-arrangement-sharing-report.md`](docs/26-arrangement-sharing-report.md); the SICP numbers
   come from `cargo test --release --test sicp` and from `beck test sicp/ch1.beck` and
-  `beck test sicp/ch2.beck`, quoted in [`docs/27-walls-report.md`](docs/27-walls-report.md) §27.5.
+  `beck test sicp/ch2.beck`, quoted in [`docs/27-walls-report.md`](docs/27-walls-report.md) §27.5,
+  [`docs/31-tail-calls-report.md`](docs/31-tail-calls-report.md) §31.5–§31.6 and
+  [`docs/32-numeric-tower-and-polymorphism-report.md`](docs/32-numeric-tower-and-polymorphism-report.md)
+  §32.5 and
+  [`docs/33-effect-polymorphism-and-list-patterns-report.md`](docs/33-effect-polymorphism-and-list-patterns-report.md)
+  §33.6.
 - The harnesses are the project's conscience (§4.8, §8.3): `compiler/crates/beck-cli/tests/` holds
   the differential, replay-determinism, backend-seam, scaling, security, corpus, general-slicer,
   incremental-analysis, incremental-engine, shared-arrangement, subscription, view-metrics, SICP,
@@ -73,7 +86,9 @@ Write the commit message as the author of the change: what changed, and why.
   `.github/workflows/`, run the steps you changed by hand before trusting them.
 - `beck-rt` must not depend on any backend crate. Execution goes through
   `beck_core::backend::Backend`, and `tests/backend_seam.rs` drives the runtime with an
-  implementation that is not the evaluator so the seam stays load-bearing (docs/19 §19.9).
+  implementation that is not the evaluator so the seam stays load-bearing (docs/19 §19.9). Anything
+  the runtime needs to *know* about a backend goes on that trait — `Backend::stack_bytes` is how the
+  runtime sizes a thread for the tree-walker without naming it (docs/31 §31.3).
 - A program's own behaviour is asserted in Beck, not only in Rust. `beck test` runs `test` and
   `property` blocks ([`docs/21-tests-in-beck-and-proof.md`](docs/21-tests-in-beck-and-proof.md)
   §21.2–§21.3); a change to what a program *means* should move a test in the program, and

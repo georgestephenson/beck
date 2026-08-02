@@ -37,6 +37,7 @@ fn poly(vars: &[u32], ty: Ty) -> Scheme {
     Scheme {
         vars: vars.to_vec(),
         row_vars: Vec::new(),
+        params: Vec::new(),
         ty,
     }
 }
@@ -46,6 +47,7 @@ fn poly_eff(vars: &[u32], row_vars: &[RowVarId], ty: Ty) -> Scheme {
     Scheme {
         vars: vars.to_vec(),
         row_vars: row_vars.to_vec(),
+        params: Vec::new(),
         ty,
     }
 }
@@ -65,6 +67,7 @@ pub fn prims() -> Vec<(&'static str, Prim, Scheme)> {
     let int = Ty::int();
     let bool_ = Ty::bool_();
     let str_ = Ty::str_();
+    let float = Ty::con(Ty::FLOAT);
     let html = Ty::html();
     let attr = Ty::con(Ty::ATTR);
 
@@ -95,6 +98,24 @@ pub fn prims() -> Vec<(&'static str, Prim, Scheme)> {
             "%",
             Prim::Rem,
             Scheme::mono(fun(vec![int.clone(), int.clone()], int.clone())),
+        ),
+        // The reals. `abs` is written for both tiers in SICP and is resolved from its operand in
+        // `check`, exactly as `+` is; the scheme here is its `Int` form, which is what a reference
+        // to it *as a value* gets (`docs/32` §32.3).
+        (
+            "abs",
+            Prim::Abs,
+            Scheme::mono(fun(vec![int.clone()], int.clone())),
+        ),
+        (
+            "sqrt",
+            Prim::Sqrt,
+            Scheme::mono(fun(vec![float.clone()], float.clone())),
+        ),
+        (
+            "float",
+            Prim::ToFloat,
+            Scheme::mono(fun(vec![int.clone()], float.clone())),
         ),
         (
             "negate",

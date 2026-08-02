@@ -268,30 +268,39 @@ impl Py {
 
     fn def(&mut self, n: &Node) {
         let name = self.expr(&n.args[0]);
-        let params = self.params(&n.args[1]);
+        let typarams = n
+            .args
+            .get(1)
+            .filter(|t| !t.args.is_empty())
+            .map(|t| {
+                let names: Vec<String> = t.args.iter().map(|a| self.expr(a)).collect();
+                format!("[{}]", names.join(", "))
+            })
+            .unwrap_or_default();
+        let params = self.params(&n.args[2]);
         let ret = n
             .args
-            .get(2)
+            .get(3)
             .filter(|r| !r.args.is_empty())
             .map(|r| format!(" -> {}", self.type_expr(&r.args[0])))
             .unwrap_or_default();
         let uses = n
             .args
-            .get(3)
+            .get(4)
             .filter(|u| !u.args.is_empty())
             .map(|u| {
                 let items: Vec<String> = u.args.iter().map(|e| self.expr(e)).collect();
                 format!(" uses {}", items.join(", "))
             })
             .unwrap_or_default();
-        match n.args.get(4) {
+        match n.args.get(5) {
             Some(body) => {
-                self.line(&format!("def {name}({params}){ret}{uses}:"));
+                self.line(&format!("def {name}{typarams}({params}){ret}{uses}:"));
                 self.body(body);
             }
             // A declaration: a trait's method signature, or a line of a `.becki` interface (§3.6).
             // It prints without a colon, which is what it parses back from.
-            None => self.line(&format!("def {name}({params}){ret}{uses}")),
+            None => self.line(&format!("def {name}{typarams}({params}){ret}{uses}")),
         }
     }
 
@@ -634,6 +643,7 @@ impl Py {
                 let items: Vec<String> = n.args.iter().map(|a| self.expr(a)).collect();
                 format!("[{}]", items.join(", "))
             }
+            sym::REST if n.args.len() == 1 => format!("*{}", self.expr(&n.args[0])),
             sym::RECORD => {
                 let mut parts = Vec::new();
                 for pair in n.args.chunks(2) {

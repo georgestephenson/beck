@@ -265,6 +265,11 @@ pub mod sym {
     pub const MODULE: &str = "module";
     pub const DEF: &str = "def";
     pub const PARAMS: &str = "params";
+    /// A `def`'s type parameters — `def map[T, U](…)`. Always present on a `def`, empty when the
+    /// definition is monomorphic, so that the form has one shape (`docs/32` §32.7).
+    pub const TYPARAMS: &str = "typarams";
+    /// `*rest` inside a list — the tail binder of a list pattern (`docs/33` §33.5).
+    pub const REST: &str = "rest";
     pub const RETURNS: &str = "returns";
     pub const ANNOT: &str = ":";
     pub const FN: &str = "fn";

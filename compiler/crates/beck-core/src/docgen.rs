@@ -166,11 +166,22 @@ impl Docs {
 
 fn entry(i: &Item, docs: &BTreeMap<Arc<str>, Arc<str>>) -> Entry {
     let (kind, signature) = match &i.kind {
-        Kind::Function { params, ret } => (
+        Kind::Function {
+            typarams,
+            params,
+            ret,
+        } => (
             "def",
             format!(
-                "{}({}) -> {ret}",
+                "{}{}({}) -> {ret}",
                 i.name,
+                // A generic definition publishes what it quantifies over (§3.6), so the page shows
+                // it: `pair[T](a: T, b: T)` is a different contract from `pair(a: T, b: T)`.
+                if typarams.is_empty() {
+                    String::new()
+                } else {
+                    format!("[{}]", typarams.join(", "))
+                },
                 params
                     .iter()
                     .map(|(n, t)| format!("{n}: {t}"))

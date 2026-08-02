@@ -16,12 +16,157 @@
 # What is *not* here, and why, because a chapter file that quietly skipped the hard half would be
 # the thing this suite exists to prevent:
 #
-#   * §2.1.1's rational numbers need a numeric tower — `docs/25` §25.6 item 3, still standing;
-#   * §2.2.1's `map`, `filter` and `accumulate` are asked to be *built* by the reader, and a user
-#     cannot write a polymorphic definition — §25.6 item 4, still standing. So the exercises below
-#     are monomorphic at `Tree` and `Int` where the book is generic, which is a real loss and is
-#     recorded as one rather than papered over;
-#   * §2.3.4's Huffman trees need the same two.
+#   * §2.1.1's rational numbers need *exact rationals*. Reals landed in docs/32 and are not the same
+#     thing: §2.1.1's whole point is that 1/3 + 1/3 is 2/3 and not 0.6666666666666666
+#     (`sicp/refusals/rational.beck`);
+#   * §2.3.4's Huffman trees need exact rationals for their weights and a generic tree for their
+#     nodes;
+#   * and a *type* still cannot take a parameter — `union Tree[T]` is not writable — so the tree
+#     below is a tree of `Int` where the book's is a tree of anything
+#     (`sicp/refusals/generic-type.beck`, docs/33 §33.7).
+
+# ---------------------------------------------------------------------------------------------
+# 2.2.1 Representing sequences — the abstractions the reader is asked to *build*
+#
+# `sicp/refusals/generic.beck` held exactly this `map` and asserted that it did not parse, because
+# "the parser has no type-parameter list on `def`, so every user-defined abstraction is
+# monomorphic". docs/32 gave `def` a type-parameter list, so the exercise is an exercise again:
+# each of these is written once, and the tests below use each at more than one element type. That
+# is the whole content of §2.2.1 and the reason it is worth a section rather than a footnote.
+# ---------------------------------------------------------------------------------------------
+
+# `cons`, which SICP has as a primitive and Beck does not. Everything below is built from it and
+# from `match`, so each of these is the book's own definition rather than a rename of a builtin —
+# which is what the exercise is for. `docs/33` §33.6 records what it costs: a `list[T]` cannot share
+# a suffix, so this copies, and a fold written over it is quadratic.
+def cons[T](x: T, xs: list[T]) -> list[T]:
+    return concat_lists([[x], xs])
+
+def map[T, U](xs: list[T], f: T -> U) -> list[U]:
+    match xs:
+        case []:
+            return []
+        case [first, *rest]:
+            return cons(f(first), map(rest, f))
+
+def filter[T](xs: list[T], keep: T -> Bool) -> list[T]:
+    match xs:
+        case []:
+            return []
+        case [first, *rest]:
+            if keep(first):
+                return cons(first, filter(rest, keep))
+            return filter(rest, keep)
+
+# `accumulate` — fold-right, and the abstraction §2.2.3 rebuilds the whole chapter out of. It is the
+# exercise `sicp/refusals/list-destructuring.beck` was written for and asserted was impossible.
+def accumulate[T, U](xs: list[T], seed: U, combine: (T, U) -> U) -> U:
+    match xs:
+        case []:
+            return seed
+        case [first, *rest]:
+            return combine(first, accumulate(rest, seed, combine))
+
+def append[T](a: list[T], b: list[T]) -> list[T]:
+    return accumulate(a, b, cons)
+
+def length[T](xs: list[T]) -> Int:
+    return accumulate(xs, 0, lambda x, n: n + 1)
+
+def is_empty[T](xs: list[T]) -> Bool:
+    match xs:
+        case []:
+            return True
+        case [first, *rest]:
+            return False
+
+# Exercise 2.17 — `last-pair`.
+def last_pair[T](xs: list[T]) -> list[T]:
+    match xs:
+        case []:
+            return []
+        case [only]:
+            return [only]
+        case [first, *rest]:
+            return last_pair(rest)
+
+# Exercise 2.18 — `reverse`, as the iterative process it wants to be.
+def reverse[T](xs: list[T]) -> list[T]:
+    return rev_onto(xs, [])
+
+def rev_onto[T](xs: list[T], acc: list[T]) -> list[T]:
+    match xs:
+        case []:
+            return acc
+        case [first, *rest]:
+            return rev_onto(rest, cons(first, acc))
+
+# §2.2.1's `list-ref`, and the `Option` its out-of-range case wants.
+def list_ref[T](xs: list[T], n: Int, fallback: T) -> T:
+    match xs:
+        case []:
+            return fallback
+        case [first, *rest]:
+            if n == 0:
+                return first
+            return list_ref(rest, n - 1, fallback)
+
+# ---------------------------------------------------------------------------------------------
+# 2.2.3 Sequences as conventional interfaces
+#
+# The section's thesis: `enumerate`, `filter`, `map` and `accumulate` are four stages that snap
+# together, and two programs that look nothing alike are the same four stages in a different order.
+# It needed `accumulate`, so it needed a list that can be taken apart.
+# ---------------------------------------------------------------------------------------------
+
+def enumerate_interval(low: Int, high: Int) -> list[Int]:
+    if low > high:
+        return []
+    return cons(low, enumerate_interval(low + 1, high))
+
+def sum(xs: list[Int]) -> Int:
+    return accumulate(xs, 0, lambda x, acc: x + acc)
+
+def odd(n: Int) -> Bool:
+    return n % 2 != 0
+
+def even(n: Int) -> Bool:
+    return n % 2 == 0
+
+def fib(n: Int) -> Int:
+    return fib_iter(0, 1, n)
+
+def fib_iter(a: Int, b: Int, n: Int) -> Int:
+    if n == 0:
+        return a
+    return fib_iter(b, a + b, n - 1)
+
+# `sum-odd-squares`, over a tree — the first of the section's two programs.
+def sum_odd_squares(t: Tree) -> Int:
+    return sum(map(filter(fringe(t), odd), square))
+
+# `even-fibs`, over an interval — the second, which is the same four stages.
+def even_fibs(n: Int) -> list[Int]:
+    return filter(map(enumerate_interval(0, n), fib), even)
+
+# Exercise 2.33 — `map`, `append` and `length` written *again*, as accumulations, to show that they
+# were accumulations all along.
+def map_via_accumulate[T, U](xs: list[T], f: T -> U) -> list[U]:
+    return accumulate(xs, [], lambda x, acc: cons(f(x), acc))
+
+def append_via_accumulate[T](a: list[T], b: list[T]) -> list[T]:
+    return accumulate(a, b, cons)
+
+def length_via_accumulate[T](xs: list[T]) -> Int:
+    return accumulate(xs, 0, lambda x, n: n + 1)
+
+# Exercise 2.21 — `square-list`, "written once with `map` and once without", where "without" is what
+# the section spends its time on and "with" is what it is arguing for.
+def scale_list(xs: list[Int], factor: Int) -> list[Int]:
+    return map(xs, lambda x: x * factor)
+
+def square_list(xs: list[Int]) -> list[Int]:
+    return map(xs, square)
 
 # ---------------------------------------------------------------------------------------------
 # 2.2.2 Hierarchical structures — the closure property, which is the whole point of the section
@@ -103,6 +248,46 @@ def doubled() -> Tree:
 def deep() -> Tree:
     return Node(kids=[Node(kids=[Node(kids=[Leaf(value=7)])])])
 
+test "2.2.1 — one `map`, written once, used at three element types":
+    expect map([1, 2, 3], square) == [1, 4, 9]
+    expect map(["a", "b"], lambda s: s + "!") == ["a!", "b!"]
+    expect map([1, 2, 3], lambda n: str(n)) == ["1", "2", "3"]
+    expect map([1.5, -2.5], lambda x: x * 2.0) == [3.0, -5.0]
+
+test "2.2.1 — the book's own printed lists, from the book's own definitions":
+    expect list_ref([1, 4, 9, 16, 25], 3, 0) == 16
+    expect length([1, 3, 5, 7]) == 4
+    expect append([1, 4, 9, 16, 25], [1, 3, 5, 7]) == [1, 4, 9, 16, 25, 1, 3, 5, 7]
+    expect last_pair([23, 72, 149, 34]) == [34]
+    expect reverse([1, 4, 9, 16, 25]) == [25, 16, 9, 4, 1]
+
+test "2.2.1 — `accumulate`, and the three exercise 2.33 rebuilds from it":
+    expect accumulate([1, 2, 3, 4, 5], 0, lambda x, acc: x + acc) == 15
+    expect accumulate([1, 2, 3, 4, 5], 1, lambda x, acc: x * acc) == 120
+    expect accumulate(["a", "b"], "", lambda s, acc: s + acc) == "ab"
+    expect map_via_accumulate([1, 2, 3], square) == [1, 4, 9]
+    expect append_via_accumulate([1, 2], [3, 4]) == [1, 2, 3, 4]
+    expect length_via_accumulate(["a", "b", "c"]) == 3
+
+test "2.2.3 — four stages, two programs, one shape":
+    expect enumerate_interval(2, 7) == [2, 3, 4, 5, 6, 7]
+    expect even_fibs(10) == [0, 2, 8, 34]
+    expect sum_odd_squares(example()) == 10
+    expect sum_odd_squares(deep()) == 49
+
+test "2.2.1 — and one `filter`, one `append` and one `length`":
+    expect filter([1, 2, 3, 4], lambda n: n % 2 == 0) == [2, 4]
+    expect filter(["", "a", ""], lambda s: not str_is_empty(s)) == ["a"]
+    expect append([1, 2], [3]) == [1, 2, 3]
+    expect append(["a"], ["b", "c"]) == ["a", "b", "c"]
+    expect length([1, 2, 3]) == 3
+    expect length(["a"]) == 1
+    expect is_empty(map([], square))
+
+test "2.21 — square-list and scale-list, from the `map` above":
+    expect square_list([1, 2, 3, 4]) == [1, 4, 9, 16]
+    expect scale_list([1, 2, 3], 10) == [10, 20, 30]
+
 test "2.2.2 — count-leaves, on the section's own tree":
     expect count_leaves(example()) == 4
     expect count_leaves(pair()) == 2
@@ -119,6 +304,10 @@ test "2.30/2.31 — square-tree, and tree-map subsuming it":
     expect fringe(tree_map(doubled(), square)) == [1, 4, 1, 4]
     expect count_leaves(square_tree(deep())) == 1
     expect fringe(square_tree(deep())) == [49]
+
+test "2.2.1 and 2.2.2 together — the generic `map` over a tree's own fringe":
+    expect map(fringe(example()), square) == [1, 4, 9, 16]
+    expect length(filter(fringe(example()), lambda n: n % 2 == 0)) == 2
 
 test "the closure property: a combining means whose result it can combine again":
     expect count_leaves(Node(kids=[example(), example()])) == 8

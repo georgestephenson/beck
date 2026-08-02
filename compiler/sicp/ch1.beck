@@ -26,8 +26,9 @@ def factorial(n: Int) -> Int:
     return n * factorial(n - 1)
 
 # The same function as a linear *iterative* process. SICP's whole point here is that this one runs
-# in constant space and the one above does not. In Beck today they are the same shape and the same
-# cost: see `sicp/refusals/tail.beck`, and §25.6 of the report.
+# in constant space and the one above does not — "an implementation with this property is said to
+# be tail-recursive", and until docs/31 Beck was not one. `sicp/refusals/tail.beck` used to sit
+# here asserting that the distinction was unobservable; `count_to` below is what it turned into.
 def fact_iter(product: Int, counter: Int, max_count: Int) -> Int:
     if counter > max_count:
         return product
@@ -35,6 +36,21 @@ def fact_iter(product: Int, counter: Int, max_count: Int) -> Int:
 
 def factorial_iterative(n: Int) -> Int:
     return fact_iter(1, 1, n)
+
+# The distinction itself, with nothing else in it: the same count as a recursive process and as an
+# iterative one. `count_up` defers an addition per call and so needs space linear in `n`;
+# `count_to` does not and needs none. The test below runs the second a *quarter of a million*
+# levels deep, which is far past anything the first can reach — that gap is the property, and it is
+# the one thing in this chapter that is about the implementation rather than about the mathematics.
+def count_to(acc: Int, n: Int) -> Int:
+    if n == 0:
+        return acc
+    return count_to(acc + 1, n - 1)
+
+def count_up(n: Int) -> Int:
+    if n == 0:
+        return 0
+    return 1 + count_up(n - 1)
 
 # ---------------------------------------------------------------------------------------------
 # 1.2.2 Tree recursion
@@ -138,6 +154,41 @@ def is_prime(n: Int) -> Bool:
     return n > 1 and smallest_divisor(n) == n
 
 # ---------------------------------------------------------------------------------------------
+# 1.1.7 Example: Square Roots by Newton's Method
+#
+# The first substantial program in the book, and the one the whole of §1.3 is built out of. It
+# needed reals, which `sicp/refusals/real.beck` recorded as wall 5 until docs/32.
+#
+# `square_real` is here because `square` above is `Int -> Int` and Beck has no numeric type class:
+# one name cannot cover both tiers. That is a real cost of resolving `*` from its operands instead
+# of from a trait, it is the honest one to pay before traits exist, and docs/32 §32.3 argues it
+# rather than hiding it. User-written polymorphism — wall 6 — would not fix it either.
+#
+# `sqrt` shadows the prelude primitive of the same name, deliberately: the chapter's point is that
+# you can *build* it, and a definition may shadow a primitive (docs/32 §32.4).
+# ---------------------------------------------------------------------------------------------
+
+def square_real(x: Float) -> Float:
+    return x * x
+
+def average(x: Float, y: Float) -> Float:
+    return (x + y) / 2.0
+
+def improve(guess: Float, x: Float) -> Float:
+    return average(guess, x / guess)
+
+def good_enough(guess: Float, x: Float) -> Bool:
+    return abs(square_real(guess) - x) < 0.001
+
+def sqrt_iter(guess: Float, x: Float) -> Float:
+    if good_enough(guess, x):
+        return guess
+    return sqrt_iter(improve(guess, x), x)
+
+def sqrt(x: Float) -> Float:
+    return sqrt_iter(1.0, x)
+
+# ---------------------------------------------------------------------------------------------
 # 1.3.1 Procedures as arguments
 # ---------------------------------------------------------------------------------------------
 
@@ -210,9 +261,66 @@ def repeated(f: Int -> Int, n: Int) -> Int -> Int:
         return identity
     return compose(f, repeated(f, n - 1))
 
+# ---------------------------------------------------------------------------------------------
+# 1.3.3 Procedures as general methods, 1.3.4 Procedures as returned values
+# ---------------------------------------------------------------------------------------------
+
+def close_enough(a: Float, b: Float) -> Bool:
+    return abs(a - b) < 0.00001
+
+def fixed_point(f: Float -> Float, first: Float) -> Float:
+    if close_enough(first, f(first)):
+        return f(first)
+    return fixed_point(f, f(first))
+
+# Exercise 1.35 — the golden ratio as a fixed point of x ↦ 1 + 1/x.
+def golden_ratio() -> Float:
+    return fixed_point(lambda x: 1.0 + 1.0 / x, 1.0)
+
+def average_damp(f: Float -> Float) -> Float -> Float:
+    return lambda x: average(x, f(x))
+
+def sqrt_damped(x: Float) -> Float:
+    return fixed_point(average_damp(lambda y: x / y), 1.0)
+
+def cube_root(x: Float) -> Float:
+    return fixed_point(average_damp(lambda y: x / square_real(y)), 1.0)
+
+# 1.3.4 — the derivative as a procedure that returns a procedure, and Newton's method built on it.
+def deriv(g: Float -> Float) -> Float -> Float:
+    return lambda x: (g(x + 0.00001) - g(x)) / 0.00001
+
+def newton_transform(g: Float -> Float) -> Float -> Float:
+    return lambda x: x - g(x) / deriv(g)(x)
+
+def newtons_method(g: Float -> Float, guess: Float) -> Float:
+    return fixed_point(newton_transform(g), guess)
+
+def sqrt_newton(x: Float) -> Float:
+    return newtons_method(lambda y: square_real(y) - x, 1.0)
+
+# The abstraction §1.3.4 ends on: both of the last two are a fixed point of *some* transform.
+def fixed_point_of_transform(
+    g: Float -> Float,
+    transform: (Float -> Float) -> Float -> Float,
+    guess: Float,
+) -> Float:
+    return fixed_point(transform(g), guess)
+
+def sqrt_via_transform(x: Float) -> Float:
+    return fixed_point_of_transform(lambda y: x / y, average_damp, 1.0)
+
 test "1.2.1 — factorial, recursive and iterative, agree":
     expect factorial(6) == 720
     expect factorial_iterative(6) == 720
+
+# The one test in this chapter that is not about a number the book states. SICP §1.2.1 states a
+# *property* instead — that an iterative process runs in constant space — and a quarter of a
+# million levels is the smallest honest way to assert it, because any depth a recursive process
+# could also reach would prove nothing. Before docs/31 this program did not fail; it aborted.
+test "1.2.1 — an iterative process is iterative, a quarter of a million levels deep":
+    expect count_to(0, 250000) == 250000
+    expect count_up(500) == 500
 
 test "1.2.2 — tree recursion, Fibonacci":
     expect fib(10) == 55
@@ -256,6 +364,33 @@ test "1.32 — sum and product are both accumulate":
 
 test "1.3.2 — the same, with an anonymous procedure":
     expect sum_squares(1, 10) == 385
+
+# The book prints these four, to the last digit, and they are IEEE 754 doubles on both sides — so
+# the assertion is equality and not a tolerance. That it holds is a statement about `Float` being
+# the same `Float` (docs/32 §32.5).
+test "1.1.7 — square roots by Newton's method, to the digit SICP prints":
+    expect str(sqrt(9.0)) == "3.00009155413138"
+    expect str(sqrt(100.0 + 37.0)) == "11.704699917758145"
+    expect str(square_real(sqrt(1000.0))) == "1000.000369924366"
+
+test "1.1.7 — and the recursion `sqrt` is written as is a tail call":
+    expect abs(sqrt(2.0) - 1.4142) < 0.001
+    expect abs(sqrt(1000000.0) - 1000.0) < 0.01
+
+test "1.35 — the golden ratio as a fixed point":
+    expect str(golden_ratio()) == "1.6180327868852458"
+
+test "1.3.3 — square and cube roots by fixed points with average damping":
+    expect abs(sqrt_damped(9.0) - 3.0) < 0.0001
+    expect abs(cube_root(27.0) - 3.0) < 0.0001
+
+test "1.3.4 — the same square root three ways, from a derivative and a transform":
+    expect abs(sqrt_newton(9.0) - 3.0) < 0.0001
+    expect abs(sqrt_via_transform(9.0) - 3.0) < 0.0001
+    expect abs(sqrt_newton(9.0) - sqrt_via_transform(9.0)) < 0.0001
+
+test "1.3.4 — a derivative is a procedure, and cube's is 3x²":
+    expect abs(deriv(square_real)(5.0) - 10.0) < 0.001
 
 test "1.42 — compose":
     expect compose(square, inc)(6) == 49

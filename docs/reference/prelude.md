@@ -16,7 +16,7 @@ Every name in scope in every module, with the type inference reads for it. Small
 
 ## Names
 
-50 of them.
+53 of them.
 
 | Name | Type |
 |---|---|
@@ -31,12 +31,14 @@ Every name in scope in every module, with the type inference reads for it. Small
 | `==` | `(a, a) -> Bool` |
 | `>` | `(a, a) -> Bool` |
 | `>=` | `(a, a) -> Bool` |
+| `abs` | `(Int) -> Int` |
 | `and` | `(Bool, Bool) -> Bool` |
 | `concat_lists` | `(list[list[a]]) -> list[a]` |
 | `decide` | `(Stream[Proposal], Signal[a], (a, Proposal) -> Result[list[b], c] ! {e}) -> Stream[b] ! {e}` |
 | `durable` | `(Signal[a]) -> Signal[a] ! {durable}` |
 | `filter_list` | `(list[a], (a) -> Bool ! {e}) -> list[a] ! {e}` |
 | `filter_map` | `(Stream[a], (a) -> Option[b] ! {e}) -> Stream[b] ! {e}` |
+| `float` | `(Int) -> Float` |
 | `fold` | `((a, Envelope[b]) -> a ! {e}, a, Stream[b]) -> Signal[a]` |
 | `html_attr` | `(Str, a) -> Attr` |
 | `html_el` | `(Str, list[Attr], list[Html]) -> Html` |
@@ -65,6 +67,7 @@ Every name in scope in every module, with the type inference reads for it. Small
 | `secret_env` | `(Str) -> secret[Str] ! {env}` |
 | `signal_map` | `(Signal[a], (a) -> b ! {e}) -> Signal[b] ! {e}` |
 | `sort_by` | `(list[a], (a) -> b ! {e}) -> list[a] ! {e}` |
+| `sqrt` | `(Float) -> Float` |
 | `str` | `(a) -> Str` |
 | `str_is_empty` | `(Str) -> Bool` |
 | `str_trim` | `(Str) -> Str` |

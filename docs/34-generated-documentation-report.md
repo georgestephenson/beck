@@ -1,4 +1,4 @@
-# 31 — Generated documentation
+# 34 — Generated documentation
 
 **Built.** Doc comments in the language, `beck doc` for a module, a language reference derived from
 the compiler's own tables, a drift gate that fails when the two disagree, and a published site.
@@ -8,7 +8,7 @@ measured, and what is claimed — and it names what it does not do first, not la
 
 ---
 
-## 31.1 What this closes
+## 34.1 What this closes
 
 [`16-packages-and-ecosystem.md`](16-packages-and-ecosystem.md) §16.2 promises the docs.rs model:
 "documentation generated from types and doc-comments for every published version, automatically",
@@ -32,7 +32,7 @@ Three of the five things a reference page says about a name are *inferred*:
 A hand-written page claiming `map_list` is pure would be wrong and would stay wrong. **A doc
 comment can go stale; a signature cannot.**
 
-## 31.2 Doc comments
+## 34.2 Doc comments
 
 `##` in the Python surface, `;;` in the S-expression one — one more marker than an ordinary
 comment, as `///` is one more than `//`.
@@ -72,7 +72,7 @@ not rebuild because somebody wrote a sentence.
 marker, and a test asserts both halves of it — including that a documented module round-trips
 through *both* surfaces with every comment landing back on the node it started on.
 
-## 31.3 `beck doc module`
+## 34.3 `beck doc module`
 
 One page per module: every published type with its fields or variants, and every published name
 with its signature, its inferred effects and the tier the solver put it on. Markdown for review,
@@ -92,16 +92,16 @@ to show the difference, and a test fails if a name in it loses its comment.
 Coverage is **reported, never enforced**. A coverage gate that fails a build is how a codebase ends
 up with `## the id` on a field called `id`.
 
-## 31.4 The language reference
+## 34.4 The language reference
 
-[`reference/`](reference/README.md) — five pages, 543 lines, all generated, all checked in.
+[`reference/`](reference/README.md) — five pages, 549 lines, all generated, all checked in.
 
 | Page | Derived from | Size |
 |---|---|---|
-| [Error index](reference/errors.md) | the codes the compiler emits | 92 codes |
+| [Error index](reference/errors.md) | the codes the compiler emits | 95 codes |
 | [Command reference](reference/cli.md) | the `clap` command tree that parses the arguments | 23 commands |
 | [Effects and tiers](reference/effects.md) | `Tier::discharges`, *evaluated* | 15 atoms × 4 tiers |
-| [The prelude](reference/prelude.md) | `prelude::prims` and `prelude::types` | 50 names, 5 types |
+| [The prelude](reference/prelude.md) | `prelude::prims` and `prelude::types` | 53 names, 5 types |
 | [Forms](reference/forms.md) | `sym::RESERVED_FORMS` | 15 forms |
 
 The effects page is the one worth pointing at. It is **not** a transcription of §3.3's table — it
@@ -124,7 +124,7 @@ that raises it. The index's explanations are that prose, condensed; they are not
 independent account of what the compiler does, because a second account is a thing that goes out of
 date. `beck explain error B0341` prints one at the terminal, in the shape `rustc --explain` uses.
 
-## 31.5 The gates
+## 34.5 The gates
 
 Five properties, all deterministic — no cluster, no container, no network — in
 `compiler/crates/beck-cli/tests/docs.rs`:
@@ -134,7 +134,7 @@ Five properties, all deterministic — no cluster, no container, no network — 
    diagnostic without an entry fails `cargo test`; so does an entry whose code was deleted.
 2. **The checked-in reference is what the compiler generates.** `beck doc reference --check`
    regenerates all six files in memory and compares.
-3. **`beck doc` runs over the corpus** — 25 programs × 3 formats, which is the only way to know the
+3. **`beck doc` runs over the corpus** — 26 programs × 3 formats, which is the only way to know the
    generator does not panic on a shape no unit test covers.
 4. **Every link in the generated site resolves.** This found a real defect: a module page is
    written one directory below the reference pages, so the shell's header link back to the index is
@@ -150,33 +150,38 @@ run, and nothing said so. A test cannot be silently skipped.
 builds the site from `main`. Every step of all three was run by hand before being trusted, which is
 the rule §20.4 item 8 left behind.
 
-## 31.6 Rustdoc
+## 34.6 Rustdoc
 
 `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps` **failed to build** before this change
 — six of the nine crates could not be documented at all — and is clean across all nine after it.
-Fixing it turned up 55 problems, of two kinds:
+Fixing it turned up 56 problems, of two kinds:
 
 - **46 shortcut links with no target** — `[`docs/19-phase-1-report.md`]` rather than the
   `[`docs/19-phase-1-report.md`](…)` the rest of the codebase writes. Rustdoc reads a bracketed code
   span with no target as an intra-doc link and cannot resolve it. They were never links; they are
   code spans now.
-- **Nine real ones**: a link to a `#[cfg(test)]` item that no documentation build contains; three
+- **Ten real ones**: a link to a `#[cfg(test)]` item that no documentation build contains; four
   links into private items from public documentation; one unresolvable `[`20`]`; three ambiguities
   where a name is both a module and a function (`crate::telemetry`, `beck_rt::telemetry`) or both a
   function and a primitive type (`slice`); and one pair of `<dir>` / `<file>` placeholders inside a
   doc comment that rustdoc read as unclosed HTML tags.
+
+The last of those arrived while this branch was open: [`31`](31-tail-calls-report.md)'s trampoline
+documents `Interp::eval` in terms of the private `Interp::step`, which no documentation build
+contains. That is the gate working — a warning-free rustdoc is a thing that has to be kept, not a
+thing that is achieved once.
 
 One limitation stated plainly: the `[`docs/03-…`](../../../../docs/03-…)` links throughout the
 crates resolve when reading the *source*, which is what they were written for, and do not resolve
 from the rustdoc HTML, whose directory depth is different. Rustdoc does not check them and neither
 does the link gate, which reads markdown. Nothing here made that better or worse.
 
-## 31.7 What this does not do
+## 34.7 What this does not do
 
-- **`missing_docs` is not enabled.** 863 public items across the nine crates carry no `///`. CI
+- **`missing_docs` is not enabled.** 865 public items across the nine crates carry no `///`. CI
   denies warnings, so the lint would fail the build until every one had a sentence — and most of
   those sentences would restate the name. The number is here so the decision stays visible;
-  [`adr/0007`](adr/0007-generated-reference-documentation.md) records why, and a crate-by-crate
+  [`adr/0007`](adr/0009-generated-reference-documentation.md) records why, and a crate-by-crate
   opt-in is the path if it is taken.
 - **No cross-module linking.** A type from an imported module renders as its name, not as a link.
   The Mere (§16.2) is where a link between published versions belongs, and the Mere is not built.

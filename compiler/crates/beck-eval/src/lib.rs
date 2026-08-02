@@ -24,6 +24,10 @@
 //!   same log render identically — Phase 0 §18.5 item 4 learned this the hard way.
 //! * **Errors are values, not panics.** A partial operation returns an error carrying its span,
 //!   because a language server has to survive evaluating half-written code.
+//! * **A call in tail position is free, and nothing aborts the process.** `docs/31` §31.2–§31.3.
+//!   Recursion that is not in tail position still costs host stack, so it is bounded by
+//!   [`interp::DEFAULT_MAX_DEPTH`] — and the stack that ceiling needs is [`STACK_BYTES`], which
+//!   whoever drives the evaluator has to supply. [`on_the_evaluator_stack`] is how.
 
 pub mod interp;
 
@@ -32,7 +36,43 @@ use std::sync::Arc;
 use beck_core::backend::{Backend, Callable, ExecError, Interceptor};
 use beck_core::{Core, Env, Program, Value};
 
-pub use interp::{EvalError, Host, Interp};
+pub use interp::{EvalError, Host, Interp, DEFAULT_MAX_DEPTH};
+
+/// The host stack a thread must have before it drives the evaluator.
+///
+/// This exists because the alternative is worse. A tree-walker spends host frames on recursion
+/// that is *not* in tail position, and [`interp::DEFAULT_MAX_DEPTH`] is a fixed count rather than a
+/// reading of the stack pointer, so somebody has to guarantee that the count is reachable. Leaving
+/// that to whatever stack the caller happened to be on is what produced the abort this replaced —
+/// and what left `sicp.rs` carrying a 32 MiB thread with a comment apologising for it.
+///
+/// The number is the measured worst case with room over it: an unoptimised build spends about 6 KiB
+/// per level (`the_depth_ceiling_fits_the_smallest_stack_we_run_on` prints the figure it measured),
+/// so the ceiling costs about 25 MiB and this is not quite three times that. It is address space,
+/// not memory: pages are committed as they are touched, and a program that never recurses touches
+/// one.
+pub const STACK_BYTES: usize = 64 * 1024 * 1024;
+
+/// Run `f` on a thread that has [`STACK_BYTES`], and give back what it returned.
+///
+/// Every entry point in this workspace that drives Beck code goes through here or sets the same
+/// size on the threads it spawns: the CLI's command dispatch, the `run`/`up` server runtimes'
+/// worker threads, and `beck_rt::testing::run`. An embedder that drives [`Evaluator`] from its own
+/// thread has to do the same, and this is the function to call.
+pub fn on_the_evaluator_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .stack_size(STACK_BYTES)
+            .name("beck-eval".into())
+            .spawn_scoped(scope, f)
+            .expect("a thread for the evaluator")
+            .join()
+            // A panic here is the evaluator's own bug, not the program's — programs get an
+            // `EvalError`. Resuming it puts the unwind back on the caller's thread, so a harness
+            // still sees the panic message and the backtrace it would have seen without the hop.
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+    })
+}
 
 /// The tree-walking backend.
 ///
@@ -88,6 +128,12 @@ impl Host for Globals {
 impl Backend for Evaluator {
     fn name(&self) -> &'static str {
         "evaluator"
+    }
+
+    /// A tree-walker nests host frames on the program's own recursion, so it has a number here
+    /// where a compiling backend would keep the default of zero.
+    fn stack_bytes(&self) -> usize {
+        STACK_BYTES
     }
 
     fn constant(&self, code: &Core) -> Result<Value, ExecError> {

@@ -7,15 +7,18 @@
 //!
 //! Two halves, and the second is the point:
 //!
-//! * [`sicp/ch1.beck`](../../../sicp/ch1.beck) is the part of chapter 1 that runs today, with the
-//!   book's own stated answers as the oracle. It passes.
-//! * [`sicp/refusals/`](../../../sicp/refusals/) is one file per wall, each the smallest program
-//!   that hits it. This harness asserts each one *still* fails, and with which diagnostic — so
-//!   that a wall coming down is a test that starts failing rather than a fact somebody notices.
+//! * [`sicp/ch1.beck`](../../../sicp/ch1.beck) and [`ch2.beck`](../../../sicp/ch2.beck) are the
+//!   parts of the book that run today, with its own stated answers as the oracle. They pass.
+//! * [`sicp/refusals/`](../../../sicp/refusals/) is one file per wall *still standing*, each the
+//!   smallest program that hits it. This harness asserts each one still fails, and with which
+//!   diagnostic — so that a wall coming down is a test that starts failing rather than a fact
+//!   somebody notices.
 //!
-//! A refusal here is not a bug report against the compiler. Five of the six are features Beck has
-//! not built yet and the roadmap names; the sixth (`higher-order.beck`) is a defect, and is
-//! labelled as one.
+//! All six §25.6 measured are down, and each left a test pointing the other way rather than no test
+//! at all: docs/27 for the first three, docs/31 for tail calls, docs/32 for the reals and for
+//! user-written polymorphism. What is in `refusals/` now is the wall the last of them made visible
+//! — a `list[T]` cannot be taken apart — which is the suite working as intended rather than the
+//! suite running out.
 
 use std::process::Command;
 
@@ -50,55 +53,39 @@ fn errors(name: &str, src: &str) -> String {
 const CH1: &str = include_str!("../../../sicp/ch1.beck");
 const CH2: &str = include_str!("../../../sicp/ch2.beck");
 
-/// Chapter 1 needs more stack than `libtest` hands a test thread, and *that is the finding*.
+/// Chapter 1, in-process, on whatever stack `libtest` hands this thread.
 ///
-/// §25.6 item 5: the evaluator has no proper tail calls and spends host stack per Beck-level call.
-/// A debug build spends several times more of it per frame, and `libtest` runs each test on a
-/// thread with ~2 MiB rather than the main thread's 8 — so `beck test sicp/ch1.beck` passes from
-/// the command line, in both profiles, while the same thirteen tests abort inside the harness.
-/// That combination is worth stating plainly: **the suite's own evidence for the missing-tail-call
-/// gap is that collecting the evidence trips over it.**
-///
-/// Raising the stack here is the honest fix rather than shrinking the exercises: `count_change(100)`
-/// is 292 because SICP says it is 292, and trimming the book's own answer to fit an interpreter's
-/// frame size would be measuring the harness instead of the language. When tail calls land, this
-/// wrapper goes away and the `RUST_MIN_STACK`-shaped workaround goes with it.
-const CH1_STACK: usize = 32 * 1024 * 1024;
-
+/// It needs no thread of its own: `beck_rt::testing::run` asks the backend how much host stack it
+/// requires and provides it. A tree-walker spends a frame on recursion that is not in tail
+/// position, so the requirement is real — it is declared on the seam rather than left to the
+/// caller, and exceeding it is a diagnostic. `docs/31` §31.3–§31.4.
 #[test]
 fn chapter_one_passes_against_the_books_own_answers() {
-    std::thread::Builder::new()
-        .stack_size(CH1_STACK)
-        .spawn(|| {
-            let (placed, rendered) = compile_module("sicp/ch1.beck", CH1);
-            let placed = placed.unwrap_or_else(|| panic!("chapter 1 compiles:\n{rendered}"));
-            assert!(
-                !placed.is_application(),
-                "chapter 1 is a library, and running it as one is the point"
-            );
+    let (placed, rendered) = compile_module("sicp/ch1.beck", CH1);
+    let placed = placed.unwrap_or_else(|| panic!("chapter 1 compiles:\n{rendered}"));
+    assert!(
+        !placed.is_application(),
+        "chapter 1 is a library, and running it as one is the point"
+    );
 
-            let backend = beck_eval::backend(&placed);
-            let report = beck_rt::testing::run(&placed, backend, &Options::default());
+    let backend = beck_eval::backend(&placed);
+    let report = beck_rt::testing::run(&placed, backend, &Options::default());
 
-            assert!(
-                report.cases.len() >= 13,
-                "chapter 1 is the evidence for §25.6 and has to carry the exercises it claims"
-            );
-            assert_eq!(
-                report.failed(),
-                0,
-                "{}",
-                beck_rt::testing::render(&report, true)
-            );
-            assert_eq!(
-                report.skipped(),
-                0,
-                "nothing in chapter 1 performs an effect"
-            );
-        })
-        .expect("a thread")
-        .join()
-        .expect("chapter 1 runs without exhausting a 32 MiB stack");
+    assert!(
+        report.cases.len() >= 20,
+        "chapter 1 is the evidence for §25.6 and has to carry the exercises it claims"
+    );
+    assert_eq!(
+        report.failed(),
+        0,
+        "{}",
+        beck_rt::testing::render(&report, true)
+    );
+    assert_eq!(
+        report.skipped(),
+        0,
+        "nothing in chapter 1 performs an effect"
+    );
 }
 
 #[test]
@@ -323,11 +310,11 @@ union R4:
 #[test]
 fn what_bounds_a_recursive_types_depth_is_the_evaluator_and_not_the_checker() {
     // The honest limit, so that §27.3's "nothing bounds depth" is not read as "nothing at all".
-    // A recursive *type* is unbounded; a recursive *value* is bounded by the host stack the
-    // evaluator spends per Beck-level call, which is §25.6 item 5 — wall 4, still standing.
+    // A recursive *type* is unbounded; a recursive *value* built by recursion that is not in tail
+    // position is bounded by `beck-eval`'s depth ceiling, and that bound is a *diagnostic*
+    // (`docs/31` §31.3).
     //
-    // Run through the binary because the far end of it is a `SIGABRT` rather than a `Result`, which
-    // is the same finding `a_tail_call_consumes_stack_…` records for a different program shape.
+    // Through the binary, because the thing being checked is that the process survives.
     let program = |depth: u32| {
         format!(
             "
@@ -363,15 +350,13 @@ test \"a spine\":
         out
     };
 
-    // 100 rather than a rounder number, because the depth that fits is a property of the *profile*
-    // and not of the language: a debug build spends several times more host stack per Beck-level
-    // call than a release one, and this harness runs whichever `cargo test` was asked for. The
-    // release binary carries 500 comfortably. That the number moves with the build is itself wall
-    // 4 — a language with proper tail calls would not have one.
-    let shallow = run(&program(100), "beck-spine-shallow.beck");
+    // 1,000 rather than the 100 this used to carry, and now a round number rather than a hedged
+    // one: the depth that fits is no longer a property of the build profile, because what stops it
+    // is a counted ceiling rather than whatever stack the process happened to have.
+    let shallow = run(&program(1_000), "beck-spine-shallow.beck");
     assert!(
         shallow.status.success(),
-        "a tree 100 deep is an ordinary value:\n{}{}",
+        "a tree 1,000 deep is an ordinary value in either profile:\n{}{}",
         String::from_utf8_lossy(&shallow.stdout),
         String::from_utf8_lossy(&shallow.stderr)
     );
@@ -379,12 +364,20 @@ test \"a spine\":
     let deep = run(&program(50_000), "beck-spine-deep.beck");
     assert!(
         !deep.status.success(),
-        "a tree 50,000 deep is expected to exhaust the host stack; if this passes, Beck grew proper \
-         tail calls and wall 4 is down (happily)"
+        "a tree 50,000 deep is past the ceiling and the test that builds it has to fail"
+    );
+    let out = format!(
+        "{}{}",
+        String::from_utf8_lossy(&deep.stdout),
+        String::from_utf8_lossy(&deep.stderr)
     );
     assert!(
-        String::from_utf8_lossy(&deep.stderr).contains("overflowed its stack"),
-        "and to die by the evaluator's stack rather than by anything the checker did"
+        !out.contains("overflowed its stack"),
+        "and it must not be by aborting the process — that was the old finding:\n{out}"
+    );
+    assert!(
+        out.contains("which is the evaluator's limit"),
+        "it must be by the diagnostic, which names tail position as the way out:\n{out}"
     );
 }
 
@@ -438,25 +431,252 @@ fn a_recursive_type_survives_every_pass_a_corpus_program_is_carried_through() {
     );
 }
 
+/// Wall 6 down (docs/32) — the last of §25.6's six, and the one §25.7 called "the largest".
+///
+/// `sicp/refusals/generic.beck` held `def map[T, U]` and asserted `B0120: expected \`(\`, found
+/// \`[\``. The definition is now in `ch2.beck` and used at four element types. What this asserts is
+/// the property a passing `ch2.beck` does *not* prove: that a type parameter is **rigid** inside
+/// the body it belongs to. A `T` that could unify with `Int` would let a definition claiming to
+/// work for every type work only for one, and every call site would still typecheck.
 #[test]
-fn a_user_cannot_write_a_polymorphic_definition_so_map_cannot_be_built() {
-    let out = errors(
-        "generic.beck",
-        include_str!("../../../sicp/refusals/generic.beck"),
+fn a_type_parameter_is_rigid_inside_the_body_and_fresh_at_every_call() {
+    // Fresh at every call: one definition, three element types, in one expression each.
+    let src = "
+def pick[T](xs: list[T], fallback: T) -> T:
+    if list_is_empty(xs):
+        return fallback
+    return fallback
+
+def swap[A, B](a: A, b: B) -> Map[Str, Str]:
+    return {\"a\": str(a), \"b\": str(b)}
+
+test \"instantiated afresh\":
+    expect pick([1], 2) == 2
+    expect pick([\"x\"], \"y\") == \"y\"
+    expect pick([1.5], 2.5) == 2.5
+    expect map_len(swap(1, \"two\")) == 2
+";
+    let (placed, rendered) = compile_module("generic.beck", src);
+    let placed = placed.unwrap_or_else(|| panic!("a polymorphic definition compiles:\n{rendered}"));
+    let report = beck_rt::testing::run(&placed, beck_eval::backend(&placed), &Options::default());
+    assert_eq!(
+        report.failed(),
+        0,
+        "{}",
+        beck_rt::testing::render(&report, true)
     );
-    assert!(out.contains("B0120"), "{out}");
+
+    // Rigid inside the body: each of these would typecheck if `T` were an ordinary inference
+    // variable, and each is a definition that lies about what it works for.
+    for (body, note) in [
+        (
+            "def f[T](x: T) -> Int:\n    return x + 1\n",
+            "arithmetic on a parameter",
+        ),
+        (
+            "def f[T](x: T) -> T:\n    return 1\n",
+            "returning a concrete type",
+        ),
+        (
+            "def f[T](x: T) -> T:\n    return str(x)\n",
+            "returning something else's",
+        ),
+    ] {
+        let out = errors("rigid.beck", body);
+        assert!(out.contains("B0320"), "{note}:\n{out}");
+        assert!(
+            out.contains('T'),
+            "and the message has to name the parameter the programmer wrote, not `?7` — {note}:\n{out}"
+        );
+    }
+
+    // A parameter that shadows a type, or repeats, is refused rather than resolved: there is no
+    // syntax to disambiguate either afterwards.
+    assert!(errors("shadow.beck", "def f[Int](x: Int) -> Int:\n    return x\n").contains("B0314"));
+    assert!(errors("dup.beck", "def f[T, T](x: T) -> T:\n    return x\n").contains("B0315"));
 }
 
+/// The wall docs/32 §32.10 named, down the report after it named it.
+///
+/// `sicp/refusals/list-destructuring.beck` held `accumulate` and asserted `B0343: \`list\` is not a
+/// constructor`. `accumulate` is now in `ch2.beck`, and §2.2.3 — "Sequences as Conventional
+/// Interfaces", the section the whole of chapter 2's second half is built out of — went with it.
+///
+/// What is asserted here is the half `ch2.beck` cannot assert about itself: that a `match` over a
+/// list is checked for **exhaustiveness**. A list is empty or it is not, and a fold that handles
+/// one of those is the shape that fails on the input nobody tested.
 #[test]
-fn there_is_no_real_arithmetic_so_newtons_method_does_not_typecheck() {
+fn a_list_can_be_taken_apart_and_a_match_on_one_has_to_cover_both_shapes() {
+    let src = "
+def accumulate[T, U](xs: list[T], seed: U, combine: (T, U) -> U) -> U:
+    match xs:
+        case []:
+            return seed
+        case [first, *rest]:
+            return combine(first, accumulate(rest, seed, combine))
+
+def total(xs: list[Int]) -> Int:
+    return accumulate(xs, 0, lambda x, acc: x + acc)
+
+def joined(xs: list[Str]) -> Str:
+    return accumulate(xs, \"\", lambda s, acc: s + acc)
+
+test \"one fold, two element types\":
+    expect total([1, 2, 3]) == 6
+    expect total([]) == 0
+    expect joined([\"a\", \"b\"]) == \"ab\"
+";
+    let (placed, rendered) = compile_module("accumulate.beck", src);
+    let placed = placed.unwrap_or_else(|| panic!("`accumulate` compiles at last:\n{rendered}"));
+    let report = beck_rt::testing::run(&placed, beck_eval::backend(&placed), &Options::default());
+    assert_eq!(
+        report.failed(),
+        0,
+        "{}",
+        beck_rt::testing::render(&report, true)
+    );
+
+    // Each of these is a `match` on a list that misses a shape, and each names the shape it misses.
+    for (arms, missing) in [
+        (
+            "        case []:\n            return 0\n",
+            "a list with elements",
+        ),
+        (
+            "        case [first, *rest]:\n            return first\n",
+            "the empty list",
+        ),
+        (
+            "        case [a, b]:\n            return a\n",
+            "the empty list and a list with",
+        ),
+    ] {
+        let src = format!("def f(xs: list[Int]) -> Int:\n    match xs:\n{arms}");
+        let out = errors("partial.beck", &src);
+        assert!(out.contains("B0341"), "{out}");
+        assert!(out.contains(missing), "expected `{missing}` in:\n{out}");
+    }
+
+    // And `*rest` is the tail, so it goes at the end and nowhere else.
     let out = errors(
-        "real.beck",
-        include_str!("../../../sicp/refusals/real.beck"),
+        "misplaced.beck",
+        "def f(xs: list[Int]) -> Int:\n    match xs:\n        case [*rest, last]:\n            return last\n",
+    );
+    assert!(out.contains("B0346"), "{out}");
+}
+
+/// Two walls named in docs/32 §32.9 that had no file, given one — because a wall a report describes
+/// and a wall a test asserts are different things, and this suite's whole argument is the second.
+#[test]
+fn exact_rationals_and_parameterised_types_are_still_refused() {
+    // §2.1.1 needs *exact* arithmetic, which reals are not. The wall is that a new numeric type
+    // cannot join the ad-hoc resolution `+` goes through — which is traits, again.
+    let out = errors(
+        "rational.beck",
+        include_str!("../../../sicp/refusals/rational.beck"),
+    );
+    assert!(out.contains("B0320"), "{out}");
+    assert!(
+        out.contains("found `Rational`"),
+        "the wall is that `+` does not reach a user's numeric type:\n{out}"
+    );
+
+    // A `def` may take a type parameter; a `union` may not, so `ch2.beck`'s tree holds `Int`.
+    let out = errors(
+        "generic-type.beck",
+        include_str!("../../../sicp/refusals/generic-type.beck"),
+    );
+    assert!(out.contains("B0120"), "{out}");
+    assert!(
+        out.contains("expected `:`, found `[`"),
+        "and it is refused by the *parser*, exactly as `def map[T, U]` was before docs/32:\n{out}"
+    );
+}
+
+/// Wall 5 down (docs/32)/// Wall 5 down (docs/32), and the strongest oracle in the suite.
+///
+/// `sicp/refusals/real.beck` asserted that Newton's method did not typecheck. What replaced it is
+/// not "it typechecks" — it is that `sqrt(9.0)` prints **3.00009155413138**, which is the number on
+/// the page of SICP, digit for digit, because both sides are IEEE 754 doubles running the same
+/// sequence of operations. Three more of the book's printed reals go with it, and they live in
+/// `ch1.beck` where the rest of the chapter is.
+///
+/// What is asserted here is the part `ch1.beck` cannot assert about itself: that the resolution of
+/// `+` from its operands did not quietly make `Int` arithmetic mean something else, and that mixing
+/// the tiers is still refused rather than coerced.
+#[test]
+fn real_arithmetic_is_resolved_from_its_operands_and_the_tiers_do_not_mix() {
+    let ok = "
+def half(x: Float) -> Float:
+    return x / 2.0
+
+def halves(n: Int) -> Int:
+    return n / 2
+
+def both(n: Int, x: Float) -> Float:
+    return half(x) + float(halves(n))
+
+test \"the tiers coexist\":
+    expect halves(7) == 3
+    expect half(7.0) == 3.5
+    expect both(7, 7.0) == 6.5
+    expect abs(-2) == 2
+    expect abs(-2.5) == 2.5
+    expect sqrt(16.0) == 4.0
+";
+    let (placed, rendered) = compile_module("tiers.beck", ok);
+    let placed = placed.unwrap_or_else(|| panic!("both tiers compile:\n{rendered}"));
+    let report = beck_rt::testing::run(&placed, beck_eval::backend(&placed), &Options::default());
+    assert_eq!(
+        report.failed(),
+        0,
+        "{}",
+        beck_rt::testing::render(&report, true)
+    );
+
+    // Ad-hoc resolution is not coercion. `1 + 1.0` has no answer, and inventing one — promoting the
+    // `Int`, the way C does — is the decision this deliberately does not take (docs/32 §32.3).
+    let out = errors(
+        "mixed.beck",
+        "def f(n: Int, x: Float) -> Float:\n    return n + x\n",
     );
     assert!(out.contains("B0320"), "{out}");
     assert!(
         out.contains("expected `Int`, found `Float`"),
-        "the wall is that `+` is Int-only, not that `Float` is unknown:\n{out}"
+        "the left operand decides, and the right has to match it:\n{out}"
+    );
+}
+
+/// The ordering defect the reals brought with them, which no SICP exercise would have caught.
+///
+/// `Value::Float` is a `u64` because a fold's accumulator needs a total order. It used to hold
+/// `f64::to_bits`, which orders `-1.0` *above* `1.0` — so `<` answered backwards for every negative
+/// real and `sort_by` reversed them. docs/32 §32.2. The fix is an order-preserving key, and this is
+/// what says it stayed fixed.
+#[test]
+fn comparing_and_sorting_reals_agrees_with_arithmetic() {
+    let src = "
+def neg(x: Float) -> Float:
+    return 0.0 - x
+
+test \"negatives compare as numbers, not as bit patterns\":
+    expect -1.0 < 1.0
+    expect -2.5 < -1.5
+    expect not (-1.0 > 1.0)
+    expect neg(3.0) < 0.0
+    expect 0.0 - 0.0 == 0.0
+
+test \"and sort by the same order\":
+    expect sort_by([1.5, -2.5, 0.0, -0.5], lambda x: x) == [-2.5, -0.5, 0.0, 1.5]
+";
+    let (placed, rendered) = compile_module("reals.beck", src);
+    let placed = placed.unwrap_or_else(|| panic!("compiles:\n{rendered}"));
+    let report = beck_rt::testing::run(&placed, beck_eval::backend(&placed), &Options::default());
+    assert_eq!(
+        report.failed(),
+        0,
+        "{}",
+        beck_rt::testing::render(&report, true)
     );
 }
 
@@ -524,24 +744,37 @@ def pick(b: Bool) -> Int:
 }
 
 #[test]
-fn a_tail_call_consumes_stack_so_an_iterative_process_is_not_iterative() {
-    // §1.2.1's distinction, which Beck cannot currently make. This one is run through the binary
-    // rather than in-process because the failure is a `SIGABRT`, not a `Result` — which is itself
-    // half of the finding.
-    let file = concat!(env!("CARGO_MANIFEST_DIR"), "/../../sicp/refusals/tail.beck");
+fn a_tail_call_costs_nothing_so_an_iterative_process_is_iterative() {
+    // §1.2.1's distinction, which `docs/31` built and `ch1.beck`'s `count_to` exercise asserts
+    // from the language's side.
+    //
+    // Run through the binary rather than in-process: if the trampoline regresses the failure is a
+    // dead process rather than a `Result`, and a subprocess is what can tell the two apart.
+    let deep = "
+def count_to(acc: Int, n: Int) -> Int:
+    if n == 0:
+        return acc
+    return count_to(acc + 1, n - 1)
+
+test \"a tail call, a million deep\":
+    expect count_to(0, 1000000) == 1000000
+";
+    let file = std::env::temp_dir().join("beck-tail-million.beck");
+    std::fs::write(&file, deep).expect("a scratch file");
     let out = Command::new(env!("CARGO_BIN_EXE_beck"))
-        .args(["test", file])
+        .args(["test", file.to_str().expect("a path")])
         .output()
         .expect("the compiler is built");
+    let _ = std::fs::remove_file(&file);
 
-    assert!(
-        !out.status.success(),
-        "a tail call eight thousand deep is expected to die; if this passes, Beck grew proper \
-         tail calls and §25.6 needs rewriting (happily)"
-    );
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(
-        err.contains("overflowed its stack"),
-        "and to die by exhausting the host stack specifically:\n{err}"
+        !err.contains("overflowed its stack"),
+        "a tail call must not spend host stack, at any depth:\n{err}"
+    );
+    assert!(
+        out.status.success(),
+        "a million tail calls is an ordinary program:\n{}{err}",
+        String::from_utf8_lossy(&out.stdout)
     );
 }

@@ -1,4 +1,4 @@
-# 0007 — Reference documentation is generated from the compiler, and checked in
+# 0009 — Reference documentation is generated from the compiler, and checked in
 
 **Context.** Everything a reference page wants to say about a Beck program is something the
 compiler already computes: the signature comes from inference, the effect row from §3.2's
@@ -48,8 +48,8 @@ a page saying `map_list` is pure stays wrong until someone reads it.
   land with it. That is one extra `beck doc reference --out ../docs/reference` in such a change.
 - `beck fmt` now preserves `##` comments and still discards `#` ones. That distinction is the
   reason to use `##`, and it is asserted by a test.
-- **`missing_docs` is deliberately not enabled.** 863 public items across the nine crates carry no
+- **`missing_docs` is deliberately not enabled.** 865 public items across the nine crates carry no
   `///`, CI denies warnings, and the lint would fail the build until every one of them had a
   sentence — most of which would be the restatement-of-the-name kind that makes documentation
-  worth less, not more. The number is published in `docs/31` so the decision stays visible and
+  worth less, not more. The number is published in `docs/34` so the decision stays visible and
   reversible; a crate-by-crate opt-in is the path if it is taken.
