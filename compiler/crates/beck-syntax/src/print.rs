@@ -231,10 +231,11 @@ impl Py {
             }
             Some(sym::IMPL) => {
                 let name = self.expr(&n.args[0]);
-                let ty = self.type_expr(&n.args[1]);
-                self.line(&format!("impl {name} for {ty}:"));
+                let typarams = self.typarams(n);
+                let ty = self.type_expr(&n.args[2]);
+                self.line(&format!("impl{typarams} {name} for {ty}:"));
                 self.indent += 1;
-                for m in &n.args[2..] {
+                for m in &n.args[3..] {
                     self.item(m);
                 }
                 self.indent -= 1;

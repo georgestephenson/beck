@@ -1,0 +1,206 @@
+# The program that would embarrass traits (docs/37).
+#
+# `25-thread.beck` and `27-review.beck` are the precedent: a construct that only `sicp/` exercises
+# is a construct the compiler's own passes never see. An `impl` here is *desugared* into ordinary
+# definitions before anything is checked, and this file is how we know that the definitions it
+# produces survive everything downstream — placement with no annotations, effect inference, the
+# slicer, the plan, the incremental engine against its recompute oracle, the replay harness, the
+# formatter's round-trip, and `beck iface`, which must publish none of them.
+#
+# Three shapes on purpose, because each reaches a different part of the checker:
+#
+#   * an impl on a **model**, called from the view — so the plan decomposes a call that used to be
+#     a method;
+#   * an impl on a **union**, whose body matches on its own variants;
+#   * an impl on a **parameterised** type — `impl[T] Priced for Bundle[T]`, one impl covering every
+#     element type, which is docs/36's feature meeting this one.
+#
+# The trait's effect row is the bound its impls are held to (docs/37 §37.5), so `total` staying pure
+# here is what lets `catalogue` be a `durable` fold at all: a `nondet` in any one impl would place
+# the whole thing.
+#
+# Like every program here it carries no placement annotations and has to place itself.
+
+model State:
+    items: Map[Str, Item]
+    bundles: Map[Str, Bundle[Str]]
+
+model Item:
+    sku: Str
+    name: Str
+    pence: Int
+
+union Discount:
+    None_
+    Percent(off: Int)
+    Fixed(pence: Int)
+
+# A bundle of anything, priced by the count of what is in it.
+model Bundle[T]:
+    id: Str
+    parts: list[T]
+    each: Int
+
+# The one abstraction the file is about: everything in a catalogue has a price in pence, and the
+# view adds them up without knowing what any of them is.
+trait Priced:
+    def pence(self) -> Int
+    def describe(self) -> Str
+
+impl Priced for Item:
+    def pence(self):
+        return self.pence
+
+    def describe(self):
+        return self.name
+
+impl Priced for Discount:
+    def pence(self):
+        match self:
+            case None_:
+                return 0
+            case Percent(off):
+                return negate(off)
+            case Fixed(pence):
+                return negate(pence)
+
+    def describe(self):
+        match self:
+            case None_:
+                return "no discount"
+            case Percent(off):
+                return str(off) + "% off"
+            case Fixed(pence):
+                return str(pence) + "p off"
+
+impl[T] Priced for Bundle[T]:
+    def pence(self):
+        return list_len(self.parts) * self.each
+
+    def describe(self):
+        return self.id + " (" + str(list_len(self.parts)) + " parts)"
+
+union Command:
+    Stock(sku: Str, name: Str, pence: Int)
+    Bundle_(id: Str, skus: list[Str], each: Int)
+
+union Event:
+    Stocked(sku: Str, name: Str, pence: Int)
+    Bundled(id: Str, skus: list[Str], each: Int)
+
+union Rejection:
+    Blank
+    NotPositive
+    NoSuchItem
+
+def apply_event(s: State, env: Envelope[Event]) -> State:
+    match env.body:
+        case Stocked(sku, name, pence):
+            return s.with(items=map_insert(s.items, sku, Item(sku=sku, name=name, pence=pence)))
+        case Bundled(id, skus, each):
+            return s.with(bundles=map_insert(s.bundles, id, Bundle(id=id, parts=skus, each=each)))
+
+def validate(s: State, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Stock(sku, name, pence):
+            if str_is_empty(str_trim(name)):
+                return Err(error=Blank)
+            if pence <= 0:
+                return Err(error=NotPositive)
+            return Ok(value=[Stocked(sku=sku, name=name, pence=pence)])
+        case Bundle_(id, skus, each):
+            return if_stocked(s, id, skus, each)
+
+def if_stocked(s: State, id: Str, skus: list[Str], each: Int) -> Result[list[Event], Rejection]:
+    if each <= 0:
+        return Err(error=NotPositive)
+    if not all_stocked(s, skus):
+        return Err(error=NoSuchItem)
+    return Ok(value=[Bundled(id=id, skus=skus, each=each)])
+
+def all_stocked(s: State, skus: list[Str]) -> Bool:
+    return list_is_empty(filter_list(skus, lambda k: not map_contains(s.items, k)))
+
+# The trait method called on a model, on a union and on a parameterised type — three impls, one
+# name, resolved from the type of each receiver at check time.
+def items(s: State) -> list[Item]:
+    return sort_by(map_values(s.items), lambda i: i.sku)
+
+def bundles(s: State) -> list[Bundle[Str]]:
+    return sort_by(map_values(s.bundles), lambda b: b.id)
+
+def total(s: State) -> Int:
+    return sum_of(map_list(items(s), lambda i: i.pence())) + bundle_total(s)
+
+def bundle_total(s: State) -> Int:
+    return sum_of(map_list(bundles(s), lambda b: b.pence()))
+
+def sum_of(ns: list[Int]) -> Int:
+    match ns:
+        case []:
+            return 0
+        case [first, *rest]:
+            return first + sum_of(rest)
+
+# A `Discount` is priced too, so the same method reaches a union whose body matches on itself.
+def sale() -> Discount:
+    return Percent(off=10)
+
+def view(s: State, session: Session) -> Html:
+    return ui:
+        main:
+            h1: ("catalogue for " + session.actor)
+            ul:
+                for i in items(s):
+                    li:
+                        span: i.describe()
+                        span: (str(i.pence()) + "p")
+            ul:
+                for b in bundles(s):
+                    li: (b.describe() + " — " + str(b.pence()) + "p")
+            p: ("total " + str(total(s)) + "p")
+            p: sale().describe()
+
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, catalogue, validate)
+catalogue: Signal[State] = durable(fold(apply_event, State(items={}, bundles={}), events))
+page: Signal[Html] = per_session(catalogue, view)
+
+test "an impl on a model prices one item":
+    given [Stocked(sku="a", name="anvil", pence=250)] by "ana"
+    expect page contains "anvil"
+    expect page contains "250p"
+    expect page contains "total 250p"
+
+test "an impl on a parameterised type prices a bundle of anything":
+    given [
+        Stocked(sku="a", name="anvil", pence=250),
+        Stocked(sku="b", name="bolt", pence=50),
+        Bundled(id="kit", skus=["a", "b"], each=100),
+    ]
+    expect page contains "kit (2 parts)"
+    expect page contains "200p"
+    expect page contains "total 500p"
+
+test "an impl on a union matches on its own variants":
+    given []
+    expect page contains "10% off"
+
+test "a bundle of things nobody stocked is refused":
+    given []
+    when Bundle_(id="kit", skus=["nope"], each=100)
+    expect Err(error=NoSuchItem)
+
+test "a free item is refused, and so is a free bundle":
+    given []
+    when Stock(sku="a", name="anvil", pence=0)
+    expect Err(error=NotPositive)
+
+test "a blank name never reaches the log":
+    given []
+    when Stock(sku="a", name="  ", pence=1)
+    expect Err(error=Blank)
+
+property "the total is the sum of the prices, for any log this program can produce"(log: list[Event]):
+    given log
+    expect page contains "catalogue for"

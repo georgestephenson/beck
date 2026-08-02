@@ -4,7 +4,7 @@
 
 Every diagnostic the compiler can raise carries a stable code. `beck explain error B0341` prints one of these entries at the terminal.
 
-The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans every non-test source file for a `"Bnnnn"` literal and fails if the set differs from this table in either direction. **94 codes.**
+The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans every non-test source file for a `"Bnnnn"` literal and fails if the set differs from this table in either direction. **101 codes.**
 
 
 ## Reading the source — `B0100–B0120`
@@ -37,7 +37,7 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0211` | error | **`ui` block is empty** — A view must produce exactly one root element. |
 | `B0212` | error | **`ui` block has more than one root** — An `Html` value is a single tree. Wrap the elements in one — a `div:` or `main:` block. |
 
-## Names, types and effects — `B0300–B0370`
+## Names, types and effects — `B0300–B0387`
 
 | Code | | Meaning |
 |---|---|---|
@@ -47,7 +47,6 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0303` | error | **a top-level parameter needs a type annotation** — Inference is intra-module and boundaries are declared (§3.6): a top-level definition's parameters are part of its published signature, so they are written rather than guessed. |
 | `B0304` | error | **needs a return type** — Same reason as B0303: a top-level definition's result type is part of its contract. |
 | `B0305` | error | **not an effect** — A `uses` clause names effect atoms, and this is not one of them. `beck doc reference` lists the atom set. |
-| `B0306` | warning | **traits are parsed but not yet checked** — Trait resolution is unimplemented. Phase 2 built the effect system this was once expected to arrive with and did not bring trait resolution with it; this warning is the only thing standing between a `trait` and silence. |
 | `B0307` | error | **unsupported top-level item** — This form is not something a module may contain at top level. |
 | `B0308` | error | **expected a type** — A type position holds something that is not a type expression. |
 | `B0310` | error | **cannot find type** — No declaration, import or builtin of that name is in scope. |
@@ -80,6 +79,14 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0354` | error | **cannot construct this type** — The name is a type, but not one with a constructor — an alias or a builtin. |
 | `B0360` | error | **cannot be called inside a fold** — A fold must be replay-pure, and this would make replay non-deterministic. Time is data on the envelope (`env.at`) and entity ids are minted at the edge: mint the id in the client's command and read it from the event. |
 | `B0370` | error | **performs more than its signature declares** — The undeclared atoms are listed. A `uses` clause is the published bound, and widening it is a breaking API change — so the compiler will not widen it for you. |
+| `B0380` | error | **a trait cannot be declared here** — The name already belongs to a type, the trait is declared twice, or the file is a `.becki` — a trait does not cross a module boundary, so an interface may not hold one. |
+| `B0381` | error | **a trait declaration is wrong** — A trait holds `def` signatures with no bodies, each mentioning `Self` in a parameter so that a call has something to dispatch on. A method name belongs to one trait only. |
+| `B0382` | error | **an impl does not match its trait** — An impl writes bodies and parameter *names*; the types, the return type and the effect row are the trait's. Every method must be implemented, exactly once, and no others. |
+| `B0383` | error | **cannot find the trait or the type this impl names** — Both halves of `impl Trait for Type` have to resolve before the impl can be registered. |
+| `B0384` | error | **conflicting implementations** — Coherence: one impl per trait per type constructor, and no blanket impl over a type parameter — so what a call means never depends on which impls happen to be in scope. |
+| `B0385` | error | **orphan impl** — An impl belongs with the trait or with the type. Implementing somebody else's trait for somebody else's type is what lets two modules supply one and disagree. |
+| `B0386` | error | **a trait method needs a concrete receiver** — Dispatch is static and resolved from the receiver's type. A trait method cannot be passed as a value, and generic code cannot call one: both need bounds on a type parameter, which is not built. |
+| `B0387` | error | **the type does not implement the trait** — There is no `impl Trait for Type` in scope for the receiver's type. |
 
 ## Placement — `B0400–B0404`
 

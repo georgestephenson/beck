@@ -455,9 +455,14 @@ impl<'a> Parser<'a> {
         Some(Node::form(sym::TRAIT, items, start))
     }
 
+    /// `impl[T] Show for Tree[T]:` — the list binds the names the *target* is written in terms of.
+    ///
+    /// It goes after `impl` rather than after the trait name because that is what it quantifies:
+    /// `Tree[T]` is one impl covering every `T`, and `Show` is not parameterised at all.
     fn impl_item(&mut self) -> Option<Node> {
         let start = self.span();
         self.bump(); // impl
+        let typarams = self.typarams(start);
         let (trait_name, tspan) = self.ident("a trait name")?;
         if !self.eat_kw("for") {
             self.error("expected `for` in an impl declaration");
@@ -466,7 +471,7 @@ impl<'a> Parser<'a> {
         let ty = self.type_expr()?;
         self.expect(&Raw::Colon, "`:`");
         let body = self.block()?;
-        let mut items = vec![Node::sym(trait_name, tspan), ty];
+        let mut items = vec![Node::sym(trait_name, tspan), typarams, ty];
         items.extend(body.args);
         Some(Node::form(sym::IMPL, items, start))
     }

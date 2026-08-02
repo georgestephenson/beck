@@ -299,6 +299,9 @@ fn normalise_typarams(head: &str, items: &mut Vec<Node>, span: beck_diag::Span) 
         sym::DEF => 4,
         sym::MODEL | sym::UNION => 1,
         sym::NEWTYPE | sym::TYPE => 2,
+        // `(impl Show (typarams) Point …)` — the list follows the *trait* name in the node even
+        // though the surface writes it before, because `args[1]` is where every other form keeps it.
+        sym::IMPL => 2,
         _ => return,
     };
     let already = items

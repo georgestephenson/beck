@@ -86,6 +86,14 @@ pub struct Def {
     pub row: Row,
     /// What the signature declared with `uses`, if anything.
     pub declared_effects: Vec<Effect>,
+    /// True when the signature **stated** its row — so an empty one is a bound of "performs
+    /// nothing" rather than an absent declaration.
+    ///
+    /// A hand-written `def` with no `uses` has this false, because writing nothing means "infer
+    /// it". A trait method's row is stated by the trait, empty or not, so every impl method has it
+    /// true: otherwise `def show(self) -> Str` would let one implementation reach for a clock and
+    /// every caller of `show` would inherit it silently.
+    pub row_is_declared: bool,
     /// True when the placement was written by hand rather than solved for (§3.4).
     pub tier_is_annotated: bool,
     /// A signature with nothing behind it: a line of a `.becki` interface, or a trait's method.
@@ -125,6 +133,8 @@ enum BindKind {
     Local(VarId, Ty),
     Global(Arc<str>),
     Prim(Prim),
+    /// A trait method, resolved to an impl from the type of its receiver at each call site.
+    TraitMethod(Arc<str>),
     /// A union variant; carries the union it belongs to.
     Ctor(Arc<str>, Arc<str>),
     /// A model, used as a constructor: `Todo(id=…, text=…)`.
@@ -169,6 +179,16 @@ pub struct Checker<'a> {
     /// read, mapped to their position. Empty everywhere else, and never in scope at the same time
     /// as `typarams`: a declaration has no body and a definition has no fields.
     decl_typarams: BTreeMap<Arc<str>, u32>,
+    /// Every `trait` this module declares, by name.
+    traits: BTreeMap<Arc<str>, traits::TraitDecl>,
+    /// Which trait a method name belongs to. One entry per method, because a name may belong to
+    /// only one trait — see [`Checker::collect_traits`].
+    trait_methods: BTreeMap<Arc<str>, Arc<str>>,
+    /// The impls, keyed by trait and by the *head* constructor of the target type.
+    impls: BTreeMap<(Arc<str>, Arc<str>), traits::ImplDecl>,
+    /// The mangled names `expand_impls` produced, so that a definition standing in for a trait
+    /// method can be told from one somebody wrote.
+    impl_methods: BTreeSet<Arc<str>>,
     mode: Mode,
 }
 
@@ -220,6 +240,10 @@ pub fn check_module_with(
         in_fold: false,
         typarams: BTreeSet::new(),
         decl_typarams: BTreeMap::new(),
+        traits: BTreeMap::new(),
+        trait_methods: BTreeMap::new(),
+        impls: BTreeMap::new(),
+        impl_methods: BTreeSet::new(),
         generic_rows: BTreeMap::new(),
         mode,
     };
@@ -259,6 +283,12 @@ pub fn check_module_with(
     ck.collect_aliases(&items);
     ck.collect_types(&items);
     ck.register_type_constructors();
+    // Traits before impls, and impls before any signature: an `impl` is *desugared* into ordinary
+    // definitions, so by the time `collect_signatures` runs there is nothing trait-shaped left for
+    // it — or for placement, or for the splitter, or for the evaluator — to know about.
+    ck.collect_traits(&items);
+    let expanded = ck.expand_impls(&items);
+    let items: Vec<&Node> = items.into_iter().chain(expanded.iter()).collect();
     ck.collect_signatures(&items);
     ck.collect_signal_names(&items);
     let mut program = ck.check_items(&items, name);
@@ -267,6 +297,9 @@ pub fn check_module_with(
 }
 
 mod tests_in_beck;
+mod traits;
+
+pub use traits::is_impl_method;
 
 impl<'a> Checker<'a> {
     fn error(&mut self, code: &'static str, msg: impl Into<String>, span: Span) {
@@ -958,23 +991,9 @@ impl<'a> Checker<'a> {
                 || inner.is_form(sym::TRAIT)
                 || inner.is_form(sym::IMPL)
             {
-                // Declarations; already collected, or (traits/impls) parsed and carried but not
-                // yet given semantics — see the Phase 1 report.
-                if inner.is_form(sym::TRAIT) || inner.is_form(sym::IMPL) {
-                    self.diags.push(
-                        Diagnostic::warning(
-                            "B0306",
-                            "traits are parsed but not yet checked",
-                            inner.span(),
-                        )
-                        .with_note(
-                            "Phase 2 built the effect system this was once expected to arrive \
-                             with, and trait resolution did not come with it: it is still \
-                             unimplemented, and this warning is the only thing standing between a \
-                             `trait` and silence",
-                        ),
-                    );
-                }
+                // Declarations, all of them already collected. A `trait` was read by
+                // `collect_traits` and an `impl` was expanded into the `def`s this loop is
+                // checking, so neither has anything left to do here.
             } else {
                 self.error("B0307", "unsupported top-level item", inner.span());
             }
@@ -1052,7 +1071,7 @@ impl<'a> Checker<'a> {
         // silently" true of Beck rather than aspirational.
         for name in &def_order {
             let Some(def) = defs.get(name) else { continue };
-            if def.declared_effects.is_empty() {
+            if !def.row_is_declared {
                 continue;
             }
             let undeclared: Vec<Effect> = def
@@ -1200,6 +1219,7 @@ impl<'a> Checker<'a> {
 
         let mut declared_effects: Vec<Effect> = declared.atoms.iter().cloned().collect();
         declared_effects.sort();
+        let row_is_declared = !declared_effects.is_empty() || self.impl_methods.contains(&name);
         Some(Def {
             name,
             typarams: scheme.params.clone(),
@@ -1210,6 +1230,7 @@ impl<'a> Checker<'a> {
             effects: Vec::new(),
             row: inferred,
             declared_effects,
+            row_is_declared,
             tier_is_annotated,
             is_declaration: body_node.is_none(),
             declares_signal,
@@ -1791,6 +1812,28 @@ impl<'a> Checker<'a> {
         };
         match b.kind {
             BindKind::Local(id, ty) => Core::new(CoreKind::Var(id), ty, span),
+            // A trait method is resolved from the type of its receiver, so there is nothing to
+            // hand over until it is applied. `map_list(xs, show)` would need a dictionary.
+            BindKind::TraitMethod(m) => {
+                let owner = self.trait_methods.get(&m).cloned();
+                self.diags.push(
+                    Diagnostic::error(
+                        "B0386",
+                        format!("`{m}` is a trait method and cannot be used as a value"),
+                        span,
+                    )
+                    .with_primary_label(match &owner {
+                        Some(t) => format!("declared by trait `{t}`"),
+                        None => "a trait method".into(),
+                    })
+                    .with_note(
+                        "which implementation it means is decided by the type of its receiver, so \
+                         it has to be called rather than passed; passing one needs bounds on a type \
+                         parameter, which is not built",
+                    ),
+                );
+                Core::new(CoreKind::Const(Const::Unit), self.subst.fresh(), span)
+            }
             BindKind::Global(name) => {
                 let ty = self
                     .schemes
@@ -2333,6 +2376,7 @@ impl<'a> Checker<'a> {
 
         match self.resolve(&head).cloned().map(|b| b.kind) {
             Some(BindKind::Prim(p)) => self.prim_call(p, &n.args, expected, span),
+            Some(BindKind::TraitMethod(m)) => self.trait_call(&m, &n.args, span),
             Some(BindKind::Ctor(union, variant)) => {
                 self.make(&union, Some(&variant), &n.args, span)
             }
@@ -2355,6 +2399,57 @@ impl<'a> Checker<'a> {
                 Core::new(CoreKind::Const(Const::Unit), self.subst.fresh(), span)
             }
         }
+    }
+
+    /// [`Checker::apply_fn`] where one argument has already been checked.
+    ///
+    /// A trait call has to type its receiver *before* it can tell which function is being called,
+    /// so by the time there is a callee that argument is a `Core` and not a `Node`. Re-checking it
+    /// would report anything wrong with it twice.
+    fn apply_fn_with(
+        &mut self,
+        func: Core,
+        done: Core,
+        at: usize,
+        args: &[Node],
+        span: Span,
+    ) -> Core {
+        let ftype = self.subst.resolve(&func.ty);
+        let Ty::Fun(param_tys, ret, latent) = ftype else {
+            return self.apply_fn(func, args, span);
+        };
+        self.perform(&latent);
+        if args.len() != param_tys.len() {
+            self.error(
+                "B0351",
+                format!(
+                    "expected {} argument(s), got {}",
+                    param_tys.len(),
+                    args.len()
+                ),
+                span,
+            );
+        }
+        if let Some(want) = param_tys.get(at) {
+            self.unify(&done.ty, want, done.span, "receiver");
+        }
+        let mut checked = Vec::with_capacity(args.len());
+        for (i, a) in args.iter().enumerate() {
+            if i == at {
+                checked.push(done.clone());
+                continue;
+            }
+            let one = self.check_args(std::slice::from_ref(a), &param_tys[i..]);
+            checked.extend(one);
+        }
+        Core::new(
+            CoreKind::App {
+                func: Box::new(func),
+                args: checked,
+            },
+            *ret,
+            span,
+        )
     }
 
     fn apply_fn(&mut self, func: Core, args: &[Node], span: Span) -> Core {

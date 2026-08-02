@@ -300,14 +300,6 @@ pub const INDEX: &[CodeEntry] = &[
         "A `uses` clause names effect atoms, and this is not one of them. `beck doc reference` \
          lists the atom set.",
     ),
-    w(
-        "B0306",
-        Stage::Types,
-        "traits are parsed but not yet checked",
-        "Trait resolution is unimplemented. Phase 2 built the effect system this was once \
-         expected to arrive with and did not bring trait resolution with it; this warning is the \
-         only thing standing between a `trait` and silence.",
-    ),
     e(
         "B0307",
         Stage::Types,
@@ -524,6 +516,62 @@ pub const INDEX: &[CodeEntry] = &[
         "performs more than its signature declares",
         "The undeclared atoms are listed. A `uses` clause is the published bound, and widening it \
          is a breaking API change — so the compiler will not widen it for you.",
+    ),
+    // -------------------------------------------------------------------- B038x: traits
+    e(
+        "B0380",
+        Stage::Types,
+        "a trait cannot be declared here",
+        "The name already belongs to a type, the trait is declared twice, or the file is a \
+         `.becki` — a trait does not cross a module boundary, so an interface may not hold one.",
+    ),
+    e(
+        "B0381",
+        Stage::Types,
+        "a trait declaration is wrong",
+        "A trait holds `def` signatures with no bodies, each mentioning `Self` in a parameter so \
+         that a call has something to dispatch on. A method name belongs to one trait only.",
+    ),
+    e(
+        "B0382",
+        Stage::Types,
+        "an impl does not match its trait",
+        "An impl writes bodies and parameter *names*; the types, the return type and the effect \
+         row are the trait's. Every method must be implemented, exactly once, and no others.",
+    ),
+    e(
+        "B0383",
+        Stage::Types,
+        "cannot find the trait or the type this impl names",
+        "Both halves of `impl Trait for Type` have to resolve before the impl can be registered.",
+    ),
+    e(
+        "B0384",
+        Stage::Types,
+        "conflicting implementations",
+        "Coherence: one impl per trait per type constructor, and no blanket impl over a type \
+         parameter — so what a call means never depends on which impls happen to be in scope.",
+    ),
+    e(
+        "B0385",
+        Stage::Types,
+        "orphan impl",
+        "An impl belongs with the trait or with the type. Implementing somebody else's trait for \
+         somebody else's type is what lets two modules supply one and disagree.",
+    ),
+    e(
+        "B0386",
+        Stage::Types,
+        "a trait method needs a concrete receiver",
+        "Dispatch is static and resolved from the receiver's type. A trait method cannot be passed \
+         as a value, and generic code cannot call one: both need bounds on a type parameter, which \
+         is not built.",
+    ),
+    e(
+        "B0387",
+        Stage::Types,
+        "the type does not implement the trait",
+        "There is no `impl Trait for Type` in scope for the receiver's type.",
     ),
     // -------------------------------------------------------------------- B04xx: placement
     e(

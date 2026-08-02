@@ -113,6 +113,13 @@ impl Interface {
             let Some(d) = program.defs.get(name) else {
                 continue;
             };
+            // A desugared impl method is not part of the contract. Its name is compiler-generated
+            // and no parser could read it back, and a trait does not cross a module boundary yet —
+            // publishing the bodies without the trait that gives them meaning would be worse than
+            // publishing neither.
+            if crate::check::is_impl_method(name) {
+                continue;
+            }
             items.push(Item {
                 name: d.name.clone(),
                 kind: if d.declares_signal {
