@@ -228,7 +228,7 @@ pub fn check_project(
         // module happens to compile to today. That is the difference between a contract and a
         // description, and it is the reason `beck iface` writes a file rather than a cache entry.
         if let Some(text) = &src.interface {
-            let published = Interface::parse(name, text, diags);
+            let published = Interface::parse(name, text, map, diags);
             interfaces.insert(name.clone(), published);
         }
 

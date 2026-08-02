@@ -484,10 +484,16 @@ impl<'a> Parser<'a> {
             return None;
         }
         let ty = self.type_expr()?;
-        self.expect(&Raw::Colon, "`:`");
-        let body = self.block()?;
         let mut items = vec![Node::sym(trait_name, tspan), typarams, ty];
-        items.extend(body.args);
+        // `impl Priced for Item` with nothing after it is a *declaration*, which is what a `.becki`
+        // publishes: an importing module needs to know the implementation exists and what its
+        // signature is, and the bodies stay in the module that wrote them.
+        if self.eat(&Raw::Colon) {
+            let body = self.block()?;
+            items.extend(body.args);
+        } else {
+            self.end_of_line();
+        }
         Some(Node::form(sym::IMPL, items, start))
     }
 

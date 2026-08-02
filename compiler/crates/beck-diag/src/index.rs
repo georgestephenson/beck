@@ -357,6 +357,13 @@ pub const INDEX: &[CodeEntry] = &[
          shadow the first.",
     ),
     e(
+        "B0316",
+        Stage::Types,
+        "a declaration cannot bound its type parameter",
+        "A bound says what a body may call, and a `model`, a `union`, a `newtype` and a `type` have \
+         no body. The definitions that take the type apart are where the bound belongs.",
+    ),
+    e(
         "B0320",
         Stage::Types,
         "type mismatch",

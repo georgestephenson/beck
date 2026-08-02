@@ -796,6 +796,53 @@ impl TyDecl {
     }
 }
 
+/// A published `trait`: the signatures it requires, over an abstract `Self`.
+///
+/// The checker keeps a trait's methods as **syntax** while it is desugaring impls and bounds, because
+/// splicing is what that pass does. This is the other half: the same declaration as *types*, which
+/// is what a `.becki` compares, what `--wire-compat` classifies, and what an importing module reads.
+/// A trait that crossed a boundary as syntax would carry spans into a file that does not own them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TraitSig {
+    pub name: Arc<str>,
+    pub methods: Vec<MethodSig>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MethodSig {
+    pub name: Arc<str>,
+    /// Parameter names and types, with the abstract receiver as `Ty::con("Self")`.
+    pub params: Vec<(Arc<str>, Ty)>,
+    pub ret: Ty,
+    /// The declared row — the bound every implementation is held to (`docs/37` §37.5), and
+    /// therefore what a caller in another module may assume.
+    pub effects: Vec<Effect>,
+}
+
+/// A published `impl Trait for Type`.
+///
+/// There is no body here and there never will be: an importing module needs to know *that* the
+/// implementation exists and what its signature is, and the implementation itself stays where it
+/// was written.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ImplSig {
+    pub trait_name: Arc<str>,
+    /// The impl's own type parameters: `["T"]` for `impl[T] Priced for Bundle[T]`.
+    pub params: Vec<Arc<str>>,
+    /// The target, with those parameters as rigid names — `Bundle[T]`.
+    pub target: Ty,
+}
+
+impl ImplSig {
+    /// The head constructor dispatch keys on.
+    pub fn head(&self) -> Arc<str> {
+        self.target
+            .con_name()
+            .map(Arc::from)
+            .unwrap_or_else(|| Arc::from("?"))
+    }
+}
+
 /// Replace the positional parameters of a declaration with `args`.
 ///
 /// A field type of `Some(value: ?1000000)` under `Option[Int]` is `value: Int`, and every pass that

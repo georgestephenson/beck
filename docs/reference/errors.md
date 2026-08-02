@@ -4,7 +4,7 @@
 
 Every diagnostic the compiler can raise carries a stable code. `beck explain error B0341` prints one of these entries at the terminal.
 
-The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans every non-test source file for a `"Bnnnn"` literal and fails if the set differs from this table in either direction. **101 codes.**
+The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans every non-test source file for a `"Bnnnn"` literal and fails if the set differs from this table in either direction. **102 codes.**
 
 
 ## Reading the source — `B0100–B0120`
@@ -55,6 +55,7 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0313` | error | **a type parameter takes no type arguments** — A type parameter of the definition or declaration being read names an unknown type, so it has no structure to apply arguments to: `T[Int]` says nothing, whatever `T` turns out to be at the call site. |
 | `B0314` | error | **a type parameter shadows an existing type** — A type parameter is a name the definition or declaration invents, and one that shadowed an existing type would make its fields or its signature read as though they mentioned that type. |
 | `B0315` | error | **a type parameter is repeated** — The same name appears twice in one type-parameter list, where the second would silently shadow the first. |
+| `B0316` | error | **a declaration cannot bound its type parameter** — A bound says what a body may call, and a `model`, a `union`, a `newtype` and a `type` have no body. The definitions that take the type apart are where the bound belongs. |
 | `B0320` | error | **type mismatch** — Unification failed; the message names what was being unified — an argument, a field, a result, or the two branches of an `if`. The branches of an `if` are reported as two alternatives rather than as actual-and-expected: typing one as the other's expectation is what refused SICP exercise 1.43 (docs/27 §27.3). |
 | `B0330` | warning | **statements after `return` are unreachable** — A `return` ends its block; anything after it never runs. |
 | `B0331` | error | **loops are not available in Phase 1** — Everything is an expression and `var` is not yet mutable, so a loop has nothing to accumulate into. Use `map_list`, `filter_list` or `fold`. |

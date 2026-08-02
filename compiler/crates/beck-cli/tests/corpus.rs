@@ -377,7 +377,8 @@ fn every_programs_interface_round_trips_and_is_stable_under_a_body_edit() {
 
         let text = iface.render();
         let mut d = beck_diag::Diagnostics::new();
-        let reread = beck_core::Interface::parse(&name, &text, &mut d);
+        let mut map = beck_diag::SourceMap::new();
+        let reread = beck_core::Interface::parse(&name, &text, &mut map, &mut d);
         let mut map = beck_diag::SourceMap::new();
         map.add(format!("{name}i"), text.clone());
         assert!(!d.has_errors(), "{name}:\n{}\n{text}", d.render(&map));

@@ -838,7 +838,9 @@ fn check_static(placed: &Placed, what: &Expectation, opts: &Options) -> Result<(
             let src = std::fs::read_to_string(&file)
                 .map_err(|e| format!("reading `{}`: {e}", file.display()))?;
             let mut diags = beck_diag::Diagnostics::new();
-            let previous = beck_core::Interface::parse(&placed.program.name, &src, &mut diags);
+            let mut map = beck_diag::SourceMap::new();
+            let previous =
+                beck_core::Interface::parse(&placed.program.name, &src, &mut map, &mut diags);
             if diags.has_errors() {
                 return Err(format!("`{}` is not a readable interface", file.display()));
             }

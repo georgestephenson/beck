@@ -45,6 +45,12 @@ use crate::ty::{self, Effect, Mismatch, Row, RowVarId, Scheme, Subst, Tier, Ty, 
 pub struct Program {
     pub name: String,
     pub types: BTreeMap<Arc<str>, TyDecl>,
+    /// The `trait` declarations this module owns, in declaration order.
+    pub traits: Vec<ty::TraitSig>,
+    /// The `impl` headers this module owns, in declaration order. Both cross a `.becki`: a call in
+    /// another module cannot resolve `item.pence()` without knowing the trait *and* that the impl
+    /// exists.
+    pub impls: Vec<ty::ImplSig>,
     /// The types *this* module declares, in declaration order. An imported type is usable here and
     /// published by the module that owns it, never by this one (§3.6).
     pub own_types: Vec<Arc<str>>,
@@ -192,6 +198,10 @@ pub struct Checker<'a> {
     trait_methods: BTreeMap<Arc<str>, Arc<str>>,
     /// The impls, keyed by trait and by the *head* constructor of the target type.
     impls: BTreeMap<(Arc<str>, Arc<str>), traits::ImplDecl>,
+    /// The traits and impls *this* module declares, in order — an imported one is published by the
+    /// module that owns it, and republishing would make two modules claim the same contract.
+    own_traits: Vec<Arc<str>>,
+    own_impls: Vec<(Arc<str>, Arc<str>)>,
     /// The mangled names `expand_impls` produced, so that a definition standing in for a trait
     /// method can be told from one somebody wrote.
     impl_methods: BTreeSet<Arc<str>>,
@@ -252,6 +262,8 @@ pub fn check_module_with(
         traits: BTreeMap::new(),
         trait_methods: BTreeMap::new(),
         impls: BTreeMap::new(),
+        own_traits: Vec::new(),
+        own_impls: Vec::new(),
         impl_methods: BTreeSet::new(),
         dicts: BTreeMap::new(),
         generic_rows: BTreeMap::new(),
@@ -273,8 +285,16 @@ pub fn check_module_with(
         for (n, d) in types {
             ck.types.insert(n, d);
         }
+        ck.import_traits(&iface.traits, &iface.impls);
         for (n, e) in names {
-            ck.schemes.insert(n.clone(), e.scheme);
+            // A bounded import is given back the dictionary parameters the exporting module lowered
+            // it with, so a call site here supplies exactly what a call site there would.
+            let scheme = if e.bounds.is_empty() {
+                e.scheme
+            } else {
+                ck.import_bounded(&n, &e.bounds, e.scheme)
+            };
+            ck.schemes.insert(n.clone(), scheme);
             ck.declared.insert(n.clone(), e.row);
             ck.globals.push(Binding {
                 name: n.clone(),
@@ -678,6 +698,21 @@ impl<'a> Checker<'a> {
                 // `type` aliases were resolved by `collect_aliases`, and everything else is not a
                 // type declaration.
                 continue;
+            }
+            // A declaration has no body, so a bound on one is a promise with no reader: nothing
+            // inside a `model` or a `union` can call a method. Refused rather than ignored.
+            for (p, _) in traits::bounds_of(&item.args[1]) {
+                self.diags.push(
+                    Diagnostic::error(
+                        "B0316",
+                        format!("`{name}` cannot bound its type parameter `{p}`"),
+                        item.args[1].span(),
+                    )
+                    .with_note(
+                        "a bound says what a body may call, and a declaration has no body; the \
+                         definitions that take this type apart are where the bound belongs",
+                    ),
+                );
             }
             // In scope for every field type below, and only for those: a parameter belongs to the
             // declaration that introduced it.
@@ -1129,9 +1164,24 @@ impl<'a> Checker<'a> {
             );
         }
 
+        // Declaration order, so a rendered `.becki` is stable and a trait a later impl names has
+        // already been read by the time the file reaches it again.
+        let traits: Vec<ty::TraitSig> = self
+            .own_traits
+            .iter()
+            .filter_map(|n| self.traits.get(n).map(|d| d.sig.clone()))
+            .collect();
+        let impls: Vec<ty::ImplSig> = self
+            .own_impls
+            .iter()
+            .filter_map(|k| self.impls.get(k).map(|d| d.sig.clone()))
+            .collect();
+
         Program {
             name,
             types: self.types,
+            traits,
+            impls,
             own_types: self.own_types,
             imports: Vec::new(),
             defs,

@@ -192,10 +192,18 @@ dependencies whose signatures didn't change.
 > and [`36`](36-parameterised-types-report.md) then removed: a `list[T]` may be taken apart, and a
 > `model`, a `union`, a `newtype` and a `type` may take a type parameter. One refusal file is left
 > in `sicp/refusals/`, and it says **traits** — declarations, impls, coherence and static dispatch
+<<<<<<< HEAD
 > in [`37`](37-traits-report.md), bounds and dictionary passing in [`39`](39-bounds-report.md). What
 > is left of it is one decision and one boundary: `+` does not resolve through a trait, so §2.1.1's
 > exact rationals still refuse ([`39`](39-bounds-report.md) §38.7 sets out the options), and a trait
 > does not cross a `.becki`, which is what now stands between the language and a standard library.
+=======
+> in [`37`](37-traits-report.md), bounds and dictionary passing in [`39`](39-bounds-report.md). What
+> is left of it is one decision: `+` does not resolve through a trait, so §2.1.1's exact rationals
+> still refuse ([`39`](39-bounds-report.md) §39.7 sets out the options). The boundary is gone —
+> [`40`](40-traits-across-modules-report.md) publishes traits, impl headers and bounds in a `.becki`,
+> so the standard-library bullet has no remaining blocker and is work rather than design.
+>>>>>>> 88c9a81 (feat(traits): a trait, its impls and its bounds cross a `.becki`)
 
 - LLVM release backend + differential tests against Cranelift (§5.2).
 - **Incremental views**: compile subscribed/materialized views to differential-dataflow plans with

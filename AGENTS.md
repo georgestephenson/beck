@@ -35,7 +35,13 @@ Write the commit message as the author of the change: what changed, and why.
   and
   [`docs/37-traits-report.md`](docs/37-traits-report.md)
   and
+<<<<<<< HEAD
   [`docs/39-bounds-report.md`](docs/39-bounds-report.md)
+=======
+  [`docs/39-bounds-report.md`](docs/39-bounds-report.md)
+  and
+  [`docs/40-traits-across-modules-report.md`](docs/40-traits-across-modules-report.md)
+>>>>>>> 88c9a81 (feat(traits): a trait, its impls and its bounds cross a `.becki`)
   record what each
   phase does, what it refuses to claim, and the corrections it makes to the design documents.
   Phase 3 is **two bullets of twelve plus most of a third**; docs/26 §26.9 names the nine bullets
@@ -57,7 +63,11 @@ Write the commit message as the author of the change: what changed, and why.
   book's own stated answers as the oracle, and one file per remaining wall in `sicp/refusals/` whose
   test asserts the wall is still there. A wall coming down is a test that starts failing. All six
   §25.6 measured are down, and so are the two the removals wrote; one file is left and it says
-  traits — built by docs/37 and docs/38, all but the operator decision docs/39 §39.7 sets out.
+<<<<<<< HEAD
+  traits — built by docs/37, docs/39 and docs/40, all but the operator decision docs/39 §39.7 sets out.
+=======
+  traits — built by docs/37, docs/38 and docs/39, all but the operator decision docs/38 §38.7 sets out.
+>>>>>>> 88c9a81 (feat(traits): a trait, its impls and its bounds cross a `.becki`)
 - Design decisions are numbered in [`docs/10-decisions.md`](docs/10-decisions.md). If a change
   contradicts one, say so rather than quietly diverging. Engineering decisions — a dependency
   taken or refused, a gate's shape, an upgrade path — are recorded in [`docs/adr/`](docs/adr/).

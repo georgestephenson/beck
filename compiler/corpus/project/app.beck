@@ -8,6 +8,22 @@ import policy
 def remaining(s: State) -> Int:
     return count_where(map_values(s.todos), lambda t: not t.done)
 
+# The trait, the impl and the bounded definition all came from `domain.becki`. `Summary` is
+# *this* module's type, so implementing an imported trait for it is what the orphan rule allows —
+# neither module can be the one that disagrees.
+model Summary:
+    n: Int
+
+impl Labelled for Summary:
+    def label(self):
+        return str(self.n) + " todos"
+
+def all_labels(s: State) -> list[Str]:
+    return labels(map_values(s.todos))
+
+def summary_label(s: State) -> Str:
+    return Summary(n=map_len(s.todos)).label()
+
 def named_owners(s: State) -> list[Str]:
     return only(map_list(map_values(s.todos), lambda t: t.owner), lambda o: not str_is_empty(o))
 
@@ -21,6 +37,10 @@ def view(s: State, session: Session) -> Html:
                         span(on_click=Toggle(id=t.id)): t.text
             footer: (str(remaining(s)) + " of " + str(map_len(s.todos)) + " left")
             p: (str(list_len(named_owners(s))) + " owned")
+            p: summary_label(s)
+            ul:
+                for l in all_labels(s):
+                    li: l
 
 proposals: Stream[Proposal] = merge_clients()
 events: Stream[Event] = decide(proposals, todos, validate)
