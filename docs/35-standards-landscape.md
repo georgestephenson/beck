@@ -267,8 +267,14 @@ Each item enters [`12`](12-standards-and-conformance.md) only with its artefact,
    history — into the Phase 5 spec as current state, with a D-number; F9's deterministic libm
    gates the first transcendental or the second backend, whichever lands first; ISO/IEC 10967
    read once when the rationals/bignums floors are attempted (§35.1, §35.3).
-2. **Identifier rules**: pin the Unicode version per release; add UTS #39's security profile
-   with conformance vectors (§35.1).
+2. ~~**Identifier rules**: pin the Unicode version per release; add UTS #39's security profile
+   with conformance vectors (§35.1).~~ **Done** — `beck_syntax::security` pins the version and
+   states the profile Beck is at (**ASCII-Only**, UTS #39's strictest restriction level, satisfied
+   by construction rather than by filtering), and `beck-cli/tests/identifiers.rs` is the vector
+   suite, grouped by the attack each vector defeats. It also closed the half an identifier
+   restriction does not reach: bidirectional confusion — Trojan Source, CVE-2021-42574 — is refused
+   in both surfaces, with `\u{...}` as the escape a program uses when it wants one of those
+   characters as a value.
 3. **New charter candidates with small artefacts**: RFC 9457 problem details for `@public(rest)`
    errors; POSIX.1-2024 signal/exit contract for `beck-rt` and the CLI; the WebAssembly row
    pinned to 3.0, whose guaranteed `return_call` is how a future WASM tier honours the

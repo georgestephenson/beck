@@ -53,4 +53,4 @@ An embedder that drives the front end from its own thread has to supply the stac
 Nothing here bounds *breadth*. A file with a million top-level items is still a file with a million
 top-level items, and the memory it costs is linear and not a stack.
 
-Measurements and the gate: [`docs/43`](../43-wave-0-report.md) §43.2.
+Measurements and the gate: [`docs/44`](../44-wave-0-report.md) §44.2.

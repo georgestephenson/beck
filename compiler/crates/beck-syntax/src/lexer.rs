@@ -112,6 +112,22 @@ fn unescape(raw: &str) -> Option<String> {
             '0' => out.push('\0'),
             '\\' => out.push('\\'),
             '"' => out.push('"'),
+            // `\u{202E}` — the escape hatch `security::scan` implies. A program may need one of
+            // the characters that file refuses as a *value*; spelling it out is what makes the
+            // difference between a value and a disguise.
+            'u' => {
+                let mut hex = String::new();
+                if chars.next()? != '{' {
+                    return None;
+                }
+                for c in chars.by_ref() {
+                    if c == '}' {
+                        break;
+                    }
+                    hex.push(c);
+                }
+                out.push(char::from_u32(u32::from_str_radix(&hex, 16).ok()?)?);
+            }
             // Unknown escapes are kept verbatim rather than silently dropped, because `\d`
             // inside a `regex"..."` literal is a real thing to want (§2.5).
             other => {
@@ -217,6 +233,24 @@ pub fn lex(file: FileId, src: &str, diags: &mut Diagnostics) -> Vec<Token> {
                 tok: Tok::Raw(r),
                 span,
             }),
+            // A letter from another script is not a typo and not a stray byte: it is either a
+            // mistake worth naming or a confusable, and UTS #39's answer for both is the same.
+            Err(())
+                if src[span.start as usize..span.end as usize]
+                    .chars()
+                    .any(crate::security::is_non_ascii_letter) =>
+            {
+                diags.push(
+                    Diagnostic::error("B0103", "an identifier outside the ASCII profile", span)
+                        .with_primary_label("not an identifier character in Beck")
+                        .with_note(format!(
+                            "Beck's identifiers are `[A-Za-z_][A-Za-z0-9_]*` — UTS #39's \
+                             ASCII-Only restriction level, against Unicode {}. Two identifiers \
+                             that look alike cannot then be different names",
+                            crate::security::UNICODE
+                        )),
+                )
+            }
             Err(()) => diags.push(
                 Diagnostic::error("B0100", "unrecognised character", span)
                     .with_primary_label("not a Beck token"),

@@ -607,6 +607,83 @@ deterministic cross-context tests and no network, then deploys per-context *with
 program*. The microservices tax (integration environments, Pact-style contract infrastructure,
 mesh configuration) is either derived or dissolved.
 
+## D21 — Effects are signature clauses; placement is a decorator — **DECIDED**
+
+[`02`](02-syntax.md) §2.9 held this open with a recommendation, and
+[`09`](09-risks-and-open-questions.md) §9.6 item 5 attached a deadline to it: "cheap now, expensive
+after Phase 3". [`08`](08-roadmap.md) §8.5.2 classifies it **R** — a retrofit whose cost rises with
+delay — and Wave 0 is where it comes due. It is taken now, and taken *as a split* rather than as
+one answer to two questions, because four phases of implementation have already demonstrated that
+the two annotations are not the same kind of thing.
+
+**An effect or a capability is a clause in the signature.** `def f(x: T) -> U uses durable(orders)`,
+never `@uses(...)`. Three reasons, in the order they carry weight:
+
+1. **It is part of the type.** An effect row unifies, it is inferred, it is generalised over
+   ([`33`](33-effect-polymorphism-and-list-patterns-report.md)'s effect polymorphism), and it is a
+   bound an impl is held to ([`37`](37-traits-report.md)). A decorator is an AST transform (§2.3)
+   that runs before the checker — a transform cannot be the notation for something the checker
+   *solves*.
+2. **It is published.** §3.6 requires the module interface to carry it; `.becki` does, and
+   `--wire-compat` classifies a change to it. An annotation that appears in the published contract
+   belongs in the signature the contract is a rendering of.
+3. **It reads as part of the sentence.** `-> Todos uses durable(todos)` is one line of English; a
+   decorator stack above the definition is a second place to look for the first thing a reader of a
+   signature wants to know.
+
+**A placement is a decorator.** `@on(server)`, never a `runs on server` clause. The reason is what
+Phase 2 changed underneath this question: **placement is inferred**, and `@on(...)` is an
+*override* — a constraint handed to the solver, not a fact about the definition. The measurement
+settles it. Of the 28 single-file corpus programs, **one** carries `@on(...)`, and that one exists
+to test that pinning still works ([`20`](20-phase-2-report.md)); the other 27 place themselves. An
+annotation almost nobody writes should not occupy space in the signature everybody reads. Ten of
+the 28 carry a `uses` clause, which is the same measurement pointing the other way.
+
+The consequence for `.becki` is already built and is the thing to keep true: a published interface
+renders the placement as `@on(tier)` above the item and the effects inside its signature, because
+by then the tier is a decided fact about a compiled module rather than a request. The notation is
+the same in both directions, and the two annotations keep their two shapes.
+
+**What would reopen this.** A placement that becomes part of a *published contract a caller must
+satisfy* rather than a fact about the callee — that is what [`30`](30-bounded-contexts-and-microservices.md)'s
+cross-context deployment could turn it into, and if it does, placement moves into the signature and
+this decision is superseded rather than amended.
+
+## D22 — `ui:` is a block macro, not a JSX-like literal — **DECIDED**
+
+The other half of [`02`](02-syntax.md) §2.9 and of §9.6 item 5, taken on the same deadline. **A page
+is written as a `ui:` block, which is an ordinary call carrying a quoted block under §2.3's block
+rule, expanded by a macro into a typed `Node` tree.** There is no literal element syntax, no
+angle brackets, and no second grammar.
+
+The argument that decided it is not aesthetics but *what else the decision costs*:
+
+- **It is not a language feature at all**, which is the whole point. `ui:` is a call with a block,
+  so it needs nothing the language does not already have for `test:`, `atomically:` or
+  `retry(times=3):`. A JSX-like literal is a second surface grammar, a second thing the printer
+  must round-trip, a second thing macros must be able to produce, and a second thing every future
+  target has to be taught.
+- **A user can write the next one.** A terminal UI, a native tree, an email renderer — each is a
+  block macro somebody writes, with no change to the parser. That is [`01`](01-vision-and-premise.md)
+  §1.1's claim about Lisp's means of abstraction cashed on the surface Beck actually presents.
+- **The compiler reads its structure.** The incremental engine re-renders one row of a `for` inside
+  a `ui:` block rather than the page ([`24`](24-incremental-views-report.md)) because the block is a
+  tree of `Node`s the analysis walks. A literal syntax could have been given the same treatment;
+  the point is that this one needed no special case to receive it.
+- **It costs nothing when unused.** Two chapters of SICP run as libraries with no `ui:` anywhere
+  ([`27`](27-walls-report.md), [`32`](32-numeric-tower-and-polymorphism-report.md)) — a surface
+  feature would have been in the grammar whether or not a program had a page.
+
+Its lineage is stated rather than hidden: the output is Hiccup's, and
+`[:main [:h1 "todos"] ...]` maps one-to-one onto the block's `Node` tree, so the original sketch's
+pages *are* these pages.
+
+**What this forfeits, said plainly.** Editor tooling for a bespoke literal syntax is a thing other
+ecosystems have and Beck will not: no element autocompletion from a schema without the LSP knowing
+about `ui:` specifically, and a mistyped tag is a macro-expansion error rather than a parse error.
+That is a real cost and it is accepted; §2.7's list of honest losses is where this belongs, and the
+mitigation is the LSP's, not the grammar's.
+
 ## Still open (minor, non-blocking)
 
 - Security-headline vs productivity-headline positioning ([`09`](09-risks-and-open-questions.md)

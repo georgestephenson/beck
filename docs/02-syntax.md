@@ -243,15 +243,22 @@ convenience. There is no expressible Lisp program shape that becomes inexpressib
 - **Printer**: a Wadler/Prettier-style pretty-printer over `Node`, shared by `beck fmt`, macro
   expansion dumps, and error messages. Build it early; every later phase uses it.
 
-## 2.9 Concrete syntax risk to settle now
+## 2.9 The two syntax decisions, settled
 
-Two open decisions that are expensive later. My recommendation in bold; see
-[`09-risks-and-open-questions.md`](09-risks-and-open-questions.md) §9.6 for the full trade-off.
+Both were held open here as "expensive later" and are now taken, in
+[`10`](10-decisions.md) D21 and D22. They did not resolve the way a single recommendation would
+have: the first splits.
 
-- Effect/placement annotations: **`requires`/`uses` clauses in the signature** (`def f(x) -> T uses
-  durable(orders)`) vs. decorators (`@uses(...)`). Signature clauses read better and are part of the
-  published module interface, which §3.6 requires.
-- UI blocks: **a `ui:` macro producing a typed DOM tree** vs. JSX-like literal syntax. The macro
-  keeps the surface small and is implementable by users for other targets (terminal UI, native).
-  Its output is the Hiccup lineage the original sketch used — `[:main [:h1 "todos"] ...]` maps 1:1
-  onto the `ui:` block's `Node` tree, so the sketch's pages *are* these pages.
+- **Effect and capability annotations are clauses in the signature** — `def f(x) -> T uses
+  durable(orders)`, never `@uses(...)` — because an effect row is part of the *type*: it unifies, it
+  is inferred, it is generalised over, and §3.6 publishes it. **Placement is a decorator** —
+  `@on(server)` — because Phase 2 made placement *inferred*, so the annotation is an override handed
+  to the solver rather than a fact about the definition. The measurement is the argument: one of 28
+  corpus programs carries `@on(...)`, and it exists to test that pinning still works.
+- **UI blocks are a `ui:` macro producing a typed DOM tree**, not a JSX-like literal syntax. The
+  macro keeps the surface small — it is an ordinary call with a block under §2.3's rule, so it
+  needs nothing the language does not already have — and is implementable by users for other
+  targets (terminal UI, native). Its output is the Hiccup lineage the original sketch used —
+  `[:main [:h1 "todos"] ...]` maps 1:1 onto the `ui:` block's `Node` tree, so the sketch's pages
+  *are* these pages. What it forfeits is editor tooling for a bespoke literal, which D22 states
+  rather than hides.

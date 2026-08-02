@@ -4,7 +4,7 @@
 
 Every diagnostic the compiler can raise carries a stable code. `beck explain error B0341` prints one of these entries at the terminal.
 
-The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans every non-test source file for a `"Bnnnn"` literal and fails if the set differs from this table in either direction. **105 codes.**
+The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans every non-test source file for a `"Bnnnn"` literal and fails if the set differs from this table in either direction. **107 codes.**
 
 
 ## Reading the source — `B0100–B0121`
@@ -13,6 +13,8 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 |---|---|---|
 | `B0100` | error | **unrecognised character** — The character is not a Beck token. Lexing continues past it so that one stray character does not hide every other problem in the file. |
 | `B0101` | error | **inconsistent indentation** — This line's indentation matches no enclosing block. Indentation is significant, and §2.6 fixes it as spaces only, four per level — a tab is a lint rather than a width question. Blank and comment-only lines have no indentation at all, so a comment at column zero does not close a block. |
+| `B0102` | error | **an invisible control character in the source** — A bidirectional formatting character (UTS #39 §4.1; CVE-2021-42574) or a zero-width no-break space away from the start of the file. These change how the text after them is *displayed* without changing what it means, so a reviewer and the compiler can read the same file differently. Write `\u{...}` if a string genuinely needs one. |
+| `B0103` | error | **an identifier outside the ASCII profile** — Beck's identifiers are `[A-Za-z_][A-Za-z0-9_]*`, which is UTS #39's ASCII-Only restriction level. Confusable and mixed-script identifiers are therefore not something the compiler checks for; they are something a program cannot contain. |
 | `B0110` | error | **expected a single form** — `beck ast` and the macro-debugging paths read exactly one S-expression. A file with a second form at top level is a module, and is read with the module reader instead. |
 | `B0111` | error | **unbalanced closing delimiter** — A `)`, `]` or `}` with no matching opening delimiter. |
 | `B0112` | error | **unclosed list** — A list opened here and the file ended before it closed. The span points at the opening delimiter, which is the one worth looking at. |

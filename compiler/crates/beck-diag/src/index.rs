@@ -143,6 +143,23 @@ pub const INDEX: &[CodeEntry] = &[
          column zero does not close a block.",
     ),
     e(
+        "B0102",
+        Stage::Syntax,
+        "an invisible control character in the source",
+        "A bidirectional formatting character (UTS #39 §4.1; CVE-2021-42574) or a zero-width \
+         no-break space away from the start of the file. These change how the text after them is \
+         *displayed* without changing what it means, so a reviewer and the compiler can read the \
+         same file differently. Write `\\u{...}` if a string genuinely needs one.",
+    ),
+    e(
+        "B0103",
+        Stage::Syntax,
+        "an identifier outside the ASCII profile",
+        "Beck's identifiers are `[A-Za-z_][A-Za-z0-9_]*`, which is UTS #39's ASCII-Only \
+         restriction level. Confusable and mixed-script identifiers are therefore not something \
+         the compiler checks for; they are something a program cannot contain.",
+    ),
+    e(
         "B0110",
         Stage::Syntax,
         "expected a single form",
