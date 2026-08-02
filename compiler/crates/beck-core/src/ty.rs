@@ -231,6 +231,16 @@ impl Ty {
 pub struct Scheme {
     pub vars: Vec<TyVarId>,
     pub row_vars: Vec<RowVarId>,
+    /// The **named** type parameters of a user-written `def map[T, U](…)`.
+    ///
+    /// A prelude scheme quantifies over numbered variables because nobody reads its source; a
+    /// user's quantifies over names, because the name is what the programmer wrote, what the body
+    /// is checked against, what a diagnostic has to print, and what `beck iface` publishes. Inside
+    /// the body each of these is a *rigid* `Ty::Con(name, [])` — an opaque type that unifies with
+    /// itself and nothing else, which is exactly the property that makes the definition honest
+    /// about being polymorphic. [`Subst::instantiate`] turns them back into fresh variables at
+    /// every call site. `docs/29` §29.7.
+    pub params: Vec<Arc<str>>,
     pub ty: Ty,
 }
 
@@ -239,6 +249,17 @@ impl Scheme {
         Scheme {
             vars: Vec::new(),
             row_vars: Vec::new(),
+            params: Vec::new(),
+            ty,
+        }
+    }
+
+    /// A scheme over named type parameters — what a `def` with a `[T, U]` list gets.
+    pub fn generic(params: Vec<Arc<str>>, ty: Ty) -> Scheme {
+        Scheme {
+            vars: Vec::new(),
+            row_vars: Vec::new(),
+            params,
             ty,
         }
     }
@@ -329,7 +350,7 @@ impl Subst {
 
     /// Instantiate a scheme with fresh type and row variables.
     pub fn instantiate(&self, s: &Scheme) -> Ty {
-        if s.vars.is_empty() && s.row_vars.is_empty() {
+        if s.vars.is_empty() && s.row_vars.is_empty() && s.params.is_empty() {
             return s.ty.clone();
         }
         let tys: BTreeMap<TyVarId, Ty> = s.vars.iter().map(|v| (*v, self.fresh())).collect();
@@ -338,7 +359,15 @@ impl Subst {
             .iter()
             .map(|v| (*v, self.fresh_row_var()))
             .collect();
-        subst_vars(&s.ty, &tys, &rows)
+        let ty = subst_vars(&s.ty, &tys, &rows);
+        if s.params.is_empty() {
+            return ty;
+        }
+        // A fresh variable per named parameter, per use — which is what makes two calls of the same
+        // `map` at two element types two different types rather than one over-constrained one.
+        let named: BTreeMap<Arc<str>, Ty> =
+            s.params.iter().map(|p| (p.clone(), self.fresh())).collect();
+        subst_named(&ty, &named)
     }
 
     /// Unify two types that are **alternatives** rather than actual-and-expected, and return the
@@ -571,6 +600,24 @@ fn subst_vars(t: &Ty, m: &BTreeMap<TyVarId, Ty>, rows: &BTreeMap<RowVarId, RowVa
     }
 }
 
+/// Replace each rigid type parameter with whatever it was instantiated to.
+///
+/// A parameter is a nullary `Con`, so this is a leaf substitution: `list[T]` becomes `list[?7]` and
+/// a `T` that happens to be applied to arguments is left alone, because a type parameter cannot be
+/// a type *constructor* — §29.9 records that as a limit rather than working round it.
+fn subst_named(t: &Ty, m: &BTreeMap<Arc<str>, Ty>) -> Ty {
+    match t {
+        Ty::Var(v) => Ty::Var(*v),
+        Ty::Con(n, args) if args.is_empty() => m.get(n).cloned().unwrap_or_else(|| t.clone()),
+        Ty::Con(n, args) => Ty::Con(n.clone(), args.iter().map(|a| subst_named(a, m)).collect()),
+        Ty::Fun(ps, r, row) => Ty::Fun(
+            ps.iter().map(|p| subst_named(p, m)).collect(),
+            Box::new(subst_named(r, m)),
+            row.clone(),
+        ),
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum Mismatch {
     /// Boxed because a `Ty` is a tree and this is the *error* path: making every successful
@@ -722,6 +769,7 @@ mod tests {
         let s = Subst::new();
         let v = 0;
         let scheme = Scheme {
+            params: Vec::new(),
             vars: vec![v],
             row_vars: Vec::new(),
             ty: Ty::fun(vec![Ty::Var(v)], Ty::Var(v)),
@@ -801,6 +849,7 @@ mod tests {
         let s = Subst::new();
         let e = s.fresh_row_var();
         let scheme = Scheme {
+            params: Vec::new(),
             vars: vec![],
             row_vars: vec![e],
             ty: Ty::fun_eff(

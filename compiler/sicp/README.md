@@ -13,8 +13,8 @@ verbose for it. §25.5 sets out the protocol; nothing here is a comparison yet.
 
 | | |
 |---|---|
-| [`ch1.beck`](ch1.beck) | The part of SICP chapter 1 that runs today. Fifteen `test` blocks — fourteen asserting an answer the book states, and one asserting the *property* §1.2.1 states instead: that an iterative process runs in constant space |
-| [`ch2.beck`](ch2.beck) | Chapter 2 as far as §2.2's closure property. §2.1's rationals need the numeric tower; the exercises that ask the reader to *build* `map` and `accumulate` need user-written polymorphism |
+| [`ch1.beck`](ch1.beck) | Chapter 1: §1.1.7, §1.2 and §1.3. Twenty-one `test` blocks, all but one asserting an answer the book states — four of them a printed double, digit for digit. The exception asserts the *property* §1.2.1 states instead: that an iterative process runs in constant space |
+| [`ch2.beck`](ch2.beck) | Chapter 2's §2.2.1 and §2.2.2 — the sequence abstractions the reader is asked to build, and the closure property. §2.1's rationals need *exact* rationals, which reals are not |
 | [`refusals/`](refusals/) | One file per wall still standing between here and the rest of the book. Each is the smallest program that hits it, with the diagnostic in its header comment |
 
 The harness is [`../crates/beck-cli/tests/sicp.rs`](../crates/beck-cli/tests/sicp.rs). It runs both
@@ -27,18 +27,23 @@ $ ./target/release/beck test sicp/ch1.beck
 $ ./target/release/beck test sicp/ch2.beck
 ```
 
-## Four walls down, two standing
+## Six walls down, one discovered
 
-§25.7 put the six in dependency order and four are built. Running a module with no merge point,
-recursive and forward-referencing types, and the `B0320` defect are
-[`docs/27`](../../docs/27-walls-report.md); proper tail calls are
-[`docs/28`](../../docs/28-tail-calls-report.md). What is left in `refusals/` is the numeric tower
-(`real.beck`) and user-written polymorphism (`generic.beck`).
+§25.7 put the six in dependency order and all six are built: running a module with no merge point,
+recursive and forward-referencing types and the `B0320` defect
+([`docs/27`](../../docs/27-walls-report.md)); proper tail calls
+([`docs/28`](../../docs/28-tail-calls-report.md)); reals and user-written polymorphism
+([`docs/29`](../../docs/29-numeric-tower-and-polymorphism-report.md)).
 
-Each wall that came down left a test pointing the other way rather than no test at all — the clearest
+Each wall that came down left a test pointing the other way rather than no test at all. The clearest
 example is `refusals/tail.beck`, which asserted that a tail call eight thousand deep aborts the
 process and is now `ch1.beck`'s §1.2.1 exercise asserting that one a quarter of a million deep does
 not.
+
+What is in `refusals/` now is the wall the last of the six made visible:
+[`list-destructuring.beck`](refusals/list-destructuring.beck). §2.2.1's `map` and `filter` are
+writable at last; `accumulate` is not, because a `list[T]` has no head, no tail, no pattern and no
+fold. That the directory is not empty is the suite working rather than the suite running out.
 
 ## Why this is not in `corpus/`
 

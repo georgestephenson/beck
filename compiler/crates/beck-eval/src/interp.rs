@@ -511,14 +511,19 @@ impl<'h> Interp<'h> {
             }
         };
 
+        // An `Int` operation is checked and a `Float` one is not, and that asymmetry is the whole
+        // difference between the two tiers of the tower: `i64` overflow has no representable
+        // answer, so it is an error, while IEEE 754 defines one for every real operation —
+        // including division by zero, whose answer is an infinity. Making `1.0 / 0.0` an error
+        // would be inventing a rule the format already has (`docs/29` §29.3).
         macro_rules! arith {
-            ($f:expr) => {{
+            ($int:expr, $real:expr) => {{
                 want(2)?;
                 let b = args.pop().expect("arity checked");
                 let a = args.pop().expect("arity checked");
                 match (&a, &b) {
                     (Value::Int(x), Value::Int(y)) => {
-                        let f: fn(i64, i64) -> Option<i64> = $f;
+                        let f: fn(i64, i64) -> Option<i64> = $int;
                         f(*x, *y).map(Value::Int).ok_or_else(|| {
                             EvalError::new(
                                 format!("`{}` overflowed or divided by zero", op.name()),
@@ -526,8 +531,15 @@ impl<'h> Interp<'h> {
                             )
                         })
                     }
+                    (Value::Float(_), Value::Float(_)) => {
+                        let f: fn(f64, f64) -> f64 = $real;
+                        Ok(Value::float(f(
+                            a.as_f64().expect("a Float"),
+                            b.as_f64().expect("a Float"),
+                        )))
+                    }
                     _ => Err(EvalError::new(
-                        format!("`{}` expects two Ints", op.name()),
+                        format!("`{}` expects two Ints or two Floats", op.name()),
                         span,
                     )),
                 }
@@ -544,20 +556,56 @@ impl<'h> Interp<'h> {
                         .checked_add(*y)
                         .map(Value::Int)
                         .ok_or_else(|| EvalError::new("`+` overflowed", span)),
+                    (Value::Float(_), Value::Float(_)) => Ok(Value::float(
+                        a.as_f64().expect("a Float") + b.as_f64().expect("a Float"),
+                    )),
                     // `+` on strings concatenates, which is what the sketch's footer wants.
                     (Value::Str(x), Value::Str(y)) => Ok(Value::str_(format!("{x}{y}"))),
-                    _ => Err(EvalError::new("`+` expects two Ints or two Strs", span)),
+                    _ => Err(EvalError::new(
+                        "`+` expects two Ints, two Floats or two Strs",
+                        span,
+                    )),
                 }
             }
-            Prim::Sub => arith!(i64::checked_sub),
-            Prim::Mul => arith!(i64::checked_mul),
-            Prim::Div => arith!(i64::checked_div),
-            Prim::Rem => arith!(i64::checked_rem),
+            Prim::Sub => arith!(i64::checked_sub, |x, y| x - y),
+            Prim::Mul => arith!(i64::checked_mul, |x, y| x * y),
+            Prim::Div => arith!(i64::checked_div, |x, y| x / y),
+            // `%` stays Int-only. `f64::rem` exists, but SICP never asks for it and a remainder
+            // whose sign follows the dividend is a decision nothing here needs to take.
+            Prim::Rem => arith!(i64::checked_rem, |x, _| x),
             Prim::Neg => {
                 want(1)?;
-                match args.pop().expect("arity checked") {
+                let v = args.pop().expect("arity checked");
+                match v {
                     Value::Int(x) => Ok(Value::Int(-x)),
-                    _ => Err(EvalError::new("`-` expects an Int", span)),
+                    Value::Float(_) => Ok(Value::float(-v.as_f64().expect("a Float"))),
+                    _ => Err(EvalError::new("`-` expects an Int or a Float", span)),
+                }
+            }
+            Prim::Abs => {
+                want(1)?;
+                let v = args.pop().expect("arity checked");
+                match v {
+                    Value::Int(x) => x
+                        .checked_abs()
+                        .map(Value::Int)
+                        .ok_or_else(|| EvalError::new("`abs` overflowed", span)),
+                    Value::Float(_) => Ok(Value::float(v.as_f64().expect("a Float").abs())),
+                    _ => Err(EvalError::new("`abs` expects an Int or a Float", span)),
+                }
+            }
+            Prim::Sqrt => {
+                want(1)?;
+                let v = args.pop().expect("arity checked");
+                v.as_f64()
+                    .map(|f| Value::float(f.sqrt()))
+                    .ok_or_else(|| EvalError::new("`sqrt` expects a Float", span))
+            }
+            Prim::ToFloat => {
+                want(1)?;
+                match args.pop().expect("arity checked") {
+                    Value::Int(x) => Ok(Value::float(x as f64)),
+                    _ => Err(EvalError::new("`float` expects an Int", span)),
                 }
             }
             Prim::Eq | Prim::Ne | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge => {

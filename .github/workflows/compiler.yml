@@ -142,6 +142,30 @@ jobs:
               '    expect up(0, 1000000) == 1000000\n')
           PY
           ./target/release/beck test /tmp/iterative.beck
+          # docs/29: the last two walls. Reals reproduce the doubles SICP prints, and a user-written
+          # polymorphic definition is instantiated afresh at every call — asserted here through the
+          # binary because `cargo test` above asserts it through the library, and the claim is that
+          # a person gets it too.
+          ./target/release/beck test corpus/26-sensors.beck
+          python3 - <<'PY'
+          open("/tmp/generic.beck", "w").write(
+              'def map[T, U](xs: list[T], f: T -> U) -> list[U]:\n'
+              '    return map_list(xs, f)\n'
+              '\n'
+              'test "one map, three element types":\n'
+              '    expect map([1, 2], lambda n: n * 2) == [2, 4]\n'
+              '    expect map(["a"], lambda s: s + "!") == ["a!"]\n'
+              '    expect map([1.5], lambda x: x * 2.0) == [3.0]\n')
+          PY
+          ./target/release/beck test /tmp/generic.beck
+          # And a type parameter is rigid: a body that assumes `T` is `Int` is a lie the checker
+          # has to catch, or the polymorphism is decorative.
+          python3 - <<'PY'
+          open("/tmp/rigid.beck", "w").write(
+              'def f[T](x: T) -> Int:\n    return x + 1\n')
+          PY
+          ! ./target/release/beck check /tmp/rigid.beck
+          ./target/release/beck check /tmp/rigid.beck 2>&1 | grep -q 'found `T`'
           # A failing test has to fail the build, or the gate is decorative. This is the property
           # docs/19 §19.4 item 10 says an unexecuted artefact cannot have.
           python3 - <<'PY'

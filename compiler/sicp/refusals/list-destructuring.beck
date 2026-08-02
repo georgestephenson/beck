@@ -1,0 +1,32 @@
+# Blocks: §2.2.1's `accumulate` and `list-ref`, all of §2.2.3 ("Sequences as Conventional
+# Interfaces"), §2.3.4's Huffman trees, and every exercise in the book written by recursion over a
+# list.
+#
+# This wall was invisible until docs/29 removed the one in front of it. `sicp/refusals/generic.beck`
+# said §2.2.1 was blocked because a user could not write `map[T, U]`; that is now writable, and
+# `ch2.beck` writes it. What the exercise *after* it asks for is `accumulate` — fold-right over a
+# list — and the reason that cannot be written has nothing to do with polymorphism.
+#
+# **A `list[T]` cannot be taken apart.** The prelude offers `map_list`, `filter_list`,
+# `concat_lists`, `sort_by`, `list_len` and `list_is_empty`; there is no head, no tail, no indexing,
+# no list pattern, and `fold` is a *signal* primitive over a `Stream`, not a fold over a list. So
+# the structural recursion the book writes — "the empty list, or the first element combined with the
+# accumulation of the rest" — has nothing to recurse on.
+#
+# Two diagnostics, one per way of trying:
+#
+#   error[B0343]: `list` is not a constructor            — matching on `[]` / `[first, rest]`
+#   error[B0320]: argument mismatch: expected `Stream[?1]`, found `list[T]`   — reaching for `fold`
+#
+# This is a *language* gap rather than a library one: `head`/`tail` as primitives would return an
+# `Option[T]` and a `list[T]` and would let all of the above be written, but the honest shape is
+# list patterns in `match`, because that is how every other constructor in Beck is taken apart and
+# because a fold written over `head`/`tail` is a fold written twice. Either is a decision, and this
+# file exists so it is taken deliberately.
+
+def accumulate[T, U](xs: list[T], seed: U, combine: (T, U) -> U) -> U:
+    match xs:
+        case []:
+            return seed
+        case [first, rest]:
+            return combine(first, accumulate(rest, seed, combine))

@@ -423,6 +423,49 @@ fn the_three_module_project_checks_links_and_places() {
 }
 
 #[test]
+fn a_polymorphic_definition_crosses_a_becki_boundary_and_is_fresh_at_every_call() {
+    // docs/27 §27.7 named the shape of this gap for recursive types: "no *project* test imports a
+    // module whose published type is recursive, so separate compilation over recursive types is
+    // compiled-and-believed rather than measured". User-written polymorphism (docs/29) would have
+    // had exactly the same gap, so the project carries it instead of the SICP suite.
+    //
+    // `domain.beck` defines `only[T]` and `count_where[T]`; `app.beck` imports them and uses them
+    // at `Todo` and at `Str`. If the published scheme were monomorphic — `Scheme::mono` rather than
+    // `Scheme::generic` — the first use would fix the second's element type and this would fail to
+    // link, while every single-module test in the suite went on passing.
+    let dir = corpus().join("project");
+    let mut map = beck_diag::SourceMap::new();
+    let mut diags = beck_diag::Diagnostics::new();
+    let placed = beck_core::compile_project("app", &Dir(dir.clone()), None, &mut map, &mut diags);
+    assert!(!diags.has_errors(), "{}", diags.render(&map));
+    let placed = placed.expect("the project links");
+    for name in ["only", "count_where", "remaining", "named_owners"] {
+        assert!(
+            placed.program.defs.contains_key(name),
+            "`{name}` did not survive the link"
+        );
+    }
+    assert_eq!(
+        placed.program.defs["only"].typarams.len(),
+        1,
+        "and it is still polymorphic after the link"
+    );
+
+    // The published contract has to *say* so, or an importer compiled against the file rather than
+    // the source would get a monomorphic one.
+    let mut map = beck_diag::SourceMap::new();
+    let mut diags = beck_diag::Diagnostics::new();
+    let project =
+        beck_core::project::check_project("domain", &Dir(dir), None, &mut map, &mut diags);
+    assert!(!diags.has_errors(), "{}", diags.render(&map));
+    let rendered = project.expect("a library checks").interface.render();
+    assert!(
+        rendered.contains("def only[T](xs: list[T], keep: (T) -> Bool) -> list[T]"),
+        "the `.becki` has to carry the type parameters:\n{rendered}"
+    );
+}
+
+#[test]
 fn each_library_in_the_project_publishes_a_contract_without_being_an_application() {
     // A domain module has no merge point and no page. It is not a broken application; it is not an
     // application. Both halves are asserted, because the first without the second would pass on a

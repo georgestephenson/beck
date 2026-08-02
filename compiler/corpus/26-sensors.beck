@@ -1,0 +1,107 @@
+# A real number in a durable fold — the corpus's first.
+#
+# Reals landed in docs/29, and chapter 1 of SICP is the wrong place to find out whether they survive
+# the rest of the compiler: every number in it lives and dies inside one pure procedure. A `Float`
+# in the *accumulator* is a different question, and it is the one the corpus harnesses ask, because
+# a program here is carried through placement, the slicer, the plan, the incremental engine against
+# its recompute oracle, replay determinism, `Repr`, the value generator, the cost model, `Sendable`
+# and `beck iface`.
+#
+# Three things this asserts that no SICP exercise could: that a `Float` round-trips through `Repr`
+# and the log so `beck replay` reproduces it; that a *command* carrying one decodes from the wire;
+# and that `sort_by` over reals sorts them as numbers, which is the defect docs/29 §29.2 found.
+
+model State:
+    latest: Map[Str, Float]
+    count: Int
+    total: Float
+
+model Summary:
+    sensors: Int
+    mean: Float
+
+union Command:
+    Report(sensor: Str, celsius: Float)
+
+union Event:
+    Reported(sensor: Str, celsius: Float)
+
+union Rejection:
+    BelowAbsoluteZero
+    NoSensor
+
+def apply_event(s: State, env: Envelope[Event]) -> State:
+    match env.body:
+        case Reported(sensor, celsius):
+            return s.with(
+                latest=map_insert(s.latest, sensor, celsius),
+                count=s.count + 1,
+                total=s.total + celsius,
+            )
+
+def validate(s: State, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Report(sensor, celsius):
+            if str_is_empty(str_trim(sensor)):
+                return Err(error=NoSensor)
+            if celsius < -273.15:
+                return Err(error=BelowAbsoluteZero)
+            return Ok(value=[Reported(sensor=str_trim(sensor), celsius=celsius)])
+
+def mean_of(s: State) -> Float:
+    if s.count == 0:
+        return 0.0
+    return s.total / float(s.count)
+
+# Coldest first. Ordinary `sort_by` on the reals themselves — which is the assertion: before
+# docs/29 this put the negatives in reverse and the page would have been wrong rather than the
+# expression.
+def coldest_first(s: State) -> list[Float]:
+    return sort_by(map_values(s.latest), lambda c: c)
+
+def summarise(s: State) -> Summary:
+    return Summary(sensors=map_len(s.latest), mean=mean_of(s))
+
+def render(sum: Summary, session: Session) -> Html:
+    return ui:
+        main:
+            h1: "sensors"
+            p: (str(sum.sensors) + " reporting")
+            p: ("mean " + str(sum.mean))
+
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, readings, validate)
+readings: Signal[State] = durable(fold(apply_event, State(latest={}, count=0, total=0.0), events))
+summary: Signal[Summary] = signal_map(readings, summarise)
+page: Signal[Html] = per_session(summary, render)
+
+test "no readings is a mean of zero, not a division by zero":
+    given []
+    expect page contains "0 reporting"
+    expect page contains "mean 0"
+
+test "reals fold, and the mean is the real one":
+    given [Reported(sensor="a", celsius=10.0), Reported(sensor="b", celsius=21.0)]
+    expect page contains "2 reporting"
+    expect page contains "mean 15.5"
+
+test "a negative reading pulls the mean below zero":
+    given [Reported(sensor="a", celsius=-40.0), Reported(sensor="b", celsius=5.0)]
+    expect page contains "mean -17.5"
+
+test "coldest first means coldest first, negatives included":
+    expect coldest_first(State(latest={"a": 1.5, "b": -2.5, "c": 0.0}, count=3, total=-1.0)) == [
+        -2.5,
+        0.0,
+        1.5,
+    ]
+
+test "below absolute zero never reaches the log":
+    given []
+    when Report(sensor="a", celsius=-300.0)
+    expect Err(error=BelowAbsoluteZero)
+
+test "a blank sensor does not either":
+    given []
+    when Report(sensor="  ", celsius=20.0)
+    expect Err(error=NoSensor)

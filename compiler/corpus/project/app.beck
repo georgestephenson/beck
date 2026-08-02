@@ -3,6 +3,14 @@
 import domain
 import policy
 
+# `count_where` at `Todo` and `only` at `Str` — the same imported definition, two element types,
+# one `.becki`.
+def remaining(s: State) -> Int:
+    return count_where(map_values(s.todos), lambda t: not t.done)
+
+def named_owners(s: State) -> list[Str]:
+    return only(map_list(map_values(s.todos), lambda t: t.owner), lambda o: not str_is_empty(o))
+
 def view(s: State, session: Session) -> Html:
     return ui:
         main:
@@ -11,7 +19,8 @@ def view(s: State, session: Session) -> Html:
                 for t in map_values(s.todos):
                     li(key=t.id):
                         span(on_click=Toggle(id=t.id)): t.text
-            footer: (str(map_len(s.todos)) + " todos")
+            footer: (str(remaining(s)) + " of " + str(map_len(s.todos)) + " left")
+            p: (str(list_len(named_owners(s))) + " owned")
 
 proposals: Stream[Proposal] = merge_clients()
 events: Stream[Event] = decide(proposals, todos, validate)

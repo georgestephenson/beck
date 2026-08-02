@@ -25,21 +25,25 @@ Write the commit message as the author of the change: what changed, and why.
   [`docs/23-general-slicer-report.md`](docs/23-general-slicer-report.md),
   [`docs/24-incremental-views-report.md`](docs/24-incremental-views-report.md),
   [`docs/26-arrangement-sharing-report.md`](docs/26-arrangement-sharing-report.md),
-  [`docs/27-walls-report.md`](docs/27-walls-report.md) and
-  [`docs/28-tail-calls-report.md`](docs/28-tail-calls-report.md) record what each
+  [`docs/27-walls-report.md`](docs/27-walls-report.md),
+  [`docs/28-tail-calls-report.md`](docs/28-tail-calls-report.md) and
+  [`docs/29-numeric-tower-and-polymorphism-report.md`](docs/29-numeric-tower-and-polymorphism-report.md)
+  record what each
   phase does, what it refuses to claim, and the corrections it makes to the design documents.
   Phase 3 is **two bullets of twelve plus most of a third**; docs/26 §26.9 names the nine bullets
-  that are untouched and the parts of the incremental-views bullet that are not built, and docs/28
-  §28.7 names the two of [`docs/25`](docs/25-benchmarks-and-expressiveness.md)'s six walls that
-  still stand. Reports
+  that are untouched and the parts of the incremental-views bullet that are not built. All six of
+  [`docs/25`](docs/25-benchmarks-and-expressiveness.md)'s walls are down, and docs/29 §29.9–§29.10
+  name what stands in their place. Reports
   are history: a later phase's correction to an earlier one goes in the later report, not into the
   earlier text.
-- [`compiler/corpus/`](compiler/corpus/) is 28 programs carrying **no placement annotations**, and
+- [`compiler/corpus/`](compiler/corpus/) is 29 programs carrying **no placement annotations**, and
   the measurement behind Phase 2's exit criterion. A program added there has to place itself.
 - [`compiler/sicp/`](compiler/sicp/) is the expressiveness benchmark
   ([`docs/25`](docs/25-benchmarks-and-expressiveness.md) §25.5): chapters of SICP in Beck, with the
   book's own stated answers as the oracle, and one file per remaining wall in `sicp/refusals/` whose
-  test asserts the wall is still there. A wall coming down is a test that starts failing.
+  test asserts the wall is still there. A wall coming down is a test that starts failing. All six
+  §25.6 measured are down; what is in `refusals/` now is the one removing them made visible
+  (docs/29 §29.10).
 - Design decisions are numbered in [`docs/10-decisions.md`](docs/10-decisions.md). If a change
   contradicts one, say so rather than quietly diverging.
 
@@ -58,8 +62,10 @@ Write the commit message as the author of the change: what changed, and why.
   [`docs/24-incremental-views-report.md`](docs/24-incremental-views-report.md) and
   [`docs/26-arrangement-sharing-report.md`](docs/26-arrangement-sharing-report.md); the SICP numbers
   come from `cargo test --release --test sicp` and from `beck test sicp/ch1.beck` and
-  `beck test sicp/ch2.beck`, quoted in [`docs/27-walls-report.md`](docs/27-walls-report.md) §27.5
-  and [`docs/28-tail-calls-report.md`](docs/28-tail-calls-report.md) §28.5–§28.6.
+  `beck test sicp/ch2.beck`, quoted in [`docs/27-walls-report.md`](docs/27-walls-report.md) §27.5,
+  [`docs/28-tail-calls-report.md`](docs/28-tail-calls-report.md) §28.5–§28.6 and
+  [`docs/29-numeric-tower-and-polymorphism-report.md`](docs/29-numeric-tower-and-polymorphism-report.md)
+  §29.5.
 - The harnesses are the project's conscience (§4.8, §8.3): `compiler/crates/beck-cli/tests/` holds
   the differential, replay-determinism, backend-seam, scaling, security, corpus, general-slicer,
   incremental-analysis, incremental-engine, shared-arrangement, subscription, view-metrics, SICP and

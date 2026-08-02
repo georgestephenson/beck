@@ -7,15 +7,18 @@
 //!
 //! Two halves, and the second is the point:
 //!
-//! * [`sicp/ch1.beck`](../../../sicp/ch1.beck) is the part of chapter 1 that runs today, with the
-//!   book's own stated answers as the oracle. It passes.
-//! * [`sicp/refusals/`](../../../sicp/refusals/) is one file per wall, each the smallest program
-//!   that hits it. This harness asserts each one *still* fails, and with which diagnostic — so
-//!   that a wall coming down is a test that starts failing rather than a fact somebody notices.
+//! * [`sicp/ch1.beck`](../../../sicp/ch1.beck) and [`ch2.beck`](../../../sicp/ch2.beck) are the
+//!   parts of the book that run today, with its own stated answers as the oracle. They pass.
+//! * [`sicp/refusals/`](../../../sicp/refusals/) is one file per wall *still standing*, each the
+//!   smallest program that hits it. This harness asserts each one still fails, and with which
+//!   diagnostic — so that a wall coming down is a test that starts failing rather than a fact
+//!   somebody notices.
 //!
-//! A refusal here is not a bug report against the compiler. Five of the six are features Beck has
-//! not built yet and the roadmap names; the sixth (`higher-order.beck`) is a defect, and is
-//! labelled as one.
+//! All six §25.6 measured are down, and each left a test pointing the other way rather than no test
+//! at all: docs/27 for the first three, docs/28 for tail calls, docs/29 for the reals and for
+//! user-written polymorphism. What is in `refusals/` now is the wall the last of them made visible
+//! — a `list[T]` cannot be taken apart — which is the suite working as intended rather than the
+//! suite running out.
 
 use std::process::Command;
 
@@ -76,7 +79,7 @@ fn chapter_one_passes_against_the_books_own_answers() {
     let report = beck_rt::testing::run(&placed, backend, &Options::default());
 
     assert!(
-        report.cases.len() >= 14,
+        report.cases.len() >= 20,
         "chapter 1 is the evidence for §25.6 and has to carry the exercises it claims"
     );
     assert_eq!(
@@ -436,25 +439,173 @@ fn a_recursive_type_survives_every_pass_a_corpus_program_is_carried_through() {
     );
 }
 
+/// Wall 6 down (docs/29) — the last of §25.6's six, and the one §25.7 called "the largest".
+///
+/// `sicp/refusals/generic.beck` held `def map[T, U]` and asserted `B0120: expected \`(\`, found
+/// \`[\``. The definition is now in `ch2.beck` and used at four element types. What this asserts is
+/// the property a passing `ch2.beck` does *not* prove: that a type parameter is **rigid** inside
+/// the body it belongs to. A `T` that could unify with `Int` would let a definition claiming to
+/// work for every type work only for one, and every call site would still typecheck.
 #[test]
-fn a_user_cannot_write_a_polymorphic_definition_so_map_cannot_be_built() {
-    let out = errors(
-        "generic.beck",
-        include_str!("../../../sicp/refusals/generic.beck"),
+fn a_type_parameter_is_rigid_inside_the_body_and_fresh_at_every_call() {
+    // Fresh at every call: one definition, three element types, in one expression each.
+    let src = "
+def pick[T](xs: list[T], fallback: T) -> T:
+    if list_is_empty(xs):
+        return fallback
+    return fallback
+
+def swap[A, B](a: A, b: B) -> Map[Str, Str]:
+    return {\"a\": str(a), \"b\": str(b)}
+
+test \"instantiated afresh\":
+    expect pick([1], 2) == 2
+    expect pick([\"x\"], \"y\") == \"y\"
+    expect pick([1.5], 2.5) == 2.5
+    expect map_len(swap(1, \"two\")) == 2
+";
+    let (placed, rendered) = compile_module("generic.beck", src);
+    let placed = placed.unwrap_or_else(|| panic!("a polymorphic definition compiles:\n{rendered}"));
+    let report = beck_rt::testing::run(&placed, beck_eval::backend(&placed), &Options::default());
+    assert_eq!(
+        report.failed(),
+        0,
+        "{}",
+        beck_rt::testing::render(&report, true)
     );
-    assert!(out.contains("B0120"), "{out}");
+
+    // Rigid inside the body: each of these would typecheck if `T` were an ordinary inference
+    // variable, and each is a definition that lies about what it works for.
+    for (body, note) in [
+        (
+            "def f[T](x: T) -> Int:\n    return x + 1\n",
+            "arithmetic on a parameter",
+        ),
+        (
+            "def f[T](x: T) -> T:\n    return 1\n",
+            "returning a concrete type",
+        ),
+        (
+            "def f[T](x: T) -> T:\n    return str(x)\n",
+            "returning something else's",
+        ),
+    ] {
+        let out = errors("rigid.beck", body);
+        assert!(out.contains("B0320"), "{note}:\n{out}");
+        assert!(
+            out.contains('T'),
+            "and the message has to name the parameter the programmer wrote, not `?7` — {note}:\n{out}"
+        );
+    }
+
+    // A parameter that shadows a type, or repeats, is refused rather than resolved: there is no
+    // syntax to disambiguate either afterwards.
+    assert!(errors("shadow.beck", "def f[Int](x: Int) -> Int:\n    return x\n").contains("B0314"));
+    assert!(errors("dup.beck", "def f[T, T](x: T) -> T:\n    return x\n").contains("B0315"));
 }
 
+/// The wall that removing the last one made visible, named the same day.
+///
+/// §2.2.1's `map` is buildable now; the exercise after it — `accumulate` — is not, and the reason
+/// is not polymorphism. A `list[T]` has no head, no tail, no pattern and no fold, so the structural
+/// recursion the book writes over lists has nothing to recurse on. docs/29 §29.10.
 #[test]
-fn there_is_no_real_arithmetic_so_newtons_method_does_not_typecheck() {
+fn a_list_still_cannot_be_taken_apart_so_accumulate_cannot_be_built() {
     let out = errors(
-        "real.beck",
-        include_str!("../../../sicp/refusals/real.beck"),
+        "list-destructuring.beck",
+        include_str!("../../../sicp/refusals/list-destructuring.beck"),
+    );
+    assert!(out.contains("B0343"), "{out}");
+    assert!(
+        out.contains("`list` is not a constructor"),
+        "the wall is that a list has no pattern, not that `accumulate` is mistyped:\n{out}"
+    );
+}
+
+/// Wall 5 down (docs/29), and the strongest oracle in the suite.
+///
+/// `sicp/refusals/real.beck` asserted that Newton's method did not typecheck. What replaced it is
+/// not "it typechecks" — it is that `sqrt(9.0)` prints **3.00009155413138**, which is the number on
+/// the page of SICP, digit for digit, because both sides are IEEE 754 doubles running the same
+/// sequence of operations. Three more of the book's printed reals go with it, and they live in
+/// `ch1.beck` where the rest of the chapter is.
+///
+/// What is asserted here is the part `ch1.beck` cannot assert about itself: that the resolution of
+/// `+` from its operands did not quietly make `Int` arithmetic mean something else, and that mixing
+/// the tiers is still refused rather than coerced.
+#[test]
+fn real_arithmetic_is_resolved_from_its_operands_and_the_tiers_do_not_mix() {
+    let ok = "
+def half(x: Float) -> Float:
+    return x / 2.0
+
+def halves(n: Int) -> Int:
+    return n / 2
+
+def both(n: Int, x: Float) -> Float:
+    return half(x) + float(halves(n))
+
+test \"the tiers coexist\":
+    expect halves(7) == 3
+    expect half(7.0) == 3.5
+    expect both(7, 7.0) == 6.5
+    expect abs(-2) == 2
+    expect abs(-2.5) == 2.5
+    expect sqrt(16.0) == 4.0
+";
+    let (placed, rendered) = compile_module("tiers.beck", ok);
+    let placed = placed.unwrap_or_else(|| panic!("both tiers compile:\n{rendered}"));
+    let report = beck_rt::testing::run(&placed, beck_eval::backend(&placed), &Options::default());
+    assert_eq!(
+        report.failed(),
+        0,
+        "{}",
+        beck_rt::testing::render(&report, true)
+    );
+
+    // Ad-hoc resolution is not coercion. `1 + 1.0` has no answer, and inventing one — promoting the
+    // `Int`, the way C does — is the decision this deliberately does not take (docs/29 §29.3).
+    let out = errors(
+        "mixed.beck",
+        "def f(n: Int, x: Float) -> Float:\n    return n + x\n",
     );
     assert!(out.contains("B0320"), "{out}");
     assert!(
         out.contains("expected `Int`, found `Float`"),
-        "the wall is that `+` is Int-only, not that `Float` is unknown:\n{out}"
+        "the left operand decides, and the right has to match it:\n{out}"
+    );
+}
+
+/// The ordering defect the reals brought with them, which no SICP exercise would have caught.
+///
+/// `Value::Float` is a `u64` because a fold's accumulator needs a total order. It used to hold
+/// `f64::to_bits`, which orders `-1.0` *above* `1.0` — so `<` answered backwards for every negative
+/// real and `sort_by` reversed them. docs/29 §29.2. The fix is an order-preserving key, and this is
+/// what says it stayed fixed.
+#[test]
+fn comparing_and_sorting_reals_agrees_with_arithmetic() {
+    let src = "
+def neg(x: Float) -> Float:
+    return 0.0 - x
+
+test \"negatives compare as numbers, not as bit patterns\":
+    expect -1.0 < 1.0
+    expect -2.5 < -1.5
+    expect not (-1.0 > 1.0)
+    expect neg(3.0) < 0.0
+    expect 0.0 - 0.0 == 0.0
+
+test \"and sort by the same order\":
+    expect sort_by([1.5, -2.5, 0.0, -0.5], lambda x: x) == [-2.5, -0.5, 0.0, 1.5]
+";
+    let (placed, rendered) = compile_module("reals.beck", src);
+    let placed = placed.unwrap_or_else(|| panic!("compiles:\n{rendered}"));
+    let report = beck_rt::testing::run(&placed, beck_eval::backend(&placed), &Options::default());
+    assert_eq!(
+        report.failed(),
+        0,
+        "{}",
+        beck_rt::testing::render(&report, true)
     );
 }
 
