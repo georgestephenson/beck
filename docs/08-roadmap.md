@@ -364,7 +364,12 @@ P0 prove ──▶ P1 skeleton ──┬─▶ P2 effects+placement ──┬─
 P2 and P3 can overlap with separate owners; P4 needs both. The playground can and should ship as soon
 as P2's `explain` output exists — a page that shows source on the left and *generated SQL + generated
 Kubernetes objects + inferred placement* on the right is the demo that explains this project in
-15 seconds.
+15 seconds. **One predecessor was added to that after this graph was drawn**: the playground compiles
+source written by strangers, and §8.5's first item is what makes that safe.
+
+This graph is between phases. The ordering *within* the current phase — which of Phase 3's remaining
+bullets is next, which have predecessors the list above does not show, and which pairs can be built
+on two branches at once — is §8.5.
 
 ## 8.2 Team shape
 
@@ -427,3 +432,205 @@ update-in-place OLTP, which is not Beck's data model, and entering it would be a
 make. And it does not treat the SICP suite's pass rate as a metric — §25.5's three registers
 (translated / re-expressed / refused) are the result, and chapters 3.1–3.4 and 5 are expected to
 land mostly in the last two.
+
+## 8.5 What is next, in order
+
+The phase lists above are **sets**, not sequences. Every bullet in Phase 3 is real work and none of
+them says what to start on Monday, so this section supplies the order — and the parallelism that
+order permits. It is the only place in `docs/` that holds a sequence: the reports end with "what is
+still not" lists and the surveys ([`35`](35-standards-landscape.md) §35.5,
+[`38`](38-literature-survey.md) §38.8, [`42`](42-security-assurance.md) §42.9) end with **adopt**
+verdicts, and a verdict is not a schedule. This is where one acquires a position.
+
+**The finding that motivates it.** [`14`](14-review-findings.md) F11 says deterministic simulation
+cannot be retrofitted, and records the constraint: virtualize clock, network and disk from the first
+line of runtime code, **Phase 1**. [`13`](13-testing.md) §13.4 restates it in bold as a hard
+prerequisite. Its status is `FIXED (constraint recorded)` — and the runtime then called
+`SystemTime::now()` directly anyway, for three phases
+([`42`](42-security-assurance.md) §42.4). The decision was correct and written down twice. What it
+never had was a **position in an order**, so nothing ever came due. A list of things to do
+eventually is not a plan, and `DESIGNED` is not a schedule.
+
+### 8.5.1 The four classes
+
+Only two of these can be got wrong, which is what makes the ordering decidable.
+
+| Class | Definition | Scheduling rule |
+|---|---|---|
+| **R — retrofit** | Cost rises with delay, sometimes discontinuously (a one-way door) | By the **date it becomes expensive**. These are the only items that can be *late* |
+| **F — fan-out** | Modest cost, unblocks several others | By **how many successors it frees**. Late costs throughput, not rework |
+| **G — gate** | Something already scheduled is unsafe or dishonest until this exists | **Immediately before what it gates**, never after |
+| **S — free-standing** | Flat cost, no successors waiting | By **value and team shape** (§8.2). Order is genuinely free |
+
+Most of the outstanding work is **S** — LLVM codegen, Mode B, the LSP, SQL read models, query
+fusion — and S is where attention naturally goes, because it is where the interesting engineering
+is. The items that are actually urgent are small, and several of them are prose.
+
+The classification has just paid for itself once. Bounds were the project's textbook **F**: one
+feature with six successors queued behind it ([`37`](37-traits-report.md) §37.8). Taking it first
+carried two of those successors in behind it — the module boundary
+([`40`](40-traits-across-modules-report.md)) and the operators
+([`41`](41-generic-arithmetic-report.md)) — and emptied `sicp/refusals/`. Three reports from one
+feature, because it was the right feature. That is what taking the fan-out item first buys, and it
+is the argument for reading the rest of this section.
+
+### 8.5.2 The retrofit items, with the date each goes bad
+
+| Item | Recorded in | Expensive from |
+|---|---|---|
+| Virtualized clock, then network, then disk | F11; [`13`](13-testing.md) §13.4 | **Overdue** — every runtime line written against the real clock adds to it |
+| The two syntax decisions: effect clauses vs decorators, `ui:` vs JSX-likes | [`09`](09-risks-and-open-questions.md) §9.6 item 5, which says it itself: "cheap now, expensive after Phase 3" | End of Phase 3 |
+| Unicode version pinned per release + UTS #39 security profile | [`35`](35-standards-landscape.md) §35.5 item 2 | The moment identifiers exist in published packages |
+| Errors as a row label, `Result` reified, lexical handlers | [`38`](38-literature-survey.md) §38.4 | The moment the standard library's signatures are written — see §8.5.3 trap 2 |
+| Trusted publishing on crates.io | [`42`](42-security-assurance.md) §42.7 | The **first** `cargo publish` — a long-lived token used once is a risk already taken |
+| Diverse double-compiling / bootstrappability | [`42`](42-security-assurance.md) §42.7 | The first `beck` built by `beck` (Phase 5) |
+| Deterministic libm (F9) | [`35`](35-standards-landscape.md) §35.5 item 1 | First transcendental **or** second backend |
+
+### 8.5.3 The four traps
+
+Where doing the right work in the wrong order costs the most.
+
+1. **The playground before the parser's bound.** §8.1 says the playground can ship as soon as
+   `explain` exists — it does. It is also a service that compiles anonymous strangers' source, with
+   the compiler as its first sandbox ([`17`](17-playground.md) §17.3), and
+   [`42`](42-security-assurance.md) §42.2 measures an ~8 KB file that aborts the process. Shipping in
+   that order puts a denial of service on the front page, and the first outside security report
+   arrives at a repository with no `SECURITY.md` to receive it. The correct order costs days.
+2. **The standard library before error rows.** The Phase 3 note above now says the standard-library
+   bullet "has no remaining blocker and is work rather than design", which is true of *traits* —
+   [`39`](39-bounds-report.md) and [`41`](41-generic-arithmetic-report.md) removed that blocker
+   entirely. It is not true of *errors*. [`38`](38-literature-survey.md) §38.4 adopts errors as a
+   row label with `Result` reified, and a standard library's signatures are exactly where that
+   decision shows up — every fallible function in it. `Result`/error rows are still an unbuilt
+   Phase 3 bullet. A library written before they land gets its signatures rewritten when they do,
+   and that is a bigger edit than writing them in the right shape first. **This is the one place
+   where this section disagrees with the prose above it**, and it is stated rather than merged
+   quietly.
+3. **Phase 4 before the clock is virtualized.** Every Phase 4 bullet is a distributed-systems
+   bullet whose stated test methodology is the simulator ([`13`](13-testing.md) §13.4). Building
+   them against the real clock means testing them twice. The cheap move is not to build DST; it is
+   to make the clock **injected** — a seam, not a simulator, and the project has done exactly this
+   once before for a different resource ([`adr/0007`](adr/0007-evaluator-stack-is-declared-not-discovered.md)).
+4. **The two one-way doors.** The first `cargo publish` with a long-lived token, and the first
+   `beck` compiled by `beck` with no independent reproducible path. Neither is imminent; both are
+   free to arrange now and impossible to arrange afterwards.
+
+### 8.5.4 The waves
+
+Waves, not dates — a wave is a set whose members are order-free with respect to each other and
+which collectively unblock the next. Sizes are orders of magnitude, not commitments (§8.0).
+
+**Wave 0 — days.** Everything here is overdue, a one-way door, or a gate on something already
+shippable.
+
+1. Bound the front end's recursion as a count, with an ADR making
+   [`adr/0007`](adr/0007-evaluator-stack-is-declared-not-discovered.md)'s argument for the front end
+   *(G — gates the playground; the only live defect in [`42`](42-security-assurance.md))*
+2. Inject the clock — a source on the seam, no simulator *(R — overdue since Phase 1)*
+3. Threat model, `SECURITY.md` aligned to ISO/IEC 29147 and 30111, and the memory-safety roadmap
+   paragraph [`42`](42-security-assurance.md) §42.3 says the project already satisfies and has never
+   written *(G — prose, and the cheapest items here)*
+4. A `pending_security` suite, so the four unbuilt F-numbers fail out loud instead of being a word
+   in [`14`](14-review-findings.md) and silence in the code *(G — the pattern `sicp/refusals/` used,
+   now that that directory has been emptied by success)*
+5. Take the two syntax decisions [`09`](09-risks-and-open-questions.md) §9.6 item 5 has been holding
+   *(R — its own deadline is the end of Phase 3)*
+6. Pin the Unicode version and adopt UTS #39's security profile *(R)*
+7. Retarget [`12`](12-standards-and-conformance.md)'s four moved rows — SLSA v1.2, CISA's 2026 SBOM
+   elements, ASVS 5.0, OWASP Top 10:2025 *(S, but free)*
+
+**Wave 1 — weeks. `Result` and error rows.** Errors as a row label with `Result` reified, row
+aliases, lexical handlers, and structured concurrency as scope-as-handler — one piece of work, per
+[`38`](38-literature-survey.md) §38.4. This is now the head of the language queue: bounds, the
+previous head, landed in [`39`](39-bounds-report.md), and error rows are what Wave 2 waits on.
+
+**Wave 2 — weeks to months. The standard library.** Collections, strings, time, money/decimal,
+HTTP, JSON, UUID, crypto — on the `Num` mechanism [`41`](41-generic-arithmetic-report.md) built and
+the error shape Wave 1 settles. Bignums and numeric coercion belong here too. Stand the Are We Fast
+Yet and CLBG harnesses up alongside it per §8.4, whether or not the LLVM backend has landed.
+
+**Wave 3 — months.** Identity beyond the dev-mode actor, then the playground rungs A and B (whose
+safety predecessor landed in Wave 0), then Phase 3's exit criterion — which cannot honestly be
+attempted before either.
+
+**Wave 4 — free-standing, in parallel with Waves 1–3.** LLVM backend and native codegen; Mode B and
+client polish; the LSP; SQL read models, pgwire and query fusion; `test --update`; the SQLite
+substrate; the shared dataflow's three unfinished properties
+([`26`](26-arrangement-sharing-report.md) §26.9); more of SICP, chapter 3 being the part closest to
+what Beck is for. No predecessors, and they never acquire any.
+
+**Wave 5 — the Phase 4 gates, arranged before Phase 4 rather than during it.** Supply-chain tooling
+(SLSA v1.2 provenance, 2026-element SBOMs, signing, trusted publishing configured *before* the first
+publish); DST proper, on the seam Wave 0 created; then the operator, the replay tooling and the
+choreography. Grammar-aware fuzzing and Kani proofs of the solver's security invariants
+([`42`](42-security-assurance.md) §42.9) belong here too — both want a front end and a solver that
+have stopped moving.
+
+### 8.5.5 Parallel workstreams
+
+A wave is a dependency ordering, not a staffing plan. Most of the above can run concurrently, and
+what decides *which* pairs is not the dependency graph — it is **which files two branches would both
+rewrite**. The crate layout is favourable, because [`04`](04-compiler-architecture.md)'s pass
+boundaries are real directories.
+
+| Lane | Owns | Items | Collides with |
+|---|---|---|---|
+| **A — type system** | `beck-core/src/check/`, `ty.rs`, `core.rs`, `prelude.rs`, `iface.rs` | Error rows and handlers; `@derive`; bignums and coercion | **Itself, completely** — see below |
+| **B — runtime and views** | `beck-rt/`, `beck-core/src/{engine,plan,incremental,pmap,signal}.rs` | Clock injection; the shared dataflow's release policy, history constant and render lock; SQL read models, pgwire, query fusion; Mode B's server half | Nothing in A, C, E or F |
+| **C — front end and tooling** | `beck-syntax/`, `beck-cli/`, `beck-diag/` | The recursion bound; the two syntax decisions; Unicode and UTS #39; LSP; `test --update`; fuzzing | A, if a syntax decision changes what the checker sees |
+| **D — process and supply chain** | `docs/`, `.github/`, `deny.toml`, `SECURITY.md` | Threat model, disclosure policy, memory-safety roadmap, `pending_security`, the four retargeted §12 rows, SLSA/SBOM/trusted publishing | Nothing in code |
+| **E — backends** | `beck-eval/`, `beck-core/src/backend.rs`, any new codegen crate | LLVM backend, native codegen, the differential suite | Nothing — the seam is why ([`19`](19-phase-1-report.md) §19.9) |
+| **F — infrastructure** | `beck-infra/` | Effect-derived NetworkPolicy/RBAC/grants; Crossplane emitter; conformance rungs | Nothing |
+
+**Lane A is strictly serial, and that is the real staffing constraint.** It is tempting to run two
+language features on two branches. Do not: they rewrite `check/mod.rs` (3,345 lines) and `ty.rs`
+together, and they change what `core.rs` carries. Lane A is the critical path and absorbs one pair
+of hands; everything else in this section exists to keep other hands off those files.
+[`37`](37-traits-report.md) §37.7 records the mitigation that works — traits went into
+`check/traits.rs` rather than into `check/mod.rs`, and bounds then grew that file rather than the
+one everybody complains about ([`39`](39-bounds-report.md)). Keep doing that, and a second Lane A
+branch eventually becomes thinkable.
+
+Recommended pairings, in order:
+
+| When | Branch 1 (critical path) | Branch 2 | Why it is safe |
+|---|---|---|---|
+| **Now** | Lane A: `Result` and error rows | Lane D, plus Lane C's half of Wave 0 — the recursion bound, threat model, `SECURITY.md`, `pending_security`, the §12 retargeting | Different crates entirely; Branch 2 is mostly prose and one parser change |
+| **Next** | Lane A: the standard library | Lane B: clock injection, then the shared dataflow's three loose ends | `beck-rt` and `engine.rs` are untouched by anything in `check/` |
+| **Then** | Lane A: bignums, coercion, `@derive` | Lane E: the LLVM backend — and per §8.4 the AWFY/CLBG harness lands with whichever arrives second | The backend seam exists so these do not interact |
+| **Any time** | — | Lane F; Lane C's LSP; more of SICP | No predecessors, no collisions |
+
+A third branch is viable whenever E or F is staffed. The ceiling is four, because of these:
+
+**The four shared artefacts that serialise otherwise-independent branches.** Each has a cheap
+discipline that avoids the collision.
+
+1. **`beck-diag/src/index.rs`** — a new diagnostic code needs an entry or `cargo test` fails.
+   *Land each code as its own small commit, and pick non-adjacent numbers up front: the index is
+   sorted, so adjacent insertions conflict and distant ones do not.*
+2. **`docs/reference/`** — generated and gated against drift, so any branch touching a diagnostic, a
+   prelude scheme or the CLI tree must regenerate it, and two that do produce conflicting whole-file
+   diffs. *Regenerate as the last commit before review, never mid-branch; rebase-then-regenerate
+   rather than merging a generated file.*
+3. **[`README.md`](README.md)'s index table** — every new document appends a row, and the numbering
+   is first-come. *Claim the number in a stub row early, or expect to renumber.*
+4. **`Cargo.lock`** — any new dependency. *A and B should not both add dependencies in the same
+   week; if they must, take the lock from `main` and re-resolve rather than merging it.*
+
+### 8.5.6 What this corrects above, rather than editing quietly
+
+- **Phase 3's bullets are a set presented as a list.** The standard library has a predecessor the
+  list does not show — `Result`/error rows — which §8.5.3 trap 2 states in full.
+- **F11 should be read as unmet, not `FIXED`.** [`14`](14-review-findings.md) recorded the
+  constraint, which is all `FIXED (constraint recorded)` ever claimed; the runtime then did not
+  honour it. Correcting the code is Wave 0 item 2; correcting the record is this bullet, since
+  [`14`](14-review-findings.md) is history like any report.
+- **§8.1's "the playground can ship early" now carries a predecessor**, added by
+  [`42`](42-security-assurance.md) §42.2 after that graph was drawn.
+- **Three surveys' `adopt` verdicts now have a position.** They still need their D-numbers and ADRs
+  before they are real, and appearing in a wave does not grant one.
+
+This section is the most perishable thing in this document: the first wave that lands invalidates
+the ordering below it. It has already happened once — bounds were Wave 1 when this was drafted and
+were built before it was committed — and a sequence that is not rewritten when a wave completes is
+worse than none, because it still looks authoritative.
