@@ -201,7 +201,7 @@ parameter-bound (injection is unrepresentable, as in Ur/Web).
 | Pattern matching | `match` with exhaustiveness checking | Needed for `Result`, ADTs, and it is already in Python 3.10+ syntax |
 | Operators | Fixed precedence table; user-defined operators allowed but only at existing precedence levels | Full precedence declarations make tooling and error recovery miserable for marginal gain |
 | Modules | Explicit `import`, no wildcard, module = file, package = directory + `beck.toml` | Separate compilation depends on this (§1.6) |
-| Naming | `snake_case` values, `PascalCase` types, `SCREAMING` consts, enforced by `beck fmt` | One community, one style, zero bikeshedding |
+| Naming | `snake_case` values, `PascalCase` types, `SCREAMING` consts, enforced by `beck fmt` | One community, one style, zero bikeshedding — and `snake_case` rather than kebab-case because the Python surface has infix `-` ([ADR 0011](adr/0011-identifiers-are-snake-case-in-the-python-surface.md)). The S-expression surface, which has no infix operators, uses kebab-case for its own forms |
 
 ## 2.7 What you genuinely give up (be honest about this)
 

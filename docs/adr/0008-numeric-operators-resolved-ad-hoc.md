@@ -1,5 +1,7 @@
 # 0008 — Numeric operators are resolved from their operands, not from a type class
 
+**Superseded by [0010](0010-generic-arithmetic-through-a-prelude-trait.md).**
+
 **Context.** Adding reals meant `+`, `-`, `*`, `/`, unary `-` and `abs` had to work at two numeric
 types. Beck has no traits — they are parsed and not checked, and have been since Phase 1 — so there
 is no `Num` to bound a type variable by. A `(a, a) -> a` scheme would let `Bool + Bool` typecheck,
