@@ -14,10 +14,23 @@ name: phase 3
 on:
   push:
     branches: [main]
-    paths: ["compiler/**", ".github/workflows/compiler.yml"]
+    # All of .github/workflows/, not only this file: the workflow-linting test lives in this
+    # workspace (`beck-cli/tests/workflows.rs`) and scans *every* workflow file, so it has to run
+    # when any of them changes — a guard that cannot fire on the file it would be checking is the
+    # silently-absent gate of docs/20 §20.4 item 8, rebuilt inside the mitigation.
+    paths: ["compiler/**", ".github/workflows/**"]
   pull_request:
-    paths: ["compiler/**", ".github/workflows/compiler.yml"]
+    paths: ["compiler/**", ".github/workflows/**"]
   workflow_dispatch:
+
+# None of these jobs writes to the repository.
+permissions:
+  contents: read
+
+# A superseded push to a PR cancels the runs it superseded; `main` never cancels.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 defaults:
   run:
@@ -28,13 +41,51 @@ env:
   RUSTFLAGS: -D warnings
 
 jobs:
-  check:
+  the-workflows-are-yaml:
+    # The whole file, through a real parser — the check `workflows.rs` deliberately does not make
+    # (docs/20 §20.4 item 8: the Phase 1 workflow was invalid YAML from the day it was written).
+    # It lives in *both* workflows on purpose: if this file is the broken one, GitHub refuses it
+    # and only phase0.yml's copy can say so, and vice versa.
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+      - name: every workflow file parses
+        working-directory: .
+        run: |
+          python3 - <<'PY'
+          import glob, sys, yaml
+          files = sorted(glob.glob(".github/workflows/*.yml") + glob.glob(".github/workflows/*.yaml"))
+          assert files, "no workflow files found — the glob is wrong, not the repo"
+          for f in files:
+              yaml.safe_load(open(f))
+              print(f, "parses")
+          PY
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: beck_ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      # The log-contract test in beck-rt runs against a live Postgres — the substrate
+      # `beck run --store postgres` trusts, which until this service nothing in this workflow
+      # executed. REQUIRE makes a missing server a failure rather than a silent skip.
+      BECK_PG: postgres://postgres:postgres@localhost/beck_ci
+      BECK_REQUIRE_PG: "1"
+    steps:
+      - uses: actions/checkout@v4
+      # rust-toolchain.toml pins the toolchain (1.94.1) and its components, and rustup's
+      # precedence makes that pin win over the default this action sets — every cargo step below
+      # builds with the pin, never with floating stable. The action stays only so rustup itself is
+      # present and current on the runner.
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: compiler
@@ -53,6 +104,7 @@ jobs:
   the-sketch-still-compiles-and-runs:
     # "Every phase ships a demo that runs. No phase completes on a design document." (§8.3)
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -228,7 +280,12 @@ jobs:
     # when no cluster is reachable, which is right on a laptop and would be a silently-absent gate
     # here — the exact failure docs/19 §19.4 item 10 names, and the one this workflow file has
     # already committed once.
+    #
+    # The timeout is part of the same discipline: this job fetches k3d, the Gateway API CRDs and
+    # cluster images from the network, and a hang would otherwise sit at GitHub's six-hour default
+    # — a gate that has neither passed nor failed, which is the worst state a gate can hold.
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -275,6 +332,7 @@ jobs:
     # containers — and it is what stops `--platform compose` from rotting into a code path nobody
     # runs.
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -305,24 +363,54 @@ jobs:
   budgets:
     # Deterministic budgets only — the ones §8.3 calls gates.
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - name: thin-client payload (§5.1 target < 10 KB brotli)
+        # `shell: bash` is load-bearing: it turns on pipefail, without which a runner image that
+        # lost the `brotli` binary would make `br` zero and pass the gate at 0 bytes — a gate that
+        # cannot fail is a gate that is not there (docs/22 §22.8). The `command -v` names the
+        # failure instead of leaving it to a pipe.
+        shell: bash
         run: |
+          command -v brotli
           f=crates/beck-rt/client/beck-thin.js
           raw=$(wc -c < "$f")
           br=$(brotli -c -q 11 "$f" | wc -c)
           echo "thin client: ${raw} B raw, ${br} B brotli (budget 10240)"
           test "$br" -lt 10240
 
-  licences:
-    # §8.3: "cargo-deny licence gate from the first commit, given §7's open-source constraint."
+  measurements:
+    # Reported, never thresholded (§13.7) — the release-profile runs the phase reports quote, so
+    # the numbers in docs/20, docs/24 and docs/26 stay reproducible in public rather than only on
+    # the machine that wrote them. The same suites run in debug in `check` as correctness tests;
+    # this lane is where their printed tables are actually visible.
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: compiler
+      - name: the phase 2 and phase 3 measurements, printed
+        run: |
+          cargo test --release --test measure_phase2 -- --nocapture
+          cargo test --release --test measure_incremental -- --nocapture
+          cargo test --release --test shared_arrangements -- --nocapture
+
+  licences:
+    # §8.3: "cargo-deny licence gate from the first commit, given §7's open-source constraint."
+    # The full `check`, not `check licenses bans sources`: deny.toml calls itself the "licence and
+    # advisory gate" and carries a live [advisories] policy, but from the first commit until now
+    # only phase0's workflow ran it — the compiler's advisory policy was written and never
+    # executed. (cargo-deny ships its own binary, so no Rust toolchain is installed here.)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           manifest-path: compiler/Cargo.toml
           arguments: --workspace
-          command: check licenses bans sources
+          command: check

@@ -1,0 +1,59 @@
+name: docs
+
+# The docs are the design and the plan (AGENTS.md), dense with relative cross-links between
+# numbered documents, reports and source — and until this workflow, a docs-only change ran nothing
+# at all: no trigger matched it, so a renamed file or a broken reference merged silently.
+#
+# The gate is deliberately narrow (§13.7's rule, and the warning in `workflows.rs`: a
+# half-understood linter that fires on valid files gets deleted). It checks exactly one
+# deterministic property — every relative link in tracked markdown resolves to a file that exists —
+# and takes no view on prose, style or external URLs. Code spans and fenced blocks are stripped
+# first, because `def map[T, U](…)` in backticks is not a link.
+
+on:
+  push:
+    branches: [main]
+    paths: ["**/*.md", ".github/workflows/docs.yml"]
+  pull_request:
+    paths: ["**/*.md", ".github/workflows/docs.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  links:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: every relative link resolves
+        run: |
+          python3 - <<'PY'
+          import pathlib, re, subprocess, sys
+
+          files = subprocess.run(
+              ["git", "ls-files", "*.md"], capture_output=True, text=True, check=True
+          ).stdout.split()
+          assert files, "no markdown files found — the listing is wrong, not the repo"
+
+          link = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
+          fence = re.compile(r"^(```|~~~).*?^(```|~~~)\s*$", re.M | re.S)
+          code = re.compile(r"`[^`]*`")
+          bad = []
+          for f in files:
+              base = pathlib.Path(f).parent
+              text = code.sub("", fence.sub("", pathlib.Path(f).read_text()))
+              for m in link.finditer(text):
+                  target = m.group(1)
+                  if target.startswith(("http://", "https://", "mailto:", "#")):
+                      continue
+                  if not (base / target.split("#")[0]).exists():
+                      bad.append(f"{f}: {target}")
+          print("\n".join(bad) or f"all relative links resolve across {len(files)} markdown files")
+          sys.exit(1 if bad else 0)
+          PY
