@@ -218,7 +218,7 @@ the pattern. `ch2.beck` says so where somebody reading the fold will see it.
 - **A list is `O(n)` to take apart** (§33.6). Nothing in the compiler warns about it.
 - **Two walls named in [`32`](32-numeric-tower-and-polymorphism-report.md) §32.9 now have files
   rather than fixes**, which is the point of a refusal file:
-  [`rational.beck`](../compiler/sicp/refusals/rational.beck) — §2.1.1 needs *exact* arithmetic, and
+  `rational.beck` — §2.1.1 needs *exact* arithmetic, and
   a new numeric type cannot join the ad-hoc resolution `+` goes through, which is traits again; and
   `generic-type.beck` — `def map[T]` is writable and
   `union Tree[T]` is not, refused by the parser exactly as `def map[T, U]` was before

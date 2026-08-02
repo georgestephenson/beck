@@ -199,10 +199,13 @@ dependencies whose signatures didn't change.
 > does not cross a `.becki`, which is what now stands between the language and a standard library.
 =======
 > in [`37`](37-traits-report.md), bounds and dictionary passing in [`39`](39-bounds-report.md). What
-> is left of it is one decision: `+` does not resolve through a trait, so §2.1.1's exact rationals
-> still refuse ([`39`](39-bounds-report.md) §39.7 sets out the options). The boundary is gone —
-> [`40`](40-traits-across-modules-report.md) publishes traits, impl headers and bounds in a `.becki`,
-> so the standard-library bullet has no remaining blocker and is work rather than design.
+> declarations, impls, coherence and static dispatch in [`37`](37-traits-report.md), bounds and
+> dictionary passing in [`39`](39-bounds-report.md), the module boundary in
+> [`40`](40-traits-across-modules-report.md), and the operators in
+> [`41`](41-generic-arithmetic-report.md) — which empties `sicp/refusals/` and gives §2.1.1 its
+> exact rationals. The standard-library bullet has no remaining blocker and is work rather than
+> design; what the expressiveness suite needs next is more of the book, and chapter 3 is state and
+> time, which is the part of SICP closest to what Beck is for.
 >>>>>>> 88c9a81 (feat(traits): a trait, its impls and its bounds cross a `.becki`)
 
 - LLVM release backend + differential tests against Cranelift (§5.2).

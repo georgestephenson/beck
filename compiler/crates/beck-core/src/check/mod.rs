@@ -278,6 +278,11 @@ pub fn check_module_with(
         });
     }
 
+    // The language's own traits, before anything local is read. `Num` is what `+`, `-`, `*` and `/`
+    // resolve through for a type that is neither `Int` nor `Float` nor `Str`, and it arrives by the
+    // same door an imported trait does — so nothing downstream has a special case for it.
+    ck.import_traits(&prelude::traits(), &[]);
+
     // Imported names arrive before anything local is collected, so a local definition may shadow
     // one and the diagnostic points at the local.
     for (module_name, iface) in imports {
@@ -1841,14 +1846,23 @@ impl<'a> Checker<'a> {
                 || expected
                     .map(|t| t.con_name() == Some(Ty::STR))
                     .unwrap_or(false));
-        let want = if is_str {
-            Ty::str_()
+        let numeric = if is_str {
+            Some(Ty::str_())
         } else {
             self.numeric_of(&lhs.ty, None)
                 .or_else(|| self.numeric_of(&rhs.ty, None))
                 .or_else(|| expected.and_then(|t| self.numeric_of(t, None)))
-                .unwrap_or_else(Ty::int)
         };
+        // Neither operand is a number and neither is a string: the third floor of the tower, which
+        // a user's type joins by implementing `Num` (`docs/41` §41.2). Only when there is an
+        // implementation to dispatch to — otherwise the old rule runs and says what it always said,
+        // so `1 + true` is still a mismatch rather than a lecture about traits.
+        if numeric.is_none() {
+            if let Some(core) = self.arith_through_num(op, &lhs, &rhs, span) {
+                return core;
+            }
+        }
+        let want = numeric.unwrap_or_else(Ty::int);
         let label = format!("operand of `{}`", op.name());
         self.unify(&lhs.ty, &want, lhs.span, &label);
         self.unify(&rhs.ty, &want, rhs.span, &label);
@@ -1859,6 +1873,77 @@ impl<'a> Checker<'a> {
             },
             want,
             span,
+        )
+    }
+
+    /// `a + b` where `a` is neither a number nor a string, resolved through `Num`.
+    ///
+    /// SICP §2.5.1's generic arithmetic, and `docs/32` §32.3's deferred decision taken: the four
+    /// operators are the four methods of one prelude trait, so a `Rational` joins the tower the way
+    /// the book joins it — by implementing the operations, not by being added to a list inside the
+    /// compiler.
+    ///
+    /// Returns `None` when there is nothing to dispatch to, and the caller falls back to the
+    /// numeric rule unchanged. The failure this *does* report is the one worth reporting: an
+    /// operand whose type is a declared one with no implementation, where "expected `Int`, found
+    /// `Rational`" names the symptom and `impl Num for Rational` is the cure.
+    fn arith_through_num(&mut self, op: Prim, lhs: &Core, rhs: &Core, span: Span) -> Option<Core> {
+        let method: Arc<str> = Arc::from(prelude::num_method(op)?);
+        let num: Arc<str> = Arc::from(prelude::NUM);
+        let ty = [&lhs.ty, &rhs.ty]
+            .into_iter()
+            .map(|t| self.subst.resolve(t))
+            .find(|t| self.joins_the_tower(t))?;
+        let head = ty.con_name().map(Arc::<str>::from)?;
+        let known = self.impls.contains_key(&(num.clone(), head.clone()))
+            || self
+                .resolve(&Symbol::new(traits::mangle(&num, &method, &head)))
+                .is_some();
+        if !known {
+            // A declared type with no implementation. Reported here rather than left to the numeric
+            // rule, because "this type is not in the tower, and here is how to put it there" is a
+            // different sentence from "this is not an `Int`".
+            if self.types.contains_key(&head) {
+                self.diags.push(
+                    Diagnostic::error(
+                        "B0387",
+                        format!("`{head}` does not implement `{num}`"),
+                        span,
+                    )
+                    .with_primary_label(format!("`{}` resolves through it", op.name()))
+                    .with_fix(format!("write `impl {num} for {head}`")),
+                );
+                return Some(Core::new(CoreKind::Const(Const::Unit), ty, span));
+            }
+            return None;
+        }
+        let func = self.dictionary(&num, &method, &ty, span)?;
+        let Ty::Fun(params, ret, row) = self.subst.resolve(&func.ty) else {
+            return None;
+        };
+        self.perform(&row);
+        let label = format!("operand of `{}`", op.name());
+        self.unify(&lhs.ty, &params[0], lhs.span, &label);
+        self.unify(&rhs.ty, &params[1], rhs.span, &label);
+        Some(Core::new(
+            CoreKind::App {
+                func: Box::new(func),
+                args: vec![lhs.clone(), rhs.clone()],
+            },
+            *ret,
+            span,
+        ))
+    }
+
+    /// Could this type be a floor of the numeric tower a user built?
+    ///
+    /// Everything with a name except the two the primitives already handle and the one `+` also
+    /// concatenates. A unification variable is not: an expression nothing has pinned down yet still
+    /// defaults to `Int`, which is what keeps every program written before this compiling.
+    fn joins_the_tower(&self, t: &Ty) -> bool {
+        !matches!(
+            t.con_name(),
+            None | Some(Ty::INT) | Some(Ty::FLOAT) | Some(Ty::STR)
         )
     }
 

@@ -16,9 +16,10 @@
 //!
 //! All six §25.6 measured are down, and each left a test pointing the other way rather than no test
 //! at all: docs/27 for the first three, docs/31 for tail calls, docs/32 for the reals and for
-//! user-written polymorphism, docs/33 for taking a `list[T]` apart, docs/36 for a `union` that
-//! takes a type parameter. What is in `refusals/` now is what those removals wrote rather than what
-//! §25.6 measured, which is the suite working as intended rather than the suite running out.
+//! user-written polymorphism. Removing them wrote three more and those came down too — docs/33 for
+//! taking a `list[T]` apart, docs/36 for a type that takes a parameter, docs/41 for exact
+//! rationals. `refusals/` is **empty**, which is a claim this file asserts rather than a directory
+//! it stopped using.
 
 use std::process::Command;
 
@@ -565,22 +566,32 @@ test \"one fold, two element types\":
     assert!(out.contains("B0346"), "{out}");
 }
 
-/// The one wall docs/32 §32.9 named that still stands, asserted rather than described.
+/// The refusals directory is empty, and the harness says so out loud.
 ///
-/// `generic-type.beck` stood beside it until docs/36: a `union` may take a type parameter now, and
-/// what asserted the refusal is `ch2.beck`'s `Tree[T]` at three element types.
+/// It held one file per wall still standing, and the last of them — `rational.beck`, which needed
+/// `+` to reach a type the compiler does not know about — came down in `docs/41`. An empty
+/// directory is a claim, so it is asserted rather than left to be noticed: every wall this project
+/// has *found* has been removed. It is not the claim that Beck expresses all of SICP, and §41.7
+/// says which chapters are simply unattempted.
+///
+/// A `.beck` file appearing here again should make this test fail, because the file would have a
+/// refusal to assert and nothing would be asserting it.
 #[test]
-fn exact_rationals_are_still_refused() {
-    // §2.1.1 needs *exact* arithmetic, which reals are not. The wall is that a new numeric type
-    // cannot join the ad-hoc resolution `+` goes through — which is traits, again.
-    let out = errors(
-        "rational.beck",
-        include_str!("../../../sicp/refusals/rational.beck"),
-    );
-    assert!(out.contains("B0320"), "{out}");
+fn every_wall_this_suite_measured_has_come_down() {
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../sicp/refusals");
+    let standing: Vec<String> = std::fs::read_dir(dir)
+        .expect("the refusals directory is checked in")
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|n| n.ends_with(".beck"))
+        .collect();
     assert!(
-        out.contains("found `Rational`"),
-        "the wall is that `+` does not reach a user's numeric type:\n{out}"
+        standing.is_empty(),
+        "a wall is standing again and nothing asserts it: {standing:?}"
+    );
+    assert!(
+        std::path::Path::new(dir).join("README.md").exists(),
+        "an empty refusals directory has to say what that means"
     );
 }
 

@@ -93,7 +93,8 @@ Write the commit message as the author of the change: what changed, and why.
   §32.5 and
   [`docs/33-effect-polymorphism-and-list-patterns-report.md`](docs/33-effect-polymorphism-and-list-patterns-report.md)
   §33.6 and
-  [`docs/36-parameterised-types-report.md`](docs/36-parameterised-types-report.md) §36.6.
+  [`docs/36-parameterised-types-report.md`](docs/36-parameterised-types-report.md) §36.6 and
+  [`docs/41-generic-arithmetic-report.md`](docs/41-generic-arithmetic-report.md) §41.4.
 - The harnesses are the project's conscience (§4.8, §8.3): `compiler/crates/beck-cli/tests/` holds
   the differential, replay-determinism, backend-seam, scaling, security, corpus, general-slicer,
   incremental-analysis, incremental-engine, shared-arrangement, subscription, view-metrics, SICP,

@@ -4,6 +4,14 @@
 
 Every name in scope in every module, with the type inference reads for it. Small on purpose: §3.2's promise is that effect polymorphism is what keeps *one* standard library, so `map_list` is one definition whatever its function argument does, and mapping an effectful function over a list is effectful in exactly that way.
 
+## Traits
+
+What a user's type may implement to join something the language already has. `Num` is SICP §2.5.1's generic arithmetic: `+`, `-`, `*` and `/` resolve through it for an operand that is neither `Int` nor `Float` nor `Str`, so a numeric type is something a program declares rather than something the compiler has a list of.
+
+| Trait | Methods |
+|---|---|
+| `Num` | `def add(self, other: Self) -> Self`, `def sub(self, other: Self) -> Self`, `def mul(self, other: Self) -> Self`, `def div(self, other: Self) -> Self` |
+
 ## Types
 
 | Type | Declaration |

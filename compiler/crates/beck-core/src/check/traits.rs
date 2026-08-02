@@ -84,7 +84,7 @@ use crate::ty::{ImplSig, MethodSig, Row, Scheme, TraitSig, Ty, TyDecl};
 /// `::` and `@` are not identifier characters in either surface, so `Show::show@Tree` cannot
 /// collide with anything a program declares, and a stray one in a diagnostic is recognisable as
 /// compiler-generated rather than as something the author wrote.
-pub(super) fn mangle(trait_name: &str, method: &str, target: &str) -> Arc<str> {
+pub(crate) fn mangle(trait_name: &str, method: &str, target: &str) -> Arc<str> {
     Arc::from(format!("{trait_name}::{method}@{target}"))
 }
 
@@ -496,7 +496,10 @@ impl Checker<'_> {
         }
         // Coherence, half two: the orphan rule. Implementing somebody else's trait for somebody
         // else's type is what makes two libraries able to conflict.
-        let owns_trait = self.traits.contains_key(&trait_name);
+        // *Declared here*, not merely in scope. A trait that arrived from the prelude or from an
+        // import is somebody else's, and implementing somebody else's trait for somebody else's
+        // type is exactly what the rule refuses.
+        let owns_trait = self.own_traits.contains(&trait_name);
         let owns_type = self.own_types.contains(&target);
         if !owns_trait && !owns_type {
             self.diags.push(
@@ -898,7 +901,7 @@ impl Checker<'_> {
     /// is a **type parameter** of the definition being checked, the implementation arrived as a
     /// dictionary parameter and this is a local. Otherwise it is a concrete type and this is the
     /// impl's own global. Both are named `Trait::method@Target`.
-    fn dictionary(
+    pub(super) fn dictionary(
         &mut self,
         trait_name: &Arc<str>,
         method: &Arc<str>,
@@ -1636,6 +1639,122 @@ def two() -> Str:
         map.add("app.beck", app);
         crate::check::check_module_with(&node, crate::check::Mode::Module, &imports, &mut d);
         assert!(!d.has_errors(), "{}", d.render(&map));
+    }
+
+    // ------------------------------------------------------------------- generic arithmetic
+
+    const RATIONAL: &str = "\
+model Rational:
+    numer: Int
+    denom: Int
+
+impl Num for Rational:
+    def add(self, other):
+        return Rational(numer=self.numer + other.numer, denom=self.denom)
+
+    def sub(self, other):
+        return self
+
+    def mul(self, other):
+        return self
+
+    def div(self, other):
+        return self
+";
+
+    #[test]
+    fn a_user_type_joins_the_numeric_tower_through_num() {
+        let src = format!(
+            "{RATIONAL}
+def sum(a: Rational, b: Rational) -> Rational:
+    return a + b
+
+def rest(a: Rational, b: Rational) -> Rational:
+    return (a - b) * (a / b)
+"
+        );
+        assert_eq!(codes(&src), Vec::<&str>::new());
+
+        // `+` on a `Rational` is a call to the impl, not a primitive — which is what makes the
+        // tower open rather than a list inside the compiler.
+        let (program, _, _) = check_str("t.beck", &src);
+        assert!(program.defs.contains_key("Num::add@Rational"));
+    }
+
+    #[test]
+    fn num_is_the_preludes_and_a_module_may_not_implement_it_for_a_type_it_does_not_own() {
+        // `Num` arrives from the prelude, so `own_traits` does not contain it: the orphan rule's
+        // "the trait or the type is declared here" leaves only the type, and `Int` is not.
+        let src = "\
+impl Num for Int:
+    def add(self, other):
+        return self
+
+    def sub(self, other):
+        return self
+
+    def mul(self, other):
+        return self
+
+    def div(self, other):
+        return self
+";
+        assert!(codes(src).contains(&"B0385"), "{:?}", codes(src));
+    }
+
+    #[test]
+    fn a_declared_type_with_no_num_impl_is_told_how_to_join() {
+        let src = "\
+model Money:
+    pence: Int
+
+def sum(a: Money, b: Money) -> Money:
+    return a + b
+";
+        let text = errors(src);
+        assert!(text.contains("B0387"), "{text}");
+        assert!(text.contains("impl Num for Money"), "{text}");
+    }
+
+    #[test]
+    fn the_numeric_rule_is_unchanged_where_it_already_had_an_answer() {
+        // The whole point of dispatching only when there is something to dispatch to. `1 + true`
+        // is a mismatch and not a lecture about traits, and `1 + 1.0` still has no answer —
+        // docs/32 §32.3's refusal to coerce is untouched.
+        for (src, want) in [
+            (
+                "def f(n: Int, b: Bool) -> Int:\n    return n + b\n",
+                "found `Bool`",
+            ),
+            (
+                "def f(n: Int, x: Float) -> Float:\n    return n + x\n",
+                "found `Float`",
+            ),
+        ] {
+            let text = errors(src);
+            assert!(text.contains("B0320"), "{text}");
+            assert!(text.contains(want), "{text}");
+        }
+
+        // And a `Str` still concatenates rather than looking for an impl.
+        let ok = "def f(a: Str, b: Str) -> Str:\n    return a + b\n";
+        assert_eq!(codes(ok), Vec::<&str>::new());
+    }
+
+    #[test]
+    fn a_bounded_type_parameter_may_use_the_operators() {
+        // The two features meeting: `Num` is a trait like any other, so a bound on it hands the
+        // body a dictionary and `a + b` inside a generic definition resolves to it.
+        let src = format!(
+            "{RATIONAL}
+def twice[T: Num](x: T) -> T:
+    return x + x
+
+def used(r: Rational) -> Rational:
+    return twice(r)
+"
+        );
+        assert_eq!(codes(&src), Vec::<&str>::new());
     }
 
     #[test]

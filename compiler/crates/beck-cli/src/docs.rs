@@ -546,6 +546,49 @@ fn prelude_page() -> Page {
          scheme inference reads for it.</p>\n",
     );
 
+    let traits = beck_core::prelude::traits();
+    if !traits.is_empty() {
+        md.push_str(
+            "## Traits\n\nWhat a user's type may implement to join something the language already \
+             has. `Num` is SICP §2.5.1's generic arithmetic: `+`, `-`, `*` and `/` resolve through \
+             it for an operand that is neither `Int` nor `Float` nor `Str`, so a numeric type is \
+             something a program declares rather than something the compiler has a list of.\n\n| Trait | Methods |\n|---|---|\n",
+        );
+        html.push_str(
+            "<h2>Traits</h2>\n<p class=\"muted\">What a user's type may implement to join \
+             something the language already has.</p>\n<table><tr><th>Trait</th><th>Methods</th></tr>\n",
+        );
+        for t in &traits {
+            let methods: Vec<String> = t
+                .methods
+                .iter()
+                .map(|m| {
+                    let params: Vec<String> = m
+                        .params
+                        .iter()
+                        .map(|(n, ty)| {
+                            if n.as_ref() == "self" {
+                                "self".to_string()
+                            } else {
+                                format!("{n}: {ty}")
+                            }
+                        })
+                        .collect();
+                    format!("def {}({}) -> {}", m.name, params.join(", "), m.ret)
+                })
+                .collect();
+            let _ = writeln!(md, "| `{}` | `{}` |", t.name, methods.join("`, `"));
+            let _ = writeln!(
+                html,
+                "<tr><td><code>{}</code></td><td><code>{}</code></td></tr>",
+                docgen::escape(&t.name),
+                docgen::escape(&methods.join(", "))
+            );
+        }
+        md.push('\n');
+        html.push_str("</table>\n");
+    }
+
     let types = beck_core::prelude::types();
     if !types.is_empty() {
         md.push_str("## Types\n\n| Type | Declaration |\n|---|---|\n");
