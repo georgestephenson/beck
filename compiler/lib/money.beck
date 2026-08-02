@@ -1,0 +1,156 @@
+# Money, written in Beck.
+#
+# This file is the standard library's answer to a question the standard library has to answer about
+# itself: which parts of it are the *host's* and which are the language's. `str_upper` is a Unicode
+# table and `json_parse` is somebody else's grammar, so both are primitives. Money is neither. It
+# is exact integer arithmetic with a scale and a rounding rule — and if Beck cannot express that in
+# Beck, then §1.1's claim about means of abstraction is not one this project is entitled to make.
+#
+# So `Money` is a `model` over minor units and its operations are ordinary definitions. It was
+# *meant* to be an `impl Num`, the same shape SICP §2.5.1's rationals take in `sicp/ch2.beck` — and
+# writing it found the reason it cannot be, which is recorded at `plus` below and is the most
+# valuable thing in this file.
+#
+# What it deliberately is *not*: a general decimal. There is no arbitrary precision (that is Wave
+# 2's bignum item, unbuilt), no currency conversion, and no locale. A `Money` is a whole number of
+# minor units in one named currency, which is what an amount in a ledger is, and the two failures
+# that shape has are named rather than hidden — see `same_currency` and `split`.
+
+## An exact amount in one currency, held as a whole number of minor units.
+##
+## `Money(units=250, currency="GBP")` is £2.50. The scale is the currency's, not the value's, so
+## two amounts in the same currency are always directly comparable — which is the property that
+## makes a fold over a ledger a sum rather than a negotiation.
+model Money:
+    units: Int
+    currency: Str
+
+union MoneyError:
+    ## Two amounts in different currencies. There is no rate here and there never will be: a rate
+    ## is a fact about a moment, so converting is an application's decision and not an operator's.
+    MixedCurrency(left: Str, right: Str)
+    ## A negative or zero number of parts, which is not a division of anything.
+    BadSplit(parts: Int)
+
+def money(units: Int, currency: Str) -> Money:
+    return Money(units=units, currency=currency)
+
+def zero_of(currency: Str) -> Money:
+    return Money(units=0, currency=currency)
+
+## The two amounts' shared currency, or a raise.
+##
+## Every operation that combines two amounts goes through this, so "you cannot add pounds to euros"
+## is one line rather than a rule four functions each remember. `raises(MoneyError)` is inferred
+## from it and travels outwards by itself — which is `docs/45`'s property doing the work a library
+## is exactly where you want it doing.
+def same_currency(a: Money, b: Money) -> Str uses raises(MoneyError):
+    if a.currency != b.currency:
+        raise MixedCurrency(left=a.currency, right=b.currency)
+    return a.currency
+
+# `plus` and `minus` are functions rather than `impl Num for Money`, and **that is a wall, not a
+# preference.** A trait's declared effect row is a bound every impl is held to (`docs/37` §37.5),
+# the prelude's `Num` declares a *pure* row, and adding two amounts in different currencies has to
+# fail. So the operator is unavailable to any type whose operation can fail — which is most of the
+# interesting ones, and is the first thing writing a library found that writing a compiler had not.
+#
+# The fix is a trait whose method signatures carry a row *variable*, so an impl may be as effectful
+# as its own type requires and a caller inherits exactly that. `docs/33` did precisely this for a
+# user's higher-order definitions; nothing has done it for traits.
+# `stdlib.rs::a_trait_method_may_not_be_more_effectful_than_its_trait` is the refusal, asserted, so
+# the day it lands this file can drop four lines and gain an operator.
+def plus(a: Money, b: Money) -> Money uses raises(MoneyError):
+    return Money(units=a.units + b.units, currency=same_currency(a, b))
+
+def minus(a: Money, b: Money) -> Money uses raises(MoneyError):
+    return Money(units=a.units - b.units, currency=same_currency(a, b))
+
+## An amount times a plain number: `price * quantity`.
+##
+## Money times money is not money — £2 × £3 is not an amount of anything — so there is no such
+## operation here at all, which is the other half of why `Num` is the wrong shape for this type.
+def times(m: Money, n: Int) -> Money:
+    return Money(units=m.units * n, currency=m.currency)
+
+def is_negative(m: Money) -> Bool:
+    return m.units < 0
+
+def total(amounts: list[Money], currency: Str) -> Money uses raises(MoneyError):
+    return list_fold(amounts, zero_of(currency), plus)
+
+## Split an amount into `parts` as evenly as an integer allows, largest remainder first.
+##
+## The property that matters is that the parts sum back to the original: £10 in three is
+## £3.34 + £3.33 + £3.33, never three lots of £3.33 with a penny unaccounted for. A library that
+## rounds each part independently loses money, and it loses it silently, which is why this is here
+## rather than left to a caller with a division.
+def split(m: Money, parts: Int) -> list[Money] uses raises(MoneyError):
+    if parts <= 0:
+        raise BadSplit(parts=parts)
+    base = m.units / parts
+    remainder = m.units % parts
+    return map_list(
+        range_to(parts),
+        lambda i: Money(
+            units=(base + 1) if i < remainder else base,
+            currency=m.currency,
+        ),
+    )
+
+## `[0, 1, …, n - 1]`, written here rather than asked of the prelude.
+##
+## A range is the one piece of this file that is *not* about money, and it is written in Beck for
+## the same reason the rest is: it can be. It is a tail-recursive accumulation, which costs no host
+## stack at all (`docs/31`), so `range_to(250_000)` is a list and not a crash.
+def range_to(n: Int) -> list[Int]:
+    return range_from(0, n, [])
+
+def range_from(i: Int, n: Int, acc: list[Int]) -> list[Int]:
+    if i >= n:
+        return acc
+    return range_from(i + 1, n, list_append(acc, i))
+
+## `250` in `"GBP"` renders as `"2.50"`. Two minor digits, which is right for most of the world's
+## currencies and wrong for JPY and KWD — stated because a library that is quietly wrong about a
+## currency is worse than one that says which.
+def render(m: Money) -> Str:
+    sign = "-" if is_negative(m) else ""
+    units = abs(m.units)
+    minor = str(units % 100)
+    return sign + str(units / 100) + "." + ("0" + minor if str_len(minor) == 1 else minor)
+
+# ---------------------------------------------------------------------------------------------
+# The library's own tests, in the language (`docs/21` §21.2). A `test` block in a library needs no
+# application wrapped around it — which is one of the six walls `docs/27` removed, and is what lets
+# this file be a library rather than a program pretending to be one.
+# ---------------------------------------------------------------------------------------------
+
+test "amounts in one currency add and subtract":
+    expect (try: plus(money(250, "GBP"), money(175, "GBP"))) == Ok(value=money(425, "GBP"))
+    expect (try: minus(money(250, "GBP"), money(175, "GBP"))) == Ok(value=money(75, "GBP"))
+
+test "and amounts in two currencies do not":
+    expect (try: plus(money(250, "GBP"), money(175, "EUR"))) == Err(error=MixedCurrency(left="GBP", right="EUR"))
+
+test "a total is a fold, and it carries the same refusal":
+    expect (try: total([money(100, "GBP"), money(250, "GBP")], "GBP")) == Ok(value=money(350, "GBP"))
+    expect (try: total([], "GBP")) == Ok(value=money(0, "GBP"))
+    expect (try: total([money(100, "EUR")], "GBP")) == Err(error=MixedCurrency(left="GBP", right="EUR"))
+
+test "a split sums back to what was split":
+    expect (try: split(money(1000, "GBP"), 3)) == Ok(value=[money(334, "GBP"), money(333, "GBP"), money(333, "GBP")])
+    expect (try: split(money(1000, "GBP"), 4)) == Ok(value=[money(250, "GBP"), money(250, "GBP"), money(250, "GBP"), money(250, "GBP")])
+    expect (try: split(money(100, "GBP"), 0)) == Err(error=BadSplit(parts=0))
+
+property "however an amount is split, the parts sum to it"(units: Int, parts: Int):
+    expect (try: total(split(money(abs(units), "GBP"), abs(parts) + 1), "GBP")) == Ok(value=money(abs(units), "GBP"))
+
+test "rendering puts the point where the currency does":
+    expect render(money(250, "GBP")) == "2.50"
+    expect render(money(5, "GBP")) == "0.05"
+    expect render(money(-250, "GBP")) == "-2.50"
+    expect render(money(0, "GBP")) == "0.00"
+
+test "a price times a quantity is a price":
+    expect times(money(250, "GBP"), 3) == money(750, "GBP")

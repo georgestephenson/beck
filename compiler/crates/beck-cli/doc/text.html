@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module text — beck</title>
+<style>:root{color-scheme:light dark;--fg:#1a1a1a;--bg:#fff;--muted:#5a6270;--line:#d8dde5;--code:#f5f6f8;--link:#0a5aa8}@media(prefers-color-scheme:dark){:root{--fg:#e6e8ec;--bg:#14161a;--muted:#9aa3b2;--line:#2c313a;--code:#1c1f26;--link:#79b8ff}}*{box-sizing:border-box}body{margin:0;font:16px/1.6 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:var(--fg);background:var(--bg)}header,footer{padding:.75rem 1.25rem;border-bottom:1px solid var(--line);font-size:.9rem;color:var(--muted)}footer{border-bottom:none;border-top:1px solid var(--line);margin-top:3rem}header a{color:var(--link);text-decoration:none;font-weight:600}main{max-width:52rem;margin:0 auto;padding:1.5rem 1.25rem 4rem}h1{font-size:1.75rem;margin:1rem 0 .25rem}h2{font-size:1.3rem;margin:2.5rem 0 .5rem;padding-bottom:.3rem;border-bottom:1px solid var(--line)}h3{font-size:1.05rem;margin:2rem 0 .4rem;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.875em}pre{background:var(--code);border:1px solid var(--line);border-radius:6px;padding:.7rem .9rem;overflow-x:auto}code:not(pre code){background:var(--code);border-radius:3px;padding:.1em .35em}table{border-collapse:collapse;width:100%;margin:.75rem 0;display:block;overflow-x:auto}th,td{border:1px solid var(--line);padding:.35rem .6rem;text-align:left;vertical-align:top}th{background:var(--code);font-weight:600}a{color:var(--link)}.muted{color:var(--muted)}.tag{display:inline-block;background:var(--code);border:1px solid var(--line);border-radius:999px;padding:.05rem .55rem;font-size:.78rem;font-family:ui-monospace,monospace;margin-right:.3rem}</style>
+</head>
+<body>
+<header><a href="../index.html">beck</a> / module <code>text</code></header>
+<main>
+<h1>Module <code>text</code></h1>
+<p class="muted">Interface digest <code>02302054628625b531ad05bd0e1c6eee</code> · 6/12 published names documented</p>
+<h2>Names</h2>
+<table><tr><th>Name</th><th>Runs on</th><th>Effects</th></tr>
+<tr><td><a href="#add_pair"><code>add_pair</code></a></td><td><code>any</code></td><td><span class="muted">no effects</span></td></tr><tr><td><a href="#capitalise"><code>capitalise</code></a></td><td><code>any</code></td><td><span class="muted">no effects</span></td></tr><tr><td><a href="#lines"><code>lines</code></a></td><td><code>any</code></td><td><span class="muted">no effects</span></td></tr><tr><td><a href="#no_pairs"><code>no_pairs</code></a></td><td><code>any</code></td><td><span class="muted">no effects</span></td></tr><tr><td><a href="#pad_left"><code>pad_left</code></a></td><td><code>any</code></td><td><span class="muted">no effects</span></td></tr><tr><td><a href="#pad_right"><code>pad_right</code></a></td><td><code>any</code></td><td><span class="muted">no effects</span></td></tr><tr><td><a href="#parse_pairs"><code>parse_pairs</code></a></td><td><code>any</code></td><td><span class="muted">no effects</span></td></tr><tr><td><a href="#starts_with_fold"><code>starts_with_fold</code></a></td><td><code>any</code></td><td><span class="muted">no effects</span></td></tr><tr><td><a href="#title_case"><code>title_case</code></a></td><td><code>any</code></td><td><span class="muted">no effects</span></td></tr><tr><td><a href="#truncate"><code>truncate</code></a></td><td><code>any</code></td><td><span class="muted">no effects</span></td></tr><tr><td><a href="#word_count"><code>word_count</code></a></td><td><code>any</code></td><td><span class="muted">no effects</span></td></tr><tr><td><a href="#words"><code>words</code></a></td><td><code>any</code></td><td><span class="muted">no effects</span></td></tr></table>
+<h3 id="add_pair">add_pair</h3>
+<pre><code>add_pair(acc: Map[Str, Str], part: Str, within: Str) -&gt; Map[Str, Str]</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
+<h3 id="capitalise">capitalise</h3>
+<pre><code>capitalise(word: Str) -&gt; Str</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
+<h3 id="lines">lines</h3>
+<pre><code>lines(text: Str) -&gt; list[Str]</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
+<p>Split on newlines, dropping a single trailing one.</p>
+<p>A file that ends in a newline has the same lines as one that does not, which is what every tool
+that reads a file means by &quot;lines&quot; and what `str_split` alone does not give you. An empty string
+therefore has no lines rather than one empty one.</p>
+<h3 id="no_pairs">no_pairs</h3>
+<pre><code>no_pairs() -&gt; Map[Str, Str]</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
+<p>An empty `Map[Str, Str]`, because `{}` on its own is not one yet.</p>
+<p>A record literal is checked against an expectation, and the second argument of `list_fold` has
+none to offer: its type is only decided once the *third* argument has been read. Writing the
+empty map behind a signature is how a program says which map it means, and it is worth one
+definition rather than a change to the order the checker reads arguments in.</p>
+<h3 id="pad_left">pad_left</h3>
+<pre><code>pad_left(text: Str, width: Int, fill: Str) -&gt; Str</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
+<h3 id="pad_right">pad_right</h3>
+<pre><code>pad_right(text: Str, width: Int, fill: Str) -&gt; Str</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
+<h3 id="parse_pairs">parse_pairs</h3>
+<pre><code>parse_pairs(text: Str, between: Str, within: Str) -&gt; Map[Str, Str]</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
+<p>`&quot;a,b&quot; → {&quot;a&quot;: &quot;&quot;, &quot;b&quot;: &quot;&quot;}` is not what anybody means, so this takes pairs.</p>
+<p>`parse_pairs(&quot;a=1;b=2&quot;, &quot;;&quot;, &quot;=&quot;)` is `{&quot;a&quot;: &quot;1&quot;, &quot;b&quot;: &quot;2&quot;}`. A pair with no separator is
+skipped rather than raising: this is a *tolerant* reader for things like a cookie header, and a
+strict one would be a different function with a `raises` in its row.</p>
+<h3 id="starts_with_fold">starts_with_fold</h3>
+<pre><code>starts_with_fold(text: Str, prefix: Str) -&gt; Bool</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
+<p>Is `text` a `prefix` of nothing else? Case-insensitively, which is the comparison a search box
+wants and the one `str_starts_with` deliberately does not make for you.</p>
+<h3 id="title_case">title_case</h3>
+<pre><code>title_case(text: Str) -&gt; Str</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
+<h3 id="truncate">truncate</h3>
+<pre><code>truncate(text: Str, width: Int) -&gt; Str</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
+<p>Shorten to `width`, ending in `…` if anything was dropped.</p>
+<p>The ellipsis counts towards the width, because a &quot;truncate to 10&quot; that returns 11 characters is
+the bug this function exists to not have.</p>
+<h3 id="word_count">word_count</h3>
+<pre><code>word_count(text: Str) -&gt; Int</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
+<h3 id="words">words</h3>
+<pre><code>words(text: Str) -&gt; list[Str]</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
+<p>Split on whitespace, dropping the empty runs.</p>
+<p>`str_split(s, &quot; &quot;)` gives `[&quot;a&quot;, &quot;&quot;, &quot;b&quot;]` for `&quot;a  b&quot;`, which is correct for a split and wrong
+for words — so the difference is one `filter_list`, and having to write it is the point.</p>
+</main>
+<footer>Generated by <code>beck doc</code>. Signatures, effects and placements are derived from the program.</footer>
+</body>
+</html>

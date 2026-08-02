@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module money — beck</title>
+<style>:root{color-scheme:light dark;--fg:#1a1a1a;--bg:#fff;--muted:#5a6270;--line:#d8dde5;--code:#f5f6f8;--link:#0a5aa8}@media(prefers-color-scheme:dark){:root{--fg:#e6e8ec;--bg:#14161a;--muted:#9aa3b2;--line:#2c313a;--code:#1c1f26;--link:#79b8ff}}*{box-sizing:border-box}body{margin:0;font:16px/1.6 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:var(--fg);background:var(--bg)}header,footer{padding:.75rem 1.25rem;border-bottom:1px solid var(--line);font-size:.9rem;color:var(--muted)}footer{border-bottom:none;border-top:1px solid var(--line);margin-top:3rem}header a{color:var(--link);text-decoration:none;font-weight:600}main{max-width:52rem;margin:0 auto;padding:1.5rem 1.25rem 4rem}h1{font-size:1.75rem;margin:1rem 0 .25rem}h2{font-size:1.3rem;margin:2.5rem 0 .5rem;padding-bottom:.3rem;border-bottom:1px solid var(--line)}h3{font-size:1.05rem;margin:2rem 0 .4rem;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.875em}pre{background:var(--code);border:1px solid var(--line);border-radius:6px;padding:.7rem .9rem;overflow-x:auto}code:not(pre code){background:var(--code);border-radius:3px;padding:.1em .35em}table{border-collapse:collapse;width:100%;margin:.75rem 0;display:block;overflow-x:auto}th,td{border:1px solid var(--line);padding:.35rem .6rem;text-align:left;vertical-align:top}th{background:var(--code);font-weight:600}a{color:var(--link)}.muted{color:var(--muted)}.tag{display:inline-block;background:var(--code);border:1px solid var(--line);border-radius:999px;padding:.05rem .55rem;font-size:.78rem;font-family:ui-monospace,monospace;margin-right:.3rem}</style>
+</head>
+<body>
+<header><a href="../index.html">beck</a> / module <code>money</code></header>
+<main>
+<h1>Module <code>money</code></h1>
+<p class="muted">Interface digest <code>1bcb3da88d42e5fd8794722a41696784</code> · 6/14 published names documented</p>
+<h2>Types</h2>
+<h3 id="money">Money</h3>
+<pre><code>model Money</code></pre>
+<p>An exact amount in one currency, held as a whole number of minor units.</p>
+<p>`Money(units=250, currency=&quot;GBP&quot;)` is £2.50. The scale is the currency's, not the value's, so
+two amounts in the same currency are always directly comparable — which is the property that
+makes a fold over a ledger a sum rather than a negotiation.</p>
+<table><tr><th>Field</th><th></th></tr>
+<tr><td><code>units: Int</code></td><td></td></tr><tr><td><code>currency: Str</code></td><td></td></tr></table>
+<h3 id="moneyerror">MoneyError</h3>
+<pre><code>union MoneyError</code></pre>
+<table><tr><th>Variant</th><th></th></tr>
+<tr><td><code>MixedCurrency(left: Str, right: Str)</code></td><td><p>Two amounts in different currencies. There is no rate here and there never will be: a rate
+is a fact about a moment, so converting is an application's decision and not an operator's.</p></td></tr><tr><td><code>BadSplit(parts: Int)</code></td><td><p>A negative or zero number of parts, which is not a division of anything.</p></td></tr></table>
+<h2>Names</h2>
+<table><tr><th>Name</th><th>Runs on</th><th>Effects</th></tr>
+<tr><td><a href="#is_negative"><code>is_negative</code></a></td><td><code>any</code></td><td><span class="muted">no effects</span></td></tr><tr><td><a href="#minus"><code>minus</code></a></td><td><code>any</code></td><td><span class="tag">raises(MoneyError)</span></td></tr><tr><td><a href="#money"><code>money</code></a></td><td><code>any</code></td><td><span class="muted">no effects</span></td></tr><tr><td><a href="#plus"><code>plus</code></a></td><td><code>any</code></td><td><span class="tag">raises(MoneyError)</span></td></tr><tr><td><a href="#range_from"><code>range_from</code></a></td><td><code>any</code></td><td><span class="muted">no effects</span></td></tr><tr><td><a href="#range_to"><code>range_to</code></a></td><td><code>any</code></td><td><span class="muted">no effects</span></td></tr><tr><td><a href="#render"><code>render</code></a></td><td><code>any</code></td><td><span class="muted">no effects</span></td></tr><tr><td><a href="#same_currency"><code>same_currency</code></a></td><td><code>any</code></td><td><span class="tag">raises(MoneyError)</span></td></tr><tr><td><a href="#split"><code>split</code></a></td><td><code>any</code></td><td><span class="tag">raises(MoneyError)</span></td></tr><tr><td><a href="#times"><code>times</code></a></td><td><code>any</code></td><td><span class="muted">no effects</span></td></tr><tr><td><a href="#total"><code>total</code></a></td><td><code>any</code></td><td><span class="tag">raises(MoneyError)</span></td></tr><tr><td><a href="#zero_of"><code>zero_of</code></a></td><td><code>any</code></td><td><span class="muted">no effects</span></td></tr></table>
+<h3 id="is_negative">is_negative</h3>
+<pre><code>is_negative(m: Money) -&gt; Bool</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
+<h3 id="minus">minus</h3>
+<pre><code>minus(a: Money, b: Money) -&gt; Money</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="tag">raises(MoneyError)</span></p>
+<h3 id="money">money</h3>
+<pre><code>money(units: Int, currency: Str) -&gt; Money</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
+<h3 id="plus">plus</h3>
+<pre><code>plus(a: Money, b: Money) -&gt; Money</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="tag">raises(MoneyError)</span></p>
+<h3 id="range_from">range_from</h3>
+<pre><code>range_from(i: Int, n: Int, acc: list[Int]) -&gt; list[Int]</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
+<h3 id="range_to">range_to</h3>
+<pre><code>range_to(n: Int) -&gt; list[Int]</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
+<p>`[0, 1, …, n - 1]`, written here rather than asked of the prelude.</p>
+<p>A range is the one piece of this file that is *not* about money, and it is written in Beck for
+the same reason the rest is: it can be. It is a tail-recursive accumulation, which costs no host
+stack at all (`docs/31`), so `range_to(250_000)` is a list and not a crash.</p>
+<h3 id="render">render</h3>
+<pre><code>render(m: Money) -&gt; Str</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
+<p>`250` in `&quot;GBP&quot;` renders as `&quot;2.50&quot;`. Two minor digits, which is right for most of the world's
+currencies and wrong for JPY and KWD — stated because a library that is quietly wrong about a
+currency is worse than one that says which.</p>
+<h3 id="same_currency">same_currency</h3>
+<pre><code>same_currency(a: Money, b: Money) -&gt; Str</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="tag">raises(MoneyError)</span></p>
+<p>The two amounts' shared currency, or a raise.</p>
+<p>Every operation that combines two amounts goes through this, so &quot;you cannot add pounds to euros&quot;
+is one line rather than a rule four functions each remember. `raises(MoneyError)` is inferred
+from it and travels outwards by itself — which is `docs/45`'s property doing the work a library
+is exactly where you want it doing.</p>
+<h3 id="split">split</h3>
+<pre><code>split(m: Money, parts: Int) -&gt; list[Money]</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="tag">raises(MoneyError)</span></p>
+<p>Split an amount into `parts` as evenly as an integer allows, largest remainder first.</p>
+<p>The property that matters is that the parts sum back to the original: £10 in three is
+£3.34 + £3.33 + £3.33, never three lots of £3.33 with a penny unaccounted for. A library that
+rounds each part independently loses money, and it loses it silently, which is why this is here
+rather than left to a caller with a division.</p>
+<h3 id="times">times</h3>
+<pre><code>times(m: Money, n: Int) -&gt; Money</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
+<p>An amount times a plain number: `price * quantity`.</p>
+<p>Money times money is not money — £2 × £3 is not an amount of anything — so there is no such
+operation here at all, which is the other half of why `Num` is the wrong shape for this type.</p>
+<h3 id="total">total</h3>
+<pre><code>total(amounts: list[Money], currency: Str) -&gt; Money</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="tag">raises(MoneyError)</span></p>
+<h3 id="zero_of">zero_of</h3>
+<pre><code>zero_of(currency: Str) -&gt; Money</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
+</main>
+<footer>Generated by <code>beck doc</code>. Signatures, effects and placements are derived from the program.</footer>
+</body>
+</html>

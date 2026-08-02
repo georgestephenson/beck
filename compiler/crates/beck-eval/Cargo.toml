@@ -8,6 +8,9 @@ description = "Phase 1's Core backend: a tree-walking evaluator behind the Backe
 
 [dependencies]
 beck-core.workspace = true
+# JSON's text form only. The shape in between is Beck's own `Json` union, so this is a reader and
+# a writer rather than a data model the language would then have two of.
+serde_json.workspace = true
 beck-diag.workspace = true
 
 [lints]
