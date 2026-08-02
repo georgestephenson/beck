@@ -313,14 +313,27 @@ dependencies whose signatures didn't change.
 
 **Exit**: an outside developer builds a non-trivial app from documentation alone, without asking the
 team a question. Track this literally as the acceptance test.
-**Not met**, and not close — three bullets of fourteen, a fourth's engine
-([`24`](24-incremental-views-report.md) §24.10) and a fifth that has started. What did change is
-that the first question they would have asked — "how do I test this?" — now has a command for an
-answer; the second — "will this recount a million rows every time somebody clicks?" — has a command
-*and* a number; and the third — "can I write my own abstractions, or only the ones the todo sketch
-needed?" — has nine walls down and an empty `sicp/refusals/` for an answer. What none of them has
-is documentation an outside developer could build from, which is what this criterion actually
-measures.
+**Not met** — four bullets of fourteen, the first halves of three more
+([`46`](46-standard-library-report.md), [`48`](48-identity-report.md), and
+[`24`](24-incremental-views-report.md) §24.10's engine), and a seventh that has started. It is
+closer than it was, and the honest way to say how much closer is by the questions such a developer
+would ask in order:
+
+| Their question | The answer today |
+|---|---|
+| "How do I test this?" | A command, since [`22`](22-phase-3-report.md) |
+| "Will this recount a million rows every time somebody clicks?" | A command *and* a number ([`24`](24-incremental-views-report.md), [`26`](26-arrangement-sharing-report.md)) |
+| "Can I write my own abstractions, or only the ones the todo sketch needed?" | Ten walls down and an empty `sicp/refusals/` |
+| "How do I say something failed?" | `raise` and `try:`, and the signature says so whether or not I wrote it down ([`45`](45-error-rows-report.md)) |
+| "Is there a string library? A JSON parser?" | Yes, and `compiler/lib/` shows how to write the next one ([`46`](46-standard-library-report.md)) |
+| "Can I trust the actor in my ownership check?" | With a verifying provider, yes ([`48`](48-identity-report.md)) — the default still believes the client, and says so |
+| "Where's the tutorial?" | **There is none**, and this is the criterion |
+
+That last row has not moved and is what the criterion actually measures. Every other row is a
+prerequisite for a tutorial being worth writing, and §8.3 item 6 — "write the tutorial as you
+build, and treat any sentence that requires an apology as a bug report against the design" — is
+the practice this phase has least honoured. The apologies it would currently need are enumerable:
+no HTTP client, no OIDC, no quotas, no Mode B, no LSP.
 
 ## Phase 4 — Production readiness (4–5 months)
 
