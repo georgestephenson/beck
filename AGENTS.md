@@ -40,7 +40,8 @@ Write the commit message as the author of the change: what changed, and why.
   book's own stated answers as the oracle, and one file per remaining wall in `sicp/refusals/` whose
   test asserts the wall is still there. A wall coming down is a test that starts failing.
 - Design decisions are numbered in [`docs/10-decisions.md`](docs/10-decisions.md). If a change
-  contradicts one, say so rather than quietly diverging.
+  contradicts one, say so rather than quietly diverging. Engineering decisions — a dependency
+  taken or refused, a gate's shape, an upgrade path — are recorded in [`docs/adr/`](docs/adr/).
 
 ## Standards for changes
 
@@ -73,3 +74,32 @@ Write the commit message as the author of the change: what changed, and why.
   `compiler/crates/beck-cli/tests/tests_in_beck.rs` is where the construct itself is held to account.
 - Say plainly when something is written but unproven. "Built" and "runs" and "measured" are three
   different claims.
+- A code comment states the point — a constraint, an invariant, a non-obvious why — and the
+  context a reader needs, nothing else. Never narrate history ("this was broken, now it works"),
+  a review, or a conversation ("we decided…"); that belongs in the commit message, an ADR
+  ([`docs/adr/`](docs/adr/)), or a report. Docs and comments are the current state of things.
+
+## Working in an isolated or cloud environment
+
+- **The first `cargo` command downloads the pinned toolchain** (`rust-toolchain.toml`, 1.94.1,
+  ~2 minutes). Do not run a second `cargo` or `rustup` process until it finishes: concurrent
+  first-runs race inside rustup and corrupt the install. Repair:
+  `rustup toolchain uninstall 1.94.1 && rustup toolchain install 1.94.1`.
+- **Verification, cheapest first** (from `compiler/`): `cargo test -p <crate>`, then
+  `cargo test --workspace --all-targets`, `cargo clippy --workspace --all-targets` and
+  `cargo fmt --all --check` before pushing. CI denies warnings.
+- **Environment-dependent suites degrade by skipping, and a skip prints itself** — read the
+  output for it:
+  - Kubernetes conformance (`beck-infra/tests/conformance.rs`): skips without a cluster;
+    `BECK_REQUIRE_CLUSTER=1` forbids the skip. Do not claim this rung ran without one.
+  - Postgres log contract (`beck-rt/src/log.rs`): runs only with `BECK_PG=<url>`
+    (`BECK_REQUIRE_PG=1` forbids the skip). A local server works: `initdb`/`pg_ctl` as the
+    `postgres` user, in a directory that user can traverse (`/tmp`, not a root-owned dir).
+  - Compose parity needs Docker; the thin-client budget needs `brotli` (apt-installable).
+- **The measurement suites are release-only by convention**: the reproducible form is
+  `cargo test --release --test <suite> -- --nocapture`. They also run in debug under the full
+  suite with their tables swallowed; that is expected.
+- **The network is proxied and partial.** crates.io and the toolchain host work; docs hosts may
+  not. Read a dependency's API from its vendored source under `~/.cargo/registry/src/`.
+- **Run CI steps you change by hand** (the §20.4 rule above): the deterministic gates need only
+  `python3` (with PyYAML) and git, so they run anywhere.

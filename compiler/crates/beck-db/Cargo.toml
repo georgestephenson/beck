@@ -8,7 +8,6 @@ publish.workspace = true
 [dependencies]
 beck-core.workspace = true
 beck-diag.workspace = true
-beck-infra.workspace = true
 beck-macro.workspace = true
 beck-syntax.workspace = true
 salsa.workspace = true

@@ -114,7 +114,7 @@ fn where_the_corpus_ends_up() {
 fn what_an_incremental_rebuild_costs_in_a_three_module_project() {
     // §3.6's firewall, as a number rather than as an assertion: how much of a project a one-line
     // body edit re-checks, against how much a signature change does.
-    use beck_db::{Compiler, Database};
+    use beck_db::Database;
     use std::sync::Arc;
 
     let dir = corpus().join("project");
