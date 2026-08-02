@@ -30,20 +30,24 @@ Write the commit message as the author of the change: what changed, and why.
   [`34`](docs/34-generated-documentation-report.md),
   [`36`](docs/36-parameterised-types-report.md), [`37`](docs/37-traits-report.md),
   [`39`](docs/39-bounds-report.md), [`40`](docs/40-traits-across-modules-report.md),
-  [`41`](docs/41-generic-arithmetic-report.md), [`44`](docs/44-wave-0-report.md) and
-  [`45`](docs/45-error-rows-report.md), indexed in
+  [`41`](docs/41-generic-arithmetic-report.md), [`44`](docs/44-wave-0-report.md),
+  [`45`](docs/45-error-rows-report.md) and [`46`](docs/46-standard-library-report.md), indexed in
   [`docs/README.md`](docs/README.md) — record what each
   phase does, what it refuses to claim, and the corrections it makes to the design documents.
   Add a new report to that list and to the index; do not extend it with another "and".
-  Phase 3 is **four bullets built, most of a fifth, and a sixth that has started**: the test
-  construct, the general slicer (Phase 2's debt), the means-of-abstraction bullet and `Result`/error
-  rows are built; the incremental-views bullet has its engine but not its read models, pgwire or
-  fusion; the expressiveness suite runs two chapters of SICP. Eight of the fourteen are untouched,
-  and docs/26 §26.9 names them one at a time. **Wave 0** (docs/08 §8.5.4) is also built —
-  a bounded front end, an injected clock, a threat model, a disclosure policy and an identifier
-  profile — and is debt rather than a phase bullet, so it appears in docs/44 and not in that list. All six of
+  Phase 3 is **four bullets built, half of a fifth, most of a sixth, and a seventh that has
+  started**: the test construct, the general slicer (Phase 2's debt), the means-of-abstraction
+  bullet and `Result`/error rows are built; the standard library has its first half and a wall of
+  its own (docs/46); the incremental-views bullet has its engine but not its read models, pgwire
+  or fusion; the expressiveness suite runs two chapters of SICP. Seven of the fourteen are
+  untouched, and docs/26 §26.9 names them one at a time. **Wave 0** (docs/08 §8.5.4) is also
+  built — a bounded front end, an injected clock, a threat model, a disclosure policy and an
+  identifier profile — and is debt rather than a phase bullet, so it is in docs/44 and not in that
+  list. All six of
   [`docs/25`](docs/25-benchmarks-and-expressiveness.md)'s walls are down, and so are the three that
-  removing them wrote (docs/33, docs/36, docs/41); docs/41 §41.7 names what stands in their place.
+  removing them wrote (docs/33, docs/36, docs/41); docs/41 §41.7 names what stands in their place —
+  and docs/46 §46.5 has added one more, found by writing a library rather than a compiler: a
+  trait's declared row is a bound, so a fallible operation cannot be a trait method.
   Reports are history: a later phase's correction to an earlier one goes in the later report, not
   into the earlier text.
 - [`docs/reference/`](docs/reference/README.md) is **generated** by `beck doc reference` from the
@@ -52,6 +56,10 @@ Write the commit message as the author of the change: what changed, and why.
   change. A new diagnostic code needs an entry in `beck-diag/src/index.rs` or `cargo test` fails.
   [`docs/34-generated-documentation-report.md`](docs/34-generated-documentation-report.md) records
   what is generated, what is written, and what it does not do.
+- [`compiler/lib/`](compiler/lib/README.md) is the standard library's **Beck half**: a host's table
+  or grammar is a primitive in `prelude.rs`, and composition is a file there. Each carries its own
+  `test` blocks, and `beck-cli/tests/stdlib.rs` gates the directory rather than a list — a file
+  added there is gated by being there.
 - [`compiler/corpus/`](compiler/corpus/) is 30 programs — 29 single files and one three-module
   project — carrying **no placement annotations**, and the measurement behind Phase 2's exit
   criterion. A program added there has to place itself.

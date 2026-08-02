@@ -265,6 +265,11 @@ dependencies whose signatures didn't change.
   resolves through the prelude trait `Num` ([`41`](41-generic-arithmetic-report.md)) — which is a
   mechanism the standard library can be built on and not a standard library. Bignums are still not
   built, and neither is coercion between numeric types.*
+  ***The first half is now built** ([`46`](46-standard-library-report.md)): strings, list and map
+  collections, JSON and time as thirty-one primitives, plus `compiler/lib/` — the half written in
+  Beck, three libraries with their own tests. HTTP, crypto, decimal, bignums and numeric coercion
+  are untouched, and §46.6 is the item-by-item list. The `Num` mechanism turned out not to be
+  enough for money: §46.5 is the wall.*
 - **The language's own means of abstraction, which four phases had never been pointed at**
   ([`25`](25-benchmarks-and-expressiveness.md) §25.6, measured; §25.7 orders them). Every corpus
   program is shaped like the todo sketch, which is why none of these had surfaced. ***All six are
@@ -560,13 +565,31 @@ as one piece of work with the above. It is separated here rather than quietly: t
 what Wave 2 waits on, and the concurrency half waits on nothing, so pairing them would have meant
 designing a concurrency model inside an error model's change.
 
-**Wave 2 — weeks to months. The standard library.** *Now unblocked.* Collections, strings, time,
-money/decimal, HTTP, JSON, UUID, crypto — on the `Num` mechanism
-[`41`](41-generic-arithmetic-report.md) built and the error shape Wave 1 has now settled, so
-§8.5.3's trap 2 no longer applies and every fallible signature in it can be written in its final
-shape the first time. Bignums and numeric coercion belong here too. Stand the Are We Fast Yet and
-CLBG harnesses up alongside it per §8.4, whether or not the LLVM backend has landed. **This is the
-head of the language queue.**
+**Wave 2 — weeks to months. The standard library. ✅ First half built**
+([`46`](46-standard-library-report.md)). Strings, list and map collections, JSON and time are
+**built** — thirty-one primitives plus `compiler/lib/`, which is the half written in Beck and the
+answer to which parts of a library the *host* owns. `json_parse` and `time_parse` raise rather than
+returning a `Result`, which is trap 2 cashed: a wave earlier, every one of those signatures would
+now be wrong. **Untouched**: the HTTP client (the one item whose effect row nobody has designed),
+crypto, `Set` operations, durations and date arithmetic, UUID parsing, arbitrary-precision decimal,
+bignums and numeric coercion. §46.6 has the item-by-item list. The Are We Fast Yet and CLBG
+harnesses are **not** stood up, and §8.4 asks for them alongside this bullet — that is the largest
+thing still owed here.
+
+*Writing it found a wall, which is what writing a library is for: **a trait's declared row is a
+bound, so a fallible operation cannot be a trait method** — `Money` cannot have `+` because `Num`
+is pure and mixing currencies has to fail (§46.5). The fix is one feature, a row variable in a
+trait's method signatures, which [`33`](33-effect-polymorphism-and-list-patterns-report.md) built
+for a user's higher-order definitions and nothing has built for traits. It is asserted as a
+refusal, so it is a test that goes red rather than a paragraph.*
+
+**Wave 2b — the wall Wave 2 wrote.** Effect-polymorphic traits: a `trait` whose method signatures
+carry a row variable, so an impl may be as effectful as its type requires and a caller inherits
+exactly that. It has one successor that matters — every numeric or fallible type that wants an
+operator — and it is Lane A, so it is the head of the language queue the moment the rest of the
+standard library stops being the thing in front of it. This is a wave because it did not exist when
+§8.5.4 was written: it was *written by* Wave 2, which is the third time a completed wave has
+rewritten the ordering below it.
 
 **Wave 3 — months.** Identity beyond the dev-mode actor — which is also the item that empties four
 of `pending_security.rs`'s tests and edits [`43`](43-threat-model.md) §43.4 — then the playground
