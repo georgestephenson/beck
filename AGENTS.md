@@ -73,3 +73,43 @@ Write the commit message as the author of the change: what changed, and why.
   `compiler/crates/beck-cli/tests/tests_in_beck.rs` is where the construct itself is held to account.
 - Say plainly when something is written but unproven. "Built" and "runs" and "measured" are three
   different claims.
+
+## Working in an isolated or cloud environment
+
+For an agent in a fresh sandbox — no state from a previous session, network through a proxy,
+some tools absent. Everything here was learned by hitting it.
+
+- **The first `cargo` command installs the pinned toolchain** (`compiler/rust-toolchain.toml`,
+  1.94.1 with rustfmt and clippy) — a one-to-two-minute download. Let it finish before starting a
+  second `cargo` or `rustup` process: two concurrent first-runs race inside rustup and corrupt
+  the toolchain (`error: could not rename component file…`). The repair is
+  `rustup toolchain uninstall 1.94.1 && rustup toolchain install 1.94.1`.
+- **The verification ladder, cheapest first**: `cargo test -p <crate>` for the crate you touched;
+  then `cargo test --workspace --all-targets`, `cargo clippy --workspace --all-targets` and
+  `cargo fmt --all --check` before pushing — CI runs clippy with `-D warnings`, so a warning that
+  is noise locally is a red build there. A cold release build is ~2 minutes; the full debug suite
+  a few minutes more. All from `compiler/`.
+- **Suites that need something the sandbox may not have, and how each degrades** — a skip prints
+  itself, so silence in the output is worth reading for:
+  - The Kubernetes conformance suite (`beck-infra/tests/conformance.rs`) needs a reachable
+    cluster; without one it skips, unless `BECK_REQUIRE_CLUSTER=1` makes that a failure. `k3d`
+    and `kubectl` are typically absent in a sandbox; do not claim the conformance rung ran.
+  - The Postgres log contract (`beck-rt/src/log.rs`) runs only with `BECK_PG=<url>` set
+    (`BECK_REQUIRE_PG=1` to forbid the skip). A sandbox with Postgres server binaries can run it
+    against a local instance: `initdb` and `pg_ctl` as the `postgres` user, in a directory that
+    user can traverse (`/tmp` works where a root-owned scratchpad does not), then
+    `BECK_PG=postgres://postgres@127.0.0.1:<port>/<db>`.
+  - The compose parity checks need a Docker daemon; the thin-client budget needs `brotli`
+    (installable via apt where the image lacks it).
+- **The measurement suites are release-only by convention.** The commands quoted in the phase
+  reports (`cargo test --release --test measure_phase2|measure_incremental|shared_arrangements
+  -- --nocapture`) are the reproducible form; the same tests also run in debug under the full
+  suite, where their printed tables are swallowed — that is expected, not a defect.
+- **The network is proxied and partial.** crates.io and the toolchain host work; documentation
+  hosts (docs.rs, *.github.io) may be blocked. To read a dependency's API, read its vendored
+  source under `~/.cargo/registry/src/` — after `cargo fetch` it is all there, examples and tests
+  included.
+- **Run CI steps you change by hand** (the §20.4 rule above) even in a sandbox: the workflows'
+  Python steps need only `python3` with PyYAML, the link checker needs only git and Python, and
+  both are runnable anywhere, so "the environment could not run it" is almost never true for the
+  deterministic gates.
