@@ -151,7 +151,6 @@ version = "0.1.0"
 dependencies = [
  "beck-core",
  "beck-diag",
- "beck-infra",
  "beck-macro",
  "beck-syntax",
  "salsa",
@@ -200,7 +199,6 @@ dependencies = [
  "async-trait",
  "beck-core",
  "beck-diag",
- "beck-syntax",
  "blake3",
  "futures-util",
  "http-body-util",

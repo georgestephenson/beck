@@ -8,7 +8,6 @@ publish.workspace = true
 [dependencies]
 beck-core.workspace = true
 beck-diag.workspace = true
-beck-syntax.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 blake3.workspace = true
