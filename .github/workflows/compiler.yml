@@ -166,6 +166,44 @@ jobs:
           PY
           ! ./target/release/beck check /tmp/rigid.beck
           ./target/release/beck check /tmp/rigid.beck 2>&1 | grep -q 'found `T`'
+          # docs/30: a list can be taken apart, and a `match` on one has to cover both shapes.
+          python3 - <<'PY'
+          open("/tmp/fold.beck", "w").write(
+              'def accumulate[T, U](xs: list[T], seed: U, combine: (T, U) -> U) -> U:\n'
+              '    match xs:\n'
+              '        case []:\n'
+              '            return seed\n'
+              '        case [first, *rest]:\n'
+              '            return combine(first, accumulate(rest, seed, combine))\n'
+              '\n'
+              'test "one fold, two element types":\n'
+              '    expect accumulate([1, 2, 3], 0, lambda x, acc: x + acc) == 6\n'
+              '    expect accumulate(["a", "b"], "", lambda s, acc: s + acc) == "ab"\n')
+          open("/tmp/partial.beck", "w").write(
+              'def f(xs: list[Int]) -> Int:\n'
+              '    match xs:\n'
+              '        case []:\n'
+              '            return 0\n')
+          PY
+          ./target/release/beck test /tmp/fold.beck
+          ! ./target/release/beck check /tmp/partial.beck
+          ./target/release/beck check /tmp/partial.beck 2>&1 | grep -q 'B0341'
+          # docs/30: and a pure caller of a generic higher-order definition stays pure, however
+          # another caller uses it. Read off the *published contract*, which is where it was wrong.
+          python3 - <<'PY'
+          open("/tmp/rows.beck", "w").write(
+              'def twice[T](f: (T) -> T, x: T) -> T:\n'
+              '    return f(f(x))\n'
+              '\n'
+              'def plain(n: Int) -> Int:\n'
+              '    return twice(lambda m: m + 1, n)\n'
+              '\n'
+              'def stamped(n: Int) -> Int:\n'
+              '    return twice(lambda m: m + now(), n)\n')
+          PY
+          ./target/release/beck iface /tmp/rows.beck --stdout | tee /tmp/rows.becki
+          grep -q 'def plain(n: Int) -> Int$' /tmp/rows.becki
+          grep -q 'def stamped(n: Int) -> Int uses nondet$' /tmp/rows.becki
           # A failing test has to fail the build, or the gate is decorative. This is the property
           # docs/19 §19.4 item 10 says an unexecuted artefact cannot have.
           python3 - <<'PY'

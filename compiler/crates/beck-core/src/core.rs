@@ -219,6 +219,35 @@ pub enum Pattern {
         variant: Arc<str>,
         binds: Vec<(Arc<str>, VarId)>,
     },
+    /// `[]`, `[x]`, `[a, b]`, `[first, *rest]` — a list, taken apart.
+    ///
+    /// Shallow, like every other pattern here: `binds` is one binder (or a wildcard) per fixed
+    /// element, and `rest` is the optional tail binder. A pattern with no `rest` matches a list of
+    /// exactly `binds.len()` elements; one with a `rest` matches any list at least that long.
+    /// `docs/30` §30.5 says why this shape and not nested patterns.
+    List {
+        binds: Vec<Option<VarId>>,
+        rest: Option<Option<VarId>>,
+    },
+}
+
+impl Pattern {
+    /// Every variable this pattern binds.
+    ///
+    /// One method rather than a `match` at each of the three call sites, because those three were
+    /// `Bind`/`Ctor`/`_ => {}` — and a new pattern kind falling into the `_` would have been a
+    /// silent miscount in the splitter's variable supply and a false *free* variable in the plan's
+    /// analysis. Neither would have failed a test until a program used one (`docs/30` §30.5).
+    pub fn binders(&self) -> Vec<VarId> {
+        match self {
+            Pattern::Wildcard | Pattern::Const(_) => Vec::new(),
+            Pattern::Bind(v) => vec![*v],
+            Pattern::Ctor { binds, .. } => binds.iter().map(|(_, v)| *v).collect(),
+            Pattern::List { binds, rest } => {
+                binds.iter().chain(rest.iter()).filter_map(|b| *b).collect()
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

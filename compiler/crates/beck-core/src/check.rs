@@ -145,6 +145,9 @@ pub struct Checker<'a> {
     /// The row *variable* standing for each definition's inferred row, minted before any body is
     /// checked so that callers can name it and mutual recursion needs no ordering.
     def_row: BTreeMap<Arc<str>, RowVarId>,
+    /// The row variables each definition's scheme quantifies over — §3.2's `e`, for a definition a
+    /// user wrote rather than one the prelude declares.
+    generic_rows: BTreeMap<Arc<str>, Vec<RowVarId>>,
     /// What the body currently being checked has been seen to perform.
     row: Row,
     next_var: VarId,
@@ -203,6 +206,7 @@ pub fn check_module_with(
         next_var: 0,
         in_fold: false,
         typarams: BTreeSet::new(),
+        generic_rows: BTreeMap::new(),
         mode,
     };
     for (name, prim, scheme) in prelude::prims() {
@@ -653,11 +657,24 @@ impl<'a> Checker<'a> {
             // The definition's latent row is a *variable*, bound once its body has been checked.
             // Minting it here is what lets any definition call any other in any order.
             let rv = self.subst.fresh_row_var();
+            // §3.2's `map : (list[a], (a -> b ! e)) -> list[b] ! e`, for a definition a *user*
+            // wrote. The row variables the signature's function-typed parameters carry are
+            // quantified, so each call site gets its own — without which one caller passing an
+            // effectful function makes every other caller effectful too (`docs/30` §30.2).
+            let generic_rows = self.generalisable_rows(&params, &ret);
+            let mut latent = Row::var(rv);
+            latent.tails.extend(generic_rows.iter().copied());
             self.schemes.insert(
                 name.clone(),
-                Scheme::generic(typarams, Ty::fun_eff(params, ret, Row::var(rv))),
+                Scheme {
+                    vars: Vec::new(),
+                    row_vars: generic_rows.clone(),
+                    params: typarams,
+                    ty: Ty::fun_eff(params, ret, latent),
+                },
             );
             self.def_row.insert(name.clone(), rv);
+            self.generic_rows.insert(name.clone(), generic_rows);
             self.declared.insert(name.clone(), declared);
             self.globals.push(Binding {
                 name: name.clone(),
@@ -665,6 +682,29 @@ impl<'a> Checker<'a> {
                 kind: BindKind::Global(name.clone()),
             });
         }
+    }
+
+    /// The row variables a definition's signature may quantify over.
+    ///
+    /// Those written into its *parameters*, and only when the return type carries none of its own.
+    /// The restriction is not conservatism for its own sake: a variable quantified in the scheme is
+    /// renamed by `instantiate` wherever it appears **syntactically**, and a return type whose row
+    /// is bound — through the substitution — to a parameter's would keep the generic variable on
+    /// one side of the call and the fresh one on the other. `docs/30` §30.3 says what that costs
+    /// and what would lift it.
+    fn generalisable_rows(&self, params: &[Ty], ret: &Ty) -> Vec<RowVarId> {
+        let mut in_ret = Vec::new();
+        row_vars_of(ret, &mut in_ret);
+        if !in_ret.is_empty() {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        for p in params {
+            row_vars_of(p, &mut out);
+        }
+        out.sort_unstable();
+        out.dedup();
+        out
     }
 
     /// Put a `def`'s `[T, U]` into scope, and answer with the names in order.
@@ -1569,7 +1609,19 @@ impl<'a> Checker<'a> {
         // edit that fills the body in.
         let inferred = performed.union(&declared);
         if let Some(rv) = self.def_row.get(&name).copied() {
-            self.subst.bind_row(rv, inferred.clone());
+            // What the body performs *itself*, with the quantified tails taken out — they are
+            // already in the scheme's latent row, and leaving them in `rv` as well would put the
+            // *generic* variable into every instantiated call rather than the call's own copy of
+            // it. Resolved first, because a tail reached through `map_list`'s own row variable is
+            // still that tail (`docs/30` §30.2).
+            let generic: &[RowVarId] = self
+                .generic_rows
+                .get(&name)
+                .map(|v| v.as_slice())
+                .unwrap_or(&[]);
+            let mut own = self.subst.resolve_row(&inferred);
+            own.tails.retain(|t| !generic.contains(t));
+            self.subst.bind_row(rv, own);
         }
 
         let lam = Core {
@@ -2263,6 +2315,31 @@ impl<'a> Checker<'a> {
 
         // §3.1: "a fold over a `union Event` that misses a case is a compile error — this single
         // check carries the migration story" (§3.9).
+        // A `match` on a list is exhaustive when it covers the empty list and a non-empty one.
+        // Two cases, because the pattern language has two shapes that partition a list — which is
+        // the whole reason it has exactly those two shapes (`docs/30` §30.5).
+        if !irrefutable && scrut_ty.con_name() == Some(Ty::LIST) {
+            let has_empty = covered.contains(LIST_EMPTY);
+            let has_tail = covered.contains(LIST_NONEMPTY);
+            if !(has_empty && has_tail) {
+                let missing = if has_empty {
+                    "a list with elements — `case [first, *rest]`"
+                } else if has_tail {
+                    "the empty list — `case []`"
+                } else {
+                    "the empty list and a list with elements — `case []` and `case [first, *rest]`"
+                };
+                self.diags.push(
+                    Diagnostic::error("B0341", "match is not exhaustive", span)
+                        .with_primary_label(format!("missing: {missing}"))
+                        .with_note(
+                            "a list is empty or it is not, and a fold that handles only one of \
+                             those is a fold that fails on the input nobody tested",
+                        ),
+                );
+            }
+        }
+
         if !irrefutable {
             if let Some(TyDecl::Union { variants, .. }) =
                 scrut_ty.con_name().and_then(|c| self.types.get(c))
@@ -2337,6 +2414,84 @@ impl<'a> Checker<'a> {
                 kind: BindKind::Local(id, scrut.clone()),
             });
             return Pattern::Bind(id);
+        }
+
+        // `[]`, `[x]`, `[first, *rest]` — a list taken apart. The scrutinee decides the element
+        // type, so the binders need no annotation (`docs/30` §30.5).
+        if p.is_form(sym::LIST) {
+            let elem = self.subst.fresh();
+            self.unify(
+                scrut,
+                &Ty::list(elem.clone()),
+                span,
+                "a list pattern matches a list",
+            );
+            let mut binds = Vec::new();
+            let mut rest = None;
+            for (i, item) in p.args.iter().enumerate() {
+                let is_rest = item.is_form(sym::REST) && item.args.len() == 1;
+                let target = if is_rest { &item.args[0] } else { item };
+                if is_rest && i + 1 != p.args.len() {
+                    self.error(
+                        "B0346",
+                        "`*rest` has to be the last element of a list pattern",
+                        item.span(),
+                    );
+                    continue;
+                }
+                let ty = if is_rest {
+                    Ty::list(elem.clone())
+                } else {
+                    elem.clone()
+                };
+                let bound = match target.as_var() {
+                    Some(s) if s.as_str() == sym::WILDCARD => None,
+                    Some(s) => {
+                        let id = self.fresh_var();
+                        self.locals.push(Binding {
+                            name: s.name.clone(),
+                            scopes: s.scopes.clone(),
+                            kind: BindKind::Local(id, ty),
+                        });
+                        Some(id)
+                    }
+                    None => {
+                        self.error(
+                            "B0345",
+                            "nested patterns are not available in Phase 1",
+                            target.span(),
+                        );
+                        None
+                    }
+                };
+                if is_rest {
+                    rest = Some(bound);
+                } else {
+                    binds.push(bound);
+                }
+            }
+            // `[*rest]` alone matches every list, and so does a bare binder. Nothing else does, so
+            // nothing else makes the match irrefutable.
+            if binds.is_empty() && rest.is_some() {
+                *irrefutable = true;
+            }
+            covered.insert(Arc::from(if rest.is_some() {
+                LIST_NONEMPTY
+            } else if binds.is_empty() {
+                LIST_EMPTY
+            } else {
+                LIST_FIXED
+            }));
+            return Pattern::List { binds, rest };
+        }
+
+        if p.is_form(sym::REST) {
+            self.error(
+                "B0347",
+                "`*name` is only meaningful inside a list pattern",
+                span,
+            );
+            return Pattern::Wildcard;
         }
 
         let Some(head) = p.head_sym().cloned() else {
@@ -2993,6 +3148,31 @@ fn resolve_types(c: &mut Core, s: &Subst) {
     }
 }
 
+/// The three shapes a list pattern can have, as keys in the `covered` set the exhaustiveness check
+/// reads. Not type names: they never escape this module.
+const LIST_EMPTY: &str = "[]";
+const LIST_FIXED: &str = "[…]";
+const LIST_NONEMPTY: &str = "[…, *rest]";
+
+/// Every row variable written into a type, in no particular order.
+fn row_vars_of(t: &Ty, out: &mut Vec<RowVarId>) {
+    match t {
+        Ty::Var(_) => {}
+        Ty::Con(_, args) => {
+            for a in args {
+                row_vars_of(a, out);
+            }
+        }
+        Ty::Fun(ps, r, row) => {
+            for p in ps {
+                row_vars_of(p, out);
+            }
+            row_vars_of(r, out);
+            out.extend(row.tails.iter().copied());
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::check_str;
@@ -3082,11 +3262,16 @@ def minted_labels(xs: list[Str]) -> list[Str]:
         assert_eq!(row_of(src, "minted_labels"), ["nondet"]);
     }
 
+    /// §3.2's `map : (list[a], (a -> b ! e)) -> list[b] ! e`, for a definition a *user* wrote.
+    ///
+    /// This test used to assert the opposite, and the comment on it explained why that was the
+    /// sound direction: the parameter's row was monomorphic within the module, so `apply` ended up
+    /// with the union of every call's row and every caller inherited it. Sound, and wrong enough to
+    /// matter — `pure_use` performs nothing and was published as performing `nondet` because
+    /// somebody *else* passed an effectful function. docs/30 §30.2 is the fix and this is it turned
+    /// round.
     #[test]
-    fn a_user_higher_order_function_is_polymorphic_enough_for_two_call_sites() {
-        // The parameter's row is monomorphic within the module and *subsumes* rather than equates,
-        // so a pure argument at one call and an effectful one at another both check — and `apply`
-        // ends up with the union, which is the sound direction.
+    fn a_user_higher_order_function_is_polymorphic_over_its_arguments_row() {
         let src = "\
 def apply(f: (Str) -> Str, x: Str) -> Str:
     return f(x)
@@ -3097,9 +3282,84 @@ def pure_use() -> Str:
 def impure_use() -> Str:
     return apply(lambda s: s + uuid(), \"b\")
 ";
-        assert_eq!(row_of(src, "apply"), ["nondet"]);
-        assert_eq!(row_of(src, "pure_use"), ["nondet"]);
-        assert_eq!(row_of(src, "impure_use"), ["nondet"]);
+        assert!(
+            row_of(src, "apply").is_empty(),
+            "`apply` performs nothing of its own: {:?}",
+            row_of(src, "apply")
+        );
+        assert!(
+            row_of(src, "pure_use").is_empty(),
+            "and a pure caller stays pure however another caller uses it: {:?}",
+            row_of(src, "pure_use")
+        );
+        assert_eq!(
+            row_of(src, "impure_use"),
+            ["nondet"],
+            "while the effectful caller is charged for exactly what it passed"
+        );
+    }
+
+    #[test]
+    fn a_generalised_row_is_still_charged_to_whoever_supplies_it() {
+        // The other direction, which is the one a mistake here would break silently: the effect has
+        // to arrive *somewhere*. `render` is a view, so `nondet` reaching it is a placement error
+        // rather than a lost effect — and the caller is where it lands.
+        let src = "\
+def twice(f: (Int) -> Int, n: Int) -> Int:
+    return f(f(n))
+
+def stamped(n: Int) -> Int:
+    return twice(lambda m: m + now(), n)
+
+def plain(n: Int) -> Int:
+    return twice(lambda m: m + 1, n)
+";
+        assert!(row_of(src, "twice").is_empty());
+        assert_eq!(row_of(src, "stamped"), ["nondet"]);
+        assert!(row_of(src, "plain").is_empty());
+    }
+
+    #[test]
+    fn a_quantified_row_is_charged_even_when_the_body_never_calls_the_argument() {
+        // The over-approximation docs/30 §30.3 names, asserted so that it is a decision rather than
+        // a surprise. `ignore` never calls `f`, and a caller passing an effectful one is charged
+        // anyway — because the row is quantified from the *signature*, before any body is read.
+        //
+        // It is the safe direction (an effect too many forces a stricter placement; an effect too
+        // few would let a fold read a clock), and it is the same rule `uses` already followed: "a
+        // declared effect is part of the signature whether or not the body reaches it".
+        let src = "\
+def ignore(xs: list[Int], f: (Int) -> Int) -> Int:
+    return list_len(xs)
+
+def caller(xs: list[Int]) -> Int:
+    return ignore(xs, lambda n: now())
+";
+        assert!(row_of(src, "ignore").is_empty());
+        assert_eq!(row_of(src, "caller"), ["nondet"]);
+    }
+
+    #[test]
+    fn a_definition_that_returns_a_function_keeps_the_older_monomorphic_row() {
+        // The limit docs/30 §30.3 names, asserted rather than described. A row variable that also
+        // reaches the *return* type is not quantified, because `instantiate` renames syntactic
+        // occurrences and the return's row is bound to the parameter's through the substitution —
+        // so one side of the call would be renamed and the other would not.
+        let src = "\
+def hold(f: (Int) -> Int) -> (Int) -> Int:
+    return f
+
+def use_pure(n: Int) -> Int:
+    return hold(lambda m: m + 1)(n)
+
+def use_impure(n: Int) -> Int:
+    return hold(lambda m: m + now())(n)
+";
+        assert_eq!(
+            row_of(src, "use_pure"),
+            ["nondet"],
+            "still contaminated, and this is the test that will start failing when it is not"
+        );
     }
 
     #[test]

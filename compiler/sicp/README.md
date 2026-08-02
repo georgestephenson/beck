@@ -14,7 +14,7 @@ verbose for it. §25.5 sets out the protocol; nothing here is a comparison yet.
 | | |
 |---|---|
 | [`ch1.beck`](ch1.beck) | Chapter 1: §1.1.7, §1.2 and §1.3. Twenty-one `test` blocks, all but one asserting an answer the book states — four of them a printed double, digit for digit. The exception asserts the *property* §1.2.1 states instead: that an iterative process runs in constant space |
-| [`ch2.beck`](ch2.beck) | Chapter 2's §2.2.1 and §2.2.2 — the sequence abstractions the reader is asked to build, and the closure property. §2.1's rationals need *exact* rationals, which reals are not |
+| [`ch2.beck`](ch2.beck) | Chapter 2's §2.2 — the sequence abstractions the reader is asked to build (`map`, `filter`, `accumulate`, `append`, `length`, `reverse`), the closure property, and §2.2.3's conventional interfaces. §2.1's rationals need *exact* rationals, which reals are not |
 | [`refusals/`](refusals/) | One file per wall still standing between here and the rest of the book. Each is the smallest program that hits it, with the diagnostic in its header comment |
 
 The harness is [`../crates/beck-cli/tests/sicp.rs`](../crates/beck-cli/tests/sicp.rs). It runs both
@@ -40,10 +40,12 @@ example is `refusals/tail.beck`, which asserted that a tail call eight thousand 
 process and is now `ch1.beck`'s §1.2.1 exercise asserting that one a quarter of a million deep does
 not.
 
-What is in `refusals/` now is the wall the last of the six made visible:
-[`list-destructuring.beck`](refusals/list-destructuring.beck). §2.2.1's `map` and `filter` are
-writable at last; `accumulate` is not, because a `list[T]` has no head, no tail, no pattern and no
-fold. That the directory is not empty is the suite working rather than the suite running out.
+What is in `refusals/` now was written by the removals rather than by §25.6, which is the suite
+working rather than the suite running out:
+[`rational.beck`](refusals/rational.beck) — §2.1.1 needs *exact* arithmetic, and a new numeric type
+cannot join the resolution `+` goes through — and
+[`generic-type.beck`](refusals/generic-type.beck) — a `def` may take a type parameter and a `union`
+may not. Both headers end at the same place: **traits**.
 
 ## Why this is not in `corpus/`
 

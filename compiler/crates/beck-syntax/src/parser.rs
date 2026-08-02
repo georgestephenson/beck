@@ -1601,7 +1601,20 @@ impl<'a> Parser<'a> {
                 self.bump();
                 let mut items = Vec::new();
                 while !self.at(&Raw::RBracket) && !self.at_eof() {
-                    items.push(self.expr()?);
+                    // `*rest` — only meaningful in a `case` pattern, and parsed here rather than in
+                    // a separate pattern grammar because §2.6's patterns *are* expressions:
+                    // "`Added(id, text)` is the form `(Added id text)` … Nothing new to
+                    // represent". The checker is what refuses it outside a pattern
+                    // (`docs/30` §30.5).
+                    if self.at(&Raw::Star) {
+                        let star = self.span();
+                        self.bump();
+                        let e = self.postfix(false)?;
+                        let sp = star.to(e.span());
+                        items.push(Node::form(sym::REST, vec![e], sp));
+                    } else {
+                        items.push(self.expr()?);
+                    }
                     if !self.eat(&Raw::Comma) {
                         break;
                     }

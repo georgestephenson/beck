@@ -921,17 +921,12 @@ fn free_vars(c: &Core, bound: &mut BTreeSet<VarId>, out: &mut BTreeSet<VarId>) {
         CoreKind::Match { scrutinee, arms } => {
             free_vars(scrutinee, bound, out);
             for a in arms {
-                let added: Vec<VarId> = match &a.pattern {
-                    crate::core::Pattern::Bind(v) => {
-                        vec![*v].into_iter().filter(|p| bound.insert(*p)).collect()
-                    }
-                    crate::core::Pattern::Ctor { binds, .. } => binds
-                        .iter()
-                        .map(|(_, v)| *v)
-                        .filter(|p| bound.insert(*p))
-                        .collect(),
-                    _ => Vec::new(),
-                };
+                let added: Vec<VarId> = a
+                    .pattern
+                    .binders()
+                    .into_iter()
+                    .filter(|p| bound.insert(*p))
+                    .collect();
                 free_vars(&a.body, bound, out);
                 for p in added {
                     bound.remove(&p);

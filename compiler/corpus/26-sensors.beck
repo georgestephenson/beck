@@ -7,9 +7,10 @@
 # its recompute oracle, replay determinism, `Repr`, the value generator, the cost model, `Sendable`
 # and `beck iface`.
 #
-# Three things this asserts that no SICP exercise could: that a `Float` round-trips through `Repr`
+# Four things this asserts that no SICP exercise could: that a `Float` round-trips through `Repr`
 # and the log so `beck replay` reproduces it; that a *command* carrying one decodes from the wire;
-# and that `sort_by` over reals sorts them as numbers, which is the defect docs/29 §29.2 found.
+# that `sort_by` over reals sorts them as numbers, which is the defect docs/29 §29.2 found; and
+# that a **list pattern** survives the slicer, the plan and the incremental engine (docs/30 §30.5).
 
 model State:
     latest: Map[Str, Float]
@@ -19,6 +20,7 @@ model State:
 model Summary:
     sensors: Int
     mean: Float
+    coldest: Float
 
 union Command:
     Report(sensor: Str, celsius: Float)
@@ -59,8 +61,20 @@ def mean_of(s: State) -> Float:
 def coldest_first(s: State) -> list[Float]:
     return sort_by(map_values(s.latest), lambda c: c)
 
+# …and the first of them, which is a *list pattern* inside a signal the incremental engine
+# maintains. docs/30 added those, and a `match` on a list in a pure expression is a different claim
+# from one on the path the slicer, the plan and the recompute oracle all walk: `Pattern::binders`
+# is what those three read, and a pattern kind they did not know about would have been a silent
+# miscount rather than a failure (docs/30 §30.5).
+def coldest(s: State) -> Float:
+    match coldest_first(s):
+        case []:
+            return 0.0
+        case [first, *rest]:
+            return first
+
 def summarise(s: State) -> Summary:
-    return Summary(sensors=map_len(s.latest), mean=mean_of(s))
+    return Summary(sensors=map_len(s.latest), mean=mean_of(s), coldest=coldest(s))
 
 def render(sum: Summary, session: Session) -> Html:
     return ui:
@@ -68,6 +82,7 @@ def render(sum: Summary, session: Session) -> Html:
             h1: "sensors"
             p: (str(sum.sensors) + " reporting")
             p: ("mean " + str(sum.mean))
+            p: ("coldest " + str(sum.coldest))
 
 proposals: Stream[Proposal] = merge_clients()
 events: Stream[Event] = decide(proposals, readings, validate)
@@ -85,9 +100,10 @@ test "reals fold, and the mean is the real one":
     expect page contains "2 reporting"
     expect page contains "mean 15.5"
 
-test "a negative reading pulls the mean below zero":
+test "a negative reading pulls the mean below zero, and is the coldest":
     given [Reported(sensor="a", celsius=-40.0), Reported(sensor="b", celsius=5.0)]
     expect page contains "mean -17.5"
+    expect page contains "coldest -40"
 
 test "coldest first means coldest first, negatives included":
     expect coldest_first(State(latest={"a": 1.5, "b": -2.5, "c": 0.0}, count=3, total=-1.0)) == [
@@ -95,6 +111,8 @@ test "coldest first means coldest first, negatives included":
         0.0,
         1.5,
     ]
+    expect coldest(State(latest={"a": 1.5, "b": -2.5, "c": 0.0}, count=3, total=-1.0)) == -2.5
+    expect coldest(State(latest={}, count=0, total=0.0)) == 0.0
 
 test "below absolute zero never reaches the log":
     given []

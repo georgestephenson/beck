@@ -219,8 +219,9 @@ dependencies whose signatures didn't change.
   without them. *Reals are **built** ([`29`](29-numeric-tower-and-polymorphism-report.md)): §1.1.7
   runs and reproduces the doubles the book prints. Exact rationals and bignums are not, and §2.1.1
   of SICP is about the first of those rather than about reals. Collections, strings, time,
-  money/decimal, HTTP, JSON, UUID and crypto are untouched — and docs/29 §29.10 adds one the suite
-  found: a `list[T]` cannot be taken apart, so no fold over a list can be written.*
+  money/decimal, HTTP, JSON, UUID and crypto are untouched. A fold over a list *can* now be written
+  ([`30`](30-effect-polymorphism-and-list-patterns-report.md)) — and so can a library whose callers
+  do not inherit each other's effects, which §30.8 records as the precondition nobody had listed.*
 - **The language's own means of abstraction, which four phases had never been pointed at**
   ([`25`](25-benchmarks-and-expressiveness.md) §25.6, measured; §25.7 orders them). Every corpus
   program is shaped like the todo sketch, which is why none of these had surfaced. ***All six are
@@ -229,10 +230,10 @@ dependencies whose signatures didn't change.
   ([`27`](27-walls-report.md)); proper tail calls, with the bounded-depth diagnostic **as well as**
   rather than instead of them, so no Beck program aborts its own process any more
   ([`28`](28-tail-calls-report.md)); and reals plus user-written polymorphic definitions
-  ([`29`](29-numeric-tower-and-polymorphism-report.md)). What stands in their place is named in
-  docs/29 §29.9–§29.10 and is a different kind of thing: traits, type parameters on a `model` or
-  `union`, effect polymorphism for a user's higher-order definition, and a way to take a `list[T]`
-  apart.*
+  ([`29`](29-numeric-tower-and-polymorphism-report.md)). Two of the four things that stood in their
+  place are also built — effect polymorphism for a user's higher-order definition, and a way to take
+  a `list[T]` apart ([`30`](30-effect-polymorphism-and-list-patterns-report.md)). What is left is
+  **traits**, and type parameters on a `model` or `union`; docs/30 §30.7 has the rest.*
 - **The expressiveness suite** ([`25`](25-benchmarks-and-expressiveness.md) §25.5, D18): SICP
   stage 1, and Felleisen's criterion answered for the special forms the book introduces. It needs
   macros and nothing else, so it starts now and does not wait on the bullet above. *Chapter 1 is

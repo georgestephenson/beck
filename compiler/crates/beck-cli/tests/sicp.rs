@@ -504,25 +504,104 @@ test \"instantiated afresh\":
     assert!(errors("dup.beck", "def f[T, T](x: T) -> T:\n    return x\n").contains("B0315"));
 }
 
-/// The wall that removing the last one made visible, named the same day.
+/// The wall docs/29 §29.10 named, down the report after it named it.
 ///
-/// §2.2.1's `map` is buildable now; the exercise after it — `accumulate` — is not, and the reason
-/// is not polymorphism. A `list[T]` has no head, no tail, no pattern and no fold, so the structural
-/// recursion the book writes over lists has nothing to recurse on. docs/29 §29.10.
+/// `sicp/refusals/list-destructuring.beck` held `accumulate` and asserted `B0343: \`list\` is not a
+/// constructor`. `accumulate` is now in `ch2.beck`, and §2.2.3 — "Sequences as Conventional
+/// Interfaces", the section the whole of chapter 2's second half is built out of — went with it.
+///
+/// What is asserted here is the half `ch2.beck` cannot assert about itself: that a `match` over a
+/// list is checked for **exhaustiveness**. A list is empty or it is not, and a fold that handles
+/// one of those is the shape that fails on the input nobody tested.
 #[test]
-fn a_list_still_cannot_be_taken_apart_so_accumulate_cannot_be_built() {
-    let out = errors(
-        "list-destructuring.beck",
-        include_str!("../../../sicp/refusals/list-destructuring.beck"),
+fn a_list_can_be_taken_apart_and_a_match_on_one_has_to_cover_both_shapes() {
+    let src = "
+def accumulate[T, U](xs: list[T], seed: U, combine: (T, U) -> U) -> U:
+    match xs:
+        case []:
+            return seed
+        case [first, *rest]:
+            return combine(first, accumulate(rest, seed, combine))
+
+def total(xs: list[Int]) -> Int:
+    return accumulate(xs, 0, lambda x, acc: x + acc)
+
+def joined(xs: list[Str]) -> Str:
+    return accumulate(xs, \"\", lambda s, acc: s + acc)
+
+test \"one fold, two element types\":
+    expect total([1, 2, 3]) == 6
+    expect total([]) == 0
+    expect joined([\"a\", \"b\"]) == \"ab\"
+";
+    let (placed, rendered) = compile_module("accumulate.beck", src);
+    let placed = placed.unwrap_or_else(|| panic!("`accumulate` compiles at last:\n{rendered}"));
+    let report = beck_rt::testing::run(&placed, beck_eval::backend(&placed), &Options::default());
+    assert_eq!(
+        report.failed(),
+        0,
+        "{}",
+        beck_rt::testing::render(&report, true)
     );
-    assert!(out.contains("B0343"), "{out}");
+
+    // Each of these is a `match` on a list that misses a shape, and each names the shape it misses.
+    for (arms, missing) in [
+        (
+            "        case []:\n            return 0\n",
+            "a list with elements",
+        ),
+        (
+            "        case [first, *rest]:\n            return first\n",
+            "the empty list",
+        ),
+        (
+            "        case [a, b]:\n            return a\n",
+            "the empty list and a list with",
+        ),
+    ] {
+        let src = format!("def f(xs: list[Int]) -> Int:\n    match xs:\n{arms}");
+        let out = errors("partial.beck", &src);
+        assert!(out.contains("B0341"), "{out}");
+        assert!(out.contains(missing), "expected `{missing}` in:\n{out}");
+    }
+
+    // And `*rest` is the tail, so it goes at the end and nowhere else.
+    let out = errors(
+        "misplaced.beck",
+        "def f(xs: list[Int]) -> Int:\n    match xs:\n        case [*rest, last]:\n            return last\n",
+    );
+    assert!(out.contains("B0346"), "{out}");
+}
+
+/// Two walls named in docs/29 §29.9 that had no file, given one — because a wall a report describes
+/// and a wall a test asserts are different things, and this suite's whole argument is the second.
+#[test]
+fn exact_rationals_and_parameterised_types_are_still_refused() {
+    // §2.1.1 needs *exact* arithmetic, which reals are not. The wall is that a new numeric type
+    // cannot join the ad-hoc resolution `+` goes through — which is traits, again.
+    let out = errors(
+        "rational.beck",
+        include_str!("../../../sicp/refusals/rational.beck"),
+    );
+    assert!(out.contains("B0320"), "{out}");
     assert!(
-        out.contains("`list` is not a constructor"),
-        "the wall is that a list has no pattern, not that `accumulate` is mistyped:\n{out}"
+        out.contains("found `Rational`"),
+        "the wall is that `+` does not reach a user's numeric type:\n{out}"
+    );
+
+    // A `def` may take a type parameter; a `union` may not, so `ch2.beck`'s tree holds `Int`.
+    let out = errors(
+        "generic-type.beck",
+        include_str!("../../../sicp/refusals/generic-type.beck"),
+    );
+    assert!(out.contains("B0120"), "{out}");
+    assert!(
+        out.contains("expected `:`, found `[`"),
+        "and it is refused by the *parser*, exactly as `def map[T, U]` was before docs/29:\n{out}"
     );
 }
 
-/// Wall 5 down (docs/29), and the strongest oracle in the suite.
+/// Wall 5 down (docs/29)/// Wall 5 down (docs/29), and the strongest oracle in the suite.
 ///
 /// `sicp/refusals/real.beck` asserted that Newton's method did not typecheck. What replaced it is
 /// not "it typechecks" — it is that `sqrt(9.0)` prints **3.00009155413138**, which is the number on

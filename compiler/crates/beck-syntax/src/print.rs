@@ -617,6 +617,7 @@ impl Py {
                 let items: Vec<String> = n.args.iter().map(|a| self.expr(a)).collect();
                 format!("[{}]", items.join(", "))
             }
+            sym::REST if n.args.len() == 1 => format!("*{}", self.expr(&n.args[0])),
             sym::RECORD => {
                 let mut parts = Vec::new();
                 for pair in n.args.chunks(2) {

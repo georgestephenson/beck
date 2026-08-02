@@ -28,12 +28,14 @@ Write the commit message as the author of the change: what changed, and why.
   [`docs/27-walls-report.md`](docs/27-walls-report.md),
   [`docs/28-tail-calls-report.md`](docs/28-tail-calls-report.md) and
   [`docs/29-numeric-tower-and-polymorphism-report.md`](docs/29-numeric-tower-and-polymorphism-report.md)
+  and
+  [`docs/30-effect-polymorphism-and-list-patterns-report.md`](docs/30-effect-polymorphism-and-list-patterns-report.md)
   record what each
   phase does, what it refuses to claim, and the corrections it makes to the design documents.
   Phase 3 is **two bullets of twelve plus most of a third**; docs/26 §26.9 names the nine bullets
   that are untouched and the parts of the incremental-views bullet that are not built. All six of
-  [`docs/25`](docs/25-benchmarks-and-expressiveness.md)'s walls are down, and docs/29 §29.9–§29.10
-  name what stands in their place. Reports
+  [`docs/25`](docs/25-benchmarks-and-expressiveness.md)'s walls are down, and docs/30 §30.7 names
+  what stands in their place. Reports
   are history: a later phase's correction to an earlier one goes in the later report, not into the
   earlier text.
 - [`compiler/corpus/`](compiler/corpus/) is 29 programs carrying **no placement annotations**, and
@@ -42,8 +44,8 @@ Write the commit message as the author of the change: what changed, and why.
   ([`docs/25`](docs/25-benchmarks-and-expressiveness.md) §25.5): chapters of SICP in Beck, with the
   book's own stated answers as the oracle, and one file per remaining wall in `sicp/refusals/` whose
   test asserts the wall is still there. A wall coming down is a test that starts failing. All six
-  §25.6 measured are down; what is in `refusals/` now is the one removing them made visible
-  (docs/29 §29.10).
+  §25.6 measured are down; what is in `refusals/` now was written by the removals rather than by
+  docs/25 (docs/30 §30.7).
 - Design decisions are numbered in [`docs/10-decisions.md`](docs/10-decisions.md). If a change
   contradicts one, say so rather than quietly diverging.
 
@@ -65,7 +67,9 @@ Write the commit message as the author of the change: what changed, and why.
   `beck test sicp/ch2.beck`, quoted in [`docs/27-walls-report.md`](docs/27-walls-report.md) §27.5,
   [`docs/28-tail-calls-report.md`](docs/28-tail-calls-report.md) §28.5–§28.6 and
   [`docs/29-numeric-tower-and-polymorphism-report.md`](docs/29-numeric-tower-and-polymorphism-report.md)
-  §29.5.
+  §29.5 and
+  [`docs/30-effect-polymorphism-and-list-patterns-report.md`](docs/30-effect-polymorphism-and-list-patterns-report.md)
+  §30.6.
 - The harnesses are the project's conscience (§4.8, §8.3): `compiler/crates/beck-cli/tests/` holds
   the differential, replay-determinism, backend-seam, scaling, security, corpus, general-slicer,
   incremental-analysis, incremental-engine, shared-arrangement, subscription, view-metrics, SICP and

@@ -998,6 +998,28 @@ fn match_pattern(p: &Pattern, v: &Value) -> Option<Vec<(u32, Value)>> {
             }
             Some(out)
         }
+        Pattern::List { binds, rest } => {
+            let xs = v.as_list()?;
+            // No tail binder means an exact length; a tail binder means "at least this many".
+            match rest {
+                None if xs.len() != binds.len() => return None,
+                Some(_) if xs.len() < binds.len() => return None,
+                _ => {}
+            }
+            let mut out = Vec::with_capacity(binds.len() + 1);
+            for (b, x) in binds.iter().zip(xs.iter()) {
+                if let Some(id) = b {
+                    out.push((*id, x.clone()));
+                }
+            }
+            if let Some(Some(id)) = rest {
+                // The tail is a fresh list. `Arc<Vec<_>>` cannot share a suffix, so this is `O(n)`
+                // per step and a fold written over it is `O(n²)` — stated in `docs/30` §30.6
+                // rather than discovered on a long list.
+                out.push((*id, Value::List(Arc::new(xs[binds.len()..].to_vec()))));
+            }
+            Some(out)
+        }
     }
 }
 
