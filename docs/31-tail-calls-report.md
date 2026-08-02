@@ -67,9 +67,11 @@ wearing a different hat.
 `eval` and `step` could be one loop, and the reason they are not is a borrow rather than a taste.
 The body a tail call jumps into lives inside an `Arc<Closure>` that the loop has just taken
 ownership of, and a `&Core` pointing into a local that the loop then reassigns is not something safe
-Rust will write. Returning the call to `eval` and re-entering `step` costs **one host frame per
-call**, which is a constant — not per level of recursion, which is the number that had to be zero.
-The measurement in §31.5 is what says the constant is a constant.
+Rust will write. `eval` takes **one host frame for the whole trampoline**, and every iteration of
+its loop re-enters `step` in that same frame: the cost is one frame per *entry to the trampoline*,
+not one per tail call, and not one per level of recursion — which is the number that had to be
+zero. `the_depth_ceiling_fits_the_smallest_stack_we_run_on` is what says so, and it says it as an
+equality rather than a bound.
 
 ## 31.3 The abort, and the three things it took to remove it
 
