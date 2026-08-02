@@ -48,8 +48,8 @@ may be parameterised now, so nothing raises it (§36.8). The index is 94 codes, 
 | A parameter no field mentions is still a parameter | done — arity is declared, not counted | §36.4 |
 | The wire encoding and `beck iface`'s published contract | done, and rendered back as source | §36.5 |
 | `--wire-compat` on `Tree[Int]` versus `Tree[Str]` | **decided**, both directions tested | §36.5 |
-| Bounds on a parameter (`[T: Display]`) | **not done** — there are no traits to bound it by | §36.9 |
-| A parameter that is itself applied (`F[T]`) | **refused**, by name | §36.9 |
+| Bounds on a parameter (`[T: Display]`) | **not done** — there are no traits to bound it by | §36.10 |
+| A parameter that is itself applied (`F[T]`) | **refused**, by name | §36.10 |
 
 ## 36.2 One notation, four more forms
 
@@ -243,7 +243,40 @@ an arity mismatch like every other, so nothing raises it.
 scans every non-test source file for a `"Bnnnn"` literal and fails if the set differs from the index
 in *either* direction. An entry cannot outlive its code. The code is not recycled.
 
-## 36.9 What is still not
+## 36.9 The pass eight reports promised
+
+[`22`](22-phase-3-report.md) §22.6 asked for the test-checking pass to be moved out of `check.rs`.
+Every report since has repeated the request and the line count, and this one had written it a ninth
+time before deciding that a sentence written nine times is not a request, it is a habit. So it is
+done, in this change:
+
+| | before | after |
+|---|---|---|
+| `check.rs` | 3,659 lines in one file | — |
+| `check/mod.rs` | — | 3,074 |
+| `check/tests_in_beck.rs` | — | 615 |
+
+**It is a child module and not a sibling**, and that is the whole reason it could move at all. The
+pass is not a separate checker: it needs the substitution, the scopes and the diagnostics, and a
+private field of `Checker` is visible to a descendant module but not to a sibling. So
+`check/tests_in_beck.rs` holds one `impl Checker` block with `test_subjects`, `check_test`,
+`check_stub`, `test_atom`, `test_tier` and the two free functions only they use, and exactly two of
+those methods are `pub(super)`.
+
+**What made it separable was already true of the design.** Checking a `test` block is *deferred*: a
+clause is typed against the state and event types, which are only known once every signal has been
+checked, because `given` is a `list[Event]` and `Event` is whatever the program's own `decide` node
+produces. `check_module` already collected the items and came back to them at the end. The seam was
+there; nobody had cut along it.
+
+Moving it also found a doc comment that had been attached to the wrong function — "Walk a `Core`
+tree applying the final substitution to every recorded type", sitting above `body_expr_of` and
+describing `resolve_types`. It is back where it belongs. That is what a refactor is for and it is
+not worth more than a sentence.
+
+No behaviour changed: 528 tests, the same 528.
+
+## 36.10 What is still not
 
 - **A parameter cannot be bounded.** `[T: Display]` is not writable, because there is nothing to
   bound it by. This is the same sentence [`32`](32-numeric-tower-and-polymorphism-report.md) §32.9
@@ -261,10 +294,6 @@ in *either* direction. An entry cannot outlive its code. The code is not recycle
 - **Variance is not a concept.** §3.1 has no subtyping beyond effect-row subsumption, so `Tree[T]`
   relates to `Tree[U]` exactly when `T` and `U` unify, and there is nothing to get wrong. Worth
   stating because a reader coming from a language with subtyping will look for it.
-- **`check.rs` is 3,659 lines**, up from 3,437. §22.6's request to move the test-checking pass out
-  of it is unmet for the eighth report running. This change added 328 lines to it and removed 106,
-  and about 140 of the added lines are tests. The sentence has now been written eight times; the
-  next report should either move the pass or stop promising to.
 - Everything [`26`](26-arrangement-sharing-report.md) §26.9, [`31`](31-tail-calls-report.md) §31.7,
   [`32`](32-numeric-tower-and-polymorphism-report.md) §32.9 and
   [`33`](33-effect-polymorphism-and-list-patterns-report.md) §33.7 list is unchanged: no LLVM
@@ -274,7 +303,7 @@ in *either* direction. An entry cannot outlive its code. The code is not recycle
   pgwire, no query fusion. Patterns are still one level deep, effect polymorphism still does not
   cross a module boundary, and a `list[T]` is still `O(n)` to take apart.
 
-## 36.10 What this changes for the rest of Phase 3
+## 36.11 What this changes for the rest of Phase 3
 
 1. **The standard-library bullet has its second precondition.**
    [`33`](33-effect-polymorphism-and-list-patterns-report.md) §33.8 item 1 found the first: until a

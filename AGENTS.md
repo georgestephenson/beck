@@ -37,7 +37,7 @@ Write the commit message as the author of the change: what changed, and why.
   Phase 3 is **two bullets of twelve plus most of a third**; docs/26 §26.9 names the nine bullets
   that are untouched and the parts of the incremental-views bullet that are not built. All six of
   [`docs/25`](docs/25-benchmarks-and-expressiveness.md)'s walls are down, and so are the two that
-  removing them wrote (docs/33, docs/36); docs/36 §36.9 names what stands in their place. Reports
+  removing them wrote (docs/33, docs/36); docs/36 §36.10 names what stands in their place. Reports
   are history: a later phase's correction to an earlier one goes in the later report, not into the
   earlier text.
 - [`docs/reference/`](docs/reference/README.md) is **generated** by `beck doc reference` from the
@@ -53,7 +53,7 @@ Write the commit message as the author of the change: what changed, and why.
   book's own stated answers as the oracle, and one file per remaining wall in `sicp/refusals/` whose
   test asserts the wall is still there. A wall coming down is a test that starts failing. All six
   §25.6 measured are down, and so are the two the removals wrote; one file is left and it says
-  traits (docs/36 §36.10).
+  traits (docs/36 §36.11).
 - Design decisions are numbered in [`docs/10-decisions.md`](docs/10-decisions.md). If a change
   contradicts one, say so rather than quietly diverging. Engineering decisions — a dependency
   taken or refused, a gate's shape, an upgrade path — are recorded in [`docs/adr/`](docs/adr/).
