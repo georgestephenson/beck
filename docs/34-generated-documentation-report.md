@@ -181,7 +181,7 @@ does the link gate, which reads markdown. Nothing here made that better or worse
 - **`missing_docs` is not enabled.** 865 public items across the nine crates carry no `///`. CI
   denies warnings, so the lint would fail the build until every one had a sentence — and most of
   those sentences would restate the name. The number is here so the decision stays visible;
-  [`adr/0007`](adr/0009-generated-reference-documentation.md) records why, and a crate-by-crate
+  [`adr/0009`](adr/0009-generated-reference-documentation.md) records why, and a crate-by-crate
   opt-in is the path if it is taken.
 - **No cross-module linking.** A type from an imported module renders as its name, not as a link.
   The Mere (§16.2) is where a link between published versions belongs, and the Mere is not built.

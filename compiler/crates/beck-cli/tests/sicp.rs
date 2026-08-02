@@ -593,7 +593,7 @@ fn exact_rationals_and_parameterised_types_are_still_refused() {
     );
 }
 
-/// Wall 5 down (docs/32)/// Wall 5 down (docs/32), and the strongest oracle in the suite.
+/// Wall 5 down (docs/32), and the strongest oracle in the suite.
 ///
 /// `sicp/refusals/real.beck` asserted that Newton's method did not typecheck. What replaced it is
 /// not "it typechecks" — it is that `sqrt(9.0)` prints **3.00009155413138**, which is the number on
