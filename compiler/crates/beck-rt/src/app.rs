@@ -20,7 +20,6 @@
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Result};
 use beck_core::Value;
@@ -60,6 +59,13 @@ pub struct AppConfig {
     ///
     /// Ignored when `maintain_views` is off: there are no arrangements to share.
     pub share_arrangements: bool,
+    /// Where an envelope's `at` comes from.
+    ///
+    /// A dependency rather than a tunable, and here because the merge point is "the one place time
+    /// enters" (§3.7) and this is the configuration the merge point is built from. F11's constraint
+    /// is that a clock is supplied and never ambient; `beck_core::clock` says why, and says what is
+    /// deliberately not on the seam yet.
+    pub clock: Arc<dyn beck_core::clock::Clock>,
 }
 
 impl Default for AppConfig {
@@ -70,6 +76,7 @@ impl Default for AppConfig {
             dedup_capacity: 16_384,
             maintain_views: true,
             share_arrangements: true,
+            clock: Arc::new(beck_core::clock::SystemClock),
         }
     }
 }
@@ -243,12 +250,10 @@ impl App {
     /// found out the hard way that those are different facts (§18.5 item 1).
     pub async fn propose(&self, id: String, actor: String, command: Value) -> Result<Seq, String> {
         let (reply, rx) = oneshot::channel();
-        let at = Instant(
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_millis() as i64)
-                .unwrap_or(0),
-        );
+        // §3.7: the merge point is the one place time enters. It enters *here*, from the clock the
+        // process was configured with, and is data on the envelope from this line onwards — which
+        // is what makes a replay of that envelope reproduce the run rather than re-read the clock.
+        let at = Instant(self.config.clock.now_millis());
         self.ingress
             .send(Proposal {
                 id,

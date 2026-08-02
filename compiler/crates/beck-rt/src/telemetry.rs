@@ -61,7 +61,6 @@
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value as J};
 
@@ -487,10 +486,7 @@ fn resource_attributes(service: &str) -> J {
 }
 
 pub fn now_unix_nanos() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64)
-        .unwrap_or(0)
+    beck_core::clock::process_clock().now_nanos()
 }
 
 fn start_unix_nanos() -> u64 {

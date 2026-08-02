@@ -14,6 +14,7 @@
 
 pub mod backend;
 pub mod check;
+pub mod clock;
 pub mod compat;
 pub mod core;
 pub mod cost;

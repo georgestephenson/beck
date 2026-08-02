@@ -67,11 +67,12 @@ pub trait Host {
     fn new_uuid(&self) -> Arc<str>;
     /// Read the wall clock. `nondet`, and forbidden inside a fold for the same reason `uuid` is:
     /// time is data on the envelope.
+    ///
+    /// Defaulted to the host's clock through the seam rather than to `SystemTime::now()` directly
+    /// (`beck_core::clock`), so a host that wants a stated instant overrides one method and a host
+    /// that does not still never names the standard library's clock.
     fn now_millis(&self) -> i64 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as i64)
-            .unwrap_or(0)
+        beck_core::clock::process_clock().now_millis()
     }
     /// Read a secret from the process environment — `env`, which no client tier discharges.
     fn secret(&self, name: &str) -> Arc<str> {

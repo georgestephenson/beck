@@ -199,13 +199,8 @@ fn into_exec(e: EvalError) -> ExecError {
 fn uuid_v7() -> String {
     use std::collections::hash_map::RandomState;
     use std::hash::{BuildHasher, Hasher};
-    use std::time::{SystemTime, UNIX_EPOCH};
 
-    let ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
-        & 0x0000_FFFF_FFFF_FFFF;
+    let ms = (beck_core::clock::process_clock().now_millis().max(0) as u64) & 0x0000_FFFF_FFFF_FFFF;
     let rand = || RandomState::new().build_hasher().finish();
     let (a, b) = (rand(), rand());
 
