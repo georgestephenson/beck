@@ -8,10 +8,10 @@ Every name in scope in every module, with the type inference reads for it. Small
 
 | Type | Declaration |
 |---|---|
-| `Envelope` | `model Envelope {seq: Int, at: Int, actor: Str, body: a}` |
-| `Option` | `union Option = Some(value: a) \| None` |
+| `Envelope` | `model Envelope[T] {seq: Int, at: Int, actor: Str, body: T}` |
+| `Option` | `union Option[T] = Some(value: T) \| None` |
 | `Proposal` | `model Proposal {session: Session, command: Command}` |
-| `Result` | `union Result = Ok(value: a) \| Err(error: b)` |
+| `Result` | `union Result[T, E] = Ok(value: T) \| Err(error: E)` |
 | `Session` | `model Session {actor: Str}` |
 
 ## Names

@@ -57,7 +57,7 @@ use std::sync::Arc;
 use beck_diag::{Diagnostic, Diagnostics, SourceMap};
 
 use crate::check::Program;
-use crate::ty::{Effect, Row, Scheme, Tier, Ty, TyDecl};
+use crate::ty::{self, Effect, Row, Scheme, Tier, Ty, TyDecl};
 
 /// One published name.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -400,11 +400,15 @@ pub fn structural(ty: &Ty, types: &BTreeMap<Arc<str>, TyDecl>) -> String {
                 };
                 seen.push(n.clone());
                 out.push('{');
+                // Instantiated, so the hash describes the shape this mention actually has:
+                // `Envelope[Added]` carries a `body: Added`, and hashing the declaration's
+                // `body: ?1000000` instead would make it the same boundary as `Envelope[Toggled]`.
+                let at = |t: &Ty| ty::instantiate_decl(t, args);
                 match decl {
                     TyDecl::Model { fields, .. } => {
                         for (f, t) in fields {
                             let _ = write!(out, "{f}:");
-                            go(t, types, seen, out);
+                            go(&at(t), types, seen, out);
                             out.push(';');
                         }
                     }
@@ -413,14 +417,14 @@ pub fn structural(ty: &Ty, types: &BTreeMap<Arc<str>, TyDecl>) -> String {
                             let _ = write!(out, "{}(", v.name);
                             for (f, t) in &v.fields {
                                 let _ = write!(out, "{f}:");
-                                go(t, types, seen, out);
+                                go(&at(t), types, seen, out);
                                 out.push(',');
                             }
                             out.push_str(");");
                         }
                     }
                     TyDecl::Newtype { inner, .. } | TyDecl::Alias { ty: inner, .. } => {
-                        go(inner, types, seen, out)
+                        go(&at(inner), types, seen, out)
                     }
                 }
                 out.push('}');
@@ -433,73 +437,63 @@ pub fn structural(ty: &Ty, types: &BTreeMap<Arc<str>, TyDecl>) -> String {
     out
 }
 
-fn type_signature(t: &TyDecl) -> String {
-    match t {
-        TyDecl::Model { name, fields } => format!(
-            "model {name} {{{}}}",
-            fields
-                .iter()
-                .map(|(n, t)| format!("{n}: {t}"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-        TyDecl::Union { name, variants } => format!(
-            "union {name} {{{}}}",
+fn fields_as_written(fields: &[(Arc<str>, Ty)], d: &TyDecl) -> String {
+    fields
+        .iter()
+        .map(|(n, t)| format!("{n}: {}", d.as_written(t)))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn type_signature(d: &TyDecl) -> String {
+    let p = d.param_brackets();
+    match d {
+        TyDecl::Model { name, fields, .. } => {
+            format!("model {name}{p} {{{}}}", fields_as_written(fields, d))
+        }
+        TyDecl::Union { name, variants, .. } => format!(
+            "union {name}{p} {{{}}}",
             variants
                 .iter()
-                .map(|v| format!(
-                    "{}({})",
-                    v.name,
-                    v.fields
-                        .iter()
-                        .map(|(n, t)| format!("{n}: {t}"))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ))
+                .map(|v| format!("{}({})", v.name, fields_as_written(&v.fields, d)))
                 .collect::<Vec<_>>()
                 .join(" | ")
         ),
-        TyDecl::Newtype { name, inner } => format!("newtype {name} = {inner}"),
-        TyDecl::Alias { name, ty } => format!("alias {name} = {ty}"),
+        TyDecl::Newtype { name, inner, .. } => {
+            format!("newtype {name}{p} = {}", d.as_written(inner))
+        }
+        TyDecl::Alias { name, ty, .. } => format!("alias {name}{p} = {}", d.as_written(ty)),
     }
 }
 
-fn render_type(t: &TyDecl) -> String {
+fn render_type(d: &TyDecl) -> String {
     let mut out = String::new();
-    match t {
-        TyDecl::Model { name, fields } => {
-            let _ = writeln!(out, "model {name}:");
+    let p = d.param_brackets();
+    match d {
+        TyDecl::Model { name, fields, .. } => {
+            let _ = writeln!(out, "model {name}{p}:");
             if fields.is_empty() {
                 let _ = writeln!(out, "    pass");
             }
             for (n, t) in fields {
-                let _ = writeln!(out, "    {n}: {t}");
+                let _ = writeln!(out, "    {n}: {}", d.as_written(t));
             }
         }
-        TyDecl::Union { name, variants } => {
-            let _ = writeln!(out, "union {name}:");
+        TyDecl::Union { name, variants, .. } => {
+            let _ = writeln!(out, "union {name}{p}:");
             for v in variants {
                 if v.fields.is_empty() {
                     let _ = writeln!(out, "    {}", v.name);
                 } else {
-                    let _ = writeln!(
-                        out,
-                        "    {}({})",
-                        v.name,
-                        v.fields
-                            .iter()
-                            .map(|(n, t)| format!("{n}: {t}"))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    );
+                    let _ = writeln!(out, "    {}({})", v.name, fields_as_written(&v.fields, d));
                 }
             }
         }
-        TyDecl::Newtype { name, inner } => {
-            let _ = writeln!(out, "type {name} = newtype[{inner}]");
+        TyDecl::Newtype { name, inner, .. } => {
+            let _ = writeln!(out, "type {name}{p} = newtype[{}]", d.as_written(inner));
         }
-        TyDecl::Alias { name, ty } => {
-            let _ = writeln!(out, "type {name} = {ty}");
+        TyDecl::Alias { name, ty, .. } => {
+            let _ = writeln!(out, "type {name}{p} = {}", d.as_written(ty));
         }
     }
     out
@@ -648,6 +642,79 @@ mod tests {
             original.digest(),
             reread.digest(),
             "rendered:\n{text}\n\noriginal {original:#?}\n\nreread {reread:#?}"
+        );
+    }
+
+    /// The same, for a library — which is what a module publishing only types and functions is.
+    fn iface_of_library(src: &str) -> Interface {
+        let (placed, d, map) = crate::compile_or_library_str("g.beck", src);
+        assert!(!d.has_errors(), "{}", d.render(&map));
+        Interface::of(&placed.expect("it compiles").program)
+    }
+
+    /// A library whose published types are parameterised, through the file form and back.
+    const GENERIC: &str = "\
+model Stamped[T]:
+    at: Int
+    what: T
+
+union Verdict[T]:
+    Waiting(item: T)
+    Failed(item: T, why: Str)
+
+type Trail[T] = list[Stamped[T]]
+
+def stamp[T](at: Int, what: T) -> Stamped[T]:
+    return Stamped(at=at, what=what)
+
+def length(t: Trail[Str]) -> Int:
+    return list_len(t)
+
+def held(v: Verdict[Str]) -> Str:
+    match v:
+        case Waiting(item):
+            return item
+        case Failed(item, why):
+            return why
+";
+
+    #[test]
+    fn a_parameterised_declaration_round_trips_through_the_file_form() {
+        // A `.becki` is source, and the checker holds a declaration's parameters positionally. If
+        // rendering did not put the names back, the file would say `what: ?1000000` and nothing
+        // would read it again.
+        let original = iface_of_library(GENERIC);
+        let text = original.render();
+        assert!(text.contains("model Stamped[T]:"), "{text}");
+        assert!(text.contains("what: T"), "{text}");
+        assert!(text.contains("union Verdict[T]:"), "{text}");
+        assert!(text.contains("type Trail[T] = list[Stamped[T]]"), "{text}");
+        assert!(
+            !text.contains('?'),
+            "no positional variable escapes:\n{text}"
+        );
+
+        let mut diags = Diagnostics::new();
+        let reread = Interface::parse("g", &text, &mut diags);
+        let mut map = SourceMap::new();
+        map.add("g.becki", &text);
+        assert!(!diags.has_errors(), "{}\n---\n{text}", diags.render(&map));
+        assert_eq!(original.digest(), reread.digest(), "rendered:\n{text}");
+    }
+
+    #[test]
+    fn the_same_declaration_at_two_arguments_is_two_boundaries() {
+        // The question `sicp/refusals/generic-type.beck` asked of `--wire-compat`: whether
+        // `Stamped[Int]` and `Stamped[Str]` are the same boundary. They are not, and the structural
+        // hash is where that is decided — a declaration is published once, parameterised, and every
+        // *mention* of it carries the arguments that make it a type.
+        let ints = iface_of_library(&GENERIC.replace("Trail[Str]", "Trail[Int]"));
+        let strs = iface_of_library(GENERIC);
+        assert_ne!(ints.digest(), strs.digest());
+        assert_eq!(
+            ints.types.iter().find(|t| t.name().as_ref() == "Stamped"),
+            strs.types.iter().find(|t| t.name().as_ref() == "Stamped"),
+            "the declaration itself did not change; only what a signature applied it to"
         );
     }
 

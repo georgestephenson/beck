@@ -125,6 +125,25 @@ fn types(previous: &Interface, current: &Interface, out: &mut Vec<Change>) {
 }
 
 fn compare_decl(name: &str, old: &TyDecl, new: &TyDecl, out: &mut Vec<Change>) {
+    // A declaration is compared once, parameterised — not once per instantiation. `Tree[Int]` and
+    // `Tree[Str]` are different types wherever they are *mentioned*, and the field comparisons
+    // below see that difference because a field's type carries its arguments. What changes here is
+    // the shape of the name itself, and adding or removing a parameter changes every mention of it
+    // at once.
+    if old.arity() != new.arity() {
+        out.push(Change {
+            severity: Severity::Breaking,
+            what: name.to_string(),
+            detail: format!(
+                "type parameters changed from {} to {}",
+                old.arity(),
+                new.arity()
+            ),
+            because: "every mention of this type has to be rewritten, so no old signature that \
+                      names it still type-checks",
+        });
+        return;
+    }
     match (old, new) {
         (TyDecl::Union { variants: a, .. }, TyDecl::Union { variants: b, .. }) => {
             let is_event = name == "Event";
@@ -511,6 +530,27 @@ mod tests {
             .replace("State(todos={})", "State(todos={}, revision=0)")
         });
         assert!(breaking_about(&c, "State.revision"), "{c:?}");
+    }
+
+    #[test]
+    fn giving_a_type_a_parameter_is_breaking_and_renaming_one_is_not() {
+        // The decision `sicp/refusals/generic-type.beck` asked for, as a test. A declaration is
+        // compared once, parameterised — so adding a parameter breaks every mention of it at once,
+        // and renaming one changes nothing anybody can observe because the fields refer to it
+        // positionally.
+        let c = changes(|s| {
+            s.replace("model Todo:", "model Todo[T]:")
+                .replace("todos: Map[Id, Todo]", "todos: Map[Id, Todo[Str]]")
+                .replace("-> Todo:", "-> Todo[Str]:")
+                .replace("(t: Todo)", "(t: Todo[Str])")
+                .replace("list[Todo]", "list[Todo[Str]]")
+        });
+        assert!(breaking_about(&c, "Todo"), "{c:?}");
+        assert!(
+            c.iter()
+                .any(|x| x.detail.contains("type parameters changed")),
+            "{c:?}"
+        );
     }
 
     #[test]

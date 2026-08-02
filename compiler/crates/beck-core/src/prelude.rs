@@ -521,6 +521,7 @@ pub fn types() -> BTreeMap<Arc<str>, TyDecl> {
 
     add(TyDecl::Union {
         name: Arc::from(Ty::OPTION),
+        params: vec![Arc::from("T")],
         variants: vec![
             Variant {
                 name: Arc::from("Some"),
@@ -534,6 +535,7 @@ pub fn types() -> BTreeMap<Arc<str>, TyDecl> {
     });
     add(TyDecl::Union {
         name: Arc::from(Ty::RESULT),
+        params: vec![Arc::from("T"), Arc::from("E")],
         variants: vec![
             Variant {
                 name: Arc::from("Ok"),
@@ -547,6 +549,7 @@ pub fn types() -> BTreeMap<Arc<str>, TyDecl> {
     });
     add(TyDecl::Model {
         name: Arc::from(Ty::ENVELOPE),
+        params: vec![Arc::from("T")],
         fields: vec![
             (Arc::from("seq"), Ty::int()),
             (Arc::from("at"), Ty::int()),
@@ -558,10 +561,12 @@ pub fn types() -> BTreeMap<Arc<str>, TyDecl> {
     // capabilities" (§3.7). Phase 1 carries the actor only — dev-mode identity, as Phase 0 had.
     add(TyDecl::Model {
         name: Arc::from("Session"),
+        params: Vec::new(),
         fields: vec![(Arc::from("actor"), Ty::str_())],
     });
     add(TyDecl::Model {
         name: Arc::from("Proposal"),
+        params: Vec::new(),
         fields: vec![
             (Arc::from("session"), Ty::con("Session")),
             (Arc::from("command"), Ty::con("Command")),

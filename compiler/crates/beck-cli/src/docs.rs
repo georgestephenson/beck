@@ -647,38 +647,34 @@ fn generalise(ty: &str) -> String {
     out
 }
 
-fn render_ty_decl(decl: &TyDecl) -> String {
-    match decl {
-        TyDecl::Model { name, fields } => format!(
-            "model {name} {{{}}}",
-            fields
-                .iter()
-                .map(|(f, t)| format!("{f}: {t}"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-        TyDecl::Union { name, variants } => format!(
-            "union {name} = {}",
+fn render_ty_decl(d: &TyDecl) -> String {
+    let p = d.param_brackets();
+    let fields = |fs: &[(std::sync::Arc<str>, beck_core::Ty)]| {
+        fs.iter()
+            .map(|(f, t)| format!("{f}: {}", d.as_written(t)))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    match d {
+        TyDecl::Model {
+            name, fields: fs, ..
+        } => format!("model {name}{p} {{{}}}", fields(fs)),
+        TyDecl::Union { name, variants, .. } => format!(
+            "union {name}{p} = {}",
             variants
                 .iter()
                 .map(|v| if v.fields.is_empty() {
                     v.name.to_string()
                 } else {
-                    format!(
-                        "{}({})",
-                        v.name,
-                        v.fields
-                            .iter()
-                            .map(|(f, t)| format!("{f}: {t}"))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )
+                    format!("{}({})", v.name, fields(&v.fields))
                 })
                 .collect::<Vec<_>>()
                 .join(" | ")
         ),
-        TyDecl::Newtype { name, inner } => format!("type {name} = newtype[{inner}]"),
-        TyDecl::Alias { name, ty } => format!("type {name} = {ty}"),
+        TyDecl::Newtype { name, inner, .. } => {
+            format!("type {name}{p} = newtype[{}]", d.as_written(inner))
+        }
+        TyDecl::Alias { name, ty, .. } => format!("type {name}{p} = {}", d.as_written(ty)),
     }
 }
 

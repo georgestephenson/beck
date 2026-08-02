@@ -211,6 +211,7 @@ mod tests {
                 Arc::from("Todo"),
                 TyDecl::Model {
                     name: Arc::from("Todo"),
+                    params: Vec::new(),
                     fields: vec![
                         (Arc::from("text"), Ty::str_()),
                         (Arc::from("done"), Ty::bool_()),
@@ -221,6 +222,7 @@ mod tests {
                 Arc::from("Command"),
                 TyDecl::Union {
                     name: Arc::from("Command"),
+                    params: Vec::new(),
                     variants: vec![
                         Variant {
                             name: Arc::from("Toggle"),
@@ -266,6 +268,7 @@ mod tests {
             Arc::from("Tree"),
             TyDecl::Model {
                 name: Arc::from("Tree"),
+                params: Vec::new(),
                 fields: vec![(Arc::from("kids"), Ty::list(Ty::con("Tree")))],
             },
         )]);

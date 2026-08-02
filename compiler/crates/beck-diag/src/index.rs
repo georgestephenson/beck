@@ -321,12 +321,6 @@ pub const INDEX: &[CodeEntry] = &[
         "A type position holds something that is not a type expression.",
     ),
     e(
-        "B0309",
-        Stage::Types,
-        "takes no type arguments",
-        "An alias is transparent and this one is not parameterised, so `Name[…]` says nothing.",
-    ),
-    e(
         "B0310",
         Stage::Types,
         "cannot find type",
@@ -336,8 +330,8 @@ pub const INDEX: &[CodeEntry] = &[
         "B0311",
         Stage::Types,
         "wrong number of type arguments",
-        "The arity comes from the whole declaration, not from one variant: `Result` has two \
-         parameters even where a variant mentions one.",
+        "A mention of a type carries one argument per declared parameter — `union Tree[T]` is \
+         written `Tree[Int]`, never bare `Tree`.",
     ),
     e(
         "B0312",
@@ -351,22 +345,24 @@ pub const INDEX: &[CodeEntry] = &[
         "B0313",
         Stage::Types,
         "a type parameter takes no type arguments",
-        "A definition's own type parameter names an unknown type, so it has no structure to apply \
-         arguments to: `T[Int]` says nothing, whatever `T` turns out to be at the call site.",
+        "A type parameter of the definition or declaration being read names an unknown type, so it \
+         has no structure to apply arguments to: `T[Int]` says nothing, whatever `T` turns out to \
+         be at the call site.",
     ),
     e(
         "B0314",
         Stage::Types,
         "a type parameter shadows an existing type",
-        "A type parameter is a name the definition invents, and one that shadowed an existing type \
-         would make its signature read as though it mentioned that type.",
+        "A type parameter is a name the definition or declaration invents, and one that shadowed \
+         an existing type would make its fields or its signature read as though they mentioned \
+         that type.",
     ),
     e(
         "B0315",
         Stage::Types,
         "a type parameter is repeated",
-        "The same name appears twice in one definition's type parameter list, where the second \
-         would silently shadow the first.",
+        "The same name appears twice in one type-parameter list, where the second would silently \
+         shadow the first.",
     ),
     e(
         "B0320",

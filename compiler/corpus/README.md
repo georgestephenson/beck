@@ -1,6 +1,6 @@
 # The corpus
 
-Twenty-seven programs, and the Phase 2 exit criterion measured against them:
+Twenty-eight programs, and the Phase 2 exit criterion measured against them:
 
 > On a corpus of 20+ programs, placement is inferred with no annotations for the common cases.
 
@@ -27,7 +27,12 @@ of one shape would prove that the shape works, which Phase 1 already did. What v
   by two operators, and a computation that does not read the session even though it sits inside a
   `per_session`. Program 24 exists for the incremental view engine
   ([`docs/24`](../../docs/24-incremental-views-report.md)) and every one of those shapes is a way
-  for a maintained view to disagree with the recomputed one.
+  for a maintained view to disagree with the recomputed one;
+- **the shape of the types**: a type that mentions itself, two that mention each other, and a
+  declaration that takes a type parameter and is used at two different arguments. Program 25 exists
+  for recursive types ([`docs/27`](../../docs/27-walls-report.md)) and program 27 for parameterised
+  ones ([`docs/36`](../../docs/36-parameterised-types-report.md)) — every pass here walks a type,
+  and each is a place one of those shapes can be silently dropped.
 
 Every file is a program someone could plausibly write. Where one exists to exercise a corner, its
 first comment says which corner and why.

@@ -30,12 +30,14 @@ Write the commit message as the author of the change: what changed, and why.
   [`docs/32-numeric-tower-and-polymorphism-report.md`](docs/32-numeric-tower-and-polymorphism-report.md)
   and
   [`docs/33-effect-polymorphism-and-list-patterns-report.md`](docs/33-effect-polymorphism-and-list-patterns-report.md)
+  and
+  [`docs/36-parameterised-types-report.md`](docs/36-parameterised-types-report.md)
   record what each
   phase does, what it refuses to claim, and the corrections it makes to the design documents.
   Phase 3 is **two bullets of twelve plus most of a third**; docs/26 §26.9 names the nine bullets
   that are untouched and the parts of the incremental-views bullet that are not built. All six of
-  [`docs/25`](docs/25-benchmarks-and-expressiveness.md)'s walls are down, and docs/33 §33.7 names
-  what stands in their place. Reports
+  [`docs/25`](docs/25-benchmarks-and-expressiveness.md)'s walls are down, and so are the two that
+  removing them wrote (docs/33, docs/36); docs/36 §36.9 names what stands in their place. Reports
   are history: a later phase's correction to an earlier one goes in the later report, not into the
   earlier text.
 - [`docs/reference/`](docs/reference/README.md) is **generated** by `beck doc reference` from the
@@ -44,14 +46,14 @@ Write the commit message as the author of the change: what changed, and why.
   change. A new diagnostic code needs an entry in `beck-diag/src/index.rs` or `cargo test` fails.
   [`docs/34-generated-documentation-report.md`](docs/34-generated-documentation-report.md) records
   what is generated, what is written, and what it does not do.
-- [`compiler/corpus/`](compiler/corpus/) is 29 programs carrying **no placement annotations**, and
+- [`compiler/corpus/`](compiler/corpus/) is 30 programs carrying **no placement annotations**, and
   the measurement behind Phase 2's exit criterion. A program added there has to place itself.
 - [`compiler/sicp/`](compiler/sicp/) is the expressiveness benchmark
   ([`docs/25`](docs/25-benchmarks-and-expressiveness.md) §25.5): chapters of SICP in Beck, with the
   book's own stated answers as the oracle, and one file per remaining wall in `sicp/refusals/` whose
   test asserts the wall is still there. A wall coming down is a test that starts failing. All six
-  §25.6 measured are down; what is in `refusals/` now was written by the removals rather than by
-  docs/25 (docs/33 §33.7).
+  §25.6 measured are down, and so are the two the removals wrote; one file is left and it says
+  traits (docs/36 §36.10).
 - Design decisions are numbered in [`docs/10-decisions.md`](docs/10-decisions.md). If a change
   contradicts one, say so rather than quietly diverging. Engineering decisions — a dependency
   taken or refused, a gate's shape, an upgrade path — are recorded in [`docs/adr/`](docs/adr/).
@@ -76,7 +78,8 @@ Write the commit message as the author of the change: what changed, and why.
   [`docs/32-numeric-tower-and-polymorphism-report.md`](docs/32-numeric-tower-and-polymorphism-report.md)
   §32.5 and
   [`docs/33-effect-polymorphism-and-list-patterns-report.md`](docs/33-effect-polymorphism-and-list-patterns-report.md)
-  §33.6.
+  §33.6 and
+  [`docs/36-parameterised-types-report.md`](docs/36-parameterised-types-report.md) §36.6.
 - The harnesses are the project's conscience (§4.8, §8.3): `compiler/crates/beck-cli/tests/` holds
   the differential, replay-determinism, backend-seam, scaling, security, corpus, general-slicer,
   incremental-analysis, incremental-engine, shared-arrangement, subscription, view-metrics, SICP,

@@ -220,7 +220,7 @@ the pattern. `ch2.beck` says so where somebody reading the fold will see it.
   rather than fixes**, which is the point of a refusal file:
   [`rational.beck`](../compiler/sicp/refusals/rational.beck) — §2.1.1 needs *exact* arithmetic, and
   a new numeric type cannot join the ad-hoc resolution `+` goes through, which is traits again; and
-  [`generic-type.beck`](../compiler/sicp/refusals/generic-type.beck) — `def map[T]` is writable and
+  `generic-type.beck` — `def map[T]` is writable and
   `union Tree[T]` is not, refused by the parser exactly as `def map[T, U]` was before
   [`32`](32-numeric-tower-and-polymorphism-report.md).
 - **Traits are still parsed and not checked**, which is now named by two refusal files, two reports

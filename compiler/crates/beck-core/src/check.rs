@@ -38,7 +38,7 @@ use beck_syntax::{sym, Lit, Node, ScopeSet, Symbol};
 use crate::core::{Arm, Const, Core, CoreKind, Pattern, Prim, VarId};
 use crate::iface::Interface;
 use crate::prelude;
-use crate::ty::{Effect, Mismatch, Row, RowVarId, Scheme, Subst, Tier, Ty, TyDecl, Variant};
+use crate::ty::{self, Effect, Mismatch, Row, RowVarId, Scheme, Subst, Tier, Ty, TyDecl, Variant};
 
 /// A checked module: everything the placement checker, the splitter and the runtime need.
 #[derive(Clone, Debug)]
@@ -164,6 +164,10 @@ pub struct Checker<'a> {
     /// The type parameters of the `def` whose signature or body is being read. Empty everywhere
     /// else, which is why a monomorphic program cannot accidentally see one (`docs/32` §32.7).
     typarams: BTreeSet<Arc<str>>,
+    /// The type parameters of the `model`, `union`, `newtype` or `type` whose fields are being
+    /// read, mapped to their position. Empty everywhere else, and never in scope at the same time
+    /// as `typarams`: a declaration has no body and a definition has no fields.
+    decl_typarams: BTreeMap<Arc<str>, u32>,
     mode: Mode,
 }
 
@@ -214,6 +218,7 @@ pub fn check_module_with(
         next_var: 0,
         in_fold: false,
         typarams: BTreeSet::new(),
+        decl_typarams: BTreeMap::new(),
         generic_rows: BTreeMap::new(),
         mode,
     };
@@ -362,23 +367,31 @@ impl<'a> Checker<'a> {
             else {
                 continue;
             };
-            // A placeholder, so that `ty_from_node`'s "cannot find type" check passes while the
-            // real declaration is still being built. It is never observed: `collect_types`
-            // overwrites every one of them, and a name that reaches a later pass unfilled would be
-            // a name no declaration produced.
+            // The placeholder carries the declaration's *parameters*, unlike its fields: a
+            // recursive mention resolved while the real declaration is still being built —
+            // `Node(kids: list[Tree[T]])` — is arity-checked against this, so the placeholder has
+            // to know that `Tree` takes one argument even though it does not yet know what a
+            // `Tree` contains.
+            let params = Self::typaram_names(item);
+            // Otherwise a placeholder is never observed: `collect_types` overwrites every one of
+            // them, and a name that reaches a later pass unfilled would be a name no declaration
+            // produced.
             let placeholder = if item.is_form(sym::MODEL) {
                 TyDecl::Model {
                     name: name.clone(),
+                    params,
                     fields: Vec::new(),
                 }
             } else if item.is_form(sym::UNION) {
                 TyDecl::Union {
                     name: name.clone(),
+                    params,
                     variants: Vec::new(),
                 }
             } else if item.is_form(sym::NEWTYPE) {
                 TyDecl::Newtype {
                     name: name.clone(),
+                    params,
                     inner: Ty::unit(),
                 }
             } else {
@@ -398,6 +411,76 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// The names in a declaration's `(typarams …)` list, as written.
+    ///
+    /// Unvalidated on purpose: this runs while the set of type names is still being built, so it
+    /// cannot yet tell a parameter that shadows a type from one that does not.
+    /// [`Checker::bind_decl_typarams`] does that once, when every name is known.
+    fn typaram_names(item: &Node) -> Vec<Arc<str>> {
+        item.args
+            .get(1)
+            .filter(|n| n.is_form(sym::TYPARAMS))
+            .map(|n| {
+                n.args
+                    .iter()
+                    .filter_map(|p| p.as_var().map(|s| s.name.clone()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Put a *declaration's* type parameters in scope, numbered from [`ty::SCHEME_BASE`].
+    ///
+    /// This is the difference between a declaration and a definition. A `def`'s parameter is
+    /// **rigid** — `Ty::con("T")`, which unifies with itself and nothing else, so the body is
+    /// forced to work for every `T` (`docs/32` §32.7). A declaration has no body to constrain, and
+    /// its parameter has to survive into the stored `TyDecl` so that every later mention of
+    /// `Tree[Str]` can substitute for it. A positional variable does both: it cannot be unified
+    /// with by accident, because the checker's own variables are numbered from zero, and it is an
+    /// index into the arguments of whatever type mentions the name.
+    fn bind_decl_typarams(&mut self, item: &Node, decl_name: &str) -> Vec<Arc<str>> {
+        self.decl_typarams.clear();
+        let mut out: Vec<Arc<str>> = Vec::new();
+        let Some(list) = item.args.get(1).filter(|n| n.is_form(sym::TYPARAMS)) else {
+            return out;
+        };
+        for p in &list.args {
+            let Some(s) = p.as_var() else { continue };
+            let name = s.name.clone();
+            if self.types.contains_key(&name) || prelude::builtin_arity(&name).is_some() {
+                self.diags.push(
+                    Diagnostic::error(
+                        "B0314",
+                        format!(
+                            "`{name}` is already a type, so `{decl_name}` cannot take it as a \
+                             parameter"
+                        ),
+                        p.span(),
+                    )
+                    .with_primary_label("this name already names a type")
+                    .with_note(
+                        "a type parameter is a name the declaration invents, and one that shadowed \
+                         an existing type would make its fields read as though they mentioned that \
+                         type",
+                    ),
+                );
+                continue;
+            }
+            if out.contains(&name) {
+                self.error(
+                    "B0315",
+                    format!("`{name}` is repeated in `{decl_name}`'s type parameters"),
+                    p.span(),
+                );
+                continue;
+            }
+            self.decl_typarams
+                .insert(name.clone(), ty::SCHEME_BASE + out.len() as u32);
+            out.push(name);
+        }
+        out
+    }
+
     /// Resolve `type` aliases, in dependency order, before anything else reads a type.
     ///
     /// An alias is transparent, so it must be *expanded* rather than referenced, and expanding it
@@ -415,7 +498,7 @@ impl<'a> Checker<'a> {
         let mut order: Vec<Arc<str>> = Vec::new();
         for item in items {
             let (item, _) = self.undecorate(item);
-            if !item.is_form(sym::TYPE) || item.args.len() < 2 {
+            if !item.is_form(sym::TYPE) || item.args.len() < 3 {
                 continue;
             }
             let Some(name) = item.args[0].as_var().map(|s| s.name.clone()) else {
@@ -429,7 +512,9 @@ impl<'a> Checker<'a> {
                 );
                 continue;
             }
-            pending.insert(name.clone(), (item.args[1].clone(), item.span()));
+            // The whole item, not just its target: an alias may be parameterised, and its
+            // parameters have to be in scope when the target is read.
+            pending.insert(name.clone(), (item.clone(), item.span()));
             order.push(name);
         }
         let mut resolving: Vec<Arc<str>> = Vec::new();
@@ -447,9 +532,11 @@ impl<'a> Checker<'a> {
         if self.types.contains_key(name) {
             return;
         }
-        let Some((node, span)) = pending.get(name) else {
+        let Some((item, span)) = pending.get(name) else {
             return;
         };
+        let (item, span) = (item.clone(), *span);
+        let node = &item.args[2];
         if resolving.contains(name) {
             self.error(
                 "B0312",
@@ -457,7 +544,7 @@ impl<'a> Checker<'a> {
                     "type alias `{name}` is defined in terms of itself — an alias is transparent, \
                      so this describes no type; a `union` may be recursive, an alias may not"
                 ),
-                *span,
+                span,
             );
             // Registered as an alias for a fresh variable, so that every *other* mention of it
             // reports nothing further: one cycle is one diagnostic.
@@ -466,6 +553,7 @@ impl<'a> Checker<'a> {
                 name.clone(),
                 TyDecl::Alias {
                     name: name.clone(),
+                    params: Self::typaram_names(&item),
                     ty,
                 },
             );
@@ -481,11 +569,16 @@ impl<'a> Checker<'a> {
         if self.types.contains_key(name) {
             return; // the cycle branch above already filled it in
         }
+        // Bound *after* the aliases this one names are resolved, because resolving them rebinds
+        // the same scope.
+        let params = self.bind_decl_typarams(&item, name);
         let ty = self.ty_from_node(node);
+        self.decl_typarams.clear();
         self.types.insert(
             name.clone(),
             TyDecl::Alias {
                 name: name.clone(),
+                params,
                 ty,
             },
         );
@@ -523,17 +616,27 @@ impl<'a> Checker<'a> {
             else {
                 continue;
             };
+            if !item.is_form(sym::MODEL) && !item.is_form(sym::UNION) && !item.is_form(sym::NEWTYPE)
+            {
+                // `type` aliases were resolved by `collect_aliases`, and everything else is not a
+                // type declaration.
+                continue;
+            }
+            // In scope for every field type below, and only for those: a parameter belongs to the
+            // declaration that introduced it.
+            let params = self.bind_decl_typarams(item, &name);
             let decl = if item.is_form(sym::MODEL) {
-                let fields = item.args[1..]
+                let fields = item.args[2..]
                     .iter()
                     .filter_map(|f| self.field_decl(f))
                     .collect();
                 TyDecl::Model {
                     name: name.clone(),
+                    params,
                     fields,
                 }
             } else if item.is_form(sym::UNION) {
-                let variants = item.args[1..]
+                let variants = item.args[2..]
                     .iter()
                     .map(|vn| Variant {
                         name: vn
@@ -550,18 +653,17 @@ impl<'a> Checker<'a> {
                     .collect();
                 TyDecl::Union {
                     name: name.clone(),
+                    params,
                     variants,
                 }
-            } else if item.is_form(sym::NEWTYPE) {
+            } else {
                 TyDecl::Newtype {
                     name: name.clone(),
-                    inner: self.ty_from_node(&item.args[1]),
+                    params,
+                    inner: self.ty_from_node(&item.args[2]),
                 }
-            } else {
-                // `type` aliases were resolved by `collect_aliases`, and everything else is not a
-                // type declaration.
-                continue;
             };
+            self.decl_typarams.clear();
             // Overwrites the placeholder `declare_type_names` left. Duplicates were reported there,
             // where both declarations are still in view; reporting them again here would double
             // every message.
@@ -581,7 +683,7 @@ impl<'a> Checker<'a> {
         let decls: Vec<TyDecl> = self.types.values().cloned().collect();
         for d in decls {
             match &d {
-                TyDecl::Union { name, variants } => {
+                TyDecl::Union { name, variants, .. } => {
                     for v in variants {
                         self.globals.push(Binding {
                             name: v.name.clone(),
@@ -1740,37 +1842,73 @@ impl<'a> Checker<'a> {
             }
             return Ty::con(name);
         }
+        // A type parameter of the *declaration* being read — positional rather than rigid, because
+        // it has to survive into the stored `TyDecl` and be substituted for at every mention of the
+        // declaration. See [`Checker::bind_decl_typarams`].
+        if let Some(v) = self.decl_typarams.get(name).copied() {
+            if !n.args.is_empty() {
+                self.error(
+                    "B0313",
+                    format!("`{name}` is a type parameter, so it takes no type arguments"),
+                    span,
+                );
+            }
+            return Ty::Var(v);
+        }
 
         let args: Vec<Ty> = n.args.iter().map(|a| self.ty_from_node(a)).collect();
 
         // Aliases are transparent; newtypes are not — that is what "ids of different entities must
-        // not be interchangeable" (§3.1) means.
-        if let Some(TyDecl::Alias { ty, .. }) = self.types.get(name) {
-            let ty = ty.clone();
-            if !args.is_empty() {
-                self.error("B0309", format!("`{name}` takes no type arguments"), span);
+        // not be interchangeable" (§3.1) means. A parameterised alias is expanded *and* applied:
+        // `type Pairs[A] = list[Pair[A, A]]` names no type of its own, so `Pairs[Int]` has to be
+        // `list[Pair[Int, Int]]` by the time anything else sees it.
+        if let Some(TyDecl::Alias { ty, params, .. }) = self.types.get(name) {
+            let (ty, arity) = (ty.clone(), params.len());
+            if !self.check_arity(name, arity, args.len(), span) {
+                return self.subst.fresh();
             }
-            return ty;
+            return ty::instantiate_decl(&ty, &args);
         }
 
-        let known = prelude::builtin_arity(name);
-        if known.is_none() && !self.types.contains_key(name) {
-            self.error("B0310", format!("cannot find type `{name}`"), span);
+        let arity = match prelude::builtin_arity(name) {
+            Some(a) => a,
+            None => match self.types.get(name) {
+                Some(d) => d.arity(),
+                None => {
+                    self.error("B0310", format!("cannot find type `{name}`"), span);
+                    return self.subst.fresh();
+                }
+            },
+        };
+        if !self.check_arity(name, arity, args.len(), span) {
             return self.subst.fresh();
         }
-        if let Some(arity) = known {
-            if args.len() != arity {
-                self.error(
-                    "B0311",
-                    format!(
-                        "`{name}` takes {arity} type argument(s), got {}",
-                        args.len()
-                    ),
-                    span,
-                );
-            }
-        }
         Ty::Con(Arc::from(name), args)
+    }
+
+    /// A mention of a type carries exactly as many arguments as the declaration has parameters.
+    ///
+    /// Reported here rather than left to unification, because `Tree` with its argument missing
+    /// would otherwise unify with `Tree[Int]` and the error would surface as a mismatch somewhere
+    /// downstream of the line that is actually wrong.
+    fn check_arity(&mut self, name: &str, arity: usize, got: usize, span: Span) -> bool {
+        if arity == got {
+            return true;
+        }
+        let d = Diagnostic::error(
+            "B0311",
+            format!("`{name}` takes {arity} type argument(s), got {got}"),
+            span,
+        );
+        self.diags.push(if arity == 0 {
+            d.with_primary_label("this type takes no arguments")
+        } else {
+            d.with_primary_label(format!(
+                "write `{name}[{}]`",
+                (0..arity).map(|_| "_").collect::<Vec<_>>().join(", ")
+            ))
+        });
+        false
     }
 
     /// The type of two alternatives, neither of which is the other's expectation.
@@ -2570,18 +2708,16 @@ impl<'a> Checker<'a> {
         union: &str,
         fields: &[(Arc<str>, Ty)],
     ) -> BTreeMap<Arc<str>, Ty> {
-        let mut mapping: BTreeMap<u32, Ty> = BTreeMap::new();
-        if let Ty::Con(name, args) = self.subst.resolve(scrut) {
+        // The scrutinee's own arguments: matching `Leaf(v)` against a `Tree[Str]` binds `v: Str`.
+        let mut args: Vec<Ty> = Vec::new();
+        if let Ty::Con(name, xs) = self.subst.resolve(scrut) {
             if name.as_ref() == union {
-                // Declared type parameters appear as the prelude's `A`, `B` variables in order.
-                for (i, a) in args.iter().enumerate() {
-                    mapping.insert(1_000_000 + i as u32, a.clone());
-                }
+                args = xs;
             }
         }
         fields
             .iter()
-            .map(|(n, t)| (n.clone(), substitute(t, &mapping)))
+            .map(|(n, t)| (n.clone(), ty::instantiate_decl(t, &args)))
             .collect()
     }
 
@@ -2712,40 +2848,19 @@ impl<'a> Checker<'a> {
         Core::new(CoreKind::Const(Const::Unit), Ty::unit(), span)
     }
 
-    /// How many type parameters a declaration has, counted over every field of every variant.
-    fn decl_arity(&self, decl: &Option<TyDecl>) -> usize {
-        let fields: Vec<&Ty> = match decl {
-            Some(TyDecl::Union { variants, .. }) => variants
-                .iter()
-                .flat_map(|v| v.fields.iter().map(|(_, t)| t))
-                .collect(),
-            Some(TyDecl::Model { fields, .. }) => fields.iter().map(|(_, t)| t).collect(),
-            Some(TyDecl::Newtype { inner, .. }) => vec![inner],
-            _ => Vec::new(),
-        };
-        fields
-            .into_iter()
-            .filter_map(max_scheme_var)
-            .max()
-            .map(|m| (m - 1_000_000 + 1) as usize)
-            .unwrap_or(0)
-    }
-
     fn model_fields(&self, ty: &Ty) -> BTreeMap<Arc<str>, Ty> {
         let Some(name) = ty.con_name() else {
             return BTreeMap::new();
         };
         match self.types.get(name) {
             Some(TyDecl::Model { fields, .. }) => {
-                let mut mapping = BTreeMap::new();
-                if let Ty::Con(_, args) = ty {
-                    for (i, a) in args.iter().enumerate() {
-                        mapping.insert(1_000_000 + i as u32, a.clone());
-                    }
-                }
+                let args: &[Ty] = match ty {
+                    Ty::Con(_, args) => args,
+                    _ => &[],
+                };
                 fields
                     .iter()
-                    .map(|(n, t)| (n.clone(), substitute(t, &mapping)))
+                    .map(|(n, t)| (n.clone(), ty::instantiate_decl(t, args)))
                     .collect()
             }
             Some(TyDecl::Newtype { inner, .. }) => {
@@ -2933,16 +3048,11 @@ impl<'a> Checker<'a> {
 
         // Fresh type arguments for each declared parameter, so `Some(1)` is `Option[Int]`.
         //
-        // The arity comes from the whole declaration, not from this one variant: `Err` mentions
-        // only `Result`'s second parameter, and reading the arity off it would build a
+        // The arity comes from the declaration, not from this one variant: `Err` mentions only
+        // `Result`'s second parameter, and reading the arity off it would build a
         // `Result[Rejection]` that then fails to unify with `Result[list[Event], Rejection]`.
-        let param_count = self.decl_arity(&decl);
+        let param_count = decl.as_ref().map(|d| d.arity()).unwrap_or(0);
         let ty_args: Vec<Ty> = (0..param_count).map(|_| self.subst.fresh()).collect();
-        let mapping: BTreeMap<u32, Ty> = ty_args
-            .iter()
-            .enumerate()
-            .map(|(i, t)| (1_000_000 + i as u32, t.clone()))
-            .collect();
 
         if args.len() != arity {
             self.error(
@@ -2970,7 +3080,7 @@ impl<'a> Checker<'a> {
             let want = declared
                 .iter()
                 .find(|(n, _)| *n == fname)
-                .map(|(_, t)| substitute(t, &mapping));
+                .map(|(_, t)| ty::instantiate_decl(t, &ty_args));
             let value = self.expr(value_node, want.as_ref());
             match want {
                 Some(w) => self.unify(&value.ty, &w, value.span, &format!("field `{fname}`")),
@@ -3019,31 +3129,6 @@ fn written_form(n: &Node) -> Option<String> {
     }
     let args: Vec<String> = n.args.iter().filter_map(written_form).collect();
     Some(format!("{head}({})", args.join(", ")))
-}
-
-fn substitute(t: &Ty, m: &BTreeMap<u32, Ty>) -> Ty {
-    match t {
-        Ty::Var(v) => m.get(v).cloned().unwrap_or(Ty::Var(*v)),
-        Ty::Con(n, args) => Ty::Con(n.clone(), args.iter().map(|a| substitute(a, m)).collect()),
-        Ty::Fun(ps, r, row) => Ty::Fun(
-            ps.iter().map(|p| substitute(p, m)).collect(),
-            Box::new(substitute(r, m)),
-            row.clone(),
-        ),
-    }
-}
-
-fn max_scheme_var(t: &Ty) -> Option<u32> {
-    match t {
-        Ty::Var(v) if *v >= 1_000_000 => Some(*v),
-        Ty::Var(_) => None,
-        Ty::Con(_, args) => args.iter().filter_map(max_scheme_var).max(),
-        Ty::Fun(ps, r, _) => ps
-            .iter()
-            .filter_map(max_scheme_var)
-            .chain(max_scheme_var(r))
-            .max(),
-    }
 }
 
 /// Walk a `Core` tree applying the final substitution to every recorded type.
@@ -3433,5 +3518,142 @@ def audit(what: Str) -> Str uses log:
             def.row.visible().is_empty(),
             "§3.2 elides the ambient set from signatures"
         );
+    }
+
+    // --------------------------------------------------------------- parameterised declarations
+
+    const TREE: &str = "\
+union Tree[T]:
+    Leaf(value: T)
+    Node(kids: list[Tree[T]])
+
+def count[T](t: Tree[T]) -> Int:
+    match t:
+        case Leaf(value):
+            return 1
+        case Node(kids):
+            return list_len(kids)
+";
+
+    #[test]
+    fn a_declaration_may_take_a_type_parameter_and_mention_itself_under_one() {
+        assert_eq!(codes(TREE), Vec::<&str>::new());
+    }
+
+    #[test]
+    fn a_parameterised_declaration_is_a_different_type_at_each_argument() {
+        // The point of the whole feature, and the thing a compiler that ignored the arguments
+        // would still compile: `Tree[Int]` and `Tree[Str]` do not unify.
+        let src = format!(
+            "{TREE}
+def ints() -> Tree[Int]:
+    return Leaf(value=1)
+
+def strs() -> Tree[Str]:
+    return ints()
+"
+        );
+        assert!(codes(&src).contains(&"B0320"), "{:?}", codes(&src));
+    }
+
+    #[test]
+    fn a_pattern_binds_the_argument_the_scrutinee_carries() {
+        // `case Leaf(value)` over a `Tree[Str]` binds a `Str`, not the declaration's parameter.
+        let ok = format!(
+            "{TREE}
+def first(t: Tree[Str]) -> Str:
+    match t:
+        case Leaf(value):
+            return value
+        case Node(kids):
+            return \"\"
+"
+        );
+        assert_eq!(codes(&ok), Vec::<&str>::new());
+
+        let bad = ok.replace("return value", "return value + 1");
+        assert!(!codes(&bad).is_empty(), "a `Str` is not an `Int`");
+    }
+
+    #[test]
+    fn a_mention_carries_one_argument_per_declared_parameter() {
+        for (src, why) in [
+            ("union Box[T]:\n    Held(value: T)\n\ndef f(b: Box) -> Int:\n    return 1\n", "none"),
+            (
+                "union Box[T]:\n    Held(value: T)\n\ndef f(b: Box[Int, Str]) -> Int:\n    return 1\n",
+                "two",
+            ),
+        ] {
+            assert!(codes(src).contains(&"B0311"), "{why}: {:?}", codes(src));
+        }
+    }
+
+    #[test]
+    fn a_parameter_a_declaration_never_mentions_is_still_a_parameter() {
+        // Arity is declared, not inferred from the fields that happen to use it — so a phantom
+        // parameter still distinguishes `Tag[Int]` from `Tag[Str]`, and still has to be written.
+        let src = "\
+model Tag[T]:
+    label: Str
+
+def a() -> Tag[Int]:
+    return Tag(label=\"a\")
+
+def b() -> Tag[Str]:
+    return a()
+";
+        assert!(codes(src).contains(&"B0320"), "{:?}", codes(src));
+        let bare = src.replace("Tag[Int]", "Tag");
+        assert!(codes(&bare).contains(&"B0311"), "{:?}", codes(&bare));
+    }
+
+    #[test]
+    fn a_type_parameter_may_not_shadow_a_type_or_repeat_itself() {
+        let shadow = "model Note:\n    text: Str\n\nmodel Box[Note]:\n    held: Note\n";
+        assert!(codes(shadow).contains(&"B0314"), "{:?}", codes(shadow));
+
+        let repeat = "model Pair[T, T]:\n    a: T\n    b: T\n";
+        assert!(codes(repeat).contains(&"B0315"), "{:?}", codes(repeat));
+    }
+
+    #[test]
+    fn a_parameterised_alias_is_expanded_and_applied() {
+        // An alias names no type of its own, so `Pairs[Int]` has to *be* `list[Map[Int, Int]]` by
+        // the time anything else sees it — including a mismatch report.
+        let src = "\
+type Pairs[T] = list[Map[T, T]]
+
+def f(xs: Pairs[Int]) -> Int:
+    return list_len(xs)
+
+def g(xs: Pairs[Str]) -> Int:
+    return f(xs)
+";
+        let (_, d, map) = check_str("t.beck", src);
+        let text = d.render(&map);
+        assert!(text.contains("B0320"), "{text}");
+        assert!(
+            !text.contains("Pairs"),
+            "an alias is transparent, so nothing downstream should still be talking about it:\n{text}"
+        );
+    }
+
+    #[test]
+    fn a_definitions_parameter_and_a_declarations_parameter_do_not_meet() {
+        // A `def`'s `T` is rigid and a declaration's is positional. The same letter in both is two
+        // different things, and the body of the `def` may not assume they are the same.
+        let src = "\
+union Box[T]:
+    Held(value: T)
+
+def unwrap[T](b: Box[T]) -> T:
+    match b:
+        case Held(value):
+            return value
+";
+        assert_eq!(codes(src), Vec::<&str>::new());
+
+        let bad = src.replace("-> T:", "-> Int:");
+        assert!(!codes(&bad).is_empty(), "a `T` is not an `Int`");
     }
 }

@@ -356,6 +356,7 @@ pub fn signal_elem(t: &Ty) -> Ty {
 pub fn fused_state_decl(folds: &[(Arc<str>, Ty)]) -> crate::ty::TyDecl {
     crate::ty::TyDecl::Model {
         name: Arc::from(FUSED_STATE),
+        params: Vec::new(),
         fields: folds.to_vec(),
     }
 }
