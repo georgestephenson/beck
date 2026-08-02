@@ -1,13 +1,13 @@
 # Blocks: §2.2.2's tree at any element type but `Int`, §2.3.3's sets, §2.3.4's Huffman trees, and
 # every structure in chapters 3–5 that the book builds once and uses at several element types.
 #
-# docs/29 gave `def` a type-parameter list, so a *function* may be written once for every type.
+# docs/32 gave `def` a type-parameter list, so a *function* may be written once for every type.
 # A `model` and a `union` may not. `sicp/ch2.beck`'s `Tree` is therefore a tree of `Int`, where the
 # book's holds anything — including other trees, which is the closure property the section is named
 # after — and `count_leaves` over a tree of strings needs a second `union`.
 #
 # It does not reach the checker at all — the parser has no bracket list on a `union` or a `model`,
-# the way it had none on a `def` before docs/29:
+# the way it had none on a `def` before docs/32:
 #
 #   error[B0120]: expected `:`, found `[`
 #
@@ -15,7 +15,7 @@
 # constructor`.
 #
 # The half that is built is the harder half to have got wrong: quantification, instantiation, and a
-# parameter that is rigid inside the body it belongs to (docs/29 §29.7). What a parameterised
+# parameter that is rigid inside the body it belongs to (docs/32 §32.7). What a parameterised
 # *type* adds is that the parameter has to reach the constructors, the field types, the
 # exhaustiveness check, the wire encoding and `beck iface`'s published contract — so a `union
 # Tree[T]` crossing a `.becki` publishes a shape rather than a type, and `--wire-compat` has to say
