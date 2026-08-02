@@ -44,9 +44,21 @@ charge      : (Card, Money) -> Result[Receipt, Declined] ! { net.out(payments.ex
 
 Effect atoms: `ingress` (a merge point — arbitrary interleaving), `durable(S)` (persistent
 accumulator), `dom`, `net.out(host)`, `net.in`, `fs(path)`, `env`, `spawn`, `cap.X` (capabilities),
-`partial` (may diverge/panic), `external.read/write(store)` (escape-hatch stores, §3.8). An
+`partial` (may diverge/panic), `raises(E)` (may fail with a value of type `E`),
+`external.read/write(store)` (escape-hatch stores, §3.8). An
 `ambient` set — **`log` and `metrics`** — is implicitly available on every tier, elided from
 signatures, and never a reason to place anything.
+
+**Failure is one of those atoms, and `Result` is what a handler produces from it.** `raise e`
+performs `raises(E)`; `try: block` is the handler, and it yields `Result[T, E]` having discharged
+exactly that label. The consequence is the point: a function that can fail says so in its
+*signature* whether or not its author thought about it, because the row is inferred; a `uses`
+clause is an upper bound on it, as it is on every other atom; and `--wire-compat` calls a function
+that starts being able to fail a breaking change, in the same sentence it already used for a
+library that starts phoning home. Several labels in one row get a name —
+`row Fallible = raises(Refusal), log` — because rows of five and six labels are ordinary and a
+signature nobody reads is not a contract.
+[`45`](45-error-rows-report.md) is what was built and what was not.
 
 > **Correction, Phase 2** ([`20`](20-phase-2-report.md) §20.4 item 3). This paragraph originally put
 > `time` and `rand` in the ambient set as well, "implicitly available *outside folds* … except where
