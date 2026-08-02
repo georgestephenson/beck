@@ -21,67 +21,58 @@
 //! *equal* to what it was, and Salsa backdates it: `checked(m)` is not re-run. The equality is the
 //! whole mechanism, which is why [`beck_core::Interface`] closes its rows and hashes its meaning
 //! rather than its rendering.
+//!
+//! Salsa 0.28 phrases inputs as entities rather than string-keyed queries, so a [`Source`] is an
+//! input struct and the name→source lookup lives on the [`Compiler`] trait. The lookup is add-only
+//! and un-tracked, which preserves the old behaviour exactly: a module that is imported but never
+//! `set` was a panic before and is a panic now.
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
 
 use beck_core::project::{check_one, Checked};
 use beck_core::Interface;
 use beck_diag::{Diagnostics, SourceMap};
 use beck_syntax::Node;
+use salsa::Setter;
 
-#[salsa::query_group(SourceStorage)]
+/// The text of a file. The only input; everything else is derived.
+#[salsa::input]
+pub struct Source {
+    pub name: Arc<str>,
+    pub text: Arc<str>,
+}
+
+/// The database trait the tracked queries run against: [`salsa::Database`] plus the one thing
+/// Salsa does not provide, resolving a module *name* to its [`Source`].
+#[salsa::db]
 pub trait Compiler: salsa::Database {
-    /// The text of a file. The only input; everything else is derived.
-    #[salsa::input]
-    fn source(&self, name: Arc<str>) -> Arc<str>;
-
-    /// `parse(file) → Node`
-    fn parse(&self, name: Arc<str>) -> Arc<Node>;
-
-    /// `expand(module) → Node`
-    fn expand(&self, name: Arc<str>) -> Arc<Node>;
-
-    /// The modules this one imports.
-    fn imports(&self, name: Arc<str>) -> Arc<Vec<Arc<str>>>;
-
-    /// `signature(item) → Signature` — **the separate-compilation firewall** (§3.6).
-    ///
-    /// This is the query the whole design turns on. Everything downstream depends on it and
-    /// nothing downstream depends on a body, so a body edit stops here.
-    fn interface(&self, name: Arc<str>) -> Arc<Interface>;
-
-    /// `typecheck_body(item)` and `core(item)`, as one query per module: the expensive half, and
-    /// the one the firewall exists to avoid re-running.
-    fn checked(&self, name: Arc<str>) -> Arc<Outcome>;
+    fn file(&self, name: &str) -> Option<Source>;
 }
 
-/// What checking a module produced, reduced to what a caller can compare.
-///
-/// The `Program` itself is not stored: it holds `Core` trees whose variable numbering is an
-/// implementation detail, and a query result that changes when nothing meaningful did would defeat
-/// the backdating this module exists to demonstrate.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Outcome {
-    pub interface: Interface,
-    pub diagnostics: Vec<(&'static str, String)>,
-}
-
-fn parse(db: &dyn Compiler, name: Arc<str>) -> Arc<Node> {
-    let src = db.source(name.clone());
+/// `parse(file) → Node`
+#[salsa::tracked(returns(clone))]
+fn parse(db: &dyn Compiler, file: Source) -> Arc<Node> {
+    let name = file.name(db);
+    let src = file.text(db);
     let mut map = SourceMap::new();
-    let file = map.add(name.to_string(), src.to_string());
+    let f = map.add(name.to_string(), src.to_string());
     let mut diags = Diagnostics::new();
-    Arc::new(beck_syntax::parse_file(file, &name, &src, &mut diags))
+    Arc::new(beck_syntax::parse_file(f, &name, &src, &mut diags))
 }
 
-fn expand(db: &dyn Compiler, name: Arc<str>) -> Arc<Node> {
-    let parsed = db.parse(name);
+/// `expand(module) → Node`
+#[salsa::tracked(returns(clone))]
+fn expand(db: &dyn Compiler, file: Source) -> Arc<Node> {
+    let parsed = parse(db, file);
     let mut diags = Diagnostics::new();
     Arc::new(beck_macro::expand_module(&parsed, &mut diags))
 }
 
-fn imports(db: &dyn Compiler, name: Arc<str>) -> Arc<Vec<Arc<str>>> {
-    let expanded = db.expand(name);
+/// The modules this one imports.
+#[salsa::tracked(returns(clone))]
+fn imports(db: &dyn Compiler, file: Source) -> Arc<Vec<Arc<str>>> {
+    let expanded = expand(db, file);
     Arc::new(
         expanded
             .args
@@ -94,19 +85,31 @@ fn imports(db: &dyn Compiler, name: Arc<str>) -> Arc<Vec<Arc<str>>> {
     )
 }
 
-fn interface(db: &dyn Compiler, name: Arc<str>) -> Arc<Interface> {
-    Arc::new(db.checked(name).interface.clone())
+/// `signature(item) → Signature` — **the separate-compilation firewall** (§3.6).
+///
+/// This is the query the whole design turns on. Everything downstream depends on it and
+/// nothing downstream depends on a body, so a body edit stops here: the recomputed value
+/// compares equal and Salsa backdates it.
+#[salsa::tracked(returns(clone))]
+fn interface(db: &dyn Compiler, file: Source) -> Arc<Interface> {
+    Arc::new(checked(db, file).interface.clone())
 }
 
-fn checked(db: &dyn Compiler, name: Arc<str>) -> Arc<Outcome> {
+/// `typecheck_body(item)` and `core(item)`, as one query per module: the expensive half, and
+/// the one the firewall exists to avoid re-running.
+#[salsa::tracked(returns(clone))]
+fn checked(db: &dyn Compiler, file: Source) -> Arc<Outcome> {
     // The dependency that matters: each import's *interface*, never its source.
-    let deps: Vec<(String, Interface)> = db
-        .imports(name.clone())
+    let deps: Vec<(String, Interface)> = imports(db, file)
         .iter()
-        .map(|d| (d.to_string(), (*db.interface(d.clone())).clone()))
+        .map(|d| {
+            let dep = db.file(d).expect("an imported module has been set");
+            (d.to_string(), (*interface(db, dep)).clone())
+        })
         .collect();
 
-    let src = db.source(name.clone());
+    let name = file.name(db);
+    let src = file.text(db);
     let mut diags = Diagnostics::new();
     observe(&name);
     let Checked { interface, .. } = check_one(&name, &src, &deps, None, &mut diags);
@@ -114,6 +117,17 @@ fn checked(db: &dyn Compiler, name: Arc<str>) -> Arc<Outcome> {
         interface,
         diagnostics: diags.iter().map(|d| (d.code, d.message.clone())).collect(),
     })
+}
+
+/// What checking a module produced, reduced to what a caller can compare.
+///
+/// The `Program` itself is not stored: it holds `Core` trees whose variable numbering is an
+/// implementation detail, and a query result that changes when nothing meaningful did would defeat
+/// the backdating this module exists to demonstrate.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Outcome {
+    pub interface: Interface,
+    pub diagnostics: Vec<(&'static str, String)>,
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -134,13 +148,23 @@ pub fn take_rechecked() -> Vec<String> {
     OBSERVED.with(|o| std::mem::take(&mut *o.borrow_mut()))
 }
 
-#[salsa::database(SourceStorage)]
-#[derive(Default)]
+#[salsa::db]
+#[derive(Default, Clone)]
 pub struct Database {
     storage: salsa::Storage<Database>,
+    /// Name → input. Add-only; an edit goes through the input's setter, never through this map.
+    files: Arc<RwLock<HashMap<Arc<str>, Source>>>,
 }
 
+#[salsa::db]
 impl salsa::Database for Database {}
+
+#[salsa::db]
+impl Compiler for Database {
+    fn file(&self, name: &str) -> Option<Source> {
+        self.files.read().expect("not poisoned").get(name).copied()
+    }
+}
 
 impl Database {
     pub fn new() -> Database {
@@ -148,7 +172,44 @@ impl Database {
     }
 
     pub fn set(&mut self, name: &str, src: &str) {
-        self.set_source(Arc::from(name), Arc::from(src));
+        let existing = self.file(name);
+        match existing {
+            Some(f) => {
+                f.set_text(self).to(Arc::from(src));
+            }
+            None => {
+                let key: Arc<str> = Arc::from(name);
+                let source = Source::new(self, key.clone(), Arc::from(src));
+                self.files
+                    .write()
+                    .expect("not poisoned")
+                    .insert(key, source);
+            }
+        }
+    }
+
+    fn source(&self, name: &str) -> Source {
+        self.file(name).expect("a queried module has been set")
+    }
+
+    pub fn parse(&self, name: Arc<str>) -> Arc<Node> {
+        parse(self, self.source(&name))
+    }
+
+    pub fn expand(&self, name: Arc<str>) -> Arc<Node> {
+        expand(self, self.source(&name))
+    }
+
+    pub fn imports(&self, name: Arc<str>) -> Arc<Vec<Arc<str>>> {
+        imports(self, self.source(&name))
+    }
+
+    pub fn interface(&self, name: Arc<str>) -> Arc<Interface> {
+        interface(self, self.source(&name))
+    }
+
+    pub fn checked(&self, name: Arc<str>) -> Arc<Outcome> {
+        checked(self, self.source(&name))
     }
 }
 
