@@ -35,7 +35,7 @@ AST, a hygienic macro expander, Hindley–Milner inference, a typed `Core` IR, p
 against effects, and a splitter that slices the signal graph into the roles a runtime drives —
 executed by whichever backend the process chooses, behind a `Backend` seam the runtime cannot see
 past. The todo sketch is now *source* —
-[`compiler/examples/todo.beck`](compiler/examples/todo.beck), 132 lines — and the runtime that serves it is Phase 0's, with the application arriving as compiled
+[`compiler/examples/todo.beck`](compiler/examples/todo.beck), 178 lines — and the runtime that serves it is Phase 0's, with the application arriving as compiled
 `Core` instead of hand-written Rust. `beck up` puts it in a real cluster, where a killed pod
 recovers by folding the log. What it deliberately does not do — native codegen, effect inference —
 is in [`docs/19-phase-1-report.md`](docs/19-phase-1-report.md), along with the four defects that
@@ -51,23 +51,56 @@ placements so downstream compiles against a signature and a body edit costs noth
 `beck check --wire-compat` refuses a release that would break an open browser tab.
 
 The headline: **delete every `@on(...)` from the todo sketch and it still compiles, places and
-runs.** Across a 23-program [corpus](compiler/corpus/) carrying no annotations at all, 43% of
+runs.** Across a 29-program [corpus](compiler/corpus/) carrying no annotations at all, 52% of
 everything placed is unplaced-pure — code with no tier, compiled to whichever tier calls it.
 [`docs/20-phase-2-report.md`](docs/20-phase-2-report.md) has the measurements, what is still not
 done, and the sixteen things that turned out harder than expected — including the discovery that the
 Phase 1 CI workflow had never run.
 
-**Phase 3 has started**, with one of its twelve bullets built: **tests written in Beck**. A test is
-a log, a command and an expectation, so there is no fixture — state is a fold, and `given [ … ]`
-goes through the program's real `apply_event`. There is no network either: `expect
-page(session("bo")) contains "milk"` renders through the same view the server diffs, because the
-boundary is a placement of one graph rather than a seam between two programs. And there are no mocks
-to write — a stub is a value for an *effect atom*, every external call is stubbed by default with an
-inhabitant the compiler derives from its return type, and `beck test --verbose` prints the complete
-list of what it stubbed, because the compiler already knows it. `expect place(page) == client` is
-answered without running anything, and still passes with every `@on(...)` deleted.
-[`docs/22-phase-3-report.md`](docs/22-phase-3-report.md) has what shipped, the five corrections
-building it made to the design, and the eleven Phase 3 bullets it does **not** cover.
+**Phase 3 has started** — three of its fourteen bullets built, a fourth's engine, and a fifth
+running. The phase's own exit criterion, "an outside developer builds a non-trivial app from
+documentation alone", is **not met**, and
+[`docs/08-roadmap.md`](docs/08-roadmap.md) tracks that literally rather than by summary.
+
+**Tests written in Beck** ([`22`](docs/22-phase-3-report.md)). A test is a log, a command and an
+expectation, so there is no fixture — state is a fold, and `given [ … ]` goes through the program's
+real `apply_event`. There is no network either: `expect page(session("bo")) contains "milk"` renders
+through the same view the server diffs, because the boundary is a placement of one graph rather than
+a seam between two programs. And there are no mocks to write — a stub is a value for an *effect
+atom*, every external call is stubbed by default with an inhabitant the compiler derives from its
+return type, and `beck test --verbose` prints the complete list of what it stubbed. `expect
+place(page) == client` is answered without running anything, and still passes with every `@on(...)`
+deleted.
+
+**The signal graph is sliced as a graph, and views are maintained rather than recomputed**
+([`23`](docs/23-general-slicer-report.md), [`24`](docs/24-incremental-views-report.md),
+[`26`](docs/26-arrangement-sharing-report.md)). Any number of `durable` folds, any depth and any
+sharing above them; a view compiled to a dataflow of operators and updated from the change, with
+full recompute kept as the CI oracle — every corpus program, every event, maintained page against
+recomputed page, byte for byte. The operators that do not read the session are held **once for the
+whole fanout**: 256 subscribers of a public feed do 55× less work per event. What is not built is
+named as such — the page is still assembled and diffed rather than streamed as deltas, and the read
+models, pgwire exposure and query fusion in that bullet are untouched.
+
+**The language's own means of abstraction** — the bullet four phases had never pointed at
+([`25`](docs/25-benchmarks-and-expressiveness.md) §25.6 measured six walls between Beck and the rest
+of SICP). All six are down, and so are the three that removing them wrote. In order: recursive and
+forward-referencing types ([`27`](docs/27-walls-report.md)), proper tail calls
+([`31`](docs/31-tail-calls-report.md)), reals and user-written polymorphism
+([`32`](docs/32-numeric-tower-and-polymorphism-report.md)), effect polymorphism and list patterns
+([`33`](docs/33-effect-polymorphism-and-list-patterns-report.md)), parameterised types
+([`36`](docs/36-parameterised-types-report.md)), and traits — declarations and impls
+([`37`](docs/37-traits-report.md)), bounds ([`39`](docs/39-bounds-report.md)), the `.becki` boundary
+([`40`](docs/40-traits-across-modules-report.md)) and the operators
+([`41`](docs/41-generic-arithmetic-report.md)), so `one_third() + one_third()` prints `2/3`.
+Between the four trait reports: no IR node, no evaluator case, no runtime change.
+
+**SICP is the expressiveness benchmark** ([`compiler/sicp/`](compiler/sicp/), D18). Chapters 1 and 2
+run as Beck libraries with the book's own printed answers as the oracle — 21 tests and 18 tests,
+including four doubles asserted digit for digit and an iterative process a quarter of a million
+levels deep. `sicp/refusals/`, which holds one file per wall still standing, is **empty**; its
+README says why that is the narrow claim that every wall this project has *found* has been removed,
+and not that Beck expresses SICP. Chapters 3, 4 and 5 are unattempted.
 
 ```console
 $ cd compiler

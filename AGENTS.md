@@ -18,56 +18,48 @@ Write the commit message as the author of the change: what changed, and why.
   records what it proves and what it does not. It is history — a measured baseline — and should not
   be edited to track the compiler.
 - [`compiler/`](compiler/) is the built compiler and the runtime it targets, through Phase 2 plus
-  Phase 3's test construct, its general slicer, its incremental view engine and that engine's
-  shared dataflow. [`docs/19-phase-1-report.md`](docs/19-phase-1-report.md),
-  [`docs/20-phase-2-report.md`](docs/20-phase-2-report.md),
-  [`docs/22-phase-3-report.md`](docs/22-phase-3-report.md),
-  [`docs/23-general-slicer-report.md`](docs/23-general-slicer-report.md),
-  [`docs/24-incremental-views-report.md`](docs/24-incremental-views-report.md),
-  [`docs/26-arrangement-sharing-report.md`](docs/26-arrangement-sharing-report.md),
-  [`docs/27-walls-report.md`](docs/27-walls-report.md),
-  [`docs/31-tail-calls-report.md`](docs/31-tail-calls-report.md) and
-  [`docs/32-numeric-tower-and-polymorphism-report.md`](docs/32-numeric-tower-and-polymorphism-report.md)
-  and
-  [`docs/33-effect-polymorphism-and-list-patterns-report.md`](docs/33-effect-polymorphism-and-list-patterns-report.md)
-  and
-  [`docs/36-parameterised-types-report.md`](docs/36-parameterised-types-report.md)
-  and
-  [`docs/37-traits-report.md`](docs/37-traits-report.md)
-  and
-<<<<<<< HEAD
-  [`docs/39-bounds-report.md`](docs/39-bounds-report.md)
-=======
-  [`docs/39-bounds-report.md`](docs/39-bounds-report.md)
-  and
-  [`docs/40-traits-across-modules-report.md`](docs/40-traits-across-modules-report.md)
->>>>>>> 88c9a81 (feat(traits): a trait, its impls and its bounds cross a `.becki`)
-  record what each
+  Phase 3's test construct, its general slicer, its incremental view engine, that engine's shared
+  dataflow, and the language's own means of abstraction — tail calls, reals, polymorphism,
+  parameterised types and traits. The build reports —
+  [`19`](docs/19-phase-1-report.md), [`20`](docs/20-phase-2-report.md),
+  [`22`](docs/22-phase-3-report.md), [`23`](docs/23-general-slicer-report.md),
+  [`24`](docs/24-incremental-views-report.md), [`26`](docs/26-arrangement-sharing-report.md),
+  [`27`](docs/27-walls-report.md), [`31`](docs/31-tail-calls-report.md),
+  [`32`](docs/32-numeric-tower-and-polymorphism-report.md),
+  [`33`](docs/33-effect-polymorphism-and-list-patterns-report.md),
+  [`34`](docs/34-generated-documentation-report.md),
+  [`36`](docs/36-parameterised-types-report.md), [`37`](docs/37-traits-report.md),
+  [`39`](docs/39-bounds-report.md), [`40`](docs/40-traits-across-modules-report.md) and
+  [`41`](docs/41-generic-arithmetic-report.md), indexed in
+  [`docs/README.md`](docs/README.md) — record what each
   phase does, what it refuses to claim, and the corrections it makes to the design documents.
-  Phase 3 is **two bullets of twelve plus most of a third**; docs/26 §26.9 names the nine bullets
-  that are untouched and the parts of the incremental-views bullet that are not built. All six of
-  [`docs/25`](docs/25-benchmarks-and-expressiveness.md)'s walls are down, and so are the two that
-  removing them wrote (docs/33, docs/36); docs/36 §36.10 names what stands in their place. Reports
-  are history: a later phase's correction to an earlier one goes in the later report, not into the
-  earlier text.
+  Add a new report to that list and to the index; do not extend it with another "and".
+  Phase 3 is **three bullets built, most of a fourth, and a fifth that has started**: the test
+  construct, the general slicer (Phase 2's debt) and the means-of-abstraction bullet are built; the
+  incremental-views bullet has its engine but not its read models, pgwire or fusion; the
+  expressiveness suite runs two chapters of SICP. Nine of the fourteen are untouched, and docs/26
+  §26.9 names them one at a time. All six of
+  [`docs/25`](docs/25-benchmarks-and-expressiveness.md)'s walls are down, and so are the three that
+  removing them wrote (docs/33, docs/36, docs/41); docs/41 §41.7 names what stands in their place.
+  Reports are history: a later phase's correction to an earlier one goes in the later report, not
+  into the earlier text.
 - [`docs/reference/`](docs/reference/README.md) is **generated** by `beck doc reference` from the
   compiler's own tables and checked in. Never edit it by hand: change the compiler, then run
   `beck doc reference --out ../docs/reference` from `compiler/` and commit the result in the same
   change. A new diagnostic code needs an entry in `beck-diag/src/index.rs` or `cargo test` fails.
   [`docs/34-generated-documentation-report.md`](docs/34-generated-documentation-report.md) records
   what is generated, what is written, and what it does not do.
-- [`compiler/corpus/`](compiler/corpus/) is 31 programs carrying **no placement annotations**, and
-  the measurement behind Phase 2's exit criterion. A program added there has to place itself.
+- [`compiler/corpus/`](compiler/corpus/) is 29 programs — 28 single files and one three-module
+  project — carrying **no placement annotations**, and the measurement behind Phase 2's exit
+  criterion. A program added there has to place itself.
 - [`compiler/sicp/`](compiler/sicp/) is the expressiveness benchmark
   ([`docs/25`](docs/25-benchmarks-and-expressiveness.md) §25.5): chapters of SICP in Beck, with the
   book's own stated answers as the oracle, and one file per remaining wall in `sicp/refusals/` whose
   test asserts the wall is still there. A wall coming down is a test that starts failing. All six
-  §25.6 measured are down, and so are the two the removals wrote; one file is left and it says
-<<<<<<< HEAD
-  traits — built by docs/37, docs/39 and docs/40, all but the operator decision docs/39 §39.7 sets out.
-=======
-  traits — built by docs/37, docs/38 and docs/39, all but the operator decision docs/38 §38.7 sets out.
->>>>>>> 88c9a81 (feat(traits): a trait, its impls and its bounds cross a `.becki`)
+  §25.6 measured are down, and so are the three the removals wrote, so `sicp/refusals/` is
+  **empty** — which claims that every wall this project has found has been removed, and not that
+  Beck expresses SICP. `sicp/refusals/README.md` holds that distinction and says what puts a file
+  back.
 - Design decisions are numbered in [`docs/10-decisions.md`](docs/10-decisions.md). If a change
   contradicts one, say so rather than quietly diverging. Engineering decisions — a dependency
   taken or refused, a gate's shape, an upgrade path — are recorded in [`docs/adr/`](docs/adr/).
@@ -96,9 +88,11 @@ Write the commit message as the author of the change: what changed, and why.
   [`docs/36-parameterised-types-report.md`](docs/36-parameterised-types-report.md) §36.6 and
   [`docs/41-generic-arithmetic-report.md`](docs/41-generic-arithmetic-report.md) §41.4.
 - The harnesses are the project's conscience (§4.8, §8.3): `compiler/crates/beck-cli/tests/` holds
-  the differential, replay-determinism, backend-seam, scaling, security, corpus, general-slicer,
-  incremental-analysis, incremental-engine, shared-arrangement, subscription, view-metrics, SICP,
-  documentation and diagnostic-snapshot suites. Keep them green.
+  the differential, replay-determinism, backend-seam, scaling, security, corpus, placement-property,
+  general-slicer, incremental-analysis, incremental-engine, shared-arrangement, subscription,
+  view-metrics, SICP, tests-in-Beck, UI, workflow-cross-check, documentation and
+  diagnostic-snapshot suites, plus the two release-only measurement suites (`measure_phase2`,
+  `measure_incremental`). Keep them green.
 - The CI workflow is an artefact too, and Phase 2 found that it had never run
   ([`docs/20-phase-2-report.md`](docs/20-phase-2-report.md) §20.4 item 8). If you change
   `.github/workflows/`, run the steps you changed by hand before trusting them.

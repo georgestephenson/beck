@@ -502,8 +502,8 @@ A proof is about a specification. Three things here have no specification we own
 
 | | status |
 |---|---|
-| §21.2 `test` blocks in Beck | **designed, not built.** Phase 3 candidate; §11.10 and §13.9 promised the surface and this is the semantics behind it |
-| §21.3 inferred mocks | **designed, not built.** Depends on the type-directed value generator, which §21.2's property tests also need |
+| §21.2 `test` blocks in Beck | **built** ([`22`](22-phase-3-report.md)): `beck test` runs a program's own `test` and `property` blocks. `beck test --update` for page snapshots is the part that did not ship |
+| §21.3 inferred mocks | **built** ([`22`](22-phase-3-report.md)): a stub is a value for an effect atom, defaulted from the atom's return type by the one type-directed generator `property` blocks share |
 | §21.4 rung 1 — typed objects | built (`beck-infra/src/k8s.rs`) |
 | §21.4 rung 2 — YAML round-trip | built (`beck-infra/tests/invariants`, read back with `serde_norway`) |
 | §21.4 rung 3 — invariants by example | built (`beck-infra/tests/manifests.rs`, 15 checks) |
