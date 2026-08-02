@@ -644,11 +644,10 @@ fn check(
     if let Some(previous) = wire_compat {
         let text = read(previous)?;
         let mut pd = Diagnostics::new();
+        let mut pmap = SourceMap::new();
         let name = module_name(previous);
-        let old = beck_core::Interface::parse(&name, &text, &mut pd);
+        let old = beck_core::Interface::parse(&name, &text, &mut pmap, &mut pd);
         if pd.has_errors() {
-            let mut pmap = SourceMap::new();
-            pmap.add(previous.display().to_string(), text.clone());
             print!("{}", pd.render(&pmap));
             bail!("{} is not a readable interface", previous.display());
         }

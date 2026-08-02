@@ -17,7 +17,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::core::Prim;
-use crate::ty::{Effect, Row, RowVarId, Scheme, Ty, TyDecl, Variant};
+use crate::ty::{Effect, MethodSig, Row, RowVarId, Scheme, TraitSig, Ty, TyDecl, Variant};
 
 /// A fresh type variable id for a scheme. Scheme variables are numbered from a private range that
 /// never collides with the inference variables `Subst` mints, because `instantiate` replaces them.
@@ -573,6 +573,56 @@ pub fn types() -> BTreeMap<Arc<str>, TyDecl> {
         ],
     });
     out
+}
+
+/// The traits every program has.
+///
+/// One, and it is the one SICP §2.5.1 builds by hand: **generic arithmetic**. The book's answer to
+/// "how do rationals join a tower that already has integers" is a set of generic operations —
+/// `add`, `sub`, `mul`, `div` — that each type installs an implementation for, and that is exactly
+/// a trait. `docs/32` §32.3 resolved `+` from its operands and said an ad-hoc resolution was "the
+/// honest thing to build before traits exist"; they exist, so `+` resolves through this when its
+/// operands are neither `Int` nor `Float` nor `Str`.
+///
+/// The method names are the book's. A tower is only worth having if a third floor can be added
+/// from outside the language, and `impl Num for Rational` is how §2.1.1's exercise stops being
+/// about function names and starts being about data abstraction.
+///
+/// It is **not published**: `own_traits` is what a `.becki` carries, and this belongs to the
+/// language rather than to any module. Nor is it implemented for `Int` or `Float` — those go
+/// through the primitives, because a tower whose bottom floor is a dictionary call would make every
+/// existing program slower to prove a point.
+pub fn traits() -> Vec<TraitSig> {
+    let binary = |name: &str| MethodSig {
+        name: Arc::from(name),
+        params: vec![
+            (Arc::from("self"), Ty::con(SELF)),
+            (Arc::from("other"), Ty::con(SELF)),
+        ],
+        ret: Ty::con(SELF),
+        effects: Vec::new(),
+    };
+    vec![TraitSig {
+        name: Arc::from(NUM),
+        methods: vec![binary("add"), binary("sub"), binary("mul"), binary("div")],
+    }]
+}
+
+/// The trait `+`, `-`, `*` and `/` resolve through.
+pub const NUM: &str = "Num";
+
+/// The abstract receiver a trait's signatures are written in terms of.
+const SELF: &str = "Self";
+
+/// Which method of [`NUM`] an operator is.
+pub fn num_method(op: Prim) -> Option<&'static str> {
+    Some(match op {
+        Prim::Add => "add",
+        Prim::Sub => "sub",
+        Prim::Mul => "mul",
+        Prim::Div => "div",
+        _ => return None,
+    })
 }
 
 /// The type-constructor arities the checker knows without a declaration.

@@ -25,3 +25,5 @@ The split this directory creates:
 | [0007](0007-evaluator-stack-is-declared-not-discovered.md) | The evaluator's recursion bound is a count, and its stack is declared on the backend seam |
 | [0008](0008-numeric-operators-resolved-ad-hoc.md) | Numeric operators are resolved from their operands, not from a type class |
 | [0009](0009-generated-reference-documentation.md) | Reference documentation is generated from the compiler, and checked in |
+| [0010](0010-generic-arithmetic-through-a-prelude-trait.md) | Numeric operators resolve through a prelude trait — supersedes [0008](0008-numeric-operators-resolved-ad-hoc.md) |
+| [0011](0011-identifiers-are-snake-case-in-the-python-surface.md) | Identifiers are `snake_case` in the Python surface and kebab-case in the S-expression one |

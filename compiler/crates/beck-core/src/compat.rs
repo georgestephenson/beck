@@ -42,7 +42,7 @@ use std::collections::BTreeSet;
 use std::fmt;
 
 use crate::iface::{Interface, Item, Kind};
-use crate::ty::{Effect, Ty, TyDecl};
+use crate::ty::{Effect, ImplSig, Ty, TyDecl};
 
 /// How bad a change is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -84,6 +84,8 @@ impl fmt::Display for Change {
 pub fn compare(previous: &Interface, current: &Interface) -> Vec<Change> {
     let mut out = Vec::new();
     types(previous, current, &mut out);
+    traits(previous, current, &mut out);
+    impls(previous, current, &mut out);
     items(previous, current, &mut out);
     out.sort_by(|a, b| b.severity.cmp(&a.severity).then(a.what.cmp(&b.what)));
     out
@@ -119,6 +121,95 @@ fn types(previous: &Interface, current: &Interface, out: &mut Vec<Change>) {
                 what: new.name().to_string(),
                 detail: "added".into(),
                 because: "nothing in the previous release refers to it",
+            });
+        }
+    }
+}
+
+/// Traits, which are read by the *importing* module and so break in the ordinary direction.
+///
+/// The asymmetry that makes events different from commands does not apply here: a trait is not
+/// something either side writes onto a wire, it is what a call site resolves against. So removing
+/// anything an importer might have named is breaking, and adding a trait is not — with one
+/// exception, which is why this function exists at all.
+fn traits(previous: &Interface, current: &Interface, out: &mut Vec<Change>) {
+    for old in &previous.traits {
+        let Some(new) = current.traits.iter().find(|t| t.name == old.name) else {
+            out.push(Change {
+                severity: Severity::Breaking,
+                what: old.name.to_string(),
+                detail: "trait removed".into(),
+                because: "an importing module's calls resolve against it, and a bound naming it \
+                          stops type-checking",
+            });
+            continue;
+        };
+        for m in &old.methods {
+            match new.methods.iter().find(|x| x.name == m.name) {
+                None => out.push(Change {
+                    severity: Severity::Breaking,
+                    what: format!("{}.{}", old.name, m.name),
+                    detail: "method removed".into(),
+                    because: "a call to it in another module has nothing left to resolve to",
+                }),
+                Some(now) if now != m => out.push(Change {
+                    severity: Severity::Breaking,
+                    what: format!("{}.{}", old.name, m.name),
+                    detail: "signature changed".into(),
+                    because: "the caller and the implementation agree on this signature and \
+                              nothing else, so changing it breaks both at once",
+                }),
+                Some(_) => {}
+            }
+        }
+        // The exception, and the one that is easy to get wrong: an *added* method is breaking even
+        // though nobody calls it yet, because every existing `impl` — including ones in modules
+        // this release cannot see — is now incomplete.
+        for m in &new.methods {
+            if !old.methods.iter().any(|x| x.name == m.name) {
+                out.push(Change {
+                    severity: Severity::Breaking,
+                    what: format!("{}.{}", old.name, m.name),
+                    detail: "method added".into(),
+                    because: "every impl of this trait is now incomplete, including the ones in \
+                              modules this release cannot see",
+                });
+            }
+        }
+    }
+    for new in &current.traits {
+        if !previous.traits.iter().any(|t| t.name == new.name) {
+            out.push(Change {
+                severity: Severity::Compatible,
+                what: new.name.to_string(),
+                detail: "trait added".into(),
+                because: "nothing in the previous release refers to it",
+            });
+        }
+    }
+}
+
+fn impls(previous: &Interface, current: &Interface, out: &mut Vec<Change>) {
+    let key = |i: &ImplSig| format!("{} for {}", i.trait_name, i.head());
+    for old in &previous.impls {
+        if !current.impls.iter().any(|n| key(n) == key(old)) {
+            out.push(Change {
+                severity: Severity::Breaking,
+                what: key(old),
+                detail: "impl removed".into(),
+                because:
+                    "a call in another module resolved to it, and coherence means there is no \
+                          second one to fall back on",
+            });
+        }
+    }
+    for new in &current.impls {
+        if !previous.impls.iter().any(|o| key(o) == key(new)) {
+            out.push(Change {
+                severity: Severity::Compatible,
+                what: key(new),
+                detail: "impl added".into(),
+                because: "no previous call could have resolved to it",
             });
         }
     }
@@ -551,6 +642,83 @@ mod tests {
                 .any(|x| x.detail.contains("type parameters changed")),
             "{c:?}"
         );
+    }
+
+    /// The sketch with a trait and an impl, so the trait rules have something to compare.
+    const WITH_TRAIT: &str = "
+trait Labelled:
+    def label(self) -> Str
+
+impl Labelled for Todo:
+    def label(self):
+        return t_text(self)
+
+def t_text(t: Todo) -> Str:
+    return t.text
+";
+
+    fn trait_changes(edit: impl Fn(&str) -> String) -> Vec<Change> {
+        let base = format!("{}{WITH_TRAIT}", crate::split::tests::TODO);
+        let before = iface(&base);
+        let after = iface(&edit(&base));
+        compare(&before, &after)
+    }
+
+    #[test]
+    fn removing_a_trait_or_an_impl_is_breaking_and_adding_one_is_not() {
+        let gone = trait_changes(|s| s.replace(WITH_TRAIT, "\n"));
+        assert!(breaking_about(&gone, "Labelled"), "{gone:?}");
+        assert!(gone.iter().any(|c| c.detail == "trait removed"), "{gone:?}");
+        assert!(gone.iter().any(|c| c.detail == "impl removed"), "{gone:?}");
+
+        // The other direction: what this release added, nothing in the previous one could name.
+        let added = {
+            let before = iface(crate::split::tests::TODO);
+            let after = iface(&format!("{}{WITH_TRAIT}", crate::split::tests::TODO));
+            compare(&before, &after)
+        };
+        assert!(!is_breaking(&added), "{added:?}");
+        assert!(added.iter().any(|c| c.detail == "trait added"), "{added:?}");
+        assert!(added.iter().any(|c| c.detail == "impl added"), "{added:?}");
+    }
+
+    #[test]
+    fn adding_a_method_to_a_trait_is_breaking_even_though_nobody_calls_it() {
+        // The asymmetry worth getting right, and the trait version of the event/command one this
+        // file exists for: every impl of the trait is now incomplete, including impls in modules
+        // this release cannot see.
+        let c = trait_changes(|s| {
+            s.replace(
+                "    def label(self) -> Str
+",
+                "    def label(self) -> Str
+    def short(self) -> Str
+",
+            )
+            .replace(
+                "    def label(self):
+        return t_text(self)
+",
+                "    def label(self):
+        return t_text(self)
+
+    def short(self):
+        return t_text(self)
+",
+            )
+        });
+        assert!(breaking_about(&c, "Labelled.short"), "{c:?}");
+        assert!(c.iter().any(|x| x.detail == "method added"), "{c:?}");
+    }
+
+    #[test]
+    fn changing_a_trait_methods_signature_is_breaking() {
+        let c = trait_changes(|s| {
+            s.replace("def label(self) -> Str", "def label(self) -> Int")
+                .replace("return t_text(self)", "return 1")
+        });
+        assert!(breaking_about(&c, "Labelled.label"), "{c:?}");
+        assert!(c.iter().any(|x| x.detail == "signature changed"), "{c:?}");
     }
 
     #[test]

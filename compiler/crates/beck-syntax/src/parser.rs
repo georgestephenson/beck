@@ -358,11 +358,14 @@ impl<'a> Parser<'a> {
         ))
     }
 
-    /// `[T, U]`, or nothing. A type parameter is a bare name: there are no bounds to write,
-    /// because there are no traits to bound it by (`docs/32` §32.9).
+    /// `[T, U]` or `[T: Show + Eq, U]`, or nothing.
     ///
     /// The same list follows the name of a `def`, a `model`, a `union` and a `type`, so a
     /// declaration and a definition are quantified by the same notation.
+    ///
+    /// A **bound** says which traits the parameter's argument must implement, and it is what lets a
+    /// generic body call a trait method: `[T: Show]` reads as `(: T Show)`, and an unbounded
+    /// parameter stays a bare symbol so that every form that never carries one is unchanged.
     fn typarams(&mut self, at: Span) -> Node {
         let start = self.span();
         if !self.at(&Raw::LBracket) {
@@ -371,9 +374,21 @@ impl<'a> Parser<'a> {
         self.bump();
         let mut out = Vec::new();
         while !self.at(&Raw::RBracket) && !self.at_eof() {
-            match self.ident("a type parameter") {
-                Some((name, span)) => out.push(Node::sym(name, span)),
-                None => break,
+            let Some((name, span)) = self.ident("a type parameter") else {
+                break;
+            };
+            if self.eat(&Raw::Colon) {
+                let mut parts = vec![Node::sym(name, span)];
+                while let Some((t, tspan)) = self.ident("a trait name") {
+                    parts.push(Node::sym(t, tspan));
+                    if !self.eat(&Raw::Plus) {
+                        break;
+                    }
+                }
+                let end = self.span();
+                out.push(Node::form(sym::ANNOT, parts, span.to(end)));
+            } else {
+                out.push(Node::sym(name, span));
             }
             if !self.eat(&Raw::Comma) {
                 break;
@@ -469,10 +484,16 @@ impl<'a> Parser<'a> {
             return None;
         }
         let ty = self.type_expr()?;
-        self.expect(&Raw::Colon, "`:`");
-        let body = self.block()?;
         let mut items = vec![Node::sym(trait_name, tspan), typarams, ty];
-        items.extend(body.args);
+        // `impl Priced for Item` with nothing after it is a *declaration*, which is what a `.becki`
+        // publishes: an importing module needs to know the implementation exists and what its
+        // signature is, and the bodies stay in the module that wrote them.
+        if self.eat(&Raw::Colon) {
+            let body = self.block()?;
+            items.extend(body.args);
+        } else {
+            self.end_of_line();
+        }
         Some(Node::form(sym::IMPL, items, start))
     }
 

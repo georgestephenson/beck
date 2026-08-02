@@ -45,6 +45,12 @@ use crate::ty::{self, Effect, Mismatch, Row, RowVarId, Scheme, Subst, Tier, Ty, 
 pub struct Program {
     pub name: String,
     pub types: BTreeMap<Arc<str>, TyDecl>,
+    /// The `trait` declarations this module owns, in declaration order.
+    pub traits: Vec<ty::TraitSig>,
+    /// The `impl` headers this module owns, in declaration order. Both cross a `.becki`: a call in
+    /// another module cannot resolve `item.pence()` without knowing the trait *and* that the impl
+    /// exists.
+    pub impls: Vec<ty::ImplSig>,
     /// The types *this* module declares, in declaration order. An imported type is usable here and
     /// published by the module that owns it, never by this one (§3.6).
     pub own_types: Vec<Arc<str>>,
@@ -86,6 +92,12 @@ pub struct Def {
     pub row: Row,
     /// What the signature declared with `uses`, if anything.
     pub declared_effects: Vec<Effect>,
+    /// The trait bounds on this definition's type parameters, in written order.
+    ///
+    /// Empty for almost everything. A bounded definition is **not published**: its dictionary
+    /// parameters carry names no source could write, and a trait does not cross a module boundary,
+    /// so `beck iface` drops it rather than publishing a signature nobody could call.
+    pub bounds: Vec<(Arc<str>, Vec<Arc<str>>)>,
     /// True when the signature **stated** its row — so an empty one is a bound of "performs
     /// nothing" rather than an absent declaration.
     ///
@@ -186,9 +198,16 @@ pub struct Checker<'a> {
     trait_methods: BTreeMap<Arc<str>, Arc<str>>,
     /// The impls, keyed by trait and by the *head* constructor of the target type.
     impls: BTreeMap<(Arc<str>, Arc<str>), traits::ImplDecl>,
+    /// The traits and impls *this* module declares, in order — an imported one is published by the
+    /// module that owns it, and republishing would make two modules claim the same contract.
+    own_traits: Vec<Arc<str>>,
+    own_impls: Vec<(Arc<str>, Arc<str>)>,
     /// The mangled names `expand_impls` produced, so that a definition standing in for a trait
     /// method can be told from one somebody wrote.
     impl_methods: BTreeSet<Arc<str>>,
+    /// The dictionary parameters `expand_bounds` appended, per definition, in order. A call site
+    /// reads this to know how many of the callee's parameters it has to supply itself.
+    dicts: BTreeMap<Arc<str>, Vec<traits::DictParam>>,
     mode: Mode,
 }
 
@@ -243,7 +262,10 @@ pub fn check_module_with(
         traits: BTreeMap::new(),
         trait_methods: BTreeMap::new(),
         impls: BTreeMap::new(),
+        own_traits: Vec::new(),
+        own_impls: Vec::new(),
         impl_methods: BTreeSet::new(),
+        dicts: BTreeMap::new(),
         generic_rows: BTreeMap::new(),
         mode,
     };
@@ -256,6 +278,11 @@ pub fn check_module_with(
         });
     }
 
+    // The language's own traits, before anything local is read. `Num` is what `+`, `-`, `*` and `/`
+    // resolve through for a type that is neither `Int` nor `Float` nor `Str`, and it arrives by the
+    // same door an imported trait does — so nothing downstream has a special case for it.
+    ck.import_traits(&prelude::traits(), &[]);
+
     // Imported names arrive before anything local is collected, so a local definition may shadow
     // one and the diagnostic points at the local.
     for (module_name, iface) in imports {
@@ -263,8 +290,16 @@ pub fn check_module_with(
         for (n, d) in types {
             ck.types.insert(n, d);
         }
+        ck.import_traits(&iface.traits, &iface.impls);
         for (n, e) in names {
-            ck.schemes.insert(n.clone(), e.scheme);
+            // A bounded import is given back the dictionary parameters the exporting module lowered
+            // it with, so a call site here supplies exactly what a call site there would.
+            let scheme = if e.bounds.is_empty() {
+                e.scheme
+            } else {
+                ck.import_bounded(&n, &e.bounds, e.scheme)
+            };
+            ck.schemes.insert(n.clone(), scheme);
             ck.declared.insert(n.clone(), e.row);
             ck.globals.push(Binding {
                 name: n.clone(),
@@ -288,7 +323,18 @@ pub fn check_module_with(
     // it — or for placement, or for the splitter, or for the evaluator — to know about.
     ck.collect_traits(&items);
     let expanded = ck.expand_impls(&items);
-    let items: Vec<&Node> = items.into_iter().chain(expanded.iter()).collect();
+    // A bounded `def` is rewritten in place, so what follows sees a definition with one more
+    // parameter and no bound. The rewrites are owned here because they replace items rather than
+    // adding to them.
+    let bounded: Vec<(usize, Node)> = items
+        .iter()
+        .enumerate()
+        .filter_map(|(i, it)| ck.expand_bounds(it).map(|n| (i, n)))
+        .collect();
+    let mut items: Vec<&Node> = items.into_iter().chain(expanded.iter()).collect();
+    for (i, node) in &bounded {
+        items[*i] = node;
+    }
     ck.collect_signatures(&items);
     ck.collect_signal_names(&items);
     let mut program = ck.check_items(&items, name);
@@ -658,6 +704,21 @@ impl<'a> Checker<'a> {
                 // type declaration.
                 continue;
             }
+            // A declaration has no body, so a bound on one is a promise with no reader: nothing
+            // inside a `model` or a `union` can call a method. Refused rather than ignored.
+            for (p, _) in traits::bounds_of(&item.args[1]) {
+                self.diags.push(
+                    Diagnostic::error(
+                        "B0316",
+                        format!("`{name}` cannot bound its type parameter `{p}`"),
+                        item.args[1].span(),
+                    )
+                    .with_note(
+                        "a bound says what a body may call, and a declaration has no body; the \
+                         definitions that take this type apart are where the bound belongs",
+                    ),
+                );
+            }
             // In scope for every field type below, and only for those: a parameter belongs to the
             // declaration that introduced it.
             let params = self.bind_decl_typarams(item, &name);
@@ -863,8 +924,9 @@ impl<'a> Checker<'a> {
         self.typarams.clear();
         let mut out: Vec<Arc<str>> = Vec::new();
         for p in &node.args {
-            let Some(s) = p.as_var() else { continue };
-            let name = s.name.clone();
+            let Some(name) = traits::typaram_name(p) else {
+                continue;
+            };
             if self.types.contains_key(&name) || prelude::builtin_arity(&name).is_some() {
                 self.diags.push(
                     Diagnostic::error(
@@ -1107,9 +1169,24 @@ impl<'a> Checker<'a> {
             );
         }
 
+        // Declaration order, so a rendered `.becki` is stable and a trait a later impl names has
+        // already been read by the time the file reaches it again.
+        let traits: Vec<ty::TraitSig> = self
+            .own_traits
+            .iter()
+            .filter_map(|n| self.traits.get(n).map(|d| d.sig.clone()))
+            .collect();
+        let impls: Vec<ty::ImplSig> = self
+            .own_impls
+            .iter()
+            .filter_map(|k| self.impls.get(k).map(|d| d.sig.clone()))
+            .collect();
+
         Program {
             name,
             types: self.types,
+            traits,
+            impls,
             own_types: self.own_types,
             imports: Vec::new(),
             defs,
@@ -1220,6 +1297,7 @@ impl<'a> Checker<'a> {
         let mut declared_effects: Vec<Effect> = declared.atoms.iter().cloned().collect();
         declared_effects.sort();
         let row_is_declared = !declared_effects.is_empty() || self.impl_methods.contains(&name);
+        let bounds = self.bounds_of_def(&name);
         Some(Def {
             name,
             typarams: scheme.params.clone(),
@@ -1230,6 +1308,7 @@ impl<'a> Checker<'a> {
             effects: Vec::new(),
             row: inferred,
             declared_effects,
+            bounds,
             row_is_declared,
             tier_is_annotated,
             is_declaration: body_node.is_none(),
@@ -1767,14 +1846,23 @@ impl<'a> Checker<'a> {
                 || expected
                     .map(|t| t.con_name() == Some(Ty::STR))
                     .unwrap_or(false));
-        let want = if is_str {
-            Ty::str_()
+        let numeric = if is_str {
+            Some(Ty::str_())
         } else {
             self.numeric_of(&lhs.ty, None)
                 .or_else(|| self.numeric_of(&rhs.ty, None))
                 .or_else(|| expected.and_then(|t| self.numeric_of(t, None)))
-                .unwrap_or_else(Ty::int)
         };
+        // Neither operand is a number and neither is a string: the third floor of the tower, which
+        // a user's type joins by implementing `Num` (`docs/41` §41.2). Only when there is an
+        // implementation to dispatch to — otherwise the old rule runs and says what it always said,
+        // so `1 + true` is still a mismatch rather than a lecture about traits.
+        if numeric.is_none() {
+            if let Some(core) = self.arith_through_num(op, &lhs, &rhs, span) {
+                return core;
+            }
+        }
+        let want = numeric.unwrap_or_else(Ty::int);
         let label = format!("operand of `{}`", op.name());
         self.unify(&lhs.ty, &want, lhs.span, &label);
         self.unify(&rhs.ty, &want, rhs.span, &label);
@@ -1785,6 +1873,77 @@ impl<'a> Checker<'a> {
             },
             want,
             span,
+        )
+    }
+
+    /// `a + b` where `a` is neither a number nor a string, resolved through `Num`.
+    ///
+    /// SICP §2.5.1's generic arithmetic, and `docs/32` §32.3's deferred decision taken: the four
+    /// operators are the four methods of one prelude trait, so a `Rational` joins the tower the way
+    /// the book joins it — by implementing the operations, not by being added to a list inside the
+    /// compiler.
+    ///
+    /// Returns `None` when there is nothing to dispatch to, and the caller falls back to the
+    /// numeric rule unchanged. The failure this *does* report is the one worth reporting: an
+    /// operand whose type is a declared one with no implementation, where "expected `Int`, found
+    /// `Rational`" names the symptom and `impl Num for Rational` is the cure.
+    fn arith_through_num(&mut self, op: Prim, lhs: &Core, rhs: &Core, span: Span) -> Option<Core> {
+        let method: Arc<str> = Arc::from(prelude::num_method(op)?);
+        let num: Arc<str> = Arc::from(prelude::NUM);
+        let ty = [&lhs.ty, &rhs.ty]
+            .into_iter()
+            .map(|t| self.subst.resolve(t))
+            .find(|t| self.joins_the_tower(t))?;
+        let head = ty.con_name().map(Arc::<str>::from)?;
+        let known = self.impls.contains_key(&(num.clone(), head.clone()))
+            || self
+                .resolve(&Symbol::new(traits::mangle(&num, &method, &head)))
+                .is_some();
+        if !known {
+            // A declared type with no implementation. Reported here rather than left to the numeric
+            // rule, because "this type is not in the tower, and here is how to put it there" is a
+            // different sentence from "this is not an `Int`".
+            if self.types.contains_key(&head) {
+                self.diags.push(
+                    Diagnostic::error(
+                        "B0387",
+                        format!("`{head}` does not implement `{num}`"),
+                        span,
+                    )
+                    .with_primary_label(format!("`{}` resolves through it", op.name()))
+                    .with_fix(format!("write `impl {num} for {head}`")),
+                );
+                return Some(Core::new(CoreKind::Const(Const::Unit), ty, span));
+            }
+            return None;
+        }
+        let func = self.dictionary(&num, &method, &ty, span)?;
+        let Ty::Fun(params, ret, row) = self.subst.resolve(&func.ty) else {
+            return None;
+        };
+        self.perform(&row);
+        let label = format!("operand of `{}`", op.name());
+        self.unify(&lhs.ty, &params[0], lhs.span, &label);
+        self.unify(&rhs.ty, &params[1], rhs.span, &label);
+        Some(Core::new(
+            CoreKind::App {
+                func: Box::new(func),
+                args: vec![lhs.clone(), rhs.clone()],
+            },
+            *ret,
+            span,
+        ))
+    }
+
+    /// Could this type be a floor of the numeric tower a user built?
+    ///
+    /// Everything with a name except the two the primitives already handle and the one `+` also
+    /// concatenates. A unification variable is not: an expression nothing has pinned down yet still
+    /// defaults to `Int`, which is what keeps every program written before this compiling.
+    fn joins_the_tower(&self, t: &Ty) -> bool {
+        !matches!(
+            t.con_name(),
+            None | Some(Ty::INT) | Some(Ty::FLOAT) | Some(Ty::STR)
         )
     }
 
@@ -1835,6 +1994,20 @@ impl<'a> Checker<'a> {
                 Core::new(CoreKind::Const(Const::Unit), self.subst.fresh(), span)
             }
             BindKind::Global(name) => {
+                if self.dicts.contains_key(&name) {
+                    self.diags.push(
+                        Diagnostic::error(
+                            "B0386",
+                            format!("`{name}` has a bound, so it cannot be used as a value"),
+                            span,
+                        )
+                        .with_note(
+                            "a bounded definition is handed its implementations at the call site, \
+                             and a reference that is never called has no call site to hand them \
+                             over",
+                        ),
+                    );
+                }
                 let ty = self
                     .schemes
                     .get(&name)
@@ -2382,6 +2555,9 @@ impl<'a> Checker<'a> {
             }
             Some(BindKind::Model(model)) => self.make(&model, None, &n.args, span),
             Some(BindKind::Global(name)) => {
+                if let Some(specs) = self.dicts.get(&name).cloned() {
+                    return self.apply_bounded(&name, &specs, &n.args, expected, span);
+                }
                 let ty = self
                     .schemes
                     .get(&name)

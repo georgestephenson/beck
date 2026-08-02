@@ -48,3 +48,20 @@ def only[T](xs: list[T], keep: T -> Bool) -> list[T]:
 
 def count_where[T](xs: list[T], keep: T -> Bool) -> Int:
     return list_len(only(xs, keep))
+
+# The project's first *trait*, and the reason it is here rather than in a single file: what a call
+# in another module resolves against is the published header, not the body. `beck iface` writes the
+# trait and the `impl` line; `app.beck` calls `label()` on a `Todo` it imported and never sees the
+# implementation (docs/40 §40.3).
+
+trait Labelled:
+    def label(self) -> Str
+
+impl Labelled for Todo:
+    def label(self):
+        return self.text
+
+# A bounded definition that crosses the boundary. The dictionary parameter it is lowered with is not
+# part of the contract — the *bound* is, and the importing module rebuilds the parameter from it.
+def labels[T: Labelled](xs: list[T]) -> list[Str]:
+    return map_list(xs, lambda x: x.label())

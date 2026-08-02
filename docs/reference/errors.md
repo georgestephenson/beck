@@ -4,7 +4,7 @@
 
 Every diagnostic the compiler can raise carries a stable code. `beck explain error B0341` prints one of these entries at the terminal.
 
-The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans every non-test source file for a `"Bnnnn"` literal and fails if the set differs from this table in either direction. **101 codes.**
+The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans every non-test source file for a `"Bnnnn"` literal and fails if the set differs from this table in either direction. **102 codes.**
 
 
 ## Reading the source — `B0100–B0120`
@@ -55,6 +55,7 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0313` | error | **a type parameter takes no type arguments** — A type parameter of the definition or declaration being read names an unknown type, so it has no structure to apply arguments to: `T[Int]` says nothing, whatever `T` turns out to be at the call site. |
 | `B0314` | error | **a type parameter shadows an existing type** — A type parameter is a name the definition or declaration invents, and one that shadowed an existing type would make its fields or its signature read as though they mentioned that type. |
 | `B0315` | error | **a type parameter is repeated** — The same name appears twice in one type-parameter list, where the second would silently shadow the first. |
+| `B0316` | error | **a declaration cannot bound its type parameter** — A bound says what a body may call, and a `model`, a `union`, a `newtype` and a `type` have no body. The definitions that take the type apart are where the bound belongs. |
 | `B0320` | error | **type mismatch** — Unification failed; the message names what was being unified — an argument, a field, a result, or the two branches of an `if`. The branches of an `if` are reported as two alternatives rather than as actual-and-expected: typing one as the other's expectation is what refused SICP exercise 1.43 (docs/27 §27.3). |
 | `B0330` | warning | **statements after `return` are unreachable** — A `return` ends its block; anything after it never runs. |
 | `B0331` | error | **loops are not available in Phase 1** — Everything is an expression and `var` is not yet mutable, so a loop has nothing to accumulate into. Use `map_list`, `filter_list` or `fold`. |
@@ -85,7 +86,7 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0383` | error | **cannot find the trait or the type this impl names** — Both halves of `impl Trait for Type` have to resolve before the impl can be registered. |
 | `B0384` | error | **conflicting implementations** — Coherence: one impl per trait per type constructor, and no blanket impl over a type parameter — so what a call means never depends on which impls happen to be in scope. |
 | `B0385` | error | **orphan impl** — An impl belongs with the trait or with the type. Implementing somebody else's trait for somebody else's type is what lets two modules supply one and disagree. |
-| `B0386` | error | **a trait method needs a concrete receiver** — Dispatch is static and resolved from the receiver's type. A trait method cannot be passed as a value, and generic code cannot call one: both need bounds on a type parameter, which is not built. |
+| `B0386` | error | **no implementation can be chosen here** — An implementation comes from a concrete type or from a bound on a type parameter — write `[T: Trait]` to say the parameter has one. A trait method and a bounded definition are both called rather than passed: the implementation is supplied at the call site, so a reference that is never called has nowhere to receive it. |
 | `B0387` | error | **the type does not implement the trait** — There is no `impl Trait for Type` in scope for the receiver's type. |
 
 ## Placement — `B0400–B0404`

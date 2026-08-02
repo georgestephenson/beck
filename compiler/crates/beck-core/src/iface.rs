@@ -57,12 +57,17 @@ use std::sync::Arc;
 use beck_diag::{Diagnostic, Diagnostics, SourceMap};
 
 use crate::check::Program;
-use crate::ty::{self, Effect, Row, Scheme, Tier, Ty, TyDecl};
+use crate::ty::{self, Effect, ImplSig, Row, Scheme, Tier, TraitSig, Ty, TyDecl};
 
 /// One published name.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Item {
     pub name: Arc<str>,
+    /// The trait bounds on this name's type parameters. A bounded definition publishes the bound
+    /// and *not* the dictionary parameters it was lowered with: those are named
+    /// `Trait::method@T` and belong to the lowering rather than to the contract, and an importing
+    /// module reconstructs them from the bound.
+    pub bounds: Vec<(Arc<str>, Vec<Arc<str>>)>,
     pub kind: Kind,
     /// The effect row, as atoms. A published row is always closed: §3.6 says boundaries are
     /// declared, and a row variable is an inference artefact that has no meaning outside the module
@@ -91,6 +96,12 @@ pub struct Interface {
     pub module: String,
     /// Types in declaration order, so the rendered file is stable.
     pub types: Vec<TyDecl>,
+    /// The `trait` declarations this module owns.
+    pub traits: Vec<TraitSig>,
+    /// The `impl` headers this module owns — the bodies stay behind, and what crosses is that the
+    /// implementation exists and what it promises. Without these, a call in an importing module has
+    /// a trait and nothing to resolve it to.
+    pub impls: Vec<ImplSig>,
     pub items: Vec<Item>,
 }
 
@@ -107,21 +118,26 @@ impl Interface {
             .iter()
             .filter_map(|n| program.types.get(n).cloned())
             .collect();
+        let traits = program.traits.clone();
+        let impls = program.impls.clone();
 
         let mut items = Vec::new();
         for name in &program.def_order {
             let Some(d) = program.defs.get(name) else {
                 continue;
             };
-            // A desugared impl method is not part of the contract. Its name is compiler-generated
-            // and no parser could read it back, and a trait does not cross a module boundary yet —
-            // publishing the bodies without the trait that gives them meaning would be worse than
-            // publishing neither.
+            // A desugared impl method is not part of the contract: its name is compiler-generated
+            // and no parser could read it back. What crosses instead is the `impl` header, which
+            // says the implementation exists, and the trait, which says what it promises.
             if crate::check::is_impl_method(name) {
                 continue;
             }
+            // A bounded definition publishes its written parameters. The dictionaries were appended
+            // by the lowering and are recovered by the importer from the same bound.
+            let written = d.params.len() - dict_count(d);
             items.push(Item {
                 name: d.name.clone(),
+                bounds: d.bounds.clone(),
                 kind: if d.declares_signal {
                     Kind::Signal {
                         ty: close_rows(&d.ret),
@@ -129,8 +145,7 @@ impl Interface {
                 } else {
                     Kind::Function {
                         typarams: d.typarams.clone(),
-                        params: d
-                            .params
+                        params: d.params[..written]
                             .iter()
                             .map(|(_, n, t)| (n.clone(), close_rows(t)))
                             .collect(),
@@ -144,6 +159,7 @@ impl Interface {
         for s in &program.signals {
             items.push(Item {
                 name: s.name.clone(),
+                bounds: Vec::new(),
                 kind: Kind::Signal {
                     ty: close_rows(&s.ty),
                 },
@@ -156,6 +172,8 @@ impl Interface {
         Interface {
             module: program.name.clone(),
             types,
+            traits,
+            impls,
             items,
         }
     }
@@ -178,6 +196,14 @@ impl Interface {
         for t in &types {
             h.update(b"T");
             h.update(t.as_bytes());
+        }
+        for t in &self.traits {
+            h.update(b"R");
+            h.update(trait_signature(t).as_bytes());
+        }
+        for i in &self.impls {
+            h.update(b"M");
+            h.update(impl_signature(i).as_bytes());
         }
         for i in &self.items {
             h.update(b"I");
@@ -203,6 +229,18 @@ impl Interface {
             out.push_str(&render_type(t));
             out.push('\n');
         }
+        for t in &self.traits {
+            out.push_str(&render_trait(t));
+            out.push('\n');
+        }
+        // After the traits and before the definitions, because an impl names both a trait and a
+        // type and the checker reads a file once, in order.
+        for i in &self.impls {
+            let _ = writeln!(out, "{}", render_impl(i));
+        }
+        if !self.impls.is_empty() {
+            out.push('\n');
+        }
         for i in &self.items {
             if let Kind::Signal { .. } = i.kind {
                 out.push_str("@signal\n");
@@ -215,8 +253,18 @@ impl Interface {
     }
 
     /// Read a `.becki` back.
-    pub fn parse(module: &str, src: &str, diags: &mut Diagnostics) -> Interface {
-        let mut map = SourceMap::new();
+    ///
+    /// The **caller's** `SourceMap`, for the same reason [`crate::project`] gives one to every
+    /// module it loads: a diagnostic about `orders.becki` has to point into `orders.becki`. A map
+    /// made and dropped here would leave every diagnostic carrying a `FileId` the renderer resolves
+    /// against somebody else's file, which is worse than no span at all — it points confidently at
+    /// an unrelated line.
+    pub fn parse(
+        module: &str,
+        src: &str,
+        map: &mut SourceMap,
+        diags: &mut Diagnostics,
+    ) -> Interface {
         let file = map.add(format!("{module}.becki"), src);
         let node = beck_syntax::parse_file(file, module, src, diags);
         // An interface is checked as a module: the same resolver, the same type syntax, the same
@@ -282,6 +330,7 @@ impl Interface {
                     i.name.clone(),
                     Export {
                         scheme,
+                        bounds: i.bounds.clone(),
                         row: Row::of(i.effects.iter().cloned()),
                         tier: i.tier,
                         is_signal: matches!(i.kind, Kind::Signal { .. }),
@@ -297,6 +346,8 @@ impl Interface {
 #[derive(Clone, Debug)]
 pub struct Export {
     pub scheme: Scheme,
+    /// The bounds the importer has to reconstruct dictionaries from.
+    pub bounds: Vec<(Arc<str>, Vec<Arc<str>>)>,
     pub row: Row,
     pub tier: Tier,
     pub is_signal: bool,
@@ -334,6 +385,11 @@ fn published(row: &Row) -> Vec<Effect> {
 }
 
 fn item_signature(i: &Item) -> String {
+    let bounds: String = i
+        .bounds
+        .iter()
+        .map(|(p, ts)| format!("{p}:{};", ts.join("+")))
+        .collect();
     let ty = match &i.kind {
         // The type parameters are part of the signature the digest covers: `map[T, U]` and
         // `map[T]` are different contracts even when the printed parameter list is the same.
@@ -342,7 +398,7 @@ fn item_signature(i: &Item) -> String {
             params,
             ret,
         } => format!(
-            "{}({}) -> {ret}",
+            "{bounds}{}({}) -> {ret}",
             if typarams.is_empty() {
                 String::new()
             } else {
@@ -506,6 +562,106 @@ fn render_type(d: &TyDecl) -> String {
     out
 }
 
+/// How many of a definition's parameters the bound lowering appended.
+///
+/// Counted from the names rather than tracked separately, because the names are what makes them
+/// recognisable — a dictionary is `Trait::method@T`, and nothing a program writes can be.
+fn dict_count(d: &crate::check::Def) -> usize {
+    d.params
+        .iter()
+        .filter(|(_, n, _)| crate::check::is_impl_method(n))
+        .count()
+}
+
+fn render_trait(t: &TraitSig) -> String {
+    let mut out = String::new();
+    let _ = writeln!(out, "trait {}:", t.name);
+    for m in &t.methods {
+        let params: Vec<String> = m
+            .params
+            .iter()
+            .map(|(n, ty)| {
+                // `self: Self` is written `self`, which is the notation the surface uses and the
+                // one the parser gives the implicit type back to.
+                if n.as_ref() == "self" && ty.con_name() == Some("Self") {
+                    "self".to_string()
+                } else {
+                    format!("{n}: {ty}")
+                }
+            })
+            .collect();
+        let uses = if m.effects.is_empty() {
+            String::new()
+        } else {
+            format!(
+                " uses {}",
+                m.effects
+                    .iter()
+                    .map(|e| e.name())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
+        let _ = writeln!(
+            out,
+            "    def {}({}) -> {}{uses}",
+            m.name,
+            params.join(", "),
+            m.ret
+        );
+    }
+    out
+}
+
+fn render_impl(i: &ImplSig) -> String {
+    let params = if i.params.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "[{}]",
+            i.params
+                .iter()
+                .map(|p| p.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+    format!("impl{params} {} for {}", i.trait_name, i.target)
+}
+
+fn trait_signature(t: &TraitSig) -> String {
+    let mut out = format!("trait {}{{", t.name);
+    for m in &t.methods {
+        let _ = write!(
+            out,
+            "{}({}) -> {} !{{{}}};",
+            m.name,
+            m.params
+                .iter()
+                .map(|(n, ty)| format!("{n}: {ty}"))
+                .collect::<Vec<_>>()
+                .join(", "),
+            m.ret,
+            m.effects
+                .iter()
+                .map(|e| e.name())
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+    }
+    out.push('}');
+    out
+}
+
+fn impl_signature(i: &ImplSig) -> String {
+    format!(
+        "impl[{}] {} for {}",
+        i.params.join(","),
+        i.trait_name,
+        i.target
+    )
+}
+
 fn render_item(i: &Item) -> String {
     let uses = if i.effects.is_empty() {
         String::new()
@@ -534,7 +690,17 @@ fn render_item(i: &Item) -> String {
                     "[{}]",
                     typarams
                         .iter()
-                        .map(|t| t.to_string())
+                        .map(|t| match i.bounds.iter().find(|(p, _)| p == t) {
+                            Some((_, traits)) => format!(
+                                "{t}: {}",
+                                traits
+                                    .iter()
+                                    .map(|x| x.to_string())
+                                    .collect::<Vec<_>>()
+                                    .join(" + ")
+                            ),
+                            None => t.to_string(),
+                        })
                         .collect::<Vec<_>>()
                         .join(", ")
                 )
@@ -641,9 +807,8 @@ mod tests {
         let original = iface_of(crate::split::tests::TODO);
         let text = original.render();
         let mut diags = Diagnostics::new();
-        let reread = Interface::parse("todo", &text, &mut diags);
         let mut map = SourceMap::new();
-        map.add("todo.becki", &text);
+        let reread = Interface::parse("todo", &text, &mut map, &mut diags);
         assert!(!diags.has_errors(), "{}\n---\n{text}", diags.render(&map));
         assert_eq!(
             original.digest(),
@@ -702,9 +867,8 @@ def held(v: Verdict[Str]) -> Str:
         );
 
         let mut diags = Diagnostics::new();
-        let reread = Interface::parse("g", &text, &mut diags);
         let mut map = SourceMap::new();
-        map.add("g.becki", &text);
+        let reread = Interface::parse("g", &text, &mut map, &mut diags);
         assert!(!diags.has_errors(), "{}\n---\n{text}", diags.render(&map));
         assert_eq!(original.digest(), reread.digest(), "rendered:\n{text}");
     }
@@ -728,7 +892,13 @@ def held(v: Verdict[Str]) -> Str:
     #[test]
     fn an_interface_with_a_body_in_it_is_refused() {
         let mut diags = Diagnostics::new();
-        Interface::parse("x", "def f(a: Int) -> Int:\n    return a\n", &mut diags);
+        let mut map = SourceMap::new();
+        Interface::parse(
+            "x",
+            "def f(a: Int) -> Int:\n    return a\n",
+            &mut map,
+            &mut diags,
+        );
         assert!(diags.iter().any(|d| d.code == "B0600"));
     }
 }

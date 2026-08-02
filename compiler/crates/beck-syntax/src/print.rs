@@ -271,12 +271,24 @@ impl Py {
         }
     }
 
-    /// `[T, U]` from the list at `args[1]`, or the empty string when there is nothing to quantify.
+    /// `[T, U]` or `[T: Show + Eq]` from the list at `args[1]`, or the empty string when there is
+    /// nothing to quantify.
     fn typarams(&mut self, n: &Node) -> String {
         let Some(t) = n.args.get(1).filter(|t| !t.args.is_empty()) else {
             return String::new();
         };
-        let names: Vec<String> = t.args.clone().iter().map(|a| self.expr(a)).collect();
+        let names: Vec<String> = t
+            .args
+            .clone()
+            .iter()
+            .map(|a| {
+                if !a.is_form(sym::ANNOT) || a.args.len() < 2 {
+                    return self.expr(a);
+                }
+                let bounds: Vec<String> = a.args[1..].iter().map(|b| self.expr(b)).collect();
+                format!("{}: {}", self.expr(&a.args[0]), bounds.join(" + "))
+            })
+            .collect();
         format!("[{}]", names.join(", "))
     }
 

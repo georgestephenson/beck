@@ -38,7 +38,7 @@ libm, FMA and fast-math off in fold-reachable code — comes due with the second
 first transcendental, whichever arrives first: today the prelude's only root is `sqrt`, which
 IEEE 754 requires correctly rounded and is therefore portable, and `sin`/`cos`/`pow` — where
 libms actually diverge — do not exist yet. Exact rationals and bignums remain refused
-([`rational.beck`](../compiler/sicp/refusals/rational.beck)); the tower has one floor of three,
+(`rational.beck`); the tower has one floor of three,
 said plainly in §32.9.
 
 **The deviation from IEEE comparison is now stated — but in a report, and reports are history.**
@@ -182,7 +182,7 @@ its artefact exists, not before.
 | **SPDX 3.0** (SPDX 2.2.1 is [ISO/IEC 5962:2021](https://www.iso.org/standard/81870.html)) | 3.0 published 2024; 2.x remains the ISO-anchored, tooling-dominant line | The charter pins SPDX 2.3 — correctly, today: apko and `cargo-about` emit it | Keep 2.3; the 3.0 switch is an ADR when the toolchain moves | **watch** |
 | **SLSA v1.1** | Clarifying revision of v1.0 (2025) | The charter targets "v1.0 Build L3"; same levels, tightened wording | Update the reference when the supply-chain bullets are built — they are untouched ([`22`](22-phase-3-report.md) §22.9) | **watch** |
 | **EU Cyber Resilience Act** (Regulation 2024/2847) | In force; vulnerability-reporting obligations began phasing in from September 2026, full obligations December 2027; CEN/CENELEC harmonised standards in drafting | Not a standard — the *reason* standards will be demanded of anything Beck-built sold in the EU. Beck's chartered posture (SBOM, signing, reproducibility, coordinated disclosure) is the evidence shape the CRA asks manufacturers for | None yet; revisit when harmonised standards publish | **watch** |
-| **ISO/IEC 10967** (Language-Independent Arithmetic, parts 1–3) | Dormant but not withdrawn | The only ISO vocabulary for specifying how a numeric tower's integers, floats and conversions relate. The reals floor is built ([`32`](32-numeric-tower-and-polymorphism-report.md)); read this once when the rationals/bignums floors are attempted ([`rational.beck`](../compiler/sicp/refusals/rational.beck) is that wall), then set down | None — read at spec-writing time | **borrow** |
+| **ISO/IEC 10967** (Language-Independent Arithmetic, parts 1–3) | Dormant but not withdrawn | The only ISO vocabulary for specifying how a numeric tower's integers, floats and conversions relate. The reals floor is built ([`32`](32-numeric-tower-and-polymorphism-report.md)); read this once when the rationals/bignums floors are attempted (`rational.beck` is that wall), then set down | None — read at spec-writing time | **borrow** |
 
 Considered and declined, one line each, so the survey is falsifiably complete rather than
 selectively flattering: **ISO/IEC/IEEE 12207 / 15288** (lifecycle process standards — Beck's
