@@ -12,6 +12,7 @@
 //! not a slogan here: `print::tests::the_two_surfaces_are_the_same_language` reads the same
 //! definition through both readers and asserts the trees are structurally equal.
 
+pub mod doc;
 pub mod lexer;
 pub mod node;
 pub mod parser;
@@ -60,6 +61,14 @@ pub fn module_ident(name: &str) -> String {
 }
 
 pub fn parse_file(file: FileId, name: &str, src: &str, diags: &mut Diagnostics) -> Node {
+    let mut parsed = parse_forms(file, name, src, diags);
+    // Doc comments are attached after parsing rather than lexed (see [`doc`]), so this is the one
+    // place both surfaces pass through and the one place the attachment has to happen.
+    doc::attach(&mut parsed, &doc::collect(src, doc::marker_for(name)));
+    parsed
+}
+
+fn parse_forms(file: FileId, name: &str, src: &str, diags: &mut Diagnostics) -> Node {
     let module_name = module_ident(name);
 
     if name.ends_with(".sx") {

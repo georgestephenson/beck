@@ -1,4 +1,4 @@
-//! `test` and `property` blocks — [`docs/21-tests-in-beck-and-proof.md`] §21.2 and §21.3, checked.
+//! `test` and `property` blocks — `docs/21-tests-in-beck-and-proof.md` §21.2 and §21.3, checked.
 //!
 //! This module holds the *checked* shape of a test. The runner is elsewhere (`beck-rt`), because
 //! running one means driving the same `Roles` the runtime drives; what belongs here is the part

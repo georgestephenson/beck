@@ -179,7 +179,7 @@ fn what_a_subscriber_holds() {
     // §5.3's per-session memory, which is the metric the whole fanout question turns on: an engine
     // per subscription is a memory-for-time trade, and a trade whose cost is not measured is a
     // claim rather than a trade. Phase 0's kill gate was ~50 KB per idle session and it measured
-    // ~5 KB ([`docs/18-phase-0-report.md`] §18.3).
+    // ~5 KB (`docs/18-phase-0-report.md` §18.3).
     //
     // Computed, not sampled. The first version of this read `/proc/self/statm` around 32 live
     // subscriptions and reported a ratio that swung between 2.0× and 4.9× across runs of the same

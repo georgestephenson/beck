@@ -6,7 +6,7 @@
 //! for exactly this ("the upgraded socket in the server, and an in-memory duplex in the tests") and
 //! nothing had used the second half of that sentence.
 //!
-//! The reason it exists now is [`docs/24-incremental-views-report.md`]: the subscription loop is
+//! The reason it exists now is `docs/24-incremental-views-report.md`: the subscription loop is
 //! where the incremental view engine is switched on, one engine per connection. The differential
 //! harness proves the engine renders what a recompute would; this proves the loop is holding one.
 

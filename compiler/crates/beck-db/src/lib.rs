@@ -11,7 +11,7 @@
 //!
 //! Phase 1 could only demonstrate the shape, because it had one module. Phase 2 has `.becki`
 //! interfaces and a project pipeline, so the firewall is now a property with a *number* attached:
-//! [`tests::a_body_edit_upstream_does_not_recheck_anything_downstream`] counts how many modules a
+//! `tests::a_body_edit_upstream_does_not_recheck_anything_downstream` counts how many modules a
 //! one-line edit re-checks, and the answer is one.
 //!
 //! # How the firewall is expressed to Salsa

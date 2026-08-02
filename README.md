@@ -17,6 +17,10 @@ The design and implementation plan live in **[`docs/`](docs/)**:
 - [`docs/00-original-idea.md`](docs/00-original-idea.md) — the seed conversation the project grew
   from, sketch preserved verbatim
 - [`docs/README.md`](docs/README.md) — plan overview and index
+- [`docs/reference/`](docs/reference/README.md) — the **generated** language reference: the error
+  index, the command reference, the effect and tier matrix, the prelude and the forms. Produced by
+  `beck doc reference` from the compiler's own tables and gated on every pull request, so a page
+  cannot disagree with the compiler
 
 **Phase 0 is built.** [`phase0/`](phase0/) is the *output* the compiler will generate for the todo
 sketch, hand-written in Rust so the architecture could be measured before anything was built on top
@@ -72,6 +76,9 @@ $ cargo run -- explain place examples/todo.beck todos   # candidates, costs, and
 $ cargo run -- explain flow  examples/todo.beck Id      # where a type reaches, and what is blocked
 $ cargo run -- test    examples/todo.beck              # the program's own tests, written in Beck
 $ cargo run -- iface   examples/todo.beck      # the published signature: types, effects, placements
+$ cargo run -- doc module examples/documented.beck --format md --stdout   # the page, derived
+$ cargo run -- doc reference --out ../docs/reference   # the language reference, from the compiler
+$ cargo run -- explain error B0341             # what a diagnostic code means
 $ cargo run -- check   examples/todo.beck --wire-compat previous.becki
 $ cargo run -- graph   examples/todo.beck      # every part, and what depends on what
 $ cargo run -- impact  examples/todo.beck validate   # what breaks if this changes

@@ -22,3 +22,4 @@ The split this directory creates:
 | [0004](0004-full-cargo-deny-gate.md) | The full cargo-deny check gates the compiler workspace |
 | [0005](0005-workflows-cross-check.md) | Workflows cross-check each other's YAML validity |
 | [0006](0006-ci-measurements-lane.md) | A release-profile measurements lane in CI |
+| [0007](0007-generated-reference-documentation.md) | Reference documentation is generated from the compiler, and checked in |

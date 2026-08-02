@@ -4,7 +4,7 @@
 //!
 //! Aspire's dashboard reads two things: an AppHost that *declares* the topology, and an OTLP feed
 //! that reports on it. Beck has no AppHost — [`beck_core::graph`] explains why — so this reads the
-//! compiled program for structure and [`crate::telemetry`] for behaviour. The consequence is worth
+//! compiled program for structure and [`mod@crate::telemetry`] for behaviour. The consequence is worth
 //! naming: the resource list here cannot disagree with what `beck build` emits or with what is
 //! running, because all three are the same derivation of the same source.
 //!
@@ -27,7 +27,7 @@
 //! # The page is hand-written HTML, and should not stay that way
 //!
 //! [`dash.html`](./dash.html) is a hand-written page served as a string. That is the same thing
-//! [`phase0/`] was: the output the compiler ought to generate, written by hand because the compiler
+//! `phase0/` was: the output the compiler ought to generate, written by hand because the compiler
 //! could not yet generate it. A dashboard is a view over state — a resource table, a graph, a
 //! metrics pane, a log tail — which is precisely the shape `page: Signal[Html] = per_session(...)`
 //! describes. **It should be a Beck program**, and then the compiler's own diffing client would
@@ -38,7 +38,7 @@
 //! dashboard's state is not a `durable` fold over an event stream — it is a live read of atomic
 //! counters and a compile-time graph — and Beck has no way yet to say "a signal whose value comes
 //! from the host". That is the missing construct, and it is a language question, not a dashboard
-//! one. Recorded in [`docs/19-phase-1-report.md`] §19.7.
+//! one. Recorded in `docs/19-phase-1-report.md` §19.7.
 
 use std::sync::Arc;
 

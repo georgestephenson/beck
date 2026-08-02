@@ -1,4 +1,4 @@
-//! The `beck test` runner — [`docs/21-tests-in-beck-and-proof.md`] §21.2 and §21.3, executed.
+//! The `beck test` runner — `docs/21-tests-in-beck-and-proof.md` §21.2 and §21.3, executed.
 //!
 //! # Why the runner lives in the runtime crate
 //!

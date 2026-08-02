@@ -26,8 +26,8 @@
 //! # What changed when the general slicer arrived
 //!
 //! Phase 1 and Phase 2 recognised **one topology** and refused every other by name — legitimate
-//! narrowness, named as debt by [`docs/19-phase-1-report.md`] §19.9 and again by
-//! [`docs/20-phase-2-report.md`] §20.5. Three things are different now, and each is a property of
+//! narrowness, named as debt by `docs/19-phase-1-report.md` §19.9 and again by
+//! `docs/20-phase-2-report.md` §20.5. Three things are different now, and each is a property of
 //! working from a graph rather than from a pattern:
 //!
 //! 1. **Any number of durable folds.** They are *fused* into one accumulator — a synthetic record
@@ -74,7 +74,7 @@ pub struct Placed {
     /// [`Placed::roles`] are placeholders rather than a slice of anything.
     ///
     /// A library used to have no `Placed` at all, which meant it had no way to run its own tests
-    /// ([`docs/22`] §22.6, [`docs/25`] §25.6 item 1): every SICP exercise is a library, and so is
+    /// (`docs/22` §22.6, `docs/25` §25.6 item 1): every SICP exercise is a library, and so is
     /// every domain module a real project would most want unit tests for. It has one now — but a
     /// placeholder role is a lie a caller must not be able to tell by accident, so the flag is on
     /// the struct and [`Placed::is_application`] is what the paths that drive a *program* ask.

@@ -55,6 +55,14 @@ pub struct Program {
     pub def_order: Vec<Arc<str>>,
     pub signals: Vec<SignalDecl>,
     pub tests: Vec<crate::testing::TestDef>,
+    /// The `##` doc comment attached to each declaration, keyed by the name it documents:
+    /// `todos` for a definition or signal, `Todo` for a type, `Todo.text` for a model field and
+    /// `Event.Toggled` for a union variant ([`beck_syntax::doc`]).
+    ///
+    /// A side table rather than a field on [`Def`], because documentation is not something the
+    /// checker, the solver or the runtime may read: nothing downstream of here may behave
+    /// differently because a definition is documented.
+    pub docs: BTreeMap<Arc<str>, Arc<str>>,
 }
 
 #[derive(Clone, Debug)]
@@ -318,7 +326,7 @@ impl<'a> Checker<'a> {
     ///     Node(left: Tree, right: Tree)   error[B0310]: cannot find type `Tree`
     /// ```
     ///
-    /// which is [`docs/25-benchmarks-and-expressiveness.md`] §25.6 item 2 — §2.2 of SICP *is* "the
+    /// which is `docs/25-benchmarks-and-expressiveness.md` §25.6 item 2 — §2.2 of SICP *is* "the
     /// closure property", so this ended chapter 2 at §2.2 and took chapters 4 and 5 with it. It is
     /// also the reason no Beck program could describe a tree, a comment thread or an expression.
     ///
@@ -713,6 +721,7 @@ impl<'a> Checker<'a> {
     }
 
     fn check_items(mut self, items: &[&Node], name: String) -> Program {
+        let docs = crate::docgen::collect_docs(items);
         let mut defs = BTreeMap::new();
         let mut def_order = Vec::new();
         let mut signals = Vec::new();
@@ -887,6 +896,7 @@ impl<'a> Checker<'a> {
             def_order,
             signals,
             tests,
+            docs,
         }
     }
 
@@ -910,7 +920,7 @@ impl<'a> Checker<'a> {
         };
         // `state` is the *accumulator*, which is the program's own type when it declares one
         // `durable` fold and the fused record when it declares several — see
-        // [`docs/23-general-slicer-report.md`] §23.4. The checker has to know which before a signal
+        // `docs/23-general-slicer-report.md` §23.4. The checker has to know which before a signal
         // graph exists, so both it and the slicer ask [`crate::signal::durables`].
         let folds = {
             let subst = &self.subst;

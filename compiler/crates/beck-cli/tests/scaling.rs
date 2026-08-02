@@ -10,7 +10,7 @@
 //!
 //! # Why the bound is loose
 //!
-//! [`docs/13-testing.md`] §13.7 and the CI workflow both say timing thresholds should not be gates,
+//! `docs/13-testing.md` §13.7 and the CI workflow both say timing thresholds should not be gates,
 //! because "a gate that flakes gets deleted". So this does not assert a *rate*; it asserts a
 //! *shape*. Over an 8× increase in log length, a quadratic fold costs ~8× more per event and a
 //! logarithmic one costs ~1.3×. The bound is 3×: far enough above the real signal to survive a

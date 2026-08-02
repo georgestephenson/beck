@@ -228,7 +228,7 @@ async fn wait_for_hello<S: Socket>(socket: &mut S) -> Result<Option<(String, u64
 
 /// Holds this subscription's share of the arranged-entries gauge.
 ///
-/// §5.3 names per-session memory as a metric to export, and [`docs/24-incremental-views-report.md`]
+/// §5.3 names per-session memory as a metric to export, and `docs/24-incremental-views-report.md`
 /// §24.10 recorded that `Engine::footprint` computed one and nothing exported it. This exports the
 /// unit that scales — arrangement *entries*, `O(operators)` to read — rather than bytes, which
 /// would need a walk of the accumulator on every render.

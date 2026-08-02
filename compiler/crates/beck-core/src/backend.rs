@@ -2,8 +2,8 @@
 //!
 //! # Why this exists
 //!
-//! [`docs/05-tier-lowering.md`] §5.2 says the `Core → Target` seam is what lets a backend slot in
-//! later, and [`docs/04-compiler-architecture.md`] §4.8 names a differential test *between backends*
+//! `docs/05-tier-lowering.md` §5.2 says the `Core → Target` seam is what lets a backend slot in
+//! later, and `docs/04-compiler-architecture.md` §4.8 names a differential test *between backends*
 //! as a thing the project will need. Neither is possible while the host calls a particular
 //! evaluator by name.
 //!
@@ -66,7 +66,7 @@ pub type Callable = Arc<dyn Fn(Vec<Value>) -> Result<Value, ExecError> + Send + 
 /// Something that answers a call *instead of* the definition it names.
 ///
 /// This exists for exactly one caller, and the reason it is on the seam rather than inside a
-/// backend is [`docs/21-tests-in-beck-and-proof.md`] §21.3: "**A mock is not a stand-in for an
+/// backend is `docs/21-tests-in-beck-and-proof.md` §21.3: "**A mock is not a stand-in for an
 /// object. It is a value for an effect.**" A stub is therefore not a program transformation the
 /// compiler can do once — the *complete list* of what got stubbed has to be reportable per test,
 /// with the arguments each stubbed call was passed, because §21.3 rule 4 makes verification a query

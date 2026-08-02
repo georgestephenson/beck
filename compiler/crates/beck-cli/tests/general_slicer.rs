@@ -1,9 +1,9 @@
 //! The general slicer: topologies the old splitter could not slice, and one it sliced wrongly.
 //!
-//! [`docs/19-phase-1-report.md`] §19.9 assigned a general slicer to Phase 2;
-//! [`docs/20-phase-2-report.md`] §20.5 recorded that Phase 2 did not deliver it;
-//! [`docs/22-phase-3-report.md`] §22.6 said it was "debt with two phases' names on it" and "should
-//! be the next thing built". [`docs/23-general-slicer-report.md`] is what building it found.
+//! `docs/19-phase-1-report.md` §19.9 assigned a general slicer to Phase 2;
+//! `docs/20-phase-2-report.md` §20.5 recorded that Phase 2 did not deliver it;
+//! `docs/22-phase-3-report.md` §22.6 said it was "debt with two phases' names on it" and "should
+//! be the next thing built". `docs/23-general-slicer-report.md` is what building it found.
 //!
 //! Every test here is a *program*, compiled through the same `beck_core::compile_str` the CLI
 //! uses, because the claim is about programs and not about a data structure. Three groups:
@@ -419,7 +419,7 @@ fn a_view_that_reads_a_stream_is_refused_before_the_slicer_ever_sees_it() {
     // that should be unreachable rather than one that fires.
     //
     // Deliberately asserting that *something* names itself rather than which stage, by the same
-    // reasoning [`docs/19`] §19.9 gives: the property is that no shape is quietly mis-sliced.
+    // reasoning `docs/19` §19.9 gives: the property is that no shape is quietly mis-sliced.
     let codes = refused(
         "stream-view.beck",
         &program(
@@ -590,7 +590,7 @@ fn walk(c: &beck_core::Core, f: &mut impl FnMut(&beck_core::Core)) {
 async fn a_fused_accumulator_replays_bit_for_bit() {
     // §3.7's whole correctness argument is "replaying the log reproduces the state, bit for bit",
     // and the fused accumulator is a value the slicer invented rather than one the program wrote.
-    // If `value_to_repr` could not encode it — [`docs/19`] §19.9 records a lossy branch that once
+    // If `value_to_repr` could not encode it — `docs/19` §19.9 records a lossy branch that once
     // could not — this is where it would show, at write time rather than at read time.
     use beck_rt::{replay_from_genesis, replay_to, App, AppConfig, LogStore, MemoryLog};
 

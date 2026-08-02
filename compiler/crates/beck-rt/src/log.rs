@@ -12,7 +12,7 @@
 //! * Reads are ordered and replayable from any position; that is what `beck replay`,
 //!   `(subscription, seq)` resumption and forked worlds are made of.
 //!
-//! We do not write a storage engine ([`docs/01-vision-and-premise.md`] §1.5). This is a small log
+//! We do not write a storage engine (`docs/01-vision-and-premise.md` §1.5). This is a small log
 //! engine on top of proven storage: redb for rung 0, PostgreSQL for everything above it.
 
 use std::collections::BTreeMap;

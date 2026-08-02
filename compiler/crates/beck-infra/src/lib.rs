@@ -539,8 +539,8 @@ pub fn add_resources(b: &mut GraphBuilder, infra: &InfraGraph) {
 ///
 /// Kept as a constant because the conformance suite and the CI job name it, and because it is the
 /// default platform's answer. The general question — "which directory holds only the files an apply
-/// consumes" — is [`Platform::manifest_dir`], and it is the platform's to answer: `kubectl apply -f
-/// <dir>` and `docker compose -f <file>` want different things.
+/// consumes" — is [`Platform::manifest_dir`], and it is the platform's to answer:
+/// `kubectl apply -f <dir>` and `docker compose -f <file>` want different things.
 pub const MANIFEST_DIR: &str = "k8s";
 
 /// Write everything a deployment needs, for the default platform.

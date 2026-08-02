@@ -1,0 +1,88 @@
+# A documented library, as the dogfood for `beck doc`.
+#
+# `beck doc module examples/documented.beck --format md --stdout` renders this file. Everything in
+# the generated page except the prose is *derived*: the signatures come from inference, the effect
+# rows from §3.2's row inference, and the tier column from the placement solver. The `##` lines are
+# the only part anybody wrote.
+#
+# Note the two markers doing different jobs. This paragraph is an ordinary `#` comment: it is about
+# the file, the lexer discards it, and `beck fmt` will not give it back. The `##` lines below are
+# doc comments — metadata on the declaration beneath them, preserved by `beck fmt`, and read by
+# `beck doc`.
+
+## An amount of money in minor units — pence, cents — never a float.
+##
+## A newtype rather than an alias, so it cannot be passed where a plain `Int` is expected: §3.1's
+## "ids of different entities must not be interchangeable" is about amounts too.
+type Money = newtype[Int]
+
+## One line on an order: a product, bought some number of times.
+model Line:
+    ## What was bought. Opaque here; the catalogue owns the meaning.
+    sku: Str
+    ## How many. A line with a quantity of zero is legal and contributes nothing.
+    quantity: Int
+    ## The price of one unit when the line was written, not the price today.
+    unit_price: Money
+
+## What changes the amount payable, beyond the lines themselves.
+union Adjustment:
+    ## A flat reduction.
+    Discount(amount: Money)
+    ## Carriage. Free delivery is `Shipping(Money(0))` rather than the absence of this variant.
+    Shipping(cost: Money)
+
+## Read the minor units out of a `Money`.
+##
+## The one place the newtype is opened, so a change of representation is a change here rather than
+## everywhere an amount is arithmetic.
+def minor_units(m: Money) -> Int:
+    return m.value
+
+## What one line costs: unit price times quantity.
+def line_total(line: Line) -> Int:
+    return minor_units(line.unit_price) * line.quantity
+
+## What one adjustment does to a running total — a discount subtracts, shipping adds.
+def apply_adjustment(running: Int, adjustment: Adjustment) -> Int:
+    match adjustment:
+        case Discount(amount):
+            return running - minor_units(amount)
+        case Shipping(cost):
+            return running + minor_units(cost)
+
+## The amount payable for one line under one adjustment.
+def payable(line: Line, adjustment: Adjustment) -> Int:
+    return apply_adjustment(line_total(line), adjustment)
+
+## The lines that would actually be charged for — quantity above zero.
+##
+## `filter_list` is effect-polymorphic (§3.2), so this is pure exactly because its predicate is.
+def chargeable(lines: list[Line]) -> list[Line]:
+    return filter_list(lines, lambda l: l.quantity > 0)
+
+## How many lines would be charged for.
+def chargeable_count(lines: list[Line]) -> Int:
+    return list_len(chargeable(lines))
+
+test "a line costs its unit price times its quantity":
+    expect line_total(Line(sku="a", quantity=2, unit_price=Money(150))) == 300
+
+test "a discount comes off the line total":
+    expect payable(
+        Line(sku="a", quantity=2, unit_price=Money(150)),
+        Discount(amount=Money(50))) == 250
+
+test "free shipping is zero rather than absent":
+    expect payable(
+        Line(sku="a", quantity=1, unit_price=Money(100)),
+        Shipping(cost=Money(0))) == 100
+
+test "an empty line is not chargeable":
+    expect chargeable_count([
+        Line(sku="a", quantity=1, unit_price=Money(100)),
+        Line(sku="b", quantity=0, unit_price=Money(100))]) == 1
+
+test "the whole calculation is unplaced":
+    expect place(payable) == any
+    expect place(chargeable) == any

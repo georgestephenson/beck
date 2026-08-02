@@ -33,6 +33,12 @@ Write the commit message as the author of the change: what changed, and why.
   still stand. Reports
   are history: a later phase's correction to an earlier one goes in the later report, not into the
   earlier text.
+- [`docs/reference/`](docs/reference/README.md) is **generated** by `beck doc reference` from the
+  compiler's own tables and checked in. Never edit it by hand: change the compiler, then run
+  `beck doc reference --out ../docs/reference` from `compiler/` and commit the result in the same
+  change. A new diagnostic code needs an entry in `beck-diag/src/index.rs` or `cargo test` fails.
+  [`docs/31-generated-documentation-report.md`](docs/31-generated-documentation-report.md) records
+  what is generated, what is written, and what it does not do.
 - [`compiler/corpus/`](compiler/corpus/) is 28 programs carrying **no placement annotations**, and
   the measurement behind Phase 2's exit criterion. A program added there has to place itself.
 - [`compiler/sicp/`](compiler/sicp/) is the expressiveness benchmark
@@ -60,8 +66,8 @@ Write the commit message as the author of the change: what changed, and why.
   `beck test sicp/ch2.beck`, quoted in [`docs/27-walls-report.md`](docs/27-walls-report.md) §27.5.
 - The harnesses are the project's conscience (§4.8, §8.3): `compiler/crates/beck-cli/tests/` holds
   the differential, replay-determinism, backend-seam, scaling, security, corpus, general-slicer,
-  incremental-analysis, incremental-engine, shared-arrangement, subscription, view-metrics, SICP and
-  diagnostic-snapshot suites. Keep them green.
+  incremental-analysis, incremental-engine, shared-arrangement, subscription, view-metrics, SICP,
+  documentation and diagnostic-snapshot suites. Keep them green.
 - The CI workflow is an artefact too, and Phase 2 found that it had never run
   ([`docs/20-phase-2-report.md`](docs/20-phase-2-report.md) §20.4 item 8). If you change
   `.github/workflows/`, run the steps you changed by hand before trusting them.

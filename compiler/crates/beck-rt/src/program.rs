@@ -1,6 +1,6 @@
 //! The bridge between a compiled program and the runtime that drives it.
 //!
-//! This is the "Roc platform" of Beck ([`docs/05-tier-lowering.md`] §5.2): an effectful Rust host
+//! This is the "Roc platform" of Beck (`docs/05-tier-lowering.md` §5.2): an effectful Rust host
 //! owning I/O, scheduling and memory, executing the pure program. The program supplies four
 //! closures the splitter sliced out of the signal graph — `validate`, the fold, its initial state,
 //! and the view — and the host supplies everything those closures are not allowed to have.

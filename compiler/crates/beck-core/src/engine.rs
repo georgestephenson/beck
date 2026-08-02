@@ -40,7 +40,7 @@
 //! # What "changed" means, and why it is never a deep comparison
 //!
 //! A pointwise operator re-runs when an input changed. Deciding that by structural equality would
-//! reintroduce the `O(n)` this module exists to remove, so [`same`] is a *conservative* test:
+//! reintroduce the `O(n)` this module exists to remove, so `same` is a *conservative* test:
 //! scalars compare by value, collections and rendered trees by pointer. It answers "unchanged" only
 //! when it is certain, and "changed" costs a recompute that the old runtime did unconditionally.
 
@@ -1136,9 +1136,9 @@ struct SharedInner {
 ///    version — has to copy any arrangement that moved, which is the `O(n)` this engine exists to
 ///    remove.
 /// 3. **What happens to a subscriber that fell behind.** It replays the changes it missed, from a
-///    bounded history of recent versions ([`Step`]). Beyond that history it rebuilds — correct at
+///    bounded history of recent versions (`Step`). Beyond that history it rebuilds — correct at
 ///    any lag, because a rebuild reads the current arrangement whole and a rebuild is already
-///    contagious downstream ([`Cell::rebuilt`]).
+///    contagious downstream (`Cell::rebuilt`).
 ///
 /// # What is still not shared
 ///
@@ -1448,9 +1448,9 @@ fn same(a: &Value, b: &Value) -> bool {
 
 /// A deterministic byte estimate for the memory a subscription's engine retains.
 ///
-/// [`docs/05-tier-lowering.md`] §5.3 names per-session memory as one of three metrics to export,
+/// `docs/05-tier-lowering.md` §5.3 names per-session memory as one of three metrics to export,
 /// and Phase 0's kill gate is written in kilobytes per idle session
-/// ([`docs/18-phase-0-report.md`] §18.3). An engine per subscription is a memory-for-time trade,
+/// (`docs/18-phase-0-report.md` §18.3). An engine per subscription is a memory-for-time trade,
 /// so the number has to exist.
 ///
 /// It is computed rather than sampled. A resident-set reading moves with the allocator's arena and
