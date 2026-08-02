@@ -23,13 +23,14 @@ Write the commit message as the author of the change: what changed, and why.
   [`docs/20-phase-2-report.md`](docs/20-phase-2-report.md),
   [`docs/22-phase-3-report.md`](docs/22-phase-3-report.md),
   [`docs/23-general-slicer-report.md`](docs/23-general-slicer-report.md),
-  [`docs/24-incremental-views-report.md`](docs/24-incremental-views-report.md) and
-  [`docs/26-arrangement-sharing-report.md`](docs/26-arrangement-sharing-report.md) and
-  [`docs/27-walls-report.md`](docs/27-walls-report.md) record what each
+  [`docs/24-incremental-views-report.md`](docs/24-incremental-views-report.md),
+  [`docs/26-arrangement-sharing-report.md`](docs/26-arrangement-sharing-report.md),
+  [`docs/27-walls-report.md`](docs/27-walls-report.md) and
+  [`docs/28-tail-calls-report.md`](docs/28-tail-calls-report.md) record what each
   phase does, what it refuses to claim, and the corrections it makes to the design documents.
   Phase 3 is **two bullets of twelve plus most of a third**; docs/26 §26.9 names the nine bullets
-  that are untouched and the parts of the incremental-views bullet that are not built, and docs/27
-  §27.7 names the three of [`docs/25`](docs/25-benchmarks-and-expressiveness.md)'s six walls that
+  that are untouched and the parts of the incremental-views bullet that are not built, and docs/28
+  §28.7 names the two of [`docs/25`](docs/25-benchmarks-and-expressiveness.md)'s six walls that
   still stand. Reports
   are history: a later phase's correction to an earlier one goes in the later report, not into the
   earlier text.
@@ -50,13 +51,15 @@ Write the commit message as the author of the change: what changed, and why.
   the Phase 2 numbers come from `cargo test --release --test measure_phase2 -- --nocapture` and the
   commands quoted in [`docs/20-phase-2-report.md`](docs/20-phase-2-report.md); the Phase 3 numbers
   come from `cargo test --workspace`, from `cargo test --release --test measure_incremental --
-  --nocapture`, from `cargo test --release --test shared_arrangements -- --nocapture`, and from the
+  --nocapture`, from `cargo test --release --test shared_arrangements -- --nocapture`, from
+  `cargo test -p beck-eval -- --nocapture` (the evaluator's stack-per-level figures), and from the
   commands quoted in [`docs/22-phase-3-report.md`](docs/22-phase-3-report.md),
   [`docs/23-general-slicer-report.md`](docs/23-general-slicer-report.md),
   [`docs/24-incremental-views-report.md`](docs/24-incremental-views-report.md) and
   [`docs/26-arrangement-sharing-report.md`](docs/26-arrangement-sharing-report.md); the SICP numbers
   come from `cargo test --release --test sicp` and from `beck test sicp/ch1.beck` and
-  `beck test sicp/ch2.beck`, quoted in [`docs/27-walls-report.md`](docs/27-walls-report.md) §27.5.
+  `beck test sicp/ch2.beck`, quoted in [`docs/27-walls-report.md`](docs/27-walls-report.md) §27.5
+  and [`docs/28-tail-calls-report.md`](docs/28-tail-calls-report.md) §28.5–§28.6.
 - The harnesses are the project's conscience (§4.8, §8.3): `compiler/crates/beck-cli/tests/` holds
   the differential, replay-determinism, backend-seam, scaling, security, corpus, general-slicer,
   incremental-analysis, incremental-engine, shared-arrangement, subscription, view-metrics, SICP and
@@ -66,7 +69,9 @@ Write the commit message as the author of the change: what changed, and why.
   `.github/workflows/`, run the steps you changed by hand before trusting them.
 - `beck-rt` must not depend on any backend crate. Execution goes through
   `beck_core::backend::Backend`, and `tests/backend_seam.rs` drives the runtime with an
-  implementation that is not the evaluator so the seam stays load-bearing (docs/19 §19.9).
+  implementation that is not the evaluator so the seam stays load-bearing (docs/19 §19.9). Anything
+  the runtime needs to *know* about a backend goes on that trait — `Backend::stack_bytes` is how the
+  runtime sizes a thread for the tree-walker without naming it (docs/28 §28.3).
 - A program's own behaviour is asserted in Beck, not only in Rust. `beck test` runs `test` and
   `property` blocks ([`docs/21-tests-in-beck-and-proof.md`](docs/21-tests-in-beck-and-proof.md)
   §21.2–§21.3); a change to what a program *means* should move a test in the program, and

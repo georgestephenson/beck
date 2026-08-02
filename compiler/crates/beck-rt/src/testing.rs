@@ -255,7 +255,27 @@ impl Recorder {
 // ---------------------------------------------------------------------------------------------
 
 /// Run every `test` and `property` block in a compiled program.
+///
+/// On a thread with as much host stack as the backend says it needs
+/// ([`Backend::stack_bytes`]), because a test is the most likely place for a program to recurse
+/// further than its author expected and the answer to that has to be a failing case rather than a
+/// dead process. A backend that needs nothing gets no thread.
 pub fn run(placed: &Placed, backend: Arc<dyn Backend>, opts: &Options) -> Report {
+    match backend.stack_bytes() {
+        0 => run_here(placed, backend, opts),
+        bytes => std::thread::scope(|scope| {
+            std::thread::Builder::new()
+                .stack_size(bytes)
+                .name("beck-test".into())
+                .spawn_scoped(scope, || run_here(placed, backend, opts))
+                .expect("a thread for the tests")
+                .join()
+                .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+        }),
+    }
+}
+
+fn run_here(placed: &Placed, backend: Arc<dyn Backend>, opts: &Options) -> Report {
     let mut cases = Vec::new();
     for t in &placed.program.tests {
         if let Some(f) = &opts.filter {

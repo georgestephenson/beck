@@ -255,6 +255,14 @@ fn main() -> Result<()> {
         .init();
 
     let cli = Cli::parse();
+    // Every command below may end up evaluating Beck code, and the evaluator spends host stack on
+    // recursion that is not in tail position. It says how much it needs; this is where a `beck`
+    // process supplies it, so that a deep program gets `beck-eval`'s diagnostic rather than the
+    // process getting a SIGSEGV (`docs/28` §28.3).
+    beck_eval::on_the_evaluator_stack(move || dispatch(cli))
+}
+
+fn dispatch(cli: Cli) -> Result<()> {
     match cli.command {
         Cmd::Check {
             file,
@@ -984,8 +992,25 @@ fn explain(what: Explain) -> Result<()> {
     }
 }
 
-#[tokio::main(flavor = "multi_thread")]
-async fn run(file: &Path, addr: &str, store: Store, path: &Path, url: Option<&str>) -> Result<()> {
+/// `beck run`, on a runtime whose worker threads have the evaluator's stack.
+///
+/// `#[tokio::main]` cannot say that, and the folds and views of a served program run on these
+/// threads: a stack a worker did not have would take the server down rather than the request.
+fn run(file: &Path, addr: &str, store: Store, path: &Path, url: Option<&str>) -> Result<()> {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(beck_eval::STACK_BYTES)
+        .build()?
+        .block_on(serve(file, addr, store, path, url))
+}
+
+async fn serve(
+    file: &Path,
+    addr: &str,
+    store: Store,
+    path: &Path,
+    url: Option<&str>,
+) -> Result<()> {
     let placed = compiled(file)?;
     // Built before the app starts and never rebuilt: the program cannot change under a running
     // process, so the dashboard's structural panes are computed once (docs/19 §19.8).
@@ -1123,8 +1148,24 @@ fn detail_of(n: &beck_infra::Node) -> String {
     }
 }
 
-#[tokio::main(flavor = "current_thread")]
-async fn replay(
+fn replay(
+    file: &Path,
+    store: Store,
+    path: &Path,
+    url: Option<&str>,
+    genesis: bool,
+    verify: bool,
+    to: Option<u64>,
+) -> Result<()> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(replay_inner(file, store, path, url, genesis, verify, to))
+}
+
+/// The caller is already on the evaluator's stack (`main`), and a current-thread runtime folds the
+/// log on that same thread, so this one needs no size of its own.
+async fn replay_inner(
     file: &Path,
     store: Store,
     path: &Path,

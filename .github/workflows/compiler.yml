@@ -107,6 +107,41 @@ jobs:
           # beyond them are held by tests/sicp.rs, which `cargo test` above already runs.
           ./target/release/beck test sicp/ch1.beck
           ./target/release/beck test sicp/ch2.beck
+          # docs/28: a recursion the user cannot bound must end in a diagnostic and a live process.
+          # An exit status of 134 (SIGABRT) or 139 (SIGSEGV) is the failure this replaced, and it is
+          # exactly the thing a `! cmd` gate would have accepted, so the status is checked rather
+          # than only the failure.
+          python3 - <<'PY'
+          open("/tmp/deep.beck", "w").write(
+              'def up(n: Int) -> Int:\n'
+              '    if n == 0:\n'
+              '        return 0\n'
+              '    return 1 + up(n - 1)\n'
+              '\n'
+              'test "past the ceiling":\n'
+              '    expect up(100000) == 100000\n')
+          PY
+          set +e
+          ./target/release/beck test /tmp/deep.beck >/tmp/deep.out 2>/tmp/deep.err
+          code=$?
+          set -e
+          cat /tmp/deep.out /tmp/deep.err
+          test "$code" -ne 0        # the test fails…
+          test "$code" -lt 128      # …by failing, not by dying on a signal
+          grep -q "which is the evaluator's limit" /tmp/deep.out
+          ! grep -q 'overflowed its stack' /tmp/deep.err
+          # And the same recursion in tail position has no ceiling at all.
+          python3 - <<'PY'
+          open("/tmp/iterative.beck", "w").write(
+              'def up(acc: Int, n: Int) -> Int:\n'
+              '    if n == 0:\n'
+              '        return acc\n'
+              '    return up(acc + 1, n - 1)\n'
+              '\n'
+              'test "an iterative process":\n'
+              '    expect up(0, 1000000) == 1000000\n')
+          PY
+          ./target/release/beck test /tmp/iterative.beck
           # A failing test has to fail the build, or the gate is decorative. This is the property
           # docs/19 §19.4 item 10 says an unexecuted artefact cannot have.
           python3 - <<'PY'

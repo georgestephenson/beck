@@ -104,4 +104,18 @@ pub trait Backend: Send + Sync {
     fn intercepting(&self, _by: Arc<dyn Interceptor>) -> Option<Arc<dyn Backend>> {
         None
     }
+
+    /// How much host stack a thread must have before it calls into this backend.
+    ///
+    /// Zero — the default — means "whatever the caller has", which is the honest answer for a
+    /// backend that compiles to a machine-code loop and never nests host frames on the program's
+    /// recursion. A tree-walker does nest, and needs to say so: `docs/28` §28.3 records what
+    /// leaving it unsaid cost, which was a `SIGSEGV` where a diagnostic belonged.
+    ///
+    /// It is part of the seam rather than of one crate because the *runtime* is what spawns
+    /// threads and the runtime may not name a backend crate (`docs/19` §19.9). Asking the backend
+    /// it was handed is how it finds out without one.
+    fn stack_bytes(&self) -> usize {
+        0
+    }
 }

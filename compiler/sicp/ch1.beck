@@ -26,8 +26,9 @@ def factorial(n: Int) -> Int:
     return n * factorial(n - 1)
 
 # The same function as a linear *iterative* process. SICP's whole point here is that this one runs
-# in constant space and the one above does not. In Beck today they are the same shape and the same
-# cost: see `sicp/refusals/tail.beck`, and §25.6 of the report.
+# in constant space and the one above does not — "an implementation with this property is said to
+# be tail-recursive", and until docs/28 Beck was not one. `sicp/refusals/tail.beck` used to sit
+# here asserting that the distinction was unobservable; `count_to` below is what it turned into.
 def fact_iter(product: Int, counter: Int, max_count: Int) -> Int:
     if counter > max_count:
         return product
@@ -35,6 +36,21 @@ def fact_iter(product: Int, counter: Int, max_count: Int) -> Int:
 
 def factorial_iterative(n: Int) -> Int:
     return fact_iter(1, 1, n)
+
+# The distinction itself, with nothing else in it: the same count as a recursive process and as an
+# iterative one. `count_up` defers an addition per call and so needs space linear in `n`;
+# `count_to` does not and needs none. The test below runs the second a *quarter of a million*
+# levels deep, which is far past anything the first can reach — that gap is the property, and it is
+# the one thing in this chapter that is about the implementation rather than about the mathematics.
+def count_to(acc: Int, n: Int) -> Int:
+    if n == 0:
+        return acc
+    return count_to(acc + 1, n - 1)
+
+def count_up(n: Int) -> Int:
+    if n == 0:
+        return 0
+    return 1 + count_up(n - 1)
 
 # ---------------------------------------------------------------------------------------------
 # 1.2.2 Tree recursion
@@ -213,6 +229,14 @@ def repeated(f: Int -> Int, n: Int) -> Int -> Int:
 test "1.2.1 — factorial, recursive and iterative, agree":
     expect factorial(6) == 720
     expect factorial_iterative(6) == 720
+
+# The one test in this chapter that is not about a number the book states. SICP §1.2.1 states a
+# *property* instead — that an iterative process runs in constant space — and a quarter of a
+# million levels is the smallest honest way to assert it, because any depth a recursive process
+# could also reach would prove nothing. Before docs/28 this program did not fail; it aborted.
+test "1.2.1 — an iterative process is iterative, a quarter of a million levels deep":
+    expect count_to(0, 250000) == 250000
+    expect count_up(500) == 500
 
 test "1.2.2 — tree recursion, Fibonacci":
     expect fib(10) == 55

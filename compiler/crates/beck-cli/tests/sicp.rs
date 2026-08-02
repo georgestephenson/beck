@@ -50,55 +50,46 @@ fn errors(name: &str, src: &str) -> String {
 const CH1: &str = include_str!("../../../sicp/ch1.beck");
 const CH2: &str = include_str!("../../../sicp/ch2.beck");
 
-/// Chapter 1 needs more stack than `libtest` hands a test thread, and *that is the finding*.
+/// Chapter 1 used to be wrapped in a 32 MiB thread here, with twelve lines explaining why.
 ///
-/// §25.6 item 5: the evaluator has no proper tail calls and spends host stack per Beck-level call.
-/// A debug build spends several times more of it per frame, and `libtest` runs each test on a
-/// thread with ~2 MiB rather than the main thread's 8 — so `beck test sicp/ch1.beck` passes from
-/// the command line, in both profiles, while the same thirteen tests abort inside the harness.
-/// That combination is worth stating plainly: **the suite's own evidence for the missing-tail-call
-/// gap is that collecting the evidence trips over it.**
+/// The explanation was that the evaluator had no proper tail calls, spent host stack per
+/// Beck-level call, and needed more of it than `libtest` hands a test thread — so the same
+/// thirteen tests passed from the command line and aborted inside the harness. It ended: "when
+/// tail calls land, this wrapper goes away".
 ///
-/// Raising the stack here is the honest fix rather than shrinking the exercises: `count_change(100)`
-/// is 292 because SICP says it is 292, and trimming the book's own answer to fit an interpreter's
-/// frame size would be measuring the harness instead of the language. When tail calls land, this
-/// wrapper goes away and the `RUST_MIN_STACK`-shaped workaround goes with it.
-const CH1_STACK: usize = 32 * 1024 * 1024;
-
+/// Tail calls landed (docs/28) and half of that came true. The wrapper is gone from *here*,
+/// because `beck_rt::testing::run` now asks the backend how much stack it needs and provides it
+/// (docs/28 §28.3) — but it did not go away, it moved to where it can be stated once and tested.
+/// A tree-walker still spends a host frame on recursion that is not in tail position, and no
+/// amount of tail-call optimisation changes that; what changed is that the requirement is declared
+/// by the backend, and that exceeding it is `beck-eval`'s diagnostic rather than a `SIGSEGV`.
 #[test]
 fn chapter_one_passes_against_the_books_own_answers() {
-    std::thread::Builder::new()
-        .stack_size(CH1_STACK)
-        .spawn(|| {
-            let (placed, rendered) = compile_module("sicp/ch1.beck", CH1);
-            let placed = placed.unwrap_or_else(|| panic!("chapter 1 compiles:\n{rendered}"));
-            assert!(
-                !placed.is_application(),
-                "chapter 1 is a library, and running it as one is the point"
-            );
+    let (placed, rendered) = compile_module("sicp/ch1.beck", CH1);
+    let placed = placed.unwrap_or_else(|| panic!("chapter 1 compiles:\n{rendered}"));
+    assert!(
+        !placed.is_application(),
+        "chapter 1 is a library, and running it as one is the point"
+    );
 
-            let backend = beck_eval::backend(&placed);
-            let report = beck_rt::testing::run(&placed, backend, &Options::default());
+    let backend = beck_eval::backend(&placed);
+    let report = beck_rt::testing::run(&placed, backend, &Options::default());
 
-            assert!(
-                report.cases.len() >= 13,
-                "chapter 1 is the evidence for §25.6 and has to carry the exercises it claims"
-            );
-            assert_eq!(
-                report.failed(),
-                0,
-                "{}",
-                beck_rt::testing::render(&report, true)
-            );
-            assert_eq!(
-                report.skipped(),
-                0,
-                "nothing in chapter 1 performs an effect"
-            );
-        })
-        .expect("a thread")
-        .join()
-        .expect("chapter 1 runs without exhausting a 32 MiB stack");
+    assert!(
+        report.cases.len() >= 14,
+        "chapter 1 is the evidence for §25.6 and has to carry the exercises it claims"
+    );
+    assert_eq!(
+        report.failed(),
+        0,
+        "{}",
+        beck_rt::testing::render(&report, true)
+    );
+    assert_eq!(
+        report.skipped(),
+        0,
+        "nothing in chapter 1 performs an effect"
+    );
 }
 
 #[test]
@@ -323,11 +314,12 @@ union R4:
 #[test]
 fn what_bounds_a_recursive_types_depth_is_the_evaluator_and_not_the_checker() {
     // The honest limit, so that §27.3's "nothing bounds depth" is not read as "nothing at all".
-    // A recursive *type* is unbounded; a recursive *value* is bounded by the host stack the
-    // evaluator spends per Beck-level call, which is §25.6 item 5 — wall 4, still standing.
+    // A recursive *type* is unbounded; a recursive *value* built by recursion that is not in tail
+    // position is bounded by `beck-eval`'s depth ceiling — and since docs/28 that bound is a
+    // *diagnostic*. This test used to assert the `SIGABRT`; the assertion it makes now is the
+    // difference between the two.
     //
-    // Run through the binary because the far end of it is a `SIGABRT` rather than a `Result`, which
-    // is the same finding `a_tail_call_consumes_stack_…` records for a different program shape.
+    // Still through the binary, because the thing being checked is that the process survives.
     let program = |depth: u32| {
         format!(
             "
@@ -363,15 +355,13 @@ test \"a spine\":
         out
     };
 
-    // 100 rather than a rounder number, because the depth that fits is a property of the *profile*
-    // and not of the language: a debug build spends several times more host stack per Beck-level
-    // call than a release one, and this harness runs whichever `cargo test` was asked for. The
-    // release binary carries 500 comfortably. That the number moves with the build is itself wall
-    // 4 — a language with proper tail calls would not have one.
-    let shallow = run(&program(100), "beck-spine-shallow.beck");
+    // 1,000 rather than the 100 this used to carry, and now a round number rather than a hedged
+    // one: the depth that fits is no longer a property of the build profile, because what stops it
+    // is a counted ceiling rather than whatever stack the process happened to have.
+    let shallow = run(&program(1_000), "beck-spine-shallow.beck");
     assert!(
         shallow.status.success(),
-        "a tree 100 deep is an ordinary value:\n{}{}",
+        "a tree 1,000 deep is an ordinary value in either profile:\n{}{}",
         String::from_utf8_lossy(&shallow.stdout),
         String::from_utf8_lossy(&shallow.stderr)
     );
@@ -379,12 +369,20 @@ test \"a spine\":
     let deep = run(&program(50_000), "beck-spine-deep.beck");
     assert!(
         !deep.status.success(),
-        "a tree 50,000 deep is expected to exhaust the host stack; if this passes, Beck grew proper \
-         tail calls and wall 4 is down (happily)"
+        "a tree 50,000 deep is past the ceiling and the test that builds it has to fail"
+    );
+    let out = format!(
+        "{}{}",
+        String::from_utf8_lossy(&deep.stdout),
+        String::from_utf8_lossy(&deep.stderr)
     );
     assert!(
-        String::from_utf8_lossy(&deep.stderr).contains("overflowed its stack"),
-        "and to die by the evaluator's stack rather than by anything the checker did"
+        !out.contains("overflowed its stack"),
+        "and it must not be by aborting the process — that was the old finding:\n{out}"
+    );
+    assert!(
+        out.contains("which is the evaluator's limit"),
+        "it must be by the diagnostic, which names tail position as the way out:\n{out}"
     );
 }
 
@@ -524,24 +522,39 @@ def pick(b: Bool) -> Int:
 }
 
 #[test]
-fn a_tail_call_consumes_stack_so_an_iterative_process_is_not_iterative() {
-    // §1.2.1's distinction, which Beck cannot currently make. This one is run through the binary
-    // rather than in-process because the failure is a `SIGABRT`, not a `Result` — which is itself
-    // half of the finding.
-    let file = concat!(env!("CARGO_MANIFEST_DIR"), "/../../sicp/refusals/tail.beck");
+fn a_tail_call_costs_nothing_so_an_iterative_process_is_iterative() {
+    // §1.2.1's distinction, which Beck could not make until docs/28. `sicp/refusals/tail.beck`
+    // used to live here asserting the `SIGABRT`; it is now the `count_to` exercise in `ch1.beck`,
+    // and this test is what turned round.
+    //
+    // Still run through the binary rather than in-process, for the reason the refusal was: if the
+    // trampoline ever regresses the failure is a dead process rather than a `Result`, and a
+    // subprocess is what can tell the difference between the two.
+    let deep = "
+def count_to(acc: Int, n: Int) -> Int:
+    if n == 0:
+        return acc
+    return count_to(acc + 1, n - 1)
+
+test \"a tail call, a million deep\":
+    expect count_to(0, 1000000) == 1000000
+";
+    let file = std::env::temp_dir().join("beck-tail-million.beck");
+    std::fs::write(&file, deep).expect("a scratch file");
     let out = Command::new(env!("CARGO_BIN_EXE_beck"))
-        .args(["test", file])
+        .args(["test", file.to_str().expect("a path")])
         .output()
         .expect("the compiler is built");
+    let _ = std::fs::remove_file(&file);
 
-    assert!(
-        !out.status.success(),
-        "a tail call eight thousand deep is expected to die; if this passes, Beck grew proper \
-         tail calls and §25.6 needs rewriting (happily)"
-    );
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(
-        err.contains("overflowed its stack"),
-        "and to die by exhausting the host stack specifically:\n{err}"
+        !err.contains("overflowed its stack"),
+        "a tail call must not spend host stack, at any depth:\n{err}"
+    );
+    assert!(
+        out.status.success(),
+        "a million tail calls is an ordinary program:\n{}{err}",
+        String::from_utf8_lossy(&out.stdout)
     );
 }

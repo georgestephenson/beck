@@ -182,7 +182,9 @@ dependencies whose signatures didn't change.
 > the bullet below are still untouched.
 >
 > The nine other bullets are **untouched**, and [`26`](26-arrangement-sharing-report.md) §26.9 names
-> them one at a time rather than by omission. So are the two added since (§8.4).
+> them one at a time rather than by omission. So are the two added since (§8.4) — though the
+> means-of-abstraction bullet is now four of its six, and the evaluator no longer aborts the process
+> on a recursion a user cannot bound ([`28`](28-tail-calls-report.md)).
 
 - LLVM release backend + differential tests against Cranelift (§5.2).
 - **Incremental views**: compile subscribed/materialized views to differential-dataflow plans with
@@ -212,22 +214,24 @@ dependencies whose signatures didn't change.
 - Standard library v1: collections, strings, time, money/decimal, HTTP client, JSON, UUID, crypto
   primitives (delegated to `ring`/`aws-lc-rs`, not hand-rolled). **Reals first**, because §25.6
   measures that §1.1.7 of SICP — the first substantial program in the book — does not typecheck
-  without them, and because the three items §25.7 put ahead of it are now done
-  ([`27`](27-walls-report.md)).
+  without them, and because the four items §25.7 put ahead of it are now done
+  ([`27`](27-walls-report.md), [`28`](28-tail-calls-report.md)).
 - **The language's own means of abstraction, which four phases had never been pointed at**
   ([`25`](25-benchmarks-and-expressiveness.md) §25.6, measured; §25.7 orders them). Every corpus
-  program is shaped like the todo sketch, which is why none of these had surfaced. *Three of the six
-  are **built** ([`27`](27-walls-report.md)): running a module with no merge point, recursive and
-  forward-referencing types, and the `B0320` row-unification defect that refused an `if` over two
-  function values. Three remain — user-written polymorphic definitions; proper tail calls in the
-  evaluator, or a bounded-depth diagnostic in the interim, because a Beck program can currently abort
-  its own process with a recursion the user cannot bound; and the numeric tower, which is the
-  standard-library bullet below.*
+  program is shaped like the todo sketch, which is why none of these had surfaced. *Four of the six
+  are **built**: running a module with no merge point, recursive and forward-referencing types, and
+  the `B0320` row-unification defect that refused an `if` over two function values
+  ([`27`](27-walls-report.md)); and proper tail calls, with the bounded-depth diagnostic **as well
+  as** rather than instead of them, so no Beck program aborts its own process any more
+  ([`28`](28-tail-calls-report.md)). Two remain — user-written polymorphic definitions, and the
+  numeric tower, which is the standard-library bullet below.*
 - **The expressiveness suite** ([`25`](25-benchmarks-and-expressiveness.md) §25.5, D18): SICP
   stage 1, and Felleisen's criterion answered for the special forms the book introduces. It needs
   macros and nothing else, so it starts now and does not wait on the bullet above. *Chapter 1 is
   complete and chapter 2 reaches §2.2's closure property ([`27`](27-walls-report.md)); both run as
-  **libraries**, with no application wrapped around them. Felleisen's table is not written.*
+  **libraries**, with no application wrapped around them. Chapter 1 also carries §1.2.1's *property*
+  — an iterative process running a quarter of a million levels deep — now that there is one to carry
+  ([`28`](28-tail-calls-report.md)). Felleisen's table is not written.*
 - **Identity**: OIDC relying-party runtime, `identity = managed()` provisioning (Keycloak/Ory),
   claims → `Session` capability mapping, dev-mode identity for rung 0, presence as a first-class
   signal ([`10`](10-decisions.md) D6).

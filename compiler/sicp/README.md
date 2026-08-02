@@ -13,23 +13,32 @@ verbose for it. §25.5 sets out the protocol; nothing here is a comparison yet.
 
 | | |
 |---|---|
-| [`ch1.beck`](ch1.beck) | The part of SICP chapter 1 that runs today. Thirteen `test` blocks, each asserting an answer the book states |
-| [`refusals/`](refusals/) | One file per wall between chapter 1 and the rest of the book. Each is the smallest program that hits it, with the diagnostic in its header comment |
+| [`ch1.beck`](ch1.beck) | The part of SICP chapter 1 that runs today. Fifteen `test` blocks — fourteen asserting an answer the book states, and one asserting the *property* §1.2.1 states instead: that an iterative process runs in constant space |
+| [`ch2.beck`](ch2.beck) | Chapter 2 as far as §2.2's closure property. §2.1's rationals need the numeric tower; the exercises that ask the reader to *build* `map` and `accumulate` need user-written polymorphism |
+| [`refusals/`](refusals/) | One file per wall still standing between here and the rest of the book. Each is the smallest program that hits it, with the diagnostic in its header comment |
 
-The harness is [`../crates/beck-cli/tests/sicp.rs`](../crates/beck-cli/tests/sicp.rs). It runs
-chapter 1, and asserts that every refusal is **still refused** — so a wall coming down shows up as
+The harness is [`../crates/beck-cli/tests/sicp.rs`](../crates/beck-cli/tests/sicp.rs). It runs both
+chapters, and asserts that every refusal is **still refused** — so a wall coming down shows up as
 a test that starts failing rather than as something somebody notices.
 
 ```console
 $ cargo test --release --test sicp
 $ ./target/release/beck test sicp/ch1.beck
+$ ./target/release/beck test sicp/ch2.beck
 ```
 
-## Read `ch1.beck`'s header before anything else
+## Four walls down, two standing
 
-Every SICP solution is a library: pure procedures, no merge point. Beck cannot run a library, so
-`ch1.beck` carries a five-declaration application that nothing in the chapter uses, purely to be
-executable. It is left visible on purpose — deleting it is item 1 of §25.7.
+§25.7 put the six in dependency order and four are built. Running a module with no merge point,
+recursive and forward-referencing types, and the `B0320` defect are
+[`docs/27`](../../docs/27-walls-report.md); proper tail calls are
+[`docs/28`](../../docs/28-tail-calls-report.md). What is left in `refusals/` is the numeric tower
+(`real.beck`) and user-written polymorphism (`generic.beck`).
+
+Each wall that came down left a test pointing the other way rather than no test at all — the clearest
+example is `refusals/tail.beck`, which asserted that a tail call eight thousand deep aborts the
+process and is now `ch1.beck`'s §1.2.1 exercise asserting that one a quarter of a million deep does
+not.
 
 ## Why this is not in `corpus/`
 
