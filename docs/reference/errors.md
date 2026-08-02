@@ -4,7 +4,7 @@
 
 Every diagnostic the compiler can raise carries a stable code. `beck explain error B0341` prints one of these entries at the terminal.
 
-The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans every non-test source file for a `"Bnnnn"` literal and fails if the set differs from this table in either direction. **107 codes.**
+The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans every non-test source file for a `"Bnnnn"` literal and fails if the set differs from this table in either direction. **111 codes.**
 
 
 ## Reading the source — `B0100–B0121`
@@ -41,7 +41,7 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0212` | error | **`ui` block has more than one root** — An `Html` value is a single tree. Wrap the elements in one — a `div:` or `main:` block. |
 | `B0213` | error | **the form nests too deep to expand** — The expander walks a form's arguments as deeply as they nest, and stops at the count the reader stops at. This is not `B0201`: nothing here says a macro failed to terminate — the two were one counter until they were separated, and a deep expression with no macros in it reported the wrong one. |
 
-## Names, types and effects — `B0300–B0390`
+## Names, types and effects — `B0300–B0394`
 
 | Code | | Meaning |
 |---|---|---|
@@ -50,7 +50,7 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0302` | error | **type is declared twice** — Two declarations in this module share a type name. |
 | `B0303` | error | **a top-level parameter needs a type annotation** — Inference is intra-module and boundaries are declared (§3.6): a top-level definition's parameters are part of its published signature, so they are written rather than guessed. |
 | `B0304` | error | **needs a return type** — Same reason as B0303: a top-level definition's result type is part of its contract. |
-| `B0305` | error | **not an effect** — A `uses` clause names effect atoms, and this is not one of them. `beck doc reference` lists the atom set. |
+| `B0305` | error | **neither an effect nor a row** — A `uses` clause names effect atoms and row aliases, and this is neither. `beck doc reference` lists the atom set; a `row Name = …` declaration in the module is what makes a name for a bundle of them. |
 | `B0307` | error | **unsupported top-level item** — This form is not something a module may contain at top level. |
 | `B0308` | error | **expected a type** — A type position holds something that is not a type expression. |
 | `B0310` | error | **cannot find type** — No declaration, import or builtin of that name is in scope. |
@@ -93,6 +93,10 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0386` | error | **no implementation can be chosen here** — An implementation comes from a concrete type or from a bound on a type parameter — write `[T: Trait]` to say the parameter has one. A trait method and a bounded definition are both called rather than passed: the implementation is supplied at the call site, so a reference that is never called has nowhere to receive it. |
 | `B0387` | error | **the type does not implement the trait** — There is no `impl Trait for Type` in scope for the receiver's type. |
 | `B0390` | error | **the expression nests too deep to check** — The checker walks an expression and a type as deeply as they nest, and stops at `beck_diag::depth::MAX_NESTING` levels — the same count the reader stops at, because the checker can be handed a tree a macro produced rather than one anybody typed. Everything downstream walks the `Core` this pass built, so it is bounded by the same number. |
+| `B0391` | error | **a raised value must have a declared type** — `raise` performs `raises(T)`, and the atom names `T` so that a handler can say what it catches. A builtin will not do: `raises(Int)` would make every integer failure in a program the same failure, and a handler could not tell them apart. |
+| `B0392` | error | **nothing in this block can fail** — A `try:` reifies a failure into a `Result`, and this block's row carries no `raises(...)` to reify. Either the call you meant to make is not there, or the `try:` is left over from a signature that has stopped failing — which is the good case, and the diagnostic is how you find out. |
+| `B0393` | error | **the block can fail in more than one way** — A `Result[T, E]` has one error type. Declare a union over the failures and raise that — which is the same advice as for any sum, and keeps the handler's `E` a type the caller can match on exhaustively. |
+| `B0394` | error | **the row is declared twice** — Two `row Name = …` declarations with the same name. A row alias is a name for a bundle of effect atoms, and a second one would make every `uses` clause mentioning it ambiguous. |
 
 ## Placement — `B0400–B0404`
 

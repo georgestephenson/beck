@@ -331,9 +331,10 @@ pub const INDEX: &[CodeEntry] = &[
     e(
         "B0305",
         Stage::Types,
-        "not an effect",
-        "A `uses` clause names effect atoms, and this is not one of them. `beck doc reference` \
-         lists the atom set.",
+        "neither an effect nor a row",
+        "A `uses` clause names effect atoms and row aliases, and this is neither. `beck doc \
+         reference` lists the atom set; a `row Name = …` declaration in the module is what makes a \
+         name for a bundle of them.",
     ),
     e(
         "B0307",
@@ -624,6 +625,38 @@ pub const INDEX: &[CodeEntry] = &[
          `beck_diag::depth::MAX_NESTING` levels — the same count the reader stops at, because the \
          checker can be handed a tree a macro produced rather than one anybody typed. Everything \
          downstream walks the `Core` this pass built, so it is bounded by the same number.",
+    ),
+    e(
+        "B0391",
+        Stage::Types,
+        "a raised value must have a declared type",
+        "`raise` performs `raises(T)`, and the atom names `T` so that a handler can say what it \
+         catches. A builtin will not do: `raises(Int)` would make every integer failure in a \
+         program the same failure, and a handler could not tell them apart.",
+    ),
+    e(
+        "B0392",
+        Stage::Types,
+        "nothing in this block can fail",
+        "A `try:` reifies a failure into a `Result`, and this block's row carries no `raises(...)` \
+         to reify. Either the call you meant to make is not there, or the `try:` is left over from \
+         a signature that has stopped failing — which is the good case, and the diagnostic is how \
+         you find out.",
+    ),
+    e(
+        "B0393",
+        Stage::Types,
+        "the block can fail in more than one way",
+        "A `Result[T, E]` has one error type. Declare a union over the failures and raise that — \
+         which is the same advice as for any sum, and keeps the handler's `E` a type the caller \
+         can match on exhaustively.",
+    ),
+    e(
+        "B0394",
+        Stage::Types,
+        "the row is declared twice",
+        "Two `row Name = …` declarations with the same name. A row alias is a name for a bundle of \
+         effect atoms, and a second one would make every `uses` clause mentioning it ambiguous.",
     ),
     // -------------------------------------------------------------------- B04xx: placement
     e(

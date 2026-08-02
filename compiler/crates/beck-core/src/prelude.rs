@@ -177,6 +177,14 @@ pub fn prims() -> Vec<(&'static str, Prim, Scheme)> {
             Prim::StrTrim,
             Scheme::mono(fun(vec![str_.clone()], str_.clone())),
         ),
+        // The canonical fallible operation, and the reason it is here rather than in the standard
+        // library Wave 2 will write: `corpus/29-fallible.beck` needs one thing that can genuinely
+        // fail on its input, and a parse is that thing in every language.
+        (
+            "str_to_int",
+            Prim::StrToInt,
+            Scheme::mono(fun(vec![str_.clone()], Ty::option(Ty::int()))),
+        ),
         (
             "str_is_empty",
             Prim::StrIsEmpty,

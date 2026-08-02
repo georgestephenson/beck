@@ -24,7 +24,7 @@ What a user's type may implement to join something the language already has. `Nu
 
 ## Names
 
-53 of them.
+54 of them.
 
 | Name | Type |
 |---|---|
@@ -78,6 +78,7 @@ What a user's type may implement to join something the language already has. `Nu
 | `sqrt` | `(Float) -> Float` |
 | `str` | `(a) -> Str` |
 | `str_is_empty` | `(Str) -> Bool` |
+| `str_to_int` | `(Str) -> Option[Int]` |
 | `str_trim` | `(Str) -> Str` |
 | `unwrap_or` | `(Option[a], a) -> a` |
 | `uuid` | `() -> Str ! {nondet}` |

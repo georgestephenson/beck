@@ -64,7 +64,11 @@ impl Tier {
         match self {
             Tier::Any => CONCRETE_TIERS.iter().all(|t| t.discharges(e)),
             Tier::Client => match e {
-                Effect::Dom | Effect::Nondet | Effect::Partial | Effect::Ambient(_) => true,
+                Effect::Dom
+                | Effect::Nondet
+                | Effect::Partial
+                | Effect::Raises(_)
+                | Effect::Ambient(_) => true,
                 // §3.3: `net.out(own-origin)` — and only that. A browser cannot reach an arbitrary
                 // host, so a `net.out(payments.example.com)` on the client is a placement error and
                 // not a CORS bug discovered in production.
@@ -79,7 +83,13 @@ impl Tier {
             // `partial` is discharged: a fold that diverges aborts the process, which is the same
             // failure mode as any other failed append (§18.5 item 6) and does not make replay a
             // different function of the log. `nondet` is not, and that is §3.7's rule.
-            Tier::Data => matches!(e, Effect::Durable | Effect::Partial | Effect::Ambient(_)),
+            // `raises` is discharged everywhere, including here: failing is *control flow* and not
+            // a resource. A fold that raises is a fold that produced no state from that event,
+            // which is the same shape as `partial` and is a function of the log either way.
+            Tier::Data => matches!(
+                e,
+                Effect::Durable | Effect::Partial | Effect::Raises(_) | Effect::Ambient(_)
+            ),
         }
     }
 
@@ -97,10 +107,14 @@ impl Effect {
     /// Does this effect make a fold a different function of the log? §3.7's replay-purity rule,
     /// stated as a property of the atom rather than as "the row is empty".
     ///
-    /// `log` and `metrics` do not (they are write-only observations, §19.8), and `partial` does not
-    /// (a fold that aborts produces no state, rather than a different one). Everything else does.
+    /// `log` and `metrics` do not (they are write-only observations, §19.8), `partial` does not
+    /// (a fold that aborts produces no state, rather than a different one), and `raises` does not
+    /// (the same value raised for the same input, every replay). Everything else does.
     pub fn breaks_replay(&self) -> bool {
-        !matches!(self, Effect::Ambient(_) | Effect::Partial)
+        !matches!(
+            self,
+            Effect::Ambient(_) | Effect::Partial | Effect::Raises(_)
+        )
     }
 }
 

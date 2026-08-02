@@ -63,6 +63,7 @@ pub enum Prim {
     Not,
     ToStr,
     StrTrim,
+    StrToInt,
     StrIsEmpty,
     ListLen,
     ListIsEmpty,
@@ -91,6 +92,19 @@ pub enum Prim {
     Now,
     /// Reads a secret from the process environment, yielding a `secret[Str]` (§3.5).
     SecretEnv,
+    /// `raise e` — fail with a value.
+    ///
+    /// The atom it performs is `raises(T)`, which depends on the *type* of its argument, so the
+    /// checker attaches it where that type is known rather than [`Prim::effects`] declaring it.
+    /// This is the first primitive whose row is not a constant, and it is why that table's doc
+    /// says "the atoms this primitive performs *itself*".
+    Raise,
+    /// `try: block` — run a thunk, and turn a raise of the named type into an `Err`.
+    ///
+    /// Two arguments: the thunk, and the name of the error type this handler catches. The name is
+    /// what stops a handler from catching a failure it cannot type — a caller's function may raise
+    /// something this `try` never heard of, and that has to keep travelling.
+    Try,
     /// Wraps a value as `internal[T]`: storable, never Sendable.
     InternalOf,
     /// Unwraps one. Performs `cap.internal`, so only the authority chokepoint can do it.
@@ -120,6 +134,8 @@ impl Prim {
             Div => "/",
             Rem => "%",
             Neg => "negate",
+            Raise => "raise",
+            Try => "try",
             Abs => "abs",
             Sqrt => "sqrt",
             ToFloat => "float",
@@ -134,6 +150,7 @@ impl Prim {
             Not => "not",
             ToStr => "str",
             StrTrim => "str_trim",
+            StrToInt => "str_to_int",
             StrIsEmpty => "str_is_empty",
             ListLen => "list_len",
             ListIsEmpty => "list_is_empty",

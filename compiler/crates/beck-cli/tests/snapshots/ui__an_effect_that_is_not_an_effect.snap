@@ -2,7 +2,7 @@
 source: crates/beck-cli/tests/ui.rs
 expression: "render(\"\\\ndef f() -> Int uses teleport:\n    return 1\n\")"
 ---
-error[B0305]: `teleport` is not an effect
+error[B0305]: `teleport` is neither an effect nor a row
   --> t.beck:1:21
   |
 1 | def f() -> Int uses teleport:

@@ -810,7 +810,12 @@ fn verify(
     if tier == Tier::Any {
         // After the solver has run, this can only be reached by an explicit `@on(any)` on
         // something effectful — the solver never leaves an effectful node unplaced.
-        if let Some(e) = row.visible().first() {
+        //
+        // "Effectful" has to mean *undischargeable here*, not merely non-empty. `partial` and
+        // `raises(E)` are performed by definitions that are legal on every tier, and asking the
+        // author to pin one of those to a tier would be asking them to make a placement decision
+        // the language does not need them to make.
+        if let Some(e) = row.visible().into_iter().find(|e| !tier.discharges(e)) {
             diags.push(
                 Diagnostic::error("B0404", format!("{what} cannot be unplaced"), tier_span)
                     .with_primary_label(format!(

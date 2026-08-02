@@ -304,6 +304,18 @@ pub mod sym {
     pub const DECORATE: &str = "decorate";
     pub const ON: &str = "on";
     pub const UI: &str = "ui";
+    /// `raise e` — fail with a value. Performs `raises(T)`, where `T` is the value's type.
+    pub const RAISE: &str = "raise";
+    /// `row Name = a, b` — a name for a bundle of effect atoms, usable in a `uses` clause.
+    pub const ROW: &str = "row";
+    /// `try: block` — run the block and reify a failure as a `Result[T, E]`.
+    ///
+    /// The handler is a *form*, so it is lexically scoped by construction rather than by a search
+    /// at run time — which POPL 2019 gives the general argument for and
+    /// [`docs/38`](../../../../docs/38-literature-survey.md) §38.4 adopts. In a language where
+    /// effects decide placement, an accidentally intercepted effect would be an accidental
+    /// *re-placement*.
+    pub const TRY: &str = "try";
     pub const KW_ARG: &str = "kw";
     pub const WILDCARD: &str = "_";
     pub const SERVICE: &str = "service";

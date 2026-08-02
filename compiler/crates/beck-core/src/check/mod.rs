@@ -172,6 +172,11 @@ pub struct Checker<'a> {
     globals: Vec<Binding>,
     /// The row each definition's signature declares with `uses`.
     declared: BTreeMap<Arc<str>, Row>,
+    /// `row Failure = raises(FormError), log` — a name for a bundle, expanded wherever it is used.
+    ///
+    /// Module-local by design. A `.becki` renders the expanded atoms, because a published contract
+    /// that referred to a name the reader has to look up somewhere else would not be a contract.
+    row_aliases: BTreeMap<Arc<str>, Row>,
     /// Types declared in this module, in source order.
     own_types: Vec<Arc<str>>,
     /// The row *variable* standing for each definition's inferred row, minted before any body is
@@ -257,6 +262,7 @@ pub fn check_module_with(
         locals: Vec::new(),
         globals: Vec::new(),
         declared: BTreeMap::new(),
+        row_aliases: BTreeMap::new(),
         own_types: Vec::new(),
         def_row: BTreeMap::new(),
         row: Row::empty(),
@@ -327,6 +333,9 @@ pub fn check_module_with(
     // Traits before impls, and impls before any signature: an `impl` is *desugared* into ordinary
     // definitions, so by the time `collect_signatures` runs there is nothing trait-shaped left for
     // it — or for placement, or for the splitter, or for the evaluator — to know about.
+    // Row aliases before anything reads a `uses` clause, and after the types so a `raises(E)`
+    // names a type that exists.
+    ck.collect_row_aliases(&items);
     ck.collect_traits(&items);
     let expanded = ck.expand_impls(&items);
     // A bounded `def` is rewritten in place, so what follows sees a definition with one more
@@ -973,19 +982,55 @@ impl<'a> Checker<'a> {
             // here, so the atom is reassembled from what was written rather than pattern-matched
             // per shape — which is why adding an atom to §3.2's list costs one line in `row.rs`.
             let text = written_form(e).unwrap_or_default();
-            match Effect::parse(&text) {
-                Some(atom) => row.add(atom),
-                None => self.error(
+            // A name that is not an atom may be a row alias. Tried second, so an alias cannot
+            // shadow an effect: `row durable = ...` would otherwise silently change what every
+            // signature in the module means.
+            if let Some(atom) = Effect::parse(&text) {
+                row.add(atom);
+            } else if let Some(alias) = self.row_aliases.get(text.as_str()).cloned() {
+                row = row.union(&alias);
+            } else {
+                self.error(
                     "B0305",
                     format!(
-                        "`{}` is not an effect",
+                        "`{}` is neither an effect nor a row",
                         if text.is_empty() { "?" } else { &text }
                     ),
                     e.span(),
-                ),
+                );
             }
         }
         row
+    }
+
+    /// Collect `row Name = …` declarations, before any signature mentions one.
+    ///
+    /// An alias may name an alias declared earlier in the file. It may not name one declared later,
+    /// and that is the one place this differs from types — which may mention anything, in any order
+    /// (`docs/27` §27.3). The reason is that a row is a *set* being built here rather than a
+    /// declaration being resolved later, and a forward reference would mean a fixpoint over
+    /// something a reader cannot see the end of. A cycle is refused for the same reason.
+    fn collect_row_aliases(&mut self, items: &[&Node]) {
+        for item in items {
+            let (item, _) = self.undecorate(item);
+            if !item.is_form(sym::ROW) || item.args.len() < 2 {
+                continue;
+            }
+            let Some(name) = item.args[0].as_var().map(|s| s.name.clone()) else {
+                continue;
+            };
+            if self.row_aliases.contains_key(&name) {
+                self.error(
+                    "B0394",
+                    format!("row `{name}` is declared twice"),
+                    item.span(),
+                );
+                continue;
+            }
+            let body = Node::form("uses", item.args[1..].to_vec(), item.span());
+            let row = self.declared_row(Some(&body));
+            self.row_aliases.insert(name, row);
+        }
     }
 
     /// Register every top-level signal before checking any of them.
@@ -1058,6 +1103,7 @@ impl<'a> Checker<'a> {
                 || inner.is_form(sym::IMPORT)
                 || inner.is_form(sym::TRAIT)
                 || inner.is_form(sym::IMPL)
+                || inner.is_form(sym::ROW)
             {
                 // Declarations, all of them already collected. A `trait` was read by
                 // `collect_traits` and an `impl` was expanded into the `def`s this loop is
@@ -1748,6 +1794,8 @@ impl<'a> Checker<'a> {
                 )
             }
             sym::FN if n.args.len() == 2 => self.lambda(n, expected, span),
+            sym::RAISE if n.args.len() == 1 => self.raise_expr(&n.args[0], span),
+            sym::TRY if n.args.len() == 1 => self.try_expr(&n.args[0], expected, span),
             sym::MATCH if !n.args.is_empty() => self.match_expr(n, expected, span),
             sym::LIST => {
                 let elem = expected
@@ -2098,6 +2146,128 @@ impl<'a> Checker<'a> {
             BindKind::Ctor(union, variant) => self.make(&union, Some(&variant), &[], span),
             BindKind::Model(model) => self.make(&model, None, &[], span),
         }
+    }
+
+    // ---------------------------------------------------------- failure, as a row label
+
+    /// `raise e` — perform `raises(T)`, and have no type of its own.
+    ///
+    /// The result is a fresh variable rather than `never`, for the reason `docs/38` §38.4 gives for
+    /// the whole shape: a raise is an *effect*, so the expression it stands in for is whatever the
+    /// context wanted. `if text == "": raise Blank else: text` is a `Str`.
+    fn raise_expr(&mut self, arg: &Node, span: Span) -> Core {
+        let value = self.expr(arg, None);
+        let ty = self.subst.resolve(&value.ty);
+        let Some(name) = error_ty_name(&ty) else {
+            self.error(
+                "B0391",
+                format!("a raised value must have a declared type, and this one is `{ty}`"),
+                value.span,
+            );
+            return Core::new(CoreKind::Const(Const::Unit), self.subst.fresh(), span);
+        };
+        // The atom names the type, so a handler can say what it catches. This is why `Raise` is the
+        // one primitive whose row `Prim::effects` cannot state: it is a function of the argument.
+        self.perform(&Row::of([Effect::Raises(name)]));
+        Core::new(
+            CoreKind::Prim {
+                op: Prim::Raise,
+                args: vec![value],
+            },
+            self.subst.fresh(),
+            span,
+        )
+    }
+
+    /// `try: block` — run the block, and reify its failure as a `Result[T, E]`.
+    ///
+    /// This is the handler, and it is a *form*: lexically scoped by construction, with no dynamic
+    /// search for who handles what (POPL 2019's result, `docs/38` §38.4). It discharges exactly the
+    /// `raises(E)` atoms the block's row carries and leaves everything else — including the row
+    /// *variables*, which stand for a caller's effects and may hide a failure this handler has no
+    /// type for. That last point is why the primitive is given the name of what it catches.
+    fn try_expr(&mut self, body: &Node, expected: Option<&Ty>, span: Span) -> Core {
+        // The `Result[T, _]` a caller expects tells the block what its own value type should be.
+        let inner_expected = match expected.map(|t| self.subst.resolve(t)) {
+            Some(Ty::Con(c, args)) if c.as_ref() == Ty::RESULT && args.len() == 2 => {
+                Some(args[0].clone())
+            }
+            _ => None,
+        };
+
+        let outer = std::mem::take(&mut self.row);
+        let before = self.locals.len();
+        let core = self.body_expr(body, inner_expected.as_ref());
+        self.locals.truncate(before);
+        let inner = std::mem::replace(&mut self.row, outer);
+
+        let mut raised: Vec<Arc<str>> = Vec::new();
+        let mut rest = Row::empty();
+        rest.tails = inner.tails.clone();
+        for atom in &inner.atoms {
+            match atom {
+                Effect::Raises(t) => {
+                    if !raised.contains(t) {
+                        raised.push(t.clone());
+                    }
+                }
+                other => {
+                    rest.atoms.insert(other.clone());
+                }
+            }
+        }
+        // Everything the block did except fail is still done, and the enclosing definition still
+        // performs it. A handler catches failure; it does not launder a `durable`.
+        self.perform(&rest);
+
+        let error = match raised.len() {
+            1 => raised.remove(0),
+            0 => {
+                self.error(
+                    "B0392",
+                    "nothing in this block can fail, so there is no failure to reify",
+                    span,
+                );
+                return core;
+            }
+            _ => {
+                raised.sort();
+                let names: Vec<String> = raised.iter().map(|t| format!("`{t}`")).collect();
+                self.error(
+                    "B0393",
+                    format!(
+                        "this block can fail in {} different ways ({}), and a `Result` has one \
+                         error type — declare a union over them and raise that",
+                        raised.len(),
+                        names.join(", ")
+                    ),
+                    span,
+                );
+                raised.remove(0)
+            }
+        };
+
+        let value_ty = core.ty.clone();
+        let result_ty = Ty::app(Ty::RESULT, vec![value_ty, Ty::con(&error)]);
+        let thunk = Core::new(
+            CoreKind::Lam {
+                params: Vec::new(),
+                body: Box::new(core),
+            },
+            self.subst.fresh(),
+            span,
+        );
+        Core::new(
+            CoreKind::Prim {
+                op: Prim::Try,
+                args: vec![
+                    thunk,
+                    Core::new(CoreKind::Const(Const::Str(error.clone())), Ty::str_(), span),
+                ],
+            },
+            result_ty,
+            span,
+        )
     }
 
     fn lambda(&mut self, n: &Node, expected: Option<&Ty>, span: Span) -> Core {
@@ -2919,6 +3089,22 @@ fn clause_cores_mut(c: &mut crate::testing::Clause) -> Vec<&mut Core> {
 }
 
 /// Walk a `Core` tree applying the final substitution to every recorded type.
+/// The name a `raises(...)` atom carries, for the type of a raised value.
+///
+/// A declared type, and not a builtin: `raise 4` would give a handler nothing to say it catches,
+/// and `raises(Int)` would make every integer failure in a program the same failure. A `list[E]`
+/// is refused for the same reason — the atom names a constructor, so `list` would be the name and
+/// two unrelated lists would collide.
+fn error_ty_name(t: &Ty) -> Option<Arc<str>> {
+    match t {
+        Ty::Con(name, args) if args.is_empty() => match name.as_ref() {
+            Ty::INT | Ty::FLOAT | Ty::BOOL | Ty::STR | Ty::UNIT => None,
+            _ => Some(name.clone()),
+        },
+        _ => None,
+    }
+}
+
 fn resolve_types(c: &mut Core, s: &Subst) {
     c.ty = s.resolve(&c.ty);
     match &mut c.kind {

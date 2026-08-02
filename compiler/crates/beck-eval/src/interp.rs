@@ -35,6 +35,12 @@ use beck_core::PMap;
 pub struct EvalError {
     pub message: String,
     pub span: Span,
+    /// The value a `raise` failed with, if this is a raise rather than a fault.
+    ///
+    /// The two travel the same way — a raise unwinds — and are distinguished here rather than in a
+    /// second error type, because everything between the raise and its handler has to pass both
+    /// along unchanged and neither of them is the ordinary path. `Prim::Try` is the only reader.
+    pub raised: Option<Box<(Arc<str>, Value)>>,
 }
 
 impl EvalError {
@@ -42,6 +48,16 @@ impl EvalError {
         EvalError {
             message: message.into(),
             span,
+            raised: None,
+        }
+    }
+
+    /// A failure a program *chose*, carrying the value it chose to fail with and that value's type.
+    pub fn raise(ty: Arc<str>, value: Value, span: Span) -> EvalError {
+        EvalError {
+            message: format!("raised `{}`", value.display()),
+            span,
+            raised: Some(Box::new((ty, value))),
         }
     }
 }
@@ -548,6 +564,35 @@ impl<'h> Interp<'h> {
         }
 
         match op {
+            // `raise e` — unwind, carrying the value and its type name. The name is what a handler
+            // matches on, so a `try:` for one error type does not swallow another.
+            Prim::Raise => {
+                want(1)?;
+                let v = args.pop().expect("arity checked");
+                let ty = match &v {
+                    Value::Data { ty, .. } => ty.clone(),
+                    other => Arc::from(other.display()),
+                };
+                Err(EvalError::raise(ty, v, span))
+            }
+            // `try: block` — run the thunk, and turn a raise of the named type into an `Err`.
+            //
+            // Anything else keeps travelling: a fault is not a failure, and a *different* error
+            // type belongs to a handler further out. That is the whole reason the type name is an
+            // argument rather than something this could infer.
+            Prim::Try => {
+                want(2)?;
+                let caught = args.pop().expect("arity checked");
+                let thunk = args.pop().expect("arity checked");
+                let caught = caught.as_str().unwrap_or_default().to_string();
+                match self.apply(&thunk, Vec::new(), span) {
+                    Ok(v) => Ok(Value::ok(v)),
+                    Err(e) => match &e.raised {
+                        Some(r) if r.0.as_ref() == caught => Ok(Value::err(r.1.clone())),
+                        _ => Err(e),
+                    },
+                }
+            }
             Prim::Add => {
                 want(2)?;
                 let b = args.pop().expect("arity checked");
@@ -653,6 +698,17 @@ impl<'h> Interp<'h> {
                 v.as_str()
                     .map(|s| Value::str_(s.trim()))
                     .ok_or_else(|| EvalError::new("`str_trim` expects a Str", span))
+            }
+            Prim::StrToInt => {
+                want(1)?;
+                let v = args.pop().expect("arity checked");
+                let s = v
+                    .as_str()
+                    .ok_or_else(|| EvalError::new("`str_to_int` expects a Str", span))?;
+                Ok(match s.parse::<i64>() {
+                    Ok(n) => Value::some(Value::Int(n)),
+                    Err(_) => Value::none(),
+                })
             }
             Prim::StrIsEmpty => {
                 want(1)?;

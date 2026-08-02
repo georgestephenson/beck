@@ -214,6 +214,27 @@ impl<'a> Parser<'a> {
         if self.at_kw("def") {
             return self.def_item();
         }
+        // `row Failure = raises(FormError), log` — Koka's community supplies the argument for this
+        // being in the design from the start rather than added when rows get long (`docs/38`
+        // §38.4): five- and six-label rows are ordinary, and a language that makes you write them
+        // out is a language whose signatures nobody reads.
+        if self.at_kw("row") {
+            self.bump();
+            let (name, name_span) = self.ident("a row name")?;
+            self.expect(&Raw::Eq, "`=`");
+            let mut atoms = Vec::new();
+            loop {
+                atoms.push(self.expr()?);
+                if !self.eat(&Raw::Comma) {
+                    break;
+                }
+            }
+            let span = start.to(atoms.last().map(|a| a.span()).unwrap_or(name_span));
+            self.end_of_line();
+            let mut items = vec![Node::sym(name, name_span)];
+            items.extend(atoms);
+            return Some(Node::form(sym::ROW, items, span));
+        }
         if self.at_kw("macro") {
             return self.macro_item();
         }
@@ -1633,6 +1654,22 @@ impl<'a> Parser<'a> {
                 ],
                 span.to(bspan),
             ));
+        }
+        // `raise e` and `try: block` are expressions, not statements: `x = try: f()` is the form
+        // that makes a `Result` out of a failure, and a `raise` in the middle of an expression is
+        // exactly where a fallible branch wants to be.
+        if self.at_kw("raise") {
+            self.bump();
+            let e = self.expr()?;
+            let espan = e.span();
+            return Some(Node::form(sym::RAISE, vec![e], span.to(espan)));
+        }
+        if self.at_kw("try") {
+            self.bump();
+            self.expect(&Raw::Colon, "`:` after `try`");
+            let body = self.block()?;
+            let bspan = body.span();
+            return Some(Node::form(sym::TRY, vec![body], span.to(bspan)));
         }
         if self.at_kw("quote") {
             self.bump();
