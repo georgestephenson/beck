@@ -85,7 +85,7 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0383` | error | **cannot find the trait or the type this impl names** — Both halves of `impl Trait for Type` have to resolve before the impl can be registered. |
 | `B0384` | error | **conflicting implementations** — Coherence: one impl per trait per type constructor, and no blanket impl over a type parameter — so what a call means never depends on which impls happen to be in scope. |
 | `B0385` | error | **orphan impl** — An impl belongs with the trait or with the type. Implementing somebody else's trait for somebody else's type is what lets two modules supply one and disagree. |
-| `B0386` | error | **a trait method needs a concrete receiver** — Dispatch is static and resolved from the receiver's type. A trait method cannot be passed as a value, and generic code cannot call one: both need bounds on a type parameter, which is not built. |
+| `B0386` | error | **no implementation can be chosen here** — An implementation comes from a concrete type or from a bound on a type parameter — write `[T: Trait]` to say the parameter has one. A trait method and a bounded definition are both called rather than passed: the implementation is supplied at the call site, so a reference that is never called has nowhere to receive it. |
 | `B0387` | error | **the type does not implement the trait** — There is no `impl Trait for Type` in scope for the receiver's type. |
 
 ## Placement — `B0400–B0404`

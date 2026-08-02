@@ -350,8 +350,17 @@ impl Subst {
 
     /// Instantiate a scheme with fresh type and row variables.
     pub fn instantiate(&self, s: &Scheme) -> Ty {
+        self.instantiate_named(s).0
+    }
+
+    /// [`Subst::instantiate`], and the fresh variable each **named** parameter became.
+    ///
+    /// A bounded definition needs the map: `def sort[T: Ord](xs: list[T])` is lowered with a
+    /// dictionary parameter per method of `Ord`, and the call site can only say which impl to pass
+    /// once it knows what this call's `T` turned out to be. `docs/39` §39.4.
+    pub fn instantiate_named(&self, s: &Scheme) -> (Ty, BTreeMap<Arc<str>, Ty>) {
         if s.vars.is_empty() && s.row_vars.is_empty() && s.params.is_empty() {
-            return s.ty.clone();
+            return (s.ty.clone(), BTreeMap::new());
         }
         let tys: BTreeMap<TyVarId, Ty> = s.vars.iter().map(|v| (*v, self.fresh())).collect();
         let rows: BTreeMap<RowVarId, RowVarId> = s
@@ -361,13 +370,13 @@ impl Subst {
             .collect();
         let ty = subst_vars(&s.ty, &tys, &rows);
         if s.params.is_empty() {
-            return ty;
+            return (ty, BTreeMap::new());
         }
         // A fresh variable per named parameter, per use — which is what makes two calls of the same
         // `map` at two element types two different types rather than one over-constrained one.
         let named: BTreeMap<Arc<str>, Ty> =
             s.params.iter().map(|p| (p.clone(), self.fresh())).collect();
-        subst_named(&ty, &named)
+        (subst_named(&ty, &named), named)
     }
 
     /// Unify two types that are **alternatives** rather than actual-and-expected, and return the

@@ -191,11 +191,11 @@ dependencies whose signatures didn't change.
 > Removing the six walls wrote two more, which [`33`](33-effect-polymorphism-and-list-patterns-report.md)
 > and [`36`](36-parameterised-types-report.md) then removed: a `list[T]` may be taken apart, and a
 > `model`, a `union`, a `newtype` and a `type` may take a type parameter. One refusal file is left
-> in `sicp/refusals/`, and it says **traits** — which [`37`](37-traits-report.md) has now half
-> built. Declarations, impls, coherence and static dispatch are done; **bounds** on a type parameter
-> are not, so generic code still cannot call a trait method and §2.1.1's exact rationals still
-> refuse. Bounds are the single item `rational.beck`, the numeric tower, `@derive`, a standard
-> library's `sort` and a trait crossing a `.becki` are all waiting behind.
+> in `sicp/refusals/`, and it says **traits** — declarations, impls, coherence and static dispatch
+> in [`37`](37-traits-report.md), bounds and dictionary passing in [`39`](39-bounds-report.md). What
+> is left of it is one decision and one boundary: `+` does not resolve through a trait, so §2.1.1's
+> exact rationals still refuse ([`39`](39-bounds-report.md) §38.7 sets out the options), and a trait
+> does not cross a `.becki`, which is what now stands between the language and a standard library.
 
 - LLVM release backend + differential tests against Cranelift (§5.2).
 - **Incremental views**: compile subscribed/materialized views to differential-dataflow plans with

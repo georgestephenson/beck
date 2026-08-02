@@ -40,22 +40,40 @@
 //! That is why this pass adds **no IR node and no evaluator case**. Dispatch is static: a call
 //! `p.show()` resolves at check time from the type of `p` to exactly one mangled global.
 //!
+//! # Bounds, and the dictionary that is not a data structure
+//!
+//! `def largest[T: Ord](xs: list[T]) -> Option[T]` carries a **bound**, and it is lowered by the
+//! same trick: the definition gains one ordinary parameter per method of each bound, named exactly
+//! as an impl method is named but with the *type parameter* as the target — `Ord::before@T`. Inside
+//! the body, `a.before(b)` resolves `Ord::before@T` and finds a **local**; at a call site with
+//! `T := Int` the caller passes `Ord::before@Int`, which is a **global**. One name scheme, two kinds
+//! of binding, and one resolution rule that reads both:
+//!
+//! ```text
+//! def largest[T: Ord](xs: list[T]) -> Option[T]
+//!   ⇒ def largest[T](xs: list[T], Ord::before@T: (T, T) -> Bool) -> Option[T]
+//!
+//! largest([3, 1])   ⇒   largest([3, 1], Ord::before@Int)
+//! ```
+//!
+//! A dictionary is therefore not a record and not a runtime value of its own — it is a function
+//! argument — so bounds add no IR node either. A bounded definition calling another passes its own
+//! parameter straight through, which is what makes the recursion terminate.
+//!
 //! # What it is not
 //!
-//! **There are no bounds.** `def f[T: Show](x: T)` is not writable, so no *generic* code can call a
-//! trait method — resolution needs a concrete receiver. That is the half of the design that needs
-//! dictionary passing, and building it badly would be worse than not building it. `B0366` says so
-//! by name where a program tries.
-//!
 //! **A trait does not cross a module boundary.** A `.becki` publishes neither traits nor impls, and
-//! `Interface::of` drops the mangled definitions rather than publishing names no parser could read
-//! back.
+//! `Interface::of` drops both the mangled definitions and any bounded one rather than publishing a
+//! signature whose dictionary parameters no source could name.
+//!
+//! **A bounded definition cannot be passed as a value.** Its dictionaries are supplied at the call
+//! site, and a reference that is never called has no call site to supply them.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use beck_diag::{Diagnostic, Span};
-use beck_syntax::{sym, Node, ScopeSet};
+use beck_syntax::{sym, Node, ScopeSet, Symbol};
 
 use super::{BindKind, Binding, Checker};
 use crate::core::{Const, Core, CoreKind};
@@ -106,6 +124,50 @@ pub(super) struct ImplDecl {
 
 /// `Self`, the name a trait's signatures are written in terms of.
 const SELF: &str = "Self";
+
+/// The head of a written function type, as the parser produces it.
+const FN_TYPE: &str = "fn-type";
+
+/// One dictionary parameter of a bounded definition, in the order it was appended.
+#[derive(Clone, Debug)]
+pub(super) struct DictParam {
+    /// The type parameter the bound is on: `T` in `[T: Ord]`.
+    pub param: Arc<str>,
+    pub trait_name: Arc<str>,
+    pub method: Arc<str>,
+}
+
+/// The name of one entry in a `(typarams …)` list, bounded or not.
+pub(super) fn typaram_name(p: &Node) -> Option<Arc<str>> {
+    if p.is_form(sym::ANNOT) {
+        return p
+            .args
+            .first()
+            .and_then(|n| n.as_var())
+            .map(|s| s.name.clone());
+    }
+    p.as_var().map(|s| s.name.clone())
+}
+
+/// Every **bounded** parameter of a `(typarams …)` node, with its traits, in written order.
+pub(super) fn bounds_of(typarams: &Node) -> Vec<(Arc<str>, Vec<Arc<str>>)> {
+    if !typarams.is_form(sym::TYPARAMS) {
+        return Vec::new();
+    }
+    typarams
+        .args
+        .iter()
+        .filter(|p| p.is_form(sym::ANNOT) && p.args.len() >= 2)
+        .filter_map(|p| {
+            let name = typaram_name(p)?;
+            let traits: Vec<Arc<str>> = p.args[1..]
+                .iter()
+                .filter_map(|b| b.as_var().map(|s| s.name.clone()))
+                .collect();
+            Some((name, traits))
+        })
+        .collect()
+}
 
 impl Checker<'_> {
     /// Collect every `trait` declaration, before any impl is expanded and before any signature is
@@ -580,6 +642,252 @@ impl Checker<'_> {
         ))
     }
 
+    // ------------------------------------------------------------------------------- bounds
+
+    /// Rewrite every bounded `def` so that its dictionaries are ordinary parameters.
+    ///
+    /// Returns the replacement for `item`, or `None` when it has no bounds and needs none. Run
+    /// before `collect_signatures`, so every later pass sees a definition with one more argument
+    /// and nothing else to know about.
+    pub(super) fn expand_bounds(&mut self, item: &Node) -> Option<Node> {
+        if item.is_form(sym::DECORATE) && item.args.len() == 2 {
+            let inner = self.expand_bounds(&item.args[1])?;
+            let mut out = item.clone();
+            out.args[1] = inner;
+            return Some(out);
+        }
+        if !item.is_form(sym::DEF) || item.args.len() < 5 {
+            return None;
+        }
+        let bounds = bounds_of(&item.args[1]);
+        if bounds.is_empty() {
+            return None;
+        }
+        let name = item.args[0].as_var().map(|s| s.name.clone())?;
+        let mut extra = Vec::new();
+        let mut specs = Vec::new();
+        for (param, traits) in &bounds {
+            let param_node = Node::sym(param, item.args[1].span());
+            for t in traits {
+                let Some(decl) = self.traits.get(t).cloned() else {
+                    self.error(
+                        "B0383",
+                        format!("cannot find trait `{t}`"),
+                        item.args[1].span(),
+                    );
+                    continue;
+                };
+                for m in &decl.methods {
+                    let dict = mangle(t, &m.name, param);
+                    let span = item.args[1].span();
+                    // The method's own signature with `Self` := the type parameter. Its row is left
+                    // to `ty_from_node`, which mints a variable for a written function type — so a
+                    // caller that supplies a pure impl stays pure (`docs/33` §33.2).
+                    let mut fn_ty: Vec<Node> = m
+                        .params
+                        .args
+                        .iter()
+                        .map(|p| substitute_self(&p.args[1], &param_node))
+                        .collect();
+                    fn_ty.push(substitute_self(&m.returns.args[0], &param_node));
+                    extra.push(Node::form(
+                        sym::ANNOT,
+                        vec![Node::sym(&dict, span), Node::form(FN_TYPE, fn_ty, span)],
+                        span,
+                    ));
+                    specs.push(DictParam {
+                        param: param.clone(),
+                        trait_name: t.clone(),
+                        method: m.name.clone(),
+                    });
+                }
+            }
+        }
+        if specs.is_empty() {
+            return None;
+        }
+        self.dicts.insert(name, specs);
+        let mut out = item.clone();
+        // The type-parameter list keeps only the names from here on: the bound has been spent, and
+        // leaving it would make `bind_typarams` read a form it does not need to know about.
+        out.args[1] = Node::form(
+            sym::TYPARAMS,
+            bounds_of(&item.args[1])
+                .iter()
+                .map(|(p, _)| Node::sym(p, item.args[1].span()))
+                .chain(
+                    item.args[1]
+                        .args
+                        .iter()
+                        .filter(|p| !p.is_form(sym::ANNOT))
+                        .cloned(),
+                )
+                .collect(),
+            item.args[1].span(),
+        );
+        out.args[2].args.extend(extra);
+        Some(out)
+    }
+
+    /// The bounds on a definition's type parameters, recovered from the dictionaries it was given.
+    ///
+    /// One entry per bounded parameter, in the order the parameters were written, with each
+    /// parameter's traits in the order they were written — which is the order the dictionaries were
+    /// appended in, so reading them back off the dictionaries cannot disagree with the signature.
+    pub(super) fn bounds_of_def(&self, name: &Arc<str>) -> Vec<(Arc<str>, Vec<Arc<str>>)> {
+        let Some(specs) = self.dicts.get(name) else {
+            return Vec::new();
+        };
+        let mut out: Vec<(Arc<str>, Vec<Arc<str>>)> = Vec::new();
+        for s in specs {
+            match out.iter_mut().find(|(p, _)| *p == s.param) {
+                Some((_, traits)) => {
+                    if !traits.contains(&s.trait_name) {
+                        traits.push(s.trait_name.clone());
+                    }
+                }
+                None => out.push((s.param.clone(), vec![s.trait_name.clone()])),
+            }
+        }
+        out
+    }
+
+    /// Apply a **bounded** definition, supplying one dictionary per method of each bound.
+    ///
+    /// The ordinary arguments are checked *and* the result is unified with what the context wants,
+    /// both before any dictionary is resolved — because until then the call's `T` is a variable and
+    /// there is nothing to look an impl up by. Consulting the expectation is what makes
+    /// `def none_yet() -> Option[Int]: return largest([])` work: the element type is not in the
+    /// argument, and it is in the return type.
+    pub(super) fn apply_bounded(
+        &mut self,
+        name: &Arc<str>,
+        specs: &[DictParam],
+        args: &[Node],
+        expected: Option<&Ty>,
+        span: Span,
+    ) -> Core {
+        let Some(scheme) = self.schemes.get(name).cloned() else {
+            return Core::new(CoreKind::Const(Const::Unit), self.subst.fresh(), span);
+        };
+        let (ty, named) = self.subst.instantiate_named(&scheme);
+        let func = Core::new(CoreKind::Global(name.clone()), ty.clone(), span);
+        let Ty::Fun(param_tys, ret, latent) = ty else {
+            return self.apply_fn(func, args, span);
+        };
+        self.perform(&latent);
+        let ordinary = param_tys.len().saturating_sub(specs.len());
+        if args.len() != ordinary {
+            self.error(
+                "B0351",
+                format!("expected {ordinary} argument(s), got {}", args.len()),
+                span,
+            );
+        }
+        let mut checked = self.check_args(args, &param_tys[..ordinary]);
+        if let Some(want) = expected {
+            // Deliberately not reported as a mismatch here: the caller unifies the result again
+            // when it has a label for what went wrong, and a second message would be noise.
+            let _ = self.subst.unify(&ret, want);
+        }
+        for (i, spec) in specs.iter().enumerate() {
+            let at = named
+                .get(&spec.param)
+                .map(|t| self.subst.resolve(t))
+                .unwrap_or_else(|| self.subst.fresh());
+            let Some(dict) = self.dictionary(&spec.trait_name, &spec.method, &at, span) else {
+                continue;
+            };
+            if let Some(want) = param_tys.get(ordinary + i) {
+                self.unify(&dict.ty, want, span, "implementation");
+            }
+            checked.push(dict);
+        }
+        Core::new(
+            CoreKind::App {
+                func: Box::new(func),
+                args: checked,
+            },
+            *ret,
+            span,
+        )
+    }
+
+    /// The implementation of one trait method at one type, as something callable.
+    ///
+    /// Two kinds of answer, and the whole design is that they are found the same way. If the type
+    /// is a **type parameter** of the definition being checked, the implementation arrived as a
+    /// dictionary parameter and this is a local. Otherwise it is a concrete type and this is the
+    /// impl's own global. Both are named `Trait::method@Target`.
+    fn dictionary(
+        &mut self,
+        trait_name: &Arc<str>,
+        method: &Arc<str>,
+        ty: &Ty,
+        span: Span,
+    ) -> Option<Core> {
+        let head = ty.con_name().map(Arc::<str>::from);
+        if let Some(head) = &head {
+            if self.typarams.contains(head) {
+                let want = mangle(trait_name, method, head);
+                if let Some(BindKind::Local(id, t)) =
+                    self.resolve(&Symbol::new(&want)).map(|b| b.kind.clone())
+                {
+                    return Some(Core::new(CoreKind::Var(id), t, span));
+                }
+                self.diags.push(
+                    Diagnostic::error(
+                        "B0386",
+                        format!("`{head}` is not known to implement `{trait_name}`"),
+                        span,
+                    )
+                    .with_primary_label(format!("`{method}` needs it"))
+                    .with_fix(format!("bound it: `[{head}: {trait_name}]`")),
+                );
+                return None;
+            }
+        }
+        let Some(head) = head else {
+            self.diags.push(
+                Diagnostic::error(
+                    "B0386",
+                    format!("cannot tell which type `{method}` dispatches on here"),
+                    span,
+                )
+                .with_primary_label("the type is not determined at this call")
+                .with_fix("annotate it, or pass an argument that fixes it")
+                .with_note(
+                    "an implementation is chosen from a concrete type or from a bound on a type \
+                     parameter; this is neither yet, and the choice is made where the call is \
+                     written rather than after the whole body has been read",
+                ),
+            );
+            return None;
+        };
+        let Some(found) = self.impls.get(&(trait_name.clone(), head.clone())) else {
+            let decl = self.traits.get(trait_name).map(|d| d.span);
+            let mut d = Diagnostic::error(
+                "B0387",
+                format!("`{head}` does not implement `{trait_name}`"),
+                span,
+            )
+            .with_primary_label(format!(
+                "`{method}` needs an `impl {trait_name} for {head}`"
+            ));
+            if let Some(at) = decl {
+                d = d.with_label(at, "the trait is declared here");
+            }
+            self.diags.push(d);
+            return None;
+        };
+        let name = mangle(trait_name, method, &found.target);
+        let ty = self
+            .schemes
+            .get(&name)
+            .map(|sc| self.subst.instantiate(sc))?;
+        Some(Core::new(CoreKind::Global(name), ty, span))
+    }
+
     /// A call to a trait method, resolved from the type of the argument that carries `Self`.
     pub(super) fn trait_call(&mut self, method: &Arc<str>, args: &[Node], span: Span) -> Core {
         let unit = || Core::new(CoreKind::Const(Const::Unit), Ty::unit(), span);
@@ -614,48 +922,11 @@ impl Checker<'_> {
         }
         let receiver = self.expr(&args[at], None);
         let ty = self.subst.resolve(&receiver.ty);
-        // A rigid type parameter *has* a head — `Ty::Con("T", [])` — so it would otherwise be
-        // reported as a type with no impl, which is the wrong answer to the right question. What is
-        // missing is a bound saying `T` implements the trait, not an impl for a type called `T`.
-        let is_typaram = ty
-            .con_name()
-            .map(|n| self.typarams.contains(n))
-            .unwrap_or(false);
-        let Some(head) = ty.con_name().map(Arc::<str>::from).filter(|_| !is_typaram) else {
-            self.diags.push(
-                Diagnostic::error(
-                    "B0386",
-                    format!("cannot tell which type `{method}` dispatches on here"),
-                    args[at].span(),
-                )
-                .with_primary_label(format!("this is `{ty}`"))
-                .with_note(
-                    "a trait method is resolved from a concrete receiver, and there are no bounds \
-                     on a type parameter yet — so a generic definition cannot call one",
-                ),
-            );
+        // One rule for both kinds of answer: a concrete receiver finds the impl's own global, and a
+        // bounded type parameter finds the dictionary its definition was handed.
+        let Some(func) = self.dictionary(&trait_name, method, &ty, args[at].span()) else {
             return unit();
         };
-        let Some(found) = self.impls.get(&(trait_name.clone(), head.clone())) else {
-            self.diags.push(
-                Diagnostic::error(
-                    "B0387",
-                    format!("`{head}` does not implement `{trait_name}`"),
-                    args[at].span(),
-                )
-                .with_primary_label(format!(
-                    "`{method}` needs an `impl {trait_name} for {head}`"
-                ))
-                .with_label(decl.span, "the trait is declared here"),
-            );
-            return unit();
-        };
-        let name = mangle(&trait_name, method, &found.target);
-        let ty = match self.schemes.get(&name) {
-            Some(sc) => self.subst.instantiate(sc),
-            None => return unit(), // the impl itself failed to check; it has said so already
-        };
-        let func = Core::new(CoreKind::Global(name), ty, span);
         self.apply_fn_with(func, receiver, at, args, span)
     }
 }
@@ -679,6 +950,8 @@ fn substitute_self(n: &Node, target: &Node) -> Node {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use crate::check_str;
 
     fn codes(src: &str) -> Vec<&'static str> {
@@ -890,25 +1163,160 @@ impl Show for Point:
     }
 
     #[test]
-    fn a_trait_method_needs_a_concrete_receiver() {
-        // The limit this step stops at, asserted so that it starts failing the day bounds land.
+    fn an_unbounded_type_parameter_cannot_call_a_trait_method() {
+        // The distinction the diagnostic has to make: `T` is not a type with no impl, it is a type
+        // nobody said anything about — so the fix is a bound and not an impl.
         let generic = format!(
             "{SHOW}
 def twice[T](x: T) -> Str:
     return x.show()
 "
         );
-        assert!(codes(&generic).contains(&"B0386"), "{:?}", codes(&generic));
+        let text = errors(&generic);
+        assert!(text.contains("B0386"), "{text}");
+        assert!(text.contains("not known to implement"), "{text}");
+        assert!(text.contains("[T: Show]"), "the fix names itself:\n{text}");
+    }
 
-        let as_value = format!(
+    #[test]
+    fn a_bound_lets_a_generic_body_call_a_trait_method() {
+        let src = format!(
+            "{SHOW}
+def label[T: Show](x: T) -> Str:
+    return \"<\" + x.show() + \">\"
+
+def a() -> Str:
+    return label(Point(x=1))
+"
+        );
+        assert_eq!(codes(&src), Vec::<&str>::new());
+
+        // The dictionary is an ordinary parameter, so the lowered definition has one more of them
+        // than the source wrote — which is the whole implementation, visible.
+        let (program, _, _) = check_str("t.beck", &src);
+        let label = &program.defs["label"];
+        assert_eq!(label.params.len(), 2, "{:?}", label.params);
+        assert_eq!(label.params[1].1.as_ref(), "Show::show@T");
+        assert_eq!(
+            label.bounds,
+            vec![(Arc::<str>::from("T"), vec![Arc::<str>::from("Show")])]
+        );
+    }
+
+    #[test]
+    fn a_bounded_definition_passes_its_own_dictionary_through() {
+        // The case that makes bounds compose rather than bottom out: `outer` has no idea what `U`
+        // is, and hands `inner` the implementation it was handed itself.
+        let src = format!(
+            "{SHOW}
+def inner[T: Show](x: T) -> Str:
+    return x.show()
+
+def outer[U: Show](x: U) -> Str:
+    return inner(x)
+
+def used() -> Str:
+    return outer(Point(x=1))
+"
+        );
+        assert_eq!(codes(&src), Vec::<&str>::new());
+    }
+
+    #[test]
+    fn a_call_takes_its_implementation_from_the_context_when_the_arguments_do_not_say() {
+        let src = format!(
+            "{SHOW}
+def none_of[T: Show](xs: list[T]) -> Option[T]:
+    return None
+
+def nothing() -> Option[Point]:
+    return none_of([])
+"
+        );
+        assert_eq!(
+            codes(&src),
+            Vec::<&str>::new(),
+            "the element type is in the return type, not in the argument"
+        );
+    }
+
+    #[test]
+    fn a_call_whose_type_is_undetermined_says_so() {
+        let src = format!(
+            "{SHOW}
+def none_of[T: Show](xs: list[T]) -> Option[T]:
+    return None
+
+def nothing() -> Int:
+    return list_len([none_of([])])
+"
+        );
+        let text = errors(&src);
+        assert!(text.contains("B0386"), "{text}");
+        assert!(text.contains("not determined at this call"), "{text}");
+    }
+
+    #[test]
+    fn a_bound_names_a_trait_and_nothing_else() {
+        let src = format!(
+            "{SHOW}
+def label[T: Nope](x: T) -> Str:
+    return \"\"
+"
+        );
+        assert!(codes(&src).contains(&"B0383"), "{:?}", codes(&src));
+    }
+
+    #[test]
+    fn neither_a_trait_method_nor_a_bounded_definition_is_a_value() {
+        let method = format!(
             "{SHOW}
 def all(ps: list[Point]) -> list[Str]:
     return map_list(ps, show)
 "
         );
-        let text = errors(&as_value);
+        let text = errors(&method);
         assert!(text.contains("B0386"), "{text}");
         assert!(text.contains("cannot be used as a value"), "{text}");
+
+        // The same for a definition that carries a bound: its implementations arrive at the call
+        // site, and a reference has no call site.
+        let bounded = format!(
+            "{SHOW}
+def label[T: Show](x: T) -> Str:
+    return x.show()
+
+def all(ps: list[Point]) -> list[Str]:
+    return map_list(ps, label)
+"
+        );
+        let text = errors(&bounded);
+        assert!(text.contains("B0386"), "{text}");
+        assert!(text.contains("has a bound"), "{text}");
+    }
+
+    #[test]
+    fn a_bounded_definition_is_not_published() {
+        // A trait does not cross a module boundary, so a signature with dictionary parameters in it
+        // would name something no importing module could supply.
+        let src = format!(
+            "{SHOW}
+def label[T: Show](x: T) -> Str:
+    return x.show()
+
+def plain(p: Point) -> Str:
+    return label(p)
+"
+        );
+        let (placed, d, map) = crate::compile_or_library_str("t.beck", &src);
+        assert!(!d.has_errors(), "{}", d.render(&map));
+        let text = crate::iface::Interface::of(&placed.expect("compiles").program).render();
+        assert!(text.contains("def plain"), "{text}");
+        assert!(
+            !text.contains("label"),
+            "a bounded definition is not published:\n{text}"
+        );
+        assert!(!text.contains("Show::"), "{text}");
     }
 
     #[test]

@@ -562,10 +562,11 @@ pub const INDEX: &[CodeEntry] = &[
     e(
         "B0386",
         Stage::Types,
-        "a trait method needs a concrete receiver",
-        "Dispatch is static and resolved from the receiver's type. A trait method cannot be passed \
-         as a value, and generic code cannot call one: both need bounds on a type parameter, which \
-         is not built.",
+        "no implementation can be chosen here",
+        "An implementation comes from a concrete type or from a bound on a type parameter — write \
+         `[T: Trait]` to say the parameter has one. A trait method and a bounded definition are \
+         both called rather than passed: the implementation is supplied at the call site, so a \
+         reference that is never called has nowhere to receive it.",
     ),
     e(
         "B0387",

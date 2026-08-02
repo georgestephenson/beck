@@ -86,6 +86,12 @@ pub struct Def {
     pub row: Row,
     /// What the signature declared with `uses`, if anything.
     pub declared_effects: Vec<Effect>,
+    /// The trait bounds on this definition's type parameters, in written order.
+    ///
+    /// Empty for almost everything. A bounded definition is **not published**: its dictionary
+    /// parameters carry names no source could write, and a trait does not cross a module boundary,
+    /// so `beck iface` drops it rather than publishing a signature nobody could call.
+    pub bounds: Vec<(Arc<str>, Vec<Arc<str>>)>,
     /// True when the signature **stated** its row — so an empty one is a bound of "performs
     /// nothing" rather than an absent declaration.
     ///
@@ -189,6 +195,9 @@ pub struct Checker<'a> {
     /// The mangled names `expand_impls` produced, so that a definition standing in for a trait
     /// method can be told from one somebody wrote.
     impl_methods: BTreeSet<Arc<str>>,
+    /// The dictionary parameters `expand_bounds` appended, per definition, in order. A call site
+    /// reads this to know how many of the callee's parameters it has to supply itself.
+    dicts: BTreeMap<Arc<str>, Vec<traits::DictParam>>,
     mode: Mode,
 }
 
@@ -244,6 +253,7 @@ pub fn check_module_with(
         trait_methods: BTreeMap::new(),
         impls: BTreeMap::new(),
         impl_methods: BTreeSet::new(),
+        dicts: BTreeMap::new(),
         generic_rows: BTreeMap::new(),
         mode,
     };
@@ -288,7 +298,18 @@ pub fn check_module_with(
     // it — or for placement, or for the splitter, or for the evaluator — to know about.
     ck.collect_traits(&items);
     let expanded = ck.expand_impls(&items);
-    let items: Vec<&Node> = items.into_iter().chain(expanded.iter()).collect();
+    // A bounded `def` is rewritten in place, so what follows sees a definition with one more
+    // parameter and no bound. The rewrites are owned here because they replace items rather than
+    // adding to them.
+    let bounded: Vec<(usize, Node)> = items
+        .iter()
+        .enumerate()
+        .filter_map(|(i, it)| ck.expand_bounds(it).map(|n| (i, n)))
+        .collect();
+    let mut items: Vec<&Node> = items.into_iter().chain(expanded.iter()).collect();
+    for (i, node) in &bounded {
+        items[*i] = node;
+    }
     ck.collect_signatures(&items);
     ck.collect_signal_names(&items);
     let mut program = ck.check_items(&items, name);
@@ -863,8 +884,9 @@ impl<'a> Checker<'a> {
         self.typarams.clear();
         let mut out: Vec<Arc<str>> = Vec::new();
         for p in &node.args {
-            let Some(s) = p.as_var() else { continue };
-            let name = s.name.clone();
+            let Some(name) = traits::typaram_name(p) else {
+                continue;
+            };
             if self.types.contains_key(&name) || prelude::builtin_arity(&name).is_some() {
                 self.diags.push(
                     Diagnostic::error(
@@ -1220,6 +1242,7 @@ impl<'a> Checker<'a> {
         let mut declared_effects: Vec<Effect> = declared.atoms.iter().cloned().collect();
         declared_effects.sort();
         let row_is_declared = !declared_effects.is_empty() || self.impl_methods.contains(&name);
+        let bounds = self.bounds_of_def(&name);
         Some(Def {
             name,
             typarams: scheme.params.clone(),
@@ -1230,6 +1253,7 @@ impl<'a> Checker<'a> {
             effects: Vec::new(),
             row: inferred,
             declared_effects,
+            bounds,
             row_is_declared,
             tier_is_annotated,
             is_declaration: body_node.is_none(),
@@ -1835,6 +1859,20 @@ impl<'a> Checker<'a> {
                 Core::new(CoreKind::Const(Const::Unit), self.subst.fresh(), span)
             }
             BindKind::Global(name) => {
+                if self.dicts.contains_key(&name) {
+                    self.diags.push(
+                        Diagnostic::error(
+                            "B0386",
+                            format!("`{name}` has a bound, so it cannot be used as a value"),
+                            span,
+                        )
+                        .with_note(
+                            "a bounded definition is handed its implementations at the call site, \
+                             and a reference that is never called has no call site to hand them \
+                             over",
+                        ),
+                    );
+                }
                 let ty = self
                     .schemes
                     .get(&name)
@@ -2382,6 +2420,9 @@ impl<'a> Checker<'a> {
             }
             Some(BindKind::Model(model)) => self.make(&model, None, &n.args, span),
             Some(BindKind::Global(name)) => {
+                if let Some(specs) = self.dicts.get(&name).cloned() {
+                    return self.apply_bounded(&name, &specs, &n.args, expected, span);
+                }
                 let ty = self
                     .schemes
                     .get(&name)

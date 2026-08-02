@@ -117,7 +117,7 @@ impl Interface {
             // and no parser could read it back, and a trait does not cross a module boundary yet —
             // publishing the bodies without the trait that gives them meaning would be worse than
             // publishing neither.
-            if crate::check::is_impl_method(name) {
+            if crate::check::is_impl_method(name) || !d.bounds.is_empty() {
                 continue;
             }
             items.push(Item {

@@ -130,10 +130,13 @@ def bundles(s: State) -> list[Bundle[Str]]:
     return sort_by(map_values(s.bundles), lambda b: b.id)
 
 def total(s: State) -> Int:
-    return sum_of(map_list(items(s), lambda i: i.pence())) + bundle_total(s)
+    return priced_total(items(s)) + priced_total(bundles(s))
 
-def bundle_total(s: State) -> Int:
-    return sum_of(map_list(bundles(s), lambda b: b.pence()))
+# The payoff of a bound, in one line: written once, called at `Item` and at `Bundle[Str]`, and the
+# body knows nothing about either beyond the fact that they are priced. Without `[T: Priced]` this
+# is two functions that differ only in a type.
+def priced_total[T: Priced](xs: list[T]) -> Int:
+    return sum_of(map_list(xs, lambda x: x.pence()))
 
 def sum_of(ns: list[Int]) -> Int:
     match ns:
