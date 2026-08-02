@@ -1,0 +1,46 @@
+# Blocks: §2.1.1 ("Example: Arithmetic Operations for Rational Numbers"), which is the section the
+# whole of chapter 2's first half is built on, §1.2.2's exercises, and every place SICP relies on
+# exact arithmetic rather than approximate.
+#
+# `sicp/refusals/real.beck` used to stand here and it is gone: reals landed in docs/29, and
+# §1.1.7's Newton's method reproduces the doubles the book prints. **That is not this wall.**
+# §2.1.1's point is exactness — `(add-rat (make-rat 1 3) (make-rat 1 3))` is `2/3`, printed as
+# `2/3`, and a real gives 0.6666666666666666 which is a different number. A tower with only reals in
+# it is a tower with one floor.
+#
+# What is missing is a *type*, not an operator. `Rational` would be a pair of `Int` in lowest terms
+# — which is writable today as a `model` — but the arithmetic has to be part of the numeric
+# resolution `+`, `-`, `*` and `/` go through (docs/29 §29.3), or every expression in the section
+# reads `add_rat(x, y)` instead of `x + y` and the exercise is about function names rather than
+# about data abstraction.
+#
+# So this file is refused for the reason the *last* line of it is refused rather than the first:
+#
+#   error[B0320]: operand of `+` mismatch: expected `Int`, found `Rational`
+#
+# The decision it poses is the one docs/29 §29.9 and §29.11 name: `+` is resolved ad-hoc from its
+# operands, and a third numeric tier makes that resolution a small closed list pretending to be a
+# type class. **Traits are what this needs**, and a `Rational` bolted into the resolver would be the
+# thing that makes them harder to add later.
+
+model Rational:
+    numer: Int
+    denom: Int
+
+def make_rat(n: Int, d: Int) -> Rational:
+    return Rational(numer=n / gcd(n, d), denom=d / gcd(n, d))
+
+def gcd(a: Int, b: Int) -> Int:
+    if b == 0:
+        return a
+    return gcd(b, a % b)
+
+def add_rat(x: Rational, y: Rational) -> Rational:
+    return make_rat(x.numer * y.denom + y.numer * x.denom, x.denom * y.denom)
+
+def one_third() -> Rational:
+    return make_rat(1, 3)
+
+# The line that has to work, and does not.
+def two_thirds() -> Rational:
+    return one_third() + one_third()

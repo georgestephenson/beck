@@ -152,6 +152,103 @@ jobs:
           # beyond them are held by tests/sicp.rs, which `cargo test` above already runs.
           ./target/release/beck test sicp/ch1.beck
           ./target/release/beck test sicp/ch2.beck
+          # docs/31: a recursion the user cannot bound must end in a diagnostic and a live process.
+          # An exit status of 134 (SIGABRT) or 139 (SIGSEGV) is the failure this replaced, and it is
+          # exactly the thing a `! cmd` gate would have accepted, so the status is checked rather
+          # than only the failure.
+          python3 - <<'PY'
+          open("/tmp/deep.beck", "w").write(
+              'def up(n: Int) -> Int:\n'
+              '    if n == 0:\n'
+              '        return 0\n'
+              '    return 1 + up(n - 1)\n'
+              '\n'
+              'test "past the ceiling":\n'
+              '    expect up(100000) == 100000\n')
+          PY
+          set +e
+          ./target/release/beck test /tmp/deep.beck >/tmp/deep.out 2>/tmp/deep.err
+          code=$?
+          set -e
+          cat /tmp/deep.out /tmp/deep.err
+          test "$code" -ne 0        # the test fails…
+          test "$code" -lt 128      # …by failing, not by dying on a signal
+          grep -q "which is the evaluator's limit" /tmp/deep.out
+          ! grep -q 'overflowed its stack' /tmp/deep.err
+          # And the same recursion in tail position has no ceiling at all.
+          python3 - <<'PY'
+          open("/tmp/iterative.beck", "w").write(
+              'def up(acc: Int, n: Int) -> Int:\n'
+              '    if n == 0:\n'
+              '        return acc\n'
+              '    return up(acc + 1, n - 1)\n'
+              '\n'
+              'test "an iterative process":\n'
+              '    expect up(0, 1000000) == 1000000\n')
+          PY
+          ./target/release/beck test /tmp/iterative.beck
+          # docs/32: the last two walls. Reals reproduce the doubles SICP prints, and a user-written
+          # polymorphic definition is instantiated afresh at every call — asserted here through the
+          # binary because `cargo test` above asserts it through the library, and the claim is that
+          # a person gets it too.
+          ./target/release/beck test corpus/26-sensors.beck
+          python3 - <<'PY'
+          open("/tmp/generic.beck", "w").write(
+              'def map[T, U](xs: list[T], f: T -> U) -> list[U]:\n'
+              '    return map_list(xs, f)\n'
+              '\n'
+              'test "one map, three element types":\n'
+              '    expect map([1, 2], lambda n: n * 2) == [2, 4]\n'
+              '    expect map(["a"], lambda s: s + "!") == ["a!"]\n'
+              '    expect map([1.5], lambda x: x * 2.0) == [3.0]\n')
+          PY
+          ./target/release/beck test /tmp/generic.beck
+          # And a type parameter is rigid: a body that assumes `T` is `Int` is a lie the checker
+          # has to catch, or the polymorphism is decorative.
+          python3 - <<'PY'
+          open("/tmp/rigid.beck", "w").write(
+              'def f[T](x: T) -> Int:\n    return x + 1\n')
+          PY
+          ! ./target/release/beck check /tmp/rigid.beck
+          ./target/release/beck check /tmp/rigid.beck 2>&1 | grep -q 'found `T`'
+          # docs/33: a list can be taken apart, and a `match` on one has to cover both shapes.
+          python3 - <<'PY'
+          open("/tmp/fold.beck", "w").write(
+              'def accumulate[T, U](xs: list[T], seed: U, combine: (T, U) -> U) -> U:\n'
+              '    match xs:\n'
+              '        case []:\n'
+              '            return seed\n'
+              '        case [first, *rest]:\n'
+              '            return combine(first, accumulate(rest, seed, combine))\n'
+              '\n'
+              'test "one fold, two element types":\n'
+              '    expect accumulate([1, 2, 3], 0, lambda x, acc: x + acc) == 6\n'
+              '    expect accumulate(["a", "b"], "", lambda s, acc: s + acc) == "ab"\n')
+          open("/tmp/partial.beck", "w").write(
+              'def f(xs: list[Int]) -> Int:\n'
+              '    match xs:\n'
+              '        case []:\n'
+              '            return 0\n')
+          PY
+          ./target/release/beck test /tmp/fold.beck
+          ! ./target/release/beck check /tmp/partial.beck
+          ./target/release/beck check /tmp/partial.beck 2>&1 | grep -q 'B0341'
+          # docs/33: and a pure caller of a generic higher-order definition stays pure, however
+          # another caller uses it. Read off the *published contract*, which is where it was wrong.
+          python3 - <<'PY'
+          open("/tmp/rows.beck", "w").write(
+              'def twice[T](f: (T) -> T, x: T) -> T:\n'
+              '    return f(f(x))\n'
+              '\n'
+              'def plain(n: Int) -> Int:\n'
+              '    return twice(lambda m: m + 1, n)\n'
+              '\n'
+              'def stamped(n: Int) -> Int:\n'
+              '    return twice(lambda m: m + now(), n)\n')
+          PY
+          ./target/release/beck iface /tmp/rows.beck --stdout | tee /tmp/rows.becki
+          grep -q 'def plain(n: Int) -> Int$' /tmp/rows.becki
+          grep -q 'def stamped(n: Int) -> Int uses nondet$' /tmp/rows.becki
           # A failing test has to fail the build, or the gate is decorative. This is the property
           # docs/19 §19.4 item 10 says an unexecuted artefact cannot have.
           python3 - <<'PY'
@@ -386,6 +483,11 @@ jobs:
           cargo test --release --test measure_phase2 -- --nocapture
           cargo test --release --test measure_incremental -- --nocapture
           cargo test --release --test shared_arrangements -- --nocapture
+          # The evaluator's host stack per level of non-tail recursion, in both profiles — the
+          # number `beck_eval::STACK_BYTES` is chosen from, and the equality that says a tail call
+          # costs nothing (docs/31 §31.3, §31.5). It prints in release and gates in either.
+          cargo test -p beck-eval -- --nocapture
+          cargo test --release -p beck-eval -- --nocapture
 
   licences:
     # §8.3 practice 5. The full `check`, advisories included (docs/adr/0004). cargo-deny ships

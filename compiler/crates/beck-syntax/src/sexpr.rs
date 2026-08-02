@@ -172,7 +172,12 @@ impl<'a> Reader<'a> {
         // argument of the reserved `call` head.
         let head = items.remove(0);
         match head.head {
-            Head::Sym(s) if head.args.is_empty() => Some(Node::form_sym(s, items, span)),
+            Head::Sym(s) if head.args.is_empty() => {
+                if s.as_str() == crate::node::sym::DEF {
+                    normalise_def(&mut items, span);
+                }
+                Some(Node::form_sym(s, items, span))
+            }
             _ => {
                 let mut args = vec![head];
                 args.extend(items);
@@ -276,6 +281,23 @@ pub fn atom_node(text: &str, span: Span) -> Node {
         }
     }
     Node::symbol(Symbol::new(text), span)
+}
+
+/// Give a hand-written `def` the empty type-parameter list the Python surface always writes.
+///
+/// `(def f (params …) (returns …) (uses) body)` is what the S-expression surface has always looked
+/// like, and §2.3 makes that surface a notation people write by hand for macro debugging. Requiring
+/// `(typarams)` on every one of them would be a tax on the notation for a feature most definitions
+/// do not use, so the reader normalises instead — and the AST keeps one shape, which is what every
+/// pass downstream indexes into (`docs/32` §32.7).
+fn normalise_def(items: &mut Vec<Node>, span: beck_diag::Span) {
+    let already = items
+        .get(1)
+        .map(|n| n.is_form(crate::node::sym::TYPARAMS))
+        .unwrap_or(false);
+    if items.len() >= 4 && !already {
+        items.insert(1, Node::form(crate::node::sym::TYPARAMS, Vec::new(), span));
+    }
 }
 
 #[cfg(test)]

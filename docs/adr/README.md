@@ -22,3 +22,5 @@ The split this directory creates:
 | [0004](0004-full-cargo-deny-gate.md) | The full cargo-deny check gates the compiler workspace |
 | [0005](0005-workflows-cross-check.md) | Workflows cross-check each other's YAML validity |
 | [0006](0006-ci-measurements-lane.md) | A release-profile measurements lane in CI |
+| [0007](0007-evaluator-stack-is-declared-not-discovered.md) | The evaluator's recursion bound is a count, and its stack is declared on the backend seam |
+| [0008](0008-numeric-operators-resolved-ad-hoc.md) | Numeric operators are resolved from their operands, not from a type class |

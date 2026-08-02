@@ -182,7 +182,11 @@ dependencies whose signatures didn't change.
 > the bullet below are still untouched.
 >
 > The nine other bullets are **untouched**, and [`26`](26-arrangement-sharing-report.md) §26.9 names
-> them one at a time rather than by omission. So are the two added since (§8.4).
+> them one at a time rather than by omission. Of the two added since (§8.4), the
+> means-of-abstraction bullet is **done** — all six walls
+> ([`27`](27-walls-report.md), [`31`](31-tail-calls-report.md),
+> [`32`](32-numeric-tower-and-polymorphism-report.md)) — and the expressiveness suite runs two
+> chapters of SICP against the book's own answers.
 
 - LLVM release backend + differential tests against Cranelift (§5.2).
 - **Incremental views**: compile subscribed/materialized views to differential-dataflow plans with
@@ -212,22 +216,34 @@ dependencies whose signatures didn't change.
 - Standard library v1: collections, strings, time, money/decimal, HTTP client, JSON, UUID, crypto
   primitives (delegated to `ring`/`aws-lc-rs`, not hand-rolled). **Reals first**, because §25.6
   measures that §1.1.7 of SICP — the first substantial program in the book — does not typecheck
-  without them, and because the three items §25.7 put ahead of it are now done
-  ([`27`](27-walls-report.md)).
+  without them. *Reals are **built** ([`32`](32-numeric-tower-and-polymorphism-report.md)): §1.1.7
+  runs and reproduces the doubles the book prints. Exact rationals and bignums are not, and §2.1.1
+  of SICP is about the first of those rather than about reals. Collections, strings, time,
+  money/decimal, HTTP, JSON, UUID and crypto are untouched. A fold over a list *can* now be written
+  ([`33`](33-effect-polymorphism-and-list-patterns-report.md)) — and so can a library whose callers
+  do not inherit each other's effects, which §33.8 records as the precondition nobody had listed.*
 - **The language's own means of abstraction, which four phases had never been pointed at**
   ([`25`](25-benchmarks-and-expressiveness.md) §25.6, measured; §25.7 orders them). Every corpus
-  program is shaped like the todo sketch, which is why none of these had surfaced. *Three of the six
-  are **built** ([`27`](27-walls-report.md)): running a module with no merge point, recursive and
-  forward-referencing types, and the `B0320` row-unification defect that refused an `if` over two
-  function values. Three remain — user-written polymorphic definitions; proper tail calls in the
-  evaluator, or a bounded-depth diagnostic in the interim, because a Beck program can currently abort
-  its own process with a recursion the user cannot bound; and the numeric tower, which is the
-  standard-library bullet below.*
+  program is shaped like the todo sketch, which is why none of these had surfaced. ***All six are
+  built.** Running a module with no merge point, recursive and forward-referencing types, and the
+  `B0320` row-unification defect that refused an `if` over two function values
+  ([`27`](27-walls-report.md)); proper tail calls, with the bounded-depth diagnostic **as well as**
+  rather than instead of them, so no Beck program aborts its own process any more
+  ([`31`](31-tail-calls-report.md)); and reals plus user-written polymorphic definitions
+  ([`32`](32-numeric-tower-and-polymorphism-report.md)). Two of the four things that stood in their
+  place are also built — effect polymorphism for a user's higher-order definition, and a way to take
+  a `list[T]` apart ([`33`](33-effect-polymorphism-and-list-patterns-report.md)). What is left is
+  **traits**, and type parameters on a `model` or `union`; docs/33 §33.7 has the rest.*
 - **The expressiveness suite** ([`25`](25-benchmarks-and-expressiveness.md) §25.5, D18): SICP
   stage 1, and Felleisen's criterion answered for the special forms the book introduces. It needs
   macros and nothing else, so it starts now and does not wait on the bullet above. *Chapter 1 is
   complete and chapter 2 reaches §2.2's closure property ([`27`](27-walls-report.md)); both run as
-  **libraries**, with no application wrapped around them. Felleisen's table is not written.*
+  **libraries**, with no application wrapped around them. Chapter 1 also carries §1.2.1's *property*
+  — an iterative process running a quarter of a million levels deep — now that there is one to carry
+  ([`31`](31-tail-calls-report.md)), and §1.1.7/§1.3.3/§1.3.4's reals asserted against the doubles
+  the book prints, while chapter 2 carries §2.2.1's `map` written by the reader rather than borrowed
+  from the prelude ([`32`](32-numeric-tower-and-polymorphism-report.md)). Felleisen's table is not
+  written.*
 - **Identity**: OIDC relying-party runtime, `identity = managed()` provisioning (Keycloak/Ory),
   claims → `Session` capability mapping, dev-mode identity for rung 0, presence as a first-class
   signal ([`10`](10-decisions.md) D6).

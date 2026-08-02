@@ -74,6 +74,9 @@ pub struct Item {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Kind {
     Function {
+        /// The names a generic definition quantifies over, in the order written. Empty for the
+        /// monomorphic case, which is every definition written before `docs/32`.
+        typarams: Vec<Arc<str>>,
         params: Vec<(Arc<str>, Ty)>,
         ret: Ty,
     },
@@ -118,6 +121,7 @@ impl Interface {
                     }
                 } else {
                     Kind::Function {
+                        typarams: d.typarams.clone(),
                         params: d
                             .params
                             .iter()
@@ -251,11 +255,20 @@ impl Interface {
             .iter()
             .map(|i| {
                 let scheme = match &i.kind {
-                    Kind::Function { params, ret } => Scheme::mono(Ty::fun_eff(
-                        params.iter().map(|(_, t)| t.clone()).collect(),
-                        ret.clone(),
-                        Row::of(i.effects.iter().cloned()),
-                    )),
+                    // `generic` and not `mono`: an importer has to instantiate a published
+                    // `map[T, U]` afresh per call, or the first use would fix the second's types.
+                    Kind::Function {
+                        typarams,
+                        params,
+                        ret,
+                    } => Scheme::generic(
+                        typarams.clone(),
+                        Ty::fun_eff(
+                            params.iter().map(|(_, t)| t.clone()).collect(),
+                            ret.clone(),
+                            Row::of(i.effects.iter().cloned()),
+                        ),
+                    ),
                     Kind::Signal { ty } => Scheme::mono(ty.clone()),
                 };
                 (
@@ -315,8 +328,19 @@ fn published(row: &Row) -> Vec<Effect> {
 
 fn item_signature(i: &Item) -> String {
     let ty = match &i.kind {
-        Kind::Function { params, ret } => format!(
-            "({}) -> {ret}",
+        // The type parameters are part of the signature the digest covers: `map[T, U]` and
+        // `map[T]` are different contracts even when the printed parameter list is the same.
+        Kind::Function {
+            typarams,
+            params,
+            ret,
+        } => format!(
+            "{}({}) -> {ret}",
+            if typarams.is_empty() {
+                String::new()
+            } else {
+                format!("[{}]", typarams.join(", "))
+            },
             params
                 .iter()
                 .map(|(n, t)| format!("{n}: {t}"))
@@ -495,9 +519,25 @@ fn render_item(i: &Item) -> String {
         )
     };
     match &i.kind {
-        Kind::Function { params, ret } => format!(
-            "def {}({}) -> {ret}{uses}\n",
+        Kind::Function {
+            typarams,
+            params,
+            ret,
+        } => format!(
+            "def {}{}({}) -> {ret}{uses}\n",
             i.name,
+            if typarams.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "[{}]",
+                    typarams
+                        .iter()
+                        .map(|t| t.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            },
             params
                 .iter()
                 .map(|(n, t)| format!("{n}: {t}"))

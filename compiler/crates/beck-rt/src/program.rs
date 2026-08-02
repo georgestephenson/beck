@@ -331,6 +331,14 @@ fn decode_field(
             .as_bool()
             .map(Value::Bool)
             .ok_or_else(|| anyhow!("expected a boolean, got {raw}")),
+        // A real crosses the wire as a JSON number, and an integral one arrives as an integer —
+        // `1` and `1.0` are the same JSON token — so this accepts either and canonicalises through
+        // `Value::float`. Nothing in SICP needed it; a command with a `Float` field does, and it
+        // would have been a runtime error nobody had written a test for (`docs/32` §32.6).
+        Ty::FLOAT => raw
+            .as_f64()
+            .map(Value::float)
+            .ok_or_else(|| anyhow!("expected a number, got {raw}")),
         other => Err(anyhow!("Phase 1 cannot decode `{other}` from the wire")),
     }
 }

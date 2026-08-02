@@ -830,14 +830,8 @@ fn max_var(program: &Program) -> VarId {
             CoreKind::Match { scrutinee, arms } => {
                 go(scrutinee, max);
                 for a in arms {
-                    match &a.pattern {
-                        crate::core::Pattern::Bind(v) => *max = (*max).max(*v),
-                        crate::core::Pattern::Ctor { binds, .. } => {
-                            for (_, v) in binds {
-                                *max = (*max).max(*v);
-                            }
-                        }
-                        _ => {}
+                    for v in a.pattern.binders() {
+                        *max = (*max).max(v);
                     }
                     go(&a.body, max);
                 }

@@ -46,6 +46,12 @@ pub enum Prim {
     Div,
     Rem,
     Neg,
+    /// `abs`, `sqrt` and `Int` → `Float`, which are the three the numeric tower needs before any
+    /// of SICP §1.1.7 will run (`docs/32` §32.1). `Abs` is resolved from its operand the way the
+    /// arithmetic operators are; the other two are monomorphic.
+    Abs,
+    Sqrt,
+    ToFloat,
     Eq,
     Ne,
     Lt,
@@ -114,6 +120,9 @@ impl Prim {
             Div => "/",
             Rem => "%",
             Neg => "negate",
+            Abs => "abs",
+            Sqrt => "sqrt",
+            ToFloat => "float",
             Eq => "==",
             Ne => "!=",
             Lt => "<",
@@ -210,6 +219,35 @@ pub enum Pattern {
         variant: Arc<str>,
         binds: Vec<(Arc<str>, VarId)>,
     },
+    /// `[]`, `[x]`, `[a, b]`, `[first, *rest]` — a list, taken apart.
+    ///
+    /// Shallow, like every other pattern here: `binds` is one binder (or a wildcard) per fixed
+    /// element, and `rest` is the optional tail binder. A pattern with no `rest` matches a list of
+    /// exactly `binds.len()` elements; one with a `rest` matches any list at least that long.
+    /// `docs/33` §33.5 says why this shape and not nested patterns.
+    List {
+        binds: Vec<Option<VarId>>,
+        rest: Option<Option<VarId>>,
+    },
+}
+
+impl Pattern {
+    /// Every variable this pattern binds.
+    ///
+    /// One method rather than a `match` at each of the three call sites, because those three were
+    /// `Bind`/`Ctor`/`_ => {}` — and a new pattern kind falling into the `_` would have been a
+    /// silent miscount in the splitter's variable supply and a false *free* variable in the plan's
+    /// analysis. Neither would have failed a test until a program used one (`docs/33` §33.5).
+    pub fn binders(&self) -> Vec<VarId> {
+        match self {
+            Pattern::Wildcard | Pattern::Const(_) => Vec::new(),
+            Pattern::Bind(v) => vec![*v],
+            Pattern::Ctor { binds, .. } => binds.iter().map(|(_, v)| *v).collect(),
+            Pattern::List { binds, rest } => {
+                binds.iter().chain(rest.iter()).filter_map(|b| *b).collect()
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -434,8 +472,15 @@ pub enum Value {
     Unit,
     Bool(bool),
     Int(i64),
-    /// Floats are stored as their bit pattern so that `Value` can be `Ord` — a map key, and a
-    /// component of the state digest, must have a total order.
+    /// A real, stored as an **order-preserving** key rather than as `f64::to_bits`, so that the
+    /// derived `Ord` is the numeric one.
+    ///
+    /// A total order is not optional here — a map key and a component of the state digest need one
+    /// — and `to_bits` supplies one that disagrees with arithmetic: `-1.0` has a larger bit pattern
+    /// than `1.0`, so `<` answered backwards for every negative number and `sort_by` sorted the
+    /// negatives in reverse. [`Value::float`] applies the standard monotone transform instead
+    /// (flip the sign bit for a positive, invert every bit for a negative), which makes the two
+    /// orders the same order. `docs/32` §32.2.
     Float(u64),
     Str(Arc<str>),
     List(Arc<Vec<Value>>),
@@ -523,14 +568,46 @@ impl Env {
     }
 }
 
+/// The monotone `f64` → `u64` transform: for a non-negative float flip the sign bit, for a
+/// negative one invert every bit. `a < b` as reals iff `order_key(a) < order_key(b)` as integers,
+/// with `-inf` at the bottom and NaN above `+inf`.
+const SIGN: u64 = 1 << 63;
+
+fn order_key(f: f64) -> u64 {
+    let bits = f.to_bits();
+    if bits & SIGN != 0 {
+        !bits
+    } else {
+        bits ^ SIGN
+    }
+}
+
+fn from_order_key(key: u64) -> f64 {
+    f64::from_bits(if key & SIGN != 0 { key ^ SIGN } else { !key })
+}
+
 impl Value {
+    /// Make a real, canonicalising the two IEEE values that would otherwise break `Eq`.
+    ///
+    /// `-0.0` becomes `0.0` and every NaN becomes one NaN, because [`Value`] is `Eq` and `Ord` and
+    /// a fold's accumulator is compared, hashed and used as a map key. IEEE 754 says `NaN != NaN`
+    /// and `-0.0 == 0.0`; both are irreconcilable with a total order, and the total order is the
+    /// one §3.7 needs. So Beck's `==` on reals is *structural*, and `docs/32` §32.2 says so where
+    /// somebody porting numeric code will read it.
     pub fn float(f: f64) -> Value {
-        Value::Float(f.to_bits())
+        let f = if f.is_nan() {
+            f64::NAN
+        } else if f == 0.0 {
+            0.0
+        } else {
+            f
+        };
+        Value::Float(order_key(f))
     }
 
     pub fn as_f64(&self) -> Option<f64> {
         match self {
-            Value::Float(bits) => Some(f64::from_bits(*bits)),
+            Value::Float(key) => Some(from_order_key(*key)),
             _ => None,
         }
     }
@@ -921,6 +998,55 @@ fn hash_into(v: &Value, h: &mut blake3::Hasher) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The property `Value::Float`'s representation exists for: the order the fold uses and the
+    /// order arithmetic uses are one order.
+    ///
+    /// `f64::to_bits` does not have it — `(-1.0).to_bits()` is larger than `(1.0).to_bits()`
+    /// because the sign bit is the top one — and that is the defect docs/32 §32.2 records. This is
+    /// the test that would have caught it, checked across the sign, the zeroes and the infinities
+    /// rather than on one example.
+    #[test]
+    fn reals_compare_as_reals_and_round_trip_through_their_key() {
+        let ladder = [
+            f64::NEG_INFINITY,
+            -1e308,
+            -1.5,
+            -1.0,
+            -f64::MIN_POSITIVE,
+            0.0,
+            f64::MIN_POSITIVE,
+            1.0,
+            1.5,
+            1e308,
+            f64::INFINITY,
+        ];
+        for w in ladder.windows(2) {
+            let (a, b) = (Value::float(w[0]), Value::float(w[1]));
+            assert!(a < b, "{} should order below {}", w[0], w[1]);
+            assert_eq!(a.as_f64(), Some(w[0]), "and survive the round trip");
+        }
+
+        // The two IEEE values that would otherwise break `Eq`, canonicalised.
+        assert_eq!(
+            Value::float(-0.0),
+            Value::float(0.0),
+            "`-0.0` and `0.0` are one value, because `Ord` cannot have two of them"
+        );
+        assert_eq!(
+            Value::float(f64::NAN),
+            Value::float(-f64::NAN),
+            "and every NaN is one NaN — including a negative one — for the same reason"
+        );
+        assert!(
+            Value::float(f64::NAN) > Value::float(f64::INFINITY),
+            "NaN has to go somewhere, and above every number is somewhere"
+        );
+
+        // The digest is a function of the value, and a different real is a different digest.
+        assert_eq!(digest(&Value::float(1.5)), digest(&Value::float(1.5)));
+        assert_ne!(digest(&Value::float(1.5)), digest(&Value::float(-1.5)));
+    }
 
     #[test]
     fn the_log_encoding_round_trips_exactly() {

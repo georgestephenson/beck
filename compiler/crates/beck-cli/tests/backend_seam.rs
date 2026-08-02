@@ -38,6 +38,13 @@ impl Backend for Counting {
         self.inner.constant(code)
     }
 
+    /// Forwarded, and that is the point of the test below: what a wrapper forgets to pass on, the
+    /// runtime never learns. A backend that needs host stack and a wrapper that swallows the
+    /// number is an abort waiting for a deep program (`docs/31` §31.3).
+    fn stack_bytes(&self) -> usize {
+        self.inner.stack_bytes()
+    }
+
     fn function(&self, code: &Core) -> Result<Callable, ExecError> {
         self.prepared.fetch_add(1, Ordering::Relaxed);
         let f = self.inner.function(code)?;
@@ -210,5 +217,74 @@ fn envelope(seq: u64) -> beck_rt::Envelope {
         at: beck_rt::Instant(0),
         actor: "alice".into(),
         body: beck_core::Value::Unit,
+    }
+}
+
+/// The newest thing on the seam, and the one a second backend is most likely to get wrong.
+///
+/// [`Backend::stack_bytes`] exists because the runtime spawns threads and may not name a backend
+/// crate: it has to *ask*. Three claims, and none of them is about the evaluator's number being
+/// right — only about the seam carrying it.
+#[test]
+fn the_seam_carries_how_much_host_stack_a_backend_needs() {
+    let placed = todo_program();
+    let evaluator = beck_eval::backend(&placed);
+
+    // A tree-walker nests host frames on the program's recursion and says so.
+    assert_eq!(
+        evaluator.stack_bytes(),
+        beck_eval::STACK_BYTES,
+        "the evaluator declares the stack its depth ceiling needs"
+    );
+
+    // A backend that does not is answering "whatever the caller has", which is the right answer
+    // for anything that compiles to a loop — and it must not be forced to invent a number.
+    struct Compiled;
+    impl Backend for Compiled {
+        fn name(&self) -> &'static str {
+            "compiled"
+        }
+        fn constant(&self, _: &Core) -> Result<Value, ExecError> {
+            unreachable!("nothing here executes")
+        }
+        fn function(&self, _: &Core) -> Result<Callable, ExecError> {
+            unreachable!("nothing here executes")
+        }
+    }
+    assert_eq!(
+        Compiled.stack_bytes(),
+        0,
+        "the default is zero, so the seam costs a compiling backend nothing"
+    );
+
+    // And a wrapper has to pass it through, or the runtime under-provisions a backend that needs
+    // the stack for a reason the wrapper knows nothing about.
+    let wrapped = Counting {
+        inner: evaluator,
+        prepared: AtomicUsize::new(0),
+        calls: Arc::new(AtomicUsize::new(0)),
+    };
+    assert_eq!(
+        wrapped.stack_bytes(),
+        beck_eval::STACK_BYTES,
+        "a backend that wraps another inherits its requirement"
+    );
+
+    // The interceptor `beck test` installs makes a *new* backend out of the old one, which is the
+    // same trap one layer down.
+    let intercepting = beck_eval::backend(&placed)
+        .intercepting(Arc::new(NeverIntercepts))
+        .expect("the evaluator can intercept");
+    assert_eq!(
+        intercepting.stack_bytes(),
+        beck_eval::STACK_BYTES,
+        "and so does the one `beck test` swaps in"
+    );
+}
+
+struct NeverIntercepts;
+impl beck_core::backend::Interceptor for NeverIntercepts {
+    fn intercept(&self, _: &str, _: &[Value]) -> Option<Value> {
+        None
     }
 }
