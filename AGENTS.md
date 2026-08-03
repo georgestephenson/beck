@@ -34,8 +34,9 @@ Write the commit message as the author of the change: what changed, and why.
   [`41`](docs/41-generic-arithmetic-report.md), [`44`](docs/44-wave-0-report.md),
   [`45`](docs/45-error-rows-report.md), [`46`](docs/46-standard-library-report.md),
   [`47`](docs/47-effect-polymorphic-traits-report.md), [`48`](docs/48-identity-report.md),
-  [`49`](docs/49-http-client-report.md) and
-  [`50`](docs/50-collections-and-dates-report.md),
+  [`49`](docs/49-http-client-report.md),
+  [`50`](docs/50-collections-and-dates-report.md) and
+  [`51`](docs/51-arrangement-lifecycle-report.md),
   indexed in
   [`docs/README.md`](docs/README.md) — record what each
   phase does, what it refuses to claim, and the corrections it makes to the design documents.
@@ -44,11 +45,11 @@ Write the commit message as the author of the change: what changed, and why.
   started**: the test construct, the general slicer (Phase 2's debt), the means-of-abstraction
   bullet and `Result`/error rows are built; the standard library has everything but crypto, UUID
   parsing and the bignums — its HTTP client (docs/49), its collections and its calendar (docs/50) —
-  and two walls of its own (docs/46, docs/49); the incremental-views bullet has its engine
-  but not its read models, pgwire
+  and two walls of its own (docs/46, docs/49); the incremental-views bullet has its engine and
+  that engine's lifecycle (docs/51) but not its read models, pgwire
   or fusion; the expressiveness suite runs two chapters of SICP. Seven of the fourteen are
   untouched — identity has its seam but not its OIDC relying party (docs/48) — and docs/26 §26.9
-  names them one at a time. **Wave 0** (docs/08 §8.5.4) is also
+  names them one at a time, less the two docs/51 closed. **Wave 0** (docs/08 §8.5.4) is also
   built — a bounded front end, an injected clock, a threat model, a disclosure policy and an
   identifier profile — and is debt rather than a phase bullet, so it is in docs/44 and not in that
   list. All six of
@@ -105,8 +106,9 @@ Write the commit message as the author of the change: what changed, and why.
   `cargo test -p beck-eval -- --nocapture` (the evaluator's stack-per-level figures), and from the
   commands quoted in [`docs/22-phase-3-report.md`](docs/22-phase-3-report.md),
   [`docs/23-general-slicer-report.md`](docs/23-general-slicer-report.md),
-  [`docs/24-incremental-views-report.md`](docs/24-incremental-views-report.md) and
-  [`docs/26-arrangement-sharing-report.md`](docs/26-arrangement-sharing-report.md); the SICP numbers
+  [`docs/24-incremental-views-report.md`](docs/24-incremental-views-report.md),
+  [`docs/26-arrangement-sharing-report.md`](docs/26-arrangement-sharing-report.md) and
+  [`docs/51-arrangement-lifecycle-report.md`](docs/51-arrangement-lifecycle-report.md); the SICP numbers
   come from `cargo test --release --test sicp` and from `beck test sicp/ch1.beck` and
   `beck test sicp/ch2.beck`, quoted in [`docs/27-walls-report.md`](docs/27-walls-report.md) §27.5,
   [`docs/31-tail-calls-report.md`](docs/31-tail-calls-report.md) §31.5–§31.6 and
