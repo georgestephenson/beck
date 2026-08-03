@@ -1,0 +1,853 @@
+# Are We Fast Yet — Havlak.
+#
+# The third of the five macro-benchmarks. Havlak's loop-recognition algorithm run over a
+# 5,213-node control-flow graph: a depth-first numbering, a classification of every edge as a back
+# edge or not, and then union-find with path compression collapsing each loop body into its header.
+#
+# `docs/58` §58.5 recommended attempting this one first of the three that were left, for a reason
+# that was about *learning* rather than about size: it is the only one whose published configuration
+# might not run at all, because `findLoops` is called **52 times** over that graph. §59.3 is what
+# that turned out to cost, and it is the first benchmark in this directory to need a `--fuel` bigger
+# than the default.
+#
+# Three shapes the port needs, on top of `awfy/README.md`'s five rules:
+#
+#   * **An object graph keyed by identity is a `Map` keyed by name.** `IdentityDictionary<BasicBlock,
+#     Integer>` is the original's DFS numbering, and `BasicBlock.customHash` returns its `name` — so
+#     a `Map[Int, Int]` is the same dictionary with the identity made explicit.
+#   * **Union-find is a `Map` threaded through the walk.** Path compression is mutation used as an
+#     optimisation, so the compression is a fold over the nodes collected on the way up rather than
+#     a write through a pointer. It is the same compression: the same nodes are repointed at the
+#     same parent.
+#   * **`som.Set` is a `list` with a membership check**, which is what `som.Set` is — a `Vector`
+#     with `hasSome` on `add`. Using a `Map` would order the members by value where the original
+#     orders them by insertion, and this algorithm iterates them.
+#
+# 1,605 and 5,213 are the harness's own numbers: `Havlak.java`'s `verifyResult` is
+# `r[0] == 1605 && r[1] == 5213` at `innerIterations == 1`.
+
+# ---------------------------------------------------------------------------------------------
+# The control-flow graph
+# ---------------------------------------------------------------------------------------------
+
+model Block:
+    name: Int
+    in_edges: list[Int]
+    out_edges: list[Int]
+
+model Cfg:
+    blocks: Map[Int, Block]
+    ## `basicBlockMap.size()` in the original, which is a `Vector` indexed by name — so it is the
+    ## largest name plus one rather than a count, and every index below it is filled.
+    num_nodes: Int
+    ## The first node created, which the original captures the moment the map's size reaches one.
+    start: Int
+    ## The original appends every edge to a `Vector` that nothing ever reads. A count stands in for
+    ## it — §59.4 records that as the one place this does less work than the original.
+    edge_count: Int
+
+def no_block() -> Int:
+    return -1
+
+def empty_cfg() -> Cfg:
+    return Cfg(blocks={}, num_nodes=0, start=no_block(), edge_count=0)
+
+def block_at(cfg: Cfg, name: Int) -> Block:
+    return unwrap_or(map_get(cfg.blocks, name), Block(name=name, in_edges=[], out_edges=[]))
+
+def create_node(cfg: Cfg, name: Int) -> Cfg:
+    if map_contains(cfg.blocks, name):
+        return cfg
+    grown = Cfg(
+        blocks=map_insert(cfg.blocks, name, Block(name=name, in_edges=[], out_edges=[])),
+        num_nodes=name + 1 if name + 1 > cfg.num_nodes else cfg.num_nodes,
+        start=cfg.start,
+        edge_count=cfg.edge_count,
+    )
+    if grown.num_nodes == 1:
+        return Cfg(
+            blocks=grown.blocks, num_nodes=1, start=name, edge_count=grown.edge_count
+        )
+    return grown
+
+## The original's `BasicBlockEdge` constructor, which creates both ends, wires them and files
+## itself with the graph.
+def add_edge(cfg: Cfg, from_name: Int, to_name: Int) -> Cfg:
+    both = create_node(create_node(cfg, from_name), to_name)
+    from_block = block_at(both, from_name)
+    to_block = block_at(both, to_name)
+    wired = map_insert(
+        map_insert(
+            both.blocks,
+            from_name,
+            Block(
+                name=from_name,
+                in_edges=from_block.in_edges,
+                out_edges=list_append(from_block.out_edges, to_name),
+            ),
+        ),
+        to_name,
+        Block(
+            name=to_name,
+            in_edges=list_append(block_at_in(both, to_name, from_name), from_name),
+            out_edges=to_block.out_edges,
+        ),
+    )
+    return Cfg(
+        blocks=wired,
+        num_nodes=both.num_nodes,
+        start=both.start,
+        edge_count=both.edge_count + 1,
+    )
+
+## The in-edges of `to_name` as they stand — read separately because a self-edge would otherwise
+## read the block from before its own out-edge was added.
+def block_at_in(cfg: Cfg, to_name: Int, from_name: Int) -> list[Int]:
+    if to_name == from_name:
+        return list_append(block_at(cfg, to_name).in_edges, from_name)
+    return block_at(cfg, to_name).in_edges
+
+# ---------------------------------------------------------------------------------------------
+# The loop structure graph
+# ---------------------------------------------------------------------------------------------
+
+model Loop:
+    counter: Int
+    header: Int
+    is_reducible: Bool
+    is_root: Bool
+    nesting_level: Int
+    depth_level: Int
+    parent: Int
+    children: list[Int]
+    blocks: list[Int]
+
+model Lsg:
+    loops: Map[Int, Loop]
+    count: Int
+
+def no_loop() -> Int:
+    return -1
+
+## The original's constructor makes a root loop with no header and files it as loop zero.
+def empty_lsg() -> Lsg:
+    root = Loop(
+        counter=0,
+        header=no_block(),
+        is_reducible=true,
+        is_root=true,
+        nesting_level=0,
+        depth_level=0,
+        parent=no_loop(),
+        children=[],
+        blocks=[],
+    )
+    return Lsg(loops={0: root}, count=1)
+
+def loop_at(lsg: Lsg, counter: Int) -> Loop:
+    return unwrap_or(map_get(lsg.loops, counter), loop_at_root(lsg))
+
+def loop_at_root(lsg: Lsg) -> Loop:
+    return unwrap_or(
+        map_get(lsg.loops, 0),
+        Loop(
+            counter=0,
+            header=no_block(),
+            is_reducible=true,
+            is_root=true,
+            nesting_level=0,
+            depth_level=0,
+            parent=no_loop(),
+            children=[],
+            blocks=[],
+        ),
+    )
+
+def with_loop(lsg: Lsg, loop: Loop) -> Lsg:
+    return Lsg(loops=map_insert(lsg.loops, loop.counter, loop), count=lsg.count)
+
+def create_new_loop(lsg: Lsg, header: Int, is_reducible: Bool) -> Lsg:
+    loop = Loop(
+        counter=lsg.count,
+        header=header,
+        is_reducible=is_reducible,
+        is_root=false,
+        nesting_level=0,
+        depth_level=0,
+        parent=no_loop(),
+        children=[],
+        blocks=[header] if header != no_block() else [],
+    )
+    return Lsg(loops=map_insert(lsg.loops, lsg.count, loop), count=lsg.count + 1)
+
+## The original's `setParent`, which also files the child with its new parent.
+def set_parent(lsg: Lsg, child: Int, parent: Int) -> Lsg:
+    was = loop_at(lsg, child)
+    reparented = with_loop(
+        lsg,
+        Loop(
+            counter=was.counter,
+            header=was.header,
+            is_reducible=was.is_reducible,
+            is_root=was.is_root,
+            nesting_level=was.nesting_level,
+            depth_level=was.depth_level,
+            parent=parent,
+            children=was.children,
+            blocks=was.blocks,
+        ),
+    )
+    up = loop_at(reparented, parent)
+    if list_contains(up.children, child):
+        return reparented
+    return with_loop(
+        reparented,
+        Loop(
+            counter=up.counter,
+            header=up.header,
+            is_reducible=up.is_reducible,
+            is_root=up.is_root,
+            nesting_level=up.nesting_level,
+            depth_level=up.depth_level,
+            parent=up.parent,
+            children=list_append(up.children, child),
+            blocks=up.blocks,
+        ),
+    )
+
+def add_loop_node(lsg: Lsg, counter: Int, block: Int) -> Lsg:
+    loop = loop_at(lsg, counter)
+    if list_contains(loop.blocks, block):
+        return lsg
+    return with_loop(
+        lsg,
+        Loop(
+            counter=loop.counter,
+            header=loop.header,
+            is_reducible=loop.is_reducible,
+            is_root=loop.is_root,
+            nesting_level=loop.nesting_level,
+            depth_level=loop.depth_level,
+            parent=loop.parent,
+            children=loop.children,
+            blocks=list_append(loop.blocks, block),
+        ),
+    )
+
+def set_levels(lsg: Lsg, counter: Int, nesting: Int, depth: Int) -> Lsg:
+    loop = loop_at(lsg, counter)
+    return with_loop(
+        lsg,
+        Loop(
+            counter=loop.counter,
+            header=loop.header,
+            is_reducible=loop.is_reducible,
+            is_root=loop.is_root or nesting == 0,
+            nesting_level=nesting,
+            depth_level=depth,
+            parent=loop.parent,
+            children=loop.children,
+            blocks=loop.blocks,
+        ),
+    )
+
+## The original's `calculateNestingLevel`: adopt every orphan, then walk down from the root.
+def calculate_nesting_level(lsg: Lsg) -> Lsg:
+    return nesting_from(adopt_orphans(lsg, 0), 0, 0)
+
+def adopt_orphans(lsg: Lsg, i: Int) -> Lsg:
+    if i >= lsg.count:
+        return lsg
+    loop = loop_at(lsg, i)
+    if loop.is_root or loop.parent != no_loop():
+        return adopt_orphans(lsg, i + 1)
+    return adopt_orphans(set_parent(lsg, i, 0), i + 1)
+
+def nesting_from(lsg: Lsg, counter: Int, depth: Int) -> Lsg:
+    deepened = set_levels(lsg, counter, loop_at(lsg, counter).nesting_level, depth)
+    return nesting_children(deepened, counter, loop_at(deepened, counter).children, 0, depth)
+
+def nesting_children(
+    lsg: Lsg, counter: Int, children: list[Int], i: Int, depth: Int
+) -> Lsg:
+    if i >= list_len(children):
+        return lsg
+    child = unwrap_or(list_get(children, i), 0)
+    below = nesting_from(lsg, child, depth + 1)
+    mine = loop_at(below, counter).nesting_level
+    theirs = 1 + loop_at(below, child).nesting_level
+    raised = set_levels(
+        below, counter, theirs if theirs > mine else mine, loop_at(below, counter).depth_level
+    )
+    return nesting_children(raised, counter, children, i + 1, depth)
+
+# ---------------------------------------------------------------------------------------------
+# The finder
+# ---------------------------------------------------------------------------------------------
+
+## The original's `Integer.MAX_VALUE`, used as "not yet numbered".
+def unvisited() -> Int:
+    return 2147483647
+
+def bb_nonheader() -> Int:
+    return 1
+
+def bb_reducible() -> Int:
+    return 2
+
+def bb_self() -> Int:
+    return 3
+
+def bb_irreducible() -> Int:
+    return 4
+
+def bb_dead() -> Int:
+    return 5
+
+def max_non_back_preds() -> Int:
+    return 32768
+
+## The original's `UnionFindNode`. `parent` is a DFS number rather than a pointer, which is what
+## makes the union-find a `Map` rather than a graph of records pointing at one another.
+model UnionNode:
+    parent: Int
+    block: Int
+    loop: Int
+    dfs: Int
+
+model Finder:
+    cfg: Cfg
+    lsg: Lsg
+    number: Map[Int, Int]
+    non_back_preds: Map[Int, list[Int]]
+    back_preds: Map[Int, list[Int]]
+    header: Map[Int, Int]
+    kind: Map[Int, Int]
+    last: Map[Int, Int]
+    nodes: Map[Int, UnionNode]
+
+def node_at(f: Finder, dfs: Int) -> UnionNode:
+    return unwrap_or(
+        map_get(f.nodes, dfs), UnionNode(parent=dfs, block=no_block(), loop=no_loop(), dfs=dfs)
+    )
+
+def with_node(f: Finder, node: UnionNode) -> Finder:
+    return Finder(
+        cfg=f.cfg,
+        lsg=f.lsg,
+        number=f.number,
+        non_back_preds=f.non_back_preds,
+        back_preds=f.back_preds,
+        header=f.header,
+        kind=f.kind,
+        last=f.last,
+        nodes=map_insert(f.nodes, node.dfs, node),
+    )
+
+def with_lsg(f: Finder, lsg: Lsg) -> Finder:
+    return Finder(
+        cfg=f.cfg,
+        lsg=lsg,
+        number=f.number,
+        non_back_preds=f.non_back_preds,
+        back_preds=f.back_preds,
+        header=f.header,
+        kind=f.kind,
+        last=f.last,
+        nodes=f.nodes,
+    )
+
+def with_number(f: Finder, block: Int, dfs: Int) -> Finder:
+    return Finder(
+        cfg=f.cfg,
+        lsg=f.lsg,
+        number=map_insert(f.number, block, dfs),
+        non_back_preds=f.non_back_preds,
+        back_preds=f.back_preds,
+        header=f.header,
+        kind=f.kind,
+        last=f.last,
+        nodes=f.nodes,
+    )
+
+def with_last(f: Finder, w: Int, value: Int) -> Finder:
+    return Finder(
+        cfg=f.cfg,
+        lsg=f.lsg,
+        number=f.number,
+        non_back_preds=f.non_back_preds,
+        back_preds=f.back_preds,
+        header=f.header,
+        kind=f.kind,
+        last=map_insert(f.last, w, value),
+        nodes=f.nodes,
+    )
+
+def with_kind(f: Finder, w: Int, value: Int) -> Finder:
+    return Finder(
+        cfg=f.cfg,
+        lsg=f.lsg,
+        number=f.number,
+        non_back_preds=f.non_back_preds,
+        back_preds=f.back_preds,
+        header=f.header,
+        kind=map_insert(f.kind, w, value),
+        last=f.last,
+        nodes=f.nodes,
+    )
+
+def with_header(f: Finder, w: Int, value: Int) -> Finder:
+    return Finder(
+        cfg=f.cfg,
+        lsg=f.lsg,
+        number=f.number,
+        non_back_preds=f.non_back_preds,
+        back_preds=f.back_preds,
+        header=map_insert(f.header, w, value),
+        kind=f.kind,
+        last=f.last,
+        nodes=f.nodes,
+    )
+
+def with_back_preds(f: Finder, w: Int, value: list[Int]) -> Finder:
+    return Finder(
+        cfg=f.cfg,
+        lsg=f.lsg,
+        number=f.number,
+        non_back_preds=f.non_back_preds,
+        back_preds=map_insert(f.back_preds, w, value),
+        header=f.header,
+        kind=f.kind,
+        last=f.last,
+        nodes=f.nodes,
+    )
+
+def with_non_back_preds(f: Finder, w: Int, value: list[Int]) -> Finder:
+    return Finder(
+        cfg=f.cfg,
+        lsg=f.lsg,
+        number=f.number,
+        non_back_preds=map_insert(f.non_back_preds, w, value),
+        back_preds=f.back_preds,
+        header=f.header,
+        kind=f.kind,
+        last=f.last,
+        nodes=f.nodes,
+    )
+
+def number_of(f: Finder, block: Int) -> Int:
+    return unwrap_or(map_get(f.number, block), unvisited())
+
+def last_of(f: Finder, w: Int) -> Int:
+    return unwrap_or(map_get(f.last, w), 0)
+
+def kind_of(f: Finder, w: Int) -> Int:
+    return unwrap_or(map_get(f.kind, w), 0)
+
+def back_preds_of(f: Finder, w: Int) -> list[Int]:
+    return unwrap_or(map_get(f.back_preds, w), [])
+
+def non_back_preds_of(f: Finder, w: Int) -> list[Int]:
+    return unwrap_or(map_get(f.non_back_preds, w), [])
+
+## The original's `som.Set.add`, which is a membership check and an append.
+def add_to_set(members: list[Int], value: Int) -> list[Int]:
+    if list_contains(members, value):
+        return members
+    return list_append(members, value)
+
+def is_ancestor(f: Finder, w: Int, v: Int) -> Bool:
+    return w <= v and v <= last_of(f, w)
+
+# ---------------------------------------------------------------------------------------------
+# The depth-first numbering
+# ---------------------------------------------------------------------------------------------
+
+model Dfs:
+    finder: Finder
+    last_id: Int
+
+def do_dfs(f: Finder, block: Int, current: Int) -> Dfs:
+    started = with_number(
+        with_node(f, UnionNode(parent=current, block=block, loop=no_loop(), dfs=current)),
+        block,
+        current,
+    )
+    walked = dfs_targets(started, block_at(started.cfg, block).out_edges, 0, current)
+    return Dfs(finder=with_last(walked.finder, current, walked.last_id), last_id=walked.last_id)
+
+def dfs_targets(f: Finder, targets: list[Int], i: Int, last_id: Int) -> Dfs:
+    if i >= list_len(targets):
+        return Dfs(finder=f, last_id=last_id)
+    target = unwrap_or(list_get(targets, i), 0)
+    if number_of(f, target) != unvisited():
+        return dfs_targets(f, targets, i + 1, last_id)
+    stepped = do_dfs(f, target, last_id + 1)
+    return dfs_targets(stepped.finder, targets, i + 1, stepped.last_id)
+
+def init_all_nodes(f: Finder) -> Finder:
+    cleared = unvisit_from(f, 0)
+    return do_dfs(cleared, cleared.cfg.start, 0).finder
+
+def unvisit_from(f: Finder, i: Int) -> Finder:
+    if i >= f.cfg.num_nodes:
+        return f
+    return unvisit_from(with_number(f, i, unvisited()), i + 1)
+
+# ---------------------------------------------------------------------------------------------
+# Edge classification
+# ---------------------------------------------------------------------------------------------
+
+def identify_edges(f: Finder, w: Int, size: Int) -> Finder:
+    if w >= size:
+        return f
+    marked = with_kind(with_header(f, w, 0), w, bb_nonheader())
+    node = node_at(marked, w)
+    if node.block == no_block():
+        return identify_edges(with_kind(marked, w, bb_dead()), w + 1, size)
+    return identify_edges(process_edges(marked, node.block, w), w + 1, size)
+
+def process_edges(f: Finder, block: Int, w: Int) -> Finder:
+    return classify(f, block_at(f.cfg, block).in_edges, 0, w)
+
+def classify(f: Finder, preds: list[Int], i: Int, w: Int) -> Finder:
+    if i >= list_len(preds):
+        return f
+    v = number_of(f, unwrap_or(list_get(preds, i), 0))
+    if v == unvisited():
+        return classify(f, preds, i + 1, w)
+    if is_ancestor(f, w, v):
+        return classify(
+            with_back_preds(f, w, list_append(back_preds_of(f, w), v)), preds, i + 1, w
+        )
+    return classify(
+        with_non_back_preds(f, w, add_to_set(non_back_preds_of(f, w), v)), preds, i + 1, w
+    )
+
+# ---------------------------------------------------------------------------------------------
+# Union-find, with the original's path compression
+# ---------------------------------------------------------------------------------------------
+
+model Found:
+    finder: Finder
+    root: Int
+
+model Walk:
+    collected: list[Int]
+    root: Int
+
+## The original's `findSet`: walk to the root, collecting every node whose grandparent is not its
+## parent, then repoint all of them at **the starting node's parent**.
+##
+## That last detail is the original's and is worth transcribing exactly rather than improving:
+## `nodeList.forEach(iter -> iter.union(parent))` reads the *enclosing* node's `parent` field, not
+## the one it walked to. A port that repointed at the root would compress harder and be a different
+## algorithm.
+def find_set(f: Finder, start: Int) -> Found:
+    walk = walk_up(f, start, [])
+    return Found(finder=compress(f, walk.collected, node_at(f, start).parent, 0), root=walk.root)
+
+def walk_up(f: Finder, node: Int, collected: list[Int]) -> Walk:
+    parent = node_at(f, node).parent
+    if node == parent:
+        return Walk(collected=collected, root=node)
+    if parent != node_at(f, parent).parent:
+        return walk_up(f, parent, list_append(collected, node))
+    return walk_up(f, parent, collected)
+
+def compress(f: Finder, nodes: list[Int], parent: Int, i: Int) -> Finder:
+    if i >= list_len(nodes):
+        return f
+    return compress(union_with(f, unwrap_or(list_get(nodes, i), 0), parent), nodes, parent, i + 1)
+
+def union_with(f: Finder, node: Int, parent: Int) -> Finder:
+    was = node_at(f, node)
+    return with_node(f, UnionNode(parent=parent, block=was.block, loop=was.loop, dfs=was.dfs))
+
+def set_node_loop(f: Finder, node: Int, loop: Int) -> Finder:
+    was = node_at(f, node)
+    return with_node(f, UnionNode(parent=was.parent, block=was.block, loop=loop, dfs=was.dfs))
+
+# ---------------------------------------------------------------------------------------------
+# The algorithm
+# ---------------------------------------------------------------------------------------------
+
+## A pass's state: the finder, the pool of nodes in the loop body, and the work list.
+model Pass:
+    finder: Finder
+    pool: list[Int]
+    work: list[Int]
+
+def find_loops(f: Finder) -> Finder:
+    if f.cfg.start == no_block():
+        return f
+    size = f.cfg.num_nodes
+    fresh = Finder(
+        cfg=f.cfg,
+        lsg=f.lsg,
+        number={},
+        non_back_preds={},
+        back_preds={},
+        header={},
+        kind={},
+        last={},
+        nodes={},
+    )
+    numbered = init_all_nodes(fresh)
+    classified = identify_edges(numbered, 0, size)
+    return step_c(with_header(classified, 0, 0), size - 1)
+
+## The original's "Step c": every node, from the highest DFS number down.
+def step_c(f: Finder, w: Int) -> Finder:
+    if w < 0:
+        return f
+    if node_at(f, w).block == no_block():
+        return step_c(f, w - 1)
+    started = step_d(Pass(finder=f, pool=[], work=[]), back_preds_of(f, w), 0, w)
+    seeded = Pass(
+        finder=with_kind(started.finder, w, bb_reducible())
+        if list_len(started.pool) != 0
+        else started.finder,
+        pool=started.pool,
+        work=started.pool,
+    )
+    drained = step_e(seeded, w)
+    if list_len(drained.pool) > 0 or kind_of(drained.finder, w) == bb_self():
+        return step_c(close_loop(drained, w), w - 1)
+    return step_c(drained.finder, w - 1)
+
+## The original's "Step d": a back predecessor that is not the node itself joins the pool.
+def step_d(p: Pass, preds: list[Int], i: Int, w: Int) -> Pass:
+    if i >= list_len(preds):
+        return p
+    v = unwrap_or(list_get(preds, i), 0)
+    if v == w:
+        return step_d(
+            Pass(finder=with_kind(p.finder, w, bb_self()), pool=p.pool, work=p.work),
+            preds,
+            i + 1,
+            w,
+        )
+    found = find_set(p.finder, v)
+    return step_d(
+        Pass(finder=found.finder, pool=list_append(p.pool, found.root), work=p.work),
+        preds,
+        i + 1,
+        w,
+    )
+
+## The original's "Step e": drain the work list, following non-back predecessors.
+def step_e(p: Pass, w: Int) -> Pass:
+    if list_is_empty(p.work):
+        return p
+    x = unwrap_or(list_get(p.work, 0), 0)
+    rest = Pass(finder=p.finder, pool=p.pool, work=list_drop(p.work, 1))
+    return step_e(non_back(rest, non_back_preds_of(rest.finder, x), 0, w), w)
+
+def non_back(p: Pass, preds: list[Int], i: Int, w: Int) -> Pass:
+    if i >= list_len(preds):
+        return p
+    found = find_set(p.finder, unwrap_or(list_get(preds, i), 0))
+    ydash = found.root
+    if not is_ancestor(found.finder, w, ydash):
+        irreducible = with_non_back_preds(
+            with_kind(found.finder, w, bb_irreducible()),
+            w,
+            add_to_set(non_back_preds_of(found.finder, w), ydash),
+        )
+        return non_back(Pass(finder=irreducible, pool=p.pool, work=p.work), preds, i + 1, w)
+    if ydash != w and not list_contains(p.pool, ydash):
+        return non_back(
+            Pass(
+                finder=found.finder,
+                pool=list_append(p.pool, ydash),
+                work=list_append(p.work, ydash),
+            ),
+            preds,
+            i + 1,
+            w,
+        )
+    return non_back(Pass(finder=found.finder, pool=p.pool, work=p.work), preds, i + 1, w)
+
+## The original's `createNewLoop` plus `setLoopAttributes`.
+def close_loop(p: Pass, w: Int) -> Finder:
+    header_block = node_at(p.finder, w).block
+    made = create_new_loop(
+        p.finder.lsg, header_block, kind_of(p.finder, w) != bb_irreducible()
+    )
+    loop = made.count - 1
+    attached = set_node_loop(with_lsg(p.finder, made), w, loop)
+    return attribute(attached, p.pool, 0, w, loop)
+
+def attribute(f: Finder, pool: list[Int], i: Int, w: Int, loop: Int) -> Finder:
+    if i >= list_len(pool):
+        return f
+    node = unwrap_or(list_get(pool, i), 0)
+    headed = with_header(f, node, w)
+    joined = union_with(headed, node, w)
+    was = node_at(joined, node)
+    if was.loop != no_loop():
+        return attribute(with_lsg(joined, set_parent(joined.lsg, was.loop, loop)), pool, i + 1, w, loop)
+    return attribute(
+        with_lsg(joined, add_loop_node(joined.lsg, loop, was.block)), pool, i + 1, w, loop
+    )
+
+# ---------------------------------------------------------------------------------------------
+# `LoopTesterApp` — the graph the benchmark recognises loops in
+# ---------------------------------------------------------------------------------------------
+
+## Four blocks in a diamond, and the index of the last one.
+def build_diamond(cfg: Cfg, start: Int) -> Cfg:
+    return add_edge(
+        add_edge(add_edge(add_edge(cfg, start, start + 1), start, start + 2), start + 1, start + 3),
+        start + 2,
+        start + 3,
+    )
+
+def build_straight(cfg: Cfg, start: Int, n: Int) -> Cfg:
+    if n <= 0:
+        return cfg
+    return build_straight(add_edge(cfg, start, start + 1), start + 1, n - 1)
+
+## A loop with two diamonds in it, which is ten block indices.
+def build_base_loop(cfg: Cfg, from_block: Int) -> Cfg:
+    header = from_block + 1
+    diamond1 = header + 3
+    d11 = diamond1 + 1
+    diamond2 = d11 + 3
+    footer = diamond2 + 1
+    built = build_straight(
+        build_diamond(build_straight(build_diamond(build_straight(cfg, from_block, 1), header), diamond1, 1), d11),
+        diamond2,
+        1,
+    )
+    closed = add_edge(add_edge(add_edge(built, diamond2, d11), diamond1, header), footer, from_block)
+    return build_straight(closed, footer, 1)
+
+def base_loop_end(from_block: Int) -> Int:
+    return from_block + 10
+
+def construct_simple_cfg(cfg: Cfg) -> Cfg:
+    with_zero = create_node(cfg, 0)
+    looped = build_base_loop(with_zero, 0)
+    return add_edge(create_node(looped, 1), 0, 2)
+
+## The three nested loops of the original's `constructCFG`, with `n` carried rather than mutated.
+model Building:
+    cfg: Cfg
+    n: Int
+
+def construct_cfg(cfg: Cfg, par_loops: Int, ppar_loops: Int, pppar_loops: Int) -> Cfg:
+    return par_trees(Building(cfg=cfg, n=2), 0, par_loops, ppar_loops, pppar_loops).cfg
+
+def par_trees(b: Building, i: Int, par: Int, ppar: Int, pppar: Int) -> Building:
+    if i >= par:
+        return b
+    opened = add_edge(create_node(b.cfg, b.n + 1), 2, b.n + 1)
+    inner = ppar_loops_from(Building(cfg=opened, n=b.n + 1), 0, ppar, pppar)
+    closed = Building(cfg=add_edge(inner.cfg, inner.n, 1), n=inner.n)
+    return par_trees(closed, i + 1, par, ppar, pppar)
+
+def ppar_loops_from(b: Building, i: Int, ppar: Int, pppar: Int) -> Building:
+    if i >= ppar:
+        return b
+    top = b.n
+    straight = Building(cfg=build_straight(b.cfg, b.n, 1), n=b.n + 1)
+    based = pppar_loops_from(straight, 0, pppar)
+    bottom = based.n + 1
+    finished = Building(
+        cfg=add_edge(build_straight(based.cfg, based.n, 1), based.n, top), n=bottom
+    )
+    return ppar_loops_from(finished, i + 1, ppar, pppar)
+
+def pppar_loops_from(b: Building, i: Int, pppar: Int) -> Building:
+    if i >= pppar:
+        return b
+    return pppar_loops_from(
+        Building(cfg=build_base_loop(b.cfg, b.n), n=base_loop_end(b.n)), i + 1, pppar
+    )
+
+def new_finder(cfg: Cfg, lsg: Lsg) -> Finder:
+    return Finder(
+        cfg=cfg,
+        lsg=lsg,
+        number={},
+        non_back_preds={},
+        back_preds={},
+        header={},
+        kind={},
+        last={},
+        nodes={},
+    )
+
+## The original's `LoopTesterApp.main`, which returns the number of loops found and the number of
+## nodes in the graph.
+model LoopCount:
+    loops: Int
+    nodes: Int
+
+def main(
+    num_dummy_loops: Int, find_loop_iterations: Int, par: Int, ppar: Int, pppar: Int
+) -> LoopCount:
+    simple = construct_simple_cfg(create_node(empty_cfg(), 0))
+    dummied = dummy_loops(simple, empty_lsg(), 0, num_dummy_loops)
+    whole = construct_cfg(simple, par, ppar, pppar)
+    once = find_loops(new_finder(whole, dummied)).lsg
+    discarded = repeated(whole, 0, find_loop_iterations, 0)
+    return LoopCount(
+        loops=calculate_nesting_level(once).count,
+        nodes=whole.num_nodes + discarded - discarded,
+    )
+
+## The original runs `findLoops(lsg)` on the *small* graph, before `constructCFG` has grown it.
+def dummy_loops(cfg: Cfg, lsg: Lsg, i: Int, n: Int) -> Lsg:
+    if i >= n:
+        return lsg
+    return dummy_loops(cfg, find_loops(new_finder(cfg, lsg)).lsg, i + 1, n)
+
+## The 50 runs whose loop structure is thrown away. They change no number this benchmark verifies —
+## `lsg` is not one of their arguments — and they are the bulk of the work, which §59.3 measures.
+##
+## The count is **summed** rather than dropped, and that is not decoration. The first version of this
+## passed the run's own loop count back as the loop counter, so it ran once and stopped; every
+## verified number was still right, because none of them depends on this loop. §59.5 is the finding:
+## a benchmark whose workload is discarded has no oracle for its workload, and the only defence is
+## to carry the result somewhere a test can see it.
+def repeated(cfg: Cfg, i: Int, n: Int, seen: Int) -> Int:
+    if i >= n:
+        return seen
+    return repeated(cfg, i + 1, n, seen + find_loops(new_finder(cfg, empty_lsg())).lsg.count)
+
+## The benchmark, at Are We Fast Yet's own configuration for one inner iteration — except for
+## `find_loop_iterations`, which the caller chooses. §59.3 is why that is a parameter.
+def benchmark(find_loop_iterations: Int) -> LoopCount:
+    return main(1, find_loop_iterations, 10, 10, 5)
+
+## The benchmark's verified numbers, at Are We Fast Yet's own graph.
+##
+## `find_loop_iterations` is **0** here where the suite's configuration says 50, and §59.3 is the
+## measurement behind that: the published configuration exhausts the evaluator's 50,000,000-step
+## fuel budget after 13.7 s in a release build, and six discarded runs fit where eight do not. The
+## two tests below are what make gating on a cheaper number honest rather than convenient — the
+## first says the answers do not depend on it, and the second says each discarded run does the whole
+## job rather than being skipped.
+test "havlak: 1,605 loops over 5,213 nodes":
+    expect benchmark(0) == LoopCount(loops=1605, nodes=5213)
+
+test "and the discarded runs change nothing but the clock":
+    expect benchmark(1) == benchmark(0)
+
+## The workload itself, which is the number no `verifyResult` looks at.
+##
+## A discarded run starts from a fresh loop structure and finds 1,601 loops in the big graph, so its
+## count is 1,602 with the root. The verified 1,605 is that plus the three the *small* graph gives
+## the counted structure before `constructCFG` grows it — which is the arithmetic that says these
+## two numbers are the same algorithm rather than two coincidences.
+##
+## It is here because §59.5's bug was invisible to every other assertion in this file.
+test "each discarded run does the whole job":
+    expect discarded_total(0) == 0
+    expect discarded_total(1) == 1602
+
+def discarded_total(n: Int) -> Int:
+    return repeated(construct_cfg(construct_simple_cfg(create_node(empty_cfg(), 0)), 10, 10, 5), 0, n, 0)

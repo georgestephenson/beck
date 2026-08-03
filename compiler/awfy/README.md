@@ -13,7 +13,7 @@ what it establishes, what it refuses to claim, and the three findings porting it
 
 ## What is here
 
-Eleven files — Are We Fast Yet's nine micro-benchmarks and two of its five macro-benchmarks — each a
+Twelve files — Are We Fast Yet's nine micro-benchmarks and three of its five macro-benchmarks — each a
 Beck **library** whose `test` block is the original's `verifyResult` with the original's own
 constant in it.
 
@@ -30,8 +30,9 @@ constant in it.
 | [`towers.beck`](towers.beck) | Stack discipline and recursion | 8,191 moves |
 | [`richards.beck`](richards.beck) | **Macro.** An OS task scheduler — a mutable object graph | 23,246 packets queued, 9,297 holds |
 | [`json.beck`](json.beck) | **Macro.** A JSON parser over 25,820 characters of RAP protocol traffic | an object whose `operations` array has 156 entries |
+| [`havlak.beck`](havlak.beck) | **Macro.** Loop recognition — DFS, edge classification and union-find over a control-flow graph | 1,605 loops over 5,213 nodes |
 
-`beck-cli/tests/awfy.rs` gates the directory: a file added here is run by being here, and the eleven
+`beck-cli/tests/awfy.rs` gates the directory: a file added here is run by being here, and the twelve
 names are enumerated in one place — micro and macro apart, because that is the suite's own division
 — so dropping one is a red test rather than a shorter table.
 `measure_awfy.rs` prints wall-clock and gates on nothing.
@@ -84,13 +85,19 @@ Two differences are worth naming separately because they are not mechanical:
 
 ## What is not here
 
-**Three of the five macro-benchmarks — CD, DeltaBlue and Havlak — are not ported.** Richards
-([`57`](../../docs/57-richards-report.md)) and Json ([`58`](../../docs/58-json-report.md)) are, and
-[`58`](../../docs/58-json-report.md) §58.5 sizes the remaining three from their sources: what each
-needs, how many lines it is, and which published configuration it would verify against. **None is
-blocked by the language.** Between them they need `som`'s `Vector` (248 lines), a red-black tree
-with deletion (406) and the DeltaBlue constraint hierarchy (about 1,140) — which is the next thing
-this directory is owed and is more than one sitting's work.
+**Two of the five macro-benchmarks — CD and DeltaBlue — are not ported.** Richards
+([`57`](../../docs/57-richards-report.md)), Json ([`58`](../../docs/58-json-report.md)) and Havlak
+([`59`](../../docs/59-havlak-report.md)) are. [`58`](../../docs/58-json-report.md) §58.5 sizes the
+two that remain from their sources — **neither is blocked by the language** — and between them they
+need `som`'s `Vector` (248 lines), a red-black tree with deletion (406) and the DeltaBlue constraint
+hierarchy (about 1,140).
+
+**`havlak` runs a cheaper configuration than the suite publishes, and says so.**
+[`59`](../../docs/59-havlak-report.md) §59.3 measured why: the published 50 discarded runs exhaust
+the evaluator's 50,000,000-step fuel budget after 13.7 s in a release build, and six of them fit
+where eight do not. Two of its three tests exist to make the reduction honest rather than
+convenient — one asserts the verified numbers do not depend on that parameter, and the other
+asserts each discarded run does the whole job.
 
 **Two of the nine run at a size the suite publishes for one iteration rather than at its default.**
 `mandelbrot` verifies at size 1 (128) rather than 500 (191), and `nbody` after one advance
