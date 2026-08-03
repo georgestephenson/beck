@@ -603,8 +603,10 @@ the item where §3.5 met the first operation that *has* to declassify a secret, 
 authentication code exists to be given to whoever must not learn the key;
 [`adr/0014`](adr/0014-a-keyed-digest-is-the-one-declassifier.md) is the decision, and it is one
 function behind `cap.sign` with a test that enumerates the prelude and keeps the count at one.
-**Untouched**: arbitrary-precision decimal, bignums and
-numeric coercion. §46.6 has the item-by-item list, §49.6 the client's own, §50.6 the two newest
+**Bignums and numeric coercion** are built too
+([`55`](55-bignums-report.md)) — in Beck rather than as a primitive, which is the first time
+[`lib/README.md`](../compiler/lib/README.md)'s division cost the refusal of a good crate — so
+**arbitrary-precision decimal** is what is left of this list. §46.6 has the item-by-item list, §49.6 the client's own, §50.6 the two newest
 files' and §52.6 the crypto half's — including what a digest deliberately is not: no asymmetric
 signature, no TLS, no encryption of any kind. The **Are We Fast Yet harness is stood up for nine of
 its fourteen benchmarks** ([`53`](53-are-we-fast-yet-report.md)), each verified against the constant

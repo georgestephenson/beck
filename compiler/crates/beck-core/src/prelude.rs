@@ -196,10 +196,19 @@ pub fn prims() -> Vec<(&'static str, Prim, Scheme)> {
         // Wave 2 writes it in Beck instead, which is the distinction §1.1 claims to be able to
         // make.
         //
-        // Indices are byte offsets into UTF-8 and are clamped rather than refused: `str_slice`
-        // past the end is the empty string, not a failure. That is a decision and not an
-        // oversight — a slice is not a parse, and `raises` is for a program's own vocabulary
-        // rather than for the standard library's arithmetic ([`45`](../../../../../docs/45-error-rows-report.md)).
+        // Positions are counted in **characters** — Unicode scalar values — and `str_len`,
+        // `str_slice` and `str_index_of` are one unit or they are a trap;
+        // `stdlib.rs::string_positions_are_characters_everywhere_or_nowhere` is where that is held.
+        //
+        // `str_slice(s, start, count)` takes a **count**, not an end index. Worth stating because
+        // the signature cannot: a primitive's parameters have no names in the generated reference,
+        // so `(Str, Int, Int) -> Str` reads either way and the first caller to pass a non-zero
+        // start with a real count got it wrong (`docs/55` §55.5).
+        //
+        // Both are clamped rather than refused: a slice past the end is the empty string, not a
+        // failure. That is a decision and not an oversight — a slice is not a parse, and `raises`
+        // is for a program's own vocabulary rather than for the standard library's arithmetic
+        // ([`45`](../../../../../docs/45-error-rows-report.md)).
         (
             "str_len",
             Prim::StrLen,

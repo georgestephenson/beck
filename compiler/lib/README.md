@@ -26,6 +26,7 @@ expressed.
 | [`http.beck`](http.beck) | A request built up and a response read back — over `http_fetch`, which is the *call*. There is no `get(host, path)` here and there cannot be: the host is written at the call site so the egress policy is derivable ([`adr/0013`](../../docs/adr/0013-the-host-of-an-outbound-call-is-written-at-the-call-site.md)) |
 | [`collections.beck`](collections.beck) | A `Set[T]` as a map's keys, the three set operations and the two questions; sorting by a value rather than by a comparator; grouping, indexing, counting, deduplication and a partition. Every function total, and every result in an order that is a function of the values |
 | [`crypto.beck`](crypto.beck) | A fingerprint, a digest of several values that is not the digest of their concatenation, and a signed token in two layers — a pure one that takes the code it expects as an argument, and the two lines that compute one. The seam is where the key is, because a `test` block's row must be empty and `cap.sign` is not auto-stubbable ([`52`](../../docs/52-crypto-and-identifiers-report.md) §52.5) |
+| [`bignum.beck`](bignum.beck) | An integer of any size, as a sign and base-10,000 limbs: schoolbook multiplication, long division, `impl Num`, and every coercion to and from it named rather than implicit. The last floor of the numeric tower ([`55`](../../docs/55-bignums-report.md)) |
 | [`dates.beck`](dates.beck) | The civil calendar as arithmetic — Hinnant's two functions in Beck, checked against the same two in Rust rather than against themselves — plus `Date`, a `Duration` with its own `impl Num`, clamped month arithmetic, and `YYYY-MM-DD` read and written |
 
 Each file carries its own `test` and `property` blocks and runs under `beck test`, which is what
@@ -35,7 +36,7 @@ failing build.
 
 ## What is not here yet
 
-Bignums, arbitrary-precision decimal, numeric coercion, and time zones.
+Arbitrary-precision decimal and time zones.
 [`46`](../../docs/46-standard-library-report.md) §46.6 says which of those are waiting on a
 language feature and which are simply unwritten;
 [`49`](../../docs/49-http-client-report.md) §49.6 says the same for what `http.beck` does not do —
@@ -44,7 +45,10 @@ no TLS, no redirects, no percent-encoding; and
 a set whose cost is a map's, no zones, no locale, and a `Duration` that is milliseconds rather
 than a rational number of seconds; and
 [`52`](../../docs/52-crypto-and-identifiers-report.md) §52.6 for what `crypto.beck` is not — no
-asymmetric signature, no encryption of any kind, no key rotation and no expiry in a token.
+asymmetric signature, no encryption of any kind, no key rotation and no expiry in a token; and
+[`55`](../../docs/55-bignums-report.md) §55.6 for `bignum.beck`'s — schoolbook and nothing
+sub-quadratic, no Knuth algorithm D, no `gcd` and no modular arithmetic, and the decimal that would
+sit on top of it unwritten.
 
 **One wall was found here and removed from here.** `money.beck` was meant to be an
 `impl Num for Money` so that `+` would work on it, the way `sicp/ch2.beck`'s rationals do. It could

@@ -37,17 +37,18 @@ Write the commit message as the author of the change: what changed, and why.
   [`49`](docs/49-http-client-report.md),
   [`50`](docs/50-collections-and-dates-report.md),
   [`51`](docs/51-arrangement-lifecycle-report.md),
-  [`52`](docs/52-crypto-and-identifiers-report.md) and
-  [`53`](docs/53-are-we-fast-yet-report.md),
+  [`52`](docs/52-crypto-and-identifiers-report.md),
+  [`53`](docs/53-are-we-fast-yet-report.md) and
+  [`55`](docs/55-bignums-report.md),
   indexed in
   [`docs/README.md`](docs/README.md) — record what each
   phase does, what it refuses to claim, and the corrections it makes to the design documents.
   Add a new report to that list and to the index; do not extend it with another "and".
   Phase 3 is **four bullets built, half of a fifth, most of a sixth, and a seventh that has
   started**: the test construct, the general slicer (Phase 2's debt), the means-of-abstraction
-  bullet and `Result`/error rows are built; the standard library has everything but the bignums —
+  bullet and `Result`/error rows are built; the standard library has everything but the decimal —
   its HTTP client (docs/49), its collections and its calendar (docs/50), its digests and its
-  identifiers (docs/52) —
+  identifiers (docs/52), its bignums and its coercions (docs/55) —
   and two walls of its own (docs/46, docs/49), and nine of Are We Fast Yet's fourteen benchmarks
   are the start of its long-owed harness half (docs/53); the incremental-views bullet has its engine and
   that engine's lifecycle (docs/51) but not its read models, pgwire

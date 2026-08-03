@@ -451,3 +451,65 @@ fn a_token_opens_only_under_the_key_that_minted_it() {
         call("minted", vec![key("k1"), Value::str_("actor-7")]).display()
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// Bignums, against an arithmetic that is not their own
+// ---------------------------------------------------------------------------------------------
+
+/// `lib/bignum.beck` multiplied and divided against Rust's `i128`, over 400 pairs.
+///
+/// [`dates.beck`](../../../../lib/dates.beck) established the shape and
+/// [`50`](../../../../docs/50-collections-and-dates-report.md) §50.3 the limit on what it buys:
+/// this is not two independent algorithms, it is one *claim* checked against a different
+/// implementation. The file's own `property` blocks check `Big` against `Int`, which only reaches
+/// values an `Int` holds; the whole point of a bignum is the values it does not, and `i128` is the
+/// widest arithmetic the host has to check those against.
+///
+/// The operands are built to be past `Int` — around 10^18 each, so a product is around 10^36 and
+/// still inside `i128` — and the generator is a fixed LCG rather than a random source, because a
+/// cross-check that fails on Tuesdays is a cross-check nobody keeps.
+#[test]
+fn a_bignum_multiplies_and_divides_the_way_i128_does() {
+    let dir = std::env::temp_dir().join("beck-bignum-crosscheck");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    std::fs::copy(lib_dir().join("bignum.beck"), dir.join("bignum.beck")).expect("the library");
+
+    let mut seed: u64 = 0x2545_F491_4F6C_DD1D;
+    let mut next = || {
+        // xorshift64*, so the sequence is this test's and not the platform's.
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        seed
+    };
+
+    let mut lines = String::new();
+    for _ in 0..400 {
+        let a = (next() % 2_000_000_000_000_000_000) as i128 - 1_000_000_000_000_000_000;
+        // Never zero: division by it is a `raise`, which the library's own tests cover.
+        let b = (next() % 1_000_000_000_000_000_000) as i128 + 1;
+        let sign = if next() % 2 == 0 { -1 } else { 1 };
+        let b = b * sign;
+        lines.push_str(&format!(
+            "    expect (try: render_big(big_of_str(\"{a}\") * big_of_str(\"{b}\"))) == Ok(value=\"{}\")\n\
+             \x20   expect (try: render_big(big_of_str(\"{a}\") / big_of_str(\"{b}\"))) == Ok(value=\"{}\")\n\
+             \x20   expect (try: render_big(big_rem(big_of_str(\"{a}\"), big_of_str(\"{b}\")))) == Ok(value=\"{}\")\n",
+            a * b,
+            a / b,
+            a % b,
+        ));
+    }
+    let src = format!("import bignum\n\ntest \"against i128\":\n{lines}");
+    let file = dir.join("crosscheck.beck");
+    std::fs::write(&file, &src).expect("a scratch file");
+
+    let (ok, text) = beck(&[
+        "test",
+        file.to_string_lossy().as_ref(),
+        "--filter",
+        "against i128",
+    ]);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(ok && text.contains("0 failed"), "{text}");
+}
