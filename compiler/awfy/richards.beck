@@ -1,0 +1,557 @@
+# Are We Fast Yet — Richards.
+#
+# The first of the five **macro**-benchmarks, and the one this directory was most owed: `docs/53`
+# §53.6 recorded all five as "not ported, not attempted and not declined … nothing is known about
+# whether they are expressible". This is that question answered for one of them.
+#
+# Richards is an operating-system task scheduler: six tasks pass packets to one another until an
+# idler runs down a counter, and what is verified is how many packets were queued and how many times
+# a task held itself. It is in the suite because it is a **mutable object graph** — a linked list of
+# task control blocks, each with a chain of packets, each task's closure reaching back into the
+# scheduler to change another task's queue and the scheduler's own counters.
+#
+# Beck has no mutation, so the port is a rewrite rather than a transcription, and the shape it takes
+# is the finding (`docs/57` §57.2). Three rules, applied everywhere:
+#
+#   * **A mutable field is a rebuilt record.** Every setter becomes a value returned.
+#   * **A pointer chain is a `list`.** `Packet.link` exists only to be the next packet in one queue,
+#     and a packet is in exactly one queue at a time, so the field disappears into the list that
+#     holds it. Nothing is lost, and `docs/33` §33.6's cost — a `list` cannot share a suffix — is
+#     paid on queues that are a few packets long.
+#   * **A closure over mutable state is a function of the state.** Java's `ProcessFunction` returns
+#     the next task and mutates the scheduler on the way; here every one of them takes the scheduler
+#     and returns a `Step`, which is the scheduler *and* the next task. That is the whole of what
+#     "no mutation" costs this benchmark, and it is a threading discipline rather than a wall.
+#
+# The task's process function is chosen by **matching on its private data**, which is the one place
+# the port is cleaner than the original: Java needs a `ProcessFunction` field and four lambdas
+# closing over four record types, and a union says the same thing once.
+#
+# 23,246 and 9,297 are the harness's own numbers: `Scheduler.java`'s `start` returns
+# `queuePacketCount == 23246 && holdCount == 9297`.
+
+def idler_id() -> Int:
+    return 0
+
+def worker_id() -> Int:
+    return 1
+
+def handler_a() -> Int:
+    return 2
+
+def handler_b() -> Int:
+    return 3
+
+def device_a() -> Int:
+    return 4
+
+def device_b() -> Int:
+    return 5
+
+## The original's `NO_TASK`, which is a null pointer there and an identity no task has here.
+def no_task() -> Int:
+    return -1
+
+def device_packet_kind() -> Int:
+    return 0
+
+def work_packet_kind() -> Int:
+    return 1
+
+def data_size() -> Int:
+    return 4
+
+model Packet:
+    identity: Int
+    kind: Int
+    datum: Int
+    data: list[Int]
+
+## The private record of each of the four kinds of task — and the tag that says which kind it is.
+##
+## `Scheduler.java` keeps these apart: a `ProcessFunction` field holding one of four lambdas, and
+## four `RBObject` subclasses cast back at the top of each. One union carries both, and `run_task`
+## matches on it.
+union TaskData:
+    IdleData(control: Int, count: Int)
+    WorkerData(destination: Int, count: Int)
+    ## The two queues a handler drains in step. `list[Packet]` is the original's `Packet.link`
+    ## chain, per the header.
+    HandlerData(work_in: list[Packet], device_in: list[Packet])
+    ## One packet or none. A `list` of at most one rather than an `Option`, so that every queue in
+    ## this file is the same shape and `append`/`head` read the same way everywhere.
+    DeviceData(pending: list[Packet])
+
+model Task:
+    ## The next task in the scheduler's chain, or `no_task()`. The original's `TaskControlBlock.link`,
+    ## kept as a field because `holdSelf` returns it and the chain's order is the scheduling order.
+    link: Int
+    identity: Int
+    priority: Int
+    input: list[Packet]
+    packet_pending: Bool
+    task_waiting: Bool
+    task_holding: Bool
+    data: TaskData
+
+model Scheduler:
+    tasks: Map[Int, Task]
+    ## The head of the task chain — the last one created, as in the original.
+    task_list: Int
+    current: Int
+    current_identity: Int
+    queue_count: Int
+    hold_count: Int
+
+## A process function's answer: the scheduler it leaves behind, and the task to run next.
+##
+## In Java these are two things — a return value and a pile of side effects — and the whole reason
+## this record exists is that the second one has to be said out loud.
+model Step:
+    scheduler: Scheduler
+    next: Int
+
+# ---------------------------------------------------------------------------------------------
+# The pieces a language without mutation needs anyway
+# ---------------------------------------------------------------------------------------------
+
+## `a ^ b`, bit by bit. Beck has no bitwise operators (`docs/53` §53.5), and the idler's control word
+## is stirred with `^ 53256`.
+##
+## `mandelbrot.beck` has the same eight lines. Repeating them is deliberate: `awfy/README.md`'s rule
+## is that each benchmark is a self-contained program, and a shared helper would make the directory
+## a library.
+def xor_of(a: Int, b: Int) -> Int:
+    return xor_from(a, b, 1, 0)
+
+def xor_from(a: Int, b: Int, weight: Int, acc: Int) -> Int:
+    if a == 0 and b == 0:
+        return acc
+    return xor_from(a / 2, b / 2, weight * 2, acc + weight * ((a % 2 + b % 2) % 2))
+
+def no_packet() -> Packet:
+    return Packet(identity=0, kind=0, datum=0, data=[])
+
+## The first packet of a queue, or a dead one. Every call below has already checked the queue is not
+## empty; the default is what a total `list_get` costs.
+def first_of(queue: list[Packet]) -> Packet:
+    return unwrap_or(list_get(queue, 0), no_packet())
+
+def rest_of(queue: list[Packet]) -> list[Packet]:
+    return list_drop(queue, 1)
+
+def packet_of(identity: Int, kind: Int) -> Packet:
+    return Packet(identity=identity, kind=kind, datum=0, data=[0, 0, 0, 0])
+
+def task_at(s: Scheduler, identity: Int) -> Task:
+    return unwrap_or(map_get(s.tasks, identity), dead_task())
+
+def dead_task() -> Task:
+    return Task(
+        link=no_task(),
+        identity=no_task(),
+        priority=0,
+        input=[],
+        packet_pending=false,
+        task_waiting=false,
+        task_holding=false,
+        data=IdleData(control=0, count=0),
+    )
+
+def with_task(s: Scheduler, t: Task) -> Scheduler:
+    return Scheduler(
+        tasks=map_insert(s.tasks, t.identity, t),
+        task_list=s.task_list,
+        current=s.current,
+        current_identity=s.current_identity,
+        queue_count=s.queue_count,
+        hold_count=s.hold_count,
+    )
+
+def with_data(t: Task, data: TaskData) -> Task:
+    return Task(
+        link=t.link,
+        identity=t.identity,
+        priority=t.priority,
+        input=t.input,
+        packet_pending=t.packet_pending,
+        task_waiting=t.task_waiting,
+        task_holding=t.task_holding,
+        data=data,
+    )
+
+# ---------------------------------------------------------------------------------------------
+# Task state — the original's `TaskState`, as four transitions on a `Task`
+# ---------------------------------------------------------------------------------------------
+
+def set_flags(t: Task, pending: Bool, waiting: Bool, holding: Bool) -> Task:
+    return Task(
+        link=t.link,
+        identity=t.identity,
+        priority=t.priority,
+        input=t.input,
+        packet_pending=pending,
+        task_waiting=waiting,
+        task_holding=holding,
+        data=t.data,
+    )
+
+def running(t: Task) -> Task:
+    return set_flags(t, false, false, false)
+
+def packet_pending(t: Task) -> Task:
+    return set_flags(t, true, false, false)
+
+def is_holding_or_waiting(t: Task) -> Bool:
+    return t.task_holding or (not t.packet_pending and t.task_waiting)
+
+def is_waiting_with_packet(t: Task) -> Bool:
+    return t.packet_pending and t.task_waiting and not t.task_holding
+
+# ---------------------------------------------------------------------------------------------
+# The three things a process function may do to the scheduler
+# ---------------------------------------------------------------------------------------------
+
+## The original's `holdSelf`: count it, mark the current task holding, and run whatever is next in
+## the chain.
+def hold_self(s: Scheduler) -> Step:
+    current = task_at(s, s.current)
+    held = with_task(s, set_flags(current, current.packet_pending, current.task_waiting, true))
+    return Step(scheduler=counted(held, held.queue_count, held.hold_count + 1), next=current.link)
+
+## The original's `markWaiting`: the current task waits, and keeps the processor.
+def mark_waiting(s: Scheduler) -> Step:
+    current = task_at(s, s.current)
+    waiting = with_task(s, set_flags(current, current.packet_pending, true, current.task_holding))
+    return Step(scheduler=waiting, next=s.current)
+
+## The original's `release`: a task stops holding, and pre-empts the current one if it outranks it.
+def release(s: Scheduler, identity: Int) -> Step:
+    t = task_at(s, identity)
+    freed = set_flags(t, t.packet_pending, t.task_waiting, false)
+    return Step(scheduler=with_task(s, freed), next=preferred(s, freed))
+
+## The original's `queuePacket`, and `addInputAndCheckPriority` with it.
+##
+## The packet is stamped with the *sender's* identity on the way — which is the line that makes the
+## worker's packets come back to it — and a task whose queue was empty becomes runnable and may
+## pre-empt.
+def queue_packet(s: Scheduler, packet: Packet) -> Step:
+    target = task_at(s, packet.identity)
+    stamped = Packet(
+        identity=s.current_identity,
+        kind=packet.kind,
+        datum=packet.datum,
+        data=packet.data,
+    )
+    counted_s = counted(s, s.queue_count + 1, s.hold_count)
+    if list_is_empty(target.input):
+        woken = set_flags(
+            queued(target, [stamped]), true, target.task_waiting, target.task_holding
+        )
+        return Step(scheduler=with_task(counted_s, woken), next=preferred(counted_s, woken))
+    appended = queued(target, list_append(target.input, stamped))
+    return Step(scheduler=with_task(counted_s, appended), next=counted_s.current)
+
+## `t` if it outranks the current task, and the current task otherwise.
+def preferred(s: Scheduler, t: Task) -> Int:
+    if t.priority > task_at(s, s.current).priority:
+        return t.identity
+    return s.current
+
+def queued(t: Task, input: list[Packet]) -> Task:
+    return Task(
+        link=t.link,
+        identity=t.identity,
+        priority=t.priority,
+        input=input,
+        packet_pending=t.packet_pending,
+        task_waiting=t.task_waiting,
+        task_holding=t.task_holding,
+        data=t.data,
+    )
+
+def counted(s: Scheduler, queue_count: Int, hold_count: Int) -> Scheduler:
+    return Scheduler(
+        tasks=s.tasks,
+        task_list=s.task_list,
+        current=s.current,
+        current_identity=s.current_identity,
+        queue_count=queue_count,
+        hold_count=hold_count,
+    )
+
+# ---------------------------------------------------------------------------------------------
+# The four tasks
+# ---------------------------------------------------------------------------------------------
+
+## Runs down a counter, and alternates which device it releases according to a stirred control word.
+def run_idler(s: Scheduler, t: Task, control: Int, count: Int) -> Step:
+    if count - 1 == 0:
+        return hold_self(with_task(s, with_data(t, IdleData(control=control, count=count - 1))))
+    if control % 2 == 0:
+        halved = with_data(t, IdleData(control=control / 2, count=count - 1))
+        return release(with_task(s, halved), device_a())
+    stirred = with_data(t, IdleData(control=xor_of(control / 2, 53256), count=count - 1))
+    return release(with_task(s, stirred), device_b())
+
+## Fills a packet with letters and sends it to whichever handler it did not send to last.
+def run_worker(
+    s: Scheduler, t: Task, message: list[Packet], destination: Int, count: Int
+) -> Step:
+    if list_is_empty(message):
+        return mark_waiting(with_task(s, t))
+    target = handler_b() if destination == handler_a() else handler_a()
+    filled = fill_from(0, count, first_of(message), target)
+    updated = with_data(t, WorkerData(destination=target, count=filled.count))
+    return queue_packet(with_task(s, updated), filled.packet)
+
+## A packet with its four bytes written, and the letter counter left where the writing stopped.
+model Filled:
+    packet: Packet
+    count: Int
+
+## The original's `for i = 0 … DATA_SIZE`: the counter advances once per byte and wraps at 26, and
+## the byte is `65 + count - 1` — which is `A` through `Z`.
+def fill_from(i: Int, count: Int, work: Packet, target: Int) -> Filled:
+    if i >= data_size():
+        return Filled(packet=work, count=count)
+    next_count = 1 if count + 1 > 26 else count + 1
+    return fill_from(
+        i + 1,
+        next_count,
+        Packet(
+            identity=target,
+            kind=work.kind,
+            datum=0,
+            data=written(work.data, i, 65 + next_count - 1),
+        ),
+        target,
+    )
+
+## `data[i] = value`, as a rebuilt list. The original writes into an `int[4]`.
+def written(data: list[Int], i: Int, value: Int) -> list[Int]:
+    return concat_lists([list_take(data, i), [value], list_drop(data, i + 1)])
+
+## Drains a work queue against a device queue, one byte per pair.
+def run_handler(
+    s: Scheduler, t: Task, message: list[Packet], work_in: list[Packet], device_in: list[Packet]
+) -> Step:
+    sorted_work = sorted_into(message, work_in, work_packet_kind())
+    sorted_device = sorted_into(message, device_in, device_packet_kind())
+    if list_is_empty(sorted_work):
+        return mark_waiting(
+            with_task(s, with_data(t, HandlerData(work_in=sorted_work, device_in=sorted_device)))
+        )
+    work_packet = first_of(sorted_work)
+    if work_packet.datum >= data_size():
+        drained = with_data(
+            t, HandlerData(work_in=rest_of(sorted_work), device_in=sorted_device)
+        )
+        return queue_packet(with_task(s, drained), work_packet)
+    if list_is_empty(sorted_device):
+        return mark_waiting(
+            with_task(s, with_data(t, HandlerData(work_in=sorted_work, device_in=sorted_device)))
+        )
+    device_packet = first_of(sorted_device)
+    carried = Packet(
+        identity=device_packet.identity,
+        kind=device_packet.kind,
+        datum=unwrap_or(list_get(work_packet.data, work_packet.datum), 0),
+        data=device_packet.data,
+    )
+    advanced = Packet(
+        identity=work_packet.identity,
+        kind=work_packet.kind,
+        datum=work_packet.datum + 1,
+        data=work_packet.data,
+    )
+    stepped = with_data(
+        t,
+        HandlerData(
+            work_in=concat_lists([[advanced], rest_of(sorted_work)]),
+            device_in=rest_of(sorted_device),
+        ),
+    )
+    return queue_packet(with_task(s, stepped), carried)
+
+## The original's `workInAdd`/`deviceInAdd`: an arriving packet joins whichever of the two queues
+## matches its kind, and neither if there is no packet at all.
+def sorted_into(message: list[Packet], queue: list[Packet], kind: Int) -> list[Packet]:
+    if list_is_empty(message):
+        return queue
+    if first_of(message).kind != kind:
+        return queue
+    return list_append(queue, first_of(message))
+
+## Holds one packet, and sends it on the next time it is woken with nothing.
+def run_device(s: Scheduler, t: Task, message: list[Packet], pending: list[Packet]) -> Step:
+    if list_is_empty(message):
+        if list_is_empty(pending):
+            return mark_waiting(with_task(s, t))
+        sent = with_data(t, DeviceData(pending=[]))
+        return queue_packet(with_task(s, sent), first_of(pending))
+    holding = with_data(t, DeviceData(pending=message))
+    return hold_self(with_task(s, holding))
+
+# ---------------------------------------------------------------------------------------------
+# The scheduler
+# ---------------------------------------------------------------------------------------------
+
+## The original's `runTask`: take the head packet if there is one, update the state, then run.
+##
+## The task is written back **before** the function runs, because the function may write it again —
+## `markWaiting` reads the current task out of the scheduler — and a stale copy is how a port of
+## this loses a state transition.
+def run_task(s: Scheduler, t: Task) -> Step:
+    if not is_waiting_with_packet(t):
+        return dispatch(s, t, [])
+    message = list_take(t.input, 1)
+    remaining = rest_of(t.input)
+    drained = queued(t, remaining)
+    ready = running(drained) if list_is_empty(remaining) else packet_pending(drained)
+    return dispatch(with_task(s, ready), ready, message)
+
+def dispatch(s: Scheduler, t: Task, message: list[Packet]) -> Step:
+    match t.data:
+        case IdleData(control, count):
+            return run_idler(s, t, control, count)
+        case WorkerData(destination, count):
+            return run_worker(s, t, message, destination, count)
+        case HandlerData(work_in, device_in):
+            return run_handler(s, t, message, work_in, device_in)
+        case DeviceData(pending):
+            return run_device(s, t, message, pending)
+
+## The original's `while (NO_TASK != currentTask)` loop, as a tail call.
+##
+## It runs about thirty-three thousand task activations, so this is the one benchmark in the
+## directory where `docs/31`'s tail calls are not a nicety: a non-tail transcription would want
+## thirty-three thousand host frames.
+def schedule(s: Scheduler) -> Scheduler:
+    if s.current == no_task():
+        return s
+    t = task_at(s, s.current)
+    if is_holding_or_waiting(t):
+        return schedule(moved(s, t.link))
+    stepped = run_task(identified(s, t.identity), t)
+    return schedule(moved(stepped.scheduler, stepped.next))
+
+def moved(s: Scheduler, current: Int) -> Scheduler:
+    return Scheduler(
+        tasks=s.tasks,
+        task_list=s.task_list,
+        current=current,
+        current_identity=s.current_identity,
+        queue_count=s.queue_count,
+        hold_count=s.hold_count,
+    )
+
+def identified(s: Scheduler, identity: Int) -> Scheduler:
+    return Scheduler(
+        tasks=s.tasks,
+        task_list=s.task_list,
+        current=s.current,
+        current_identity=identity,
+        queue_count=s.queue_count,
+        hold_count=s.hold_count,
+    )
+
+## The original's `createTask`: the new task becomes the head of the chain.
+def create_task(
+    s: Scheduler,
+    identity: Int,
+    priority: Int,
+    input: list[Packet],
+    pending: Bool,
+    waiting: Bool,
+    holding: Bool,
+    data: TaskData,
+) -> Scheduler:
+    t = Task(
+        link=s.task_list,
+        identity=identity,
+        priority=priority,
+        input=input,
+        packet_pending=pending,
+        task_waiting=waiting,
+        task_holding=holding,
+        data=data,
+    )
+    return Scheduler(
+        tasks=map_insert(s.tasks, identity, t),
+        task_list=identity,
+        current=s.current,
+        current_identity=s.current_identity,
+        queue_count=s.queue_count,
+        hold_count=s.hold_count,
+    )
+
+def empty_scheduler() -> Scheduler:
+    return Scheduler(
+        tasks={},
+        task_list=no_task(),
+        current=no_task(),
+        current_identity=0,
+        queue_count=0,
+        hold_count=0,
+    )
+
+## The original's `start`, task for task and packet for packet.
+##
+## The three states it hands out are `TaskState`'s three constructors: running is all flags clear,
+## waiting is `taskWaiting`, and waiting-with-a-packet is `taskWaiting` and `packetPending`.
+def start() -> Scheduler:
+    idler = create_task(
+        empty_scheduler(), idler_id(), 0, [], false, false, false, IdleData(control=1, count=10000)
+    )
+    worker_queue = [
+        packet_of(worker_id(), work_packet_kind()),
+        packet_of(worker_id(), work_packet_kind()),
+    ]
+    worker = create_task(
+        idler,
+        worker_id(),
+        1000,
+        worker_queue,
+        true,
+        true,
+        false,
+        WorkerData(destination=handler_a(), count=0),
+    )
+    a_queue = [
+        packet_of(device_a(), device_packet_kind()),
+        packet_of(device_a(), device_packet_kind()),
+        packet_of(device_a(), device_packet_kind()),
+    ]
+    with_a = create_task(
+        worker, handler_a(), 2000, a_queue, true, true, false, HandlerData(work_in=[], device_in=[])
+    )
+    b_queue = [
+        packet_of(device_b(), device_packet_kind()),
+        packet_of(device_b(), device_packet_kind()),
+        packet_of(device_b(), device_packet_kind()),
+    ]
+    with_b = create_task(
+        with_a, handler_b(), 3000, b_queue, true, true, false, HandlerData(work_in=[], device_in=[])
+    )
+    with_device_a = create_task(
+        with_b, device_a(), 4000, [], false, true, false, DeviceData(pending=[])
+    )
+    with_device_b = create_task(
+        with_device_a, device_b(), 5000, [], false, true, false, DeviceData(pending=[])
+    )
+    return schedule(moved(with_device_b, with_device_b.task_list))
+
+## The benchmark, at Are We Fast Yet's own size.
+def benchmark() -> Bool:
+    finished = start()
+    return finished.queue_count == 23246 and finished.hold_count == 9297
+
+test "richards: 23,246 packets queued and 9,297 holds":
+    expect benchmark()
+
+test "the hand-written exclusive-or is the operator it replaces":
+    expect xor_of(0, 53256) == 53256
+    expect xor_of(53256, 53256) == 0
+    expect xor_of(1, 53256) == 53257

@@ -39,8 +39,9 @@ Write the commit message as the author of the change: what changed, and why.
   [`51`](docs/51-arrangement-lifecycle-report.md),
   [`52`](docs/52-crypto-and-identifiers-report.md),
   [`53`](docs/53-are-we-fast-yet-report.md),
-  [`55`](docs/55-bignums-report.md) and
-  [`56`](docs/56-decimal-report.md),
+  [`55`](docs/55-bignums-report.md),
+  [`56`](docs/56-decimal-report.md) and
+  [`57`](docs/57-richards-report.md),
   indexed in
   [`docs/README.md`](docs/README.md) — record what each
   phase does, what it refuses to claim, and the corrections it makes to the design documents.
@@ -51,8 +52,9 @@ Write the commit message as the author of the change: what changed, and why.
   its HTTP client (docs/49), its collections and its calendar (docs/50), its digests and its
   identifiers (docs/52), its bignums and its coercions (docs/55) and its decimal (docs/56), which
   closes docs/08 §8.5.4's Wave 2 —
-  and two walls of its own (docs/46, docs/49); nine of Are We Fast Yet's fourteen benchmarks
-  are the start of that bullet's long-owed harness half (docs/53), which is all it has left; the incremental-views bullet has its engine and
+  and two walls of its own (docs/46, docs/49); ten of Are We Fast Yet's fourteen benchmarks —
+  its nine micro and one of its five macro (docs/53, docs/57) — are that bullet's long-owed
+  harness half, which is all it has left; the incremental-views bullet has its engine and
   that engine's lifecycle (docs/51) but not its read models, pgwire
   or fusion; the expressiveness suite runs two chapters of SICP. Seven of the fourteen are
   untouched — identity has its seam but not its OIDC relying party (docs/48) — and docs/26 §26.9
@@ -107,8 +109,9 @@ Write the commit message as the author of the change: what changed, and why.
   Beck expresses SICP. `sicp/refusals/README.md` holds that distinction and says what puts a file
   back.
 - [`compiler/awfy/`](compiler/awfy/README.md) is the performance benchmark
-  ([`docs/25`](docs/25-benchmarks-and-expressiveness.md) §25.2): nine of Are We Fast Yet's fourteen
-  benchmarks, ported, each verified against the constant the original's own `verifyResult` checks.
+  ([`docs/25`](docs/25-benchmarks-and-expressiveness.md) §25.2): ten of Are We Fast Yet's fourteen
+  benchmarks — all nine micro and Richards — ported, each verified against the constant the
+  original's own `verifyResult` checks.
   Those constants are **somebody else's** and were read out of the MIT-licensed source, so a number
   invented here would defeat the whole point; `beck-cli/tests/awfy.rs` gates the directory, the nine
   names and the attribution, and `measure_awfy.rs` prints wall-clock and gates on nothing —

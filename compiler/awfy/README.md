@@ -6,13 +6,16 @@ is written against a *common subset* of language features so that a comparison i
 implementations rather than of standard libraries. §25.9 schedules the harness for Phase 3 and
 schedules the number for later. This directory is the harness.
 
-[`docs/53`](../../docs/53-are-we-fast-yet-report.md) is the report: what it establishes, what it
-refuses to claim, and the three findings porting it produced.
+[`docs/53`](../../docs/53-are-we-fast-yet-report.md) is the report for the nine micro-benchmarks:
+what it establishes, what it refuses to claim, and the three findings porting it produced.
+[`docs/57`](../../docs/57-richards-report.md) is the report for `richards`, the first macro-benchmark
+— a mutable object graph in a language with no mutation — and it assesses the remaining four.
 
 ## What is here
 
-Nine files, one per micro-benchmark, each a Beck **library** whose `test` block is the original's
-`verifyResult` with the original's own constant in it.
+Ten files — Are We Fast Yet's nine micro-benchmarks and one of its five macro-benchmarks — each a
+Beck **library** whose `test` block is the original's `verifyResult` with the original's own
+constant in it.
 
 | File | What it measures | The suite's own number |
 |---|---|---|
@@ -25,9 +28,11 @@ Nine files, one per micro-benchmark, each a Beck **library** whose `test` block 
 | [`sieve.beck`](sieve.beck) | Array writes in a loop | 669 primes at or below 5,000 |
 | [`storage.beck`](storage.beck) | Allocation — a four-way tree seven deep | 5,461 nodes |
 | [`towers.beck`](towers.beck) | Stack discipline and recursion | 8,191 moves |
+| [`richards.beck`](richards.beck) | **Macro.** An OS task scheduler — a mutable object graph | 23,246 packets queued, 9,297 holds |
 
-`beck-cli/tests/awfy.rs` gates the directory: a file added here is run by being here, and the nine
-names are enumerated in one place so dropping one is a red test rather than a shorter table.
+`beck-cli/tests/awfy.rs` gates the directory: a file added here is run by being here, and the ten
+names are enumerated in one place — micro and macro apart, because that is the suite's own division
+— so dropping one is a red test rather than a shorter table.
 `measure_awfy.rs` prints wall-clock and gates on nothing.
 
 ## Provenance
@@ -60,6 +65,11 @@ follows four rules:
 4. **A number is the suite's.** Where a size had to change, the number changes with it and the file
    says which of the suite's published sizes it is at. No file invents a verification value.
 
+`richards` needs a fifth rule that none of the nine did, and [`57`](../../docs/57-richards-report.md)
+§57.2 is why: **a closure over mutable state is a function of the state**. Java's `ProcessFunction`
+returns the next task and changes the scheduler on the way out; here every one of them takes the
+scheduler and returns both.
+
 Two differences are worth naming separately because they are not mechanical:
 
 - **`queens` does not undo.** The original sets its arrays on the way down and unsets them on the
@@ -73,11 +83,13 @@ Two differences are worth naming separately because they are not mechanical:
 
 ## What is not here
 
-**The five macro-benchmarks — CD, DeltaBlue, Havlak, Json and Richards — are not ported.** They are
-not out of reach for a reason worth reporting; they are simply larger, each several hundred lines of
-mutable object graph, and porting them is the next thing this directory is owed rather than
-something it has decided against. Nothing about them has been measured or attempted, and this
-sentence is the whole of what is known about them.
+**Four of the five macro-benchmarks — CD, DeltaBlue, Havlak and Json — are not ported.** Richards
+is ([`57`](../../docs/57-richards-report.md)), which is what makes it possible to say something
+about the other four beyond "not attempted": §57.5 assesses each one against the shape Richards
+turned out to need, with line counts and the specific thing each requires. None of them is blocked
+by the language. Three of the four need `som`'s collection classes ported first — `Vector`,
+`Dictionary` and `IdentityDictionary`, about 530 lines between them — which is the next thing this
+directory is owed.
 
 **Two of the nine run at a size the suite publishes for one iteration rather than at its default.**
 `mandelbrot` verifies at size 1 (128) rather than 500 (191), and `nbody` after one advance

@@ -55,12 +55,11 @@ fn beck(args: &[&str]) -> (bool, String) {
     (out.status.success(), text)
 }
 
-/// The nine micro-benchmarks of Are We Fast Yet, and the numbers each one's `verifyResult` checks.
+/// The nine micro-benchmarks of Are We Fast Yet.
 ///
 /// Written down here rather than left to the directory listing because *which* of the suite is
 /// ported is the claim the report makes, and a listing cannot be wrong about a file that was never
-/// added. The five macro-benchmarks — CD, DeltaBlue, Havlak, Json, Richards — are not ported, and
-/// [`awfy/README.md`](../../../../awfy/README.md) says why rather than leaving it to be inferred.
+/// added.
 const MICRO: [&str; 9] = [
     "bounce",
     "list",
@@ -72,6 +71,14 @@ const MICRO: [&str; 9] = [
     "storage",
     "towers",
 ];
+
+/// The macro-benchmarks, of which one is ported.
+///
+/// The other four — CD, DeltaBlue, Havlak and Json — are assessed rather than attempted in
+/// [`57`](../../../../docs/57-richards-report.md) §57.5, which says what each needs. Kept apart
+/// from the nine because the distinction is the suite's own and is what the two halves measure:
+/// a micro-benchmark is a loop, and a macro-benchmark is a program.
+const MACRO: [&str; 1] = ["richards"];
 
 /// Every benchmark runs its own tests and passes them.
 ///
@@ -103,15 +110,17 @@ fn each_benchmark_is_a_library() {
     }
 }
 
-/// The nine are all there, and nothing else is.
+/// The ten are all there, and nothing else is.
 #[test]
-fn the_ported_suite_is_are_we_fast_yets_nine_micro_benchmarks() {
+fn the_ported_suite_is_nine_micro_benchmarks_and_one_macro() {
     let mut found: Vec<String> = benchmarks()
         .iter()
         .map(|p| p.file_stem().unwrap().to_string_lossy().to_string())
         .collect();
     found.sort();
-    assert_eq!(found, MICRO, "the ported suite changed shape");
+    let mut expected: Vec<String> = MICRO.iter().chain(&MACRO).map(|s| s.to_string()).collect();
+    expected.sort();
+    assert_eq!(found, expected, "the ported suite changed shape");
 }
 
 /// Each file says whose benchmark it is a port of.
