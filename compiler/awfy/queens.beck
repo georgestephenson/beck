@@ -1,0 +1,82 @@
+# Are We Fast Yet — Queens.
+#
+# Eight queens, solved ten times. The Java keeps three `boolean[]` of free rows and free diagonals
+# plus an `int[]` of placements, sets them on the way down and unsets them on the way back up. The
+# port keeps the same four arrays as maps and simply *does not unset*: backtracking is returning to
+# the board the caller still holds, so the undo the original needs is the one thing a value cannot
+# require.
+#
+# That is the only real difference between the two, and it is worth stating plainly rather than
+# celebrating: it removes four assignments per rejected placement and it is not a different
+# algorithm. The search visits the same nodes in the same order.
+#
+# `verifyResult` in the original is `(boolean) result`, so the number here is `true`.
+
+model Board:
+    ## Absent reads as free, which is what `Arrays.fill(freeRows, true)` sets up.
+    free_rows: Map[Int, Bool]
+    free_maxs: Map[Int, Bool]
+    free_mins: Map[Int, Bool]
+    ## Written and never read, exactly as in the original. It is the work the benchmark is
+    ## measuring, so dropping it would make this file faster than the thing it is a port of.
+    queen_rows: Map[Int, Int]
+
+def empty_board() -> Board:
+    return Board(free_rows={}, free_maxs={}, free_mins={}, queen_rows={})
+
+def free_at(b: Board, r: Int, c: Int) -> Bool:
+    return (
+        unwrap_or(map_get(b.free_rows, r), true)
+        and unwrap_or(map_get(b.free_maxs, c + r), true)
+        and unwrap_or(map_get(b.free_mins, c - r + 7), true)
+    )
+
+def occupy(b: Board, r: Int, c: Int) -> Board:
+    return Board(
+        free_rows=map_insert(b.free_rows, r, false),
+        free_maxs=map_insert(b.free_maxs, c + r, false),
+        free_mins=map_insert(b.free_mins, c - r + 7, false),
+        queen_rows=map_insert(b.queen_rows, r, c),
+    )
+
+def place_queen(c: Int, b: Board) -> Bool:
+    return try_row(0, c, b)
+
+## The original's `for r = 0 … 7`, and the line that found a defect in the language.
+##
+## `if (getRowColumn(r, c)) { … if (placeQueen(c + 1)) …` is two nested tests in Java and reads as
+## one `and`. Writing it as one used to search from squares that were already attacked, because
+## `and` evaluated both operands — a 2,057-node search became an 8⁸ one and the benchmark ran out
+## of fuel. `docs/53` §53.5 is what that cost and what fixing it took; the line below is what the
+## fix is *for*, and it is here in its natural form rather than in the shape a strict `and` forced.
+def try_row(r: Int, c: Int, b: Board) -> Bool:
+    if r >= 8:
+        return false
+    if free_at(b, r, c) and settles(r, c, occupy(b, r, c)):
+        return true
+    return try_row(r + 1, c, b)
+
+## The last column is a solution; anything else has to place the next one.
+def settles(r: Int, c: Int, placed: Board) -> Bool:
+    if c == 7:
+        return true
+    return place_queen(c + 1, placed)
+
+def queens() -> Bool:
+    return place_queen(0, empty_board())
+
+## The benchmark, at Are We Fast Yet's own size: the eight-queens search, ten times.
+##
+## The original writes `result = result && queens()`, which short-circuits. `and` here is a
+## primitive over two `Bool`s and evaluates both, so all ten searches run whatever the first
+## returns — the same ten searches, since each of them succeeds.
+def benchmark() -> Bool:
+    return solve_again(0, true)
+
+def solve_again(i: Int, solved: Bool) -> Bool:
+    if i >= 10:
+        return solved
+    return solve_again(i + 1, solved and queens())
+
+test "queens: eight queens placed, ten times over":
+    expect benchmark()

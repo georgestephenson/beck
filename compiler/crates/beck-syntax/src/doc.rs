@@ -1,6 +1,6 @@
 //! Doc comments: `##` in the Python surface, `;;` in the S-expression one.
 //!
-//! [`docs/16-packages-and-ecosystem.md`](../../../../docs/16-packages-and-ecosystem.md) §16.2 asks
+//! [`docs/16-packages-and-ecosystem.md`](../../../../../docs/16-packages-and-ecosystem.md) §16.2 asks
 //! for "documentation generated from types and doc-comments for every published version,
 //! automatically". The types were already there — `beck_core::iface::Interface` has carried each
 //! name's signature, effect row and placement since Phase 2. This module supplies the other half.

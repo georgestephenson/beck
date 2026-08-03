@@ -21,7 +21,7 @@
 //! `docs/reference/` is checked in. `beck doc reference --check` regenerates it in memory and fails
 //! if what is on disk differs — the gate the `docs` workflow runs on every pull request. Checked in
 //! rather than built-only because a generated file that nobody sees in a diff is a generated file
-//! nobody notices going wrong ([`docs/20-phase-2-report.md`](../../../../docs/20-phase-2-report.md)
+//! nobody notices going wrong ([`docs/20-phase-2-report.md`](../../../../../docs/20-phase-2-report.md)
 //! §20.4 item 8 is what that costs).
 
 use std::collections::BTreeMap;
@@ -47,20 +47,18 @@ pub enum Format {
 // ------------------------------------------------------------------------ a module's own page
 
 /// `beck doc <file>` — one module's reference documentation.
-pub fn module(file: &Path, out: Option<&Path>, format: Format, stdout: bool) -> Result<()> {
-    let src =
-        std::fs::read_to_string(file).with_context(|| format!("reading {}", file.display()))?;
-    let name = file.to_string_lossy().to_string();
-    let (placed, diags, map) = beck_core::compile_or_library_str(&name, &src);
-    if diags.has_errors() {
-        eprint!("{}", diags.render(&map));
-        bail!(
-            "{} does not compile, so it cannot be documented",
-            file.display()
-        );
-    }
-    let placed = placed.context("the module produced no program")?;
-    let docs = Docs::of(&placed.program);
+///
+/// The program is compiled by the caller rather than here, because a module that **imports**
+/// another cannot be read on its own: `lib/decimal.beck` is written over `lib/bignum.beck`, and a
+/// single-file read of it cannot find `Big`. `docs/56` §56.5 is where that was found — the first
+/// library in the tree to import another was the first to notice.
+pub fn module(
+    project: &beck_core::project::Project,
+    out: Option<&Path>,
+    format: Format,
+    stdout: bool,
+) -> Result<()> {
+    let docs = Docs::of_interface(&project.interface, &project.program.docs);
 
     let rendered = match format {
         Format::Md => docs.to_markdown(),

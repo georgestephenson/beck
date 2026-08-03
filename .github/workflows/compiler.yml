@@ -152,6 +152,12 @@ jobs:
           # beyond them are held by tests/sicp.rs, which `cargo test` above already runs.
           ./target/release/beck test sicp/ch1.beck
           ./target/release/beck test sicp/ch2.beck
+          # docs/53: Are We Fast Yet, verified against the original suite's own constants. Run the
+          # way a person runs it, for the same reason the SICP chapters are — `cargo test` above
+          # already drives tests/awfy.rs, and this is the claim that the binary does it too.
+          for f in awfy/*.beck; do
+            ./target/release/beck test "$f"
+          done
           # docs/31: a recursion the user cannot bound must end in a diagnostic and a live process.
           # An exit status of 134 (SIGABRT) or 139 (SIGSEGV) is the failure this replaced, and it is
           # exactly the thing a `! cmd` gate would have accepted, so the status is checked rather
@@ -483,6 +489,9 @@ jobs:
           cargo test --release --test measure_phase2 -- --nocapture
           cargo test --release --test measure_incremental -- --nocapture
           cargo test --release --test shared_arrangements -- --nocapture
+          # docs/53 §53.3. Printed, never thresholded, and no comparative claim: docs/25 §25.9
+          # holds those until there is a second backend for them to be about.
+          cargo test --release --test measure_awfy -- --nocapture
           # The evaluator's host stack per level of non-tail recursion, in both profiles — the
           # number `beck_eval::STACK_BYTES` is chosen from, and the equality that says a tail call
           # costs nothing (docs/31 §31.3, §31.5). It prints in release and gates in either.

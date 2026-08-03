@@ -1,8 +1,8 @@
 //! A small, deterministic JSON → YAML writer.
 //!
-//! [`docs/05-tier-lowering.md`](../../../../docs/05-tier-lowering.md) §5.4: "No YAML text, no
+//! [`docs/05-tier-lowering.md`](../../../../../docs/05-tier-lowering.md) §5.4: "No YAML text, no
 //! `kubectl` shelling. The compiler builds a typed `InfraGraph`." YAML exists downstream of that
-//! only because [`06`](../../../../docs/06-kubernetes-and-packaging.md) §6.3 requires it — "teams
+//! only because [`06`](../../../../../docs/06-kubernetes-and-packaging.md) §6.3 requires it — "teams
 //! with GitOps (Argo CD/Flux) must be able to commit it, and refusing them is refusing half the
 //! market". So this is an **output format, never an input**.
 //!

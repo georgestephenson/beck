@@ -501,6 +501,14 @@ no regression-detecting power, which is the only thing a benchmark is for.
 | **4** | TechEmpower, js-framework-benchmark, YCSB, Lighthouse; SICP stages 2–3; **the DDIA matrix** ([`15`](15-scale-and-distribution.md) §15.6), beside the Jepsen work that discharges its rows | The whole-system numbers, with §25.2's methodology notes attached |
 | **5** | TPC-H/ClickBench on read models; the incremental-view workload nobody has standardised; SICP stage 4 | The Phase 5 suite, and the expressiveness result — **including the rows §25.5 forecasts we lose**. The DDIA matrix's **Conceded** and **Bounded** rows, which are the ones a platform team reads |
 
+> **Phase 3, in progress.** SICP chapters 1 and 2 run ([`27`](27-walls-report.md),
+> [`41`](41-generic-arithmetic-report.md)), and the Are We Fast Yet harness is stood up for **nine
+> of its fourteen** benchmarks ([`53`](53-are-we-fast-yet-report.md)) — verified against the
+> original suite's own constants, with wall-clock printed and no comparative claim, which is this
+> table's "Published" column kept and §25.3 item 1's "adopt now, publish now, make them
+> unflattering" kept at the same time. The Felleisen table, the compile-speed budgets and the CLBG
+> harness are not built.
+
 Not in the table, deliberately: **LeetCode** is a recommendation rather than an adopted commitment
 (§25.8), and **Nand2Tetris** is conditional on SICP chapter 4 being green first, at which point the
 question is whether it adds a result or a second copy of one.

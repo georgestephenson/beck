@@ -1,13 +1,13 @@
 //! `.becki` — the published module signature, and the separate-compilation firewall.
 //!
-//! [`docs/03-type-and-effect-system.md`](../../../../docs/03-type-and-effect-system.md) §3.6, whose
+//! [`docs/03-type-and-effect-system.md`](../../../../../docs/03-type-and-effect-system.md) §3.6, whose
 //! heading is "Modularity and separate compilation (**do not defer**)", and whose rule is one
 //! sentence:
 //!
 //! > **Placement, effects, and event/command types are part of a module's published signature.**
 //! > Inference is intra-module; boundaries are declared.
 //!
-//! [`docs/01-vision-and-premise.md`](../../../../docs/01-vision-and-premise.md) §1.6 says why this
+//! [`docs/01-vision-and-premise.md`](../../../../../docs/01-vision-and-premise.md) §1.6 says why this
 //! is the item that cannot slip: it is the historical killer of tierless languages. A language that
 //! must see every module to place any of them has a build time proportional to the whole program
 //! and an API surface nobody can review.

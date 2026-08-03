@@ -1,9 +1,9 @@
 //! Who is asking, as a thing the runtime **decides** rather than a thing the client asserts.
 //!
-//! [`docs/42-security-assurance.md`](../../../../docs/42-security-assurance.md) §42.6's first
+//! [`docs/42-security-assurance.md`](../../../../../docs/42-security-assurance.md) §42.6's first
 //! bullet: "**Claim any identity.** `actor` arrives in the client's own `hello` frame … Every
 //! ownership check in every corpus program is therefore enforced against a value the caller
-//! chooses." [`docs/43`](../../../../docs/43-threat-model.md) §43.4 records it as the gap that
+//! chooses." [`docs/43`](../../../../../docs/43-threat-model.md) §43.4 records it as the gap that
 //! makes the difference between §3.5's *proven* properties and a program's own rules, and §42.5
 //! names it as the most likely misquotation of this project's security story: "a capability
 //! required outside the chokepoint has no holder" is true and proven; "only the owner may toggle
@@ -16,10 +16,10 @@
 //! operator *chooses* rather than a thing the runtime assumes. Two implementations, because a seam
 //! with one is an abstraction nobody has checked.
 //!
-//! It is **not an OIDC relying party**, which is what [`10`](../../../../docs/10-decisions.md) D6
+//! It is **not an OIDC relying party**, which is what [`10`](../../../../../docs/10-decisions.md) D6
 //! asks for and what a production deployment needs: no JWKS fetch, no RSA or ECDSA, no issuer or
 //! audience validation, no token refresh. Those need an HTTP client and a signature library, and
-//! taking either is an ADR rather than a line in a module. [`48`](../../../../docs/48-identity-report.md)
+//! taking either is an ADR rather than a line in a module. [`48`](../../../../../docs/48-identity-report.md)
 //! §48.5 says so plainly, and `pending_security.rs` keeps saying it after this file stops being new.
 //!
 //! What it *does* do is remove the thing that made the gap structural: an actor now arrives
@@ -52,7 +52,7 @@ impl Actor {
     /// D6 asks for "claims → `Session` capability mapping". This is the first half — verified
     /// claims exist and are available at the edge — and not the second: nothing maps them onto a
     /// `Session`, because the actor travels through the view path as a `String`.
-    /// [`48`](../../../../docs/48-identity-report.md) §48.5 records that, and
+    /// [`48`](../../../../../docs/48-identity-report.md) §48.5 records that, and
     /// `pending_security.rs` asserts it, so the gap is a failing test rather than a sentence.
     pub fn claims(&self) -> &BTreeMap<Arc<str>, Arc<str>> {
         &self.claims
@@ -148,7 +148,7 @@ impl Identity for DevIdentity {
 /// gateway that mints credentials for a Beck process behind it — the shape a rung-1 deployment
 /// actually has — and it does not suit a public identity provider, because everything that can
 /// verify a credential can also mint one. An asymmetric verifier is D6's OIDC work and needs a
-/// signature library ([`48`](../../../../docs/48-identity-report.md) §48.5).
+/// signature library ([`48`](../../../../../docs/48-identity-report.md) §48.5).
 ///
 /// BLAKE3's keyed mode is a MAC by construction and is already in this workspace's dependency
 /// graph, so this costs no new dependency and no hand-rolled cryptography — the two ways a module

@@ -1,0 +1,251 @@
+# Are We Fast Yet — NBody.
+#
+# The Computer Language Benchmarks Game's n-body, as Are We Fast Yet carries it: the sun and the
+# four gas giants, advanced by a symplectic integrator, and the system's total energy checked
+# against a constant printed to seventeen significant figures.
+#
+# That constant is what makes this file worth having, and it is not really a performance test here.
+# It is a **determinism test**: `-0.16907495402506745` is a specific `f64`, and a port reproduces it
+# only if every literal is read to the same bits, every multiplication happens in the same order and
+# `sqrt` is the host's. `docs/32` §32.3 made reals IEEE 754 with no rule of Beck's own laid on top;
+# this is the first program in the tree that would notice if that stopped being true.
+#
+# The constants are transcribed in the notation they are published in. They could not be, when this
+# file was written — Beck's float literal had no exponent — and `docs/53` §53.4 is that change.
+#
+# Are We Fast Yet's `verifyResult` publishes two values: `-0.1690859889909308` after 250,000
+# advances and `-0.16907495402506745` after one. The second is the one this file asserts, and
+# `awfy/README.md` says plainly that the first is out of the tree-walker's reach rather than
+# uninteresting.
+
+model Body:
+    x: Float
+    y: Float
+    z: Float
+    vx: Float
+    vy: Float
+    vz: Float
+    mass: Float
+
+## The three components of the system's momentum, which the sun is given the negative of so the
+## centre of mass stays put.
+model Momentum:
+    px: Float
+    py: Float
+    pz: Float
+
+def pi() -> Float:
+    return 3.141592653589793
+
+## `4 * PI * PI` in the original, where `4` is an `int` promoted by the multiplication. Beck does
+## not promote — `docs/41` refuses `1 + 1.0` deliberately — so the literal is written as a real.
+def solar_mass() -> Float:
+    return 4.0 * pi() * pi()
+
+def days_per_year() -> Float:
+    return 365.24
+
+## The original's `Body` constructor, which scales the velocity and the mass on the way in.
+def body(x: Float, y: Float, z: Float, vx: Float, vy: Float, vz: Float, mass: Float) -> Body:
+    return Body(
+        x=x,
+        y=y,
+        z=z,
+        vx=vx * days_per_year(),
+        vy=vy * days_per_year(),
+        vz=vz * days_per_year(),
+        mass=mass * solar_mass(),
+    )
+
+def sun() -> Body:
+    return body(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+
+def jupiter() -> Body:
+    return body(
+        4.84143144246472090e+00,
+        -1.16032004402742839e+00,
+        -1.03622044471123109e-01,
+        1.66007664274403694e-03,
+        7.69901118419740425e-03,
+        -6.90460016972063023e-05,
+        9.54791938424326609e-04,
+    )
+
+def saturn() -> Body:
+    return body(
+        8.34336671824457987e+00,
+        4.12479856412430479e+00,
+        -4.03523417114321381e-01,
+        -2.76742510726862411e-03,
+        4.99852801234917238e-03,
+        2.30417297573763929e-05,
+        2.85885980666130812e-04,
+    )
+
+def uranus() -> Body:
+    return body(
+        1.28943695621391310e+01,
+        -1.51111514016986312e+01,
+        -2.23307578892655734e-01,
+        2.96460137564761618e-03,
+        2.37847173959480950e-03,
+        -2.96589568540237556e-05,
+        4.36624404335156298e-05,
+    )
+
+def neptune() -> Body:
+    return body(
+        1.53796971148509165e+01,
+        -2.59193146099879641e+01,
+        1.79258772950371181e-01,
+        2.68067772490389322e-03,
+        1.62824170038242295e-03,
+        -9.51592254519715870e-05,
+        5.15138902046611451e-05,
+    )
+
+def body_count() -> Int:
+    return 5
+
+## The bodies, indexed, because the integrator is a double loop over `i` and `j > i`.
+##
+## A `Map`'s lookup is an `Option` and this is where that costs a line: every index below is in
+## range by construction, and the language has no way to be told so. The unreachable default is a
+## body of no mass at the origin, which is inert if it is ever reached.
+def body_at(bodies: Map[Int, Body], i: Int) -> Body:
+    return unwrap_or(map_get(bodies, i), Body(x=0.0, y=0.0, z=0.0, vx=0.0, vy=0.0, vz=0.0, mass=0.0))
+
+def initial_bodies() -> Map[Int, Body]:
+    placed = {0: sun(), 1: jupiter(), 2: saturn(), 3: uranus(), 4: neptune()}
+    return map_insert(
+        placed,
+        0,
+        offset_momentum(body_at(placed, 0), total_momentum(0, placed, Momentum(px=0.0, py=0.0, pz=0.0))),
+    )
+
+def total_momentum(i: Int, bodies: Map[Int, Body], m: Momentum) -> Momentum:
+    if i >= body_count():
+        return m
+    b = body_at(bodies, i)
+    return total_momentum(
+        i + 1,
+        bodies,
+        Momentum(px=m.px + b.vx * b.mass, py=m.py + b.vy * b.mass, pz=m.pz + b.vz * b.mass),
+    )
+
+def offset_momentum(b: Body, m: Momentum) -> Body:
+    return Body(
+        x=b.x,
+        y=b.y,
+        z=b.z,
+        vx=0.0 - (m.px / solar_mass()),
+        vy=0.0 - (m.py / solar_mass()),
+        vz=0.0 - (m.pz / solar_mass()),
+        mass=b.mass,
+    )
+
+## One step: every pair pulls on the other, then everything moves.
+def advance(bodies: Map[Int, Body], dt: Float) -> Map[Int, Body]:
+    return move_all(0, pull_all(0, bodies, dt), dt)
+
+def pull_all(i: Int, bodies: Map[Int, Body], dt: Float) -> Map[Int, Body]:
+    if i >= body_count():
+        return bodies
+    return pull_all(i + 1, pull_pairs(i, i + 1, bodies, dt), dt)
+
+## The inner `for j = i + 1 …`, which reads body `i` back on every step because the original's
+## `iBody` is a reference and has been changing under it.
+def pull_pairs(i: Int, j: Int, bodies: Map[Int, Body], dt: Float) -> Map[Int, Body]:
+    if j >= body_count():
+        return bodies
+    ib = body_at(bodies, i)
+    jb = body_at(bodies, j)
+    dx = ib.x - jb.x
+    dy = ib.y - jb.y
+    dz = ib.z - jb.z
+    d_squared = dx * dx + dy * dy + dz * dz
+    distance = sqrt(d_squared)
+    mag = dt / (d_squared * distance)
+    pulled = map_insert(
+        map_insert(
+            bodies,
+            i,
+            Body(
+                x=ib.x,
+                y=ib.y,
+                z=ib.z,
+                vx=ib.vx - (dx * jb.mass * mag),
+                vy=ib.vy - (dy * jb.mass * mag),
+                vz=ib.vz - (dz * jb.mass * mag),
+                mass=ib.mass,
+            ),
+        ),
+        j,
+        Body(
+            x=jb.x,
+            y=jb.y,
+            z=jb.z,
+            vx=jb.vx + (dx * ib.mass * mag),
+            vy=jb.vy + (dy * ib.mass * mag),
+            vz=jb.vz + (dz * ib.mass * mag),
+            mass=jb.mass,
+        ),
+    )
+    return pull_pairs(i, j + 1, pulled, dt)
+
+def move_all(i: Int, bodies: Map[Int, Body], dt: Float) -> Map[Int, Body]:
+    if i >= body_count():
+        return bodies
+    b = body_at(bodies, i)
+    return move_all(
+        i + 1,
+        map_insert(
+            bodies,
+            i,
+            Body(
+                x=b.x + dt * b.vx,
+                y=b.y + dt * b.vy,
+                z=b.z + dt * b.vz,
+                vx=b.vx,
+                vy=b.vy,
+                vz=b.vz,
+                mass=b.mass,
+            ),
+        ),
+        dt,
+    )
+
+## Kinetic energy per body, less the potential between every pair — in that order, because the
+## order is what the seventeenth digit is a fact about.
+def energy(bodies: Map[Int, Body]) -> Float:
+    return energy_of(0, bodies, 0.0)
+
+def energy_of(i: Int, bodies: Map[Int, Body], e: Float) -> Float:
+    if i >= body_count():
+        return e
+    ib = body_at(bodies, i)
+    kinetic = e + 0.5 * ib.mass * (ib.vx * ib.vx + ib.vy * ib.vy + ib.vz * ib.vz)
+    return energy_of(i + 1, bodies, potential(i, i + 1, bodies, kinetic))
+
+def potential(i: Int, j: Int, bodies: Map[Int, Body], e: Float) -> Float:
+    if j >= body_count():
+        return e
+    ib = body_at(bodies, i)
+    jb = body_at(bodies, j)
+    dx = ib.x - jb.x
+    dy = ib.y - jb.y
+    dz = ib.z - jb.z
+    distance = sqrt(dx * dx + dy * dy + dz * dz)
+    return potential(i, j + 1, bodies, e - ((ib.mass * jb.mass) / distance))
+
+def advanced(n: Int, bodies: Map[Int, Body]) -> Map[Int, Body]:
+    if n <= 0:
+        return bodies
+    return advanced(n - 1, advance(bodies, 0.01))
+
+## The benchmark: the system's energy after `steps` advances of a hundredth of a day.
+def benchmark(steps: Int) -> Float:
+    return energy(advanced(steps, initial_bodies()))
+
+test "nbody: the energy after one advance is the harness's own constant, to the bit":
+    expect benchmark(1) == -0.16907495402506745

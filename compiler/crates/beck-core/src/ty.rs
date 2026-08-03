@@ -1,6 +1,6 @@
 //! Types, effect rows, unification, and the tier lattice.
 //!
-//! [`docs/03-type-and-effect-system.md`](../../../../docs/03-type-and-effect-system.md) §3.1:
+//! [`docs/03-type-and-effect-system.md`](../../../../../docs/03-type-and-effect-system.md) §3.1:
 //! "Hindley–Milner inference with bidirectional checking. Full inference inside bodies; mandatory
 //! annotations on public signatures."
 //!

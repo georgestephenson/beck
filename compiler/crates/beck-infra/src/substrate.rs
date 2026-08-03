@@ -25,7 +25,7 @@
 //! could only provision one, because the knowledge was scattered. A second [`Substrate`] is now a
 //! value, and the platforms pick it up without changing.
 //!
-//! Nothing here evaluates the choice — [`docs/07-dependencies.md`](../../../../docs/07-dependencies.md)
+//! Nothing here evaluates the choice — [`docs/07-dependencies.md`](../../../../../docs/07-dependencies.md)
 //! is where a substrate has to argue for itself. This module is what makes the argument actionable.
 
 /// A concrete store behind the `durable` effect.

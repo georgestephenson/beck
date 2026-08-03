@@ -1,6 +1,6 @@
 //! Multi-module compilation: check against signatures, then link.
 //!
-//! [`docs/03-type-and-effect-system.md`](../../../../docs/03-type-and-effect-system.md) §3.6's
+//! [`docs/03-type-and-effect-system.md`](../../../../../docs/03-type-and-effect-system.md) §3.6's
 //! consequence, spelled out: "modules compile against signatures (true separate compilation,
 //! parallel builds); body edits don't invalidate downstream modules".
 //!
@@ -401,6 +401,12 @@ fn link(root: &str, modules: Vec<Checked>, diags: &mut Diagnostics) -> Option<Pr
         acc.own_types.extend(program.own_types);
         acc.signals.extend(program.signals);
         acc.tests.extend(program.tests);
+        // The doc comments too. Without this the merged program keeps only the *first* module's,
+        // which is the deepest import rather than the root — so `beck doc` on a module that imports
+        // another documented the wrong module's names. Invisible until a module in `lib/` imported
+        // one (`docs/56` §56.5); a clash is impossible for a definition, because `B0601` above
+        // already refuses two modules defining one name.
+        acc.docs.extend(program.docs);
     }
 
     let mut merged = out?;

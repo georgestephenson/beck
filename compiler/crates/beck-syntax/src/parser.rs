@@ -1,6 +1,6 @@
 //! The Python surface: recursive descent for statements, Pratt for expressions.
 //!
-//! [`docs/02-syntax.md`](../../../../docs/02-syntax.md) §2.8: "hand-written recursive descent +
+//! [`docs/02-syntax.md`](../../../../../docs/02-syntax.md) §2.8: "hand-written recursive descent +
 //! Pratt for expressions. **Not** a parser generator. Rationale: error messages and error
 //! *recovery* are the top-two UX properties of a new language."
 //!

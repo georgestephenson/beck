@@ -1,0 +1,74 @@
+# Are We Fast Yet — List.
+#
+# Takeuchi's function over linked lists: three lists are built, and `tail` recurses on them until
+# one is not shorter than another. It is a call-and-allocation benchmark and nothing else, which is
+# why it is in the suite.
+#
+# The original's `Element` is a mutable node with a nullable `next`, and this is the one benchmark
+# whose data structure the port does not have to work around: a nullable linked node *is* a
+# recursive union, and `docs/27` made a type able to mention itself. `Nil` is the original's `null`,
+# which means the port has no null and loses nothing.
+#
+# It deliberately does not use `list[Int]`. The benchmark is about walking a chain of allocated
+# nodes one link at a time, and `docs/33` §33.6 recorded that a `list[T]` cannot share a suffix —
+# so `list_drop` would copy where the original follows a pointer, and the port would measure the
+# copy.
+#
+# 10 is the harness's own number: `List.java`'s `verifyResult` is `10 == (int) result`.
+
+union Chain:
+    Nil
+    Link(value: Int, rest: Chain)
+
+## `length, length - 1, …, 1`, as the original's `makeList` builds it.
+def make_chain(length: Int) -> Chain:
+    if length == 0:
+        return Nil
+    return Link(value=length, rest=make_chain(length - 1))
+
+## The original's `Element.length()`, which counts the node it is called on.
+##
+## `Nil` is 0 here where the Java has no case at all — it would throw — and the two agree on every
+## chain the benchmark actually measures, which are all non-empty.
+def length_of(chain: Chain) -> Int:
+    match chain:
+        case Nil:
+            return 0
+        case Link(value, rest):
+            return 1 + length_of(rest)
+
+def rest_of(chain: Chain) -> Chain:
+    match chain:
+        case Nil:
+            return Nil
+        case Link(value, rest):
+            return rest
+
+## The original's `isShorterThan`: walk both until `y` runs out, and answer whether `x` ran out
+## first.
+def is_shorter_than(x: Chain, y: Chain) -> Bool:
+    match y:
+        case Nil:
+            return false
+        case Link(y_value, y_rest):
+            match x:
+                case Nil:
+                    return true
+                case Link(x_value, x_rest):
+                    return is_shorter_than(x_rest, y_rest)
+
+def tail(x: Chain, y: Chain, z: Chain) -> Chain:
+    if is_shorter_than(y, x):
+        return tail(
+            tail(rest_of(x), y, z),
+            tail(rest_of(y), z, x),
+            tail(rest_of(z), x, y),
+        )
+    return z
+
+## The benchmark, at Are We Fast Yet's own sizes: chains of 15, 10 and 6.
+def benchmark() -> Int:
+    return length_of(tail(make_chain(15), make_chain(10), make_chain(6)))
+
+test "list: the tail of 15, 10 and 6 is ten links long":
+    expect benchmark() == 10

@@ -1,8 +1,8 @@
 //! What a source file may contain, before anything tries to read it.
 //!
-//! [`docs/35-standards-landscape.md`](../../../../docs/35-standards-landscape.md) §35.5 item 2:
+//! [`docs/35-standards-landscape.md`](../../../../../docs/35-standards-landscape.md) §35.5 item 2:
 //! "pin the Unicode version per release; add UTS #39's security profile with conformance vectors".
-//! [`docs/08-roadmap.md`](../../../../docs/08-roadmap.md) §8.5.2 classes it **R** — a retrofit that
+//! [`docs/08-roadmap.md`](../../../../../docs/08-roadmap.md) §8.5.2 classes it **R** — a retrofit that
 //! becomes expensive "the moment identifiers exist in published packages", which is before the
 //! registry and therefore now.
 //!
@@ -64,7 +64,7 @@ const BIDI: &[(char, &str)] = &[
 ///
 /// One place, both surfaces, because the S-expression reader is the same front end and a rule that
 /// holds on one notation and not the other is not a rule
-/// ([`adr/0012`](../../../../docs/adr/0012-the-front-end-counts-its-own-recursion.md) makes the
+/// ([`adr/0012`](../../../../../docs/adr/0012-the-front-end-counts-its-own-recursion.md) makes the
 /// same argument about a different bound).
 ///
 /// Zero-width *joiners* are deliberately not here. U+200D is how an emoji sequence is spelled, a

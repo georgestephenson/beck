@@ -1,6 +1,6 @@
 //! §3.5's security properties, as checks rather than as intentions.
 //!
-//! [`docs/03-type-and-effect-system.md`](../../../../docs/03-type-and-effect-system.md) §3.5:
+//! [`docs/03-type-and-effect-system.md`](../../../../../docs/03-type-and-effect-system.md) §3.5:
 //! "Placement-as-type makes vulnerability classes *unrepresentable*." This module is where three of
 //! that table's rows stop being prose:
 //!
@@ -81,7 +81,7 @@ pub fn sendable(ty: &Ty, types: &BTreeMap<Arc<str>, TyDecl>) -> Result<(), NotSe
 ///
 /// Strictly stronger than [`sendable`]: a rendered view can cross a boundary — that is what a patch
 /// stream *is* — but it cannot be stored, because replay must reconstruct it rather than read it
-/// back. [`docs/19-phase-1-report.md`](../../../../docs/19-phase-1-report.md) §19.9 predicted this:
+/// back. [`docs/19-phase-1-report.md`](../../../../../docs/19-phase-1-report.md) §19.9 predicted this:
 /// the runtime refusal in `value_to_repr` was "the right thing to have while the proof is missing",
 /// and this is the proof. The refusal stays, now unreachable from a program that compiles.
 pub fn storable(ty: &Ty, types: &BTreeMap<Arc<str>, TyDecl>) -> Result<(), NotSendable> {

@@ -187,7 +187,7 @@ pub fn prims() -> Vec<(&'static str, Prim, Scheme)> {
         ),
         // ------------------------------------------------------------------------ strings
         //
-        // Wave 2's string half ([`docs/08`](../../../../docs/08-roadmap.md) §8.5.4). Every one of
+        // Wave 2's string half ([`docs/08`](../../../../../docs/08-roadmap.md) §8.5.4). Every one of
         // these is a primitive rather than a definition written in Beck, and the reason is the
         // same in each case: a string is where the host has to be asked. `str_upper` is a Unicode
         // table, `str_split` is an allocation strategy, and writing either of them over a
@@ -196,10 +196,19 @@ pub fn prims() -> Vec<(&'static str, Prim, Scheme)> {
         // Wave 2 writes it in Beck instead, which is the distinction §1.1 claims to be able to
         // make.
         //
-        // Indices are byte offsets into UTF-8 and are clamped rather than refused: `str_slice`
-        // past the end is the empty string, not a failure. That is a decision and not an
-        // oversight — a slice is not a parse, and `raises` is for a program's own vocabulary
-        // rather than for the standard library's arithmetic ([`45`](../../../../docs/45-error-rows-report.md)).
+        // Positions are counted in **characters** — Unicode scalar values — and `str_len`,
+        // `str_slice` and `str_index_of` are one unit or they are a trap;
+        // `stdlib.rs::string_positions_are_characters_everywhere_or_nowhere` is where that is held.
+        //
+        // `str_slice(s, start, count)` takes a **count**, not an end index. Worth stating because
+        // the signature cannot: a primitive's parameters have no names in the generated reference,
+        // so `(Str, Int, Int) -> Str` reads either way and the first caller to pass a non-zero
+        // start with a real count got it wrong (`docs/55` §55.5).
+        //
+        // Both are clamped rather than refused: a slice past the end is the empty string, not a
+        // failure. That is a decision and not an oversight — a slice is not a parse, and `raises`
+        // is for a program's own vocabulary rather than for the standard library's arithmetic
+        // ([`45`](../../../../../docs/45-error-rows-report.md)).
         (
             "str_len",
             Prim::StrLen,
@@ -284,7 +293,7 @@ pub fn prims() -> Vec<(&'static str, Prim, Scheme)> {
         //
         // The higher-order ones are row-polymorphic in the argument's effects — §3.2's
         // `map : (list[a], (a -> b ! e)) -> list[b] ! e`, which
-        // [`33`](../../../../docs/33-effect-polymorphism-and-list-patterns-report.md) made true of
+        // [`33`](../../../../../docs/33-effect-polymorphism-and-list-patterns-report.md) made true of
         // a *user's* definitions too. A pure caller of `list_fold` stays pure however another
         // caller uses it.
         (
@@ -443,8 +452,8 @@ pub fn prims() -> Vec<(&'static str, Prim, Scheme)> {
         // ------------------------------------------------------------------------ JSON and time
         //
         // `json_parse` and `time_parse` **raise** rather than returning a `Result`, and that is the
-        // whole reason [`08`](../../../../docs/08-roadmap.md) §8.5.3's trap 2 said the standard
-        // library had to wait for [`45`](../../../../docs/45-error-rows-report.md). A caller who
+        // whole reason [`08`](../../../../../docs/08-roadmap.md) §8.5.3's trap 2 said the standard
+        // library had to wait for [`45`](../../../../../docs/45-error-rows-report.md). A caller who
         // wants a `Result` writes `try:`; a caller already inside something fallible writes
         // nothing. Had these been written first, every one of their signatures would have had to
         // change.

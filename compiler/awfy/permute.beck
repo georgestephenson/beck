@@ -1,0 +1,46 @@
+# Are We Fast Yet — Permute.
+#
+# Six elements permuted, and what is counted is the number of times the recursive procedure is
+# entered rather than the number of permutations. The Java swaps in place in an `int[6]`; here the
+# array is a `Map[Int, Int]` and a swap is two inserts, which is `awfy/README.md`'s standing rule
+# for a mutable array.
+#
+# The interesting part of the transcription is that `permute` mutates *two* things — the array and
+# the counter — and a pure port has to carry both or it will count right and permute wrong. They
+# travel together as one record, which is what a language without mutation makes you write down.
+#
+# 8,660 is the harness's own number: `Permute.java`'s `verifyResult` is `(int) result == 8660`.
+
+model Permutation:
+    cells: Map[Int, Int]
+    count: Int
+
+def cell_at(p: Permutation, i: Int) -> Int:
+    return unwrap_or(map_get(p.cells, i), 0)
+
+## The `int[6]` of the original starts as six zeros, which is what an absent key reads as here.
+def swap(p: Permutation, i: Int, j: Int) -> Permutation:
+    return Permutation(
+        cells=map_insert(map_insert(p.cells, i, cell_at(p, j)), j, cell_at(p, i)),
+        count=p.count,
+    )
+
+def permute(p: Permutation, n: Int) -> Permutation:
+    counted = Permutation(cells=p.cells, count=p.count + 1)
+    if n == 0:
+        return counted
+    return permute_from(permute(counted, n - 1), n - 1, n - 1)
+
+## The original's descending `for i = n1 … 0`: swap, recurse, swap back.
+def permute_from(p: Permutation, n1: Int, i: Int) -> Permutation:
+    if i < 0:
+        return p
+    swapped = permute(swap(p, n1, i), n1)
+    return permute_from(swap(swapped, n1, i), n1, i - 1)
+
+## The benchmark, at Are We Fast Yet's own size: six cells.
+def benchmark() -> Int:
+    return permute(Permutation(cells={}, count=0), 6).count
+
+test "permute: the procedure is entered 8,660 times for six cells":
+    expect benchmark() == 8660

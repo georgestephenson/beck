@@ -1,6 +1,6 @@
 //! Stage 7 — placement: inferred from effects, solved against a cost model, verified.
 //!
-//! [`docs/03-type-and-effect-system.md`](../../../../docs/03-type-and-effect-system.md) §3.3:
+//! [`docs/03-type-and-effect-system.md`](../../../../../docs/03-type-and-effect-system.md) §3.3:
 //! "**Placement is not a primitive annotation; it is a constraint solution** — with explicit
 //! `@on(...)` always available and always winning. Purity means *unplaced*: legal on every tier,
 //! compiled to each tier that needs it."
@@ -28,7 +28,7 @@
 //!    it. "That duplication is the payoff, not waste."
 //! 3. A **`Signal[Html]` is the browser's subscription** (§4.3), so it is pinned to the client.
 //!    Where the *view function* runs — Mode A server-side rendering versus Mode B in the browser —
-//!    is the [`05`](../../../../docs/05-tier-lowering.md) §5.1 decision that §3.4 also mentions,
+//!    is the [`05`](../../../../../docs/05-tier-lowering.md) §5.1 decision that §3.4 also mentions,
 //!    and it is Phase 3's: Mode B does not exist, so the cost model has nothing to choose between
 //!    and should not pretend otherwise.
 //!

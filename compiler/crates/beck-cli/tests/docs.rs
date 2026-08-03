@@ -371,3 +371,67 @@ fn explain_error_answers_for_every_indexed_code() {
     let out = beck(&["explain", "error", "B9999"]);
     assert!(!out.status.success(), "an unknown code should be an error");
 }
+
+/// A relative link out of a rustdoc page resolves to the file it names.
+///
+/// The four properties above are about the *generated Beck reference*. This one is about the other
+/// generated documentation — `cargo doc` — and it closes a gap nothing was watching: a `//!` header
+/// linking to `docs/04-compiler-architecture.md` is rendered into a page whose URL depth is the
+/// **module's**, not the file's, so `beck_core/index.html` and `beck_core/prelude/index.html` need a
+/// different number of `../` for the same target. Every submodule in the tree was one level short,
+/// and `beck-core/src/digest.rs` was the single file that had it right.
+///
+/// `cargo doc` does not check these — it verifies intra-doc links, and a relative path to a
+/// markdown file outside the output tree is not one — so the arithmetic is done here instead:
+/// `target/doc/<crate>/<module path>/` is four levels below the repository root plus one per module.
+#[test]
+fn a_relative_link_out_of_a_rustdoc_page_lands_on_the_file_it_names() {
+    let mut checked = 0usize;
+    for path in compiler_sources() {
+        let Ok(rest) = path.strip_prefix(compiler_root().join("crates")) else {
+            continue;
+        };
+        let parts: Vec<&str> = rest.iter().filter_map(|p| p.to_str()).collect();
+        let Some(src) = parts.iter().position(|p| *p == "src") else {
+            continue;
+        };
+        let module = &parts[src + 1..];
+        // `target/doc/<crate>/` is four levels under the repository root; each module below the
+        // crate root adds one. `lib.rs`/`main.rs` are the crate root; `foo/mod.rs` is one module.
+        let depth = match module {
+            ["lib.rs"] | ["main.rs"] => 0,
+            _ if module.last() == Some(&"mod.rs") => module.len() - 1,
+            _ => module.len(),
+        };
+        let text = std::fs::read_to_string(&path).expect("readable");
+        for link in text.split("](").skip(1) {
+            let Some(target) = link.split(')').next() else {
+                continue;
+            };
+            if !target.starts_with("../") || !target.contains("docs/") {
+                continue;
+            }
+            let ups = target.matches("../").count();
+            assert_eq!(
+                ups,
+                4 + depth,
+                "{}: `{target}` needs {} levels, not {ups} — \
+                 a rustdoc page for this module sits {} below the repository root",
+                path.display(),
+                4 + depth,
+                4 + depth,
+            );
+            let named = target.trim_start_matches("../");
+            assert!(
+                repo_root().join(named).exists(),
+                "{}: `{target}` names {named}, which does not exist",
+                path.display()
+            );
+            checked += 1;
+        }
+    }
+    assert!(
+        checked > 40,
+        "the link sweep found almost nothing: {checked}"
+    );
+}

@@ -1,6 +1,6 @@
 //! `Node` — the canonical AST, and an ordinary value.
 //!
-//! [`docs/02-syntax.md`](../../../../docs/02-syntax.md) §2.2 fixes the shape:
+//! [`docs/02-syntax.md`](../../../../../docs/02-syntax.md) §2.2 fixes the shape:
 //!
 //! ```text
 //! model Node:
@@ -312,7 +312,7 @@ pub mod sym {
     ///
     /// The handler is a *form*, so it is lexically scoped by construction rather than by a search
     /// at run time — which POPL 2019 gives the general argument for and
-    /// [`docs/38`](../../../../docs/38-literature-survey.md) §38.4 adopts. In a language where
+    /// [`docs/38`](../../../../../docs/38-literature-survey.md) §38.4 adopts. In a language where
     /// effects decide placement, an accidentally intercepted effect would be an accidental
     /// *re-placement*.
     pub const TRY: &str = "try";

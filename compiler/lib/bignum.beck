@@ -1,0 +1,564 @@
+# Arbitrary-precision integers, written in Beck.
+#
+# `docs/08` §8.5.4's Wave 2 has carried "bignums and numeric coercion" as untouched since
+# `docs/46`, and `docs/25` §25.7 item 5 put them at the end of the numeric tower: "reals first, then
+# rationals and bignums". The reals landed in `docs/32` and the rationals in `docs/41`. This is the
+# floor underneath both of them, and it is the last one.
+#
+# It is a **file rather than a primitive**, and that is `lib/README.md`'s division applied to the
+# hardest case it has met. A hash function is somebody else's table and a date format is somebody
+# else's grammar, so both are primitives; schoolbook long multiplication is neither. Every part of
+# it — a carry, a borrow, a trial quotient — is arithmetic on `Int`, and `Int` is something the
+# language has. Taking `num-bigint` instead would have been faster to run and would have been the
+# admission `lib/README.md` exists to avoid making.
+#
+# What that costs is stated rather than hidden: this is **schoolbook**, so multiplication is
+# quadratic and division is quadratic with a fourteen-step search inside it. There is no Karatsuba,
+# no Toom-Cook and no Barrett reduction, and `docs/55` §55.6 says so with the sizes that makes
+# reasonable. It is an exact integer of any size, not a competitive one.
+#
+# The representation is a **sign and a list of base-10,000 limbs, least significant first**. Base
+# 10,000 is chosen so that two things are true by inspection rather than by argument: a product of
+# two limbs plus a carry is at most about 10⁸, which is nowhere near an `Int`'s range, and a limb is
+# exactly four decimal digits, so rendering and parsing are grouping rather than division.
+#
+# The form is **canonical** — no leading zero limbs, and zero is the empty list with a positive sign
+# — which is what lets `==` be value equality rather than a function nobody would remember to call.
+# `normalise` is the only constructor that may be used to build one, and every function here returns
+# through it.
+
+## An integer of any size.
+##
+## `Big(negative=false, limbs=[])` is zero, and it is the only representation of zero: a negative
+## zero would compare unequal to a positive one under `==`, and a library whose zero has two values
+## is a library whose tests pass and whose folds do not.
+model Big:
+    negative: Bool
+    ## Base-10,000 digits, least significant first, with no leading zeros.
+    limbs: list[Int]
+
+union BigError:
+    ## Text that is not an optionally-signed run of decimal digits.
+    NotANumber(text: Str)
+    ## Division or remainder by zero. Named rather than returning a zero, because a quotient by
+    ## zero is not a number and a library that answers anyway is a library that hides a bug.
+    DividedByZero
+    ## A negative exponent. `2 ** -1` is a rational, and this type is the integers.
+    NegativeExponent(exponent: Int)
+
+## 10,000 — the limb base. See the header for why this one.
+def base() -> Int:
+    return 10000
+
+## The number of decimal digits in a limb, which is what `render` pads to.
+def limb_digits() -> Int:
+    return 4
+
+def zero() -> Big:
+    return Big(negative=false, limbs=[])
+
+def one() -> Big:
+    return Big(negative=false, limbs=[1])
+
+# ---------------------------------------------------------------------------------------------
+# Magnitudes: the unsigned half, over plain lists of limbs
+#
+# Everything below this line and above the signed section works on *magnitudes* and knows nothing
+# about signs. Splitting them is not tidiness — a sign rule applied halfway through a borrow is the
+# classic way to get subtraction wrong, so subtraction here is only ever the larger minus the
+# smaller and the sign is decided before it is called.
+# ---------------------------------------------------------------------------------------------
+
+## The limb at `i`, or zero past the end — which is what makes two magnitudes of different lengths
+## addable without padding either of them.
+def limb_at(limbs: list[Int], i: Int) -> Int:
+    return unwrap_or(list_get(limbs, i), 0)
+
+## Drop leading zero limbs, so a magnitude has one representation.
+def trim(limbs: list[Int]) -> list[Int]:
+    n = list_len(limbs)
+    if n == 0:
+        return limbs
+    if limb_at(limbs, n - 1) != 0:
+        return limbs
+    return trim(list_take(limbs, n - 1))
+
+def add_limbs(a: list[Int], b: list[Int]) -> list[Int]:
+    return trim(add_from(a, b, 0, 0, []))
+
+def add_from(a: list[Int], b: list[Int], i: Int, carry: Int, done: list[Int]) -> list[Int]:
+    if i >= list_len(a) and i >= list_len(b) and carry == 0:
+        return done
+    total = limb_at(a, i) + limb_at(b, i) + carry
+    return add_from(a, b, i + 1, total / base(), list_append(done, total % base()))
+
+## `a - b`, where `a` is at least `b`. The caller guarantees that; nothing here checks it.
+def sub_limbs(a: list[Int], b: list[Int]) -> list[Int]:
+    return trim(sub_from(a, b, 0, 0, []))
+
+def sub_from(a: list[Int], b: list[Int], i: Int, borrow: Int, done: list[Int]) -> list[Int]:
+    if i >= list_len(a):
+        return done
+    difference = limb_at(a, i) - limb_at(b, i) - borrow
+    if difference < 0:
+        return sub_from(a, b, i + 1, 1, list_append(done, difference + base()))
+    return sub_from(a, b, i + 1, 0, list_append(done, difference))
+
+## `-1`, `0` or `1`. Both arguments must be trimmed, which every magnitude here is.
+def cmp_limbs(a: list[Int], b: list[Int]) -> Int:
+    if list_len(a) != list_len(b):
+        return -1 if list_len(a) < list_len(b) else 1
+    return cmp_from(a, b, list_len(a) - 1)
+
+def cmp_from(a: list[Int], b: list[Int], i: Int) -> Int:
+    if i < 0:
+        return 0
+    if limb_at(a, i) != limb_at(b, i):
+        return -1 if limb_at(a, i) < limb_at(b, i) else 1
+    return cmp_from(a, b, i - 1)
+
+## Multiply by a single limb. The whole of multiplication is this plus a shift plus an add.
+def mul_small(limbs: list[Int], m: Int) -> list[Int]:
+    if m == 0:
+        return []
+    return trim(mul_small_from(limbs, m, 0, 0, []))
+
+def mul_small_from(
+    limbs: list[Int], m: Int, i: Int, carry: Int, done: list[Int]
+) -> list[Int]:
+    if i >= list_len(limbs) and carry == 0:
+        return done
+    total = limb_at(limbs, i) * m + carry
+    return mul_small_from(limbs, m, i + 1, total / base(), list_append(done, total % base()))
+
+## Multiply by `base()^k` — `k` zero limbs on the front. Zero stays zero, which is why the guard is
+## here rather than at each call site.
+def shift_limbs(limbs: list[Int], k: Int) -> list[Int]:
+    if list_is_empty(limbs):
+        return limbs
+    return concat_lists([zeros(k, []), limbs])
+
+def zeros(k: Int, done: list[Int]) -> list[Int]:
+    if k <= 0:
+        return done
+    return zeros(k - 1, list_append(done, 0))
+
+## Schoolbook long multiplication: one partial product per limb of `b`, shifted and summed.
+def mul_limbs(a: list[Int], b: list[Int]) -> list[Int]:
+    return mul_from(a, b, 0, [])
+
+def mul_from(a: list[Int], b: list[Int], j: Int, acc: list[Int]) -> list[Int]:
+    if j >= list_len(b):
+        return trim(acc)
+    return mul_from(a, b, j + 1, add_limbs(acc, shift_limbs(mul_small(a, limb_at(b, j)), j)))
+
+## A quotient and a remainder, over magnitudes.
+model LimbDivision:
+    quotient: list[Int]
+    remainder: list[Int]
+
+## Schoolbook long division, most significant limb first.
+##
+## The trial quotient is found by **binary search** rather than by Knuth's estimate-and-correct.
+## That is fourteen comparisons per limb instead of one multiply and a rare fixup, so it is slower —
+## and it is obviously right, which for a first implementation of division is the trade to make.
+## `docs/55` §55.6 records it as the thing to replace if this is ever a bottleneck.
+def divmod_limbs(a: list[Int], b: list[Int]) -> LimbDivision:
+    return divide_from(a, b, list_len(a) - 1, [], [])
+
+def divide_from(
+    a: list[Int], b: list[Int], i: Int, quotient_msf: list[Int], remainder: list[Int]
+) -> LimbDivision:
+    if i < 0:
+        return LimbDivision(quotient=trim(list_reverse(quotient_msf)), remainder=remainder)
+    carried = add_limbs(shift_limbs(remainder, 1), [limb_at(a, i)])
+    digit = trial_digit(b, carried, 0, base() - 1)
+    return divide_from(
+        a,
+        b,
+        i - 1,
+        list_append(quotient_msf, digit),
+        sub_limbs(carried, mul_small(b, digit)),
+    )
+
+## The largest `d` in `0..base()-1` with `b * d` at most `carried`.
+def trial_digit(b: list[Int], carried: list[Int], low: Int, high: Int) -> Int:
+    if low >= high:
+        return low
+    middle = (low + high + 1) / 2
+    if cmp_limbs(mul_small(b, middle), carried) <= 0:
+        return trial_digit(b, carried, middle, high)
+    return trial_digit(b, carried, low, middle - 1)
+
+# ---------------------------------------------------------------------------------------------
+# The signed integer
+# ---------------------------------------------------------------------------------------------
+
+## The only way to build a `Big`. Trims, and refuses to let zero be negative.
+def normalise(negative: Bool, limbs: list[Int]) -> Big:
+    trimmed = trim(limbs)
+    return Big(negative=negative and not list_is_empty(trimmed), limbs=trimmed)
+
+def is_zero(b: Big) -> Bool:
+    return list_is_empty(b.limbs)
+
+def negate_big(b: Big) -> Big:
+    return normalise(not b.negative, b.limbs)
+
+def abs_big(b: Big) -> Big:
+    return normalise(false, b.limbs)
+
+## `-1`, `0` or `1`, by value.
+##
+## Written rather than left to `<`, because `<` on a record compares field by field and `Big`'s
+## first field is the *sign flag* — so `-5 < 3` would be decided by `false < true` and come out
+## backwards. `docs/50` §50.5 found the same edge from the other side, and `docs/54` is the
+## write-up; here it is a reason to expose an ordering function and say why.
+def compare_big(a: Big, b: Big) -> Int:
+    if a.negative != b.negative:
+        return -1 if a.negative else 1
+    if a.negative:
+        return negate(cmp_limbs(a.limbs, b.limbs))
+    return cmp_limbs(a.limbs, b.limbs)
+
+def less_than(a: Big, b: Big) -> Bool:
+    return compare_big(a, b) < 0
+
+def greater_than(a: Big, b: Big) -> Bool:
+    return compare_big(a, b) > 0
+
+# `+`, `-`, `*` and `/` on `Big`, through the prelude trait `Num` (`docs/41`), whose four method
+# names are SICP §2.5.1's own. This is the third floor of the tower to be added from outside the
+# compiler, after `sicp/ch2.beck`'s rationals and `money.beck`'s amounts — and the first where the
+# type is a *number* in the ordinary sense, which is the point: a tower whose new floors can only
+# be domain types is not a tower.
+#
+# `div` truncates toward zero, which is what `Int`'s `/` does, so `big(-7) / big(2)` is `-3` and
+# agrees with `-7 / 2`. It is the only one of the four that can fail, and `raises(BigError)` is
+# inferred from it and travels to whoever writes `a / b` (`docs/45`, `docs/47`).
+impl Num for Big:
+    def add(self, other):
+        if self.negative == other.negative:
+            return normalise(self.negative, add_limbs(self.limbs, other.limbs))
+        if cmp_limbs(self.limbs, other.limbs) >= 0:
+            return normalise(self.negative, sub_limbs(self.limbs, other.limbs))
+        return normalise(other.negative, sub_limbs(other.limbs, self.limbs))
+
+    def sub(self, other):
+        return self + negate_big(other)
+
+    def mul(self, other):
+        return normalise(self.negative != other.negative, mul_limbs(self.limbs, other.limbs))
+
+    def div(self, other):
+        return divide(self, other).quotient
+
+## A quotient and a remainder together, because long division computes both and a caller that wants
+## both should not pay for it twice.
+##
+## The signs follow `Int`: the quotient truncates toward zero and the remainder takes the sign of
+## the dividend, so `divide(big(-7), big(2))` is `-3` remainder `-1` and `-7 / 2` and `-7 % 2` say
+## the same.
+model Division:
+    quotient: Big
+    remainder: Big
+
+def divide(a: Big, b: Big) -> Division uses raises(BigError):
+    if is_zero(b):
+        raise DividedByZero
+    split = divmod_limbs(a.limbs, b.limbs)
+    return Division(
+        quotient=normalise(a.negative != b.negative, split.quotient),
+        remainder=normalise(a.negative, split.remainder),
+    )
+
+def big_rem(a: Big, b: Big) -> Big uses raises(BigError):
+    return divide(a, b).remainder
+
+## Divide by a small positive `Int`, with the remainder — and **without** a failure.
+##
+## The caller supplies a divisor in `1..base()-1`, in the shape `sub_limbs` takes its precondition:
+## nothing here checks it, and the reason it is worth having a second division is the *row*. `divide`
+## raises, so a caller dividing by a literal ten in a loop is fallible on paper and needs a handler
+## for a case it has already ruled out. `lib/decimal.beck` strips a trailing zero that way on every
+## value it normalises, which is the caller this exists for.
+def divide_small(a: Big, m: Int) -> Division:
+    split = divmod_limbs(a.limbs, [m])
+    return Division(
+        quotient=normalise(a.negative, split.quotient),
+        remainder=normalise(a.negative, split.remainder),
+    )
+
+## `b ** exponent`, by repeated squaring.
+##
+## `docs/31`'s tail calls are what make this a loop rather than a stack: the accumulator is carried,
+## so `big(2) ** 4096` costs no host frames at all.
+def big_pow(b: Big, exponent: Int) -> Big uses raises(BigError):
+    if exponent < 0:
+        raise NegativeExponent(exponent=exponent)
+    return power_from(b, exponent, one())
+
+def power_from(b: Big, exponent: Int, acc: Big) -> Big:
+    if exponent == 0:
+        return acc
+    if exponent % 2 == 1:
+        return power_from(b * b, exponent / 2, acc * b)
+    return power_from(b * b, exponent / 2, acc)
+
+# ---------------------------------------------------------------------------------------------
+# Coercion — the other half of §8.5.4's Wave 2 item
+#
+# Every conversion is a *named function*, and none of them is implicit. `docs/41` refuses `1 + 1.0`
+# on purpose, and adding a bignum to the tower is exactly the moment that decision would come under
+# pressure: an `Int` that silently became a `Big` on overflow would make the cost of arbitrary
+# precision invisible, and `Int` arithmetic is checked precisely so that overflow is a message
+# rather than a wrong answer (`docs/32` §32.3).
+# ---------------------------------------------------------------------------------------------
+
+## An `Int` as a `Big`. Total — including the most negative `Int`.
+##
+## The limbs are peeled off the *signed* value rather than from `abs(n)`, which is not a
+## micro-optimisation: `abs` of the most negative `Int` overflows and there is no positive `Int` to
+## hold it, so a conversion written the obvious way has exactly one input it cannot take. `%`
+## follows the sign of the dividend, so a negative `n` gives negative limbs and `negate` on each one
+## is enough.
+def big(n: Int) -> Big:
+    return normalise(n < 0, int_limbs(n, []))
+
+def int_limbs(n: Int, done: list[Int]) -> list[Int]:
+    if n == 0:
+        return done
+    return int_limbs(n / base(), list_append(done, abs(n % base())))
+
+## A `Big` as an `Int`, or nothing when it does not fit.
+##
+## `None` rather than a raise, and rather than a saturating answer: narrowing is a question with a
+## "no", not a failure of the program, and a caller that wants a failure writes one line.
+def big_to_int(b: Big) -> Option[Int]:
+    if cmp_limbs(b.limbs, int_bound(b.negative)) > 0:
+        return None
+    return Some(value=to_int_from(b, list_len(b.limbs) - 1, 0))
+
+## The largest magnitude an `Int` holds: 2⁶³ - 1 positive, and one more than that negative, because
+## two's complement is not symmetric. The positive bound is written as a literal because it *is* one;
+## the negative bound is that plus one because the literal for it does not exist.
+def int_bound(negative: Bool) -> list[Int]:
+    top = int_limbs(9223372036854775807, [])
+    if negative:
+        return add_limbs(top, [1])
+    return top
+
+## Horner's rule from the top limb down, accumulating **negative** for a negative value.
+##
+## Accumulating the magnitude and negating at the end would overflow on exactly one input — the most
+## negative `Int`, whose magnitude is not an `Int` — which is the same asymmetry `big` deals with at
+## the other end, and the same fix.
+def to_int_from(b: Big, i: Int, acc: Int) -> Int:
+    if i < 0:
+        return acc
+    limb = limb_at(b.limbs, i)
+    return to_int_from(b, i - 1, acc * base() + (negate(limb) if b.negative else limb))
+
+## A `Big` as a `Float`. **Lossy**, and named so a reader has to mean it.
+##
+## A real has 53 bits of significand, so any `Big` above 2⁵³ is rounded — and one above about 1.8 ×
+## 10³⁰⁸ becomes an infinity, because that is what IEEE 754 does and `docs/32` §32.3 declines to lay
+## a rule of Beck's on top of the format's own.
+def big_to_real(b: Big) -> Float:
+    return real_from(b, list_len(b.limbs) - 1, 0.0)
+
+def real_from(b: Big, i: Int, acc: Float) -> Float:
+    if i < 0:
+        return acc if not b.negative else 0.0 - acc
+    return real_from(b, i - 1, acc * float(base()) + float(limb_at(b.limbs, i)))
+
+# ---------------------------------------------------------------------------------------------
+# Text
+# ---------------------------------------------------------------------------------------------
+
+## `"-1267650600228229401496703205376"`, and the empty magnitude renders as `"0"`.
+def render_big(b: Big) -> Str:
+    if is_zero(b):
+        return "0"
+    n = list_len(b.limbs)
+    return (
+        ("-" if b.negative else "")
+        + str(limb_at(b.limbs, n - 1))
+        + render_from(b.limbs, n - 2, "")
+    )
+
+## Every limb below the leading one is padded to four digits, because `1` in the middle of a number
+## is `0001`. The leading limb is not padded, which is why it is rendered by the caller.
+def render_from(limbs: list[Int], i: Int, done: Str) -> Str:
+    if i < 0:
+        return done
+    return render_from(limbs, i - 1, done + pad4(str(limb_at(limbs, i))))
+
+def pad4(digits: Str) -> Str:
+    return str_slice("0000", 0, limb_digits() - str_len(digits)) + digits
+
+## Read an optionally-signed run of decimal digits. Anything else raises.
+##
+## Leading zeros are accepted and normalised away — `"007"` is seven — because a leading zero is a
+## way of writing a number and not a different number. An empty string, a bare `"-"`, a space and a
+## `"1_000"` are all `NotANumber`: this is a reader for a canonical form, and `docs/46` §46.2's rule
+## is that a parser raises rather than guessing.
+def big_of_str(text: Str) -> Big uses raises(BigError):
+    if str_starts_with(text, "-"):
+        return negate_big(unsigned_of_str(str_slice(text, 1, str_len(text)), text))
+    return unsigned_of_str(text, text)
+
+def unsigned_of_str(digits: Str, whole: Str) -> Big uses raises(BigError):
+    if str_is_empty(digits):
+        raise NotANumber(text=whole)
+    return normalise(false, group_from(digits, str_len(digits), [], whole))
+
+## Four characters at a time from the *right*, which is where a limb boundary is.
+def group_from(
+    digits: Str, at: Int, done: list[Int], whole: Str
+) -> list[Int] uses raises(BigError):
+    if at <= 0:
+        return done
+    start = at - limb_digits() if at > limb_digits() else 0
+    # `str_slice`'s third argument is a **count**, not an end index. Every other call site in the
+    # tree passes a start of zero or a count that clamps, so the two readings agree there and this
+    # is the first caller where they do not — `docs/55` §55.5.
+    group = str_slice(digits, start, at - start)
+    match str_to_int(group):
+        case None:
+            raise NotANumber(text=whole)
+        case Some(value):
+            if value < 0:
+                raise NotANumber(text=whole)
+            return group_from(digits, start, list_append(done, value), whole)
+
+# ---------------------------------------------------------------------------------------------
+# The library's own tests, in the language (`docs/21` §21.2)
+#
+# The constants below are *outside* oracles wherever one exists: 20! is a number that fits an `Int`
+# so the `Int` arithmetic checks it, and the larger factorials and powers were computed by Python's
+# own arbitrary-precision integers rather than by this file. The `property` blocks are the stronger
+# half, because they check this implementation against the one the language already has: for every
+# pair of `Int`s the generator produces, `big` arithmetic and `Int` arithmetic agree.
+# ---------------------------------------------------------------------------------------------
+
+test "a big renders as the number it is, and reads back":
+    expect render_big(zero()) == "0"
+    expect render_big(big(1)) == "1"
+    expect render_big(big(-1)) == "-1"
+    expect render_big(big(10000)) == "10000"
+    expect render_big(big(100000001)) == "100000001"
+    expect (try: render_big(big_of_str("1267650600228229401496703205376"))) == Ok(value="1267650600228229401496703205376")
+    expect (try: render_big(big_of_str("0000000123"))) == Ok(value="123")
+    expect (try: render_big(big_of_str("-0"))) == Ok(value="0")
+
+test "and text that is not a number says so":
+    expect (try: big_of_str("")) == Err(error=NotANumber(text=""))
+    expect (try: big_of_str("-")) == Err(error=NotANumber(text="-"))
+    expect (try: big_of_str("12 34")) == Err(error=NotANumber(text="12 34"))
+    expect (try: big_of_str("twelve")) == Err(error=NotANumber(text="twelve"))
+    expect (try: big_of_str("1_000")) == Err(error=NotANumber(text="1_000"))
+
+## `+`, `-` and `*` are **pure** — only division, the exponent and the reader can fail — so no `try:`
+## appears on a line that only adds. That is `docs/47`'s per-impl row doing exactly what it is for,
+## and the checker refuses a `try:` over an expression that cannot fail, so this is not a style
+## choice: it is checked.
+test "zero has one representation, whichever way it is reached":
+    expect negate_big(zero()) == zero()
+    expect big(5) - big(5) == zero()
+    expect big(-3) * zero() == zero()
+    expect big(0) == zero()
+
+test "addition and subtraction cross zero the way integers do":
+    expect render_big(big(7) + big(-9)) == "-2"
+    expect render_big(big(-7) + big(9)) == "2"
+    expect render_big(big(-7) - big(9)) == "-16"
+    expect render_big(big(9999) + big(1)) == "10000"
+    expect render_big(big(10000) - big(1)) == "9999"
+
+## 20! is the largest factorial an `Int` holds, so this one is checked against the language's own
+## arithmetic rather than against a constant somebody typed.
+test "20! is what Int arithmetic says it is":
+    expect big_to_int(factorial(20)) == Some(value=2432902008176640000)
+
+test "and the factorials past it are what arbitrary precision says":
+    expect render_big(factorial(25)) == "15511210043330985984000000"
+    expect render_big(factorial(30)) == "265252859812191058636308480000000"
+
+test "powers of two, past every width a machine has":
+    expect (try: render_big(big_pow(big(2), 64))) == Ok(value="18446744073709551616")
+    expect (try: render_big(big_pow(big(2), 100))) == Ok(value="1267650600228229401496703205376")
+    expect (try: render_big(big_pow(big(2), 128))) == Ok(value="340282366920938463463374607431768211456")
+    expect (try: render_big(big_pow(big(2), 0))) == Ok(value="1")
+    expect (try: big_pow(big(2), -1)) == Err(error=NegativeExponent(exponent=-1))
+
+test "a product of two numbers neither of which is an Int":
+    expect (try: render_big(
+        big_of_str("123456789012345678901234567890") * big_of_str("98765432109876543210")
+    )) == Ok(value="12193263113702179522496570642237463801111263526900")
+
+test "division is long division, and it truncates toward zero":
+    expect (try: render_big(big_pow(big(2), 128) / big_pow(big(10), 20))) == Ok(value="3402823669209384634")
+    expect (try: render_big(big_rem(big_pow(big(2), 128), big_pow(big(10), 20)))) == Ok(value="63374607431768211456")
+    expect (try: render_big(big(-7) / big(2))) == Ok(value="-3")
+    expect (try: render_big(big_rem(big(-7), big(2)))) == Ok(value="-1")
+    expect (try: render_big(big(7) / big(-2))) == Ok(value="-3")
+    expect (try: big(1) / zero()) == Err(error=DividedByZero)
+
+test "the small division is the same division, without the failure":
+    expect divide_small(big(12345), 10).quotient == big(1234)
+    expect divide_small(big(12345), 10).remainder == big(5)
+    expect divide_small(big(-12345), 10).quotient == big(-1234)
+    expect divide_small(big(-12345), 10).remainder == big(-5)
+    expect (try: divide(big(-12345), big(10))) == Ok(value=divide_small(big(-12345), 10))
+
+test "narrowing to an Int answers, or says it cannot":
+    expect big_to_int(big(0)) == Some(value=0)
+    expect big_to_int(big(9223372036854775807)) == Some(value=9223372036854775807)
+    expect big_to_int(big(9223372036854775807) + big(1)) == None
+    # The most negative `Int` has no *literal* — `9223372036854775808` is not an `Int`, so the text
+    # of it is not a token — and it round-trips anyway, which is the asymmetry `big` and
+    # `to_int_from` are both written for. Both sides of this line reach it by arithmetic.
+    expect big_to_int(negate_big(big(9223372036854775807) + big(1))) == Some(value=negate(9223372036854775807) - 1)
+    expect big_to_int(negate_big(big(9223372036854775807) + big(2))) == None
+
+test "widening to a real is lossy, and says so by being a different function":
+    expect big_to_real(big(1)) == 1.0
+    expect big_to_real(big(-100000000)) == -100000000.0
+    expect (try: big_to_real(big_pow(big(10), 30))) == Ok(value=1e30)
+
+test "ordering is by value, not by the order the fields happen to be in":
+    expect compare_big(big(-5), big(3)) == -1
+    expect compare_big(big(3), big(-5)) == 1
+    expect compare_big(big(-5), big(-3)) == -1
+    expect compare_big(big(0), zero()) == 0
+    expect less_than(big(-1), big(0))
+    expect greater_than(big(100000000), big(99999999))
+
+## The strongest test in the file, and the cheapest: for whatever pair the generator produces, this
+## implementation and the language's own `Int` arithmetic agree. It checks the carries, the borrows
+## and the sign rules on inputs nobody chose. The operands are reduced first so that the `Int` side
+## of the comparison cannot be the thing that overflows.
+property "big arithmetic agrees with Int arithmetic wherever both are defined"(a: Int, b: Int):
+    expect big_to_int(big(a % 1000000000) + big(b % 1000000000)) == Some(value=a % 1000000000 + b % 1000000000)
+    expect big_to_int(big(a % 1000000000) - big(b % 1000000000)) == Some(value=a % 1000000000 - b % 1000000000)
+    expect big_to_int(big(a % 1000000) * big(b % 1000000)) == Some(value=a % 1000000 * b % 1000000)
+
+property "division and remainder reassemble the dividend"(a: Int, b: Int):
+    expect (try: reassembled(big(a % 1000000000), big(abs(b % 1000000) + 1))) == Ok(value=big(a % 1000000000))
+
+def reassembled(a: Big, b: Big) -> Big uses raises(BigError):
+    split = divide(a, b)
+    return split.quotient * b + split.remainder
+
+property "an Int round-trips through a Big"(n: Int):
+    expect big_to_int(big(n)) == Some(value=n)
+    expect render_big(big(n)) == str(n)
+
+def factorial(n: Int) -> Big:
+    return factorial_from(n, one())
+
+def factorial_from(n: Int, acc: Big) -> Big:
+    if n <= 1:
+        return acc
+    return factorial_from(n - 1, acc * big(n))

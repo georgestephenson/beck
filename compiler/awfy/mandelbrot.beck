@@ -1,0 +1,100 @@
+# Are We Fast Yet — Mandelbrot.
+#
+# The Computer Language Benchmarks Game's mandelbrot, as Are We Fast Yet carries it: escape-time
+# over a square of the complex plane, with the escape bits packed eight to a byte and the bytes
+# folded together with exclusive-or. The checksum is the answer, so the packing is not incidental —
+# a port that counted escapes instead would be a different benchmark with a different number.
+#
+# **Beck has no bitwise operators.** `<<` and `^` are written here as arithmetic, which is exact for
+# the values involved and is the largest gap between the original and its port anywhere in this
+# directory. `docs/53` §53.5 records it as a finding rather than a workaround: every language in Are
+# We Fast Yet's common subset has these, and a benchmark suite is a reasonable place to find out
+# that yours does not.
+#
+# It is also the file that needs `float(…)`. The original writes `2.0 * y / size`, mixing an `int`
+# with a `double` and letting the promotion happen; Beck refuses that by design (`docs/41`), so the
+# conversion is written.
+#
+# Are We Fast Yet's `verifyResult` publishes three values: 191 at size 500, 50 at 750 and 128 at 1.
+# The last is the one this file asserts by default, and `awfy/README.md` says which of the others
+# the release measurement reaches.
+
+## The escape bits of one row, packed into bytes and folded into the running checksum.
+model Packed:
+    sum: Int
+    byte_acc: Int
+    bit_num: Int
+
+## `n << by`, for a `by` of 0..8 on a byte. Doubling, because that is what a left shift is.
+def shifted_left(n: Int, by: Int) -> Int:
+    if by <= 0:
+        return n
+    return shifted_left(n * 2, by - 1)
+
+## `a ^ b`, bit by bit from the bottom.
+##
+## Both operands are bytes here, so this is eight steps and not a general integer routine — a
+## negative operand would not terminate, and there are none.
+def xor_of(a: Int, b: Int) -> Int:
+    return xor_from(a, b, 1, 0)
+
+def xor_from(a: Int, b: Int, weight: Int, acc: Int) -> Int:
+    if a == 0 and b == 0:
+        return acc
+    return xor_from(a / 2, b / 2, weight * 2, acc + weight * ((a % 2 + b % 2) % 2))
+
+## Does `c` escape within fifty iterations? 1 if it does, 0 if it does not.
+##
+## The original preserves `zrzr` and `zizi` across the loop rather than recomputing them, and so
+## does this: the squares are the loop's state, not a convenience, and rewriting them as
+# `zr * zr` at the test would change how many multiplications the benchmark performs.
+def escapes(zrzr: Float, zi: Float, zizi: Float, cr: Float, ci: Float, z: Int) -> Int:
+    if z >= 50:
+        return 0
+    zr = zrzr - zizi + cr
+    next_zi = 2.0 * zr * zi + ci
+    next_zrzr = zr * zr
+    next_zizi = next_zi * next_zi
+    if next_zrzr + next_zizi > 4.0:
+        return 1
+    return escapes(next_zrzr, next_zi, next_zizi, cr, ci, z + 1)
+
+def rows(y: Int, size: Int, packed: Packed) -> Packed:
+    if y >= size:
+        return packed
+    ci = 2.0 * float(y) / float(size) - 1.0
+    return rows(y + 1, size, columns(0, size, ci, packed))
+
+def columns(x: Int, size: Int, ci: Float, packed: Packed) -> Packed:
+    if x >= size:
+        return packed
+    cr = 2.0 * float(x) / float(size) - 1.5
+    return columns(x + 1, size, ci, absorb(x, size, packed, escapes(0.0, 0.0, 0.0, cr, ci, 0)))
+
+## One escape bit into the byte, and the byte into the checksum when it is full — or when the row
+## ends, which is the original's second case and the reason a row of 1 pixel checksums to 128.
+def absorb(x: Int, size: Int, packed: Packed, escape: Int) -> Packed:
+    acc = packed.byte_acc * 2 + escape
+    bit_num = packed.bit_num + 1
+    if bit_num == 8:
+        return Packed(sum=xor_of(packed.sum, acc), byte_acc=0, bit_num=0)
+    if x == size - 1:
+        return Packed(sum=xor_of(packed.sum, shifted_left(acc, 8 - bit_num)), byte_acc=0, bit_num=0)
+    return Packed(sum=packed.sum, byte_acc=acc, bit_num=bit_num)
+
+## The benchmark: the checksum of a `size` × `size` image.
+def benchmark(size: Int) -> Int:
+    return rows(0, size, Packed(sum=0, byte_acc=0, bit_num=0)).sum
+
+test "mandelbrot: the one-pixel image checksums to 128":
+    expect benchmark(1) == 128
+
+## The two helpers are arithmetic standing in for operators the language does not have, so they are
+## checked against what the operators mean rather than only through the benchmark that uses them.
+test "the hand-written shift and exclusive-or are the operators they replace":
+    expect shifted_left(1, 7) == 128
+    expect shifted_left(5, 0) == 5
+    expect xor_of(0, 0) == 0
+    expect xor_of(255, 255) == 0
+    expect xor_of(170, 85) == 255
+    expect xor_of(191, 50) == 141

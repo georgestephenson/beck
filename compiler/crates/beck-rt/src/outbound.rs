@@ -2,7 +2,7 @@
 //!
 //! The seam is in `beck-core` because the evaluator needs it and the evaluator must not know what
 //! a socket is. The implementation is here because this is the crate that already has an HTTP
-//! stack — [`docs/07`](../../../../docs/07-dependencies.md) chose hyper, and the server half of it
+//! stack — [`docs/07`](../../../../../docs/07-dependencies.md) chose hyper, and the server half of it
 //! has been in [`crate::http`] since Phase 1. Nothing new was taken to make a request.
 //!
 //! # Plaintext, and saying so
@@ -11,7 +11,7 @@
 //! dependency decision rather than a line here, and until it is taken an outbound call is
 //! confidential only if the network under it is.
 //! `beck-cli/tests/pending_security.rs` asserts the absence, so the day rustls arrives a test goes
-//! red and [`docs/43`](../../../../docs/43-threat-model.md) has to be corrected in the same change.
+//! red and [`docs/43`](../../../../../docs/43-threat-model.md) has to be corrected in the same change.
 //!
 //! # Its own runtime
 //!

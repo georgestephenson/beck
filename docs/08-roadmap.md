@@ -603,12 +603,18 @@ the item where §3.5 met the first operation that *has* to declassify a secret, 
 authentication code exists to be given to whoever must not learn the key;
 [`adr/0014`](adr/0014-a-keyed-digest-is-the-one-declassifier.md) is the decision, and it is one
 function behind `cap.sign` with a test that enumerates the prelude and keeps the count at one.
-**Untouched**: arbitrary-precision decimal, bignums and
-numeric coercion. §46.6 has the item-by-item list, §49.6 the client's own, §50.6 the two newest
+**Bignums and numeric coercion** are built too
+([`55`](55-bignums-report.md)) — in Beck rather than as a primitive, which is the first time
+[`lib/README.md`](../compiler/lib/README.md)'s division cost the refusal of a good crate — so
+**arbitrary-precision decimal** is built too ([`56`](56-decimal-report.md)) — canonical, with `/`
+exact or refusing — so **§8.5.4's Wave 2 is finished** and what is left on this bullet is the
+benchmark harness. §46.6 has the item-by-item list, §49.6 the client's own, §50.6 the two newest
 files' and §52.6 the crypto half's — including what a digest deliberately is not: no asymmetric
-signature, no TLS, no encryption of any kind. The Are We Fast Yet and CLBG harnesses are **not** stood up, and §8.4 asks for them
-alongside this bullet — that is now the largest thing still owed here, and the item that has been
-owed longest.
+signature, no TLS, no encryption of any kind. The **Are We Fast Yet harness is stood up for nine of
+its fourteen benchmarks** ([`53`](53-are-we-fast-yet-report.md)), each verified against the constant
+the original suite's own `verifyResult` checks, with wall-clock printed and nothing compared to
+anything — §8.4's ask, half discharged. Its five macro-benchmarks and the whole **CLBG** harness are
+not stood up, and that is what is left of the item that has been owed longest.
 
 *It found a wall too, in the same way and one wave later: **a credential could not be sent**, because
 §3.5 gives a program no way to read a `secret[Str]` and a header value is a `Str` (§49.4). It had

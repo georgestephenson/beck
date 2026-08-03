@@ -1,6 +1,6 @@
 //! Tokens, and the layout algorithm that turns indentation into `INDENT`/`DEDENT`.
 //!
-//! [`docs/02-syntax.md`](../../../../docs/02-syntax.md) §2.8: "`logos` for tokens; a hand-written
+//! [`docs/02-syntax.md`](../../../../../docs/02-syntax.md) §2.8: "`logos` for tokens; a hand-written
 //! layout algorithm producing explicit `INDENT`/`DEDENT`/`NEWLINE` tokens (Python's approach), with
 //! brackets suppressing layout so multi-line calls work."
 //!
@@ -29,7 +29,13 @@ pub enum Raw {
     #[regex(r":[A-Za-z_][A-Za-z0-9_\-]*", |lex| lex.slice()[1..].to_string())]
     Keyword(String),
 
-    #[regex(r"[0-9][0-9_]*\.[0-9][0-9_]*", |lex| lex.slice().replace('_', "").parse::<f64>().ok())]
+    // A digit is required on both sides of the point, and the exponent is optional. `1e6` — an
+    // exponent with no point — is a float too: a literal whose value is not representable as an
+    // `Int` must not lex as one, and the notation is how every table of physical constants is
+    // written. Longest-match puts this ahead of `Int` for `1e6`, and `1.e6` is not a float in any
+    // of the languages that have this notation, so it is not one here.
+    #[regex(r"[0-9][0-9_]*\.[0-9][0-9_]*([eE][+-]?[0-9]+)?", float)]
+    #[regex(r"[0-9][0-9_]*[eE][+-]?[0-9]+", float)]
     Float(f64),
 
     #[regex(r"[0-9][0-9_]*", |lex| lex.slice().replace('_', "").parse::<i64>().ok())]
@@ -94,6 +100,15 @@ pub enum Raw {
     Pipe,
     #[token("?")]
     Question,
+}
+
+/// A float literal's value, with the digit separators dropped.
+///
+/// `parse::<f64>` is the correctly-rounded reading of a decimal string, so `1.5e-3` and `0.0015`
+/// give the same `f64` — which is what lets a table of constants be transcribed in the notation it
+/// was published in rather than rewritten.
+fn float(lex: &mut logos::Lexer<Raw>) -> Option<f64> {
+    lex.slice().replace('_', "").parse::<f64>().ok()
 }
 
 fn unescape(raw: &str) -> Option<String> {
