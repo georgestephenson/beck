@@ -43,8 +43,9 @@ Write the commit message as the author of the change: what changed, and why.
   [`56`](docs/56-decimal-report.md),
   [`57`](docs/57-richards-report.md),
   [`58`](docs/58-json-report.md),
-  [`59`](docs/59-havlak-report.md) and
-  [`60`](docs/60-collision-detection-report.md),
+  [`59`](docs/59-havlak-report.md),
+  [`60`](docs/60-collision-detection-report.md) and
+  [`61`](docs/61-deltablue-report.md),
   indexed in
   [`docs/README.md`](docs/README.md) — record what each
   phase does, what it refuses to claim, and the corrections it makes to the design documents.
@@ -55,9 +56,11 @@ Write the commit message as the author of the change: what changed, and why.
   its HTTP client (docs/49), its collections and its calendar (docs/50), its digests and its
   identifiers (docs/52), its bignums and its coercions (docs/55) and its decimal (docs/56), which
   closes docs/08 §8.5.4's Wave 2 —
-  and two walls of its own (docs/46, docs/49); thirteen of Are We Fast Yet's fourteen benchmarks —
-  its nine micro and four of its five macro (docs/53, docs/57, docs/58, docs/59, docs/60) — are
-  that bullet's long-owed harness half, which is all it has left, and only DeltaBlue is undone; the incremental-views bullet has its engine and
+  and two walls of its own (docs/46, docs/49); **all fourteen** of Are We Fast Yet's benchmarks —
+  its nine micro and all five macro (docs/53, docs/57, docs/58, docs/59, docs/60, docs/61) — are
+  that bullet's long-owed harness half, so **the standard-library bullet is done**, with CLBG, the
+  compile-speed budgets and the Felleisen table outstanding under docs/25 §25.9 rather than under
+  it; the incremental-views bullet has its engine and
   that engine's lifecycle (docs/51) but not its read models, pgwire
   or fusion; the expressiveness suite runs two chapters of SICP. Seven of the fourteen are
   untouched — identity has its seam but not its OIDC relying party (docs/48) — and docs/26 §26.9
@@ -92,7 +95,10 @@ Write the commit message as the author of the change: what changed, and why.
   has no oracle for its workload, so a loop that ran once instead of fifty times passed every
   verification the suite publishes. docs/60 §60.2 is the third time the suite found something the
   *language* was missing, after docs/53's short-circuiting and its bitwise operators: `sin`, `cos`
-  and a real-to-integer truncation did not exist, and now do.
+  and a real-to-integer truncation did not exist, and now do. Three of the fourteen cannot run at
+  the size the suite measures at because the evaluator's 50,000,000-step fuel budget refuses them
+  (docs/59 §59.3, docs/61 §61.3), which makes a `--fuel` on `beck test` a missing feature rather
+  than three incidents.
   Reports are history: a later phase's correction to an earlier one goes in the later report, not
   into the earlier text.
 - [`docs/reference/`](docs/reference/README.md) is **generated** by `beck doc reference` from the
@@ -117,9 +123,10 @@ Write the commit message as the author of the change: what changed, and why.
   Beck expresses SICP. `sicp/refusals/README.md` holds that distinction and says what puts a file
   back.
 - [`compiler/awfy/`](compiler/awfy/README.md) is the performance benchmark
-  ([`docs/25`](docs/25-benchmarks-and-expressiveness.md) §25.2): thirteen of Are We Fast Yet's
-  fourteen benchmarks — all nine micro, Richards, Json, Havlak and CD — ported, each verified
-  against the constant the original's own `verifyResult` checks.
+  ([`docs/25`](docs/25-benchmarks-and-expressiveness.md) §25.2): **all fourteen** of Are We Fast
+  Yet's benchmarks — its nine micro and all five macro — ported, each verified against the constant
+  the original's own `verifyResult` checks, except DeltaBlue, which publishes none and whose oracle
+  is the six assertions inside its own planner.
   Those constants are **somebody else's** and were read out of the MIT-licensed source, so a number
   invented here would defeat the whole point; `beck-cli/tests/awfy.rs` gates the directory, the nine
   names and the attribution, and `measure_awfy.rs` prints wall-clock and gates on nothing —

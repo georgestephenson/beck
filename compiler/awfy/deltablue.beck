@@ -1,0 +1,903 @@
+# Are We Fast Yet — DeltaBlue.
+#
+# The fifth and last macro-benchmark. An incremental constraint solver: variables are linked by
+# constraints of differing strengths, and when one is added, removed or edited the planner works out
+# which constraints can be satisfied and in what order, then executes that plan.
+#
+# It is the hardest of the five to port and the reason is one line of `docs/58` §58.5:
+#
+# > variables point at constraints and constraints back at variables, both mutated during planning
+#
+# That is a **cyclic** object graph, and it is the data structure rather than an artefact of it.
+# `docs/57` §57.2's answer applies — two arenas, `Map[Int, Variable]` and `Map[Int, Constraint]`,
+# with integer handles — and the cycle becomes two maps that refer to each other by name, which is
+# what a cycle is once you stop being able to follow a pointer.
+#
+# **It is also the only benchmark in the suite that verifies against nothing.** `DeltaBlue.java`'s
+# `innerBenchmarkLoop` runs `chainTest` and `projectionTest` and returns `true`; the oracle is the
+# `throw new RuntimeException` inside the planner. So a port that dropped an assertion would pass
+# while solving nothing, and every one of the six is kept — as a `raise`, which is `docs/45`'s row
+# label and makes "this did not throw" a thing a `test` block can say.
+#
+# The size is the caller's, and §61.3 says why: the suite publishes no verification value, and its
+# *measurement* configuration is 12,000, which is out of reach.
+
+# ---------------------------------------------------------------------------------------------
+# Strengths
+#
+# `Strength` is a symbol and a table lookup in the original, and the only thing anybody ever asks of
+# a `Strength` is its arithmetic value. So a strength is that number here, and `stronger` is `<`.
+# ---------------------------------------------------------------------------------------------
+
+def required() -> Int:
+    return -800
+
+def strong_preferred() -> Int:
+    return -600
+
+def preferred() -> Int:
+    return -400
+
+def strong_default() -> Int:
+    return -200
+
+def default_strength() -> Int:
+    return 0
+
+def absolute_weakest() -> Int:
+    return 10000
+
+def stronger(a: Int, b: Int) -> Bool:
+    return a < b
+
+def weakest(a: Int, b: Int) -> Int:
+    return a if a > b else b
+
+# ---------------------------------------------------------------------------------------------
+# The graph
+# ---------------------------------------------------------------------------------------------
+
+def nothing() -> Int:
+    return -1
+
+def forward() -> Int:
+    return 1
+
+def backward() -> Int:
+    return 2
+
+def unsatisfied_direction() -> Int:
+    return 0
+
+model Variable:
+    value: Int
+    ## The constraints that mention me, by handle. The other half of the cycle.
+    constraints: list[Int]
+    determined_by: Int
+    mark: Int
+    walk_strength: Int
+    stay: Bool
+
+union Kind:
+    ## `v1` and `v2`, equal.
+    Equality
+    ## `v2 = v1 * scale + offset`, and back the other way.
+    Scale(scale: Int, offset: Int)
+    ## A unary constraint that is an *input*, so it never counts as known.
+    Edit
+    ## A unary constraint that pins its variable.
+    Stay
+
+model Constraint:
+    kind: Kind
+    strength: Int
+    ## For a unary constraint `v1` is the output and `v2` is nothing.
+    v1: Int
+    v2: Int
+    direction: Int
+    ## Unary constraints carry a flag where binary ones carry a direction.
+    satisfied: Bool
+
+model World:
+    vars: Map[Int, Variable]
+    cons: Map[Int, Constraint]
+    next_var: Int
+    next_con: Int
+    current_mark: Int
+
+union PlanError:
+    ## The original's `throw new RuntimeException("Cycle encountered")`.
+    CycleEncountered
+    CouldNotSatisfyRequired
+    ## The four assertions in `chainTest` and `projectionTest`, which are the only oracle this
+    ## benchmark has.
+    ChainTestFailed(step: Int, got: Int)
+    ProjectionTestFailed(which: Int, got: Int)
+
+def empty_world() -> World:
+    return World(vars={}, cons={}, next_var=0, next_con=0, current_mark=1)
+
+def var_at(w: World, i: Int) -> Variable:
+    return unwrap_or(
+        map_get(w.vars, i),
+        Variable(
+            value=0,
+            constraints=[],
+            determined_by=nothing(),
+            mark=0,
+            walk_strength=absolute_weakest(),
+            stay=true,
+        ),
+    )
+
+def con_at(w: World, i: Int) -> Constraint:
+    return unwrap_or(
+        map_get(w.cons, i),
+        Constraint(
+            kind=Stay,
+            strength=absolute_weakest(),
+            v1=nothing(),
+            v2=nothing(),
+            direction=unsatisfied_direction(),
+            satisfied=false,
+        ),
+    )
+
+def with_var(w: World, i: Int, v: Variable) -> World:
+    return World(
+        vars=map_insert(w.vars, i, v),
+        cons=w.cons,
+        next_var=w.next_var,
+        next_con=w.next_con,
+        current_mark=w.current_mark,
+    )
+
+def with_con(w: World, i: Int, c: Constraint) -> World:
+    return World(
+        vars=w.vars,
+        cons=map_insert(w.cons, i, c),
+        next_var=w.next_var,
+        next_con=w.next_con,
+        current_mark=w.current_mark,
+    )
+
+def with_mark(w: World, mark: Int) -> World:
+    return World(
+        vars=w.vars,
+        cons=w.cons,
+        next_var=w.next_var,
+        next_con=w.next_con,
+        current_mark=mark,
+    )
+
+model Made:
+    world: World
+    handle: Int
+
+def new_variable(w: World, value: Int) -> Made:
+    i = w.next_var
+    return Made(
+        world=World(
+            vars=map_insert(
+                w.vars,
+                i,
+                Variable(
+                    value=value,
+                    constraints=[],
+                    determined_by=nothing(),
+                    mark=0,
+                    walk_strength=absolute_weakest(),
+                    stay=true,
+                ),
+            ),
+            cons=w.cons,
+            next_var=i + 1,
+            next_con=w.next_con,
+            current_mark=w.current_mark,
+        ),
+        handle=i,
+    )
+
+def set_value(w: World, i: Int, value: Int) -> World:
+    was = var_at(w, i)
+    return with_var(
+        w,
+        i,
+        Variable(
+            value=value,
+            constraints=was.constraints,
+            determined_by=was.determined_by,
+            mark=was.mark,
+            walk_strength=was.walk_strength,
+            stay=was.stay,
+        ),
+    )
+
+def set_mark(w: World, i: Int, mark: Int) -> World:
+    was = var_at(w, i)
+    return with_var(
+        w,
+        i,
+        Variable(
+            value=was.value,
+            constraints=was.constraints,
+            determined_by=was.determined_by,
+            mark=mark,
+            walk_strength=was.walk_strength,
+            stay=was.stay,
+        ),
+    )
+
+def set_determined_by(w: World, i: Int, c: Int) -> World:
+    was = var_at(w, i)
+    return with_var(
+        w,
+        i,
+        Variable(
+            value=was.value,
+            constraints=was.constraints,
+            determined_by=c,
+            mark=was.mark,
+            walk_strength=was.walk_strength,
+            stay=was.stay,
+        ),
+    )
+
+def set_walk_strength(w: World, i: Int, strength: Int) -> World:
+    was = var_at(w, i)
+    return with_var(
+        w,
+        i,
+        Variable(
+            value=was.value,
+            constraints=was.constraints,
+            determined_by=was.determined_by,
+            mark=was.mark,
+            walk_strength=strength,
+            stay=was.stay,
+        ),
+    )
+
+def set_stay(w: World, i: Int, stay: Bool) -> World:
+    was = var_at(w, i)
+    return with_var(
+        w,
+        i,
+        Variable(
+            value=was.value,
+            constraints=was.constraints,
+            determined_by=was.determined_by,
+            mark=was.mark,
+            walk_strength=was.walk_strength,
+            stay=stay,
+        ),
+    )
+
+def add_var_constraint(w: World, i: Int, c: Int) -> World:
+    was = var_at(w, i)
+    return with_var(
+        w,
+        i,
+        Variable(
+            value=was.value,
+            constraints=list_append(was.constraints, c),
+            determined_by=was.determined_by,
+            mark=was.mark,
+            walk_strength=was.walk_strength,
+            stay=was.stay,
+        ),
+    )
+
+## The original's `Variable.removeConstraint`, which also clears `determinedBy` if it was this one.
+def remove_var_constraint(w: World, i: Int, c: Int) -> World:
+    was = var_at(w, i)
+    return with_var(
+        w,
+        i,
+        Variable(
+            value=was.value,
+            constraints=filter_list(was.constraints, lambda other: other != c),
+            determined_by=nothing() if was.determined_by == c else was.determined_by,
+            mark=was.mark,
+            walk_strength=was.walk_strength,
+            stay=was.stay,
+        ),
+    )
+
+def set_direction(w: World, i: Int, direction: Int) -> World:
+    was = con_at(w, i)
+    return with_con(
+        w,
+        i,
+        Constraint(
+            kind=was.kind,
+            strength=was.strength,
+            v1=was.v1,
+            v2=was.v2,
+            direction=direction,
+            satisfied=was.satisfied,
+        ),
+    )
+
+def set_satisfied(w: World, i: Int, satisfied: Bool) -> World:
+    was = con_at(w, i)
+    return with_con(
+        w,
+        i,
+        Constraint(
+            kind=was.kind,
+            strength=was.strength,
+            v1=was.v1,
+            v2=was.v2,
+            direction=was.direction,
+            satisfied=satisfied,
+        ),
+    )
+
+# ---------------------------------------------------------------------------------------------
+# What a constraint is
+# ---------------------------------------------------------------------------------------------
+
+def is_unary(c: Constraint) -> Bool:
+    match c.kind:
+        case Equality:
+            return false
+        case Scale(scale, offset):
+            return false
+        case Edit:
+            return true
+        case Stay:
+            return true
+
+## Only an `EditConstraint` is an input, which is what stops a plan treating it as known.
+def is_input(c: Constraint) -> Bool:
+    match c.kind:
+        case Equality:
+            return false
+        case Scale(scale, offset):
+            return false
+        case Edit:
+            return true
+        case Stay:
+            return false
+
+def is_satisfied(c: Constraint) -> Bool:
+    if is_unary(c):
+        return c.satisfied
+    return c.direction != unsatisfied_direction()
+
+def output_of(c: Constraint) -> Int:
+    if is_unary(c):
+        return c.v1
+    return c.v2 if c.direction == forward() else c.v1
+
+def input_of(c: Constraint) -> Int:
+    return c.v1 if c.direction == forward() else c.v2
+
+def add_to_graph(w: World, i: Int) -> World:
+    c = con_at(w, i)
+    if is_unary(c):
+        return set_satisfied(add_var_constraint(w, c.v1, i), i, false)
+    wired = add_var_constraint(add_var_constraint(w, c.v1, i), c.v2, i)
+    return set_direction(scale_wired(wired, c, i, true), i, unsatisfied_direction())
+
+def remove_from_graph(w: World, i: Int) -> World:
+    c = con_at(w, i)
+    if is_unary(c):
+        return set_satisfied(remove_var_constraint(w, c.v1, i), i, false)
+    unwired = remove_var_constraint(remove_var_constraint(w, c.v1, i), c.v2, i)
+    return set_direction(scale_wired(unwired, c, i, false), i, unsatisfied_direction())
+
+## A `ScaleConstraint` also mentions its scale and its offset, in both directions.
+def scale_wired(w: World, c: Constraint, i: Int, adding: Bool) -> World:
+    match c.kind:
+        case Equality:
+            return w
+        case Scale(scale, offset):
+            if adding:
+                return add_var_constraint(add_var_constraint(w, scale, i), offset, i)
+            return remove_var_constraint(remove_var_constraint(w, scale, i), offset, i)
+        case Edit:
+            return w
+        case Stay:
+            return w
+
+def choose_method(w: World, i: Int, mark: Int) -> World:
+    c = con_at(w, i)
+    if is_unary(c):
+        return set_satisfied(
+            w,
+            i,
+            var_at(w, c.v1).mark != mark and stronger(c.strength, var_at(w, c.v1).walk_strength),
+        )
+    return set_direction(w, i, chosen_direction(w, c, mark))
+
+def chosen_direction(w: World, c: Constraint, mark: Int) -> Int:
+    one = var_at(w, c.v1)
+    two = var_at(w, c.v2)
+    if one.mark == mark:
+        if two.mark != mark and stronger(c.strength, two.walk_strength):
+            return forward()
+        return unsatisfied_direction()
+    if two.mark == mark:
+        if one.mark != mark and stronger(c.strength, one.walk_strength):
+            return backward()
+        return unsatisfied_direction()
+    if one.walk_strength > two.walk_strength:
+        return backward() if stronger(c.strength, one.walk_strength) else unsatisfied_direction()
+    return forward() if stronger(c.strength, two.walk_strength) else unsatisfied_direction()
+
+def execute(w: World, i: Int) -> World:
+    c = con_at(w, i)
+    match c.kind:
+        case Equality:
+            if c.direction == forward():
+                return set_value(w, c.v2, var_at(w, c.v1).value)
+            return set_value(w, c.v1, var_at(w, c.v2).value)
+        case Scale(scale, offset):
+            if c.direction == forward():
+                return set_value(
+                    w, c.v2, var_at(w, c.v1).value * var_at(w, scale).value + var_at(w, offset).value
+                )
+            return set_value(
+                w,
+                c.v1,
+                (var_at(w, c.v2).value - var_at(w, offset).value) / var_at(w, scale).value,
+            )
+        case Edit:
+            return w
+        case Stay:
+            return w
+
+## `inputsDo`, which a `ScaleConstraint` extends to its scale and its offset.
+def mark_inputs(w: World, i: Int, mark: Int) -> World:
+    c = con_at(w, i)
+    if is_unary(c):
+        return w
+    marked = set_mark(w, input_of(c), mark)
+    match c.kind:
+        case Equality:
+            return marked
+        case Scale(scale, offset):
+            return set_mark(set_mark(marked, scale, mark), offset, mark)
+        case Edit:
+            return marked
+        case Stay:
+            return marked
+
+## `inputsKnown`, which is `!inputsHasOne(…)`.
+##
+## `ScaleConstraint` overrides `inputsDo` and **not** `inputsHasOne`, so this asks only about the
+## single binary input and never about the scale or the offset. Transcribed rather than tidied,
+## because tidying it would change which plans are producible.
+def inputs_known(w: World, i: Int, mark: Int) -> Bool:
+    c = con_at(w, i)
+    if is_unary(c):
+        return true
+    v = var_at(w, input_of(c))
+    return v.mark == mark or v.stay or v.determined_by == nothing()
+
+def recalculate(w: World, i: Int) -> World:
+    c = con_at(w, i)
+    if is_unary(c):
+        pinned = set_stay(set_walk_strength(w, c.v1, c.strength), c.v1, not is_input(c))
+        if var_at(pinned, c.v1).stay:
+            return execute(pinned, i)
+        return pinned
+    return recalculate_binary(w, c, i)
+
+def recalculate_binary(w: World, c: Constraint, i: Int) -> World:
+    in_var = input_of(c)
+    out_var = output_of(c)
+    strengthened = set_walk_strength(
+        w, out_var, weakest(c.strength, var_at(w, in_var).walk_strength)
+    )
+    settled = set_stay(strengthened, out_var, stays(strengthened, c, in_var))
+    if var_at(settled, out_var).stay:
+        return execute(settled, i)
+    return settled
+
+def stays(w: World, c: Constraint, in_var: Int) -> Bool:
+    match c.kind:
+        case Equality:
+            return var_at(w, in_var).stay
+        case Scale(scale, offset):
+            return var_at(w, in_var).stay and var_at(w, scale).stay and var_at(w, offset).stay
+        case Edit:
+            return var_at(w, in_var).stay
+        case Stay:
+            return var_at(w, in_var).stay
+
+# ---------------------------------------------------------------------------------------------
+# The planner
+# ---------------------------------------------------------------------------------------------
+
+def new_mark(w: World) -> World:
+    return with_mark(w, w.current_mark + 1)
+
+model Satisfied:
+    world: World
+    overridden: Int
+
+## The original's `satisfy`, and both of its exceptions.
+def satisfy(w: World, i: Int, mark: Int) -> Satisfied uses raises(PlanError):
+    chosen = choose_method(w, i, mark)
+    c = con_at(chosen, i)
+    if not is_satisfied(c):
+        if c.strength == required():
+            raise CouldNotSatisfyRequired
+        return Satisfied(world=chosen, overridden=nothing())
+    marked = mark_inputs(chosen, i, mark)
+    out = output_of(c)
+    overridden = var_at(marked, out).determined_by
+    cleared = set_satisfied_flag(marked, overridden, false)
+    claimed = set_determined_by(cleared, out, i)
+    propagated = add_propagate(claimed, i, mark)
+    if not propagated.ok:
+        raise CycleEncountered
+    return Satisfied(world=set_mark(propagated.world, out, mark), overridden=overridden)
+
+## `markUnsatisfied`, which is a flag on a unary constraint and a direction on a binary one.
+def set_satisfied_flag(w: World, i: Int, satisfied: Bool) -> World:
+    if i == nothing():
+        return w
+    if is_unary(con_at(w, i)):
+        return set_satisfied(w, i, satisfied)
+    return set_direction(w, i, unsatisfied_direction() if not satisfied else con_at(w, i).direction)
+
+def incremental_add(w: World, i: Int) -> World uses raises(PlanError):
+    marked = new_mark(w)
+    return chase(marked, i, marked.current_mark)
+
+def chase(w: World, i: Int, mark: Int) -> World uses raises(PlanError):
+    if i == nothing():
+        return w
+    result = satisfy(w, i, mark)
+    return chase(result.world, result.overridden, mark)
+
+def add_constraint(w: World, i: Int) -> World uses raises(PlanError):
+    return incremental_add(add_to_graph(w, i), i)
+
+def incremental_remove(w: World, i: Int) -> World uses raises(PlanError):
+    out = output_of(con_at(w, i))
+    detached = remove_from_graph(set_satisfied_flag(w, i, false), i)
+    freed = remove_propagate_from(detached, out)
+    return re_add(freed.world, freed.unsatisfied, 0)
+
+def re_add(w: World, unsatisfied: list[Int], i: Int) -> World uses raises(PlanError):
+    if i >= list_len(unsatisfied):
+        return w
+    return re_add(incremental_add(w, unwrap_or(list_get(unsatisfied, i), nothing())), unsatisfied, i + 1)
+
+def destroy_constraint(w: World, i: Int) -> World uses raises(PlanError):
+    if is_satisfied(con_at(w, i)):
+        return remove_from_graph(incremental_remove(w, i), i)
+    return remove_from_graph(w, i)
+
+model Propagated:
+    world: World
+    ok: Bool
+
+## The original's `addPropagate`, which unwinds the constraint it started from if it finds a cycle.
+def add_propagate(w: World, i: Int, mark: Int) -> Propagated uses raises(PlanError):
+    return propagate_todo(w, [i], i, mark)
+
+def propagate_todo(w: World, todo: list[Int], start: Int, mark: Int) -> Propagated uses raises(PlanError):
+    if list_is_empty(todo):
+        return Propagated(world=w, ok=true)
+    d = unwrap_or(list_get(todo, 0), nothing())
+    rest = list_drop(todo, 1)
+    if var_at(w, output_of(con_at(w, d))).mark == mark:
+        return Propagated(world=incremental_remove(w, start), ok=false)
+    recalculated = recalculate(w, d)
+    return propagate_todo(
+        recalculated,
+        consuming(recalculated, output_of(con_at(recalculated, d)), rest),
+        start,
+        mark,
+    )
+
+## `addConstraintsConsumingTo`: every satisfied constraint on `v` except the one that determines it.
+def consuming(w: World, v: Int, coll: list[Int]) -> list[Int]:
+    determining = var_at(w, v).determined_by
+    return concat_lists(
+        [
+            coll,
+            filter_list(
+                var_at(w, v).constraints,
+                lambda c: c != determining and is_satisfied(con_at(w, c)),
+            ),
+        ]
+    )
+
+model Freed:
+    world: World
+    unsatisfied: list[Int]
+
+## The original's `removePropagateFrom`, ending in a sort that puts the strongest first.
+def remove_propagate_from(w: World, out: Int) -> Freed:
+    loosened = set_stay(set_walk_strength(set_determined_by(w, out, nothing()), out, absolute_weakest()), out, true)
+    walked = propagate_removal(Freed(world=loosened, unsatisfied=[]), [out], 0)
+    return Freed(
+        world=walked.world,
+        unsatisfied=sort_by(walked.unsatisfied, lambda c: con_at(walked.world, c).strength),
+    )
+
+def propagate_removal(f: Freed, todo: list[Int], guard: Int) -> Freed:
+    if list_is_empty(todo):
+        return f
+    v = unwrap_or(list_get(todo, 0), nothing())
+    rest = list_drop(todo, 1)
+    broken = concat_lists(
+        [
+            f.unsatisfied,
+            filter_list(var_at(f.world, v).constraints, lambda c: not is_satisfied(con_at(f.world, c))),
+        ]
+    )
+    consumers = filter_list(
+        var_at(f.world, v).constraints,
+        lambda c: c != var_at(f.world, v).determined_by and is_satisfied(con_at(f.world, c)),
+    )
+    stepped = recalculate_all(Freed(world=f.world, unsatisfied=broken), consumers, 0, rest)
+    return propagate_removal(
+        Freed(world=stepped.world, unsatisfied=stepped.unsatisfied), stepped.todo, guard + 1
+    )
+
+model Stepped:
+    world: World
+    unsatisfied: list[Int]
+    todo: list[Int]
+
+def recalculate_all(f: Freed, consumers: list[Int], i: Int, todo: list[Int]) -> Stepped:
+    if i >= list_len(consumers):
+        return Stepped(world=f.world, unsatisfied=f.unsatisfied, todo=todo)
+    c = unwrap_or(list_get(consumers, i), nothing())
+    stepped = recalculate(f.world, c)
+    return recalculate_all(
+        Freed(world=stepped, unsatisfied=f.unsatisfied),
+        consumers,
+        i + 1,
+        list_append(todo, output_of(con_at(stepped, c))),
+    )
+
+## `extractPlanFromConstraints` plus `makePlan`: the satisfied inputs, then everything reachable
+## whose own inputs are known.
+def extract_plan(w: World, sources: list[Int]) -> list[Int]:
+    marked = new_mark(w)
+    return make_plan(marked, filter_list(sources, lambda c: is_input(con_at(marked, c)) and is_satisfied(con_at(marked, c))), [], marked.current_mark).plan
+
+model Planned:
+    world: World
+    plan: list[Int]
+
+def make_plan(w: World, todo: list[Int], plan: list[Int], mark: Int) -> Planned:
+    if list_is_empty(todo):
+        return Planned(world=w, plan=plan)
+    c = unwrap_or(list_get(todo, 0), nothing())
+    rest = list_drop(todo, 1)
+    out = output_of(con_at(w, c))
+    if var_at(w, out).mark == mark or not inputs_known(w, c, mark):
+        return make_plan(w, rest, plan, mark)
+    marked = set_mark(w, out, mark)
+    return make_plan(marked, consuming(marked, out, rest), list_append(plan, c), mark)
+
+def run_plan(w: World, plan: list[Int], i: Int) -> World:
+    if i >= list_len(plan):
+        return w
+    return run_plan(execute(w, unwrap_or(list_get(plan, i), nothing())), plan, i + 1)
+
+# ---------------------------------------------------------------------------------------------
+# Building constraints
+# ---------------------------------------------------------------------------------------------
+
+def new_constraint(w: World, c: Constraint) -> Made uses raises(PlanError):
+    i = w.next_con
+    placed = World(
+        vars=w.vars,
+        cons=map_insert(w.cons, i, c),
+        next_var=w.next_var,
+        next_con=i + 1,
+        current_mark=w.current_mark,
+    )
+    return Made(world=add_constraint(placed, i), handle=i)
+
+def new_equality(w: World, v1: Int, v2: Int, strength: Int) -> Made uses raises(PlanError):
+    return new_constraint(
+        w,
+        Constraint(
+            kind=Equality,
+            strength=strength,
+            v1=v1,
+            v2=v2,
+            direction=unsatisfied_direction(),
+            satisfied=false,
+        ),
+    )
+
+def new_scale(
+    w: World, src: Int, scale: Int, offset: Int, dest: Int, strength: Int
+) -> Made uses raises(PlanError):
+    return new_constraint(
+        w,
+        Constraint(
+            kind=Scale(scale=scale, offset=offset),
+            strength=strength,
+            v1=src,
+            v2=dest,
+            direction=unsatisfied_direction(),
+            satisfied=false,
+        ),
+    )
+
+def new_stay(w: World, v: Int, strength: Int) -> Made uses raises(PlanError):
+    return new_constraint(
+        w,
+        Constraint(
+            kind=Stay,
+            strength=strength,
+            v1=v,
+            v2=nothing(),
+            direction=unsatisfied_direction(),
+            satisfied=false,
+        ),
+    )
+
+def new_edit(w: World, v: Int, strength: Int) -> Made uses raises(PlanError):
+    return new_constraint(
+        w,
+        Constraint(
+            kind=Edit,
+            strength=strength,
+            v1=v,
+            v2=nothing(),
+            direction=unsatisfied_direction(),
+            satisfied=false,
+        ),
+    )
+
+## The original's `Planner.change`: edit a variable ten times through a plan, then drop the edit.
+def change(w: World, v: Int, new_value: Int) -> World uses raises(PlanError):
+    edit = new_edit(w, v, preferred())
+    plan = extract_plan(edit.world, [edit.handle])
+    changed = apply_change(edit.world, v, new_value, plan, 0)
+    return destroy_constraint(changed, edit.handle)
+
+def apply_change(
+    w: World, v: Int, new_value: Int, plan: list[Int], i: Int
+) -> World uses raises(PlanError):
+    if i >= 10:
+        return w
+    return apply_change(run_plan(set_value(w, v, new_value), plan, 0), v, new_value, plan, i + 1)
+
+# ---------------------------------------------------------------------------------------------
+# The two tests, which are this benchmark's only oracle
+# ---------------------------------------------------------------------------------------------
+
+model Chain:
+    world: World
+    vars: list[Int]
+
+## `Planner.chainTest`: a chain of `n` equalities, an edit at one end, and the value has to arrive
+## at the other end a hundred times running.
+def chain_test(n: Int) -> World uses raises(PlanError):
+    built = chain_vars(Chain(world=empty_world(), vars=[]), 0, n + 1)
+    linked = chain_links(built.world, built.vars, 0, n)
+    last = unwrap_or(list_get(built.vars, n), nothing())
+    first = unwrap_or(list_get(built.vars, 0), nothing())
+    stayed = new_stay(linked, last, strong_default())
+    edit = new_edit(stayed.world, first, preferred())
+    plan = extract_plan(edit.world, [edit.handle])
+    driven = drive_chain(edit.world, first, last, plan, 0)
+    return destroy_constraint(driven, edit.handle)
+
+def chain_vars(c: Chain, i: Int, n: Int) -> Chain:
+    if i >= n:
+        return c
+    made = new_variable(c.world, 0)
+    return chain_vars(Chain(world=made.world, vars=list_append(c.vars, made.handle)), i + 1, n)
+
+def chain_links(w: World, vars: list[Int], i: Int, n: Int) -> World uses raises(PlanError):
+    if i >= n:
+        return w
+    made = new_equality(
+        w,
+        unwrap_or(list_get(vars, i), nothing()),
+        unwrap_or(list_get(vars, i + 1), nothing()),
+        required(),
+    )
+    return chain_links(made.world, vars, i + 1, n)
+
+def drive_chain(
+    w: World, first: Int, last: Int, plan: list[Int], i: Int
+) -> World uses raises(PlanError):
+    if i >= 100:
+        return w
+    driven = run_plan(set_value(w, first, i), plan, 0)
+    if var_at(driven, last).value != i:
+        raise ChainTestFailed(step=i, got=var_at(driven, last).value)
+    return drive_chain(driven, first, last, plan, i + 1)
+
+model Projection:
+    world: World
+    dests: list[Int]
+    src: Int
+    dst: Int
+
+## `Planner.projectionTest`: `n` scaled projections sharing one scale and one offset, then four
+## assertions about what changing each of them does.
+def projection_test(n: Int) -> World uses raises(PlanError):
+    scale_made = new_variable(empty_world(), 10)
+    offset_made = new_variable(scale_made.world, 1000)
+    scale = scale_made.handle
+    offset = offset_made.handle
+    built = build_projections(
+        Projection(world=offset_made.world, dests=[], src=nothing(), dst=nothing()),
+        1,
+        n,
+        scale,
+        offset,
+    )
+    first = change(built.world, built.src, 17)
+    if var_at(first, built.dst).value != 1170:
+        raise ProjectionTestFailed(which=1, got=var_at(first, built.dst).value)
+    second = change(first, built.dst, 1050)
+    if var_at(second, built.src).value != 5:
+        raise ProjectionTestFailed(which=2, got=var_at(second, built.src).value)
+    third = change(second, scale, 5)
+    check_dests(third, built.dests, 0, n - 1, 1000, 3)
+    fourth = change(third, offset, 2000)
+    check_dests(fourth, built.dests, 0, n - 1, 2000, 4)
+    return fourth
+
+def build_projections(
+    p: Projection, i: Int, n: Int, scale: Int, offset: Int
+) -> Projection uses raises(PlanError):
+    if i > n:
+        return p
+    src = new_variable(p.world, i)
+    dst = new_variable(src.world, i)
+    stayed = new_stay(dst.world, src.handle, default_strength())
+    scaled = new_scale(stayed.world, src.handle, scale, offset, dst.handle, required())
+    return build_projections(
+        Projection(
+            world=scaled.world,
+            dests=list_append(p.dests, dst.handle),
+            src=src.handle,
+            dst=dst.handle,
+        ),
+        i + 1,
+        n,
+        scale,
+        offset,
+    )
+
+def check_dests(
+    w: World, dests: list[Int], i: Int, n: Int, base: Int, which: Int
+) -> Int uses raises(PlanError):
+    if i >= n:
+        return i
+    got = var_at(w, unwrap_or(list_get(dests, i), nothing())).value
+    if got != (i + 1) * 5 + base:
+        raise ProjectionTestFailed(which=which, got=got)
+    return check_dests(w, dests, i + 1, n, base, which)
+
+## The benchmark. `innerBenchmarkLoop` runs both tests and returns `true`; the assertions inside
+## them are what make that mean anything, so this returns `true` only by not raising.
+def benchmark(n: Int) -> Bool uses raises(PlanError):
+    return ran(chain_test(n)) and ran(projection_test(n))
+
+def ran(w: World) -> Bool:
+    return w.next_var >= 0
+
+test "deltablue: the chain and the projection both solve":
+    expect (try: benchmark(20)) == Ok(value=true)
+
+## The assertions are the oracle, so they are checked to *fire* as well as to pass — a port whose
+## `raise` was unreachable would verify nothing at all, and this benchmark has no other check.
+test "and the assertions the benchmark relies on are reachable":
+    expect (try: check_dests(empty_world(), [0], 0, 1, 1000, 3)) == Err(
+        error=ProjectionTestFailed(which=3, got=0)
+    )
+    expect (try: drive_chain(empty_world(), 0, 1, [], 0)) == Err(
+        error=ChainTestFailed(step=1, got=0)
+    )
