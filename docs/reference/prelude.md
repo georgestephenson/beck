@@ -17,14 +17,17 @@ What a user's type may implement to join something the language already has. `Nu
 | Type | Declaration |
 |---|---|
 | `Envelope` | `model Envelope[T] {seq: Int, at: Int, actor: Str, body: T}` |
+| `Json` | `union Json = JsonNull \| JsonBool(value: Bool) \| JsonNumber(value: Float) \| JsonStr(value: Str) \| JsonList(items: list[Json]) \| JsonObject(fields: Map[Str, Json])` |
+| `JsonError` | `union JsonError = BadJson(why: Str)` |
 | `Option` | `union Option[T] = Some(value: T) \| None` |
 | `Proposal` | `model Proposal {session: Session, command: Command}` |
 | `Result` | `union Result[T, E] = Ok(value: T) \| Err(error: E)` |
 | `Session` | `model Session {actor: Str}` |
+| `TimeError` | `union TimeError = BadTime(why: Str)` |
 
 ## Names
 
-53 of them.
+86 of them.
 
 | Name | Type |
 |---|---|
@@ -55,14 +58,31 @@ What a user's type may implement to join something the language already has. `Nu
 | `html_text` | `(a) -> Html` |
 | `internal_of` | `(a) -> internal[a]` |
 | `is_some` | `(Option[a]) -> Bool` |
+| `json_parse` | `(Str) -> Json ! {raises(JsonError)}` |
+| `json_render` | `(Json) -> Str` |
+| `list_all` | `(list[a], (a) -> Bool ! {e}) -> Bool ! {e}` |
+| `list_any` | `(list[a], (a) -> Bool ! {e}) -> Bool ! {e}` |
+| `list_append` | `(list[a], a) -> list[a]` |
+| `list_contains` | `(list[a], a) -> Bool` |
+| `list_drop` | `(list[a], Int) -> list[a]` |
+| `list_flat_map` | `(list[a], (a) -> list[b] ! {e}) -> list[b] ! {e}` |
+| `list_fold` | `(list[a], b, (b, a) -> b ! {e}) -> b ! {e}` |
+| `list_get` | `(list[a], Int) -> Option[a]` |
+| `list_index_of` | `(list[a], a) -> Option[Int]` |
 | `list_is_empty` | `(list[a]) -> Bool` |
 | `list_len` | `(list[a]) -> Int` |
+| `list_reverse` | `(list[a]) -> list[a]` |
+| `list_slice` | `(list[a], Int, Int) -> list[a]` |
+| `list_take` | `(list[a], Int) -> list[a]` |
+| `list_zip_with` | `(list[a], list[b], (a, b) -> c ! {e}) -> list[c] ! {e}` |
 | `map2` | `((a, b) -> c ! {e}, Signal[a], Signal[b]) -> Signal[c] ! {e}` |
 | `map_contains` | `(Map[a, b], a) -> Bool` |
 | `map_get` | `(Map[a, b], a) -> Option[b]` |
 | `map_insert` | `(Map[a, b], a, b) -> Map[a, b]` |
+| `map_keys` | `(Map[a, b]) -> list[a]` |
 | `map_len` | `(Map[a, b]) -> Int` |
 | `map_list` | `(list[a], (a) -> b ! {e}) -> list[b] ! {e}` |
+| `map_merge` | `(Map[a, b], Map[a, b]) -> Map[a, b]` |
 | `map_remove` | `(Map[a, b], a) -> Map[a, b]` |
 | `map_values` | `(Map[a, b]) -> list[b]` |
 | `merge_clients` | `() -> Stream[Proposal] ! {ingress}` |
@@ -77,8 +97,24 @@ What a user's type may implement to join something the language already has. `Nu
 | `sort_by` | `(list[a], (a) -> b ! {e}) -> list[a] ! {e}` |
 | `sqrt` | `(Float) -> Float` |
 | `str` | `(a) -> Str` |
+| `str_chars` | `(Str) -> list[Str]` |
+| `str_contains` | `(Str, Str) -> Bool` |
+| `str_ends_with` | `(Str, Str) -> Bool` |
+| `str_index_of` | `(Str, Str) -> Option[Int]` |
 | `str_is_empty` | `(Str) -> Bool` |
+| `str_join` | `(list[Str], Str) -> Str` |
+| `str_len` | `(Str) -> Int` |
+| `str_lower` | `(Str) -> Str` |
+| `str_repeat` | `(Str, Int) -> Str` |
+| `str_replace` | `(Str, Str, Str) -> Str` |
+| `str_slice` | `(Str, Int, Int) -> Str` |
+| `str_split` | `(Str, Str) -> list[Str]` |
+| `str_starts_with` | `(Str, Str) -> Bool` |
+| `str_to_int` | `(Str) -> Option[Int]` |
 | `str_trim` | `(Str) -> Str` |
+| `str_upper` | `(Str) -> Str` |
+| `time_format` | `(Int) -> Str` |
+| `time_parse` | `(Str) -> Int ! {raises(TimeError)}` |
 | `unwrap_or` | `(Option[a], a) -> a` |
 | `uuid` | `() -> Str ! {nondet}` |
 

@@ -11,6 +11,7 @@
 //! * macro-generated code carries its **expansion chain**, so a type error inside `derive(Json)`
 //!   says where the derive was written.
 
+pub mod depth;
 pub mod index;
 
 use std::fmt::Write as _;

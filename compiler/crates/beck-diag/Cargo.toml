@@ -5,5 +5,11 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
+# `probe` compiles the stack-address recorder in `depth`, and nothing else. It is a dev-dependency
+# feature of the crates that recurse, so their `the_ceiling_fits_the_declared_stack` tests can
+# *measure* bytes per level instead of quoting a number, and a release build carries none of it.
+[features]
+probe = []
+
 [lints]
 workspace = true

@@ -35,6 +35,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use beck_diag::depth::Nesting;
 use beck_diag::{Diagnostic, Diagnostics, Span};
 use beck_syntax::{sym, Head, Lit, Node, Scope, Symbol};
 
@@ -43,6 +44,11 @@ mod ui;
 pub use ui::expand_ui;
 
 /// How deep a macro may expand before the expander decides it is not going to terminate.
+///
+/// This counts *expansions* — a macro whose output is another call to itself — and nothing else.
+/// Walking into a form's arguments is not an expansion, and counting it here is what used to make
+/// a 65-level-deep expression with no macros in it report that macro expansion had not terminated.
+/// The structural walk is bounded by [`Nesting`] against the ceiling the whole front end shares.
 const MAX_DEPTH: u32 = 64;
 
 #[derive(Clone, Debug)]
@@ -57,6 +63,9 @@ struct MacroDef {
 pub struct Expander<'a> {
     macros: HashMap<Arc<str>, MacroDef>,
     next_scope: u32,
+    /// How deep into the tree this walk is. Separate from the expansion depth above, because they
+    /// bound different things and only one of them means a macro is misbehaving.
+    nesting: Nesting,
     diags: &'a mut Diagnostics,
 }
 
@@ -65,6 +74,7 @@ pub fn expand_module(module: &Node, diags: &mut Diagnostics) -> Node {
     let mut ex = Expander {
         macros: HashMap::new(),
         next_scope: 1,
+        nesting: Nesting::new(),
         diags,
     };
     ex.collect_macros(module);
@@ -151,7 +161,19 @@ impl<'a> Expander<'a> {
             return n.clone();
         }
 
-        let expanded_args: Vec<Node> = n.args.iter().map(|a| self.expand(a, depth + 1)).collect();
+        if !self.nesting.enter() {
+            if self.nesting.should_report() {
+                let note = self.nesting.note();
+                self.diags.push(
+                    Diagnostic::error("B0213", "the form nests too deep to expand", n.span())
+                        .with_primary_label("the expander gave up here")
+                        .with_note(note),
+                );
+            }
+            return n.clone();
+        }
+        let expanded_args: Vec<Node> = n.args.iter().map(|a| self.expand(a, depth)).collect();
+        self.nesting.leave();
         let here = Node {
             head: n.head.clone(),
             args: expanded_args,

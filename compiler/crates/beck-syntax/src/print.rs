@@ -256,6 +256,11 @@ impl Py {
                 let path = self.expr(&n.args[0]);
                 self.line(&format!("import {path}"));
             }
+            Some(sym::ROW) if n.args.len() >= 2 => {
+                let name = self.expr(&n.args[0]);
+                let atoms: Vec<String> = n.args[1..].iter().map(|a| self.expr(a)).collect();
+                self.line(&format!("row {name} = {}", atoms.join(", ")));
+            }
             Some(sym::TEST) => {
                 let name = self.expr(&n.args[0]);
                 self.line(&format!("test {name}:"));
@@ -360,6 +365,12 @@ impl Py {
                 // reproduce it — printing `return ui(do=quote(...))` would not re-parse, because
                 // `quote` is a block form and `;`-joined statements are not surface syntax.
                 // `return quote:` + template — the shape every macro body has (§2.4).
+                // `return try:` + block, for the same reason as the `quote` case below it: the
+                // handler carries an indented body, and `try((do …))` is not surface syntax.
+                Some(e) if e.is_form(sym::TRY) && e.args.len() == 1 => {
+                    self.line("return try:");
+                    self.body(&e.args[0]);
+                }
                 Some(e) if e.is_form(sym::QUOTE) && e.args.len() == 1 => {
                     self.line("return quote:");
                     let body = &e.args[0];
@@ -458,6 +469,13 @@ impl Py {
                 }
                 self.indent -= 1;
             }
+            // `try:` + block. Like `ui:` it carries an indented body, so it prints as one rather
+            // than as a call — `try((do …))` is not surface syntax and would not re-parse.
+            Some(sym::TRY) if n.args.len() == 1 => {
+                self.line("try:");
+                self.body(&n.args[0]);
+            }
+            Some(sym::ROW) => self.item(n),
             Some(sym::DEF | sym::MACRO | sym::MODEL | sym::UNION | sym::TYPE | sym::NEWTYPE)
             | Some(sym::TRAIT | sym::IMPL | sym::IMPORT | sym::DECORATE | sym::TEST)
             | Some(sym::PROPERTY) => self.item(n),
@@ -618,6 +636,7 @@ impl Py {
         let head = n.head_name().unwrap_or("");
         match head {
             "not" if n.args.len() == 1 => format!("not {}", self.expr(&n.args[0])),
+            sym::RAISE if n.args.len() == 1 => format!("raise {}", self.expr(&n.args[0])),
             "negate" if n.args.len() == 1 => format!("-{}", self.expr(&n.args[0])),
             sym::UNQUOTE if n.args.len() == 1 => format!("${}", self.expr(&n.args[0])),
             sym::SPLICE if n.args.len() == 1 => format!("$*{}", self.expr(&n.args[0])),

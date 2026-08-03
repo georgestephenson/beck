@@ -1,0 +1,48 @@
+# JSON and time, over the two primitives each that the host has to provide.
+#
+# `json_parse` is somebody else's grammar and `time_format` is the civil calendar, so both are
+# primitives — but everything a program actually does with a document is composition, and this file
+# is where that starts. It is also where the standard library's *shape* is asserted: both parsers
+# **raise** rather than returning a `Result`, which is what `docs/08` §8.5.3's trap 2 was about.
+# A caller that wants a `Result` writes `try:`; a caller already inside something fallible writes
+# nothing at all, and every function here is one or the other.
+
+## The value at `name` in a JSON object, or `JsonNull` — for a document, not a path.
+##
+## A `Result` at the boundary and a total function inside it: the failure is *parsing*, and once
+## the document is data there is nothing left to fail at. `unwrap_or(map_get(...), JsonNull)` is
+## how a missing key becomes a value rather than a second error type.
+def field_of(doc: Str, name: Str) -> Result[Json, JsonError]:
+    return try:
+        match json_parse(doc):
+            case JsonObject(fields):
+                unwrap_or(map_get(fields, name), JsonNull)
+            case _:
+                JsonNull
+
+def round_trip(doc: Str) -> Result[Str, JsonError]:
+    return try: json_render(json_parse(doc))
+
+test "a document reads as data":
+    expect field_of("{\"a\": 1}", "a") == Ok(value=JsonNumber(value=1.0))
+    expect field_of("{\"a\": 1}", "b") == Ok(value=JsonNull)
+    expect field_of("[1,2]", "a") == Ok(value=JsonNull)
+
+test "a bad document raises, and the try makes it a value":
+    expect round_trip("{oops") == Err(error=BadJson(why="key must be a string at line 1 column 2"))
+
+test "and a good one round-trips":
+    expect round_trip("{\"a\":[1,true,null,\"x\"]}") == Ok(value="{\"a\":[1.0,true,null,\"x\"]}")
+
+test "time is the calendar over the milliseconds now() gives":
+    expect time_format(0) == "1970-01-01T00:00:00.000Z"
+    expect time_format(1700000000000) == "2023-11-14T22:13:20.000Z"
+    expect time_format(-1) == "1969-12-31T23:59:59.999Z"
+
+def when(text: Str) -> Result[Int, TimeError]:
+    return try: time_parse(text)
+
+test "and it reads back":
+    expect when("2023-11-14T22:13:20.000Z") == Ok(value=1700000000000)
+    expect when("2023-11-14T22:13:20Z") == Ok(value=1700000000000)
+    expect when("2023-11-14T22:13:20+01:00") == Err(error=BadTime(why="`2023-11-14T22:13:20+01:00` is not an RFC 3339 instant in UTC"))

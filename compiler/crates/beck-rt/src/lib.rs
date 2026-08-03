@@ -14,6 +14,7 @@ pub mod css;
 pub mod dash;
 pub mod diff;
 pub mod http;
+pub mod identity;
 pub mod log;
 pub mod patch;
 pub mod program;

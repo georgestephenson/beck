@@ -15,6 +15,7 @@
 //!   `(decorate (on server) (def ...))`, so the decorator receives the definition's AST rather
 //!   than a function object.
 
+use beck_diag::depth::Nesting;
 use beck_diag::{Diagnostic, Diagnostics, FileId, Span};
 
 use crate::lexer::{lex, Raw, Tok, Token};
@@ -30,6 +31,10 @@ pub struct Parser<'a> {
     poisoned: bool,
     /// Set by [`Parser::attach_block`] so the statement parser knows the expression is finished.
     attached_block: bool,
+    /// How deep the parser is inside brackets and indentation, against the ceiling every part of
+    /// the front end shares. Unlike the `depth` locals in this file — which are balance counters
+    /// serving error recovery and the layout algorithm — this one is a bound.
+    nesting: Nesting,
     /// Non-zero inside a `test`/`property` body, where `given`, `when`, `expect` and `stub` are
     /// clause keywords. They are *not* reserved anywhere else: a program with a function called
     /// `expect` keeps working, and §21.2's construct does not cost the language four words.
@@ -46,6 +51,7 @@ pub fn parse_module(file: FileId, name: &str, src: &str, diags: &mut Diagnostics
         file,
         poisoned: false,
         attached_block: false,
+        nesting: Nesting::new(),
         in_test: 0,
     };
     let mut items = vec![Node::sym(name, Span::new(file, 0..0))];
@@ -72,6 +78,7 @@ pub fn parse_expr_str(file: FileId, src: &str, diags: &mut Diagnostics) -> Optio
         file,
         poisoned: false,
         attached_block: false,
+        nesting: Nesting::new(),
         in_test: 0,
     };
     p.skip_newlines();
@@ -206,6 +213,27 @@ impl<'a> Parser<'a> {
         let start = self.span();
         if self.at_kw("def") {
             return self.def_item();
+        }
+        // `row Failure = raises(FormError), log` — Koka's community supplies the argument for this
+        // being in the design from the start rather than added when rows get long (`docs/38`
+        // §38.4): five- and six-label rows are ordinary, and a language that makes you write them
+        // out is a language whose signatures nobody reads.
+        if self.at_kw("row") {
+            self.bump();
+            let (name, name_span) = self.ident("a row name")?;
+            self.expect(&Raw::Eq, "`=`");
+            let mut atoms = Vec::new();
+            loop {
+                atoms.push(self.expr()?);
+                if !self.eat(&Raw::Comma) {
+                    break;
+                }
+            }
+            let span = start.to(atoms.last().map(|a| a.span()).unwrap_or(name_span));
+            self.end_of_line();
+            let mut items = vec![Node::sym(name, name_span)];
+            items.extend(atoms);
+            return Some(Node::form(sym::ROW, items, span));
         }
         if self.at_kw("macro") {
             return self.macro_item();
@@ -962,7 +990,39 @@ impl<'a> Parser<'a> {
         false
     }
 
+    /// Descend one level of user-chosen structure, or refuse.
+    ///
+    /// `false` means the ceiling is reached: the caller returns `None` without recursing and
+    /// without leaving, and the parser's ordinary recovery takes it from there. The two callers are
+    /// [`Parser::block`] and [`Parser::primary`] — the two places the parser re-enters itself, one
+    /// per level of indentation and one per level of brackets.
+    fn enter(&mut self) -> bool {
+        if self.nesting.enter() {
+            return true;
+        }
+        if self.nesting.should_report() {
+            let span = self.span();
+            let note = self.nesting.note();
+            self.diags.push(
+                Diagnostic::error("B0121", "nesting is too deep to read", span)
+                    .with_primary_label("the parser gave up here")
+                    .with_note(note),
+            );
+        }
+        self.poisoned = true;
+        false
+    }
+
     fn block(&mut self) -> Option<Node> {
+        if !self.enter() {
+            return None;
+        }
+        let out = self.block_inner();
+        self.nesting.leave();
+        out
+    }
+
+    fn block_inner(&mut self) -> Option<Node> {
         let start = self.span();
         // `f(x): expr` — the single-line form of the block rule (§2.3).
         if !matches!(self.cur().tok, Tok::Newline) {
@@ -1086,6 +1146,7 @@ impl<'a> Parser<'a> {
             file: self.file,
             poisoned: false,
             attached_block: false,
+            nesting: self.nesting.resumed(),
             in_test: self.in_test,
         }
     }
@@ -1562,6 +1623,15 @@ impl<'a> Parser<'a> {
     }
 
     fn primary(&mut self) -> Option<Node> {
+        if !self.enter() {
+            return None;
+        }
+        let out = self.primary_inner();
+        self.nesting.leave();
+        out
+    }
+
+    fn primary_inner(&mut self) -> Option<Node> {
         let span = self.span();
         if self.at_kw("lambda") {
             self.bump();
@@ -1584,6 +1654,22 @@ impl<'a> Parser<'a> {
                 ],
                 span.to(bspan),
             ));
+        }
+        // `raise e` and `try: block` are expressions, not statements: `x = try: f()` is the form
+        // that makes a `Result` out of a failure, and a `raise` in the middle of an expression is
+        // exactly where a fallible branch wants to be.
+        if self.at_kw("raise") {
+            self.bump();
+            let e = self.expr()?;
+            let espan = e.span();
+            return Some(Node::form(sym::RAISE, vec![e], span.to(espan)));
+        }
+        if self.at_kw("try") {
+            self.bump();
+            self.expect(&Raw::Colon, "`:` after `try`");
+            let body = self.block()?;
+            let bspan = body.span();
+            return Some(Node::form(sym::TRY, vec![body], span.to(bspan)));
         }
         if self.at_kw("quote") {
             self.bump();
@@ -2006,6 +2092,105 @@ mod test_clause_tests {
         assert_eq!(
             sx("property \"p\"(events: list[Event]):\n    given events\n"),
             "(property \"p\" (params (: events (list Event))) (do (given events)))"
+        );
+    }
+}
+
+/// The front end's recursion bound, from the outside: what a program past the ceiling gets, and
+/// whether the stack the ceiling is declared to need actually covers it.
+///
+/// `docs/42` §42.2 is what these are about — an ~7.6 KB file that aborted `beck check` in a debug
+/// build, on the 64 MiB stack `adr/0007` declared for a *different* recursive consumer of it.
+#[cfg(test)]
+mod nesting_tests {
+    use super::*;
+    use beck_diag::depth::{MAX_NESTING, STACK_BYTES};
+
+    /// `(((…1…)))`, nested `n` deep, as a whole module.
+    fn nested_parens(n: usize) -> String {
+        format!(
+            "def f() -> Int:\n    return {}1{}\n",
+            "(".repeat(n),
+            ")".repeat(n)
+        )
+    }
+
+    /// On the stack the front end declares it needs — which is the whole contract: the ceiling is
+    /// only a bound if somebody guarantees it is reachable.
+    fn diagnose(src: &str) -> Vec<String> {
+        beck_diag::depth::on_the_front_end_stack(|| {
+            let mut map = beck_diag::SourceMap::new();
+            let f = map.add("deep.beck", src);
+            let mut d = Diagnostics::new();
+            let _ = parse_module(f, "deep", src, &mut d);
+            d.iter().map(|x| x.code.to_string()).collect()
+        })
+    }
+
+    #[test]
+    fn one_level_past_the_ceiling_is_a_diagnostic_rather_than_an_abort() {
+        // Two levels of the ceiling are spent on the module and the `def`'s block before the
+        // expression starts, so "one past" is stated as a wide margin rather than as arithmetic
+        // about the parser's own frames.
+        let codes = diagnose(&nested_parens(MAX_NESTING as usize + 8));
+        assert!(
+            codes.contains(&"B0121".to_string()),
+            "a program past the ceiling should be refused with B0121, got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn the_refusal_is_one_diagnostic_and_not_one_per_level() {
+        let codes = diagnose(&nested_parens(MAX_NESTING as usize + 8));
+        assert_eq!(
+            codes.iter().filter(|c| *c == "B0121").count(),
+            1,
+            "got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn nesting_a_person_would_write_is_still_read() {
+        let mut map = beck_diag::SourceMap::new();
+        let src = nested_parens(64);
+        let f = map.add("ok.beck", &src);
+        let mut d = Diagnostics::new();
+        let _ = parse_module(f, "ok", &src, &mut d);
+        assert!(!d.has_errors(), "{}", d.render(&map));
+    }
+
+    /// The `beck-eval` pair, for the reader: measure what one level costs and hold the declaration
+    /// to it, rather than trusting a number somebody wrote down once.
+    #[test]
+    fn the_ceiling_fits_the_declared_stack() {
+        const PROBE_DEPTH: usize = 200;
+        // Measured on a stack far larger than the one whose adequacy is being concluded, so the
+        // measurement is never the thing that overflows.
+        let spent = std::thread::Builder::new()
+            .stack_size(256 * 1024 * 1024)
+            .spawn(|| {
+                let src = nested_parens(PROBE_DEPTH);
+                beck_diag::depth::probe::stack_spent(|| {
+                    let mut map = beck_diag::SourceMap::new();
+                    let f = map.add("probe.beck", &src);
+                    let mut d = Diagnostics::new();
+                    parse_module(f, "probe", &src, &mut d)
+                })
+            })
+            .expect("a thread")
+            .join()
+            .expect("the probe parses");
+
+        let per_level = spent / PROBE_DEPTH;
+        println!("parser: {spent} bytes for {PROBE_DEPTH} levels ({per_level} per level)");
+        // Twice over, as the evaluator's does: whoever drives the parser has as much stack again
+        // above the ceiling as the ceiling itself needs.
+        let needed = MAX_NESTING as usize * per_level * 2;
+        assert!(
+            needed < STACK_BYTES,
+            "a ceiling of {MAX_NESTING} levels at {per_level} bytes each needs {needed} bytes \
+             with the margin, against a declared STACK_BYTES of {STACK_BYTES} — raise the \
+             declaration or lower the ceiling"
         );
     }
 }

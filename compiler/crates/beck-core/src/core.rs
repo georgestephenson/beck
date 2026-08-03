@@ -63,9 +63,52 @@ pub enum Prim {
     Not,
     ToStr,
     StrTrim,
+    StrToInt,
+    // ---- strings (docs/45 §? — Wave 2's string half). One primitive each, because a string is
+    // where a language's host has to be asked and there is nothing to express in Beck itself.
+    StrLen,
+    StrSlice,
+    StrSplit,
+    StrJoin,
+    StrContains,
+    StrStartsWith,
+    StrEndsWith,
+    StrUpper,
+    StrLower,
+    StrReplace,
+    StrIndexOf,
+    StrRepeat,
+    StrChars,
     StrIsEmpty,
     ListLen,
     ListIsEmpty,
+    // ---- collections
+    ListGet,
+    ListSlice,
+    ListReverse,
+    ListTake,
+    ListDrop,
+    ListContains,
+    ListIndexOf,
+    ListFold,
+    ListAll,
+    ListAny,
+    ListFlatMap,
+    ListZip,
+    ListAppend,
+    MapKeys,
+    MapMerge,
+    // ---- JSON, and the standard library's first fallible function.
+    //
+    // `json_parse` raises rather than returning a `Result`, which is the shape
+    // [`docs/45`](../../../../docs/45-error-rows-report.md) settled and the reason §8.5.3's trap 2
+    // said the library had to wait for it: a caller that wants a `Result` writes `try:`, and a
+    // caller inside something already fallible writes nothing at all.
+    JsonParse,
+    JsonRender,
+    // ---- time. `now()` gives milliseconds; these two are the civil calendar over them.
+    TimeFormat,
+    TimeParse,
     MapList,
     FilterList,
     ConcatLists,
@@ -91,6 +134,19 @@ pub enum Prim {
     Now,
     /// Reads a secret from the process environment, yielding a `secret[Str]` (§3.5).
     SecretEnv,
+    /// `raise e` — fail with a value.
+    ///
+    /// The atom it performs is `raises(T)`, which depends on the *type* of its argument, so the
+    /// checker attaches it where that type is known rather than [`Prim::effects`] declaring it.
+    /// This is the first primitive whose row is not a constant, and it is why that table's doc
+    /// says "the atoms this primitive performs *itself*".
+    Raise,
+    /// `try: block` — run a thunk, and turn a raise of the named type into an `Err`.
+    ///
+    /// Two arguments: the thunk, and the name of the error type this handler catches. The name is
+    /// what stops a handler from catching a failure it cannot type — a caller's function may raise
+    /// something this `try` never heard of, and that has to keep travelling.
+    Try,
     /// Wraps a value as `internal[T]`: storable, never Sendable.
     InternalOf,
     /// Unwraps one. Performs `cap.internal`, so only the authority chokepoint can do it.
@@ -120,6 +176,8 @@ impl Prim {
             Div => "/",
             Rem => "%",
             Neg => "negate",
+            Raise => "raise",
+            Try => "try",
             Abs => "abs",
             Sqrt => "sqrt",
             ToFloat => "float",
@@ -134,6 +192,39 @@ impl Prim {
             Not => "not",
             ToStr => "str",
             StrTrim => "str_trim",
+            StrToInt => "str_to_int",
+            StrLen => "str_len",
+            StrSlice => "str_slice",
+            StrSplit => "str_split",
+            StrJoin => "str_join",
+            StrContains => "str_contains",
+            StrStartsWith => "str_starts_with",
+            StrEndsWith => "str_ends_with",
+            StrUpper => "str_upper",
+            StrLower => "str_lower",
+            StrReplace => "str_replace",
+            StrIndexOf => "str_index_of",
+            StrRepeat => "str_repeat",
+            StrChars => "str_chars",
+            ListGet => "list_get",
+            ListSlice => "list_slice",
+            ListReverse => "list_reverse",
+            ListTake => "list_take",
+            ListDrop => "list_drop",
+            ListContains => "list_contains",
+            ListIndexOf => "list_index_of",
+            ListFold => "list_fold",
+            ListAll => "list_all",
+            ListAny => "list_any",
+            ListFlatMap => "list_flat_map",
+            ListZip => "list_zip_with",
+            ListAppend => "list_append",
+            MapKeys => "map_keys",
+            MapMerge => "map_merge",
+            JsonParse => "json_parse",
+            JsonRender => "json_render",
+            TimeFormat => "time_format",
+            TimeParse => "time_parse",
             StrIsEmpty => "str_is_empty",
             ListLen => "list_len",
             ListIsEmpty => "list_is_empty",
@@ -186,6 +277,11 @@ impl Prim {
             // Wrapping is free; *reading* is the privileged half, and the capability is what stops
             // a view unwrapping one to render it.
             Prim::Reveal => vec![Effect::Cap(std::sync::Arc::from("internal"))],
+            // The standard library's fallible pair. Unlike `Prim::Raise`, whose atom depends on
+            // its argument's type, these two raise a type the prelude declares — so the row *is* a
+            // constant and belongs here, where a test holds it against the scheme.
+            Prim::JsonParse => vec![Effect::Raises(std::sync::Arc::from("JsonError"))],
+            Prim::TimeParse => vec![Effect::Raises(std::sync::Arc::from("TimeError"))],
             _ => Vec::new(),
         }
     }

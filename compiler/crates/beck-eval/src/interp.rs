@@ -31,10 +31,203 @@ use beck_core::core::{Closure, Const, Core, CoreKind, Env, Pattern, Prim, Value}
 use beck_core::html::Html;
 use beck_core::PMap;
 
+/// The three "this primitive wanted a `T`" conversions, so twenty-odd library primitives do not
+/// each spell out the same `ok_or_else`. The message names the primitive, because "expects a Str"
+/// with no subject is the least useful diagnostic a runtime can produce.
+fn as_str<'a>(v: &'a Value, who: &str, span: Span) -> Result<&'a str, EvalError> {
+    v.as_str()
+        .ok_or_else(|| EvalError::new(format!("`{who}` expects a Str"), span))
+}
+
+fn as_int(v: &Value, who: &str, span: Span) -> Result<i64, EvalError> {
+    v.as_int()
+        .ok_or_else(|| EvalError::new(format!("`{who}` expects an Int"), span))
+}
+
+fn as_list<'a>(v: &'a Value, who: &str, span: Span) -> Result<&'a Vec<Value>, EvalError> {
+    v.as_list()
+        .ok_or_else(|| EvalError::new(format!("`{who}` expects a list"), span))
+}
+
+// ------------------------------------------------------------------------------------ JSON
+
+fn json_node(variant: &str, field: &str, value: Value) -> Value {
+    Value::Data {
+        ty: Arc::from("Json"),
+        variant: Some(Arc::from(variant)),
+        fields: Arc::new(std::collections::BTreeMap::from([(
+            Arc::from(field),
+            value,
+        )])),
+    }
+}
+
+fn json_to_value(j: &serde_json::Value) -> Value {
+    match j {
+        serde_json::Value::Null => Value::Data {
+            ty: Arc::from("Json"),
+            variant: Some(Arc::from("JsonNull")),
+            fields: Arc::new(std::collections::BTreeMap::new()),
+        },
+        serde_json::Value::Bool(b) => json_node("JsonBool", "value", Value::Bool(*b)),
+        // JSON has one number type and so does this union, which is why an integer document reads
+        // back as a `Float` and a caller who wants an `Int` says so.
+        serde_json::Value::Number(n) => json_node(
+            "JsonNumber",
+            "value",
+            Value::float(n.as_f64().unwrap_or(0.0)),
+        ),
+        serde_json::Value::String(s) => json_node("JsonStr", "value", Value::str_(s)),
+        serde_json::Value::Array(xs) => json_node(
+            "JsonList",
+            "items",
+            Value::List(Arc::new(xs.iter().map(json_to_value).collect())),
+        ),
+        serde_json::Value::Object(fields) => {
+            let mut m = beck_core::PMap::new();
+            for (k, v) in fields {
+                m = m.insert(Value::str_(k), json_to_value(v));
+            }
+            json_node("JsonObject", "fields", Value::Map(m))
+        }
+    }
+}
+
+fn value_to_json(v: &Value, span: Span) -> Result<serde_json::Value, EvalError> {
+    let field = |name: &str| v.field(name).cloned();
+    match v.variant() {
+        Some("JsonNull") => Ok(serde_json::Value::Null),
+        Some("JsonBool") => Ok(serde_json::Value::Bool(
+            field("value").and_then(|x| x.as_bool()).unwrap_or(false),
+        )),
+        Some("JsonNumber") => {
+            let n = field("value").and_then(|x| x.as_f64()).unwrap_or(0.0);
+            Ok(serde_json::Number::from_f64(n)
+                .map(serde_json::Value::Number)
+                // A non-finite float has no JSON spelling at all, so `null` is the only total
+                // answer and is what every encoder in every language does here.
+                .unwrap_or(serde_json::Value::Null))
+        }
+        Some("JsonStr") => Ok(serde_json::Value::String(
+            field("value")
+                .and_then(|x| x.as_str().map(|s| s.to_string()))
+                .unwrap_or_default(),
+        )),
+        Some("JsonList") => {
+            let items = field("items");
+            let xs = items
+                .as_ref()
+                .and_then(|x| x.as_list())
+                .ok_or_else(|| EvalError::new("`json_render` expects a list of Json", span))?;
+            Ok(serde_json::Value::Array(
+                xs.iter()
+                    .map(|x| value_to_json(x, span))
+                    .collect::<Result<_, _>>()?,
+            ))
+        }
+        Some("JsonObject") => {
+            let fields = field("fields");
+            let m = fields
+                .as_ref()
+                .and_then(|x| x.as_map())
+                .ok_or_else(|| EvalError::new("`json_render` expects a Map of Json", span))?;
+            let mut out = serde_json::Map::new();
+            for (k, val) in m.iter() {
+                out.insert(
+                    k.as_str()
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| k.display()),
+                    value_to_json(val, span)?,
+                );
+            }
+            Ok(serde_json::Value::Object(out))
+        }
+        _ => Err(EvalError::new("`json_render` expects a Json", span)),
+    }
+}
+
+// ------------------------------------------------------------------------------------ time
+//
+// The civil calendar over Unix milliseconds, in UTC. Hinnant's `days_from_civil` and its inverse:
+// well-known, exact for every date this can represent, and — the property that decides it here —
+// pure arithmetic with no table behind it, so `beck replay` cannot disagree with the run it is
+// replaying because a time-zone database was updated in between.
+
+fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let mp = (m + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
+fn civil_from_days(z: i64) -> (i64, i64, i64) {
+    let z = z + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
+fn format_rfc3339(ms: i64) -> String {
+    // Floor division, so an instant before 1970 formats as the second it is in rather than the one
+    // after it. `-1` is 1969-12-31T23:59:59.999Z, not 1970-01-01T00:00:00.-001Z.
+    let (secs, milli) = (ms.div_euclid(1000), ms.rem_euclid(1000));
+    let (days, sod) = (secs.div_euclid(86_400), secs.rem_euclid(86_400));
+    let (y, m, d) = civil_from_days(days);
+    format!(
+        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}.{milli:03}Z",
+        sod / 3600,
+        (sod % 3600) / 60,
+        sod % 60
+    )
+}
+
+fn parse_rfc3339(s: &str) -> Option<i64> {
+    // `YYYY-MM-DDTHH:MM:SS[.mmm]Z`, UTC only. An offset is refused rather than silently shifted:
+    // accepting `+01:00` would mean accepting that two spellings of the same instant are two
+    // values, and a log is not the place to discover that.
+    let b = s.as_bytes();
+    if b.len() < 20 || (b[10] != b'T' && b[10] != b' ') || *b.last()? != b'Z' {
+        return None;
+    }
+    let num = |from: usize, to: usize| s.get(from..to)?.parse::<i64>().ok();
+    let (y, mo, d) = (num(0, 4)?, num(5, 7)?, num(8, 10)?);
+    let (h, mi, sec) = (num(11, 13)?, num(14, 16)?, num(17, 19)?);
+    if !(1..=12).contains(&mo) || !(1..=31).contains(&d) || h > 23 || mi > 59 || sec > 60 {
+        return None;
+    }
+    let milli = match b[19] {
+        b'.' => {
+            let frac: String = s[20..s.len() - 1].chars().take(3).collect();
+            if frac.is_empty() || !frac.chars().all(|c| c.is_ascii_digit()) {
+                return None;
+            }
+            format!("{frac:0<3}").parse::<i64>().ok()?
+        }
+        b'Z' if s.len() == 20 => 0,
+        _ => return None,
+    };
+    Some((days_from_civil(y, mo, d) * 86_400 + h * 3600 + mi * 60 + sec) * 1000 + milli)
+}
+
 #[derive(Clone, Debug)]
 pub struct EvalError {
     pub message: String,
     pub span: Span,
+    /// The value a `raise` failed with, if this is a raise rather than a fault.
+    ///
+    /// The two travel the same way — a raise unwinds — and are distinguished here rather than in a
+    /// second error type, because everything between the raise and its handler has to pass both
+    /// along unchanged and neither of them is the ordinary path. `Prim::Try` is the only reader.
+    pub raised: Option<Box<(Arc<str>, Value)>>,
 }
 
 impl EvalError {
@@ -42,6 +235,16 @@ impl EvalError {
         EvalError {
             message: message.into(),
             span,
+            raised: None,
+        }
+    }
+
+    /// A failure a program *chose*, carrying the value it chose to fail with and that value's type.
+    pub fn raise(ty: Arc<str>, value: Value, span: Span) -> EvalError {
+        EvalError {
+            message: format!("raised `{}`", value.display()),
+            span,
+            raised: Some(Box::new((ty, value))),
         }
     }
 }
@@ -67,11 +270,12 @@ pub trait Host {
     fn new_uuid(&self) -> Arc<str>;
     /// Read the wall clock. `nondet`, and forbidden inside a fold for the same reason `uuid` is:
     /// time is data on the envelope.
+    ///
+    /// Defaulted to the host's clock through the seam rather than to `SystemTime::now()` directly
+    /// (`beck_core::clock`), so a host that wants a stated instant overrides one method and a host
+    /// that does not still never names the standard library's clock.
     fn now_millis(&self) -> i64 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as i64)
-            .unwrap_or(0)
+        beck_core::clock::process_clock().now_millis()
     }
     /// Read a secret from the process environment — `env`, which no client tier discharges.
     fn secret(&self, name: &str) -> Arc<str> {
@@ -547,6 +751,35 @@ impl<'h> Interp<'h> {
         }
 
         match op {
+            // `raise e` — unwind, carrying the value and its type name. The name is what a handler
+            // matches on, so a `try:` for one error type does not swallow another.
+            Prim::Raise => {
+                want(1)?;
+                let v = args.pop().expect("arity checked");
+                let ty = match &v {
+                    Value::Data { ty, .. } => ty.clone(),
+                    other => Arc::from(other.display()),
+                };
+                Err(EvalError::raise(ty, v, span))
+            }
+            // `try: block` — run the thunk, and turn a raise of the named type into an `Err`.
+            //
+            // Anything else keeps travelling: a fault is not a failure, and a *different* error
+            // type belongs to a handler further out. That is the whole reason the type name is an
+            // argument rather than something this could infer.
+            Prim::Try => {
+                want(2)?;
+                let caught = args.pop().expect("arity checked");
+                let thunk = args.pop().expect("arity checked");
+                let caught = caught.as_str().unwrap_or_default().to_string();
+                match self.apply(&thunk, Vec::new(), span) {
+                    Ok(v) => Ok(Value::ok(v)),
+                    Err(e) => match &e.raised {
+                        Some(r) if r.0.as_ref() == caught => Ok(Value::err(r.1.clone())),
+                        _ => Err(e),
+                    },
+                }
+            }
             Prim::Add => {
                 want(2)?;
                 let b = args.pop().expect("arity checked");
@@ -652,6 +885,335 @@ impl<'h> Interp<'h> {
                 v.as_str()
                     .map(|s| Value::str_(s.trim()))
                     .ok_or_else(|| EvalError::new("`str_trim` expects a Str", span))
+            }
+            Prim::StrToInt => {
+                want(1)?;
+                let v = args.pop().expect("arity checked");
+                let s = v
+                    .as_str()
+                    .ok_or_else(|| EvalError::new("`str_to_int` expects a Str", span))?;
+                Ok(match s.parse::<i64>() {
+                    Ok(n) => Value::some(Value::Int(n)),
+                    Err(_) => Value::none(),
+                })
+            }
+            // ---- strings. Indices are byte offsets into UTF-8 and are clamped: a slice past the
+            // end is the empty string. `str_chars` yields *characters*, so the two are different
+            // units on purpose and a caller that needs character positions uses the second.
+            Prim::StrLen => {
+                want(1)?;
+                let v = args.pop().expect("arity checked");
+                let s = as_str(&v, "str_len", span)?;
+                Ok(Value::Int(s.chars().count() as i64))
+            }
+            Prim::StrSlice => {
+                want(3)?;
+                let len = as_int(&args.pop().expect("arity checked"), "str_slice", span)?;
+                let start = as_int(&args.pop().expect("arity checked"), "str_slice", span)?;
+                let v = args.pop().expect("arity checked");
+                let s = as_str(&v, "str_slice", span)?;
+                let out: String = s
+                    .chars()
+                    .skip(start.max(0) as usize)
+                    .take(len.max(0) as usize)
+                    .collect();
+                Ok(Value::str_(&out))
+            }
+            Prim::StrSplit => {
+                want(2)?;
+                let sep = args.pop().expect("arity checked");
+                let v = args.pop().expect("arity checked");
+                let sep = as_str(&sep, "str_split", span)?.to_string();
+                let s = as_str(&v, "str_split", span)?;
+                // Splitting on the empty string is characters, which is what every caller who
+                // writes it means and is the only total answer available.
+                let parts: Vec<Value> = if sep.is_empty() {
+                    s.chars().map(|c| Value::str_(c.to_string())).collect()
+                } else {
+                    s.split(sep.as_str()).map(Value::str_).collect()
+                };
+                Ok(Value::List(Arc::new(parts)))
+            }
+            Prim::StrJoin => {
+                want(2)?;
+                let sep = args.pop().expect("arity checked");
+                let xs = args.pop().expect("arity checked");
+                let sep = as_str(&sep, "str_join", span)?.to_string();
+                let xs = xs
+                    .as_list()
+                    .ok_or_else(|| EvalError::new("`str_join` expects a list", span))?;
+                let parts: Vec<String> = xs
+                    .iter()
+                    .map(|x| {
+                        x.as_str()
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(|| x.display())
+                    })
+                    .collect();
+                Ok(Value::str_(parts.join(&sep)))
+            }
+            Prim::StrContains | Prim::StrStartsWith | Prim::StrEndsWith => {
+                want(2)?;
+                let needle = args.pop().expect("arity checked");
+                let hay = args.pop().expect("arity checked");
+                let needle = as_str(&needle, op.name(), span)?.to_string();
+                let hay = as_str(&hay, op.name(), span)?;
+                Ok(Value::Bool(match op {
+                    Prim::StrContains => hay.contains(needle.as_str()),
+                    Prim::StrStartsWith => hay.starts_with(needle.as_str()),
+                    _ => hay.ends_with(needle.as_str()),
+                }))
+            }
+            Prim::StrUpper | Prim::StrLower => {
+                want(1)?;
+                let v = args.pop().expect("arity checked");
+                let s = as_str(&v, op.name(), span)?;
+                Ok(Value::str_(&if op == Prim::StrUpper {
+                    s.to_uppercase()
+                } else {
+                    s.to_lowercase()
+                }))
+            }
+            Prim::StrReplace => {
+                want(3)?;
+                let to = args.pop().expect("arity checked");
+                let from = args.pop().expect("arity checked");
+                let v = args.pop().expect("arity checked");
+                let to = as_str(&to, "str_replace", span)?.to_string();
+                let from = as_str(&from, "str_replace", span)?.to_string();
+                let s = as_str(&v, "str_replace", span)?;
+                if from.is_empty() {
+                    return Ok(Value::str_(s));
+                }
+                Ok(Value::str_(s.replace(from.as_str(), &to)))
+            }
+            Prim::StrIndexOf => {
+                want(2)?;
+                let needle = args.pop().expect("arity checked");
+                let v = args.pop().expect("arity checked");
+                let needle = as_str(&needle, "str_index_of", span)?.to_string();
+                let s = as_str(&v, "str_index_of", span)?;
+                // In characters, to agree with `str_len` and `str_slice`.
+                Ok(match s.find(needle.as_str()) {
+                    Some(byte) => Value::some(Value::Int(s[..byte].chars().count() as i64)),
+                    None => Value::none(),
+                })
+            }
+            Prim::StrRepeat => {
+                want(2)?;
+                let n = as_int(&args.pop().expect("arity checked"), "str_repeat", span)?;
+                let v = args.pop().expect("arity checked");
+                let s = as_str(&v, "str_repeat", span)?;
+                // A bound, because `"x" * 10_000_000_000` is a request nobody makes on purpose and
+                // an allocation the process does not survive. Fuel is the general answer; this is
+                // the specific one, and it is here rather than nowhere.
+                let n = n.clamp(0, 1_000_000) as usize;
+                Ok(Value::str_(s.repeat(n)))
+            }
+            Prim::StrChars => {
+                want(1)?;
+                let v = args.pop().expect("arity checked");
+                let s = as_str(&v, "str_chars", span)?;
+                Ok(Value::List(Arc::new(
+                    s.chars().map(|c| Value::str_(c.to_string())).collect(),
+                )))
+            }
+            // ---- collections
+            Prim::ListGet => {
+                want(2)?;
+                let i = as_int(&args.pop().expect("arity checked"), "list_get", span)?;
+                let xs = args.pop().expect("arity checked");
+                let xs = as_list(&xs, "list_get", span)?;
+                Ok(match usize::try_from(i).ok().and_then(|i| xs.get(i)) {
+                    Some(v) => Value::some(v.clone()),
+                    None => Value::none(),
+                })
+            }
+            Prim::ListSlice | Prim::ListTake | Prim::ListDrop => {
+                let (start, len) = if op == Prim::ListSlice {
+                    want(3)?;
+                    let len = as_int(&args.pop().expect("arity checked"), op.name(), span)?;
+                    let start = as_int(&args.pop().expect("arity checked"), op.name(), span)?;
+                    (start, len)
+                } else {
+                    want(2)?;
+                    let n = as_int(&args.pop().expect("arity checked"), op.name(), span)?;
+                    if op == Prim::ListTake {
+                        (0, n)
+                    } else {
+                        (n, i64::MAX)
+                    }
+                };
+                let xs = args.pop().expect("arity checked");
+                let xs = as_list(&xs, op.name(), span)?;
+                let out: Vec<Value> = xs
+                    .iter()
+                    .skip(start.max(0) as usize)
+                    .take(len.max(0) as usize)
+                    .cloned()
+                    .collect();
+                Ok(Value::List(Arc::new(out)))
+            }
+            Prim::ListReverse => {
+                want(1)?;
+                let xs = args.pop().expect("arity checked");
+                let mut out = as_list(&xs, "list_reverse", span)?.to_vec();
+                out.reverse();
+                Ok(Value::List(Arc::new(out)))
+            }
+            Prim::ListContains | Prim::ListIndexOf => {
+                want(2)?;
+                let needle = args.pop().expect("arity checked");
+                let xs = args.pop().expect("arity checked");
+                let xs = as_list(&xs, op.name(), span)?;
+                let found = xs.iter().position(|x| *x == needle);
+                Ok(match op {
+                    Prim::ListContains => Value::Bool(found.is_some()),
+                    _ => match found {
+                        Some(i) => Value::some(Value::Int(i as i64)),
+                        None => Value::none(),
+                    },
+                })
+            }
+            Prim::ListAppend => {
+                want(2)?;
+                let x = args.pop().expect("arity checked");
+                let xs = args.pop().expect("arity checked");
+                let mut out = as_list(&xs, "list_append", span)?.to_vec();
+                out.push(x);
+                Ok(Value::List(Arc::new(out)))
+            }
+            Prim::ListFold => {
+                want(3)?;
+                let f = args.pop().expect("arity checked");
+                let init = args.pop().expect("arity checked");
+                let xs = args.pop().expect("arity checked");
+                let xs = as_list(&xs, "list_fold", span)?.to_vec();
+                let mut acc = init;
+                for x in xs {
+                    acc = self.apply(&f, vec![acc, x], span)?;
+                }
+                Ok(acc)
+            }
+            Prim::ListAll | Prim::ListAny => {
+                want(2)?;
+                let f = args.pop().expect("arity checked");
+                let xs = args.pop().expect("arity checked");
+                let xs = as_list(&xs, op.name(), span)?.to_vec();
+                let want_true = op == Prim::ListAny;
+                for x in xs {
+                    // Short-circuiting, which is observable when the predicate has effects — so it
+                    // is a promise rather than an optimisation.
+                    if self.apply(&f, vec![x], span)?.as_bool() == Some(want_true) {
+                        return Ok(Value::Bool(want_true));
+                    }
+                }
+                Ok(Value::Bool(!want_true))
+            }
+            Prim::ListFlatMap => {
+                want(2)?;
+                let f = args.pop().expect("arity checked");
+                let xs = args.pop().expect("arity checked");
+                let xs = as_list(&xs, "list_flat_map", span)?.to_vec();
+                let mut out = Vec::new();
+                for x in xs {
+                    let ys = self.apply(&f, vec![x], span)?;
+                    out.extend(as_list(&ys, "list_flat_map", span)?.iter().cloned());
+                }
+                Ok(Value::List(Arc::new(out)))
+            }
+            Prim::ListZip => {
+                want(3)?;
+                let f = args.pop().expect("arity checked");
+                let ys = args.pop().expect("arity checked");
+                let xs = args.pop().expect("arity checked");
+                let ys = as_list(&ys, "list_zip_with", span)?.to_vec();
+                let xs = as_list(&xs, "list_zip_with", span)?.to_vec();
+                let mut out = Vec::with_capacity(xs.len().min(ys.len()));
+                for (x, y) in xs.into_iter().zip(ys) {
+                    out.push(self.apply(&f, vec![x, y], span)?);
+                }
+                Ok(Value::List(Arc::new(out)))
+            }
+            Prim::MapKeys => {
+                want(1)?;
+                let m = args.pop().expect("arity checked");
+                let m = m
+                    .as_map()
+                    .ok_or_else(|| EvalError::new("`map_keys` expects a Map", span))?;
+                Ok(Value::List(Arc::new(m.keys().cloned().collect())))
+            }
+            Prim::MapMerge => {
+                want(2)?;
+                let b = args.pop().expect("arity checked");
+                let a = args.pop().expect("arity checked");
+                let a = a
+                    .as_map()
+                    .ok_or_else(|| EvalError::new("`map_merge` expects a Map", span))?;
+                let b = b
+                    .as_map()
+                    .ok_or_else(|| EvalError::new("`map_merge` expects a Map", span))?;
+                // The second wins, which is the convention and the only one worth having: a merge
+                // is how a default map is overridden by an explicit one.
+                let mut out = a.clone();
+                for (k, v) in b.iter() {
+                    out = out.insert(k.clone(), v.clone());
+                }
+                Ok(Value::Map(out))
+            }
+            // ---- JSON. `serde_json` reads and writes the text; the shape in between is Beck's
+            // own `Json` union, so a program pattern-matches a document rather than asking a
+            // library what kind of node it is holding.
+            Prim::JsonParse => {
+                want(1)?;
+                let v = args.pop().expect("arity checked");
+                let text = as_str(&v, "json_parse", span)?;
+                match serde_json::from_str::<serde_json::Value>(text) {
+                    Ok(j) => Ok(json_to_value(&j)),
+                    Err(e) => Err(EvalError::raise(
+                        Arc::from("JsonError"),
+                        Value::Data {
+                            ty: Arc::from("JsonError"),
+                            variant: Some(Arc::from("BadJson")),
+                            fields: Arc::new(std::collections::BTreeMap::from([(
+                                Arc::from("why"),
+                                Value::str_(e.to_string()),
+                            )])),
+                        },
+                        span,
+                    )),
+                }
+            }
+            Prim::JsonRender => {
+                want(1)?;
+                let v = args.pop().expect("arity checked");
+                Ok(Value::str_(value_to_json(&v, span)?.to_string()))
+            }
+            // ---- time. RFC 3339 in UTC, over the milliseconds `now()` gives.
+            Prim::TimeFormat => {
+                want(1)?;
+                let ms = as_int(&args.pop().expect("arity checked"), "time_format", span)?;
+                Ok(Value::str_(format_rfc3339(ms)))
+            }
+            Prim::TimeParse => {
+                want(1)?;
+                let v = args.pop().expect("arity checked");
+                let text = as_str(&v, "time_parse", span)?;
+                match parse_rfc3339(text) {
+                    Some(ms) => Ok(Value::Int(ms)),
+                    None => Err(EvalError::raise(
+                        Arc::from("TimeError"),
+                        Value::Data {
+                            ty: Arc::from("TimeError"),
+                            variant: Some(Arc::from("BadTime")),
+                            fields: Arc::new(std::collections::BTreeMap::from([(
+                                Arc::from("why"),
+                                Value::str_(format!("`{text}` is not an RFC 3339 instant in UTC")),
+                            )])),
+                        },
+                        span,
+                    )),
+                }
             }
             Prim::StrIsEmpty => {
                 want(1)?;

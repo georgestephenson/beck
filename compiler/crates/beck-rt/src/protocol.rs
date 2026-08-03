@@ -27,7 +27,10 @@ pub enum ClientMsg {
         sub: String,
         #[serde(default)]
         seq: Seq,
-        /// Dev-mode identity (Phase 1, as Phase 0). D6's OIDC relying party is Phase 3.
+        /// What the client says it is. **A claim, not an actor**: `beck_rt::identity` is what
+        /// turns it into one, and under `DevIdentity` the two are the same value — which is a
+        /// choice an operator makes rather than a property of the protocol (`docs/48`).
+        #[serde(default)]
         actor: String,
     },
     /// A proposal. `id` is the idempotency key that makes a retry after a reconnect safe (§4.3).
@@ -87,6 +90,15 @@ impl ServerMsg {
 
     pub fn nack(id: &str, why: &str) -> Value {
         json!({"t": "n", "id": id, "e": why})
+    }
+
+    /// The connection is over before it began: the identity was refused.
+    ///
+    /// Coarse on purpose (`identity::Rejected::message`) — a client learns it was refused and not
+    /// which of the three ways, because the difference is useful to an attacker and to nobody
+    /// else. The operator gets the distinction, in the log.
+    pub fn error(why: &str) -> Value {
+        json!({"t": "e", "e": why})
     }
 }
 

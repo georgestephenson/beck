@@ -626,7 +626,24 @@ fn render_impl(i: &ImplSig) -> String {
                 .join(", ")
         )
     };
-    format!("impl{params} {} for {}", i.trait_name, i.target)
+    let header = format!("impl{params} {} for {}", i.trait_name, i.target);
+    if i.effects.is_empty() {
+        return header;
+    }
+    // A method that performs something publishes what: a caller in another module resolves through
+    // this header and has nowhere else to learn it (`docs/47` §47.3). A pure method says nothing,
+    // so an impl of a pure trait reads exactly as it did before this existed.
+    let mut out = header;
+    out.push_str(":\n");
+    for (name, row) in &i.effects {
+        let atoms: Vec<String> = row.iter().map(|e| e.name()).collect();
+        // `def add() uses …` — a bodyless `def` with an empty parameter list, because that is
+        // already a shape the reader has: the trait supplies the parameters, and repeating them
+        // here would be the second copy §37's impl rule exists to refuse.
+        let _ = writeln!(out, "    def {name}() uses {}", atoms.join(", "));
+    }
+    out.pop();
+    out
 }
 
 fn trait_signature(t: &TraitSig) -> String {

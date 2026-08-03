@@ -177,8 +177,10 @@ awaiting George: F1 (erasure vs genesis-replay semantics), F3 (abuse-quota defau
    with incremental plans (differential handles it via time as input — surface how?).
 4. Data placement (cache this slice client-side, materialise that view) — v1 is explicit
    (`materialized`, Mode B); when does the solver take it over?
-5. The two syntax decisions from [`02`](02-syntax.md) §2.9: effect clauses vs decorators; `ui:`
-   macro vs JSX-likes. Cheap now, expensive after Phase 3.
+5. ~~The two syntax decisions from [`02`](02-syntax.md) §2.9: effect clauses vs decorators; `ui:`
+   macro vs JSX-likes.~~ **Settled** — [`10`](10-decisions.md) D21 and D22, taken in Wave 0 on the
+   deadline this item set itself. Effects are signature clauses and placement is a decorator (they
+   are different kinds of thing, and the split is the decision); `ui:` stays a block macro.
 6. Multi-app composition: two Beck apps sharing events — federation of logs, or one app with two
    deployments? (Touches org boundaries, so it will be asked early.)
 7. Backpressure surfacing: v1 hides it in the runtime contract; when a client can't keep up with

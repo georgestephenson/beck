@@ -1,0 +1,113 @@
+# Failure as a row label, and `Result` as what a handler produces.
+#
+# Every other corpus program returns `Result[list[Event], Rejection]` from `validate` by *building*
+# one — an `Err(...)` written out at each refusal, threaded back by hand through every helper that
+# might refuse. That works, and it is what a language without an error row makes you do: the
+# plumbing is in the return type of everything on the path, whether or not that function is where
+# the decision is.
+#
+# Here the decision is where it belongs. `parse_amount` and `check_budget` say `raises(Refusal)` in
+# their rows and `raise` at the point they decide; `validate` writes `try:` once, at the boundary
+# where the shape the runtime wants is a `Result`. Nothing in between mentions failure — and
+# because the row is inferred, nothing in between *can* fail without its published signature
+# saying so.
+#
+# `beck iface` is where to look: `parse_amount` publishes `uses raises(Refusal)` and `validate`
+# publishes nothing, because the `try:` discharged it.
+
+model State:
+    spent: Int
+    budget: Int
+
+model Ledger:
+    spent: Int
+    left: Int
+
+union Command:
+    Spend(amount: Str)
+
+union Event:
+    Spent(amount: Int)
+
+union Refusal:
+    NotANumber
+    NotPositive
+    OverBudget(by: Int)
+
+# One name for the bundle, which is what a row alias is for: this module's fallible functions all
+# fail the same way, and repeating the atom in four signatures is how signatures stop being read.
+row Fallible = raises(Refusal)
+
+def parse_amount(text: Str) -> Int uses Fallible:
+    n = str_to_int(str_trim(text))
+    match n:
+        case None:
+            raise NotANumber
+        case Some(value):
+            if value <= 0:
+                raise NotPositive
+            return value
+
+def check_budget(s: State, amount: Int) -> Int uses Fallible:
+    over = (s.spent + amount) - s.budget
+    if over > 0:
+        raise OverBudget(by=over)
+    return amount
+
+# The only function on the path that mentions `Result`, and the only one with a `try:`.
+def validate(s: State, p: Proposal) -> Result[list[Event], Refusal]:
+    return try:
+        match p.command:
+            case Spend(amount):
+                n = check_budget(s, parse_amount(amount))
+                [Spent(amount=n)]
+
+def apply_event(s: State, env: Envelope[Event]) -> State:
+    match env.body:
+        case Spent(amount):
+            return s.with(spent=s.spent + amount)
+
+def summarise(s: State) -> Ledger:
+    return Ledger(spent=s.spent, left=s.budget - s.spent)
+
+def render(l: Ledger, session: Session) -> Html:
+    return ui:
+        main:
+            h1: "ledger"
+            p: (str(l.spent) + " spent")
+            p: (str(l.left) + " left")
+
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, account, validate)
+account: Signal[State] = durable(fold(apply_event, State(spent=0, budget=100), events))
+ledger: Signal[Ledger] = signal_map(account, summarise)
+page: Signal[Html] = per_session(ledger, render)
+
+test "an empty ledger has the whole budget":
+    given []
+    expect page contains "100 left"
+
+test "a spend lands":
+    given [Spent(amount=30)]
+    expect page contains "30 spent"
+    expect page contains "70 left"
+
+test "text that is not a number is refused, and the refusal came from two calls down":
+    given []
+    when Spend(amount="lots")
+    expect Err(error=NotANumber)
+
+test "so is a negative one":
+    given []
+    when Spend(amount="-5")
+    expect Err(error=NotPositive)
+
+test "and the budget refusal carries how far over it was":
+    given [Spent(amount=90)]
+    when Spend(amount="30")
+    expect Err(error=OverBudget(by=20))
+
+test "a spend within the budget is accepted":
+    given [Spent(amount=90)]
+    when Spend(amount="10")
+    expect list_len(events) == 1

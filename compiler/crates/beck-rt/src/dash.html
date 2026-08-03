@@ -102,7 +102,12 @@
 
 <script>
 const $ = id => document.getElementById(id);
-const esc = s => String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+// One escaper for both contexts. Quotes are escaped as well as `&<>` because half the
+// interpolations below are into attributes, and an escaper that is right for text only is an
+// escaper somebody will reach for in an attribute anyway (`beck-core/src/html.rs` splits the two
+// for the same reason, on the tier where it matters more).
+const esc = s => String(s).replace(/[&<>"']/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const get = async p => (await fetch(p)).json();
 
 let GRAPH = null;
@@ -145,7 +150,7 @@ function drawGraph() {
     const label = n.name.length > 23 ? n.name.slice(0, 22) + '…' : n.name;
     const title = [n.name, n.kind, n.tier !== 'any' ? '@on(' + n.tier + ')' : '',
                    n.effects.join(' '), n.because].filter(Boolean).join(' — ');
-    return `<g class="${n.tier}"><title>${esc(title)}</title>` +
+    return `<g class="${esc(n.tier)}"><title>${esc(title)}</title>` +
       `<circle cx="${p.x}" cy="${p.y - 4}" r="${n.cycle ? 4.5 : 3}" fill="currentColor"` +
       `${n.kind === 'resource' ? ' fill-opacity=".45"' : ''}/>` +
       `<text x="${p.x + 8}" y="${p.y}">${esc(label)}</text></g>`;

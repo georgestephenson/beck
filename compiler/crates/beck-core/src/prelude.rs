@@ -177,6 +177,308 @@ pub fn prims() -> Vec<(&'static str, Prim, Scheme)> {
             Prim::StrTrim,
             Scheme::mono(fun(vec![str_.clone()], str_.clone())),
         ),
+        // The canonical fallible operation, and the reason it is here rather than in the standard
+        // library Wave 2 will write: `corpus/29-fallible.beck` needs one thing that can genuinely
+        // fail on its input, and a parse is that thing in every language.
+        (
+            "str_to_int",
+            Prim::StrToInt,
+            Scheme::mono(fun(vec![str_.clone()], Ty::option(Ty::int()))),
+        ),
+        // ------------------------------------------------------------------------ strings
+        //
+        // Wave 2's string half ([`docs/08`](../../../../docs/08-roadmap.md) §8.5.4). Every one of
+        // these is a primitive rather than a definition written in Beck, and the reason is the
+        // same in each case: a string is where the host has to be asked. `str_upper` is a Unicode
+        // table, `str_split` is an allocation strategy, and writing either of them over a
+        // `list[Str]` of characters in Beck would be a slower, less correct copy of what the host
+        // already has. Where there *is* something to express — a `Decimal`, a `Json` document —
+        // Wave 2 writes it in Beck instead, which is the distinction §1.1 claims to be able to
+        // make.
+        //
+        // Indices are byte offsets into UTF-8 and are clamped rather than refused: `str_slice`
+        // past the end is the empty string, not a failure. That is a decision and not an
+        // oversight — a slice is not a parse, and `raises` is for a program's own vocabulary
+        // rather than for the standard library's arithmetic ([`45`](../../../../docs/45-error-rows-report.md)).
+        (
+            "str_len",
+            Prim::StrLen,
+            Scheme::mono(fun(vec![str_.clone()], int.clone())),
+        ),
+        (
+            "str_slice",
+            Prim::StrSlice,
+            Scheme::mono(fun(
+                vec![str_.clone(), int.clone(), int.clone()],
+                str_.clone(),
+            )),
+        ),
+        (
+            "str_split",
+            Prim::StrSplit,
+            Scheme::mono(fun(
+                vec![str_.clone(), str_.clone()],
+                Ty::list(str_.clone()),
+            )),
+        ),
+        (
+            "str_join",
+            Prim::StrJoin,
+            Scheme::mono(fun(
+                vec![Ty::list(str_.clone()), str_.clone()],
+                str_.clone(),
+            )),
+        ),
+        (
+            "str_contains",
+            Prim::StrContains,
+            Scheme::mono(fun(vec![str_.clone(), str_.clone()], bool_.clone())),
+        ),
+        (
+            "str_starts_with",
+            Prim::StrStartsWith,
+            Scheme::mono(fun(vec![str_.clone(), str_.clone()], bool_.clone())),
+        ),
+        (
+            "str_ends_with",
+            Prim::StrEndsWith,
+            Scheme::mono(fun(vec![str_.clone(), str_.clone()], bool_.clone())),
+        ),
+        (
+            "str_upper",
+            Prim::StrUpper,
+            Scheme::mono(fun(vec![str_.clone()], str_.clone())),
+        ),
+        (
+            "str_lower",
+            Prim::StrLower,
+            Scheme::mono(fun(vec![str_.clone()], str_.clone())),
+        ),
+        (
+            "str_replace",
+            Prim::StrReplace,
+            Scheme::mono(fun(
+                vec![str_.clone(), str_.clone(), str_.clone()],
+                str_.clone(),
+            )),
+        ),
+        (
+            "str_index_of",
+            Prim::StrIndexOf,
+            Scheme::mono(fun(
+                vec![str_.clone(), str_.clone()],
+                Ty::option(int.clone()),
+            )),
+        ),
+        (
+            "str_repeat",
+            Prim::StrRepeat,
+            Scheme::mono(fun(vec![str_.clone(), int.clone()], str_.clone())),
+        ),
+        (
+            "str_chars",
+            Prim::StrChars,
+            Scheme::mono(fun(vec![str_.clone()], Ty::list(str_.clone()))),
+        ),
+        // ------------------------------------------------------------------------ collections
+        //
+        // The higher-order ones are row-polymorphic in the argument's effects — §3.2's
+        // `map : (list[a], (a -> b ! e)) -> list[b] ! e`, which
+        // [`33`](../../../../docs/33-effect-polymorphism-and-list-patterns-report.md) made true of
+        // a *user's* definitions too. A pure caller of `list_fold` stays pure however another
+        // caller uses it.
+        (
+            "list_get",
+            Prim::ListGet,
+            poly(
+                &[A],
+                fun(vec![Ty::list(v(A)), int.clone()], Ty::option(v(A))),
+            ),
+        ),
+        (
+            "list_slice",
+            Prim::ListSlice,
+            poly(
+                &[A],
+                fun(
+                    vec![Ty::list(v(A)), int.clone(), int.clone()],
+                    Ty::list(v(A)),
+                ),
+            ),
+        ),
+        (
+            "list_reverse",
+            Prim::ListReverse,
+            poly(&[A], fun(vec![Ty::list(v(A))], Ty::list(v(A)))),
+        ),
+        (
+            "list_take",
+            Prim::ListTake,
+            poly(&[A], fun(vec![Ty::list(v(A)), int.clone()], Ty::list(v(A)))),
+        ),
+        (
+            "list_drop",
+            Prim::ListDrop,
+            poly(&[A], fun(vec![Ty::list(v(A)), int.clone()], Ty::list(v(A)))),
+        ),
+        (
+            "list_contains",
+            Prim::ListContains,
+            poly(&[A], fun(vec![Ty::list(v(A)), v(A)], bool_.clone())),
+        ),
+        (
+            "list_index_of",
+            Prim::ListIndexOf,
+            poly(
+                &[A],
+                fun(vec![Ty::list(v(A)), v(A)], Ty::option(int.clone())),
+            ),
+        ),
+        (
+            "list_append",
+            Prim::ListAppend,
+            poly(&[A], fun(vec![Ty::list(v(A)), v(A)], Ty::list(v(A)))),
+        ),
+        // Zip *with* a function rather than zip into a pair: Beck has no tuple type, and inventing
+        // one for this would be a language change hiding inside a library addition. The shorter
+        // list decides the length, which is the convention every language that has this agrees on.
+        (
+            "list_zip_with",
+            Prim::ListZip,
+            poly_eff(
+                &[A, B, C],
+                &[E],
+                fun_eff(
+                    vec![
+                        Ty::list(v(A)),
+                        Ty::list(v(B)),
+                        fun_eff(vec![v(A), v(B)], v(C), Row::var(E)),
+                    ],
+                    Ty::list(v(C)),
+                    Row::var(E),
+                ),
+            ),
+        ),
+        (
+            "list_fold",
+            Prim::ListFold,
+            poly_eff(
+                &[A, B],
+                &[E],
+                fun_eff(
+                    vec![
+                        Ty::list(v(A)),
+                        v(B),
+                        fun_eff(vec![v(B), v(A)], v(B), Row::var(E)),
+                    ],
+                    v(B),
+                    Row::var(E),
+                ),
+            ),
+        ),
+        (
+            "list_all",
+            Prim::ListAll,
+            poly_eff(
+                &[A],
+                &[E],
+                fun_eff(
+                    vec![
+                        Ty::list(v(A)),
+                        fun_eff(vec![v(A)], bool_.clone(), Row::var(E)),
+                    ],
+                    bool_.clone(),
+                    Row::var(E),
+                ),
+            ),
+        ),
+        (
+            "list_any",
+            Prim::ListAny,
+            poly_eff(
+                &[A],
+                &[E],
+                fun_eff(
+                    vec![
+                        Ty::list(v(A)),
+                        fun_eff(vec![v(A)], bool_.clone(), Row::var(E)),
+                    ],
+                    bool_.clone(),
+                    Row::var(E),
+                ),
+            ),
+        ),
+        (
+            "list_flat_map",
+            Prim::ListFlatMap,
+            poly_eff(
+                &[A, B],
+                &[E],
+                fun_eff(
+                    vec![
+                        Ty::list(v(A)),
+                        fun_eff(vec![v(A)], Ty::list(v(B)), Row::var(E)),
+                    ],
+                    Ty::list(v(B)),
+                    Row::var(E),
+                ),
+            ),
+        ),
+        (
+            "map_keys",
+            Prim::MapKeys,
+            poly(&[A, B], fun(vec![Ty::map(v(A), v(B))], Ty::list(v(A)))),
+        ),
+        (
+            "map_merge",
+            Prim::MapMerge,
+            poly(
+                &[A, B],
+                fun(
+                    vec![Ty::map(v(A), v(B)), Ty::map(v(A), v(B))],
+                    Ty::map(v(A), v(B)),
+                ),
+            ),
+        ),
+        // ------------------------------------------------------------------------ JSON and time
+        //
+        // `json_parse` and `time_parse` **raise** rather than returning a `Result`, and that is the
+        // whole reason [`08`](../../../../docs/08-roadmap.md) §8.5.3's trap 2 said the standard
+        // library had to wait for [`45`](../../../../docs/45-error-rows-report.md). A caller who
+        // wants a `Result` writes `try:`; a caller already inside something fallible writes
+        // nothing. Had these been written first, every one of their signatures would have had to
+        // change.
+        (
+            "json_parse",
+            Prim::JsonParse,
+            Scheme::mono(fun_eff(
+                vec![str_.clone()],
+                Ty::con("Json"),
+                Row::of([Effect::Raises(Arc::from("JsonError"))]),
+            )),
+        ),
+        (
+            "json_render",
+            Prim::JsonRender,
+            Scheme::mono(fun(vec![Ty::con("Json")], str_.clone())),
+        ),
+        // RFC 3339 in UTC, and only that: a time zone is a database with a release schedule, and
+        // one is not being embedded in a compiler on the way past. `now()` gives the milliseconds
+        // these two are the calendar over.
+        (
+            "time_format",
+            Prim::TimeFormat,
+            Scheme::mono(fun(vec![int.clone()], str_.clone())),
+        ),
+        (
+            "time_parse",
+            Prim::TimeParse,
+            Scheme::mono(fun_eff(
+                vec![str_.clone()],
+                int.clone(),
+                Row::of([Effect::Raises(Arc::from("TimeError"))]),
+            )),
+        ),
         (
             "str_is_empty",
             Prim::StrIsEmpty,
@@ -546,6 +848,64 @@ pub fn types() -> BTreeMap<Arc<str>, TyDecl> {
                 fields: vec![(Arc::from("error"), Ty::Var(B))],
             },
         ],
+    });
+    // JSON as data, so a program reads a document with `match` and builds one with ordinary
+    // constructors. There is no reflection and no derive: `Json` is a union like any other, and
+    // turning a `model` into one is a function somebody writes — which is what `@derive` is for
+    // when it exists, and is not a reason to put a second kind of value in the language now.
+    //
+    // The variants are prefixed because a union's constructors are global names: `Str` and `Bool`
+    // are taken, and `List` would be taken by anybody's own union the day they wrote one.
+    add(TyDecl::Union {
+        name: Arc::from("Json"),
+        params: Vec::new(),
+        variants: vec![
+            Variant {
+                name: Arc::from("JsonNull"),
+                fields: vec![],
+            },
+            Variant {
+                name: Arc::from("JsonBool"),
+                fields: vec![(Arc::from("value"), Ty::bool_())],
+            },
+            // One number type, and it is the `Float` §32 built rather than a second numeric
+            // tower: JSON's own grammar has one, and a reader who wants an integer asks for one.
+            Variant {
+                name: Arc::from("JsonNumber"),
+                fields: vec![(Arc::from("value"), Ty::con(Ty::FLOAT))],
+            },
+            Variant {
+                name: Arc::from("JsonStr"),
+                fields: vec![(Arc::from("value"), Ty::str_())],
+            },
+            Variant {
+                name: Arc::from("JsonList"),
+                fields: vec![(Arc::from("items"), Ty::list(Ty::con("Json")))],
+            },
+            Variant {
+                name: Arc::from("JsonObject"),
+                fields: vec![(Arc::from("fields"), Ty::map(Ty::str_(), Ty::con("Json")))],
+            },
+        ],
+    });
+    // The error `json_parse` raises. A declared type rather than a `Str`, because
+    // `docs/45` §45.1's atom names the type and a `raises(Str)` would make every string failure in
+    // a program the same failure.
+    add(TyDecl::Union {
+        name: Arc::from("JsonError"),
+        params: Vec::new(),
+        variants: vec![Variant {
+            name: Arc::from("BadJson"),
+            fields: vec![(Arc::from("why"), Ty::str_())],
+        }],
+    });
+    add(TyDecl::Union {
+        name: Arc::from("TimeError"),
+        params: Vec::new(),
+        variants: vec![Variant {
+            name: Arc::from("BadTime"),
+            fields: vec![(Arc::from("why"), Ty::str_())],
+        }],
     });
     add(TyDecl::Model {
         name: Arc::from(Ty::ENVELOPE),

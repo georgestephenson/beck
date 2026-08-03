@@ -32,6 +32,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use beck_diag::depth::Nesting;
 use beck_diag::{Diagnostic, Diagnostics, Span};
 use beck_syntax::{sym, Lit, Node, ScopeSet, Symbol};
 
@@ -171,6 +172,11 @@ pub struct Checker<'a> {
     globals: Vec<Binding>,
     /// The row each definition's signature declares with `uses`.
     declared: BTreeMap<Arc<str>, Row>,
+    /// `row Failure = raises(FormError), log` — a name for a bundle, expanded wherever it is used.
+    ///
+    /// Module-local by design. A `.becki` renders the expanded atoms, because a published contract
+    /// that referred to a name the reader has to look up somewhere else would not be a contract.
+    row_aliases: BTreeMap<Arc<str>, Row>,
     /// Types declared in this module, in source order.
     own_types: Vec<Arc<str>>,
     /// The row *variable* standing for each definition's inferred row, minted before any body is
@@ -208,6 +214,10 @@ pub struct Checker<'a> {
     /// The dictionary parameters `expand_bounds` appended, per definition, in order. A call site
     /// reads this to know how many of the callee's parameters it has to supply itself.
     dicts: BTreeMap<Arc<str>, Vec<traits::DictParam>>,
+    /// How deep this pass is inside an expression or a type, against the ceiling the reader
+    /// counts against. The reader's bound does not cover this one: a macro can expand into a tree
+    /// deeper than the one that was written, and the checker is the first pass to see it.
+    nesting: Nesting,
     mode: Mode,
 }
 
@@ -252,6 +262,7 @@ pub fn check_module_with(
         locals: Vec::new(),
         globals: Vec::new(),
         declared: BTreeMap::new(),
+        row_aliases: BTreeMap::new(),
         own_types: Vec::new(),
         def_row: BTreeMap::new(),
         row: Row::empty(),
@@ -267,6 +278,7 @@ pub fn check_module_with(
         impl_methods: BTreeSet::new(),
         dicts: BTreeMap::new(),
         generic_rows: BTreeMap::new(),
+        nesting: Nesting::new(),
         mode,
     };
     for (name, prim, scheme) in prelude::prims() {
@@ -321,6 +333,9 @@ pub fn check_module_with(
     // Traits before impls, and impls before any signature: an `impl` is *desugared* into ordinary
     // definitions, so by the time `collect_signatures` runs there is nothing trait-shaped left for
     // it — or for placement, or for the splitter, or for the evaluator — to know about.
+    // Row aliases before anything reads a `uses` clause, and after the types so a `raises(E)`
+    // names a type that exists.
+    ck.collect_row_aliases(&items);
     ck.collect_traits(&items);
     let expanded = ck.expand_impls(&items);
     // A bounded `def` is rewritten in place, so what follows sees a definition with one more
@@ -331,9 +346,15 @@ pub fn check_module_with(
         .enumerate()
         .filter_map(|(i, it)| ck.expand_bounds(it).map(|n| (i, n)))
         .collect();
-    let mut items: Vec<&Node> = items.into_iter().chain(expanded.iter()).collect();
+    // The impl's methods go **first**, and the order is load-bearing rather than tidy. A row is
+    // solved as its definition is checked, so a `try:` in a caller can only see what has already
+    // been decided — and a trait method is the one thing every operator call in the module goes
+    // through. Checking `Num::add@Money` before the definitions that write `a + b` is what lets a
+    // handler discharge the failure that impl performs rather than carrying it as an unresolved
+    // tail (`docs/47` §47.4).
+    let mut items: Vec<&Node> = expanded.iter().chain(items).collect();
     for (i, node) in &bounded {
-        items[*i] = node;
+        items[expanded.len() + *i] = node;
     }
     ck.collect_signatures(&items);
     ck.collect_signal_names(&items);
@@ -967,19 +988,55 @@ impl<'a> Checker<'a> {
             // here, so the atom is reassembled from what was written rather than pattern-matched
             // per shape — which is why adding an atom to §3.2's list costs one line in `row.rs`.
             let text = written_form(e).unwrap_or_default();
-            match Effect::parse(&text) {
-                Some(atom) => row.add(atom),
-                None => self.error(
+            // A name that is not an atom may be a row alias. Tried second, so an alias cannot
+            // shadow an effect: `row durable = ...` would otherwise silently change what every
+            // signature in the module means.
+            if let Some(atom) = Effect::parse(&text) {
+                row.add(atom);
+            } else if let Some(alias) = self.row_aliases.get(text.as_str()).cloned() {
+                row = row.union(&alias);
+            } else {
+                self.error(
                     "B0305",
                     format!(
-                        "`{}` is not an effect",
+                        "`{}` is neither an effect nor a row",
                         if text.is_empty() { "?" } else { &text }
                     ),
                     e.span(),
-                ),
+                );
             }
         }
         row
+    }
+
+    /// Collect `row Name = …` declarations, before any signature mentions one.
+    ///
+    /// An alias may name an alias declared earlier in the file. It may not name one declared later,
+    /// and that is the one place this differs from types — which may mention anything, in any order
+    /// (`docs/27` §27.3). The reason is that a row is a *set* being built here rather than a
+    /// declaration being resolved later, and a forward reference would mean a fixpoint over
+    /// something a reader cannot see the end of. A cycle is refused for the same reason.
+    fn collect_row_aliases(&mut self, items: &[&Node]) {
+        for item in items {
+            let (item, _) = self.undecorate(item);
+            if !item.is_form(sym::ROW) || item.args.len() < 2 {
+                continue;
+            }
+            let Some(name) = item.args[0].as_var().map(|s| s.name.clone()) else {
+                continue;
+            };
+            if self.row_aliases.contains_key(&name) {
+                self.error(
+                    "B0394",
+                    format!("row `{name}` is declared twice"),
+                    item.span(),
+                );
+                continue;
+            }
+            let body = Node::form("uses", item.args[1..].to_vec(), item.span());
+            let row = self.declared_row(Some(&body));
+            self.row_aliases.insert(name, row);
+        }
     }
 
     /// Register every top-level signal before checking any of them.
@@ -1052,6 +1109,7 @@ impl<'a> Checker<'a> {
                 || inner.is_form(sym::IMPORT)
                 || inner.is_form(sym::TRAIT)
                 || inner.is_form(sym::IMPL)
+                || inner.is_form(sym::ROW)
             {
                 // Declarations, all of them already collected. A `trait` was read by
                 // `collect_traits` and an `impl` was expanded into the `def`s this loop is
@@ -1176,10 +1234,35 @@ impl<'a> Checker<'a> {
             .iter()
             .filter_map(|n| self.traits.get(n).map(|d| d.sig.clone()))
             .collect();
+        // The header, plus what each of its methods turned out to perform. An impl's row is
+        // inferred rather than taken from the trait (`docs/47`), so a module that publishes an
+        // impl has to publish the rows too — a caller in another module has nowhere else to get
+        // them, and taking them off the trait is exactly the unsoundness this closes.
         let impls: Vec<ty::ImplSig> = self
             .own_impls
             .iter()
             .filter_map(|k| self.impls.get(k).map(|d| d.sig.clone()))
+            .map(|mut sig| {
+                let head = sig.head();
+                if let Some(decl) = self.traits.get(&sig.trait_name) {
+                    for m in &decl.sig.methods {
+                        let mangled = traits::mangle(&sig.trait_name, &m.name, &head);
+                        let Some(def) = defs.get(&mangled) else {
+                            continue;
+                        };
+                        let row: Vec<Effect> = def
+                            .effects
+                            .iter()
+                            .filter(|e| !e.is_ambient())
+                            .cloned()
+                            .collect();
+                        if !row.is_empty() {
+                            sig.effects.push((m.name.clone(), row));
+                        }
+                    }
+                }
+                sig
+            })
             .collect();
 
         Program {
@@ -1296,7 +1379,15 @@ impl<'a> Checker<'a> {
 
         let mut declared_effects: Vec<Effect> = declared.atoms.iter().cloned().collect();
         declared_effects.sort();
-        let row_is_declared = !declared_effects.is_empty() || self.impl_methods.contains(&name);
+        // An impl method's row is **inferred**, not bounded by the trait's.
+        //
+        // It was bounded until `docs/46` §46.5: a trait's declared row was a ceiling every impl was
+        // held to, which meant a fallible operation could not be a trait method and `Money` could
+        // not have `+`. A trait's row is now a floor and a piece of documentation — what a caller
+        // of an *unknown* impl may assume — and what a caller of a known one performs is what that
+        // impl performs. `.becki` publishes it per impl, so the boundary is not where this
+        // becomes untrue.
+        let row_is_declared = !declared_effects.is_empty();
         let bounds = self.bounds_of_def(&name);
         Some(Def {
             name,
@@ -1364,6 +1455,35 @@ impl<'a> Checker<'a> {
     // ------------------------------------------------------------------ types from syntax
 
     fn ty_from_node(&mut self, n: &Node) -> Ty {
+        if !self.enter(n.span()) {
+            return self.subst.fresh();
+        }
+        let out = self.ty_from_node_inner(n);
+        self.nesting.leave();
+        out
+    }
+
+    /// Descend one level of the tree, or refuse.
+    ///
+    /// `false` means the ceiling is reached: the caller returns whatever it returns for an
+    /// expression it could not check — a fresh variable, which unifies with anything and so raises
+    /// no second error — without recursing and without leaving.
+    fn enter(&mut self, span: Span) -> bool {
+        if self.nesting.enter() {
+            return true;
+        }
+        if self.nesting.should_report() {
+            let note = self.nesting.note();
+            self.diags.push(
+                Diagnostic::error("B0390", "the expression nests too deep to check", span)
+                    .with_primary_label("the checker gave up here")
+                    .with_note(note),
+            );
+        }
+        false
+    }
+
+    fn ty_from_node_inner(&mut self, n: &Node) -> Ty {
         let span = n.span();
         if n.has_head("fn-type") && n.args.len() >= 2 {
             let params: Vec<Ty> = n.args[..n.args.len() - 1]
@@ -1658,6 +1778,15 @@ impl<'a> Checker<'a> {
     // ------------------------------------------------------------------ expressions
 
     fn expr(&mut self, n: &Node, expected: Option<&Ty>) -> Core {
+        if !self.enter(n.span()) {
+            return Core::new(CoreKind::Const(Const::Unit), self.subst.fresh(), n.span());
+        }
+        let out = self.expr_inner(n, expected);
+        self.nesting.leave();
+        out
+    }
+
+    fn expr_inner(&mut self, n: &Node, expected: Option<&Ty>) -> Core {
         let span = n.span();
 
         if let Some(l) = n.as_lit() {
@@ -1704,6 +1833,8 @@ impl<'a> Checker<'a> {
                 )
             }
             sym::FN if n.args.len() == 2 => self.lambda(n, expected, span),
+            sym::RAISE if n.args.len() == 1 => self.raise_expr(&n.args[0], span),
+            sym::TRY if n.args.len() == 1 => self.try_expr(&n.args[0], expected, span),
             sym::MATCH if !n.args.is_empty() => self.match_expr(n, expected, span),
             sym::LIST => {
                 let elem = expected
@@ -2054,6 +2185,151 @@ impl<'a> Checker<'a> {
             BindKind::Ctor(union, variant) => self.make(&union, Some(&variant), &[], span),
             BindKind::Model(model) => self.make(&model, None, &[], span),
         }
+    }
+
+    // ---------------------------------------------------------- failure, as a row label
+
+    /// `raise e` — perform `raises(T)`, and have no type of its own.
+    ///
+    /// The result is a fresh variable rather than `never`, for the reason `docs/38` §38.4 gives for
+    /// the whole shape: a raise is an *effect*, so the expression it stands in for is whatever the
+    /// context wanted. `if text == "": raise Blank else: text` is a `Str`.
+    fn raise_expr(&mut self, arg: &Node, span: Span) -> Core {
+        let value = self.expr(arg, None);
+        let ty = self.subst.resolve(&value.ty);
+        let Some(name) = error_ty_name(&ty) else {
+            self.error(
+                "B0391",
+                format!("a raised value must have a declared type, and this one is `{ty}`"),
+                value.span,
+            );
+            return Core::new(CoreKind::Const(Const::Unit), self.subst.fresh(), span);
+        };
+        // The atom names the type, so a handler can say what it catches. This is why `Raise` is the
+        // one primitive whose row `Prim::effects` cannot state: it is a function of the argument.
+        self.perform(&Row::of([Effect::Raises(name)]));
+        Core::new(
+            CoreKind::Prim {
+                op: Prim::Raise,
+                args: vec![value],
+            },
+            self.subst.fresh(),
+            span,
+        )
+    }
+
+    /// `try: block` — run the block, and reify one failure as a `Result[T, E]`.
+    ///
+    /// This is the handler, and it is a *form*: lexically scoped by construction, with no dynamic
+    /// search for who handles what (POPL 2019's result, `docs/38` §38.4).
+    ///
+    /// **It catches one error type and lets every other failure travel**, which is what makes it
+    /// composable rather than a barrier. `E` comes from the expectation where there is one — a
+    /// `try:` almost always flows into something whose type says `Result[T, E]` — and from the
+    /// block's own row where there is not. Taking it from the expectation is not a convenience: a
+    /// row is decided lazily, so a call to a definition declared *later* in the file contributes a
+    /// row *variable* at this point and a handler that could only read atoms would be wrong about
+    /// exactly the forward references a program is made of.
+    ///
+    /// Whatever is not caught stays in the enclosing row — other `raises` atoms, every other
+    /// effect, and the row variables, which may hide a failure this handler has no type for. That
+    /// last point is why the primitive is given the name of what it catches: the runtime compares.
+    fn try_expr(&mut self, body: &Node, expected: Option<&Ty>, span: Span) -> Core {
+        // The `Result[T, E]` a caller expects tells the block both halves: what its value type
+        // should be, and which failure this handler is for.
+        let (inner_expected, expected_error) = match expected.map(|t| self.subst.resolve(t)) {
+            Some(Ty::Con(c, args)) if c.as_ref() == Ty::RESULT && args.len() == 2 => (
+                Some(args[0].clone()),
+                match self.subst.resolve(&args[1]) {
+                    Ty::Con(e, es) if es.is_empty() => Some(e),
+                    _ => None,
+                },
+            ),
+            _ => (None, None),
+        };
+
+        let outer = std::mem::take(&mut self.row);
+        let before = self.locals.len();
+        let core = self.body_expr(body, inner_expected.as_ref());
+        self.locals.truncate(before);
+        // Resolved, not raw: a call to something whose row is still a variable contributes a tail,
+        // and the atoms behind it are only visible once the substitution has caught up.
+        let inner = self
+            .subst
+            .resolve_row(&std::mem::replace(&mut self.row, outer));
+
+        let mut raised: Vec<Arc<str>> = Vec::new();
+        for atom in &inner.atoms {
+            if let Effect::Raises(t) = atom {
+                if !raised.contains(t) {
+                    raised.push(t.clone());
+                }
+            }
+        }
+        raised.sort();
+
+        let error = match expected_error {
+            Some(e) => e,
+            None => match raised.len() {
+                1 => raised[0].clone(),
+                0 => {
+                    self.error(
+                        "B0392",
+                        "nothing here can fail, and nothing says what this would catch",
+                        span,
+                    );
+                    return core;
+                }
+                _ => {
+                    let names: Vec<String> = raised.iter().map(|t| format!("`{t}`")).collect();
+                    self.error(
+                        "B0393",
+                        format!(
+                            "this block can fail in {} ways ({}), so say which one to catch — a \
+                             `Result[T, E]` on the enclosing signature is how",
+                            raised.len(),
+                            names.join(", ")
+                        ),
+                        span,
+                    );
+                    raised[0].clone()
+                }
+            },
+        };
+
+        // Everything except the failure being caught is still performed by the enclosing
+        // definition. A handler catches one failure; it does not launder a `durable`, and it does
+        // not silently swallow a second error type.
+        let mut rest = Row::empty();
+        rest.tails = inner.tails.clone();
+        for atom in &inner.atoms {
+            if !matches!(atom, Effect::Raises(t) if *t == error) {
+                rest.atoms.insert(atom.clone());
+            }
+        }
+        self.perform(&rest);
+
+        let value_ty = core.ty.clone();
+        let result_ty = Ty::app(Ty::RESULT, vec![value_ty, Ty::con(&error)]);
+        let thunk = Core::new(
+            CoreKind::Lam {
+                params: Vec::new(),
+                body: Box::new(core),
+            },
+            self.subst.fresh(),
+            span,
+        );
+        Core::new(
+            CoreKind::Prim {
+                op: Prim::Try,
+                args: vec![
+                    thunk,
+                    Core::new(CoreKind::Const(Const::Str(error.clone())), Ty::str_(), span),
+                ],
+            },
+            result_ty,
+            span,
+        )
     }
 
     fn lambda(&mut self, n: &Node, expected: Option<&Ty>, span: Span) -> Core {
@@ -2875,6 +3151,22 @@ fn clause_cores_mut(c: &mut crate::testing::Clause) -> Vec<&mut Core> {
 }
 
 /// Walk a `Core` tree applying the final substitution to every recorded type.
+/// The name a `raises(...)` atom carries, for the type of a raised value.
+///
+/// A declared type, and not a builtin: `raise 4` would give a handler nothing to say it catches,
+/// and `raises(Int)` would make every integer failure in a program the same failure. A `list[E]`
+/// is refused for the same reason — the atom names a constructor, so `list` would be the name and
+/// two unrelated lists would collide.
+fn error_ty_name(t: &Ty) -> Option<Arc<str>> {
+    match t {
+        Ty::Con(name, args) if args.is_empty() => match name.as_ref() {
+            Ty::INT | Ty::FLOAT | Ty::BOOL | Ty::STR | Ty::UNIT => None,
+            _ => Some(name.clone()),
+        },
+        _ => None,
+    }
+}
+
 fn resolve_types(c: &mut Core, s: &Subst) {
     c.ty = s.resolve(&c.ty);
     match &mut c.kind {
@@ -3341,5 +3633,88 @@ def unwrap[T](b: Box[T]) -> T:
 
         let bad = src.replace("-> T:", "-> Int:");
         assert!(!codes(&bad).is_empty(), "a `T` is not an `Int`");
+    }
+}
+
+/// The checker's half of the front end's recursion bound.
+///
+/// The reader's bound does not cover this one. A macro expands into a tree nobody typed, and the
+/// checker is the first pass to walk it — so it counts for itself, against the same ceiling.
+#[cfg(test)]
+mod nesting_tests {
+    use crate::check_str;
+    use beck_diag::depth::{MAX_NESTING, STACK_BYTES};
+
+    /// A type nested `n` deep — `list[list[…Int…]]` — which is the checker's *other* recursion.
+    fn nested_type(n: usize) -> String {
+        let mut ty = String::from("Int");
+        for _ in 0..n {
+            ty = format!("list[{ty}]");
+        }
+        format!("def f(x: {ty}) -> Int:\n    return 1\n")
+    }
+
+    fn nested_expr(n: usize) -> String {
+        format!(
+            "def f() -> Int:\n    return {}1{}\n",
+            "(".repeat(n),
+            ")".repeat(n)
+        )
+    }
+
+    fn codes(src: &str) -> Vec<String> {
+        beck_diag::depth::on_the_front_end_stack(|| {
+            let (_, d, _) = check_str("deep.beck", src);
+            d.iter().map(|x| x.code.to_string()).collect()
+        })
+    }
+
+    #[test]
+    fn a_type_past_the_ceiling_is_a_diagnostic_rather_than_an_abort() {
+        let found = codes(&nested_type(MAX_NESTING as usize + 8));
+        assert!(
+            found.contains(&"B0390".to_string()),
+            "expected the checker's own refusal, got {found:?}"
+        );
+    }
+
+    #[test]
+    fn an_expression_past_the_ceiling_is_refused_by_whichever_pass_reaches_it_first() {
+        // The reader gets there first for an expression, which is the point of bounding all three:
+        // whichever pass is handed the deep tree is the one that refuses it.
+        let found = codes(&nested_expr(MAX_NESTING as usize + 8));
+        assert!(
+            found.iter().any(|c| c == "B0121" || c == "B0390"),
+            "expected a nesting refusal, got {found:?}"
+        );
+    }
+
+    #[test]
+    fn nesting_a_person_would_write_still_checks() {
+        assert!(codes(&nested_type(16)).is_empty());
+    }
+
+    #[test]
+    fn the_ceiling_fits_the_declared_stack() {
+        const PROBE_DEPTH: usize = 100;
+        let spent = std::thread::Builder::new()
+            .stack_size(256 * 1024 * 1024)
+            .spawn(|| {
+                let src = nested_type(PROBE_DEPTH);
+                beck_diag::depth::probe::stack_spent(|| check_str("probe.beck", &src))
+            })
+            .expect("a thread")
+            .join()
+            .expect("the probe checks");
+
+        let per_level = spent / PROBE_DEPTH;
+        println!("checker: {spent} bytes for {PROBE_DEPTH} levels ({per_level} per level)");
+        let needed = MAX_NESTING as usize * per_level * 2;
+        assert!(
+            needed < STACK_BYTES,
+            "a ceiling of {MAX_NESTING} levels at {per_level} bytes each needs {needed} bytes \
+             with the margin, against a declared STACK_BYTES of {STACK_BYTES} — raise the \
+             declaration or lower the ceiling"
+        );
     }
 }

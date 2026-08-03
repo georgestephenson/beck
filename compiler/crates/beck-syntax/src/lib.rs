@@ -17,6 +17,7 @@ pub mod lexer;
 pub mod node;
 pub mod parser;
 pub mod print;
+pub mod security;
 pub mod sexpr;
 
 pub use node::{sym, Head, Lit, Meta, Node, Scope, ScopeSet, Symbol};
@@ -70,6 +71,10 @@ pub fn parse_file(file: FileId, name: &str, src: &str, diags: &mut Diagnostics) 
 
 fn parse_forms(file: FileId, name: &str, src: &str, diags: &mut Diagnostics) -> Node {
     let module_name = module_ident(name);
+
+    // Before either surface reads a byte: what a source file is allowed to contain at all.
+    // One place for both notations — see [`security`].
+    security::scan(file, src, diags);
 
     if name.ends_with(".sx") {
         let forms = sexpr::read_all(file, src, diags);

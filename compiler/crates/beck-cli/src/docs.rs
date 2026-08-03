@@ -441,6 +441,11 @@ fn atoms() -> Vec<(Effect, &'static str)> {
         (Effect::Spawn, "Starts concurrent work."),
         (Effect::Cap(std::sync::Arc::from("x")), "A capability the caller must hold. Forgetting an auth check leaves `cap.*` undischarged — a compile error, not a pentest finding (§3.5)."),
         (Effect::Partial, "May diverge or panic."),
+        (
+            Effect::Raises(std::sync::Arc::from("E")),
+            "May fail with a value of the named type. A signature without this provably cannot \
+             fail; `try:` reifies it into a `Result[T, E]`.",
+        ),
         (Effect::ExternalRead(std::sync::Arc::from("store")), "Reads a store the program does not own — §3.8's escape hatch."),
         (Effect::ExternalWrite(std::sync::Arc::from("store")), "Writes a store the program does not own."),
         (Effect::Ambient(beck_core::row::Ambient::Log), "Ambient: available everywhere, elided from signatures, never a reason to place anything."),

@@ -17,6 +17,7 @@ A definition's effect row is **inferred**, not declared (§3.2), and its placeme
 | `spawn` | — | yes | — | — | Starts concurrent work. |
 | `cap.x` | — | yes | — | — | A capability the caller must hold. Forgetting an auth check leaves `cap.*` undischarged — a compile error, not a pentest finding (§3.5). |
 | `partial` | yes | yes | yes | yes | May diverge or panic. |
+| `raises(E)` | yes | yes | yes | yes | May fail with a value of the named type. A signature without this provably cannot fail; `try:` reifies it into a `Result[T, E]`. |
 | `external.read(store)` | — | yes | — | — | Reads a store the program does not own — §3.8's escape hatch. |
 | `external.write(store)` | — | yes | — | — | Writes a store the program does not own. |
 | `log` | yes | yes | yes | yes | Ambient: available everywhere, elided from signatures, never a reason to place anything. |

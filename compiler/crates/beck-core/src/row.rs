@@ -69,6 +69,14 @@ pub enum Effect {
     Cap(Arc<str>),
     /// May diverge or panic.
     Partial,
+    /// `raises(E)` — this may fail with a value of the named type.
+    ///
+    /// An error is a **row label**, not a mechanism: a signature without one provably cannot fail,
+    /// and `Result[T, E]` is the *reified* form a handler produces rather than a parallel channel
+    /// ([`docs/38`](../../../../docs/38-literature-survey.md) §38.4, adopting Koka's `exn`). The
+    /// atom names the error's type because a handler has to say what it catches — a `try` that
+    /// caught everything would turn a caller's unknown failure into this one's `Result`.
+    Raises(Arc<str>),
     /// §3.8's escape hatches: an existing store the team already has.
     ExternalRead(Arc<str>),
     ExternalWrite(Arc<str>),
@@ -97,6 +105,7 @@ impl Effect {
             Effect::Spawn => "spawn".into(),
             Effect::Cap(c) => format!("cap.{c}"),
             Effect::Partial => "partial".into(),
+            Effect::Raises(t) => format!("raises({t})"),
             Effect::ExternalRead(s) => format!("external.read({s})"),
             Effect::ExternalWrite(s) => format!("external.write({s})"),
             Effect::Ambient(Ambient::Log) => "log".into(),
@@ -121,6 +130,7 @@ impl Effect {
             ("env", None) => Effect::Env,
             ("spawn", None) => Effect::Spawn,
             ("partial", None) => Effect::Partial,
+            ("raises", Some(t)) => Effect::Raises(Arc::from(t)),
             ("external.read", Some(s)) => Effect::ExternalRead(Arc::from(s)),
             ("external.write", Some(s)) => Effect::ExternalWrite(Arc::from(s)),
             ("log", None) => Effect::Ambient(Ambient::Log),
@@ -149,6 +159,7 @@ impl Effect {
             Effect::Spawn => "spawn",
             Effect::Cap(_) => "cap",
             Effect::Partial => "partial",
+            Effect::Raises(_) => "raises",
             Effect::ExternalRead(_) => "external.read",
             Effect::ExternalWrite(_) => "external.write",
             Effect::Ambient(_) => "ambient",

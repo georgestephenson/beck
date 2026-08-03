@@ -9,6 +9,7 @@
 //! is a `Node` with head `def` and three arguments, and nothing is desugared on the way in — the
 //! Python parser's job is to arrive at exactly the same tree.
 
+use beck_diag::depth::Nesting;
 use beck_diag::{Diagnostic, Diagnostics, FileId, Span};
 
 use crate::node::{Head, Lit, Node, Symbol};
@@ -18,6 +19,10 @@ struct Reader<'a> {
     src: &'a [u8],
     text: &'a str,
     pos: usize,
+    /// The same ceiling the Python surface counts against. `(((…)))` is the S-expression spelling
+    /// of the input `docs/42` §42.2 aborted on, and this reader recurses through `form` → `list`
+    /// exactly as that one recurses through `primary`.
+    nesting: Nesting,
 }
 
 /// Read every form in a source string.
@@ -27,6 +32,7 @@ pub fn read_all(file: FileId, src: &str, diags: &mut Diagnostics) -> Vec<Node> {
         src: src.as_bytes(),
         text: src,
         pos: 0,
+        nesting: Nesting::new(),
     };
     let mut out = Vec::new();
     loop {
@@ -112,6 +118,24 @@ impl<'a> Reader<'a> {
     }
 
     fn list(&mut self, open: u8, diags: &mut Diagnostics) -> Option<Node> {
+        if !self.nesting.enter() {
+            if self.nesting.should_report() {
+                let start = self.pos;
+                let note = self.nesting.note();
+                diags.push(
+                    Diagnostic::error("B0121", "nesting is too deep to read", self.span(start))
+                        .with_primary_label("the reader gave up here")
+                        .with_note(note),
+                );
+            }
+            return None;
+        }
+        let out = self.list_inner(open, diags);
+        self.nesting.leave();
+        out
+    }
+
+    fn list_inner(&mut self, open: u8, diags: &mut Diagnostics) -> Option<Node> {
         let start = self.pos;
         let close = match open {
             b'(' => b')',
