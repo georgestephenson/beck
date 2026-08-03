@@ -47,6 +47,7 @@ harness goes red, **absent** means it is not there and §43.4 says so by name.
 | Time enters at the merge point and nowhere else | A2, A4 | tested | `beck_core::clock`; `clock.rs`'s one-reader gate |
 | Text in a page is escaped, in both text and attribute context | A2, A4 | tested | `beck-core/src/html.rs`; the dashboard's own escaper |
 | An actor is a decision of the runtime, not a claim of the client | A2 | tested | `beck_rt::identity`; `identity.rs` drives the socket loop. **Only with a verifying provider** — the default verifies nothing, which is §43.4 |
+| Every host a program can reach is one the program named, and the egress rule is that list | A2 | structural + tested | [`adr/0013`](adr/0013-the-host-of-an-outbound-call-is-written-at-the-call-site.md): a computed host is `B0395`, so the derivation in §6.5 is total; `outbound.rs` |
 
 ## 43.3 What is explicitly **not** defended
 
@@ -84,6 +85,13 @@ The controls a reader would reasonably assume exist, that do not:
   structurally. **OIDC is still absent** (no JWKS, no asymmetric signature, no issuer or audience
   validation), and so is the claims → `Session` mapping: claims are verified at the edge and do not
   reach the program.
+- **Transport security on an outbound call.** [`49`](49-http-client-report.md) built `http_fetch`,
+  so a Beck program can now reach a host of its own choosing — over **plaintext HTTP/1.1**. There
+  is no TLS, which means a credential sent with `with_secret_header` is confidential exactly as far
+  as the network under it is, and a reply is trusted exactly as far as that network is. What *is*
+  bounded is the blast radius of a hostile peer: 8 MiB of reply read at most, a 10-second deadline
+  per exchange, and an egress rule the cluster derives from the program's own atoms, so a call to a
+  host nobody wrote is a call the network refuses.
 - **Per-actor quotas** (F3, `APPROVED` and unbuilt), **subscription and connection quotas** (F15),
   and **the deploy choreography's bounded buffer** (F12).
 - **Message size limits and origin checks** on the websocket: the limits are the library's
@@ -110,9 +118,13 @@ day it is written and quietly wrong six months later.
                                    └─ the only writer; the only place time enters (§3.7)
                                                               └─ secret[T] cannot cross (§3.5)
    A4 operator ◀── dashboard ◀── telemetry ◀── (content originating with A2)
+
+   program ──http_fetch──▶│ net.out(host) │──▶ a peer ──▶ a reply the program parses
+                          └─ the host is a literal, so the egress rule is the program (0013)
+                             plaintext; bounded at 8 MiB and 10 s (§43.4)
 ```
 
-Four crossings, and what each one is:
+Five crossings, and what each one is:
 
 1. **Source into the compiler** — the boundary A1 attacks. Bounded in nesting; not bounded in
    macro work.
@@ -122,6 +134,10 @@ Four crossings, and what each one is:
    work, and the crossing this project has the most evidence about.
 4. **Content into an operator's screen** — the one A4 is attacked through, and the reason the
    dashboard escapes in attribute context as well as text.
+5. **The program out to a peer, and the peer's reply back in** — added by
+   [`49`](49-http-client-report.md). The outward half is bounded by construction: the set of hosts
+   reachable is the set written in the source. The inward half is not authenticated at all, which
+   is §43.4's first bullet, and a reply is a `Str` a program has to parse like any other input.
 
 ## 43.6 What would change this document
 

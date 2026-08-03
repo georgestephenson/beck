@@ -28,3 +28,4 @@ The split this directory creates:
 | [0010](0010-generic-arithmetic-through-a-prelude-trait.md) | Numeric operators resolve through a prelude trait — supersedes [0008](0008-numeric-operators-resolved-ad-hoc.md) |
 | [0011](0011-identifiers-are-snake-case-in-the-python-surface.md) | Identifiers are `snake_case` in the Python surface and kebab-case in the S-expression one |
 | [0012](0012-the-front-end-counts-its-own-recursion.md) | The front end counts its own recursion, against one ceiling and one declared stack |
+| [0013](0013-the-host-of-an-outbound-call-is-written-at-the-call-site.md) | The host of an outbound call is written at the call site, so the egress policy is derivable |
