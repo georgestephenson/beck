@@ -45,6 +45,7 @@
 //! when it is certain, and "changed" costs a recompute that the old runtime did unconditionally.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
 
 use beck_diag::Span;
@@ -240,7 +241,36 @@ pub struct Engine {
     /// The shared version this engine last rendered against, so the changes it has not yet seen can
     /// be found. Meaningless for a standalone engine, which has no upstream to lag behind.
     seen: u64,
+    /// This engine's place in a [`SharedDataflow`]'s reader set, for as long as it lives.
+    ///
+    /// `None` for a standalone engine, which owns every operator and has nobody to tell when it
+    /// goes away.
+    attached: Option<Attachment>,
     work: Work,
+}
+
+/// A subscriber's membership of a shared dataflow's reader set.
+///
+/// Two facts the dataflow cannot learn any other way: that this reader exists — so the
+/// arrangements are not dropped underneath it — and how far behind it is, which is what bounds
+/// how much change history is worth keeping.
+///
+/// The frontier is an atomic rather than an entry in a map under the dataflow's lock, because it
+/// is written on **every** render and read only when the dataflow advances. A map would make the
+/// hot path take a write lock and serialise the concurrent renders §5.3 exists to allow.
+struct Attachment {
+    shared: Arc<SharedDataflow>,
+    id: ReaderId,
+    /// The version this reader has rendered up to, or [`UNRENDERED`].
+    frontier: Arc<AtomicU64>,
+}
+
+impl Drop for Engine {
+    fn drop(&mut self) {
+        if let Some(a) = &self.attached {
+            a.shared.detach(a.id);
+        }
+    }
 }
 
 impl Engine {
@@ -278,6 +308,7 @@ impl Engine {
             owns,
             warm: false,
             seen: 0,
+            attached: None,
             work: Work::default(),
         }
     }
@@ -1098,6 +1129,16 @@ struct Step {
     changes: BTreeMap<OpId, Arc<[Change]>>,
 }
 
+/// A reader's frontier before it has rendered anything.
+///
+/// It constrains nothing: a reader with no arrangements rebuilds from the current ones whatever
+/// history is kept, so treating it as a frontier of 0 would retain the maximum for the one reader
+/// that cannot use a single step of it. `u64::MAX` falls out of the minimum instead of having to be
+/// filtered out of it.
+const UNRENDERED: u64 = u64::MAX;
+
+type ReaderId = u64;
+
 struct SharedInner {
     engine: Engine,
     version: u64,
@@ -1110,6 +1151,83 @@ struct SharedInner {
     started: bool,
     /// Oldest first, and contiguous: `history[k].to == history[k + 1].from`.
     history: VecDeque<Step>,
+    /// Every attached subscriber, and how far behind it is.
+    ///
+    /// The set is what decides whether the arrangements are worth holding at all; the frontiers are
+    /// what decide how much of the change history is. Both are read only under this lock, and the
+    /// frontiers are *written* outside it — see [`Attachment`].
+    readers: BTreeMap<ReaderId, Arc<AtomicU64>>,
+}
+
+impl SharedInner {
+    /// The oldest version any attached reader can still ask for changes since.
+    ///
+    /// A step whose `to` is at or below this is retained by nobody: every reader has already
+    /// rendered past it. With no readers at all it is the current version, so everything is
+    /// droppable — which is the same fact the release path acts on more thoroughly.
+    fn floor(&self) -> u64 {
+        self.readers
+            .values()
+            .map(|f| f.load(Ordering::Relaxed))
+            .min()
+            .unwrap_or(UNRENDERED)
+            .min(self.version)
+    }
+
+    /// Drop the steps no attached reader can still ask for, and cap what is left.
+    ///
+    /// Two bounds, and they are different kinds of thing. The floor is a *fact*: a step below it is
+    /// retained for nobody. The depth is a *policy*: past it we would rather a very late subscriber
+    /// rebuild than hold change history for it indefinitely.
+    fn compact(&mut self, depth: usize) {
+        let floor = self.floor();
+        while self.history.front().is_some_and(|s| s.to <= floor) {
+            self.history.pop_front();
+        }
+        while self.history.len() > depth {
+            self.history.pop_front();
+        }
+    }
+}
+
+/// How long a shared dataflow keeps what a subscriber might still ask for.
+///
+/// [`docs/26-arrangement-sharing-report.md`](../../../../docs/26-arrangement-sharing-report.md)
+/// §26.9 recorded both of these as constants that should have been policies: the history was 64
+/// versions "because a subscriber further behind than that is not the bottleneck", and the
+/// arrangements were never dropped at all.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Retention {
+    /// The **ceiling** on retained change history, in versions. The reader frontiers are the floor,
+    /// and they are usually far lower — this bounds what one subscriber that has stopped rendering
+    /// can pin.
+    pub depth: usize,
+    /// Whether to give up the arrangements when the last subscriber goes.
+    ///
+    /// On, the process holds nothing between fanouts and the next subscriber pays a cold start. Off,
+    /// they stay warm for a reconnection that may not come. The trade is a real one and it belongs
+    /// to a deployment rather than to this file, which is why it is here and not a `const`.
+    pub release_when_idle: bool,
+}
+
+/// How many versions of change history a shared dataflow keeps **at most**.
+///
+/// The cost is one `Change` per entry that moved per remembered version — a delta, not a
+/// collection, because a rebuilt operator's changes are not kept. The benefit is that a subscriber
+/// this many events behind still updates by delta rather than rebuilding. 64 is well past the point
+/// where a subscriber that far behind is the bottleneck.
+///
+/// It is a ceiling rather than the retention itself: what is actually kept is bounded below by the
+/// oldest reader's frontier, which on a fanout of subscribers that all render is one step.
+const HISTORY: usize = 64;
+
+impl Default for Retention {
+    fn default() -> Retention {
+        Retention {
+            depth: HISTORY,
+            release_when_idle: true,
+        }
+    }
 }
 
 /// The operators of a plan that do not read the session, arranged **once** for every subscriber.
@@ -1145,27 +1263,41 @@ struct SharedInner {
 /// The *page* is per-session in every corpus program, so what is shared is the prefix below the
 /// session, not the render. `24-feed.beck` is the case where that prefix is most of the plan and
 /// the sketch is the case where it is least; `docs/26` has the table.
+///
+/// # The lifecycle: who keeps this alive, and for how long
+///
+/// The three choices above say how the dataflow is *maintained*. They are silent about when it
+/// stops being worth maintaining, which [`26`](../../../../docs/26-arrangement-sharing-report.md)
+/// §26.9 recorded as two loose ends — arrangements that are never released, and a change history
+/// that is a constant rather than a policy. Both are the same missing rule, and it is the
+/// reader-frontier discipline of differential dataflow's shared arrangements: a reader set, a
+/// frontier per reader, history compactable up to the minimum frontier, and the trace droppable
+/// when the reader set is empty.
+///
+/// So a subscriber engine is **counted**. [`SharedDataflow::subscriber`] enters it in the reader
+/// set and its `Drop` removes it; each render publishes the version it reached; an advance
+/// compacts to the oldest frontier and, when the last reader goes, the arrangements are released
+/// outright. What the process holds is then a function of who is connected rather than of what has
+/// ever connected.
 pub struct SharedDataflow {
     inner: RwLock<SharedInner>,
-    /// How many versions of changes to remember. Beyond this a lagging subscriber rebuilds.
-    depth: usize,
+    retention: Retention,
     /// How many times the shared prefix has actually been advanced.
     ///
     /// The metric the whole design turns on: a thousand subscribers rendering at one version must
     /// advance it *once*, and a counter is how that is a test rather than a claim.
-    advances: std::sync::atomic::AtomicU64,
+    advances: AtomicU64,
+    /// How many times the arrangements have been given up because nobody was reading them.
+    releases: AtomicU64,
+    next_reader: AtomicU64,
 }
-
-/// How many versions of change history a shared dataflow keeps.
-///
-/// The cost is one `Change` per entry that moved per remembered version — a delta, not a
-/// collection, because a rebuilt operator's changes are not kept. The benefit is that a subscriber
-/// this many events behind still updates by delta rather than rebuilding. 64 is well past the point
-/// where a subscriber that far behind is the bottleneck.
-const HISTORY: usize = 64;
 
 impl SharedDataflow {
     pub fn new(prepared: Arc<Prepared>) -> SharedDataflow {
+        SharedDataflow::with_retention(prepared, Retention::default())
+    }
+
+    pub fn with_retention(prepared: Arc<Prepared>, retention: Retention) -> SharedDataflow {
         let owns: Arc<[bool]> = prepared.plan.nodes.iter().map(|n| !n.per_session).collect();
         SharedDataflow {
             inner: RwLock::new(SharedInner {
@@ -1173,16 +1305,70 @@ impl SharedDataflow {
                 version: 0,
                 started: false,
                 history: VecDeque::new(),
+                readers: BTreeMap::new(),
             }),
-            depth: HISTORY,
-            advances: std::sync::atomic::AtomicU64::new(0),
+            retention,
+            advances: AtomicU64::new(0),
+            releases: AtomicU64::new(0),
+            next_reader: AtomicU64::new(0),
         }
     }
 
+    pub fn retention(&self) -> Retention {
+        self.retention
+    }
+
     /// A subscriber's engine over the same plan: the per-session operators, and nothing else.
-    pub fn subscriber(&self) -> Engine {
-        let inner = self.read();
-        Engine::subscriber(inner.engine.prepared.clone())
+    ///
+    /// The engine is a **reader** of this dataflow for exactly as long as it lives. It takes an
+    /// `Arc<Self>` because that is what makes the second half true: the engine has to be able to
+    /// say it has gone, and a subscription ends by dropping its engine rather than by calling
+    /// anything.
+    pub fn subscriber(self: &Arc<Self>) -> Engine {
+        let mut inner = self.write();
+        let mut engine = Engine::subscriber(inner.engine.prepared.clone());
+        let id = self.next_reader.fetch_add(1, Ordering::Relaxed);
+        let frontier = Arc::new(AtomicU64::new(UNRENDERED));
+        inner.readers.insert(id, frontier.clone());
+        engine.attached = Some(Attachment {
+            shared: self.clone(),
+            id,
+            frontier,
+        });
+        engine
+    }
+
+    /// A subscriber has gone. Drop what only it could still have asked for.
+    ///
+    /// Called from [`Engine`]'s `Drop`, so it must not be reachable while this thread holds either
+    /// guard — it is not: the engine a `SharedInner` owns is built by `Engine::for_nodes` and is
+    /// never a reader of anything.
+    fn detach(&self, id: ReaderId) {
+        let mut inner = self.write();
+        inner.readers.remove(&id);
+        if inner.readers.is_empty() && self.retention.release_when_idle {
+            self.release(&mut inner);
+        } else {
+            let depth = self.retention.depth;
+            inner.compact(depth);
+        }
+    }
+
+    /// Give up the arrangements. Nobody is reading them and the accumulator they came from remains,
+    /// so this costs the next subscriber a cold start and costs correctness nothing.
+    ///
+    /// Deliberately the same reset the error path takes, and for the same reason: what is left has
+    /// to be a dataflow that says it has never been advanced, rather than one that has been
+    /// advanced and then hollowed out.
+    fn release(&self, inner: &mut SharedInner) {
+        if !inner.started {
+            return;
+        }
+        inner.engine.reset();
+        inner.history.clear();
+        inner.started = false;
+        inner.version = 0;
+        self.releases.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Render one subscriber's page, maintaining the shared prefix once for all of them.
@@ -1208,6 +1394,14 @@ impl SharedDataflow {
         let up = Upstream::new(&inner, engine.seen);
         let page = engine.render_from(Some(up), state, session)?;
         engine.seen = inner.version;
+        // Published outside this dataflow's write lock, and this is the whole reason a frontier is
+        // an atomic: a render must not serialise against the other renders it is concurrent with.
+        // Publishing it *after* the render is what makes it safe to compact against — a reader
+        // whose frontier still reads older than it is retains more history than it needs, and a
+        // reader that retains too little is the only way this could be wrong.
+        if let Some(a) = &engine.attached {
+            a.frontier.store(inner.version, Ordering::Relaxed);
+        }
         Ok((page, inner.version))
     }
 
@@ -1219,10 +1413,7 @@ impl SharedDataflow {
                 return Ok(());
             }
         }
-        let mut inner = self
-            .inner
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut inner = self.write();
         // Checked again under the write lock: between the read above and here, another subscriber
         // may have done exactly this.
         if inner.started && inner.version >= version {
@@ -1238,14 +1429,15 @@ impl SharedDataflow {
             return Err(e);
         }
         inner.started = true;
-        self.advances
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.advances.fetch_add(1, Ordering::Relaxed);
         let step = inner.engine.step(from, version);
         inner.history.push_back(step);
-        while inner.history.len() > self.depth {
-            inner.history.pop_front();
-        }
         inner.version = version;
+        // Under the same write lock as the advance, so nothing is compacted away between a
+        // subscriber deciding what it needs and reading it: a render holds the read lock for its
+        // whole duration, and this cannot run until every render in flight has finished.
+        let depth = self.retention.depth;
+        inner.compact(depth);
         Ok(())
     }
 
@@ -1260,7 +1452,29 @@ impl SharedDataflow {
     /// number that says so: it counts advances, not renders, so it stays flat as subscribers are
     /// added and moves only when the fold does.
     pub fn advances(&self) -> u64 {
-        self.advances.load(std::sync::atomic::Ordering::Relaxed)
+        self.advances.load(Ordering::Relaxed)
+    }
+
+    /// How many times the arrangements have been given up because nobody was reading them.
+    ///
+    /// The counterpart to [`SharedDataflow::advances`], and the number a deployment weighs against
+    /// it: every release is a cold start charged to whichever subscriber reconnects first.
+    pub fn releases(&self) -> u64 {
+        self.releases.load(Ordering::Relaxed)
+    }
+
+    /// How many subscribers are attached right now.
+    pub fn readers(&self) -> usize {
+        self.read().readers.len()
+    }
+
+    /// How many versions of change history are being kept.
+    ///
+    /// Bounded above by [`Retention::depth`] and below by the oldest attached reader's frontier, so
+    /// on a fanout whose subscribers all render at every version it is 1 rather than 64. This is
+    /// the number that says the frontier discipline is doing something.
+    pub fn retained(&self) -> usize {
+        self.read().history.len()
     }
 
     /// Entries across every shared arrangement — held once, however many subscribers there are.
@@ -1280,6 +1494,12 @@ impl SharedDataflow {
     fn read(&self) -> std::sync::RwLockReadGuard<'_, SharedInner> {
         self.inner
             .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn write(&self) -> std::sync::RwLockWriteGuard<'_, SharedInner> {
+        self.inner
+            .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }

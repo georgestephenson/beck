@@ -14,7 +14,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, Context, Result};
 use beck_core::backend::{Backend, Callable};
 use beck_core::core::CoreKind;
-use beck_core::engine::{Engine, Prepared, SharedDataflow};
+use beck_core::engine::{Engine, Prepared, Retention, SharedDataflow};
 use beck_core::plan::Plan;
 use beck_core::{Core, Html, Placed, Value};
 
@@ -175,8 +175,11 @@ impl Runtime {
     /// It is created per [`crate::App`] rather than per `Runtime` because what it holds is derived
     /// from the accumulator, and the accumulator belongs to the application. A `Runtime` with no
     /// application driving it (`beck test`, the differential harness) never makes one.
-    pub fn shared_dataflow(&self) -> Arc<SharedDataflow> {
-        Arc::new(SharedDataflow::new(self.plan.clone()))
+    ///
+    /// `retention` says how long it keeps what a subscriber might still ask for, and comes from the
+    /// application's configuration for the reason [`crate::AppConfig::retention`] gives.
+    pub fn shared_dataflow(&self, retention: Retention) -> Arc<SharedDataflow> {
+        Arc::new(SharedDataflow::with_retention(self.plan.clone(), retention))
     }
 
     /// Render a subscriber's view by maintaining it, rather than by recomputing it.

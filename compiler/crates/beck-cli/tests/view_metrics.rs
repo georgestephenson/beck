@@ -117,11 +117,43 @@ async fn what_the_views_cost_is_exported_while_the_process_is_running() {
         "the subscriptions report no entries between them"
     );
 
+    // Nobody is behind, so nothing is being kept for anybody. Zero rather than one because the
+    // events all landed before either subscription opened: the single advance happened with no
+    // warm reader to use its changes, so the step was retained for nobody the moment it was made.
+    // A subscription that was already rendering when an event arrived would pin exactly one.
+    assert_eq!(
+        t.shared_retained.get(),
+        0,
+        "two subscriptions that are up to date are pinning {} versions of change history",
+        t.shared_retained.get()
+    );
+    assert_eq!(t.shared_releases.get(), 0, "released while subscribed");
+
     // The gauge is a sum over connections, so it has to come back down when they end — a gauge
     // that only goes up describes connections that closed.
-    for (tx, _, task) in sockets {
-        drop(tx);
-        let _ = task.await;
+    let (first, rest) = sockets.split_at_mut(1);
+    for (tx, _, task) in first.iter_mut() {
+        drop(std::mem::replace(tx, unbounded_channel().0));
+        task.await.expect("the first subscription ends").ok();
+    }
+    // One subscription left, so the shared dataflow is still being read and still holds what it
+    // was holding. This is the half that says the release is about the *last* reader and not about
+    // any of them.
+    assert_eq!(
+        t.shared_arranged.get(),
+        shared,
+        "the shared dataflow's entries moved when one of two subscriptions ended; they are not \
+         per session"
+    );
+    assert_eq!(
+        t.shared_releases.get(),
+        0,
+        "released with a reader attached"
+    );
+
+    for (tx, _, task) in rest.iter_mut() {
+        drop(std::mem::replace(tx, unbounded_channel().0));
+        task.await.expect("the last subscription ends").ok();
     }
     assert_eq!(
         t.session_arranged.get(),
@@ -129,9 +161,17 @@ async fn what_the_views_cost_is_exported_while_the_process_is_running() {
         "two subscriptions ended and the per-session gauge is still {}",
         t.session_arranged.get()
     );
+    // And with nobody reading it, the one shared dataflow gives its arrangements back — the
+    // lifecycle rule, as the process reports it rather than as the engine's own tests assert it.
     assert_eq!(
         t.shared_arranged.get(),
-        shared,
-        "the shared dataflow's entries moved when a subscription ended; they are not per session"
+        0,
+        "the last subscription ended and the process still reports {} shared entries",
+        t.shared_arranged.get()
+    );
+    assert_eq!(
+        t.shared_releases.get(),
+        1,
+        "the arrangements went without the process counting a release"
     );
 }

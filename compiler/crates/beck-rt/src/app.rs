@@ -59,6 +59,18 @@ pub struct AppConfig {
     ///
     /// Ignored when `maintain_views` is off: there are no arrangements to share.
     pub share_arrangements: bool,
+    /// How long the shared dataflow keeps what a subscriber might still ask for.
+    ///
+    /// The default releases the arrangements when the last subscription ends and keeps at most 64
+    /// versions of change history while one is open — but what is actually kept is the oldest
+    /// connected subscriber's lag, so both numbers are ceilings rather than costs. A deployment
+    /// whose clients reconnect constantly wants `release_when_idle` off, and one with slow clients
+    /// and fast events wants a deeper history; neither should have to recompile for it
+    /// ([`docs/26-arrangement-sharing-report.md`](../../../../docs/26-arrangement-sharing-report.md)
+    /// §26.9 asked for exactly this).
+    ///
+    /// Ignored when `share_arrangements` is off: there is no shared dataflow to retain anything.
+    pub retention: beck_core::engine::Retention,
     /// Where an envelope's `at` comes from.
     ///
     /// A dependency rather than a tunable, and here because the merge point is "the one place time
@@ -83,6 +95,7 @@ impl Default for AppConfig {
             dedup_capacity: 16_384,
             maintain_views: true,
             share_arrangements: true,
+            retention: beck_core::engine::Retention::default(),
             clock: Arc::new(beck_core::clock::SystemClock),
             identity: Arc::new(crate::identity::DevIdentity),
         }
@@ -144,7 +157,7 @@ impl App {
 
         let (version, _) = watch::channel(head);
         let (tx, rx) = mpsc::channel::<Proposal>(1024);
-        let shared = runtime.shared_dataflow();
+        let shared = runtime.shared_dataflow(config.retention);
         let app = Arc::new(App {
             runtime,
             store,

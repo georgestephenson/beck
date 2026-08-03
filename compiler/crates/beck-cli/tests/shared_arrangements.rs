@@ -22,11 +22,15 @@
 //! * subscribers with different sessions over one dataflow, which is the case a shared arrangement
 //!   could leak one subscriber's rows into another's page;
 //! * that the sharing is real: advanced once for any number of subscribers, and the arrangements
-//!   counted once rather than once each.
+//!   counted once rather than once each;
+//! * and the *lifecycle* — how much of all that is held once nobody is reading it, which
+//!   [`docs/26-arrangement-sharing-report.md`](../../../../docs/26-arrangement-sharing-report.md)
+//!   §26.9 recorded as two loose ends. The second half of this file is that rule, and it asserts
+//!   the page is unaffected before it asserts anything is dropped.
 
 use std::sync::Arc;
 
-use beck_core::engine::{Engine, Prepared, SharedDataflow};
+use beck_core::engine::{Engine, Prepared, Retention, SharedDataflow};
 use beck_core::gen::{arbitrary, Rng};
 use beck_core::plan::Plan;
 use beck_core::{Placed, Ty, Value};
@@ -99,6 +103,18 @@ impl Subject {
             shared,
             history,
         }
+    }
+
+    /// The same subject under a different retention policy.
+    ///
+    /// Safe to swap the dataflow wholesale because nothing has rendered against it yet: a `Subject`
+    /// folds its log with the runtime, and the dataflow is not touched until a subscriber attaches.
+    fn retaining(mut self, retention: Retention) -> Subject {
+        self.shared = Arc::new(SharedDataflow::with_retention(
+            self.prepared.clone(),
+            retention,
+        ));
+        self
     }
 
     fn head(&self) -> u64 {
@@ -475,5 +491,286 @@ fn a_shared_arrangement_is_listed_once_between_the_subscribers_that_read_it() {
         "eight subscribers paid {} entries over 50 posts and {} over 400; the shared page is \
          being assembled per subscriber",
         per_subscriber[0], per_subscriber[1]
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// The lifecycle: what the dataflow holds when nobody is reading it, and for how long
+//
+// `docs/26-arrangement-sharing-report.md` §26.9 recorded two loose ends — the arrangements are
+// never released, and the change history is a constant rather than a policy. Both are the same
+// missing rule, and everything below is where it is wrong if it is wrong. The rule is a *reader
+// set*: a subscriber engine is counted while it lives and publishes how far it has rendered, so
+// the history can be compacted to the oldest frontier and the arrangements dropped when the set
+// empties.
+//
+// What these have to establish, and in this order: that the release and the compaction cannot
+// change a page (they are memory, not semantics); and only then that they actually happen.
+// ---------------------------------------------------------------------------------------------
+
+#[test]
+fn what_is_retained_never_changes_a_page() {
+    // The one that matters. Every other test in this section asserts something is *dropped*, and a
+    // dropped arrangement that was still needed is a wrong page rather than a crash — so the
+    // correctness claim is made first and over the whole corpus.
+    //
+    // Three subscribers, arriving and leaving at different points, against the recompute oracle at
+    // every version. The middle one is dropped and replaced halfway through, which is the case that
+    // exercises both halves at once: its departure compacts the history the survivors are using,
+    // and its replacement attaches to a dataflow that has moved on.
+    for subject in subjects(20) {
+        let head = subject.head();
+        let mut steady = subject.shared.subscriber();
+        let mut leaver = Some(subject.shared.subscriber());
+        for version in 0..=head {
+            subject.render(&mut steady, version, ACTORS[0], "the steady subscriber");
+            match leaver.as_mut() {
+                Some(engine) => {
+                    subject.render(engine, version, ACTORS[1], "the leaver");
+                    if version == head / 2 {
+                        // Detaches, compacting the history back to what `steady` still needs.
+                        leaver = None;
+                    }
+                }
+                None => {
+                    let mut fresh = subject.shared.subscriber();
+                    subject.render(&mut fresh, version, ACTORS[2], "the replacement");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn a_page_survives_the_arrangements_being_released_underneath_it() {
+    // The release path's own correctness. A dataflow that has been emptied must be indistinguishable
+    // from one that was never started — not nearly, exactly — because the next subscriber's page is
+    // compared against a recompute that knows nothing about any of this.
+    //
+    // The subtle half is the *second* render after the release: a dataflow that reset its
+    // arrangements but kept its version would advance from a version it can no longer describe, and
+    // hand its next subscriber deltas against arrangements that are not there.
+    for subject in subjects(16) {
+        let head = subject.head();
+        {
+            let mut first = subject.shared.subscriber();
+            for version in 0..=head {
+                subject.render(&mut first, version, ACTORS[0], "before the release");
+            }
+        }
+        assert_eq!(
+            subject.shared.readers(),
+            0,
+            "{}: the subscriber was dropped and the reader set still has entries",
+            subject.name
+        );
+        let mut second = subject.shared.subscriber();
+        subject.render(&mut second, head, ACTORS[1], "after the release");
+        subject.render(&mut second, head, ACTORS[1], "and again");
+    }
+}
+
+#[test]
+fn the_history_is_bounded_by_the_laggiest_subscriber_and_not_by_the_ceiling() {
+    // §26.9: "The history is a constant, not a policy. 64 versions, chosen because a subscriber
+    // further behind than that is not the bottleneck, and not because anything measured where the
+    // knee is."
+    //
+    // It is now a ceiling with a floor underneath it, and the floor is a fact rather than a number
+    // somebody picked: a step every reader has already rendered past is retained for nobody.
+    let subject = Subject::new("examples/todo.beck", support::todo_program(), 40);
+    let head = subject.head();
+    assert!(
+        head > 8,
+        "the log is too short to say anything: {head} versions"
+    );
+
+    let mut keen = subject.shared.subscriber();
+    let mut laggard = subject.shared.subscriber();
+    subject.render(&mut laggard, 3, ACTORS[1], "the laggard's only render");
+    for version in 0..=head {
+        subject.render(&mut keen, version, ACTORS[0], "the keen subscriber");
+    }
+
+    // Everything from the laggard's frontier forward, and nothing before it.
+    assert_eq!(
+        subject.shared.retained(),
+        (head - 3) as usize,
+        "with one subscriber stuck at version 3 and the head at {head}, the dataflow kept {} \
+         versions of history",
+        subject.shared.retained()
+    );
+
+    // And the laggard leaving is what releases it — the history was being kept *for it*.
+    drop(laggard);
+    assert_eq!(
+        subject.shared.retained(),
+        0,
+        "the laggard left and the dataflow is still keeping {} versions for nobody",
+        subject.shared.retained()
+    );
+    // The survivor is unaffected: it was never behind.
+    subject.render(&mut keen, head, ACTORS[0], "after the laggard left");
+}
+
+#[test]
+fn a_fanout_that_keeps_up_keeps_one_version_of_history() {
+    // The common case, and the one the constant was most wrong about. Thirty-two subscribers all
+    // rendering at every version were costing 64 versions of retained change; they cost one.
+    const FANOUT: usize = 32;
+    let subject = Subject::new("examples/todo.beck", support::todo_program(), 40);
+    let head = subject.head();
+    let mut engines: Vec<Engine> = (0..FANOUT).map(|_| subject.shared.subscriber()).collect();
+    for version in 0..=head {
+        for (i, engine) in engines.iter_mut().enumerate() {
+            subject.render(engine, version, ACTORS[i % ACTORS.len()], "the fanout");
+        }
+    }
+    println!(
+        "{FANOUT} subscribers over {head} versions retained {} version(s) of change history \
+         (ceiling {})",
+        subject.shared.retained(),
+        subject.shared.retention().depth
+    );
+    assert_eq!(
+        subject.shared.retained(),
+        1,
+        "a fanout that renders at every version kept {} versions of history",
+        subject.shared.retained()
+    );
+}
+
+#[test]
+fn a_subscriber_that_has_not_rendered_pins_nothing() {
+    // A reader's frontier is `UNRENDERED` until its first render, and the alternative — treating it
+    // as version 0 — would pin the whole history for the one subscriber that cannot use a single
+    // step of it, because an engine with no arrangements rebuilds whatever it is offered.
+    //
+    // The failure this rules out is a connection that opens and never renders holding the ceiling's
+    // worth of change for the lifetime of the process.
+    let subject = Subject::new("examples/todo.beck", support::todo_program(), 40);
+    let head = subject.head();
+    let _idle = subject.shared.subscriber();
+    let mut keen = subject.shared.subscriber();
+    for version in 0..=head {
+        subject.render(&mut keen, version, ACTORS[0], "beside an idle subscriber");
+    }
+    assert_eq!(
+        subject.shared.retained(),
+        1,
+        "a subscriber that never rendered pinned {} versions of history",
+        subject.shared.retained()
+    );
+}
+
+#[test]
+fn the_arrangements_go_when_the_last_subscriber_does() {
+    // §26.9: "The shared dataflow is never released. It holds its arrangements whether or not
+    // anybody is subscribed. A process that had a fanout and now has none keeps the accumulator's
+    // arrangements warm for a reconnection that may not come. Nothing measures how much that is and
+    // nothing drops it."
+    //
+    // Both halves, on the program written for the case where the shared side is most of the plan.
+    let subject = feed_with(200);
+    let head = subject.head();
+    let state = &subject.history[head as usize];
+
+    let mut engines: Vec<Engine> = (0..8).map(|_| subject.shared.subscriber()).collect();
+    for (i, engine) in engines.iter_mut().enumerate() {
+        subject.render(engine, head, ACTORS[i % ACTORS.len()], "the fanout");
+    }
+    let held = subject.shared.arranged();
+    let bytes = subject.shared.footprint(state).bytes;
+    assert!(held > 200, "the shared side is holding only {held} entries");
+    assert_eq!(subject.shared.releases(), 0, "released while subscribed");
+
+    // Seven of the eight go. Nothing is released: somebody is still reading.
+    engines.truncate(1);
+    assert_eq!(
+        subject.shared.arranged(),
+        held,
+        "the arrangements were dropped with a subscriber still attached"
+    );
+
+    drop(engines);
+    assert_eq!(subject.shared.readers(), 0);
+    assert_eq!(
+        subject.shared.arranged(),
+        0,
+        "the last subscriber left and the dataflow is still holding {} entries",
+        subject.shared.arranged()
+    );
+    assert_eq!(
+        subject.shared.releases(),
+        1,
+        "the arrangements went without being counted as released"
+    );
+    let after = subject.shared.footprint(state).bytes;
+    println!(
+        "24-feed.beck, 200 posts, 8 subscribers: the shared side held {held} entries \
+         ({bytes} bytes beyond the accumulator); with nobody subscribed it holds {} ({after} bytes)",
+        subject.shared.arranged()
+    );
+    assert!(
+        after < bytes / 4,
+        "releasing gave back {bytes} - {after} bytes, which is not most of what was held"
+    );
+}
+
+#[test]
+fn a_dataflow_told_to_stay_warm_stays_warm() {
+    // The policy half. Releasing costs the next subscriber a cold start, and a deployment whose
+    // clients reconnect constantly would rather pay the memory — which is a deployment's judgement
+    // and not this file's, so it is a field rather than a `const`.
+    let subject = feed_with(200).retaining(Retention {
+        release_when_idle: false,
+        ..Retention::default()
+    });
+    let head = subject.head();
+    {
+        let mut engine = subject.shared.subscriber();
+        subject.render(&mut engine, head, ACTORS[0], "the only subscriber");
+    }
+    assert_eq!(subject.shared.readers(), 0);
+    assert!(
+        subject.shared.arranged() > 200,
+        "a dataflow told not to release when idle dropped its arrangements anyway"
+    );
+    assert_eq!(subject.shared.releases(), 0);
+
+    // And the reconnection it was kept warm for is served without a rebuild of the shared side.
+    let advances = subject.shared.advances();
+    let mut engine = subject.shared.subscriber();
+    subject.render(&mut engine, head, ACTORS[1], "the reconnection");
+    assert_eq!(
+        subject.shared.advances(),
+        advances,
+        "a warm dataflow at the version being asked for advanced again"
+    );
+}
+
+#[test]
+fn a_release_costs_the_next_subscriber_a_cold_start() {
+    // What the default trades away, asserted rather than left to be inferred. The reconnection after
+    // a release is served correctly — `a_page_survives_the_arrangements_being_released_underneath_it`
+    // is the corpus-wide version of that — and it is served by rebuilding the shared prefix.
+    let subject = feed_with(200);
+    let head = subject.head();
+    {
+        let mut engine = subject.shared.subscriber();
+        subject.render(&mut engine, head, ACTORS[0], "the first subscriber");
+    }
+    let advances = subject.shared.advances();
+    let mut engine = subject.shared.subscriber();
+    subject.render(&mut engine, head, ACTORS[1], "the reconnection");
+    assert_eq!(
+        subject.shared.advances(),
+        advances + 1,
+        "the shared prefix was not rebuilt after being released"
+    );
+    assert!(
+        subject.shared.arranged() > 200,
+        "the rebuilt dataflow is holding only {} entries",
+        subject.shared.arranged()
     );
 }
