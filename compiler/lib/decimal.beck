@@ -1,0 +1,488 @@
+# Arbitrary-precision decimal, written in Beck on top of `bignum.beck`.
+#
+# The last item of `docs/08` §8.5.4's Wave 2. `docs/46` §46.6 recorded what `money.beck` is and is
+# not — "money, not decimal. Fixed at two minor digits … no arbitrary precision" — and `docs/55`
+# §55.6 named this as the thing the bignums made possible and did not contain, with its one real
+# design question: **what `/` does when the quotient does not terminate.** §56.3 is that decision.
+#
+# A `Decimal` is an exact rational whose denominator is a power of ten: `units` scaled by
+# `10^-scale`. That is not the same thing as a real — `docs/32`'s `Float` is IEEE 754 and 0.1 is not
+# representable in it — and it is not the same thing as a rational either, because a third has no
+# decimal expansion and this type says so out loud rather than rounding.
+
+import bignum
+
+## An exact number of the form `units × 10^-scale`, with `scale` at least zero.
+##
+## **Canonical**: trailing zeros are stripped, so `1.50` and `1.5` are the same value and `==` is
+## numeric equality. That is the opposite of what a `BigDecimal` does, and the reason is `docs/54`:
+## the value order here is a `Map`'s iteration, the state digest and the patch stream a replay has
+## to reproduce, so two representations of one number are two keys and two digests for one fact.
+##
+# What it costs is that **a scale is not a significance**. `2.50` cannot be held as distinct from
+# `2.5`, so this type does not carry "two decimal places" as data — `render_at` carries it as a
+# presentation decision, which is where it belongs, and `money.beck` is the type whose scale is
+# fixed by its currency.
+model Decimal:
+    units: Big
+    scale: Int
+
+union DecimalError:
+    ## Text that is not an optionally-signed decimal numeral.
+    NotADecimal(text: Str)
+    ## A quotient with no terminating decimal expansion — a third, a seventh — or one longer than
+    ## `max_scale()`. §56.3 is why this is a raise rather than a rounded answer.
+    QuotientDoesNotTerminate(dividend: Str, divisor: Str)
+    ## Division by zero.
+    DivisionByZero
+    ## `to_big` of a value that is not a whole number.
+    NotAWholeNumber(value: Str)
+
+## How a digit that has to be dropped is accounted for.
+##
+## Three, because picking one would be picking a jurisdiction. `HalfEven` is IEEE 754-2008's default
+## for decimal and is the one that does not bias a sum of many roundings, which is the property a
+## ledger wants; `HalfUp` is what most tax rules and most people mean by "round"; `Down` truncates
+## and is what a quotient's integer part is.
+union Rounding:
+    HalfEven
+    HalfUp
+    Down
+
+## The most fractional digits `/` will produce before it refuses.
+##
+## A bound rather than a proof: a terminating quotient needs as many digits as the larger of the twos
+## and the fives in its reduced divisor, and deciding *that* needs a `gcd` and a factorisation this
+## library does not have. Forty is past anything a program asks for — money is two places, an IEEE
+## double is about seventeen significant digits — and a quotient that has not terminated in forty is
+## one whose caller should be choosing a scale and a rule.
+##
+## It is also what keeps a **refusal** cheap, and that is worth saying rather than hiding: the
+## expansion costs one long division per digit, so the bound is the work done before `/` gives up.
+## At a hundred it was twenty-five seconds on the divisor below, which is a gate nobody would keep.
+## §56.6 records what the bound gets wrong: an exact quotient needing more than forty places.
+def max_scale() -> Int:
+    return 40
+
+# ---------------------------------------------------------------------------------------------
+# Construction
+# ---------------------------------------------------------------------------------------------
+
+## The only constructor. Strips trailing zeros, and multiplies out a negative scale.
+##
+## `divide_small` rather than `/` is what keeps this **pure**: dividing by a literal ten cannot fail,
+## and `bignum`'s `/` says it can, so a normaliser written with the operator would make every
+## addition in this file fallible on paper. `docs/55` §55.7 is where that helper came from.
+def decimal(units: Big, scale: Int) -> Decimal:
+    if scale < 0:
+        return Decimal(units=units * pow10(negate(scale)), scale=0)
+    if is_zero(units):
+        return Decimal(units=zero(), scale=0)
+    return strip(units, scale)
+
+def strip(units: Big, scale: Int) -> Decimal:
+    if scale <= 0:
+        return Decimal(units=units, scale=0)
+    split = divide_small(units, 10)
+    if is_zero(split.remainder):
+        return strip(split.quotient, scale - 1)
+    return Decimal(units=units, scale=scale)
+
+## `10^k`, and `1` for a `k` at or below zero.
+##
+## Written here rather than reached for as `big_pow`, which raises on a negative exponent: this one
+## cannot fail, so nothing downstream of it has to say that it might.
+def pow10(k: Int) -> Big:
+    return pow10_from(k, one())
+
+def pow10_from(k: Int, acc: Big) -> Big:
+    if k <= 0:
+        return acc
+    return pow10_from(k - 1, acc * big(10))
+
+def decimal_zero() -> Decimal:
+    return Decimal(units=zero(), scale=0)
+
+def of_int(n: Int) -> Decimal:
+    return decimal(big(n), 0)
+
+def of_big(n: Big) -> Decimal:
+    return decimal(n, 0)
+
+## `of_units(150, 2)` is `1.5`. The scale is the caller's; canonicalising is not.
+def of_units(units: Int, scale: Int) -> Decimal:
+    return decimal(big(units), scale)
+
+def is_negative(d: Decimal) -> Bool:
+    return d.units.negative
+
+def is_zero_decimal(d: Decimal) -> Bool:
+    return is_zero(d.units)
+
+# ---------------------------------------------------------------------------------------------
+# Alignment, and the arithmetic that needs it
+# ---------------------------------------------------------------------------------------------
+
+## `d`'s units as they would be at `scale`, which must be at least `d.scale`.
+def units_at(d: Decimal, scale: Int) -> Big:
+    return d.units * pow10(scale - d.scale)
+
+def wider(a: Decimal, b: Decimal) -> Int:
+    return a.scale if a.scale > b.scale else b.scale
+
+## `-1`, `0` or `1`, by value.
+##
+## Exposed as a function for the reason `bignum`'s `compare_big` is: `<` on a record compares field
+## by field, and this record's first field is a `Big` whose own first field is a sign flag — so the
+## derived order is wrong twice over. `docs/54` is the write-up of why the answer is a function here
+## rather than a trait.
+def compare_decimal(a: Decimal, b: Decimal) -> Int:
+    common = wider(a, b)
+    return compare_big(units_at(a, common), units_at(b, common))
+
+def less_than_decimal(a: Decimal, b: Decimal) -> Bool:
+    return compare_decimal(a, b) < 0
+
+def greater_than_decimal(a: Decimal, b: Decimal) -> Bool:
+    return compare_decimal(a, b) > 0
+
+def negate_decimal(d: Decimal) -> Decimal:
+    return Decimal(units=negate_big(d.units), scale=d.scale)
+
+def abs_decimal(d: Decimal) -> Decimal:
+    return Decimal(units=abs_big(d.units), scale=d.scale)
+
+# `+`, `-`, `*` and `/` on `Decimal`, through the prelude trait `Num` (`docs/41`). The fourth floor
+# of the tower added from outside the compiler, and the second built on another one — `Decimal`'s
+# arithmetic is `Big`'s, and `Big`'s `+` being pure is why this one's is.
+#
+# Addition and multiplication are **exact and total**: the scale of a sum is the wider of the two,
+# and the scale of a product is their sum, so nothing is ever dropped. Division is the one that can
+# fail, and §56.3 is the decision behind it.
+impl Num for Decimal:
+    def add(self, other):
+        common = wider(self, other)
+        return decimal(units_at(self, common) + units_at(other, common), common)
+
+    def sub(self, other):
+        common = wider(self, other)
+        return decimal(units_at(self, common) - units_at(other, common), common)
+
+    def mul(self, other):
+        return decimal(self.units * other.units, self.scale + other.scale)
+
+    def div(self, other):
+        return exact_quotient(self, other)
+
+## `a / b`, exactly, or a refusal.
+##
+## The digits are produced one at a time and the loop stops when the remainder reaches zero. A
+## quotient that never gets there — a third — raises rather than rounding, and §56.3 is the argument:
+## a `/` that silently picked a scale and a rounding rule would be *guessing*, and this library set
+## already refuses to guess in the two places it costs the most (`money.beck`'s `split`,
+## `docs/46` §46.2's parsers).
+##
+## `divide_to` is the rounded division, and it takes both the scale and the rule.
+def exact_quotient(a: Decimal, b: Decimal) -> Decimal uses raises(DecimalError):
+    if is_zero_decimal(b):
+        raise DivisionByZero
+    first = divide_bigs(abs_big(a.units), abs_big(b.units), a, b)
+    digits = expand(abs_big(b.units), first.quotient, first.remainder, 0, a, b)
+    return signed_as(a, b, decimal(digits.value, digits.places + b.scale - a.scale))
+
+## A quotient being built, and how many fractional digits it has taken so far.
+model Expansion:
+    value: Big
+    places: Int
+
+def expand(
+    divisor: Big, value: Big, remainder: Big, places: Int, a: Decimal, b: Decimal
+) -> Expansion uses raises(DecimalError):
+    if is_zero(remainder):
+        return Expansion(value=value, places=places)
+    if places >= max_scale():
+        raise QuotientDoesNotTerminate(dividend=render_decimal(a), divisor=render_decimal(b))
+    step = divide_bigs(remainder * big(10), divisor, a, b)
+    return expand(divisor, value * big(10) + step.quotient, step.remainder, places + 1, a, b)
+
+## `bignum`'s division with its failure translated into this module's vocabulary.
+##
+## The divisor is non-zero at every call below, so the `Err` arm is unreachable — and writing it is
+## what keeps this file's row a single error type. A library whose callers have to handle two
+## unrelated error unions because of what it happens to be built on is a library leaking its
+## implementation, and `try:` is the tool for not doing that (`docs/45`).
+def divide_bigs(x: Big, y: Big, a: Decimal, b: Decimal) -> Division uses raises(DecimalError):
+    match (try: divide(x, y)):
+        case Ok(value):
+            return value
+        case Err(error):
+            raise QuotientDoesNotTerminate(dividend=render_decimal(a), divisor=render_decimal(b))
+
+def signed_as(a: Decimal, b: Decimal, magnitude: Decimal) -> Decimal:
+    if is_negative(a) != is_negative(b):
+        return negate_decimal(magnitude)
+    return magnitude
+
+# ---------------------------------------------------------------------------------------------
+# Rounding
+# ---------------------------------------------------------------------------------------------
+
+## `a / b` at exactly `scale` fractional digits, rounded by `rule`.
+##
+## This is the division that always answers, and the caller has said what it wants: how many digits,
+## and what to do with the one after them. `exact_quotient` is the one that refuses.
+def divide_to(a: Decimal, b: Decimal, scale: Int, rule: Rounding) -> Decimal uses raises(DecimalError):
+    if is_zero_decimal(b):
+        raise DivisionByZero
+    shift = b.scale - a.scale + scale
+    numerator = abs_big(a.units) * pow10(shift)
+    divisor = abs_big(b.units) * pow10(negate(shift))
+    split = divide_bigs(numerator, divisor, a, b)
+    # Through `decimal` and not `Decimal`: the rounded units of `1 / 2` at four places are `5000`,
+    # and a value built straight from them would be a second representation of one half — unequal
+    # to the one `decimal_of_str("0.5")` gives, and a second `Map` key and a second digest for one
+    # number. The canonical form is the type's promise, so the constructor is the only way in.
+    return signed_as(a, b, decimal(away_or_not(split, divisor, rule), scale))
+
+## Round `d` to `scale` fractional digits.
+##
+## Widening is exact and needs no rule, so a scale at or above `d`'s own is `d` — which is why this
+## does not go through the division above.
+def round_to(d: Decimal, scale: Int, rule: Rounding) -> Decimal uses raises(DecimalError):
+    if scale >= d.scale:
+        return d
+    return divide_to(d, of_int(1), scale, rule)
+
+## The quotient, plus one in its own direction if the remainder says so.
+##
+## The comparison is `2 × remainder` against the divisor, so "exactly half" is `==` on integers and
+## never a question about a fraction — which is the whole reason this is done on `Big`s rather than
+## by looking at a digit.
+def away_or_not(split: Division, divisor: Big, rule: Rounding) -> Big:
+    twice = split.remainder * big(2)
+    order = compare_big(abs_big(twice), abs_big(divisor))
+    match rule:
+        case Down:
+            return split.quotient
+        case HalfUp:
+            return split.quotient + one() if order >= 0 else split.quotient
+        case HalfEven:
+            if order > 0:
+                return split.quotient + one()
+            if order < 0:
+                return split.quotient
+            return split.quotient + one() if is_odd(split.quotient) else split.quotient
+
+def is_odd(n: Big) -> Bool:
+    return not is_zero(divide_small(n, 2).remainder)
+
+# ---------------------------------------------------------------------------------------------
+# Text
+# ---------------------------------------------------------------------------------------------
+
+## `"1.5"`, `"-0.25"`, `"3"`. Canonical, so no trailing zeros and no trailing point.
+def render_decimal(d: Decimal) -> Str:
+    if d.scale == 0:
+        return render_big(d.units)
+    digits = render_big(abs_big(d.units))
+    padded = str_slice("0000000000000000000000000000000000000000", 0, d.scale + 1 - str_len(digits)) + digits
+    point = str_len(padded) - d.scale
+    return (
+        ("-" if is_negative(d) else "")
+        + str_slice(padded, 0, point)
+        + "."
+        + str_slice(padded, point, d.scale)
+    )
+
+## `"2.50"` — the presentation the canonical form deliberately does not hold.
+##
+## Rounds when `scale` is narrower than the value and pads when it is wider, which is what a column
+## in a report wants and what `render_decimal` will not do for it.
+def render_at(d: Decimal, scale: Int, rule: Rounding) -> Str uses raises(DecimalError):
+    rounded = round_to(d, scale, rule)
+    if scale <= 0:
+        return render_big(rounded.units)
+    digits = render_big(abs_big(rounded.units * pow10(scale - rounded.scale)))
+    padded = str_slice("0000000000000000000000000000000000000000", 0, scale + 1 - str_len(digits)) + digits
+    point = str_len(padded) - scale
+    return (
+        ("-" if is_negative(rounded) else "")
+        + str_slice(padded, 0, point)
+        + "."
+        + str_slice(padded, point, scale)
+    )
+
+## Read `"1.25"`, `"-0.5"`, `"42"`. No exponent, and §56.6 says so.
+def decimal_of_str(text: Str) -> Decimal uses raises(DecimalError):
+    parts = str_split(text, ".")
+    if list_len(parts) == 1:
+        return of_big(whole_of(text, text))
+    if list_len(parts) != 2:
+        raise NotADecimal(text=text)
+    fraction = unwrap_or(list_get(parts, 1), "")
+    if str_is_empty(fraction):
+        raise NotADecimal(text=text)
+    whole = unwrap_or(list_get(parts, 0), "")
+    return signed_of(whole, text, digits_of(fraction, text), str_len(fraction))
+
+## The integer part, which may be empty (`".5"` is not accepted; `"-.5"` is not either) or signed.
+def signed_of(whole: Str, text: Str, fraction: Big, scale: Int) -> Decimal uses raises(DecimalError):
+    magnitude = decimal(abs_big(whole_of(strip_sign(whole), text)) * pow10(scale) + fraction, scale)
+    if str_starts_with(whole, "-"):
+        return negate_decimal(magnitude)
+    return magnitude
+
+def strip_sign(whole: Str) -> Str:
+    if str_starts_with(whole, "-"):
+        return str_slice(whole, 1, str_len(whole) - 1)
+    return whole
+
+## An unsigned run of digits, refusing a sign — so `"1.-5"` is not a number.
+def digits_of(text: Str, whole: Str) -> Big uses raises(DecimalError):
+    if str_starts_with(text, "-"):
+        raise NotADecimal(text=whole)
+    return whole_of(text, whole)
+
+## `bignum`'s reader, with its failure translated. Same reason as `divide_bigs`.
+def whole_of(text: Str, context: Str) -> Big uses raises(DecimalError):
+    match (try: big_of_str(text)):
+        case Ok(value):
+            return value
+        case Err(error):
+            raise NotADecimal(text=context)
+
+# ---------------------------------------------------------------------------------------------
+# Coercion
+# ---------------------------------------------------------------------------------------------
+
+## The whole number this is, or a refusal. Exact — it does not truncate, because a `to_big` that
+## quietly dropped a half is the bug `round_to` exists to make deliberate.
+def to_big(d: Decimal) -> Big uses raises(DecimalError):
+    if d.scale != 0:
+        raise NotAWholeNumber(value=render_decimal(d))
+    return d.units
+
+## **Lossy**, and a different function so a reader has to mean it: a real has 53 bits of significand
+## and 0.1 is not one of the numbers it holds, which is the whole reason this type exists.
+def to_real(d: Decimal) -> Float:
+    return big_to_real(d.units) / big_to_real(pow10(d.scale))
+
+# ---------------------------------------------------------------------------------------------
+# The library's own tests, in the language (`docs/21` §21.2)
+# ---------------------------------------------------------------------------------------------
+
+test "a decimal is canonical, so a trailing zero is not a different number":
+    expect (try: decimal_of_str("1.50")) == Ok(value=of_units(15, 1))
+    expect (try: decimal_of_str("1.5")) == Ok(value=of_units(15, 1))
+    expect of_units(1500, 3) == of_units(15, 1)
+    expect of_units(0, 5) == decimal_zero()
+    expect (try: render_decimal(decimal_of_str("1.500"))) == Ok(value="1.5")
+    expect (try: render_decimal(decimal_of_str("-0.250"))) == Ok(value="-0.25")
+    expect (try: render_decimal(decimal_of_str("42"))) == Ok(value="42")
+
+test "and text that is not a decimal says so":
+    expect (try: decimal_of_str("")) == Err(error=NotADecimal(text=""))
+    expect (try: decimal_of_str("1.")) == Err(error=NotADecimal(text="1."))
+    expect (try: decimal_of_str("1.2.3")) == Err(error=NotADecimal(text="1.2.3"))
+    expect (try: decimal_of_str("1.-5")) == Err(error=NotADecimal(text="1.-5"))
+    expect (try: decimal_of_str("1e6")) == Err(error=NotADecimal(text="1e6"))
+    expect (try: decimal_of_str("one")) == Err(error=NotADecimal(text="one"))
+
+## The number every floating-point tutorial opens with. `0.1 + 0.2` is `0.30000000000000004` as a
+## real and is `0.3` here, and that difference is the entire reason this type is in the library.
+test "0.1 + 0.2 is 0.3":
+    expect (try: render_decimal(decimal_of_str("0.1") + decimal_of_str("0.2"))) == Ok(value="0.3")
+    expect 0.1 + 0.2 != 0.3
+
+test "addition and multiplication are exact, and keep the scale they need":
+    expect (try: render_decimal(decimal_of_str("1.25") + decimal_of_str("2.5"))) == Ok(value="3.75")
+    expect (try: render_decimal(decimal_of_str("1.25") - decimal_of_str("1.25"))) == Ok(value="0")
+    expect (try: render_decimal(decimal_of_str("1.25") * decimal_of_str("0.4"))) == Ok(value="0.5")
+    expect (try: render_decimal(decimal_of_str("0.001") * decimal_of_str("0.001"))) == Ok(value="0.000001")
+    expect (try: render_decimal(decimal_of_str("-2.5") * decimal_of_str("4"))) == Ok(value="-10")
+
+test "division is exact, or it refuses":
+    expect (try: render_decimal(decimal_of_str("1") / decimal_of_str("8"))) == Ok(value="0.125")
+    expect (try: render_decimal(decimal_of_str("10") / decimal_of_str("4"))) == Ok(value="2.5")
+    expect (try: render_decimal(decimal_of_str("-1") / decimal_of_str("8"))) == Ok(value="-0.125")
+    expect (try: render_decimal(decimal_of_str("1") / decimal_of_str("-2"))) == Ok(value="-0.5")
+    expect (try: decimal_of_str("1") / decimal_of_str("3")) == Err(
+        error=QuotientDoesNotTerminate(dividend="1", divisor="3")
+    )
+    expect (try: decimal_of_str("1") / decimal_zero()) == Err(error=DivisionByZero)
+
+## The rounded division goes through the canonical constructor like everything else. It did not,
+## once: `1 / 2` at four places came back as `5000 × 10^-4`, which is the same number as `0.5` and
+## was not the same *value* — so `==` said no and it would have been a second `Map` key for one
+## amount. §56.5 is the record.
+test "a rounded division is canonical, like every other way to build one":
+    expect (try: divide_to(of_int(1), of_int(2), 4, HalfEven)) == Ok(value=of_units(5, 1))
+    expect (try: divide_to(of_int(1), of_int(2), 4, HalfEven)) == Ok(value=of_units(50, 2))
+    expect (try: round_to(of_units(25000, 4), 3, HalfEven)) == Ok(value=of_units(25, 1))
+
+test "and the rounded division always answers, at the scale it is asked for":
+    expect (try: render_at(divide_to(of_int(1), of_int(3), 5, HalfEven), 5, HalfEven)) == Ok(value="0.33333")
+    expect (try: render_at(divide_to(of_int(2), of_int(3), 5, HalfEven), 5, HalfEven)) == Ok(value="0.66667")
+    expect (try: render_at(divide_to(of_int(-2), of_int(3), 5, HalfEven), 5, HalfEven)) == Ok(value="-0.66667")
+
+test "the three rounding rules disagree exactly where they should":
+    expect (try: render_decimal(round_to(decimal_of_str("2.5"), 0, HalfEven))) == Ok(value="2")
+    expect (try: render_decimal(round_to(decimal_of_str("3.5"), 0, HalfEven))) == Ok(value="4")
+    expect (try: render_decimal(round_to(decimal_of_str("2.5"), 0, HalfUp))) == Ok(value="3")
+    expect (try: render_decimal(round_to(decimal_of_str("2.5"), 0, Down))) == Ok(value="2")
+    expect (try: render_decimal(round_to(decimal_of_str("-2.5"), 0, HalfUp))) == Ok(value="-3")
+    expect (try: render_decimal(round_to(decimal_of_str("-2.5"), 0, Down))) == Ok(value="-2")
+    # Away from the halfway point they all agree, which is the other half of the claim.
+    expect (try: render_decimal(round_to(decimal_of_str("2.4"), 0, HalfEven))) == Ok(value="2")
+    expect (try: render_decimal(round_to(decimal_of_str("2.6"), 0, HalfUp))) == Ok(value="3")
+
+test "rendering at a scale is a presentation, and the type does not hold one":
+    expect (try: render_at(decimal_of_str("2.5"), 2, HalfEven)) == Ok(value="2.50")
+    expect (try: render_at(decimal_of_str("2"), 2, HalfEven)) == Ok(value="2.00")
+    expect (try: render_at(decimal_of_str("2.567"), 2, HalfEven)) == Ok(value="2.57")
+    expect (try: render_at(decimal_of_str("-2.565"), 2, HalfEven)) == Ok(value="-2.56")
+    expect (try: render_at(decimal_of_str("2.5"), 0, HalfEven)) == Ok(value="2")
+
+test "ordering is by value, across scales":
+    expect (try: compare_decimal(decimal_of_str("1.50"), decimal_of_str("1.5"))) == Ok(value=0)
+    expect (try: less_than_decimal(decimal_of_str("1.4999"), decimal_of_str("1.5"))) == Ok(value=true)
+    expect (try: greater_than_decimal(decimal_of_str("-0.1"), decimal_of_str("-0.2"))) == Ok(value=true)
+    expect (try: less_than_decimal(decimal_of_str("-1"), decimal_zero())) == Ok(value=true)
+
+test "the coercions answer or refuse, and never quietly drop a half":
+    expect (try: to_big(decimal_of_str("42"))) == Ok(value=big(42))
+    expect (try: to_big(decimal_of_str("4.2"))) == Err(error=NotAWholeNumber(value="4.2"))
+    expect (try: to_real(decimal_of_str("0.5"))) == Ok(value=0.5)
+    expect (try: to_real(decimal_of_str("-2.25"))) == Ok(value=-2.25)
+
+## A hundred and one places is past `max_scale()`, so an exactly-representable quotient is refused.
+## `1 / 10^101` is the simplest number that shows it: its expansion is a hundred and one digits and
+## every one of them is known. §56.6 records this as the case the bound gets wrong, and this is it
+## pinned rather than left to be discovered.
+##
+## The divisor is `pow10` rather than `big_pow` for a reason the diagnostic gave: `big_pow` raises
+## `BigError`, a test block's row must be empty, and `try:` catches one error type — so a test that
+## reached for it could not say which failure it was asking about.
+test "a quotient longer than the bound is refused even though it terminates":
+    expect (try: of_int(1) / of_big(pow10(40))) == Ok(value=of_units(1, 40))
+    expect (try: of_int(1) / of_big(pow10(41))) == Err(
+        error=QuotientDoesNotTerminate(dividend="1", divisor=render_decimal(of_big(pow10(41))))
+    )
+
+property "a decimal round-trips through its own rendering"(units: Int, scale: Int):
+    expect (try: decimal_of_str(render_decimal(of_units(units % 1000000000, abs(scale % 8))))) == Ok(
+        value=of_units(units % 1000000000, abs(scale % 8))
+    )
+
+property "the sum of two decimals is the sum of the numbers"(a: Int, b: Int):
+    expect of_units(a % 1000000, 3) + of_units(b % 1000000, 3) == of_units(a % 1000000 + b % 1000000, 3)
+
+property "a rounded division is within one unit of the last place"(a: Int, b: Int):
+    expect (try: within_a_unit(of_int(a % 100000), of_int(abs(b % 1000) + 1), 4)) == Ok(value=true)
+
+## `|q × b - a|` is under one unit of the last place, which is what "rounded to `scale` digits"
+## means and is checkable without a second division.
+def within_a_unit(a: Decimal, b: Decimal, scale: Int) -> Bool uses raises(DecimalError):
+    quotient = divide_to(a, b, scale, HalfEven)
+    slack = abs_decimal(quotient * b - a)
+    return less_than_decimal(slack, abs_decimal(b) * of_units(1, scale)) or compare_decimal(slack, abs_decimal(b) * of_units(1, scale)) == 0

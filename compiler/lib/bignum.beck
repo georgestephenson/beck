@@ -275,6 +275,20 @@ def divide(a: Big, b: Big) -> Division uses raises(BigError):
 def big_rem(a: Big, b: Big) -> Big uses raises(BigError):
     return divide(a, b).remainder
 
+## Divide by a small positive `Int`, with the remainder — and **without** a failure.
+##
+## The caller supplies a divisor in `1..base()-1`, in the shape `sub_limbs` takes its precondition:
+## nothing here checks it, and the reason it is worth having a second division is the *row*. `divide`
+## raises, so a caller dividing by a literal ten in a loop is fallible on paper and needs a handler
+## for a case it has already ruled out. `lib/decimal.beck` strips a trailing zero that way on every
+## value it normalises, which is the caller this exists for.
+def divide_small(a: Big, m: Int) -> Division:
+    split = divmod_limbs(a.limbs, [m])
+    return Division(
+        quotient=normalise(a.negative, split.quotient),
+        remainder=normalise(a.negative, split.remainder),
+    )
+
 ## `b ** exponent`, by repeated squaring.
 ##
 ## `docs/31`'s tail calls are what make this a loop rather than a stack: the accumulator is carried,
@@ -490,6 +504,13 @@ test "division is long division, and it truncates toward zero":
     expect (try: render_big(big_rem(big(-7), big(2)))) == Ok(value="-1")
     expect (try: render_big(big(7) / big(-2))) == Ok(value="-3")
     expect (try: big(1) / zero()) == Err(error=DividedByZero)
+
+test "the small division is the same division, without the failure":
+    expect divide_small(big(12345), 10).quotient == big(1234)
+    expect divide_small(big(12345), 10).remainder == big(5)
+    expect divide_small(big(-12345), 10).quotient == big(-1234)
+    expect divide_small(big(-12345), 10).remainder == big(-5)
+    expect (try: divide(big(-12345), big(10))) == Ok(value=divide_small(big(-12345), 10))
 
 test "narrowing to an Int answers, or says it cannot":
     expect big_to_int(big(0)) == Some(value=0)

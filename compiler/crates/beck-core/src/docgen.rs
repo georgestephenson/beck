@@ -133,17 +133,26 @@ pub struct Docs {
 impl Docs {
     /// Derive a module's documentation from the checked, placed program.
     pub fn of(program: &Program) -> Docs {
-        let iface = Interface::of(program);
+        Docs::of_interface(&Interface::of(program), &program.docs)
+    }
+
+    /// The page for an interface that has already been computed.
+    ///
+    /// A module that **imports** another is checked as part of a project, and the program that
+    /// comes out of the slicer is every module merged — which is right for slicing and wrong for a
+    /// documentation page, because `beck doc` on one module would then publish the names of every
+    /// module beneath it. [`Project::interface`](crate::project::Project) is the root module's own
+    /// contract, and it is what a page is of. `docs/56` §56.5 is where that was found.
+    ///
+    /// The doc-comment map is the *program's*, because a comment is looked up by the name it
+    /// documents and the interface selects which names those are.
+    pub fn of_interface(iface: &Interface, comments: &BTreeMap<Arc<str>, Arc<str>>) -> Docs {
         let types = iface
             .types
             .iter()
-            .map(|t| type_entry(t, &program.docs))
+            .map(|t| type_entry(t, comments))
             .collect();
-        let items = iface
-            .items
-            .iter()
-            .map(|i| entry(i, &program.docs))
-            .collect();
+        let items = iface.items.iter().map(|i| entry(i, comments)).collect();
         Docs {
             module: iface.module.clone(),
             digest: iface.digest(),

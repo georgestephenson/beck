@@ -38,19 +38,21 @@ Write the commit message as the author of the change: what changed, and why.
   [`50`](docs/50-collections-and-dates-report.md),
   [`51`](docs/51-arrangement-lifecycle-report.md),
   [`52`](docs/52-crypto-and-identifiers-report.md),
-  [`53`](docs/53-are-we-fast-yet-report.md) and
-  [`55`](docs/55-bignums-report.md),
+  [`53`](docs/53-are-we-fast-yet-report.md),
+  [`55`](docs/55-bignums-report.md) and
+  [`56`](docs/56-decimal-report.md),
   indexed in
   [`docs/README.md`](docs/README.md) — record what each
   phase does, what it refuses to claim, and the corrections it makes to the design documents.
   Add a new report to that list and to the index; do not extend it with another "and".
   Phase 3 is **four bullets built, half of a fifth, most of a sixth, and a seventh that has
   started**: the test construct, the general slicer (Phase 2's debt), the means-of-abstraction
-  bullet and `Result`/error rows are built; the standard library has everything but the decimal —
+  bullet and `Result`/error rows are built; the standard library's **library half is done** —
   its HTTP client (docs/49), its collections and its calendar (docs/50), its digests and its
-  identifiers (docs/52), its bignums and its coercions (docs/55) —
-  and two walls of its own (docs/46, docs/49), and nine of Are We Fast Yet's fourteen benchmarks
-  are the start of its long-owed harness half (docs/53); the incremental-views bullet has its engine and
+  identifiers (docs/52), its bignums and its coercions (docs/55) and its decimal (docs/56), which
+  closes docs/08 §8.5.4's Wave 2 —
+  and two walls of its own (docs/46, docs/49); nine of Are We Fast Yet's fourteen benchmarks
+  are the start of that bullet's long-owed harness half (docs/53), which is all it has left; the incremental-views bullet has its engine and
   that engine's lifecycle (docs/51) but not its read models, pgwire
   or fusion; the expressiveness suite runs two chapters of SICP. Seven of the fourteen are
   untouched — identity has its seam but not its OIDC relying party (docs/48) — and docs/26 §26.9
@@ -77,7 +79,10 @@ Write the commit message as the author of the change: what changed, and why.
   did not guard. It is fixed, in the checker rather than the evaluator, because short-circuiting is
   a property of the language and not of one backend; `beck explain incremental` over all 31 corpus
   and example programs is byte-for-byte identical either side of it. The other two stand: Beck has
-  no bitwise operators, and a nested `if` is not a statement.
+  no bitwise operators, and a nested `if` is not a statement. docs/56 §56.5 has three more, and all
+  three are one shape: a module that imports another is a *tool* gap rather than a compiler one —
+  `beck check`, `beck test` and `beck iface` were right about it and `beck doc` was wrong three
+  ways, which the first `lib/` file to import a sibling found in an afternoon.
   Reports are history: a later phase's correction to an earlier one goes in the later report, not
   into the earlier text.
 - [`docs/reference/`](docs/reference/README.md) is **generated** by `beck doc reference` from the

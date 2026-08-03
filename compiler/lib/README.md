@@ -27,6 +27,7 @@ expressed.
 | [`collections.beck`](collections.beck) | A `Set[T]` as a map's keys, the three set operations and the two questions; sorting by a value rather than by a comparator; grouping, indexing, counting, deduplication and a partition. Every function total, and every result in an order that is a function of the values |
 | [`crypto.beck`](crypto.beck) | A fingerprint, a digest of several values that is not the digest of their concatenation, and a signed token in two layers — a pure one that takes the code it expects as an argument, and the two lines that compute one. The seam is where the key is, because a `test` block's row must be empty and `cap.sign` is not auto-stubbable ([`52`](../../docs/52-crypto-and-identifiers-report.md) §52.5) |
 | [`bignum.beck`](bignum.beck) | An integer of any size, as a sign and base-10,000 limbs: schoolbook multiplication, long division, `impl Num`, and every coercion to and from it named rather than implicit. The last floor of the numeric tower ([`55`](../../docs/55-bignums-report.md)) |
+| [`decimal.beck`](decimal.beck) | An exact number of the form `units × 10^-scale`, over `bignum.beck`: canonical so `1.50` and `1.5` are one value, `/` exact or refusing, and three rounding rules rather than one ([`56`](../../docs/56-decimal-report.md)) |
 | [`dates.beck`](dates.beck) | The civil calendar as arithmetic — Hinnant's two functions in Beck, checked against the same two in Rust rather than against themselves — plus `Date`, a `Duration` with its own `impl Num`, clamped month arithmetic, and `YYYY-MM-DD` read and written |
 
 Each file carries its own `test` and `property` blocks and runs under `beck test`, which is what
@@ -34,9 +35,15 @@ Each file carries its own `test` and `property` blocks and runs under `beck test
 `beck-cli/tests/stdlib.rs` runs all of them, so a change to a primitive that breaks a caller is a
 failing build.
 
+**One file imports another.** `decimal.beck` is written over `bignum.beck`, which is the first time
+anything in this directory has done that — and every one of the three findings in
+[`56`](../../docs/56-decimal-report.md) §56.5 came from it. A module importing another was a shape
+the *compiler* supported and the *tools* had never been run against: `beck check`, `beck test` and
+`beck iface` were right about it, and `beck doc` was wrong three ways.
+
 ## What is not here yet
 
-Arbitrary-precision decimal and time zones.
+Time zones.
 [`46`](../../docs/46-standard-library-report.md) §46.6 says which of those are waiting on a
 language feature and which are simply unwritten;
 [`49`](../../docs/49-http-client-report.md) §49.6 says the same for what `http.beck` does not do —

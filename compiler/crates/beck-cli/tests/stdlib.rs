@@ -513,3 +513,104 @@ fn a_bignum_multiplies_and_divides_the_way_i128_does() {
     let _ = std::fs::remove_dir_all(&dir);
     assert!(ok && text.contains("0 failed"), "{text}");
 }
+
+/// `lib/decimal.beck`'s rounded division against exact rational arithmetic in `i128`, over 300 cases.
+///
+/// Rounding is where a decimal library is subtly wrong, and it is wrong in a way its own tests
+/// tend not to catch: a rule tested against the examples its author had in mind agrees with itself.
+/// So the oracle is written the other way round here — the expected units are computed as an exact
+/// rational, `2 × |remainder|` against `|divisor|`, in Rust, and compared against what Beck rendered.
+///
+/// All three rules are checked, and the halfway cases are **generated on purpose** rather than left
+/// to chance: a uniform sample almost never lands exactly on a half, which is the only place the
+/// three rules disagree and therefore the only place the test has any power.
+#[test]
+fn decimal_rounding_is_what_exact_rational_arithmetic_says() {
+    let dir = std::env::temp_dir().join("beck-decimal-crosscheck");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    for lib in ["bignum.beck", "decimal.beck"] {
+        std::fs::copy(lib_dir().join(lib), dir.join(lib)).expect("the library");
+    }
+
+    let mut seed: u64 = 0x9E37_79B9_7F4A_7C15;
+    let mut next = || {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        seed
+    };
+
+    // (numerator, denominator, scale) — the first block lands exactly on a half at `scale`, which
+    // is the only input that separates the three rules.
+    let mut cases: Vec<(i128, i128, u32)> = Vec::new();
+    for scale in 0..4u32 {
+        for k in -6i128..7 {
+            // (2k + 1) / (2 × 10^scale) is exactly k.5 × 10^-scale.
+            cases.push((2 * k + 1, 2 * 10i128.pow(scale), scale));
+        }
+    }
+    while cases.len() < 300 {
+        let a = (next() % 200_001) as i128 - 100_000;
+        let b = (next() % 1_000) as i128 + 1;
+        let b = if next() % 2 == 0 { -b } else { b };
+        cases.push((a, b, (next() % 5) as u32));
+    }
+
+    /// The exact quotient `a / b` scaled by `10^scale`, rounded by `rule`, as an integer.
+    fn expected(a: i128, b: i128, scale: u32, rule: &str) -> i128 {
+        let numerator = a * 10i128.pow(scale);
+        let quotient = numerator / b;
+        let remainder = numerator % b;
+        if remainder == 0 {
+            return quotient;
+        }
+        let away = if (a < 0) != (b < 0) { -1 } else { 1 };
+        let twice = (2 * remainder).abs();
+        let magnitude = b.abs();
+        match rule {
+            "Down" => quotient,
+            "HalfUp" if twice >= magnitude => quotient + away,
+            "HalfUp" => quotient,
+            _ if twice > magnitude => quotient + away,
+            _ if twice < magnitude => quotient,
+            // Exactly half: to even.
+            _ if quotient % 2 != 0 => quotient + away,
+            _ => quotient,
+        }
+    }
+
+    /// `units × 10^-scale` written out at exactly `scale` places, which is what `render_at` gives.
+    fn rendered(units: i128, scale: u32) -> String {
+        let sign = if units < 0 { "-" } else { "" };
+        let digits = units.unsigned_abs().to_string();
+        if scale == 0 {
+            return format!("{sign}{digits}");
+        }
+        let padded = format!("{:0>width$}", digits, width = scale as usize + 1);
+        let point = padded.len() - scale as usize;
+        format!("{sign}{}.{}", &padded[..point], &padded[point..])
+    }
+
+    let mut lines = String::new();
+    for (a, b, scale) in &cases {
+        for rule in ["HalfEven", "HalfUp", "Down"] {
+            lines.push_str(&format!(
+                "    expect (try: render_at(divide_to(of_int({a}), of_int({b}), {scale}, {rule}), {scale}, Down)) == Ok(value=\"{}\")\n",
+                rendered(expected(*a, *b, *scale, rule), *scale),
+            ));
+        }
+    }
+    let src = format!("import decimal\n\ntest \"against exact rationals\":\n{lines}");
+    let file = dir.join("crosscheck.beck");
+    std::fs::write(&file, &src).expect("a scratch file");
+
+    let (ok, text) = beck(&[
+        "test",
+        file.to_string_lossy().as_ref(),
+        "--filter",
+        "against exact rationals",
+    ]);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(ok && text.contains("0 failed"), "{text}");
+}
