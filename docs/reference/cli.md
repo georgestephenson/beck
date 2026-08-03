@@ -152,6 +152,7 @@ A test is a log, a command and an expectation, so this needs no network, no data
 | `-f, --filter` | FILTER | Only run tests whose name contains this |
 | `-v, --verbose` | true \| false | Say what was stubbed even when the test passed — §21.3 rule 1's hidden default, declaring itself |
 | `--runs` | RUNS | Inputs per `property` block |
+| `--fuel` | FUEL | Evaluation steps one expectation may take before it is stopped.  The default is a runaway-program backstop and is right for everything written by hand. A *benchmark* is the exception — three of the fourteen in `awfy/` need more at the size their suite measures at (`docs/61` §61.3), and a backstop nothing can raise is a ceiling. |
 
 
 ## `beck run`

@@ -139,6 +139,13 @@ enum Cmd {
         /// Inputs per `property` block.
         #[arg(long, default_value_t = 100)]
         runs: u64,
+        /// Evaluation steps one expectation may take before it is stopped.
+        ///
+        /// The default is a runaway-program backstop and is right for everything written by hand.
+        /// A *benchmark* is the exception — three of the fourteen in `awfy/` need more at the size
+        /// their suite measures at (`docs/61` §61.3), and a backstop nothing can raise is a ceiling.
+        #[arg(long, default_value_t = beck_eval::DEFAULT_FUEL)]
+        fuel: u64,
     },
     /// Run the program in a single process — rung 0 of the parity ladder.
     Run {
@@ -368,7 +375,8 @@ fn dispatch(cli: Cli) -> Result<()> {
             filter,
             verbose,
             runs,
-        } => test_cmd(&file, filter.as_deref(), verbose, runs),
+            fuel,
+        } => test_cmd(&file, filter.as_deref(), verbose, runs, fuel),
         Cmd::Graph { file, json, types } => graph_cmd(&file, json, types),
         Cmd::Impact { file, name, json } => impact_cmd(&file, &name, json),
         Cmd::Run {
@@ -1118,7 +1126,7 @@ async fn serve(
 /// Note what this command does not take: no `--url`, no `--store`, no address. A test performs no
 /// effects (`B0700` is a compile error) and its subject's effects are stubbed, so there is nothing
 /// to point at anything.
-fn test_cmd(file: &Path, filter: Option<&str>, verbose: bool, runs: u64) -> Result<()> {
+fn test_cmd(file: &Path, filter: Option<&str>, verbose: bool, runs: u64, fuel: u64) -> Result<()> {
     // Not `compiled`: a module with no merge point is a **library**, and a library's tests are the
     // ones a developer most wants to run (docs/22 §22.6, docs/25 §25.6 item 1, docs/27 §27.4).
     // `slice_or_library` gives one back instead of refusing it; every other diagnostic still does.
@@ -1130,7 +1138,7 @@ fn test_cmd(file: &Path, filter: Option<&str>, verbose: bool, runs: u64) -> Resu
         eprintln!("no `test` or `property` blocks in {}", file.display());
         return Ok(());
     }
-    let backend = beck_eval::backend(&placed);
+    let backend = beck_eval::backend_with_fuel(&placed, fuel);
     let opts = beck_rt::testing::Options {
         filter: filter.map(str::to_string),
         runs,

@@ -44,8 +44,9 @@ Write the commit message as the author of the change: what changed, and why.
   [`57`](docs/57-richards-report.md),
   [`58`](docs/58-json-report.md),
   [`59`](docs/59-havlak-report.md),
-  [`60`](docs/60-collision-detection-report.md) and
-  [`61`](docs/61-deltablue-report.md),
+  [`60`](docs/60-collision-detection-report.md),
+  [`61`](docs/61-deltablue-report.md) and
+  [`62`](docs/62-fuel-report.md),
   indexed in
   [`docs/README.md`](docs/README.md) — record what each
   phase does, what it refuses to claim, and the corrections it makes to the design documents.

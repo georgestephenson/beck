@@ -188,3 +188,38 @@ fn the_directory_documents_what_the_port_changes() {
         assert!(readme.contains(expected), "the README lost `{expected}`");
     }
 }
+
+/// `beck test --fuel` raises the per-call step budget, and the default is where it was.
+///
+/// The evaluator stops a call after 50,000,000 steps, which is a runaway-program backstop and is
+/// right for everything written by hand. It is not right for a benchmark: three of the fourteen in
+/// this directory need more at the size their suite measures at, and before this there was no way
+/// to say so ([`61`](../../../../docs/61-deltablue-report.md) §61.3).
+///
+/// Asserted in **both** directions, for [`20`](../../../../docs/20-phase-2-report.md)'s reason —
+/// a flag that raises a ceiling has to be shown raising it *and* shown that the ceiling is still
+/// there without it, or it is indistinguishable from having removed the ceiling.
+#[test]
+fn the_fuel_budget_is_a_default_rather_than_a_ceiling() {
+    // A loop long enough to exhaust the default and short enough to finish above it.
+    let src = "def burn(i: Int, n: Int, acc: Int) -> Int:\n\
+               \x20   if i >= n:\n\
+               \x20       return acc\n\
+               \x20   return burn(i + 1, n, acc + i % 7)\n\n\
+               test \"a long loop\":\n    expect burn(0, 12000000, 0) > 0\n";
+    let file = std::env::temp_dir().join("beck-awfy-fuel.beck");
+    std::fs::write(&file, src).expect("a scratch file");
+
+    let (stopped, text) = beck(&["test", file.to_string_lossy().as_ref()]);
+    assert!(!stopped, "the default budget did not stop it:\n{text}");
+    assert!(text.contains("out of fuel"), "{text}");
+
+    let (ran, text) = beck(&[
+        "test",
+        file.to_string_lossy().as_ref(),
+        "--fuel",
+        "500000000",
+    ]);
+    let _ = std::fs::remove_file(&file);
+    assert!(ran && text.contains("0 failed"), "{text}");
+}

@@ -549,7 +549,13 @@ pub struct Interp<'h> {
     max_depth: u32,
 }
 
-const DEFAULT_FUEL: u64 = 50_000_000;
+/// The number of evaluation steps one call gets before it is stopped.
+///
+/// A runaway-program backstop, not a performance knob — but a backstop nothing can raise is a
+/// ceiling, and three of Are We Fast Yet's fourteen benchmarks live above it at the size the suite
+/// measures at ([`docs/61`](../../../../../docs/61-deltablue-report.md) §61.3). `beck test --fuel`
+/// is how a program that means it says so.
+pub const DEFAULT_FUEL: u64 = 50_000_000;
 
 /// The ceiling on non-tail evaluator nesting.
 ///
