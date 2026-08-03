@@ -24,6 +24,8 @@ expressed.
 | [`text.beck`](text.beck) | Lines, words, padding, case, truncation, a tolerant pair reader — over the string primitives |
 | [`documents.beck`](documents.beck) | JSON and time: a document read as data with `match`, and RFC 3339 in UTC |
 | [`http.beck`](http.beck) | A request built up and a response read back — over `http_fetch`, which is the *call*. There is no `get(host, path)` here and there cannot be: the host is written at the call site so the egress policy is derivable ([`adr/0013`](../../docs/adr/0013-the-host-of-an-outbound-call-is-written-at-the-call-site.md)) |
+| [`collections.beck`](collections.beck) | A `Set[T]` as a map's keys, the three set operations and the two questions; sorting by a value rather than by a comparator; grouping, indexing, counting, deduplication and a partition. Every function total, and every result in an order that is a function of the values |
+| [`dates.beck`](dates.beck) | The civil calendar as arithmetic — Hinnant's two functions in Beck, checked against the same two in Rust rather than against themselves — plus `Date`, a `Duration` with its own `impl Num`, clamped month arithmetic, and `YYYY-MM-DD` read and written |
 
 Each file carries its own `test` and `property` blocks and runs under `beck test`, which is what
 [`27`](../../docs/27-walls-report.md) made possible for a library with no application around it.
@@ -32,11 +34,14 @@ failing build.
 
 ## What is not here yet
 
-Collections beyond the primitives, UUID beyond `uuid()`, crypto, bignums and numeric coercion.
+UUID beyond `uuid()`, crypto, bignums and numeric coercion, and time zones.
 [`46`](../../docs/46-standard-library-report.md) §46.6 says which of those are waiting on a
 language feature and which are simply unwritten;
 [`49`](../../docs/49-http-client-report.md) §49.6 says the same for what `http.beck` does not do —
-no TLS, no redirects, no percent-encoding.
+no TLS, no redirects, no percent-encoding; and
+[`50`](../../docs/50-collections-and-dates-report.md) §50.6 for what the two newest files leave —
+a set whose cost is a map's, no zones, no locale, and a `Duration` that is milliseconds rather
+than a rational number of seconds.
 
 **One wall was found here and removed from here.** `money.beck` was meant to be an
 `impl Num for Money` so that `+` would work on it, the way `sicp/ch2.beck`'s rationals do. It could
@@ -54,3 +59,13 @@ a credential could not reach a header, and an authenticated request was inexpres
 not to weaken the property but to move the moment: `HttpRequest` carries its secret headers apart,
 and the runtime merges them at the edge. `with_secret_header` is that, and
 [`49`](../../docs/49-http-client-report.md) §49.4 is why.
+
+**The next two findings were not walls.** `collections.beck` wanted a `Set[T]` in a trait, and the
+diagnostic that catches a missing type argument said to write `Set[_]` — which is not a program,
+because there is no wildcard type. The feature was there all along (`impl[T] Trait for Set[T]`), so
+what was broken was the sentence pointing at it; the label now uses the declaration's own parameter
+names, and a test in `check/mod.rs` applies the suggestion and demands the result compiles. The
+second is that **a record orders by field name, not by declaration order**, so a two-key sort key
+written `Key(score=…, name=…)` sorts by the name. That one is pinned rather than fixed — a value
+carries no declaration, and a checker-side rule would disagree with the order the same records come
+out of a `Map`. [`50`](../../docs/50-collections-and-dates-report.md) §50.5 is the record for both.

@@ -1535,24 +1535,24 @@ impl<'a> Checker<'a> {
         // `type Pairs[A] = list[Pair[A, A]]` names no type of its own, so `Pairs[Int]` has to be
         // `list[Pair[Int, Int]]` by the time anything else sees it.
         if let Some(TyDecl::Alias { ty, params, .. }) = self.types.get(name) {
-            let (ty, arity) = (ty.clone(), params.len());
-            if !self.check_arity(name, arity, args.len(), span) {
+            let (ty, params) = (ty.clone(), params.clone());
+            if !self.check_arity(name, &params, args.len(), span) {
                 return self.subst.fresh();
             }
             return ty::instantiate_decl(&ty, &args);
         }
 
-        let arity = match prelude::builtin_arity(name) {
-            Some(a) => a,
+        let params = match prelude::builtin_arity(name) {
+            Some(a) => letters(a),
             None => match self.types.get(name) {
-                Some(d) => d.arity(),
+                Some(d) => d.params().to_vec(),
                 None => {
                     self.error("B0310", format!("cannot find type `{name}`"), span);
                     return self.subst.fresh();
                 }
             },
         };
-        if !self.check_arity(name, arity, args.len(), span) {
+        if !self.check_arity(name, &params, args.len(), span) {
             return self.subst.fresh();
         }
         Ty::Con(Arc::from(name), args)
@@ -1563,7 +1563,12 @@ impl<'a> Checker<'a> {
     /// Reported here rather than left to unification, because `Tree` with its argument missing
     /// would otherwise unify with `Tree[Int]` and the error would surface as a mismatch somewhere
     /// downstream of the line that is actually wrong.
-    fn check_arity(&mut self, name: &str, arity: usize, got: usize, span: Span) -> bool {
+    ///
+    /// `params` is the declaration's own parameter names, so the suggestion is a program: there is
+    /// no wildcard type in this language, and every argument is either concrete or a parameter
+    /// bound where the mention is — including by an `impl` head, which binds its own.
+    fn check_arity(&mut self, name: &str, params: &[Arc<str>], got: usize, span: Span) -> bool {
+        let arity = params.len();
         if arity == got {
             return true;
         }
@@ -1575,10 +1580,23 @@ impl<'a> Checker<'a> {
         self.diags.push(if arity == 0 {
             d.with_primary_label("this type takes no arguments")
         } else {
-            d.with_primary_label(format!(
-                "write `{name}[{}]`",
-                (0..arity).map(|_| "_").collect::<Vec<_>>().join(", ")
-            ))
+            let written = params
+                .iter()
+                .map(|p| p.as_ref())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let one = params[0].as_ref();
+            let d = d.with_primary_label(format!("write `{name}[{written}]`"));
+            if got < arity {
+                // Only when something is *missing*: the reader has to get a type into the
+                // brackets, and every way of doing that either names one or binds one.
+                d.with_note(format!(
+                    "each argument is a concrete type, or a parameter bound where this mention \
+                     is — `def f[{one}]`, `model M[{one}]`, or an `impl[{one}]` head"
+                ))
+            } else {
+                d
+            }
         });
         false
     }
@@ -3228,6 +3246,16 @@ fn clause_cores_mut(c: &mut crate::testing::Clause) -> Vec<&mut Core> {
     }
 }
 
+/// Parameter names for a builtin type constructor, which has an arity and no declaration.
+///
+/// `a`, `b`, … — the names the generated reference already renders `list[a]` and `Map[a, b]` with,
+/// so a suggestion and the reference agree about what to call the thing in the brackets.
+fn letters(n: usize) -> Vec<Arc<str>> {
+    (0..n)
+        .map(|i| Arc::from(((b'a' + i as u8) as char).to_string().as_str()))
+        .collect()
+}
+
 /// Walk a `Core` tree applying the final substitution to every recorded type.
 /// The name a `raises(...)` atom carries, for the type of a raised value.
 ///
@@ -3682,6 +3710,39 @@ def first(t: Tree[Str]) -> Str:
         ] {
             assert!(codes(src).contains(&"B0311"), "{why}: {:?}", codes(src));
         }
+    }
+
+    /// And the spelling it suggests is a program.
+    ///
+    /// The label offered `Set[_]`, and `_` is not a type — so the fix a reader copied out was
+    /// itself refused, by `B0310`. The declaration wrote a name down; that is the one to hand
+    /// back, and an `impl` head is where it matters most because it binds its own.
+    #[test]
+    fn the_spelling_a_missing_type_argument_suggests_is_one_that_compiles() {
+        let bare = "\
+type Set[T] = newtype[Map[T, Bool]]
+
+trait Sized:
+    def size(self) -> Int
+
+impl Sized for Set:
+    def size(self):
+        return map_len(self.value)
+";
+        let (_, d, map) = check_str("t.beck", bare);
+        let text = d.render(&map);
+        assert!(text.contains("write `Set[T]`"), "{text}");
+        assert!(
+            !text.contains("Set[_]"),
+            "there is no wildcard type:\n{text}"
+        );
+
+        let fixed = bare.replace("impl Sized for Set:", "impl[T] Sized for Set[T]:");
+        assert_eq!(
+            codes(&fixed),
+            Vec::<&str>::new(),
+            "the suggestion has to check clean"
+        );
     }
 
     #[test]

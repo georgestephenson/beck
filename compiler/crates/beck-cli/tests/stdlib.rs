@@ -194,6 +194,80 @@ fn the_calendar_gets_the_leap_years_right() {
     );
 }
 
+/// Integer division truncates towards zero, and the remainder takes the dividend's sign.
+///
+/// `lib/dates.beck` is Hinnant's calendar, which is written for exactly this division — its
+/// `if` on a negative operand is what makes the era right, and would be *wrong* under a division
+/// that floored. So the choice is load-bearing for a whole library and is pinned here rather than
+/// left to be inferred from the one case a test happened to cover. `floor_div` in that file is the
+/// other kind, written in Beck because it has to be.
+#[test]
+fn division_truncates_towards_zero_and_the_remainder_follows_the_dividend() {
+    expect_beck(
+        "    expect -7 / 2 == -3\n\
+         \x20   expect 7 / -2 == -3\n\
+         \x20   expect -7 % 2 == -1\n\
+         \x20   expect 7 % -2 == 1\n\
+         \x20   expect -8 / 2 == -4",
+        "division",
+    );
+}
+
+/// A sort is stable, and a union orders by variant and then by payload.
+///
+/// Together those are why `lib/collections.beck` has no comparator: `sort_by` takes a *key*, and
+/// "by score descending, then by name" is one key function returning a compound value. Neither
+/// half is obvious from the signature and both are relied on, so both are here.
+#[test]
+fn sorting_is_stable_and_a_compound_value_orders_structurally() {
+    expect_beck(
+        "    expect sort_by([3, 1, 2], lambda n: 0) == [3, 1, 2]\n\
+         \x20   expect Some(value=1) < Some(value=2)\n\
+         \x20   expect None < Some(value=1)\n\
+         \x20   expect sort_by([\"bb\", \"a\", \"cc\"], lambda s: str_len(s)) == [\"a\", \"bb\", \"cc\"]",
+        "stable",
+    );
+}
+
+/// And a record orders by its field **names**, not by the order they were declared in.
+///
+/// A value carries its fields and not its declaration, so there is nothing else at runtime to sort
+/// them by — and a rule the checker applied instead would disagree with the order the same records
+/// come out of a `Map`, which is this one. The consequence lands on every two-key sort:
+/// `lib/collections.beck`'s `sorted` documents it, and this is where a change to it goes red.
+#[test]
+fn a_record_orders_by_field_name_and_not_by_declaration_order() {
+    let src = "\
+model Declared:
+    zebra: Int
+    alpha: Int
+
+test \"names, not positions\":
+    expect Declared(zebra=2, alpha=0) < Declared(zebra=1, alpha=9)
+";
+    let file = std::env::temp_dir().join("beck-stdlib-field-order.beck");
+    std::fs::write(&file, src).expect("a scratch file");
+    let (ok, text) = beck(&["test", file.to_string_lossy().as_ref()]);
+    let _ = std::fs::remove_file(&file);
+    assert!(ok && text.contains("0 failed"), "{src}\n{text}");
+}
+
+/// A map's keys come back in the values' own order, whatever order they went in.
+///
+/// `lib/collections.beck`'s `Set` is a map's keys, and `elements` promises an order that is a
+/// function of the values — which is a promise about this and nothing else. A replay that
+/// disagreed with the run it was replaying about the order of a set would be a replay of a
+/// different program.
+#[test]
+fn a_maps_keys_come_back_in_the_values_own_order() {
+    expect_beck(
+        "    expect map_keys(map_insert(map_insert({}, \"b\", 1), \"a\", 1)) == [\"a\", \"b\"]\n\
+         \x20   expect map_keys(map_insert(map_insert({}, \"a\", 1), \"b\", 1)) == [\"a\", \"b\"]\n\
+         \x20   expect map_keys(map_insert(map_insert({}, 10, 1), 9, 1)) == [9, 10]",
+        "map-order",
+    );
+}
+
 /// An offset is refused rather than silently shifted: two spellings of one instant would be two
 /// values, and a log is not where you want to discover that.
 #[test]

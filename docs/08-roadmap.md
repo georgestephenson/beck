@@ -583,7 +583,7 @@ as one piece of work with the above. It is separated here rather than quietly: t
 what Wave 2 waits on, and the concurrency half waits on nothing, so pairing them would have meant
 designing a concurrency model inside an error model's change.
 
-**Wave 2 — weeks to months. The standard library. ✅ First half built**
+**Wave 2 — weeks to months. The standard library. ✅ Most of it built**
 ([`46`](46-standard-library-report.md)). Strings, list and map collections, JSON and time are
 **built** — thirty-one primitives plus `compiler/lib/`, which is the half written in Beck and the
 answer to which parts of a library the *host* owns. `json_parse` and `time_parse` raise rather than
@@ -592,10 +592,14 @@ now be wrong. The **HTTP client is built too** ([`49`](49-http-client-report.md)
 effect row nobody had designed, and the reason to take it next rather than last: `net.out(host)` is
 charged from the host *written at the call site*, so §6.5's egress policy stays derivable, and
 [`adr/0013`](adr/0013-the-host-of-an-outbound-call-is-written-at-the-call-site.md) records what
-that costs. **Untouched**: crypto, `Set` operations, durations and date arithmetic, UUID parsing,
-arbitrary-precision decimal, bignums and numeric coercion. §46.6 has the item-by-item list, and
-§49.6 the client's own. The Are We Fast Yet and CLBG harnesses are **not** stood up, and §8.4 asks
-for them alongside this bullet — that is the largest thing still owed here.
+that costs. **`Set` operations, sorting, grouping, deduplication, durations and date arithmetic are
+built** ([`50`](50-collections-and-dates-report.md)), and added no primitives: a set is a map's
+keys and the civil calendar is arithmetic, so both are files in `compiler/lib/` rather than lines
+in `prelude.rs`. **Untouched**: crypto, UUID parsing, arbitrary-precision decimal, bignums and
+numeric coercion. §46.6 has the item-by-item list, §49.6 the client's own, and §50.6 the two newest
+files'. The Are We Fast Yet and CLBG harnesses are **not** stood up, and §8.4 asks for them
+alongside this bullet — that is now the largest thing still owed here, and the item that has been
+owed longest.
 
 *It found a wall too, in the same way and one wave later: **a credential could not be sent**, because
 §3.5 gives a program no way to read a `secret[Str]` and a header value is a `Str` (§49.4). It had
@@ -689,8 +693,9 @@ Recommended pairings, in order:
 |---|---|---|---|
 | ~~**Then**~~ | ~~Lane A: `Result` and error rows~~ | ~~Lane D, plus Lane C's half of Wave 0~~ | **Done.** Both branches landed together, and the prediction held: the error rows touched `check/`, `ty.rs`, `row.rs` and `core.rs`, and Wave 0 touched `beck-diag`, `beck-syntax`, `beck-rt` and `docs/`. The one collision was the one the table names below — `beck-diag/src/index.rs`, four new codes — and it was trivial because the numbers were far apart |
 | ~~**Then**~~ | ~~Lane A: the standard library, on the error shape Wave 1 settled~~ | ~~Lane B: the shared dataflow's three loose ends~~ | **Half done.** The library's first half landed ([`46`](46-standard-library-report.md)), then the wall it wrote ([`47`](47-effect-polymorphic-traits-report.md)), then the HTTP client ([`49`](49-http-client-report.md)) — which was Lane A *and* Lane B, because the seam is in `beck-core` and the implementation is in `beck-rt`. The prediction held anyway: nothing in `engine.rs` was touched |
-| **Now** | Lane A: the rest of Wave 2 — bignums, coercion, `Set`, dates | Lane B: the shared dataflow's three loose ends, then SQL read models | `beck-rt` and `engine.rs` are untouched by anything in `check/` |
-| **Then** | Lane A: bignums, coercion, `@derive` | Lane E: the LLVM backend — and per §8.4 the AWFY/CLBG harness lands with whichever arrives second | The backend seam exists so these do not interact |
+| ~~**Then**~~ | ~~Lane A: the rest of Wave 2 — `Set`, dates~~ | ~~Lane B: the shared dataflow's three loose ends~~ | **Half done.** `Set` and dates landed ([`50`](50-collections-and-dates-report.md)) and were not Lane A at all: two files in `compiler/lib/`, no primitive, and the only Rust touched was one diagnostic's label. Lane B is untouched, so the pairing was never tested — the prediction it made cannot be claimed to have held |
+| **Now** | Lane A: bignums, coercion, `@derive` | Lane B: the shared dataflow's three loose ends, then SQL read models | `beck-rt` and `engine.rs` are untouched by anything in `check/` |
+| **Then** | Lane A, continued | Lane E: the LLVM backend — and per §8.4 the AWFY/CLBG harness lands with whichever arrives second | The backend seam exists so these do not interact |
 | **Any time** | — | Lane F; Lane C's LSP; more of SICP | No predecessors, no collisions |
 
 A third branch is viable whenever E or F is staffed. The ceiling is four, because of these:
@@ -743,6 +748,12 @@ they are what the next rewrite should assume:
   been answered as two by four phases of implementation; Wave 1's error and concurrency halves have
   different successors and should never have been one row. The classification is about *cost over
   time*, and it is silent about whether an item is one item.
+- **A wave item can be in the wrong lane.** §8.5.5 filed `Set` and dates under Lane A, the type
+  system, on the assumption that a standard-library item is a language item. They turned out to be
+  two files of Beck and no compiler change at all
+  ([`50`](50-collections-and-dates-report.md)) — which means they could have run beside a Lane A
+  branch rather than behind one. The lane table is about which *files* two branches would both
+  rewrite, and nothing had asked which files these would touch before assigning them.
 - **A G-class item's real output is the gate, not the artefact.** Every prose item in Wave 0 —
   the threat model, the disclosure policy, the memory-safety roadmap — is worth what it is only
   because something now goes red when it stops being true. `pending_security.rs` is a smaller
