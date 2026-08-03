@@ -3,7 +3,7 @@
 //! The half of Wave 2's crypto item that belongs to the *host* under `lib/README.md`'s division: a
 //! hash function is somebody else's table and base64 is somebody else's grammar, so both are
 //! primitives rather than Beck. What is composition — a signed token, a fingerprint, a check that
-//! reads the two halves apart — is [`compiler/lib/crypto.beck`].
+//! reads the two halves apart — is [`lib/crypto.beck`](../../../../../compiler/lib/crypto.beck).
 //!
 //! Three constraints shaped what is here.
 //!
@@ -15,7 +15,7 @@
 //!   is that a secret cannot reach a browser; a message authentication code exists precisely to be
 //!   handed to one, so the declassification is the point rather than a hole in it — but it is
 //!   charged `cap.sign` so that a view cannot mint one, and
-//!   [`docs/adr/0014`](../../../../docs/adr/0014-a-keyed-digest-is-the-one-declassifier.md) is the
+//!   [`docs/adr/0014`](../../../../../docs/adr/0014-a-keyed-digest-is-the-one-declassifier.md) is the
 //!   record of that decision.
 //! * **Comparing a digest is not `==`.** [`same`] is constant-time, because a verifier that returns
 //!   early tells the caller where the first wrong byte was.
@@ -23,7 +23,7 @@
 //! BLAKE3 rather than SHA-2 because it is already in this tree — `beck-rt`'s `SignedIdentity`
 //! (`docs/48`) and the signal graph's stable ids both use it — and adding a second hash function to
 //! avoid reusing one is a dependency taken for symmetry.
-//! [`docs/adr/0015`](../../../../docs/adr/0015-blake3-for-the-standard-librarys-digests.md) records
+//! [`docs/adr/0015`](../../../../../docs/adr/0015-blake3-for-the-standard-librarys-digests.md) records
 //! why `ring` was not taken instead, and what that leaves unbuilt.
 
 /// The domain the standard library's keyed digest is derived into.
