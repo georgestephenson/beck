@@ -610,11 +610,12 @@ function behind `cap.sign` with a test that enumerates the prelude and keeps the
 exact or refusing — so **§8.5.4's Wave 2 is finished** and what is left on this bullet is the
 benchmark harness. §46.6 has the item-by-item list, §49.6 the client's own, §50.6 the two newest
 files' and §52.6 the crypto half's — including what a digest deliberately is not: no asymmetric
-signature, no TLS, no encryption of any kind. The **Are We Fast Yet harness is stood up for nine of
-its fourteen benchmarks** ([`53`](53-are-we-fast-yet-report.md)), each verified against the constant
+signature, no TLS, no encryption of any kind. The **Are We Fast Yet harness is stood up for eleven of
+its fourteen benchmarks** ([`53`](53-are-we-fast-yet-report.md), [`57`](57-richards-report.md),
+[`58`](58-json-report.md)), each verified against the constant
 the original suite's own `verifyResult` checks, with wall-clock printed and nothing compared to
-anything — §8.4's ask, half discharged. Its five macro-benchmarks and the whole **CLBG** harness are
-not stood up, and that is what is left of the item that has been owed longest.
+anything — §8.4's ask, half discharged. Three of its five macro-benchmarks and the whole **CLBG** harness are
+not stood up — [`58`](58-json-report.md) §58.5 sizes the three — and that is what is left of the item that has been owed longest.
 
 *It found a wall too, in the same way and one wave later: **a credential could not be sent**, because
 §3.5 gives a program no way to read a `secret[Str]` and a header value is a `Str` (§49.4). It had
