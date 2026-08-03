@@ -109,6 +109,10 @@ pub enum Prim {
     // ---- time. `now()` gives milliseconds; these two are the civil calendar over them.
     TimeFormat,
     TimeParse,
+    // ---- the outbound call. The *second* primitive whose row is a function of its argument
+    // (`Raise` is the first): the host it is given is the `net.out(host)` atom it performs, which
+    // is why that argument has to be written at the call site rather than computed.
+    HttpFetch,
     MapList,
     FilterList,
     ConcatLists,
@@ -225,6 +229,7 @@ impl Prim {
             JsonRender => "json_render",
             TimeFormat => "time_format",
             TimeParse => "time_parse",
+            HttpFetch => "http_fetch",
             StrIsEmpty => "str_is_empty",
             ListLen => "list_len",
             ListIsEmpty => "list_is_empty",
@@ -282,6 +287,10 @@ impl Prim {
             // constant and belongs here, where a test holds it against the scheme.
             Prim::JsonParse => vec![Effect::Raises(std::sync::Arc::from("JsonError"))],
             Prim::TimeParse => vec![Effect::Raises(std::sync::Arc::from("TimeError"))],
+            // Half of `http_fetch`'s row is a constant and half is its first argument. The
+            // constant half is here; the `net.out(host)` half is added by [`Core::effects`],
+            // which can see the argument, and by the checker, which is where it is charged.
+            Prim::HttpFetch => vec![Effect::Raises(std::sync::Arc::from("HttpError"))],
             _ => Vec::new(),
         }
     }
@@ -407,6 +416,20 @@ pub struct Core {
     pub span: Span,
 }
 
+/// The string this expression *is*, when it is written as one.
+///
+/// Deliberately not an evaluator and deliberately not a constant folder: the one caller is the
+/// host of an outbound call, and "the host is written at the call site" is the rule that makes an
+/// egress policy derivable. A `let` that happens to bind a literal is not written at the call
+/// site, and reading through one would make the rule depend on how much folding the compiler
+/// currently does.
+pub fn literal_str(c: &Core) -> Option<Arc<str>> {
+    match &c.kind {
+        CoreKind::Const(Const::Str(s)) => Some(s.clone()),
+        _ => None,
+    }
+}
+
 impl Core {
     pub fn new(kind: CoreKind, ty: Ty, span: Span) -> Core {
         Core {
@@ -430,6 +453,16 @@ impl Core {
                 for e in op.effects() {
                     if !out.contains(&e) {
                         out.push(e);
+                    }
+                }
+                // `http_fetch`'s host is its first argument and a literal, so this walk can read
+                // it. It matters here rather than only in the checker because this is the oracle
+                // `testing::performs_itself` asks — a definition that makes the call is the one a
+                // `stub net.out(host)` replaces, and a definition that merely calls it is not.
+                if let (Prim::HttpFetch, Some(host)) = (op, args.first().and_then(literal_str)) {
+                    let atom = Effect::NetOut(host);
+                    if !out.contains(&atom) {
+                        out.push(atom);
                     }
                 }
                 for a in args {

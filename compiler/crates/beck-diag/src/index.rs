@@ -659,6 +659,25 @@ pub const INDEX: &[CodeEntry] = &[
         "Two `row Name = …` declarations with the same name. A row alias is a name for a bundle of \
          effect atoms, and a second one would make every `uses` clause mentioning it ambiguous.",
     ),
+    e(
+        "B0395",
+        Stage::Types,
+        "the host of an outbound call has to be written at the call site",
+        "`http_fetch` performs `net.out(host)`, and §6.5 derives the cluster's egress policy from \
+         that atom and nothing else. A host computed at run time is an outbound call the \
+         deployment cannot be told about, so the argument is read where it is written. Compute \
+         the path, the port, the headers and the body; or take a closure, so the caller names its \
+         own host and the row carries the atom out.",
+    ),
+    e(
+        "B0396",
+        Stage::Types,
+        "that is not a host an outbound call can name",
+        "The host becomes a NetworkPolicy peer and a `uses net.out(…)` clause, both of which are \
+         written as bare DNS labels — so a scheme, a port or a path in it is a name neither could \
+         carry. `origin` is refused for a different reason: it is the one outbound atom a client \
+         tier discharges, and a client reaches its own server over the command channel.",
+    ),
     // -------------------------------------------------------------------- B04xx: placement
     e(
         "B0400",

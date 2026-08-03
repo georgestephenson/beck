@@ -479,6 +479,22 @@ pub fn prims() -> Vec<(&'static str, Prim, Scheme)> {
                 Row::of([Effect::Raises(Arc::from("TimeError"))]),
             )),
         ),
+        // ------------------------------------------------------------------------ the outbound call
+        //
+        // The row here is half of the truth, and the half that is a constant. `net.out(host)` is
+        // charged at the *call site* from the literal first argument (`check::prim_call`), because
+        // an effect atom whose argument is a value is the one thing this language has no way to
+        // write in a scheme — and because the egress policy §6.5 derives is exactly the set of
+        // those atoms, so a host that were not written where the call is would not be derivable.
+        (
+            "http_fetch",
+            Prim::HttpFetch,
+            Scheme::mono(fun_eff(
+                vec![str_.clone(), Ty::con("HttpRequest")],
+                Ty::con("HttpResponse"),
+                Row::of([Effect::Raises(Arc::from("HttpError"))]),
+            )),
+        ),
         (
             "str_is_empty",
             Prim::StrIsEmpty,
@@ -898,6 +914,81 @@ pub fn types() -> BTreeMap<Arc<str>, TyDecl> {
             name: Arc::from("BadJson"),
             fields: vec![(Arc::from("why"), Ty::str_())],
         }],
+    });
+    // The outbound call's three types. A request carries a port and *not* a host: the host is the
+    // atom the call site performs, so it is an argument of `http_fetch` rather than a field
+    // anything can compute.
+    add(TyDecl::Model {
+        name: Arc::from("HttpRequest"),
+        params: Vec::new(),
+        fields: vec![
+            (Arc::from("method"), Ty::str_()),
+            // Origin-form, sent as written: `/v1/todos?limit=10`. Nothing percent-encodes it,
+            // because only the program that built it knows which part of it was data.
+            (Arc::from("path"), Ty::str_()),
+            // One value per name, which loses a repeated header (`Set-Cookie`). Said out loud
+            // here rather than discovered: a `map` is what a program wants to read, and the day a
+            // caller needs the repeats this becomes a `list[(Str, Str)]` and every reader changes.
+            (Arc::from("headers"), Ty::map(Ty::str_(), Ty::str_())),
+            (Arc::from("body"), Ty::str_()),
+            (Arc::from("port"), Ty::int()),
+            // Headers whose *value* is a secret, kept apart from the ones whose value is a `Str`.
+            //
+            // §3.5 makes a `secret[T]` unreadable — there is no `reveal` for one, which is the
+            // whole claim — so `"Bearer " + key` cannot be written and an authenticated request
+            // would be inexpressible. These are merged into the headers by the runtime at the
+            // edge, so the credential goes on the wire without ever having been a `Str` the
+            // program could put somewhere else. A request carrying one is not Sendable, which is
+            // the property doing the work: it cannot be built on, or sent to, a client.
+            (
+                Arc::from("secrets"),
+                Ty::map(Ty::str_(), Ty::secret(Ty::str_())),
+            ),
+        ],
+    });
+    add(TyDecl::Model {
+        name: Arc::from("HttpResponse"),
+        params: Vec::new(),
+        fields: vec![
+            (Arc::from("status"), Ty::int()),
+            (Arc::from("headers"), Ty::map(Ty::str_(), Ty::str_())),
+            (Arc::from("body"), Ty::str_()),
+        ],
+    });
+    // A status is a reply and not a failure — a 500 arrived, and a program that treats it as an
+    // exception has lost the body that says why. These are the cases where *nothing* arrived,
+    // plus the one the library raises when a caller asks for a status it did not get.
+    add(TyDecl::Union {
+        name: Arc::from("HttpError"),
+        params: Vec::new(),
+        variants: vec![
+            Variant {
+                name: Arc::from("HttpUnreachable"),
+                fields: vec![
+                    (Arc::from("host"), Ty::str_()),
+                    (Arc::from("why"), Ty::str_()),
+                ],
+            },
+            Variant {
+                name: Arc::from("HttpTimedOut"),
+                fields: vec![
+                    (Arc::from("host"), Ty::str_()),
+                    (Arc::from("millis"), Ty::int()),
+                ],
+            },
+            Variant {
+                name: Arc::from("HttpBadResponse"),
+                fields: vec![(Arc::from("why"), Ty::str_())],
+            },
+            // Raised by `lib/http.beck`'s `require_ok`, never by the primitive.
+            Variant {
+                name: Arc::from("HttpStatus"),
+                fields: vec![
+                    (Arc::from("status"), Ty::int()),
+                    (Arc::from("body"), Ty::str_()),
+                ],
+            },
+        ],
     });
     add(TyDecl::Union {
         name: Arc::from("TimeError"),

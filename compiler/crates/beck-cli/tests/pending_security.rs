@@ -128,6 +128,40 @@ fn a_verified_identitys_claims_do_not_reach_the_program() {
 }
 
 // ---------------------------------------------------------------------------------------------
+// The outbound call — built, and plaintext
+// ---------------------------------------------------------------------------------------------
+
+/// An outbound request is not encrypted, and nothing in the tree pretends otherwise.
+///
+/// `http_fetch` speaks HTTP/1.1 over TCP. [`docs/07`](../../../../docs/07-dependencies.md) chooses
+/// rustls for the other half, and taking a TLS stack is a dependency decision rather than a line
+/// in `beck-rt/src/outbound.rs` — so until it is taken, a credential sent with
+/// `with_secret_header` is confidential exactly as far as the network under it is. Whoever adds
+/// TLS deletes this test and corrects docs/43 §43.4 and docs/49 §49.6.
+#[test]
+fn an_outbound_call_has_no_transport_security() {
+    let sites = mentions(&["rustls", "TlsConnector", "tokio_rustls", "webpki"]);
+    assert!(
+        sites.is_empty(),
+        "a TLS stack appears to exist now ({sites:?}) — delete this test, and correct docs/43 \
+         §43.4, docs/49 §49.6 and the `net.rs` seam's own module comment"
+    );
+    // The port a request defaults to is the plaintext one, which is the same fact stated where a
+    // reader of the library will meet it.
+    let lib = std::fs::read_to_string(
+        crates_dir()
+            .parent()
+            .expect("compiler/")
+            .join("lib/http.beck"),
+    )
+    .expect("lib/http.beck is readable");
+    assert!(
+        lib.contains("port=80"),
+        "`lib/http.beck` no longer defaults to the plaintext port; this test is out of date"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
 // F3 — per-actor quotas, `APPROVED` and "on by default with generous limits"
 // ---------------------------------------------------------------------------------------------
 

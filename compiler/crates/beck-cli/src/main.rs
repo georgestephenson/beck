@@ -1068,6 +1068,10 @@ async fn serve(
     url: Option<&str>,
 ) -> Result<()> {
     let placed = compiled(file)?;
+    // A serving process is one that may make outbound calls, so it is the process that installs a
+    // client. `beck test` deliberately does not: `net.out` is auto-stubbed there (§21.3), and a
+    // test that reached a socket would depend on somebody else's uptime.
+    beck_rt::outbound::HttpOutbound::install();
     // Built before the app starts and never rebuilt: the program cannot change under a running
     // process, so the dashboard's structural panes are computed once (docs/19 §19.8).
     let dashboard = Arc::new(dashboard(&placed));

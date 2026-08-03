@@ -183,7 +183,15 @@ impl Backend for Evaluator {
 /// it. That is one `O(program size)` copy per process, at startup, against a borrow that would
 /// otherwise infect every role signature with a lifetime.
 pub fn backend(placed: &beck_core::Placed) -> Arc<dyn Backend> {
-    Arc::new(Evaluator::new(Arc::new(placed.program.clone())))
+    backend_for(Arc::new(placed.program.clone()))
+}
+
+/// The same, for a program that has not been placed or sliced.
+///
+/// A **library** is the case: a file with no merge point has definitions to call and no roles to
+/// drive, and a harness that wants to call one should not have to invent a signal graph for it.
+pub fn backend_for(program: Arc<Program>) -> Arc<dyn Backend> {
+    Arc::new(Evaluator::new(program))
 }
 
 fn into_exec(e: EvalError) -> ExecError {
