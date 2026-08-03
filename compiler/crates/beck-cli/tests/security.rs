@@ -217,6 +217,99 @@ fn a_secret_cannot_stand_in_for_an_internal_fact_because_it_is_not_storable() {
 }
 
 // ---------------------------------------------------------------------------------------------
+// 1c. "…and the one function that spends a secret without revealing it"
+//     Mechanism: `digest_keyed` is a message authentication code, so its output depends on a key
+//     its reader must not learn. That is a declassification and it is the point of the operation
+//     rather than a hole in §3.5 — `docs/adr/0014` is the decision. The tests below are what keeps
+//     it *one* function, held behind a capability, rather than a door that opened.
+// ---------------------------------------------------------------------------------------------
+
+#[test]
+fn exactly_one_primitive_turns_a_secret_into_something_that_is_not_one() {
+    // §3.5's claim is a claim about the whole language, so it is checked against the whole prelude
+    // rather than against the primitive that happens to be under discussion. A second declassifier
+    // added without a second argument fails here, which is the only place it would fail.
+    let declassifiers: Vec<&str> = beck_core::prelude::prims()
+        .iter()
+        .filter_map(|(name, _, scheme)| {
+            let beck_core::Ty::Fun(params, ret, _) = &scheme.ty else {
+                return None;
+            };
+            let takes = params
+                .iter()
+                .any(|p| p.con_name() == Some(beck_core::Ty::SECRET));
+            let gives = ret.con_name() == Some(beck_core::Ty::SECRET);
+            (takes && !gives).then_some(*name)
+        })
+        .collect();
+    assert_eq!(
+        declassifiers,
+        vec!["digest_keyed"],
+        "one function spends a secret; adding another is a decision, not a patch"
+    );
+}
+
+#[test]
+fn minting_a_code_is_a_capability_and_the_client_does_not_hold_it() {
+    // The same shape as `placing_a_secret_handling_function_on_the_client_is_refused`, one row
+    // down: it is not the secret that reaches the client here — a `Str` is Sendable and a MAC is a
+    // `Str` — it is the *minting*. `cap.sign` is undischargeable on a browser, so a view that
+    // signs is a placement error rather than a code review.
+    let src = format!(
+        "{SECRET_APP}
+@on(client)
+def stamp(k: secret[Str], body: Str) -> Str:
+    return digest_keyed(k, body)
+"
+    );
+    let all = codes(&src);
+    assert!(
+        all.contains(&"B0401") || all.contains(&"B0410"),
+        "a client that mints a code must be refused: {all:?}"
+    );
+}
+
+#[test]
+fn signing_inside_the_chokepoint_is_exactly_what_it_is_for() {
+    // And the other direction, for the reason 1b's pair exists: a capability that nothing may hold
+    // is not a capability, it is a ban. `validate` may hold `cap.sign`, so a program can issue a
+    // token where authority already lives.
+    let src = TODO
+        .replace(
+            "def validate(s: State, p: Proposal) -> Result[list[Event], Rejection]:",
+            "def validate(s: State, p: Proposal) -> Result[list[Event], Rejection] uses env, cap.sign:
+    stamp = digest_keyed(secret_of(), p.session.actor)
+    if str_is_empty(stamp):
+        return Err(error=BlankText)",
+        )
+        .replace(
+            "def if_owned(",
+            "@on(server)
+def secret_of() -> secret[Str]:
+    return secret_env(\"TOKEN_KEY\")
+
+def if_owned(",
+        );
+    compiles(&src);
+}
+
+#[test]
+fn a_digest_is_pure_and_a_keyed_one_is_not() {
+    // The line this group is drawn on. `digest` performs nothing, so it may be computed inside a
+    // fold and a replay recomputes it; `digest_keyed` performs a capability, so §3.7's rule about
+    // what a fold may contain applies to it and not to the other.
+    use beck_core::core::Prim;
+    assert!(Prim::Digest.effects().is_empty());
+    assert!(Prim::HexEncode.effects().is_empty());
+    assert!(Prim::Base64Encode.effects().is_empty());
+    assert!(Prim::DigestEq.effects().is_empty());
+    assert_eq!(
+        Prim::DigestKeyed.effects(),
+        vec![Effect::Cap(std::sync::Arc::from("sign"))]
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
 // 2. "Clients can only propose"
 //    Mechanism: the client's entire write surface is send(cmd) into a typed Command union.
 // ---------------------------------------------------------------------------------------------

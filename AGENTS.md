@@ -21,7 +21,7 @@ Write the commit message as the author of the change: what changed, and why.
   Phase 3's test construct, its general slicer, its incremental view engine, that engine's shared
   dataflow, the language's own means of abstraction — tail calls, reals, polymorphism,
   parameterised types and traits — and most of the standard library, its outbound call, its
-  collections and its calendar included. The build reports —
+  collections, its calendar and its digests included. The build reports —
   [`19`](docs/19-phase-1-report.md), [`20`](docs/20-phase-2-report.md),
   [`22`](docs/22-phase-3-report.md), [`23`](docs/23-general-slicer-report.md),
   [`24`](docs/24-incremental-views-report.md), [`26`](docs/26-arrangement-sharing-report.md),
@@ -35,16 +35,18 @@ Write the commit message as the author of the change: what changed, and why.
   [`45`](docs/45-error-rows-report.md), [`46`](docs/46-standard-library-report.md),
   [`47`](docs/47-effect-polymorphic-traits-report.md), [`48`](docs/48-identity-report.md),
   [`49`](docs/49-http-client-report.md),
-  [`50`](docs/50-collections-and-dates-report.md) and
-  [`51`](docs/51-arrangement-lifecycle-report.md),
+  [`50`](docs/50-collections-and-dates-report.md),
+  [`51`](docs/51-arrangement-lifecycle-report.md) and
+  [`52`](docs/52-crypto-and-identifiers-report.md),
   indexed in
   [`docs/README.md`](docs/README.md) — record what each
   phase does, what it refuses to claim, and the corrections it makes to the design documents.
   Add a new report to that list and to the index; do not extend it with another "and".
   Phase 3 is **four bullets built, half of a fifth, most of a sixth, and a seventh that has
   started**: the test construct, the general slicer (Phase 2's debt), the means-of-abstraction
-  bullet and `Result`/error rows are built; the standard library has everything but crypto, UUID
-  parsing and the bignums — its HTTP client (docs/49), its collections and its calendar (docs/50) —
+  bullet and `Result`/error rows are built; the standard library has everything but the bignums —
+  its HTTP client (docs/49), its collections and its calendar (docs/50), its digests and its
+  identifiers (docs/52) —
   and two walls of its own (docs/46, docs/49); the incremental-views bullet has its engine and
   that engine's lifecycle (docs/51) but not its read models, pgwire
   or fusion; the expressiveness suite runs two chapters of SICP. Seven of the fourteen are
@@ -62,7 +64,11 @@ Write the commit message as the author of the change: what changed, and why.
   rather than weakening §3.5. docs/50 §50.5 has two more findings of that kind and **neither is a
   wall**: the diagnostic for a missing type argument named a syntax the language does not have, and
   a record orders by field name rather than as declared — the second pinned as a test rather than
-  changed, for the reason that section gives.
+  changed, for the reason that section gives. docs/52 §52.5 has two more of the same kind: a `test`
+  block cannot exercise a capability, so the layer of a library holding a key is the layer Beck
+  cannot test, and nine match arms in the evaluator cost a thousand levels of recursion. It also
+  took the first decision to let a `secret[Str]` become a `Str` — one function, behind `cap.sign`,
+  with a test that keeps the count at one (docs/adr/0014).
   Reports are history: a later phase's correction to an earlier one goes in the later report, not
   into the earlier text.
 - [`docs/reference/`](docs/reference/README.md) is **generated** by `beck doc reference` from the
@@ -120,8 +126,9 @@ Write the commit message as the author of the change: what changed, and why.
   [`docs/41-generic-arithmetic-report.md`](docs/41-generic-arithmetic-report.md) §41.4; and the
   standard library's come from `cargo test -p beck-cli --test stdlib` and from `beck test` on each
   file in `compiler/lib/`, quoted in
-  [`docs/46-standard-library-report.md`](docs/46-standard-library-report.md) and
-  [`docs/50-collections-and-dates-report.md`](docs/50-collections-and-dates-report.md).
+  [`docs/46-standard-library-report.md`](docs/46-standard-library-report.md),
+  [`docs/50-collections-and-dates-report.md`](docs/50-collections-and-dates-report.md) and
+  [`docs/52-crypto-and-identifiers-report.md`](docs/52-crypto-and-identifiers-report.md).
 - The harnesses are the project's conscience (§4.8, §8.3): `compiler/crates/beck-cli/tests/` holds
   the differential, replay-determinism, backend-seam, scaling, security, corpus, placement-property,
   general-slicer, incremental-analysis, incremental-engine, shared-arrangement, subscription,

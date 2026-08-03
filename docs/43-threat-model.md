@@ -48,15 +48,19 @@ harness goes red, **absent** means it is not there and §43.4 says so by name.
 | Text in a page is escaped, in both text and attribute context | A2, A4 | tested | `beck-core/src/html.rs`; the dashboard's own escaper |
 | An actor is a decision of the runtime, not a claim of the client | A2 | tested | `beck_rt::identity`; `identity.rs` drives the socket loop. **Only with a verifying provider** — the default verifies nothing, which is §43.4 |
 | Every host a program can reach is one the program named, and the egress rule is that list | A2 | structural + tested | [`adr/0013`](adr/0013-the-host-of-an-outbound-call-is-written-at-the-call-site.md): a computed host is `B0395`, so the derivation in §6.5 is total; `outbound.rs` |
+| Exactly one function turns a `secret[T]` into a value that is not one, and it needs a capability | A2 | structural + tested | [`adr/0014`](adr/0014-a-keyed-digest-is-the-one-declassifier.md): `digest_keyed` performs `cap.sign`, which no client tier discharges; `security.rs` enumerates the prelude and asserts the count is one |
 
 ## 43.3 What is explicitly **not** defended
 
 Stated positively, because an unstated exclusion reads as an oversight and a stated one is a
 decision.
 
-1. **Side channels.** Timing, cache, speculation. Nothing in Beck's design attempts constant-time
-   anything, and `secret[T]` is a *flow* property — where a value may travel — not a claim about
-   what its use costs to observe.
+1. **Side channels.** Timing, cache, speculation. `secret[T]` is a *flow* property — where a value
+   may travel — not a claim about what its use costs to observe, and nothing in Beck's design
+   attempts constant-time anything **except `digest_eq`**, which exists because comparing a message
+   authentication code with `==` returns at the first differing byte
+   ([`52`](52-crypto-and-identifiers-report.md) §52.3). One comparison is not a side-channel
+   programme, and the exclusion is otherwise unchanged.
 2. **A compromised host.** If the process's memory or its filesystem is under someone else's
    control, no property here survives, and none is claimed to.
 3. **An authenticated insider.** Until identity lands (§43.4), there is no authentication to be

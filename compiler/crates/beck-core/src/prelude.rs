@@ -479,6 +479,96 @@ pub fn prims() -> Vec<(&'static str, Prim, Scheme)> {
                 Row::of([Effect::Raises(Arc::from("TimeError"))]),
             )),
         ),
+        // ------------------------------------------------- digests, encodings and identifiers
+        //
+        // Wave 2's crypto item, host half. A hash function is a table and base64 is a grammar, so
+        // both are here rather than in `lib/`; what a program *does* with a digest — a token, a
+        // fingerprint, a check that reads two halves apart — is `lib/crypto.beck`.
+        //
+        // A digest is **pure**. That is the line between this group and `uuid()`/`now()`, which are
+        // the two nondeterministic things a crypto library is usually asked for: the same input
+        // digests to the same string on every replay, so nothing here has to be recorded on an
+        // envelope, and §3.7's rule about folds does not reach it.
+        (
+            "digest",
+            Prim::Digest,
+            Scheme::mono(fun(vec![str_.clone()], str_.clone())),
+        ),
+        // The one function whose input is a `secret[Str]` and whose output is a `Str`.
+        //
+        // A message authentication code exists to be given to somebody who must not learn the key,
+        // so the declassification is what the operation *is* rather than a hole in §3.5. It is
+        // charged `cap.sign` for the reason `reveal` is charged `cap.internal`: no client tier
+        // discharges a capability, so a view cannot mint a token, and a server that mints one has
+        // said so in its row. `adr/0014` is the decision and `security.rs` is the gate that keeps
+        // this the *only* one.
+        (
+            "digest_keyed",
+            Prim::DigestKeyed,
+            Scheme::mono(fun_eff(
+                vec![Ty::secret(str_.clone()), str_.clone()],
+                str_.clone(),
+                Row::of([Effect::Cap(Arc::from("sign"))]),
+            )),
+        ),
+        // Comparing a digest with `==` returns at the first differing byte, which tells whoever is
+        // guessing how much of their guess was right. This does not.
+        (
+            "digest_eq",
+            Prim::DigestEq,
+            Scheme::mono(fun(vec![str_.clone(), str_.clone()], bool_.clone())),
+        ),
+        (
+            "hex_encode",
+            Prim::HexEncode,
+            Scheme::mono(fun(vec![str_.clone()], str_.clone())),
+        ),
+        (
+            "hex_decode",
+            Prim::HexDecode,
+            Scheme::mono(fun_eff(
+                vec![str_.clone()],
+                str_.clone(),
+                Row::of([Effect::Raises(Arc::from("EncodingError"))]),
+            )),
+        ),
+        // RFC 4648 §5 — the URL-safe alphabet, unpadded — because every place a Beck program puts
+        // one of these is a place `+`, `/` and `=` have to be escaped.
+        (
+            "base64_encode",
+            Prim::Base64Encode,
+            Scheme::mono(fun(vec![str_.clone()], str_.clone())),
+        ),
+        (
+            "base64_decode",
+            Prim::Base64Decode,
+            Scheme::mono(fun_eff(
+                vec![str_.clone()],
+                str_.clone(),
+                Row::of([Effect::Raises(Arc::from("EncodingError"))]),
+            )),
+        ),
+        // `uuid()` has minted one since Phase 1 and nothing has ever read one back. This
+        // *normalises* rather than only validating: two spellings of one identifier must not be
+        // two map keys, and a `Str` that has been through here is canonical.
+        (
+            "uuid_parse",
+            Prim::UuidParse,
+            Scheme::mono(fun_eff(
+                vec![str_.clone()],
+                str_.clone(),
+                Row::of([Effect::Raises(Arc::from("UuidError"))]),
+            )),
+        ),
+        (
+            "uuid_version",
+            Prim::UuidVersion,
+            Scheme::mono(fun_eff(
+                vec![str_.clone()],
+                int.clone(),
+                Row::of([Effect::Raises(Arc::from("UuidError"))]),
+            )),
+        ),
         // ------------------------------------------------------------------------ the outbound call
         //
         // The row here is half of the truth, and the half that is a constant. `net.out(host)` is
@@ -995,6 +1085,28 @@ pub fn types() -> BTreeMap<Arc<str>, TyDecl> {
         params: Vec::new(),
         variants: vec![Variant {
             name: Arc::from("BadTime"),
+            fields: vec![(Arc::from("why"), Ty::str_())],
+        }],
+    });
+    // The two the decoders raise. Separate types rather than one `BadInput`, because a caller
+    // reading a base64 field and a caller reading an identifier are recovering from different
+    // things: the first re-reads the message, the second rejects the request.
+    add(TyDecl::Union {
+        name: Arc::from("EncodingError"),
+        params: Vec::new(),
+        variants: vec![Variant {
+            name: Arc::from("BadEncoding"),
+            fields: vec![
+                (Arc::from("encoding"), Ty::str_()),
+                (Arc::from("why"), Ty::str_()),
+            ],
+        }],
+    });
+    add(TyDecl::Union {
+        name: Arc::from("UuidError"),
+        params: Vec::new(),
+        variants: vec![Variant {
+            name: Arc::from("BadUuid"),
             fields: vec![(Arc::from("why"), Ty::str_())],
         }],
     });

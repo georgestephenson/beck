@@ -1,0 +1,192 @@
+# Digests, encodings and signed tokens, over the primitives in `beck-core/src/digest.rs`.
+#
+# The division `lib/README.md` states puts a hash function and a base64 alphabet on the host's side:
+# both are tables, and a Beck reimplementation would be a slower copy of one. What is *composition*
+# is here — a fingerprint, a digest of several values that is not the digest of their concatenation,
+# and a token that carries its own proof.
+#
+# Two properties this file exists to demonstrate rather than to assert in prose:
+#
+# * **A digest is pure.** Nothing here has an effect row except the two functions that touch a key,
+#   so a fingerprint may be computed inside a fold and a replay recomputes the same one. That is not
+#   true of the other things a crypto library is asked for, and `uuid()` and `now()` are where those
+#   live — both `nondet`, both refused inside a fold by §3.7.
+# * **A key is spent, never read.** `digest_keyed` is the one function in the language whose input
+#   is a `secret[Str]` and whose output is a `Str`, and it is charged `cap.sign` for it. So `sign`
+#   and `open_token` carry that capability in their rows and a view cannot call them — the
+#   compiler's answer to "which part of my program may mint a session cookie".
+#
+# The token is deliberately in two layers, and the seam is where the key is. Everything about the
+# *format* — the two halves, the comparison, the decoding — is pure and takes the code it expects as
+# an argument; `sign` and `open_token` are the two lines that compute one. That is not only
+# tidiness: a `test` block's own row must be empty (§21.3) and a capability is not auto-stubbed, so
+# the layer holding the key is the layer Beck cannot test and the layer holding the logic is not.
+
+## The failure of a token that does not check out.
+##
+## One variant with a reason rather than several: a caller distinguishing "the mac is wrong" from
+## "the payload is not base64" would be distinguishing two ways of being handed a forgery, and both
+## answers are the same answer.
+union TokenError:
+    BadToken(why: Str)
+
+## A short, stable name for a value — the first `width` hex digits of its digest.
+##
+## Shortening is the caller's decision and not this function's, because how much collision
+## resistance a name needs is a property of what it names. A width past the digest's length is the
+## whole digest rather than an error: asking for more than there is is not a mistake a program can
+## recover from differently.
+def fingerprint(text: Str, width: Int) -> Str:
+    whole = digest(text)
+    if width <= 0:
+        return ""
+    if width >= str_len(whole):
+        return whole
+    return str_slice(whole, 0, width)
+
+## The digest of several values, which is not the digest of their concatenation.
+##
+## `["ab", "c"]` and `["a", "bc"]` concatenate to the same string and must not digest to the same
+## one, or a program digesting a record's fields could be handed a different record with the same
+## fingerprint. Each part carries its own length, which is the cheapest thing that makes the
+## encoding unambiguous.
+def digest_all(parts: list[Str]) -> Str:
+    return digest(str_join(map_list(parts, lambda p: str(str_len(p)) + ":" + p), ""))
+
+## The two halves of a token.
+model TokenParts:
+    body: Str
+    mac: Str
+
+## A payload and a code over it, in one string that survives a URL.
+##
+## The payload is base64 first so that a dot inside it cannot be read as the separator, and §5's
+## alphabet has no dot.
+def token_of(payload: Str, mac: Str) -> Str:
+    return base64_encode(payload) + "." + mac
+
+## A token taken apart, or a raised `BadToken`.
+def token_parts(token: Str) -> TokenParts:
+    parts = str_split(token, ".")
+    if list_len(parts) != 2:
+        raise BadToken(why="a token is a payload and a mac, separated by a dot")
+    return TokenParts(
+        body=unwrap_or(list_get(parts, 0), ""),
+        mac=unwrap_or(list_get(parts, 1), ""),
+    )
+
+## The payload of a token whose code is `mac`, or a raised `BadToken`.
+##
+## The comparison is `digest_eq` rather than `==`, because `==` returns at the first byte that
+## differs and tells a caller who is guessing how much of the guess was right.
+def payload_if(token: Str, mac: Str) -> Str:
+    parts = token_parts(token)
+    if not digest_eq(parts.mac, mac):
+        raise BadToken(why="the mac does not match the payload")
+    decoded = try: base64_decode(parts.body)
+    match decoded:
+        case Ok(value):
+            return value
+        case Err(error):
+            raise BadToken(why="the payload is not base64")
+
+## A token for `payload`, signed with `key`.
+def sign(key: secret[Str], payload: Str) -> Str:
+    return token_of(payload, digest_keyed(key, base64_encode(payload)))
+
+## The payload of a token minted by `sign` under the same key, or a raised `BadToken`.
+def open_token(key: secret[Str], token: Str) -> Str:
+    parts = token_parts(token)
+    return payload_if(token, digest_keyed(key, parts.body))
+
+## `open_token` as a value, for a caller that wants to branch rather than to fail.
+def read_token(key: secret[Str], token: Str) -> Result[Str, TokenError]:
+    return try: open_token(key, token)
+
+## Is this a UUID, in any of the spellings `uuid_parse` accepts?
+def is_uuid(text: Str) -> Bool:
+    read = try: uuid_parse(text)
+    match read:
+        case Ok(value):
+            return true
+        case Err(error):
+            return false
+
+## The canonical spelling of an identifier, or the string unchanged.
+##
+## For a program reading identifiers from somewhere that does not promise a spelling and would
+## rather carry the odd one through than fail the whole request.
+def canonical_uuid(text: Str) -> Str:
+    read = try: uuid_parse(text)
+    match read:
+        case Ok(value):
+            return value
+        case Err(error):
+            return text
+
+test "a digest is a function, and a pure one":
+    expect digest("") == "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262"
+    expect digest("abc") == digest("abc")
+    expect digest("abc") != digest("abd")
+
+test "a fingerprint is a prefix, and asking for too much gives what there is":
+    expect fingerprint("abc", 8) == str_slice(digest("abc"), 0, 8)
+    expect fingerprint("abc", 0) == ""
+    expect fingerprint("abc", 1000) == digest("abc")
+
+test "a digest of several values is not the digest of their concatenation":
+    expect digest_all(["ab", "c"]) != digest_all(["a", "bc"])
+    expect digest_all(["ab", "c"]) != digest("abc")
+    expect digest_all([]) == digest("")
+
+test "constant-time equality answers the same question equality does":
+    expect digest_eq("abc", "abc")
+    expect not digest_eq("abc", "abd")
+    expect not digest_eq("abc", "ab")
+    expect digest_eq("", "")
+
+def hex_of(text: Str) -> Result[Str, EncodingError]:
+    return try: hex_decode(hex_encode(text))
+
+property "hex round-trips whatever it is given"(text: Str):
+    expect hex_of(text) == Ok(value=text)
+
+def base64_of(text: Str) -> Result[Str, EncodingError]:
+    return try: base64_decode(base64_encode(text))
+
+property "and so does base64"(text: Str):
+    expect base64_of(text) == Ok(value=text)
+
+test "the encodings are the published ones":
+    expect hex_encode("hello") == "68656c6c6f"
+    expect base64_encode("foobar") == "Zm9vYmFy"
+    expect base64_encode("fooba") == "Zm9vYmE"
+
+def decoded_hex(text: Str) -> Result[Str, EncodingError]:
+    return try: hex_decode(text)
+
+test "and what is not one says which encoding it is not":
+    expect decoded_hex("abc") == Err(error=BadEncoding(encoding="hex", why="hex has two digits per byte, and `3` has an odd number of them"))
+
+test "an identifier has one spelling":
+    expect canonical_uuid("F47AC10B-58CC-4372-A567-0E02B2C3D479") == "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+    expect canonical_uuid("f47ac10b58cc4372a5670e02b2c3d479") == "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+    expect is_uuid("{f47ac10b-58cc-4372-a567-0e02b2c3d479}")
+    expect not is_uuid("nope")
+    expect canonical_uuid("nope") == "nope"
+
+# The token's format, tested without a key. `payload_if` takes the code it expects as an argument,
+# so every failure a forgery can produce is reachable from a pure test — and the one thing these do
+# not check is that a real key produces a code only that key reproduces, which is
+# `stdlib.rs::a_token_opens_only_under_the_key_that_minted_it`.
+def opened(token: Str, mac: Str) -> Result[Str, TokenError]:
+    return try: payload_if(token, mac)
+
+test "a token opens when the code is the one it carries":
+    expect opened(token_of("actor-7", digest("x")), digest("x")) == Ok(value="actor-7")
+
+test "and refuses every other way it can arrive":
+    expect opened("no-dot-here", digest("x")) == Err(error=BadToken(why="a token is a payload and a mac, separated by a dot"))
+    expect opened(token_of("actor-7", digest("x")), digest("y")) == Err(error=BadToken(why="the mac does not match the payload"))
+    expect opened(token_of("actor-7", digest("x")) + "0", digest("x")) == Err(error=BadToken(why="the mac does not match the payload"))
+    expect opened("!!!." + digest("x"), digest("x")) == Err(error=BadToken(why="the payload is not base64"))

@@ -109,6 +109,23 @@ pub enum Prim {
     // ---- time. `now()` gives milliseconds; these two are the civil calendar over them.
     TimeFormat,
     TimeParse,
+    // ---- digests, encodings and identifiers (`crate::digest`). A hash is a table and base64 is a
+    // grammar, so both are the host's half of `lib/README.md`'s division; a digest is also a *pure*
+    // function, which is what separates this from the other things a crypto library offers.
+    Digest,
+    /// A message authentication code: the one primitive whose input is a `secret[Str]` and whose
+    /// output is a `Str`. Charged `cap.sign` rather than left free, so a view cannot mint one —
+    /// `docs/adr/0014` is the record of the decision and §3.5 is what it is measured against.
+    DigestKeyed,
+    /// Constant-time equality, for the caller comparing a digest against one that arrived.
+    DigestEq,
+    HexEncode,
+    HexDecode,
+    Base64Encode,
+    Base64Decode,
+    /// Validates and *normalises*: two spellings of one identifier must not be two map keys.
+    UuidParse,
+    UuidVersion,
     // ---- the outbound call. The *second* primitive whose row is a function of its argument
     // (`Raise` is the first): the host it is given is the `net.out(host)` atom it performs, which
     // is why that argument has to be written at the call site rather than computed.
@@ -229,6 +246,15 @@ impl Prim {
             JsonRender => "json_render",
             TimeFormat => "time_format",
             TimeParse => "time_parse",
+            Digest => "digest",
+            DigestKeyed => "digest_keyed",
+            DigestEq => "digest_eq",
+            HexEncode => "hex_encode",
+            HexDecode => "hex_decode",
+            Base64Encode => "base64_encode",
+            Base64Decode => "base64_decode",
+            UuidParse => "uuid_parse",
+            UuidVersion => "uuid_version",
             HttpFetch => "http_fetch",
             StrIsEmpty => "str_is_empty",
             ListLen => "list_len",
@@ -287,6 +313,16 @@ impl Prim {
             // constant and belongs here, where a test holds it against the scheme.
             Prim::JsonParse => vec![Effect::Raises(std::sync::Arc::from("JsonError"))],
             Prim::TimeParse => vec![Effect::Raises(std::sync::Arc::from("TimeError"))],
+            Prim::HexDecode | Prim::Base64Decode => {
+                vec![Effect::Raises(std::sync::Arc::from("EncodingError"))]
+            }
+            Prim::UuidParse | Prim::UuidVersion => {
+                vec![Effect::Raises(std::sync::Arc::from("UuidError"))]
+            }
+            // The declassifier. `digest` and the encodings are pure; this one reads a
+            // `secret[Str]`, so it is held where `reveal` is held — behind a capability no client
+            // tier discharges, which is what stops a view minting a token (`docs/adr/0014`).
+            Prim::DigestKeyed => vec![Effect::Cap(std::sync::Arc::from("sign"))],
             // Half of `http_fetch`'s row is a constant and half is its first argument. The
             // constant half is here; the `net.out(host)` half is added by [`Core::effects`],
             // which can see the argument, and by the checker, which is where it is charged.

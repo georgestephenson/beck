@@ -25,6 +25,7 @@ expressed.
 | [`documents.beck`](documents.beck) | JSON and time: a document read as data with `match`, and RFC 3339 in UTC |
 | [`http.beck`](http.beck) | A request built up and a response read back — over `http_fetch`, which is the *call*. There is no `get(host, path)` here and there cannot be: the host is written at the call site so the egress policy is derivable ([`adr/0013`](../../docs/adr/0013-the-host-of-an-outbound-call-is-written-at-the-call-site.md)) |
 | [`collections.beck`](collections.beck) | A `Set[T]` as a map's keys, the three set operations and the two questions; sorting by a value rather than by a comparator; grouping, indexing, counting, deduplication and a partition. Every function total, and every result in an order that is a function of the values |
+| [`crypto.beck`](crypto.beck) | A fingerprint, a digest of several values that is not the digest of their concatenation, and a signed token in two layers — a pure one that takes the code it expects as an argument, and the two lines that compute one. The seam is where the key is, because a `test` block's row must be empty and `cap.sign` is not auto-stubbable ([`52`](../../docs/52-crypto-and-identifiers-report.md) §52.5) |
 | [`dates.beck`](dates.beck) | The civil calendar as arithmetic — Hinnant's two functions in Beck, checked against the same two in Rust rather than against themselves — plus `Date`, a `Duration` with its own `impl Num`, clamped month arithmetic, and `YYYY-MM-DD` read and written |
 
 Each file carries its own `test` and `property` blocks and runs under `beck test`, which is what
@@ -34,14 +35,16 @@ failing build.
 
 ## What is not here yet
 
-UUID beyond `uuid()`, crypto, bignums and numeric coercion, and time zones.
+Bignums, arbitrary-precision decimal, numeric coercion, and time zones.
 [`46`](../../docs/46-standard-library-report.md) §46.6 says which of those are waiting on a
 language feature and which are simply unwritten;
 [`49`](../../docs/49-http-client-report.md) §49.6 says the same for what `http.beck` does not do —
 no TLS, no redirects, no percent-encoding; and
 [`50`](../../docs/50-collections-and-dates-report.md) §50.6 for what the two newest files leave —
 a set whose cost is a map's, no zones, no locale, and a `Duration` that is milliseconds rather
-than a rational number of seconds.
+than a rational number of seconds; and
+[`52`](../../docs/52-crypto-and-identifiers-report.md) §52.6 for what `crypto.beck` is not — no
+asymmetric signature, no encryption of any kind, no key rotation and no expiry in a token.
 
 **One wall was found here and removed from here.** `money.beck` was meant to be an
 `impl Num for Money` so that `+` would work on it, the way `sicp/ch2.beck`'s rationals do. It could
@@ -69,3 +72,13 @@ second is that **a record orders by field name, not by declaration order**, so a
 written `Key(score=…, name=…)` sorts by the name. That one is pinned rather than fixed — a value
 carries no declaration, and a checker-side rule would disagree with the order the same records come
 out of a `Map`. [`50`](../../docs/50-collections-and-dates-report.md) §50.5 is the record for both.
+
+**The third was not a wall either, and it shaped a file rather than a feature.** `crypto.beck`
+wanted a test that minted a token and opened it. A `test` block's own row must be empty (§21.3) and
+`cap.*` is deliberately not auto-stubbable — stubbing a capability would bypass the thing it exists
+to enforce — so the layer of a library that *holds a key* is the layer Beck cannot test, and writing
+`stub cap.sign:` would make the test pass on a forgery. Nothing is inexpressible and the rule is
+right; what changed is the library. The token's format is a pure layer that takes the code it
+expects as an argument, `sign` and `open_token` are the two lines that compute one, and
+`stdlib.rs::a_token_opens_only_under_the_key_that_minted_it` is the Rust-side edge.
+[`52`](../../docs/52-crypto-and-identifiers-report.md) §52.5 is the record.
