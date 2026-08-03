@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module collections — beck</title>
+<style>:root{color-scheme:light dark;--fg:#1a1a1a;--bg:#fff;--muted:#5a6270;--line:#d8dde5;--code:#f5f6f8;--link:#0a5aa8}@media(prefers-color-scheme:dark){:root{--fg:#e6e8ec;--bg:#14161a;--muted:#9aa3b2;--line:#2c313a;--code:#1c1f26;--link:#79b8ff}}*{box-sizing:border-box}body{margin:0;font:16px/1.6 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:var(--fg);background:var(--bg)}header,footer{padding:.75rem 1.25rem;border-bottom:1px solid var(--line);font-size:.9rem;color:var(--muted)}footer{border-bottom:none;border-top:1px solid var(--line);margin-top:3rem}header a{color:var(--link);text-decoration:none;font-weight:600}main{max-width:52rem;margin:0 auto;padding:1.5rem 1.25rem 4rem}h1{font-size:1.75rem;margin:1rem 0 .25rem}h2{font-size:1.3rem;margin:2.5rem 0 .5rem;padding-bottom:.3rem;border-bottom:1px solid var(--line)}h3{font-size:1.05rem;margin:2rem 0 .4rem;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.875em}pre{background:var(--code);border:1px solid var(--line);border-radius:6px;padding:.7rem .9rem;overflow-x:auto}code:not(pre code){background:var(--code);border-radius:3px;padding:.1em .35em}table{border-collapse:collapse;width:100%;margin:.75rem 0;display:block;overflow-x:auto}th,td{border:1px solid var(--line);padding:.35rem .6rem;text-align:left;vertical-align:top}th{background:var(--code);font-weight:600}a{color:var(--link)}.muted{color:var(--muted)}.tag{display:inline-block;background:var(--code);border:1px solid var(--line);border-radius:999px;padding:.05rem .55rem;font-size:.78rem;font-family:ui-monospace,monospace;margin-right:.3rem}</style>
+</head>
+<body>
+<header><a href="../index.html">beck</a> / module <code>collections</code></header>
+<main>
+<h1>Module <code>collections</code></h1>
+<p class="muted">Interface digest <code>7085352daccdfe513d777dd72b71f0e1</code> · 12/30 published names documented</p>
+<h2>Types</h2>
+<h3 id="set">Set</h3>
+<pre><code>type Set = newtype[Map[?1000000, Bool]]</code></pre>
+<p>A set of `T`, as the keys of a map.</p>
+<p>The value is `Bool` and is always `true`: what a set stores is the *key*, and `Map` is the only
+ordered keyed collection the host provides. Membership is therefore the map's lookup rather than
+a scan, which is the whole reason to have this type rather than pass a `list[T]` around and call
+`list_contains`.</p>
+<h3 id="pair">Pair</h3>
+<pre><code>model Pair</code></pre>
+<p>A pair, for the two-key sort above and for anything else that wants an order over two things.</p>
+<p>`left` and `right` sort in that order because `l` comes before `r`, not because they are written
+in that order — see `sorted`.</p>
+<table><tr><th>Field</th><th></th></tr>
+<tr><td><code>left: ?1000000</code></td><td></td></tr><tr><td><code>right: ?1000001</code></td><td></td></tr></table>
+<h3 id="split">Split</h3>
+<pre><code>model Split</code></pre>
+<p>The two halves of a list, each in the original order.</p>
+<table><tr><th>Field</th><th></th></tr>
+<tr><td><code>kept: list[?1000000]</code></td><td></td></tr><tr><td><code>rest: list[?1000000]</code></td><td></td></tr></table>
+<h3 id="declared">Declared</h3>
+<pre><code>model Declared</code></pre>
+<p>Declared `zebra` first and compared `alpha` first — the trap `sorted` documents, written down so
+that a change to it is a test that starts failing rather than every two-key sort in every
+program quietly reordering.</p>
+<table><tr><th>Field</th><th></th></tr>
+<tr><td><code>zebra: Int</code></td><td></td></tr><tr><td><code>alpha: Int</code></td><td></td></tr></table>
+<h2>Names</h2>
+<table><tr><th>Name</th><th>Runs on</th><th>Effects</th></tr>
+<tr><td><a href="#contains"><code>contains</code></a></td><td><code>any</code></td><td><span class="muted">no effects</span></td></tr><tr><td><a href="#counts"><code>counts</code></a></td><td><code>any</code></td><td><span class="muted">no effects</span></td></tr><tr><td><a href="#difference"><code>difference</code></a></td><td><code>any</code></td><td><span class="muted">no effects</span></td></tr><tr><td><a href="#elements"><code>elements</code></a></td><td><code>any</code></td><td><span class="muted">no effects</span></td></tr><tr><td><a href="#empty_map"><code>empty_map</code></a></td><td><code>any</code></td><td><span class="muted">no effects</span></td></tr><tr><td><a href="#empty_set"><code>empty_set</code></a></td><td><code>any</code></td><td><span class="muted">no effects</span></td></tr><tr><td><a href="#file_under"><code>file_under</code></a></td><td><code>any</code></td><td><span class="muted">no effects</span></td></tr><tr><td><a href="#group_by"><code>group_by</code></a></td><td><code>any</code></td><td><span class="muted">no effects</span></td></tr><tr><td><a href="#index_by"><code>index_by</code></a></td><td><code>any</code></td><td><span class="muted">no effects</span></td></tr><tr><td><a href="#insert"><code>insert</code></a></td><td><code>any</code></td><td><span class="muted">no effects</span></td></tr><tr><td><a href="#intersection"><code>intersection</code></a></td><td><code>any</code></td><td><span class="muted">no effects</span></td></tr><tr><td><a href="#is_disjoint"><code>is_disjoint</code></a></td><td><code>any</code></td><td><span class="muted">no effects</span></td></tr><tr><td><a href="#is_empty"><code>is_empty</code></a></td><td><code>any</code></td><td><span class="muted">no effects</span></td></tr><tr><td><a href="#is_subset"><code>is_subset</code></a></td><td><code>any</code></td><td><span class="muted">no effects</span></td></tr><tr><td><a href="#max_of"><code>max_of</code></a></td><td><code>any</code></td><td><span class="muted">no effects</span></td></tr><tr><td><a href="#min_of"><code>min_of</code></a></td><td><code>any</code></td><td><span class="muted">no effects</span></td></tr><tr><td><a href="#no_ints"><code>no_ints</code></a></td><td><code>any</code></td><td><span class="muted">no effects</span></td></tr><tr><td><a href="#partition"><code>partition</code></a></td><td><code>any</code></td><td><span class="muted">no effects</span></td></tr><tr><td><a href="#remove"><code>remove</code></a></td><td><code>any</code></td><td><span class="muted">no effects</span></td></tr><tr><td><a href="#seen_once"><code>seen_once</code></a></td><td><code>any</code></td><td><span class="muted">no effects</span></td></tr><tr><td><a href="#set_of"><code>set_of</code></a></td><td><code>any</code></td><td><span class="muted">no effects</span></td></tr><tr><td><a href="#size"><code>size</code></a></td><td><code>any</code></td><td><span class="muted">no effects</span></td></tr><tr><td><a href="#sorted"><code>sorted</code></a></td><td><code>any</code></td><td><span class="muted">no effects</span></td></tr><tr><td><a href="#sorted_desc"><code>sorted_desc</code></a></td><td><code>any</code></td><td><span class="muted">no effects</span></td></tr><tr><td><a href="#union_of"><code>union_of</code></a></td><td><code>any</code></td><td><span class="muted">no effects</span></td></tr><tr><td><a href="#unique"><code>unique</code></a></td><td><code>any</code></td><td><span class="muted">no effects</span></td></tr></table>
+<h3 id="contains">contains</h3>
+<pre><code>contains[T](s: Set[T], x: T) -&gt; Bool</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
+<h3 id="counts">counts</h3>
+<pre><code>counts[T](xs: list[T]) -&gt; Map[T, Int]</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
+<p>How many times each value occurs.</p>
+<h3 id="difference">difference</h3>
+<pre><code>difference[T](a: Set[T], b: Set[T]) -&gt; Set[T]</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
+<h3 id="elements">elements</h3>
+<pre><code>elements[T](s: Set[T]) -&gt; list[T]</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
+<p>The members, in order.</p>
+<p>The order is the map's, which is the values' own — so two programs that built the same set by
+different routes get the same list, and a log folded twice folds to the same thing.</p>
+<h3 id="empty_map">empty_map</h3>
+<pre><code>empty_map[K, V]() -&gt; Map[K, V]</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
+<p>The empty map, behind a signature — `empty_set`'s reason, one level down.</p>
+<h3 id="empty_set">empty_set</h3>
+<pre><code>empty_set[T]() -&gt; Set[T]</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
+<p>The empty set.</p>
+<p>Behind a signature rather than written as `{}` at each use, for the reason `text.beck`'s
+`no_pairs` is: an empty map literal is checked against an expectation, and a fold's seed has
+none to offer until its third argument has been read.</p>
+<h3 id="file_under">file_under</h3>
+<pre><code>file_under[T, K](acc: Map[K, list[T]], k: K, x: T) -&gt; Map[K, list[T]]</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
+<h3 id="group_by">group_by</h3>
+<pre><code>group_by[T, K](xs: list[T], key: (T) -&gt; K) -&gt; Map[K, list[T]]</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
+<p>Everything in `xs`, filed under `key(x)`, each group in the order it was read.</p>
+<p>`key` may do anything a function may do: if it can fail, `group_by` can fail, and the row says
+so without this signature mentioning one (`docs/33`). That is the property that lets a library
+take a function at all without deciding on its caller's behalf what a function is allowed to be.</p>
+<h3 id="index_by">index_by</h3>
+<pre><code>index_by[T, K](xs: list[T], key: (T) -&gt; K) -&gt; Map[K, T]</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
+<p>Everything in `xs` by its key, with the last one winning.</p>
+<p>Last rather than first because that is what a fold over a log means: a later event about the
+same id is the one that is true. A caller who wants the first reverses the list.</p>
+<h3 id="insert">insert</h3>
+<pre><code>insert[T](s: Set[T], x: T) -&gt; Set[T]</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
+<h3 id="intersection">intersection</h3>
+<pre><code>intersection[T](a: Set[T], b: Set[T]) -&gt; Set[T]</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
+<h3 id="is_disjoint">is_disjoint</h3>
+<pre><code>is_disjoint[T](a: Set[T], b: Set[T]) -&gt; Bool</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
+<h3 id="is_empty">is_empty</h3>
+<pre><code>is_empty[T](s: Set[T]) -&gt; Bool</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
+<h3 id="is_subset">is_subset</h3>
+<pre><code>is_subset[T](a: Set[T], b: Set[T]) -&gt; Bool</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
+<h3 id="max_of">max_of</h3>
+<pre><code>max_of[T](xs: list[T]) -&gt; Option[T]</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
+<h3 id="min_of">min_of</h3>
+<pre><code>min_of[T](xs: list[T]) -&gt; Option[T]</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
+<h3 id="no_ints">no_ints</h3>
+<pre><code>no_ints() -&gt; list[Int]</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
+<h3 id="partition">partition</h3>
+<pre><code>partition[T](xs: list[T], keep: (T) -&gt; Bool) -&gt; Split[T]</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
+<h3 id="remove">remove</h3>
+<pre><code>remove[T](s: Set[T], x: T) -&gt; Set[T]</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
+<h3 id="seen_once">seen_once</h3>
+<pre><code>seen_once[T](xs: list[T], seen: Set[T], acc: list[T]) -&gt; list[T]</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
+<h3 id="set_of">set_of</h3>
+<pre><code>set_of[T](xs: list[T]) -&gt; Set[T]</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
+<h3 id="size">size</h3>
+<pre><code>size[T](s: Set[T]) -&gt; Int</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
+<h3 id="sorted">sorted</h3>
+<pre><code>sorted[T](xs: list[T]) -&gt; list[T]</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
+<p>Sorted by the values themselves.</p>
+<p>`sort_by` takes a key rather than a comparator, and this is the key that is the value. Sorting
+by two things is one key function returning a record: `lambda r: Pair(left=negate(r.score),
+right=r.name)` is &quot;by score descending, then by name&quot;, and needs no comparator to say so.</p>
+<p>**A record compares by field name, in order, and not in the order the fields are declared.** A
+value carries its fields and not its declaration, so the runtime has nothing else to sort them
+by — and a rule the checker applied instead would disagree with the order the same records come
+back from `elements`, which is this one. So a key record whose first priority is a field called
+`score` and whose second is called `name` sorts by the **name**, silently and correctly. Naming
+the fields is how a two-key sort says which key is first, which is why `Pair`'s are `left` and
+`right`.</p>
+<h3 id="sorted_desc">sorted_desc</h3>
+<pre><code>sorted_desc[T](xs: list[T]) -&gt; list[T]</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
+<h3 id="union_of">union_of</h3>
+<pre><code>union_of[T](a: Set[T], b: Set[T]) -&gt; Set[T]</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
+<h3 id="unique">unique</h3>
+<pre><code>unique[T](xs: list[T]) -&gt; list[T]</code></pre>
+<p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
+<p>`xs` with later duplicates dropped, in the order they were first seen.</p>
+<p>This is a different function from `elements(set_of(xs))`, which is also duplicate-free and is
+*sorted*. Both are wanted and neither is the other: a menu keeps its order, a set of tags has no
+order to keep.</p>
+</main>
+<footer>Generated by <code>beck doc</code>. Signatures, effects and placements are derived from the program.</footer>
+</body>
+</html>

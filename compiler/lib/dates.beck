@@ -1,0 +1,441 @@
+# Dates and durations, written in Beck on top of the two time primitives.
+#
+# `docs/46` §46.6 recorded what the first half of the standard library left out here: "built for
+# instants: RFC 3339, UTC, milliseconds. No durations, no arithmetic on dates". This file is the
+# arithmetic, and the division `lib/README.md` states is why it is a file rather than four more
+# primitives: `time_format` is a *grammar* — RFC 3339 is somebody else's spelling of an instant —
+# but a calendar is arithmetic. Which day is 2024-02-29 plus one is a question with an answer in
+# integers, and integers are something the language has.
+#
+# So the calendar below is Howard Hinnant's `days_from_civil` and `civil_from_days`, in Beck —
+# the same two functions `time_format` is built from in Rust (`interp.rs`), written a second time
+# in a different language. The tests at the bottom walk 5,000 days and demand that the two name the
+# same date, in both directions.
+#
+# Be precise about what that buys, because it is not two independent algorithms and claiming so
+# would be the more flattering lie. It is one algorithm on two evaluators, so what it checks is the
+# *language*: that `/` truncates where the algorithm needs it to, that the conditional expression
+# and the operator precedence read the way they are written, and that nothing was mistyped in the
+# transcription. That the algorithm itself is right is somebody else's proof plus the leap-year
+# cases `stdlib.rs` pins on the host side.
+#
+# The whole file is proleptic Gregorian, UTC, and has no zones and no locale, for the reason
+# `prelude.rs` gives for `time_format`: a time zone is a database with a release schedule, and one
+# is not being embedded in a compiler on the way past.
+
+## A civil date: a year, a month in `1..12`, and a day in `1..days_in_month`.
+##
+## Deliberately not an instant. An instant is a number of milliseconds and the host formats it; a
+## *date* is what you add a month to, and adding a month to a number of milliseconds is the bug
+## this type exists to not have.
+model Date:
+    year: Int
+    month: Int
+    day: Int
+
+## An elapsed length of time, in milliseconds.
+##
+## Elapsed, not calendar: a `Duration` of 24 hours added to an instant is 24 hours later, which is
+## not the same thing as "the next day" wherever a day is not 24 hours long. `add_days` is the
+## calendar operation and it works on a `Date`; this works on an instant. Keeping them apart is the
+## point of having two types.
+type Duration = newtype[Int]
+
+union CalendarError:
+    ## A string that is not `YYYY-MM-DD`, or is that shape and not a date — `2023-02-30` is caught
+    ## here rather than silently becoming the first of March.
+    BadDate(text: Str)
+    ## A duration times a duration, or divided by one. Neither is a length of time: an hour times
+    ## an hour is an hour-squared, and an hour divided by an hour is the number two. `Num` asks for
+    ## four methods, so the two with no answer say so — `money.beck` refuses the same pair for the
+    ## same reason.
+    NotADuration(op: Str)
+
+# ---------------------------------------------------------------------------------------------
+# Durations
+# ---------------------------------------------------------------------------------------------
+
+def ms_per_second() -> Int:
+    return 1000
+
+def ms_per_minute() -> Int:
+    return 60000
+
+def ms_per_hour() -> Int:
+    return 3600000
+
+## 86,400,000 — the length of a day *as a duration*, which is a definition and not an observation.
+## The calendar below never uses it to decide what a date is; it uses it to convert an instant.
+def ms_per_day() -> Int:
+    return 86400000
+
+def of_millis(n: Int) -> Duration:
+    return Duration(value=n)
+
+def of_seconds(n: Int) -> Duration:
+    return Duration(value=n * ms_per_second())
+
+def of_minutes(n: Int) -> Duration:
+    return Duration(value=n * ms_per_minute())
+
+def of_hours(n: Int) -> Duration:
+    return Duration(value=n * ms_per_hour())
+
+## `n` lots of 24 hours. Named for what it is rather than for `add_days`, which is the calendar one.
+def of_days(n: Int) -> Duration:
+    return Duration(value=n * ms_per_day())
+
+def as_millis(d: Duration) -> Int:
+    return d.value
+
+def scaled(d: Duration, n: Int) -> Duration:
+    return Duration(value=d.value * n)
+
+## How long it was from `from_ms` to `to_ms`. Negative if the second is earlier, which is a fact
+## about the arguments rather than an error.
+def between(from_ms: Int, to_ms: Int) -> Duration:
+    return Duration(value=to_ms - from_ms)
+
+def after(ms: Int, d: Duration) -> Int:
+    return ms + d.value
+
+def before(ms: Int, d: Duration) -> Int:
+    return ms - d.value
+
+# `+` and `-` on `Duration`, through the prelude trait `Num` (`docs/41`), and `mul`/`div` refusing
+# for the reason the union above gives. The two halves have different rows and that is the whole of
+# `docs/47`: `add` is pure and stays pure, so `of_hours(1) + of_hours(2)` needs no handler, while
+# `*` on two durations is a failure the caller has to face.
+impl Num for Duration:
+    def add(self, other):
+        return Duration(value=self.value + other.value)
+
+    def sub(self, other):
+        return Duration(value=self.value - other.value)
+
+    def mul(self, other):
+        raise NotADuration(op="*")
+
+    def div(self, other):
+        raise NotADuration(op="/")
+
+## ISO 8601: `PT1H30M`, `PT0.500S`, `-PT2M`.
+##
+## Hours are the largest unit used, and that is deliberate rather than lazy. ISO 8601's `P1D` is a
+## *calendar* day and a `Duration` is elapsed milliseconds, so writing `P1D` here would claim
+## something this type does not know — see the type's own comment. Zero renders as `PT0S`, which
+## the standard requires to have at least one component.
+def render_duration(d: Duration) -> Str:
+    if d.value == 0:
+        return "PT0S"
+    return ("-" if d.value < 0 else "") + "PT" + parts_of(abs(d.value))
+
+def parts_of(ms: Int) -> Str:
+    hours = ms / ms_per_hour()
+    minutes = (ms % ms_per_hour()) / ms_per_minute()
+    return (
+        (str(hours) + "H" if hours > 0 else "")
+        + (str(minutes) + "M" if minutes > 0 else "")
+        + seconds_of(ms % ms_per_minute())
+    )
+
+def seconds_of(ms: Int) -> Str:
+    if ms == 0:
+        return ""
+    fraction = ms % ms_per_second()
+    return str(ms / ms_per_second()) + ("" if fraction == 0 else "." + pad(fraction, 3)) + "S"
+
+# ---------------------------------------------------------------------------------------------
+# The calendar
+#
+# Hinnant's algorithms, unchanged in shape. They are written for a division that truncates towards
+# zero — which is what `/` does here — and the `if` on a negative operand in each is what makes
+# that true rather than nearly true. `floor_div` below is the other kind, and the two are not
+# interchangeable: an instant before 1970 is in the day it is *in*, so splitting an instant floors,
+# while `era` truncates.
+# ---------------------------------------------------------------------------------------------
+
+def floor_div(a: Int, b: Int) -> Int:
+    quotient = a / b
+    return (quotient - 1) if a % b < 0 else quotient
+
+## Days since 1970-01-01 for a civil date, whether or not that date exists.
+##
+## Total on purpose: `days_from_civil(2023, 2, 30)` is the day after the 28th, because the
+## arithmetic has no opinion. `parse_date` is where a date is *validated*, and keeping the two
+## apart is why the arithmetic can be used to write the validation.
+def days_from_civil(year: Int, month: Int, day: Int) -> Int:
+    shifted = (year - 1) if month <= 2 else year
+    era = (shifted if shifted >= 0 else (shifted - 399)) / 400
+    year_of_era = shifted - era * 400
+    shifted_month = (month + 9) % 12
+    day_of_era_year = (153 * shifted_month + 2) / 5 + day - 1
+    day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_era_year
+    return era * 146097 + day_of_era - 719468
+
+## And back: the civil date `days` days after 1970-01-01.
+def civil_from_days(days: Int) -> Date:
+    shifted = days + 719468
+    era = (shifted if shifted >= 0 else (shifted - 146096)) / 146097
+    day_of_era = shifted - era * 146097
+    year_of_era = (day_of_era - day_of_era / 1460 + day_of_era / 36524 - day_of_era / 146096) / 365
+    day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100)
+    shifted_month = (5 * day_of_year + 2) / 153
+    month = (shifted_month + 3) if shifted_month < 10 else (shifted_month - 9)
+    return Date(
+        year=year_of_era + era * 400 + (1 if month <= 2 else 0),
+        month=month,
+        day=day_of_year - (153 * shifted_month + 2) / 5 + 1,
+    )
+
+## The day an instant falls in — floored, so an instant before 1970 is in the day it is in.
+def epoch_day(ms: Int) -> Int:
+    return floor_div(ms, ms_per_day())
+
+## How far into its day an instant is, in milliseconds. Always in `0..86_399_999`.
+def time_of_day(ms: Int) -> Int:
+    return ms - epoch_day(ms) * ms_per_day()
+
+def date_of(ms: Int) -> Date:
+    return civil_from_days(epoch_day(ms))
+
+## Midnight UTC at the start of `d`, as an instant.
+def midnight(d: Date) -> Int:
+    return days_from_civil(d.year, d.month, d.day) * ms_per_day()
+
+def days_between(from_date: Date, to_date: Date) -> Int:
+    return (
+        days_from_civil(to_date.year, to_date.month, to_date.day)
+        - days_from_civil(from_date.year, from_date.month, from_date.day)
+    )
+
+def add_days(d: Date, n: Int) -> Date:
+    return civil_from_days(days_from_civil(d.year, d.month, d.day) + n)
+
+## `n` months on, with the day clamped to the end of the month it lands in.
+##
+## 2024-01-31 plus one month is 2024-02-29, not 2024-03-02. There is no answer here that is right
+## for every caller — a monthly billing date and a "30 days later" are different questions — so
+## this is the one that keeps the *month* and says so, and a caller who wants the other writes
+## `add_days`. Clamping also makes the operation lossy: adding a month and subtracting one does not
+## always return where it started, and the test below says so rather than leaving it to be found.
+def add_months(d: Date, n: Int) -> Date:
+    total = d.year * 12 + (d.month - 1) + n
+    year = floor_div(total, 12)
+    month = total - year * 12 + 1
+    return Date(year=year, month=month, day=least(d.day, days_in_month(year, month)))
+
+def add_years(d: Date, n: Int) -> Date:
+    return add_months(d, n * 12)
+
+def least(a: Int, b: Int) -> Int:
+    return a if a < b else b
+
+def is_leap_year(year: Int) -> Bool:
+    return (year % 4 == 0 and year % 100 != 0) or year % 400 == 0
+
+def days_in_month(year: Int, month: Int) -> Int:
+    if month == 2:
+        return 29 if is_leap_year(year) else 28
+    return 30 if month == 4 or month == 6 or month == 9 or month == 11 else 31
+
+def day_of_year(d: Date) -> Int:
+    return days_from_civil(d.year, d.month, d.day) - days_from_civil(d.year, 1, 1) + 1
+
+## ISO 8601's numbering: Monday is 1 and Sunday is 7.
+##
+## 1970-01-01 was a Thursday, which is the only fact this needs and the reason for the `+ 3`.
+def weekday(d: Date) -> Int:
+    return floor_mod(days_from_civil(d.year, d.month, d.day) + 3, 7) + 1
+
+def floor_mod(a: Int, b: Int) -> Int:
+    return a - floor_div(a, b) * b
+
+def weekday_name(d: Date) -> Str:
+    return unwrap_or(
+        list_get(["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"], weekday(d) - 1),
+        "?",
+    )
+
+def is_valid(year: Int, month: Int, day: Int) -> Bool:
+    return month >= 1 and month <= 12 and day >= 1 and day <= days_in_month(year, month)
+
+## `YYYY-MM-DD`.
+##
+## Four digits for the year, which is what ISO 8601 requires and what the host's `time_format`
+## writes. A year outside `0..9999` is rendered as the number it is, and is outside what that
+## notation can say — stated because a library that quietly writes a five-character year into a
+## four-character field is worse than one that says which.
+def render_date(d: Date) -> Str:
+    return pad(d.year, 4) + "-" + pad(d.month, 2) + "-" + pad(d.day, 2)
+
+def pad(n: Int, width: Int) -> Str:
+    digits = str(abs(n))
+    zeros = width - str_len(digits)
+    return ("-" if n < 0 else "") + (str_repeat("0", zeros) if zeros > 0 else "") + digits
+
+## `YYYY-MM-DD`, read back — and validated, which is the half the arithmetic deliberately has not.
+##
+## It **raises** rather than returning a `Result`, which is the shape `docs/08` §8.5.3 trap 2 and
+## `documents.beck` settled for the whole library: a caller who wants a `Result` writes `try:`, and
+## a caller already inside something fallible writes nothing.
+def parse_date(text: Str) -> Date uses raises(CalendarError):
+    if str_len(text) != 10 or str_slice(text, 4, 1) != "-" or str_slice(text, 7, 1) != "-":
+        raise BadDate(text=text)
+    return checked(
+        text,
+        digits(str_slice(text, 0, 4)),
+        digits(str_slice(text, 5, 2)),
+        digits(str_slice(text, 8, 2)),
+    )
+
+def checked(text: Str, year: Option[Int], month: Option[Int], day: Option[Int]) -> Date uses raises(CalendarError):
+    match year:
+        case None:
+            raise BadDate(text=text)
+        case Some(y):
+            return checked_day(text, y, month, day)
+
+def checked_day(text: Str, year: Int, month: Option[Int], day: Option[Int]) -> Date uses raises(CalendarError):
+    match month:
+        case None:
+            raise BadDate(text=text)
+        case Some(m):
+            match day:
+                case None:
+                    raise BadDate(text=text)
+                case Some(d):
+                    if not is_valid(year, m, d):
+                        raise BadDate(text=text)
+                    return Date(year=year, month=m, day=d)
+
+## `str_to_int` accepts a sign and this notation does not, so `"-123"` in a four-digit field is not
+## the year −123 arriving by the back door.
+def digits(text: Str) -> Option[Int]:
+    if list_all(str_chars(text), lambda c: c >= "0" and c <= "9"):
+        return str_to_int(text)
+    return None
+
+# ---------------------------------------------------------------------------------------------
+# The library's own tests, in the language (`docs/21` §21.2).
+#
+# The first two are the cross-check against the host: the calendar written above and the calendar
+# `time_format` is built from, walked day by day and asked to agree. The header says what that does
+# and does not establish; everything below them is checked against numbers somebody typed out.
+# ---------------------------------------------------------------------------------------------
+
+## Walk `count` days from `day`, `stride` at a time, demanding at each one that this calendar and
+## the host's name the same date and that the naming is invertible.
+def agrees_from(day: Int, count: Int, stride: Int) -> Bool:
+    if count <= 0:
+        return true
+    if not agrees_on(day):
+        return false
+    return agrees_from(day + stride, count - 1, stride)
+
+def agrees_on(day: Int) -> Bool:
+    here = civil_from_days(day)
+    return (
+        render_date(here) == str_slice(time_format(day * ms_per_day()), 0, 10)
+        and days_from_civil(here.year, here.month, here.day) == day
+    )
+
+test "the calendar written in Beck is the calendar the host writes RFC 3339 with":
+    # 1900-01-01 forward, day by day: 1900 is divisible by four and is not a leap year, and the
+    # 2,000 days from here cross that February and five more.
+    expect agrees_from(-25567, 2000, 1)
+
+test "and it stays the same calendar across eight centuries":
+    # 1583-01-01 forward in strides of 97 days to 2379 — every century boundary in between, leap
+    # and not. A wrong leap rule shifts every later day, so a stride that misses the 29th itself
+    # still catches it on the next sample.
+    expect agrees_from(-141349, 3000, 97)
+
+test "an instant splits into the day it is in and how far into it":
+    expect date_of(0) == Date(year=1970, month=1, day=1)
+    expect time_of_day(0) == 0
+    expect date_of(-1) == Date(year=1969, month=12, day=31)
+    expect time_of_day(-1) == 86399999
+    expect midnight(Date(year=2024, month=2, day=29)) == 1709164800000
+    expect time_format(midnight(Date(year=2024, month=2, day=29))) == "2024-02-29T00:00:00.000Z"
+
+test "days are added by the calendar, and February knows how long it is":
+    expect add_days(Date(year=2024, month=2, day=28), 1) == Date(year=2024, month=2, day=29)
+    expect add_days(Date(year=2023, month=2, day=28), 1) == Date(year=2023, month=3, day=1)
+    expect add_days(Date(year=2024, month=12, day=31), 1) == Date(year=2025, month=1, day=1)
+    expect add_days(Date(year=1970, month=1, day=1), -1) == Date(year=1969, month=12, day=31)
+    expect days_between(Date(year=2024, month=1, day=1), Date(year=2025, month=1, day=1)) == 366
+    expect days_between(Date(year=2025, month=1, day=1), Date(year=2024, month=1, day=1)) == -366
+
+test "a month is added by keeping the month, so the day is clamped and the operation is lossy":
+    expect add_months(Date(year=2024, month=1, day=31), 1) == Date(year=2024, month=2, day=29)
+    expect add_months(Date(year=2023, month=1, day=31), 1) == Date(year=2023, month=2, day=28)
+    expect add_months(Date(year=2024, month=12, day=15), 1) == Date(year=2025, month=1, day=15)
+    expect add_months(Date(year=2024, month=1, day=15), -1) == Date(year=2023, month=12, day=15)
+    # Lossy: a clamp has nothing to un-clamp from.
+    expect add_months(add_months(Date(year=2024, month=1, day=31), 1), -1) == Date(year=2024, month=1, day=29)
+    expect add_years(Date(year=2024, month=2, day=29), 1) == Date(year=2025, month=2, day=28)
+
+test "the leap rule is the Gregorian one, all three clauses of it":
+    expect is_leap_year(2024)
+    expect not is_leap_year(2023)
+    expect not is_leap_year(1900)
+    expect is_leap_year(2000)
+    expect days_in_month(2024, 2) == 29
+    expect days_in_month(1900, 2) == 28
+    expect days_in_month(2024, 4) == 30
+    expect day_of_year(Date(year=2024, month=3, day=1)) == 61
+    expect day_of_year(Date(year=2023, month=3, day=1)) == 60
+    expect day_of_year(Date(year=2024, month=12, day=31)) == 366
+
+test "Monday is 1, and 1970-01-01 was a Thursday":
+    expect weekday(Date(year=1970, month=1, day=1)) == 4
+    expect weekday_name(Date(year=1970, month=1, day=1)) == "Thursday"
+    expect weekday_name(Date(year=1969, month=12, day=29)) == "Monday"
+    expect weekday_name(Date(year=2024, month=2, day=29)) == "Thursday"
+
+property "whatever day a date is, its weekday is one of the seven — before 1970 as well as after"(steps: Int):
+    expect weekday(a_century_out(steps)) >= 1
+    expect weekday(a_century_out(steps)) <= 7
+
+test "a date reads back, and something that is not one raises":
+    expect (try: parse_date("2024-02-29")) == Ok(value=Date(year=2024, month=2, day=29))
+    expect (try: parse_date("2023-02-29")) == Err(error=BadDate(text="2023-02-29"))
+    expect (try: parse_date("2024-13-01")) == Err(error=BadDate(text="2024-13-01"))
+    expect (try: parse_date("2024-2-9")) == Err(error=BadDate(text="2024-2-9"))
+    expect (try: parse_date("not a date")) == Err(error=BadDate(text="not a date"))
+    expect (try: parse_date("-123-01-01")) == Err(error=BadDate(text="-123-01-01"))
+
+## A century per generated step, so a `days` in `-10..10` is a millennium either side of 1970 —
+## which is where the four-digit year `render_date` writes is the notation it claims to be.
+def a_century_out(steps: Int) -> Date:
+    return civil_from_days(steps * 36525)
+
+property "every date this calendar produces reads back as itself"(steps: Int):
+    expect (try: parse_date(render_date(a_century_out(steps)))) == Ok(value=a_century_out(steps))
+
+test "durations add and subtract, and the two that are not durations refuse":
+    # No `try:` on these two, and that is the point: a row is inferred per *method*, so `add` is
+    # pure and a caller of it needs no handler, while `mul` on the same type is fallible.
+    expect of_hours(1) + of_minutes(30) == of_minutes(90)
+    expect of_hours(1) - of_minutes(30) == of_minutes(30)
+    expect (try: of_hours(1) * of_hours(1)) == Err(error=NotADuration(op="*"))
+    expect (try: of_hours(1) / of_hours(1)) == Err(error=NotADuration(op="/"))
+    expect scaled(of_minutes(30), 4) == of_hours(2)
+    expect as_millis(of_days(1)) == 86400000
+
+test "a duration is elapsed time, and it moves an instant rather than a date":
+    expect between(1000, 4000) == of_seconds(3)
+    expect between(4000, 1000) == of_seconds(-3)
+    expect after(midnight(Date(year=2024, month=1, day=1)), of_hours(9)) == 1704099600000
+    expect time_format(after(midnight(Date(year=2024, month=1, day=1)), of_hours(9))) == "2024-01-01T09:00:00.000Z"
+    expect before(0, of_days(1)) == -86400000
+
+test "a duration renders as ISO 8601, in the units that are a fixed length":
+    expect render_duration(of_millis(0)) == "PT0S"
+    expect render_duration(of_minutes(90)) == "PT1H30M"
+    expect render_duration(of_millis(500)) == "PT0.500S"
+    expect render_duration(of_millis(-120000)) == "-PT2M"
+    expect render_duration(of_millis(3661500)) == "PT1H1M1.500S"
+    # A day is 24 hours here and says so: `P1D` would be a claim about a calendar.
+    expect render_duration(of_days(1)) == "PT24H"

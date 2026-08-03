@@ -1,0 +1,257 @@
+# Collections, written in Beck on top of the list and map primitives.
+#
+# `docs/46` §46.6 recorded what the first half of the standard library left out: "no `Set`
+# operations, no sorting beyond `sort_by`, no grouping, no deduplication". This file is those four,
+# and it is here rather than in `prelude.rs` because none of them is a host's table or grammar. A
+# set is a map whose values nobody reads; a sort is `sort_by` with the identity; a grouping is a
+# fold. Every one of them has a definition in the language, so the language is where it is written.
+#
+# Two properties hold across the whole file and are worth stating once rather than per function:
+#
+# - **Every function here is total.** A collection has no failure of its own — the only way to get
+#   an error out of this file is to pass in a function that has one, and then the row is that
+#   function's and travels by inference (`docs/33`, `docs/45`). Nothing here `raise`s.
+# - **Every result is ordered, and the order is a function of the values.** `elements` is sorted
+#   because a `Map` is, not because anything sorts it; `group_by` returns a `Map` for the same
+#   reason. A replay that disagrees with the run it is replaying about the order of a set would be
+#   a replay of a different program, so "in whatever order the hash landed" is not available here
+#   and is not wanted.
+
+# ---------------------------------------------------------------------------------------------
+# Sets
+# ---------------------------------------------------------------------------------------------
+
+## A set of `T`, as the keys of a map.
+##
+## The value is `Bool` and is always `true`: what a set stores is the *key*, and `Map` is the only
+## ordered keyed collection the host provides. Membership is therefore the map's lookup rather than
+## a scan, which is the whole reason to have this type rather than pass a `list[T]` around and call
+## `list_contains`.
+type Set[T] = newtype[Map[T, Bool]]
+
+## The empty set.
+##
+## Behind a signature rather than written as `{}` at each use, for the reason `text.beck`'s
+## `no_pairs` is: an empty map literal is checked against an expectation, and a fold's seed has
+## none to offer until its third argument has been read.
+def empty_set[T]() -> Set[T]:
+    return Set(value={})
+
+def set_of[T](xs: list[T]) -> Set[T]:
+    return list_fold(xs, empty_set(), insert)
+
+def insert[T](s: Set[T], x: T) -> Set[T]:
+    return Set(value=map_insert(s.value, x, true))
+
+def remove[T](s: Set[T], x: T) -> Set[T]:
+    return Set(value=map_remove(s.value, x))
+
+def contains[T](s: Set[T], x: T) -> Bool:
+    return map_contains(s.value, x)
+
+def size[T](s: Set[T]) -> Int:
+    return map_len(s.value)
+
+def is_empty[T](s: Set[T]) -> Bool:
+    return map_len(s.value) == 0
+
+## The members, in order.
+##
+## The order is the map's, which is the values' own — so two programs that built the same set by
+## different routes get the same list, and a log folded twice folds to the same thing.
+def elements[T](s: Set[T]) -> list[T]:
+    return map_keys(s.value)
+
+def union_of[T](a: Set[T], b: Set[T]) -> Set[T]:
+    return Set(value=map_merge(a.value, b.value))
+
+def intersection[T](a: Set[T], b: Set[T]) -> Set[T]:
+    return set_of(filter_list(elements(a), lambda x: contains(b, x)))
+
+def difference[T](a: Set[T], b: Set[T]) -> Set[T]:
+    return set_of(filter_list(elements(a), lambda x: not contains(b, x)))
+
+def is_subset[T](a: Set[T], b: Set[T]) -> Bool:
+    return list_all(elements(a), lambda x: contains(b, x))
+
+def is_disjoint[T](a: Set[T], b: Set[T]) -> Bool:
+    return not list_any(elements(a), lambda x: contains(b, x))
+
+# ---------------------------------------------------------------------------------------------
+# Sorting
+# ---------------------------------------------------------------------------------------------
+
+## Sorted by the values themselves.
+##
+## `sort_by` takes a key rather than a comparator, and this is the key that is the value. Sorting
+## by two things is one key function returning a record: `lambda r: Pair(left=negate(r.score),
+## right=r.name)` is "by score descending, then by name", and needs no comparator to say so.
+##
+## **A record compares by field name, in order, and not in the order the fields are declared.** A
+## value carries its fields and not its declaration, so the runtime has nothing else to sort them
+## by — and a rule the checker applied instead would disagree with the order the same records come
+## back from `elements`, which is this one. So a key record whose first priority is a field called
+## `score` and whose second is called `name` sorts by the **name**, silently and correctly. Naming
+## the fields is how a two-key sort says which key is first, which is why `Pair`'s are `left` and
+## `right`.
+def sorted[T](xs: list[T]) -> list[T]:
+    return sort_by(xs, lambda x: x)
+
+def sorted_desc[T](xs: list[T]) -> list[T]:
+    return list_reverse(sort_by(xs, lambda x: x))
+
+## A pair, for the two-key sort above and for anything else that wants an order over two things.
+##
+## `left` and `right` sort in that order because `l` comes before `r`, not because they are written
+## in that order — see `sorted`.
+model Pair[A, B]:
+    left: A
+    right: B
+
+def min_of[T](xs: list[T]) -> Option[T]:
+    return list_get(sorted(xs), 0)
+
+def max_of[T](xs: list[T]) -> Option[T]:
+    return list_get(sorted_desc(xs), 0)
+
+# ---------------------------------------------------------------------------------------------
+# Grouping and deduplication
+# ---------------------------------------------------------------------------------------------
+
+## The empty map, behind a signature — `empty_set`'s reason, one level down.
+def empty_map[K, V]() -> Map[K, V]:
+    return {}
+
+## Everything in `xs`, filed under `key(x)`, each group in the order it was read.
+##
+## `key` may do anything a function may do: if it can fail, `group_by` can fail, and the row says
+## so without this signature mentioning one (`docs/33`). That is the property that lets a library
+## take a function at all without deciding on its caller's behalf what a function is allowed to be.
+def group_by[T, K](xs: list[T], key: T -> K) -> Map[K, list[T]]:
+    return list_fold(xs, empty_map(), lambda acc, x: file_under(acc, key(x), x))
+
+def file_under[T, K](acc: Map[K, list[T]], k: K, x: T) -> Map[K, list[T]]:
+    return map_insert(acc, k, list_append(unwrap_or(map_get(acc, k), []), x))
+
+## Everything in `xs` by its key, with the last one winning.
+##
+## Last rather than first because that is what a fold over a log means: a later event about the
+## same id is the one that is true. A caller who wants the first reverses the list.
+def index_by[T, K](xs: list[T], key: T -> K) -> Map[K, T]:
+    return list_fold(xs, empty_map(), lambda acc, x: map_insert(acc, key(x), x))
+
+## How many times each value occurs.
+def counts[T](xs: list[T]) -> Map[T, Int]:
+    return list_fold(xs, empty_map(), lambda acc, x: map_insert(acc, x, unwrap_or(map_get(acc, x), 0) + 1))
+
+## `xs` with later duplicates dropped, in the order they were first seen.
+##
+## This is a different function from `elements(set_of(xs))`, which is also duplicate-free and is
+## *sorted*. Both are wanted and neither is the other: a menu keeps its order, a set of tags has no
+## order to keep.
+def unique[T](xs: list[T]) -> list[T]:
+    return seen_once(xs, empty_set(), [])
+
+def seen_once[T](xs: list[T], seen: Set[T], acc: list[T]) -> list[T]:
+    match xs:
+        case []:
+            return acc
+        case [first, *rest]:
+            if contains(seen, first):
+                return seen_once(rest, seen, acc)
+            return seen_once(rest, insert(seen, first), list_append(acc, first))
+
+## The two halves of a list, each in the original order.
+model Split[T]:
+    kept: list[T]
+    rest: list[T]
+
+def partition[T](xs: list[T], keep: T -> Bool) -> Split[T]:
+    return Split(
+        kept=filter_list(xs, keep),
+        rest=filter_list(xs, lambda x: not keep(x)),
+    )
+
+# ---------------------------------------------------------------------------------------------
+# The library's own tests, in the language (`docs/21` §21.2).
+# ---------------------------------------------------------------------------------------------
+
+test "a set holds each member once, in the values' own order":
+    expect elements(set_of([3, 1, 2, 1, 3])) == [1, 2, 3]
+    expect elements(set_of(["pear", "fig", "pear"])) == ["fig", "pear"]
+    expect size(set_of([1, 1, 1])) == 1
+    expect is_empty(empty_set())
+    expect elements(empty_set()) == []
+
+test "membership is a lookup, and removing what is not there is not an error":
+    expect contains(set_of([1, 2]), 2)
+    expect not contains(set_of([1, 2]), 9)
+    expect elements(remove(set_of([1, 2]), 9)) == [1, 2]
+    expect elements(remove(set_of([1, 2]), 1)) == [2]
+
+test "the three set operations, and the two questions":
+    expect elements(union_of(set_of([1, 2]), set_of([2, 3]))) == [1, 2, 3]
+    expect elements(intersection(set_of([1, 2]), set_of([2, 3]))) == [2]
+    expect elements(difference(set_of([1, 2]), set_of([2, 3]))) == [1]
+    expect is_subset(set_of([1, 2]), set_of([1, 2, 3]))
+    expect not is_subset(set_of([1, 9]), set_of([1, 2, 3]))
+    expect is_subset(empty_set(), set_of([1]))
+    expect is_disjoint(set_of([1]), set_of([2]))
+    expect not is_disjoint(set_of([1]), set_of([1, 2]))
+
+property "a union contains both sides, however they were built"(xs: list[Int], ys: list[Int]):
+    expect is_subset(set_of(xs), union_of(set_of(xs), set_of(ys)))
+    expect is_subset(set_of(ys), union_of(set_of(xs), set_of(ys)))
+
+property "and a difference contains neither the other side nor anything new"(xs: list[Int], ys: list[Int]):
+    expect is_disjoint(difference(set_of(xs), set_of(ys)), set_of(ys))
+    expect is_subset(difference(set_of(xs), set_of(ys)), set_of(xs))
+
+test "sorting is by the value, and a record's value is its fields":
+    expect sorted([3, 1, 2]) == [1, 2, 3]
+    expect sorted_desc([3, 1, 2]) == [3, 2, 1]
+    expect sorted(["b", "a"]) == ["a", "b"]
+    expect sorted([Pair(left=1, right="b"), Pair(left=1, right="a")]) == [Pair(left=1, right="a"), Pair(left=1, right="b")]
+    expect min_of([3, 1, 2]) == Some(value=1)
+    expect max_of([3, 1, 2]) == Some(value=3)
+    expect min_of(no_ints()) == None
+
+## Declared `zebra` first and compared `alpha` first — the trap `sorted` documents, written down so
+## that a change to it is a test that starts failing rather than every two-key sort in every
+## program quietly reordering.
+model Declared:
+    zebra: Int
+    alpha: Int
+
+test "and the fields are compared by name, whatever order they were declared in":
+    expect Declared(zebra=2, alpha=0) < Declared(zebra=1, alpha=9)
+    expect sorted([Declared(zebra=1, alpha=9), Declared(zebra=2, alpha=0)]) == [Declared(zebra=2, alpha=0), Declared(zebra=1, alpha=9)]
+
+def no_ints() -> list[Int]:
+    return []
+
+test "grouping files each item under its key":
+    expect group_by(["fig", "pear", "fox"], lambda s: str_slice(s, 0, 1)) == {"f": ["fig", "fox"], "p": ["pear"]}
+    expect group_by(no_ints(), lambda n: n) == empty_map()
+
+test "indexing keeps the last, which is what a fold over a log means":
+    expect index_by([Pair(left=1, right="old"), Pair(left=1, right="new")], lambda p: p.left) == {1: Pair(left=1, right="new")}
+
+test "counting is a fold, and an absent key counts zero":
+    expect counts(["a", "b", "a"]) == {"a": 2, "b": 1}
+    expect unwrap_or(map_get(counts(["a"]), "z"), 0) == 0
+
+test "deduplication keeps the order it was given, and a set does not":
+    expect unique([3, 1, 3, 2, 1]) == [3, 1, 2]
+    expect elements(set_of([3, 1, 3, 2, 1])) == [1, 2, 3]
+    expect unique(no_ints()) == []
+
+property "however a list is deduplicated, it holds the same members as its set"(xs: list[Int]):
+    expect set_of(unique(xs)) == set_of(xs)
+    expect list_len(unique(xs)) == size(set_of(xs))
+
+test "a partition loses nothing and keeps each side in order":
+    expect partition([1, 2, 3, 4], lambda n: n % 2 == 0) == Split(kept=[2, 4], rest=[1, 3])
+
+property "and the two halves add back up"(xs: list[Int]):
+    expect list_len(partition(xs, lambda n: n > 0).kept) + list_len(partition(xs, lambda n: n > 0).rest) == list_len(xs)
