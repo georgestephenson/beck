@@ -649,10 +649,15 @@ it measures is documentation an outside developer could build from, and there is
 
 **Wave 4 — free-standing, in parallel with Waves 2–3.** LLVM backend and native codegen; Mode B and
 client polish; the LSP; SQL read models, pgwire and query fusion; `test --update`; the SQLite
-substrate; the shared dataflow's three unfinished properties
-([`26`](26-arrangement-sharing-report.md) §26.9); structured concurrency, which Wave 1 left behind
-and which has no predecessor; more of SICP, chapter 3 being the part closest to what Beck is for.
-No predecessors, and they never acquire any.
+substrate; ~~the shared dataflow's three unfinished properties
+([`26`](26-arrangement-sharing-report.md) §26.9)~~ — **two of the three built**
+([`51`](51-arrangement-lifecycle-report.md)): the arrangements are released when the last subscriber
+goes and the change history is compacted to the oldest reader's frontier, both as one reader-set
+rule rather than as the two items §26.9 listed. The third, the render lock, is still here and
+§51.7 records that this change made it a *harder* item rather than an unchanged one, because
+compaction is now safe partly because the lock is held the way it is; structured concurrency, which
+Wave 1 left behind and which has no predecessor; more of SICP, chapter 3 being the part closest to
+what Beck is for. No predecessors, and they never acquire any.
 
 **Wave 5 — the Phase 4 gates, arranged before Phase 4 rather than during it.** Supply-chain tooling
 (SLSA v1.2 provenance, 2026-element SBOMs, signing, trusted publishing configured *before* the first
@@ -694,7 +699,8 @@ Recommended pairings, in order:
 | ~~**Then**~~ | ~~Lane A: `Result` and error rows~~ | ~~Lane D, plus Lane C's half of Wave 0~~ | **Done.** Both branches landed together, and the prediction held: the error rows touched `check/`, `ty.rs`, `row.rs` and `core.rs`, and Wave 0 touched `beck-diag`, `beck-syntax`, `beck-rt` and `docs/`. The one collision was the one the table names below — `beck-diag/src/index.rs`, four new codes — and it was trivial because the numbers were far apart |
 | ~~**Then**~~ | ~~Lane A: the standard library, on the error shape Wave 1 settled~~ | ~~Lane B: the shared dataflow's three loose ends~~ | **Half done.** The library's first half landed ([`46`](46-standard-library-report.md)), then the wall it wrote ([`47`](47-effect-polymorphic-traits-report.md)), then the HTTP client ([`49`](49-http-client-report.md)) — which was Lane A *and* Lane B, because the seam is in `beck-core` and the implementation is in `beck-rt`. The prediction held anyway: nothing in `engine.rs` was touched |
 | ~~**Then**~~ | ~~Lane A: the rest of Wave 2 — `Set`, dates~~ | ~~Lane B: the shared dataflow's three loose ends~~ | **Half done.** `Set` and dates landed ([`50`](50-collections-and-dates-report.md)) and were not Lane A at all: two files in `compiler/lib/`, no primitive, and the only Rust touched was one diagnostic's label. Lane B is untouched, so the pairing was never tested — the prediction it made cannot be claimed to have held |
-| **Now** | Lane A: bignums, coercion, `@derive` | Lane B: the shared dataflow's three loose ends, then SQL read models | `beck-rt` and `engine.rs` are untouched by anything in `check/` |
+| ~~**Then**~~ | ~~Lane A: bignums, coercion, `@derive`~~ | ~~Lane B: the shared dataflow's three loose ends~~ | **Half done, and the other half.** Lane B was taken at last, after being the recommended Branch 2 for three consecutive rewrites: two of the three loose ends are closed ([`51`](51-arrangement-lifecycle-report.md)) and the third — the render lock — is deliberately left. The prediction held exactly: `engine.rs`, `beck-rt/` and one test suite, and nothing in `check/`, `ty.rs` or `core.rs`. Lane A is untouched, so this pairing was again never actually run as a pair |
+| **Now** | Lane A: bignums, coercion, `@derive` — or `Ord` as a trait, which [`50`](50-collections-and-dates-report.md) §50.5 argues for and which is the same decision [`41`](41-generic-arithmetic-report.md) took for arithmetic | Lane B: SQL read models and pgwire | `beck-rt` and `engine.rs` are untouched by anything in `check/` |
 | **Then** | Lane A, continued | Lane E: the LLVM backend — and per §8.4 the AWFY/CLBG harness lands with whichever arrives second | The backend seam exists so these do not interact |
 | **Any time** | — | Lane F; Lane C's LSP; more of SICP | No predecessors, no collisions |
 

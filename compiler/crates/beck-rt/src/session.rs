@@ -77,10 +77,17 @@ pub async fn run<S: Socket>(app: Arc<App>, mut socket: S) -> Result<()> {
         }
     };
 
+    // Declared *before* the engine so it is dropped after it: what the shared dataflow holds
+    // changes when this subscription's engine goes, and sampling before that would leave the gauge
+    // describing arrangements the process has just released.
+    let _shared = SharedGauge(app.clone());
     // One engine per subscription: §5.3's per-subscriber operators, and the arrangements they
     // hold. With sharing on that is *only* the per-session operators — everything above them is one
     // dataflow the application holds. It is created before the first render so that render is the
     // engine's own cold start rather than a recompute the engine then has to catch up with.
+    //
+    // It is also this subscription's membership of the shared dataflow's reader set, and dropping
+    // it is how the dataflow learns the subscription is over (`docs/26` §26.9's lifecycle).
     let mut engine = app.view_engine()?;
     let mut arranged = Arranged::new();
     // `seq` comes back from the render rather than from `app.head()` afterwards: it is the version
@@ -88,9 +95,7 @@ pub async fn run<S: Socket>(app: Arc<App>, mut socket: S) -> Result<()> {
     // from.
     let (view_now, seq) = app.maintain(&mut engine, &actor).await?;
     arranged.update(engine.arranged());
-    telemetry()
-        .shared_arranged
-        .set(app.shared_dataflow().arranged());
+    report_shared(&app);
 
     let ops = match how {
         // The client has nothing we can trust: hand it the whole frame. Same format, same
@@ -157,9 +162,7 @@ async fn drive<S: Socket>(
                 }
                 let (view, at) = app.maintain(engine, &actor).await?;
                 arranged.update(engine.arranged());
-                telemetry()
-                    .shared_arranged
-                    .set(app.shared_dataflow().arranged());
+                report_shared(app);
                 let started = std::time::Instant::now();
                 let ops = diff(&last_view, &view);
                 telemetry().diff.record(started.elapsed());
@@ -251,6 +254,34 @@ async fn wait_for_hello<S: Socket>(socket: &mut S) -> Result<Option<(String, u64
 /// A guard rather than a pair of calls, for the same reason [`SessionGuard`] is one: a subscription
 /// ends by returning, by erroring or by its socket dying, and a gauge that only releases its share
 /// on the happy path drifts upward until it is describing connections that closed hours ago.
+/// Sample what the **one** shared dataflow holds, after a render has just moved it.
+///
+/// Three numbers, and they answer different questions: `arranged` is what a fanout costs once,
+/// `retained` is how far behind the laggiest subscriber is, and `releases` is how often the process
+/// has thrown the arrangements away because nobody was connected. A render is the right moment for
+/// all three — it is when they change, and it is `O(operators)` to read (`docs/26`).
+fn report_shared(app: &Arc<App>) {
+    let shared = app.shared_dataflow();
+    telemetry().shared_arranged.set(shared.arranged());
+    telemetry().shared_retained.set(shared.retained() as u64);
+    telemetry().shared_releases.sync(shared.releases());
+}
+
+/// Re-samples the shared dataflow's numbers when a subscription ends.
+///
+/// A guard rather than a call at the end of `run`, for the reason [`Arranged`] is one: a
+/// subscription ends by returning, by erroring or by its socket dying. And it matters more here
+/// than it looks — the *last* subscription to end is the one that releases the arrangements, so
+/// without this the gauge sits at whatever the fanout was holding for as long as the process is
+/// idle, which is the one moment an operator most wants it to say zero.
+struct SharedGauge(Arc<App>);
+
+impl Drop for SharedGauge {
+    fn drop(&mut self) {
+        report_shared(&self.0);
+    }
+}
+
 struct Arranged(u64);
 
 impl Arranged {

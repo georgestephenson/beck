@@ -167,6 +167,15 @@ impl Counter {
     pub fn add(&self, n: u64) {
         self.0.fetch_add(n, Ordering::Relaxed);
     }
+    /// Adopt a total that is counted somewhere else.
+    ///
+    /// For a counter whose authoritative value lives outside this struct: the shared dataflow
+    /// counts its own releases, and this exports that number rather than counting the same events a
+    /// second time. Still monotone, because the source is — but `incr`/`add` and this must not be
+    /// mixed on one counter, or neither is right.
+    pub fn sync(&self, total: u64) {
+        self.0.store(total, Ordering::Relaxed);
+    }
     pub fn get(&self) -> u64 {
         self.0.load(Ordering::Relaxed)
     }
@@ -288,6 +297,19 @@ pub struct Telemetry {
     /// operational question: `shared_arranged` is paid once, `session_arranged` is paid per
     /// connection. A program whose second number dwarfs the first has its cut in the wrong place.
     pub session_arranged: Gauge,
+    /// Versions of change history the shared dataflow is keeping for subscribers that are behind.
+    ///
+    /// Bounded above by the configured retention depth and below by the laggiest connected
+    /// subscriber, so on a healthy fanout it sits at 1 and a rising number means renders are not
+    /// keeping up with events. That makes it a *lag* signal rather than a memory one, which is the
+    /// more useful reading of the same number.
+    pub shared_retained: Gauge,
+    /// How many times the shared dataflow gave up its arrangements because nothing was subscribed.
+    ///
+    /// Each one is a cold start charged to whichever subscriber reconnects first. A process whose
+    /// releases track its connection count is one whose clients are flapping, and is the case for
+    /// turning `AppConfig::retention.release_when_idle` off.
+    pub shared_releases: Counter,
 }
 
 /// How many log records to keep. Bounded so a long-running process does not accumulate; the log
@@ -338,12 +360,14 @@ impl Telemetry {
                 "bad_messages": self.bad_messages.get(),
                 "patch_frames": self.patch_frames.get(),
                 "patch_bytes": self.patch_bytes.get(),
+                "shared_releases": self.shared_releases.get(),
             },
             "gauges": {
                 "sessions": self.sessions.get(),
                 "head": self.head.get(),
                 "shared_arranged": self.shared_arranged.get(),
                 "session_arranged": self.session_arranged.get(),
+                "shared_retained": self.shared_retained.get(),
             },
             "histograms": [
                 hist("fold", &self.fold),
@@ -430,6 +454,8 @@ impl Telemetry {
                         gauge("beck.log.head", self.head.get()),
                         gauge("beck.views.shared_arranged", self.shared_arranged.get()),
                         gauge("beck.views.session_arranged", self.session_arranged.get()),
+                        gauge("beck.views.shared_retained", self.shared_retained.get()),
+                        sum("beck.views.shared_releases", self.shared_releases.get(), true),
                         histogram("beck.fold.duration", &self.fold),
                         histogram("beck.view.duration", &self.view),
                         histogram("beck.diff.duration", &self.diff),

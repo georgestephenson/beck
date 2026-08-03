@@ -311,7 +311,7 @@ fn what_a_fanout_costs_with_and_without_a_shared_dataflow() {
             let alone_us = started.elapsed().as_micros();
             let unshared = fanout_footprint(&state, None, &alone.iter().collect::<Vec<_>>()).bytes;
 
-            let dataflow = SharedDataflow::new(bench.prepared.clone());
+            let dataflow = Arc::new(SharedDataflow::new(bench.prepared.clone()));
             let mut engines: Vec<Engine> = (0..n).map(|_| dataflow.subscriber()).collect();
             let started = Instant::now();
             for (e, s) in engines.iter_mut().zip(&sessions) {
@@ -390,7 +390,7 @@ fn what_one_event_costs_a_connected_fanout() {
             let alone_us = started.elapsed().as_micros();
             let alone_work: u64 = alone.iter().map(|e| e.work().total()).sum();
 
-            let dataflow = SharedDataflow::new(bench.prepared.clone());
+            let dataflow = Arc::new(SharedDataflow::new(bench.prepared.clone()));
             let mut engines: Vec<Engine> = (0..n).map(|_| dataflow.subscriber()).collect();
             for (e, s) in engines.iter_mut().zip(&sessions) {
                 dataflow.render(e, &state, 1, s).expect("warm");
@@ -415,5 +415,114 @@ fn what_one_event_costs_a_connected_fanout() {
         "\n  work — `Engine::work().total()`: per-element applications, arrangement entries moved,\n  \
                 entries copied into a `list`, and pointwise operators re-evaluated. A count rather\n  \
                 than a duration, so it is the same on any machine (§13.7)."
+    );
+}
+
+/// What a process holds when nobody is looking, and how much change history a fanout pins.
+///
+/// [`docs/26-arrangement-sharing-report.md`](../../../../docs/26-arrangement-sharing-report.md)
+/// §26.9 left two numbers unmeasured: what the shared dataflow retains for a fanout that has gone
+/// away, and where the change history's knee actually is. Both are now a function of the reader
+/// set rather than of a constant, and this is the table that says by how much.
+///
+/// The first half is bytes, because "the arrangements are dropped" is a memory claim and entries
+/// are not bytes. The second is versions, because that is the unit the retention ceiling is in.
+#[test]
+fn what_the_arrangement_lifecycle_gives_back() {
+    use beck_core::engine::{fanout_footprint, SharedDataflow};
+
+    const ROWS: usize = 200;
+    const OWNERS: usize = 8;
+    const FANOUT: usize = 64;
+
+    println!("\nWhat an idle process holds — {FANOUT} subscribers, then none");
+    println!(
+        "{:>20}  {:>12} {:>12} {:>12} {:>8}",
+        "program", "connected KB", "shared KB", "idle KB", "given back"
+    );
+    for (label, placed, feed) in [
+        ("examples/todo.beck", support::todo_program(), false),
+        ("24-feed.beck", feed_program(), true),
+    ] {
+        let bench = Bench::new(placed);
+        let state = if feed {
+            bench.feed_with(ROWS)
+        } else {
+            bench.state_across(ROWS, OWNERS)
+        };
+        let sessions: Vec<Value> = (0..FANOUT)
+            .map(|i| bench.runtime.session(&format!("u{}", i % OWNERS)))
+            .collect();
+
+        let dataflow = Arc::new(SharedDataflow::new(bench.prepared.clone()));
+        let mut engines: Vec<Engine> = (0..FANOUT).map(|_| dataflow.subscriber()).collect();
+        for (e, s) in engines.iter_mut().zip(&sessions) {
+            dataflow.render(e, &state, 1, s).expect("a shared render");
+        }
+        let connected =
+            fanout_footprint(&state, Some(&dataflow), &engines.iter().collect::<Vec<_>>()).bytes;
+        let shared = dataflow.footprint(&state).bytes;
+
+        // Every subscription ends. This is the state a process sits in between fanouts, and until
+        // now it was the same as the line above it.
+        drop(engines);
+        let idle = dataflow.footprint(&state).bytes;
+        assert_eq!(dataflow.readers(), 0);
+
+        println!(
+            "{label:>20}  {:>12} {:>12} {:>12} {:>7.1}%",
+            connected / 1024,
+            shared / 1024,
+            idle / 1024,
+            100.0 * (shared - idle) as f64 / shared.max(1) as f64,
+        );
+    }
+    println!(
+        "  `connected` is the whole fanout, `shared` the part of it held once, `idle` what is left\n  \
+         after the last subscription ends. The percentage is of `shared`: the per-subscriber half\n  \
+         goes with the subscribers whether or not anything is released."
+    );
+
+    println!("\nHow much change history a fanout pins — 24-feed.beck, one laggard");
+    println!(
+        "{:>14}  {:>10} {:>12} {:>10}",
+        "laggard's lag", "retained", "the ceiling", "saved"
+    );
+    let bench = Bench::new(feed_program());
+    const VERSIONS: u64 = 80;
+    let states: Vec<Value> = (0..=VERSIONS)
+        .map(|k| bench.feed_with(ROWS + k as usize))
+        .collect();
+    // A subscriber lags by rendering *less often*, not by asking for an older version: asking for
+    // an older version is served the current one, which is the documented behaviour and means a
+    // subscriber cannot be made to lag that way.
+    for lag in [0u64, 1, 4, 16, 70] {
+        let dataflow = Arc::new(SharedDataflow::new(bench.prepared.clone()));
+        let session = bench.runtime.session("u0");
+        let mut keen = dataflow.subscriber();
+        let mut slow = (lag > 0).then(|| dataflow.subscriber());
+        for v in 0..=VERSIONS {
+            dataflow
+                .render(&mut keen, &states[v as usize], v, &session)
+                .expect("the keen subscriber renders");
+            // The laggard's last render, after which it stops looking and falls `lag` behind.
+            if let (Some(slow), true) = (slow.as_mut(), v + lag == VERSIONS) {
+                dataflow
+                    .render(slow, &states[v as usize], v, &session)
+                    .expect("the laggard renders");
+            }
+        }
+        let retained = dataflow.retained();
+        let ceiling = (VERSIONS as usize).min(dataflow.retention().depth);
+        println!(
+            "{lag:>14}  {retained:>10} {ceiling:>12} {:>9.1}×",
+            ceiling as f64 / retained.max(1) as f64,
+        );
+        drop(slow);
+    }
+    println!(
+        "  `the ceiling` is what the constant retained before this: every version, up to 64. What\n  \
+         is retained now is the laggard's own lag — the ceiling only bites past it, which is why\n  \
+         a lag of 70 retains 64 and that subscriber rebuilds instead."
     );
 }
