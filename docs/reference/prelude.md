@@ -32,7 +32,7 @@ What a user's type may implement to join something the language already has. `Nu
 
 ## Names
 
-96 of them.
+99 of them.
 
 | Name | Type |
 |---|---|
@@ -52,6 +52,7 @@ What a user's type may implement to join something the language already has. `Nu
 | `base64_decode` | `(Str) -> Str ! {raises(EncodingError)}` |
 | `base64_encode` | `(Str) -> Str` |
 | `concat_lists` | `(list[list[a]]) -> list[a]` |
+| `cos` | `(Float) -> Float` |
 | `decide` | `(Stream[Proposal], Signal[a], (a, Proposal) -> Result[list[b], c] ! {e}) -> Stream[b] ! {e}` |
 | `digest` | `(Str) -> Str` |
 | `digest_eq` | `(Str, Str) -> Bool` |
@@ -107,6 +108,7 @@ What a user's type may implement to join something the language already has. `Nu
 | `reveal` | `(internal[a]) -> a ! {cap.internal}` |
 | `secret_env` | `(Str) -> secret[Str] ! {env}` |
 | `signal_map` | `(Signal[a], (a) -> b ! {e}) -> Signal[b] ! {e}` |
+| `sin` | `(Float) -> Float` |
 | `sort_by` | `(list[a], (a) -> b ! {e}) -> list[a] ! {e}` |
 | `sqrt` | `(Float) -> Float` |
 | `str` | `(a) -> Str` |
@@ -128,6 +130,7 @@ What a user's type may implement to join something the language already has. `Nu
 | `str_upper` | `(Str) -> Str` |
 | `time_format` | `(Int) -> Str` |
 | `time_parse` | `(Str) -> Int ! {raises(TimeError)}` |
+| `trunc` | `(Float) -> Int` |
 | `unwrap_or` | `(Option[a], a) -> a` |
 | `uuid` | `() -> Str ! {nondet}` |
 | `uuid_parse` | `(Str) -> Str ! {raises(UuidError)}` |

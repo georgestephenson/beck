@@ -1079,6 +1079,20 @@ impl<'h> Interp<'h> {
                     .map(|f| Value::float(f.sqrt()))
                     .ok_or_else(|| EvalError::new("`sqrt` expects a Float", span))
             }
+            Prim::Sin | Prim::Cos | Prim::Trunc => {
+                want(1)?;
+                let v = args.pop().expect("arity checked");
+                let f = v.as_f64().ok_or_else(|| {
+                    EvalError::new(format!("`{}` expects a Float", op.name()), span)
+                })?;
+                Ok(match op {
+                    Prim::Sin => Value::float(f.sin()),
+                    Prim::Cos => Value::float(f.cos()),
+                    // `as` on a float is saturating in Rust and toward zero, which is the rule the
+                    // prelude states. A NaN becomes zero, which is the only total answer.
+                    _ => Value::Int(f as i64),
+                })
+            }
             Prim::ToFloat => {
                 want(1)?;
                 match args.pop().expect("arity checked") {

@@ -72,13 +72,13 @@ const MICRO: [&str; 9] = [
     "towers",
 ];
 
-/// The macro-benchmarks, of which three are ported.
+/// The macro-benchmarks, of which four are ported.
 ///
-/// The other two — CD and DeltaBlue — are sized rather than attempted in
-/// [`58`](../../../../docs/58-json-report.md) §58.5, which says what each needs and how large it
-/// is. Kept apart from the nine because the distinction is the suite's own and is what the two
-/// halves measure: a micro-benchmark is a loop, and a macro-benchmark is a program.
-const MACRO: [&str; 3] = ["havlak", "json", "richards"];
+/// The last one — DeltaBlue — is sized rather than attempted in
+/// [`58`](../../../../docs/58-json-report.md) §58.5, which says what it needs and how large it is.
+/// Kept apart from the nine because the distinction is the suite's own and is what the two halves
+/// measure: a micro-benchmark is a loop, and a macro-benchmark is a program.
+const MACRO: [&str; 4] = ["cd", "havlak", "json", "richards"];
 
 /// Every benchmark runs its own tests and passes them.
 ///
@@ -110,9 +110,9 @@ fn each_benchmark_is_a_library() {
     }
 }
 
-/// The twelve are all there, and nothing else is.
+/// The thirteen are all there, and nothing else is.
 #[test]
-fn the_ported_suite_is_nine_micro_benchmarks_and_three_macro() {
+fn the_ported_suite_is_nine_micro_benchmarks_and_four_macro() {
     let mut found: Vec<String> = benchmarks()
         .iter()
         .map(|p| p.file_stem().unwrap().to_string_lossy().to_string())

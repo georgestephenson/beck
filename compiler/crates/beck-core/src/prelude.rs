@@ -112,6 +112,35 @@ pub fn prims() -> Vec<(&'static str, Prim, Scheme)> {
             Prim::Sqrt,
             Scheme::mono(fun(vec![float.clone()], float.clone())),
         ),
+        // The two trigonometric functions, and the conversion back down from a real.
+        //
+        // `docs/32` built the reals with `sqrt` and nothing else, and three phases of programs
+        // never asked for more — until a benchmark did. `Math.sin`, `Math.cos` and a `(int)` cast
+        // are what Are We Fast Yet's collision detector is written in, and a numeric tower with a
+        // square root and no sine is a gap rather than a decision (`docs/60` §60.2).
+        //
+        // All three are the host's, in `lib/README.md`'s sense: `sin` is somebody else's polynomial
+        // and truncation is the format's own rule about which way a real falls. Composition would
+        // be a slower, less correct copy — and unlike `money.beck`'s arithmetic there is nothing
+        // here that Beck *should* be expressing.
+        (
+            "sin",
+            Prim::Sin,
+            Scheme::mono(fun(vec![float.clone()], float.clone())),
+        ),
+        (
+            "cos",
+            Prim::Cos,
+            Scheme::mono(fun(vec![float.clone()], float.clone())),
+        ),
+        // Toward zero, which is what every language with this conversion means by it and what
+        // IEEE 754 calls `roundTowardZero`. Saturating rather than wrapping at the ends of `Int`,
+        // because a wrap would turn a large real into a small integer of the wrong sign.
+        (
+            "trunc",
+            Prim::Trunc,
+            Scheme::mono(fun(vec![float.clone()], int.clone())),
+        ),
         (
             "float",
             Prim::ToFloat,
