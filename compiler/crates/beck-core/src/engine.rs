@@ -1,9 +1,9 @@
 //! The incremental view engine: the thing that flows deltas through a [`crate::plan::Plan`].
 //!
-//! [`docs/03-type-and-effect-system.md`](../../../../docs/03-type-and-effect-system.md) §3.8:
+//! [`docs/03-type-and-effect-system.md`](../../../../../docs/03-type-and-effect-system.md) §3.8:
 //! "`remaining` updates by ±1 per event, never by recount." Until now that sentence described an
 //! intention. This is the machine that makes it true, and
-//! [`docs/24-incremental-views-report.md`](../../../../docs/24-incremental-views-report.md) is the
+//! [`docs/24-incremental-views-report.md`](../../../../../docs/24-incremental-views-report.md) is the
 //! measurement.
 //!
 //! # The one hard problem, and where it is solved
@@ -1192,7 +1192,7 @@ impl SharedInner {
 
 /// How long a shared dataflow keeps what a subscriber might still ask for.
 ///
-/// [`docs/26-arrangement-sharing-report.md`](../../../../docs/26-arrangement-sharing-report.md)
+/// [`docs/26-arrangement-sharing-report.md`](../../../../../docs/26-arrangement-sharing-report.md)
 /// §26.9 recorded both of these as constants that should have been policies: the history was 64
 /// versions "because a subscriber further behind than that is not the bottleneck", and the
 /// arrangements were never dropped at all.
@@ -1232,7 +1232,7 @@ impl Default for Retention {
 
 /// The operators of a plan that do not read the session, arranged **once** for every subscriber.
 ///
-/// [`docs/05-tier-lowering.md`](../../../../docs/05-tier-lowering.md) §5.3:
+/// [`docs/05-tier-lowering.md`](../../../../../docs/05-tier-lowering.md) §5.3:
 ///
 /// > a thousand connected users of `todos.map(filter_by(session.user))` must compile to *one*
 /// > shared dataflow whose final per-session operators (filter, project, diff) run per subscriber
@@ -1267,7 +1267,7 @@ impl Default for Retention {
 /// # The lifecycle: who keeps this alive, and for how long
 ///
 /// The three choices above say how the dataflow is *maintained*. They are silent about when it
-/// stops being worth maintaining, which [`26`](../../../../docs/26-arrangement-sharing-report.md)
+/// stops being worth maintaining, which [`26`](../../../../../docs/26-arrangement-sharing-report.md)
 /// §26.9 recorded as two loose ends — arrangements that are never released, and a change history
 /// that is a constant rather than a policy. Both are the same missing rule, and it is the
 /// reader-frontier discipline of differential dataflow's shared arrangements: a reader set, a

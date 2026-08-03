@@ -1,6 +1,6 @@
 //! Stage 8 — signal-graph slicing, and the boundaries it synthesises.
 //!
-//! [`docs/04-compiler-architecture.md`](../../../../docs/04-compiler-architecture.md) §4.3:
+//! [`docs/04-compiler-architecture.md`](../../../../../docs/04-compiler-architecture.md) §4.3:
 //! "**Slice the signal graph.** Every signal edge that crosses tiers becomes a subscription: the
 //! server side gets a diff operator (DOM patches for Mode-A components), the client side a
 //! resumable `(subscription, seq)` consumer; `send` becomes the upstream command channel into the

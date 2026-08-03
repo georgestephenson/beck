@@ -14,7 +14,7 @@
 //!    serial.
 //!
 //! Phase 0 stored events with `postcard` and measured 7,660 events/s through Postgres
-//! ([`docs/18-phase-0-report.md`](../../../../docs/18-phase-0-report.md) §18.3.2). Phase 1 rewrote
+//! ([`docs/18-phase-0-report.md`](../../../../../docs/18-phase-0-report.md) §18.3.2). Phase 1 rewrote
 //! the log against `beck_core::Value` — which the runtime must not know the shape of — and reached
 //! for JSON because it is self-describing, which is exactly what postcard is not. That was a real
 //! constraint and this module is the answer to it: a **concrete** type postcard can encode, plus

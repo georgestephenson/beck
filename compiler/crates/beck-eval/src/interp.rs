@@ -1,7 +1,7 @@
 //! The tree-walker itself. [`crate`] wraps it as a [`beck_core::backend::Backend`].
 //!
 //! Deliberately bad at everything, complete end-to-end
-//! ([`docs/08-roadmap.md`](../../../../docs/08-roadmap.md) Phase 1). It is a tree-walker over
+//! ([`docs/08-roadmap.md`](../../../../../docs/08-roadmap.md) Phase 1). It is a tree-walker over
 //! typed `Core`, with three properties that are not negotiable and are tested:
 //!
 //! * **Replay purity.** Nothing here reads a clock, a random source, or a socket *of its own*.
@@ -14,7 +14,7 @@
 //! * **Errors are values, not panics.** A partial operation returns an [`EvalError`] carrying the
 //!   span, because a language server has to survive evaluating half-written code.
 //!
-//! To which a fourth was added by [`docs/31-tail-calls-report.md`](../../../../docs/31-tail-calls-report.md):
+//! To which a fourth was added by [`docs/31-tail-calls-report.md`](../../../../../docs/31-tail-calls-report.md):
 //!
 //! * **A call in tail position does not grow the host stack, and no program aborts the process.**
 //!   [`Interp::eval`] is a trampoline: `Interp::step` walks the tail positions of a body without
@@ -1468,7 +1468,7 @@ impl<'h> Interp<'h> {
             // every local a new arm adds is a local every nested call carries — and inlining
             // merges the two frames into one. Adding these inline cost enough depth to break
             // `sicp.rs::what_bounds_a_recursive_types_depth_is_the_evaluator_and_not_the_checker`
-            // in a debug build, which is [`adr/0007`](../../../../docs/adr/0007-evaluator-stack-is-declared-not-discovered.md)'s
+            // in a debug build, which is [`adr/0007`](../../../../../docs/adr/0007-evaluator-stack-is-declared-not-discovered.md)'s
             // budget being spent by a primitive that has nothing to do with recursion.
             Prim::Digest
             | Prim::DigestKeyed

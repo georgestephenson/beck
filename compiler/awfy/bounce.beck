@@ -1,0 +1,114 @@
+# Are We Fast Yet — Bounce.
+#
+# A hundred balls, fifty steps, counting the steps in which a ball hits a wall. The Java mutates
+# each `Ball` in place; here a step maps the list of balls to a new list and the count is a fold,
+# which is the one shape in this directory that is *more* natural in Beck than in the original.
+#
+# What is not more natural is the generator. `som.Random` is an object with a seed field, and four
+# draws build one ball; a pure port has to thread the seed through the construction and say in what
+# order the draws happen, because the order is what the answer depends on. `Minted` is that thread
+# made visible.
+#
+# `& 65535` in the original is `% 65536` here, and `storage.beck` says why.
+#
+# 1,331 is the harness's own number: `Bounce.java`'s `verifyResult` is `1331 == (int) result`.
+
+model Ball:
+    x: Int
+    y: Int
+    x_vel: Int
+    y_vel: Int
+
+## A ball and the generator state it was drawn from.
+model Minted:
+    ball: Ball
+    seed: Int
+
+## A step's outcome for one ball: where it is now, and whether it hit a wall getting there.
+model Bounced:
+    ball: Ball
+    hit: Bool
+
+def next_random(seed: Int) -> Int:
+    return (seed * 1309 + 13849) % 65536
+
+## Four draws, in the order the original's constructor makes them: x, y, then the two velocities.
+def mint(seed: Int) -> Minted:
+    sx = next_random(seed)
+    sy = next_random(sx)
+    svx = next_random(sy)
+    svy = next_random(svx)
+    return Minted(
+        ball=Ball(x=sx % 500, y=sy % 500, x_vel=svx % 300 - 150, y_vel=svy % 300 - 150),
+        seed=svy,
+    )
+
+def mint_balls(n: Int, seed: Int, done: list[Ball]) -> list[Ball]:
+    if n <= 0:
+        return done
+    drawn = mint(seed)
+    return mint_balls(n - 1, drawn.seed, list_append(done, drawn.ball))
+
+## The four wall tests of the original, in the original's order.
+##
+## They are four separate `if`s there and four functions here rather than one four-way choice,
+## because a ball that leaves through a corner is clamped on both axes and a `match` would clamp it
+## on one.
+def bounce_ball(b: Ball) -> Bounced:
+    moved = Ball(x=b.x + b.x_vel, y=b.y + b.y_vel, x_vel=b.x_vel, y_vel=b.y_vel)
+    return low_y(high_y(low_x(high_x(Bounced(ball=moved, hit=false)))))
+
+def high_x(s: Bounced) -> Bounced:
+    if s.ball.x > 500:
+        return Bounced(
+            ball=Ball(x=500, y=s.ball.y, x_vel=negate(abs(s.ball.x_vel)), y_vel=s.ball.y_vel),
+            hit=true,
+        )
+    return s
+
+def low_x(s: Bounced) -> Bounced:
+    if s.ball.x < 0:
+        return Bounced(
+            ball=Ball(x=0, y=s.ball.y, x_vel=abs(s.ball.x_vel), y_vel=s.ball.y_vel),
+            hit=true,
+        )
+    return s
+
+def high_y(s: Bounced) -> Bounced:
+    if s.ball.y > 500:
+        return Bounced(
+            ball=Ball(x=s.ball.x, y=500, x_vel=s.ball.x_vel, y_vel=negate(abs(s.ball.y_vel))),
+            hit=true,
+        )
+    return s
+
+def low_y(s: Bounced) -> Bounced:
+    if s.ball.y < 0:
+        return Bounced(
+            ball=Ball(x=s.ball.x, y=0, x_vel=s.ball.x_vel, y_vel=abs(s.ball.y_vel)),
+            hit=true,
+        )
+    return s
+
+model World:
+    balls: list[Ball]
+    bounces: Int
+
+def step(w: World) -> World:
+    stepped = map_list(w.balls, bounce_ball)
+    return World(
+        balls=map_list(stepped, lambda s: s.ball),
+        bounces=w.bounces + list_len(filter_list(stepped, lambda s: s.hit)),
+    )
+
+def steps(n: Int, w: World) -> World:
+    if n <= 0:
+        return w
+    return steps(n - 1, step(w))
+
+## The benchmark, at Are We Fast Yet's own size: 100 balls, 50 steps, from the harness's own seed.
+def benchmark() -> Int:
+    return steps(50, World(balls=mint_balls(100, 74755, []), bounces=0)).bounces
+
+test "bounce: 1,331 wall hits over 50 steps of 100 balls":
+    expect benchmark() == 1331

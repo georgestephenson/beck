@@ -1,13 +1,13 @@
 //! Which views can be maintained by delta, and which have to be recomputed — and why.
 //!
-//! [`docs/03-type-and-effect-system.md`](../../../../docs/03-type-and-effect-system.md) §3.8:
+//! [`docs/03-type-and-effect-system.md`](../../../../../docs/03-type-and-effect-system.md) §3.8:
 //!
 //! > **Subscribed views** (anything feeding a live `page`, or marked `materialized`) compile to
 //! > **incremental dataflow plans** … `remaining` updates by ±1 per event, never by recount. …
 //! > Arbitrary pure code is incrementalized where analysis allows, recomputed where not —
 //! > **`beck explain incremental <view>` shows which, and why**.
 //!
-//! [`20`](../../../../docs/20-phase-2-report.md) §20.6 item 3 said the input for this existed
+//! [`20`](../../../../../docs/20-phase-2-report.md) §20.6 item 3 said the input for this existed
 //! ("a view whose row is empty is a pure function of the signal — which is §3.8's precondition")
 //! and §20.5 said the command was not built, because until the general slicer there was no plan to
 //! ask about: an inlined view is one expression, and "which vertices are incremental" is not a
@@ -156,7 +156,7 @@ pub struct Assessment {
     /// Empty for a vertex that applies nothing — a `durable`, an alias.
     pub ops: Vec<(Prim, &'static str)>,
     /// True when this vertex's value is read by more than one consumer, so an engine would share
-    /// one arrangement rather than build two ([`05`](../../../../docs/05-tier-lowering.md) §5.3).
+    /// one arrangement rather than build two ([`05`](../../../../../docs/05-tier-lowering.md) §5.3).
     pub shared: bool,
     /// True when this vertex is at or below a `per_session`, so an engine would run it *per
     /// subscriber* rather than once. §3.8: "per-session views are the norm, not the exception."

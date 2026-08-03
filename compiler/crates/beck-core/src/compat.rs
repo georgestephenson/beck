@@ -1,6 +1,6 @@
 //! `beck check --wire-compat` — boundary versioning, §4.3.
 //!
-//! [`docs/04-compiler-architecture.md`](../../../../docs/04-compiler-architecture.md) §4.3, which
+//! [`docs/04-compiler-architecture.md`](../../../../../docs/04-compiler-architecture.md) §4.3, which
 //! calls this "a hard requirement, not a nicety":
 //!
 //! > During a rolling deploy, old clients talk to new servers. Rules: operation ids are

@@ -1,6 +1,6 @@
 //! The printer — one `Node` tree, two surfaces.
 //!
-//! [`docs/02-syntax.md`](../../../../docs/02-syntax.md) §2.2: "`beck fmt --sexpr orders.beck`
+//! [`docs/02-syntax.md`](../../../../../docs/02-syntax.md) §2.2: "`beck fmt --sexpr orders.beck`
 //! emits the canonical Lisp form. `beck fmt --py orders.sx` emits the Python form." §2.8 asks for
 //! it early because "every later phase uses it": macro expansion dumps, `beck ast`, and the error
 //! renderer all print `Node`s.

@@ -1,0 +1,79 @@
+# Are We Fast Yet — Towers.
+#
+# The Java holds three piles in a `TowersDisk[]` and threads a mutable `next` pointer through the
+# disks. A pile is a stack, and a stack is a list with the top at the front, so the port carries
+# `Map[Int, list[Int]]` — pile index to the disks on it, smallest first.
+#
+# The two `throw new RuntimeException` in the original are kept rather than dropped, and they are
+# the reason this file has an effect row: an invariant that is only checked in the language that
+# had exceptions is an invariant the port stopped testing. `raise` is `docs/45`'s row label, so
+# `benchmark` publishes `raises(TowersError)` by inference and the test faces it with `try:`.
+#
+# 8,191 is the harness's own number: `Towers.java` builds at 13 and `verifyResult` is
+# `8191 == (int) result`.
+
+model Towers:
+    piles: Map[Int, list[Int]]
+    moves: Int
+
+union TowersError:
+    ## The original's "Cannot put a big disk on a smaller one". Unreachable if the algorithm is
+    ## right, which is exactly why it is worth keeping: it is the benchmark's own assertion that it
+    ## did what it claims, and a port that silently dropped it would pass while moving nonsense.
+    BigOnSmall(disk: Int, onto: Int)
+    ## The original's "Attempting to remove a disk from an empty pile".
+    EmptyPile(pile: Int)
+
+def pile_at(t: Towers, pile: Int) -> list[Int]:
+    return unwrap_or(map_get(t.piles, pile), [])
+
+def top_of(disks: list[Int]) -> Int:
+    return unwrap_or(list_get(disks, 0), 0)
+
+def push_disk(t: Towers, disk: Int, pile: Int) -> Towers uses raises(TowersError):
+    onto = pile_at(t, pile)
+    if not list_is_empty(onto) and disk >= top_of(onto):
+        raise BigOnSmall(disk=disk, onto=top_of(onto))
+    return Towers(piles=map_insert(t.piles, pile, concat_lists([[disk], onto])), moves=t.moves)
+
+## Lift the top disk off `from_pile`, put it on `to_pile`, and count the move.
+##
+## The Java is `pushDisk(popDiskFrom(from), to); movesDone++` across three methods, and the pop
+## returns a disk while mutating the pile. One function here rather than three, because a `pop`
+## that returns *both* a disk and the remaining state is a pair type invented for the transcription
+## rather than for the benchmark.
+def move_top_disk(t: Towers, from_pile: Int, to_pile: Int) -> Towers uses raises(TowersError):
+    from_disks = pile_at(t, from_pile)
+    if list_is_empty(from_disks):
+        raise EmptyPile(pile=from_pile)
+    lifted = Towers(
+        piles=map_insert(t.piles, from_pile, list_drop(from_disks, 1)),
+        moves=t.moves + 1,
+    )
+    return push_disk(lifted, top_of(from_disks), to_pile)
+
+## Disks `i` down to 0 onto one pile, largest first — so the tower is built the way the Java's
+## descending `for` builds it.
+def build_tower_at(t: Towers, pile: Int, i: Int) -> Towers uses raises(TowersError):
+    if i < 0:
+        return t
+    return build_tower_at(push_disk(t, i, pile), pile, i - 1)
+
+def move_disks(t: Towers, disks: Int, from_pile: Int, to_pile: Int) -> Towers uses raises(TowersError):
+    if disks == 1:
+        return move_top_disk(t, from_pile, to_pile)
+    other = (3 - from_pile) - to_pile
+    onto_other = move_disks(t, disks - 1, from_pile, other)
+    across = move_top_disk(onto_other, from_pile, to_pile)
+    return move_disks(across, disks - 1, other, to_pile)
+
+## The benchmark, at Are We Fast Yet's own size: a tower of 14 disks built, 13 of them moved.
+##
+## The move counter is reset after the build, as in the original — the pushes that build the tower
+## are not moves.
+def benchmark() -> Int uses raises(TowersError):
+    built = build_tower_at(Towers(piles={}, moves=0), 0, 13)
+    return move_disks(Towers(piles=built.piles, moves=0), 13, 0, 1).moves
+
+test "towers: 8,191 moves, and no disk ever lands on a smaller one":
+    expect (try: benchmark()) == Ok(value=8191)

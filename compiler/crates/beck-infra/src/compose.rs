@@ -1,8 +1,8 @@
 //! The single-host target: Docker Compose.
 //!
-//! [`docs/05-tier-lowering.md`](../../../../docs/05-tier-lowering.md) §5.4 draws
+//! [`docs/05-tier-lowering.md`](../../../../../docs/05-tier-lowering.md) §5.4 draws
 //! `SingleProcessPlatform` beside `KubernetesPlatform`, and
-//! [`docs/06-kubernetes-and-packaging.md`](../../../../docs/06-kubernetes-and-packaging.md) §6.6
+//! [`docs/06-kubernetes-and-packaging.md`](../../../../../docs/06-kubernetes-and-packaging.md) §6.6
 //! rung 2 is `beck run --docker` — "one container, image sanity, works outside my machine". This is
 //! that rung as an artefact rather than a flag, and it is the reason [`crate::platform::Platform`]
 //! is a fact rather than a claim.

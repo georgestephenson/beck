@@ -1,18 +1,18 @@
 //! The signal graph, as a graph.
 //!
-//! [`docs/03-type-and-effect-system.md`](../../../../docs/03-type-and-effect-system.md) §3.7:
+//! [`docs/03-type-and-effect-system.md`](../../../../../docs/03-type-and-effect-system.md) §3.7:
 //! "**The signal graph is a graph, not a pipeline.** This section reads top-to-bottom, and the
 //! programs it describes do not: `events` is decided from the state, and the state is folded from
 //! `events`. The cycle is real and it is sound."
 //!
 //! Phase 1 and Phase 2 read the graph by *recognising one shape*: find the `merge_clients()`, find
 //! the `durable`, find the `decide`, find the first client-placed signal, and inline everything
-//! between them ([`docs/19-phase-1-report.md`](../../../../docs/19-phase-1-report.md) §19.9). That
+//! between them ([`docs/19-phase-1-report.md`](../../../../../docs/19-phase-1-report.md) §19.9). That
 //! was legitimate narrowness because it announced itself — nine diagnostics refused every other
 //! shape — and it was named as debt by two phases running. It also had a hole neither report knew
 //! about: a program with *two* durable folds matched the shape, was accepted, and was sliced with
 //! both folds reading the same accumulator. See
-//! [`docs/23-general-slicer-report.md`](../../../../docs/23-general-slicer-report.md) §23.2.
+//! [`docs/23-general-slicer-report.md`](../../../../../docs/23-general-slicer-report.md) §23.2.
 //!
 //! This module is the replacement. It does not recognise a shape. It builds the graph the program
 //! wrote — one vertex per signal operation, including the ones nested inside a declaration —

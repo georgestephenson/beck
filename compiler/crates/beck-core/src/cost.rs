@@ -1,6 +1,6 @@
 //! The placement cost model — §3.4's node costs, edge costs and byte estimates.
 //!
-//! [`docs/03-type-and-effect-system.md`](../../../../docs/03-type-and-effect-system.md) §3.4:
+//! [`docs/03-type-and-effect-system.md`](../../../../../docs/03-type-and-effect-system.md) §3.4:
 //!
 //! > **Node costs**: ∞ for forbidden tiers; tier-specific compute cost otherwise (client CPU is
 //! > expensive and untrusted; fold-engine compute is cheap and adjacent to state).
@@ -24,7 +24,7 @@
 //! | compute weight, server | 2 | the middle |
 //! | compute weight, client | 8 | "client CPU is expensive and untrusted" (§3.4) |
 //! | latency, data ↔ server | 1 ms | same pod network |
-//! | latency, server ↔ client | 25 ms | Phase 0's realistic RTT ([`18`](../../../../docs/18-phase-0-report.md)) |
+//! | latency, server ↔ client | 25 ms | Phase 0's realistic RTT ([`18`](../../../../../docs/18-phase-0-report.md)) |
 //! | latency, data ↔ client | 26 ms | it goes through the server |
 //! | bytes → cost | ×5 per byte | so a 2 KB crossing (~100 ms) outweighs an RTT, which is the
 //! |   |   | trade a placement decision is actually making |

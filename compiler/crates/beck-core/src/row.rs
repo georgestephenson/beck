@@ -1,6 +1,6 @@
 //! Effect rows — §3.2, made real.
 //!
-//! [`docs/03-type-and-effect-system.md`](../../../../docs/03-type-and-effect-system.md) §3.2:
+//! [`docs/03-type-and-effect-system.md`](../../../../../docs/03-type-and-effect-system.md) §3.2:
 //! "Every function type carries an inferred, row-polymorphic effect row … Effect polymorphism is
 //! what keeps one standard library: `map : (list[a], (a -> b ! e)) -> list[b] ! e`."
 //!
@@ -53,7 +53,7 @@ pub enum Effect {
     /// ([`Effect::Ambient`]); these do not.
     Nondet,
     /// `net.out(host)` — an outbound call to a named host. The host is what
-    /// [`docs/06-kubernetes-and-packaging.md`](../../../../docs/06-kubernetes-and-packaging.md)
+    /// [`docs/06-kubernetes-and-packaging.md`](../../../../../docs/06-kubernetes-and-packaging.md)
     /// §6.5 turns into a NetworkPolicy peer.
     NetOut(Arc<str>),
     /// `net.in` — accepts inbound connections.
@@ -73,7 +73,7 @@ pub enum Effect {
     ///
     /// An error is a **row label**, not a mechanism: a signature without one provably cannot fail,
     /// and `Result[T, E]` is the *reified* form a handler produces rather than a parallel channel
-    /// ([`docs/38`](../../../../docs/38-literature-survey.md) §38.4, adopting Koka's `exn`). The
+    /// ([`docs/38`](../../../../../docs/38-literature-survey.md) §38.4, adopting Koka's `exn`). The
     /// atom names the error's type because a handler has to say what it catches — a `try` that
     /// caught everything would turn a caller's unknown failure into this one's `Result`.
     Raises(Arc<str>),

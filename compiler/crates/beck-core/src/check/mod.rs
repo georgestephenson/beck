@@ -1,6 +1,6 @@
 //! Resolution and typechecking, elaborating straight into `Core`.
 //!
-//! Stages 4 and 5 of [`docs/04-compiler-architecture.md`](../../../../docs/04-compiler-architecture.md)
+//! Stages 4 and 5 of [`docs/04-compiler-architecture.md`](../../../../../docs/04-compiler-architecture.md)
 //! §4.1 — "modules, imports, name binding, hygiene scopes → resolved AST" and "HM + rows + effect
 //! rows + capabilities → typed AST" — run as one pass that emits stage 6's `Core` directly. §4.2
 //! allows exactly three IRs; a separate resolved-but-untyped tree would be a fourth.

@@ -1,11 +1,11 @@
 //! The view, as a dataflow plan rather than as one expression.
 //!
-//! [`docs/05-tier-lowering.md`](../../../../docs/05-tier-lowering.md) §5.3:
+//! [`docs/05-tier-lowering.md`](../../../../../docs/05-tier-lowering.md) §5.3:
 //!
 //! > a thousand connected users of `todos.map(filter_by(session.user))` must compile to *one*
 //! > shared dataflow whose final per-session operators (filter, project, diff) run per subscriber
 //!
-//! and [`docs/03-type-and-effect-system.md`](../../../../docs/03-type-and-effect-system.md) §3.8:
+//! and [`docs/03-type-and-effect-system.md`](../../../../../docs/03-type-and-effect-system.md) §3.8:
 //!
 //! > `remaining` updates by ±1 per event, never by recount.
 //!
@@ -221,7 +221,7 @@ impl Plan {
     /// Compile the view of a sliced program.
     ///
     /// Works from the *graph* rather than from [`crate::split::Roles::view`], for the reason
-    /// [`23`](../../../../docs/23-general-slicer-report.md) built the graph in the first place: the
+    /// [`23`](../../../../../docs/23-general-slicer-report.md) built the graph in the first place: the
     /// sliced expression has already lost which signal each part came from, and a plan whose nodes
     /// cannot be named is a plan no report can explain.
     pub fn compile(placed: &Placed) -> Plan {

@@ -1,6 +1,6 @@
 //! `Core` — the load-bearing IR, and the evaluator that runs it.
 //!
-//! [`docs/04-compiler-architecture.md`](../../../../docs/04-compiler-architecture.md) §4.2:
+//! [`docs/04-compiler-architecture.md`](../../../../../docs/04-compiler-architecture.md) §4.2:
 //! "Typed ANF/SSA hybrid; explicit closures, explicit effect operations, explicit tier annotation
 //! per node; `Query` sub-language kept *symbolic*. Typechecked semantics, placement, splitting,
 //! optimisation. The load-bearing IR."
@@ -19,7 +19,7 @@
 //!
 //! The roadmap names Cranelift as Phase 1's server backend. What is here instead is a **`Core`
 //! evaluator**: the "engine-in-Rust with the language as its configuration" route that
-//! [`docs/00-original-idea.md`](../../../../docs/00-original-idea.md) names as one of the three
+//! [`docs/00-original-idea.md`](../../../../../docs/00-original-idea.md) names as one of the three
 //! that work for a GC'd functional language on a Rust host (Materialize's shape). It is the
 //! deliberately-bad-but-complete option, and it keeps the `Core → Target` seam narrow, which §5.2
 //! says is what lets a backend slot in later. The Phase 1 report says plainly that native codegen
@@ -101,7 +101,7 @@ pub enum Prim {
     // ---- JSON, and the standard library's first fallible function.
     //
     // `json_parse` raises rather than returning a `Result`, which is the shape
-    // [`docs/45`](../../../../docs/45-error-rows-report.md) settled and the reason §8.5.3's trap 2
+    // [`docs/45`](../../../../../docs/45-error-rows-report.md) settled and the reason §8.5.3's trap 2
     // said the library had to wait for it: a caller that wants a `Result` writes `try:`, and a
     // caller inside something already fallible writes nothing at all.
     JsonParse,

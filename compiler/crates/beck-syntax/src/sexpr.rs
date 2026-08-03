@@ -1,6 +1,6 @@
 //! The S-expression reader — the canonical surface.
 //!
-//! [`docs/02-syntax.md`](../../../../docs/02-syntax.md) §2.8: "The S-expression reader is ~300
+//! [`docs/02-syntax.md`](../../../../../docs/02-syntax.md) §2.8: "The S-expression reader is ~300
 //! lines and should exist from week one: it lets you write compiler tests against canonical ASTs
 //! without depending on the Python surface being finished, and it is how you'll dump intermediate
 //! state for the rest of the project's life."

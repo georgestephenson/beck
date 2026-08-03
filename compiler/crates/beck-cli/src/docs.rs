@@ -21,7 +21,7 @@
 //! `docs/reference/` is checked in. `beck doc reference --check` regenerates it in memory and fails
 //! if what is on disk differs — the gate the `docs` workflow runs on every pull request. Checked in
 //! rather than built-only because a generated file that nobody sees in a diff is a generated file
-//! nobody notices going wrong ([`docs/20-phase-2-report.md`](../../../../docs/20-phase-2-report.md)
+//! nobody notices going wrong ([`docs/20-phase-2-report.md`](../../../../../docs/20-phase-2-report.md)
 //! §20.4 item 8 is what that costs).
 
 use std::collections::BTreeMap;

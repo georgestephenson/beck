@@ -36,8 +36,9 @@ Write the commit message as the author of the change: what changed, and why.
   [`47`](docs/47-effect-polymorphic-traits-report.md), [`48`](docs/48-identity-report.md),
   [`49`](docs/49-http-client-report.md),
   [`50`](docs/50-collections-and-dates-report.md),
-  [`51`](docs/51-arrangement-lifecycle-report.md) and
-  [`52`](docs/52-crypto-and-identifiers-report.md),
+  [`51`](docs/51-arrangement-lifecycle-report.md),
+  [`52`](docs/52-crypto-and-identifiers-report.md) and
+  [`53`](docs/53-are-we-fast-yet-report.md),
   indexed in
   [`docs/README.md`](docs/README.md) — record what each
   phase does, what it refuses to claim, and the corrections it makes to the design documents.
@@ -47,7 +48,8 @@ Write the commit message as the author of the change: what changed, and why.
   bullet and `Result`/error rows are built; the standard library has everything but the bignums —
   its HTTP client (docs/49), its collections and its calendar (docs/50), its digests and its
   identifiers (docs/52) —
-  and two walls of its own (docs/46, docs/49); the incremental-views bullet has its engine and
+  and two walls of its own (docs/46, docs/49), and nine of Are We Fast Yet's fourteen benchmarks
+  are the start of its long-owed harness half (docs/53); the incremental-views bullet has its engine and
   that engine's lifecycle (docs/51) but not its read models, pgwire
   or fusion; the expressiveness suite runs two chapters of SICP. Seven of the fourteen are
   untouched — identity has its seam but not its OIDC relying party (docs/48) — and docs/26 §26.9
@@ -68,7 +70,10 @@ Write the commit message as the author of the change: what changed, and why.
   block cannot exercise a capability, so the layer of a library holding a key is the layer Beck
   cannot test, and nine match arms in the evaluator cost a thousand levels of recursion. It also
   took the first decision to let a `secret[Str]` become a `Str` — one function, behind `cap.sign`,
-  with a test that keeps the count at one (docs/adr/0014).
+  with a test that keeps the count at one (docs/adr/0014). docs/53 §53.5 has three more, found by
+  porting somebody else's benchmark suite rather than by writing anything of ours: `and` and `or`
+  do **not** short-circuit, so a guard written as a conjunction does not guard — pinned rather than
+  fixed, in §50.5's shape — Beck has no bitwise operators, and a nested `if` is not a statement.
   Reports are history: a later phase's correction to an earlier one goes in the later report, not
   into the earlier text.
 - [`docs/reference/`](docs/reference/README.md) is **generated** by `beck doc reference` from the
@@ -92,6 +97,13 @@ Write the commit message as the author of the change: what changed, and why.
   **empty** — which claims that every wall this project has found has been removed, and not that
   Beck expresses SICP. `sicp/refusals/README.md` holds that distinction and says what puts a file
   back.
+- [`compiler/awfy/`](compiler/awfy/README.md) is the performance benchmark
+  ([`docs/25`](docs/25-benchmarks-and-expressiveness.md) §25.2): nine of Are We Fast Yet's fourteen
+  benchmarks, ported, each verified against the constant the original's own `verifyResult` checks.
+  Those constants are **somebody else's** and were read out of the MIT-licensed source, so a number
+  invented here would defeat the whole point; `beck-cli/tests/awfy.rs` gates the directory, the nine
+  names and the attribution, and `measure_awfy.rs` prints wall-clock and gates on nothing —
+  §25.9 holds every comparative claim until there is a second backend.
 - Security posture is [`docs/43-threat-model.md`](docs/43-threat-model.md) (who is defended
   against, and who is not) and `SECURITY.md` (how a report reaches us). What is *absent* is asserted
   as absent in `beck-cli/tests/pending_security.rs`: building one of those controls turns a test
@@ -128,13 +140,17 @@ Write the commit message as the author of the change: what changed, and why.
   file in `compiler/lib/`, quoted in
   [`docs/46-standard-library-report.md`](docs/46-standard-library-report.md),
   [`docs/50-collections-and-dates-report.md`](docs/50-collections-and-dates-report.md) and
-  [`docs/52-crypto-and-identifiers-report.md`](docs/52-crypto-and-identifiers-report.md).
+  [`docs/52-crypto-and-identifiers-report.md`](docs/52-crypto-and-identifiers-report.md); and the
+  Are We Fast Yet numbers come from `cargo test --release --test measure_awfy -- --nocapture` and
+  from `beck test` on each file in `compiler/awfy/`, quoted in
+  [`docs/53-are-we-fast-yet-report.md`](docs/53-are-we-fast-yet-report.md) — where each benchmark's
+  *verification* constant is the original suite's own, read from its source rather than chosen here.
 - The harnesses are the project's conscience (§4.8, §8.3): `compiler/crates/beck-cli/tests/` holds
   the differential, replay-determinism, backend-seam, scaling, security, corpus, placement-property,
   general-slicer, incremental-analysis, incremental-engine, shared-arrangement, subscription,
-  view-metrics, SICP, tests-in-Beck, UI, workflow-cross-check, documentation, outbound and
-  diagnostic-snapshot suites, plus the two release-only measurement suites (`measure_phase2`,
-  `measure_incremental`). Keep them green.
+  view-metrics, SICP, Are We Fast Yet, tests-in-Beck, UI, workflow-cross-check, documentation,
+  outbound and diagnostic-snapshot suites, plus the three release-only measurement suites
+  (`measure_phase2`, `measure_incremental`, `measure_awfy`). Keep them green.
 - The CI workflow is an artefact too, and Phase 2 found that it had never run
   ([`docs/20-phase-2-report.md`](docs/20-phase-2-report.md) §20.4 item 8). If you change
   `.github/workflows/`, run the steps you changed by hand before trusting them.
@@ -161,8 +177,11 @@ Write the commit message as the author of the change: what changed, and why.
   first-runs race inside rustup and corrupt the install. Repair:
   `rustup toolchain uninstall 1.94.1 && rustup toolchain install 1.94.1`.
 - **Verification, cheapest first** (from `compiler/`): `cargo test -p <crate>`, then
-  `cargo test --workspace --all-targets`, `cargo clippy --workspace --all-targets` and
-  `cargo fmt --all --check` before pushing. CI denies warnings.
+  `cargo test --workspace --all-targets`, `cargo clippy --workspace --all-targets`,
+  `cargo fmt --all --check` and `RUSTDOCFLAGS=-D warnings cargo doc --workspace --no-deps`
+  before pushing. CI denies warnings, and the last one is a separate gate rather than a
+  formality: `.github/workflows/docs.yml` runs it, and a broken intra-doc link fails there and
+  nowhere else.
 - **Environment-dependent suites degrade by skipping, and a skip prints itself** — read the
   output for it:
   - Kubernetes conformance (`beck-infra/tests/conformance.rs`): skips without a cluster;

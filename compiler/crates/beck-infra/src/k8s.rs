@@ -1,6 +1,6 @@
 //! The Kubernetes rendering of an [`InfraGraph`].
 //!
-//! [`docs/06-kubernetes-and-packaging.md`](../../../../docs/06-kubernetes-and-packaging.md) §6.1
+//! [`docs/06-kubernetes-and-packaging.md`](../../../../../docs/06-kubernetes-and-packaging.md) §6.1
 //! puts orchestrators behind a `Platform` trait and keeps them out of language semantics:
 //! "Kubernetes under the hood? Yes — as a **compiler backend** behind a `Platform` trait, never as
 //! language semantics." This module is one implementation of that backend; `beck run` is the other,

@@ -1,0 +1,68 @@
+# Are We Fast Yet — Storage.
+#
+# An allocation benchmark: a four-way tree seven deep, whose leaves are arrays of a random length.
+# What is verified is the number of nodes built, and the arrays themselves are never read.
+#
+# The Java returns `Object[]` and lets the caller drop it. A port that only counted would be
+# measuring the counter, so the tree is built as a value and returned — `Node` is the recursive
+# union `docs/27` made possible — and the leaves really do hold their cells. Nothing reads them,
+# which is the benchmark's point.
+#
+# `som.Random` is three lines, so it is written here rather than shared: two of these files need a
+# generator and a directory of self-contained programs is worth more than one saved definition.
+# `& 65535` in the original is `% 65536` here — the same operation on a value the recurrence keeps
+# non-negative, because Beck has no bitwise operators (`awfy/README.md`).
+#
+# 5,461 is the harness's own number: `Storage.java`'s `verifyResult` is `5461 == (int) result`.
+
+union Node:
+    Cells(count: Int)
+    Kids(nodes: list[Node])
+
+model Built:
+    node: Node
+    ## Nodes built so far, which is what the benchmark returns.
+    count: Int
+    seed: Int
+
+def next_random(seed: Int) -> Int:
+    return (seed * 1309 + 13849) % 65536
+
+## A leaf's array, whose length is the next random number in `1..10`.
+def build_leaf(count: Int, seed: Int) -> Built:
+    drawn = next_random(seed)
+    return Built(node=Cells(count=drawn % 10 + 1), count=count, seed=drawn)
+
+def build_tree(depth: Int, count: Int, seed: Int) -> Built:
+    if depth == 1:
+        return build_leaf(count + 1, seed)
+    return build_kids(0, depth, [], count + 1, seed)
+
+## The original's `Arrays.setAll(arr, v -> buildTreeDepth(depth - 1, random))` over four cells —
+## left to right, because the generator is stateful and the order is what makes the count
+## reproducible.
+def build_kids(i: Int, depth: Int, done: list[Node], count: Int, seed: Int) -> Built:
+    if i >= 4:
+        return Built(node=Kids(nodes=done), count=count, seed=seed)
+    child = build_tree(depth - 1, count, seed)
+    return build_kids(i + 1, depth, list_append(done, child.node), child.count, child.seed)
+
+## The benchmark, at Are We Fast Yet's own size: depth 7, four ways, from the harness's own seed.
+def benchmark() -> Int:
+    return build_tree(7, 0, 74755).count
+
+test "storage: 5,461 nodes in a four-way tree seven deep":
+    expect benchmark() == 5461
+
+## The generator is the harness's, and the harness ships its own test vector — `som.Random`'s
+## `main` checks the first nine draws. It is pinned here because every number this file and
+## `bounce.beck` verify is downstream of it, so a transcription slip in three lines of arithmetic
+## would look like a wrong benchmark rather than a wrong generator.
+test "the random generator draws what som.Random's own test vector says":
+    expect draws(9, 74755, []) == [22896, 34761, 34014, 39231, 52540, 41445, 1546, 5947, 65224]
+
+def draws(n: Int, seed: Int, done: list[Int]) -> list[Int]:
+    if n <= 0:
+        return done
+    drawn = next_random(seed)
+    return draws(n - 1, drawn, list_append(done, drawn))

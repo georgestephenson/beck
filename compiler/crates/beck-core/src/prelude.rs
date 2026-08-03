@@ -187,7 +187,7 @@ pub fn prims() -> Vec<(&'static str, Prim, Scheme)> {
         ),
         // ------------------------------------------------------------------------ strings
         //
-        // Wave 2's string half ([`docs/08`](../../../../docs/08-roadmap.md) §8.5.4). Every one of
+        // Wave 2's string half ([`docs/08`](../../../../../docs/08-roadmap.md) §8.5.4). Every one of
         // these is a primitive rather than a definition written in Beck, and the reason is the
         // same in each case: a string is where the host has to be asked. `str_upper` is a Unicode
         // table, `str_split` is an allocation strategy, and writing either of them over a
@@ -199,7 +199,7 @@ pub fn prims() -> Vec<(&'static str, Prim, Scheme)> {
         // Indices are byte offsets into UTF-8 and are clamped rather than refused: `str_slice`
         // past the end is the empty string, not a failure. That is a decision and not an
         // oversight — a slice is not a parse, and `raises` is for a program's own vocabulary
-        // rather than for the standard library's arithmetic ([`45`](../../../../docs/45-error-rows-report.md)).
+        // rather than for the standard library's arithmetic ([`45`](../../../../../docs/45-error-rows-report.md)).
         (
             "str_len",
             Prim::StrLen,
@@ -284,7 +284,7 @@ pub fn prims() -> Vec<(&'static str, Prim, Scheme)> {
         //
         // The higher-order ones are row-polymorphic in the argument's effects — §3.2's
         // `map : (list[a], (a -> b ! e)) -> list[b] ! e`, which
-        // [`33`](../../../../docs/33-effect-polymorphism-and-list-patterns-report.md) made true of
+        // [`33`](../../../../../docs/33-effect-polymorphism-and-list-patterns-report.md) made true of
         // a *user's* definitions too. A pure caller of `list_fold` stays pure however another
         // caller uses it.
         (
@@ -443,8 +443,8 @@ pub fn prims() -> Vec<(&'static str, Prim, Scheme)> {
         // ------------------------------------------------------------------------ JSON and time
         //
         // `json_parse` and `time_parse` **raise** rather than returning a `Result`, and that is the
-        // whole reason [`08`](../../../../docs/08-roadmap.md) §8.5.3's trap 2 said the standard
-        // library had to wait for [`45`](../../../../docs/45-error-rows-report.md). A caller who
+        // whole reason [`08`](../../../../../docs/08-roadmap.md) §8.5.3's trap 2 said the standard
+        // library had to wait for [`45`](../../../../../docs/45-error-rows-report.md). A caller who
         // wants a `Result` writes `try:`; a caller already inside something fallible writes
         // nothing. Had these been written first, every one of their signatures would have had to
         // change.

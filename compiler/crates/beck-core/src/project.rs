@@ -1,6 +1,6 @@
 //! Multi-module compilation: check against signatures, then link.
 //!
-//! [`docs/03-type-and-effect-system.md`](../../../../docs/03-type-and-effect-system.md) §3.6's
+//! [`docs/03-type-and-effect-system.md`](../../../../../docs/03-type-and-effect-system.md) §3.6's
 //! consequence, spelled out: "modules compile against signatures (true separate compilation,
 //! parallel builds); body edits don't invalidate downstream modules".
 //!

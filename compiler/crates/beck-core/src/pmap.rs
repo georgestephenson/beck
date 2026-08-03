@@ -2,7 +2,7 @@
 //!
 //! # Why this exists
 //!
-//! [`docs/19-phase-1-report.md`](../../../../docs/19-phase-1-report.md) §19.4 item 3: the fold was
+//! [`docs/19-phase-1-report.md`](../../../../../docs/19-phase-1-report.md) §19.4 item 3: the fold was
 //! `O(events × rows)` because `map_insert` cloned the whole accumulator. `Arc<BTreeMap>` makes
 //! *cloning the handle* cheap and *updating* expensive, which is exactly backwards for a language
 //! whose central construct is `state = fold(f, init, events)`.
@@ -216,7 +216,7 @@ impl<K: Ord + Clone, V: Clone + PartialEq> PMap<K, V> {
     /// # Why this is `O(δ log n)` rather than `O(n)`
     ///
     /// This is the operation the whole incremental view engine rests on
-    /// ([`docs/24-incremental-views-report.md`](../../../../docs/24-incremental-views-report.md)):
+    /// ([`docs/24-incremental-views-report.md`](../../../../../docs/24-incremental-views-report.md)):
     /// a fold produces a *whole new accumulator* per event, and a dataflow plan consumes *deltas*,
     /// so something has to turn one into the other. Comparing entry by entry would be `O(n)` per
     /// event, which is the recount §3.8 exists to abolish — the plan downstream would be

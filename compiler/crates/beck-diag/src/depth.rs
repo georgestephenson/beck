@@ -3,14 +3,14 @@
 //! The front end recurses over structure the user chose — nested parentheses, nested blocks, a
 //! macro that expands into more of itself, a type inside a type. Every one of those is a host
 //! frame, and until this module existed nothing counted them:
-//! [`docs/42-security-assurance.md`](../../../../docs/42-security-assurance.md) §42.2 measured an
+//! [`docs/42-security-assurance.md`](../../../../../docs/42-security-assurance.md) §42.2 measured an
 //! ~7.6 KB file that aborted `beck check` in a debug build with no span and nothing catchable.
 //!
 //! The bound is a **count**, for the reason
-//! [`docs/adr/0007`](../../../../docs/adr/0007-evaluator-stack-is-declared-not-discovered.md) gave
+//! [`docs/adr/0007`](../../../../../docs/adr/0007-evaluator-stack-is-declared-not-discovered.md) gave
 //! for the evaluator's: a stack-headroom budget accepts a program in a release build and refuses it
 //! in a debug one, and a diagnostic that depends on the profile is not a diagnostic.
-//! [`docs/adr/0012`](../../../../docs/adr/0012-the-front-end-counts-its-own-recursion.md) makes
+//! [`docs/adr/0012`](../../../../../docs/adr/0012-the-front-end-counts-its-own-recursion.md) makes
 //! that argument for the front end.
 //!
 //! It lives in this crate because three crates share it — `beck-syntax` reads, `beck-macro`
@@ -151,7 +151,7 @@ impl Nesting {
 ///
 /// Compiled only under the `probe` feature, which nothing but a test enables. It exists because
 /// [`STACK_BYTES`] is a declaration, and a declaration nobody checks is the thing
-/// [`docs/42`](../../../../docs/42-security-assurance.md) §42.2 found: 64 MiB sized for one
+/// [`docs/42`](../../../../../docs/42-security-assurance.md) §42.2 found: 64 MiB sized for one
 /// recursive consumer of the stack and already false for another.
 #[cfg(feature = "probe")]
 pub mod probe {

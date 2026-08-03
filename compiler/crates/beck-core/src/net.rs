@@ -1,6 +1,6 @@
 //! Outbound HTTP, as a thing that is supplied rather than a thing that is ambient.
 //!
-//! [`docs/14-review-findings.md`](../../../../docs/14-review-findings.md) F11 names three
+//! [`docs/14-review-findings.md`](../../../../../docs/14-review-findings.md) F11 names three
 //! resources that cannot be retrofitted — clock, **network** and disk.
 //! [`crate::clock`] is the first of them. This is the second, and it arrives with the feature that
 //! first needs it rather than after: a program's outbound call goes through this trait, so a
@@ -16,7 +16,7 @@
 //!
 //! **TLS.** [`Request`] carries a host and a port and nothing about transport security, and the
 //! implementation in `beck-rt` speaks plaintext HTTP/1.1. That is a stated absence rather than an
-//! oversight: [`docs/07`](../../../../docs/07-dependencies.md) chooses rustls, taking it is a
+//! oversight: [`docs/07`](../../../../../docs/07-dependencies.md) chooses rustls, taking it is a
 //! dependency decision, and `beck-cli/tests/pending_security.rs` asserts the gap so it cannot go
 //! quietly stale.
 

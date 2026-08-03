@@ -7,7 +7,7 @@
 //! [`beck_rt::LogStore`] is seven methods with three implementations behind it, and its `kind()`
 //! method exists precisely because "a number without its substrate is meaningless".
 //!
-//! [`docs/18-phase-0-report.md`](../../../../docs/18-phase-0-report.md) §18.3.2 measured Phase 0's
+//! [`docs/18-phase-0-report.md`](../../../../../docs/18-phase-0-report.md) §18.3.2 measured Phase 0's
 //! log at 7,660 events/s on Postgres against 8,927 on redb and 140,608 in memory. Two conclusions
 //! follow and both are load-bearing for the substrate decision:
 //!

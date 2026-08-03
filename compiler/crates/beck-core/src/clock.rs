@@ -1,11 +1,11 @@
 //! Time, as a thing that is supplied rather than a thing that is ambient.
 //!
-//! [`docs/14-review-findings.md`](../../../../docs/14-review-findings.md) F11 records that
+//! [`docs/14-review-findings.md`](../../../../../docs/14-review-findings.md) F11 records that
 //! deterministic simulation cannot be retrofitted and names the constraint: virtualize clock,
 //! network and disk from the first line of runtime code.
-//! [`docs/13-testing.md`](../../../../docs/13-testing.md) §13.4 restates it in bold. The runtime
+//! [`docs/13-testing.md`](../../../../../docs/13-testing.md) §13.4 restates it in bold. The runtime
 //! then called `SystemTime::now()` directly for three phases anyway
-//! ([`docs/42`](../../../../docs/42-security-assurance.md) §42.4), which is what a constraint with
+//! ([`docs/42`](../../../../../docs/42-security-assurance.md) §42.4), which is what a constraint with
 //! no position in an order gets you.
 //!
 //! This module is the cheap half of the fix, and deliberately only the cheap half. It is a

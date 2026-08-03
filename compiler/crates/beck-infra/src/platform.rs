@@ -2,9 +2,9 @@
 //!
 //! # Why this exists
 //!
-//! [`docs/06-kubernetes-and-packaging.md`](../../../../docs/06-kubernetes-and-packaging.md) §6.1:
+//! [`docs/06-kubernetes-and-packaging.md`](../../../../../docs/06-kubernetes-and-packaging.md) §6.1:
 //! "Kubernetes under the hood? Yes — as a **compiler backend** behind a `Platform` trait, never as
-//! language semantics." [`docs/05-tier-lowering.md`](../../../../docs/05-tier-lowering.md) §5.4
+//! language semantics." [`docs/05-tier-lowering.md`](../../../../../docs/05-tier-lowering.md) §5.4
 //! draws the same picture with three boxes under it — `KubernetesPlatform`,
 //! `SingleProcessPlatform`, and "(+ later: Nomad, serverless…)".
 //!
@@ -78,7 +78,7 @@ pub trait Platform: Send + Sync {
     ///
     /// **Not a lint.** A platform that silently drops a `Policy` produces a deployment that looks
     /// like the one the effects asked for and enforces nothing, which is the failure mode
-    /// [`docs/06`](../../../../docs/06-kubernetes-and-packaging.md) §6.5.1 records for
+    /// [`docs/06`](../../../../../docs/06-kubernetes-and-packaging.md) §6.5.1 records for
     /// FQDN egress. Whatever a platform returns here is written into the output and printed by
     /// `beck build`, so a gap is something a reader sees rather than something they infer.
     fn unsupported(&self, _graph: &InfraGraph) -> Vec<(String, String)> {

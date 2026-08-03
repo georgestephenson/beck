@@ -1,6 +1,6 @@
 //! `beck doc` — a module's reference documentation, derived from the module.
 //!
-//! [`docs/16-packages-and-ecosystem.md`](../../../../docs/16-packages-and-ecosystem.md) §16.2 names
+//! [`docs/16-packages-and-ecosystem.md`](../../../../../docs/16-packages-and-ecosystem.md) §16.2 names
 //! the model: "documentation generated from types and doc-comments for every published version,
 //! automatically". Half of that has existed since Phase 2 — [`crate::iface::Interface`] is every
 //! published name's type, effect row and placement, and it is derived rather than declared. The
@@ -403,7 +403,7 @@ impl Docs {
 ///
 /// The whole generated site is static files that open from `file://` as readily as from a server,
 /// which is what keeps the documentation reviewable in a pull request and buildable offline.
-/// [`docs/07-dependencies.md`](../../../../docs/07-dependencies.md) lists mdBook for the eventual
+/// [`docs/07-dependencies.md`](../../../../../docs/07-dependencies.md) lists mdBook for the eventual
 /// book; a reference page needs less than a book does, and less is one fewer dependency.
 ///
 /// `home` is the href of the site index *relative to this page*. It is a parameter rather than a

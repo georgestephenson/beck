@@ -1,6 +1,6 @@
 //! The `ui:` macro — a typed DOM tree from an indented block.
 //!
-//! [`docs/02-syntax.md`](../../../../docs/02-syntax.md) §2.9 settles this: "**a `ui:` macro
+//! [`docs/02-syntax.md`](../../../../../docs/02-syntax.md) §2.9 settles this: "**a `ui:` macro
 //! producing a typed DOM tree** vs. JSX-like literal syntax. The macro keeps the surface small and
 //! is implementable by users for other targets (terminal UI, native). Its output is the Hiccup
 //! lineage the original sketch used — `[:main [:h1 "todos"] ...]` maps 1:1 onto the `ui:` block's
