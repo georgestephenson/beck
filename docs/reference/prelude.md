@@ -16,6 +16,7 @@ What a user's type may implement to join something the language already has. `Nu
 
 | Type | Declaration |
 |---|---|
+| `EncodingError` | `union EncodingError = BadEncoding(encoding: Str, why: Str)` |
 | `Envelope` | `model Envelope[T] {seq: Int, at: Int, actor: Str, body: T}` |
 | `HttpError` | `union HttpError = HttpUnreachable(host: Str, why: Str) \| HttpTimedOut(host: Str, millis: Int) \| HttpBadResponse(why: Str) \| HttpStatus(status: Int, body: Str)` |
 | `HttpRequest` | `model HttpRequest {method: Str, path: Str, headers: Map[Str, Str], body: Str, port: Int, secrets: Map[Str, secret[Str]]}` |
@@ -27,10 +28,11 @@ What a user's type may implement to join something the language already has. `Nu
 | `Result` | `union Result[T, E] = Ok(value: T) \| Err(error: E)` |
 | `Session` | `model Session {actor: Str}` |
 | `TimeError` | `union TimeError = BadTime(why: Str)` |
+| `UuidError` | `union UuidError = BadUuid(why: Str)` |
 
 ## Names
 
-87 of them.
+96 of them.
 
 | Name | Type |
 |---|---|
@@ -47,13 +49,20 @@ What a user's type may implement to join something the language already has. `Nu
 | `>=` | `(a, a) -> Bool` |
 | `abs` | `(Int) -> Int` |
 | `and` | `(Bool, Bool) -> Bool` |
+| `base64_decode` | `(Str) -> Str ! {raises(EncodingError)}` |
+| `base64_encode` | `(Str) -> Str` |
 | `concat_lists` | `(list[list[a]]) -> list[a]` |
 | `decide` | `(Stream[Proposal], Signal[a], (a, Proposal) -> Result[list[b], c] ! {e}) -> Stream[b] ! {e}` |
+| `digest` | `(Str) -> Str` |
+| `digest_eq` | `(Str, Str) -> Bool` |
+| `digest_keyed` | `(secret[Str], Str) -> Str ! {cap.sign}` |
 | `durable` | `(Signal[a]) -> Signal[a] ! {durable}` |
 | `filter_list` | `(list[a], (a) -> Bool ! {e}) -> list[a] ! {e}` |
 | `filter_map` | `(Stream[a], (a) -> Option[b] ! {e}) -> Stream[b] ! {e}` |
 | `float` | `(Int) -> Float` |
 | `fold` | `((a, Envelope[b]) -> a ! {e}, a, Stream[b]) -> Signal[a]` |
+| `hex_decode` | `(Str) -> Str ! {raises(EncodingError)}` |
+| `hex_encode` | `(Str) -> Str` |
 | `html_attr` | `(Str, a) -> Attr` |
 | `html_el` | `(Str, list[Attr], list[Html]) -> Html` |
 | `html_key` | `(a) -> Attr` |
@@ -121,6 +130,8 @@ What a user's type may implement to join something the language already has. `Nu
 | `time_parse` | `(Str) -> Int ! {raises(TimeError)}` |
 | `unwrap_or` | `(Option[a], a) -> a` |
 | `uuid` | `() -> Str ! {nondet}` |
+| `uuid_parse` | `(Str) -> Str ! {raises(UuidError)}` |
+| `uuid_version` | `(Str) -> Int ! {raises(UuidError)}` |
 
 `http_fetch` is the one name whose row the table above cannot state in full: it also performs `net.out(host)`, for the host written as its first argument. That argument has to be a literal — the cluster's egress policy is derived from those atoms, so a computed host is a call the deployment could not be told about.
 

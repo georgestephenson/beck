@@ -29,3 +29,5 @@ The split this directory creates:
 | [0011](0011-identifiers-are-snake-case-in-the-python-surface.md) | Identifiers are `snake_case` in the Python surface and kebab-case in the S-expression one |
 | [0012](0012-the-front-end-counts-its-own-recursion.md) | The front end counts its own recursion, against one ceiling and one declared stack |
 | [0013](0013-the-host-of-an-outbound-call-is-written-at-the-call-site.md) | The host of an outbound call is written at the call site, so the egress policy is derivable |
+| [0014](0014-a-keyed-digest-is-the-one-declassifier.md) | A keyed digest is the one declassifier, and it is a capability |
+| [0015](0015-blake3-for-the-standard-librarys-digests.md) | BLAKE3 for the standard library's digests, and no signature library yet |

@@ -384,3 +384,70 @@ impl Num for Money:
     // And a pure method says nothing, so an impl of a pure trait reads as it always did.
     assert!(!text.contains("def sub()"), "{text}");
 }
+
+// ---------------------------------------------------------------------------------------------
+// The token, under a real key
+// ---------------------------------------------------------------------------------------------
+
+/// The one thing `crypto.beck`'s own tests cannot assert, asserted here.
+///
+/// A `test` block's row must be empty (§21.3) and `cap.sign` is deliberately not auto-stubbable —
+/// "stubbing a capability would bypass it" — so the layer of that library which *holds the key* is
+/// the layer Beck cannot reach. Its pure layer covers every way a forgery can arrive; what is left
+/// is that a real key produces a code only that key reproduces, which needs the evaluator.
+///
+/// That limit is a finding rather than an accident, and
+/// [`52`](../../../../docs/52-crypto-and-identifiers-report.md) §52.5 is where it is written down.
+#[test]
+fn a_token_opens_only_under_the_key_that_minted_it() {
+    use beck_core::core::Value;
+
+    let src = format!(
+        "{}\n\ndef minted(key: secret[Str], payload: Str) -> Str:\n    return sign(key, payload)\n\
+         \ndef opened_with(key: secret[Str], token: Str) -> Result[Str, TokenError]:\n    return read_token(key, token)\n",
+        std::fs::read_to_string(lib_dir().join("crypto.beck")).expect("the library is there")
+    );
+    let (program, d, map) = beck_core::check_str("crypto.beck", &src);
+    assert!(!d.has_errors(), "{}", d.render(&map));
+
+    let backend = beck_eval::backend_for(std::sync::Arc::new(program.clone()));
+    let call = |name: &str, args: Vec<Value>| -> Value {
+        let body = &program
+            .defs
+            .get(name)
+            .unwrap_or_else(|| panic!("{name}"))
+            .body;
+        backend.function(body).expect("a definition is a function")(args)
+            .unwrap_or_else(|e| panic!("`{name}`: {e}"))
+    };
+    // `secret[Str]` is a newtype at runtime, so a key is built the way `secret_env` builds one
+    // rather than by reading the environment: what is under test is the arithmetic, not the read.
+    let key = |text: &str| Value::Data {
+        ty: std::sync::Arc::from(beck_core::Ty::SECRET),
+        variant: None,
+        fields: std::sync::Arc::new(std::collections::BTreeMap::from([(
+            std::sync::Arc::from("value"),
+            Value::str_(text),
+        )])),
+    };
+
+    let token = call("minted", vec![key("k1"), Value::str_("actor-7")]);
+    let opened = call("opened_with", vec![key("k1"), token.clone()]);
+    assert_eq!(
+        opened.display(),
+        "Ok{value: actor-7}",
+        "the key that minted it opens it"
+    );
+    let forged = call("opened_with", vec![key("k2"), token.clone()]);
+    assert!(
+        forged.display().contains("the mac does not match"),
+        "another key must not: {}",
+        forged.display()
+    );
+    // And it is a function: the same key and payload give the same token, every run, which is what
+    // makes a digest safe to compute inside a replay.
+    assert_eq!(
+        token.display(),
+        call("minted", vec![key("k1"), Value::str_("actor-7")]).display()
+    );
+}

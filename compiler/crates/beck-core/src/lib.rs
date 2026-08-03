@@ -18,6 +18,7 @@ pub mod clock;
 pub mod compat;
 pub mod core;
 pub mod cost;
+pub mod digest;
 pub mod docgen;
 pub mod engine;
 pub mod gen;

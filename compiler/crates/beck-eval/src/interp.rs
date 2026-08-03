@@ -30,6 +30,7 @@ use std::sync::Arc;
 use beck_diag::Span;
 
 use beck_core::core::{Closure, Const, Core, CoreKind, Env, Pattern, Prim, Value};
+use beck_core::digest;
 use beck_core::html::Html;
 use beck_core::net::{Failure as NetFailure, Reply, Request};
 use beck_core::PMap;
@@ -153,6 +154,124 @@ fn failure_value(host: &str, f: &NetFailure) -> Value {
 fn as_str<'a>(v: &'a Value, who: &str, span: Span) -> Result<&'a str, EvalError> {
     v.as_str()
         .ok_or_else(|| EvalError::new(format!("`{who}` expects a Str"), span))
+}
+
+/// The digest, encoding and identifier primitives.
+///
+/// Out of line on purpose — see the arm in [`Interp::prim`] that calls it.
+#[inline(never)]
+fn digest_prim(op: Prim, mut args: Vec<Value>, span: Span) -> Result<Value, EvalError> {
+    let arity = match op {
+        Prim::DigestKeyed | Prim::DigestEq => 2,
+        _ => 1,
+    };
+    if args.len() != arity {
+        return Err(EvalError::new(
+            format!(
+                "`{}` takes {arity} argument(s), given {}",
+                op.name(),
+                args.len()
+            ),
+            span,
+        ));
+    }
+    match op {
+        Prim::Digest => {
+            let v = args.pop().expect("arity checked");
+            Ok(Value::str_(digest::of(as_str(&v, "digest", span)?)))
+        }
+        Prim::DigestKeyed => {
+            let message = args.pop().expect("arity checked");
+            let key = args.pop().expect("arity checked");
+            // The key arrives as the `secret[Str]` newtype `secret_env` built, and this is the one
+            // place in the tree that takes one apart. What comes back is a code, which is what the
+            // capability in the row is charged for.
+            let key = key
+                .field("value")
+                .and_then(Value::as_str)
+                .ok_or_else(|| EvalError::new("`digest_keyed` expects a `secret[Str]`", span))?;
+            Ok(Value::str_(digest::keyed(
+                key,
+                as_str(&message, "digest_keyed", span)?,
+            )))
+        }
+        Prim::DigestEq => {
+            let b = args.pop().expect("arity checked");
+            let a = args.pop().expect("arity checked");
+            Ok(Value::Bool(digest::same(
+                as_str(&a, "digest_eq", span)?,
+                as_str(&b, "digest_eq", span)?,
+            )))
+        }
+        Prim::HexEncode | Prim::Base64Encode => {
+            let v = args.pop().expect("arity checked");
+            let text = as_str(&v, op.name(), span)?;
+            Ok(Value::str_(if op == Prim::HexEncode {
+                digest::hex_encode(text)
+            } else {
+                digest::base64_encode(text)
+            }))
+        }
+        Prim::HexDecode | Prim::Base64Decode => {
+            let v = args.pop().expect("arity checked");
+            let text = as_str(&v, op.name(), span)?;
+            let (encoding, decoded) = if op == Prim::HexDecode {
+                ("hex", digest::hex_decode(text))
+            } else {
+                ("base64", digest::base64_decode(text))
+            };
+            decoded.map(Value::str_).map_err(|why| {
+                raised(
+                    "EncodingError",
+                    "BadEncoding",
+                    [
+                        ("encoding", Value::str_(encoding)),
+                        ("why", Value::str_(why)),
+                    ],
+                    span,
+                )
+            })
+        }
+        // `uuid_parse` and `uuid_version` differ only in which half of the answer they keep.
+        _ => {
+            let v = args.pop().expect("arity checked");
+            let text = as_str(&v, op.name(), span)?;
+            let canonical = digest::uuid_normalise(text)
+                .map_err(|why| raised("UuidError", "BadUuid", [("why", Value::str_(why))], span))?;
+            Ok(if op == Prim::UuidParse {
+                Value::str_(canonical)
+            } else {
+                Value::Int(digest::uuid_version(&canonical))
+            })
+        }
+    }
+}
+
+/// A raised value of a prelude-declared union, built from its variant's fields.
+///
+/// The shape `json_parse` and `time_parse` write out inline; the decoders raise three of these
+/// between them, and three copies of a `BTreeMap::from` would be three chances to name a field
+/// something the prelude does not declare.
+fn raised<const N: usize>(
+    ty: &str,
+    variant: &str,
+    fields: [(&str, Value); N],
+    span: Span,
+) -> EvalError {
+    EvalError::raise(
+        Arc::from(ty),
+        Value::Data {
+            ty: Arc::from(ty),
+            variant: Some(Arc::from(variant)),
+            fields: Arc::new(
+                fields
+                    .into_iter()
+                    .map(|(n, v)| (Arc::from(n), v))
+                    .collect::<BTreeMap<Arc<str>, Value>>(),
+            ),
+        },
+        span,
+    )
 }
 
 fn as_int(v: &Value, who: &str, span: Span) -> Result<i64, EvalError> {
@@ -1341,6 +1460,25 @@ impl<'h> Interp<'h> {
                     )),
                 }
             }
+            // ---- digests, encodings and identifiers, all of `beck_core::digest`.
+            //
+            // In a function of their own rather than inline, and `#[inline(never)]` so they stay
+            // there. This match is one arm per primitive and its frame is as large as the widest
+            // arm; it is reached from `Interp::eval_prim`, which is on the *recursive* path, so
+            // every local a new arm adds is a local every nested call carries — and inlining
+            // merges the two frames into one. Adding these inline cost enough depth to break
+            // `sicp.rs::what_bounds_a_recursive_types_depth_is_the_evaluator_and_not_the_checker`
+            // in a debug build, which is [`adr/0007`](../../../../docs/adr/0007-evaluator-stack-is-declared-not-discovered.md)'s
+            // budget being spent by a primitive that has nothing to do with recursion.
+            Prim::Digest
+            | Prim::DigestKeyed
+            | Prim::DigestEq
+            | Prim::HexEncode
+            | Prim::HexDecode
+            | Prim::Base64Encode
+            | Prim::Base64Decode
+            | Prim::UuidParse
+            | Prim::UuidVersion => digest_prim(op, args, span),
             // ---- the outbound call. The host is the first argument because it is the atom this
             // performs; everything else the program computed is in the request.
             Prim::HttpFetch => {

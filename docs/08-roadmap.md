@@ -595,9 +595,18 @@ charged from the host *written at the call site*, so §6.5's egress policy stays
 that costs. **`Set` operations, sorting, grouping, deduplication, durations and date arithmetic are
 built** ([`50`](50-collections-and-dates-report.md)), and added no primitives: a set is a map's
 keys and the civil calendar is arithmetic, so both are files in `compiler/lib/` rather than lines
-in `prelude.rs`. **Untouched**: crypto, UUID parsing, arbitrary-precision decimal, bignums and
-numeric coercion. §46.6 has the item-by-item list, §49.6 the client's own, and §50.6 the two newest
-files'. The Are We Fast Yet and CLBG harnesses are **not** stood up, and §8.4 asks for them
+in `prelude.rs`. **Digests, encodings and identifiers are built too**
+([`52`](52-crypto-and-identifiers-report.md)): nine primitives — a hash, a keyed one, a
+constant-time comparison, hex, base64url and a UUID reader that normalises — plus `lib/crypto.beck`,
+and no new dependency ([`adr/0015`](adr/0015-blake3-for-the-standard-librarys-digests.md)). That is
+the item where §3.5 met the first operation that *has* to declassify a secret, because a message
+authentication code exists to be given to whoever must not learn the key;
+[`adr/0014`](adr/0014-a-keyed-digest-is-the-one-declassifier.md) is the decision, and it is one
+function behind `cap.sign` with a test that enumerates the prelude and keeps the count at one.
+**Untouched**: arbitrary-precision decimal, bignums and
+numeric coercion. §46.6 has the item-by-item list, §49.6 the client's own, §50.6 the two newest
+files' and §52.6 the crypto half's — including what a digest deliberately is not: no asymmetric
+signature, no TLS, no encryption of any kind. The Are We Fast Yet and CLBG harnesses are **not** stood up, and §8.4 asks for them
 alongside this bullet — that is now the largest thing still owed here, and the item that has been
 owed longest.
 
