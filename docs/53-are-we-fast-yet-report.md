@@ -10,8 +10,10 @@ the number held until Phase 4. This is the harness, and the number is held.
 
 The interesting part is not the timing table, which measures a placeholder and says so. It is that a
 suite deliberately built against a *common subset* of language features turns out to be a good
-detector of what a language does not have: three things came out of porting it, and only one of them
-is about speed.
+detector of what a language does not have. Three things came out of porting it and only one is about
+speed — and one of the three was a defect: **`and` and `or` did not short-circuit**, which no program
+this project had ever written could see, and which the first benchmark written the way its original
+is written found immediately.
 
 ## 53.1 What was ported, and what it is verified against
 
@@ -64,6 +66,9 @@ back up. The port passes the board the caller still holds, so backtracking needs
 search visits the same nodes in the same order; it does four fewer assignments per rejected
 placement. That is a real difference in the work performed, it favours Beck, and it is here rather
 than in a footnote for that reason.
+
+Its `if` is otherwise the original's, one conjunction and all — which it could not have been when
+this directory was written, and §53.5 is that story.
 
 **`towers` keeps its exceptions.** The original throws if a disk lands on a smaller one — an
 assertion that the algorithm did what it claims. A port that dropped it would pass while moving
@@ -136,9 +141,9 @@ folded in silently because it is a **lexical** change: a program that used to be
 another, and the only reason that is safe is that `1e6` was previously a parse error at the point of
 use rather than a legal expression.
 
-## 53.5 Three findings, and only one of them is about speed
+## 53.5 Three findings, one language change, and only one of them is about speed
 
-### `and` evaluates both operands
+### `and` evaluated both operands — and now does not
 
 `Queens.java` reads:
 
@@ -153,26 +158,58 @@ of fuel**: `and` is a primitive over two `Bool`s, its arguments are evaluated be
 `free_at(b, r, c) and settles(…)` searches from squares that are already attacked and turns a
 2,057-node search into an 8⁸ one.
 
-This is not about queens. Beck's `and` and `or` do not short-circuit, which means:
+This was not about queens. `and` and `or` were **primitives over two `Bool`s**, so both operands were
+evaluated before either operator was applied, which meant:
 
-- a guard does not guard — `if b != 0 and 10 / b > 1` divides by zero;
-- a `raise` in the right operand fires when the left already decided the answer, so a `try:` is
-  needed for a failure the program cannot reach;
-- and an effectful right operand **performs its effects**, so an expression's inferred row is larger
-  than the expression can actually reach.
+- a guard did not guard — `if b != 0 and 10 / b > 1` divided by zero;
+- a `raise` in the right operand fired when the left had already decided the answer, so a `try:` was
+  needed for a failure the program could not reach;
+- and an effectful right operand performed its effects every time, whether or not the left operand
+  had already settled the value.
 
-Nothing in the tree was wrong because of it — the standard library's uses are all pure, total and
+Nothing in the tree was wrong because of it — every use in the standard library is pure, total and
 cheap, which is why three phases and six libraries never noticed. That is exactly the argument for a
 benchmark suite: it is written by people who assume the common subset, and it assumed this.
 
-It is **pinned rather than fixed**, in the shape [`50`](50-collections-and-dates-report.md) §50.5 used
-for the record-ordering finding: `awfy.rs::and_evaluates_both_operands_and_a_guard_written_with_it_does_not_guard`
-asserts the current behaviour, so changing it is a red test and a correction to this section rather
-than a silent change of meaning in every program that guards with `and`. What fixing it would take is
-one rewrite in the checker — `a and b` becomes `if a: b else: false` — and no new IR node, because
-`CoreKind::If` is already there; what it needs before that is a decision about whether `and` stays a
-name in the prelude when no source expression lowers to it, which is a published-surface question and
-not a two-line one. It is named here as the next person's starting point, as §50.5 named `Ord`.
+**It is fixed.** `a and b` is `if a: b else: false` and `a or b` is `if a: true else: b`, lowered in
+the checker (`check/mod.rs::short_circuit`).
+
+Three things about *where* the fix went, because the placement is the whole engineering content:
+
+**In the checker, not the evaluator.** Short-circuiting is a property of the language, not of one
+backend. Special-casing `Prim::And` in `interp.rs` would have been three lines and would have left
+the rule in a place a second backend has to remember — the class of bug the backend seam exists to
+prevent ([`19`](19-phase-1-report.md) §19.9). `CoreKind::If` already means "pick which computation
+runs", so **no IR node, no evaluator case and no runtime change**: the third feature running to be
+added without one, after [`37`](37-traits-report.md)'s impls and [`39`](39-bounds-report.md)'s
+bounds.
+
+**The effect row is deliberately unchanged.** Both operands may still run, so both are still charged,
+exactly as for any other `if`. What changed is how often an operand runs, not what it is allowed to
+do — so no `.becki` moves and `--wire-compat` has nothing to say about it.
+
+**It could have cost the view engine, and did not — measured, not assumed.** `Prim::And` and
+`Prim::Or` are classified `pointwise` in `incremental.rs`'s table, and `CoreKind::If` is **opaque**
+to the planner: "an `if` picks which computation runs, and a delta can move it between branches"
+(`plan.rs`). So the obvious risk was that every `and` inside a maintained view became a full
+recompute. `beck explain incremental` over all 31 corpus and example programs is **byte-for-byte
+identical** before and after, and `measure_incremental` still reports 55.4× on `24-feed.beck` and
+1.3× on the sketch, which are [`26`](26-arrangement-sharing-report.md)'s published numbers. The
+reason is structural rather than lucky: a boolean expression lives inside a per-element lambda, and
+a plan's operators are the collection-level ones — the `and` was never a plan node to begin with.
+
+What is **not** fixed is the one case where it cannot be. A bare `and` referenced as a *value* is
+still the strict primitive, because a function value is handed arguments that have already been
+evaluated; no function value in any strict language short-circuits, and `list_all` is what a fold
+over conjunction wants. That is a smaller surface than it sounds — the operator form and the direct
+call `and(a, b)` both go through `prim_call` and both short-circuit — and it is why the prelude
+keeps the two names rather than losing them, which was the published-surface question this fix had
+to answer.
+
+`awfy.rs::and_and_or_short_circuit_so_a_guard_written_as_a_conjunction_guards` is the gate, and it
+tests **both directions** for [`20`](20-phase-2-report.md)'s reason: that the right operand does not
+run when the left decides, *and* that it does when the left does not, because an `and` that never
+evaluated its right operand would pass the first half.
 
 ### Beck has no bitwise operators
 
@@ -248,6 +285,13 @@ shape [`50`](50-collections-and-dates-report.md) §50.5's missing-type-argument 
   regexes, so it does not carry it either. A reader looking for "may a float have an exponent" has
   nowhere to look but the source. That is not fixed here — it is named, because it is the kind of
   gap [`34`](34-generated-documentation-report.md) exists to close and has not yet.
+- **[`03`](03-type-and-effect-system.md) is unchanged and worth checking against, which is the
+  point of saying so.** `and` and `or` short-circuiting changes *when* an operand is evaluated and
+  not what it may do: both operands are still charged to the expression's row, exactly as both
+  branches of an `if` are. No signature moved, no `.becki` moved, and `--wire-compat` has nothing
+  to say. The generated reference still lists `and : (Bool, Bool) -> Bool`, which is still true —
+  it is the type of the name, and the name is still there for the one case that cannot be lazy
+  (§53.5).
 - **[`21`](21-tests-in-beck-and-proof.md) §21.2 gains a use nobody designed it for.** A `test` block
   is a program's own assertion about its meaning; here it is a *third party's* assertion about the
   program's meaning, carried into the file. Nothing had to change for that to work, which is the

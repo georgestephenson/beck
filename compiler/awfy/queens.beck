@@ -42,28 +42,17 @@ def occupy(b: Board, r: Int, c: Int) -> Board:
 def place_queen(c: Int, b: Board) -> Bool:
     return try_row(0, c, b)
 
-## The original's `for r = 0 … 7`, and the one place in this directory where the transcription
-## could not be literal.
+## The original's `for r = 0 … 7`, and the line that found a defect in the language.
 ##
 ## `if (getRowColumn(r, c)) { … if (placeQueen(c + 1)) …` is two nested tests in Java and reads as
-## one `and` — but Beck's `and` is a primitive over two `Bool`s and **evaluates both operands**, so
-## writing it that way searches from squares that are already attacked and turns a 2,057-node
-## search into an 8⁸ one. Nested, not conjoined, and `docs/53` §53.5 is why that is a finding
-## rather than a style note.
+## one `and`. Writing it as one used to search from squares that were already attacked, because
+## `and` evaluated both operands — a 2,057-node search became an 8⁸ one and the benchmark ran out
+## of fuel. `docs/53` §53.5 is what that cost and what fixing it took; the line below is what the
+## fix is *for*, and it is here in its natural form rather than in the shape a strict `and` forced.
 def try_row(r: Int, c: Int, b: Board) -> Bool:
     if r >= 8:
         return false
-    if free_at(b, r, c):
-        return solved_or_next(settles(r, c, occupy(b, r, c)), r, c, b)
-    return try_row(r + 1, c, b)
-
-## `if (placeQueen(c + 1)) { return true; }` and the fall-through after it, as one function.
-##
-## The search is run *before* this is entered, which is what the original does at the same point;
-## what a strict `or` would change is the other half — `settles(…) or try_row(…)` searches the rest
-## of the column whether or not the queen was placed.
-def solved_or_next(solved: Bool, r: Int, c: Int, b: Board) -> Bool:
-    if solved:
+    if free_at(b, r, c) and settles(r, c, occupy(b, r, c)):
         return true
     return try_row(r + 1, c, b)
 

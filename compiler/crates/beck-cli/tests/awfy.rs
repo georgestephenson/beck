@@ -132,33 +132,40 @@ fn every_benchmark_names_the_suite_it_is_a_port_of() {
     }
 }
 
-/// `and` evaluates **both** operands, and this is where that was found.
+/// `and` and `or` short-circuit, and this is where the fact that they did not was found.
 ///
 /// `Queens.java` writes `if (getRowColumn(r, c)) { … if (placeQueen(c + 1)) …`, which reads as one
-/// conjunction; written as one in Beck it searches from squares that are already attacked, because
-/// `and` is a primitive over two `Bool`s and its arguments are evaluated before it is called. The
-/// port nests instead ([`awfy/queens.beck`](../../../../awfy/queens.beck)).
+/// conjunction. Written as one in Beck it used to search from squares that were already attacked,
+/// because both operands were evaluated before the operator was applied
+/// ([`53`](../../../../docs/53-are-we-fast-yet-report.md) §53.5). It is a `if a: b else: false` in
+/// the IR now, so the guard guards.
 ///
-/// It is pinned rather than fixed, in the shape [`50`](../../../../docs/50-collections-and-dates-report.md)
-/// §50.5 used: the behaviour is asserted, so a change to it is a red test and a report correction
-/// rather than a silent change of meaning in every program that guards with `and`.
-/// [`53`](../../../../docs/53-are-we-fast-yet-report.md) §53.5 names what fixing it would take.
+/// The test is here rather than beside the checker's other lowerings on purpose: it is where the
+/// defect was found, and a benchmark suite is the only thing in this repository that had ever
+/// exercised the difference. It asserts through the binary, on a program whose right operand
+/// *cannot* be evaluated, which is the only way to observe the change from outside.
 #[test]
-fn and_evaluates_both_operands_and_a_guard_written_with_it_does_not_guard() {
-    let src = "def risky(n: Int) -> Bool:\n    return 1 / n > 0\n\n\
-               test \"a guard that does not guard\":\n    expect not (false and risky(0))\n";
-    let file = std::env::temp_dir().join("beck-awfy-shortcircuit.beck");
-    std::fs::write(&file, src).expect("a scratch file");
-    let (ok, text) = beck(&["test", file.to_string_lossy().as_ref()]);
-    let _ = std::fs::remove_file(&file);
-    assert!(
-        !ok,
-        "`and` short-circuits now — docs/53 §53.5 needs correcting:\n{text}"
-    );
-    assert!(
-        text.contains("divided by zero"),
-        "the right operand should have been evaluated:\n{text}"
-    );
+fn and_and_or_short_circuit_so_a_guard_written_as_a_conjunction_guards() {
+    let cases = [
+        // The left operand decides, so the right — which divides by zero — must not run.
+        ("false and risky(0)", "not (false and risky(0))"),
+        ("true or risky(0)", "true or risky(0)"),
+        // And the right operand still runs when the left does not decide, or `and` would be a
+        // constant. Both directions, for `docs/20`'s reason: one is not a test.
+        ("true and risky(1)", "true and risky(1)"),
+        ("false or risky(1)", "false or risky(1)"),
+    ];
+    for (name, expr) in cases {
+        let src = format!(
+            "def risky(n: Int) -> Bool:\n    return 1 / n > 0\n\n\
+             test \"{name}\":\n    expect {expr}\n"
+        );
+        let file = std::env::temp_dir().join("beck-awfy-shortcircuit.beck");
+        std::fs::write(&file, &src).expect("a scratch file");
+        let (ok, text) = beck(&["test", file.to_string_lossy().as_ref()]);
+        let _ = std::fs::remove_file(&file);
+        assert!(ok && text.contains("0 failed"), "{name}:\n{src}\n{text}");
+    }
 }
 
 /// The directory's own README exists and says what the port changes.

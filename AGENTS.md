@@ -71,9 +71,12 @@ Write the commit message as the author of the change: what changed, and why.
   cannot test, and nine match arms in the evaluator cost a thousand levels of recursion. It also
   took the first decision to let a `secret[Str]` become a `Str` — one function, behind `cap.sign`,
   with a test that keeps the count at one (docs/adr/0014). docs/53 §53.5 has three more, found by
-  porting somebody else's benchmark suite rather than by writing anything of ours: `and` and `or`
-  do **not** short-circuit, so a guard written as a conjunction does not guard — pinned rather than
-  fixed, in §50.5's shape — Beck has no bitwise operators, and a nested `if` is not a statement.
+  porting somebody else's benchmark suite rather than by writing anything of ours — and the first of
+  them was a **defect**: `and` and `or` did not short-circuit, so a guard written as a conjunction
+  did not guard. It is fixed, in the checker rather than the evaluator, because short-circuiting is
+  a property of the language and not of one backend; `beck explain incremental` over all 31 corpus
+  and example programs is byte-for-byte identical either side of it. The other two stand: Beck has
+  no bitwise operators, and a nested `if` is not a statement.
   Reports are history: a later phase's correction to an earlier one goes in the later report, not
   into the earlier text.
 - [`docs/reference/`](docs/reference/README.md) is **generated** by `beck doc reference` from the

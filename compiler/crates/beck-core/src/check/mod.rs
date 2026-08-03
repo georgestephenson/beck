@@ -3032,6 +3032,9 @@ impl<'a> Checker<'a> {
         if p == Prim::HttpFetch {
             self.outbound_host(checked.first(), span);
         }
+        if let Some(core) = short_circuit(p, &checked, (*ret).clone(), span) {
+            return core;
+        }
 
         Core::new(
             CoreKind::Prim {
@@ -3896,4 +3899,47 @@ mod nesting_tests {
              declaration or lower the ceiling"
         );
     }
+}
+
+/// `a and b` and `a or b`, lowered to the conditional they mean.
+///
+/// Beck's `and` and `or` were primitives over two `Bool`s, so both operands were evaluated before
+/// either operator was applied. That is a difference nobody could see for three phases — every use
+/// in the tree is pure, total and cheap — and [`53`](../../../../../docs/53-are-we-fast-yet-report.md)
+/// §53.5 is where it became visible: a benchmark written the way its original is written searched
+/// from positions its guard had already rejected.
+///
+/// The lowering happens **here** rather than in the evaluator, and that is the load-bearing choice.
+/// Short-circuiting is a property of the language, not of one backend; put it in `interp.rs` and
+/// the second backend has to remember it, which is the class of bug the backend seam exists to
+/// prevent (`docs/19` §19.9). `CoreKind::If` already means "pick which computation runs", so no IR
+/// node, no evaluator case and no runtime change was needed — the third feature running to be
+/// added without one.
+///
+/// The *effect row* is deliberately unchanged. Both operands may run, so both are charged, exactly
+/// as for any other `if`. What changes is how often they run, not what they are allowed to do.
+///
+/// A **bare reference** — `and` passed somewhere as a value — is untouched and still strict, and
+/// that is not an oversight: a function value is handed arguments that have already been evaluated,
+/// so no function value in any strict language short-circuits. `list_all` is what a fold over
+/// conjunction wants.
+fn short_circuit(p: Prim, args: &[Core], ty: Ty, span: Span) -> Option<Core> {
+    let [lhs, rhs] = args else {
+        return None;
+    };
+    let constant = |b: bool| Core::new(CoreKind::Const(Const::Bool(b)), ty.clone(), span);
+    let (then, alt) = match p {
+        Prim::And => (rhs.clone(), constant(false)),
+        Prim::Or => (constant(true), rhs.clone()),
+        _ => return None,
+    };
+    Some(Core::new(
+        CoreKind::If {
+            cond: Box::new(lhs.clone()),
+            then: Box::new(then),
+            alt: Box::new(alt),
+        },
+        ty,
+        span,
+    ))
 }
