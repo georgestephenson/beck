@@ -4,7 +4,7 @@
 
 Every diagnostic the compiler can raise carries a stable code. `beck explain error B0341` prints one of these entries at the terminal.
 
-The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans every non-test source file for a `"Bnnnn"` literal and fails if the set differs from this table in either direction. **111 codes.**
+The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans every non-test source file for a `"Bnnnn"` literal and fails if the set differs from this table in either direction. **113 codes.**
 
 
 ## Reading the source — `B0100–B0121`
@@ -41,7 +41,7 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0212` | error | **`ui` block has more than one root** — An `Html` value is a single tree. Wrap the elements in one — a `div:` or `main:` block. |
 | `B0213` | error | **the form nests too deep to expand** — The expander walks a form's arguments as deeply as they nest, and stops at the count the reader stops at. This is not `B0201`: nothing here says a macro failed to terminate — the two were one counter until they were separated, and a deep expression with no macros in it reported the wrong one. |
 
-## Names, types and effects — `B0300–B0394`
+## Names, types and effects — `B0300–B0396`
 
 | Code | | Meaning |
 |---|---|---|
@@ -97,6 +97,8 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0392` | error | **nothing here can fail, and nothing says what this would catch** — A `try:` reifies one failure into a `Result`, and it takes the error type from the enclosing signature's `Result[T, E]` where there is one and from the block's own row where there is not. Neither said anything here. Either the call you meant to make is not there, or the `try:` is left over from a signature that has stopped failing — which is the good case, and the diagnostic is how you find out. |
 | `B0393` | error | **the block can fail in more than one way, and nothing says which to catch** — A `Result[T, E]` has one error type, and a `try:` catches one — the rest keep travelling, which is what makes a handler composable. Here nothing named which: give the enclosing definition a `Result[T, E]` return type, and the handler catches that `E`. |
 | `B0394` | error | **the row is declared twice** — Two `row Name = …` declarations with the same name. A row alias is a name for a bundle of effect atoms, and a second one would make every `uses` clause mentioning it ambiguous. |
+| `B0395` | error | **the host of an outbound call has to be written at the call site** — `http_fetch` performs `net.out(host)`, and §6.5 derives the cluster's egress policy from that atom and nothing else. A host computed at run time is an outbound call the deployment cannot be told about, so the argument is read where it is written. Compute the path, the port, the headers and the body; or take a closure, so the caller names its own host and the row carries the atom out. |
+| `B0396` | error | **that is not a host an outbound call can name** — The host becomes a NetworkPolicy peer and a `uses net.out(…)` clause, both of which are written as bare DNS labels — so a scheme, a port or a path in it is a name neither could carry. `origin` is refused for a different reason: it is the one outbound atom a client tier discharges, and a client reaches its own server over the command channel. |
 
 ## Placement — `B0400–B0404`
 

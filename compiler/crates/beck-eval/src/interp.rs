@@ -4,9 +4,11 @@
 //! ([`docs/08-roadmap.md`](../../../../docs/08-roadmap.md) Phase 1). It is a tree-walker over
 //! typed `Core`, with three properties that are not negotiable and are tested:
 //!
-//! * **Replay purity.** Nothing here reads a clock, a random source, or performs I/O. `uuid()` is
-//!   a primitive the *checker* refuses inside a fold (§3.7), and even outside one it is supplied
-//!   by the host rather than taken from the ambient environment, so a replay is reproducible.
+//! * **Replay purity.** Nothing here reads a clock, a random source, or a socket *of its own*.
+//!   `uuid()` is a primitive the *checker* refuses inside a fold (§3.7), and even outside one it
+//!   is supplied by the host rather than taken from the ambient environment; `http_fetch` goes to
+//!   [`Host::fetch`] for the same reason. A replay is reproducible because every reading of the
+//!   outside world enters through the host, where a replay can decide what it says.
 //! * **Total order everywhere.** Maps are `BTreeMap`s and `sort_by` is stable, so two runs over
 //!   the same log render identically — Phase 0 §18.5 item 4 learned this the hard way.
 //! * **Errors are values, not panics.** A partial operation returns an [`EvalError`] carrying the
@@ -29,7 +31,121 @@ use beck_diag::Span;
 
 use beck_core::core::{Closure, Const, Core, CoreKind, Env, Pattern, Prim, Value};
 use beck_core::html::Html;
+use beck_core::net::{Failure as NetFailure, Reply, Request};
 use beck_core::PMap;
+
+/// `HttpRequest` — a Beck record — as the seam's [`Request`].
+///
+/// Every field is read by name and defaulted, because a record the checker approved has them all
+/// and a record built by a test may not. The port defaults to 80 rather than 0: a request with no
+/// port is an HTTP request, and making a caller state the obvious is how a library acquires
+/// ceremony.
+fn outbound_request(host: &str, v: &Value, span: Span) -> Result<Request, EvalError> {
+    let field = |name: &str| v.field(name).cloned().unwrap_or(Value::Unit);
+    let text = |name: &str| match field(name) {
+        Value::Str(s) => s,
+        _ => Arc::from(""),
+    };
+    let port = match field("port") {
+        Value::Int(p) if (1..=65_535).contains(&p) => p as u16,
+        Value::Int(0) | Value::Unit => 80,
+        Value::Int(p) => {
+            return Err(EvalError::new(
+                format!("`{p}` is not a port an outbound call can use"),
+                span,
+            ))
+        }
+        _ => 80,
+    };
+    let mut headers: Vec<(Arc<str>, Arc<str>)> = match field("headers") {
+        Value::Map(m) => m
+            .iter()
+            .filter_map(|(k, val)| match (k, val) {
+                (Value::Str(k), Value::Str(v)) => Some((k.clone(), v.clone())),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+    // The secret half, unwrapped here and nowhere else. §3.5 gives a program no way to read a
+    // `secret[Str]`; this is the edge, past every tier the checker places, so the credential
+    // becomes bytes exactly where it becomes a request and never becomes a value the program
+    // could have put somewhere else.
+    if let Value::Map(m) = field("secrets") {
+        for (k, val) in m.iter() {
+            if let (Value::Str(name), Some(Value::Str(secret))) = (k, val.field("value")) {
+                headers.push((name.clone(), secret.clone()));
+            }
+        }
+    }
+    let method = text("method");
+    Ok(Request {
+        host: Arc::from(host),
+        port,
+        method: if method.is_empty() {
+            Arc::from("GET")
+        } else {
+            method
+        },
+        path: {
+            let p = text("path");
+            if p.is_empty() {
+                Arc::from("/")
+            } else {
+                p
+            }
+        },
+        headers,
+        body: text("body"),
+    })
+}
+
+fn reply_value(reply: &Reply) -> Value {
+    let headers = reply.headers.iter().fold(PMap::new(), |m, (k, v)| {
+        m.insert(Value::Str(k.clone()), Value::Str(v.clone()))
+    });
+    Value::Data {
+        ty: Arc::from("HttpResponse"),
+        variant: None,
+        fields: Arc::new(BTreeMap::from([
+            (Arc::from("status"), Value::Int(reply.status)),
+            (Arc::from("headers"), Value::Map(headers)),
+            (Arc::from("body"), Value::Str(reply.body.clone())),
+        ])),
+    }
+}
+
+/// The seam's [`NetFailure`] as the `HttpError` the call raises.
+///
+/// The host is put back in here rather than carried through the failure, because the seam's
+/// implementation was told which host it was calling and there is no case where the two differ.
+fn failure_value(host: &str, f: &NetFailure) -> Value {
+    let (variant, fields): (&str, Vec<(Arc<str>, Value)>) = match f {
+        NetFailure::Unreachable(why) => (
+            "HttpUnreachable",
+            vec![
+                (Arc::from("host"), Value::str_(host)),
+                (Arc::from("why"), Value::str_(why)),
+            ],
+        ),
+        NetFailure::TimedOut(ms) => (
+            "HttpTimedOut",
+            vec![
+                (Arc::from("host"), Value::str_(host)),
+                (Arc::from("millis"), Value::Int(*ms)),
+            ],
+        ),
+        NetFailure::BadResponse(why) => (
+            "HttpBadResponse",
+            vec![(Arc::from("why"), Value::str_(why))],
+        ),
+    };
+    Value::Data {
+        ty: Arc::from("HttpError"),
+        variant: Some(Arc::from(variant)),
+        fields: Arc::new(fields.into_iter().collect()),
+    }
+}
 
 /// The three "this primitive wanted a `T`" conversions, so twenty-odd library primitives do not
 /// each spell out the same `ok_or_else`. The message names the primitive, because "expects a Str"
@@ -280,6 +396,16 @@ pub trait Host {
     /// Read a secret from the process environment — `env`, which no client tier discharges.
     fn secret(&self, name: &str) -> Arc<str> {
         std::env::var(name).unwrap_or_default().into()
+    }
+
+    /// Make an outbound request — the runtime half of `net.out(host)`.
+    ///
+    /// Defaulted through the process seam rather than to a client of its own
+    /// ([`beck_core::net`]), for the same reason [`Host::now_millis`] is defaulted through the
+    /// clock: a host that wants to answer differently overrides one method, and a host that does
+    /// not still never names a network stack.
+    fn fetch(&self, request: &beck_core::net::Request) -> Result<Reply, NetFailure> {
+        beck_core::net::process_outbound().fetch(request)
     }
 
     /// Answer a call to a top-level definition without running its body.
@@ -1211,6 +1337,23 @@ impl<'h> Interp<'h> {
                                 Value::str_(format!("`{text}` is not an RFC 3339 instant in UTC")),
                             )])),
                         },
+                        span,
+                    )),
+                }
+            }
+            // ---- the outbound call. The host is the first argument because it is the atom this
+            // performs; everything else the program computed is in the request.
+            Prim::HttpFetch => {
+                want(2)?;
+                let request = args.pop().expect("arity checked");
+                let host = args.pop().expect("arity checked");
+                let host = as_str(&host, "http_fetch", span)?;
+                let request = outbound_request(host, &request, span)?;
+                match self.host.fetch(&request) {
+                    Ok(reply) => Ok(reply_value(&reply)),
+                    Err(f) => Err(EvalError::raise(
+                        Arc::from("HttpError"),
+                        failure_value(host, &f),
                         span,
                     )),
                 }

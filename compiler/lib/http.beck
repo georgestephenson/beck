@@ -1,0 +1,182 @@
+# HTTP, written in Beck on top of one primitive.
+#
+# The primitive is `http_fetch(host, request)`, and the host is the *first argument* rather than a
+# field of the request for a reason this file then has to live with: the call performs
+# `net.out(host)`, and `docs/06` §6.5 derives the cluster's egress policy from exactly those atoms.
+# A host that arrived in a variable would be an outbound call the deployment could not be told
+# about, so the compiler reads it where it is written.
+#
+# The consequence is that **there is no `get(host, path)` here**, and there cannot be: a library
+# that made the call on a caller's behalf would be a library that hid the peer. What a library can
+# do is everything either side of the call — build what goes, read what comes back — and that is
+# what this file is. The application writes the two words that name its peer.
+#
+# What is deliberately absent: percent-encoding (it needs a code point, and no primitive gives
+# one), redirect following (a policy, and one that silently changes which host is reached is the
+# last thing a derived egress rule wants), retries, and cookies.
+
+## A request with nothing in it but a method and a path.
+##
+## Port 80 because this is HTTP; `on_port` changes it. The path is origin-form and is sent as
+## written — `"/v1/todos?limit=10"` is one string, because only the caller knows which part of it
+## was data and therefore which part needed encoding.
+def request(method: Str, path: Str) -> HttpRequest:
+    return HttpRequest(method=method, path=path, headers={}, body="", port=80, secrets={})
+
+def get(path: Str) -> HttpRequest:
+    return request("GET", path)
+
+def delete(path: Str) -> HttpRequest:
+    return request("DELETE", path)
+
+## `POST` with a body, and the length the peer needs to read it.
+##
+## `content-length` is set here rather than by the client because a request is data: two runs that
+## build the same request send the same bytes, and a header added underneath would be a difference
+## the program could not see.
+def post(path: Str, body: Str) -> HttpRequest:
+    return with_body(request("POST", path), body)
+
+def put(path: Str, body: Str) -> HttpRequest:
+    return with_body(request("PUT", path), body)
+
+def with_body(req: HttpRequest, body: Str) -> HttpRequest:
+    return req.with(
+        body=body,
+        headers=map_insert(req.headers, "content-length", str(str_len(body))),
+    )
+
+## Set a header, under a lower-cased name.
+##
+## Lower-cased both here and in `header`, so that a program never has two spellings of one header:
+## HTTP header names are case-insensitive and a `map[Str, Str]` is not.
+def with_header(req: HttpRequest, name: Str, value: Str) -> HttpRequest:
+    return req.with(headers=map_insert(req.headers, str_lower(name), value))
+
+## Set a header whose value is a secret — the only way a credential reaches a peer.
+##
+## §3.5 gives a program no way to read a `secret[Str]`: there is no `reveal` for one, which is
+## exactly the claim that makes a secret unable to reach a browser. So `"Bearer " + key` is not a
+## thing anybody can write, and an authenticated request would be inexpressible if this took a
+## `Str`. It takes the secret itself, the runtime merges it into the headers at the edge, and the
+## request that results is not Sendable — so the type system says, without anyone asserting it,
+## that this request cannot be built on a client or handed to one.
+def with_secret_header(req: HttpRequest, name: Str, value: secret[Str]) -> HttpRequest:
+    return req.with(secrets=map_insert(req.secrets, str_lower(name), value))
+
+def on_port(req: HttpRequest, port: Int) -> HttpRequest:
+    return req.with(port=port)
+
+def sending_json(req: HttpRequest, body: Str) -> HttpRequest:
+    return with_header(with_body(req, body), "content-type", "application/json")
+
+def accepting_json(req: HttpRequest) -> HttpRequest:
+    return with_header(req, "accept", "application/json")
+
+## The value of a header, or `""`.
+##
+## A missing header and an empty one are the same answer here, which is a choice: the alternative
+## is an option type at every call site to distinguish two cases almost nothing distinguishes.
+def header(response: HttpResponse, name: Str) -> Str:
+    return unwrap_or(map_get(response.headers, str_lower(name)), "")
+
+def is_ok(response: HttpResponse) -> Bool:
+    return response.status >= 200 and response.status < 300
+
+def is_redirect(response: HttpResponse) -> Bool:
+    return response.status >= 300 and response.status < 400
+
+def is_client_error(response: HttpResponse) -> Bool:
+    return response.status >= 400 and response.status < 500
+
+def is_server_error(response: HttpResponse) -> Bool:
+    return response.status >= 500
+
+## The body of a 2xx reply, or a raise carrying the status and the body.
+##
+## The primitive raises only when *nothing arrived*: a 500 is a reply, and a client that threw it
+## away would have thrown away the sentence saying why. A caller that would rather not decide gets
+## this — and note that it raises the same `HttpError` the primitive does, so one `try:` catches
+## both a peer that was down and a peer that said no.
+def require_ok(response: HttpResponse) -> Str uses raises(HttpError):
+    if not is_ok(response):
+        raise HttpStatus(status=response.status, body=response.body)
+    return response.body
+
+## The body read as JSON. Fallible twice, and the two failures stay apart.
+##
+## `raises(JsonError)` is inferred from `json_parse` and `raises(HttpError)` from `require_ok`, so
+## the row of this function names both and a handler catches the one it can say (`docs/47` §47.4).
+def json_body(response: HttpResponse) -> Json uses raises(HttpError), raises(JsonError):
+    return json_parse(require_ok(response))
+
+# ------------------------------------------------------------------------------ its own tests
+#
+# A test may not bind a local (§21.2: "there is no fixture to build"), so the requests below are
+# definitions. That is not a workaround — a fixture with a name is a thing the file can also use.
+
+def listing() -> HttpRequest:
+    return accepting_json(on_port(get("/v1/todos?limit=10"), 8080))
+
+def created() -> HttpRequest:
+    return post("/v1/todos", "{\"text\":\"milk\"}")
+
+def twice_named() -> HttpRequest:
+    return with_header(with_header(get("/"), "X-Request-Id", "a"), "x-request-id", "b")
+
+def patched() -> HttpRequest:
+    return sending_json(request("PATCH", "/v1/todos/1"), "{\"done\":true}")
+
+test "a request is built up, and every part of it is data":
+    expect listing().method == "GET"
+    expect listing().path == "/v1/todos?limit=10"
+    expect listing().port == 8080
+    expect listing().body == ""
+    expect unwrap_or(map_get(listing().headers, "accept"), "") == "application/json"
+
+test "a body carries its own length":
+    expect created().method == "POST"
+    expect created().body == "{\"text\":\"milk\"}"
+    expect unwrap_or(map_get(created().headers, "content-length"), "") == "15"
+
+test "a header has one spelling, whichever one you write":
+    expect map_len(twice_named().headers) == 1
+    expect unwrap_or(map_get(twice_named().headers, "x-request-id"), "") == "b"
+
+test "sending json sets the type and the length together":
+    expect unwrap_or(map_get(patched().headers, "content-type"), "") == "application/json"
+    expect unwrap_or(map_get(patched().headers, "content-length"), "") == "13"
+
+def reply(status: Int, body: Str) -> HttpResponse:
+    return HttpResponse(status=status, headers={"content-type": "application/json"}, body=body)
+
+test "a status is classified, and a header is read case-insensitively":
+    expect is_ok(reply(204, "")) == True
+    expect is_ok(reply(301, "")) == False
+    expect is_redirect(reply(301, "")) == True
+    expect is_client_error(reply(404, "not found")) == True
+    expect is_server_error(reply(503, "later")) == True
+    expect header(reply(200, ""), "Content-Type") == "application/json"
+    expect header(reply(200, ""), "x-missing") == ""
+
+def body_or_error(response: HttpResponse) -> Result[Str, HttpError]:
+    return try: require_ok(response)
+
+test "a 500 is a reply the caller may still refuse":
+    expect body_or_error(reply(200, "ok")) == Ok(value="ok")
+    expect body_or_error(reply(503, "later")) == Err(error=HttpStatus(status=503, body="later"))
+
+## Both of `json_body`'s failures, caught one handler each.
+##
+## The nesting is the point rather than a nuisance: a `try:` catches the failure its type names and
+## lets every other one travel (`docs/47` §47.4), so "the peer said 503" and "the peer said
+## something that is not JSON" cannot be confused for one another by a caller that wanted to tell
+## them apart. A caller that does not want to tell them apart writes one `try:` further out.
+def parsed(response: HttpResponse) -> Result[Result[Json, JsonError], HttpError]:
+    return try:
+        try: json_body(response)
+
+test "and the two failures a json body has stay apart":
+    expect parsed(reply(200, "{\"a\":1}")) == Ok(value=Ok(value=JsonObject(fields={"a": JsonNumber(value=1.0)})))
+    expect parsed(reply(200, "{oops")) == Ok(value=Err(error=BadJson(why="key must be a string at line 1 column 2")))
+    expect parsed(reply(503, "later")) == Err(error=HttpStatus(status=503, body="later"))

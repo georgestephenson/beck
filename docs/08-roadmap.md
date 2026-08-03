@@ -518,7 +518,7 @@ is the argument for reading the rest of this section.
 
 | Item | Recorded in | Expensive from |
 |---|---|---|
-| ~~Virtualized clock~~, then network, then disk | F11; [`13`](13-testing.md) §13.4 | **The clock is done** ([`44`](44-wave-0-report.md) §44.3): supplied, not ambient, with a test that counts the readers. The network and the disk are not, and elapsed time is not — F11 named three resources and this closed one |
+| ~~Virtualized clock~~, ~~then network~~, then disk | F11; [`13`](13-testing.md) §13.4 | **Two of three.** The clock is supplied rather than ambient ([`44`](44-wave-0-report.md) §44.3), with a test that counts the readers; the network is a seam with three implementations ([`49`](49-http-client-report.md) §49.5), and it arrived *with* the first thing that needed it rather than after. The **disk** is not, and elapsed time is not |
 | ~~The two syntax decisions~~ | [`09`](09-risks-and-open-questions.md) §9.6 item 5 | **Taken** — [`10`](10-decisions.md) D21 and D22, inside the deadline |
 | ~~Unicode version pinned per release + UTS #39 security profile~~ | [`35`](35-standards-landscape.md) §35.5 item 2 | **Done** ([`44`](44-wave-0-report.md) §44.5), with the bidirectional half the profile does not reach closed alongside it |
 | ~~Errors as a row label, `Result` reified, lexical handlers~~ | [`38`](38-literature-survey.md) §38.4 | **Done** ([`45`](45-error-rows-report.md)), before the standard library's signatures rather than after — which is the one thing §8.5.3 trap 2 asked for |
@@ -588,11 +588,20 @@ designing a concurrency model inside an error model's change.
 **built** — thirty-one primitives plus `compiler/lib/`, which is the half written in Beck and the
 answer to which parts of a library the *host* owns. `json_parse` and `time_parse` raise rather than
 returning a `Result`, which is trap 2 cashed: a wave earlier, every one of those signatures would
-now be wrong. **Untouched**: the HTTP client (the one item whose effect row nobody has designed),
-crypto, `Set` operations, durations and date arithmetic, UUID parsing, arbitrary-precision decimal,
-bignums and numeric coercion. §46.6 has the item-by-item list. The Are We Fast Yet and CLBG
-harnesses are **not** stood up, and §8.4 asks for them alongside this bullet — that is the largest
-thing still owed here.
+now be wrong. The **HTTP client is built too** ([`49`](49-http-client-report.md)) — the item whose
+effect row nobody had designed, and the reason to take it next rather than last: `net.out(host)` is
+charged from the host *written at the call site*, so §6.5's egress policy stays derivable, and
+[`adr/0013`](adr/0013-the-host-of-an-outbound-call-is-written-at-the-call-site.md) records what
+that costs. **Untouched**: crypto, `Set` operations, durations and date arithmetic, UUID parsing,
+arbitrary-precision decimal, bignums and numeric coercion. §46.6 has the item-by-item list, and
+§49.6 the client's own. The Are We Fast Yet and CLBG harnesses are **not** stood up, and §8.4 asks
+for them alongside this bullet — that is the largest thing still owed here.
+
+*It found a wall too, in the same way and one wave later: **a credential could not be sent**, because
+§3.5 gives a program no way to read a `secret[Str]` and a header value is a `Str` (§49.4). It had
+been invisible for three phases because no program had ever tried to *spend* a secret — `corpus/03`
+has held an `ApiKey` since Phase 1 and never used it. Closed by sending the secret at the edge
+rather than by weakening the property, so `"Bearer " + reveal(token)` is still a compile error.*
 
 *Writing it found a wall, which is what writing a library is for: **a trait's declared row is a
 bound, so a fallible operation cannot be a trait method** — `Money` cannot have `+` because `Num`
@@ -620,9 +629,15 @@ that can fail two ways.*
 an `Actor` only a provider can mint, `DevIdentity` as the named default, and a `SignedIdentity`
 that verifies a keyed-BLAKE3 credential — so an ownership check compares against something the
 caller did not choose. **Unbuilt**: the OIDC relying party (JWKS, asymmetric signatures, issuer and
-audience validation — it needs an HTTP client and a signature library, so it is an ADR rather than
-a module), `identity = managed()` provisioning, the claims → `Session` mapping, and presence. §48.5
-is the row-by-row list and `pending_security.rs` asserts each gap.
+audience validation), `identity = managed()` provisioning, the claims → `Session` mapping, and
+presence. §48.5 is the row-by-row list and `pending_security.rs` asserts each gap.
+
+*One of that row's two predecessors is gone.* §48.5 said the relying party "needs an HTTP client
+and a signature library, so it is an ADR rather than a line in a module". The HTTP client is built
+([`49`](49-http-client-report.md)). What is left is the signature library — and TLS, because JWKS
+is fetched over it and [`49`](49-http-client-report.md) §49.6 is plaintext. Those two are one
+dependency decision taken together, which is a better-shaped ADR than the three-way one this row
+used to describe.
 
 Then the playground rungs A and B (whose safety predecessor landed in Wave 0), then Phase 3's exit
 criterion — which still cannot honestly be attempted, and now for one reason rather than two: what
@@ -673,7 +688,8 @@ Recommended pairings, in order:
 | When | Branch 1 (critical path) | Branch 2 | Why it is safe |
 |---|---|---|---|
 | ~~**Then**~~ | ~~Lane A: `Result` and error rows~~ | ~~Lane D, plus Lane C's half of Wave 0~~ | **Done.** Both branches landed together, and the prediction held: the error rows touched `check/`, `ty.rs`, `row.rs` and `core.rs`, and Wave 0 touched `beck-diag`, `beck-syntax`, `beck-rt` and `docs/`. The one collision was the one the table names below — `beck-diag/src/index.rs`, four new codes — and it was trivial because the numbers were far apart |
-| **Now** | Lane A: the standard library, on the error shape Wave 1 settled | Lane B: the shared dataflow's three loose ends, then SQL read models | `beck-rt` and `engine.rs` are untouched by anything in `check/` |
+| ~~**Then**~~ | ~~Lane A: the standard library, on the error shape Wave 1 settled~~ | ~~Lane B: the shared dataflow's three loose ends~~ | **Half done.** The library's first half landed ([`46`](46-standard-library-report.md)), then the wall it wrote ([`47`](47-effect-polymorphic-traits-report.md)), then the HTTP client ([`49`](49-http-client-report.md)) — which was Lane A *and* Lane B, because the seam is in `beck-core` and the implementation is in `beck-rt`. The prediction held anyway: nothing in `engine.rs` was touched |
+| **Now** | Lane A: the rest of Wave 2 — bignums, coercion, `Set`, dates | Lane B: the shared dataflow's three loose ends, then SQL read models | `beck-rt` and `engine.rs` are untouched by anything in `check/` |
 | **Then** | Lane A: bignums, coercion, `@derive` | Lane E: the LLVM backend — and per §8.4 the AWFY/CLBG harness lands with whichever arrives second | The backend seam exists so these do not interact |
 | **Any time** | — | Lane F; Lane C's LSP; more of SICP | No predecessors, no collisions |
 
@@ -701,12 +717,14 @@ discipline that avoids the collision.
   [`45`](45-error-rows-report.md) has now removed. The correction stands for the next one: the
   concurrency half of the same bullet has *no* predecessor and should not be scheduled as though it
   shares one.
-- **F11 should be read as one-third met, not `FIXED`.** [`14`](14-review-findings.md) recorded the
+- **F11 should be read as two-thirds met, not `FIXED`.** [`14`](14-review-findings.md) recorded the
   constraint, which is all `FIXED (constraint recorded)` ever claimed; the runtime then did not
   honour it for three phases. The clock is now supplied rather than ambient
-  ([`44`](44-wave-0-report.md) §44.3) — but F11 named clock, network *and* disk, and the other two
-  are untouched, as is elapsed time. Correcting the record is this bullet, since
-  [`14`](14-review-findings.md) is history like any report.
+  ([`44`](44-wave-0-report.md) §44.3) and the network is a seam
+  ([`49`](49-http-client-report.md) §49.5) — the second built *before* its first caller rather than
+  three phases after, which is the whole of what F11 asks for. The **disk** is untouched, as is
+  elapsed time. Correcting the record is this bullet, since [`14`](14-review-findings.md) is
+  history like any report.
 - **§8.1's "the playground can ship early" now carries a predecessor**, added by
   [`42`](42-security-assurance.md) §42.2 after that graph was drawn.
 - **Three surveys' `adopt` verdicts now have a position.** They still need their D-numbers and ADRs

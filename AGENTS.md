@@ -19,8 +19,9 @@ Write the commit message as the author of the change: what changed, and why.
   be edited to track the compiler.
 - [`compiler/`](compiler/) is the built compiler and the runtime it targets, through Phase 2 plus
   Phase 3's test construct, its general slicer, its incremental view engine, that engine's shared
-  dataflow, and the language's own means of abstraction — tail calls, reals, polymorphism,
-  parameterised types and traits. The build reports —
+  dataflow, the language's own means of abstraction — tail calls, reals, polymorphism,
+  parameterised types and traits — and the standard library's first half, its outbound call
+  included. The build reports —
   [`19`](docs/19-phase-1-report.md), [`20`](docs/20-phase-2-report.md),
   [`22`](docs/22-phase-3-report.md), [`23`](docs/23-general-slicer-report.md),
   [`24`](docs/24-incremental-views-report.md), [`26`](docs/26-arrangement-sharing-report.md),
@@ -31,16 +32,18 @@ Write the commit message as the author of the change: what changed, and why.
   [`36`](docs/36-parameterised-types-report.md), [`37`](docs/37-traits-report.md),
   [`39`](docs/39-bounds-report.md), [`40`](docs/40-traits-across-modules-report.md),
   [`41`](docs/41-generic-arithmetic-report.md), [`44`](docs/44-wave-0-report.md),
-  [`45`](docs/45-error-rows-report.md), [`46`](docs/46-standard-library-report.md) and
-  [`47`](docs/47-effect-polymorphic-traits-report.md) and [`48`](docs/48-identity-report.md),
+  [`45`](docs/45-error-rows-report.md), [`46`](docs/46-standard-library-report.md),
+  [`47`](docs/47-effect-polymorphic-traits-report.md), [`48`](docs/48-identity-report.md) and
+  [`49`](docs/49-http-client-report.md),
   indexed in
   [`docs/README.md`](docs/README.md) — record what each
   phase does, what it refuses to claim, and the corrections it makes to the design documents.
   Add a new report to that list and to the index; do not extend it with another "and".
   Phase 3 is **four bullets built, half of a fifth, most of a sixth, and a seventh that has
   started**: the test construct, the general slicer (Phase 2's debt), the means-of-abstraction
-  bullet and `Result`/error rows are built; the standard library has its first half and a wall of
-  its own (docs/46); the incremental-views bullet has its engine but not its read models, pgwire
+  bullet and `Result`/error rows are built; the standard library has its first half, its HTTP client
+  (docs/49) and two walls of its own (docs/46, docs/49); the incremental-views bullet has its engine
+  but not its read models, pgwire
   or fusion; the expressiveness suite runs two chapters of SICP. Seven of the fourteen are
   untouched — identity has its seam but not its OIDC relying party (docs/48) — and docs/26 §26.9
   names them one at a time. **Wave 0** (docs/08 §8.5.4) is also
@@ -51,7 +54,9 @@ Write the commit message as the author of the change: what changed, and why.
   removing them wrote (docs/33, docs/36, docs/41); docs/41 §41.7 names what stands in their place —
   and docs/46 §46.5 added one more, found by writing a library rather than a compiler — a trait's
   declared row was a ceiling, so a fallible operation could not be a trait method — which docs/47
-  removed the next day.
+  removed the next day. docs/49 §49.4 found the next one the same way: a `secret[Str]` cannot be
+  read, so a credential could not reach a header, and the fix moved *when* the secret is unwrapped
+  rather than weakening §3.5.
   Reports are history: a later phase's correction to an earlier one goes in the later report, not
   into the earlier text.
 - [`docs/reference/`](docs/reference/README.md) is **generated** by `beck doc reference` from the
@@ -109,7 +114,7 @@ Write the commit message as the author of the change: what changed, and why.
 - The harnesses are the project's conscience (§4.8, §8.3): `compiler/crates/beck-cli/tests/` holds
   the differential, replay-determinism, backend-seam, scaling, security, corpus, placement-property,
   general-slicer, incremental-analysis, incremental-engine, shared-arrangement, subscription,
-  view-metrics, SICP, tests-in-Beck, UI, workflow-cross-check, documentation and
+  view-metrics, SICP, tests-in-Beck, UI, workflow-cross-check, documentation, outbound and
   diagnostic-snapshot suites, plus the two release-only measurement suites (`measure_phase2`,
   `measure_incremental`). Keep them green.
 - The CI workflow is an artefact too, and Phase 2 found that it had never run

@@ -25,6 +25,7 @@ pub mod graph;
 pub mod html;
 pub mod iface;
 pub mod incremental;
+pub mod net;
 pub mod place;
 pub mod plan;
 pub mod pmap;

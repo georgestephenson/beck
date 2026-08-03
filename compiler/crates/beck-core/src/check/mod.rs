@@ -3011,6 +3011,9 @@ impl<'a> Checker<'a> {
         // Charged *after* the arguments, so that a row variable in the scheme (`map_list`'s `e`)
         // has already absorbed whatever the function argument does.
         self.perform(&latent);
+        if p == Prim::HttpFetch {
+            self.outbound_host(checked.first(), span);
+        }
 
         Core::new(
             CoreKind::Prim {
@@ -3020,6 +3023,81 @@ impl<'a> Checker<'a> {
             *ret,
             span,
         )
+    }
+
+    /// Charge `net.out(host)` for an `http_fetch`, from the host written at the call site.
+    ///
+    /// This is the second place the compiler reads an *argument* to decide a row — `raise` is the
+    /// first — and the reason is not symmetry. §6.5 derives the egress NetworkPolicy from the
+    /// program's `net.out` atoms and nothing else, so a host that arrived in a variable would be a
+    /// call the cluster could not be told about. Requiring a literal is what makes the derivation
+    /// total: every outbound call in the program names its peer, and the policy is the list.
+    ///
+    /// What a program does instead of computing a host is compute everything *else* — the path,
+    /// the port, the body, the headers — or write one call site per host. A wrapper is still
+    /// possible in the direction that matters: a higher-order helper takes a closure, and the
+    /// closure names the host, so its row carries the atom out (§3.2's `e`).
+    fn outbound_host(&mut self, arg: Option<&Core>, span: Span) {
+        let (Some(arg), Some(host)) = (arg, arg.and_then(crate::core::literal_str)) else {
+            let at = arg.map(|a| a.span).unwrap_or(span);
+            self.diags.push(
+                Diagnostic::error(
+                    "B0395",
+                    "the host of an outbound call has to be written at the call site".to_string(),
+                    at,
+                )
+                .with_primary_label("this is computed, so nothing knows which host it reaches")
+                .with_note(
+                    "`http_fetch` performs `net.out(host)`, and the cluster's egress policy is \
+                     that atom (§6.5). A host that is not written here is a call the deployment \
+                     cannot be told about",
+                )
+                .with_fix(
+                    "write the host as a literal and compute the path instead — or take a \
+                     closure, so the caller names its own host and the row carries it out",
+                ),
+            );
+            return;
+        };
+        // `origin` is the client's own server, and the client's channel to it is the socket the
+        // runtime already owns. Allowing it here would put an outbound call on the tier that has
+        // no way to make one.
+        if host.as_ref() == "origin" {
+            self.diags.push(
+                Diagnostic::error(
+                    "B0396",
+                    "`origin` is not a host `http_fetch` can call".to_string(),
+                    arg.span,
+                )
+                .with_primary_label("this names the program's own origin")
+                .with_note(
+                    "`net.out(origin)` is the one outbound atom a client tier discharges, and a \
+                     client reaches its server over the command channel rather than by fetching",
+                )
+                .with_fix("send a command, or name the service's own host"),
+            );
+            return;
+        }
+        if !crate::net::is_nameable_host(&host) {
+            self.diags.push(
+                Diagnostic::error(
+                    "B0396",
+                    format!("`{host}` is not a host `http_fetch` can call"),
+                    arg.span,
+                )
+                .with_primary_label("this is not a name a `uses net.out(…)` clause could write")
+                .with_note(
+                    "the host is a DNS name — ASCII labels separated by dots — because it becomes \
+                     a NetworkPolicy peer. A scheme, a port or a path is not part of it",
+                )
+                .with_fix(
+                    "give the host alone; the port is a field of the request and the path \
+                     is its own argument",
+                ),
+            );
+            return;
+        }
+        self.perform(&Row::of([Effect::NetOut(host)]));
     }
 
     /// Build a union variant or a model record from positional or named arguments.
@@ -3470,6 +3548,46 @@ def charge(amount: Int) -> Str uses net.out(payments.example.com), nondet:
             .atoms
             .contains(&Effect::NetOut("payments.example.com".into())));
         assert!(row.atoms.contains(&Effect::Nondet));
+    }
+
+    #[test]
+    fn an_outbound_call_performs_the_host_it_names() {
+        // The row is *inferred* from the argument — the `uses` clause below is the bound §3.6
+        // makes it, and the atom in it came from the string on the line above.
+        let src = "\
+def fetch_rate() -> Str uses net.out(rates.example.com), raises(HttpError):
+    r = http_fetch(\"rates.example.com\", HttpRequest(method=\"GET\", path=\"/usd\", headers={}, body=\"\", port=80, secrets={}))
+    return r.body
+";
+        assert_eq!(
+            row_of(src, "fetch_rate"),
+            ["net.out(rates.example.com)", "raises(HttpError)"]
+        );
+    }
+
+    #[test]
+    fn an_outbound_call_to_a_host_it_cannot_name_is_refused() {
+        let req =
+            "HttpRequest(method=\"GET\", path=\"/\", headers={}, body=\"\", port=80, secrets={})";
+        // Computed: nothing downstream could write the NetworkPolicy peer.
+        let computed = format!(
+            "def go(host: Str) -> Str uses net.out(x.example.com), raises(HttpError):\n    \
+             return http_fetch(host, {req}).body\n"
+        );
+        assert!(
+            codes(&computed).contains(&"B0395"),
+            "{:?}",
+            codes(&computed)
+        );
+
+        // A URL is not a host, and neither is a host with a port on it.
+        for bad in ["https://x.example.com", "x.example.com:8080", "origin"] {
+            let src = format!(
+                "def go() -> Str uses net.out(x.example.com), raises(HttpError):\n    \
+                 return http_fetch(\"{bad}\", {req}).body\n"
+            );
+            assert!(codes(&src).contains(&"B0396"), "{bad}: {:?}", codes(&src));
+        }
     }
 
     #[test]

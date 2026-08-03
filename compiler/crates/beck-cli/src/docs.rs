@@ -635,6 +635,14 @@ fn prelude_page() -> Page {
     }
     md.push('\n');
     html.push_str("</table>\n");
+    // The scheme above is the whole row for every name but one, and a reader who assumed it was
+    // the whole row for `http_fetch` would think an outbound call performs nothing but a failure.
+    let caveat = "`http_fetch` is the one name whose row the table above cannot state in full: it \
+                  also performs `net.out(host)`, for the host written as its first argument. That \
+                  argument has to be a literal — the cluster's egress policy is derived from those \
+                  atoms, so a computed host is a call the deployment could not be told about.";
+    let _ = writeln!(md, "{caveat}\n");
+    let _ = writeln!(html, "<p>{}</p>", docgen::escape(caveat));
     Page {
         slug: "prelude",
         title: "The prelude",

@@ -17,6 +17,9 @@ What a user's type may implement to join something the language already has. `Nu
 | Type | Declaration |
 |---|---|
 | `Envelope` | `model Envelope[T] {seq: Int, at: Int, actor: Str, body: T}` |
+| `HttpError` | `union HttpError = HttpUnreachable(host: Str, why: Str) \| HttpTimedOut(host: Str, millis: Int) \| HttpBadResponse(why: Str) \| HttpStatus(status: Int, body: Str)` |
+| `HttpRequest` | `model HttpRequest {method: Str, path: Str, headers: Map[Str, Str], body: Str, port: Int, secrets: Map[Str, secret[Str]]}` |
+| `HttpResponse` | `model HttpResponse {status: Int, headers: Map[Str, Str], body: Str}` |
 | `Json` | `union Json = JsonNull \| JsonBool(value: Bool) \| JsonNumber(value: Float) \| JsonStr(value: Str) \| JsonList(items: list[Json]) \| JsonObject(fields: Map[Str, Json])` |
 | `JsonError` | `union JsonError = BadJson(why: Str)` |
 | `Option` | `union Option[T] = Some(value: T) \| None` |
@@ -27,7 +30,7 @@ What a user's type may implement to join something the language already has. `Nu
 
 ## Names
 
-86 of them.
+87 of them.
 
 | Name | Type |
 |---|---|
@@ -56,6 +59,7 @@ What a user's type may implement to join something the language already has. `Nu
 | `html_key` | `(a) -> Attr` |
 | `html_on` | `(Str, a) -> Attr` |
 | `html_text` | `(a) -> Html` |
+| `http_fetch` | `(Str, HttpRequest) -> HttpResponse ! {raises(HttpError)}` |
 | `internal_of` | `(a) -> internal[a]` |
 | `is_some` | `(Option[a]) -> Bool` |
 | `json_parse` | `(Str) -> Json ! {raises(JsonError)}` |
@@ -117,4 +121,6 @@ What a user's type may implement to join something the language already has. `Nu
 | `time_parse` | `(Str) -> Int ! {raises(TimeError)}` |
 | `unwrap_or` | `(Option[a], a) -> a` |
 | `uuid` | `() -> Str ! {nondet}` |
+
+`http_fetch` is the one name whose row the table above cannot state in full: it also performs `net.out(host)`, for the host written as its first argument. That argument has to be a literal — the cluster's egress policy is derived from those atoms, so a computed host is a call the deployment could not be told about.
 
