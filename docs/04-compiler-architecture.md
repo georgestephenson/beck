@@ -162,6 +162,16 @@ Targets to hold yourself to: keystroke→diagnostics **< 100 ms** on a 50 kLOC p
 `beck build` for a one-line change **< 2 s** to a running dev process (hot reload); clean release
 build of 50 kLOC **< 60 s** including WASM and image assembly.
 
+*Status ([`65`](65-lsp-report.md)). `beck lsp` is built — diagnostics, hover, go-to-definition and
+document symbols — and the "no separate implementation to drift" claim is now a harness: the
+server's answers are compared to `compile_or_library_str`'s own diagnostics and to
+`iface::render_item`, rather than to strings written in a test. **The Salsa query graph above is
+not built**; the server re-checks the whole buffer, which [`64`](64-compile-speed-report.md) §64.6
+is the argument for. Measured end to end through the protocol, the 100 ms target holds to about
+**13,000 lines in one module** — 0.84 ms at 59 lines, 7.37 ms at 914, 88 ms at 12,899 — so a 50 kLOC
+project of ordinary modules is inside the budget and a 50 kLOC module is not. That gap is exactly
+what per-item invalidation is for, and §65.4 says so with the numbers.*
+
 ## 4.7 `beck explain` — shipped in v0.1
 
 Non-negotiable, per §1.6's Meteor lesson. Every inferred decision must be interrogable:

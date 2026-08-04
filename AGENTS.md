@@ -47,8 +47,9 @@ Write the commit message as the author of the change: what changed, and why.
   [`60`](docs/60-collision-detection-report.md),
   [`61`](docs/61-deltablue-report.md),
   [`62`](docs/62-fuel-report.md),
-  [`63`](docs/63-felleisen-report.md) and
-  [`64`](docs/64-compile-speed-report.md),
+  [`63`](docs/63-felleisen-report.md),
+  [`64`](docs/64-compile-speed-report.md) and
+  [`65`](docs/65-lsp-report.md),
   indexed in
   [`docs/README.md`](docs/README.md) — record what each
   phase does, what it refuses to claim, and the corrections it makes to the design documents.
@@ -68,7 +69,10 @@ Write the commit message as the author of the change: what changed, and why.
   from this environment and a benchmark verified against an invented number is worse than none; the incremental-views bullet has its engine and
   that engine's lifecycle (docs/51) but not its read models, pgwire
   or fusion; the expressiveness suite runs two chapters of SICP and answers §25.9's Felleisen
-  question — six of the seven special forms recovered, `amb` conceded (docs/63). Seven of the fourteen are
+  question — six of the seven special forms recovered, `amb` conceded (docs/63); and **the LSP
+  bullet is built** (docs/65) — diagnostics, hover, go-to-definition and symbols, from the same
+  front end `beck check` runs, with §4.6's 100 ms budget holding to about 13,000 lines in one
+  module. Six of the fourteen are
   untouched — identity has its seam but not its OIDC relying party (docs/48) — and docs/26 §26.9
   names them one at a time, less the two docs/51 closed. **Wave 0** (docs/08 §8.5.4) is also
   built — a bounded front end, an injected clock, a threat model, a disclosure policy and an

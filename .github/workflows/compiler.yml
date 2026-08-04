@@ -354,6 +354,42 @@ jobs:
           done
           ./target/release/beck check corpus/project/app.beck
           ./target/release/beck iface corpus/project/domain.beck --stdout > /dev/null
+          # docs/65: the language server starts, answers `initialize`, and exits cleanly on
+          # `shutdown`/`exit`. The protocol itself is `beck-cli/tests/lsp.rs`, which `cargo test`
+          # above already drives; this is the claim that the *release* binary does it too — a
+          # server that only worked in a debug build is a server nobody could ship.
+          python3 - <<'PY'
+          import json, subprocess
+          def frame(o):
+              b = json.dumps(o).encode()
+              return b"Content-Length: %d\r\n\r\n" % len(b) + b
+          def read(f):
+              n = None
+              while True:
+                  line = f.readline()
+                  assert line, "the server closed its output"
+                  t = line.strip()
+                  if not t:
+                      break
+                  k, _, v = t.partition(b":")
+                  if k.strip().lower() == b"content-length":
+                      n = int(v.strip())
+              return json.loads(f.read(n))
+          p = subprocess.Popen(["./target/release/beck", "lsp"],
+                               stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+          p.stdin.write(frame({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                               "params": {"capabilities": {}}}))
+          p.stdin.flush()
+          caps = read(p.stdout)["result"]["capabilities"]
+          assert caps["hoverProvider"] and caps["definitionProvider"], caps
+          p.stdin.write(frame({"jsonrpc": "2.0", "id": 2, "method": "shutdown", "params": None}))
+          p.stdin.flush()
+          read(p.stdout)
+          p.stdin.write(frame({"jsonrpc": "2.0", "method": "exit", "params": None}))
+          p.stdin.flush()
+          assert p.wait() == 0, "`exit` after `shutdown` is a clean exit"
+          print("beck lsp: initialize, shutdown, exit")
+          PY
 
       - name: the object graph is what the effects imply
         run: |

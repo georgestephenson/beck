@@ -203,6 +203,12 @@ enum Cmd {
         #[command(subcommand)]
         what: Bench,
     },
+    /// Serve the Language Server Protocol on stdin and stdout (§4.6).
+    ///
+    /// The same front end `beck check` runs, so an editor's squiggle and a CI failure are the same
+    /// diagnostic — §4.6's "there is no separate language server implementation to drift". Not
+    /// meant to be run by hand: an editor starts it and speaks JSON-RPC to it.
+    Lsp,
     /// Bring the program up on a local cluster or host — rung 2 or 3 (§6.6).
     Up {
         file: PathBuf,
@@ -296,6 +302,7 @@ enum Explain {
 
 mod capture;
 mod docs;
+mod lsp;
 
 fn main() -> Result<()> {
     // Two destinations for one set of records: the terminal, and the dashboard's ring.
@@ -377,6 +384,7 @@ fn dispatch(cli: Cli) -> Result<()> {
             runs,
             fuel,
         } => test_cmd(&file, filter.as_deref(), verbose, runs, fuel),
+        Cmd::Lsp => lsp::serve(),
         Cmd::Graph { file, json, types } => graph_cmd(&file, json, types),
         Cmd::Impact { file, name, json } => impact_cmd(&file, &name, json),
         Cmd::Run {

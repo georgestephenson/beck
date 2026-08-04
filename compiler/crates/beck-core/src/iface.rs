@@ -679,7 +679,11 @@ fn impl_signature(i: &ImplSig) -> String {
     )
 }
 
-fn render_item(i: &Item) -> String {
+/// One published name, as a `.becki` line.
+///
+/// Public because `beck lsp` shows it on hover, and `docs/04` §4.6 forbids a second renderer: what
+/// an editor says a name's signature is has to be what `beck iface` publishes it as.
+pub fn render_item(i: &Item) -> String {
     let uses = if i.effects.is_empty() {
         String::new()
     } else {

@@ -241,6 +241,13 @@ Append, read and encode, against memory, redb and — with a URL — PostgreSQL
 | `--dir` | DIR | Where to put the temporary redb file |
 
 
+## `beck lsp`
+
+Serve the Language Server Protocol on stdin and stdout (§4.6).
+
+The same front end `beck check` runs, so an editor's squiggle and a CI failure are the same diagnostic — §4.6's "there is no separate language server implementation to drift". Not meant to be run by hand: an editor starts it and speaks JSON-RPC to it.
+
+
 ## `beck up`
 
 Bring the program up on a local cluster or host — rung 2 or 3 (§6.6)
