@@ -40,3 +40,7 @@ tokio = { workspace = true }
 # the tests".
 futures-util.workspace = true
 tokio-tungstenite.workspace = true
+# `clbg.rs` recomputes the digest of the Benchmarks Game's two 10 KB published outputs, so that the
+# hexadecimal a port asserts is derived from the checked-in file rather than chosen. It is the same
+# BLAKE3 the `digest` primitive is, which is what makes the two comparable.
+blake3.workspace = true

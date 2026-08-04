@@ -1,0 +1,101 @@
+# The Computer Language Benchmarks Game — binary-trees, in Beck.
+#
+# The Computer Language Benchmarks Game
+# https://salsa.debian.org/benchmarksgame-team/benchmarksgame/
+#
+# Ported from the Java program, contributed by Jarkko Miettinen.
+#
+# Allocate and walk many perfect binary trees. The suite is blunter about this one than about any
+# other — "don't optimize away the work", "leaf nodes must be the same as interior nodes, the same
+# memory allocation", and no arenas or pools — because the number it wants is the allocator's and a
+# clever program can make the work disappear.
+#
+# **A Beck port cannot honour the memory rules and does not claim to.** There is no allocator to
+# expose, no GC to leave in its default configuration, and nothing this file can say about how the
+# evaluator represents a `Node`. What it can honour is the *work*: `bottom_up_tree` builds every
+# node the Java builds, `item_check` visits every one of them, and the counts below are the counts
+# the suite publishes. `docs/68` §68.3 records that this benchmark measures less here than it does
+# elsewhere, which is a thing to know before reading a number off it and not a reason to leave it
+# out.
+#
+# The one place the rule bites the *shape* of the code: the Java's leaf is `new TreeNode(null,
+# null)` — an allocation, not an absence — so `Leaf` is a variant of the same union rather than an
+# `Option[Tree]` field, and building one costs what building a `Node` costs.
+#
+# Verified against `expected/binarytrees-output.txt`, the suite's own published output for
+# `N = 10`.
+
+import format
+
+union Tree:
+    Leaf
+    Node(left: Tree, right: Tree)
+
+## `1 << k`. Beck has no bitwise operators — `docs/53` §53.5 records that as a standing gap and
+## `awfy/README.md`'s third rule is the workaround — so a shift by `k` is `k` doublings.
+def two_to(k: Int) -> Int:
+    if k <= 0:
+        return 1
+    return 2 * two_to(k - 1)
+
+## A perfect tree of `depth`, built from the bottom.
+def bottom_up_tree(depth: Int) -> Tree:
+    if depth > 0:
+        return Node(left=bottom_up_tree(depth - 1), right=bottom_up_tree(depth - 1))
+    return Leaf
+
+## Every node counted once — `2^(depth+1) - 1` for a perfect tree, arrived at by walking it.
+def item_check(t: Tree) -> Int:
+    match t:
+        case Leaf:
+            return 1
+        case Node(left, right):
+            return 1 + item_check(left) + item_check(right)
+
+def min_depth() -> Int:
+    return 4
+
+## `iterations` trees of `depth`, each built, walked and dropped, and their checks summed.
+def check_many(i: Int, iterations: Int, depth: Int, acc: Int) -> Int:
+    if i > iterations:
+        return acc
+    return check_many(i + 1, iterations, depth, acc + item_check(bottom_up_tree(depth)))
+
+## The `for (depth = minDepth; depth <= maxDepth; depth += 2)` band, one published line each.
+def depth_lines(depth: Int, max_depth: Int, done: list[Str]) -> list[Str]:
+    if depth > max_depth:
+        return done
+    iterations = two_to(max_depth - depth + min_depth())
+    line = str(iterations) + "\t trees of depth " + str(depth) + "\t check: " + str(
+        check_many(1, iterations, depth, 0)
+    )
+    return depth_lines(depth + 2, max_depth, list_append(done, line))
+
+## The benchmark: what the program writes to stdout for `N = n`.
+##
+## The long-lived tree is built before the band and checked after it, which is the whole point of
+## it: it is alive across every allocation the band does. Beck has no way to observe that and the
+## line is published anyway, because the output is the oracle.
+def binarytrees_output(n: Int) -> Str:
+    max_depth = min_depth() + 2 if min_depth() + 2 > n else n
+    stretch_depth = max_depth + 1
+    long_lived = bottom_up_tree(max_depth)
+    stretch = "stretch tree of depth " + str(stretch_depth) + "\t check: " + str(
+        item_check(bottom_up_tree(stretch_depth))
+    )
+    tail = "long lived tree of depth " + str(max_depth) + "\t check: " + str(item_check(long_lived))
+    return lines_of(
+        concat_lists([[stretch], depth_lines(min_depth(), max_depth, []), [tail]])
+    )
+
+test "binarytrees: N = 10 is the suite's own published output":
+    expect binarytrees_output(10) == "stretch tree of depth 11\t check: 4095\n1024\t trees of depth 4\t check: 31744\n256\t trees of depth 6\t check: 32512\n64\t trees of depth 8\t check: 32704\n16\t trees of depth 10\t check: 32752\nlong lived tree of depth 10\t check: 2047\n"
+
+## A perfect tree of depth `d` has `2^(d+1) - 1` nodes, and `item_check` is only worth anything if
+## it agrees. Asserted separately from the published output because the published output is a sum
+## over many trees, in which a walk that is wrong on one depth can cancel against another.
+test "binarytrees: a walk of a perfect tree counts every node":
+    expect item_check(bottom_up_tree(0)) == 1
+    expect item_check(bottom_up_tree(1)) == 3
+    expect item_check(bottom_up_tree(4)) == 31
+    expect item_check(bottom_up_tree(10)) == 2047

@@ -50,8 +50,9 @@ Write the commit message as the author of the change: what changed, and why.
   [`63`](docs/63-felleisen-report.md),
   [`64`](docs/64-compile-speed-report.md),
   [`65`](docs/65-lsp-report.md),
-  [`66`](docs/66-page-snapshots-report.md) and
-  [`67`](docs/67-sqlite-report.md),
+  [`66`](docs/66-page-snapshots-report.md),
+  [`67`](docs/67-sqlite-report.md) and
+  [`68`](docs/68-clbg-report.md),
   indexed in
   [`docs/README.md`](docs/README.md) — record what each
   phase does, what it refuses to claim, and the corrections it makes to the design documents.
@@ -64,11 +65,18 @@ Write the commit message as the author of the change: what changed, and why.
   closes docs/08 §8.5.4's Wave 2 —
   and two walls of its own (docs/46, docs/49); **all fourteen** of Are We Fast Yet's benchmarks —
   its nine micro and all five macro (docs/53, docs/57, docs/58, docs/59, docs/60, docs/61) — are
-  that bullet's long-owed harness half, so **the standard-library bullet is done**, with CLBG the
-  only thing outstanding under docs/25 §25.9 rather than under
-  it — the compile-speed budgets are built (docs/64), and docs/64 §64.7.1 records that CLBG is owed
-  *with its sources to hand* rather than owed generally, since its expected outputs are unreachable
-  from this environment and a benchmark verified against an invented number is worse than none; the incremental-views bullet has its engine and
+  that bullet's long-owed harness half, so **the standard-library bullet is done** — the
+  compile-speed budgets are built (docs/64) and so is the **CLBG harness** (docs/68), which
+  completes docs/25 §25.9's Phase 3 row: seven of the Game's ten, each verified against the Game's
+  own published output *file*, with the oracle enforced by the gate — `clbg.rs` rebuilds every
+  asserted literal from `clbg/expected/` and recomputes the digest of the two 10 KB ones — which is
+  what docs/64 §64.7.1 was holding out for when it said the harness was owed *with its sources to
+  hand* rather than owed generally. Its largest finding is not about speed: **`lib/` is a standard
+  library that nothing outside `lib/` can import**, since `import` resolves only against the root
+  module's own directory, and nothing had noticed because in three phases nothing had reached
+  across a directory. That is what stops `pidigits`, and docs/68 §68.4 leaves it as a decision for
+  docs/10 rather than repairing it in a benchmark's change; `mandelbrot` (a binary PBM, and `Str`
+  is UTF-8) and `regexredux` (no regex) are the other two of the ten; the incremental-views bullet has its engine and
   that engine's lifecycle (docs/51) but not its read models, pgwire
   or fusion; the expressiveness suite runs two chapters of SICP and answers §25.9's Felleisen
   question — six of the seven special forms recovered, `amb` conceded (docs/63); and **the LSP
@@ -162,6 +170,17 @@ Write the commit message as the author of the change: what changed, and why.
   invented here would defeat the whole point; `beck-cli/tests/awfy.rs` gates the directory, the nine
   names and the attribution, and `measure_awfy.rs` prints wall-clock and gates on nothing —
   §25.9 holds every comparative claim until there is a second backend.
+- [`compiler/clbg/`](compiler/clbg/README.md) is the other performance benchmark
+  ([`docs/25`](docs/25-benchmarks-and-expressiveness.md) §25.2): **seven** of the Computer Language
+  Benchmarks Game's ten, ported, each verified against the Game's own published **output file** —
+  checked in verbatim under `clbg/expected/` under its BSD 3-clause notice. The oracle is
+  *enforced* rather than transcribed, which is the difference from `awfy/` and the reason docs/64
+  §64.7.1 held the harness back until the files were reachable: `beck-cli/tests/clbg.rs` rebuilds
+  every asserted literal from `expected/` and recomputes the digest of the two 10 KB ones, so a
+  wrong constant fails the Beck test and a wrong constant with a matching wrong expectation fails
+  the Rust one. It also gates the seven names, the three absent ones and the attribution;
+  `measure_clbg.rs` prints wall-clock and gates on nothing. `mandelbrot`, `pidigits` and
+  `regexredux` are the three not ported and docs/68 §68.6 is why each.
 - Security posture is [`docs/43-threat-model.md`](docs/43-threat-model.md) (who is defended
   against, and who is not) and `SECURITY.md` (how a report reaches us). What is *absent* is asserted
   as absent in `beck-cli/tests/pending_security.rs`: building one of those controls turns a test
@@ -205,6 +224,10 @@ Write the commit message as the author of the change: what changed, and why.
   from `beck test` on each file in `compiler/awfy/`, quoted in
   [`docs/53-are-we-fast-yet-report.md`](docs/53-are-we-fast-yet-report.md) — where each benchmark's
   *verification* constant is the original suite's own, read from its source rather than chosen here;
+  and the Benchmarks Game numbers come from `cargo test --release --test measure_clbg --
+  --nocapture` and from `beck test` on each file in `compiler/clbg/`, quoted in
+  [`docs/68-clbg-report.md`](docs/68-clbg-report.md) — where every expected output is the Game's own
+  file under `clbg/expected/` and `clbg.rs` is what holds a port's assertion to it;
   and the compile-speed numbers come from `cargo test --release --test measure_compile --
   --nocapture` and `cargo test --release --test compile_speed -- --nocapture`, quoted in
   [`docs/64-compile-speed-report.md`](docs/64-compile-speed-report.md) — where the gate asserts a
@@ -213,10 +236,10 @@ Write the commit message as the author of the change: what changed, and why.
 - The harnesses are the project's conscience (§4.8, §8.3): `compiler/crates/beck-cli/tests/` holds
   the differential, replay-determinism, backend-seam, scaling, security, corpus, placement-property,
   general-slicer, incremental-analysis, incremental-engine, shared-arrangement, subscription,
-  view-metrics, SICP, Are We Fast Yet, tests-in-Beck, UI, workflow-cross-check, documentation,
-  outbound, compile-speed and diagnostic-snapshot suites, plus the four release-only measurement
-  suites (`measure_phase2`, `measure_incremental`, `measure_awfy`, `measure_compile`). Keep them
-  green.
+  view-metrics, SICP, Are We Fast Yet, Benchmarks Game, tests-in-Beck, UI, workflow-cross-check,
+  documentation, outbound, compile-speed and diagnostic-snapshot suites, plus the five release-only
+  measurement suites (`measure_phase2`, `measure_incremental`, `measure_awfy`, `measure_compile`,
+  `measure_clbg`). Keep them green.
 - The CI workflow is an artefact too, and Phase 2 found that it had never run
   ([`docs/20-phase-2-report.md`](docs/20-phase-2-report.md) §20.4 item 8). If you change
   `.github/workflows/`, run the steps you changed by hand before trusting them.

@@ -180,6 +180,12 @@ jobs:
           for f in awfy/*.beck; do
             ./target/release/beck test "$f"
           done
+          # docs/68: the Computer Language Benchmarks Game, verified against the Game's own
+          # published output files under clbg/expected/. Same reason as awfy/ above — `cargo test`
+          # drives tests/clbg.rs, and this is the claim that the binary does it too.
+          for f in clbg/*.beck; do
+            ./target/release/beck test "$f"
+          done
           # docs/31: a recursion the user cannot bound must end in a diagnostic and a live process.
           # An exit status of 134 (SIGABRT) or 139 (SIGSEGV) is the failure this replaced, and it is
           # exactly the thing a `! cmd` gate would have accepted, so the status is checked rather
@@ -550,6 +556,10 @@ jobs:
           # docs/53 §53.3. Printed, never thresholded, and no comparative claim: docs/25 §25.9
           # holds those until there is a second backend for them to be about.
           cargo test --release --test measure_awfy -- --nocapture
+          # docs/68 §68.5. The same rule, and one more qualification stated there: every port runs
+          # the Game's format-checking size, because that is the only size it publishes an oracle
+          # for.
+          cargo test --release --test measure_clbg -- --nocapture
           # docs/64. The front end per phase and per program, and §13.7's keystroke→diagnostic
           # latency. Printed, never thresholded — the *gate* is `compile_speed`, which asserts a
           # shape rather than a rate and runs under `cargo test` above.

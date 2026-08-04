@@ -1,0 +1,164 @@
+# The Computer Language Benchmarks Game — fannkuch-redux, in Beck.
+#
+# The Computer Language Benchmarks Game
+# https://salsa.debian.org/benchmarksgame-team/benchmarksgame/
+#
+# Ported from the Java program, contributed by Oleg Mazurov.
+#
+# Indexed access to a tiny integer sequence: walk all `n!` permutations of `1..n`, and for each one
+# count how many prefix-reversals it takes to bring `1` to the front. The answers are the largest
+# such count and a checksum that alternates sign with the permutation's index.
+#
+# **The Java is the parallel version and this is not.** It splits `n!` into 150 chunks across an
+# `AtomicInteger` task counter, and `firstPermutation(idx)` exists to seek a worker to its chunk's
+# start. Beck has no threads to give a chunk to, so this port runs the one chunk that covers
+# everything — which is what `runTask(0)` with `CHUNKSZ = Fact[n]` does, and is the same walk in
+# the same order. `firstPermutation(0)` is the identity permutation with a zeroed count array, so
+# it is written as that rather than transcribed. `docs/68` §68.3 records the reduction; the walk
+# and both published answers are unaffected, because a chunk boundary is not observable in either.
+#
+# Verified against `expected/fannkuchredux-output.txt`, the suite's own published output for
+# `N = 7`.
+
+import format
+
+## The permutation and the odometer that generates the next one — two mutable arrays in the Java,
+## carried together here for `awfy/README.md`'s second rule: where the original mutates two things
+## at once, the port carries both in one record.
+model Perm:
+    p: Map[Int, Int]
+    count: Map[Int, Int]
+
+## The two answers, accumulated across the walk.
+model Tally:
+    maxflips: Int
+    chksum: Int
+
+def empty_ints() -> Map[Int, Int]:
+    return {}
+
+## An element of an array that is fully populated before it is read. Beck cannot be told that, so
+## the unreachable default is `0` — which is also what Java's `new int[n]` would have held.
+def at(m: Map[Int, Int], i: Int) -> Int:
+    return unwrap_or(map_get(m, i), 0)
+
+def factorial(n: Int) -> Int:
+    if n <= 1:
+        return 1
+    return n * factorial(n - 1)
+
+## `firstPermutation(0)`: `p[i] = i`, and every `count[i]` zero.
+def first_permutation(n: Int) -> Perm:
+    return Perm(p=identity(0, n, empty_ints()), count=empty_ints())
+
+def identity(i: Int, n: Int, acc: Map[Int, Int]) -> Map[Int, Int]:
+    if i >= n:
+        return acc
+    return identity(i + 1, n, map_insert(acc, i, i))
+
+## `countFlips`: how many prefix-reversals bring `0` to the front, counted the Java's way.
+##
+## The Java counts the *first* reversal before performing any, so a permutation that already starts
+## with `0` scores 1 rather than 0 — and the caller never asks about one, because it skips those.
+## Reproducing the convention matters: the checksum is a sum of these numbers.
+def count_flips(p: Map[Int, Int]) -> Int:
+    first = at(p, 0)
+    if at(p, first) == 0:
+        return 1
+    return flip_from(p, first, 1)
+
+def flip_from(pp: Map[Int, Int], first: Int, flips: Int) -> Int:
+    turned = reverse_span(pp, 1, first - 1)
+    landed = at(turned, first)
+    placed = map_insert(turned, first, first)
+    if at(placed, landed) == 0:
+        return flips + 1
+    return flip_from(placed, landed, flips + 1)
+
+## `pp[lo..hi]` reversed in place, ends inwards.
+def reverse_span(pp: Map[Int, Int], lo: Int, hi: Int) -> Map[Int, Int]:
+    if lo >= hi:
+        return pp
+    return reverse_span(
+        map_insert(map_insert(pp, lo, at(pp, hi)), hi, at(pp, lo)),
+        lo + 1,
+        hi - 1,
+    )
+
+## `nextPermutation`: swap the first two, then carry the odometer.
+def next_permutation(s: Perm) -> Perm:
+    first = at(s.p, 1)
+    swapped = map_insert(map_insert(s.p, 1, at(s.p, 0)), 0, first)
+    return carry(Perm(p=swapped, count=s.count), 1, first)
+
+## The `while (++count[i] > i)` loop, which rotates a longer and longer prefix each time the digit
+## below it wraps.
+def carry(s: Perm, i: Int, first: Int) -> Perm:
+    bumped = map_insert(s.count, i, at(s.count, i) + 1)
+    if at(bumped, i) <= i:
+        return Perm(p=s.p, count=bumped)
+    j = i + 1
+    moved = at(s.p, 1)
+    return carry(
+        Perm(
+            p=map_insert(shift_down(map_insert(s.p, 0, moved), 1, j), j, first),
+            count=map_insert(bumped, i, 0),
+        ),
+        j,
+        moved,
+    )
+
+## `for (j = 1; j < limit; ++j) p[j] = p[j+1]` — every read is ahead of every write, so doing it
+## one index at a time is the same as doing it at once.
+def shift_down(p: Map[Int, Int], j: Int, limit: Int) -> Map[Int, Int]:
+    if j >= limit:
+        return p
+    return shift_down(map_insert(p, j, at(p, j + 1)), j + 1, limit)
+
+## The walk. `total` is `n!`, and the permutation is advanced between visits rather than after the
+## last one, which is what the Java's `if (++i == idxMax) break;` before `nextPermutation()` does.
+def scan(i: Int, total: Int, s: Perm, acc: Tally) -> Tally:
+    visited = visit(i, s, acc)
+    if i + 1 >= total:
+        return visited
+    return scan(i + 1, total, next_permutation(s), visited)
+
+## A permutation already starting with `0` is skipped, exactly as the Java skips it: it needs no
+## reversals, so it moves neither the maximum nor the checksum.
+def visit(i: Int, s: Perm, acc: Tally) -> Tally:
+    if at(s.p, 0) == 0:
+        return acc
+    flips = count_flips(s.p)
+    return Tally(
+        maxflips=flips if flips > acc.maxflips else acc.maxflips,
+        chksum=acc.chksum + (flips if i % 2 == 0 else 0 - flips),
+    )
+
+def tally(n: Int) -> Tally:
+    return scan(0, factorial(n), first_permutation(n), Tally(maxflips=1, chksum=0))
+
+## The benchmark: what the program writes to stdout for `N = n`.
+def fannkuchredux_output(n: Int) -> Str:
+    result = tally(n)
+    return lines_of([
+        str(result.chksum),
+        "Pfannkuchen(" + str(n) + ") = " + str(result.maxflips),
+    ])
+
+test "fannkuchredux: N = 7 is the suite's own published output":
+    expect fannkuchredux_output(7) == "228\nPfannkuchen(7) = 16\n"
+
+## `Pfannkuchen(n)` is OEIS [A000375](https://oeis.org/A000375), "Topswops" — `0, 1, 2, 4, 7, 10,
+## 16, …` from `n = 1`, whose seventh term is the `16` above. Asserting the four sizes below it is
+## what stops a walk that is wrong in a way `n = 7` happens not to notice; the Game publishes an
+## expected output at one size only, and `docs/59` §59.5 is the report on a benchmark whose single
+## oracle let it do nothing at all.
+##
+## The checksum is not asserted at these sizes, because the Game publishes one only for `N = 7` and
+## a second one would have to be computed here — which is the whole thing this directory does not
+## do.
+test "fannkuchredux: the flip count is A000375 at the four sizes below N = 7 too":
+    expect tally(3).maxflips == 2
+    expect tally(4).maxflips == 4
+    expect tally(5).maxflips == 7
+    expect tally(6).maxflips == 10

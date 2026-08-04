@@ -1,0 +1,166 @@
+# The Computer Language Benchmarks Game — k-nucleotide, in Beck.
+#
+# The Computer Language Benchmarks Game
+# https://salsa.debian.org/benchmarksgame-team/benchmarksgame/
+#
+# Ported from the Java program, contributed by James McIlree, modified by Tagir Valeev.
+#
+# Hashtable update and k-nucleotide strings: count every fragment of each length in one DNA
+# sequence, report the one- and two-base frequencies sorted by count, and then the exact count of
+# five named fragments.
+#
+# **The input is `fasta.beck`'s output rather than a file**, for the reason `revcomp.beck` gives at
+# length: `expected/knucleotide-input.txt` is byte-for-byte `expected/fasta-output.txt`, `clbg.rs`
+# asserts that rather than trusting it, and Beck has no stdin to redirect. Only sequence THREE is
+# read, which is what the Java's `read` does when it skips to `>THREE`.
+#
+# Two things the Java does that this does not, both recorded in `docs/68` §68.3:
+#
+# - **It is parallel and this is not.** The fragment tasks are split across a thread pool by
+#   reading-frame offset — `createFragmentMap(sequence, offset, length)` steps by `length` from
+#   `offset`, and the pool runs one task per offset. Their union is every position at every length,
+#   which is what this port counts directly. The answers are identical; there is no interleaving to
+#   observe because the counts are summed before anything is printed.
+# - **It packs a fragment into a `long`, two bits per base, and this uses the string.** The packing
+#   is what makes a hashtable of 18-mers cheap in Java, and it needs `&`, `>>` and `<<`, none of
+#   which Beck has (`docs/53` §53.5). The counting is the same counting over a slower key.
+#
+# Verified against `expected/knucleotide-output.txt`, the suite's own published output for the
+# input it publishes.
+
+import format
+import fasta
+
+## A fragment and how many times it occurs.
+model Entry:
+    key: Str
+    count: Int
+
+## A sort key: by count descending, then by fragment.
+##
+## **The field names are the sort order**, not the order they are declared in — `docs/50` §50.5
+## measured that and `lib/collections.beck` carries the note. `left` sorts before `right`, so the
+## negated count decides and the fragment breaks the tie.
+##
+## The tie-break is this port's and not the suite's. Java sorts by count alone, on a list built by
+## iterating a hash map, so two fragments with equal counts come out in an order that is a fact
+## about the hash table — reproducible for that program and not defined by the benchmark. No tie
+## occurs in the published output at `N = 1000`, so nothing here depends on the choice; making it
+## the fragment rather than leaving it to a `Map`'s iteration is what stops the answer from being
+## a fact about Beck's `Map` instead.
+model Rank:
+    left: Int
+    right: Str
+
+def no_counts() -> Map[Str, Int]:
+    return {}
+
+## Sequence THREE, upper-cased, one base per element.
+##
+## Upper case because the Java's `toCodes` masks each byte with `7` before indexing its code table,
+## which maps `a` and `A` to the same code — a case-insensitive read written as bit arithmetic.
+## `fasta` emits THREE in lower case and the published output names fragments in upper, so a port
+## that skipped this would count nothing at all and report five zeros.
+def three_sequence(n: Int) -> list[Str]:
+    return str_chars(str_upper(str_join(three_lines(str_split(fasta_output(n), "\n"), 0, false, []), "")))
+
+def three_lines(lines: list[Str], i: Int, inside: Bool, done: list[Str]) -> list[Str]:
+    if i >= list_len(lines):
+        return done
+    line = unwrap_or(list_get(lines, i), "")
+    if str_starts_with(line, ">"):
+        return three_lines(lines, i + 1, str_starts_with(line, ">THREE"), done)
+    if inside and not str_is_empty(line):
+        return three_lines(lines, i + 1, inside, list_append(done, line))
+    return three_lines(lines, i + 1, inside, done)
+
+## Every fragment of length `k`, at every position, counted.
+def kmer_counts(chars: list[Str], k: Int) -> Map[Str, Int]:
+    return count_from(chars, k, 0, no_counts())
+
+def count_from(chars: list[Str], k: Int, i: Int, acc: Map[Str, Int]) -> Map[Str, Int]:
+    if i + k > list_len(chars):
+        return acc
+    key = kmer_at(chars, i, k)
+    return count_from(chars, k, i + 1, map_insert(acc, key, unwrap_or(map_get(acc, key), 0) + 1))
+
+def kmer_at(chars: list[Str], i: Int, k: Int) -> Str:
+    return str_join(list_slice(chars, i, k), "")
+
+def entries(counts: Map[Str, Int]) -> list[Entry]:
+    return map_list(map_keys(counts), lambda key: Entry(key=key, count=unwrap_or(map_get(counts, key), 0)))
+
+def ranked(counts: Map[Str, Int]) -> list[Entry]:
+    return sort_by(entries(counts), lambda e: Rank(left=0 - e.count, right=e.key))
+
+## A frequency block: every fragment of one length, as a percentage of the fragments counted, and
+## a blank line after it.
+##
+## The denominator is the number of *fragments* rather than of bases, which is why the caller
+## passes it: there are `n` one-base fragments in `n` bases and only `n - 1` two-base ones. The
+## Java computes the percentage in single precision (`100.0f`) and Beck's `Float` is IEEE 754
+## double (`docs/32` §32.3). No value in the published output is within `1e-6` of a rounding
+## boundary at three places, so the two agree here; a size where they did not would be a real
+## difference and not a formatting one.
+def block(chars: list[Str], k: Int, denominator: Int) -> Str:
+    return lines_of(frequency_lines(ranked(kmer_counts(chars, k)), denominator)) + "\n"
+
+def frequency_lines(es: list[Entry], denominator: Int) -> list[Str]:
+    return map_list(es, lambda e: e.key + " " + fixed(float(e.count) * 100.0 / float(denominator), 3))
+
+## One named fragment's exact count, tab-separated — the second half of the output.
+def count_line(chars: list[Str], fragment: Str) -> Str:
+    return str(occurrences(chars, fragment)) + "\t" + fragment + "\n"
+
+## Built as a whole table and then looked up, rather than scanned for. That is the suite's
+## instruction — "define a procedure to update a hashtable of k-nucleotide keys and count values"
+## — and it is the expensive half of the benchmark, so a port that counted matches directly would
+## be measuring something cheaper and answering the same.
+def occurrences(chars: list[Str], fragment: Str) -> Int:
+    return unwrap_or(map_get(kmer_counts(chars, str_len(fragment)), fragment), 0)
+
+## The benchmark: what the program writes to stdout for the input the suite publishes, which is
+## `fasta` at `N = n`.
+def knucleotide_output(n: Int) -> Str:
+    return output_over(three_sequence(n))
+
+def output_over(chars: list[Str]) -> Str:
+    return str_join(
+        [
+            block(chars, 1, list_len(chars)),
+            block(chars, 2, list_len(chars) - 1),
+            count_line(chars, "GGT"),
+            count_line(chars, "GGTA"),
+            count_line(chars, "GGTATT"),
+            count_line(chars, "GGTATTTTAATT"),
+            count_line(chars, "GGTATTTTAATTTATAGT"),
+        ],
+        "",
+    )
+
+test "knucleotide: the suite's own published output for the input it publishes":
+    expect knucleotide_output(1000) == "T 31.520\nA 29.600\nC 19.480\nG 19.400\n\nAT 9.922\nTT 9.602\nTA 9.402\nAA 8.402\nGA 6.321\nTC 6.301\nTG 6.201\nGT 6.041\nCT 5.961\nAG 5.841\nCA 5.461\nAC 5.441\nCC 4.041\nCG 4.021\nGC 3.701\nGG 3.341\n\n54\tGGT\n24\tGGTA\n4\tGGTATT\n0\tGGTATTTTAATT\n0\tGGTATTTTAATTTATAGT\n"
+
+## The sequence the counts are about, asserted before the counts.
+##
+## Every number above is a fact about 5,000 bases of sequence THREE. If the reader took ONE and
+## TWO as well, or stopped at the wrong `>`, the output would still be a well-formed frequency
+## table of the wrong thing — which is `docs/59` §59.5's failure mode exactly.
+test "knucleotide: the sequence read is THREE, and only THREE":
+    expect list_len(three_sequence(1000)) == 5000
+    expect str_join(list_slice(three_sequence(1000), 0, 20), "") == "AACACTTCACCAGGTATCGT"
+
+## The counting itself, on a sequence small enough to check by eye.
+##
+## `"AAA"` has three one-base fragments and two two-base ones, which is the off-by-one the
+## denominators above turn on.
+test "knucleotide: every position is counted once, at every length":
+    expect unwrap_or(map_get(kmer_counts(str_chars("AAA"), 1), "A"), 0) == 3
+    expect unwrap_or(map_get(kmer_counts(str_chars("AAA"), 2), "AA"), 0) == 2
+    expect unwrap_or(map_get(kmer_counts(str_chars("AGAGA"), 2), "GA"), 0) == 2
+    expect list_len(map_keys(kmer_counts(str_chars("AGAGA"), 2))) == 2
+
+## The ranking, which is a sort by count descending and not by fragment.
+test "knucleotide: the ranking is by count, descending":
+    expect map_list(ranked(kmer_counts(str_chars("ATTT"), 1)), lambda e: e.key) == ["T", "A"]
+    expect map_list(ranked(kmer_counts(str_chars("ATTT"), 1)), lambda e: e.count) == [3, 1]
