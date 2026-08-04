@@ -251,7 +251,13 @@ dependencies whose signatures didn't change.
   durable substrates are within ~16% of each other — it is that SQLite is *also* the read-model
   engine, so rungs 0–2 get the same "append and project in one transaction" property production
   has, and a developer's laptop stops being merely similar to production. Measure with `beck bench
-  log` and let the number pick rung 0's default.
+  log` and let the number pick rung 0's default. ***Built*** ([`67`](67-sqlite-report.md)), and the
+  number does **not** pick: at equal durability SQLite and redb are within noise of each other, so
+  rung 0's default is unchanged. The first measurement said 26× and was comparing
+  `synchronous = NORMAL` against redb's fsync — a weaker promise rather than a faster engine — which
+  is why durability is now a public type defaulting to fsync (§67.3,
+  [`adr/0017`](adr/0017-sqlite-is-a-substrate-for-its-transaction-not-its-speed.md)). The reason
+  §7.8.1 gave survives the measurement and is the only reason: the transaction, not the speed.*
 - Standard library v1: collections, strings, time, money/decimal, HTTP client, JSON, UUID, crypto
   primitives (delegated to `ring`/`aws-lc-rs`, not hand-rolled). **Reals first**, because §25.6
   measures that §1.1.7 of SICP — the first substantial program in the book — does not typecheck

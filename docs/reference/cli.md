@@ -164,7 +164,7 @@ Run the program in a single process — rung 0 of the parity ladder
 |---|---|---|
 | `<FILE>` | FILE |  |
 | `--addr` | ADDR |  |
-| `--store` | redb \| postgres \| memory |  |
+| `--store` | redb \| sqlite \| postgres \| memory |  |
 | `--path` | PATH |  |
 | `--url` | URL |  |
 
@@ -176,7 +176,7 @@ Fold a recorded log and report the state it produces (§3.7)
 | Argument | | |
 |---|---|---|
 | `<FILE>` | FILE |  |
-| `--store` | redb \| postgres \| memory |  |
+| `--store` | redb \| sqlite \| postgres \| memory |  |
 | `--path` | PATH |  |
 | `--url` | URL |  |
 | `--genesis` | true \| false | Ignore snapshots and fold from the first event — D3's genesis-replay discipline |

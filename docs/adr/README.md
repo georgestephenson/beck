@@ -32,3 +32,4 @@ The split this directory creates:
 | [0014](0014-a-keyed-digest-is-the-one-declassifier.md) | A keyed digest is the one declassifier, and it is a capability |
 | [0015](0015-blake3-for-the-standard-librarys-digests.md) | BLAKE3 for the standard library's digests, and no signature library yet |
 | [0016](0016-the-language-server-speaks-json-rpc-directly.md) | The language server speaks JSON-RPC directly, and takes no LSP framework |
+| [0017](0017-sqlite-is-a-substrate-for-its-transaction-not-its-speed.md) | SQLite is a substrate for its transaction, not its speed — and durability is a type |

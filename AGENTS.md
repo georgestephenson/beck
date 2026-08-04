@@ -49,8 +49,9 @@ Write the commit message as the author of the change: what changed, and why.
   [`62`](docs/62-fuel-report.md),
   [`63`](docs/63-felleisen-report.md),
   [`64`](docs/64-compile-speed-report.md),
-  [`65`](docs/65-lsp-report.md) and
-  [`66`](docs/66-page-snapshots-report.md),
+  [`65`](docs/65-lsp-report.md),
+  [`66`](docs/66-page-snapshots-report.md) and
+  [`67`](docs/67-sqlite-report.md),
   indexed in
   [`docs/README.md`](docs/README.md) — record what each
   phase does, what it refuses to claim, and the corrections it makes to the design documents.
@@ -74,7 +75,9 @@ Write the commit message as the author of the change: what changed, and why.
   bullet is built** (docs/65) — diagnostics, hover, go-to-definition and symbols, from the same
   front end `beck check` runs, with §4.6's 100 ms budget holding to about 13,000 lines in one
   module — and `beck test --update` closes docs/21 §21.2's last open question, so a page assertion
-  is a checked-in file rather than one string somebody thought to name (docs/66). Six of the fourteen are
+  is a checked-in file rather than one string somebody thought to name (docs/66); and the **SQLite
+  substrate** is built (docs/67) — for its transaction rather than its speed, since redb has no
+  query language for a projection to be written in. Five of the fourteen are
   untouched — identity has its seam but not its OIDC relying party (docs/48) — and docs/26 §26.9
   names them one at a time, less the two docs/51 closed. **Wave 0** (docs/08 §8.5.4) is also
   built — a bounded front end, an injected clock, a threat model, a disclosure policy and an

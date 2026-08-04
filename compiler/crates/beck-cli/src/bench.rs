@@ -48,7 +48,7 @@ use std::time::{Duration, Instant as StdInstant};
 use anyhow::{Context, Result};
 use beck_core::Value;
 use beck_rt::log::Pending;
-use beck_rt::{Instant, LogStore, MemoryLog, RedbLog};
+use beck_rt::{Durability, Instant, LogStore, MemoryLog, RedbLog, SqliteLog};
 
 /// How many events each measurement moves. Small enough to run in seconds, large enough that a
 /// single `fsync` does not dominate.
@@ -75,6 +75,28 @@ pub async fn run(url: Option<&str>, dir: &Path) -> Result<()> {
     std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
     rows.push(measure(Arc::new(RedbLog::open(&path)?)).await?);
     let _ = std::fs::remove_file(&path);
+
+    // SQLite needs no server, so unlike Postgres it is always in the table — which is what makes
+    // `docs/08`'s "measure and let the number pick rung 0's default" answerable on any machine.
+    //
+    // **Both** durability settings, and that is the whole point of the row rather than thoroughness:
+    // measured against redb at `NORMAL`, SQLite looks 26× faster, and the comparison is measuring a
+    // weaker promise rather than a faster engine (`docs/67` §67.3). Printing both is what stops the
+    // flattering number being the only one anybody sees.
+    for (durability, label) in [
+        (Durability::Fsync, "bench.sqlite"),
+        (Durability::Relaxed, "bench-relaxed.sqlite"),
+    ] {
+        let sqlite = dir.join(label);
+        let clean = |p: &Path| {
+            for suffix in ["", "-wal", "-shm"] {
+                let _ = std::fs::remove_file(format!("{}{suffix}", p.display()));
+            }
+        };
+        clean(&sqlite);
+        rows.push(measure(Arc::new(SqliteLog::open_with(&sqlite, durability)?)).await?);
+        clean(&sqlite);
+    }
 
     match url {
         Some(url) => {
@@ -216,12 +238,12 @@ async fn measure(store: Arc<dyn LogStore>) -> Result<Row> {
 
 fn report(rows: &[Row]) {
     println!(
-        "{:<10} {:>8}  {:>14}  {:>14}  {:>14}  {:>8}",
+        "{:<15} {:>8}  {:>14}  {:>14}  {:>14}  {:>8}",
         "substrate", "durable", "append (batch)", "append (serial)", "read", "batch ×"
     );
     for r in rows {
         println!(
-            "{:<10} {:>8}  {:>11.0} /s  {:>11.0} /s  {:>11.0} /s  {:>7.1}×",
+            "{:<15} {:>8}  {:>11.0} /s  {:>11.0} /s  {:>11.0} /s  {:>7.1}×",
             r.substrate,
             if r.durable { "yes" } else { "no" },
             r.batched,

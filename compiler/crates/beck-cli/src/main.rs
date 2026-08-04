@@ -36,6 +36,8 @@ enum Surface {
 enum Store {
     /// Rung 0: an embedded append-only log. `beck run` needs no server (§6.6).
     Redb,
+    /// A single file, and the same engine a read model would be projected into (§7.8.1).
+    Sqlite,
     /// The durable substrate above rung 0.
     Postgres,
     /// No disk at all — for tests and measurements.
@@ -1375,6 +1377,7 @@ async fn open_store(
     Ok(match store {
         Store::Memory => Arc::new(beck_rt::MemoryLog::new()),
         Store::Redb => Arc::new(beck_rt::RedbLog::open(path)?),
+        Store::Sqlite => Arc::new(beck_rt::SqliteLog::open(path)?),
         Store::Postgres => {
             let url = url.context("--url or BECK_POSTGRES_URL is required for --store postgres")?;
             Arc::new(beck_rt::PgLog::connect(url).await?)

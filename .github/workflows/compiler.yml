@@ -136,6 +136,20 @@ jobs:
       - name: replay is exact
         run: ./target/release/beck replay examples/todo.beck --path /tmp/beck.log --verify
 
+      - name: and the same app runs and replays on SQLite
+        # docs/67. The substrate that makes rungs 0-2 production-shaped has to be one `beck run`
+        # actually accepts, not only one the unit tests construct — and `--verify` is what says the
+        # log it wrote folds to the same state twice.
+        run: |
+          ./target/release/beck run examples/todo.beck --addr 127.0.0.1:8081 \
+            --store sqlite --path /tmp/beck.sqlite &
+          for _ in $(seq 1 40); do curl -sf http://127.0.0.1:8081/healthz >/dev/null && break; sleep 0.25; done
+          curl -sf "http://127.0.0.1:8081/?actor=ci" | grep -q '<footer>0 remaining</footer>'
+          kill %1
+          sleep 1
+          ./target/release/beck replay examples/todo.beck --store sqlite \
+            --path /tmp/beck.sqlite --verify | grep -q 'replay is exact'
+
       - name: the programs' own tests pass
         # docs/21 §21.2, run the way a person runs it. This is a different claim from `cargo test`:
         # that suite tests the *compiler*, and this one runs tests written in Beck, about Beck
