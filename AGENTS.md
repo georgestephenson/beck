@@ -63,7 +63,9 @@ Write the commit message as the author of the change: what changed, and why.
   its nine micro and all five macro (docs/53, docs/57, docs/58, docs/59, docs/60, docs/61) — are
   that bullet's long-owed harness half, so **the standard-library bullet is done**, with CLBG the
   only thing outstanding under docs/25 §25.9 rather than under
-  it — the compile-speed budgets are built (docs/64); the incremental-views bullet has its engine and
+  it — the compile-speed budgets are built (docs/64), and docs/64 §64.7.1 records that CLBG is owed
+  *with its sources to hand* rather than owed generally, since its expected outputs are unreachable
+  from this environment and a benchmark verified against an invented number is worse than none; the incremental-views bullet has its engine and
   that engine's lifecycle (docs/51) but not its read models, pgwire
   or fusion; the expressiveness suite runs two chapters of SICP and answers §25.9's Felleisen
   question — six of the seven special forms recovered, `amb` conceded (docs/63). Seven of the fourteen are
