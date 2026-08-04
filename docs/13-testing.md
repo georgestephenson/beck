@@ -113,6 +113,15 @@ memory at 10k subscribers, shared-prefix hit rate, thin-client payload, Mode B b
 size, cold start, keystroke→diagnostic latency, incremental build time, clean build time.
 Phase 0 sets the baselines ([`08`](08-roadmap.md)); every merge answers to them.
 
+*Status ([`64`](64-compile-speed-report.md)). The **compile-speed** budgets are built, and not as
+thresholds: this section's own "a gate that flakes gets deleted" rules out a wall-clock gate on a
+shared runner, so what is asserted is that **cost per declaration does not grow with the number of
+declarations** along three axes. Keystroke→diagnostic latency has a number for the first time —
+4.7 ms worst and 0.75 ms median over every Beck program in the tree — and the gate found placement
+computing explanations in `O(n × (n + e))` within an hour of existing. Incremental and clean build
+time are `cargo` numbers about the compiler's own build and are still unmeasured; every other budget
+in the list above waits on the phase that produces the thing it measures.*
+
 ## 13.8 Meta-testing: testing the tests
 
 - **Mutation testing** (`cargo-mutants`) on the compiler's core crates: if a seeded bug survives

@@ -510,7 +510,10 @@ no regression-detecting power, which is the only thing a benchmark is for.
 > table's "Published" column kept and §25.3 item 1's "adopt now, publish now, make them
 > unflattering" kept at the same time. **The Felleisen table below is built**
 > ([`63`](63-felleisen-report.md)): six of the seven forms recovered, `amb` conceded, which is the
-> shape the forecast predicted. The compile-speed budgets and the CLBG harness are not built.
+> shape the forecast predicted. **The compile-speed budgets are built too**
+> ([`64`](64-compile-speed-report.md)) — as a *shape* gate rather than a rate, for
+> [`13`](13-testing.md) §13.7's reason, and they found a quadratic in placement on their first run.
+> The CLBG harness is what is left of this row.
 
 Not in the table, deliberately: **LeetCode** is a recommendation rather than an adopted commitment
 (§25.8), and **Nand2Tetris** is conditional on SICP chapter 4 being green first, at which point the

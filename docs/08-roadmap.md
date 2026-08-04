@@ -618,8 +618,9 @@ benchmarks** ([`53`](53-are-we-fast-yet-report.md), [`57`](57-richards-report.md
 [`61`](61-deltablue-report.md)), each verified against the constant
 the original suite's own `verifyResult` checks, with wall-clock printed and nothing compared to
 anything — §8.4's ask, half discharged. The whole **CLBG** harness is
-not stood up — and that, with the compile-speed budgets, is what is left of the item that has been
-owed longest. The **Felleisen table** is built ([`63`](63-felleisen-report.md)) and sits under
+not stood up — and that is now the only thing left of the item that has been owed longest. The
+**Felleisen table** ([`63`](63-felleisen-report.md)) and the **compile-speed budgets**
+([`64`](64-compile-speed-report.md)) are both built and sit under
 [`25`](25-benchmarks-and-expressiveness.md) §25.9 rather than under this bullet.
 
 *It found a wall too, in the same way and one wave later: **a credential could not be sent**, because
