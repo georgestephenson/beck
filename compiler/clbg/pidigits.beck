@@ -21,6 +21,12 @@
 # This is the benchmark `docs/68` §68.4 could not port. The bignums existed and nothing outside
 # `lib/` could import them; `import bignum` below is the whole of what changed.
 #
+# It is also what made that library faster. This file needed 100,000,000 evaluator steps — twice the
+# default budget — because every long division searched each trial digit over the whole limb range;
+# `docs/69` §69.6 brackets that search with Knuth's estimate, and the same run is now under
+# 16,000,000. Nothing here was tuned for it: a benchmark's job is to be the caller that makes a cost
+# visible.
+#
 # Verified against `expected/pidigits-output.txt`, the suite's own published output for `N = 30`.
 
 import bignum

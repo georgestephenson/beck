@@ -55,10 +55,12 @@ import the standard library, which is also what stopped `pidigits`.
 **`pidigits` measures [`lib/bignum.beck`](../lib/README.md)**, which is worth stating beside the
 benchmark rather than in a report: every other entry in the Game's table for it measures GMP or a
 runtime's built-in big integer, and this one measures schoolbook arithmetic over base-10,000 limbs
-written in Beck, on a tree-walker. It is also the one benchmark whose *gate* needs
-[`docs/62`](../../docs/62-fuel-report.md)'s `--fuel` — `--fuel 200000000`, because the only size the
-Game publishes an oracle for is `N = 30` and there is no reduced configuration to fall back on.
-`clbg.rs` carries that budget in a table beside the names.
+written in Beck, on a tree-walker. It was also the first benchmark here to want more than the
+evaluator's default step budget — the only size the Game publishes an oracle for is `N = 30`, so
+unlike `awfy/`'s three there is no reduced configuration to gate at — and what that bought was a
+faster long division rather than a `--fuel` flag in the harness
+([`docs/69`](../../docs/69-standard-library-imports-report.md) §69.6). Every file here runs under
+the default budget.
 
 `beck-cli/tests/clbg.rs` gates the directory: a file added here is run by being here, the eight
 names and the two absent ones are enumerated in one place, and the oracle cross-check above is a

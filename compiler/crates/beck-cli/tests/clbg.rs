@@ -118,37 +118,25 @@ const NOT_PORTED: [(&str, &str); 2] = [
 /// the next port that needs a shared helper will want to say so here.
 const SUPPORT: [&str; 0] = [];
 
-/// The benchmarks whose gate needs a budget larger than the default, and how much.
-///
-/// `docs/62` built `--fuel` because a backstop nothing can raise is a ceiling, and `awfy/`'s
-/// answer was to keep the *gates* at reduced configurations. `pidigits` cannot do that: the Game
-/// publishes one expected output and it is at `N = 30`, so the only size with an oracle is the size
-/// that must run. It needs just over 100,000,000 steps — see `docs/69` §69.5 — and the figure below
-/// is that with room, not a number picked to be safe.
-const FUEL: [(&str, &str); 1] = [("pidigits", "200000000")];
-
-/// The arguments `beck test <file>` takes for a benchmark, budget included.
-fn test_args(stem: &str) -> Vec<&'static str> {
-    FUEL.iter()
-        .find(|(name, _)| *name == stem)
-        .map(|(_, fuel)| vec!["--fuel", *fuel])
-        .unwrap_or_default()
-}
-
 /// Every file in `clbg/` runs its own tests and passes them.
 ///
 /// The test inside each port asserts its output against the suite's published file, so this is the
 /// whole correctness claim of the directory: not that the Beck runs, but that it computes what the
 /// Java computes, character for character.
+///
+/// **On the default fuel budget**, `pidigits` included, which is worth a line because it was not.
+/// The Game publishes one expected output for that benchmark and it is at `N = 30`, so unlike
+/// `awfy/`'s three (`docs/62` §62.3) there is no reduced configuration to gate at — it needed
+/// `--fuel` or nothing. It needed 100,000,000 steps because `lib/bignum.beck` searched every long
+/// division's trial digit over the whole limb range; bracketing that search (`docs/69` §69.6) took
+/// it to under 16,000,000, which is inside the default. A budget table here would have hidden the
+/// cost rather than fixed it.
 #[test]
 fn every_benchmark_verifies_against_the_suites_own_published_output() {
     for path in beck_files() {
         let file = path.to_string_lossy().to_string();
-        let stem = path.file_stem().unwrap().to_string_lossy().to_string();
-        let mut args = vec!["test", file.as_str()];
-        args.extend(test_args(&stem));
-        let (ok, text) = beck(&args);
-        assert!(ok, "`beck {}`:\n{text}", args.join(" "));
+        let (ok, text) = beck(&["test", &file]);
+        assert!(ok, "`beck test {file}`:\n{text}");
         assert!(text.contains("0 failed"), "{file}:\n{text}");
     }
 }

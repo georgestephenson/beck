@@ -109,7 +109,7 @@ About 12 µs a line, which is [`64`](64-compile-speed-report.md) §64.6's figure
 direction. It is a real cost and it is linear in what was imported: a program that imports the whole
 standard library pays 30 ms a build for the privilege. The place that will feel it is the editor —
 [`65`](65-lsp-report.md)'s server re-checks the whole file on every change and does not resolve
-imports at all (§69.8), so the day it does, this table is what it adds to
+imports at all (§69.10), so the day it does, this table is what it adds to
 [`04`](04-compiler-architecture.md) §4.6's 100 ms budget. There is room at these numbers and there
 would not be at ten times them.
 
@@ -141,17 +141,16 @@ running on a tree-walking evaluator. Two placeholders, not one.
 
 | | |
 |---|---|
-| `beck test clbg/pidigits.beck --fuel 200000000`, release | **23.3 s** for the file's four tests |
-| the same, debug | 89 s |
-| what `N = 30` alone needs | **just over 100,000,000 steps** — it fails at 100,000,000 and passes at 101,000,000 |
+| `beck test clbg/pidigits.beck`, release | **4.4 s** for the file's four tests |
+| the same, debug | 15.9 s |
+| what `N = 30` alone needs | **under 16,000,000 steps** — it fails at 15,000,000 and passes at 16,000,000, so it is inside the default budget and takes no `--fuel` |
 
-That makes it the fourth benchmark to need [`62`](62-fuel-report.md)'s `--fuel`, and the first that
-needs it **in the gate**. `awfy/`'s three run reduced configurations in `cargo test` and
-their large sizes are a choice a person makes at the command line (§62.3); `pidigits` has no such
-choice, because the Game publishes exactly one expected output and it is at `N = 30`. So `clbg.rs`
-carries a per-benchmark budget table, and the whole `clbg` suite now takes 127 s in a debug
-`cargo test` where it took a few seconds. That is the price of the only oracle there is, paid
-knowingly.
+**That row was 100,000,000 when this port was first written**, which would have made it the fourth
+benchmark to need [`62`](62-fuel-report.md)'s `--fuel` and the first to need it *in the gate*:
+`awfy/`'s three run reduced configurations in `cargo test` and their large sizes are a choice a
+person makes at the command line (§62.3), and `pidigits` has no such choice, because the Game
+publishes exactly one expected output and it is at `N = 30`. A per-benchmark budget table in
+`clbg.rs` was the first answer. §69.6 is why it is not the answer that shipped.
 
 Two smaller things the port records:
 
@@ -166,20 +165,131 @@ Two smaller things the port records:
   digits in that assertion are the first 17 of the published thirty, so it is not a second oracle —
   the thing under test is the three spaces.
 
-## 69.6 How it is tested
+## 69.6 The long division underneath it, which is what the two minutes actually were
+
+A gate that costs two minutes is a gate somebody stops running, and "the benchmark is inherently
+expensive" is the kind of answer that should be checked before it is accepted. It was wrong.
+
+[`55`](55-bignums-report.md) §55.6 had already named the suspect, in the row that says what a first
+implementation deliberately did not do:
+
+> **Knuth's algorithm D** — **not built**, and this is the thing to replace first if any of it is
+> ever a bottleneck. The binary search for a trial digit is fourteen comparisons where the
+> estimate-and-correct is one multiply and a rare fixup; it is here because it is *obviously* right,
+> which for a first division is the trade to make.
+
+`pidigits` is that bottleneck arriving. Every digit of pi costs several long divisions of
+hundred-digit numbers, every long division costs one trial digit per limb of the dividend, and every
+trial digit was a fourteen-step binary search over `0..9999` — each step multiplying the **whole
+divisor** by a candidate. Most of those limbs divide to zero, and the search paid full price to
+discover it.
+
+**What changed is four lines and it is not algorithm D.** Knuth's *estimate* now brackets the
+search instead of replacing it:
+
+- the divisor is at least its top limb times `base^(n-1)`, so the digit is at most `(H + 1) / v`;
+- it is less than one more than its top limb times `base^(n-1)`, so the digit is at least
+  `H / (v + 1)`;
+
+where `v` is the divisor's top limb and `H` is the dividend's limbs above the divisor's length — two
+integer divisions, against a multiplication over every limb per search step. The search still runs
+between those bounds, so **the digit is still the one the search would have found and the search is
+still what proves it**; when the top limb is large the bracket is one digit wide and the search
+confirms it in a single comparison, and when the top limb is 1 the bracket is wide and the cost is
+what it always was. Never worse, because the bounds hold either way. Algorithm D's other half — the
+normalisation that makes the bracket narrow *always* — is still not built, and now has a measured
+price rather than an assumed one.
+
+| | before | after |
+|---|---|---|
+| `pidigits`, steps for `N = 30` | just over 100,000,000 | **under 16,000,000** |
+| `beck test clbg/pidigits.beck`, debug | 89 s, and only with `--fuel 200000000` | **15.9 s**, default budget |
+| `cargo test -p beck-cli --test clbg`, debug | 127 s | **52 s** |
+| `beck test lib/decimal.beck`, debug | 8.0 s | **3.5 s** |
+
+The last row is the one that matters most, and it is not a benchmark: `decimal.beck` divides on
+every rounded quotient it computes, and nothing about it changed. **Every caller of the standard
+library's arbitrary-precision division got 2.3× faster**, which is an argument for the
+[`46`](46-standard-library-report.md) division that put this in Beck rather than in Rust — the fix
+is in a file, in the language, with the library's own property tests as the check.
+
+Those tests are the reason this is a safe change to make in an afternoon.
+`bignum.beck`'s `property` blocks check every result against `Int` arithmetic over 100 generated
+pairs, and `stdlib.rs` checks 400 more against `i128` and `decimal.beck`'s rounding against exact
+rational arithmetic. Two tests were added for what a bracket specifically can get wrong: a divisor
+whose top limb is `1` (the widest bracket), one whose top limb is `9999` (the narrowest), a quotient
+limb of zero and one of 9,999 — and a property that divides `divisor · d + r` back by `divisor` for
+every digit `d` a limb can hold, because a bound that is wrong one time in ten thousand is not
+something a hundred random pairs will find.
+
+## 69.7 A larger one underneath it, **not fixed**: the accumulator idiom is quadratic
+
+§69.6 is a library being slow. This is the language being slow, it is bigger, and it is recorded
+here rather than repaired because the repair is a compiler feature rather than an edit.
+
+**`list_append` copies the whole list.** `beck-eval/src/interp.rs`, `Prim::ListAppend`, is
+`as_list(&xs)?.to_vec()` and a push. Beck has no mutable sequence, so every loop that builds one is
+written as a tail-recursive accumulator — `return go(i + 1, list_append(done, x))` — which is how
+`lib/` accumulates limbs, how `awfy/` and `clbg/` build their arrays, how the corpus builds lists
+and how both SICP chapters do. Every one of them is therefore **O(n²) in time**.
+
+Measured, release build, over that exact loop:
+
+| n | wall clock | ratio | evaluator steps | steps per element |
+|---|---|---|---|---|
+| 1,000 | 13 ms | | 14,014 | 14.0 |
+| 2,000 | 33 ms | 2.5× | 28,014 | 14.0 |
+| 4,000 | 105 ms | 3.2× | 56,014 | 14.0 |
+| 8,000 | 385 ms | 3.7× | 112,014 | 14.0 |
+
+**The two halves of that table are the finding.** Time approaches 4× per doubling — quadratic — and
+the step count is exactly 2× per doubling — linear, 14 steps an element, flat. So the cost is real
+and **the evaluator's own budget cannot see it**: a step is a node evaluated, and a primitive that
+copies ten thousand values is one step. [`62`](62-fuel-report.md) built `--fuel` as the backstop
+that "bounds one evaluation"; it bounds one evaluation's *nodes*, and a program can do unbounded
+work inside a bounded number of them. That is a second finding and it is about the backstop rather
+than about lists.
+
+[`19`](19-phase-1-report.md) §19.4 item 3 found this exact shape in the *fold* — "the accumulator was
+being copied on every insert, making a fold over a log `O(events × rows)`" — and
+`beck-cli/tests/scaling.rs` exists to keep it fixed, opening with the sentence that settles what
+this is: **"That is a semantic defect, not a backend one: it would survive into Cranelift
+unchanged."** By the repository's own standard this is a defect, not a cost.
+
+**The obvious cheap fix does not work, and it is worth writing down why.** Making `Prim::ListAppend`
+push in place when it holds the only reference — `Arc::try_unwrap` on the `Arc<Vec<Value>>` — was
+tried and measured: **no change at any size**. At the moment `list_append(done, x)` runs, the
+caller's frame still binds `done`, so the reference count is two and the copy happens anyway. The
+value's owner is the environment, and the environment does not know the binding is dead.
+
+So the fix is one of two real changes, and both are somebody's next piece of work rather than this
+one's:
+
+| | what it is |
+|---|---|
+| **Last-use moves** | Compute, per function body, which occurrence of each local is its last, and have the evaluator *take* the binding from the frame there instead of cloning it. Then the reference count at the append is one and the push is in place — the `try_unwrap` above becomes the other half of the fix rather than dead weight. It is a liveness pass over `Core` plus a change to variable lookup, and its correctness rests on closures: a frame captured by one cannot be emptied. Contained, and not small |
+| **A persistent sequence** | Replace `Arc<Vec<Value>>` with an RRB or similar, making append `O(log n)` with sharing and no analysis at all. A new dependency ([`07`](07-dependencies.md), [`adr/0004`](adr/0004-full-cargo-deny-gate.md)'s allowlist) and a change at every site that reads a list, but no new invariant to get wrong |
+
+The first is faster and is a language feature; the second is duller and is a swap. Either wants its
+own change, its own measurement over `awfy/` and `clbg/`, and a scaling gate in `scaling.rs`
+alongside the fold's — and the gate should count **work rather than steps**, because this table is
+the proof that steps do not see it.
+
+## 69.8 How it is tested
 
 | | |
 |---|---|
 | `beck_core::project` | a module resolves from the library with no file beside the root; a file beside the root shadows the library's module of the same name; the library's tests do not become the program's |
 | `stdlib.rs` | every file in `lib/` is importable from a directory that is not `lib/` — the strong form, `beck test` on a probe that imports it, so a file added to the directory and left out of `MODULES` fails here; the whole library links into one program; a local module shadows |
-| `clbg.rs` | `pidigits` runs and verifies against the published file; `import bignum` works from `clbg/`; the two remaining unported benchmarks are still unportable, and neither has an oracle file sitting unused |
+| `clbg.rs` | `pidigits` runs and verifies against the published file, on the default fuel budget like every other file there; `import bignum` works from `clbg/`; the two remaining unported benchmarks are still unportable, and neither has an oracle file sitting unused |
+| `bignum.beck` | the trial-digit bracket, at the divisor's widest and narrowest leading limb, at a quotient limb of zero and of 9,999, and over every digit a limb can hold — plus the property blocks that already checked division against `Int` arithmetic |
 | `beck-core::stdlib` | the table is a sorted set and nothing in it is empty |
 
 The gate that matters most is the first `stdlib.rs` one, because it is the one that would have
 failed before this change. `docs/68` §68.4's probe — one file, two directories — is now a test in
 two places rather than a paragraph in a report.
 
-## 69.7 What this corrects
+## 69.9 What this corrects
 
 - **[`68`](68-clbg-report.md) §68.4 is fixed rather than recorded.** Its three findings: the import
   limitation is gone, `format.beck` is in `lib/`, and the flat namespace's cost is unchanged and now
@@ -190,6 +300,11 @@ two places rather than a paragraph in a report.
 - **[`68`](68-clbg-report.md) §68.7's "the standard library has never had a consumer, and could not
   have had one" is answered.** It has eight — the Benchmarks Game's ports, every one of which
   imports `format`, and one of which, `pidigits`, is written on `bignum`.
+- **[`55`](55-bignums-report.md) §55.6's "Knuth's algorithm D — **not built**" is half wrong now.**
+  His *estimate* is built, as a bracket around the search rather than a replacement for it; his
+  normalisation is not, and §69.6 says what it would buy and when. That row's own condition — "the
+  thing to replace first if any of it is ever a bottleneck" — is what made this a change rather than
+  a discussion.
 - **[`46`](46-standard-library-report.md)'s directory is a standard library in the ordinary sense**
   for the first time — reachable by name from any program, versioned with the compiler that
   understands it.
@@ -197,7 +312,7 @@ two places rather than a paragraph in a report.
   will be spelled; D23 says so explicitly, and `adr/0018` names the namespaced import as what
   supersedes it.
 
-## 69.8 What is not built
+## 69.10 What is not built
 
 | | |
 |---|---|
@@ -208,8 +323,12 @@ two places rather than a paragraph in a report.
 | The LSP resolving imports | **not built**, and unchanged: [`65`](65-lsp-report.md) §65.4 already records that a file is analysed alone, so a name imported from *anywhere* — sibling or library — is unresolved in the editor. This change makes that gap easier to hit, and does not widen it |
 | `mandelbrot`, `regexredux` | **not ported**, per [`68`](68-clbg-report.md) §68.6. Both reasons are facts about the language and `clbg.rs` still asserts them |
 | A number for `pidigits` worth comparing | **not published**, per [`25`](25-benchmarks-and-expressiveness.md) §25.9 and §69.5. It measures our bignum library on our placeholder evaluator |
+| Knuth's normalisation | **not built**, per §69.6. Scaling both operands so the divisor's top limb is at least half the base would make the bracket one digit wide *always*, rather than usually; what is built is the estimate alone, and the case it does not help — a divisor whose leading limb is 1 — is the case a test now pins |
+| Sub-quadratic multiplication | **still not built**, per [`55`](55-bignums-report.md) §55.6. Division got cheaper; multiplication is the schoolbook it was, and `pidigits` is now the caller that would notice if it changed |
+| A linear `list_append` | **not built**, per §69.7, and it is the largest performance item this change found. Every accumulator loop in the language is quadratic in time, and the evaluator's step budget cannot see it |
+| A work-counting budget | **not built.** `--fuel` counts nodes evaluated; §69.7's table is one program whose steps are linear and whose cost is quadratic, which is what a node count cannot distinguish |
 
-## 69.9 What this establishes, and what it does not
+## 69.11 What this establishes, and what it does not
 
 **It establishes that a program outside `lib/` can use the standard library**, which is a sentence
 three reports have implied and none could have made. The evidence is not the compiler's own tests:
@@ -221,3 +340,17 @@ file the Benchmarks Game published.
 namespaces, no third-party anything. What [`16`](16-packages-and-ecosystem.md) describes remains
 entirely ahead, and the one decision taken here that touches it — the precedence rule — is written
 down as the thing a namespaced import would supersede.
+
+**And it is the first time a benchmark in this repository has made the language faster rather than
+just measured it.** [`53`](53-are-we-fast-yet-report.md), [`60`](60-collision-detection-report.md)
+and [`63`](63-felleisen-report.md) each found something *missing* — short-circuiting `and`, `sin`
+and `cos`, a function type with no arguments. §69.6 is a different kind of finding: nothing was
+missing, and a cost nobody could see was being paid by every program that divided a big number. The
+suite's value is not the numbers it prints, which §25.9 will not let us publish anyway. It is that
+it is the first caller demanding enough to make a cost visible.
+
+**And §69.7 is the same lesson learned the hard way.** The division fix came from asking why a
+number was large; the quadratic underneath it came from asking the same question one level further
+down, and only after somebody said the first answer was not good enough. A benchmark suite that
+prints numbers nobody interrogates is a suite that measures nothing, and the two findings above are
+what interrogating one produces. §69.7 is the one still owed.

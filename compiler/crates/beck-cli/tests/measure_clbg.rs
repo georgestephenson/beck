@@ -60,24 +60,12 @@ fn benchmarks() -> Vec<PathBuf> {
     out
 }
 
-/// The step budget a benchmark needs beyond the default, mirroring `clbg.rs`'s own table.
-///
-/// `pidigits` is the only one, and it is not a tuning knob: the Game publishes one expected output
-/// for it and that output is at `N = 30`, so the size with an oracle is the size that has to run.
-/// `docs/62` is why the flag exists and `docs/69` §69.5 is what this one costs.
-fn fuel_args(stem: &str) -> Vec<&'static str> {
-    match stem {
-        "pidigits" => vec!["--fuel", "200000000"],
-        _ => Vec::new(),
-    }
-}
-
 /// How many times each command is run: five in release, one in debug.
 ///
 /// The reproducible form of this suite is `cargo test --release`, and the debug run happens only
-/// because `cargo test --workspace` runs everything. Five readings of a debug `pidigits` is seven
-/// minutes spent on a table whose numbers nobody may read — the timings are meaningless in a debug
-/// build, and the run is still worth doing because it exercises the binary on every benchmark.
+/// because `cargo test --workspace` runs everything. A debug timing is not a number anybody may
+/// read, and `pidigits` is slow enough in that build to be worth several minutes of nothing; the
+/// run is still worth doing once, because it exercises the binary on every benchmark.
 const RUNS: usize = if cfg!(debug_assertions) { 1 } else { 5 };
 
 /// The median of [`RUNS`] runs, because a single wall-clock reading of a process is mostly noise.
@@ -109,9 +97,7 @@ fn what_the_benchmarks_game_costs_on_the_tree_walker() {
         let file = path.to_string_lossy().to_string();
         let name = path.file_stem().unwrap().to_string_lossy().to_string();
         let check = median(&["check", &file]);
-        let mut test_args = vec!["test", file.as_str()];
-        test_args.extend(fuel_args(&name));
-        let test = median(&test_args);
+        let test = median(&["test", &file]);
         println!(
             "{:<16} {:>10.1} {:>10.1} {:>12.1}",
             name,
@@ -124,7 +110,8 @@ fn what_the_benchmarks_game_costs_on_the_tree_walker() {
         "\nMedian of {RUNS}, {} build, at the sizes the Game publishes an expected output for —\n\
          which are its *format-checking* sizes and not the ones it measures at. No comparative\n\
          claim: docs/25 §25.9 holds those until there is a second backend for them to be about.\n\
-         `pidigits` runs under --fuel 200000000 and measures lib/bignum.beck, not a host's.\n",
+         `pidigits` measures lib/bignum.beck rather than a host's big integer, which is the\n\
+         thing to know before reading its row against anything.\n",
         if cfg!(debug_assertions) {
             "debug — read nothing off this table, the reproducible form is --release"
         } else {

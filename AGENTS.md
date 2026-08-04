@@ -192,11 +192,18 @@ Write the commit message as the author of the change: what changed, and why.
   §64.7.1 held the harness back until the files were reachable: `beck-cli/tests/clbg.rs` rebuilds
   every asserted literal from `expected/` and recomputes the digest of the two 10 KB ones, so a
   wrong constant fails the Beck test and a wrong constant with a matching wrong expectation fails
-  the Rust one. It also gates the eight names, the two absent ones, the per-benchmark fuel budget
-  and the attribution; `measure_clbg.rs` prints wall-clock and gates on nothing. `mandelbrot` and
+  the Rust one. It also gates the eight names, the two absent ones and the attribution;
+  `measure_clbg.rs` prints wall-clock and gates on nothing. `mandelbrot` and
   `regexredux` are the two not ported and docs/68 §68.6 is why each; `pidigits` was the third until
-  docs/69 made `lib/bignum.beck` importable, and it is the one benchmark whose gate needs
-  `--fuel`, because the only size the Game publishes an oracle for is the size that has to run.
+  docs/69 made `lib/bignum.beck` importable. Every file there runs under the **default** fuel
+  budget, `pidigits` included, and that is a fact about the library rather than about the gate:
+  it needed 100,000,000 steps until docs/69 §69.6 bracketed long division's trial-digit search, and
+  needs under 16,000,000 now. A budget table in `clbg.rs` would have hidden that. **docs/69 §69.7 is
+  the larger thing the same question found and is not fixed**: `list_append` copies the whole list,
+  so the tail-recursive accumulator every loop in the language is written as is O(n²) in time — and
+  `--fuel` cannot see it, because a primitive copying ten thousand values is one step. It is docs/19
+  §19.4's fold defect in a second place, and `scaling.rs`'s own sentence applies: a semantic defect,
+  not a backend one.
 - Security posture is [`docs/43-threat-model.md`](docs/43-threat-model.md) (who is defended
   against, and who is not) and `SECURITY.md` (how a report reaches us). What is *absent* is asserted
   as absent in `beck-cli/tests/pending_security.rs`: building one of those controls turns a test
