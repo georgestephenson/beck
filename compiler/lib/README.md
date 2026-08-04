@@ -5,6 +5,28 @@ standard library that is **written in the language**, and its existence is a cla
 express its own library, [`01`](../../docs/01-vision-and-premise.md) §1.1's argument about means of
 abstraction is not one this project is entitled to make.
 
+## How a program gets at it
+
+`import bignum`, from any directory, with nothing to declare. Every file here is compiled into the
+`beck` binary and an import resolves against the program's own directory **first** and this
+directory second — so a project that has its own `text.beck` keeps it, and adding a library here can
+never break a program that never asked for it
+([`docs/10`](../../docs/10-decisions.md) D23,
+[`adr/0018`](../../docs/adr/0018-the-standard-library-is-carried-in-the-compiler.md)).
+
+Two consequences worth knowing before writing a file here:
+
+- **Changing a file means rebuilding the compiler** for anything outside this directory to see the
+  change. Inside it, the caller's directory wins, so `decimal.beck` importing `bignum` gets the file
+  beside it and editing works as it always did.
+- **The namespace is flat and it now spans this directory.** A program can import two library files,
+  and two files defining one name cannot both be imported (`B0601`), so a helper here is a name
+  every program that imports the file cannot use.
+  `beck-cli/tests/stdlib.rs::the_whole_library_links_into_one_program` compiles a program that
+  imports all of it, which is how a collision is found before a user finds it.
+  [`docs/69`](../../docs/69-standard-library-imports-report.md) §69.2 is the record of the two that
+  were waiting.
+
 ## The division
 
 | Kind | Where it lives | Why |
@@ -28,6 +50,7 @@ expressed.
 | [`crypto.beck`](crypto.beck) | A fingerprint, a digest of several values that is not the digest of their concatenation, and a signed token in two layers — a pure one that takes the code it expects as an argument, and the two lines that compute one. The seam is where the key is, because a `test` block's row must be empty and `cap.sign` is not auto-stubbable ([`52`](../../docs/52-crypto-and-identifiers-report.md) §52.5) |
 | [`bignum.beck`](bignum.beck) | An integer of any size, as a sign and base-10,000 limbs: schoolbook multiplication, long division, `impl Num`, and every coercion to and from it named rather than implicit. The last floor of the numeric tower ([`55`](../../docs/55-bignums-report.md)) |
 | [`decimal.beck`](decimal.beck) | An exact number of the form `units × 10^-scale`, over `bignum.beck`: canonical so `1.50` and `1.5` are one value, `/` exact or refusing, and three rounding rules rather than one ([`56`](../../docs/56-decimal-report.md)) |
+| [`format.beck`](format.beck) | A real written to a fixed number of decimal places, and lines written as a file. `str` on a `Float` is the shortest representation that round-trips and is not `printf("%.9f")`; anything compared as *text* needs the second one. Written for the Benchmarks Game ports and kept there until they could import it back ([`69`](../../docs/69-standard-library-imports-report.md) §69.3) |
 | [`dates.beck`](dates.beck) | The civil calendar as arithmetic — Hinnant's two functions in Beck, checked against the same two in Rust rather than against themselves — plus `Date`, a `Duration` with its own `impl Num`, clamped month arithmetic, and `YYYY-MM-DD` read and written |
 
 Each file carries its own `test` and `property` blocks and runs under `beck test`, which is what

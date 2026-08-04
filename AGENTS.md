@@ -51,8 +51,9 @@ Write the commit message as the author of the change: what changed, and why.
   [`64`](docs/64-compile-speed-report.md),
   [`65`](docs/65-lsp-report.md),
   [`66`](docs/66-page-snapshots-report.md),
-  [`67`](docs/67-sqlite-report.md) and
-  [`68`](docs/68-clbg-report.md),
+  [`67`](docs/67-sqlite-report.md),
+  [`68`](docs/68-clbg-report.md) and
+  [`69`](docs/69-standard-library-imports-report.md),
   indexed in
   [`docs/README.md`](docs/README.md) — record what each
   phase does, what it refuses to claim, and the corrections it makes to the design documents.
@@ -67,16 +68,23 @@ Write the commit message as the author of the change: what changed, and why.
   its nine micro and all five macro (docs/53, docs/57, docs/58, docs/59, docs/60, docs/61) — are
   that bullet's long-owed harness half, so **the standard-library bullet is done** — the
   compile-speed budgets are built (docs/64) and so is the **CLBG harness** (docs/68), which
-  completes docs/25 §25.9's Phase 3 row: seven of the Game's ten, each verified against the Game's
-  own published output *file*, with the oracle enforced by the gate — `clbg.rs` rebuilds every
-  asserted literal from `clbg/expected/` and recomputes the digest of the two 10 KB ones — which is
-  what docs/64 §64.7.1 was holding out for when it said the harness was owed *with its sources to
-  hand* rather than owed generally. Its largest finding is not about speed: **`lib/` is a standard
-  library that nothing outside `lib/` can import**, since `import` resolves only against the root
-  module's own directory, and nothing had noticed because in three phases nothing had reached
-  across a directory. That is what stops `pidigits`, and docs/68 §68.4 leaves it as a decision for
-  docs/10 rather than repairing it in a benchmark's change; `mandelbrot` (a binary PBM, and `Str`
-  is UTF-8) and `regexredux` (no regex) are the other two of the ten; the incremental-views bullet has its engine and
+  completes docs/25 §25.9's Phase 3 row: **eight** of the Game's ten, each verified against the
+  Game's own published output *file*, with the oracle enforced by the gate — `clbg.rs` rebuilds
+  every asserted literal from `clbg/expected/` and recomputes the digest of the two 10 KB ones —
+  which is what docs/64 §64.7.1 was holding out for when it said the harness was owed *with its
+  sources to hand* rather than owed generally. Its largest finding was not about speed: **`lib/`
+  was a standard library that nothing outside `lib/` could import**, since `import` resolved only
+  against the root module's own directory, and nothing had noticed because in three phases nothing
+  had reached across a directory. docs/68 §68.4 left it as a decision for docs/10 rather than
+  repairing it in a benchmark's change, and **docs/69 is that decision taken and built**: the Beck
+  half of the standard library is carried in the compiler and an import resolves against the
+  caller's own directory first (docs/10 D23, docs/adr/0018), so `import bignum` works anywhere and
+  adding a library cannot break a program that never asked for it. What that broke is the more
+  interesting half — the flat namespace now spans `lib/`, so every module there has to link with
+  every other, and two collisions had been waiting where nothing could reach them. `pidigits` is
+  ported on the back of it and measures `lib/bignum.beck` rather than GMP; `mandelbrot` (a binary
+  PBM, and `Str` is UTF-8) and `regexredux` (no regex) are the two of the ten that are not, and
+  both reasons are facts about the language; the incremental-views bullet has its engine and
   that engine's lifecycle (docs/51) but not its read models, pgwire
   or fusion; the expressiveness suite runs two chapters of SICP and answers §25.9's Felleisen
   question — six of the seven special forms recovered, `amb` conceded (docs/63); and **the LSP
@@ -147,7 +155,13 @@ Write the commit message as the author of the change: what changed, and why.
 - [`compiler/lib/`](compiler/lib/README.md) is the standard library's **Beck half**: a host's table
   or grammar is a primitive in `prelude.rs`, and composition is a file there. Each carries its own
   `test` blocks, and `beck-cli/tests/stdlib.rs` gates the directory rather than a list — a file
-  added there is gated by being there.
+  added there is gated by being there. Every file is **compiled into the binary**
+  (`beck_core::stdlib`) and an import resolves against the caller's own directory first and that
+  table second, so `import bignum` works anywhere and a local module of the same name wins
+  (docs/10 D23, docs/adr/0018, docs/69). Two consequences: a file added there needs a line in
+  `MODULES`, which `stdlib.rs` checks by importing every file from outside `lib/`; and the flat
+  namespace spans the directory, so a name defined in two library files cannot be imported by one
+  program — `the_whole_library_links_into_one_program` is that gate.
 - [`compiler/corpus/`](compiler/corpus/) is 30 programs — 29 single files and one three-module
   project — carrying **no placement annotations**, and the measurement behind Phase 2's exit
   criterion. A program added there has to place itself.
@@ -171,16 +185,18 @@ Write the commit message as the author of the change: what changed, and why.
   names and the attribution, and `measure_awfy.rs` prints wall-clock and gates on nothing —
   §25.9 holds every comparative claim until there is a second backend.
 - [`compiler/clbg/`](compiler/clbg/README.md) is the other performance benchmark
-  ([`docs/25`](docs/25-benchmarks-and-expressiveness.md) §25.2): **seven** of the Computer Language
+  ([`docs/25`](docs/25-benchmarks-and-expressiveness.md) §25.2): **eight** of the Computer Language
   Benchmarks Game's ten, ported, each verified against the Game's own published **output file** —
   checked in verbatim under `clbg/expected/` under its BSD 3-clause notice. The oracle is
   *enforced* rather than transcribed, which is the difference from `awfy/` and the reason docs/64
   §64.7.1 held the harness back until the files were reachable: `beck-cli/tests/clbg.rs` rebuilds
   every asserted literal from `expected/` and recomputes the digest of the two 10 KB ones, so a
   wrong constant fails the Beck test and a wrong constant with a matching wrong expectation fails
-  the Rust one. It also gates the seven names, the three absent ones and the attribution;
-  `measure_clbg.rs` prints wall-clock and gates on nothing. `mandelbrot`, `pidigits` and
-  `regexredux` are the three not ported and docs/68 §68.6 is why each.
+  the Rust one. It also gates the eight names, the two absent ones, the per-benchmark fuel budget
+  and the attribution; `measure_clbg.rs` prints wall-clock and gates on nothing. `mandelbrot` and
+  `regexredux` are the two not ported and docs/68 §68.6 is why each; `pidigits` was the third until
+  docs/69 made `lib/bignum.beck` importable, and it is the one benchmark whose gate needs
+  `--fuel`, because the only size the Game publishes an oracle for is the size that has to run.
 - Security posture is [`docs/43-threat-model.md`](docs/43-threat-model.md) (who is defended
   against, and who is not) and `SECURITY.md` (how a report reaches us). What is *absent* is asserted
   as absent in `beck-cli/tests/pending_security.rs`: building one of those controls turns a test
@@ -226,8 +242,11 @@ Write the commit message as the author of the change: what changed, and why.
   *verification* constant is the original suite's own, read from its source rather than chosen here;
   and the Benchmarks Game numbers come from `cargo test --release --test measure_clbg --
   --nocapture` and from `beck test` on each file in `compiler/clbg/`, quoted in
-  [`docs/68-clbg-report.md`](docs/68-clbg-report.md) — where every expected output is the Game's own
-  file under `clbg/expected/` and `clbg.rs` is what holds a port's assertion to it;
+  [`docs/68-clbg-report.md`](docs/68-clbg-report.md) and
+  [`docs/69-standard-library-imports-report.md`](docs/69-standard-library-imports-report.md) §69.5 —
+  where every expected output is the Game's own file under `clbg/expected/` and `clbg.rs` is what
+  holds a port's assertion to it; and the cost of importing a standard-library module comes from
+  `beck check` on the probes docs/69 §69.4 lists;
   and the compile-speed numbers come from `cargo test --release --test measure_compile --
   --nocapture` and `cargo test --release --test compile_speed -- --nocapture`, quoted in
   [`docs/64-compile-speed-report.md`](docs/64-compile-speed-report.md) — where the gate asserts a

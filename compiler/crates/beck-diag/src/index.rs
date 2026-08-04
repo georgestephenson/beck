@@ -855,7 +855,8 @@ pub const INDEX: &[CodeEntry] = &[
         "B0603",
         Stage::Modules,
         "cannot find module",
-        "The loader looked for `<name>.becki` and `<name>.beck` and found neither.",
+        "The loader looked for `<name>.becki` and `<name>.beck` beside the root module, and for a \
+         standard-library module of that name, and found neither.",
     ),
     e(
         "B0604",

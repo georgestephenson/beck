@@ -1,0 +1,65 @@
+# A real written to a fixed number of decimal places, and lines written as a file.
+#
+# `str` on a `Float` is the shortest representation that round-trips — `str(1.0)` is `"1"` — which
+# is the right default and is not `printf("%.9f")`. Anything compared as *text* needs the second
+# one: a price with its trailing zero, a report column that lines up, an output file somebody else
+# published. Composition over the primitives, so it is a file here rather than a primitive
+# (`lib/README.md`).
+
+## Ten to the `n`, for `n` at or below the point where an `Int` stops holding it.
+##
+## Nothing guards a larger exponent, because a caller that asked for one would be wrong about `Int`
+## rather than about this function.
+def ten_to_the(n: Int) -> Int:
+    if n <= 0:
+        return 1
+    return 10 * ten_to_the(n - 1)
+
+## `digits` widened to `width` with leading zeros. Narrower than its input is its input.
+##
+## The fractional part of a fixed-point number is the one place a leading zero carries information:
+## `0.045` and `0.45` differ by the zero and by nothing else, so dropping it is a wrong answer
+## rather than an ugly one.
+def pad_zeros(digits: Str, width: Int) -> Str:
+    if str_len(digits) >= width:
+        return digits
+    return pad_zeros("0" + digits, width)
+
+## `x` to exactly `places` decimal places, rounded half away from zero.
+##
+## **The rounding rule is half away from zero and `printf`'s is half to even**, and the two differ
+## only when the scaled value lands exactly on a half. A caller whose values are quotients or roots
+## never meets one; a caller that computes in tenths meets one immediately, and wants
+## [`decimal`](decimal.beck)'s `render_at`, which takes the rule as an argument and works in exact
+## arithmetic rather than in binary floating point.
+def fixed(x: Float, places: Int) -> Str:
+    scale = ten_to_the(places)
+    magnitude = x if x >= 0.0 else 0.0 - x
+    units = trunc(magnitude * float(scale) + 0.5)
+    body = str(units / scale) + "." + pad_zeros(str(units % scale), places)
+    return "-" + body if x < 0.0 else body
+
+## `parts` as lines, with a trailing newline.
+##
+## The trailing newline is the point. A file written by a program that ends each line the way it
+## ends every other differs from one that drops the last by a single byte, and by nothing a reader
+## would see — so it is the sort of difference a comparison finds and an eye does not.
+def lines_of(parts: list[Str]) -> Str:
+    return str_join(parts, "\n") + "\n"
+
+test "fixed: nine places, both signs, and every digit asked for":
+    expect fixed(1.274219991, 9) == "1.274219991"
+    expect fixed(0.0 - 0.169075164, 9) == "-0.169075164"
+    expect fixed(2.5, 2) == "2.50"
+
+test "fixed: a fraction with a leading zero keeps it":
+    expect fixed(1.0009, 3) == "1.001"
+    expect fixed(0.045, 3) == "0.045"
+
+test "fixed: zero places is still a point-free integer, and zero is unsigned":
+    expect fixed(31.52, 3) == "31.520"
+    expect fixed(0.0, 3) == "0.000"
+
+test "lines_of: a trailing newline, and no separator before the first line":
+    expect lines_of(["a", "b"]) == "a\nb\n"
+    expect lines_of(["only"]) == "only\n"
