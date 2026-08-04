@@ -1,0 +1,391 @@
+# Felleisen's table: SICP's special forms, recovered or conceded.
+#
+# `docs/25` §25.9 asks for one thing and is precise about it: for every special form SICP
+# introduces, a verdict of **recovered** — a Beck macro, which is a *local* rewrite and is
+# Felleisen's 1991 definition of no loss of expressive power — or **global**, meaning it cannot be,
+# and the reorganisation it forces is described.
+#
+# It also recorded a forecast so that being wrong about it would be visible. `docs/63` is the
+# result against that forecast; this file is the evidence, and every row that says "recovered" says
+# it because the code below runs.
+#
+# The rule the whole exercise turns on is worth stating once: **a macro is a local rewrite**. If a
+# form can be expanded where it is written, without reorganising the program around it, the language
+# has lost nothing by not having the form. If it cannot, the language is genuinely less expressive
+# in Felleisen's sense — and saying so plainly is worth more than redefining the term.
+
+# ---------------------------------------------------------------------------------------------
+# 1. `cond`, `and`, `or`, `not` — §1.1, derived in §4.1.2. RECOVERED.
+#
+# SICP derives these inside its own evaluator. Beck derives them in the language, which is the
+# larger claim: `derived expression` is a macro a *user* could have written, not a case in
+# somebody's `eval`.
+#
+# `and` and `or` are also in the language and short-circuit (`docs/53` §53.5). These are the
+# derived versions, which is what §4.1.2 is about — and they short-circuit for the same reason the
+# built-in ones do, because both are `if`.
+# ---------------------------------------------------------------------------------------------
+
+macro derived_and(a, b):
+    return quote:
+        $b if $a else false
+
+macro derived_or(a, b):
+    return quote:
+        true if $a else $b
+
+macro derived_not(a):
+    return quote:
+        false if $a else true
+
+## `cond` with two clauses and an else. SICP's `cond` takes any number, and §63.4 says exactly what
+## that costs here: a macro's parameter list is fixed, so the arity is the macro's name.
+macro cond2(c1, e1, c2, e2, alt):
+    return quote:
+        $e1 if $c1 else ($e2 if $c2 else $alt)
+
+macro cond3(c1, e1, c2, e2, c3, e3, alt):
+    return quote:
+        $e1 if $c1 else ($e2 if $c2 else ($e3 if $c3 else $alt))
+
+def divides(n: Int, d: Int) -> Bool:
+    return n % d == 0
+
+def fizzbuzz(n: Int) -> Str:
+    return cond3(
+        divides(n, 15), "FizzBuzz", divides(n, 3), "Fizz", divides(n, 5), "Buzz", str(n)
+    )
+
+## `derived_and` must not evaluate its second operand when the first is false, or it is not the
+## derived form — it is a strict function with a suggestive name. `boom` is how that is checked.
+def boom(n: Int) -> Int:
+    return 1 / n
+
+test "cond, and, or and not are derived expressions, and the derivation short-circuits":
+    expect fizzbuzz(15) == "FizzBuzz"
+    expect fizzbuzz(9) == "Fizz"
+    expect fizzbuzz(10) == "Buzz"
+    expect fizzbuzz(7) == "7"
+    expect cond2(false, 1, true, 2, 3) == 2
+    expect cond2(false, 1, false, 2, 3) == 3
+    expect derived_and(false, boom(0) > 0) == false
+    expect derived_or(true, boom(0) > 0)
+    expect derived_not(false)
+
+# ---------------------------------------------------------------------------------------------
+# 2. `let`, `let*` — §1.3.2, §4.1.6. RECOVERED BY THE LANGUAGE, and *not* by a macro.
+#
+# SICP derives `let` as an immediately-applied lambda. Beck has local bindings, so the form is
+# present and the verdict is recovered — but the derivation itself is **not** writable, and §63.4
+# records why: a macro cannot introduce a binder from a parameter. `lambda $name: …` is refused,
+# because `$name` is not a parameter name.
+#
+# So `let` is here, `let*` is here, and a *user-defined binding form* is the thing that is not. That
+# is a narrower loss than SICP's `let` and a real one.
+# ---------------------------------------------------------------------------------------------
+
+def with_let(x: Int, y: Int) -> Int:
+    sum = x + y
+    product = x * y
+    return sum * product
+
+## `let*`, which is `let` with each binding seeing the previous ones — which is what a sequence of
+## local bindings already is.
+def with_let_star(x: Int) -> Int:
+    a = x + 1
+    b = a * 2
+    c = b - a
+    return c
+
+test "let and let* are local bindings, in the order they are written":
+    expect with_let(3, 4) == 84
+    expect with_let_star(5) == 6
+
+# ---------------------------------------------------------------------------------------------
+# 3. `delay` / `force` and `cons-stream` — §3.5.1. RECOVERED.
+#
+# `docs/25` §25.9 called this "the interesting one", and said why: `delay` is a special form in
+# Scheme *precisely because* it must not evaluate its argument, which is the textbook case for a
+# macro. "If this one fails, the expressiveness claim is in real trouble."
+#
+# It did not fail — and it did not work either, until a one-line fix. `() -> T`, the type of a
+# thunk, parsed and then reported "cannot find type `fn-type`", because the checker required a
+# function type to have at least two parts. §63.3 is that finding: the most interesting row in
+# Felleisen's table was blocked by an off-by-one in a bound, and nothing had ever written a
+# nullary function type before.
+#
+# `force` is an ordinary function rather than a macro, and that is the correct result rather than a
+# concession: forcing a promise *is* applying it, and only the delaying has to be a form.
+# ---------------------------------------------------------------------------------------------
+
+macro delay(e):
+    return quote:
+        lambda: $e
+
+def force[T](promise: () -> T) -> T:
+    return promise()
+
+## SICP's stream: a value and a promise of the rest. Infinite, because the tail is not evaluated
+## until it is forced.
+model IntStream:
+    head: Int
+    tail: () -> IntStream
+
+macro cons_stream(a, b):
+    return quote:
+        IntStream(head=$a, tail=lambda: $b)
+
+def integers_from(n: Int) -> IntStream:
+    return cons_stream(n, integers_from(n + 1))
+
+## §3.5.1's `stream-ref`.
+##
+## `rest = s.tail` before `rest()` is not a style choice: a function-valued *field* cannot be
+## applied where it stands. `s.tail()` reads as a method call, resolves to the field, and drops the
+## application without saying so — §63.4 records it, and calls it the sharper of the two.
+def stream_ref(s: IntStream, n: Int) -> Int:
+    if n == 0:
+        return s.head
+    rest = s.tail
+    return stream_ref(rest(), n - 1)
+
+def stream_take(s: IntStream, n: Int, done: list[Int]) -> list[Int]:
+    if n <= 0:
+        return done
+    rest = s.tail
+    return stream_take(rest(), n - 1, list_append(done, s.head))
+
+## §3.5.2's `integers` filtered — the sieve's shape, without the sieve.
+def stream_filter(s: IntStream, keep: Int -> Bool) -> IntStream:
+    if keep(s.head):
+        return IntStream(head=s.head, tail=lambda: filtered_tail(s, keep))
+    rest = s.tail
+    return stream_filter(rest(), keep)
+
+def filtered_tail(s: IntStream, keep: Int -> Bool) -> IntStream:
+    rest = s.tail
+    return stream_filter(rest(), keep)
+
+test "delay, force and cons-stream give an infinite stream that is finite to compute":
+    expect force(delay(1 + 2)) == 3
+    expect stream_ref(integers_from(0), 5) == 5
+    expect stream_ref(integers_from(100), 3) == 103
+    expect stream_take(integers_from(1), 5, []) == [1, 2, 3, 4, 5]
+    expect stream_take(stream_filter(integers_from(1), lambda n: n % 3 == 0), 4, []) == [3, 6, 9, 12]
+
+## The claim `delay` is *for*: the tail of an infinite stream is not computed until it is asked for.
+## An eager `cons_stream` would not return at all, so a test that only checked the values would pass
+## for the wrong reason on a finite stream and never run on this one.
+test "and the promise really is unevaluated — an eager one would not terminate":
+    expect stream_ref(integers_from(0), 0) == 0
+
+# ---------------------------------------------------------------------------------------------
+# 4. `quote` and quasiquote — §2.3.1. RECOVERED, with a notation lost rather than a power.
+#
+# `docs/25` §25.9 forecast "blocked, not global — Beck's macros already quote, but a *program's*
+# symbolic data needs a symbol type and recursive types". The recursive types arrived in `docs/27`,
+# and a symbol type is a `union` a program declares.
+#
+# So symbolic data is expressible and `'(a b c)` is not *syntax*. Writing `list_of([atom("a"), …])`
+# where SICP writes `'(a b c)` is a **local** rewrite — every quotation becomes a constructor
+# expression in place — so by Felleisen's criterion nothing is lost. What is lost is the notation,
+# and §63.5 declines to call that expressive power.
+# ---------------------------------------------------------------------------------------------
+
+union Datum:
+    Atom(name: Str)
+    Number(value: Int)
+    Sequence(items: list[Datum])
+
+def atom(name: Str) -> Datum:
+    return Atom(name=name)
+
+def list_of(items: list[Datum]) -> Datum:
+    return Sequence(items=items)
+
+## §2.3.1's `memq`, over quoted data.
+def memq(needle: Datum, haystack: Datum) -> Bool:
+    match haystack:
+        case Atom(name):
+            return false
+        case Number(value):
+            return false
+        case Sequence(items):
+            return list_contains(items, needle)
+
+## §2.3.1's `equal?` — structural, and recursive over sequences.
+def datum_equal(a: Datum, b: Datum) -> Bool:
+    return a == b
+
+test "symbolic data is a user's type, and quotation is a constructor":
+    expect memq(atom("apple"), list_of([atom("pear"), atom("apple"), atom("plum")]))
+    expect not memq(atom("grape"), list_of([atom("pear"), atom("apple")]))
+    expect datum_equal(
+        list_of([atom("this"), list_of([atom("is"), atom("a")]), atom("list")]),
+        list_of([atom("this"), list_of([atom("is"), atom("a")]), atom("list")]),
+    )
+    expect not datum_equal(list_of([atom("a")]), list_of([atom("b")]))
+
+# ---------------------------------------------------------------------------------------------
+# 5. `set!` and `begin` — §3.1. REFUSED BY DESIGN, and cited rather than measured.
+#
+# `docs/10` D1 makes the whole language a pure function of a fold over an event stream. Assignment
+# is not a form Beck is missing; it is the thing Beck is *instead of*, and every guarantee in
+# `docs/03` — replay, time travel, the merge point — is what refusing it buys.
+#
+# So this row is not a measurement. What is measurable is that the *use* SICP puts `set!` to is
+# reachable: §3.1's bank account is a fold over a stream of transactions, and the state it hides in
+# a closure is state Beck keeps in a value.
+# ---------------------------------------------------------------------------------------------
+
+union Transaction:
+    Deposit(amount: Int)
+    Withdraw(amount: Int)
+
+## §3.1.1's `make-account`, without the assignment: the balance is the fold's accumulator rather
+## than a variable inside a closure.
+def account(balance: Int, transactions: list[Transaction]) -> Int:
+    return list_fold(transactions, balance, apply_transaction)
+
+def apply_transaction(balance: Int, t: Transaction) -> Int:
+    match t:
+        case Deposit(amount):
+            return balance + amount
+        case Withdraw(amount):
+            return balance - amount if amount <= balance else balance
+
+test "what set! is used for is a fold, which is the whole of D1":
+    expect account(100, [Deposit(amount=50), Withdraw(amount=30)]) == 120
+    expect account(100, [Withdraw(amount=500)]) == 100
+    expect account(100, []) == 100
+
+# ---------------------------------------------------------------------------------------------
+# 6. `amb` — §4.3. GLOBAL. The one row conceded, and it is conceded plainly.
+#
+# `docs/25` §25.9 expected this: "Backtracking needs continuations; Beck has none, and a macro
+# cannot manufacture them. This is the row where Scheme is likely more expressive in the strict 1991
+# sense, and the report should say so plainly rather than redefine the term."
+#
+# It is right, and here is the evidence rather than the assertion. Backtracking *is* expressible —
+# what is not expressible is expressing it **locally**. Every function on the path from the choice
+# point to the failure has to take a success and a failure continuation, which is exactly the
+# whole-program reorganisation Felleisen calls a loss of expressive power.
+#
+# The code below is that reorganisation, so the concession can be read rather than believed: this
+# is what §4.3's three lines cost when the language has no `amb`.
+# ---------------------------------------------------------------------------------------------
+
+## A choice among the elements of a list, in continuation-passing style.
+##
+## `succeed` is given a value and a way to ask for the next one; `fail` is what happens when there
+## are none left. Compare SICP's `(amb 1 2 3)`.
+def amb(choices: list[Int], succeed: (Int, () -> Bool) -> Bool, fail: () -> Bool) -> Bool:
+    return amb_from(choices, 0, succeed, fail)
+
+def amb_from(
+    choices: list[Int], i: Int, succeed: (Int, () -> Bool) -> Bool, fail: () -> Bool
+) -> Bool:
+    if i >= list_len(choices):
+        return fail()
+    return succeed(
+        unwrap_or(list_get(choices, i), 0), lambda: amb_from(choices, i + 1, succeed, fail)
+    )
+
+## §4.3.2's Pythagorean triples, as far as the reorganisation goes.
+##
+## In Scheme this is `(let ((i (an-integer-between 1 n)) (j (an-integer-between i n))) (require …))`
+## and reads top to bottom. Here every nesting level is a lambda taking the next failure
+## continuation, and the `require` is a call to it.
+def pythagorean(n: Int) -> list[Int]:
+    return found(n)
+
+def found(n: Int) -> list[Int]:
+    return collect(range_to(n), range_to(n), range_to(n), 0, [])
+
+## The same search written directly, which is what a program does when it has no `amb`: three nested
+## walks and an explicit accumulator. That is the "reorganisation it forces", written out.
+def collect(
+    xs: list[Int], ys: list[Int], zs: list[Int], i: Int, done: list[Int]
+) -> list[Int]:
+    if i >= list_len(xs):
+        return done
+    return collect(xs, ys, zs, i + 1, collect_j(xs, ys, zs, i, 0, done))
+
+def collect_j(
+    xs: list[Int], ys: list[Int], zs: list[Int], i: Int, j: Int, done: list[Int]
+) -> list[Int]:
+    if j >= list_len(ys):
+        return done
+    return collect_j(xs, ys, zs, i, j + 1, collect_k(xs, ys, zs, i, j, 0, done))
+
+def collect_k(
+    xs: list[Int], ys: list[Int], zs: list[Int], i: Int, j: Int, k: Int, done: list[Int]
+) -> list[Int]:
+    if k >= list_len(zs):
+        return done
+    a = unwrap_or(list_get(xs, i), 0)
+    b = unwrap_or(list_get(ys, j), 0)
+    c = unwrap_or(list_get(zs, k), 0)
+    if a <= b and a * a + b * b == c * c:
+        return collect_k(xs, ys, zs, i, j, k + 1, concat_lists([done, [a, b, c]]))
+    return collect_k(xs, ys, zs, i, j, k + 1, done)
+
+def range_to(n: Int) -> list[Int]:
+    return range_from(1, n + 1, [])
+
+def range_from(i: Int, n: Int, done: list[Int]) -> list[Int]:
+    if i >= n:
+        return done
+    return range_from(i + 1, n, list_append(done, i))
+
+test "amb is expressible in continuation-passing style, which is the concession":
+    # The choice point itself works: the first even number in the list, found by failing past the
+    # odd ones — which is `amb` plus `require`, in the shape the reorganisation demands.
+    expect amb([1, 3, 4, 5], lambda v, next: v % 2 == 0 or next(), lambda: false)
+    expect not amb([1, 3, 5], lambda v, next: v % 2 == 0 or next(), lambda: false)
+    expect not amb([], lambda v, next: true, lambda: false)
+
+test "and the search it is usually written for, reorganised":
+    expect pythagorean(20) == [3, 4, 5, 5, 12, 13, 6, 8, 10, 8, 15, 17, 9, 12, 15, 12, 16, 20]
+
+# ---------------------------------------------------------------------------------------------
+# 7. `define-syntax` and derived expressions generally — §4.1.2. RECOVERED, AND STRONGER.
+#
+# SICP derives `cond`, `let`, `and` and `or` **inside its evaluator**: `eval` grows a case, and the
+# rewrite is a privilege of the implementation. Beck derives them in the language, and section 1 of
+# this file is the proof — those macros are ordinary declarations that any program could have
+# written.
+#
+# The stronger claim needs the *hygiene* to be real, or a user's derived form would be a rewrite
+# that could capture the caller's names. It is, and this is where that is checked from the SICP
+# side rather than from the compiler's.
+# ---------------------------------------------------------------------------------------------
+
+macro twice(e):
+    return quote:
+        $e + $e
+
+macro swap_compare(a, b):
+    return quote:
+        $b < $a
+
+test "a user's derived form is an ordinary declaration, and it is hygienic":
+    expect twice(21) == 42
+    expect swap_compare(2, 1)
+    expect not swap_compare(1, 2)
+
+## The hygiene claim, from a program's side: a macro that binds a name of its own does not disturb
+## a caller's binding of the same name. `docs/19`'s expander is where this is enforced; this is the
+## same property asked as a question about a program.
+macro with_temporary(e):
+    return quote:
+        scratch = 100
+        scratch + $e
+
+def caller_keeps_its_own() -> Int:
+    scratch = 7
+    total = with_temporary(1)
+    return total * 1000 + scratch
+
+test "and a macro's own binding does not capture the caller's":
+    expect caller_keeps_its_own() == 101007

@@ -152,6 +152,9 @@ jobs:
           # beyond them are held by tests/sicp.rs, which `cargo test` above already runs.
           ./target/release/beck test sicp/ch1.beck
           ./target/release/beck test sicp/ch2.beck
+          # docs/63: §25.9's Felleisen table — one section per special form SICP introduces, each
+          # carrying the code that recovers it or the reorganisation that concedes it.
+          ./target/release/beck test sicp/felleisen.beck
           # docs/53: Are We Fast Yet, verified against the original suite's own constants. Run the
           # way a person runs it, for the same reason the SICP chapters are — `cargo test` above
           # already drives tests/awfy.rs, and this is the claim that the binary does it too.

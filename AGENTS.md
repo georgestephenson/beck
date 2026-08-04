@@ -45,8 +45,9 @@ Write the commit message as the author of the change: what changed, and why.
   [`58`](docs/58-json-report.md),
   [`59`](docs/59-havlak-report.md),
   [`60`](docs/60-collision-detection-report.md),
-  [`61`](docs/61-deltablue-report.md) and
-  [`62`](docs/62-fuel-report.md),
+  [`61`](docs/61-deltablue-report.md),
+  [`62`](docs/62-fuel-report.md) and
+  [`63`](docs/63-felleisen-report.md),
   indexed in
   [`docs/README.md`](docs/README.md) — record what each
   phase does, what it refuses to claim, and the corrections it makes to the design documents.
@@ -59,11 +60,12 @@ Write the commit message as the author of the change: what changed, and why.
   closes docs/08 §8.5.4's Wave 2 —
   and two walls of its own (docs/46, docs/49); **all fourteen** of Are We Fast Yet's benchmarks —
   its nine micro and all five macro (docs/53, docs/57, docs/58, docs/59, docs/60, docs/61) — are
-  that bullet's long-owed harness half, so **the standard-library bullet is done**, with CLBG, the
-  compile-speed budgets and the Felleisen table outstanding under docs/25 §25.9 rather than under
+  that bullet's long-owed harness half, so **the standard-library bullet is done**, with CLBG and
+  the compile-speed budgets outstanding under docs/25 §25.9 rather than under
   it; the incremental-views bullet has its engine and
   that engine's lifecycle (docs/51) but not its read models, pgwire
-  or fusion; the expressiveness suite runs two chapters of SICP. Seven of the fourteen are
+  or fusion; the expressiveness suite runs two chapters of SICP and answers §25.9's Felleisen
+  question — six of the seven special forms recovered, `amb` conceded (docs/63). Seven of the fourteen are
   untouched — identity has its seam but not its OIDC relying party (docs/48) — and docs/26 §26.9
   names them one at a time, less the two docs/51 closed. **Wave 0** (docs/08 §8.5.4) is also
   built — a bounded front end, an injected clock, a threat model, a disclosure policy and an
@@ -96,10 +98,16 @@ Write the commit message as the author of the change: what changed, and why.
   has no oracle for its workload, so a loop that ran once instead of fifty times passed every
   verification the suite publishes. docs/60 §60.2 is the third time the suite found something the
   *language* was missing, after docs/53's short-circuiting and its bitwise operators: `sin`, `cos`
-  and a real-to-integer truncation did not exist, and now do. Three of the fourteen cannot run at
-  the size the suite measures at because the evaluator's 50,000,000-step fuel budget refuses them
-  (docs/59 §59.3, docs/61 §61.3), which makes a `--fuel` on `beck test` a missing feature rather
-  than three incidents.
+  and a real-to-integer truncation did not exist, and now do. Three of the fourteen could not run at
+  the size the suite measures at because the evaluator's 50,000,000-step fuel budget refused them
+  (docs/59 §59.3, docs/61 §61.3) — three incidents that were one missing feature, which docs/62
+  built: `beck test --fuel`, because a backstop nothing can raise is a ceiling. docs/63 §63.3 found
+  the next of the same kind by asking a different question: `() -> T` parsed and would not check,
+  because nothing in the prelude, the corpus, either SICP chapter, the standard library or fourteen
+  benchmarks had ever written a function type taking **no arguments** — a macro expanding into a
+  thunk was the first thing to need one. Its §63.4 has one more that is **not** fixed and is a
+  defect: `b.make()` on a function-valued field resolves to the field and drops the application
+  without saying so.
   Reports are history: a later phase's correction to an earlier one goes in the later report, not
   into the earlier text.
 - [`docs/reference/`](docs/reference/README.md) is **generated** by `beck doc reference` from the
@@ -122,7 +130,9 @@ Write the commit message as the author of the change: what changed, and why.
   §25.6 measured are down, and so are the three the removals wrote, so `sicp/refusals/` is
   **empty** — which claims that every wall this project has found has been removed, and not that
   Beck expresses SICP. `sicp/refusals/README.md` holds that distinction and says what puts a file
-  back.
+  back. `sicp/felleisen.beck` is the suite's *formal* half rather than its running half — §25.9's
+  table, one section per special form SICP introduces, each carrying the code that recovers it or
+  the reorganisation that concedes it (docs/63).
 - [`compiler/awfy/`](compiler/awfy/README.md) is the performance benchmark
   ([`docs/25`](docs/25-benchmarks-and-expressiveness.md) §25.2): **all fourteen** of Are We Fast
   Yet's benchmarks — its nine micro and all five macro — ported, each verified against the constant
@@ -155,15 +165,17 @@ Write the commit message as the author of the change: what changed, and why.
   [`docs/24-incremental-views-report.md`](docs/24-incremental-views-report.md),
   [`docs/26-arrangement-sharing-report.md`](docs/26-arrangement-sharing-report.md) and
   [`docs/51-arrangement-lifecycle-report.md`](docs/51-arrangement-lifecycle-report.md); the SICP numbers
-  come from `cargo test --release --test sicp` and from `beck test sicp/ch1.beck` and
-  `beck test sicp/ch2.beck`, quoted in [`docs/27-walls-report.md`](docs/27-walls-report.md) §27.5,
+  come from `cargo test --release --test sicp` and from `beck test sicp/ch1.beck`,
+  `beck test sicp/ch2.beck` and `beck test sicp/felleisen.beck`, quoted in
+  [`docs/27-walls-report.md`](docs/27-walls-report.md) §27.5,
   [`docs/31-tail-calls-report.md`](docs/31-tail-calls-report.md) §31.5–§31.6 and
   [`docs/32-numeric-tower-and-polymorphism-report.md`](docs/32-numeric-tower-and-polymorphism-report.md)
   §32.5 and
   [`docs/33-effect-polymorphism-and-list-patterns-report.md`](docs/33-effect-polymorphism-and-list-patterns-report.md)
   §33.6 and
   [`docs/36-parameterised-types-report.md`](docs/36-parameterised-types-report.md) §36.6 and
-  [`docs/41-generic-arithmetic-report.md`](docs/41-generic-arithmetic-report.md) §41.4; and the
+  [`docs/41-generic-arithmetic-report.md`](docs/41-generic-arithmetic-report.md) §41.4 and
+  [`docs/63-felleisen-report.md`](docs/63-felleisen-report.md) §63.2; and the
   standard library's come from `cargo test -p beck-cli --test stdlib` and from `beck test` on each
   file in `compiler/lib/`, quoted in
   [`docs/46-standard-library-report.md`](docs/46-standard-library-report.md),

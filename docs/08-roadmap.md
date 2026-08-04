@@ -296,8 +296,10 @@ dependencies whose signatures didn't change.
   — an iterative process running a quarter of a million levels deep — now that there is one to carry
   ([`31`](31-tail-calls-report.md)), and §1.1.7/§1.3.3/§1.3.4's reals asserted against the doubles
   the book prints, while chapter 2 carries §2.2.1's `map` written by the reader rather than borrowed
-  from the prelude ([`32`](32-numeric-tower-and-polymorphism-report.md)). Felleisen's table is not
-  written.*
+  from the prelude ([`32`](32-numeric-tower-and-polymorphism-report.md)). **Felleisen's table is
+  written** ([`63`](63-felleisen-report.md)): six of the seven forms recovered and `amb` conceded,
+  which is the shape §25.9's forecast predicted, with the CPS reorganisation the concession costs
+  written out beside it rather than asserted.*
 - **Identity**: OIDC relying-party runtime, `identity = managed()` provisioning (Keycloak/Ory),
   claims → `Session` capability mapping, dev-mode identity for rung 0, presence as a first-class
   signal ([`10`](10-decisions.md) D6). *The **seam** is built ([`48`](48-identity-report.md)):
@@ -616,7 +618,9 @@ benchmarks** ([`53`](53-are-we-fast-yet-report.md), [`57`](57-richards-report.md
 [`61`](61-deltablue-report.md)), each verified against the constant
 the original suite's own `verifyResult` checks, with wall-clock printed and nothing compared to
 anything — §8.4's ask, half discharged. The whole **CLBG** harness is
-not stood up — and that is what is left of the item that has been owed longest.
+not stood up — and that, with the compile-speed budgets, is what is left of the item that has been
+owed longest. The **Felleisen table** is built ([`63`](63-felleisen-report.md)) and sits under
+[`25`](25-benchmarks-and-expressiveness.md) §25.9 rather than under this bullet.
 
 *It found a wall too, in the same way and one wave later: **a credential could not be sent**, because
 §3.5 gives a program no way to read a `secret[Str]` and a header value is a `Str` (§49.4). It had

@@ -1485,7 +1485,11 @@ impl<'a> Checker<'a> {
 
     fn ty_from_node_inner(&mut self, n: &Node) -> Ty {
         let span = n.span();
-        if n.has_head("fn-type") && n.args.len() >= 2 {
+        // One argument is a **nullary** function type: `() -> T`, which the parser builds with the
+        // return type alone. It was `>= 2` here, so `() -> Int` parsed and then reported "cannot
+        // find type `fn-type`" — and the one thing that needs it is a thunk, which is what
+        // Felleisen's `delay` expands to (`docs/63` §63.3).
+        if n.has_head("fn-type") && !n.args.is_empty() {
             let params: Vec<Ty> = n.args[..n.args.len() - 1]
                 .iter()
                 .map(|a| self.ty_from_node(a))
