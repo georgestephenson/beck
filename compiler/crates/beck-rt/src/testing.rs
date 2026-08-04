@@ -497,6 +497,7 @@ fn build_stubs(
                     ty: Ty::fun(Vec::new(), value.ty.clone()),
                     tier: Tier::Any,
                     span: value.span,
+                    last_use: false,
                 };
                 Answer::FromTheCall(
                     backend
@@ -1050,6 +1051,7 @@ fn eval(
         ty: Ty::fun(Vec::new(), code.ty.clone()),
         tier: Tier::Any,
         span: code.span,
+        last_use: false,
     };
     let f = runtime
         .prepare(&lam)

@@ -210,3 +210,71 @@ fn the_whole_todo_program_graph_is_built_in_well_under_a_millisecond() {
         "building the graph for a 132-line program took {graph_time:?}"
     );
 }
+
+/// **The accumulator idiom is linear**, which is the language's own asymptotics rather than the
+/// runtime's.
+///
+/// Beck has no mutable sequence, so a loop that builds one threads it through a tail call:
+/// `go(i + 1, list_append(done, x))`. That is how `lib/`, `awfy/`, `clbg/`, the corpus and both
+/// SICP chapters accumulate — and until `docs/70` it was `O(n²)`, because `list_append` copied the
+/// whole list every time. The compiler now proves which read of a binding is its last
+/// (`beck_core::liveness`), the frame hands the value over instead of lending it, and the append
+/// pushes into a list nobody else holds.
+///
+/// This is the same *class* of defect as the fold above and gets the same treatment: a shape, not a
+/// rate. Over an 8× longer run a quadratic costs about 8× more per element and a linear one costs
+/// about the same per element; the bound is 3×, which is far above the noise of a shared runner and
+/// far below the failure.
+///
+/// It cannot be a fuel assertion, and that is worth knowing: the step count over this loop is
+/// exactly linear either way, because a primitive that copies ten thousand values is one step
+/// (`docs/69` §69.7). Only wall clock sees it.
+#[test]
+fn building_a_list_by_accumulation_costs_the_same_per_element_however_long_it_gets() {
+    let program = |n: usize| {
+        format!(
+            "def build(i: Int, n: Int, done: list[Int]) -> list[Int]:\n\
+             \x20   if i >= n:\n\
+             \x20       return done\n\
+             \x20   return build(i + 1, n, list_append(done, i))\n\
+             \n\
+             test \"accumulate\":\n\
+             \x20   expect list_len(build(0, {n}, [])) == {n}\n"
+        )
+    };
+    let per_element_ns = |n: usize| -> f64 {
+        let file = std::env::temp_dir().join(format!("beck-scaling-accumulate-{n}.beck"));
+        std::fs::write(&file, program(n)).expect("a scratch file");
+        // Twice, and the faster one taken: the first run pays for the page cache and the process.
+        let mut best = f64::MAX;
+        for _ in 0..2 {
+            let started = Instant::now();
+            let out = std::process::Command::new(env!("CARGO_BIN_EXE_beck"))
+                .args(["test", file.to_str().expect("a path")])
+                .output()
+                .expect("the compiler is built");
+            let elapsed = started.elapsed().as_secs_f64() * 1e9;
+            assert!(
+                out.status.success(),
+                "`beck test` on a {n}-element accumulator:\n{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            best = best.min(elapsed);
+        }
+        let _ = std::fs::remove_file(&file);
+        best / n as f64
+    };
+
+    // The short run carries the process start-up, so it is the one that flatters the ratio — which
+    // is the safe direction: it makes the bound harder to pass, not easier.
+    let short = per_element_ns(2_000);
+    let long = per_element_ns(16_000);
+    println!("accumulator: {short:.0} ns/element at 2,000 and {long:.0} ns/element at 16,000");
+    assert!(
+        long < short * 3.0,
+        "eight times the elements cost {:.1}× as much per element ({short:.0} ns → {long:.0} ns), \
+         which is the shape of a copy per append rather than a push — see docs/70",
+        long / short
+    );
+}

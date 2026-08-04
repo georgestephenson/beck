@@ -26,6 +26,7 @@ pub mod graph;
 pub mod html;
 pub mod iface;
 pub mod incremental;
+pub mod liveness;
 pub mod net;
 pub mod place;
 pub mod plan;
@@ -89,6 +90,9 @@ pub fn compile_with(
     if diags.has_errors() {
         return None;
     }
+    // Which read of a local is its last, computed once for every backend rather than by one of
+    // them (`liveness`).
+    liveness::mark_program(&mut program);
     let mut placed = split::split(program, diags)?;
     placed.placement = solution;
     Some(placed)
@@ -128,6 +132,7 @@ pub fn compile_or_library_str(name: &str, src: &str) -> (Option<Placed>, Diagnos
     if diags.has_errors() {
         return (None, diags, map);
     }
+    liveness::mark_program(&mut program);
     let interface = iface::Interface::of(&program);
     let placed = project::slice_or_library(
         project::Project {

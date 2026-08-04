@@ -52,8 +52,9 @@ Write the commit message as the author of the change: what changed, and why.
   [`65`](docs/65-lsp-report.md),
   [`66`](docs/66-page-snapshots-report.md),
   [`67`](docs/67-sqlite-report.md),
-  [`68`](docs/68-clbg-report.md) and
-  [`69`](docs/69-standard-library-imports-report.md),
+  [`68`](docs/68-clbg-report.md),
+  [`69`](docs/69-standard-library-imports-report.md) and
+  [`70`](docs/70-last-use-moves-report.md),
   indexed in
   [`docs/README.md`](docs/README.md) — record what each
   phase does, what it refuses to claim, and the corrections it makes to the design documents.
@@ -199,11 +200,15 @@ Write the commit message as the author of the change: what changed, and why.
   budget, `pidigits` included, and that is a fact about the library rather than about the gate:
   it needed 100,000,000 steps until docs/69 §69.6 bracketed long division's trial-digit search, and
   needs under 16,000,000 now. A budget table in `clbg.rs` would have hidden that. **docs/69 §69.7 is
-  the larger thing the same question found and is not fixed**: `list_append` copies the whole list,
-  so the tail-recursive accumulator every loop in the language is written as is O(n²) in time — and
-  `--fuel` cannot see it, because a primitive copying ten thousand values is one step. It is docs/19
-  §19.4's fold defect in a second place, and `scaling.rs`'s own sentence applies: a semantic defect,
-  not a backend one.
+  the larger thing the same question found**: `list_append` copied the whole list, so the
+  tail-recursive accumulator every loop in the language is written as was O(n²) in time — docs/19
+  §19.4's fold defect in a second place. **docs/70 fixes it** with last-use moves: `beck_core::liveness`
+  marks the read of a local nothing reads again, `Env::read` hands the value over when
+  `Arc::get_mut` proves the frame is unshared, and `list_append` pushes in place. Neutral on today's
+  programs and 25× at 8,000 elements; `scaling.rs` gates the shape, because `--fuel` cannot see a
+  copy — a primitive copying ten thousand values is one step. docs/70 §70.6 is the audit beside it,
+  and **strings are the next quadratic** (`+` copies both sides, `str_len` and `str_slice` walk
+  characters), not fixed.
 - Security posture is [`docs/43-threat-model.md`](docs/43-threat-model.md) (who is defended
   against, and who is not) and `SECURITY.md` (how a report reaches us). What is *absent* is asserted
   as absent in `beck-cli/tests/pending_security.rs`: building one of those controls turns a test

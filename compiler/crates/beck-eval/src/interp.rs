@@ -29,7 +29,7 @@ use std::sync::Arc;
 
 use beck_diag::Span;
 
-use beck_core::core::{Closure, Const, Core, CoreKind, Env, Pattern, Prim, Value};
+use beck_core::core::{Closure, Const, Core, CoreKind, Env, Pattern, Prim, Value, VarId};
 use beck_core::digest;
 use beck_core::html::Html;
 use beck_core::net::{Failure as NetFailure, Reply, Request};
@@ -570,6 +570,24 @@ pub const DEFAULT_FUEL: u64 = 50_000_000;
 /// bytes one level actually costs rather than assuming them.
 pub const DEFAULT_MAX_DEPTH: u32 = 4_000;
 
+/// Read a local: **move** it out of the frame when the compiler proved this is its last read,
+/// and clone it otherwise.
+///
+/// `last_use` is [`beck_core::liveness`]'s promise that no later evaluation in this body reads the
+/// binding, and [`Env::take`] only empties a frame nothing else holds — so a value that arrives
+/// here from a last read is one nobody else has, which is what lets `list_append` push into a list
+/// instead of copying it (`docs/69` §69.7).
+///
+/// `#[inline]`, unlike [`Interp::leaf`]'s arms: this is the single hottest node in the interpreter
+/// — every argument, every condition and every operand is one — and a call here costs a few percent
+/// of every benchmark in the tree. Its locals are a `bool` and a reference, so the frame it widens
+/// is a frame nobody notices; the arms `leaf` keeps out of line are the ones holding values.
+#[inline]
+fn read_var(c: &Core, v: VarId, env: &mut Env) -> EvalResult {
+    env.read(v, c.last_use)
+        .ok_or_else(|| EvalError::new(format!("unbound variable {v} at runtime"), c.span))
+}
+
 /// One step of evaluation: a finished value, or a call in tail position that
 /// [`Interp::eval`]'s loop should make *instead of* the one it is already making.
 enum Step {
@@ -652,8 +670,8 @@ impl<'h> Interp<'h> {
     pub fn apply(&self, f: &Value, args: Vec<Value>, span: Span) -> EvalResult {
         match f {
             Value::Closure(c) => {
-                let env = bind(c, args, span)?;
-                self.eval(&c.body, &env)
+                let mut env = bind(c, args, span)?;
+                self.eval(&c.body, &mut env)
             }
             other => Err(EvalError::new(
                 format!("not callable: {}", other.display()),
@@ -665,7 +683,7 @@ impl<'h> Interp<'h> {
     /// Evaluate a top-level definition by name.
     pub fn global(&self, name: &str, span: Span) -> EvalResult {
         match self.host.global(name) {
-            Some(core) => self.eval(core, &Env::new()),
+            Some(core) => self.eval(core, &mut Env::new()),
             None => Err(EvalError::new(format!("no such definition: {name}"), span)),
         }
     }
@@ -676,7 +694,7 @@ impl<'h> Interp<'h> {
     /// than nesting inside it — so `fact_iter`, `gcd` and `find_divisor` run in constant space and
     /// SICP §1.2.1's distinction between a recursive and an iterative *process* is observable
     /// (`docs/31` §31.2).
-    pub fn eval(&self, c: &Core, env: &Env) -> EvalResult {
+    pub fn eval(&self, c: &Core, env: &mut Env) -> EvalResult {
         let _frame = self.enter(c.span)?;
         let mut step = self.step(c, env)?;
         loop {
@@ -684,8 +702,10 @@ impl<'h> Interp<'h> {
                 Step::Done(v) => return Ok(v),
                 Step::Tail { callee, args, span } => (callee, args, span),
             };
-            let env = bind(&callee, args, span)?;
-            step = self.step(&callee.body, &env)?;
+            // The frame is owned here, which is what lets a last read move a value out of it
+            // instead of copying it (`beck_core::liveness`).
+            let mut env = bind(&callee, args, span)?;
+            step = self.step(&callee.body, &mut env)?;
         }
     }
 
@@ -700,7 +720,7 @@ impl<'h> Interp<'h> {
     /// through [`Interp::eval`] put a second host frame and a loop under each of them, and a real
     /// program is mostly these nodes. `docs/31` §31.5 has what the trampoline cost in the end.
     #[inline]
-    fn operand(&self, c: &Core, env: &Env) -> EvalResult {
+    fn operand(&self, c: &Core, env: &mut Env) -> EvalResult {
         match &c.kind {
             CoreKind::Const(k) => {
                 self.burn(c.span)?;
@@ -708,9 +728,7 @@ impl<'h> Interp<'h> {
             }
             CoreKind::Var(v) => {
                 self.burn(c.span)?;
-                env.get(*v).cloned().ok_or_else(|| {
-                    EvalError::new(format!("unbound variable {v} at runtime"), c.span)
-                })
+                read_var(c, *v, env)
             }
             CoreKind::If { .. }
             | CoreKind::Let { .. }
@@ -738,14 +756,17 @@ impl<'h> Interp<'h> {
     /// taken ownership of, and a `&Core` into a local the loop then reassigns is not something
     /// safe Rust will write. Returning the call to `eval` and re-entering here costs one host
     /// frame per *call* — not per level of recursion, which is the number that had to be zero.
-    fn step<'a>(&'a self, c: &'a Core, env0: &Env) -> Result<Step, EvalError> {
+    fn step<'a>(&'a self, c: &'a Core, env0: &mut Env) -> Result<Step, EvalError> {
         let mut cur: &'a Core = c;
         // The environment is only *replaced* by a `let` or a matched arm, and most nodes replace
         // nothing. Holding the caller's by reference until something extends it keeps two atomic
         // refcount operations off every node that does not — which is most of them.
         let mut owned: Option<Env> = None;
         loop {
-            let env: &Env = owned.as_ref().unwrap_or(env0);
+            let env: &mut Env = match owned.as_mut() {
+                Some(e) => e,
+                None => &mut *env0,
+            };
             self.burn(cur.span)?;
             match &cur.kind {
                 CoreKind::If { cond, then, alt } => {
@@ -836,13 +857,10 @@ impl<'h> Interp<'h> {
     /// block, and that is not tidiness: an unoptimised build gives each arm's temporaries their own
     /// slot in the enclosing frame, so a single fat `match` on the recursive path was costing every
     /// level of a program's recursion the sum of the arms it did not take (`docs/31` §31.4).
-    fn leaf(&self, c: &Core, env: &Env) -> EvalResult {
+    fn leaf(&self, c: &Core, env: &mut Env) -> EvalResult {
         match &c.kind {
             CoreKind::Const(k) => Ok(constant(k)),
-            CoreKind::Var(v) => env
-                .get(*v)
-                .cloned()
-                .ok_or_else(|| EvalError::new(format!("unbound variable {v} at runtime"), c.span)),
+            CoreKind::Var(v) => read_var(c, *v, env),
             CoreKind::Global(name) => self.global(name, c.span),
             CoreKind::Lam { params, body } => Ok(Value::Closure(Arc::new(Closure {
                 params: params.clone(),
@@ -873,7 +891,7 @@ impl<'h> Interp<'h> {
     }
 
     #[cfg_attr(debug_assertions, inline(never))]
-    fn eval_prim(&self, op: Prim, args: &[Core], env: &Env, span: Span) -> EvalResult {
+    fn eval_prim(&self, op: Prim, args: &[Core], env: &mut Env, span: Span) -> EvalResult {
         let mut vals = Vec::with_capacity(args.len());
         for a in args {
             vals.push(self.operand(a, env)?);
@@ -887,7 +905,7 @@ impl<'h> Interp<'h> {
         ty: &Arc<str>,
         variant: Option<&Arc<str>>,
         fields: &[(Arc<str>, Core)],
-        env: &Env,
+        env: &mut Env,
     ) -> EvalResult {
         let mut map = BTreeMap::new();
         for (name, expr) in fields {
@@ -901,7 +919,7 @@ impl<'h> Interp<'h> {
     }
 
     #[cfg_attr(debug_assertions, inline(never))]
-    fn eval_field(&self, base: &Core, name: &Arc<str>, env: &Env, span: Span) -> EvalResult {
+    fn eval_field(&self, base: &Core, name: &Arc<str>, env: &mut Env, span: Span) -> EvalResult {
         let v = self.operand(base, env)?;
         v.field(name)
             .cloned()
@@ -913,7 +931,7 @@ impl<'h> Interp<'h> {
         &self,
         base: &Core,
         fields: &[(Arc<str>, Core)],
-        env: &Env,
+        env: &mut Env,
         span: Span,
     ) -> EvalResult {
         let v = self.operand(base, env)?;
@@ -925,7 +943,12 @@ impl<'h> Interp<'h> {
         else {
             return Err(EvalError::new("`with` expects a record", span));
         };
-        let mut map = (*old).clone();
+        // The base of a `with` is usually a last read — `t.with(done=…)` — so when it is, the
+        // field map arrives here held by nobody else and is rebuilt rather than copied.
+        let mut map = match Arc::try_unwrap(old) {
+            Ok(owned) => owned,
+            Err(shared) => (*shared).clone(),
+        };
         for (name, expr) in fields {
             map.insert(name.clone(), self.operand(expr, env)?);
         }
@@ -937,7 +960,7 @@ impl<'h> Interp<'h> {
     }
 
     #[cfg_attr(debug_assertions, inline(never))]
-    fn eval_list(&self, items: &[Core], env: &Env) -> EvalResult {
+    fn eval_list(&self, items: &[Core], env: &mut Env) -> EvalResult {
         let mut out = Vec::with_capacity(items.len());
         for i in items {
             out.push(self.operand(i, env)?);
@@ -946,7 +969,7 @@ impl<'h> Interp<'h> {
     }
 
     #[cfg_attr(debug_assertions, inline(never))]
-    fn eval_map(&self, kvs: &[(Core, Core)], env: &Env) -> EvalResult {
+    fn eval_map(&self, kvs: &[(Core, Core)], env: &mut Env) -> EvalResult {
         let mut out = PMap::new();
         for (k, v) in kvs {
             out = out.insert(self.operand(k, env)?, self.operand(v, env)?);
@@ -1344,6 +1367,17 @@ impl<'h> Interp<'h> {
                 want(2)?;
                 let x = args.pop().expect("arity checked");
                 let xs = args.pop().expect("arity checked");
+                // The other half of what `Env::take` starts: a list that arrived from a last read
+                // is held by nobody else, so the push costs nothing. One that did not is copied,
+                // which is what this always did. `docs/69` §69.7 is the measurement.
+                if let Value::List(arc) = xs {
+                    let mut out = match Arc::try_unwrap(arc) {
+                        Ok(owned) => owned,
+                        Err(shared) => shared.to_vec(),
+                    };
+                    out.push(x);
+                    return Ok(Value::List(Arc::new(out)));
+                }
                 let mut out = as_list(&xs, "list_append", span)?.to_vec();
                 out.push(x);
                 Ok(Value::List(Arc::new(out)))
@@ -1911,7 +1945,7 @@ mod tests {
 
     fn run(c: &Core) -> EvalResult {
         let host = NoHost;
-        Interp::new(&host).eval(c, &Env::new())
+        Interp::new(&host).eval(c, &mut Env::new())
     }
 
     #[test]
@@ -2079,7 +2113,7 @@ mod tests {
             args: vec![int(depth)],
         });
         interp
-            .eval(&call, &Env::new())
+            .eval(&call, &mut Env::new())
             .expect("the probe recursion evaluates");
         let deepest = host.deepest.get();
         assert!(
@@ -2162,7 +2196,7 @@ mod tests {
                 args: vec![int(DEFAULT_MAX_DEPTH as i64 * 10)],
             });
             assert_eq!(
-                interp.eval(&call, &Env::new()).unwrap(),
+                interp.eval(&call, &mut Env::new()).unwrap(),
                 Value::str_("bottom"),
                 "ten times the depth ceiling, in tail position, is not deep at all"
             );
@@ -2186,11 +2220,11 @@ mod tests {
 
         let shallow = Interp::new(&host).with_max_depth(100);
         assert!(
-            shallow.eval(&call(200), &Env::new()).is_err(),
+            shallow.eval(&call(200), &mut Env::new()).is_err(),
             "a lowered ceiling is the one that applies"
         );
         assert!(
-            shallow.eval(&call(20), &Env::new()).is_ok(),
+            shallow.eval(&call(20), &mut Env::new()).is_ok(),
             "and it applies only past itself"
         );
 
@@ -2205,7 +2239,7 @@ mod tests {
                 args: vec![int(DEFAULT_MAX_DEPTH as i64 * 4)],
             });
             assert!(
-                greedy.eval(&deep, &Env::new()).is_err(),
+                greedy.eval(&deep, &mut Env::new()).is_err(),
                 "asking for more than the declared stack can hold does not get it"
             );
         });
@@ -2224,7 +2258,7 @@ mod tests {
                 args: vec![int(DEFAULT_MAX_DEPTH as i64 * 10)],
             });
             let err = interp
-                .eval(&call, &Env::new())
+                .eval(&call, &mut Env::new())
                 .expect_err("past the ceiling");
             assert!(
                 err.message.contains("which is the evaluator's limit"),
@@ -2242,7 +2276,7 @@ mod tests {
             Prim::Add,
             vec![prim(Prim::Add, vec![int(1), int(1)]), int(1)],
         );
-        assert!(interp.eval(&deep, &Env::new()).is_err());
+        assert!(interp.eval(&deep, &mut Env::new()).is_err());
     }
 
     #[test]

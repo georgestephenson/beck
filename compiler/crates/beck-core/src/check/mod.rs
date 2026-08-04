@@ -1375,6 +1375,7 @@ impl<'a> Checker<'a> {
             ty: Ty::Fun(param_tys, ret.clone(), latent),
             tier,
             span,
+            last_use: false,
         };
 
         let mut declared_effects: Vec<Effect> = declared.atoms.iter().cloned().collect();

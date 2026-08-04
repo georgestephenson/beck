@@ -456,6 +456,10 @@ pub struct Core {
     /// Which tier this node runs on. §4.2: "explicit tier annotation per node".
     pub tier: Tier,
     pub span: Span,
+    /// Set on a [`CoreKind::Var`] whose value this expression is the **last** reader of, so a
+    /// backend may move the binding rather than copy it. [`crate::liveness`] is what sets it and
+    /// what the guarantee means; `false` is always safe.
+    pub last_use: bool,
 }
 
 /// The string this expression *is*, when it is written as one.
@@ -479,6 +483,7 @@ impl Core {
             ty,
             tier: Tier::Any,
             span,
+            last_use: false,
         }
     }
 
@@ -737,6 +742,72 @@ impl Env {
             }
         }
     }
+
+    /// Read `v`, and **move** it out of the frame when three things hold: the caller says no later
+    /// evaluation reads it, this environment is the only holder of the frame it lives in, and the
+    /// value is one whose copy costs something.
+    ///
+    /// The third condition is not an optimisation of an optimisation — it is what keeps the other
+    /// two from costing more than they save. Moving is strictly more work than cloning at the point
+    /// of the read: a clone of an `Int` is a copy of eight bytes and a clone of a container is one
+    /// atomic increment, where a move has to find the slot, prove the frame is unshared and empty
+    /// it. It pays only when somebody downstream can then *use* the sole ownership — which today is
+    /// `list_append` pushing in place and `with` rebuilding a record's fields — and measuring it
+    /// without this condition showed every benchmark in the tree 6–13% slower, because the reads
+    /// that dominate a real program are of `Int`s and nothing was gained by moving one
+    /// ([`69`](../../../../../docs/69-standard-library-imports-report.md) §69.7).
+    ///
+    /// The caller must have established that no later evaluation reads `v` — [`crate::liveness`]
+    /// is what establishes it, and `last_use` is the flag. What this adds is the second half of the
+    /// safety argument: a frame is emptied only when nothing else holds it, so an environment
+    /// captured by a closure or shared with an inner scope is read from rather than emptied, and a
+    /// caller that is wrong about liveness gets an unbound-variable error rather than somebody
+    /// else's missing binding.
+    pub fn read(&mut self, v: VarId, may_move: bool) -> Option<Value> {
+        let mut env = self;
+        loop {
+            if let Some(i) = env.frame.iter().rposition(|(id, _)| *id == v) {
+                if may_move && worth_moving(&env.frame[i].1) {
+                    if let Some(frame) = Arc::get_mut(&mut env.frame) {
+                        // Tombstoned rather than removed: `Vec::remove` shifts every binding above
+                        // it, and this runs on the hottest path there is. The slot keeps its place
+                        // under a name no variable has, so a later read of `v` misses it and says
+                        // so instead of finding a neighbour.
+                        frame[i].0 = TOMBSTONE;
+                        return Some(std::mem::replace(&mut frame[i].1, Value::Unit));
+                    }
+                }
+                return Some(env.frame[i].1.clone());
+            }
+            let shared_parent = env
+                .parent
+                .as_ref()
+                .is_some_and(|p| Arc::strong_count(p) > 1 || Arc::weak_count(p) > 0);
+            if shared_parent {
+                return env.parent.as_ref().and_then(|p| p.get(v)).cloned();
+            }
+            match env.parent.as_mut() {
+                Some(p) => match Arc::get_mut(p) {
+                    Some(p) => env = p,
+                    None => return None,
+                },
+                None => return None,
+            }
+        }
+    }
+}
+
+/// The name a moved-out binding takes, which no variable has: `VarId`s are handed out from zero by
+/// the checker, and a program with four billion of them has lost to `MAX_NESTING` long before.
+const TOMBSTONE: VarId = VarId::MAX;
+
+/// Whether moving this value out of a frame can save anything downstream.
+///
+/// A `List` can be pushed into by `list_append` and a record's fields can be rebuilt in place by
+/// `with`, both only when nobody else holds them. Everything else is either a copy of a few bytes
+/// or an atomic increment, and moving it costs more than it saves — `Env::read` is the measurement.
+fn worth_moving(v: &Value) -> bool {
+    matches!(v, Value::List(_) | Value::Data { .. })
 }
 
 /// The monotone `f64` → `u64` transform: for a non-negative float flip the sign bit, for a

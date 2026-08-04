@@ -46,12 +46,25 @@ pub use interp::{EvalError, Host, Interp, DEFAULT_FUEL, DEFAULT_MAX_DEPTH};
 /// that to whatever stack the caller happened to be on is what produced the abort this replaced —
 /// and what left `sicp.rs` carrying a 32 MiB thread with a comment apologising for it.
 ///
-/// The number is the measured worst case with room over it: an unoptimised build spends about 6 KiB
-/// per level (`the_depth_ceiling_fits_the_smallest_stack_we_run_on` prints the figure it measured),
-/// so the ceiling costs about 25 MiB and this is not quite three times that. It is address space,
-/// not memory: pages are committed as they are touched, and a program that never recurses touches
-/// one.
-pub const STACK_BYTES: usize = 64 * 1024 * 1024;
+/// The number is measured, and it was measured twice because the first measurement used the wrong
+/// program. `the_depth_ceiling_fits_the_smallest_stack_we_run_on` recurses through the *cheapest*
+/// body a function can have — one `if`, one add, one call — and reports about 7 KiB a level, which
+/// made 64 MiB look like three times what the ceiling needs. An ordinary body costs far more: a
+/// `match` over a union whose arm calls through `map_list` spends about 64 KiB per source-level
+/// recursion in an unoptimised build, so 64 MiB stopped such a program at **1,000 levels** — a
+/// quarter of the ceiling, by overflowing the stack and aborting the process, which is the one
+/// outcome [`interp::DEFAULT_MAX_DEPTH`] exists to prevent. It stopped at 1,997 in a release build,
+/// so *which programs ran depended on how the compiler was built* — `docs/64` §64.4's defect, on
+/// the evaluator's axis rather than the front end's.
+///
+/// At this size both profiles reach the **count** instead: the same program stops at 1,997 levels
+/// in either, with the ceiling's diagnostic rather than a SIGSEGV, because two evaluator levels go
+/// to each level of its recursion. That is the property `docs/adr/0007` claims, holding for an
+/// ordinary program rather than only for the probe.
+///
+/// It is address space, not memory: pages are committed as they are touched, a program that never
+/// recurses touches one, and `beck-cli` spawns exactly one of these threads per process.
+pub const STACK_BYTES: usize = 256 * 1024 * 1024;
 
 /// Run `f` on a thread that has [`STACK_BYTES`], and give back what it returned.
 ///
@@ -160,7 +173,7 @@ impl Backend for Evaluator {
             interceptor: self.interceptor.clone(),
         };
         Interp::with_fuel(&host, self.fuel)
-            .eval(code, &Env::new())
+            .eval(code, &mut Env::new())
             .map_err(into_exec)
     }
 
