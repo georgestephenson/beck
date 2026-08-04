@@ -112,6 +112,47 @@ fn the_corpus_is_nowhere_near_the_ceiling() {
     }
 }
 
+/// The axis `MAX_NESTING` does **not** measure, and what does bound it.
+///
+/// A block of sequential local bindings is flat: `v0 = …` then `v1 = …` is not one inside the
+/// other, so a body 25,000 bindings long is at nesting level 2 and the ceiling above never sees it.
+/// The front end still recurses once per binding — a block is a chain in `Core`, whatever it looks
+/// like in source — so what bounds this axis is the declared stack rather than the counter.
+///
+/// This asserts the guarantee that holds **in either profile**: a body far larger than anything a
+/// person writes compiles, on the thread `beck-cli` dispatches onto, without aborting. `docs/64`
+/// §64.4 records the other half — that the ceiling is a *profile-dependent abort* rather than a
+/// counted diagnostic (12,000 bindings abort a debug build and 100,000 abort a release one), which
+/// is [`42`]'s defect on an axis its ceiling does not count and
+/// [`adr/0007`](../../../../docs/adr/0007-evaluator-stack-is-declared-not-discovered.md)'s
+/// property the evaluator has and the front end does not.
+///
+/// The size is chosen from the **debug** limit for that reason. A test whose passing depended on
+/// `--release` would be measuring the profile.
+///
+/// [`42`]: ../../../../docs/42-security-assurance.md
+#[test]
+fn a_flat_block_is_bounded_by_the_declared_stack_rather_than_by_the_nesting_ceiling() {
+    const BINDINGS: usize = 5_000;
+    let mut src = String::from("def deep(x: Int) -> Int:\n    v0 = x + 1\n");
+    for i in 1..BINDINGS {
+        src.push_str(&format!("    v{i} = v{} + {i}\n", i - 1));
+    }
+    src.push_str(&format!("    return v{}\n", BINDINGS - 1));
+
+    // Through the binary, for this file's reason: the failure being ruled out is a process abort,
+    // which nothing inside the process can catch.
+    let (ok, text) = check(&src, "flat-block");
+    assert!(
+        ok,
+        "{BINDINGS} sequential bindings is a large body and not a deep one — it must compile:\n{text}"
+    );
+    assert!(
+        !text.contains("B0121"),
+        "and the nesting ceiling must not be what refuses it, because this is not nesting:\n{text}"
+    );
+}
+
 /// The two declarations that share one thread.
 ///
 /// `beck-cli` dispatches every command inside `beck_eval::on_the_evaluator_stack`, so the front

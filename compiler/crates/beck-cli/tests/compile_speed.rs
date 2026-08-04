@@ -1,0 +1,166 @@
+//! The compile-speed budget: a *shape* rather than a rate.
+//!
+//! [`docs/25-benchmarks-and-expressiveness.md`](../../../../docs/25-benchmarks-and-expressiveness.md)
+//! §25.9 schedules compile-speed budgets for Phase 3, and
+//! [`docs/13-testing.md`](../../../../docs/13-testing.md) §13.7 lists them among the numbers every
+//! merge answers to. This file is the gate; [`measure_compile.rs`](measure_compile.rs) is the
+//! table.
+//!
+//! # Why it asserts a shape
+//!
+//! §13.7's own rule — "a gate that flakes gets deleted" — rules out a wall-clock threshold on a
+//! shared runner. What survives is what [`scaling.rs`](scaling.rs) already does for the fold:
+//! assert that **cost per declaration does not grow with the number of declarations**. That is the
+//! regression a compile-speed budget is actually for, because a constant factor is a nuisance and
+//! an exponent is a wall.
+//!
+//! It caught one on the day it was written ([`docs/64`](../../../../docs/64-compile-speed-report.md)
+//! §64.2): placement's explanation loop re-summed the whole program three times per definition, so
+//! the front end was quadratic in a module's width. 12,800 definitions took 6.2 s and now take
+//! 0.58 s.
+//!
+//! # The bound
+//!
+//! **4.0× per-declaration growth across a 16× increase in declarations**, and both numbers were
+//! chosen from measurements rather than from a round-number instinct:
+//!
+//! | | measured |
+//! |---|---|
+//! | the defect §64.2 removed | **×6.00** — caught, with half again to spare |
+//! | width, fixed | ×1.17 |
+//! | width with an edge per definition, fixed | ×2.62 — the residual §64.3 records as *not* fixed |
+//! | depth | ×1.04 |
+//!
+//! The range is 16× rather than `scaling.rs`'s 8× because 8× did not leave enough room: over that
+//! range the same defect measures ×3.11 against a bound of 3.0, which is a gate that catches the
+//! bug it was written for and might not catch the next one. Widening the range separates the
+//! signal from the bound instead of tightening the bound against the noise.
+//!
+//! **One test, not three.** The three axes are measured in sequence inside a single `#[test]`,
+//! because libtest runs tests in a binary concurrently and three of these hammering the CPU at
+//! once measures the contention rather than the compiler. The first draft did exactly that and
+//! reported ×2.13 on an axis that measures ×1.4 alone, which is the flake §13.7 warns about,
+//! caught before it was committed rather than after.
+
+use std::time::{Duration, Instant};
+
+use beck_core::{check_module, place, secure};
+use beck_diag::{Diagnostics, SourceMap};
+
+/// The whole front end over one source, timed. The same sequence `beck_core::compile` runs.
+fn front_end(name: &str, src: &str) -> Duration {
+    let mut map = SourceMap::new();
+    let file = map.add(name, src);
+    let mut diags = Diagnostics::new();
+
+    let started = Instant::now();
+    let parsed = beck_syntax::parse_file(file, name, src, &mut diags);
+    let expanded = beck_macro::expand_module(&parsed, &mut diags);
+    let mut program = check_module(&expanded, &mut diags);
+    let solution = place::solve(&program, None);
+    place::apply(&mut program, &solution);
+    place::check_placement(&program, &mut diags);
+    secure::check_security(&program, &mut diags);
+    let elapsed = started.elapsed();
+
+    assert!(
+        !diags.has_errors(),
+        "the generated program has to compile, or this measures error recovery:\n{}",
+        diags.render(&map)
+    );
+    elapsed
+}
+
+/// The best of five, not the median: the *floor* is the least noisy statistic a shared runner
+/// offers, because interference can only ever add time.
+fn best_of_five(name: &str, src: &str) -> Duration {
+    beck_diag::depth::on_the_front_end_stack(|| {
+        (0..5)
+            .map(|_| front_end(name, src))
+            .min()
+            .expect("five runs")
+    })
+}
+
+/// Cost per declaration at `small` and at `large`, and the ratio between them.
+fn growth(gen: fn(usize) -> String, small: usize, large: usize, what: &str) -> f64 {
+    let per = |n: usize| best_of_five("budget.beck", &gen(n)).as_secs_f64() / n as f64;
+    let (a, b) = (per(small), per(large));
+    let ratio = b / a;
+    println!(
+        "{what}: {small} → {large} declarations, {:.2} → {:.2} µs each — ×{ratio:.2}",
+        a * 1e6,
+        b * 1e6
+    );
+    ratio
+}
+
+/// A module `n` top-level definitions wide.
+fn wide(n: usize) -> String {
+    (0..n)
+        .map(|i| format!("def f{i}(x: Int) -> Int:\n    return x + {i}\n"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// One definition with `n` sequential local bindings, each reading the last.
+fn deep(n: usize) -> String {
+    let mut out = String::from("def deep(x: Int) -> Int:\n    v0 = x + 1\n");
+    for i in 1..n {
+        out.push_str(&format!("    v{i} = v{} + {i}\n", i - 1));
+    }
+    out.push_str(&format!("    return v{}\n", n - 1));
+    out
+}
+
+/// A module that calls what it declares, so the dependency graph grows with it.
+///
+/// `wide` has no edges at all, and placement's cost is a function of the *graph* rather than of the
+/// declaration count — so a program whose declarations never mention each other would not have
+/// caught §64.2 and does not guard against its return. Each definition calls the one before it.
+fn chained(n: usize) -> String {
+    let mut out = String::from("def g0(x: Int) -> Int:\n    return x + 1\n");
+    for i in 1..n {
+        out.push_str(&format!(
+            "\ndef g{i}(x: Int) -> Int:\n    return g{}(x) + {i}\n",
+            i - 1
+        ));
+    }
+    out
+}
+
+/// The bound, and the reasoning is in the module docs.
+const MAX_GROWTH: f64 = 4.0;
+
+#[test]
+fn the_front_end_cost_per_declaration_does_not_grow_with_a_module() {
+    // Three axes, in one test and in sequence. Each is a different quadratic: re-resolving every
+    // declaration per declaration is the first, summing the whole dependency graph per node is the
+    // second (docs/64 §64.2, which this caught), and re-walking the enclosing scope per binding is
+    // the third. A program that grows along one is flat along the others, so none of the three is
+    // a duplicate.
+    for (gen, axis, note) in [
+        (
+            wide as fn(usize) -> String,
+            "width",
+            "the front end has gone superlinear in a module's width",
+        ),
+        (
+            chained,
+            "width, with one edge per definition",
+            "placement is summing the whole graph per node again (docs/64 §64.2)",
+        ),
+        (
+            deep,
+            "depth",
+            "something in the front end re-walks the enclosing scope per binding",
+        ),
+    ] {
+        let ratio = growth(gen, 400, 6_400, axis);
+        assert!(
+            ratio < MAX_GROWTH,
+            "along `{axis}`, sixteen times the declarations cost ×{ratio:.2} more *each* — that \
+             is an exponent rather than a constant factor: {note}"
+        );
+    }
+}

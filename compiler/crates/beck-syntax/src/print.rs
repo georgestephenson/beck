@@ -516,6 +516,18 @@ impl Py {
                     None => self.line(&format!("expect page contains {needle}")),
                 }
             }
+            Some(sym::EXPECT_SNAPSHOT) if n.args.len() == 2 => {
+                let subject = match n.args[1].as_str_lit() {
+                    Some(actor) => format!("page(session(\"{actor}\"))"),
+                    None => "page".to_string(),
+                };
+                match n.args[0].as_str_lit() {
+                    Some(name) => {
+                        self.line(&format!("expect {subject} matches snapshot \"{name}\""))
+                    }
+                    None => self.line(&format!("expect {subject} matches snapshot")),
+                }
+            }
             Some(sym::EXPECT_FOLD) if !n.args.is_empty() => {
                 let events = self.expr(&n.args[0]);
                 match n.args.get(1).and_then(|a| a.as_str_lit()) {

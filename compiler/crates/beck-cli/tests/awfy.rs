@@ -3,8 +3,10 @@
 //! [`docs/25-benchmarks-and-expressiveness.md`](../../../../docs/25-benchmarks-and-expressiveness.md)
 //! §25.2 picks Are We Fast Yet as "the methodologically strongest choice for Beck's core", and
 //! §25.9 schedules the harness for Phase 3 with **no compute number published** until there is a
-//! backend for one to be about. This file is the harness half of that: the ported benchmarks run,
-//! and each one agrees with the number the original suite verifies against.
+//! backend for one to be about. This file is the harness half of that, and it is **complete**: all
+//! fourteen benchmarks run, and each one agrees with the number the original suite verifies
+//! against — except DeltaBlue, which publishes no number and whose oracle is the assertions inside
+//! its own planner ([`61`](../../../../docs/61-deltablue-report.md)).
 //!
 //! Three things are asserted, in order of what they are worth:
 //!
@@ -72,13 +74,11 @@ const MICRO: [&str; 9] = [
     "towers",
 ];
 
-/// The macro-benchmarks, of which one is ported.
+/// The five macro-benchmarks. All of them.
 ///
-/// The other four — CD, DeltaBlue, Havlak and Json — are assessed rather than attempted in
-/// [`57`](../../../../docs/57-richards-report.md) §57.5, which says what each needs. Kept apart
-/// from the nine because the distinction is the suite's own and is what the two halves measure:
-/// a micro-benchmark is a loop, and a macro-benchmark is a program.
-const MACRO: [&str; 1] = ["richards"];
+/// Kept apart from the nine because the distinction is the suite's own and is what the two halves
+/// measure: a micro-benchmark is a loop, and a macro-benchmark is a program.
+const MACRO: [&str; 5] = ["cd", "deltablue", "havlak", "json", "richards"];
 
 /// Every benchmark runs its own tests and passes them.
 ///
@@ -110,9 +110,9 @@ fn each_benchmark_is_a_library() {
     }
 }
 
-/// The ten are all there, and nothing else is.
+/// All fourteen are there, and nothing else is.
 #[test]
-fn the_ported_suite_is_nine_micro_benchmarks_and_one_macro() {
+fn the_ported_suite_is_all_fourteen_of_are_we_fast_yet() {
     let mut found: Vec<String> = benchmarks()
         .iter()
         .map(|p| p.file_stem().unwrap().to_string_lossy().to_string())
@@ -187,4 +187,39 @@ fn the_directory_documents_what_the_port_changes() {
     for expected in ["What the port changes", "Provenance", "licence"] {
         assert!(readme.contains(expected), "the README lost `{expected}`");
     }
+}
+
+/// `beck test --fuel` raises the per-call step budget, and the default is where it was.
+///
+/// The evaluator stops a call after 50,000,000 steps, which is a runaway-program backstop and is
+/// right for everything written by hand. It is not right for a benchmark: three of the fourteen in
+/// this directory need more at the size their suite measures at, and before this there was no way
+/// to say so ([`61`](../../../../docs/61-deltablue-report.md) §61.3).
+///
+/// Asserted in **both** directions, for [`20`](../../../../docs/20-phase-2-report.md)'s reason —
+/// a flag that raises a ceiling has to be shown raising it *and* shown that the ceiling is still
+/// there without it, or it is indistinguishable from having removed the ceiling.
+#[test]
+fn the_fuel_budget_is_a_default_rather_than_a_ceiling() {
+    // A loop long enough to exhaust the default and short enough to finish above it.
+    let src = "def burn(i: Int, n: Int, acc: Int) -> Int:\n\
+               \x20   if i >= n:\n\
+               \x20       return acc\n\
+               \x20   return burn(i + 1, n, acc + i % 7)\n\n\
+               test \"a long loop\":\n    expect burn(0, 12000000, 0) > 0\n";
+    let file = std::env::temp_dir().join("beck-awfy-fuel.beck");
+    std::fs::write(&file, src).expect("a scratch file");
+
+    let (stopped, text) = beck(&["test", file.to_string_lossy().as_ref()]);
+    assert!(!stopped, "the default budget did not stop it:\n{text}");
+    assert!(text.contains("out of fuel"), "{text}");
+
+    let (ran, text) = beck(&[
+        "test",
+        file.to_string_lossy().as_ref(),
+        "--fuel",
+        "500000000",
+    ]);
+    let _ = std::fs::remove_file(&file);
+    assert!(ran && text.contains("0 failed"), "{text}");
 }

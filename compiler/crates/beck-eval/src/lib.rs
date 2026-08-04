@@ -36,7 +36,7 @@ use std::sync::Arc;
 use beck_core::backend::{Backend, Callable, ExecError, Interceptor};
 use beck_core::{Core, Env, Program, Value};
 
-pub use interp::{EvalError, Host, Interp, DEFAULT_MAX_DEPTH};
+pub use interp::{EvalError, Host, Interp, DEFAULT_FUEL, DEFAULT_MAX_DEPTH};
 
 /// The host stack a thread must have before it drives the evaluator.
 ///
@@ -87,6 +87,11 @@ pub struct Evaluator {
     /// Installed by `beck test` (§21.3). `None` in every other run, and the branch that consults it
     /// is one `Option` check per call of a named definition.
     interceptor: Option<Arc<dyn Interceptor>>,
+    /// Evaluation steps per call, before the runaway backstop stops it.
+    ///
+    /// Per *call*, not per process: each `constant` and each `function` invocation gets a fresh
+    /// budget, because the thing being bounded is one evaluation rather than a session.
+    fuel: u64,
 }
 
 impl Evaluator {
@@ -95,7 +100,19 @@ impl Evaluator {
             program,
             uuid: Arc::new(|| Arc::from(uuid_v7())),
             interceptor: None,
+            fuel: interp::DEFAULT_FUEL,
         }
+    }
+
+    /// Raise or lower the per-call step budget.
+    ///
+    /// The default is a backstop against a program that will not stop, and it is right for
+    /// everything a person writes by hand. What it is not right for is a *benchmark*: three of Are
+    /// We Fast Yet's fourteen need more at the size the suite measures at
+    /// (`docs/61` §61.3), and before this there was no way to say so.
+    pub fn with_fuel(mut self, fuel: u64) -> Evaluator {
+        self.fuel = fuel;
+        self
     }
 
     /// Replace the id source. The checker forbids `uuid()` inside a fold, so this can only affect
@@ -142,7 +159,7 @@ impl Backend for Evaluator {
             uuid: self.uuid.clone(),
             interceptor: self.interceptor.clone(),
         };
-        Interp::new(&host)
+        Interp::with_fuel(&host, self.fuel)
             .eval(code, &Env::new())
             .map_err(into_exec)
     }
@@ -152,6 +169,7 @@ impl Backend for Evaluator {
             program: self.program.clone(),
             uuid: self.uuid.clone(),
             interceptor: Some(by),
+            fuel: self.fuel,
         }))
     }
 
@@ -163,13 +181,14 @@ impl Backend for Evaluator {
         let program = self.program.clone();
         let uuid = self.uuid.clone();
         let interceptor = self.interceptor.clone();
+        let fuel = self.fuel;
         Ok(Arc::new(move |args: Vec<Value>| {
             let host = Globals {
                 program: program.clone(),
                 uuid: uuid.clone(),
                 interceptor: interceptor.clone(),
             };
-            Interp::new(&host)
+            Interp::with_fuel(&host, fuel)
                 .apply(&closure, args, beck_diag::Span::NONE)
                 .map_err(into_exec)
         }))
@@ -192,6 +211,13 @@ pub fn backend(placed: &beck_core::Placed) -> Arc<dyn Backend> {
 /// drive, and a harness that wants to call one should not have to invent a signal graph for it.
 pub fn backend_for(program: Arc<Program>) -> Arc<dyn Backend> {
     Arc::new(Evaluator::new(program))
+}
+
+/// The tree-walking backend with a per-call step budget of the caller's choosing.
+///
+/// `beck test --fuel` is the only caller, and `docs/61` §61.3 is why it exists.
+pub fn backend_with_fuel(placed: &beck_core::Placed, fuel: u64) -> Arc<dyn Backend> {
+    Arc::new(Evaluator::new(Arc::new(placed.program.clone())).with_fuel(fuel))
 }
 
 fn into_exec(e: EvalError) -> ExecError {

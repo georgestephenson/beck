@@ -456,6 +456,19 @@ pub fn solve(program: &Program, lock: Option<&Lock>) -> Solution {
 
     // Explanations: the cost of the whole program with this node moved and everything else left
     // where the solver put it. That is the number a person is actually asking about.
+    //
+    // Computed as a **delta** rather than by re-summing the program. Moving one node changes its
+    // own cost and the cost of the edges touching it; every other term is the term it already was.
+    // Re-summing made this loop `O(n × (n + e))` — three full sweeps per definition — which is the
+    // whole of the front end's superlinearity, since parse, expand, check and the security pass
+    // are each flat per declaration (`docs/64` §64.2). Incidence lists make it `O(n + e)`.
+    let mut incident: Vec<Vec<usize>> = vec![Vec::new(); nodes.len()];
+    for (e, (a, b)) in edges.iter().enumerate() {
+        incident[*a].push(e);
+        incident[*b].push(e);
+    }
+    let settled = total_of(&assign);
+
     let mut explanations = Vec::new();
     let mut ties = Vec::new();
     for (i, n) in nodes.iter().enumerate() {
@@ -465,9 +478,41 @@ pub fn solve(program: &Program, lock: Option<&Lock>) -> Solution {
                 candidates.push((t, FORBIDDEN));
                 continue;
             }
-            let mut probe = assign.clone();
-            probe[i] = t;
-            candidates.push((t, total_of(&probe)));
+            if t == assign[i] {
+                candidates.push((t, settled));
+                continue;
+            }
+            let mut delta = cost::node_cost(t, &n.row, n.work, Some(&n.carried), &program.types)
+                .saturating_sub(cost::node_cost(
+                    assign[i],
+                    &n.row,
+                    n.work,
+                    Some(&n.carried),
+                    &program.types,
+                ));
+            for &e in &incident[i] {
+                let (a, b) = edges[e];
+                let (was_a, was_b) = (assign[a], assign[b]);
+                // `push` drops self-edges, so exactly one end is `i`.
+                let (now_a, now_b) = if a == i { (t, was_b) } else { (was_a, t) };
+                let carried = (&nodes[a].carried, &nodes[b].carried);
+                delta = delta
+                    .saturating_add(cost::edge_cost(
+                        now_a,
+                        now_b,
+                        carried.0,
+                        carried.1,
+                        &program.types,
+                    ))
+                    .saturating_sub(cost::edge_cost(
+                        was_a,
+                        was_b,
+                        carried.0,
+                        carried.1,
+                        &program.types,
+                    ));
+            }
+            candidates.push((t, settled.saturating_add(delta)));
         }
         let because = match &n.pinned {
             Some((_, why)) => why.clone(),
@@ -518,7 +563,7 @@ pub fn solve(program: &Program, lock: Option<&Lock>) -> Solution {
         .unwrap_or_default();
 
     Solution {
-        total: total_of(&assign),
+        total: settled,
         tiers,
         explanations,
         method,

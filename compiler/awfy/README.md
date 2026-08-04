@@ -13,9 +13,10 @@ what it establishes, what it refuses to claim, and the three findings porting it
 
 ## What is here
 
-Ten files — Are We Fast Yet's nine micro-benchmarks and one of its five macro-benchmarks — each a
-Beck **library** whose `test` block is the original's `verifyResult` with the original's own
-constant in it.
+**All fourteen** — Are We Fast Yet's nine micro-benchmarks and all five of its macro-benchmarks —
+each a Beck **library** whose `test` block is the original's `verifyResult` with the original's own
+constant in it. DeltaBlue is the exception and says so below: the suite publishes no constant for
+it.
 
 | File | What it measures | The suite's own number |
 |---|---|---|
@@ -29,8 +30,12 @@ constant in it.
 | [`storage.beck`](storage.beck) | Allocation — a four-way tree seven deep | 5,461 nodes |
 | [`towers.beck`](towers.beck) | Stack discipline and recursion | 8,191 moves |
 | [`richards.beck`](richards.beck) | **Macro.** An OS task scheduler — a mutable object graph | 23,246 packets queued, 9,297 holds |
+| [`json.beck`](json.beck) | **Macro.** A JSON parser over 25,820 characters of RAP protocol traffic | an object whose `operations` array has 156 entries |
+| [`havlak.beck`](havlak.beck) | **Macro.** Loop recognition — DFS, edge classification and union-find over a control-flow graph | 1,605 loops over 5,213 nodes |
+| [`cd.beck`](cd.beck) | **Macro.** Aircraft collision detection over a red-black tree of voxels | 42 collisions between two aircraft |
+| [`deltablue.beck`](deltablue.beck) | **Macro.** An incremental constraint solver over a cyclic object graph | **nothing** — the assertions inside its own planner ([`61`](../../docs/61-deltablue-report.md)) |
 
-`beck-cli/tests/awfy.rs` gates the directory: a file added here is run by being here, and the ten
+`beck-cli/tests/awfy.rs` gates the directory: a file added here is run by being here, and all fourteen
 names are enumerated in one place — micro and macro apart, because that is the suite's own division
 — so dropping one is a red test rather than a shorter table.
 `measure_awfy.rs` prints wall-clock and gates on nothing.
@@ -65,7 +70,7 @@ follows four rules:
 4. **A number is the suite's.** Where a size had to change, the number changes with it and the file
    says which of the suite's published sizes it is at. No file invents a verification value.
 
-`richards` needs a fifth rule that none of the nine did, and [`57`](../../docs/57-richards-report.md)
+`richards` and `json` need a fifth rule that none of the nine did, and [`57`](../../docs/57-richards-report.md)
 §57.2 is why: **a closure over mutable state is a function of the state**. Java's `ProcessFunction`
 returns the next task and changes the scheduler on the way out; here every one of them takes the
 scheduler and returns both.
@@ -83,13 +88,25 @@ Two differences are worth naming separately because they are not mechanical:
 
 ## What is not here
 
-**Four of the five macro-benchmarks — CD, DeltaBlue, Havlak and Json — are not ported.** Richards
-is ([`57`](../../docs/57-richards-report.md)), which is what makes it possible to say something
-about the other four beyond "not attempted": §57.5 assesses each one against the shape Richards
-turned out to need, with line counts and the specific thing each requires. None of them is blocked
-by the language. Three of the four need `som`'s collection classes ported first — `Vector`,
-`Dictionary` and `IdentityDictionary`, about 530 lines between them — which is the next thing this
-directory is owed.
+**Nothing of Are We Fast Yet is unported.** The reports are
+[`53`](../../docs/53-are-we-fast-yet-report.md) for the nine micro-benchmarks and
+[`57`](../../docs/57-richards-report.md), [`58`](../../docs/58-json-report.md),
+[`59`](../../docs/59-havlak-report.md), [`60`](../../docs/60-collision-detection-report.md) and
+[`61`](../../docs/61-deltablue-report.md) for the five macro-benchmarks.
+
+**Three of them run a smaller configuration than the suite measures at, and each says so.**
+`mandelbrot` and `nbody` verify at sizes the suite publishes values for but does not measure at
+([`53`](../../docs/53-are-we-fast-yet-report.md) §53.3); `havlak` and `deltablue` are limited by the
+evaluator's 50,000,000-step fuel budget rather than by the clock
+([`59`](../../docs/59-havlak-report.md) §59.3, [`61`](../../docs/61-deltablue-report.md) §61.3). A
+`--fuel` on `beck test` is owed by three benchmarks now.
+
+**`havlak` runs a cheaper configuration than the suite publishes, and says so.**
+[`59`](../../docs/59-havlak-report.md) §59.3 measured why: the published 50 discarded runs exhaust
+the evaluator's 50,000,000-step fuel budget after 13.7 s in a release build, and six of them fit
+where eight do not. Two of its three tests exist to make the reduction honest rather than
+convenient — one asserts the verified numbers do not depend on that parameter, and the other
+asserts each discarded run does the whole job.
 
 **Two of the nine run at a size the suite publishes for one iteration rather than at its default.**
 `mandelbrot` verifies at size 1 (128) rather than 500 (191), and `nbody` after one advance

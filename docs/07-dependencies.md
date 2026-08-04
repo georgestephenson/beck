@@ -186,7 +186,7 @@ that, and it is worth more than any append-throughput number.
 | substrate | verdict | why |
 |---|---|---|
 | **PostgreSQL** | **default, keep** | the read models are SQL and live here; one transaction covers append *and* projection. Licence is permissive; managed everywhere |
-| **SQLite** | **add — Phase 3** | the same "log and read model in one transaction" property at single-node scale, so rungs 0–2 become *semantically* identical to production rather than merely similar. Public domain; Litestream/LiteFS give replication. This is the one addition that changes what a developer can trust about their laptop |
+| **SQLite** | **added — Phase 3, built** ([`67`](67-sqlite-report.md)) | the same "log and read model in one transaction" property at single-node scale, so rungs 0–2 become *semantically* identical to production rather than merely similar. Public domain; Litestream/LiteFS give replication. This is the one addition that changes what a developer can trust about their laptop |
 | **FoundationDB** | **add — Phase 5, with §15's partitioned logs** | ordered keys *are* the `seq` abstraction, with real horizontal scale and serializable transactions. Apache 2.0, and a deterministic-simulation testing culture [`13`](13-testing.md) §13.1 already admires. Costs are real and bounded: 100 KB values and 5 s transactions mean chunking large snapshots, and it is operationally heavy — so it arrives when one writer per application stops being enough, not before |
 | **memory** | keep | tests and measurement |
 | **redb** | keep, role narrows | it works and nothing is gained by removing it. Once SQLite lands, measure and let the number decide which is rung 0's default |

@@ -229,6 +229,19 @@ impl Checker<'_> {
                             span: cspan,
                         }
                     }
+                    Some(sym::EXPECT_SNAPSHOT) if stmt.args.len() == 2 => {
+                        // Nothing to typecheck: both operands are literals the parser produced,
+                        // and the page is the runtime's to render. What the checker owes this
+                        // clause is the same thing it owes `expect page contains` — that it is in
+                        // a `test` block at all, which the surrounding walk has already decided.
+                        Clause::Expect {
+                            what: Expectation::PageMatchesSnapshot {
+                                name: stmt.args[0].as_str_lit().map(Arc::from),
+                                actor: stmt.args[1].as_str_lit().map(Arc::from),
+                            },
+                            span: cspan,
+                        }
+                    }
                     Some(sym::EXPECT_FOLD) if !stmt.args.is_empty() => {
                         let want = require_subject(
                             ck,

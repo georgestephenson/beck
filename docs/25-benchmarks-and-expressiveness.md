@@ -502,12 +502,18 @@ no regression-detecting power, which is the only thing a benchmark is for.
 | **5** | TPC-H/ClickBench on read models; the incremental-view workload nobody has standardised; SICP stage 4 | The Phase 5 suite, and the expressiveness result — **including the rows §25.5 forecasts we lose**. The DDIA matrix's **Conceded** and **Bounded** rows, which are the ones a platform team reads |
 
 > **Phase 3, in progress.** SICP chapters 1 and 2 run ([`27`](27-walls-report.md),
-> [`41`](41-generic-arithmetic-report.md)), and the Are We Fast Yet harness is stood up for **nine
-> of its fourteen** benchmarks ([`53`](53-are-we-fast-yet-report.md)) — verified against the
+> [`41`](41-generic-arithmetic-report.md)), and the Are We Fast Yet harness is stood up for **all
+> fourteen** of its benchmarks ([`53`](53-are-we-fast-yet-report.md),
+> [`57`](57-richards-report.md), [`58`](58-json-report.md), [`59`](59-havlak-report.md),
+> [`60`](60-collision-detection-report.md), [`61`](61-deltablue-report.md)) — verified against the
 > original suite's own constants, with wall-clock printed and no comparative claim, which is this
 > table's "Published" column kept and §25.3 item 1's "adopt now, publish now, make them
-> unflattering" kept at the same time. The Felleisen table, the compile-speed budgets and the CLBG
-> harness are not built.
+> unflattering" kept at the same time. **The Felleisen table below is built**
+> ([`63`](63-felleisen-report.md)): six of the seven forms recovered, `amb` conceded, which is the
+> shape the forecast predicted. **The compile-speed budgets are built too**
+> ([`64`](64-compile-speed-report.md)) — as a *shape* gate rather than a rate, for
+> [`13`](13-testing.md) §13.7's reason, and they found a quadratic in placement on their first run.
+> The CLBG harness is what is left of this row.
 
 Not in the table, deliberately: **LeetCode** is a recommendation rather than an adopted commitment
 (§25.8), and **Nand2Tetris** is conditional on SICP chapter 4 being green first, at which point the
@@ -536,6 +542,14 @@ it is visible:
 
 One row expected to be conceded out of seven is a result worth publishing. Seven out of seven
 recovered would be a result worth double-checking.
+
+> **Built, and the forecasts above are left as written.** [`63`](63-felleisen-report.md) is the
+> result, [`sicp/felleisen.beck`](../compiler/sicp/felleisen.beck) is the evidence, and the count
+> came out where this table put it: six recovered, `amb` conceded. One forecast was wrong in the
+> generous direction — `quote` was "blocked, not global" and the block came down in
+> [`27`](27-walls-report.md), so the verdict is recovered. `delay`, forecast as the row that would
+> put the whole claim in trouble if it failed, was blocked by an off-by-one in the checker instead
+> (§63.3).
 
 ## 25.10 What this document does not claim
 

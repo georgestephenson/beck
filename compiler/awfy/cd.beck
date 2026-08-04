@@ -1,0 +1,914 @@
+# Are We Fast Yet — CD (collision detection).
+#
+# The fourth of the five macro-benchmarks, and the last one this directory was missing besides
+# DeltaBlue. Two hundred frames of aircraft positions, reduced to a voxel map, with every pair
+# sharing a voxel tested for a collision by solving a quadratic.
+#
+# It is in the suite because of what it is built on: a **red-black tree with parent pointers**,
+# rebalanced on insert and on delete. That is the most mutation-shaped data structure in the whole
+# suite, and `docs/58` §58.5 named it as what made this benchmark large.
+#
+# **It also found two gaps in the prelude**, which is `docs/60` §60.2 and is the more interesting
+# half of this port: `Simulator` needs `Math.cos` and `Math.sin`, and `voxelHash` needs a `(int)`
+# cast on a real. Beck's reals arrived in `docs/32` with `sqrt` and nothing else, and three phases
+# of programs never asked for more. `sin`, `cos` and `trunc` are primitives now.
+#
+# The tree is an **arena**: `Map[Int, RbNode]` with integer handles and `-1` for null, which is
+# `docs/57` §57.2's answer to a mutable object graph applied to the one structure in the suite that
+# is nothing but pointers. Every rotation and every fixup is the original's, line for line, with
+# `x.parent.left = y` becoming a rebuilt node in the map.
+#
+# 42 is the harness's own number: `CD.java`'s `verifyResult` is `actualCollisions == 42` at two
+# aircraft, which is the smallest configuration the suite publishes a value for.
+
+# ---------------------------------------------------------------------------------------------
+# Geometry
+# ---------------------------------------------------------------------------------------------
+
+model Vec3:
+    x: Float
+    y: Float
+    z: Float
+
+def vec3_plus(a: Vec3, b: Vec3) -> Vec3:
+    return Vec3(x=a.x + b.x, y=a.y + b.y, z=a.z + b.z)
+
+def vec3_minus(a: Vec3, b: Vec3) -> Vec3:
+    return Vec3(x=a.x - b.x, y=a.y - b.y, z=a.z - b.z)
+
+def vec3_dot(a: Vec3, b: Vec3) -> Float:
+    return a.x * b.x + a.y * b.y + a.z * b.z
+
+def vec3_squared(a: Vec3) -> Float:
+    return vec3_dot(a, a)
+
+def vec3_magnitude(a: Vec3) -> Float:
+    return sqrt(vec3_squared(a))
+
+def vec3_times(a: Vec3, amount: Float) -> Vec3:
+    return Vec3(x=a.x * amount, y=a.y * amount, z=a.z * amount)
+
+def min_x() -> Float:
+    return 0.0
+
+def min_y() -> Float:
+    return 0.0
+
+def max_x() -> Float:
+    return 1000.0
+
+def max_y() -> Float:
+    return 1000.0
+
+def min_z() -> Float:
+    return 0.0
+
+def max_z() -> Float:
+    return 10.0
+
+def proximity_radius() -> Float:
+    return 1.0
+
+def good_voxel_size() -> Float:
+    return 2.0
+
+# ---------------------------------------------------------------------------------------------
+# The tree's keys and values
+#
+# `RedBlackTree<K extends Comparable<K>, V>` is generic, and the benchmark instantiates it at three
+# value types in one program. A generic tree is expressible in Beck — `docs/36`'s parameterised
+# types and `docs/39`'s bounds are exactly that — and the port uses unions instead because one
+# program's worth of variants says in one place what three instantiations would say in three. It is
+# a port decision rather than a limitation, and it is written down because the difference matters
+# to anyone reading this beside the Java.
+# ---------------------------------------------------------------------------------------------
+
+union Key:
+    ## `CallSign`, whose `compareTo` is the numeric one.
+    Sign(value: Int)
+    ## `Vector2D`, whose `compareTo` is by `x` then `y` — with the original's own tie-breaking for
+    ## values that compare equal to nothing, which is what its fourth and fifth branches are for.
+    Voxel(x: Float, y: Float)
+
+union Held:
+    Position(at: Vec3)
+    Flag(on: Bool)
+    Motions(items: list[Motion])
+    Absent
+
+## `Vector2D.compareNumbers`, which is a total order over reals including the ones that are not
+## numbers — `a == a` is the original's NaN test and is transcribed rather than dropped.
+def compare_numbers(a: Float, b: Float) -> Int:
+    if a == b:
+        return 0
+    if a < b:
+        return -1
+    if a > b:
+        return 1
+    if a == a:
+        return 1
+    return -1
+
+def compare_key(a: Key, b: Key) -> Int:
+    match a:
+        case Sign(value):
+            return compare_sign(value, b)
+        case Voxel(x, y):
+            return compare_voxel(x, y, b)
+
+def compare_sign(value: Int, b: Key) -> Int:
+    match b:
+        case Sign(other):
+            return 0 if value == other else (-1 if value < other else 1)
+        case Voxel(x, y):
+            return 0
+
+def compare_voxel(x: Float, y: Float, b: Key) -> Int:
+    match b:
+        case Sign(other):
+            return 0
+        case Voxel(bx, by):
+            return compare_numbers(x, bx) if compare_numbers(x, bx) != 0 else compare_numbers(y, by)
+
+# ---------------------------------------------------------------------------------------------
+# The red-black tree, as an arena
+# ---------------------------------------------------------------------------------------------
+
+model RbNode:
+    key: Key
+    value: Held
+    left: Int
+    right: Int
+    parent: Int
+    red: Bool
+
+model Tree:
+    nodes: Map[Int, RbNode]
+    root: Int
+    ## The next free handle. Handles are never reused, which is what makes them identities.
+    next: Int
+
+def nil_node() -> Int:
+    return -1
+
+def empty_tree() -> Tree:
+    return Tree(nodes={}, root=nil_node(), next=0)
+
+def node_at(t: Tree, i: Int) -> RbNode:
+    return unwrap_or(
+        map_get(t.nodes, i),
+        RbNode(
+            key=Sign(value=0),
+            value=Absent,
+            left=nil_node(),
+            right=nil_node(),
+            parent=nil_node(),
+            red=false,
+        ),
+    )
+
+def with_node(t: Tree, i: Int, node: RbNode) -> Tree:
+    return Tree(nodes=map_insert(t.nodes, i, node), root=t.root, next=t.next)
+
+def with_root(t: Tree, root: Int) -> Tree:
+    return Tree(nodes=t.nodes, root=root, next=t.next)
+
+def rebuilt(
+    was: RbNode, left: Int, right: Int, parent: Int, red: Bool, value: Held
+) -> RbNode:
+    return RbNode(key=was.key, value=value, left=left, right=right, parent=parent, red=red)
+
+def set_left(t: Tree, i: Int, left: Int) -> Tree:
+    if i == nil_node():
+        return t
+    was = node_at(t, i)
+    return with_node(t, i, rebuilt(was, left, was.right, was.parent, was.red, was.value))
+
+def set_right(t: Tree, i: Int, right: Int) -> Tree:
+    if i == nil_node():
+        return t
+    was = node_at(t, i)
+    return with_node(t, i, rebuilt(was, was.left, right, was.parent, was.red, was.value))
+
+def set_parent(t: Tree, i: Int, parent: Int) -> Tree:
+    if i == nil_node():
+        return t
+    was = node_at(t, i)
+    return with_node(t, i, rebuilt(was, was.left, was.right, parent, was.red, was.value))
+
+def set_red(t: Tree, i: Int, red: Bool) -> Tree:
+    if i == nil_node():
+        return t
+    was = node_at(t, i)
+    return with_node(t, i, rebuilt(was, was.left, was.right, was.parent, red, was.value))
+
+def set_value(t: Tree, i: Int, value: Held) -> Tree:
+    if i == nil_node():
+        return t
+    was = node_at(t, i)
+    return with_node(t, i, rebuilt(was, was.left, was.right, was.parent, was.red, value))
+
+## Black, in the original's sense: a missing node counts as black.
+def is_red(t: Tree, i: Int) -> Bool:
+    if i == nil_node():
+        return false
+    return node_at(t, i).red
+
+def left_of(t: Tree, i: Int) -> Int:
+    return node_at(t, i).left if i != nil_node() else nil_node()
+
+def right_of(t: Tree, i: Int) -> Int:
+    return node_at(t, i).right if i != nil_node() else nil_node()
+
+def parent_of(t: Tree, i: Int) -> Int:
+    return node_at(t, i).parent if i != nil_node() else nil_node()
+
+def tree_minimum(t: Tree, x: Int) -> Int:
+    if left_of(t, x) == nil_node():
+        return x
+    return tree_minimum(t, left_of(t, x))
+
+def successor(t: Tree, x: Int) -> Int:
+    if right_of(t, x) != nil_node():
+        return tree_minimum(t, right_of(t, x))
+    return climb(t, x, parent_of(t, x))
+
+def climb(t: Tree, x: Int, y: Int) -> Int:
+    if y == nil_node() or x != right_of(t, y):
+        return y
+    return climb(t, y, parent_of(t, y))
+
+def find_node(t: Tree, key: Key) -> Int:
+    return descend(t, t.root, key)
+
+def descend(t: Tree, current: Int, key: Key) -> Int:
+    if current == nil_node():
+        return nil_node()
+    order = compare_key(key, node_at(t, current).key)
+    if order == 0:
+        return current
+    if order < 0:
+        return descend(t, left_of(t, current), key)
+    return descend(t, right_of(t, current), key)
+
+def left_rotate(t: Tree, x: Int) -> Tree:
+    y = right_of(t, x)
+    moved = set_parent(set_right(t, x, left_of(t, y)), left_of(t, y), x)
+    lifted = set_parent(moved, y, parent_of(moved, x))
+    hung = hang(lifted, x, y)
+    return set_parent(set_left(hung, y, x), x, y)
+
+def right_rotate(t: Tree, y: Int) -> Tree:
+    x = left_of(t, y)
+    moved = set_parent(set_left(t, y, right_of(t, x)), right_of(t, x), y)
+    lifted = set_parent(moved, x, parent_of(moved, y))
+    hung = hang(lifted, y, x)
+    return set_parent(set_right(hung, x, y), y, x)
+
+## Put `replacement` where `was` hung on its parent, or at the root if it had none.
+def hang(t: Tree, was: Int, replacement: Int) -> Tree:
+    parent = parent_of(t, was)
+    if parent == nil_node():
+        return with_root(t, replacement)
+    if was == left_of(t, parent):
+        return set_left(t, parent, replacement)
+    return set_right(t, parent, replacement)
+
+## The original's `InsertResult`.
+model Inserted:
+    tree: Tree
+    is_new: Bool
+    node: Int
+    old: Held
+
+def tree_insert(t: Tree, key: Key, value: Held) -> Inserted:
+    return insert_below(t, nil_node(), t.root, key, value)
+
+def insert_below(t: Tree, y: Int, x: Int, key: Key, value: Held) -> Inserted:
+    if x == nil_node():
+        return attach(t, y, key, value)
+    order = compare_key(key, node_at(t, x).key)
+    if order < 0:
+        return insert_below(t, x, left_of(t, x), key, value)
+    if order > 0:
+        return insert_below(t, x, right_of(t, x), key, value)
+    return Inserted(
+        tree=set_value(t, x, value), is_new=false, node=nil_node(), old=node_at(t, x).value
+    )
+
+def attach(t: Tree, y: Int, key: Key, value: Held) -> Inserted:
+    z = t.next
+    placed = Tree(
+        nodes=map_insert(
+            t.nodes,
+            z,
+            RbNode(
+                key=key,
+                value=value,
+                left=nil_node(),
+                right=nil_node(),
+                parent=y,
+                red=true,
+            ),
+        ),
+        root=t.root,
+        next=t.next + 1,
+    )
+    if y == nil_node():
+        return Inserted(tree=with_root(placed, z), is_new=true, node=z, old=Absent)
+    if compare_key(key, node_at(placed, y).key) < 0:
+        return Inserted(tree=set_left(placed, y, z), is_new=true, node=z, old=Absent)
+    return Inserted(tree=set_right(placed, y, z), is_new=true, node=z, old=Absent)
+
+model Put:
+    tree: Tree
+    old: Held
+
+def tree_put(t: Tree, key: Key, value: Held) -> Put:
+    inserted = tree_insert(t, key, value)
+    if not inserted.is_new:
+        return Put(tree=inserted.tree, old=inserted.old)
+    balanced = insert_fixup(inserted.tree, inserted.node)
+    return Put(tree=set_red(balanced, balanced.root, false), old=Absent)
+
+## The original's insert rebalancing, both mirror images.
+def insert_fixup(t: Tree, x: Int) -> Tree:
+    if x == t.root or not is_red(t, parent_of(t, x)):
+        return t
+    parent = parent_of(t, x)
+    grand = parent_of(t, parent)
+    if parent == left_of(t, grand):
+        uncle = right_of(t, grand)
+        if is_red(t, uncle):
+            recoloured = set_red(set_red(set_red(t, parent, false), uncle, false), grand, true)
+            return insert_fixup(recoloured, grand)
+        return insert_fixup_left(t, x, parent, grand)
+    uncle = left_of(t, grand)
+    if is_red(t, uncle):
+        recoloured = set_red(set_red(set_red(t, parent, false), uncle, false), grand, true)
+        return insert_fixup(recoloured, grand)
+    return insert_fixup_right(t, x, parent, grand)
+
+def insert_fixup_left(t: Tree, x: Int, parent: Int, grand: Int) -> Tree:
+    turned = left_rotate(t, parent) if x == right_of(t, parent) else t
+    inner = parent if x == right_of(t, parent) else x
+    up = parent_of(turned, inner)
+    over = parent_of(turned, up)
+    return insert_fixup(
+        right_rotate(set_red(set_red(turned, up, false), over, true), over), inner
+    )
+
+def insert_fixup_right(t: Tree, x: Int, parent: Int, grand: Int) -> Tree:
+    turned = right_rotate(t, parent) if x == left_of(t, parent) else t
+    inner = parent if x == left_of(t, parent) else x
+    up = parent_of(turned, inner)
+    over = parent_of(turned, up)
+    return insert_fixup(
+        left_rotate(set_red(set_red(turned, up, false), over, true), over), inner
+    )
+
+def tree_get(t: Tree, key: Key) -> Held:
+    node = find_node(t, key)
+    if node == nil_node():
+        return Absent
+    return node_at(t, node).value
+
+## The original's `remove`, which is the longest method in the suite and is transcribed rather than
+## simplified — a splice that moves `y`'s colour and children onto `z`'s place, and a fixup when the
+## node that left was black.
+def tree_remove(t: Tree, key: Key) -> Put:
+    z = find_node(t, key)
+    if z == nil_node():
+        return Put(tree=t, old=Absent)
+    old = node_at(t, z).value
+    y = z if left_of(t, z) == nil_node() or right_of(t, z) == nil_node() else successor(t, z)
+    x = left_of(t, y) if left_of(t, y) != nil_node() else right_of(t, y)
+    x_parent = parent_of(t, y)
+    lifted = set_parent(t, x, parent_of(t, y)) if x != nil_node() else t
+    detached = detach(lifted, y, x)
+    if y != z:
+        fixed = remove_fixup(detached, x, x_parent) if not node_at(detached, y).red else detached
+        return Put(tree=splice(fixed, y, z), old=old)
+    if not node_at(detached, y).red:
+        return Put(tree=remove_fixup(detached, x, x_parent), old=old)
+    return Put(tree=detached, old=old)
+
+def detach(t: Tree, y: Int, x: Int) -> Tree:
+    parent = parent_of(t, y)
+    if parent == nil_node():
+        return with_root(t, x)
+    if y == left_of(t, parent):
+        return set_left(t, parent, x)
+    return set_right(t, parent, x)
+
+## `y` takes `z`'s colour, children and place in the tree.
+def splice(t: Tree, y: Int, z: Int) -> Tree:
+    was_y = node_at(t, y)
+    was_z = node_at(t, z)
+    moved = with_node(
+        t,
+        y,
+        RbNode(
+            key=was_y.key,
+            value=was_y.value,
+            left=was_z.left,
+            right=was_z.right,
+            parent=was_z.parent,
+            red=was_z.red,
+        ),
+    )
+    adopted = set_parent(set_parent(moved, was_z.left, y), was_z.right, y)
+    if was_z.parent == nil_node():
+        return with_root(adopted, y)
+    if left_of(adopted, was_z.parent) == z:
+        return set_left(adopted, was_z.parent, y)
+    return set_right(adopted, was_z.parent, y)
+
+def remove_fixup(t: Tree, x: Int, x_parent: Int) -> Tree:
+    if x == t.root or is_red(t, x):
+        return set_red(t, x, false)
+    if x == left_of(t, x_parent):
+        return remove_fixup_left(t, x, x_parent)
+    return remove_fixup_right(t, x, x_parent)
+
+def remove_fixup_left(t: Tree, x: Int, x_parent: Int) -> Tree:
+    reddened = (
+        left_rotate(set_red(set_red(t, right_of(t, x_parent), false), x_parent, true), x_parent)
+        if is_red(t, right_of(t, x_parent))
+        else t
+    )
+    w = right_of(reddened, x_parent)
+    if not is_red(reddened, left_of(reddened, w)) and not is_red(reddened, right_of(reddened, w)):
+        raised = set_red(reddened, w, true)
+        return remove_fixup(raised, x_parent, parent_of(raised, x_parent))
+    turned = (
+        right_rotate(set_red(set_red(reddened, left_of(reddened, w), false), w, true), w)
+        if not is_red(reddened, right_of(reddened, w))
+        else reddened
+    )
+    v = right_of(turned, x_parent)
+    recoloured = set_red(
+        set_red(set_red(turned, v, is_red(turned, x_parent)), x_parent, false),
+        right_of(turned, v),
+        false,
+    )
+    rotated = left_rotate(recoloured, x_parent)
+    return set_red(rotated, rotated.root, false)
+
+def remove_fixup_right(t: Tree, x: Int, x_parent: Int) -> Tree:
+    reddened = (
+        right_rotate(set_red(set_red(t, left_of(t, x_parent), false), x_parent, true), x_parent)
+        if is_red(t, left_of(t, x_parent))
+        else t
+    )
+    w = left_of(reddened, x_parent)
+    if not is_red(reddened, right_of(reddened, w)) and not is_red(reddened, left_of(reddened, w)):
+        raised = set_red(reddened, w, true)
+        return remove_fixup(raised, x_parent, parent_of(raised, x_parent))
+    turned = (
+        left_rotate(set_red(set_red(reddened, right_of(reddened, w), false), w, true), w)
+        if not is_red(reddened, left_of(reddened, w))
+        else reddened
+    )
+    v = left_of(turned, x_parent)
+    recoloured = set_red(
+        set_red(set_red(turned, v, is_red(turned, x_parent)), x_parent, false),
+        left_of(turned, v),
+        false,
+    )
+    rotated = right_rotate(recoloured, x_parent)
+    return set_red(rotated, rotated.root, false)
+
+model Entry:
+    key: Key
+    value: Held
+
+## The original's `forEach`, as a list — in order, by walking successors from the minimum.
+def entries(t: Tree) -> list[Entry]:
+    if t.root == nil_node():
+        return []
+    return entries_from(t, tree_minimum(t, t.root), [])
+
+def entries_from(t: Tree, current: Int, done: list[Entry]) -> list[Entry]:
+    if current == nil_node():
+        return done
+    node = node_at(t, current)
+    return entries_from(
+        t, successor(t, current), list_append(done, Entry(key=node.key, value=node.value))
+    )
+
+# ---------------------------------------------------------------------------------------------
+# Motion, and the intersection the benchmark is counting
+# ---------------------------------------------------------------------------------------------
+
+model Motion:
+    callsign: Int
+    pos_one: Vec3
+    pos_two: Vec3
+
+def motion_delta(m: Motion) -> Vec3:
+    return vec3_minus(m.pos_two, m.pos_one)
+
+## `Motion.findIntersection`, which solves a quadratic for the moment the two are within the
+## proximity radius. `Absent` is the original's `null`.
+def find_intersection(one: Motion, other: Motion) -> Held:
+    init1 = one.pos_one
+    init2 = other.pos_one
+    vec1 = motion_delta(one)
+    vec2 = motion_delta(other)
+    a = vec3_squared(vec3_minus(vec2, vec1))
+    if a != 0.0:
+        return moving_intersection(init1, init2, vec1, vec2, a)
+    if vec3_magnitude(vec3_minus(init2, init1)) <= proximity_radius():
+        return Position(at=vec3_times(vec3_plus(init1, init2), 0.5))
+    return Absent
+
+def moving_intersection(
+    init1: Vec3, init2: Vec3, vec1: Vec3, vec2: Vec3, a: Float
+) -> Held:
+    b = 2.0 * vec3_dot(vec3_minus(init1, init2), vec3_minus(vec1, vec2))
+    c = 0.0 - proximity_radius() * proximity_radius() + vec3_squared(vec3_minus(init2, init1))
+    discriminant = b * b - 4.0 * a * c
+    if discriminant < 0.0:
+        return Absent
+    v1 = (0.0 - b - sqrt(discriminant)) / (2.0 * a)
+    v2 = (0.0 - b + sqrt(discriminant)) / (2.0 * a)
+    if v1 > v2:
+        return Absent
+    if not overlaps(v1, v2):
+        return Absent
+    return inside(init1, init2, vec1, vec2, 0.0 if v1 <= 0.0 else v1)
+
+def overlaps(v1: Float, v2: Float) -> Bool:
+    return (
+        (v1 <= 1.0 and 1.0 <= v2)
+        or (v1 <= 0.0 and 0.0 <= v2)
+        or (0.0 <= v1 and v2 <= 1.0)
+    )
+
+def inside(init1: Vec3, init2: Vec3, vec1: Vec3, vec2: Vec3, v: Float) -> Held:
+    result = vec3_times(
+        vec3_plus(vec3_plus(init1, vec3_times(vec1, v)), vec3_plus(init2, vec3_times(vec2, v))),
+        0.5,
+    )
+    if (
+        result.x >= min_x()
+        and result.x <= max_x()
+        and result.y >= min_y()
+        and result.y <= max_y()
+        and result.z >= min_z()
+        and result.z <= max_z()
+    ):
+        return Position(at=result)
+    return Absent
+
+# ---------------------------------------------------------------------------------------------
+# The voxel map
+# ---------------------------------------------------------------------------------------------
+
+def voxel_hash(position: Vec3) -> Key:
+    x_div = trunc(position.x / good_voxel_size())
+    y_div = trunc(position.y / good_voxel_size())
+    x = good_voxel_size() * float(x_div)
+    y = good_voxel_size() * float(y_div)
+    return Voxel(
+        x=x - good_voxel_size() if position.x < 0.0 else x,
+        y=y - good_voxel_size() if position.y < 0.0 else y,
+    )
+
+def voxel_x(v: Key) -> Float:
+    match v:
+        case Sign(value):
+            return 0.0
+        case Voxel(x, y):
+            return x
+
+def voxel_y(v: Key) -> Float:
+    match v:
+        case Sign(value):
+            return 0.0
+        case Voxel(x, y):
+            return y
+
+def shifted(v: Key, dx: Float, dy: Float) -> Key:
+    return Voxel(x=voxel_x(v) + dx, y=voxel_y(v) + dy)
+
+## `CollisionDetector.isInVoxel`, transcribed. The three conjunctions are the original's and are
+## kept as one expression, because splitting them would change which of them is evaluated —
+## `docs/53` §53.5 made `and` short-circuit, so this now reads the way the Java does.
+def is_in_voxel(voxel: Key, motion: Motion) -> Bool:
+    if (
+        voxel_x(voxel) > max_x()
+        or voxel_x(voxel) < min_x()
+        or voxel_y(voxel) > max_y()
+        or voxel_y(voxel) < min_y()
+    ):
+        return false
+    init = motion.pos_one
+    fin = motion.pos_two
+    r = proximity_radius() / 2.0
+    xv = fin.x - init.x
+    yv = fin.y - init.y
+    low_x = span_low((voxel_x(voxel) - r - init.x) / xv, (voxel_x(voxel) + good_voxel_size() + r - init.x) / xv, xv)
+    high_x = span_high((voxel_x(voxel) - r - init.x) / xv, (voxel_x(voxel) + good_voxel_size() + r - init.x) / xv, xv)
+    low_y = span_low((voxel_y(voxel) - r - init.y) / yv, (voxel_y(voxel) + good_voxel_size() + r - init.y) / yv, yv)
+    high_y = span_high((voxel_y(voxel) - r - init.y) / yv, (voxel_y(voxel) + good_voxel_size() + r - init.y) / yv, yv)
+    return (
+        (
+            (xv == 0.0 and voxel_x(voxel) <= init.x + r and init.x - r <= voxel_x(voxel) + good_voxel_size())
+            or overlaps_unit(low_x, high_x)
+        )
+        and (
+            (yv == 0.0 and voxel_y(voxel) <= init.y + r and init.y - r <= voxel_y(voxel) + good_voxel_size())
+            or overlaps_unit(low_y, high_y)
+        )
+        and (
+            xv == 0.0
+            or yv == 0.0
+            or (low_y <= high_x and high_x <= high_y)
+            or (low_y <= low_x and low_x <= high_y)
+            or (low_x <= low_y and high_y <= high_x)
+        )
+    )
+
+## The original's `if (xv < 0.0) { swap }`, as two functions rather than a temporary.
+def span_low(a: Float, b: Float, v: Float) -> Float:
+    return b if v < 0.0 else a
+
+def span_high(a: Float, b: Float, v: Float) -> Float:
+    return a if v < 0.0 else b
+
+def overlaps_unit(low: Float, high: Float) -> Bool:
+    return (
+        (low <= 1.0 and 1.0 <= high)
+        or (low <= 0.0 and 0.0 <= high)
+        or (0.0 <= low and high <= 1.0)
+    )
+
+def motions_of(held: Held) -> list[Motion]:
+    match held:
+        case Position(at):
+            return []
+        case Flag(on):
+            return []
+        case Motions(items):
+            return items
+        case Absent:
+            return []
+
+def is_on(held: Held) -> Bool:
+    match held:
+        case Position(at):
+            return false
+        case Flag(on):
+            return on
+        case Motions(items):
+            return false
+        case Absent:
+            return false
+
+def put_into_map(voxel_map: Tree, voxel: Key, motion: Motion) -> Tree:
+    return tree_put(
+        voxel_map, voxel, Motions(items=list_append(motions_of(tree_get(voxel_map, voxel)), motion))
+    ).tree
+
+## The original's eight-way `recurse`, which floods outward from the voxel a motion starts in.
+model Flood:
+    voxel_map: Tree
+    seen: Tree
+
+def flood(f: Flood, voxel: Key, motion: Motion) -> Flood:
+    if not is_in_voxel(voxel, motion):
+        return f
+    marked = tree_put(f.seen, voxel, Flag(on=true))
+    if is_on(marked.old):
+        return Flood(voxel_map=f.voxel_map, seen=marked.tree)
+    drawn = Flood(voxel_map=put_into_map(f.voxel_map, voxel, motion), seen=marked.tree)
+    size = good_voxel_size()
+    return flood(
+        flood(
+            flood(
+                flood(
+                    flood(
+                        flood(
+                            flood(
+                                flood(drawn, shifted(voxel, 0.0 - size, 0.0), motion),
+                                shifted(voxel, size, 0.0),
+                                motion,
+                            ),
+                            shifted(voxel, 0.0, 0.0 - size),
+                            motion,
+                        ),
+                        shifted(voxel, 0.0, size),
+                        motion,
+                    ),
+                    shifted(voxel, 0.0 - size, 0.0 - size),
+                    motion,
+                ),
+                shifted(voxel, 0.0 - size, size),
+                motion,
+            ),
+            shifted(voxel, size, 0.0 - size),
+            motion,
+        ),
+        shifted(voxel, size, size),
+        motion,
+    )
+
+def draw_motions(voxel_map: Tree, motions: list[Motion], i: Int) -> Tree:
+    if i >= list_len(motions):
+        return voxel_map
+    motion = unwrap_or(list_get(motions, i), no_motion())
+    drawn = flood(
+        Flood(voxel_map=voxel_map, seen=empty_tree()), voxel_hash(motion.pos_one), motion
+    )
+    return draw_motions(drawn.voxel_map, motions, i + 1)
+
+def no_motion() -> Motion:
+    return Motion(
+        callsign=0, pos_one=Vec3(x=0.0, y=0.0, z=0.0), pos_two=Vec3(x=0.0, y=0.0, z=0.0)
+    )
+
+def reduce_collision_set(motions: list[Motion]) -> list[list[Motion]]:
+    return crowded(entries(draw_motions(empty_tree(), motions, 0)), 0, [])
+
+def crowded(es: list[Entry], i: Int, done: list[list[Motion]]) -> list[list[Motion]]:
+    if i >= list_len(es):
+        return done
+    items = motions_of(unwrap_or(list_get(es, i), Entry(key=Sign(value=0), value=Absent)).value)
+    if list_len(items) > 1:
+        return crowded(es, i + 1, list_append(done, items))
+    return crowded(es, i + 1, done)
+
+# ---------------------------------------------------------------------------------------------
+# The detector
+# ---------------------------------------------------------------------------------------------
+
+model Aircraft:
+    callsign: Int
+    position: Vec3
+
+model Framed:
+    state: Tree
+    motions: list[Motion]
+    seen: Tree
+
+def handle_new_frame(state: Tree, frame: list[Aircraft]) -> Detected:
+    tracked = track(Framed(state=state, motions=[], seen=empty_tree()), frame, 0)
+    pruned = prune(tracked.state, entries(tracked.state), tracked.seen, 0)
+    return Detected(state=pruned, collisions=count_collisions(reduce_collision_set(tracked.motions), 0, 0))
+
+model Detected:
+    state: Tree
+    collisions: Int
+
+def track(f: Framed, frame: list[Aircraft], i: Int) -> Framed:
+    if i >= list_len(frame):
+        return f
+    craft = unwrap_or(list_get(frame, i), Aircraft(callsign=0, position=Vec3(x=0.0, y=0.0, z=0.0)))
+    put = tree_put(f.state, Sign(value=craft.callsign), Position(at=craft.position))
+    seen = tree_put(f.seen, Sign(value=craft.callsign), Flag(on=true)).tree
+    old = position_of(put.old, craft.position)
+    return track(
+        Framed(
+            state=put.tree,
+            motions=list_append(
+                f.motions,
+                Motion(callsign=craft.callsign, pos_one=old, pos_two=craft.position),
+            ),
+            seen=seen,
+        ),
+        frame,
+        i + 1,
+    )
+
+def position_of(held: Held, fallback: Vec3) -> Vec3:
+    match held:
+        case Position(at):
+            return at
+        case Flag(on):
+            return fallback
+        case Motions(items):
+            return fallback
+        case Absent:
+            return fallback
+
+## Every call sign in the state that was not in this frame is dropped.
+def prune(state: Tree, was: list[Entry], seen: Tree, i: Int) -> Tree:
+    if i >= list_len(was):
+        return state
+    key = unwrap_or(list_get(was, i), Entry(key=Sign(value=0), value=Absent)).key
+    if is_on(tree_get(seen, key)):
+        return prune(state, was, seen, i + 1)
+    return prune(tree_remove(state, key).tree, was, seen, i + 1)
+
+def count_collisions(groups: list[list[Motion]], i: Int, found: Int) -> Int:
+    if i >= list_len(groups):
+        return found
+    group = unwrap_or(list_get(groups, i), [])
+    return count_collisions(groups, i + 1, found + pairs(group, 0, 0))
+
+def pairs(group: list[Motion], i: Int, found: Int) -> Int:
+    if i >= list_len(group):
+        return found
+    return pairs(group, i + 1, found + against(group, i, i + 1, 0))
+
+def against(group: list[Motion], i: Int, j: Int, found: Int) -> Int:
+    if j >= list_len(group):
+        return found
+    one = unwrap_or(list_get(group, i), no_motion())
+    other = unwrap_or(list_get(group, j), no_motion())
+    if is_collision(find_intersection(one, other)):
+        return against(group, i, j + 1, found + 1)
+    return against(group, i, j + 1, found)
+
+def is_collision(held: Held) -> Bool:
+    match held:
+        case Position(at):
+            return true
+        case Flag(on):
+            return false
+        case Motions(items):
+            return false
+        case Absent:
+            return false
+
+# ---------------------------------------------------------------------------------------------
+# The simulation
+# ---------------------------------------------------------------------------------------------
+
+## `Simulator.simulate`, which is where `cos` and `sin` come in — and where they were found to be
+## missing.
+def simulate(num_aircraft: Int, time: Float) -> list[Aircraft]:
+    return simulate_from(num_aircraft, time, 0, [])
+
+def simulate_from(
+    num_aircraft: Int, time: Float, i: Int, done: list[Aircraft]
+) -> list[Aircraft]:
+    if i >= num_aircraft:
+        return done
+    return simulate_from(
+        num_aircraft,
+        time,
+        i + 2,
+        list_append(
+            list_append(
+                done,
+                Aircraft(
+                    callsign=i,
+                    position=Vec3(x=time, y=cos(time) * 2.0 + float(i) * 3.0, z=10.0),
+                ),
+            ),
+            Aircraft(
+                callsign=i + 1,
+                position=Vec3(x=time, y=sin(time) * 2.0 + float(i) * 3.0, z=10.0),
+            ),
+        ),
+    )
+
+model Run:
+    state: Tree
+    collisions: Int
+
+## The benchmark: 200 frames, and the collisions found across all of them.
+def benchmark(num_aircraft: Int) -> Int:
+    return frames(Run(state=empty_tree(), collisions=0), num_aircraft, 0, 200).collisions
+
+def frames(r: Run, num_aircraft: Int, i: Int, count: Int) -> Run:
+    if i >= count:
+        return r
+    detected = handle_new_frame(r.state, simulate(num_aircraft, float(i) / 10.0))
+    return frames(
+        Run(state=detected.state, collisions=r.collisions + detected.collisions),
+        num_aircraft,
+        i + 1,
+        count,
+    )
+
+test "cd: 42 collisions between two aircraft over 200 frames":
+    expect benchmark(2) == 42
+
+## The tree is the benchmark, so it is checked as a tree rather than only through the answer — an
+## in-order walk of what went in, and a removal that keeps the rest in order.
+test "the red-black tree holds its order under insertion and removal":
+    expect list_len(entries(filled(empty_tree(), 0, 32))) == 32
+    expect sorted_keys(entries(filled(empty_tree(), 0, 32)), 0)
+    expect list_len(entries(tree_remove(filled(empty_tree(), 0, 32), Sign(value=7)).tree)) == 31
+    expect sorted_keys(entries(tree_remove(filled(empty_tree(), 0, 32), Sign(value=7)).tree), 0)
+    expect is_on(tree_get(filled(empty_tree(), 0, 32), Sign(value=31)))
+    expect not is_on(tree_get(tree_remove(filled(empty_tree(), 0, 32), Sign(value=7)).tree, Sign(value=7)))
+
+## Inserted in an order that forces every rebalancing case: odds ascending, then evens descending.
+def filled(t: Tree, i: Int, n: Int) -> Tree:
+    if i >= n:
+        return t
+    return filled(tree_put(t, Sign(value=(i * 7) % n), Flag(on=true)).tree, i + 1, n)
+
+def sorted_keys(es: list[Entry], i: Int) -> Bool:
+    if i + 1 >= list_len(es):
+        return true
+    here = unwrap_or(list_get(es, i), Entry(key=Sign(value=0), value=Absent)).key
+    next_one = unwrap_or(list_get(es, i + 1), Entry(key=Sign(value=0), value=Absent)).key
+    if compare_key(here, next_one) >= 0:
+        return false
+    return sorted_keys(es, i + 1)

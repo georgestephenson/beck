@@ -23,6 +23,19 @@ fn run(placed: &Placed) -> beck_rt::testing::Report {
     beck_rt::testing::run(placed, backend, &Options::default())
 }
 
+/// `Options` for a program that lives in `examples/`.
+///
+/// `base_dir` is where `snapshots/` and a `wire_compatible_with` path are resolved from, so a
+/// harness running the sketch's own tests in-process has to say where the sketch is. `Default`
+/// leaves it empty, which resolves against the *harness's* working directory — fine for a program
+/// built from a string, wrong for one read off disk (`docs/66` §66.3).
+fn examples_options() -> Options {
+    Options {
+        base_dir: std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples")),
+        ..Default::default()
+    }
+}
+
 fn compile(src: &str) -> Placed {
     let (placed, d, m) = beck_core::compile_str("t.beck", src);
     assert!(!d.has_errors(), "{}", d.render(&m));
@@ -58,7 +71,8 @@ const TODO: &str = include_str!("../../../examples/todo.beck");
 #[test]
 fn the_sketchs_tests_pass_and_there_are_some() {
     let placed = support::todo_program();
-    let report = run(&placed);
+    let backend = beck_eval::backend(&placed);
+    let report = beck_rt::testing::run(&placed, backend, &examples_options());
     assert!(
         report.cases.len() >= 8,
         "the example is the acceptance case and has to carry real tests"
@@ -596,7 +610,7 @@ fn a_program_with_no_effects_needs_no_interceptor_at_all() {
     let placed = support::todo_program();
     let inner = beck_eval::backend(&placed);
     let backend: Arc<dyn beck_core::Backend> = Arc::new(NoStubs(inner));
-    let report = beck_rt::testing::run(&placed, backend, &Options::default());
+    let report = beck_rt::testing::run(&placed, backend, &examples_options());
     assert_eq!(report.skipped(), 0);
     assert_eq!(
         report.failed(),
@@ -624,4 +638,117 @@ fn a_filter_selects_by_name() {
     );
     assert_eq!(report.cases.len(), 1);
     assert!(report.cases[0].name.contains("empty todo"));
+}
+
+// ---------------------------------------------------------------------------------------------
+// Page snapshots — §21.2's golden assertion, and `beck test --update`
+// ---------------------------------------------------------------------------------------------
+
+/// `expect page matches snapshot`, through the binary, in all four states it can be in.
+///
+/// Through the binary rather than in-process because `--update` is a *flag*, and the property that
+/// matters is that nothing writes a snapshot without one. A test that called the runtime with
+/// `update_snapshots: true` would assert the writing and not the policy.
+#[test]
+fn a_page_snapshot_is_recorded_only_when_asked_and_compared_every_other_time() {
+    let dir = std::env::temp_dir().join("beck-snapshot-flow");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    let file = dir.join("todo.beck");
+
+    let mut src = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../examples/todo.beck"
+    ))
+    .expect("the sketch is checked in");
+    src.push_str(
+        "\ntest \"a snapshotted page\":\n    \
+         given [Added(id=Id(\"1\"), text=\"milk\")] by \"ana\"\n    \
+         expect page(session(\"ana\")) matches snapshot\n",
+    );
+    std::fs::write(&file, &src).expect("written");
+
+    let beck = |args: &[&str]| {
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_beck"))
+            .args(args)
+            .output()
+            .expect("the compiler is built");
+        (
+            out.status.success(),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            ),
+        )
+    };
+    let path = file.to_str().expect("a path").to_string();
+    let snapshot = dir.join("snapshots").join("a-snapshotted-page@ana.html");
+
+    // 1. Nothing recorded is a *failure*, not a silent write. A first run that quietly passed would
+    //    be a test that has never compared anything.
+    let (ok, text) = beck(&["test", &path, "--filter", "snapshotted"]);
+    assert!(!ok, "an unrecorded snapshot has to fail:\n{text}");
+    assert!(text.contains("no snapshot recorded"), "{text}");
+    assert!(
+        text.contains("--update"),
+        "and say how to record it:\n{text}"
+    );
+    assert!(!snapshot.exists(), "and must not have written one:\n{text}");
+
+    // 2. `--update` records it, and the file is the page.
+    let (ok, text) = beck(&["test", &path, "--filter", "snapshotted", "--update"]);
+    assert!(ok, "{text}");
+    let recorded = std::fs::read_to_string(&snapshot).expect("--update wrote it");
+    assert!(
+        recorded.contains("milk"),
+        "the snapshot is the page: {recorded}"
+    );
+
+    // 3. It now passes, against the file rather than against anything in memory.
+    let (ok, text) = beck(&["test", &path, "--filter", "snapshotted"]);
+    assert!(ok, "{text}");
+
+    // 4. A page that changed fails, and the message says *where* — a rendered page is one long
+    //    line, so a diff that elided from the start would show two identical prefixes.
+    std::fs::write(&snapshot, recorded.replace("milk", "bread")).expect("written");
+    let (ok, text) = beck(&["test", &path, "--filter", "snapshotted"]);
+    assert!(!ok, "a changed page has to fail:\n{text}");
+    assert!(text.contains("does not match"), "{text}");
+    assert!(
+        text.contains("column"),
+        "the failure has to name the column, or it is a diff the reader has to do:\n{text}"
+    );
+    assert!(
+        text.contains("bread") && text.contains("milk"),
+        "and show both sides at the difference rather than at the start:\n{text}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The assertion round-trips through both surfaces, named and unnamed, with and without an actor.
+///
+/// `docs/02` §2.2's property: the two surfaces are one language, so a form the parser accepts and
+/// the printer cannot write is a form that would be lost by `beck fmt`.
+#[test]
+fn a_snapshot_assertion_survives_being_printed_and_read_back() {
+    for clause in [
+        "expect page matches snapshot",
+        "expect page matches snapshot \"after checkout\"",
+        "expect page(session(\"ana\")) matches snapshot",
+        "expect page(session(\"ana\")) matches snapshot \"after checkout\"",
+    ] {
+        let src = format!("test \"a page\":\n    given []\n    {clause}\n");
+        let mut map = beck_diag::SourceMap::new();
+        let file = map.add("snap.beck", &src);
+        let mut diags = beck_diag::Diagnostics::new();
+        let parsed = beck_syntax::parse_file(file, "snap.beck", &src, &mut diags);
+        assert!(!diags.has_errors(), "{clause}:\n{}", diags.render(&map));
+        let printed = beck_syntax::print::to_python(&parsed);
+        assert!(
+            printed.contains(clause),
+            "`{clause}` printed back as:\n{printed}"
+        );
+    }
 }

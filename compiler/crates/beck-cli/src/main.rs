@@ -36,6 +36,8 @@ enum Surface {
 enum Store {
     /// Rung 0: an embedded append-only log. `beck run` needs no server (§6.6).
     Redb,
+    /// A single file, and the same engine a read model would be projected into (§7.8.1).
+    Sqlite,
     /// The durable substrate above rung 0.
     Postgres,
     /// No disk at all — for tests and measurements.
@@ -139,6 +141,19 @@ enum Cmd {
         /// Inputs per `property` block.
         #[arg(long, default_value_t = 100)]
         runs: u64,
+        /// Evaluation steps one expectation may take before it is stopped.
+        ///
+        /// The default is a runaway-program backstop and is right for everything written by hand.
+        /// A *benchmark* is the exception — three of the fourteen in `awfy/` need more at the size
+        /// their suite measures at (`docs/61` §61.3), and a backstop nothing can raise is a ceiling.
+        #[arg(long, default_value_t = beck_eval::DEFAULT_FUEL)]
+        fuel: u64,
+        /// Write what `expect page matches snapshot` renders, instead of comparing against it.
+        ///
+        /// The written file is reviewed like any other diff (§21.2). Nothing writes a snapshot
+        /// without this flag: one that rewrote itself on disagreement would assert nothing.
+        #[arg(long)]
+        update: bool,
     },
     /// Run the program in a single process — rung 0 of the parity ladder.
     Run {
@@ -196,6 +211,12 @@ enum Cmd {
         #[command(subcommand)]
         what: Bench,
     },
+    /// Serve the Language Server Protocol on stdin and stdout (§4.6).
+    ///
+    /// The same front end `beck check` runs, so an editor's squiggle and a CI failure are the same
+    /// diagnostic — §4.6's "there is no separate language server implementation to drift". Not
+    /// meant to be run by hand: an editor starts it and speaks JSON-RPC to it.
+    Lsp,
     /// Bring the program up on a local cluster or host — rung 2 or 3 (§6.6).
     Up {
         file: PathBuf,
@@ -289,6 +310,7 @@ enum Explain {
 
 mod capture;
 mod docs;
+mod lsp;
 
 fn main() -> Result<()> {
     // Two destinations for one set of records: the terminal, and the dashboard's ring.
@@ -368,7 +390,10 @@ fn dispatch(cli: Cli) -> Result<()> {
             filter,
             verbose,
             runs,
-        } => test_cmd(&file, filter.as_deref(), verbose, runs),
+            fuel,
+            update,
+        } => test_cmd(&file, filter.as_deref(), verbose, runs, fuel, update),
+        Cmd::Lsp => lsp::serve(),
         Cmd::Graph { file, json, types } => graph_cmd(&file, json, types),
         Cmd::Impact { file, name, json } => impact_cmd(&file, &name, json),
         Cmd::Run {
@@ -1118,7 +1143,14 @@ async fn serve(
 /// Note what this command does not take: no `--url`, no `--store`, no address. A test performs no
 /// effects (`B0700` is a compile error) and its subject's effects are stubbed, so there is nothing
 /// to point at anything.
-fn test_cmd(file: &Path, filter: Option<&str>, verbose: bool, runs: u64) -> Result<()> {
+fn test_cmd(
+    file: &Path,
+    filter: Option<&str>,
+    verbose: bool,
+    runs: u64,
+    fuel: u64,
+    update: bool,
+) -> Result<()> {
     // Not `compiled`: a module with no merge point is a **library**, and a library's tests are the
     // ones a developer most wants to run (docs/22 §22.6, docs/25 §25.6 item 1, docs/27 §27.4).
     // `slice_or_library` gives one back instead of refusing it; every other diagnostic still does.
@@ -1130,7 +1162,7 @@ fn test_cmd(file: &Path, filter: Option<&str>, verbose: bool, runs: u64) -> Resu
         eprintln!("no `test` or `property` blocks in {}", file.display());
         return Ok(());
     }
-    let backend = beck_eval::backend(&placed);
+    let backend = beck_eval::backend_with_fuel(&placed, fuel);
     let opts = beck_rt::testing::Options {
         filter: filter.map(str::to_string),
         runs,
@@ -1138,6 +1170,7 @@ fn test_cmd(file: &Path, filter: Option<&str>, verbose: bool, runs: u64) -> Resu
             .parent()
             .map(Path::to_path_buf)
             .unwrap_or_else(|| PathBuf::from(".")),
+        update_snapshots: update,
     };
     let report = beck_rt::testing::run(&placed, backend, &opts);
     print!("{}", beck_rt::testing::render(&report, verbose));
@@ -1344,6 +1377,7 @@ async fn open_store(
     Ok(match store {
         Store::Memory => Arc::new(beck_rt::MemoryLog::new()),
         Store::Redb => Arc::new(beck_rt::RedbLog::open(path)?),
+        Store::Sqlite => Arc::new(beck_rt::SqliteLog::open(path)?),
         Store::Postgres => {
             let url = url.context("--url or BECK_POSTGRES_URL is required for --store postgres")?;
             Arc::new(beck_rt::PgLog::connect(url).await?)

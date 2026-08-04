@@ -176,3 +176,16 @@ test "the page is the browser's job and the fold is the data tier's":
 property "no log the program can produce makes the page unrenderable"(log: list[Event]):
     given log
     expect page contains "remaining"
+
+## The whole page, not the part somebody remembered to name (§21.2).
+##
+## `contains` asserts one string; this asserts every attribute, every `data-b-*` binding and the
+## order of the list — which is what the client interprets. `beck test --update` rewrites
+## `snapshots/`, and the diff is reviewed like any other.
+test "the page a returning user sees":
+    given [
+        Added(id=Id("1"), text="milk"),
+        Added(id=Id("2"), text="bread"),
+        Toggled(id=Id("1")),
+    ] by "ana"
+    expect page(session("ana")) matches snapshot

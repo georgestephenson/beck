@@ -107,6 +107,16 @@ pub enum Expectation {
         needle: Core,
         actor: Option<Arc<str>>,
     },
+    /// `expect page matches snapshot` / `… matches snapshot "after checkout"`.
+    ///
+    /// The rendered page is compared to a checked-in file rather than to a string in the test, so
+    /// the assertion is the whole page rather than the part somebody remembered to name. `name` is
+    /// `None` when the test's own name keys it — the common case, and the one that keeps the
+    /// assertion one line long.
+    PageMatchesSnapshot {
+        name: Option<Arc<str>>,
+        actor: Option<Arc<str>>,
+    },
     /// `expect state == fold_of [ … ]`.
     FoldEquals {
         events: Core,

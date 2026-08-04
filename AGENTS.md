@@ -40,8 +40,18 @@ Write the commit message as the author of the change: what changed, and why.
   [`52`](docs/52-crypto-and-identifiers-report.md),
   [`53`](docs/53-are-we-fast-yet-report.md),
   [`55`](docs/55-bignums-report.md),
-  [`56`](docs/56-decimal-report.md) and
+  [`56`](docs/56-decimal-report.md),
   [`57`](docs/57-richards-report.md),
+  [`58`](docs/58-json-report.md),
+  [`59`](docs/59-havlak-report.md),
+  [`60`](docs/60-collision-detection-report.md),
+  [`61`](docs/61-deltablue-report.md),
+  [`62`](docs/62-fuel-report.md),
+  [`63`](docs/63-felleisen-report.md),
+  [`64`](docs/64-compile-speed-report.md),
+  [`65`](docs/65-lsp-report.md),
+  [`66`](docs/66-page-snapshots-report.md) and
+  [`67`](docs/67-sqlite-report.md),
   indexed in
   [`docs/README.md`](docs/README.md) — record what each
   phase does, what it refuses to claim, and the corrections it makes to the design documents.
@@ -52,11 +62,22 @@ Write the commit message as the author of the change: what changed, and why.
   its HTTP client (docs/49), its collections and its calendar (docs/50), its digests and its
   identifiers (docs/52), its bignums and its coercions (docs/55) and its decimal (docs/56), which
   closes docs/08 §8.5.4's Wave 2 —
-  and two walls of its own (docs/46, docs/49); ten of Are We Fast Yet's fourteen benchmarks —
-  its nine micro and one of its five macro (docs/53, docs/57) — are that bullet's long-owed
-  harness half, which is all it has left; the incremental-views bullet has its engine and
+  and two walls of its own (docs/46, docs/49); **all fourteen** of Are We Fast Yet's benchmarks —
+  its nine micro and all five macro (docs/53, docs/57, docs/58, docs/59, docs/60, docs/61) — are
+  that bullet's long-owed harness half, so **the standard-library bullet is done**, with CLBG the
+  only thing outstanding under docs/25 §25.9 rather than under
+  it — the compile-speed budgets are built (docs/64), and docs/64 §64.7.1 records that CLBG is owed
+  *with its sources to hand* rather than owed generally, since its expected outputs are unreachable
+  from this environment and a benchmark verified against an invented number is worse than none; the incremental-views bullet has its engine and
   that engine's lifecycle (docs/51) but not its read models, pgwire
-  or fusion; the expressiveness suite runs two chapters of SICP. Seven of the fourteen are
+  or fusion; the expressiveness suite runs two chapters of SICP and answers §25.9's Felleisen
+  question — six of the seven special forms recovered, `amb` conceded (docs/63); and **the LSP
+  bullet is built** (docs/65) — diagnostics, hover, go-to-definition and symbols, from the same
+  front end `beck check` runs, with §4.6's 100 ms budget holding to about 13,000 lines in one
+  module — and `beck test --update` closes docs/21 §21.2's last open question, so a page assertion
+  is a checked-in file rather than one string somebody thought to name (docs/66); and the **SQLite
+  substrate** is built (docs/67) — for its transaction rather than its speed, since redb has no
+  query language for a projection to be written in. Five of the fourteen are
   untouched — identity has its seam but not its OIDC relying party (docs/48) — and docs/26 §26.9
   names them one at a time, less the two docs/51 closed. **Wave 0** (docs/08 §8.5.4) is also
   built — a bounded front end, an injected clock, a threat model, a disclosure policy and an
@@ -84,7 +105,29 @@ Write the commit message as the author of the change: what changed, and why.
   no bitwise operators, and a nested `if` is not a statement. docs/56 §56.5 has three more, and all
   three are one shape: a module that imports another is a *tool* gap rather than a compiler one —
   `beck check`, `beck test` and `beck iface` were right about it and `beck doc` was wrong three
-  ways, which the first `lib/` file to import a sibling found in an afternoon.
+  ways, which the first `lib/` file to import a sibling found in an afternoon. docs/59 §59.5 has one
+  more, and it is a class of bug specific to benchmarks: a benchmark whose workload is *discarded*
+  has no oracle for its workload, so a loop that ran once instead of fifty times passed every
+  verification the suite publishes. docs/60 §60.2 is the third time the suite found something the
+  *language* was missing, after docs/53's short-circuiting and its bitwise operators: `sin`, `cos`
+  and a real-to-integer truncation did not exist, and now do. Three of the fourteen could not run at
+  the size the suite measures at because the evaluator's 50,000,000-step fuel budget refused them
+  (docs/59 §59.3, docs/61 §61.3) — three incidents that were one missing feature, which docs/62
+  built: `beck test --fuel`, because a backstop nothing can raise is a ceiling. docs/63 §63.3 found
+  the next of the same kind by asking a different question: `() -> T` parsed and would not check,
+  because nothing in the prelude, the corpus, either SICP chapter, the standard library or fourteen
+  benchmarks had ever written a function type taking **no arguments** — a macro expanding into a
+  thunk was the first thing to need one. Its §63.4 has one more that is **not** fixed and is a
+  defect: `b.make()` on a function-valued field resolves to the field and drops the application
+  without saying so. docs/64 §64.2 is the largest of this kind so far and was found by a *budget*
+  rather than by a program: **a phase of the compiler was quadratic and nothing knew**, because
+  placement re-summed the whole program three times per definition to compute explanations nobody
+  had asked for. Every program in the tree is small enough that a quadratic and a linear cost the
+  same, which is why three phases of work never saw it. Its §64.3 and §64.4 record two more that
+  are **not** fixed: a residual `n^1.35` in `check` along a long call chain, and that
+  `MAX_NESTING` does not count a *flat* block — sequential local bindings abort the process at
+  12,000 in a debug build and 100,000 in a release one, so which programs compile depends on how
+  the compiler was built, which is docs/42 §42.2's defect on an axis its ceiling does not measure.
   Reports are history: a later phase's correction to an earlier one goes in the later report, not
   into the earlier text.
 - [`docs/reference/`](docs/reference/README.md) is **generated** by `beck doc reference` from the
@@ -107,11 +150,14 @@ Write the commit message as the author of the change: what changed, and why.
   §25.6 measured are down, and so are the three the removals wrote, so `sicp/refusals/` is
   **empty** — which claims that every wall this project has found has been removed, and not that
   Beck expresses SICP. `sicp/refusals/README.md` holds that distinction and says what puts a file
-  back.
+  back. `sicp/felleisen.beck` is the suite's *formal* half rather than its running half — §25.9's
+  table, one section per special form SICP introduces, each carrying the code that recovers it or
+  the reorganisation that concedes it (docs/63).
 - [`compiler/awfy/`](compiler/awfy/README.md) is the performance benchmark
-  ([`docs/25`](docs/25-benchmarks-and-expressiveness.md) §25.2): ten of Are We Fast Yet's fourteen
-  benchmarks — all nine micro and Richards — ported, each verified against the constant the
-  original's own `verifyResult` checks.
+  ([`docs/25`](docs/25-benchmarks-and-expressiveness.md) §25.2): **all fourteen** of Are We Fast
+  Yet's benchmarks — its nine micro and all five macro — ported, each verified against the constant
+  the original's own `verifyResult` checks, except DeltaBlue, which publishes none and whose oracle
+  is the six assertions inside its own planner.
   Those constants are **somebody else's** and were read out of the MIT-licensed source, so a number
   invented here would defeat the whole point; `beck-cli/tests/awfy.rs` gates the directory, the nine
   names and the attribution, and `measure_awfy.rs` prints wall-clock and gates on nothing —
@@ -139,15 +185,17 @@ Write the commit message as the author of the change: what changed, and why.
   [`docs/24-incremental-views-report.md`](docs/24-incremental-views-report.md),
   [`docs/26-arrangement-sharing-report.md`](docs/26-arrangement-sharing-report.md) and
   [`docs/51-arrangement-lifecycle-report.md`](docs/51-arrangement-lifecycle-report.md); the SICP numbers
-  come from `cargo test --release --test sicp` and from `beck test sicp/ch1.beck` and
-  `beck test sicp/ch2.beck`, quoted in [`docs/27-walls-report.md`](docs/27-walls-report.md) §27.5,
+  come from `cargo test --release --test sicp` and from `beck test sicp/ch1.beck`,
+  `beck test sicp/ch2.beck` and `beck test sicp/felleisen.beck`, quoted in
+  [`docs/27-walls-report.md`](docs/27-walls-report.md) §27.5,
   [`docs/31-tail-calls-report.md`](docs/31-tail-calls-report.md) §31.5–§31.6 and
   [`docs/32-numeric-tower-and-polymorphism-report.md`](docs/32-numeric-tower-and-polymorphism-report.md)
   §32.5 and
   [`docs/33-effect-polymorphism-and-list-patterns-report.md`](docs/33-effect-polymorphism-and-list-patterns-report.md)
   §33.6 and
   [`docs/36-parameterised-types-report.md`](docs/36-parameterised-types-report.md) §36.6 and
-  [`docs/41-generic-arithmetic-report.md`](docs/41-generic-arithmetic-report.md) §41.4; and the
+  [`docs/41-generic-arithmetic-report.md`](docs/41-generic-arithmetic-report.md) §41.4 and
+  [`docs/63-felleisen-report.md`](docs/63-felleisen-report.md) §63.2; and the
   standard library's come from `cargo test -p beck-cli --test stdlib` and from `beck test` on each
   file in `compiler/lib/`, quoted in
   [`docs/46-standard-library-report.md`](docs/46-standard-library-report.md),
@@ -156,13 +204,19 @@ Write the commit message as the author of the change: what changed, and why.
   Are We Fast Yet numbers come from `cargo test --release --test measure_awfy -- --nocapture` and
   from `beck test` on each file in `compiler/awfy/`, quoted in
   [`docs/53-are-we-fast-yet-report.md`](docs/53-are-we-fast-yet-report.md) — where each benchmark's
-  *verification* constant is the original suite's own, read from its source rather than chosen here.
+  *verification* constant is the original suite's own, read from its source rather than chosen here;
+  and the compile-speed numbers come from `cargo test --release --test measure_compile --
+  --nocapture` and `cargo test --release --test compile_speed -- --nocapture`, quoted in
+  [`docs/64-compile-speed-report.md`](docs/64-compile-speed-report.md) — where the gate asserts a
+  *shape* rather than a rate, because docs/13 §13.7's "a gate that flakes gets deleted" rules out a
+  wall-clock threshold on a shared runner.
 - The harnesses are the project's conscience (§4.8, §8.3): `compiler/crates/beck-cli/tests/` holds
   the differential, replay-determinism, backend-seam, scaling, security, corpus, placement-property,
   general-slicer, incremental-analysis, incremental-engine, shared-arrangement, subscription,
   view-metrics, SICP, Are We Fast Yet, tests-in-Beck, UI, workflow-cross-check, documentation,
-  outbound and diagnostic-snapshot suites, plus the three release-only measurement suites
-  (`measure_phase2`, `measure_incremental`, `measure_awfy`). Keep them green.
+  outbound, compile-speed and diagnostic-snapshot suites, plus the four release-only measurement
+  suites (`measure_phase2`, `measure_incremental`, `measure_awfy`, `measure_compile`). Keep them
+  green.
 - The CI workflow is an artefact too, and Phase 2 found that it had never run
   ([`docs/20-phase-2-report.md`](docs/20-phase-2-report.md) §20.4 item 8). If you change
   `.github/workflows/`, run the steps you changed by hand before trusting them.

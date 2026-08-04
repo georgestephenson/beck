@@ -22,6 +22,7 @@ use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use beck_core::Value;
 use redb::ReadableTable;
+use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
 
 /// Position in the total order. One totally-ordered log per application (§3.7 v1 semantics).
@@ -591,6 +592,288 @@ impl LogStore for PgLog {
     }
 }
 
+// ---------------------------------------------------------------------------------------------
+// SQLite — the substrate that makes rungs 0-2 the same shape as production (§7.8.1)
+// ---------------------------------------------------------------------------------------------
+
+/// The same three tables, in SQLite's dialect.
+///
+/// `INTEGER PRIMARY KEY` is the one spelling SQLite aliases to its own `rowid`, which is what makes
+/// it monotonic and gap-free for an append-only table — the property `BIGSERIAL` gives above. Any
+/// other integer type would be an ordinary column with a btree beside it.
+///
+/// There is no BRIN analogue and none is wanted: the `rowid` **is** the physical order, so
+/// `WHERE seq > ? ORDER BY seq LIMIT ?` is already a range scan of the table itself.
+pub const SQLITE_DDL: &str = "\
+CREATE TABLE IF NOT EXISTS beck_log (
+    seq   INTEGER PRIMARY KEY,
+    at    INTEGER NOT NULL,
+    actor TEXT    NOT NULL,
+    body  BLOB    NOT NULL
+);
+CREATE TABLE IF NOT EXISTS beck_snapshot (
+    seq   INTEGER PRIMARY KEY,
+    state BLOB    NOT NULL
+);
+CREATE TABLE IF NOT EXISTS beck_meta (
+    id      INTEGER PRIMARY KEY CHECK (id = 1),
+    format  INTEGER NOT NULL
+);
+";
+
+/// How much a commit promises, which is a *semantic* choice rather than a tuning knob.
+///
+/// [`03`](../../../../../docs/03-type-and-effect-system.md) §3.7 makes the log the only description of
+/// a program's history, so "an accepted event may be lost" is a change to what the system means and
+/// not a setting. It is therefore named, defaulted to the strong option, and measured
+/// (`docs/67` §67.3) — because the cost of the strong option is 38× and a number that large deserves
+/// to be visible rather than discovered.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
+pub enum Durability {
+    /// `synchronous = FULL`: every commit is on the platter before it is acknowledged.
+    ///
+    /// The same promise redb and Postgres make, which is what makes them comparable.
+    #[default]
+    Fsync,
+    /// `synchronous = NORMAL` under WAL: a commit survives a process crash and may be lost in a
+    /// power loss. **Not corrupted** — WAL rules that out — but an acknowledged event can vanish.
+    ///
+    /// Legitimate for a laptop where the log is a scratchpad, and never the default, because a
+    /// weaker promise arrived at by not reading a manual is not a decision anybody made.
+    Relaxed,
+}
+
+/// A log in a single SQLite file.
+///
+/// [`docs/07`](../../../../../docs/07-dependencies.md) §7.8.1 gives the reason, and it is not speed:
+/// SQLite is *also* a read-model engine, so "append and project in one transaction" — the property
+/// Postgres gives production — becomes available on a laptop. `redb` cannot offer that at any
+/// speed, because it has no query language for a projection to be written in.
+///
+/// The connection is behind a `Mutex` rather than a pool. One writer is the invariant §3.7 already
+/// depends on, and SQLite serialises writers anyway; a pool would add contention to model
+/// concurrency the log does not have.
+pub struct SqliteLog {
+    conn: std::sync::Mutex<rusqlite::Connection>,
+    kind: &'static str,
+}
+
+impl SqliteLog {
+    /// Open a log that makes the same durability promise redb and Postgres do.
+    pub fn open(path: &std::path::Path) -> Result<SqliteLog> {
+        Self::open_with(path, Durability::default())
+    }
+
+    pub fn open_with(path: &std::path::Path, durability: Durability) -> Result<SqliteLog> {
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent).context("creating the log directory")?;
+            }
+        }
+        let conn = rusqlite::Connection::open(path).context("opening the log store")?;
+        // The durability is part of the name, because `kind()` is what every measurement and every
+        // report labels its number with — and a row that said only "sqlite" would let two very
+        // different promises share a line (`docs/67` §67.3).
+        let kind = match durability {
+            Durability::Fsync => "sqlite",
+            Durability::Relaxed => "sqlite-relaxed",
+        };
+        Self::prepare(conn, kind, durability)
+    }
+
+    /// A log that never touches a disk — the same engine and the same SQL, for tests.
+    ///
+    /// Durability is meaningless here and the strong setting is still passed, so an in-memory run
+    /// and an on-disk run differ in exactly one thing: the disk.
+    pub fn in_memory() -> Result<SqliteLog> {
+        let conn = rusqlite::Connection::open_in_memory().context("opening the log store")?;
+        Self::prepare(conn, "sqlite-memory", Durability::Fsync)
+    }
+
+    fn prepare(
+        conn: rusqlite::Connection,
+        kind: &'static str,
+        durability: Durability,
+    ) -> Result<SqliteLog> {
+        // WAL, because a reader must not block the single writer — which is the whole shape of a
+        // log that is appended to while it is being replayed. WAL is independent of the durability
+        // choice below: it decides who blocks whom, and `synchronous` decides what a commit
+        // promises.
+        conn.pragma_update(None, "journal_mode", "WAL")
+            .context("enabling WAL")?;
+        conn.pragma_update(
+            None,
+            "synchronous",
+            match durability {
+                Durability::Fsync => "FULL",
+                Durability::Relaxed => "NORMAL",
+            },
+        )
+        .context("setting synchronous")?;
+        conn.pragma_update(None, "foreign_keys", true).ok();
+        conn.execute_batch(SQLITE_DDL)
+            .context("applying the log DDL")?;
+
+        // The same refusal `check_format` makes for Postgres, and for the same reason: a log read
+        // back under a different encoding does not fail, it produces plausible nonsense.
+        let want = beck_core::repr::FORMAT as i64;
+        let found: Option<i64> = conn
+            .query_row("SELECT format FROM beck_meta WHERE id = 1", [], |r| {
+                r.get(0)
+            })
+            .optional()
+            .context("reading the store's format")?;
+        match found {
+            Some(found) if found != want => bail!(
+                "this log was written in format {found} and this build reads format {want}. \
+                 Replay it through the older build and export, or point at a fresh store — \
+                 reading it as-is would decode to something that is not what was written"
+            ),
+            Some(_) => {}
+            None => {
+                conn.execute("INSERT INTO beck_meta (id, format) VALUES (1, ?1)", [want])
+                    .context("stamping the store's format")?;
+            }
+        }
+        Ok(SqliteLog {
+            conn: std::sync::Mutex::new(conn),
+            kind,
+        })
+    }
+
+    /// Drop and recreate the log — the counterpart of [`PgLog::truncate`].
+    pub fn truncate(&self) -> Result<()> {
+        let conn = self.conn.lock().expect("the log mutex is not poisoned");
+        conn.execute_batch("DELETE FROM beck_log; DELETE FROM beck_snapshot;")?;
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl LogStore for SqliteLog {
+    fn kind(&self) -> &'static str {
+        self.kind
+    }
+
+    async fn head(&self) -> Result<Seq> {
+        let conn = self.conn.lock().expect("the log mutex is not poisoned");
+        let head: i64 = conn.query_row("SELECT COALESCE(MAX(seq), 0) FROM beck_log", [], |r| {
+            r.get(0)
+        })?;
+        Ok(head as u64)
+    }
+
+    async fn floor(&self) -> Result<Seq> {
+        let conn = self.conn.lock().expect("the log mutex is not poisoned");
+        let floor: i64 = conn.query_row("SELECT COALESCE(MIN(seq), 1) FROM beck_log", [], |r| {
+            r.get(0)
+        })?;
+        Ok((floor as u64).saturating_sub(1))
+    }
+
+    async fn append(&self, batch: &[Pending]) -> Result<Vec<Envelope>> {
+        if batch.is_empty() {
+            return Ok(Vec::new());
+        }
+        // Encode before taking the lock: `to_bytes` can fail, and a transaction opened and then
+        // abandoned on an encoding error is a transaction that has to be reasoned about.
+        let bodies: Vec<Vec<u8>> = batch
+            .iter()
+            .map(|p| beck_core::repr::to_bytes(&p.body))
+            .collect::<Result<_, _>>()?;
+
+        let mut conn = self.conn.lock().expect("the log mutex is not poisoned");
+        let tx = conn
+            .transaction()
+            .context("opening the append transaction")?;
+        // The first `seq` is decided inside the transaction, so a concurrent writer cannot
+        // interleave: contiguous, all-or-nothing (§3.7).
+        let head: i64 = tx.query_row("SELECT COALESCE(MAX(seq), 0) FROM beck_log", [], |r| {
+            r.get(0)
+        })?;
+        {
+            let mut stmt = tx
+                .prepare("INSERT INTO beck_log (seq, at, actor, body) VALUES (?1, ?2, ?3, ?4)")
+                .context("preparing the append")?;
+            for (i, (p, body)) in batch.iter().zip(&bodies).enumerate() {
+                stmt.execute(rusqlite::params![
+                    head + 1 + i as i64,
+                    p.at.0,
+                    &p.actor,
+                    body
+                ])?;
+            }
+        }
+        tx.commit().context("committing the append")?;
+
+        Ok(batch
+            .iter()
+            .enumerate()
+            .map(|(i, p)| Envelope {
+                seq: (head + 1 + i as i64) as u64,
+                at: p.at,
+                actor: p.actor.clone(),
+                body: p.body.clone(),
+            })
+            .collect())
+    }
+
+    async fn read(&self, after: Seq, limit: usize) -> Result<Vec<Envelope>> {
+        let conn = self.conn.lock().expect("the log mutex is not poisoned");
+        let mut stmt = conn.prepare(
+            "SELECT seq, at, actor, body FROM beck_log WHERE seq > ?1 ORDER BY seq LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![after as i64, limit as i64], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, Vec<u8>>(3)?,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (seq, at, actor, body) = row?;
+            out.push(Envelope {
+                seq: seq as u64,
+                at: Instant(at),
+                actor,
+                body: beck_core::repr::from_bytes(&body).context("decoding an event")?,
+            });
+        }
+        Ok(out)
+    }
+
+    async fn put_snapshot(&self, snapshot: &Snapshot) -> Result<()> {
+        let state = beck_core::repr::to_bytes(&snapshot.state)?;
+        let conn = self.conn.lock().expect("the log mutex is not poisoned");
+        conn.execute(
+            "INSERT INTO beck_snapshot (seq, state) VALUES (?1, ?2) \
+             ON CONFLICT (seq) DO UPDATE SET state = excluded.state",
+            rusqlite::params![snapshot.seq as i64, state],
+        )?;
+        Ok(())
+    }
+
+    async fn snapshot_at_or_before(&self, seq: Seq) -> Result<Option<Snapshot>> {
+        let conn = self.conn.lock().expect("the log mutex is not poisoned");
+        let row: Option<(i64, Vec<u8>)> = conn
+            .query_row(
+                "SELECT seq, state FROM beck_snapshot WHERE seq <= ?1 ORDER BY seq DESC LIMIT 1",
+                [seq as i64],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        match row {
+            None => Ok(None),
+            Some((seq, state)) => Ok(Some(Snapshot {
+                seq: seq as u64,
+                state: beck_core::repr::from_bytes(&state).context("decoding a snapshot")?,
+            })),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -684,6 +967,161 @@ mod tests {
             );
         }
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// SQLite answers the same contract, on disk and in memory.
+    ///
+    /// Unlike Postgres this needs no server and therefore **never skips** — which is half of
+    /// `docs/07` §7.8.1's argument: the substrate that makes a laptop the same shape as production
+    /// is also the one CI can always run.
+    #[tokio::test]
+    async fn sqlite_keeps_the_same_contract() {
+        contract(&SqliteLog::in_memory().unwrap()).await;
+
+        let path = std::env::temp_dir().join(format!("beck-rt-sqlite-{}.db", std::process::id()));
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+        let store = SqliteLog::open(&path).unwrap();
+        contract(&store).await;
+        drop(store);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    }
+
+    #[tokio::test]
+    async fn sqlite_survives_reopening() {
+        let path =
+            std::env::temp_dir().join(format!("beck-rt-sqlite-reopen-{}.db", std::process::id()));
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+        {
+            let store = SqliteLog::open(&path).unwrap();
+            store.append(&[pending("a", 7)]).await.unwrap();
+            store
+                .put_snapshot(&Snapshot {
+                    seq: 1,
+                    state: Value::Int(70),
+                })
+                .await
+                .unwrap();
+        }
+        {
+            let store = SqliteLog::open(&path).unwrap();
+            assert_eq!(store.head().await.unwrap(), 1);
+            assert_eq!(
+                store.read(0, 10).await.unwrap()[0].event().unwrap(),
+                Value::Int(7)
+            );
+            // The snapshot too: a store that persisted its log and lost its snapshots would replay
+            // correctly and slowly, which is the failure nobody notices.
+            assert_eq!(
+                store.snapshot_at_or_before(5).await.unwrap().unwrap().state,
+                Value::Int(70)
+            );
+            // And appending after a reopen continues the sequence rather than restarting it.
+            let out = store.append(&[pending("b", 8)]).await.unwrap();
+            assert_eq!(out[0].seq, 2, "a reopened log continues its own sequence");
+        }
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    }
+
+    /// The property `docs/07` §7.8.1 is actually about, and the one neither redb nor a file can
+    /// offer: **an append and a projection in one transaction**.
+    ///
+    /// Postgres has it in production. This is the claim that a laptop now has the same shape — not
+    /// that the read models are built (they are not, `docs/26` §26.9), but that the substrate
+    /// underneath them admits the property. A `LogStore` cannot express it, so the test reaches
+    /// past the trait to the connection, which is the only honest way to assert it today.
+    #[tokio::test]
+    async fn sqlite_can_append_and_project_in_one_transaction() {
+        let store = SqliteLog::in_memory().unwrap();
+        {
+            let conn = store.conn.lock().unwrap();
+            conn.execute_batch("CREATE TABLE counts (actor TEXT PRIMARY KEY, n INTEGER NOT NULL);")
+                .unwrap();
+        }
+
+        // One transaction: the event lands and the read model moves, or neither does.
+        {
+            let mut conn = store.conn.lock().unwrap();
+            let tx = conn.transaction().unwrap();
+            tx.execute(
+                "INSERT INTO beck_log (seq, at, actor, body) VALUES (1, 1, 'ana', ?1)",
+                [beck_core::repr::to_bytes(&Value::Int(1)).unwrap()],
+            )
+            .unwrap();
+            tx.execute(
+                "INSERT INTO counts (actor, n) VALUES ('ana', 1) \
+                 ON CONFLICT (actor) DO UPDATE SET n = n + 1",
+                [],
+            )
+            .unwrap();
+            tx.commit().unwrap();
+        }
+        assert_eq!(store.head().await.unwrap(), 1);
+        {
+            let conn = store.conn.lock().unwrap();
+            let n: i64 = conn
+                .query_row("SELECT n FROM counts WHERE actor = 'ana'", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(n, 1);
+        }
+
+        // And a rolled-back transaction leaves neither behind, which is the half that makes the
+        // first half worth anything.
+        {
+            let mut conn = store.conn.lock().unwrap();
+            let tx = conn.transaction().unwrap();
+            tx.execute(
+                "INSERT INTO beck_log (seq, at, actor, body) VALUES (2, 2, 'ana', ?1)",
+                [beck_core::repr::to_bytes(&Value::Int(2)).unwrap()],
+            )
+            .unwrap();
+            tx.execute("UPDATE counts SET n = n + 1 WHERE actor = 'ana'", [])
+                .unwrap();
+            tx.rollback().unwrap();
+        }
+        assert_eq!(
+            store.head().await.unwrap(),
+            1,
+            "the rolled-back event is not in the log"
+        );
+        let conn = store.conn.lock().unwrap();
+        let n: i64 = conn
+            .query_row("SELECT n FROM counts WHERE actor = 'ana'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1, "and the projection did not move either");
+    }
+
+    /// A SQLite log written under another encoding is refused, the same way redb's is.
+    #[test]
+    fn a_sqlite_log_written_in_another_format_is_refused_too() {
+        let path = std::env::temp_dir().join(format!("beck-sqlite-fmt-{}.db", std::process::id()));
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            conn.execute_batch(SQLITE_DDL).unwrap();
+            conn.execute(
+                "INSERT INTO beck_meta (id, format) VALUES (1, ?1)",
+                [beck_core::repr::FORMAT as i64 + 1],
+            )
+            .unwrap();
+        }
+        let Err(err) = SqliteLog::open(&path) else {
+            panic!("a log in another format has to be refused")
+        };
+        let text = format!("{err:#}");
+        assert!(text.contains("was written in format"), "{text}");
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
     }
 
     #[test]

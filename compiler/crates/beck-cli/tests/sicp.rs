@@ -14,6 +14,11 @@
 //!   diagnostic — so that a wall coming down is a test that starts failing rather than a fact
 //!   somebody notices.
 //!
+//! [`sicp/felleisen.beck`](../../../sicp/felleisen.beck) is the third thing, and it is the
+//! *formal* half of §25.9 rather than the running half: one section per special form SICP
+//! introduces, each carrying the code that recovers it or the reorganisation that concedes it.
+//! `docs/63` is the verdict table; the file is the evidence for it.
+//!
 //! All six §25.6 measured are down, and each left a test pointing the other way rather than no test
 //! at all: docs/27 for the first three, docs/31 for tail calls, docs/32 for the reals and for
 //! user-written polymorphism. Removing them wrote three more and those came down too — docs/33 for
@@ -887,4 +892,94 @@ fn a_tail_call_holds_no_heap_either() {
              {shallow} KiB and 1,000,000 held {deep}, which is growth rather than drift"
         );
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// 3. Felleisen's table
+// ---------------------------------------------------------------------------------------------
+
+const FELLEISEN: &str = include_str!("../../../sicp/felleisen.beck");
+
+/// §25.9's Felleisen deliverable: seven forms, seven verdicts, and the code behind each.
+///
+/// The table in `docs/63` is only worth reading if the "recovered" rows are recovered *here* rather
+/// than in prose, so this runs the file. What it adds beyond a pass is the **shape** of the result:
+/// §25.9 forecast one concession out of seven and said why seven out of seven would be a result
+/// worth double-checking, so the count is asserted rather than left to a reader of the report.
+#[test]
+fn felleisens_table_is_seven_forms_with_the_code_behind_each_verdict() {
+    let (placed, rendered) = compile_module("sicp/felleisen.beck", FELLEISEN);
+    let placed = placed.unwrap_or_else(|| panic!("the Felleisen file compiles:\n{rendered}"));
+    assert!(
+        !placed.is_application(),
+        "it is a library, like the chapters"
+    );
+
+    let report = beck_rt::testing::run(&placed, beck_eval::backend(&placed), &Options::default());
+    assert_eq!(
+        report.failed(),
+        0,
+        "{}",
+        beck_rt::testing::render(&report, true)
+    );
+    assert_eq!(report.skipped(), 0, "nothing here performs an effect");
+    assert!(
+        report.cases.len() >= 10,
+        "every row that claims `recovered` has to have a test making the claim"
+    );
+
+    // Seven forms, and exactly one conceded. Both halves matter: a row quietly dropped would make
+    // the table shorter than SICP's, and a concession quietly upgraded would make the result the
+    // one §25.9 said to distrust.
+    for form in [
+        "`cond`, `and`, `or`, `not`",
+        "`let`, `let*`",
+        "`delay` / `force` and `cons-stream`",
+        "`quote` and quasiquote",
+        "`set!` and `begin`",
+        "`amb`",
+        "`define-syntax`",
+    ] {
+        assert!(
+            FELLEISEN.contains(form),
+            "{form} is one of §25.9's seven rows and the file no longer covers it"
+        );
+    }
+    assert_eq!(
+        FELLEISEN.matches("GLOBAL").count(),
+        1,
+        "§25.9 forecast one concession out of seven; a different number is a result to re-derive \
+         rather than a count to update"
+    );
+}
+
+/// The bound that blocked the most interesting row, asserted where the row is.
+///
+/// `() -> T` — a thunk, which is what `delay` expands to — parsed and then failed to check, because
+/// `ty_from_node_inner` required a function type to have at least two parts and a nullary one has
+/// one. `docs/63` §63.3. Nothing in the corpus, the prelude or either SICP chapter had ever written
+/// a function type taking no arguments, so the whole language was reachable without it until a
+/// macro needed to expand into one.
+#[test]
+fn a_function_type_may_take_no_arguments() {
+    let src = "
+def force[T](promise: () -> T) -> T:
+    return promise()
+
+def thunk() -> Int:
+    return 7
+
+test \"a thunk is a value\":
+    expect force(thunk) == 7
+    expect force(lambda: \"x\") == \"x\"
+";
+    let (placed, rendered) = compile_module("thunk.beck", src);
+    let placed = placed.unwrap_or_else(|| panic!("a nullary function type checks:\n{rendered}"));
+    let report = beck_rt::testing::run(&placed, beck_eval::backend(&placed), &Options::default());
+    assert_eq!(
+        report.failed(),
+        0,
+        "{}",
+        beck_rt::testing::render(&report, true)
+    );
 }

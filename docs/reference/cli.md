@@ -152,6 +152,8 @@ A test is a log, a command and an expectation, so this needs no network, no data
 | `-f, --filter` | FILTER | Only run tests whose name contains this |
 | `-v, --verbose` | true \| false | Say what was stubbed even when the test passed — §21.3 rule 1's hidden default, declaring itself |
 | `--runs` | RUNS | Inputs per `property` block |
+| `--fuel` | FUEL | Evaluation steps one expectation may take before it is stopped.  The default is a runaway-program backstop and is right for everything written by hand. A *benchmark* is the exception — three of the fourteen in `awfy/` need more at the size their suite measures at (`docs/61` §61.3), and a backstop nothing can raise is a ceiling. |
+| `--update` | true \| false | Write what `expect page matches snapshot` renders, instead of comparing against it.  The written file is reviewed like any other diff (§21.2). Nothing writes a snapshot without this flag: one that rewrote itself on disagreement would assert nothing. |
 
 
 ## `beck run`
@@ -162,7 +164,7 @@ Run the program in a single process — rung 0 of the parity ladder
 |---|---|---|
 | `<FILE>` | FILE |  |
 | `--addr` | ADDR |  |
-| `--store` | redb \| postgres \| memory |  |
+| `--store` | redb \| sqlite \| postgres \| memory |  |
 | `--path` | PATH |  |
 | `--url` | URL |  |
 
@@ -174,7 +176,7 @@ Fold a recorded log and report the state it produces (§3.7)
 | Argument | | |
 |---|---|---|
 | `<FILE>` | FILE |  |
-| `--store` | redb \| postgres \| memory |  |
+| `--store` | redb \| sqlite \| postgres \| memory |  |
 | `--path` | PATH |  |
 | `--url` | URL |  |
 | `--genesis` | true \| false | Ignore snapshots and fold from the first event — D3's genesis-replay discipline |
@@ -238,6 +240,13 @@ Append, read and encode, against memory, redb and — with a URL — PostgreSQL
 |---|---|---|
 | `--url` | URL | The PostgreSQL log to include. Also read from `BECK_POSTGRES_URL` |
 | `--dir` | DIR | Where to put the temporary redb file |
+
+
+## `beck lsp`
+
+Serve the Language Server Protocol on stdin and stdout (§4.6).
+
+The same front end `beck check` runs, so an editor's squiggle and a CI failure are the same diagnostic — §4.6's "there is no separate language server implementation to drift". Not meant to be run by hand: an editor starts it and speaks JSON-RPC to it.
 
 
 ## `beck up`

@@ -27,7 +27,9 @@ pub mod testing;
 pub use app::{replay_from_genesis, replay_to, App, AppConfig};
 pub use dash::{Dashboard, ResourceRow};
 pub use diff::{diff, Op, Path};
-pub use log::{Envelope, Instant, LogStore, MemoryLog, PgLog, RedbLog, Seq, Snapshot};
+pub use log::{
+    Durability, Envelope, Instant, LogStore, MemoryLog, PgLog, RedbLog, Seq, Snapshot, SqliteLog,
+};
 pub use patch::{Codec, PatchFrame};
 pub use program::Runtime;
 pub use telemetry::{telemetry, timed, Telemetry};

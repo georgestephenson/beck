@@ -251,7 +251,13 @@ dependencies whose signatures didn't change.
   durable substrates are within ~16% of each other — it is that SQLite is *also* the read-model
   engine, so rungs 0–2 get the same "append and project in one transaction" property production
   has, and a developer's laptop stops being merely similar to production. Measure with `beck bench
-  log` and let the number pick rung 0's default.
+  log` and let the number pick rung 0's default. ***Built*** ([`67`](67-sqlite-report.md)), and the
+  number does **not** pick: at equal durability SQLite and redb are within noise of each other, so
+  rung 0's default is unchanged. The first measurement said 26× and was comparing
+  `synchronous = NORMAL` against redb's fsync — a weaker promise rather than a faster engine — which
+  is why durability is now a public type defaulting to fsync (§67.3,
+  [`adr/0017`](adr/0017-sqlite-is-a-substrate-for-its-transaction-not-its-speed.md)). The reason
+  §7.8.1 gave survives the measurement and is the only reason: the transaction, not the speed.*
 - Standard library v1: collections, strings, time, money/decimal, HTTP client, JSON, UUID, crypto
   primitives (delegated to `ring`/`aws-lc-rs`, not hand-rolled). **Reals first**, because §25.6
   measures that §1.1.7 of SICP — the first substantial program in the book — does not typecheck
@@ -296,8 +302,10 @@ dependencies whose signatures didn't change.
   — an iterative process running a quarter of a million levels deep — now that there is one to carry
   ([`31`](31-tail-calls-report.md)), and §1.1.7/§1.3.3/§1.3.4's reals asserted against the doubles
   the book prints, while chapter 2 carries §2.2.1's `map` written by the reader rather than borrowed
-  from the prelude ([`32`](32-numeric-tower-and-polymorphism-report.md)). Felleisen's table is not
-  written.*
+  from the prelude ([`32`](32-numeric-tower-and-polymorphism-report.md)). **Felleisen's table is
+  written** ([`63`](63-felleisen-report.md)): six of the seven forms recovered and `amb` conceded,
+  which is the shape §25.9's forecast predicted, with the CPS reorganisation the concession costs
+  written out beside it rather than asserted.*
 - **Identity**: OIDC relying-party runtime, `identity = managed()` provisioning (Keycloak/Ory),
   claims → `Session` capability mapping, dev-mode identity for rung 0, presence as a first-class
   signal ([`10`](10-decisions.md) D6). *The **seam** is built ([`48`](48-identity-report.md)):
@@ -610,11 +618,16 @@ function behind `cap.sign` with a test that enumerates the prelude and keeps the
 exact or refusing — so **§8.5.4's Wave 2 is finished** and what is left on this bullet is the
 benchmark harness. §46.6 has the item-by-item list, §49.6 the client's own, §50.6 the two newest
 files' and §52.6 the crypto half's — including what a digest deliberately is not: no asymmetric
-signature, no TLS, no encryption of any kind. The **Are We Fast Yet harness is stood up for nine of
-its fourteen benchmarks** ([`53`](53-are-we-fast-yet-report.md)), each verified against the constant
+signature, no TLS, no encryption of any kind. The **Are We Fast Yet harness is complete — all fourteen
+benchmarks** ([`53`](53-are-we-fast-yet-report.md), [`57`](57-richards-report.md),
+[`58`](58-json-report.md), [`59`](59-havlak-report.md), [`60`](60-collision-detection-report.md),
+[`61`](61-deltablue-report.md)), each verified against the constant
 the original suite's own `verifyResult` checks, with wall-clock printed and nothing compared to
-anything — §8.4's ask, half discharged. Its five macro-benchmarks and the whole **CLBG** harness are
-not stood up, and that is what is left of the item that has been owed longest.
+anything — §8.4's ask, half discharged. The whole **CLBG** harness is
+not stood up — and that is now the only thing left of the item that has been owed longest. The
+**Felleisen table** ([`63`](63-felleisen-report.md)) and the **compile-speed budgets**
+([`64`](64-compile-speed-report.md)) are both built and sit under
+[`25`](25-benchmarks-and-expressiveness.md) §25.9 rather than under this bullet.
 
 *It found a wall too, in the same way and one wave later: **a credential could not be sent**, because
 §3.5 gives a program no way to read a `secret[Str]` and a header value is a `Str` (§49.4). It had

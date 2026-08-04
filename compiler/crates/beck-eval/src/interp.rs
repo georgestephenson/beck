@@ -549,7 +549,13 @@ pub struct Interp<'h> {
     max_depth: u32,
 }
 
-const DEFAULT_FUEL: u64 = 50_000_000;
+/// The number of evaluation steps one call gets before it is stopped.
+///
+/// A runaway-program backstop, not a performance knob — but a backstop nothing can raise is a
+/// ceiling, and three of Are We Fast Yet's fourteen benchmarks live above it at the size the suite
+/// measures at ([`docs/61`](../../../../../docs/61-deltablue-report.md) §61.3). `beck test --fuel`
+/// is how a program that means it says so.
+pub const DEFAULT_FUEL: u64 = 50_000_000;
 
 /// The ceiling on non-tail evaluator nesting.
 ///
@@ -1078,6 +1084,20 @@ impl<'h> Interp<'h> {
                 v.as_f64()
                     .map(|f| Value::float(f.sqrt()))
                     .ok_or_else(|| EvalError::new("`sqrt` expects a Float", span))
+            }
+            Prim::Sin | Prim::Cos | Prim::Trunc => {
+                want(1)?;
+                let v = args.pop().expect("arity checked");
+                let f = v.as_f64().ok_or_else(|| {
+                    EvalError::new(format!("`{}` expects a Float", op.name()), span)
+                })?;
+                Ok(match op {
+                    Prim::Sin => Value::float(f.sin()),
+                    Prim::Cos => Value::float(f.cos()),
+                    // `as` on a float is saturating in Rust and toward zero, which is the rule the
+                    // prelude states. A NaN becomes zero, which is the only total answer.
+                    _ => Value::Int(f as i64),
+                })
             }
             Prim::ToFloat => {
                 want(1)?;
