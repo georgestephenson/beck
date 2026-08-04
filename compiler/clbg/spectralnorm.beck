@@ -1,0 +1,115 @@
+# The Computer Language Benchmarks Game — spectral-norm, in Beck.
+#
+# The Computer Language Benchmarks Game
+# https://salsa.debian.org/benchmarksgame-team/benchmarksgame/
+#
+# Ported from the Java program, contributed by Jarkko Miettinen, modified by Isaac Gouy from the
+# original C# version.
+#
+# The largest eigenvalue of `AtA` by twenty steps of the power method, where `A` is the infinite
+# matrix `a[i][j] = 1/((i+j)(i+j+1)/2 + i + 1)`. The suite is unusually prescriptive about this one
+# — "not only give the correct result, but also use the same algorithm", and "implement 4 separate
+# functions like the Java program" — so `a_at`, `multiply_av`, `multiply_atv` and `multiply_at_av`
+# are four functions here for the reason they are four there, and not because the port wanted them.
+#
+# Verified against `expected/spectralnorm-output.txt`, which is the suite's own published output
+# for `N = 100`. `clbg.rs` holds the string below and that file to each other, so the constant in
+# this file cannot drift from the constant the suite publishes.
+
+import format
+
+## `A`'s element at `i`, `j`.
+##
+## The index arithmetic is exact and the division is not: `(i+j)(i+j+1)/2 + i + 1` is an integer in
+## the Java too, and `1.0/` is the only place a real enters. `docs/41` refuses `1.0 / n` for an
+## `Int` `n`, so the widening is written down — which is the whole of the difference between this
+## line and the original's.
+def a_at(i: Int, j: Int) -> Float:
+    return 1.0 / float((i + j) * (i + j + 1) / 2 + i + 1)
+
+## A vector of `n` ones — the power method's starting point.
+def ones(n: Int) -> Map[Int, Float]:
+    return ones_from(0, n, empty_vector())
+
+def ones_from(i: Int, n: Int, acc: Map[Int, Float]) -> Map[Int, Float]:
+    if i >= n:
+        return acc
+    return ones_from(i + 1, n, map_insert(acc, i, 1.0))
+
+## An empty `Map[Int, Float]`, because `{}` on its own is not one yet — `lib/text.beck`'s
+## `no_pairs` carries the same comment for the same reason.
+def empty_vector() -> Map[Int, Float]:
+    return {}
+
+## `v`'s `i`th element. Every index this file takes is in range by construction and the language has
+## no way to be told so, which is `awfy/nbody.beck`'s note and costs the same line here.
+def at(v: Map[Int, Float], i: Int) -> Float:
+    return unwrap_or(map_get(v, i), 0.0)
+
+## `Av`.
+def multiply_av(n: Int, v: Map[Int, Float]) -> Map[Int, Float]:
+    return av_from(0, n, v, empty_vector())
+
+def av_from(i: Int, n: Int, v: Map[Int, Float], acc: Map[Int, Float]) -> Map[Int, Float]:
+    if i >= n:
+        return acc
+    return av_from(i + 1, n, v, map_insert(acc, i, av_row(i, 0, n, v, 0.0)))
+
+def av_row(i: Int, j: Int, n: Int, v: Map[Int, Float], acc: Float) -> Float:
+    if j >= n:
+        return acc
+    return av_row(i, j + 1, n, v, acc + a_at(i, j) * at(v, j))
+
+## `Atv` — the same loop with the indices of `a_at` swapped, which is what "A transposed" is here.
+def multiply_atv(n: Int, v: Map[Int, Float]) -> Map[Int, Float]:
+    return atv_from(0, n, v, empty_vector())
+
+def atv_from(i: Int, n: Int, v: Map[Int, Float], acc: Map[Int, Float]) -> Map[Int, Float]:
+    if i >= n:
+        return acc
+    return atv_from(i + 1, n, v, map_insert(acc, i, atv_row(i, 0, n, v, 0.0)))
+
+def atv_row(i: Int, j: Int, n: Int, v: Map[Int, Float], acc: Float) -> Float:
+    if j >= n:
+        return acc
+    return atv_row(i, j + 1, n, v, acc + a_at(j, i) * at(v, j))
+
+## `AtAv`.
+def multiply_at_av(n: Int, v: Map[Int, Float]) -> Map[Int, Float]:
+    return multiply_atv(n, multiply_av(n, v))
+
+## The two vectors the power method carries, which the Java carries as two mutable arrays it swaps
+## the roles of. A record is `awfy/README.md`'s second rule: where the original mutates two things
+## at once, the port carries both in one.
+model Pair:
+    u: Map[Int, Float]
+    v: Map[Int, Float]
+
+def step(n: Int, p: Pair) -> Pair:
+    applied = multiply_at_av(n, p.u)
+    return Pair(u=multiply_at_av(n, applied), v=applied)
+
+def steps(k: Int, n: Int, p: Pair) -> Pair:
+    if k <= 0:
+        return p
+    return steps(k - 1, n, step(n, p))
+
+## `sqrt(vBv/vv)` over the two vectors the ten steps leave.
+def approximate(n: Int) -> Float:
+    final = steps(10, n, Pair(u=ones(n), v=empty_vector()))
+    return sqrt(quotient(0, n, final, 0.0, 0.0))
+
+def quotient(i: Int, n: Int, p: Pair, v_bv: Float, vv: Float) -> Float:
+    if i >= n:
+        return v_bv / vv
+    return quotient(i + 1, n, p, v_bv + at(p.u, i) * at(p.v, i), vv + at(p.v, i) * at(p.v, i))
+
+## The benchmark: what the program writes to stdout for `N = n`.
+##
+## `DecimalFormat("#.000000000")` in the Java, which is nine places — and for every value this
+## benchmark can produce, which are all above one, it is `fixed`'s output exactly.
+def spectralnorm_output(n: Int) -> Str:
+    return lines_of([fixed(approximate(n), 9)])
+
+test "spectralnorm: N = 100 is the suite's own published output":
+    expect spectralnorm_output(100) == "1.274219991\n"

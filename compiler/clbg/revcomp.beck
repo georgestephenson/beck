@@ -1,0 +1,163 @@
+# The Computer Language Benchmarks Game — reverse-complement, in Beck.
+#
+# The Computer Language Benchmarks Game
+# https://salsa.debian.org/benchmarksgame-team/benchmarksgame/
+#
+# Ported from the Java program, contributed by Leonhard Holz, with thanks from its author to
+# Anthony Donnefort for the mapping idea.
+#
+# Read DNA sequences in FASTA format and write each one's reverse-complement: the sequence
+# backwards, with every base replaced by the one it pairs with, wrapped at 60 columns under the
+# description line it came in with.
+#
+# **The input is `fasta.beck`'s output rather than a file.** The suite redirects
+# `revcomp-input.txt` into the program on stdin; Beck has no stdin and a `test` block has no file
+# to open, so this port generates its input by calling the port of the program the suite generated
+# it with. That is exact rather than approximate: `expected/revcomp-input.txt` is byte-for-byte
+# `expected/fasta-output.txt`, and `clbg.rs` asserts it rather than trusting it. `docs/68` §68.2
+# records the substitution and what it costs — the reading half of an I/O benchmark is not
+# measured here, and this file measures the transformation only.
+#
+# The complement table is the suite's own, including the ambiguity codes, and the answer is upper
+# case however the input was written: `fasta` emits the ALU sequence in upper case and the two
+# generated ones in lower, so a port that forgot the case conversion would be right about the first
+# sequence and wrong about the other two.
+#
+# **One difference from the Java, on input the Game does not generate.** Its table is a 256-entry
+# byte map initialised to the identity, so a code it does not list — `n`, `w`, `s` — comes out in
+# the case it went in as. This upper-cases first, so those come out upper. The three are
+# self-complementary and `fasta` writes every ambiguity code in upper case, so the two agree on
+# every byte of the published input; they would differ on a lower-case `n`, which no input in this
+# directory contains.
+#
+# Verified against `expected/revcomp-output.txt`, the suite's own published output for the input it
+# publishes.
+
+import format
+import fasta
+
+## One sequence: the `>` line as it arrived, and its bases with the line breaks taken out.
+model Sequence:
+    header: Str
+    bases: list[Str]
+
+## The pairing, as the suite's table writes it — `A` with `T`, `C` with `G`, and every IUB
+## ambiguity code with the code for the complementary set.
+##
+## `U` complements to `A` alongside `T`, which is the one asymmetry in the table: the reverse
+## complement of an RNA base is written as DNA.
+def complement(base: Str) -> Str:
+    upper = str_upper(base)
+    if upper == "A":
+        return "T"
+    if upper == "C":
+        return "G"
+    if upper == "G":
+        return "C"
+    if upper == "T":
+        return "A"
+    if upper == "U":
+        return "A"
+    if upper == "M":
+        return "K"
+    if upper == "R":
+        return "Y"
+    if upper == "Y":
+        return "R"
+    if upper == "K":
+        return "M"
+    if upper == "V":
+        return "B"
+    if upper == "H":
+        return "D"
+    if upper == "D":
+        return "H"
+    if upper == "B":
+        return "V"
+    return upper
+
+## The input, split into sequences at its `>` lines.
+def sequences(text: Str) -> list[Sequence]:
+    return gather(str_split(text, "\n"), 0, [])
+
+def gather(lines: list[Str], i: Int, done: list[Sequence]) -> list[Sequence]:
+    if i >= list_len(lines):
+        return done
+    line = unwrap_or(list_get(lines, i), "")
+    if str_is_empty(line):
+        return gather(lines, i + 1, done)
+    if str_starts_with(line, ">"):
+        return gather(lines, i + 1, list_append(done, Sequence(header=line, bases=[])))
+    return gather(lines, i + 1, extend_last(done, line))
+
+## `line`'s bases appended to the sequence being read.
+##
+## A body line before any header would have nowhere to go. The suite's format cannot produce one
+## and this drops it rather than raising, because a reader that invents an unnamed sequence is
+## worse than a reader that ignores bytes no valid input contains.
+def extend_last(done: list[Sequence], line: Str) -> list[Sequence]:
+    if list_len(done) == 0:
+        return done
+    last = unwrap_or(list_get(done, list_len(done) - 1), Sequence(header="", bases=[]))
+    return list_append(
+        list_take(done, list_len(done) - 1),
+        Sequence(header=last.header, bases=concat_lists([last.bases, str_chars(line)])),
+    )
+
+## One sequence, reverse-complemented and wrapped.
+def rendered(s: Sequence) -> list[Str]:
+    return concat_lists([[s.header], wrap(map_list(list_reverse(s.bases), complement), 0, [])])
+
+## `bases` in rows of 60 — the width every FASTA file in the suite uses, counted from the start of
+## each sequence rather than from the start of the file.
+## `line_length` is `fasta.beck`'s, not a second copy: the width an input is wrapped at and the
+## width its answer is wrapped at are the same 60 for the same reason, and two constants that must
+## agree are one constant.
+def wrap(bases: list[Str], from_: Int, done: list[Str]) -> list[Str]:
+    if from_ >= list_len(bases):
+        return done
+    return wrap(
+        bases,
+        from_ + line_length(),
+        list_append(done, str_join(list_slice(bases, from_, line_length()), "")),
+    )
+
+## The benchmark: what the program writes to stdout for the input the suite publishes, which is
+## `fasta` at `N = n`.
+def revcomp_output(n: Int) -> Str:
+    return lines_of(concat_lists(map_list(sequences(fasta_input(n)), rendered)))
+
+## The input, generated rather than read. Named so the substitution is visible at the call site and
+## in `beck iface`, rather than looking like this program reads a file.
+def fasta_input(n: Int) -> Str:
+    return fasta_output(n)
+
+test "revcomp: the suite's own published output for the input it publishes":
+    expect digest(revcomp_output(1000)) == "983064d929f6ced96dbe402f8eae9ba896c0b94625f94bfeb8acb2dfdc63333c"
+
+## The shape of that output, so a failure of the digest above is diagnosable.
+##
+## The three description lines survive unchanged and in order, the length is the input's — a
+## reverse-complement is a permutation of the same number of bases, wrapped the same way — and the
+## first sequence's answer ends with the complement of the input's first twenty bases, which is the
+## smallest end-to-end check a reader can do by hand.
+test "revcomp: the same length, the same headers, and the ends swapped":
+    expect str_len(revcomp_output(1000)) == 10245
+    expect str_contains(revcomp_output(1000), ">ONE Homo sapiens alu\nCGGAGTCTCGCTCTGTCGCCCAGG")
+    expect str_contains(revcomp_output(1000), "\nGTGAGCCACCGCGCCCGGCC\n>TWO IUB ambiguity codes\n")
+    expect str_ends_with(revcomp_output(1000), "\nACGATACCTGGTGAAGTGTT\n")
+
+## The complement table itself, in both directions and both cases.
+##
+## `complement(complement(b)) == upper(b)` for every base in the table is the property that says it
+## is a pairing rather than fifteen unrelated rules, and `U` is the one base for which it does not
+## hold — which is why it is asserted apart rather than folded in.
+test "revcomp: the table is a pairing, and upper-cases as it goes":
+    expect complement("a") == "T"
+    expect complement("G") == "C"
+    expect complement(complement("w")) == "W"
+    expect complement(complement("y")) == "Y"
+    expect complement(complement("v")) == "V"
+    expect complement(complement("n")) == "N"
+    expect complement("u") == "A"
+    expect complement(complement("u")) == "T"

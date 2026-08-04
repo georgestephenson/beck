@@ -1,0 +1,223 @@
+# The Computer Language Benchmarks Game — fasta, in Beck.
+#
+# The Computer Language Benchmarks Game
+# https://salsa.debian.org/benchmarksgame-team/benchmarksgame/
+#
+# Ported from the Java program, modified by Mehmet D. AKIN.
+#
+# Three DNA sequences in FASTA format: one copied cyclically from a fixed 287-base ALU sequence,
+# and two drawn from weighted alphabets by a linear congruential generator the suite specifies
+# exactly. `2N` bases, then `3N`, then `5N`, wrapped at 60 columns.
+#
+# **This is the benchmark the other two read.** The suite's `knucleotide`, `regexredux` and
+# `revcomp` all take a redirected FASTA file on stdin, and all three of the input files it
+# publishes are byte-for-byte this program's output at `N = 1000` — checked, not assumed:
+# `clbg.rs` compares `expected/fasta-output.txt` against `expected/revcomp-input.txt`. Beck has no
+# stdin to redirect and a `test` block has no file to open, so `revcomp.beck` calls this file
+# instead. That is the suite's own pipeline rather than a substitute for it.
+#
+# The generator is the part that has to be exact. `last = (last * 3877 + 29573) % 139968` is
+# integer arithmetic that never leaves `Int`'s range, and `max * last / IM` is a *real* division of
+# an integer numerator — so the port widens where the Java promotes and nowhere else. The
+# generator's state runs on from TWO into THREE rather than restarting, which is the one thing
+# about this program that a port gets wrong silently: both sequences would still look like DNA.
+#
+# Verified against `expected/fasta-output.txt`, the suite's own published output for `N = 1000`.
+# The assertion is a digest rather than 10,245 characters of literal, and `clbg.rs` recomputes it
+# from that file — `docs/68` §68.2 is why that is the same claim and not a weaker one.
+
+import format
+
+## A base and the running total of the probabilities up to and including it.
+model Freq:
+    c: Str
+    p: Float
+
+## The generator's state, and the base it just produced.
+model Pick:
+    c: Str
+    last: Int
+
+## A run of bases, and the state that produced them.
+model Run:
+    text: Str
+    last: Int
+
+## A whole sequence's lines, and the state to carry into the next one.
+model Block:
+    lines: list[Str]
+    last: Int
+
+## The ALU sequence's cursor, carried the way `Run` carries the generator's.
+model Cursor:
+    text: Str
+    k: Int
+
+def im() -> Int:
+    return 139968
+
+def ia() -> Int:
+    return 3877
+
+def ic() -> Int:
+    return 29573
+
+## The generator's seed. The Java's `static int last = 42`.
+def seed() -> Int:
+    return 42
+
+def line_length() -> Int:
+    return 60
+
+def alu() -> Str:
+    return "GGCCGGGCGCGGTGGCTCACGCCTGTAATCCCAGCACTTTGG" + "GAGGCCGAGGCGGGCGGATCACCTGAGGTCAGGAGTTCGAGA" + "CCAGCCTGGCCAACATGGTGAAACCCCGTCTCTACTAAAAAT" + "ACAAAAATTAGCCGGGCGTGGTGGCGCGCGCCTGTAATCCCA" + "GCTACTCGGGAGGCTGAGGCAGGAGAATCGCTTGAACCCGGG" + "AGGCGGAGGTTGCAGTGAGCCGAGATCGCGCCACTGCACTCC" + "AGCCTGGGCGACAGAGCGAGACTCCGTCTCAAAAA"
+
+## The two alphabets, as the suite writes them: a base and its own probability, not yet cumulative.
+##
+## The bases are lower case in the Java — `new frequency('a', 0.27)` — and upper case in the ALU
+## string, which is why the published output has both. It reads like a typo and is not one.
+def iub() -> list[Freq]:
+    return [
+        Freq(c="a", p=0.27),
+        Freq(c="c", p=0.12),
+        Freq(c="g", p=0.12),
+        Freq(c="t", p=0.27),
+        Freq(c="B", p=0.02),
+        Freq(c="D", p=0.02),
+        Freq(c="H", p=0.02),
+        Freq(c="K", p=0.02),
+        Freq(c="M", p=0.02),
+        Freq(c="N", p=0.02),
+        Freq(c="R", p=0.02),
+        Freq(c="S", p=0.02),
+        Freq(c="V", p=0.02),
+        Freq(c="W", p=0.02),
+        Freq(c="Y", p=0.02),
+    ]
+
+def homo_sapiens() -> list[Freq]:
+    return [
+        Freq(c="a", p=0.3029549426680),
+        Freq(c="c", p=0.1979883004921),
+        Freq(c="g", p=0.1975473066391),
+        Freq(c="t", p=0.3015094502008),
+    ]
+
+## `makeCumulative`: each probability replaced by the running total.
+##
+## The additions happen left to right in `f64`, which is what the Java does and is not the same as
+## adding them in any other order. The comparison in `choose` is against these sums rather than
+## against exact decimals, so the order is part of the specification.
+def cumulative(freqs: list[Freq]) -> list[Freq]:
+    return cumulative_from(freqs, 0, 0.0, [])
+
+def cumulative_from(freqs: list[Freq], i: Int, running: Float, done: list[Freq]) -> list[Freq]:
+    if i >= list_len(freqs):
+        return done
+    f = freq_at(freqs, i)
+    total = running + f.p
+    return cumulative_from(freqs, i + 1, total, list_append(done, Freq(c=f.c, p=total)))
+
+def freq_at(freqs: list[Freq], i: Int) -> Freq:
+    return unwrap_or(list_get(freqs, i), Freq(c="?", p=1.0))
+
+def random_next(last: Int) -> Int:
+    return (last * ia() + ic()) % im()
+
+## `selectRandom`: advance the generator, then take the first base whose cumulative probability the
+## draw falls under — a linear scan, because the Java's is one and the suite asks for the same
+## algorithm rather than only the same answer.
+def select_random(freqs: list[Freq], last: Int) -> Pick:
+    stepped = random_next(last)
+    return Pick(c=choose(freqs, 0, float(stepped) / float(im())), last=stepped)
+
+def choose(freqs: list[Freq], i: Int, r: Float) -> Str:
+    if i >= list_len(freqs) - 1:
+        return freq_at(freqs, list_len(freqs) - 1).c
+    f = freq_at(freqs, i)
+    if r < f.p:
+        return f.c
+    return choose(freqs, i + 1, r)
+
+## `makeRandomFasta`: `n` bases wrapped at 60 columns, and the generator state left where it ended.
+def random_block(freqs: list[Freq], n: Int, last: Int) -> Block:
+    return random_lines(freqs, n, last, [])
+
+def random_lines(freqs: list[Freq], n: Int, last: Int, done: list[Str]) -> Block:
+    if n <= 0:
+        return Block(lines=done, last=last)
+    m = n if n < line_length() else line_length()
+    run = random_run(freqs, m, last, "")
+    return random_lines(freqs, n - line_length(), run.last, list_append(done, run.text))
+
+def random_run(freqs: list[Freq], m: Int, last: Int, acc: Str) -> Run:
+    if m <= 0:
+        return Run(text=acc, last=last)
+    picked = select_random(freqs, last)
+    return random_run(freqs, m - 1, picked.last, acc + picked.c)
+
+## `makeRepeatFasta`: `n` bases taken cyclically from `source`, wrapped the same way.
+def repeat_block(source: Str, n: Int) -> list[Str]:
+    return repeat_lines(source, n, 0, [])
+
+def repeat_lines(source: Str, n: Int, k: Int, done: list[Str]) -> list[Str]:
+    if n <= 0:
+        return done
+    m = n if n < line_length() else line_length()
+    run = repeat_run(source, m, k, "")
+    return repeat_lines(source, n - line_length(), run.k, list_append(done, run.text))
+
+def repeat_run(source: Str, m: Int, k: Int, acc: Str) -> Cursor:
+    if m <= 0:
+        return Cursor(text=acc, k=k)
+    at = 0 if k == str_len(source) else k
+    return repeat_run(source, m - 1, at + 1, acc + str_slice(source, at, 1))
+
+## The benchmark: what the program writes to stdout for `N = n`.
+##
+## TWO and THREE share one generator, and the order of the two calls is therefore load-bearing.
+def fasta_output(n: Int) -> Str:
+    two = random_block(cumulative(iub()), n * 3, seed())
+    three = random_block(cumulative(homo_sapiens()), n * 5, two.last)
+    return lines_of(
+        concat_lists([
+            [">ONE Homo sapiens alu"],
+            repeat_block(alu(), n * 2),
+            [">TWO IUB ambiguity codes"],
+            two.lines,
+            [">THREE Homo sapiens frequency"],
+            three.lines,
+        ])
+    )
+
+## The suite's published output for `N = 1000`, by digest.
+##
+## `digest` is BLAKE3 and the hexadecimal below is `expected/fasta-output.txt`'s — computed from
+## that file by `clbg.rs`, which fails if this string stops being it. A 10,245-character literal
+## would assert the same thing and be no more checkable by a reader, and this way the bytes stay in
+## the file the suite publishes rather than being retyped into a program.
+test "fasta: N = 1000 is the suite's own published output":
+    expect digest(fasta_output(1000)) == "b71976d9d051f52965d3cbd79a7fae40dd1feaf5d580b1abcb3f69f6985098d7"
+
+## The shape of that output, asserted separately from its digest.
+##
+## A digest is all-or-nothing: it says a port is wrong without saying how, and it says nothing at
+## all about a port that has not been written yet. These are the facts a reader can check against
+## the description page — 2N, 3N and 5N bases in three sequences, wrapped at 60 — and they are what
+## makes a failure of the digest above diagnosable.
+test "fasta: three sequences of 2N, 3N and 5N bases, wrapped at 60":
+    expect str_len(fasta_output(1000)) == 10245
+    expect list_len(str_split(fasta_output(1000), "\n")) == 172
+    expect str_starts_with(fasta_output(1000), ">ONE Homo sapiens alu\nGGCCGGGCGCGGTGGCTCACG")
+    expect str_contains(fasta_output(1000), "\n>TWO IUB ambiguity codes\n")
+    expect str_contains(fasta_output(1000), "\n>THREE Homo sapiens frequency\n")
+
+## The generator itself, against the sequence the constants define.
+##
+## `42 → 52439 → 102040 → 89085` is arithmetic anybody can reproduce from the constants on the
+## description page, and the generator is the one part of this program where being subtly wrong
+## would still produce plausible DNA.
+test "fasta: the generator is the suite's own recurrence":
+    expect random_next(42) == 52439
+    expect random_next(52439) == 102040
+    expect random_next(random_next(random_next(42))) == 89085

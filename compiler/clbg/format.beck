@@ -1,0 +1,80 @@
+# The Computer Language Benchmarks Game — the formatting the outputs are compared as.
+#
+# The Computer Language Benchmarks Game
+# https://salsa.debian.org/benchmarksgame-team/benchmarksgame/
+#
+# Every benchmark in this directory is verified against a **file** the suite publishes rather than
+# against a number, and `clbg/README.md` §"The oracle" is why. A file is bytes, so a port that
+# computes the right real and prints it the wrong way is a port that fails — which means the
+# printing is part of the benchmark and not part of the harness.
+#
+# That is not busywork. `spectralnorm` is a `DecimalFormat("#.000000000")`, `nbody` is nine places
+# with the leading zero kept, and `knucleotide` is `"%.3f"`; three of the eight ports cannot be
+# checked at all without a real formatted to a fixed number of places, and Beck has no such
+# operation. `str` on a `Float` is the shortest representation that round-trips — `1.0` is `"1"` —
+# which is the right default and the wrong thing here.
+#
+# So this file is the one place the directory formats a number, for the reason `awfy/README.md`
+# gives for its four rules: rather than let each file improvise. `docs/68` §68.4 records it as a
+# standard-library gap found by porting rather than as a benchmark's private helper, because that
+# is what it is.
+
+## Ten to the `n`, for `n` at or below the point where an `Int` stops holding it.
+##
+## The exponents this directory asks for are 3 and 9. Nothing guards a larger one, because a
+## benchmark that asked for one would be wrong about `Int` rather than about this function.
+def pow10(n: Int) -> Int:
+    if n <= 0:
+        return 1
+    return 10 * pow10(n - 1)
+
+## `digits` widened to `width` with leading zeros. Narrower than its input is its input.
+##
+## The fractional part of a fixed-point number is the one place a leading zero carries information:
+## `0.045` and `0.45` differ by the zero and by nothing else, so dropping it is a wrong answer
+## rather than an ugly one.
+def pad_zeros(digits: Str, width: Int) -> Str:
+    if str_len(digits) >= width:
+        return digits
+    return pad_zeros("0" + digits, width)
+
+## `x` to exactly `places` decimal places, half away from zero — C's `printf("%.*f")` on everything
+## this directory feeds it.
+##
+## **The rounding rule is half away from zero and `printf`'s is half to even**, and the two differ
+## only when the scaled value lands exactly on a half. None of the values here does: they are
+## quotients and square roots of quantities with no short binary expansion, so the digit after the
+## last printed one is never the exact 5 that would separate the rules. `docs/68` §68.5 records
+## that as a limit of this function rather than as a property of the numbers — a benchmark added
+## here whose value *is* a tie would need the other rule, and would find out by failing.
+def fixed(x: Float, places: Int) -> Str:
+    scale = pow10(places)
+    magnitude = x if x >= 0.0 else 0.0 - x
+    units = trunc(magnitude * float(scale) + 0.5)
+    body = str(units / scale) + "." + pad_zeros(str(units % scale), places)
+    return "-" + body if x < 0.0 else body
+
+## `parts` as lines, with a trailing newline.
+##
+## Every file this directory is checked against ends in one, because every program it is a port of
+## ends its last `println` the same way as the others. A port that dropped it would differ from the
+## published output in one byte and in nothing a reader would see, which is the strongest argument
+## for comparing files rather than for comparing what a person read off a terminal.
+def lines_of(parts: list[Str]) -> Str:
+    return str_join(parts, "\n") + "\n"
+
+test "fixed: nine places, both signs, and the leading zero kept":
+    expect fixed(1.274219991, 9) == "1.274219991"
+    expect fixed(0.0 - 0.169075164, 9) == "-0.169075164"
+
+test "fixed: a fraction with a leading zero keeps it":
+    expect fixed(1.0009, 3) == "1.001"
+    expect fixed(0.045, 3) == "0.045"
+
+test "fixed: zero places is still a point-free integer, and zero is unsigned":
+    expect fixed(31.52, 3) == "31.520"
+    expect fixed(0.0, 3) == "0.000"
+
+test "lines_of: a trailing newline, and no separator before the first line":
+    expect lines_of(["a", "b"]) == "a\nb\n"
+    expect lines_of(["only"]) == "only\n"

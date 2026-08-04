@@ -623,8 +623,12 @@ benchmarks** ([`53`](53-are-we-fast-yet-report.md), [`57`](57-richards-report.md
 [`58`](58-json-report.md), [`59`](59-havlak-report.md), [`60`](60-collision-detection-report.md),
 [`61`](61-deltablue-report.md)), each verified against the constant
 the original suite's own `verifyResult` checks, with wall-clock printed and nothing compared to
-anything — §8.4's ask, half discharged. The whole **CLBG** harness is
-not stood up — and that is now the only thing left of the item that has been owed longest. The
+anything — §8.4's ask, half discharged. The **CLBG** harness is stood up too
+([`68`](68-clbg-report.md)) — seven of the Game's ten, verified against the Game's own published
+output *files*, with the oracle enforced by the gate rather than transcribed by hand — so §8.4's
+ask is **discharged in full**. Its largest finding is not about either suite: **`lib/` is a
+standard library nothing outside `lib/` can import**, since `import` resolves only against the root
+module's own directory (§68.4). The
 **Felleisen table** ([`63`](63-felleisen-report.md)) and the **compile-speed budgets**
 ([`64`](64-compile-speed-report.md)) are both built and sit under
 [`25`](25-benchmarks-and-expressiveness.md) §25.9 rather than under this bullet.

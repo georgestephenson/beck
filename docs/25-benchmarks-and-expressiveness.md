@@ -513,7 +513,12 @@ no regression-detecting power, which is the only thing a benchmark is for.
 > shape the forecast predicted. **The compile-speed budgets are built too**
 > ([`64`](64-compile-speed-report.md)) — as a *shape* gate rather than a rate, for
 > [`13`](13-testing.md) §13.7's reason, and they found a quadratic in placement on their first run.
-> The CLBG harness is what is left of this row.
+> **And the CLBG harness is built** ([`68`](68-clbg-report.md)) — seven of the Game's ten, each
+> verified against the Game's own published *output file* rather than against a constant anybody
+> here typed, which is what [`64`](64-compile-speed-report.md) §64.7.1 was waiting for and is
+> enforced rather than promised. **This row is complete.** Its "Published" column is kept: no
+> compute number, and specifically no entry in the Game's own table, which §25.2 above calls widely
+> misused and §25.3 explains would be a measurement of scaffolding.
 
 Not in the table, deliberately: **LeetCode** is a recommendation rather than an adopted commitment
 (§25.8), and **Nand2Tetris** is conditional on SICP chapter 4 being green first, at which point the

@@ -127,6 +127,7 @@ dependencies = [
  "beck-macro",
  "beck-rt",
  "beck-syntax",
+ "blake3",
  "clap",
  "futures-util",
  "insta",
