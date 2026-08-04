@@ -3,9 +3,9 @@ source: crates/beck-cli/tests/ui.rs
 expression: "render(&format!(\"{}\\ndef phone_home() -> Bool uses net.out(status.example.com):\\n    return True\\n\\n\\\n         test \\\"is the world still there\\\":\\n    expect phone_home()\\n\",\nBASE))"
 ---
 error[B0700]: `test is the world still there` performs net.out(status.example.com)
-  --> t.beck:183:1
+  --> t.beck:196:1
     |
-183 | test "is the world still there":
+196 | test "is the world still there":
     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ a test block's own row must be empty
     |
   = note: an expectation is a pure question about a state, a log and a page; effects belong to the *subject*, and §21.3 stubs those

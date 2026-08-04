@@ -3,9 +3,9 @@ source: crates/beck-cli/tests/ui.rs
 expression: "render(&format!(\"{}\\ndef charge(n: Int, tries: Int) -> Bool uses net.out(pay.example.com):\\n    return True\\n\\n\\\n         test \\\"what is the scrutinee?\\\":\\n    stub net.out(pay.example.com):\\n        case 1:\\n            return True\\n        case _:\\n            return False\\n\",\nBASE))"
 ---
 error[B0707]: `charge` takes 2 arguments, so bare `case` arms do not say what to match on
-  --> t.beck:184:5
+  --> t.beck:197:5
     |
-184 |     stub net.out(pay.example.com):
+197 |     stub net.out(pay.example.com):
     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `n: Int`, `tries: Int`
     |
   = help: write the `match` out: `match <argument>:` inside the stub

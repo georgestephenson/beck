@@ -3,9 +3,9 @@ source: crates/beck-cli/tests/ui.rs
 expression: "render(&format!(\"{}\\ndef charge(n: Int) -> Bool uses net.out(pay.example.com):\\n    return True\\n\\n\\\n         def refund(n: Int) -> Bool uses net.out(pay.example.com):\\n    return True\\n\\n\\\n         test \\\"which one's arguments?\\\":\\n    stub net.out(pay.example.com):\\n        return n > 1\\n\",\nBASE))"
 ---
 error[B0707]: `net.out(pay.example.com)` is performed by more than one definition, so a stub cannot answer from the call
-  --> t.beck:187:5
+  --> t.beck:200:5
     |
-187 |     stub net.out(pay.example.com):
+200 |     stub net.out(pay.example.com):
     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `charge`, `refund` both perform it
     |
   = note: a stub that matches on arguments has to know whose arguments they are; a stub that is a plain value does not, and still works here

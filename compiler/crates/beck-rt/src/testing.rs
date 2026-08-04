@@ -44,8 +44,15 @@ pub struct Options {
     pub filter: Option<String>,
     /// Inputs per `property` block.
     pub runs: u64,
-    /// Where a `expect wire_compatible_with "…"` path is resolved from.
+    /// Where a `expect wire_compatible_with "…"` path is resolved from, and where `snapshots/`
+    /// lives for `expect page matches snapshot`.
     pub base_dir: std::path::PathBuf,
+    /// `beck test --update`: write what the page renders to instead of comparing against it.
+    ///
+    /// Off by default and never inferred. A snapshot that updates itself when it disagrees is not
+    /// an assertion — §21.2's stated risk is snapshot rot and its stated mitigation is reviewing
+    /// the diff, which only exists if writing is something a person asked for.
+    pub update_snapshots: bool,
 }
 
 impl Options {
@@ -307,7 +314,7 @@ fn needs_an_application(t: &TestDef) -> Option<&'static str> {
                 return Some("`when` proposes a command through `validate`, and a library has none")
             }
             Clause::Expect { what, .. } => match what {
-                Expectation::PageContains { .. } => {
+                Expectation::PageContains { .. } | Expectation::PageMatchesSnapshot { .. } => {
                     return Some("`page` is the view of an application, and a library has none")
                 }
                 Expectation::FoldEquals { .. } => {
@@ -604,6 +611,136 @@ fn shrink_failure(
     (best, why)
 }
 
+/// Compare a rendered page against its checked-in snapshot, or write one.
+///
+/// `docs/21` §21.2 asked for this and named both the risk and the mitigation: "the risk is snapshot
+/// rot, and the mitigation is the same one — review the diff." Three things follow from taking that
+/// seriously rather than quoting it.
+///
+/// **A missing snapshot is a failure, not a silent write.** The first run of a new assertion has to
+/// tell somebody it recorded nothing, or a test that has never compared anything reads as a test
+/// that passes. It fails, and says which flag writes it.
+///
+/// **Writing is only ever `--update`.** A snapshot that rewrites itself when it disagrees asserts
+/// nothing at all.
+///
+/// **The diff is in the failure.** A message that says two pages differ, without saying where, sends
+/// the reader to a file comparison the harness could have done — so the first differing line is
+/// named, with both sides.
+fn snapshot(
+    opts: &Options,
+    test: &str,
+    name: Option<&str>,
+    actor: &str,
+    rendered: &str,
+) -> Result<(), String> {
+    let dir = opts.base_dir.join("snapshots");
+    let path = dir.join(format!("{}.html", snapshot_key(test, name, actor)));
+
+    if opts.update_snapshots {
+        std::fs::create_dir_all(&dir).map_err(|e| format!("creating {}: {e}", dir.display()))?;
+        std::fs::write(&path, rendered).map_err(|e| format!("writing {}: {e}", path.display()))?;
+        return Ok(());
+    }
+
+    let Ok(want) = std::fs::read_to_string(&path) else {
+        return Err(format!(
+            "no snapshot recorded at {}\n  \
+             run `beck test --update` to write it, then review the file like any other diff",
+            path.display()
+        ));
+    };
+    if want == rendered {
+        return Ok(());
+    }
+    Err(format!(
+        "the page `{actor}` sees does not match {}\n{}",
+        path.display(),
+        first_difference(&want, rendered)
+    ))
+}
+
+/// Sixty characters either side of `at`, with `…` where the line was cut.
+fn window(line: &str, at: usize) -> String {
+    const EITHER_SIDE: usize = 60;
+    let floor = |i: usize| {
+        (0..=i)
+            .rev()
+            .find(|&i| line.is_char_boundary(i))
+            .unwrap_or(0)
+    };
+    let ceil = |i: usize| {
+        (i..=line.len())
+            .find(|&i| line.is_char_boundary(i))
+            .unwrap_or(line.len())
+    };
+    let start = floor(at.saturating_sub(EITHER_SIDE));
+    let end = ceil((at + EITHER_SIDE).min(line.len()));
+    format!(
+        "{}{}{}",
+        if start > 0 { "…" } else { "" },
+        &line[start..end],
+        if end < line.len() { "…" } else { "" }
+    )
+}
+
+/// A file name that is stable, readable, and cannot collide by accident.
+///
+/// The actor is part of the key because one test may assert two people's pages, and the two are
+/// different snapshots of the same test. Everything outside `[A-Za-z0-9_-]` becomes `-`, so a test
+/// called `"a user's page"` is a file somebody can open on any platform.
+fn snapshot_key(test: &str, name: Option<&str>, actor: &str) -> String {
+    let slug = |s: &str| -> String {
+        let mut out = String::new();
+        let mut dash = false;
+        for c in s.chars() {
+            if c.is_ascii_alphanumeric() || c == '_' {
+                out.push(c);
+                dash = false;
+            } else if !dash && !out.is_empty() {
+                out.push('-');
+                dash = true;
+            }
+        }
+        out.trim_end_matches('-').to_string()
+    };
+    format!("{}@{}", slug(name.unwrap_or(test)), slug(actor))
+}
+
+/// The first line that differs, with both sides — so a failure is readable without a second tool.
+///
+/// A rendered page is frequently **one very long line**, so eliding both sides from the start shows
+/// two identical prefixes and hides the difference — which is the failure mode this whole message
+/// exists to avoid (§4.5: an error message is a product surface). The window is therefore centred
+/// on the first differing *character* rather than on the start of the line.
+fn first_difference(want: &str, got: &str) -> String {
+    for (i, (a, b)) in want.lines().zip(got.lines()).enumerate() {
+        if a != b {
+            let at = a
+                .char_indices()
+                .zip(b.char_indices())
+                .find(|((_, x), (_, y))| x != y)
+                .map(|((i, _), _)| i)
+                .unwrap_or_else(|| a.len().min(b.len()));
+            return format!(
+                "  line {}, column {}:\n    snapshot: {}\n    rendered: {}",
+                i + 1,
+                a[..at].chars().count() + 1,
+                window(a, at),
+                window(b, at)
+            );
+        }
+    }
+    let (w, g) = (want.lines().count(), got.lines().count());
+    if w == g {
+        // Equal line-by-line and unequal overall: a trailing newline, which is exactly the
+        // difference a reader would stare past.
+        return "  the lines are identical and the files are not — a trailing newline differs"
+            .to_string();
+    }
+    format!("  the snapshot has {w} lines and the page rendered {g}")
+}
+
 /// One pass through a test's clauses.
 fn execute(
     placed: &Placed,
@@ -712,6 +849,13 @@ fn execute(
                             elide(&rendered)
                         ));
                     }
+                }
+                Expectation::PageMatchesSnapshot { name, actor: who } => {
+                    let who = who.clone().unwrap_or_else(|| actor.clone());
+                    let page = runtime
+                        .view(&state, &who)
+                        .map_err(|e| format!("rendering the page for `{who}`: {e}"))?;
+                    snapshot(opts, &t.name, name.as_deref(), &who, &page.render())?;
                 }
                 Expectation::FoldEquals {
                     events: code,

@@ -842,8 +842,32 @@ impl<'a> Parser<'a> {
                 self.expect(&Raw::RParen, "`)`");
                 args.push(Node::lit(Lit::Str(actor.into()), aspan));
             }
+            // `expect page matches snapshot` / `… matches snapshot "after checkout"` — §21.2's
+            // golden assertion. The name is optional and defaults to the test's own, which is what
+            // makes the common case a single line; a second unnamed snapshot in one test is a
+            // diagnostic rather than a positional index, because an index rots when arms move.
+            if self.eat_kw("matches") {
+                if !self.eat_kw("snapshot") {
+                    self.error("expected `snapshot`");
+                    return None;
+                }
+                let mut span = start.to(self.span());
+                // Two slots, always, with `none` for the one that was not written. A form whose
+                // arity varies with which optional part is present cannot be read back without
+                // guessing which one it was — the same reason `expect no <atom>` carries a `none`.
+                let name = if matches!(self.peek_raw(0), Some(Raw::Str(_))) {
+                    let (name, nspan) = self.quoted_name("a snapshot name")?;
+                    span = start.to(nspan);
+                    Node::lit(Lit::Str(name.into()), nspan)
+                } else {
+                    Node::sym("none", span)
+                };
+                let actor = args.pop().unwrap_or_else(|| Node::sym("none", span));
+                self.end_of_line();
+                return Some(Node::form(sym::EXPECT_SNAPSHOT, vec![name, actor], span));
+            }
             if !self.eat_kw("contains") {
-                self.error("expected `contains` and a string");
+                self.error("expected `contains` or `matches snapshot`");
                 return None;
             }
             let needle = self.expr()?;

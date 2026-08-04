@@ -243,6 +243,17 @@ ui!(
     )
 );
 
+// `expect page …` now has two continuations, so the refusal has to name both — a message that
+// still said "expected `contains` and a string" would send a reader looking for a syntax error in
+// the thing they wrote correctly (docs/66 §66.3).
+ui!(
+    a_page_expectation_that_is_neither_contains_nor_a_snapshot,
+    &format!(
+        "{}\ntest \"neither\":\n    given []\n    expect page resembles \"milk\"\n",
+        BASE
+    )
+);
+
 ui!(
     a_test_in_a_program_with_nothing_to_fold,
     "def helper(x: Int) -> Int:\n    return x + 1\n\ntest \"x\":\n    given []\n"

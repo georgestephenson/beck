@@ -3,22 +3,22 @@ source: crates/beck-cli/tests/ui.rs
 expression: "render(&format!(\"{}\\ntest \\\"a fixture, not a log\\\":\\n    given [1, 2, 3]\\n\",\nBASE))"
 ---
 error[B0320]: list element mismatch: expected `Event`, found `Int`
-  --> t.beck:181:12
+  --> t.beck:194:12
     |
-181 |     given [1, 2, 3]
+194 |     given [1, 2, 3]
     |            ^
     |
 
 error[B0320]: list element mismatch: expected `Event`, found `Int`
-  --> t.beck:181:15
+  --> t.beck:194:15
     |
-181 |     given [1, 2, 3]
+194 |     given [1, 2, 3]
     |               ^
     |
 
 error[B0320]: list element mismatch: expected `Event`, found `Int`
-  --> t.beck:181:18
+  --> t.beck:194:18
     |
-181 |     given [1, 2, 3]
+194 |     given [1, 2, 3]
     |                  ^
     |

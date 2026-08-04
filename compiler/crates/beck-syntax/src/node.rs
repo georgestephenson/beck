@@ -336,6 +336,7 @@ pub mod sym {
     /// `(expect-contains <Str> <actor?>)` — `expect page contains "milk"`. The subject is always
     /// the rendered page, for the actor named or the test's default one.
     pub const EXPECT_CONTAINS: &str = "expect-contains";
+    pub const EXPECT_SNAPSHOT: &str = "expect-snapshot";
     /// `(expect-fold <list[Event]> <actor?>)` — `expect state == fold_of [ … ]`.
     pub const EXPECT_FOLD: &str = "expect-fold";
     /// `(expect-place <name> <tier>)` — answered without running anything.

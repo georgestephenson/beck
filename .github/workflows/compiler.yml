@@ -142,6 +142,11 @@ jobs:
         # programs, through the same roles the runtime drives.
         run: |
           ./target/release/beck test examples/todo.beck --verbose
+          # docs/66: the checked-in page snapshot is compared, not rewritten. `--update` is the
+          # only thing that writes one, so a run without it that leaves `git status` dirty means a
+          # snapshot rewrote itself — which would make the assertion a log rather than a test.
+          git diff --quiet examples/snapshots/ \
+            || { echo 'a beck test run without --update rewrote a snapshot'; exit 1; }
           for f in corpus/*.beck; do
             # Not every corpus program carries tests; the ones that do must pass.
             ./target/release/beck test "$f"
