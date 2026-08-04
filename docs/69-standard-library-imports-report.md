@@ -250,6 +250,23 @@ that "bounds one evaluation"; it bounds one evaluation's *nodes*, and a program 
 work inside a bounded number of them. That is a second finding and it is about the backstop rather
 than about lists.
 
+**How much it costs today, on real programs rather than that loop.** Counting primitive calls
+through the evaluator:
+
+| | `list_get` | `list_len` | `list_append` | elements copied by the appends |
+|---|---|---|---|---|
+| `clbg/pidigits` | 593,981 | 407,801 | 326,723 | **3,374,778** — 10.3 per append |
+| `awfy/havlak` | 138,602 | 283,673 | 134,100 | 116,889 — 0.9 per append |
+
+Two things follow, and the second is a correction to how the defect reads above. **Reads outnumber
+appends about three to one**, which is what decides between the two fixes below. And the copying is
+*not* what makes these two programs slow: the lists in them are limb vectors and small collections,
+ten to twenty-five elements long, so ten copied `Int`s per append is real waste and is nowhere near
+the 16,000,000 evaluator steps beside it. The quadratic bites in proportion to how long a list gets,
+which means it is invisible in a tree of programs that never build a long one and unbounded in the
+first program that does — a 100,000-element list costs five billion element copies to build. It is a
+defect waiting for its caller, in exactly the way division was waiting for `pidigits`.
+
 [`19`](19-phase-1-report.md) §19.4 item 3 found this exact shape in the *fold* — "the accumulator was
 being copied on every insert, making a fold over a log `O(events × rows)`" — and
 `beck-cli/tests/scaling.rs` exists to keep it fixed, opening with the sentence that settles what
@@ -265,15 +282,21 @@ value's owner is the environment, and the environment does not know the binding 
 So the fix is one of two real changes, and both are somebody's next piece of work rather than this
 one's:
 
-| | what it is |
-|---|---|
-| **Last-use moves** | Compute, per function body, which occurrence of each local is its last, and have the evaluator *take* the binding from the frame there instead of cloning it. Then the reference count at the append is one and the push is in place — the `try_unwrap` above becomes the other half of the fix rather than dead weight. It is a liveness pass over `Core` plus a change to variable lookup, and its correctness rests on closures: a frame captured by one cannot be emptied. Contained, and not small |
-| **A persistent sequence** | Replace `Arc<Vec<Value>>` with an RRB or similar, making append `O(log n)` with sharing and no analysis at all. A new dependency ([`07`](07-dependencies.md), [`adr/0004`](adr/0004-full-cargo-deny-gate.md)'s allowlist) and a change at every site that reads a list, but no new invariant to get wrong |
+| | what it is | what it costs the 3:1 majority |
+|---|---|---|
+| **Last-use moves** | Compute, per function body, which occurrence of each local is its last, and have the evaluator *take* the binding from the frame there instead of cloning it. Then the reference count at the append is one and the push is in place — the `try_unwrap` above becomes the other half of the fix rather than dead weight. A liveness pass over `Core` plus a change to variable lookup; its correctness rests on closures, since a frame captured by one cannot be emptied | **nothing.** A list stays a contiguous `Vec`, so `list_get` stays one indexed load and `list_len` stays a field read |
+| **A persistent sequence** | Replace `Arc<Vec<Value>>` with an RRB or similar, making append `O(log n)` with sharing and no analysis at all. A new dependency ([`07`](07-dependencies.md), [`adr/0004`](adr/0004-full-cargo-deny-gate.md)'s allowlist) and a change at all fifty `Value::List` sites, twenty-six of which take a contiguous slice the structure cannot hand out | **a pointer chase per read.** `list_get` becomes `O(log n)` with a cache miss per level, on the operation the table above says happens three times as often as the one being fixed |
 
-The first is faster and is a language feature; the second is duller and is a swap. Either wants its
-own change, its own measurement over `awfy/` and `clbg/`, and a scaling gate in `scaling.rs`
-alongside the fold's — and the gate should count **work rather than steps**, because this table is
-the proof that steps do not see it.
+**The first, and the measured mix is why**: the second makes the common operation slower to make
+the rarer one asymptotically better, which is the wrong trade for this workload however good the
+library is. It is also the one that keeps paying — uniqueness information is what lets a *compiled*
+backend turn a functional update into an in-place write, which is how Koka's Perceus and Roc reach
+the performance a persistent-vector language like Clojure or Scala does not aim at. `Arc<Vec>` with
+last-use moves is the same strategy at interpreter scale.
+
+Either way it wants its own change, its own measurement over `awfy/` and `clbg/`, and a scaling gate
+in `scaling.rs` alongside the fold's — and that gate must count **work rather than steps**, because
+the table above is the proof that steps do not see it.
 
 ## 69.8 How it is tested
 

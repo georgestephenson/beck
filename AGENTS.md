@@ -214,6 +214,28 @@ Write the commit message as the author of the change: what changed, and why.
 
 ## Standards for changes
 
+- **Know the complexity of what you write, and measure it at two sizes.** Beck's premise is a
+  language that is *fast* — [`01`](docs/01-vision-and-premise.md) — so a cost is part of a change's
+  correctness rather than a follow-up to it. Two rules, both learned by breaking them:
+  - **State the order of growth** of anything that loops, allocates or copies, where it is not
+    obvious from three lines of code, and **measure it at two sizes rather than one**. One
+    measurement cannot tell linear from quadratic; two can, and the second costs a minute. A gate
+    on a *shape* — cost per unit must not grow with the number of units — is
+    [`docs/64`](docs/64-compile-speed-report.md)'s pattern and does not flake the way a rate does.
+  - **A bad number is a design question, not a fact to write down.** If something is slower than it
+    has any business being, the first hypothesis is that the approach is wrong — not that the
+    machine is slow, not that the interpreter is a placeholder, and never that it is a cost to be
+    "paid knowingly". Every one of this project's performance findings was sitting behind a number
+    somebody had already measured and accepted: a fold that copied its accumulator
+    ([`19`](docs/19-phase-1-report.md) §19.4), a placement pass that re-summed the program
+    ([`64`](docs/64-compile-speed-report.md) §64.2), a division that searched where it could
+    estimate and a list that copies where it could move
+    ([`69`](docs/69-standard-library-imports-report.md) §69.6–§69.7). Ask what the operation *should*
+    cost before asking how to make this one faster; the answer is often a different design rather
+    than a faster version of the same one.
+  - A performance defect in the semantics — a copy the language forces, an accumulator that cannot
+    be reused — **survives into every backend**, so it is not the tree-walker's problem to grow out
+    of. `beck-cli/tests/scaling.rs` is the gate that says so, and it is where a new shape gate goes.
 - Claims in docs are stated from evidence. If you write a number, it must be reproducible —
   `phase0/tests/measure.sh` is where the Phase 0 numbers come from; the Phase 1 numbers come from
   `cargo test` and the commands quoted in [`docs/19-phase-1-report.md`](docs/19-phase-1-report.md);
