@@ -658,7 +658,9 @@ pub enum Value {
     /// (flip the sign bit for a positive, invert every bit for a negative), which makes the two
     /// orders the same order. `docs/32` §32.2.
     Float(u64),
-    Str(Arc<str>),
+    /// Text, with the two facts a character-indexed language needs about it: how many characters
+    /// there are, and whether a character index is a byte index. [`Text`] is why.
+    Str(Arc<Text>),
     List(Arc<Vec<Value>>),
     Map(PMap<Value, Value>),
     /// A model instance or a union variant. `variant` is `None` for a plain record.
@@ -671,6 +673,116 @@ pub enum Value {
     /// An attribute waiting to be attached to an element.
     Attr(Arc<AttrValue>),
     Closure(Arc<Closure>),
+}
+
+/// A string that knows its own length in **characters**, and whether it is ASCII.
+///
+/// Beck indexes text by character everywhere or nowhere (`docs/50` §50.5), and a `String` counts
+/// bytes — so `str_len` used to be `chars().count()` and `str_slice` used to `skip()` its way to
+/// the start. Both are `O(n)` in the *string* rather than in the answer, which makes the ordinary
+/// way to walk one — `while i < str_len(s)` reading `str_slice(s, i, 1)` — quadratic. Measured at
+/// ×2.7 per doubling in [`70`](../../../../../docs/70-last-use-moves-report.md) §70.6.
+///
+/// Both facts are computed once, when the string is built, which is work the construction was
+/// already doing: it had to copy the bytes, and `is_ascii` is a scan of the same bytes that answers
+/// `chars` for free when it is true. Everything downstream is then `O(1)` or `O(answer)`.
+///
+/// The `String` rather than a `Box<str>` is the other half: it has spare capacity, so `a + b` can
+/// push into `a` when the last-use analysis proves nobody else holds it ([`crate::liveness`]).
+#[derive(Clone, Debug)]
+pub struct Text {
+    bytes: String,
+    /// Characters, not bytes. `str_len`'s answer.
+    chars: usize,
+    /// Every character is one byte, so character index == byte index and a slice is a byte range.
+    ascii: bool,
+}
+
+impl Text {
+    pub fn new(bytes: String) -> Text {
+        let ascii = bytes.is_ascii();
+        // The scan `is_ascii` already did answers this when it says yes, and a non-ASCII string
+        // pays one more pass — once, here, rather than on every `str_len`.
+        let chars = if ascii {
+            bytes.len()
+        } else {
+            bytes.chars().count()
+        };
+        Text {
+            bytes,
+            chars,
+            ascii,
+        }
+    }
+
+    /// The length in characters, in constant time.
+    pub fn chars_len(&self) -> usize {
+        self.chars
+    }
+
+    pub fn is_ascii_text(&self) -> bool {
+        self.ascii
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.bytes
+    }
+
+    /// Append, consuming: the caller has established sole ownership, so this is a `push_str` and
+    /// not a copy of both sides.
+    pub fn appended(mut self, other: &str) -> Text {
+        self.bytes.push_str(other);
+        // Recomputed over the whole string rather than added to, because a character can be split
+        // across the join only if one side is invalid UTF-8, which `String` makes impossible — so
+        // this could be `self.chars + other.chars`. It is not, because `other` arrives as a `&str`
+        // and counting it is the same scan either way; what matters is that neither is quadratic.
+        let other_ascii = other.is_ascii();
+        self.chars += if other_ascii {
+            other.len()
+        } else {
+            other.chars().count()
+        };
+        self.ascii = self.ascii && other_ascii;
+        self
+    }
+}
+
+impl std::ops::Deref for Text {
+    type Target = str;
+    fn deref(&self) -> &str {
+        &self.bytes
+    }
+}
+
+impl From<&str> for Text {
+    fn from(s: &str) -> Text {
+        Text::new(s.to_string())
+    }
+}
+
+/// Text compares, orders and hashes **as its characters**, so that adding the two cached facts
+/// cannot change what a program means: a `Map` keyed by strings keeps its order, and so does the
+/// state digest that a replay has to reproduce.
+impl PartialEq for Text {
+    fn eq(&self, other: &Self) -> bool {
+        self.bytes == other.bytes
+    }
+}
+impl Eq for Text {}
+impl PartialOrd for Text {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for Text {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.bytes.cmp(&other.bytes)
+    }
+}
+impl std::hash::Hash for Text {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        self.bytes.hash(h)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -803,11 +915,11 @@ const TOMBSTONE: VarId = VarId::MAX;
 
 /// Whether moving this value out of a frame can save anything downstream.
 ///
-/// A `List` can be pushed into by `list_append` and a record's fields can be rebuilt in place by
-/// `with`, both only when nobody else holds them. Everything else is either a copy of a few bytes
+/// A `List` can be pushed into by `list_append`, a `Str` by `+`, and a record's fields can be
+/// rebuilt in place by `with` — each only when nobody else holds them. Everything else is either a copy of a few bytes
 /// or an atomic increment, and moving it costs more than it saves — `Env::read` is the measurement.
 fn worth_moving(v: &Value) -> bool {
-    matches!(v, Value::List(_) | Value::Data { .. })
+    matches!(v, Value::List(_) | Value::Str(_) | Value::Data { .. })
 }
 
 /// The monotone `f64` → `u64` transform: for a non-negative float flip the sign bit, for a
@@ -855,7 +967,13 @@ impl Value {
     }
 
     pub fn str_(s: impl AsRef<str>) -> Value {
-        Value::Str(Arc::from(s.as_ref()))
+        Value::Str(Arc::new(Text::from(s.as_ref())))
+    }
+
+    /// The same from a `String` that is already owned, which is most of the string primitives:
+    /// they build one and would otherwise copy it again on the way in.
+    pub fn text(s: String) -> Value {
+        Value::Str(Arc::new(Text::new(s)))
     }
 
     pub fn as_str(&self) -> Option<&str> {
@@ -1094,7 +1212,7 @@ pub fn value_to_repr(v: &Value) -> Result<serde_json::Value, NotStorable> {
         Value::Bool(b) => json!({"$": "bool", "v": b}),
         Value::Int(i) => json!({"$": "int", "v": i}),
         Value::Float(bits) => json!({"$": "float", "v": bits.to_string()}),
-        Value::Str(s) => json!({"$": "str", "v": s.as_ref()}),
+        Value::Str(s) => json!({"$": "str", "v": s.as_str()}),
         Value::List(xs) => {
             let items: Result<Vec<_>, _> = xs.iter().map(value_to_repr).collect();
             json!({"$": "list", "v": items?})

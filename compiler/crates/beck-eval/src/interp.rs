@@ -43,9 +43,11 @@ use beck_core::PMap;
 /// ceremony.
 fn outbound_request(host: &str, v: &Value, span: Span) -> Result<Request, EvalError> {
     let field = |name: &str| v.field(name).cloned().unwrap_or(Value::Unit);
-    let text = |name: &str| match field(name) {
-        Value::Str(s) => s,
-        _ => Arc::from(""),
+    let text = |name: &str| -> Arc<str> {
+        match field(name) {
+            Value::Str(s) => Arc::from(s.as_str()),
+            _ => Arc::from(""),
+        }
     };
     let port = match field("port") {
         Value::Int(p) if (1..=65_535).contains(&p) => p as u16,
@@ -62,7 +64,9 @@ fn outbound_request(host: &str, v: &Value, span: Span) -> Result<Request, EvalEr
         Value::Map(m) => m
             .iter()
             .filter_map(|(k, val)| match (k, val) {
-                (Value::Str(k), Value::Str(v)) => Some((k.clone(), v.clone())),
+                (Value::Str(k), Value::Str(v)) => {
+                    Some((Arc::from(k.as_str()), Arc::from(v.as_str())))
+                }
                 _ => None,
             })
             .collect(),
@@ -75,7 +79,7 @@ fn outbound_request(host: &str, v: &Value, span: Span) -> Result<Request, EvalEr
     if let Value::Map(m) = field("secrets") {
         for (k, val) in m.iter() {
             if let (Value::Str(name), Some(Value::Str(secret))) = (k, val.field("value")) {
-                headers.push((name.clone(), secret.clone()));
+                headers.push((Arc::from(name.as_str()), Arc::from(secret.as_str())));
             }
         }
     }
@@ -103,7 +107,7 @@ fn outbound_request(host: &str, v: &Value, span: Span) -> Result<Request, EvalEr
 
 fn reply_value(reply: &Reply) -> Value {
     let headers = reply.headers.iter().fold(PMap::new(), |m, (k, v)| {
-        m.insert(Value::Str(k.clone()), Value::Str(v.clone()))
+        m.insert(Value::str_(k), Value::str_(v))
     });
     Value::Data {
         ty: Arc::from("HttpResponse"),
@@ -111,7 +115,7 @@ fn reply_value(reply: &Reply) -> Value {
         fields: Arc::new(BTreeMap::from([
             (Arc::from("status"), Value::Int(reply.status)),
             (Arc::from("headers"), Value::Map(headers)),
-            (Arc::from("body"), Value::Str(reply.body.clone())),
+            (Arc::from("body"), Value::str_(&reply.body)),
         ])),
     }
 }
@@ -1058,6 +1062,21 @@ impl<'h> Interp<'h> {
                 want(2)?;
                 let b = args.pop().expect("arity checked");
                 let a = args.pop().expect("arity checked");
+                // Strings first, and by *value*: `+` on two of them **pushes** into the left one
+                // rather than copying both sides, when that one arrived from a last read and
+                // nobody else holds it. It is what makes `done + piece` in a loop linear instead
+                // of quadratic — `docs/70` §70.6 measured the quadratic, and `beck_core::liveness`
+                // is what proves the ownership this consumes.
+                if matches!(a, Value::Str(_)) && matches!(b, Value::Str(_)) {
+                    let (Value::Str(x), Value::Str(y)) = (a, b) else {
+                        unreachable!("just matched")
+                    };
+                    let left = match Arc::try_unwrap(x) {
+                        Ok(owned) => owned,
+                        Err(shared) => (*shared).clone(),
+                    };
+                    return Ok(Value::Str(Arc::new(left.appended(y.as_str()))));
+                }
                 match (&a, &b) {
                     (Value::Int(x), Value::Int(y)) => x
                         .checked_add(*y)
@@ -1066,8 +1085,6 @@ impl<'h> Interp<'h> {
                     (Value::Float(_), Value::Float(_)) => Ok(Value::float(
                         a.as_f64().expect("a Float") + b.as_f64().expect("a Float"),
                     )),
-                    // `+` on strings concatenates, which is what the sketch's footer wants.
-                    (Value::Str(x), Value::Str(y)) => Ok(Value::str_(format!("{x}{y}"))),
                     _ => Err(EvalError::new(
                         "`+` expects two Ints, two Floats or two Strs",
                         span,
@@ -1191,21 +1208,39 @@ impl<'h> Interp<'h> {
             Prim::StrLen => {
                 want(1)?;
                 let v = args.pop().expect("arity checked");
-                let s = as_str(&v, "str_len", span)?;
-                Ok(Value::Int(s.chars().count() as i64))
+                // Constant time: the count was taken when the string was built (`core::Text`).
+                // It used to be `chars().count()`, which made `while i < str_len(s)` walk the
+                // whole string once per iteration — half of `docs/70` §70.6's quadratic.
+                match &v {
+                    Value::Str(t) => Ok(Value::Int(t.chars_len() as i64)),
+                    _ => {
+                        let s = as_str(&v, "str_len", span)?;
+                        Ok(Value::Int(s.chars().count() as i64))
+                    }
+                }
             }
             Prim::StrSlice => {
                 want(3)?;
                 let len = as_int(&args.pop().expect("arity checked"), "str_slice", span)?;
                 let start = as_int(&args.pop().expect("arity checked"), "str_slice", span)?;
                 let v = args.pop().expect("arity checked");
+                let (start, len) = (start.max(0) as usize, len.max(0) as usize);
+                // A character index is a byte index when every character is one byte, and the
+                // string knows which it is (`core::Text`). That turns the common case from "skip
+                // `start` characters" — `O(start)`, and quadratic in a loop that walks a string —
+                // into a range. A non-ASCII string still walks, because there is nothing else it
+                // could do without an index nobody has asked to pay for.
+                if let Value::Str(t) = &v {
+                    if t.is_ascii_text() {
+                        let bytes = t.as_str().as_bytes();
+                        let from = start.min(bytes.len());
+                        let to = from.saturating_add(len).min(bytes.len());
+                        return Ok(Value::str_(&t.as_str()[from..to]));
+                    }
+                }
                 let s = as_str(&v, "str_slice", span)?;
-                let out: String = s
-                    .chars()
-                    .skip(start.max(0) as usize)
-                    .take(len.max(0) as usize)
-                    .collect();
-                Ok(Value::str_(&out))
+                let out: String = s.chars().skip(start).take(len).collect();
+                Ok(Value::text(out))
             }
             Prim::StrSplit => {
                 want(2)?;
@@ -1781,7 +1816,7 @@ impl<'h> Interp<'h> {
             }
             Prim::NewUuid => {
                 want(0)?;
-                Ok(Value::Str(self.host.new_uuid()))
+                Ok(Value::str_(self.host.new_uuid()))
             }
             Prim::Now => {
                 want(0)?;
@@ -1818,7 +1853,7 @@ impl<'h> Interp<'h> {
                     variant: None,
                     fields: Arc::new(std::collections::BTreeMap::from([(
                         Arc::from("value"),
-                        Value::Str(self.host.secret(name)),
+                        Value::str_(self.host.secret(name)),
                     )])),
                 })
             }
@@ -1865,7 +1900,7 @@ fn constant(k: &Const) -> Value {
         Const::Bool(b) => Value::Bool(*b),
         Const::Int(i) => Value::Int(*i),
         Const::Float(f) => Value::float(*f),
-        Const::Str(s) => Value::Str(s.clone()),
+        Const::Str(s) => Value::str_(s),
     }
 }
 
@@ -1879,7 +1914,7 @@ fn match_pattern(p: &Pattern, v: &Value) -> Option<Vec<(u32, Value)>> {
                 (Const::Unit, Value::Unit) => true,
                 (Const::Bool(a), Value::Bool(b)) => a == b,
                 (Const::Int(a), Value::Int(b)) => a == b,
-                (Const::Str(a), Value::Str(b)) => a == b,
+                (Const::Str(a), Value::Str(b)) => a.as_ref() == b.as_str(),
                 (Const::Float(a), Value::Float(_)) => Some(*a) == v.as_f64(),
                 _ => false,
             };
