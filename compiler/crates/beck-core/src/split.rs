@@ -408,6 +408,7 @@ pub fn split(mut program: Program, diags: &mut Diagnostics) -> Option<Placed> {
         tier: Tier::Client,
         span: graph.node(page).span,
         last_use: false,
+        order: crate::fields::UNORDERED,
         locals: 0,
     };
 
@@ -491,6 +492,7 @@ pub fn split(mut program: Program, diags: &mut Diagnostics) -> Option<Placed> {
                     tier: Tier::Server,
                     span,
                     last_use: false,
+                    order: crate::fields::UNORDERED,
                     locals: 0,
                 }),
             },
@@ -498,6 +500,7 @@ pub fn split(mut program: Program, diags: &mut Diagnostics) -> Option<Placed> {
             tier: Tier::Server,
             span,
             last_use: false,
+            order: crate::fields::UNORDERED,
             locals: 0,
         }
     } else {
@@ -579,6 +582,7 @@ fn var(v: VarId, ty: Ty, span: Span) -> Core {
         tier: Tier::Any,
         span,
         last_use: false,
+        order: crate::fields::UNORDERED,
         locals: 0,
     }
 }
@@ -596,6 +600,7 @@ fn field(base: Core, role: &StateRole, span: Span) -> Core {
             tier: Tier::Any,
             span,
             last_use: false,
+            order: crate::fields::UNORDERED,
             locals: 0,
         },
     }
@@ -612,6 +617,7 @@ fn call(func: Core, args: Vec<Core>, ty: Ty, span: Span) -> Core {
         tier: Tier::Any,
         span,
         last_use: false,
+        order: crate::fields::UNORDERED,
         locals: 0,
     }
 }
@@ -655,6 +661,7 @@ fn fold_field(
         tier: Tier::Any,
         span,
         last_use: false,
+        order: crate::fields::UNORDERED,
         locals: 0,
     };
     let inner = Core {
@@ -666,6 +673,7 @@ fn fold_field(
         tier: Tier::Any,
         span,
         last_use: false,
+        order: crate::fields::UNORDERED,
         locals: 0,
     };
     let narrowed = Core {
@@ -677,6 +685,7 @@ fn fold_field(
         tier: Tier::Any,
         span,
         last_use: false,
+        order: crate::fields::UNORDERED,
         locals: 0,
     };
     Core {
@@ -694,6 +703,7 @@ fn fold_field(
                         tier: Tier::Any,
                         span,
                         last_use: false,
+                        order: crate::fields::UNORDERED,
                         locals: 0,
                     }),
                     then: Box::new(call(
@@ -708,6 +718,7 @@ fn fold_field(
                 tier: Tier::Any,
                 span,
                 last_use: false,
+                order: crate::fields::UNORDERED,
                 locals: 0,
             }),
         },
@@ -715,6 +726,7 @@ fn fold_field(
         tier: Tier::Any,
         span,
         last_use: false,
+        order: crate::fields::UNORDERED,
         locals: 0,
     }
 }
@@ -741,6 +753,7 @@ fn filtered_step(step: &Core, pred: &Core, state_ty: &Ty, vars: &mut Vars, span:
         tier: Tier::Data,
         span,
         last_use: false,
+        order: crate::fields::UNORDERED,
         locals: 0,
     }
 }
@@ -786,17 +799,24 @@ fn fuse(
         init_fields.push((role.name.clone(), init.clone()));
     }
 
-    let make = |fields: Vec<(Arc<str>, Core)>| Core {
-        kind: CoreKind::Make {
-            ty: Arc::from(FUSED_STATE),
-            variant: None,
-            fields,
-        },
-        ty: state_ty.clone(),
-        tier: Tier::Data,
-        span,
-        last_use: false,
-        locals: 0,
+    // The fused state is synthesised here, after `fields::order_program` has run over what the
+    // user wrote, so it asks for its own layout rather than going without one.
+    let make = |fields: Vec<(Arc<str>, Core)>| {
+        let mut c = Core {
+            kind: CoreKind::Make {
+                ty: Arc::from(FUSED_STATE),
+                variant: None,
+                fields,
+            },
+            ty: state_ty.clone(),
+            tier: Tier::Data,
+            span,
+            last_use: false,
+            order: crate::fields::UNORDERED,
+            locals: 0,
+        };
+        crate::fields::order_here(&mut c);
+        c
     };
 
     (
@@ -809,6 +829,7 @@ fn fuse(
             tier: Tier::Data,
             span,
             last_use: false,
+            order: crate::fields::UNORDERED,
             locals: 0,
         },
         make(init_fields),
@@ -1043,6 +1064,7 @@ impl Slicer<'_, '_> {
             tier: Tier::Client,
             span: acc.span,
             last_use: false,
+            order: crate::fields::UNORDERED,
             locals: 0,
         })
     }

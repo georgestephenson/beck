@@ -1111,7 +1111,7 @@ impl<'h> Interp<'h> {
                 ty,
                 variant,
                 fields,
-            } => self.eval_make(ty, variant.as_ref(), fields, env),
+            } => self.eval_make(ty, variant.as_ref(), fields, c.order, env),
             CoreKind::Field { base, name } => self.eval_field(base, name, env, c.span),
             CoreKind::With { base, fields } => self.eval_with(base, fields, env, c.span),
             CoreKind::ListLit(items) => self.eval_list(items, env),
@@ -1144,15 +1144,26 @@ impl<'h> Interp<'h> {
         ty: &Arc<str>,
         variant: Option<&Arc<str>>,
         fields: &[(Arc<str>, Core)],
+        order: u32,
         env: &mut Env,
     ) -> EvalResult {
-        // Evaluated in the order they are written — a field expression can raise — and sorted
-        // once afterwards, rather than placed one at a time into a sorted vector.
+        // Evaluated in the order they are written, because a field expression can raise.
         let mut pairs = Vec::with_capacity(fields.len());
         for (name, expr) in fields {
             pairs.push((name.clone(), self.operand(expr, env)?));
         }
-        let map = Fields::from_pairs(pairs);
+        // Then *placed*, when `beck_core::fields` decided where each one goes. A record's field
+        // names are written in the source, so ordering them is work with a known answer, and this
+        // is where the answer is spent: no comparison and no `memcmp`, in the vector that already
+        // exists.
+        let map = if order != beck_core::fields::UNORDERED
+            && pairs.len() <= beck_core::fields::MAX_ORDERED
+        {
+            beck_core::fields::place(&mut pairs, order);
+            Fields::from_sorted(pairs)
+        } else {
+            Fields::from_pairs(pairs)
+        };
         Ok(Value::data(ty.clone(), variant.cloned(), map))
     }
 

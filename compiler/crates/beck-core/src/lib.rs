@@ -21,6 +21,7 @@ pub mod cost;
 pub mod digest;
 pub mod docgen;
 pub mod engine;
+pub mod fields;
 pub mod frames;
 pub mod gen;
 pub mod graph;
@@ -91,11 +92,13 @@ pub fn compile_with(
     if diags.has_errors() {
         return None;
     }
-    // Which read of a local is its last, computed once for every backend rather than by one of
-    // them (`liveness`), and how many bindings each body makes, so a call can reserve them in one
-    // frame (`frames`).
+    // Three facts about the finished program, computed once for every backend rather than by one
+    // of them: which read of a local is its last (`liveness`), how many bindings each body makes,
+    // so a call can reserve them in one frame (`frames`), and where a record literal's fields go,
+    // so building one places them rather than sorting them (`fields`).
     liveness::mark_program(&mut program);
     frames::reserve_program(&mut program);
+    fields::order_program(&mut program);
     let mut placed = split::split(program, diags)?;
     placed.placement = solution;
     Some(placed)
@@ -137,6 +140,7 @@ pub fn compile_or_library_str(name: &str, src: &str) -> (Option<Placed>, Diagnos
     }
     liveness::mark_program(&mut program);
     frames::reserve_program(&mut program);
+    fields::order_program(&mut program);
     let interface = iface::Interface::of(&program);
     let placed = project::slice_or_library(
         project::Project {

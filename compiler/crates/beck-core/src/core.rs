@@ -465,6 +465,13 @@ pub struct Core {
     /// backend may move the binding rather than copy it. [`crate::liveness`] is what sets it and
     /// what the guarantee means; `false` is always safe.
     pub last_use: bool,
+    /// Set on a [`CoreKind::Make`]: which written field belongs at each position of the record it
+    /// builds, packed four bits per field. [`crate::fields`] is what sets it and what the packing
+    /// means; [`crate::fields::UNORDERED`] is always safe and means "sort at run time".
+    ///
+    /// It costs nothing: a `u32` here fits in the padding `last_use` already leaves, so `Core` is
+    /// 160 bytes either way.
+    pub order: u32,
     /// Set on a [`CoreKind::Lam`]: how many bindings its body makes, so a call can reserve room
     /// for them in one frame instead of allocating a scope per `let`. [`crate::frames`] is what
     /// sets it and what the count means; `0` is always safe and means "chain a scope, as before".
@@ -493,6 +500,7 @@ impl Core {
             tier: Tier::Any,
             span,
             last_use: false,
+            order: crate::fields::UNORDERED,
             locals: 0,
         }
     }
@@ -757,6 +765,23 @@ impl Fields {
     pub fn from_pairs(mut pairs: Vec<(Arc<str>, Value)>) -> Fields {
         pairs.sort_unstable_by(|(a, _), (b, _)| cmp_name(a, b));
         pairs.dedup_by(|(a, _), (b, _)| same_name(a, b));
+        Fields(pairs)
+    }
+
+    /// Build from fields the caller has **already** put in order.
+    ///
+    /// The caller is [`crate::fields`], which decided the order once at compile time — a record
+    /// literal's field names are written in the source, so sorting them once per record built is
+    /// work with a known answer. Nothing else should use this: the order is the `Map` iteration,
+    /// the state digest and the patch stream, so getting it wrong is a wire-format bug rather than
+    /// a slow lookup.
+    pub fn from_sorted(pairs: Vec<(Arc<str>, Value)>) -> Fields {
+        debug_assert!(
+            pairs
+                .windows(2)
+                .all(|w| cmp_name(&w[0].0, &w[1].0) == std::cmp::Ordering::Less),
+            "from_sorted was given fields that are not sorted and distinct"
+        );
         Fields(pairs)
     }
 
@@ -1215,6 +1240,33 @@ impl Env {
     }
 }
 
+/// Every subexpression of this one, to be rewritten in place.
+///
+/// The walk two passes over the finished program share — [`crate::frames`] and [`crate::fields`].
+/// A lambda's body is behind an `Arc` because a closure shares it rather than copying it
+/// (`docs/73`), so reaching into one is a `make_mut`: it runs once, on a program nothing else
+/// holds yet, so nothing is actually cloned.
+pub(crate) fn children_mut(c: &mut Core) -> Vec<&mut Core> {
+    match &mut c.kind {
+        CoreKind::Const(_) | CoreKind::Var(_) | CoreKind::Global(_) => Vec::new(),
+        CoreKind::Lam { body, .. } => vec![Arc::make_mut(body)],
+        CoreKind::App { func, args } => std::iter::once(&mut **func).chain(args).collect(),
+        CoreKind::Let { value, body, .. } => vec![&mut **value, &mut **body],
+        CoreKind::If { cond, then, alt } => vec![&mut **cond, &mut **then, &mut **alt],
+        CoreKind::Match { scrutinee, arms } => std::iter::once(&mut **scrutinee)
+            .chain(arms.iter_mut().map(|a| &mut a.body))
+            .collect(),
+        CoreKind::Prim { args, .. } => args.iter_mut().collect(),
+        CoreKind::Make { fields, .. } => fields.iter_mut().map(|(_, f)| f).collect(),
+        CoreKind::Field { base, .. } => vec![&mut **base],
+        CoreKind::With { base, fields } => std::iter::once(&mut **base)
+            .chain(fields.iter_mut().map(|(_, f)| f))
+            .collect(),
+        CoreKind::ListLit(items) => items.iter_mut().collect(),
+        CoreKind::MapLit(kvs) => kvs.iter_mut().flat_map(|(k, v)| [k, v]).collect(),
+    }
+}
+
 /// Are these the same field name?
 ///
 /// Length, then first byte, then the rest. `str`'s own `==` checks the length and hands the bytes
@@ -1234,7 +1286,7 @@ fn same_name(a: &str, b: &str) -> bool {
 /// a call to distinguish `id` from `kind`. Sorting a record's fields is the other half of what
 /// `same_name` documents.
 #[inline]
-fn cmp_name(a: &str, b: &str) -> std::cmp::Ordering {
+pub(crate) fn cmp_name(a: &str, b: &str) -> std::cmp::Ordering {
     let (x, y) = (a.as_bytes(), b.as_bytes());
     match (x.first(), y.first()) {
         (Some(p), Some(q)) if p != q => p.cmp(q),

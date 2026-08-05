@@ -1376,6 +1376,7 @@ impl<'a> Checker<'a> {
             tier,
             span,
             last_use: false,
+            order: crate::fields::UNORDERED,
             locals: 0,
         };
 

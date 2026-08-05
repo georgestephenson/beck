@@ -327,6 +327,7 @@ pub fn check_project(
     // Once, on the whole linked program: a last read in one module is a last read after linking.
     crate::liveness::mark_program(&mut merged);
     crate::frames::reserve_program(&mut merged);
+    crate::fields::order_program(&mut merged);
     // Now the whole program exists, so the whole-program questions can be asked.
     crate::secure::check_capabilities(&merged, diags);
     if diags.has_errors() {

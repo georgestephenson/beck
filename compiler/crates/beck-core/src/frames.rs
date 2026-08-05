@@ -26,7 +26,7 @@
 //! happens to any program built by something that never runs this pass — a synthesised test body,
 //! a splitter's generated module — which is why the fallback is kept rather than asserted away.
 
-use crate::core::{Arm, Core, CoreKind};
+use crate::core::{children_mut, Arm, Core, CoreKind};
 
 /// Count and record every lambda's local bindings, across a whole program.
 pub fn reserve_program(program: &mut crate::check::Program) {
@@ -86,27 +86,6 @@ fn children(c: &Core) -> Vec<&Core> {
             .collect(),
         CoreKind::ListLit(items) => items.iter().collect(),
         CoreKind::MapLit(kvs) => kvs.iter().flat_map(|(k, v)| [k, v]).collect(),
-    }
-}
-
-fn children_mut(c: &mut Core) -> Vec<&mut Core> {
-    match &mut c.kind {
-        CoreKind::Const(_) | CoreKind::Var(_) | CoreKind::Global(_) => Vec::new(),
-        CoreKind::Lam { body, .. } => vec![std::sync::Arc::make_mut(body)],
-        CoreKind::App { func, args } => std::iter::once(&mut **func).chain(args).collect(),
-        CoreKind::Let { value, body, .. } => vec![&mut **value, &mut **body],
-        CoreKind::If { cond, then, alt } => vec![&mut **cond, &mut **then, &mut **alt],
-        CoreKind::Match { scrutinee, arms } => std::iter::once(&mut **scrutinee)
-            .chain(arms.iter_mut().map(|a| &mut a.body))
-            .collect(),
-        CoreKind::Prim { args, .. } => args.iter_mut().collect(),
-        CoreKind::Make { fields, .. } => fields.iter_mut().map(|(_, f)| f).collect(),
-        CoreKind::Field { base, .. } => vec![&mut **base],
-        CoreKind::With { base, fields } => std::iter::once(&mut **base)
-            .chain(fields.iter_mut().map(|(_, f)| f))
-            .collect(),
-        CoreKind::ListLit(items) => items.iter_mut().collect(),
-        CoreKind::MapLit(kvs) => kvs.iter_mut().flat_map(|(k, v)| [k, v]).collect(),
     }
 }
 

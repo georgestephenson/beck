@@ -60,8 +60,9 @@ Write the commit message as the author of the change: what changed, and why.
   [`73`](docs/73-closures-share-their-code-report.md),
   [`74`](docs/74-the-cost-of-a-call-report.md),
   [`75`](docs/75-what-the-profiler-said-report.md),
-  [`76`](docs/76-the-record-and-the-read-report.md) and
-  [`77`](docs/77-a-let-is-a-slot-report.md),
+  [`76`](docs/76-the-record-and-the-read-report.md),
+  [`77`](docs/77-a-let-is-a-slot-report.md) and
+  [`78`](docs/78-a-record-is-a-permutation-report.md),
   indexed in
   [`docs/README.md`](docs/README.md) — record what each
   phase does, what it refuses to claim, and the corrections it makes to the design documents.
@@ -265,6 +266,26 @@ Write the commit message as the author of the change: what changed, and why.
   frame. 4.2–8.2% across every benchmark, `fib(30)` unchanged because it binds nothing, and 3–6%
   more peak memory. Its §77.6 corrects docs/75 §75.4, which called this third-order from an
   allocation *count*: a candidate you have only counted has not been measured.
+  **docs/78 is the next item off that list, and the most useful thing in it is a ratio rather than a
+  speed-up**: a record literal sorted its field names on every construction — 1,166,277 of them in
+  one `richards` run, 357 instructions each — and the order is written in the source, so
+  `beck_core::fields` decides it once and packs it four bits per field into a `u32` that fits in
+  padding `Core` already had. Building a record permutes the vector it already has. It removes
+  **4.5% of the instructions** and is worth **about 1.5% of the clock**, on the one program that
+  builds a million records and on nothing else — so an instruction profile over-promises by a
+  **factor of three**, which is docs/76 §76.4's rule with a number on it at last. Its §78.3 is the
+  version thrown away: selecting into a *second* vector is **slower than doing nothing**, because an
+  allocation costs more than an insertion sort over four names. Its §78.7 turns the same clock on
+  docs/77 §77.7's own next item and **recommends not building it** — a variable read costs about
+  9 ns over a constant and the scan an index would remove is under 2 ns of it, so three reports have
+  now pointed at `Env::read` and there is not much there. Its §78.6 is three findings from a gate
+  that could not fail: every test record's layout was its own **inverse**, so the obvious mutation
+  changed nothing; **none of the three annotating passes walks a `test` block**, since all three
+  iterate `Program::defs`, so a literal, a binding or a last read written inside one takes the
+  fallback (named, not fixed); and **a fixed A-then-B run order biases a wall-clock comparison** by
+  as much as the effects in the low single digits that docs/69–77 report — so a measurement wants
+  the binaries **rotated** and a **control**, the unchanged binary against a byte-identical copy of
+  itself, whose number should be zero.
 - Security posture is [`docs/43-threat-model.md`](docs/43-threat-model.md) (who is defended
   against, and who is not) and `SECURITY.md` (how a report reaches us). What is *absent* is asserted
   as absent in `beck-cli/tests/pending_security.rs`: building one of those controls turns a test

@@ -255,6 +255,7 @@ impl Plan {
                         tier: Tier::Any,
                         span: beck_diag::Span::NONE,
                         last_use: false,
+                        order: crate::fields::UNORDERED,
                         locals: 0,
                     },
                 );
@@ -384,6 +385,7 @@ impl Builder<'_> {
                             tier: Tier::Any,
                             span: node.span,
                             last_use: false,
+                            order: crate::fields::UNORDERED,
                             locals: 0,
                         },
                     );
@@ -525,6 +527,7 @@ impl Builder<'_> {
             tier: Tier::Any,
             span,
             last_use: false,
+            order: crate::fields::UNORDERED,
             locals: 0,
         };
         let mut params = captured.clone();
@@ -632,6 +635,9 @@ impl Builder<'_> {
                         tier: c.tier,
                         span: c.span,
                         last_use: false,
+                        // The same field names in the same written order, so the layout the pass
+                        // computed for the literal is the layout of the operator that replaces it.
+                        order: c.order,
                         locals: 0,
                     },
                 );
@@ -652,6 +658,7 @@ impl Builder<'_> {
                         tier: c.tier,
                         span: c.span,
                         last_use: false,
+                        order: crate::fields::UNORDERED,
                         locals: 0,
                     },
                 );
@@ -681,6 +688,7 @@ impl Builder<'_> {
                         tier: c.tier,
                         span: c.span,
                         last_use: false,
+                        order: crate::fields::UNORDERED,
                         locals: 0,
                     },
                 );
@@ -703,6 +711,7 @@ impl Builder<'_> {
                         tier: c.tier,
                         span: c.span,
                         last_use: false,
+                        order: crate::fields::UNORDERED,
                         locals: 0,
                     },
                 );
@@ -735,6 +744,7 @@ impl Builder<'_> {
                         tier: c.tier,
                         span: c.span,
                         last_use: false,
+                        order: crate::fields::UNORDERED,
                         locals: 0,
                     },
                 );
@@ -814,6 +824,7 @@ impl Builder<'_> {
                 tier: c.tier,
                 span: c.span,
                 last_use: false,
+                order: crate::fields::UNORDERED,
                 locals: 0,
             },
         );
@@ -840,6 +851,7 @@ impl Builder<'_> {
             tier: Tier::Any,
             span: f.span,
             last_use: false,
+            order: crate::fields::UNORDERED,
             locals: 0,
         };
         Fun {
@@ -874,6 +886,7 @@ fn lam(params: Vec<VarId>, body: Core) -> Core {
             body: Arc::new(body),
         },
         last_use: false,
+        order: crate::fields::UNORDERED,
         locals: 0,
     }
 }
@@ -885,6 +898,7 @@ fn var(v: VarId, ty: Ty, span: beck_diag::Span) -> Core {
         tier: Tier::Any,
         span,
         last_use: false,
+        order: crate::fields::UNORDERED,
         locals: 0,
     }
 }
