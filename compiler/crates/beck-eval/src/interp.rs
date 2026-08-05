@@ -24,12 +24,11 @@
 //!   the host's remaining stack would make a fold's outcome depend on the build profile and §3.7
 //!   needs it to depend only on the log.
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use beck_diag::Span;
 
-use beck_core::core::{Closure, Const, Core, CoreKind, Env, Pattern, Prim, Value};
+use beck_core::core::{Closure, Const, Core, CoreKind, Env, Fields, Pattern, Prim, Value, VarId};
 use beck_core::digest;
 use beck_core::html::Html;
 use beck_core::net::{Failure as NetFailure, Reply, Request};
@@ -43,9 +42,11 @@ use beck_core::PMap;
 /// ceremony.
 fn outbound_request(host: &str, v: &Value, span: Span) -> Result<Request, EvalError> {
     let field = |name: &str| v.field(name).cloned().unwrap_or(Value::Unit);
-    let text = |name: &str| match field(name) {
-        Value::Str(s) => s,
-        _ => Arc::from(""),
+    let text = |name: &str| -> Arc<str> {
+        match field(name) {
+            Value::Str(s) => Arc::from(s.as_str()),
+            _ => Arc::from(""),
+        }
     };
     let port = match field("port") {
         Value::Int(p) if (1..=65_535).contains(&p) => p as u16,
@@ -62,7 +63,9 @@ fn outbound_request(host: &str, v: &Value, span: Span) -> Result<Request, EvalEr
         Value::Map(m) => m
             .iter()
             .filter_map(|(k, val)| match (k, val) {
-                (Value::Str(k), Value::Str(v)) => Some((k.clone(), v.clone())),
+                (Value::Str(k), Value::Str(v)) => {
+                    Some((Arc::from(k.as_str()), Arc::from(v.as_str())))
+                }
                 _ => None,
             })
             .collect(),
@@ -75,7 +78,7 @@ fn outbound_request(host: &str, v: &Value, span: Span) -> Result<Request, EvalEr
     if let Value::Map(m) = field("secrets") {
         for (k, val) in m.iter() {
             if let (Value::Str(name), Some(Value::Str(secret))) = (k, val.field("value")) {
-                headers.push((name.clone(), secret.clone()));
+                headers.push((Arc::from(name.as_str()), Arc::from(secret.as_str())));
             }
         }
     }
@@ -103,17 +106,17 @@ fn outbound_request(host: &str, v: &Value, span: Span) -> Result<Request, EvalEr
 
 fn reply_value(reply: &Reply) -> Value {
     let headers = reply.headers.iter().fold(PMap::new(), |m, (k, v)| {
-        m.insert(Value::Str(k.clone()), Value::Str(v.clone()))
+        m.insert(Value::str_(k), Value::str_(v))
     });
-    Value::Data {
-        ty: Arc::from("HttpResponse"),
-        variant: None,
-        fields: Arc::new(BTreeMap::from([
+    Value::data(
+        Arc::from("HttpResponse"),
+        None,
+        Fields::from_iter([
             (Arc::from("status"), Value::Int(reply.status)),
             (Arc::from("headers"), Value::Map(headers)),
-            (Arc::from("body"), Value::Str(reply.body.clone())),
-        ])),
-    }
+            (Arc::from("body"), Value::str_(&reply.body)),
+        ]),
+    )
 }
 
 /// The seam's [`NetFailure`] as the `HttpError` the call raises.
@@ -141,11 +144,11 @@ fn failure_value(host: &str, f: &NetFailure) -> Value {
             vec![(Arc::from("why"), Value::str_(why))],
         ),
     };
-    Value::Data {
-        ty: Arc::from("HttpError"),
-        variant: Some(Arc::from(variant)),
-        fields: Arc::new(fields.into_iter().collect()),
-    }
+    Value::data(
+        Arc::from("HttpError"),
+        Some(Arc::from(variant)),
+        fields.into_iter().collect(),
+    )
 }
 
 /// The three "this primitive wanted a `T`" conversions, so twenty-odd library primitives do not
@@ -250,7 +253,7 @@ fn digest_prim(op: Prim, mut args: Vec<Value>, span: Span) -> Result<Value, Eval
 /// A raised value of a prelude-declared union, built from its variant's fields.
 ///
 /// The shape `json_parse` and `time_parse` write out inline; the decoders raise three of these
-/// between them, and three copies of a `BTreeMap::from` would be three chances to name a field
+/// between them, and three copies of a `Fields::from_iter` would be three chances to name a field
 /// something the prelude does not declare.
 fn raised<const N: usize>(
     ty: &str,
@@ -260,16 +263,14 @@ fn raised<const N: usize>(
 ) -> EvalError {
     EvalError::raise(
         Arc::from(ty),
-        Value::Data {
-            ty: Arc::from(ty),
-            variant: Some(Arc::from(variant)),
-            fields: Arc::new(
-                fields
-                    .into_iter()
-                    .map(|(n, v)| (Arc::from(n), v))
-                    .collect::<BTreeMap<Arc<str>, Value>>(),
-            ),
-        },
+        Value::data(
+            Arc::from(ty),
+            Some(Arc::from(variant)),
+            fields
+                .into_iter()
+                .map(|(n, v)| (Arc::from(n), v))
+                .collect::<Fields>(),
+        ),
         span,
     )
 }
@@ -287,23 +288,20 @@ fn as_list<'a>(v: &'a Value, who: &str, span: Span) -> Result<&'a Vec<Value>, Ev
 // ------------------------------------------------------------------------------------ JSON
 
 fn json_node(variant: &str, field: &str, value: Value) -> Value {
-    Value::Data {
-        ty: Arc::from("Json"),
-        variant: Some(Arc::from(variant)),
-        fields: Arc::new(std::collections::BTreeMap::from([(
-            Arc::from(field),
-            value,
-        )])),
-    }
+    Value::data(
+        Arc::from("Json"),
+        Some(Arc::from(variant)),
+        Fields::from_iter([(Arc::from(field), value)]),
+    )
 }
 
 fn json_to_value(j: &serde_json::Value) -> Value {
     match j {
-        serde_json::Value::Null => Value::Data {
-            ty: Arc::from("Json"),
-            variant: Some(Arc::from("JsonNull")),
-            fields: Arc::new(std::collections::BTreeMap::new()),
-        },
+        serde_json::Value::Null => Value::data(
+            Arc::from("Json"),
+            Some(Arc::from("JsonNull")),
+            Fields::new(),
+        ),
         serde_json::Value::Bool(b) => json_node("JsonBool", "value", Value::Bool(*b)),
         // JSON has one number type and so does this union, which is why an integer document reads
         // back as a `Float` and a caller who wants an `Int` says so.
@@ -534,6 +532,15 @@ pub trait Host {
     fn intercept(&self, _name: &str, _args: &[Value]) -> Option<Value> {
         None
     }
+
+    /// Whether [`Host::intercept`] can ever answer, asked once per call so that a host with no
+    /// stubs installed does not pay for the arguments to be gathered into a slice.
+    ///
+    /// Defaulted to "yes" rather than "no": a host that overrides `intercept` and forgets this one
+    /// is slower than it needs to be, which is the harmless direction.
+    fn intercepts(&self) -> bool {
+        true
+    }
 }
 
 pub struct Interp<'h> {
@@ -547,6 +554,60 @@ pub struct Interp<'h> {
     /// used to abort the process, taking the server and any diagnostic with it.
     depth: std::cell::Cell<u32>,
     max_depth: u32,
+    /// The closure a top-level definition evaluates to, kept after the first time it is asked for.
+    ///
+    /// A definition *is* a lambda, and a lambda evaluates to a closure over the empty environment —
+    /// so every reference to `f` produces a value equal to every other, and building it again meant
+    /// a name lookup in the host, a copy of the parameter list, an `Arc` for the closure and a
+    /// clone of the environment, **per call**. `docs/73` §73.7 named this as what remained once the
+    /// body stopped being copied; it is a third of what a call cost.
+    ///
+    /// Only a `Closure` is cached. Nothing else a global can evaluate to is guaranteed to be the
+    /// same value twice, and the cache is not the place to decide that.
+    globals: std::cell::RefCell<std::collections::HashMap<Arc<str>, Value, BuildNameHasher>>,
+}
+
+/// A hash for definition names, on the path a call takes.
+///
+/// The standard-library hasher is SipHash, chosen to be hard to force collisions in. Nothing here
+/// is attacker-supplied: the keys are the names of the definitions the program itself declares, and
+/// the map is rebuilt per evaluation. This is FxHash — the multiply-and-rotate the Rust compiler
+/// uses for its own interners — over the name's bytes.
+#[derive(Default, Clone, Copy)]
+pub struct BuildNameHasher;
+
+impl std::hash::BuildHasher for BuildNameHasher {
+    type Hasher = NameHasher;
+    fn build_hasher(&self) -> NameHasher {
+        NameHasher(0)
+    }
+}
+
+pub struct NameHasher(u64);
+
+impl NameHasher {
+    const SEED: u64 = 0x51_7c_c1_b7_27_22_0a_95;
+
+    fn add(&mut self, word: u64) {
+        self.0 = (self.0.rotate_left(5) ^ word).wrapping_mul(Self::SEED);
+    }
+}
+
+impl std::hash::Hasher for NameHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        let mut rest = bytes;
+        while let Some((word, tail)) = rest.split_first_chunk::<8>() {
+            self.add(u64::from_le_bytes(*word));
+            rest = tail;
+        }
+        let mut last = [0u8; 8];
+        last[..rest.len()].copy_from_slice(rest);
+        self.add(u64::from_le_bytes(last));
+    }
+
+    fn finish(&self) -> u64 {
+        self.0
+    }
 }
 
 /// The number of evaluation steps one call gets before it is stopped.
@@ -569,6 +630,131 @@ pub const DEFAULT_FUEL: u64 = 50_000_000;
 /// [`crate::STACK_BYTES`], and `the_depth_ceiling_fits_the_smallest_stack_we_run_on` measures the
 /// bytes one level actually costs rather than assuming them.
 pub const DEFAULT_MAX_DEPTH: u32 = 4_000;
+
+/// Read a local: **move** it out of the frame when the compiler proved this is its last read,
+/// and clone it otherwise.
+///
+/// `last_use` is [`beck_core::liveness`]'s promise that no later evaluation in this body reads the
+/// binding, and [`Env::take`] only empties a frame nothing else holds — so a value that arrives
+/// here from a last read is one nobody else has, which is what lets `list_append` push into a list
+/// instead of copying it (`docs/69` §69.7).
+///
+/// `#[inline]`, unlike [`Interp::leaf`]'s arms: this is the single hottest node in the interpreter
+/// — every argument, every condition and every operand is one — and a call here costs a few percent
+/// of every benchmark in the tree. Its locals are a `bool` and a reference, so the frame it widens
+/// is a frame nobody notices; the arms `leaf` keeps out of line are the ones holding values.
+#[inline]
+fn read_var(c: &Core, v: VarId, env: &mut Env) -> EvalResult {
+    env.read(v, c.last_use)
+        .ok_or_else(|| EvalError::new(format!("unbound variable {v} at runtime"), c.span))
+}
+
+/// How much a primitive will touch, in elements, from the arguments it was given.
+///
+/// The budget used to count **nodes**, so `sort_by` over a million values and `list_len` over the
+/// same list were both one step. `docs/70` §70.7 is the proof that this is not a bound on work at
+/// all: over a loop whose wall clock quadrupled per doubling, the step count exactly doubled.
+///
+/// Only primitives whose cost is **proportional to a length the caller chose** appear here. A
+/// constant-time one — `list_get`, `list_len`, `map_len`, `str_len` — is already bounded by the node
+/// count, and charging it a length would make an ordinary indexed loop over a long list run out of
+/// fuel for doing nothing wrong. `sort_by` is charged its `n` rather than `n log n`, which
+/// understates it by a factor the budget does not need to be precise about.
+fn work_of(op: Prim, args: &[Value]) -> usize {
+    let list_len = |i: usize| match args.get(i) {
+        Some(Value::List(xs)) => xs.len(),
+        _ => 0,
+    };
+    let map_len = |i: usize| match args.get(i) {
+        Some(Value::Map(m)) => m.len(),
+        _ => 0,
+    };
+    let str_len = |i: usize| match args.get(i) {
+        Some(Value::Str(t)) => t.len(),
+        _ => 0,
+    };
+    match op {
+        // A slice costs what it *takes*, not what it is taken from — charging the whole list makes
+        // `str_join(list_slice(chars, i, k), "")` over a 10,245-element list cost 10,245 instead of
+        // `k`, which is a 500× overcharge and was the first thing this accounting got wrong.
+        Prim::ListSlice | Prim::ListTake => {
+            match args.get(if op == Prim::ListSlice { 2 } else { 1 }) {
+                Some(Value::Int(n)) => ((*n).max(0) as usize).min(list_len(0)),
+                _ => 0,
+            }
+        }
+        Prim::ListDrop => list_len(0).saturating_sub(match args.get(1) {
+            Some(Value::Int(n)) => (*n).max(0) as usize,
+            _ => 0,
+        }),
+        // Walks or rebuilds a whole list.
+        Prim::ListReverse
+        | Prim::ListContains
+        | Prim::ListIndexOf
+        | Prim::ListFold
+        | Prim::ListAll
+        | Prim::ListAny
+        | Prim::ListFlatMap
+        | Prim::MapList
+        | Prim::FilterList
+        | Prim::SortBy => list_len(0),
+        Prim::ListZip => list_len(0) + list_len(1),
+        Prim::ConcatLists => match args.first() {
+            Some(Value::List(xs)) => xs
+                .iter()
+                .map(|x| match x {
+                    Value::List(inner) => inner.len(),
+                    _ => 1,
+                })
+                .sum(),
+            _ => 0,
+        },
+        // Walks or rebuilds a map. `map_insert` and `map_remove` rebuild one path, not the tree.
+        Prim::MapKeys | Prim::MapValues | Prim::MapMerge => map_len(0),
+        // Walks a string. `str_len` is absent deliberately: it is O(1) since `docs/71`.
+        // Joining costs the text it produces, which is the parts and not their number.
+        Prim::StrJoin => match args.first() {
+            Some(Value::List(xs)) => xs
+                .iter()
+                .map(|x| match x {
+                    Value::Str(t) => t.len(),
+                    _ => 1,
+                })
+                .sum(),
+            _ => 0,
+        },
+        Prim::StrSplit
+        | Prim::StrChars
+        | Prim::StrContains
+        | Prim::StrStartsWith
+        | Prim::StrEndsWith
+        | Prim::StrIndexOf
+        | Prim::StrUpper
+        | Prim::StrLower
+        | Prim::StrReplace
+        | Prim::StrTrim
+        | Prim::StrToInt
+        | Prim::Digest
+        | Prim::DigestKeyed
+        | Prim::DigestEq
+        | Prim::HexEncode
+        | Prim::HexDecode
+        | Prim::Base64Encode
+        | Prim::Base64Decode
+        | Prim::JsonParse
+        | Prim::JsonRender => str_len(0),
+        // The length asked for, which is the only thing that bounds it.
+        Prim::StrRepeat => str_len(0).saturating_mul(match args.get(1) {
+            Some(Value::Int(n)) => (*n).max(0) as usize,
+            _ => 0,
+        }),
+        Prim::StrSlice => match args.get(2) {
+            Some(Value::Int(n)) => (*n).max(0) as usize,
+            _ => 0,
+        },
+        _ => 0,
+    }
+}
 
 /// One step of evaluation: a finished value, or a call in tail position that
 /// [`Interp::eval`]'s loop should make *instead of* the one it is already making.
@@ -605,6 +791,7 @@ impl<'h> Interp<'h> {
             fuel: std::cell::Cell::new(fuel),
             depth: std::cell::Cell::new(0),
             max_depth: DEFAULT_MAX_DEPTH,
+            globals: std::cell::RefCell::new(std::collections::HashMap::default()),
         }
     }
 
@@ -625,6 +812,28 @@ impl<'h> Interp<'h> {
             return Err(EvalError::new("evaluation ran out of fuel", span));
         }
         self.fuel.set(left - 1);
+        Ok(())
+    }
+
+    /// Charge for work a primitive does over `n` elements, on top of the one step the node cost.
+    ///
+    /// The budget counted **nodes** until `docs/72`, which meant it could not see a primitive that
+    /// touched a million values: `list_slice` over a long list, a sort, a digest and a concatenation
+    /// were each one step, so a program could do unbounded work inside a bounded number of them.
+    /// `docs/70` §70.7 is the measurement that proves it — over a loop whose wall clock quadrupled
+    /// per doubling, the step count exactly doubled.
+    ///
+    /// It is charged where the work is *proportional to a length the caller chose*, not for every
+    /// allocation: the point is that the budget bounds what a program can make the evaluator do, and
+    /// a constant is already bounded by the node count.
+    fn burn_work(&self, n: usize, span: Span) -> Result<(), EvalError> {
+        let left = self.fuel.get();
+        let cost = n as u64;
+        if left <= cost {
+            self.fuel.set(0);
+            return Err(EvalError::new("evaluation ran out of fuel", span));
+        }
+        self.fuel.set(left - cost);
         Ok(())
     }
 
@@ -652,8 +861,8 @@ impl<'h> Interp<'h> {
     pub fn apply(&self, f: &Value, args: Vec<Value>, span: Span) -> EvalResult {
         match f {
             Value::Closure(c) => {
-                let env = bind(c, args, span)?;
-                self.eval(&c.body, &env)
+                let mut env = bind(c, args.into_iter(), span)?;
+                self.eval(&c.body, &mut env)
             }
             other => Err(EvalError::new(
                 format!("not callable: {}", other.display()),
@@ -662,12 +871,23 @@ impl<'h> Interp<'h> {
         }
     }
 
-    /// Evaluate a top-level definition by name.
+    /// Evaluate a top-level definition by name, and remember the closure it is.
+    ///
+    /// A definition is a lambda over the empty environment, so the value is the same every time and
+    /// building it again per call was a name lookup, a parameter-list copy and two allocations.
+    /// Anything that is *not* a closure is evaluated as before and not remembered.
     pub fn global(&self, name: &str, span: Span) -> EvalResult {
-        match self.host.global(name) {
-            Some(core) => self.eval(core, &Env::new()),
-            None => Err(EvalError::new(format!("no such definition: {name}"), span)),
+        if let Some(v) = self.globals.borrow().get(name) {
+            return Ok(v.clone());
         }
+        let Some(core) = self.host.global(name) else {
+            return Err(EvalError::new(format!("no such definition: {name}"), span));
+        };
+        let v = self.eval(core, &mut Env::new())?;
+        if matches!(v, Value::Closure(_)) {
+            self.globals.borrow_mut().insert(Arc::from(name), v.clone());
+        }
+        Ok(v)
     }
 
     /// The trampoline.
@@ -676,7 +896,7 @@ impl<'h> Interp<'h> {
     /// than nesting inside it — so `fact_iter`, `gcd` and `find_divisor` run in constant space and
     /// SICP §1.2.1's distinction between a recursive and an iterative *process* is observable
     /// (`docs/31` §31.2).
-    pub fn eval(&self, c: &Core, env: &Env) -> EvalResult {
+    pub fn eval(&self, c: &Core, env: &mut Env) -> EvalResult {
         let _frame = self.enter(c.span)?;
         let mut step = self.step(c, env)?;
         loop {
@@ -684,8 +904,10 @@ impl<'h> Interp<'h> {
                 Step::Done(v) => return Ok(v),
                 Step::Tail { callee, args, span } => (callee, args, span),
             };
-            let env = bind(&callee, args, span)?;
-            step = self.step(&callee.body, &env)?;
+            // The frame is owned here, which is what lets a last read move a value out of it
+            // instead of copying it (`beck_core::liveness`).
+            let mut env = bind(&callee, args.into_iter(), span)?;
+            step = self.step(&callee.body, &mut env)?;
         }
     }
 
@@ -700,7 +922,7 @@ impl<'h> Interp<'h> {
     /// through [`Interp::eval`] put a second host frame and a loop under each of them, and a real
     /// program is mostly these nodes. `docs/31` §31.5 has what the trampoline cost in the end.
     #[inline]
-    fn operand(&self, c: &Core, env: &Env) -> EvalResult {
+    fn operand(&self, c: &Core, env: &mut Env) -> EvalResult {
         match &c.kind {
             CoreKind::Const(k) => {
                 self.burn(c.span)?;
@@ -708,9 +930,7 @@ impl<'h> Interp<'h> {
             }
             CoreKind::Var(v) => {
                 self.burn(c.span)?;
-                env.get(*v).cloned().ok_or_else(|| {
-                    EvalError::new(format!("unbound variable {v} at runtime"), c.span)
-                })
+                read_var(c, *v, env)
             }
             CoreKind::If { .. }
             | CoreKind::Let { .. }
@@ -738,14 +958,17 @@ impl<'h> Interp<'h> {
     /// taken ownership of, and a `&Core` into a local the loop then reassigns is not something
     /// safe Rust will write. Returning the call to `eval` and re-entering here costs one host
     /// frame per *call* — not per level of recursion, which is the number that had to be zero.
-    fn step<'a>(&'a self, c: &'a Core, env0: &Env) -> Result<Step, EvalError> {
+    fn step<'a>(&'a self, c: &'a Core, env0: &mut Env) -> Result<Step, EvalError> {
         let mut cur: &'a Core = c;
         // The environment is only *replaced* by a `let` or a matched arm, and most nodes replace
         // nothing. Holding the caller's by reference until something extends it keeps two atomic
         // refcount operations off every node that does not — which is most of them.
         let mut owned: Option<Env> = None;
         loop {
-            let env: &Env = owned.as_ref().unwrap_or(env0);
+            let env: &mut Env = match owned.as_mut() {
+                Some(e) => e,
+                None => &mut *env0,
+            };
             self.burn(cur.span)?;
             match &cur.kind {
                 CoreKind::If { cond, then, alt } => {
@@ -758,8 +981,13 @@ impl<'h> Interp<'h> {
                 }
                 CoreKind::Let { var, value, body } => {
                     let v = self.operand(value, env)?;
-                    let next = env.extend(vec![(*var, v)]);
-                    owned = Some(next);
+                    // The call reserved a slot for this binding, so writing it costs nothing.
+                    // `put` refuses if a closure has captured this environment or if the program
+                    // was built without `beck_core::frames` having counted it, and then a `let`
+                    // chains a scope of its own as it always did.
+                    if let Err(v) = env.put_one(*var, v) {
+                        owned = Some(env.extend(vec![(*var, v)]));
+                    }
                     cur = body;
                 }
                 CoreKind::Match { scrutinee, arms } => {
@@ -773,8 +1001,10 @@ impl<'h> Interp<'h> {
                             cur.span,
                         ));
                     };
-                    let next = env.extend(bindings);
-                    owned = Some(next);
+                    let mut bindings = bindings;
+                    if !env.put(&mut bindings) {
+                        owned = Some(env.extend(bindings));
+                    }
                     cur = body;
                 }
                 CoreKind::App { func, args } => {
@@ -789,9 +1019,14 @@ impl<'h> Interp<'h> {
                     // Only a direct call of a named definition is intercepted. A function passed as
                     // a value has lost its name by the time it is applied, and inventing one would
                     // be a guess; docs/22 records the limit rather than leaving it to be discovered.
-                    if let CoreKind::Global(name) = &func.kind {
-                        if let Some(v) = self.host.intercept(name, &vals) {
-                            return Ok(Step::Done(v));
+                    //
+                    // `intercepts` is asked first because it is a field test where `intercept` is a
+                    // virtual call, and no stub is installed in all but a handful of runs.
+                    if self.host.intercepts() {
+                        if let CoreKind::Global(name) = &func.kind {
+                            if let Some(v) = self.host.intercept(name, &vals) {
+                                return Ok(Step::Done(v));
+                            }
                         }
                     }
                     let f = self.operand(func, env)?;
@@ -812,12 +1047,33 @@ impl<'h> Interp<'h> {
                 // into it here rather than recursing saves a host frame on every call a program
                 // makes, which is most of what the trampoline would otherwise have cost (§31.5).
                 CoreKind::Global(name) => {
+                    // This arm is reached once per call of a named function, and the value it
+                    // produces is the same closure every time: a definition is a lambda over the
+                    // empty environment. Cached, because building it again is a name lookup, a copy
+                    // of the parameter list and two allocations — `docs/73` §73.7.
+                    if let Some(v) = self.globals.borrow().get(name.as_ref()) {
+                        return Ok(Step::Done(v.clone()));
+                    }
                     let Some(body) = self.host.global(name) else {
                         return Err(EvalError::new(
                             format!("no such definition: {name}"),
                             cur.span,
                         ));
                     };
+                    if let CoreKind::Lam { params, body: code } = &body.kind {
+                        let v = Value::Closure(Arc::new(Closure {
+                            params: Arc::clone(params),
+                            body: Arc::clone(code),
+                            env: Env::empty_shared(),
+                            locals: body.locals,
+                        }));
+                        self.globals
+                            .borrow_mut()
+                            .insert(Arc::clone(name), v.clone());
+                        return Ok(Step::Done(v));
+                    }
+                    // Anything that is not a lambda is evaluated as before and not remembered:
+                    // nothing guarantees it is the same value twice.
                     owned = Some(Env::new());
                     cur = body;
                 }
@@ -836,18 +1092,19 @@ impl<'h> Interp<'h> {
     /// block, and that is not tidiness: an unoptimised build gives each arm's temporaries their own
     /// slot in the enclosing frame, so a single fat `match` on the recursive path was costing every
     /// level of a program's recursion the sum of the arms it did not take (`docs/31` §31.4).
-    fn leaf(&self, c: &Core, env: &Env) -> EvalResult {
+    fn leaf(&self, c: &Core, env: &mut Env) -> EvalResult {
         match &c.kind {
             CoreKind::Const(k) => Ok(constant(k)),
-            CoreKind::Var(v) => env
-                .get(*v)
-                .cloned()
-                .ok_or_else(|| EvalError::new(format!("unbound variable {v} at runtime"), c.span)),
+            CoreKind::Var(v) => read_var(c, *v, env),
             CoreKind::Global(name) => self.global(name, c.span),
+            // A refcount bump, not a copy of the code. This used to be `(**body).clone()` — a deep
+            // copy of the whole function body, taken every time a `lam` node was evaluated, which
+            // is once per call of a named function. `docs/73` §73.1 has what that cost.
             CoreKind::Lam { params, body } => Ok(Value::Closure(Arc::new(Closure {
-                params: params.clone(),
-                body: (**body).clone(),
-                env: env.clone(),
+                params: Arc::clone(params),
+                body: Arc::clone(body),
+                env: Arc::new(env.clone()),
+                locals: c.locals,
             }))),
             CoreKind::Prim { op, args } => self.eval_prim(*op, args, env, c.span),
             CoreKind::Make {
@@ -873,7 +1130,7 @@ impl<'h> Interp<'h> {
     }
 
     #[cfg_attr(debug_assertions, inline(never))]
-    fn eval_prim(&self, op: Prim, args: &[Core], env: &Env, span: Span) -> EvalResult {
+    fn eval_prim(&self, op: Prim, args: &[Core], env: &mut Env, span: Span) -> EvalResult {
         let mut vals = Vec::with_capacity(args.len());
         for a in args {
             vals.push(self.operand(a, env)?);
@@ -887,21 +1144,20 @@ impl<'h> Interp<'h> {
         ty: &Arc<str>,
         variant: Option<&Arc<str>>,
         fields: &[(Arc<str>, Core)],
-        env: &Env,
+        env: &mut Env,
     ) -> EvalResult {
-        let mut map = BTreeMap::new();
+        // Evaluated in the order they are written — a field expression can raise — and sorted
+        // once afterwards, rather than placed one at a time into a sorted vector.
+        let mut pairs = Vec::with_capacity(fields.len());
         for (name, expr) in fields {
-            map.insert(name.clone(), self.operand(expr, env)?);
+            pairs.push((name.clone(), self.operand(expr, env)?));
         }
-        Ok(Value::Data {
-            ty: ty.clone(),
-            variant: variant.cloned(),
-            fields: Arc::new(map),
-        })
+        let map = Fields::from_pairs(pairs);
+        Ok(Value::data(ty.clone(), variant.cloned(), map))
     }
 
     #[cfg_attr(debug_assertions, inline(never))]
-    fn eval_field(&self, base: &Core, name: &Arc<str>, env: &Env, span: Span) -> EvalResult {
+    fn eval_field(&self, base: &Core, name: &Arc<str>, env: &mut Env, span: Span) -> EvalResult {
         let v = self.operand(base, env)?;
         v.field(name)
             .cloned()
@@ -913,31 +1169,28 @@ impl<'h> Interp<'h> {
         &self,
         base: &Core,
         fields: &[(Arc<str>, Core)],
-        env: &Env,
+        env: &mut Env,
         span: Span,
     ) -> EvalResult {
         let v = self.operand(base, env)?;
-        let Value::Data {
-            ty,
-            variant,
-            fields: old,
-        } = v
-        else {
+        let Value::Data(old) = v else {
             return Err(EvalError::new("`with` expects a record", span));
         };
-        let mut map = (*old).clone();
+        // The base of a `with` is usually a last read — `t.with(done=…)` — so when it is, the
+        // record arrives here held by nobody else and is rebuilt rather than copied.
+        let mut record = match Arc::try_unwrap(old) {
+            Ok(owned) => owned,
+            Err(shared) => (*shared).clone(),
+        };
         for (name, expr) in fields {
-            map.insert(name.clone(), self.operand(expr, env)?);
+            let value = self.operand(expr, env)?;
+            record.fields.insert(name.clone(), value);
         }
-        Ok(Value::Data {
-            ty,
-            variant,
-            fields: Arc::new(map),
-        })
+        Ok(Value::Data(Arc::new(record)))
     }
 
     #[cfg_attr(debug_assertions, inline(never))]
-    fn eval_list(&self, items: &[Core], env: &Env) -> EvalResult {
+    fn eval_list(&self, items: &[Core], env: &mut Env) -> EvalResult {
         let mut out = Vec::with_capacity(items.len());
         for i in items {
             out.push(self.operand(i, env)?);
@@ -946,7 +1199,7 @@ impl<'h> Interp<'h> {
     }
 
     #[cfg_attr(debug_assertions, inline(never))]
-    fn eval_map(&self, kvs: &[(Core, Core)], env: &Env) -> EvalResult {
+    fn eval_map(&self, kvs: &[(Core, Core)], env: &mut Env) -> EvalResult {
         let mut out = PMap::new();
         for (k, v) in kvs {
             out = out.insert(self.operand(k, env)?, self.operand(v, env)?);
@@ -955,6 +1208,12 @@ impl<'h> Interp<'h> {
     }
 
     fn prim(&self, op: Prim, mut args: Vec<Value>, span: Span) -> EvalResult {
+        // What this one will actually touch, charged before it touches it (`work_of`).
+        let work = work_of(op, &args);
+        if work > 0 {
+            self.burn_work(work, span)?;
+        }
+
         let want = |n: usize| -> Result<(), EvalError> {
             if args.len() == n {
                 Ok(())
@@ -1008,7 +1267,7 @@ impl<'h> Interp<'h> {
                 want(1)?;
                 let v = args.pop().expect("arity checked");
                 let ty = match &v {
-                    Value::Data { ty, .. } => ty.clone(),
+                    Value::Data(d) => d.ty.clone(),
                     other => Arc::from(other.display()),
                 };
                 Err(EvalError::raise(ty, v, span))
@@ -1035,6 +1294,25 @@ impl<'h> Interp<'h> {
                 want(2)?;
                 let b = args.pop().expect("arity checked");
                 let a = args.pop().expect("arity checked");
+                // Strings first, and by *value*: `+` on two of them **pushes** into the left one
+                // rather than copying both sides, when that one arrived from a last read and
+                // nobody else holds it. It is what makes `done + piece` in a loop linear instead
+                // of quadratic — `docs/70` §70.6 measured the quadratic, and `beck_core::liveness`
+                // is what proves the ownership this consumes.
+                if matches!(a, Value::Str(_)) && matches!(b, Value::Str(_)) {
+                    let (Value::Str(x), Value::Str(y)) = (a, b) else {
+                        unreachable!("just matched")
+                    };
+                    let left = match Arc::try_unwrap(x) {
+                        Ok(owned) => owned,
+                        Err(shared) => {
+                            // Copied because somebody else holds it, so the copy is charged.
+                            self.burn_work(shared.len(), span)?;
+                            (*shared).clone()
+                        }
+                    };
+                    return Ok(Value::Str(Arc::new(left.appended(y.as_str()))));
+                }
                 match (&a, &b) {
                     (Value::Int(x), Value::Int(y)) => x
                         .checked_add(*y)
@@ -1043,8 +1321,6 @@ impl<'h> Interp<'h> {
                     (Value::Float(_), Value::Float(_)) => Ok(Value::float(
                         a.as_f64().expect("a Float") + b.as_f64().expect("a Float"),
                     )),
-                    // `+` on strings concatenates, which is what the sketch's footer wants.
-                    (Value::Str(x), Value::Str(y)) => Ok(Value::str_(format!("{x}{y}"))),
                     _ => Err(EvalError::new(
                         "`+` expects two Ints, two Floats or two Strs",
                         span,
@@ -1168,21 +1444,41 @@ impl<'h> Interp<'h> {
             Prim::StrLen => {
                 want(1)?;
                 let v = args.pop().expect("arity checked");
-                let s = as_str(&v, "str_len", span)?;
-                Ok(Value::Int(s.chars().count() as i64))
+                // Constant time: the count was taken when the string was built (`core::Text`).
+                // It used to be `chars().count()`, which made `while i < str_len(s)` walk the
+                // whole string once per iteration — half of `docs/70` §70.6's quadratic.
+                match &v {
+                    Value::Str(t) => Ok(Value::Int(t.chars_len() as i64)),
+                    _ => {
+                        let s = as_str(&v, "str_len", span)?;
+                        Ok(Value::Int(s.chars().count() as i64))
+                    }
+                }
             }
             Prim::StrSlice => {
                 want(3)?;
                 let len = as_int(&args.pop().expect("arity checked"), "str_slice", span)?;
                 let start = as_int(&args.pop().expect("arity checked"), "str_slice", span)?;
                 let v = args.pop().expect("arity checked");
+                let (start, len) = (start.max(0) as usize, len.max(0) as usize);
+                // A character index is a byte index when every character is one byte, and the
+                // string knows which it is (`core::Text`). That turns the common case from "skip
+                // `start` characters" — `O(start)`, and quadratic in a loop that walks a string —
+                // into a range. A non-ASCII string still walks, because there is nothing else it
+                // could do without an index nobody has asked to pay for.
+                if let Value::Str(t) = &v {
+                    // A character index is a byte index when the text is ASCII, and otherwise the
+                    // string's own chunked index finds the byte in at most a stride's worth of
+                    // steps (`core::Text::byte_offset`). Either way this is `O(len)` in what is
+                    // *taken* rather than `O(start)` in what is skipped over — which is what made
+                    // walking a string by index quadratic (`docs/71`).
+                    let from = t.byte_offset(start);
+                    let to = t.byte_offset(start.saturating_add(len));
+                    return Ok(Value::str_(&t.as_str()[from..to]));
+                }
                 let s = as_str(&v, "str_slice", span)?;
-                let out: String = s
-                    .chars()
-                    .skip(start.max(0) as usize)
-                    .take(len.max(0) as usize)
-                    .collect();
-                Ok(Value::str_(&out))
+                let out: String = s.chars().skip(start).take(len).collect();
+                Ok(Value::text(out))
             }
             Prim::StrSplit => {
                 want(2)?;
@@ -1344,6 +1640,21 @@ impl<'h> Interp<'h> {
                 want(2)?;
                 let x = args.pop().expect("arity checked");
                 let xs = args.pop().expect("arity checked");
+                // The other half of what `Env::take` starts: a list that arrived from a last read
+                // is held by nobody else, so the push costs nothing. One that did not is copied,
+                // which is what this always did. `docs/69` §69.7 is the measurement.
+                if let Value::List(arc) = xs {
+                    let mut out = match Arc::try_unwrap(arc) {
+                        Ok(owned) => owned,
+                        Err(shared) => {
+                            // Ditto: a push costs nothing and a copy costs its length.
+                            self.burn_work(shared.len(), span)?;
+                            shared.to_vec()
+                        }
+                    };
+                    out.push(x);
+                    return Ok(Value::List(Arc::new(out)));
+                }
                 let mut out = as_list(&xs, "list_append", span)?.to_vec();
                 out.push(x);
                 Ok(Value::List(Arc::new(out)))
@@ -1437,14 +1748,11 @@ impl<'h> Interp<'h> {
                     Ok(j) => Ok(json_to_value(&j)),
                     Err(e) => Err(EvalError::raise(
                         Arc::from("JsonError"),
-                        Value::Data {
-                            ty: Arc::from("JsonError"),
-                            variant: Some(Arc::from("BadJson")),
-                            fields: Arc::new(std::collections::BTreeMap::from([(
-                                Arc::from("why"),
-                                Value::str_(e.to_string()),
-                            )])),
-                        },
+                        Value::data(
+                            Arc::from("JsonError"),
+                            Some(Arc::from("BadJson")),
+                            Fields::from_iter([(Arc::from("why"), Value::str_(e.to_string()))]),
+                        ),
                         span,
                     )),
                 }
@@ -1468,14 +1776,14 @@ impl<'h> Interp<'h> {
                     Some(ms) => Ok(Value::Int(ms)),
                     None => Err(EvalError::raise(
                         Arc::from("TimeError"),
-                        Value::Data {
-                            ty: Arc::from("TimeError"),
-                            variant: Some(Arc::from("BadTime")),
-                            fields: Arc::new(std::collections::BTreeMap::from([(
+                        Value::data(
+                            Arc::from("TimeError"),
+                            Some(Arc::from("BadTime")),
+                            Fields::from_iter([(
                                 Arc::from("why"),
                                 Value::str_(format!("`{text}` is not an RFC 3339 instant in UTC")),
-                            )])),
-                        },
+                            )]),
+                        ),
                         span,
                     )),
                 }
@@ -1747,7 +2055,7 @@ impl<'h> Interp<'h> {
             }
             Prim::NewUuid => {
                 want(0)?;
-                Ok(Value::Str(self.host.new_uuid()))
+                Ok(Value::str_(self.host.new_uuid()))
             }
             Prim::Now => {
                 want(0)?;
@@ -1758,11 +2066,11 @@ impl<'h> Interp<'h> {
             Prim::InternalOf => {
                 want(1)?;
                 let v = args.pop().expect("arity checked");
-                Ok(Value::Data {
-                    ty: Arc::from(beck_core::Ty::INTERNAL),
-                    variant: None,
-                    fields: Arc::new(std::collections::BTreeMap::from([(Arc::from("value"), v)])),
-                })
+                Ok(Value::data(
+                    Arc::from(beck_core::Ty::INTERNAL),
+                    None,
+                    Fields::from_iter([(Arc::from("value"), v)]),
+                ))
             }
             Prim::Reveal => {
                 want(1)?;
@@ -1779,14 +2087,11 @@ impl<'h> Interp<'h> {
                 };
                 // A `secret[Str]` is a newtype at runtime, which is what keeps it distinguishable
                 // from the `Str` it wraps everywhere the wire format looks at a value.
-                Ok(Value::Data {
-                    ty: Arc::from(beck_core::Ty::SECRET),
-                    variant: None,
-                    fields: Arc::new(std::collections::BTreeMap::from([(
-                        Arc::from("value"),
-                        Value::Str(self.host.secret(name)),
-                    )])),
-                })
+                Ok(Value::data(
+                    Arc::from(beck_core::Ty::SECRET),
+                    None,
+                    Fields::from_iter([(Arc::from("value"), Value::str_(self.host.secret(name)))]),
+                ))
             }
             // The signal vocabulary is *declarative*: the splitter reads these nodes out of the
             // program and wires the runtime accordingly (`split.rs`). Reaching one here means a
@@ -1815,14 +2120,22 @@ impl<'h> Interp<'h> {
 /// The new frame extends the *closure's* environment, not the caller's, so a tail call replaces
 /// the frame it returns into rather than stacking on top of it — the environment chain stays as
 /// short at the ten-thousandth iteration as at the first.
-fn bind(c: &Closure, args: Vec<Value>, span: Span) -> Result<Env, EvalError> {
+fn bind(
+    c: &Closure,
+    args: impl ExactSizeIterator<Item = Value>,
+    span: Span,
+) -> Result<Env, EvalError> {
     if c.params.len() != args.len() {
         return Err(EvalError::new(
             format!("expected {} arguments, got {}", c.params.len(), args.len()),
             span,
         ));
     }
-    Ok(c.env.extend(c.params.iter().copied().zip(args).collect()))
+    // One allocation for the frame — sized for the parameters *and* for every binding the body
+    // will make, so that a `let` writes into a slot rather than allocating a scope (`docs/77`) —
+    // and a refcount bump for the parent, which is already behind an `Arc` because a closure holds
+    // it that way (`docs/74`).
+    Ok(Env::call_frame(&c.env, &c.params, args, c.locals))
 }
 
 fn constant(k: &Const) -> Value {
@@ -1831,7 +2144,7 @@ fn constant(k: &Const) -> Value {
         Const::Bool(b) => Value::Bool(*b),
         Const::Int(i) => Value::Int(*i),
         Const::Float(f) => Value::float(*f),
-        Const::Str(s) => Value::Str(s.clone()),
+        Const::Str(s) => Value::str_(s),
     }
 }
 
@@ -1845,7 +2158,7 @@ fn match_pattern(p: &Pattern, v: &Value) -> Option<Vec<(u32, Value)>> {
                 (Const::Unit, Value::Unit) => true,
                 (Const::Bool(a), Value::Bool(b)) => a == b,
                 (Const::Int(a), Value::Int(b)) => a == b,
-                (Const::Str(a), Value::Str(b)) => a == b,
+                (Const::Str(a), Value::Str(b)) => a.as_ref() == b.as_str(),
                 (Const::Float(a), Value::Float(_)) => Some(*a) == v.as_f64(),
                 _ => false,
             };
@@ -1911,7 +2224,7 @@ mod tests {
 
     fn run(c: &Core) -> EvalResult {
         let host = NoHost;
-        Interp::new(&host).eval(c, &Env::new())
+        Interp::new(&host).eval(c, &mut Env::new())
     }
 
     #[test]
@@ -1937,34 +2250,35 @@ mod tests {
         let host = NoHost;
         let interp = Interp::new(&host);
         let xs = Value::List(Arc::new(vec![
-            Value::Data {
-                ty: Arc::from("T"),
-                variant: None,
-                fields: Arc::new(BTreeMap::from([
+            Value::data(
+                Arc::from("T"),
+                None,
+                Fields::from_iter([
                     (Arc::from("k"), Value::str_("a")),
                     (Arc::from("n"), Value::Int(1)),
-                ])),
-            },
-            Value::Data {
-                ty: Arc::from("T"),
-                variant: None,
-                fields: Arc::new(BTreeMap::from([
+                ]),
+            ),
+            Value::data(
+                Arc::from("T"),
+                None,
+                Fields::from_iter([
                     (Arc::from("k"), Value::str_("a")),
                     (Arc::from("n"), Value::Int(2)),
-                ])),
-            },
+                ]),
+            ),
         ]));
         let key = Value::Closure(Arc::new(Closure {
-            params: vec![0],
-            body: Core::new(
+            params: vec![0].into(),
+            body: Arc::new(Core::new(
                 CoreKind::Field {
                     base: Box::new(Core::new(CoreKind::Var(0), Ty::int(), Span::NONE)),
                     name: Arc::from("k"),
                 },
                 Ty::str_(),
                 Span::NONE,
-            ),
-            env: Env::new(),
+            )),
+            env: Env::empty_shared(),
+            locals: 0,
         }));
         let out = interp
             .prim(Prim::SortBy, vec![xs.clone(), key.clone()], Span::NONE)
@@ -2010,8 +2324,8 @@ mod tests {
     fn non_tail_recursion() -> Core {
         let n = || Core::new(CoreKind::Var(0), Ty::int(), Span::NONE);
         core(CoreKind::Lam {
-            params: vec![0],
-            body: Box::new(core(CoreKind::If {
+            params: vec![0].into(),
+            body: Arc::new(core(CoreKind::If {
                 cond: Box::new(Core::new(
                     CoreKind::Prim {
                         op: Prim::Eq,
@@ -2043,8 +2357,8 @@ mod tests {
     fn tail_recursion() -> Core {
         let n = || Core::new(CoreKind::Var(0), Ty::int(), Span::NONE);
         core(CoreKind::Lam {
-            params: vec![0],
-            body: Box::new(core(CoreKind::If {
+            params: vec![0].into(),
+            body: Arc::new(core(CoreKind::If {
                 cond: Box::new(Core::new(
                     CoreKind::Prim {
                         op: Prim::Eq,
@@ -2079,7 +2393,7 @@ mod tests {
             args: vec![int(depth)],
         });
         interp
-            .eval(&call, &Env::new())
+            .eval(&call, &mut Env::new())
             .expect("the probe recursion evaluates");
         let deepest = host.deepest.get();
         assert!(
@@ -2162,7 +2476,7 @@ mod tests {
                 args: vec![int(DEFAULT_MAX_DEPTH as i64 * 10)],
             });
             assert_eq!(
-                interp.eval(&call, &Env::new()).unwrap(),
+                interp.eval(&call, &mut Env::new()).unwrap(),
                 Value::str_("bottom"),
                 "ten times the depth ceiling, in tail position, is not deep at all"
             );
@@ -2186,11 +2500,11 @@ mod tests {
 
         let shallow = Interp::new(&host).with_max_depth(100);
         assert!(
-            shallow.eval(&call(200), &Env::new()).is_err(),
+            shallow.eval(&call(200), &mut Env::new()).is_err(),
             "a lowered ceiling is the one that applies"
         );
         assert!(
-            shallow.eval(&call(20), &Env::new()).is_ok(),
+            shallow.eval(&call(20), &mut Env::new()).is_ok(),
             "and it applies only past itself"
         );
 
@@ -2205,7 +2519,7 @@ mod tests {
                 args: vec![int(DEFAULT_MAX_DEPTH as i64 * 4)],
             });
             assert!(
-                greedy.eval(&deep, &Env::new()).is_err(),
+                greedy.eval(&deep, &mut Env::new()).is_err(),
                 "asking for more than the declared stack can hold does not get it"
             );
         });
@@ -2224,7 +2538,7 @@ mod tests {
                 args: vec![int(DEFAULT_MAX_DEPTH as i64 * 10)],
             });
             let err = interp
-                .eval(&call, &Env::new())
+                .eval(&call, &mut Env::new())
                 .expect_err("past the ceiling");
             assert!(
                 err.message.contains("which is the evaluator's limit"),
@@ -2242,7 +2556,7 @@ mod tests {
             Prim::Add,
             vec![prim(Prim::Add, vec![int(1), int(1)]), int(1)],
         );
-        assert!(interp.eval(&deep, &Env::new()).is_err());
+        assert!(interp.eval(&deep, &mut Env::new()).is_err());
     }
 
     #[test]

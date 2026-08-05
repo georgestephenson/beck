@@ -24,7 +24,8 @@
 //!    drifted. A constant invented here cannot survive it — which is the property §64.7.1 said an
 //!    unverifiable harness could not have.
 //! 3. **The suite is the suite.** Which of the ten are ported *is* a claim, and which are not is a
-//!    larger one, so both lists are written down here.
+//!    larger one, so both lists are written down here. Eight are, since `pidigits` — whose only
+//!    obstacle was that nothing outside `lib/` could import the standard library (`docs/69`).
 //! 4. **Provenance travels with the code.** These are ports of somebody else's BSD-licensed
 //!    benchmarks, and a file that stops saying so is a licensing problem rather than a style one.
 //!
@@ -77,34 +78,31 @@ fn expected(name: &str) -> String {
         .unwrap_or_else(|_| panic!("clbg/expected/{name} is readable"))
 }
 
-/// The seven benchmarks of the ten that are ported.
+/// The eight benchmarks of the ten that are ported.
 ///
 /// Written down here rather than left to the directory listing because *which* of the suite is
 /// ported is the claim the report makes, and a listing cannot be wrong about a file that was never
 /// added.
-const PORTED: [&str; 7] = [
+const PORTED: [&str; 8] = [
     "binarytrees",
     "fannkuchredux",
     "fasta",
     "knucleotide",
     "nbody",
+    "pidigits",
     "revcomp",
     "spectralnorm",
 ];
 
-/// The three that are not, and the reason each is not.
+/// The two that are not, and the reason each is not.
 ///
-/// Kept beside the seven and asserted against the directory, because "we ported seven of ten" is
-/// only honest if the missing three are named. `docs/68` §68.6 is the long form of each reason;
+/// Kept beside the eight and asserted against the directory, because "we ported eight of ten" is
+/// only honest if the missing two are named. `docs/68` §68.6 is the long form of each reason;
 /// dropping a benchmark from this list without adding it to `PORTED` is what this stops.
-const NOT_PORTED: [(&str, &str); 3] = [
+const NOT_PORTED: [(&str, &str); 2] = [
     (
         "mandelbrot",
         "the published output is a binary PBM whose bytes are not UTF-8, and Beck's Str is",
-    ),
-    (
-        "pidigits",
-        "needs lib/bignum.beck, which no module outside lib/ can import",
     ),
     (
         "regexredux",
@@ -114,15 +112,25 @@ const NOT_PORTED: [(&str, &str); 3] = [
 
 /// The support modules — everything in `clbg/` that is not a benchmark.
 ///
-/// Named rather than inferred, so that a benchmark that fails to be recognised as one shows up as
-/// a stray support module rather than as nothing at all.
-const SUPPORT: [&str; 1] = ["format"];
+/// Empty since `format.beck` became `lib/format.beck` (`docs/69`): the fixed-decimal formatting
+/// three of these ports need was a standard-library gap that lived here only because nothing
+/// outside `lib/` could import the standard library. Kept as a list rather than deleted, because
+/// the next port that needs a shared helper will want to say so here.
+const SUPPORT: [&str; 0] = [];
 
 /// Every file in `clbg/` runs its own tests and passes them.
 ///
 /// The test inside each port asserts its output against the suite's published file, so this is the
 /// whole correctness claim of the directory: not that the Beck runs, but that it computes what the
 /// Java computes, character for character.
+///
+/// **On the default fuel budget**, `pidigits` included, which is worth a line because it was not.
+/// The Game publishes one expected output for that benchmark and it is at `N = 30`, so unlike
+/// `awfy/`'s three (`docs/62` §62.3) there is no reduced configuration to gate at — it needed
+/// `--fuel` or nothing. It needed 100,000,000 steps because `lib/bignum.beck` searched every long
+/// division's trial digit over the whole limb range; bracketing that search (`docs/69` §69.6) took
+/// it to under 16,000,000, which is inside the default. A budget table here would have hidden the
+/// cost rather than fixed it.
 #[test]
 fn every_benchmark_verifies_against_the_suites_own_published_output() {
     for path in beck_files() {
@@ -148,9 +156,9 @@ fn each_benchmark_is_a_library() {
     }
 }
 
-/// The directory is the seven ports and the support modules, and nothing else.
+/// The directory is the eight ports and the support modules, and nothing else.
 #[test]
-fn the_ported_suite_is_seven_of_the_games_ten() {
+fn the_ported_suite_is_eight_of_the_games_ten() {
     let mut found: Vec<String> = beck_files()
         .iter()
         .map(|p| p.file_stem().unwrap().to_string_lossy().to_string())
@@ -171,6 +179,18 @@ fn the_ported_suite_is_seven_of_the_games_ten() {
         assert!(
             !found.contains(&name.to_string()),
             "{name} is ported now — move it to PORTED and correct docs/68 §68.6"
+        );
+    }
+    // `expected/` holds one file per oracle a port is checked against, plus the two inputs the
+    // readers regenerate. A published output sitting there for a benchmark nobody ported is the
+    // shape `pidigits` was in for exactly as long as it took to write this line.
+    for (name, _) in NOT_PORTED {
+        assert!(
+            !clbg_dir()
+                .join("expected")
+                .join(format!("{name}-output.txt"))
+                .exists(),
+            "clbg/expected/{name}-output.txt exists, so {name} has an oracle now — port it"
         );
     }
 }
@@ -209,11 +229,19 @@ fn each_ports_asserted_output_is_the_published_file_byte_for_byte() {
         ("fannkuchredux", "fannkuchredux-output.txt"),
         ("binarytrees", "binarytrees-output.txt"),
         ("knucleotide", "knucleotide-output.txt"),
+        ("pidigits", "pidigits-output.txt"),
     ];
     for (stem, file) in cases {
         let literal = as_beck_literal(&expected(file));
+        // Two shapes, because one port's answer is a `Result`. `pidigits` divides, `/` on a `Big`
+        // raises on a zero divisor, and the row travels to the entry point — so its test opens the
+        // answer with `try:` and compares against `Ok(value="…")`. The literal is the same literal;
+        // what differs is what surrounds it.
+        let src = source(stem);
+        let asserted = src.contains(&format!("== \"{literal}\""))
+            || src.contains(&format!("Ok(value=\"{literal}\")"));
         assert!(
-            source(stem).contains(&format!("== \"{literal}\"")),
+            asserted,
             "{stem}.beck does not assert clbg/expected/{file}.\n\
              The published output, as the literal the port must contain:\n  \"{literal}\""
         );
@@ -300,14 +328,19 @@ fn every_port_publishes_its_output_under_its_own_name() {
     }
 }
 
-/// The three that are not ported are still not portable, for the reasons recorded.
+/// The two that are not ported are still not portable, for the reasons recorded.
 ///
 /// Each reason is a fact about the language rather than about effort, and each would stop being
-/// true if the language changed — which is the point of asserting them. A regex primitive, a byte
-/// string, or an import that reaches `lib/` each turns one of these red, and the change that adds
-/// it is the change that should be porting the benchmark.
+/// true if the language changed — which is the point of asserting them. A regex primitive or a byte
+/// string turns one of these red, and the change that adds it is the change that should be porting
+/// the benchmark.
+///
+/// There were three. The third was `pidigits`, and its reason was not a fact about the language at
+/// all: `lib/bignum.beck` existed and no module outside `lib/` could import it (`docs/68` §68.4).
+/// That was a repository limitation, it is fixed (`docs/69`), and the benchmark it was holding is
+/// ported — which is what the assertion was for.
 #[test]
-fn the_three_unported_benchmarks_are_still_out_of_reach() {
+fn the_two_unported_benchmarks_are_still_out_of_reach() {
     let prelude = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(|p| p.parent())
@@ -326,21 +359,29 @@ fn the_three_unported_benchmarks_are_still_out_of_reach() {
         !prims.contains("\"bytes_of\"") && !prims.contains("Ty::BYTES"),
         "there is a byte string now — port mandelbrot and correct docs/68 §68.6"
     );
+}
 
-    // pidigits: the arbitrary-precision integer it needs is in `lib/`, and `import` resolves only
-    // against the root module's own directory. This is the finding, asserted as a fact: the same
-    // file that works in `lib/` fails in `clbg/`.
-    let probe = clbg_dir().join("import-reaches-lib-probe.beck");
+/// The standard library is reachable from here, which is the whole of what `pidigits` was waiting
+/// for.
+///
+/// `pidigits.beck` imports `bignum` and is gated above, so this is not the only thing that would
+/// notice a regression — but it is the one that would say *why*, and `docs/68` §68.4's probe is
+/// where it comes from. That probe asserted the failure; this asserts the fix.
+#[test]
+fn the_standard_library_is_importable_from_this_directory() {
+    // In a temporary directory rather than in `clbg/`: a stray `.beck` file here, however
+    // short-lived, is a file the directory-shape test above would see.
+    let probe = std::env::temp_dir().join("beck-clbg-import-probe.beck");
     std::fs::write(
         &probe,
-        "import bignum\n\ntest \"reachable\":\n    expect true\n",
+        "import bignum\n\ntest \"reachable\":\n    expect render_big(big(6) * big(7)) == \"42\"\n",
     )
     .expect("a scratch file");
-    let (ok, text) = beck(&["check", probe.to_string_lossy().as_ref()]);
+    let (ok, text) = beck(&["test", probe.to_string_lossy().as_ref()]);
     let _ = std::fs::remove_file(&probe);
     assert!(
-        !ok && text.contains("cannot find module `bignum`"),
-        "`import bignum` resolves from clbg/ now — port pidigits and correct docs/68 §68.4:\n{text}"
+        ok && text.contains("1 passed"),
+        "`import bignum` from clbg/:\n{text}"
     );
 }
 

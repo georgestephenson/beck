@@ -491,12 +491,14 @@ fn build_stubs(
             } else {
                 let lam = Core {
                     kind: CoreKind::Lam {
-                        params: params.clone(),
-                        body: Box::new(value.clone()),
+                        params: params.clone().into(),
+                        body: std::sync::Arc::new(value.clone()),
                     },
                     ty: Ty::fun(Vec::new(), value.ty.clone()),
                     tier: Tier::Any,
                     span: value.span,
+                    last_use: false,
+                    locals: 0,
                 };
                 Answer::FromTheCall(
                     backend
@@ -1044,12 +1046,14 @@ fn eval(
     params.extend(t.params.iter().map(|(id, _, _)| *id));
     let lam = Core {
         kind: CoreKind::Lam {
-            params,
-            body: Box::new(code.clone()),
+            params: params.into(),
+            body: std::sync::Arc::new(code.clone()),
         },
         ty: Ty::fun(Vec::new(), code.ty.clone()),
         tier: Tier::Any,
         span: code.span,
+        last_use: false,
+        locals: 0,
     };
     let f = runtime
         .prepare(&lam)

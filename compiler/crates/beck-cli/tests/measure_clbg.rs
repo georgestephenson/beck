@@ -60,9 +60,17 @@ fn benchmarks() -> Vec<PathBuf> {
     out
 }
 
-/// The median of five runs, because a single wall-clock reading of a process is mostly noise.
-fn median_of_five(args: &[&str]) -> Duration {
-    let mut runs: Vec<Duration> = (0..5)
+/// How many times each command is run: five in release, one in debug.
+///
+/// The reproducible form of this suite is `cargo test --release`, and the debug run happens only
+/// because `cargo test --workspace` runs everything. A debug timing is not a number anybody may
+/// read, and `pidigits` is slow enough in that build to be worth several minutes of nothing; the
+/// run is still worth doing once, because it exercises the binary on every benchmark.
+const RUNS: usize = if cfg!(debug_assertions) { 1 } else { 5 };
+
+/// The median of [`RUNS`] runs, because a single wall-clock reading of a process is mostly noise.
+fn median(args: &[&str]) -> Duration {
+    let mut runs: Vec<Duration> = (0..RUNS)
         .map(|_| {
             let started = Instant::now();
             let out = Command::new(env!("CARGO_BIN_EXE_beck"))
@@ -75,7 +83,7 @@ fn median_of_five(args: &[&str]) -> Duration {
         })
         .collect();
     runs.sort();
-    runs[2]
+    runs[RUNS / 2]
 }
 
 #[test]
@@ -88,8 +96,8 @@ fn what_the_benchmarks_game_costs_on_the_tree_walker() {
     for path in benchmarks() {
         let file = path.to_string_lossy().to_string();
         let name = path.file_stem().unwrap().to_string_lossy().to_string();
-        let check = median_of_five(&["check", &file]);
-        let test = median_of_five(&["test", &file]);
+        let check = median(&["check", &file]);
+        let test = median(&["test", &file]);
         println!(
             "{:<16} {:>10.1} {:>10.1} {:>12.1}",
             name,
@@ -99,8 +107,15 @@ fn what_the_benchmarks_game_costs_on_the_tree_walker() {
         );
     }
     println!(
-        "\nMedian of five, release build, at the sizes the Game publishes an expected output for —\n\
+        "\nMedian of {RUNS}, {} build, at the sizes the Game publishes an expected output for —\n\
          which are its *format-checking* sizes and not the ones it measures at. No comparative\n\
-         claim: docs/25 §25.9 holds those until there is a second backend for them to be about.\n"
+         claim: docs/25 §25.9 holds those until there is a second backend for them to be about.\n\
+         `pidigits` measures lib/bignum.beck rather than a host's big integer, which is the\n\
+         thing to know before reading its row against anything.\n",
+        if cfg!(debug_assertions) {
+            "debug — read nothing off this table, the reproducible form is --release"
+        } else {
+            "release"
+        }
     );
 }

@@ -1,0 +1,155 @@
+# The Computer Language Benchmarks Game — pidigits, in Beck.
+#
+# The Computer Language Benchmarks Game
+# https://salsa.debian.org/benchmarksgame-team/benchmarksgame/
+#
+# Ported from the Java program, contributed by Isaac Gouy.
+#
+# Streaming digits of pi with arbitrary-precision integers. The suite is specific about the
+# algorithm — "use the sequential algorithm", "adapt the step-by-step algorithm given on pages 4, 6
+# & 7 of *Unbounded Spigot Algorithms for the Digits of Pi*", and "do both extract(3) and
+# extract(4)" — because the alternative is a program that measures a cleverer series rather than
+# the bignum library. So this is Gibbons' transformation, matrix for matrix, and the `is_safe`
+# check that costs the second `extract` is kept.
+#
+# **What it measures here is `lib/bignum.beck`** — schoolbook multiplication and long division over
+# base-10,000 limbs, written in Beck (`docs/55`) — where every other entry in the Game measures
+# GMP, or a runtime's built-in big integer, or a library its language ships. `docs/69` §69.5 says
+# what that makes the number worth, which is: it is a number about our own library and not about
+# the language's arithmetic.
+#
+# This is the benchmark `docs/68` §68.4 could not port. The bignums existed and nothing outside
+# `lib/` could import them; `import bignum` below is the whole of what changed.
+#
+# It is also what made that library faster. This file needed 100,000,000 evaluator steps — twice the
+# default budget — because every long division searched each trial digit over the whole limb range;
+# `docs/69` §69.6 brackets that search with Knuth's estimate, and the same run is now under
+# 16,000,000. Nothing here was tuned for it: a benchmark's job is to be the caller that makes a cost
+# visible.
+#
+# Verified against `expected/pidigits-output.txt`, the suite's own published output for `N = 30`.
+
+import bignum
+import format
+
+## Gibbons' 2×2 matrix `[[q, r], [s, t]]`, over integers of any size.
+##
+## `s` is zero in every matrix this program builds and the field is carried anyway, because the
+## composition is the paper's and a port that special-cased it would be a different algorithm with
+## the same answers.
+model Transformation:
+    q: Big
+    r: Big
+    s: Big
+    t: Big
+
+def transformation(q: Int, r: Int, s: Int, t: Int) -> Transformation:
+    return Transformation(q=big(q), r=big(r), s=big(s), t=big(t))
+
+## Matrix multiplication, in the order the paper composes: `a` applied after `b`.
+def compose(a: Transformation, b: Transformation) -> Transformation:
+    return Transformation(
+        q=a.q * b.q,
+        r=a.q * b.r + a.r * b.t,
+        s=a.s * b.q + a.t * b.s,
+        t=a.s * b.r + a.t * b.t,
+    )
+
+## `floor((q·j + r) / (s·j + t))` — the paper's `extract`, and the only division in the program.
+##
+## `/` on `Big` raises on a zero divisor, so this function is fallible on paper and cannot be
+## anything else: `s` is zero and `t` is a product of odd numbers, so the divisor is never zero, and
+## the type system has no way to be told so. The row travels to `pidigits_output` and the test opens
+## it with `try:`, which is the honest shape rather than a swallowed error with a made-up default.
+def extract(z: Transformation, j: Int) -> Int uses raises(BigError):
+    numerator = z.q * big(j) + z.r
+    divisor = z.s * big(j) + z.t
+    return unwrap_or(big_to_int(numerator / divisor), 0)
+
+## The `k`th term of the input stream: `[[k, 4k + 2], [0, 2k + 1]]`.
+def term(k: Int) -> Transformation:
+    return transformation(k, 4 * k + 2, 0, 2 * k + 1)
+
+## The spigot: the accumulated transformation, and how much of the input stream it has eaten.
+model Spigot:
+    z: Transformation
+    k: Int
+
+def spigot() -> Spigot:
+    return Spigot(z=transformation(1, 0, 0, 1), k=0)
+
+## One digit, and the spigot that follows it.
+model Step:
+    digit: Int
+    next: Spigot
+
+## The paper's `next`: take `extract(3)`, keep it if `extract(4)` agrees, and otherwise consume
+## another term of the stream and try again.
+##
+## The disagreement is what makes this a *streaming* algorithm rather than a bounded one: a digit is
+## only emitted once the remaining input cannot change it, so nothing here needs to know how many
+## digits are being asked for.
+def next_digit(s: Spigot) -> Step uses raises(BigError):
+    y = extract(s.z, 3)
+    if y == extract(s.z, 4):
+        return Step(digit=y, next=Spigot(z=compose(transformation(10, 0 - 10 * y, 0, 1), s.z), k=s.k))
+    return next_digit(Spigot(z=compose(s.z, term(s.k + 1)), k=s.k + 1))
+
+## A run of digits as text, and the spigot they came from.
+model Run:
+    text: Str
+    next: Spigot
+
+def take(s: Spigot, count: Int, done: Str) -> Run uses raises(BigError):
+    if count <= 0:
+        return Run(text=done, next=s)
+    step = next_digit(s)
+    return take(step.next, count - 1, done + str(step.digit))
+
+## The line width the Game prints at, and the reason a partial line has to be padded to it.
+def line_width() -> Int:
+    return 10
+
+## Lines of ten digits, each with the running total of digits produced.
+##
+## A last line shorter than ten is padded with spaces, which is the Java's `for (i=n; i<L; i++)
+## print(" ")` and is visible in the published output only for an `N` the Game does not publish one
+## at — see the second test.
+def digit_lines(s: Spigot, remaining: Int, produced: Int, done: list[Str]) -> list[Str] uses raises(BigError):
+    if remaining <= 0:
+        return done
+    width = line_width() if remaining >= line_width() else remaining
+    run = take(s, width, "")
+    total = produced + width
+    line = run.text + str_repeat(" ", line_width() - width) + "\t:" + str(total)
+    return digit_lines(run.next, remaining - line_width(), total, list_append(done, line))
+
+## The benchmark: what the program writes to stdout for `N = n`.
+def pidigits_output(n: Int) -> Str uses raises(BigError):
+    return lines_of(digit_lines(spigot(), n, 0, []))
+
+test "pidigits: N = 30 is the suite's own published output":
+    expect (try: pidigits_output(30)) == Ok(value="3141592653\t:10\n5897932384\t:20\n6264338327\t:30\n")
+
+## The Game publishes an expected output at `N = 30`, which is three whole lines, so its file cannot
+## say what a partial line looks like. The Java pads one to ten columns and prints the running total
+## anyway, and every run at a size that is not a multiple of ten ends in one — so the padding is
+## asserted here. **The digits are not a second oracle**: they are the first 17 of the thirty above,
+## and the thing under test is the three spaces. `N = 17` rather than `N = 27` because a spigot's
+## cost climbs with the digit it is at, and this test is about the columns.
+test "pidigits: a last line shorter than ten is padded to ten columns":
+    expect (try: pidigits_output(17)) == Ok(value="3141592653\t:10\n5897932   \t:17\n")
+
+## The spigot is only worth anything if it is a spigot: the digits of a shorter run are a prefix of
+## the digits of a longer one, arrived at without knowing the longer one was coming.
+test "pidigits: a shorter run is a prefix of a longer one":
+    expect (try: str_slice(pidigits_output(10), 0, 10)) == Ok(value="3141592653")
+    expect (try: str_slice(pidigits_output(20), 0, 10)) == Ok(value="3141592653")
+
+## `extract` is the paper's, so its first few answers are checkable by hand: the initial
+## transformation is the identity, and `floor(3/1)` and `floor(4/1)` disagree — which is why the
+## first digit costs several terms of the stream rather than none.
+test "pidigits: the first digit is not safe until the stream says so":
+    expect (try: extract(transformation(1, 0, 0, 1), 3)) == Ok(value=3)
+    expect (try: extract(transformation(1, 0, 0, 1), 4)) == Ok(value=4)
+    expect (try: next_digit(spigot()).digit) == Ok(value=3)

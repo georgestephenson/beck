@@ -8,6 +8,13 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+/// The evaluator is an allocator benchmark wearing a language's clothes: a call allocates its
+/// frame, a `let` allocates its scope, and both are freed a few microseconds later. Profiling
+/// `awfy/json.beck` put a third of every instruction the process executed inside glibc's
+/// `malloc` and `free`. `docs/adr/0019` is the decision and the measurement.
+#[global_allocator]
+static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use anyhow::{anyhow, bail, Context, Result};
 
 mod bench;

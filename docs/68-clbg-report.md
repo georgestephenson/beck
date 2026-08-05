@@ -169,7 +169,7 @@ the right default and is not `printf("%.9f")`. `spectralnorm` is a `DecimalForma
 can be *checked* at all without it, because the Game's oracle is a file and the file has the digits
 in it.
 
-[`clbg/format.beck`](../compiler/clbg/format.beck) is that function, written in Beck, and it is the
+`clbg/format.beck` is that function, written in Beck, and it is the
 one thing in the directory that is not a benchmark. It belongs in `lib/` and is not there, for the
 reason above: the directory that needs it could not import it back. Recorded here as a
 standard-library gap found by porting rather than as a benchmark's private helper, because that is

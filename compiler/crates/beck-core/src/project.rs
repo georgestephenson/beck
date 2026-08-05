@@ -26,6 +26,19 @@
 //! It does **not** namespace: two modules that define the same name are an error rather than a
 //! shadowing rule, because Phase 2 has no qualified references to disambiguate with. Named, rather
 //! than discovered.
+//!
+//! # Where a module comes from
+//!
+//! A [`Loader`] answers for the program being compiled — for the CLI, the directory the root module
+//! lives in. What it cannot answer for, [`crate::stdlib`] does: the standard library's Beck half is
+//! carried in the compiler, so `import bignum` resolves from any directory
+//! ([`10`](../../../../../docs/10-decisions.md) D23,
+//! [`adr/0018`](../../../../../docs/adr/0018-the-standard-library-is-carried-in-the-compiler.md)).
+//!
+//! The order is loader first, library second, and it is not arbitrary: a project must be able to
+//! keep the name of a module it already has when the standard library grows one, and a library
+//! being *worked on* — `lib/decimal.beck` importing `bignum` — must get the file beside it rather
+//! than the copy the compiler was built with.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -142,14 +155,19 @@ pub fn check_project(
     let mut order: Vec<String> = Vec::new();
     let mut visiting: Vec<String> = Vec::new();
     let mut sources: BTreeMap<String, (Sources, beck_diag::FileId)> = BTreeMap::new();
+    // Which of them came from the compiler rather than from the caller's directory, because a
+    // standard-library module's tests are not the program's — see where this is read, below.
+    let mut from_library: BTreeSet<String> = BTreeSet::new();
 
     // Depth-first over imports, deepest first, so a module is checked only once everything it
     // depends on has an interface.
+    #[allow(clippy::too_many_arguments)]
     fn visit(
         name: &str,
         loader: &dyn Loader,
         map: &mut beck_diag::SourceMap,
         sources: &mut BTreeMap<String, (Sources, beck_diag::FileId)>,
+        from_library: &mut BTreeSet<String>,
         order: &mut Vec<String>,
         visiting: &mut Vec<String>,
         diags: &mut Diagnostics,
@@ -172,10 +190,20 @@ pub fn check_project(
             );
             return;
         }
-        let Some(src) = loader.load(name) else {
+        // The caller's directory first, the standard library second — the module doc says why the
+        // order is that way round rather than the other.
+        let loaded = loader.load(name).or_else(|| {
+            crate::stdlib::sources(name).inspect(|_| {
+                from_library.insert(name.to_string());
+            })
+        });
+        let Some(src) = loaded else {
             diags.push(
                 Diagnostic::error("B0603", format!("cannot find module `{name}`"), Span::NONE)
-                    .with_note(format!("looked for `{name}.becki` and `{name}.beck`")),
+                    .with_note(format!(
+                        "looked for `{name}.becki` and `{name}.beck` beside the root module, and \
+                         for a standard-library module called `{name}`"
+                    )),
             );
             return;
         };
@@ -188,7 +216,16 @@ pub fn check_project(
         let file = map.add(display.clone(), text.clone());
         visiting.push(name.to_string());
         for dep in imports_of(file, &display, &text) {
-            visit(&dep, loader, map, sources, order, visiting, diags);
+            visit(
+                &dep,
+                loader,
+                map,
+                sources,
+                from_library,
+                order,
+                visiting,
+                diags,
+            );
         }
         visiting.pop();
         sources.insert(name.to_string(), (src, file));
@@ -200,6 +237,7 @@ pub fn check_project(
         loader,
         map,
         &mut sources,
+        &mut from_library,
         &mut order,
         &mut visiting,
         diags,
@@ -247,7 +285,16 @@ pub fn check_project(
             continue;
         };
 
-        let one = check_one_in(*file, &display, module_src, &deps, lock, diags);
+        let mut one = check_one_in(*file, &display, module_src, &deps, lock, diags);
+        // A standard-library module's `test` blocks are the *compiler's* tests, not this program's.
+        // They are still checked — a library that stopped compiling its own tests would be broken —
+        // and they are dropped before the link, so `beck test` on a program that imports `bignum`
+        // reports the program's tests and not two hundred of ours. `beck-cli/tests/stdlib.rs` is
+        // where they run (§21.2's rule that a program's behaviour is asserted in the program still
+        // holds; the program asserting them is the library file itself).
+        if from_library.contains(name) {
+            one.program.tests.clear();
+        }
         // Where both exist, the checked-in interface is the contract and the module must meet it.
         if let Some(published) = interfaces.get(name) {
             if published.digest() != one.interface.digest() {
@@ -276,7 +323,10 @@ pub fn check_project(
     }
 
     let interface = interfaces.get(root).cloned().unwrap_or_default();
-    let merged = link(root, checked, diags)?;
+    let mut merged = link(root, checked, diags)?;
+    // Once, on the whole linked program: a last read in one module is a last read after linking.
+    crate::liveness::mark_program(&mut merged);
+    crate::frames::reserve_program(&mut merged);
     // Now the whole program exists, so the whole-program questions can be asked.
     crate::secure::check_capabilities(&merged, diags);
     if diags.has_errors() {
@@ -670,6 +720,98 @@ page: Signal[Html] = per_session(todos, view)
             &mut diags,
         );
         assert!(diags.iter().any(|d| d.code == "B0603"));
+    }
+
+    /// D23: a module the loader has never heard of still resolves if the library has it.
+    #[test]
+    fn the_standard_library_resolves_with_no_file_beside_the_root() {
+        let files: BTreeMap<String, Sources> = BTreeMap::from([(
+            "app".to_string(),
+            Sources {
+                module: Some(
+                    "import format\n\ndef nine(x: Float) -> Str:\n    return fixed(x, 9)\n".into(),
+                ),
+                interface: None,
+                path: None,
+            },
+        )]);
+        let mut diags = Diagnostics::new();
+        let mut map = beck_diag::SourceMap::new();
+        let project = check_project(
+            "app",
+            &|n: &str| files.get(n).cloned(),
+            None,
+            &mut map,
+            &mut diags,
+        );
+        assert!(
+            !diags.has_errors(),
+            "{:?}",
+            diags
+                .iter()
+                .map(|d| (d.code, &d.message))
+                .collect::<Vec<_>>()
+        );
+        let project = project.expect("it links");
+        assert!(project.program.defs.contains_key("fixed"));
+        // And the library's own tests are the library's: they do not become this program's.
+        assert!(
+            project.program.tests.is_empty(),
+            "{} imported test(s) from the standard library",
+            project.program.tests.len()
+        );
+    }
+
+    /// The loader wins, so a project keeps its own module when the library grows that name.
+    #[test]
+    fn a_module_beside_the_root_shadows_the_standard_library_module_of_the_same_name() {
+        let files = BTreeMap::from([
+            (
+                "format".to_string(),
+                Sources {
+                    module: Some(
+                        "def fixed(x: Float, places: Int) -> Str:\n    return \"mine\"\n".into(),
+                    ),
+                    interface: None,
+                    path: None,
+                },
+            ),
+            (
+                "app".to_string(),
+                Sources {
+                    module: Some(
+                        "import format\n\ndef nine(x: Float) -> Str:\n    return fixed(x, 9)\n"
+                            .into(),
+                    ),
+                    interface: None,
+                    path: None,
+                },
+            ),
+        ]);
+        let mut diags = Diagnostics::new();
+        let mut map = beck_diag::SourceMap::new();
+        let project = check_project(
+            "app",
+            &|n: &str| files.get(n).cloned(),
+            None,
+            &mut map,
+            &mut diags,
+        );
+        // One `fixed`, not two: the library's copy was never loaded, so there is nothing to clash
+        // with (`B0601`).
+        assert!(
+            !diags.has_errors(),
+            "{:?}",
+            diags
+                .iter()
+                .map(|d| (d.code, &d.message))
+                .collect::<Vec<_>>()
+        );
+        assert!(project
+            .expect("it links")
+            .program
+            .defs
+            .contains_key("fixed"));
     }
 
     #[test]

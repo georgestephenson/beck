@@ -254,6 +254,8 @@ impl Plan {
                         ty: Ty::unit(),
                         tier: Tier::Any,
                         span: beck_diag::Span::NONE,
+                        last_use: false,
+                        locals: 0,
                     },
                 );
                 id
@@ -381,6 +383,8 @@ impl Builder<'_> {
                             ty: role.ty.clone(),
                             tier: Tier::Any,
                             span: node.span,
+                            last_use: false,
+                            locals: 0,
                         },
                     );
                     let state = self.state;
@@ -520,6 +524,8 @@ impl Builder<'_> {
             ty,
             tier: Tier::Any,
             span,
+            last_use: false,
+            locals: 0,
         };
         let mut params = captured.clone();
         params.extend(ps);
@@ -537,11 +543,11 @@ impl Builder<'_> {
     /// A function expression as parameters and a body, following one level of naming.
     fn as_lambda(&self, f: &Core) -> Option<(Vec<VarId>, Core)> {
         match &f.kind {
-            CoreKind::Lam { params, body } => Some((params.clone(), (**body).clone())),
+            CoreKind::Lam { params, body } => Some((params.to_vec(), (**body).clone())),
             CoreKind::Global(name) if !self.inlining.contains(name) => {
                 let def = self.program.defs.get(name)?;
                 match &def.body.kind {
-                    CoreKind::Lam { params, body } => Some((params.clone(), (**body).clone())),
+                    CoreKind::Lam { params, body } => Some((params.to_vec(), (**body).clone())),
                     _ => None,
                 }
             }
@@ -625,6 +631,8 @@ impl Builder<'_> {
                         ty: c.ty.clone(),
                         tier: c.tier,
                         span: c.span,
+                        last_use: false,
+                        locals: 0,
                     },
                 );
                 let names: Vec<&str> = fields.iter().map(|(n, _)| n.as_ref()).collect();
@@ -643,6 +651,8 @@ impl Builder<'_> {
                         ty: c.ty.clone(),
                         tier: c.tier,
                         span: c.span,
+                        last_use: false,
+                        locals: 0,
                     },
                 );
                 self.shared(
@@ -670,6 +680,8 @@ impl Builder<'_> {
                         ty: c.ty.clone(),
                         tier: c.tier,
                         span: c.span,
+                        last_use: false,
+                        locals: 0,
                     },
                 );
                 self.push(Op::Pointwise { code }, ids, None)
@@ -690,6 +702,8 @@ impl Builder<'_> {
                         ty: c.ty.clone(),
                         tier: c.tier,
                         span: c.span,
+                        last_use: false,
+                        locals: 0,
                     },
                 );
                 let key = format!("list/{ids:?}");
@@ -720,6 +734,8 @@ impl Builder<'_> {
                         ty: c.ty.clone(),
                         tier: c.tier,
                         span: c.span,
+                        last_use: false,
+                        locals: 0,
                     },
                 );
                 self.push(Op::Pointwise { code }, ids, None)
@@ -797,6 +813,8 @@ impl Builder<'_> {
                 ty: c.ty.clone(),
                 tier: c.tier,
                 span: c.span,
+                last_use: false,
+                locals: 0,
             },
         );
         let key = format!("prim/{}/{ids:?}", op.name());
@@ -821,6 +839,8 @@ impl Builder<'_> {
             ty: Ty::unit(),
             tier: Tier::Any,
             span: f.span,
+            last_use: false,
+            locals: 0,
         };
         Fun {
             code: lam(params, call),
@@ -850,9 +870,11 @@ fn lam(params: Vec<VarId>, body: Core) -> Core {
         tier: body.tier,
         span: body.span,
         kind: CoreKind::Lam {
-            params,
-            body: Box::new(body),
+            params: params.into(),
+            body: Arc::new(body),
         },
+        last_use: false,
+        locals: 0,
     }
 }
 
@@ -862,6 +884,8 @@ fn var(v: VarId, ty: Ty, span: beck_diag::Span) -> Core {
         ty,
         tier: Tier::Any,
         span,
+        last_use: false,
+        locals: 0,
     }
 }
 

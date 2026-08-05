@@ -143,7 +143,7 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0600` | error | **has a body, so it is not a signature** — A `.becki` publishes what a module offers, not how it does it. Regenerate it with `beck iface`. |
 | `B0601` | error | **defined in more than one module** — Phase 2 links modules into one namespace and has no qualified reference to tell two definitions apart, so a clash is an error rather than a shadowing rule. |
 | `B0602` | error | **a module imports itself, directly or through a cycle** — A module's interface is derived from its body, so a cycle would mean each module needed the other's contract before either had one. The cycle is printed. |
-| `B0603` | error | **cannot find module** — The loader looked for `<name>.becki` and `<name>.beck` and found neither. |
+| `B0603` | error | **cannot find module** — The loader looked for `<name>.becki` and `<name>.beck` beside the root module, and for a standard-library module of that name, and found neither. |
 | `B0604` | error | **has an interface but no implementation** — An interface is enough to compile against and never enough to run. |
 | `B0605` | error | **does not match its published interface** — The checked-in `.becki` and the module compile to different digests. Regenerate it with `beck iface`, and review the diff — the difference is an API change. |
 

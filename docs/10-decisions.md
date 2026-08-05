@@ -2,7 +2,7 @@
 
 George's answers to [`09`](09-risks-and-open-questions.md) §9.5, recorded with the reasoning spelled
 out. Decisions marked **DECIDED** are settled and the other documents assume them. All decisions
-D1–D20 are settled. A decision that revises an earlier one says so in both directions rather than
+D1–D23 are settled. A decision that revises an earlier one says so in both directions rather than
 quietly diverging (D20 revises D2).
 
 ---
@@ -683,6 +683,47 @@ ecosystems have and Beck will not: no element autocompletion from a schema witho
 about `ui:` specifically, and a mistyped tag is a macro-expansion error rather than a parse error.
 That is a real cost and it is accepted; §2.7's list of honest losses is where this belongs, and the
 mitigation is the LSP's, not the grammar's.
+
+## D23 — The standard library is on an implicit path, and the caller's directory wins — **DECIDED**
+
+[`68`](68-clbg-report.md) §68.4 found that `import` resolved against the root module's own directory
+and against nothing else, and left the fix here rather than taking it in a benchmark's change:
+making `import bignum` work from anywhere "is deciding that `lib/` is on an implicit search path …
+but it changes name resolution for every program in the language". That is the decision, and it is
+taken in two halves.
+
+**The standard library needs no declaration.** A program does not add a dependency, name a path or
+carry a manifest entry to write `import bignum`; the library is part of the language the way the
+prelude's primitives are, and [`16`](16-packages-and-ecosystem.md) §16.7's "small and boring" is a
+statement about its *contents* rather than about its reachability. The alternative — an explicit
+dependency on the language's own library — is a tax on every program to express a choice no program
+has.
+
+**An import resolves against the caller's directory first and the library second.** This half is the
+one that could have gone the other way, and it is forward compatibility that settles it: with the
+directory first, a program that already has a `text.beck` keeps working the day the standard library
+grows a `text`, so **adding to the library can never break a program that never asked for it**. With
+the library first, every name in it would be reserved for all time, and each addition would be a
+breaking change for somebody. The cost is that a local module silently shadows a library one, which
+is the same cost Python pays and is visible in the one place it matters: a diagnostic about a module
+says where it looked.
+
+**What this is not.** It is not a package system: there is no third-party name, no version, no lock
+entry, and nothing here decides how `@beck/std` will be spelled when
+[`16`](16-packages-and-ecosystem.md) §16.7's namespaces arrive. It is not a *search path* either —
+the library is carried inside the compiler rather than found on disk, so it cannot be missing or
+stale, and [`adr/0018`](adr/0018-the-standard-library-is-carried-in-the-compiler.md) is the
+engineering record of that and of the alternatives.
+
+**What it makes true that was not.** Every module in `lib/` now has to link with every other, because
+a program can import two — Beck's namespace is flat and has no qualified reference (`B0601`). Two
+collisions were waiting on the day this was taken, and the gate that finds them is
+`stdlib.rs::the_whole_library_links_into_one_program`.
+[`69`](69-standard-library-imports-report.md) is the build report.
+
+**What would reopen this.** The package system. A namespaced import (`@beck/std/bignum`) changes the
+notation and could change the precedence; that is a decision for
+[`16`](16-packages-and-ecosystem.md)'s wave, and it supersedes this record rather than amending it.
 
 ## Still open (minor, non-blocking)
 

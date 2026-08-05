@@ -159,10 +159,10 @@ model LimbDivision:
 
 ## Schoolbook long division, most significant limb first.
 ##
-## The trial quotient is found by **binary search** rather than by Knuth's estimate-and-correct.
-## That is fourteen comparisons per limb instead of one multiply and a rare fixup, so it is slower —
-## and it is obviously right, which for a first implementation of division is the trade to make.
-## `docs/55` §55.6 records it as the thing to replace if this is ever a bottleneck.
+## The trial quotient is found by **binary search between two proved bounds**: Knuth's estimate
+## brackets the search rather than replacing it, so the digit is still the one the search would have
+## found over the whole range, and the search is still what proves it. `digit_low` is why that is
+## worth having.
 def divmod_limbs(a: list[Int], b: list[Int]) -> LimbDivision:
     return divide_from(a, b, list_len(a) - 1, [], [])
 
@@ -172,7 +172,7 @@ def divide_from(
     if i < 0:
         return LimbDivision(quotient=trim(list_reverse(quotient_msf)), remainder=remainder)
     carried = add_limbs(shift_limbs(remainder, 1), [limb_at(a, i)])
-    digit = trial_digit(b, carried, 0, base() - 1)
+    digit = trial_digit(b, carried, digit_low(b, carried), digit_high(b, carried))
     return divide_from(
         a,
         b,
@@ -181,7 +181,53 @@ def divide_from(
         sub_limbs(carried, mul_small(b, digit)),
     )
 
-## The largest `d` in `0..base()-1` with `b * d` at most `carried`.
+## The limbs of `carried` above the divisor's length, as one `Int`.
+##
+## There are never more than two of them: `carried` is a remainder — under the divisor — times the
+## base, plus a limb, so it is under `base()` times the divisor. Two base-10,000 limbs are under
+## 10⁸, which is an `Int` with room to spare.
+def leading_pair(carried: list[Int], n: Int) -> Int:
+    return limb_at(carried, n - 1) + base() * limb_at(carried, n)
+
+## A digit the trial quotient cannot be below, from the leading limbs alone.
+##
+## [`docs/55`](../../docs/55-bignums-report.md) §55.6 named the binary search over the whole limb
+## range as "the thing to replace first if any of it is ever a bottleneck", and
+## [`clbg/pidigits.beck`](../clbg/README.md) made it one: a search over `0..9999` costs fourteen
+## multiplications of the *whole divisor* per quotient limb, and most quotient limbs are small or
+## zero. This is Knuth's estimate — his algorithm D without his normalisation — used to bracket the
+## search.
+##
+## Writing `V` for the divisor, `C` for `carried`, `v` for the divisor's top limb, `n` for its
+## length and `H` for `leading_pair`:
+##
+## - `V >= v·base^(n-1)`, so `floor(C/V)` is **at most** `(H + 1) / v`;
+## - `V < (v+1)·base^(n-1)`, so it is **at least** `H / (v + 1)`.
+##
+## Both are one integer division, where each step the bracket saves is a multiplication over every
+## limb of the divisor. When the divisor's top limb is large the bracket is a single digit wide and
+## the search proves it in one comparison; when it is 1 the bracket is wide and the search is what
+## it always was — never worse, because the bounds hold either way.
+def digit_low(b: list[Int], carried: list[Int]) -> Int:
+    n = list_len(b)
+    return capped_digit(leading_pair(carried, n) / (limb_at(b, n - 1) + 1))
+
+## And one it cannot be above. `digit_low` is the argument for both.
+##
+## A zero top limb means the divisor is zero, which the callers rule out — `divide` raises on it and
+## `divide_small` takes a positive `Int`. The guard is here so that a divisor they let through
+## produces the answer this function produced before it had bounds, rather than a division by zero.
+def digit_high(b: list[Int], carried: list[Int]) -> Int:
+    n = list_len(b)
+    top = limb_at(b, n - 1)
+    if top == 0:
+        return base() - 1
+    return capped_digit((leading_pair(carried, n) + 1) / top)
+
+def capped_digit(d: Int) -> Int:
+    return d if d < base() - 1 else base() - 1
+
+## The largest `d` in `low..high` with `b * d` at most `carried`.
 def trial_digit(b: list[Int], carried: list[Int], low: Int, high: Int) -> Int:
     if low >= high:
         return low
@@ -504,6 +550,35 @@ test "division is long division, and it truncates toward zero":
     expect (try: render_big(big_rem(big(-7), big(2)))) == Ok(value="-1")
     expect (try: render_big(big(7) / big(-2))) == Ok(value="-3")
     expect (try: big(1) / zero()) == Err(error=DividedByZero)
+
+## `divisor · quotient + remainder`, divided back by `divisor`.
+##
+## The answer is the quotient the *multiplication* started from, so a test written this way does not
+## agree with long division by construction — which is the same argument the `property` blocks below
+## make with `Int` arithmetic, at sizes an `Int` cannot hold.
+def divided_back(divisor: Big, quotient: Int, remainder: Int) -> Int uses raises(BigError):
+    return unwrap_or(big_to_int((divisor * big(quotient) + big(remainder)) / divisor), -1)
+
+## The trial digit is searched between two estimated bounds rather than over the whole limb range
+## (`digit_low`), and these are the cases where a wrong bound would show: a divisor whose top limb
+## is `1`, where the bracket is at its widest; one whose top limb is `9999`, where it is one digit
+## wide; a quotient limb at the top of the range; and a quotient of zero, which is what most limbs
+## of a long division are.
+test "long division finds the same digit whatever the divisor's leading limb is":
+    expect (try: divided_back(big_pow(big(10000), 5) + big(1), 999999, 3)) == Ok(value=999999)
+    expect (try: divided_back(big(9999) * big_pow(big(10000), 4), 1234, 7)) == Ok(value=1234)
+    expect (try: divided_back(big_pow(big(10000), 4) + big(1), 9999, 0)) == Ok(value=9999)
+    expect (try: render_big(big_pow(big(10000), 8) / (big_pow(big(10000), 8) + big(1)))) == Ok(
+        value="0"
+    )
+    expect (try: render_big(big_rem(big_pow(big(10000), 8), big_pow(big(10000), 8) + big(1)))) == Ok(
+        value="100000000000000000000000000000000"
+    )
+
+## Every digit a limb can be, over a divisor of two limbs. A bound that is wrong for one digit in
+## ten thousand is what this is for, and a hundred random pairs are unlikely to find one.
+property "a divisor times a digit divides back to that digit"(d: Int):
+    expect (try: divided_back(big(12345678), abs(d) % 10000, 7)) == Ok(value=abs(d) % 10000)
 
 test "the small division is the same division, without the failure":
     expect divide_small(big(12345), 10).quotient == big(1234)

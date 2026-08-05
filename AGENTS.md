@@ -51,8 +51,17 @@ Write the commit message as the author of the change: what changed, and why.
   [`64`](docs/64-compile-speed-report.md),
   [`65`](docs/65-lsp-report.md),
   [`66`](docs/66-page-snapshots-report.md),
-  [`67`](docs/67-sqlite-report.md) and
+  [`67`](docs/67-sqlite-report.md),
   [`68`](docs/68-clbg-report.md),
+  [`69`](docs/69-standard-library-imports-report.md),
+  [`70`](docs/70-last-use-moves-report.md),
+  [`71`](docs/71-strings-report.md),
+  [`72`](docs/72-space-and-constants-report.md),
+  [`73`](docs/73-closures-share-their-code-report.md),
+  [`74`](docs/74-the-cost-of-a-call-report.md),
+  [`75`](docs/75-what-the-profiler-said-report.md),
+  [`76`](docs/76-the-record-and-the-read-report.md) and
+  [`77`](docs/77-a-let-is-a-slot-report.md),
   indexed in
   [`docs/README.md`](docs/README.md) — record what each
   phase does, what it refuses to claim, and the corrections it makes to the design documents.
@@ -67,16 +76,23 @@ Write the commit message as the author of the change: what changed, and why.
   its nine micro and all five macro (docs/53, docs/57, docs/58, docs/59, docs/60, docs/61) — are
   that bullet's long-owed harness half, so **the standard-library bullet is done** — the
   compile-speed budgets are built (docs/64) and so is the **CLBG harness** (docs/68), which
-  completes docs/25 §25.9's Phase 3 row: seven of the Game's ten, each verified against the Game's
-  own published output *file*, with the oracle enforced by the gate — `clbg.rs` rebuilds every
-  asserted literal from `clbg/expected/` and recomputes the digest of the two 10 KB ones — which is
-  what docs/64 §64.7.1 was holding out for when it said the harness was owed *with its sources to
-  hand* rather than owed generally. Its largest finding is not about speed: **`lib/` is a standard
-  library that nothing outside `lib/` can import**, since `import` resolves only against the root
-  module's own directory, and nothing had noticed because in three phases nothing had reached
-  across a directory. That is what stops `pidigits`, and docs/68 §68.4 leaves it as a decision for
-  docs/10 rather than repairing it in a benchmark's change; `mandelbrot` (a binary PBM, and `Str`
-  is UTF-8) and `regexredux` (no regex) are the other two of the ten; the incremental-views bullet has its engine and
+  completes docs/25 §25.9's Phase 3 row: **eight** of the Game's ten, each verified against the
+  Game's own published output *file*, with the oracle enforced by the gate — `clbg.rs` rebuilds
+  every asserted literal from `clbg/expected/` and recomputes the digest of the two 10 KB ones —
+  which is what docs/64 §64.7.1 was holding out for when it said the harness was owed *with its
+  sources to hand* rather than owed generally. Its largest finding was not about speed: **`lib/`
+  was a standard library that nothing outside `lib/` could import**, since `import` resolved only
+  against the root module's own directory, and nothing had noticed because in three phases nothing
+  had reached across a directory. docs/68 §68.4 left it as a decision for docs/10 rather than
+  repairing it in a benchmark's change, and **docs/69 is that decision taken and built**: the Beck
+  half of the standard library is carried in the compiler and an import resolves against the
+  caller's own directory first (docs/10 D23, docs/adr/0018), so `import bignum` works anywhere and
+  adding a library cannot break a program that never asked for it. What that broke is the more
+  interesting half — the flat namespace now spans `lib/`, so every module there has to link with
+  every other, and two collisions had been waiting where nothing could reach them. `pidigits` is
+  ported on the back of it and measures `lib/bignum.beck` rather than GMP; `mandelbrot` (a binary
+  PBM, and `Str` is UTF-8) and `regexredux` (no regex) are the two of the ten that are not, and
+  both reasons are facts about the language; the incremental-views bullet has its engine and
   that engine's lifecycle (docs/51) but not its read models, pgwire
   or fusion; the expressiveness suite runs two chapters of SICP and answers §25.9's Felleisen
   question — six of the seven special forms recovered, `amb` conceded (docs/63); and **the LSP
@@ -147,7 +163,13 @@ Write the commit message as the author of the change: what changed, and why.
 - [`compiler/lib/`](compiler/lib/README.md) is the standard library's **Beck half**: a host's table
   or grammar is a primitive in `prelude.rs`, and composition is a file there. Each carries its own
   `test` blocks, and `beck-cli/tests/stdlib.rs` gates the directory rather than a list — a file
-  added there is gated by being there.
+  added there is gated by being there. Every file is **compiled into the binary**
+  (`beck_core::stdlib`) and an import resolves against the caller's own directory first and that
+  table second, so `import bignum` works anywhere and a local module of the same name wins
+  (docs/10 D23, docs/adr/0018, docs/69). Two consequences: a file added there needs a line in
+  `MODULES`, which `stdlib.rs` checks by importing every file from outside `lib/`; and the flat
+  namespace spans the directory, so a name defined in two library files cannot be imported by one
+  program — `the_whole_library_links_into_one_program` is that gate.
 - [`compiler/corpus/`](compiler/corpus/) is 30 programs — 29 single files and one three-module
   project — carrying **no placement annotations**, and the measurement behind Phase 2's exit
   criterion. A program added there has to place itself.
@@ -171,16 +193,78 @@ Write the commit message as the author of the change: what changed, and why.
   names and the attribution, and `measure_awfy.rs` prints wall-clock and gates on nothing —
   §25.9 holds every comparative claim until there is a second backend.
 - [`compiler/clbg/`](compiler/clbg/README.md) is the other performance benchmark
-  ([`docs/25`](docs/25-benchmarks-and-expressiveness.md) §25.2): **seven** of the Computer Language
+  ([`docs/25`](docs/25-benchmarks-and-expressiveness.md) §25.2): **eight** of the Computer Language
   Benchmarks Game's ten, ported, each verified against the Game's own published **output file** —
   checked in verbatim under `clbg/expected/` under its BSD 3-clause notice. The oracle is
   *enforced* rather than transcribed, which is the difference from `awfy/` and the reason docs/64
   §64.7.1 held the harness back until the files were reachable: `beck-cli/tests/clbg.rs` rebuilds
   every asserted literal from `expected/` and recomputes the digest of the two 10 KB ones, so a
   wrong constant fails the Beck test and a wrong constant with a matching wrong expectation fails
-  the Rust one. It also gates the seven names, the three absent ones and the attribution;
-  `measure_clbg.rs` prints wall-clock and gates on nothing. `mandelbrot`, `pidigits` and
-  `regexredux` are the three not ported and docs/68 §68.6 is why each.
+  the Rust one. It also gates the eight names, the two absent ones and the attribution;
+  `measure_clbg.rs` prints wall-clock and gates on nothing. `mandelbrot` and
+  `regexredux` are the two not ported and docs/68 §68.6 is why each; `pidigits` was the third until
+  docs/69 made `lib/bignum.beck` importable. Every file there runs under the **default** fuel
+  budget, `pidigits` included, and that is a fact about the library rather than about the gate:
+  it needed 100,000,000 steps until docs/69 §69.6 bracketed long division's trial-digit search, and
+  needs under 16,000,000 now. A budget table in `clbg.rs` would have hidden that. **docs/69 §69.7 is
+  the larger thing the same question found**: `list_append` copied the whole list, so the
+  tail-recursive accumulator every loop in the language is written as was O(n²) in time — docs/19
+  §19.4's fold defect in a second place. **docs/70 fixes it** with last-use moves: `beck_core::liveness`
+  marks the read of a local nothing reads again, `Env::read` hands the value over when
+  `Arc::get_mut` proves the frame is unshared, and `list_append` pushes in place. Neutral on today's
+  programs and 25× at 8,000 elements; `scaling.rs` gates the shape, because `--fuel` cannot see a
+  copy — a primitive copying ten thousand values is one step. docs/70 §70.6 is the audit beside it,
+  and **docs/71 is its two string findings fixed**: a string carries its character count and an
+  ASCII flag, so `str_len` is O(1) and a slice is a byte range, and it holds a `String` so `+`
+  pushes into it under the same ownership test. Three quadratics found and removed in one branch —
+  division's trial digit (docs/69 §69.6), the list accumulator (docs/70) and both halves of text —
+  each by asking what an operation should cost and measuring at two sizes. **docs/72 is the same
+  question asked of space and of the constants**: a `Value` was 48 bytes because of the record
+  variant most values are not, and is 16 now — a third off the memory of everything the language
+  holds, −23% peak on `havlak`. It also makes `--fuel` charge for the work a primitive does over a
+  length the caller chose, so the budget bounds work rather than nodes and a scaling gate can be
+  deterministic; the default is unchanged, because the charge is the size of the work rather than a
+  tax on it. **docs/73 is the largest single number any of it produced and is one line**: a closure
+  held its body by value, so evaluating a `lam` deep-copied the whole function body once per call of
+  a named function — every benchmark in the tree is **56–72% faster** now that it shares an `Arc`.
+  It survived four reports about performance because it is a constant rather than a shape, and
+  because `--fuel` cannot see a copy that happens between nodes rather than inside a primitive.
+  **docs/74 is the rest of that question**: what a *call* costs, worked down from 287 ns to 174 ns —
+  a definition's closure built once instead of per call, a frame that is one allocation instead of
+  three, an environment taken by refcount, and the two smallest of all, a cheaper hash for a
+  definition's name and a field test in place of the virtual call that asked whether a stub was
+  installed. Every benchmark is a further 17–27% faster. Its §74.6 is the one that measurement
+  *refused*: an argument stack removes the last avoidable allocation and made a call 20% slower,
+  and the version that would pay needs `unsafe`, which this workspace forbids — so two allocations
+  a call is the floor rather than an oversight. **docs/75 is the first time this project profiled
+  itself**, and it corrects docs/74's own list of what was left: `callgrind` put **35% of every
+  instruction inside glibc's `malloc` and `free`**, so mimalloc is the binary's global allocator
+  (docs/adr/0019) and a record's fields are a small sorted array rather than a `BTreeMap` — 4.9–17%
+  faster together, and 26–33% faster than docs/73. Three of docs/74 §74.8's four were **measured and
+  rejected**: a small-vector for arguments and a smaller `Core` are both slower, and a globals index
+  and a cheaper `let` are third-order. Reasoning about what an operation should cost found five real
+  defects and is still the first move; it examines the operations somebody names, and the largest
+  cost here was the sum of every small one. Its §75.6 is the first update to docs/25 §25.3's
+  standing measurement: the same `fib(30)` is **0.797 s** rather than 4.120 s, so the tree-walker is
+  **7.3× CPython** on calls, 5.1× on allocation and 2.7× on arithmetic where §25.3 measured 33×.
+  A measurement rather than a claim — §25.9 still holds those until there is a second backend.
+  **docs/76 is the next three off that profile**: a record literal sorts once instead of
+  binary-searching per field, `with` scans by equality because `==` can stop at the length,
+  `Env::read` no longer proves the scope chain unshared on a read that is not a last use — two
+  atomic loads per scope *level*, paid by every read in the language — and a field name is decided
+  on its first byte. 4–8% on record-heavy programs and nothing on the one that builds no records.
+  Its §76.4 is the correction to docs/75's method: callgrind counts **instructions**, and the
+  6.21% of them that were `memcmp` were worth about 2% of the clock — an instruction profile ranks
+  candidates, and the wall clock decides between them. **docs/77 is that rule applied to docs/76's
+  own next item**, which turned out to be the wrong half: the same loop with 0, 8 and 24 bindings
+  in its body put **134 ns on a `let`** — three allocations, 77% of what a whole function call
+  costs — where the *read* it named was never the expensive part. A call now sizes its frame for
+  the parameters and every binding the body will make, so a `let` is a store and a counter at
+  **32 ns**; `beck_core::frames` counts, summing what runs in sequence and taking the maximum over
+  branches that cannot both run, and `Arc::get_mut` refuses the write once a closure holds the
+  frame. 4.2–8.2% across every benchmark, `fib(30)` unchanged because it binds nothing, and 3–6%
+  more peak memory. Its §77.6 corrects docs/75 §75.4, which called this third-order from an
+  allocation *count*: a candidate you have only counted has not been measured.
 - Security posture is [`docs/43-threat-model.md`](docs/43-threat-model.md) (who is defended
   against, and who is not) and `SECURITY.md` (how a report reaches us). What is *absent* is asserted
   as absent in `beck-cli/tests/pending_security.rs`: building one of those controls turns a test
@@ -191,6 +275,28 @@ Write the commit message as the author of the change: what changed, and why.
 
 ## Standards for changes
 
+- **Know the complexity of what you write, and measure it at two sizes.** Beck's premise is a
+  language that is *fast* — [`01`](docs/01-vision-and-premise.md) — so a cost is part of a change's
+  correctness rather than a follow-up to it. Two rules, both learned by breaking them:
+  - **State the order of growth** of anything that loops, allocates or copies, where it is not
+    obvious from three lines of code, and **measure it at two sizes rather than one**. One
+    measurement cannot tell linear from quadratic; two can, and the second costs a minute. A gate
+    on a *shape* — cost per unit must not grow with the number of units — is
+    [`docs/64`](docs/64-compile-speed-report.md)'s pattern and does not flake the way a rate does.
+  - **A bad number is a design question, not a fact to write down.** If something is slower than it
+    has any business being, the first hypothesis is that the approach is wrong — not that the
+    machine is slow, not that the interpreter is a placeholder, and never that it is a cost to be
+    "paid knowingly". Every one of this project's performance findings was sitting behind a number
+    somebody had already measured and accepted: a fold that copied its accumulator
+    ([`19`](docs/19-phase-1-report.md) §19.4), a placement pass that re-summed the program
+    ([`64`](docs/64-compile-speed-report.md) §64.2), a division that searched where it could
+    estimate and a list that copies where it could move
+    ([`69`](docs/69-standard-library-imports-report.md) §69.6–§69.7). Ask what the operation *should*
+    cost before asking how to make this one faster; the answer is often a different design rather
+    than a faster version of the same one.
+  - A performance defect in the semantics — a copy the language forces, an accumulator that cannot
+    be reused — **survives into every backend**, so it is not the tree-walker's problem to grow out
+    of. `beck-cli/tests/scaling.rs` is the gate that says so, and it is where a new shape gate goes.
 - Claims in docs are stated from evidence. If you write a number, it must be reproducible —
   `phase0/tests/measure.sh` is where the Phase 0 numbers come from; the Phase 1 numbers come from
   `cargo test` and the commands quoted in [`docs/19-phase-1-report.md`](docs/19-phase-1-report.md);
@@ -226,15 +332,18 @@ Write the commit message as the author of the change: what changed, and why.
   *verification* constant is the original suite's own, read from its source rather than chosen here;
   and the Benchmarks Game numbers come from `cargo test --release --test measure_clbg --
   --nocapture` and from `beck test` on each file in `compiler/clbg/`, quoted in
-  [`docs/68-clbg-report.md`](docs/68-clbg-report.md) — where every expected output is the Game's own
-  file under `clbg/expected/` and `clbg.rs` is what holds a port's assertion to it;
+  [`docs/68-clbg-report.md`](docs/68-clbg-report.md) and
+  [`docs/69-standard-library-imports-report.md`](docs/69-standard-library-imports-report.md) §69.5 —
+  where every expected output is the Game's own file under `clbg/expected/` and `clbg.rs` is what
+  holds a port's assertion to it; and the cost of importing a standard-library module comes from
+  `beck check` on the probes docs/69 §69.4 lists;
   and the compile-speed numbers come from `cargo test --release --test measure_compile --
   --nocapture` and `cargo test --release --test compile_speed -- --nocapture`, quoted in
   [`docs/64-compile-speed-report.md`](docs/64-compile-speed-report.md) — where the gate asserts a
   *shape* rather than a rate, because docs/13 §13.7's "a gate that flakes gets deleted" rules out a
   wall-clock threshold on a shared runner.
 - The harnesses are the project's conscience (§4.8, §8.3): `compiler/crates/beck-cli/tests/` holds
-  the differential, replay-determinism, backend-seam, scaling, security, corpus, placement-property,
+  the differential, replay-determinism, backend-seam, scaling, frames, security, corpus, placement-property,
   general-slicer, incremental-analysis, incremental-engine, shared-arrangement, subscription,
   view-metrics, SICP, Are We Fast Yet, Benchmarks Game, tests-in-Beck, UI, workflow-cross-check,
   documentation, outbound, compile-speed and diagnostic-snapshot suites, plus the five release-only

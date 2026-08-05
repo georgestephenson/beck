@@ -616,7 +616,10 @@ function behind `cap.sign` with a test that enumerates the prelude and keeps the
 [`lib/README.md`](../compiler/lib/README.md)'s division cost the refusal of a good crate — so
 **arbitrary-precision decimal** is built too ([`56`](56-decimal-report.md)) — canonical, with `/`
 exact or refusing — so **§8.5.4's Wave 2 is finished** and what is left on this bullet is the
-benchmark harness. §46.6 has the item-by-item list, §49.6 the client's own, §50.6 the two newest
+benchmark harness. And it is a standard library a program can *reach* since
+[`69`](69-standard-library-imports-report.md): every file in `compiler/lib/` is carried in the
+compiler and importable by name from anywhere, which nothing outside that directory could do for the
+three waves it took to write. §46.6 has the item-by-item list, §49.6 the client's own, §50.6 the two newest
 files' and §52.6 the crypto half's — including what a digest deliberately is not: no asymmetric
 signature, no TLS, no encryption of any kind. The **Are We Fast Yet harness is complete — all fourteen
 benchmarks** ([`53`](53-are-we-fast-yet-report.md), [`57`](57-richards-report.md),
@@ -624,11 +627,14 @@ benchmarks** ([`53`](53-are-we-fast-yet-report.md), [`57`](57-richards-report.md
 [`61`](61-deltablue-report.md)), each verified against the constant
 the original suite's own `verifyResult` checks, with wall-clock printed and nothing compared to
 anything — §8.4's ask, half discharged. The **CLBG** harness is stood up too
-([`68`](68-clbg-report.md)) — seven of the Game's ten, verified against the Game's own published
+([`68`](68-clbg-report.md)) — eight of the Game's ten, verified against the Game's own published
 output *files*, with the oracle enforced by the gate rather than transcribed by hand — so §8.4's
-ask is **discharged in full**. Its largest finding is not about either suite: **`lib/` is a
-standard library nothing outside `lib/` can import**, since `import` resolves only against the root
-module's own directory (§68.4). The
+ask is **discharged in full**. Its largest finding was not about either suite: **`lib/` was a
+standard library nothing outside `lib/` could import**, since `import` resolved only against the
+root module's own directory (§68.4). That is fixed
+([`69`](69-standard-library-imports-report.md)) — the library is carried in the compiler and an
+import resolves against the caller's directory first ([`10`](10-decisions.md) D23) — which took the
+Game's harness from seven to eight, since `pidigits` was the benchmark it was holding. The
 **Felleisen table** ([`63`](63-felleisen-report.md)) and the **compile-speed budgets**
 ([`64`](64-compile-speed-report.md)) are both built and sit under
 [`25`](25-benchmarks-and-expressiveness.md) §25.9 rather than under this bullet.

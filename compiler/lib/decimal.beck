@@ -113,7 +113,7 @@ def of_big(n: Big) -> Decimal:
 def of_units(units: Int, scale: Int) -> Decimal:
     return decimal(big(units), scale)
 
-def is_negative(d: Decimal) -> Bool:
+def is_negative_decimal(d: Decimal) -> Bool:
     return d.units.negative
 
 def is_zero_decimal(d: Decimal) -> Bool:
@@ -219,7 +219,7 @@ def divide_bigs(x: Big, y: Big, a: Decimal, b: Decimal) -> Division uses raises(
             raise QuotientDoesNotTerminate(dividend=render_decimal(a), divisor=render_decimal(b))
 
 def signed_as(a: Decimal, b: Decimal, magnitude: Decimal) -> Decimal:
-    if is_negative(a) != is_negative(b):
+    if is_negative_decimal(a) != is_negative_decimal(b):
         return negate_decimal(magnitude)
     return magnitude
 
@@ -288,7 +288,7 @@ def render_decimal(d: Decimal) -> Str:
     padded = str_slice("0000000000000000000000000000000000000000", 0, d.scale + 1 - str_len(digits)) + digits
     point = str_len(padded) - d.scale
     return (
-        ("-" if is_negative(d) else "")
+        ("-" if is_negative_decimal(d) else "")
         + str_slice(padded, 0, point)
         + "."
         + str_slice(padded, point, d.scale)
@@ -306,7 +306,7 @@ def render_at(d: Decimal, scale: Int, rule: Rounding) -> Str uses raises(Decimal
     padded = str_slice("0000000000000000000000000000000000000000", 0, scale + 1 - str_len(digits)) + digits
     point = str_len(padded) - scale
     return (
-        ("-" if is_negative(rounded) else "")
+        ("-" if is_negative_decimal(rounded) else "")
         + str_slice(padded, 0, point)
         + "."
         + str_slice(padded, point, scale)

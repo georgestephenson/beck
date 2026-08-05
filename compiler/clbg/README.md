@@ -34,7 +34,7 @@ and a matching made-up expectation — fails `clbg.rs`. Nothing in this director
 
 ## What is here
 
-Seven of the Game's ten, each a Beck **library** whose `test` block is its published output.
+Eight of the Game's ten, each a Beck **library** whose `test` block is its published output.
 
 | File | What it measures | The Game's own oracle |
 |---|---|---|
@@ -45,13 +45,25 @@ Seven of the Game's ten, each a Beck **library** whose `test` block is its publi
 | [`fasta.beck`](fasta.beck) | A specified LCG and weighted alphabets | 10,245 characters at `N = 1000` |
 | [`revcomp.beck`](revcomp.beck) | Reverse-complementing DNA | 10,245 characters, from the input the Game publishes |
 | [`knucleotide.beck`](knucleotide.beck) | Hashtable update and k-nucleotide strings | 26 lines, from the same input |
+| [`pidigits.beck`](pidigits.beck) | Gibbons' streaming spigot over arbitrary-precision integers | 30 digits, ten to a line, at `N = 30` |
 
-[`format.beck`](format.beck) is not a benchmark. It is the fixed-decimal formatting three of the
-ports need and the language does not have — `str` on a `Float` is the shortest representation that
-round-trips, and `%.9f` is not it. `docs/68` §68.4 records that as a standard-library gap.
+Every file here is a benchmark. The fixed-decimal formatting three of the ports need lives in
+[`lib/format.beck`](../lib/README.md), where `docs/68` §68.4 said it belonged and could not go:
+until [`docs/69`](../../docs/69-standard-library-imports-report.md) nothing outside `lib/` could
+import the standard library, which is also what stopped `pidigits`.
 
-`beck-cli/tests/clbg.rs` gates the directory: a file added here is run by being here, the seven
-names and the three absent ones are enumerated in one place, and the oracle cross-check above is a
+**`pidigits` measures [`lib/bignum.beck`](../lib/README.md)**, which is worth stating beside the
+benchmark rather than in a report: every other entry in the Game's table for it measures GMP or a
+runtime's built-in big integer, and this one measures schoolbook arithmetic over base-10,000 limbs
+written in Beck, on a tree-walker. It was also the first benchmark here to want more than the
+evaluator's default step budget — the only size the Game publishes an oracle for is `N = 30`, so
+unlike `awfy/`'s three there is no reduced configuration to gate at — and what that bought was a
+faster long division rather than a `--fuel` flag in the harness
+([`docs/69`](../../docs/69-standard-library-imports-report.md) §69.6). Every file here runs under
+the default budget.
+
+`beck-cli/tests/clbg.rs` gates the directory: a file added here is run by being here, the eight
+names and the two absent ones are enumerated in one place, and the oracle cross-check above is a
 test. `measure_clbg.rs` prints wall-clock and gates on nothing.
 
 ## What the port changes
@@ -88,14 +100,17 @@ Two more differences are worth naming separately because they are not mechanical
 
 ## What is not here
 
-**Three of the ten are not ported, and each is a fact about the language rather than about effort.**
-`clbg.rs` asserts all three are still true, so the change that removes one turns a test red.
+**Two of the ten are not ported, and each is a fact about the language rather than about effort.**
+`clbg.rs` asserts both are still true, so the change that removes one turns a test red.
 
 | | Why not |
 |---|---|
 | `mandelbrot` | The published output is a binary PBM — `P4\n200 200\n` and then packed bits, NUL bytes included. Beck's `Str` is UTF-8 and there is no byte string, so the answer cannot be represented, let alone compared. (Are We Fast Yet's variant of this benchmark, which returns a checksum instead of an image, *is* ported: [`awfy/mandelbrot.beck`](../awfy/mandelbrot.beck)) |
-| `pidigits` | Needs arbitrary-precision integers. Beck has them — [`lib/bignum.beck`](../lib/README.md) — and this directory cannot reach them: `import` resolves only against the root module's own directory, so `import bignum` fails from here and succeeds from `lib/`. `docs/68` §68.4 is the finding |
 | `regexredux` | The Game requires its nine specific regex patterns — "use the same simple regex patterns" — and Beck has no regex. Writing one in Beck would make the benchmark measure our regex engine, which is the one thing the instruction is there to prevent |
+
+There were three. `pidigits` was the third, and its reason was never a fact about the language:
+Beck had the arbitrary-precision integers it needs and this directory could not reach them
+(`docs/68` §68.4). That was a repository limitation, it is fixed, and the benchmark is ported.
 
 **Every port runs the Game's format-checking size, not its measuring size.** Each description page
 gives two: an `N` it publishes an expected output for, and a much larger one "to check program
@@ -114,8 +129,8 @@ machine, and it says so.
 These are ports. The originals are the Java programs published by the Computer Language Benchmarks
 Game at <https://salsa.debian.org/benchmarksgame-team/benchmarksgame/> — contributed by Jarkko
 Miettinen (`spectralnorm`, modified by Isaac Gouy, and `binarytrees`), Mark C. Lewis (`nbody`),
-Oleg Mazurov (`fannkuchredux`), Mehmet D. AKIN (`fasta`), Leonhard Holz (`revcomp`) and James
-McIlree with Tagir Valeev (`knucleotide`) — and each file names its own. The expected-output files
+Oleg Mazurov (`fannkuchredux`), Mehmet D. AKIN (`fasta`), Leonhard Holz (`revcomp`), James
+McIlree with Tagir Valeev (`knucleotide`) and Isaac Gouy (`pidigits`) — and each file names its own. The expected-output files
 in [`expected/`](expected/) are the Game's own, downloaded from `public/download/` in that
 repository and unmodified.
 

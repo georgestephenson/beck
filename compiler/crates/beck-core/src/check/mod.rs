@@ -1370,11 +1370,13 @@ impl<'a> Checker<'a> {
         let lam = Core {
             kind: CoreKind::Lam {
                 params: params.iter().map(|(id, _, _)| *id).collect(),
-                body: Box::new(body),
+                body: Arc::new(body),
             },
             ty: Ty::Fun(param_tys, ret.clone(), latent),
             tier,
             span,
+            last_use: false,
+            locals: 0,
         };
 
         let mut declared_effects: Vec<Effect> = declared.atoms.iter().cloned().collect();
@@ -2193,8 +2195,8 @@ impl<'a> Checker<'a> {
                     .collect();
                 Core::new(
                     CoreKind::Lam {
-                        params: ids,
-                        body: Box::new(Core::new(
+                        params: ids.into(),
+                        body: Arc::new(Core::new(
                             CoreKind::Prim { op: p, args },
                             *ret.clone(),
                             span,
@@ -2335,8 +2337,8 @@ impl<'a> Checker<'a> {
         let result_ty = Ty::app(Ty::RESULT, vec![value_ty, Ty::con(&error)]);
         let thunk = Core::new(
             CoreKind::Lam {
-                params: Vec::new(),
-                body: Box::new(core),
+                params: Arc::from(Vec::new()),
+                body: Arc::new(core),
             },
             self.subst.fresh(),
             span,
@@ -2394,8 +2396,8 @@ impl<'a> Checker<'a> {
         let ret = body.ty.clone();
         Core::new(
             CoreKind::Lam {
-                params: ids,
-                body: Box::new(body),
+                params: ids.into(),
+                body: Arc::new(body),
             },
             Ty::fun_eff(tys, ret, row),
             span,
@@ -3283,7 +3285,7 @@ fn error_ty_name(t: &Ty) -> Option<Arc<str>> {
 fn resolve_types(c: &mut Core, s: &Subst) {
     c.ty = s.resolve(&c.ty);
     match &mut c.kind {
-        CoreKind::Lam { body, .. } => resolve_types(body, s),
+        CoreKind::Lam { body, .. } => resolve_types(std::sync::Arc::make_mut(body), s),
         CoreKind::App { func, args } => {
             resolve_types(func, s);
             for a in args {

@@ -25,7 +25,6 @@
 //! says is what lets a backend slot in later. The Phase 1 report says plainly that native codegen
 //! is not done.
 
-use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
 
@@ -404,8 +403,14 @@ pub enum CoreKind {
     /// A reference to a top-level definition.
     Global(Arc<str>),
     Lam {
-        params: Vec<VarId>,
-        body: Box<Core>,
+        /// Shared for the same reason `body` is: evaluating a `lam` hands the list to a closure,
+        /// and a refcount bump is cheaper than copying it once per call.
+        params: Arc<[VarId]>,
+        /// Shared, not owned: a closure is built every time a `lam` node is *evaluated*, and a
+        /// `Box` meant deep-copying the whole function body each time. `docs/73` §73.1 measured
+        /// 20,000 calls to a function whose executed path never changed costing 42 ms, 227 ms and
+        /// 606 ms as the *unexecuted* part of its body grew.
+        body: Arc<Core>,
     },
     App {
         func: Box<Core>,
@@ -456,6 +461,14 @@ pub struct Core {
     /// Which tier this node runs on. §4.2: "explicit tier annotation per node".
     pub tier: Tier,
     pub span: Span,
+    /// Set on a [`CoreKind::Var`] whose value this expression is the **last** reader of, so a
+    /// backend may move the binding rather than copy it. [`crate::liveness`] is what sets it and
+    /// what the guarantee means; `false` is always safe.
+    pub last_use: bool,
+    /// Set on a [`CoreKind::Lam`]: how many bindings its body makes, so a call can reserve room
+    /// for them in one frame instead of allocating a scope per `let`. [`crate::frames`] is what
+    /// sets it and what the count means; `0` is always safe and means "chain a scope, as before".
+    pub locals: u32,
 }
 
 /// The string this expression *is*, when it is written as one.
@@ -479,6 +492,8 @@ impl Core {
             ty,
             tier: Tier::Any,
             span,
+            last_use: false,
+            locals: 0,
         }
     }
 
@@ -571,7 +586,7 @@ impl Core {
     pub fn place(&mut self, tier: Tier) {
         self.tier = tier;
         match &mut self.kind {
-            CoreKind::Lam { body, .. } => body.place(tier),
+            CoreKind::Lam { body, .. } => Arc::make_mut(body).place(tier),
             CoreKind::App { func, args } => {
                 func.place(tier);
                 for a in args {
@@ -653,19 +668,308 @@ pub enum Value {
     /// (flip the sign bit for a positive, invert every bit for a negative), which makes the two
     /// orders the same order. `docs/32` §32.2.
     Float(u64),
-    Str(Arc<str>),
+    /// Text, with the two facts a character-indexed language needs about it: how many characters
+    /// there are, and whether a character index is a byte index. [`Text`] is why.
+    Str(Arc<Text>),
     List(Arc<Vec<Value>>),
     Map(PMap<Value, Value>),
-    /// A model instance or a union variant. `variant` is `None` for a plain record.
-    Data {
-        ty: Arc<str>,
-        variant: Option<Arc<str>>,
-        fields: Arc<BTreeMap<Arc<str>, Value>>,
-    },
+    /// A model instance or a union variant — see [`Record`].
+    ///
+    /// Behind one pointer rather than inline, and that is a size decision rather than a style one:
+    /// the three fields inline made **every** `Value` 48 bytes, so a list of a million integers
+    /// carried 32 bytes of nothing per element and a call frame paid for the widest variant it did
+    /// not hold. One `Arc` makes a `Value` 16.
+    Data(Arc<Record>),
     Html(Arc<Html>),
     /// An attribute waiting to be attached to an element.
     Attr(Arc<AttrValue>),
     Closure(Arc<Closure>),
+}
+
+/// A model instance or a union variant. `variant` is `None` for a plain record.
+///
+/// Split out of [`Value::Data`] so that a `Value` is a discriminant and a pointer. Records are the
+/// widest thing the language has and the rarest thing in a hot loop, which is exactly the shape
+/// that should be behind an indirection.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Record {
+    pub ty: Arc<str>,
+    pub variant: Option<Arc<str>>,
+    pub fields: Fields,
+}
+
+/// A record's fields, sorted by name.
+///
+/// This was a `BTreeMap`, and a record is the wrong size for one: three to eight entries, built
+/// once and read many times. A B-tree pays a node allocation and a pointer chase per level to buy
+/// an asymptotic advantage that never arrives at that size, and profiling `awfy/havlak.beck` put
+/// a fifth of the process inside its search, its insert and the `memcmp` underneath them.
+///
+/// Sorted by name and searched linearly: one allocation for the whole record, the names lie next
+/// to each other in cache, and `get` compares lengths before bytes because it wants equality
+/// rather than order. Iteration is in name order, so the value order, the state digest and the
+/// wire format ([`crate::repr`]) are all bit-for-bit what the `BTreeMap` gave — which is what
+/// makes this a representation change and not a semantic one.
+#[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Fields(Vec<(Arc<str>, Value)>);
+
+impl Fields {
+    pub fn new() -> Fields {
+        Fields(Vec::new())
+    }
+
+    pub fn with_capacity(n: usize) -> Fields {
+        Fields(Vec::with_capacity(n))
+    }
+
+    pub fn get(&self, name: &str) -> Option<&Value> {
+        self.0
+            .iter()
+            .find(|(k, _)| same_name(k, name))
+            .map(|(_, v)| v)
+    }
+
+    /// Set `name`, keeping the order by name. Answers the value that was there.
+    ///
+    /// The search is by **equality** and not by order, which is the whole difference: `==` on two
+    /// `str`s compares their lengths first and reaches `memcmp` only for a pair that could match,
+    /// where a binary search has to order every probe it makes. A record has three to eight
+    /// fields, so a scan makes at most as many comparisons as a binary search and nearly all of
+    /// them are an integer test. Only a field that is genuinely new pays for the ordered insert,
+    /// and `with` — which is what calls this in a loop — never has one.
+    pub fn insert(&mut self, name: Arc<str>, value: Value) -> Option<Value> {
+        if let Some(slot) = self.0.iter_mut().find(|(k, _)| same_name(k, &name)) {
+            return Some(std::mem::replace(&mut slot.1, value));
+        }
+        let at = self
+            .0
+            .partition_point(|(k, _)| cmp_name(k, &name) == std::cmp::Ordering::Less);
+        self.0.insert(at, (name, value));
+        None
+    }
+
+    /// Build from fields in **any** order, sorting once.
+    ///
+    /// This is how a record literal is built, and it is a separate entry point from `insert` in a
+    /// loop because the two cost differently: `sort_unstable_by` on a handful of elements is an
+    /// insertion sort, which makes `n - 1` comparisons and moves nothing when the fields already
+    /// arrive in order — as a record literal's usually do.
+    pub fn from_pairs(mut pairs: Vec<(Arc<str>, Value)>) -> Fields {
+        pairs.sort_unstable_by(|(a, _), (b, _)| cmp_name(a, b));
+        pairs.dedup_by(|(a, _), (b, _)| same_name(a, b));
+        Fields(pairs)
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn iter(&self) -> std::slice::Iter<'_, (Arc<str>, Value)> {
+        self.0.iter()
+    }
+
+    pub fn values(&self) -> impl Iterator<Item = &Value> {
+        self.0.iter().map(|(_, v)| v)
+    }
+}
+
+impl FromIterator<(Arc<str>, Value)> for Fields {
+    fn from_iter<I: IntoIterator<Item = (Arc<str>, Value)>>(it: I) -> Fields {
+        Fields::from_pairs(it.into_iter().collect())
+    }
+}
+
+impl<'a> IntoIterator for &'a Fields {
+    type Item = &'a (Arc<str>, Value);
+    type IntoIter = std::slice::Iter<'a, (Arc<str>, Value)>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
+
+/// A string that knows its own length in **characters**, and whether it is ASCII.
+///
+/// Beck indexes text by character everywhere or nowhere (`docs/50` §50.5), and a `String` counts
+/// bytes — so `str_len` used to be `chars().count()` and `str_slice` used to `skip()` its way to
+/// the start. Both are `O(n)` in the *string* rather than in the answer, which makes the ordinary
+/// way to walk one — `while i < str_len(s)` reading `str_slice(s, i, 1)` — quadratic. Measured at
+/// ×2.7 per doubling in [`70`](../../../../../docs/70-last-use-moves-report.md) §70.6.
+///
+/// Both facts are computed once, when the string is built, which is work the construction was
+/// already doing: it had to copy the bytes, and `is_ascii` is a scan of the same bytes that answers
+/// `chars` for free when it is true. Everything downstream is then `O(1)` or `O(answer)`.
+///
+/// The `String` rather than a `Box<str>` is the other half: it has spare capacity, so `a + b` can
+/// push into `a` when the last-use analysis proves nobody else holds it ([`crate::liveness`]).
+#[derive(Clone, Debug)]
+pub struct Text {
+    bytes: String,
+    /// Characters, not bytes. `str_len`'s answer.
+    chars: usize,
+    /// Every character is one byte, so character index == byte index and a slice is a byte range.
+    ascii: bool,
+    /// For text that is *not* ASCII: the byte offset of every 32nd character.
+    ///
+    /// Chunked rather than one entry per character, because the point is to stop paying `O(n)` per
+    /// slice and a jump to the nearest 32 does that for a thirty-second of the memory — `n / 8`
+    /// bytes, and only for text that needs it, since an ASCII character index *is* a byte index.
+    ///
+    /// Built eagerly, in the pass that counts the characters, rather than cached on first use. A
+    /// lazy one would be interior mutability inside a `Value`, and a `Value` is a `Map` key: the
+    /// cache would be invisible to `Ord` and `Hash` and therefore harmless, but "harmless interior
+    /// mutability in a key" is a sentence every reader and `clippy::mutable_key_type` would have to
+    /// re-check. One pass and an eighth of the bytes is the cheaper answer.
+    index: Box<[u32]>,
+}
+
+/// How many characters one entry of [`Text`]'s index skips.
+const INDEX_STRIDE: usize = 32;
+
+impl Text {
+    pub fn new(bytes: String) -> Text {
+        let ascii = bytes.is_ascii();
+        // ASCII answers both questions from the scan `is_ascii` already did, and needs no index at
+        // all. Anything else pays one more pass — once, here — rather than paying it on every
+        // `str_len` and every `str_slice`.
+        if ascii {
+            let chars = bytes.len();
+            return Text {
+                bytes,
+                chars,
+                ascii,
+                index: Box::new([]),
+            };
+        }
+        let mut chars = 0usize;
+        let mut index = Vec::with_capacity(bytes.len() / INDEX_STRIDE + 1);
+        for (at, _) in bytes.char_indices() {
+            if chars.is_multiple_of(INDEX_STRIDE) {
+                index.push(at as u32);
+            }
+            chars += 1;
+        }
+        Text {
+            bytes,
+            chars,
+            ascii,
+            index: index.into_boxed_slice(),
+        }
+    }
+
+    /// The byte offset of character `i`, in constant time for ASCII text and in at most
+    /// one index stride for anything else. Past the end it answers the end, which is what a
+    /// clamping slice wants.
+    pub fn byte_offset(&self, i: usize) -> usize {
+        if self.ascii {
+            return i.min(self.bytes.len());
+        }
+        if i >= self.chars {
+            return self.bytes.len();
+        }
+        let chunk = i / INDEX_STRIDE;
+        let from = self.index.get(chunk).copied().unwrap_or(0) as usize;
+        match self.bytes[from..]
+            .char_indices()
+            .nth(i - chunk * INDEX_STRIDE)
+        {
+            Some((at, _)) => from + at,
+            None => self.bytes.len(),
+        }
+    }
+
+    /// The length in characters, in constant time.
+    pub fn chars_len(&self) -> usize {
+        self.chars
+    }
+
+    pub fn is_ascii_text(&self) -> bool {
+        self.ascii
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.bytes
+    }
+
+    /// Append, consuming: the caller has established sole ownership, so this is a `push_str` and
+    /// not a copy of both sides.
+    pub fn appended(mut self, other: &str) -> Text {
+        let before = self.chars;
+        let start = self.bytes.len();
+        let other_ascii = other.is_ascii();
+        self.bytes.push_str(other);
+
+        // Everything here is `O(other)`, never `O(self)`, which is the property the whole change
+        // exists for: appending in a loop has to stay linear in the total.
+        if self.ascii && other_ascii {
+            self.chars = self.bytes.len();
+            return self;
+        }
+        if self.ascii {
+            // The left half was ASCII, so its character numbers *are* its byte offsets and its
+            // share of the index can be written down rather than walked for.
+            let mut index = Vec::with_capacity(self.bytes.len() / INDEX_STRIDE + 1);
+            let mut at = 0;
+            while at < before {
+                index.push(at as u32);
+                at += INDEX_STRIDE;
+            }
+            self.index = index.into_boxed_slice();
+            self.ascii = false;
+        }
+        let mut index = std::mem::take(&mut self.index).into_vec();
+        let mut chars = before;
+        for (at, _) in self.bytes[start..].char_indices() {
+            if chars.is_multiple_of(INDEX_STRIDE) {
+                index.push((start + at) as u32);
+            }
+            chars += 1;
+        }
+        self.chars = chars;
+        self.index = index.into_boxed_slice();
+        self
+    }
+}
+
+impl std::ops::Deref for Text {
+    type Target = str;
+    fn deref(&self) -> &str {
+        &self.bytes
+    }
+}
+
+impl From<&str> for Text {
+    fn from(s: &str) -> Text {
+        Text::new(s.to_string())
+    }
+}
+
+/// Text compares, orders and hashes **as its characters**, so that adding the two cached facts
+/// cannot change what a program means: a `Map` keyed by strings keeps its order, and so does the
+/// state digest that a replay has to reproduce.
+impl PartialEq for Text {
+    fn eq(&self, other: &Self) -> bool {
+        self.bytes == other.bytes
+    }
+}
+impl Eq for Text {}
+impl PartialOrd for Text {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for Text {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.bytes.cmp(&other.bytes)
+    }
+}
+impl std::hash::Hash for Text {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        self.bytes.hash(h)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -677,9 +981,15 @@ pub enum AttrValue {
 
 #[derive(Debug)]
 pub struct Closure {
-    pub params: Vec<VarId>,
-    pub body: Core,
-    pub env: Env,
+    pub params: Arc<[VarId]>,
+    /// The same `Arc` the [`CoreKind::Lam`] node holds, so building a closure is a refcount bump
+    /// rather than a copy of the code.
+    pub body: Arc<Core>,
+    /// Behind an `Arc` so that *calling* the closure clones a pointer rather than the environment.
+    pub env: Arc<Env>,
+    /// How many bindings the body makes, copied off the [`CoreKind::Lam`] node so that a call can
+    /// size one frame for the parameters and all of them. [`crate::frames`] is what counts it.
+    pub locals: u32,
 }
 
 impl PartialEq for Closure {
@@ -709,7 +1019,15 @@ impl Ord for Closure {
 /// A lexical environment: a persistent chain of frames, so a closure can capture cheaply.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Env {
-    frame: Arc<Vec<(VarId, Value)>>,
+    /// `Arc<[T]>` rather than `Arc<Vec<T>>`: the second is two allocations and two hops to reach a
+    /// binding.
+    ///
+    /// A call sizes this for the parameters **and** for every binding the body will make, so a
+    /// `let` writes into a slot that is already there rather than allocating a scope of its own.
+    /// The unwritten tail is filled with [`TOMBSTONE`], which no variable is named.
+    frame: Arc<[(VarId, Value)]>,
+    /// How much of `frame` holds a binding. Everything from here up is reserved and empty.
+    used: u32,
     parent: Option<Arc<Env>>,
 }
 
@@ -720,15 +1038,112 @@ impl Env {
 
     pub fn extend(&self, bindings: Vec<(VarId, Value)>) -> Env {
         Env {
-            frame: Arc::new(bindings),
+            used: bindings.len() as u32,
+            frame: bindings.into(),
             parent: Some(Arc::new(self.clone())),
         }
+    }
+
+    /// The frame a call runs in: the parameters, then `locals` reserved slots for the bindings the
+    /// body is going to make.
+    ///
+    /// One allocation. `Map<Range, _>` has a length the compiler can trust, so collecting it into
+    /// an `Arc<[_]>` sizes the allocation once — which is why the parameters and the reserved tail
+    /// are produced by one iterator rather than a vector that is then converted.
+    pub fn call_frame(
+        parent: &Arc<Env>,
+        params: &[VarId],
+        args: impl Iterator<Item = Value>,
+        locals: u32,
+    ) -> Env {
+        let n = params.len();
+        let mut given = args;
+        let frame = (0..n + locals as usize)
+            .map(|i| match given.next() {
+                Some(v) => (params[i], v),
+                None => (TOMBSTONE, Value::Unit),
+            })
+            .collect();
+        Env {
+            frame,
+            used: n as u32,
+            parent: Some(Arc::clone(parent)),
+        }
+    }
+
+    /// Bind `bindings` into this frame's reserved tail, if there is room for all of them and
+    /// nobody else is holding the frame.
+    ///
+    /// Answers whether it did. `false` means the caller must fall back to [`Env::extend`] and
+    /// chain a scope — which happens when a closure has captured this environment (its clone holds
+    /// the frame, so `Arc::get_mut` refuses), when the reservation was too small, or when the
+    /// program was built by something that never ran the reservation pass at all.
+    ///
+    /// The safety argument is the refusal: a closure that captured this environment can see the
+    /// slots this would write, and `Arc::get_mut` is what proves that has not happened. Every
+    /// binding gets a slot of its own, so nothing a closure captured is ever overwritten.
+    pub fn put(&mut self, bindings: &mut Vec<(VarId, Value)>) -> bool {
+        let at = self.used as usize;
+        let n = bindings.len();
+        if at + n > self.frame.len() {
+            return false;
+        }
+        let Some(frame) = Arc::get_mut(&mut self.frame) else {
+            return false;
+        };
+        for (i, b) in bindings.drain(..).enumerate() {
+            frame[at + i] = b;
+        }
+        self.used = (at + n) as u32;
+        true
+    }
+
+    /// [`Env::put`] for a single binding, which is what a `let` is — and a `let` is much the most
+    /// common of the two, so it does not build a vector to hand over. Answers the value back when
+    /// there is no room for it.
+    pub fn put_one(&mut self, var: VarId, value: Value) -> Result<(), Value> {
+        let at = self.used as usize;
+        if at >= self.frame.len() {
+            return Err(value);
+        }
+        match Arc::get_mut(&mut self.frame) {
+            Some(frame) => {
+                frame[at] = (var, value);
+                self.used += 1;
+                Ok(())
+            }
+            None => Err(value),
+        }
+    }
+
+    /// The part of the frame that holds bindings, without the reserved tail.
+    #[inline]
+    fn bound(&self) -> &[(VarId, Value)] {
+        &self.frame[..self.used as usize]
+    }
+
+    /// Extend a parent that is **already** behind an `Arc` — which a closure's captured environment
+    /// is, so that a call clones a pointer instead of boxing a copy of the environment.
+    ///
+    /// This is the per-call path. `extend` above is the per-`let` path, where the parent is owned by
+    /// the evaluator's loop and has to be boxed; there are far fewer of those.
+    pub fn extend_shared(parent: &Arc<Env>, frame: Arc<[(VarId, Value)]>) -> Env {
+        Env {
+            used: frame.len() as u32,
+            frame,
+            parent: Some(Arc::clone(parent)),
+        }
+    }
+
+    /// An environment with nothing in it, behind an `Arc`, shared by every top-level definition.
+    pub fn empty_shared() -> Arc<Env> {
+        Arc::new(Env::new())
     }
 
     pub fn get(&self, v: VarId) -> Option<&Value> {
         let mut env = self;
         loop {
-            if let Some((_, value)) = env.frame.iter().rev().find(|(id, _)| *id == v) {
+            if let Some((_, value)) = env.bound().iter().rev().find(|(id, _)| *id == v) {
                 return Some(value);
             }
             match &env.parent {
@@ -737,6 +1152,107 @@ impl Env {
             }
         }
     }
+
+    /// Read `v`, and **move** it out of the frame when three things hold: the caller says no later
+    /// evaluation reads it, this environment is the only holder of the frame it lives in, and the
+    /// value is one whose copy costs something.
+    ///
+    /// The third condition is not an optimisation of an optimisation — it is what keeps the other
+    /// two from costing more than they save. Moving is strictly more work than cloning at the point
+    /// of the read: a clone of an `Int` is a copy of eight bytes and a clone of a container is one
+    /// atomic increment, where a move has to find the slot, prove the frame is unshared and empty
+    /// it. It pays only when somebody downstream can then *use* the sole ownership — which today is
+    /// `list_append` pushing in place and `with` rebuilding a record's fields — and measuring it
+    /// without this condition showed every benchmark in the tree 6–13% slower, because the reads
+    /// that dominate a real program are of `Int`s and nothing was gained by moving one
+    /// ([`69`](../../../../../docs/69-standard-library-imports-report.md) §69.7).
+    ///
+    /// The caller must have established that no later evaluation reads `v` — [`crate::liveness`]
+    /// is what establishes it, and `last_use` is the flag. What this adds is the second half of the
+    /// safety argument: a frame is emptied only when nothing else holds it, so an environment
+    /// captured by a closure or shared with an inner scope is read from rather than emptied, and a
+    /// caller that is wrong about liveness gets an unbound-variable error rather than somebody
+    /// else's missing binding.
+    pub fn read(&mut self, v: VarId, may_move: bool) -> Option<Value> {
+        // The overwhelmingly common read is not a last use, and it needs none of the machinery
+        // below: no scope on the way to the binding has to be proved unshared, because nothing is
+        // going to be taken out of one. That proof costs **two atomic loads per scope level**
+        // (`strong_count` and `weak_count`) plus an `Arc::get_mut`, and it was being paid on every
+        // variable a program reads. `get` is a plain walk.
+        if !may_move {
+            return self.get(v).cloned();
+        }
+        let mut env = self;
+        loop {
+            if let Some(i) = env.bound().iter().rposition(|(id, _)| *id == v) {
+                if may_move && worth_moving(&env.frame[i].1) {
+                    if let Some(frame) = Arc::get_mut(&mut env.frame) {
+                        // Tombstoned rather than removed: `Vec::remove` shifts every binding above
+                        // it, and this runs on the hottest path there is. The slot keeps its place
+                        // under a name no variable has, so a later read of `v` misses it and says
+                        // so instead of finding a neighbour.
+                        frame[i].0 = TOMBSTONE;
+                        return Some(std::mem::replace(&mut frame[i].1, Value::Unit));
+                    }
+                }
+                return Some(env.frame[i].1.clone());
+            }
+            let shared_parent = env
+                .parent
+                .as_ref()
+                .is_some_and(|p| Arc::strong_count(p) > 1 || Arc::weak_count(p) > 0);
+            if shared_parent {
+                return env.parent.as_ref().and_then(|p| p.get(v)).cloned();
+            }
+            match env.parent.as_mut() {
+                Some(p) => match Arc::get_mut(p) {
+                    Some(p) => env = p,
+                    None => return None,
+                },
+                None => return None,
+            }
+        }
+    }
+}
+
+/// Are these the same field name?
+///
+/// Length, then first byte, then the rest. `str`'s own `==` checks the length and hands the bytes
+/// to `memcmp`, and a `memcmp` call is dear next to what it decides here: field names are short,
+/// there are three to eight of them in a record, and two that share a length almost never share a
+/// first letter. Profiling `awfy/richards.beck` put 6% of the process inside `memcmp`, nearly all
+/// of it deciding between `kind` and `link`.
+#[inline]
+fn same_name(a: &str, b: &str) -> bool {
+    let (x, y) = (a.as_bytes(), b.as_bytes());
+    x.len() == y.len() && (x.is_empty() || x[0] == y[0]) && x == y
+}
+
+/// Order two field names, deciding on the first byte where it can.
+///
+/// `<[u8]>::cmp` calls `memcmp` over the common prefix before it looks at the lengths, so it pays
+/// a call to distinguish `id` from `kind`. Sorting a record's fields is the other half of what
+/// `same_name` documents.
+#[inline]
+fn cmp_name(a: &str, b: &str) -> std::cmp::Ordering {
+    let (x, y) = (a.as_bytes(), b.as_bytes());
+    match (x.first(), y.first()) {
+        (Some(p), Some(q)) if p != q => p.cmp(q),
+        _ => x.cmp(y),
+    }
+}
+
+/// The name a moved-out binding takes, which no variable has: `VarId`s are handed out from zero by
+/// the checker, and a program with four billion of them has lost to `MAX_NESTING` long before.
+const TOMBSTONE: VarId = VarId::MAX;
+
+/// Whether moving this value out of a frame can save anything downstream.
+///
+/// A `List` can be pushed into by `list_append`, a `Str` by `+`, and a record's fields can be
+/// rebuilt in place by `with` — each only when nobody else holds them. Everything else is either a copy of a few bytes
+/// or an atomic increment, and moving it costs more than it saves — `Env::read` is the measurement.
+fn worth_moving(v: &Value) -> bool {
+    matches!(v, Value::List(_) | Value::Str(_) | Value::Data(_))
 }
 
 /// The monotone `f64` → `u64` transform: for a non-negative float flip the sign bit, for a
@@ -784,7 +1300,13 @@ impl Value {
     }
 
     pub fn str_(s: impl AsRef<str>) -> Value {
-        Value::Str(Arc::from(s.as_ref()))
+        Value::Str(Arc::new(Text::from(s.as_ref())))
+    }
+
+    /// The same from a `String` that is already owned, which is most of the string primitives:
+    /// they build one and would otherwise copy it again on the way in.
+    pub fn text(s: String) -> Value {
+        Value::Str(Arc::new(Text::new(s)))
     }
 
     pub fn as_str(&self) -> Option<&str> {
@@ -829,50 +1351,57 @@ impl Value {
         }
     }
 
+    /// Build a record or a union variant. The one constructor, so that the `Arc` and the map are
+    /// allocated in one place rather than at every call site.
+    pub fn data(ty: impl Into<Arc<str>>, variant: Option<Arc<str>>, fields: Fields) -> Value {
+        Value::Data(Arc::new(Record {
+            ty: ty.into(),
+            variant,
+            fields,
+        }))
+    }
+
+    /// The same from a list of pairs, which is how most call sites have them.
+    pub fn record<const N: usize>(
+        ty: impl Into<Arc<str>>,
+        variant: Option<&str>,
+        fields: [(&str, Value); N],
+    ) -> Value {
+        Value::data(
+            ty,
+            variant.map(Arc::from),
+            fields.into_iter().map(|(k, v)| (Arc::from(k), v)).collect(),
+        )
+    }
+
     pub fn field(&self, name: &str) -> Option<&Value> {
         match self {
-            Value::Data { fields, .. } => fields.get(name),
+            Value::Data(d) => d.fields.get(name),
             _ => None,
         }
     }
 
     pub fn variant(&self) -> Option<&str> {
         match self {
-            Value::Data { variant, .. } => variant.as_deref(),
+            Value::Data(d) => d.variant.as_deref(),
             _ => None,
         }
     }
 
     pub fn some(v: Value) -> Value {
-        Value::Data {
-            ty: Arc::from(Ty::OPTION),
-            variant: Some(Arc::from("Some")),
-            fields: Arc::new(BTreeMap::from([(Arc::from("value"), v)])),
-        }
+        Value::record(Ty::OPTION, Some("Some"), [("value", v)])
     }
 
     pub fn none() -> Value {
-        Value::Data {
-            ty: Arc::from(Ty::OPTION),
-            variant: Some(Arc::from("None")),
-            fields: Arc::new(BTreeMap::new()),
-        }
+        Value::record(Ty::OPTION, Some("None"), [])
     }
 
     pub fn ok(v: Value) -> Value {
-        Value::Data {
-            ty: Arc::from(Ty::RESULT),
-            variant: Some(Arc::from("Ok")),
-            fields: Arc::new(BTreeMap::from([(Arc::from("value"), v)])),
-        }
+        Value::record(Ty::RESULT, Some("Ok"), [("value", v)])
     }
 
     pub fn err(v: Value) -> Value {
-        Value::Data {
-            ty: Arc::from(Ty::RESULT),
-            variant: Some(Arc::from("Err")),
-            fields: Arc::new(BTreeMap::from([(Arc::from("error"), v)])),
-        }
+        Value::record(Ty::RESULT, Some("Err"), [("error", v)])
     }
 
     /// How `str(x)` renders a value, and how a value becomes a `Map` key's printed form.
@@ -894,23 +1423,20 @@ impl Value {
                     .collect();
                 format!("{{{}}}", parts.join(", "))
             }
-            Value::Data {
-                ty,
-                variant,
-                fields,
-            } => {
+            Value::Data(d) => {
                 // A newtype wrapping one field prints as that field — `Id(uuid)` reads as the uuid,
                 // which is what a key attribute and a rendered list want.
-                if variant.is_none() && fields.len() == 1 {
-                    if let Some(v) = fields.values().next() {
+                if d.variant.is_none() && d.fields.len() == 1 {
+                    if let Some(v) = d.fields.values().next() {
                         return v.display();
                     }
                 }
-                let name = variant.as_deref().unwrap_or(ty);
-                if fields.is_empty() {
+                let name = d.variant.as_deref().unwrap_or(&d.ty);
+                if d.fields.is_empty() {
                     return name.to_string();
                 }
-                let parts: Vec<String> = fields
+                let parts: Vec<String> = d
+                    .fields
                     .iter()
                     .map(|(k, v)| format!("{k}: {}", v.display()))
                     .collect();
@@ -941,19 +1467,17 @@ impl Value {
                 }
                 J::Object(obj)
             }
-            Value::Data {
-                variant, fields, ..
-            } => {
-                if variant.is_none() && fields.len() == 1 {
-                    if let Some(v) = fields.values().next() {
+            Value::Data(d) => {
+                if d.variant.is_none() && d.fields.len() == 1 {
+                    if let Some(v) = d.fields.values().next() {
                         return v.to_json();
                     }
                 }
                 let mut obj = JMap::new();
-                if let Some(v) = variant {
+                if let Some(v) = &d.variant {
                     obj.insert("c".into(), J::String(v.to_string()));
                 }
-                for (k, v) in fields.iter() {
+                for (k, v) in d.fields.iter() {
                     obj.insert(k.to_string(), v.to_json());
                 }
                 J::Object(obj)
@@ -1023,7 +1547,7 @@ pub fn value_to_repr(v: &Value) -> Result<serde_json::Value, NotStorable> {
         Value::Bool(b) => json!({"$": "bool", "v": b}),
         Value::Int(i) => json!({"$": "int", "v": i}),
         Value::Float(bits) => json!({"$": "float", "v": bits.to_string()}),
-        Value::Str(s) => json!({"$": "str", "v": s.as_ref()}),
+        Value::Str(s) => json!({"$": "str", "v": s.as_str()}),
         Value::List(xs) => {
             let items: Result<Vec<_>, _> = xs.iter().map(value_to_repr).collect();
             json!({"$": "list", "v": items?})
@@ -1035,19 +1559,15 @@ pub fn value_to_repr(v: &Value) -> Result<serde_json::Value, NotStorable> {
             }
             json!({"$": "map", "v": pairs})
         }
-        Value::Data {
-            ty,
-            variant,
-            fields,
-        } => {
+        Value::Data(d) => {
             let mut f = JMap::new();
-            for (k, val) in fields.iter() {
+            for (k, val) in d.fields.iter() {
                 f.insert(k.to_string(), value_to_repr(val)?);
             }
             json!({
                 "$": "data",
-                "t": ty.as_ref(),
-                "c": variant.as_deref(),
+                "t": d.ty.as_ref(),
+                "c": d.variant.as_deref(),
                 "f": J::Object(f)
             })
         }
@@ -1084,15 +1604,15 @@ pub fn value_from_repr(j: &serde_json::Value) -> Option<Value> {
             Value::Map(m)
         }
         "data" => {
-            let mut fields = BTreeMap::new();
+            let mut fields = Fields::new();
             for (k, val) in j.get("f")?.as_object()? {
                 fields.insert(Arc::from(k.as_str()), value_from_repr(val)?);
             }
-            Value::Data {
-                ty: Arc::from(j.get("t")?.as_str()?),
-                variant: j.get("c").and_then(|c| c.as_str()).map(Arc::from),
-                fields: Arc::new(fields),
-            }
+            Value::data(
+                Arc::from(j.get("t")?.as_str()?),
+                j.get("c").and_then(|c| c.as_str()).map(Arc::from),
+                fields,
+            )
         }
         _ => return None,
     })
@@ -1142,16 +1662,12 @@ fn hash_into(v: &Value, h: &mut blake3::Hasher) {
             }
             h
         }
-        Value::Data {
-            ty,
-            variant,
-            fields,
-        } => {
+        Value::Data(d) => {
             h.update(&[7]);
-            h.update(ty.as_bytes());
-            h.update(variant.as_deref().unwrap_or("").as_bytes());
-            h.update(&(fields.len() as u64).to_le_bytes());
-            for (k, val) in fields.iter() {
+            h.update(d.ty.as_bytes());
+            h.update(d.variant.as_deref().unwrap_or("").as_bytes());
+            h.update(&(d.fields.len() as u64).to_le_bytes());
+            for (k, val) in d.fields.iter() {
                 h.update(k.as_bytes());
                 hash_into(val, h);
             }
@@ -1223,33 +1739,33 @@ mod tests {
     fn the_log_encoding_round_trips_exactly() {
         // The wire encoding deliberately loses information the browser does not need; the log
         // encoding cannot, because replay compares digests of what it reads back.
-        let v = Value::Data {
-            ty: Arc::from("State"),
-            variant: None,
-            fields: Arc::new(BTreeMap::from([(
+        let v = Value::data(
+            Arc::from("State"),
+            None,
+            Fields::from_iter([(
                 Arc::from("todos"),
                 Value::Map(PMap::from_iter([(
                     Value::str_("k"),
-                    Value::Data {
-                        ty: Arc::from("Todo"),
-                        variant: None,
-                        fields: Arc::new(BTreeMap::from([
+                    Value::data(
+                        Arc::from("Todo"),
+                        None,
+                        Fields::from_iter([
                             (Arc::from("done"), Value::Bool(true)),
                             (Arc::from("n"), Value::Int(-3)),
-                        ])),
-                    },
+                        ]),
+                    ),
                 )])),
-            )])),
-        };
+            )]),
+        );
         assert_eq!(
             value_from_repr(&value_to_repr(&v).unwrap()),
             Some(v.clone())
         );
-        let evt = Value::Data {
-            ty: Arc::from("Event"),
-            variant: Some(Arc::from("Toggled")),
-            fields: Arc::new(BTreeMap::from([(Arc::from("id"), Value::str_("x"))])),
-        };
+        let evt = Value::data(
+            Arc::from("Event"),
+            Some(Arc::from("Toggled")),
+            Fields::from_iter([(Arc::from("id"), Value::str_("x"))]),
+        );
         assert_eq!(value_from_repr(&value_to_repr(&evt).unwrap()), Some(evt));
     }
 
@@ -1267,11 +1783,11 @@ mod tests {
         );
 
         // …and nesting does not launder it: a record holding one is refused too.
-        let state = Value::Data {
-            ty: Arc::from("State"),
-            variant: None,
-            fields: Arc::new(BTreeMap::from([(Arc::from("cached"), view.clone())])),
-        };
+        let state = Value::data(
+            Arc::from("State"),
+            None,
+            Fields::from_iter([(Arc::from("cached"), view.clone())]),
+        );
         assert!(
             value_to_repr(&state).is_err(),
             "a record holding a view is not data"
@@ -1297,22 +1813,22 @@ mod tests {
 
     #[test]
     fn a_newtype_renders_as_its_payload() {
-        let id = Value::Data {
-            ty: Arc::from("Id"),
-            variant: None,
-            fields: Arc::new(BTreeMap::from([(Arc::from("value"), Value::str_("u-1"))])),
-        };
+        let id = Value::data(
+            Arc::from("Id"),
+            None,
+            Fields::from_iter([(Arc::from("value"), Value::str_("u-1"))]),
+        );
         assert_eq!(id.display(), "u-1");
         assert_eq!(id.to_json(), serde_json::json!("u-1"));
     }
 
     #[test]
     fn a_command_serialises_with_its_variant_tag() {
-        let cmd = Value::Data {
-            ty: Arc::from("Command"),
-            variant: Some(Arc::from("Toggle")),
-            fields: Arc::new(BTreeMap::from([(Arc::from("id"), Value::str_("x"))])),
-        };
+        let cmd = Value::data(
+            Arc::from("Command"),
+            Some(Arc::from("Toggle")),
+            Fields::from_iter([(Arc::from("id"), Value::str_("x"))]),
+        );
         assert_eq!(cmd.to_json(), serde_json::json!({"c": "Toggle", "id": "x"}));
     }
 

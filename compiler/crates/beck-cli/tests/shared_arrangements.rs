@@ -181,13 +181,15 @@ fn feed_with(posts: usize) -> Subject {
     )
     .expect("24-feed.beck is in the corpus");
     let log = (0..posts)
-        .map(|i| Value::Data {
-            ty: Arc::from("Event"),
-            variant: Some(Arc::from("Published")),
-            fields: Arc::new(std::collections::BTreeMap::from([
-                (Arc::from("id"), Value::str_(format!("p{i:05}"))),
-                (Arc::from("text"), Value::str_(format!("post {i}"))),
-            ])),
+        .map(|i| {
+            Value::data(
+                Arc::from("Event"),
+                Some(Arc::from("Published")),
+                beck_core::core::Fields::from_iter([
+                    (Arc::from("id"), Value::str_(format!("p{i:05}"))),
+                    (Arc::from("text"), Value::str_(format!("post {i}"))),
+                ]),
+            )
         })
         .collect();
     Subject::over("24-feed.beck", compile("24-feed.beck", &src), log)

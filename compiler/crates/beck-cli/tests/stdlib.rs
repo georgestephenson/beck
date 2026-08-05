@@ -93,6 +93,102 @@ fn every_library_documents() {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Reaching it from outside
+//
+// `docs/68` §68.4's finding was that none of this could be reached: `import` resolved against the
+// root module's own directory and nothing else, so the standard library was a standard library that
+// only its own directory could use. `docs/69` is the fix — the Beck half is carried in the compiler
+// and resolved after the caller's directory — and these are the gates on it.
+// ---------------------------------------------------------------------------------------------
+
+/// Every file in `lib/` is importable from a directory that is not `lib/`.
+///
+/// The strong form on purpose: not "the embedded table lists the right names" but "a program
+/// somewhere else can import it and use what it got". A library added to the directory and left out
+/// of `beck_core::stdlib::MODULES` fails here, which is the property the directory has always had
+/// for its tests.
+#[test]
+fn every_library_is_importable_from_outside_the_library_directory() {
+    let dir = std::env::temp_dir().join("beck-stdlib-import-probe");
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    for path in lib_files() {
+        let name = path.file_stem().unwrap().to_string_lossy().to_string();
+        let probe = dir.join(format!("uses-{name}.beck"));
+        std::fs::write(
+            &probe,
+            format!(
+                "import {name}\n\ntest \"the standard library is reachable\":\n    expect true\n"
+            ),
+        )
+        .expect("a scratch file");
+        let (ok, text) = beck(&["test", probe.to_string_lossy().as_ref()]);
+        let _ = std::fs::remove_file(&probe);
+        assert!(
+            ok && text.contains("0 failed"),
+            "`import {name}` from outside lib/:\n{text}"
+        );
+        // And the library's tests stay the library's: a program that imports one runs its own.
+        assert!(
+            text.contains("1 passed"),
+            "`import {name}` brought the library's own tests into the importing program:\n{text}"
+        );
+    }
+}
+
+/// The whole library links with itself: one program importing all of it compiles.
+///
+/// This is the cost of the flat namespace, asserted rather than hoped for. Beck links modules into
+/// one namespace with no qualified reference (`B0601`), so a helper in one library file and a
+/// helper in another are the *same* name to a program that imports both — and until `docs/69` no
+/// program could import two, so nothing had ever been in a position to notice. Two collisions were
+/// waiting when something finally was: `is_negative` in `money.beck` and `decimal.beck`, and
+/// `pow10` in `decimal.beck` and what is now `format.beck`.
+#[test]
+fn the_whole_library_links_into_one_program() {
+    let imports: String = lib_files()
+        .iter()
+        .map(|p| format!("import {}\n", p.file_stem().unwrap().to_string_lossy()))
+        .collect();
+    let probe = std::env::temp_dir().join("beck-stdlib-links.beck");
+    std::fs::write(
+        &probe,
+        format!("{imports}\ntest \"the standard library is one namespace\":\n    expect true\n"),
+    )
+    .expect("a scratch file");
+    let (ok, text) = beck(&["test", probe.to_string_lossy().as_ref()]);
+    let _ = std::fs::remove_file(&probe);
+    assert!(
+        ok && text.contains("0 failed"),
+        "the standard library does not link with itself:\n{text}"
+    );
+}
+
+/// A module beside the program wins over the standard-library module of the same name.
+///
+/// The order is the decision (`docs/10` D23): a project that already has a `text.beck` keeps it
+/// when the standard library grows one, so adding a library cannot break a program that never asked
+/// for it.
+#[test]
+fn a_local_module_shadows_the_standard_library_module_of_the_same_name() {
+    let dir = std::env::temp_dir().join("beck-stdlib-shadow-probe");
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    std::fs::write(
+        dir.join("format.beck"),
+        "def fixed(x: Float, places: Int) -> Str:\n    return \"the local one\"\n",
+    )
+    .expect("a scratch file");
+    let probe = dir.join("app.beck");
+    std::fs::write(
+        &probe,
+        "import format\n\ntest \"the module beside me is the one I get\":\n    expect fixed(1.5, 2) == \"the local one\"\n",
+    )
+    .expect("a scratch file");
+    let (ok, text) = beck(&["test", probe.to_string_lossy().as_ref()]);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(ok && text.contains("0 failed"), "shadowing:\n{text}");
+}
+
+// ---------------------------------------------------------------------------------------------
 // The primitives, on the edges a library hits
 // ---------------------------------------------------------------------------------------------
 
@@ -422,13 +518,15 @@ fn a_token_opens_only_under_the_key_that_minted_it() {
     };
     // `secret[Str]` is a newtype at runtime, so a key is built the way `secret_env` builds one
     // rather than by reading the environment: what is under test is the arithmetic, not the read.
-    let key = |text: &str| Value::Data {
-        ty: std::sync::Arc::from(beck_core::Ty::SECRET),
-        variant: None,
-        fields: std::sync::Arc::new(std::collections::BTreeMap::from([(
-            std::sync::Arc::from("value"),
-            Value::str_(text),
-        )])),
+    let key = |text: &str| {
+        Value::data(
+            std::sync::Arc::from(beck_core::Ty::SECRET),
+            None,
+            beck_core::core::Fields::from_iter([(
+                std::sync::Arc::from("value"),
+                Value::str_(text),
+            )]),
+        )
     };
 
     let token = call("minted", vec![key("k1"), Value::str_("actor-7")]);
