@@ -465,6 +465,10 @@ pub struct Core {
     /// backend may move the binding rather than copy it. [`crate::liveness`] is what sets it and
     /// what the guarantee means; `false` is always safe.
     pub last_use: bool,
+    /// Set on a [`CoreKind::Lam`]: how many bindings its body makes, so a call can reserve room
+    /// for them in one frame instead of allocating a scope per `let`. [`crate::frames`] is what
+    /// sets it and what the count means; `0` is always safe and means "chain a scope, as before".
+    pub locals: u32,
 }
 
 /// The string this expression *is*, when it is written as one.
@@ -489,6 +493,7 @@ impl Core {
             tier: Tier::Any,
             span,
             last_use: false,
+            locals: 0,
         }
     }
 
@@ -982,6 +987,9 @@ pub struct Closure {
     pub body: Arc<Core>,
     /// Behind an `Arc` so that *calling* the closure clones a pointer rather than the environment.
     pub env: Arc<Env>,
+    /// How many bindings the body makes, copied off the [`CoreKind::Lam`] node so that a call can
+    /// size one frame for the parameters and all of them. [`crate::frames`] is what counts it.
+    pub locals: u32,
 }
 
 impl PartialEq for Closure {
@@ -1012,9 +1020,14 @@ impl Ord for Closure {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Env {
     /// `Arc<[T]>` rather than `Arc<Vec<T>>`: the second is two allocations and two hops to reach a
-    /// binding, and a frame never changes length — a moved-out binding is tombstoned in place
-    /// (`Env::read`), which is what makes the fixed-size form possible.
+    /// binding.
+    ///
+    /// A call sizes this for the parameters **and** for every binding the body will make, so a
+    /// `let` writes into a slot that is already there rather than allocating a scope of its own.
+    /// The unwritten tail is filled with [`TOMBSTONE`], which no variable is named.
     frame: Arc<[(VarId, Value)]>,
+    /// How much of `frame` holds a binding. Everything from here up is reserved and empty.
+    used: u32,
     parent: Option<Arc<Env>>,
 }
 
@@ -1025,9 +1038,88 @@ impl Env {
 
     pub fn extend(&self, bindings: Vec<(VarId, Value)>) -> Env {
         Env {
+            used: bindings.len() as u32,
             frame: bindings.into(),
             parent: Some(Arc::new(self.clone())),
         }
+    }
+
+    /// The frame a call runs in: the parameters, then `locals` reserved slots for the bindings the
+    /// body is going to make.
+    ///
+    /// One allocation. `Map<Range, _>` has a length the compiler can trust, so collecting it into
+    /// an `Arc<[_]>` sizes the allocation once — which is why the parameters and the reserved tail
+    /// are produced by one iterator rather than a vector that is then converted.
+    pub fn call_frame(
+        parent: &Arc<Env>,
+        params: &[VarId],
+        args: impl Iterator<Item = Value>,
+        locals: u32,
+    ) -> Env {
+        let n = params.len();
+        let mut given = args;
+        let frame = (0..n + locals as usize)
+            .map(|i| match given.next() {
+                Some(v) => (params[i], v),
+                None => (TOMBSTONE, Value::Unit),
+            })
+            .collect();
+        Env {
+            frame,
+            used: n as u32,
+            parent: Some(Arc::clone(parent)),
+        }
+    }
+
+    /// Bind `bindings` into this frame's reserved tail, if there is room for all of them and
+    /// nobody else is holding the frame.
+    ///
+    /// Answers whether it did. `false` means the caller must fall back to [`Env::extend`] and
+    /// chain a scope — which happens when a closure has captured this environment (its clone holds
+    /// the frame, so `Arc::get_mut` refuses), when the reservation was too small, or when the
+    /// program was built by something that never ran the reservation pass at all.
+    ///
+    /// The safety argument is the refusal: a closure that captured this environment can see the
+    /// slots this would write, and `Arc::get_mut` is what proves that has not happened. Every
+    /// binding gets a slot of its own, so nothing a closure captured is ever overwritten.
+    pub fn put(&mut self, bindings: &mut Vec<(VarId, Value)>) -> bool {
+        let at = self.used as usize;
+        let n = bindings.len();
+        if at + n > self.frame.len() {
+            return false;
+        }
+        let Some(frame) = Arc::get_mut(&mut self.frame) else {
+            return false;
+        };
+        for (i, b) in bindings.drain(..).enumerate() {
+            frame[at + i] = b;
+        }
+        self.used = (at + n) as u32;
+        true
+    }
+
+    /// [`Env::put`] for a single binding, which is what a `let` is — and a `let` is much the most
+    /// common of the two, so it does not build a vector to hand over. Answers the value back when
+    /// there is no room for it.
+    pub fn put_one(&mut self, var: VarId, value: Value) -> Result<(), Value> {
+        let at = self.used as usize;
+        if at >= self.frame.len() {
+            return Err(value);
+        }
+        match Arc::get_mut(&mut self.frame) {
+            Some(frame) => {
+                frame[at] = (var, value);
+                self.used += 1;
+                Ok(())
+            }
+            None => Err(value),
+        }
+    }
+
+    /// The part of the frame that holds bindings, without the reserved tail.
+    #[inline]
+    fn bound(&self) -> &[(VarId, Value)] {
+        &self.frame[..self.used as usize]
     }
 
     /// Extend a parent that is **already** behind an `Arc` — which a closure's captured environment
@@ -1037,6 +1129,7 @@ impl Env {
     /// the evaluator's loop and has to be boxed; there are far fewer of those.
     pub fn extend_shared(parent: &Arc<Env>, frame: Arc<[(VarId, Value)]>) -> Env {
         Env {
+            used: frame.len() as u32,
             frame,
             parent: Some(Arc::clone(parent)),
         }
@@ -1050,7 +1143,7 @@ impl Env {
     pub fn get(&self, v: VarId) -> Option<&Value> {
         let mut env = self;
         loop {
-            if let Some((_, value)) = env.frame.iter().rev().find(|(id, _)| *id == v) {
+            if let Some((_, value)) = env.bound().iter().rev().find(|(id, _)| *id == v) {
                 return Some(value);
             }
             match &env.parent {
@@ -1091,7 +1184,7 @@ impl Env {
         }
         let mut env = self;
         loop {
-            if let Some(i) = env.frame.iter().rposition(|(id, _)| *id == v) {
+            if let Some(i) = env.bound().iter().rposition(|(id, _)| *id == v) {
                 if may_move && worth_moving(&env.frame[i].1) {
                     if let Some(frame) = Arc::get_mut(&mut env.frame) {
                         // Tombstoned rather than removed: `Vec::remove` shifts every binding above

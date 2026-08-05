@@ -408,6 +408,7 @@ pub fn split(mut program: Program, diags: &mut Diagnostics) -> Option<Placed> {
         tier: Tier::Client,
         span: graph.node(page).span,
         last_use: false,
+        locals: 0,
     };
 
     // ---- the accumulator, fused when the program declared more than one fold ----
@@ -490,12 +491,14 @@ pub fn split(mut program: Program, diags: &mut Diagnostics) -> Option<Placed> {
                     tier: Tier::Server,
                     span,
                     last_use: false,
+                    locals: 0,
                 }),
             },
             ty: Ty::unit(),
             tier: Tier::Server,
             span,
             last_use: false,
+            locals: 0,
         }
     } else {
         validate.clone()
@@ -576,6 +579,7 @@ fn var(v: VarId, ty: Ty, span: Span) -> Core {
         tier: Tier::Any,
         span,
         last_use: false,
+        locals: 0,
     }
 }
 
@@ -592,6 +596,7 @@ fn field(base: Core, role: &StateRole, span: Span) -> Core {
             tier: Tier::Any,
             span,
             last_use: false,
+            locals: 0,
         },
     }
 }
@@ -607,6 +612,7 @@ fn call(func: Core, args: Vec<Core>, ty: Ty, span: Span) -> Core {
         tier: Tier::Any,
         span,
         last_use: false,
+        locals: 0,
     }
 }
 
@@ -649,6 +655,7 @@ fn fold_field(
         tier: Tier::Any,
         span,
         last_use: false,
+        locals: 0,
     };
     let inner = Core {
         kind: CoreKind::Field {
@@ -659,6 +666,7 @@ fn fold_field(
         tier: Tier::Any,
         span,
         last_use: false,
+        locals: 0,
     };
     let narrowed = Core {
         kind: CoreKind::With {
@@ -669,6 +677,7 @@ fn fold_field(
         tier: Tier::Any,
         span,
         last_use: false,
+        locals: 0,
     };
     Core {
         kind: CoreKind::Let {
@@ -685,6 +694,7 @@ fn fold_field(
                         tier: Tier::Any,
                         span,
                         last_use: false,
+                        locals: 0,
                     }),
                     then: Box::new(call(
                         step.clone(),
@@ -698,12 +708,14 @@ fn fold_field(
                 tier: Tier::Any,
                 span,
                 last_use: false,
+                locals: 0,
             }),
         },
         ty: ty.clone(),
         tier: Tier::Any,
         span,
         last_use: false,
+        locals: 0,
     }
 }
 
@@ -729,6 +741,7 @@ fn filtered_step(step: &Core, pred: &Core, state_ty: &Ty, vars: &mut Vars, span:
         tier: Tier::Data,
         span,
         last_use: false,
+        locals: 0,
     }
 }
 
@@ -783,6 +796,7 @@ fn fuse(
         tier: Tier::Data,
         span,
         last_use: false,
+        locals: 0,
     };
 
     (
@@ -795,6 +809,7 @@ fn fuse(
             tier: Tier::Data,
             span,
             last_use: false,
+            locals: 0,
         },
         make(init_fields),
     )
@@ -1028,6 +1043,7 @@ impl Slicer<'_, '_> {
             tier: Tier::Client,
             span: acc.span,
             last_use: false,
+            locals: 0,
         })
     }
 }

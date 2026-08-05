@@ -59,8 +59,9 @@ Write the commit message as the author of the change: what changed, and why.
   [`72`](docs/72-space-and-constants-report.md),
   [`73`](docs/73-closures-share-their-code-report.md),
   [`74`](docs/74-the-cost-of-a-call-report.md),
-  [`75`](docs/75-what-the-profiler-said-report.md) and
-  [`76`](docs/76-the-record-and-the-read-report.md),
+  [`75`](docs/75-what-the-profiler-said-report.md),
+  [`76`](docs/76-the-record-and-the-read-report.md) and
+  [`77`](docs/77-a-let-is-a-slot-report.md),
   indexed in
   [`docs/README.md`](docs/README.md) — record what each
   phase does, what it refuses to claim, and the corrections it makes to the design documents.
@@ -254,7 +255,16 @@ Write the commit message as the author of the change: what changed, and why.
   on its first byte. 4–8% on record-heavy programs and nothing on the one that builds no records.
   Its §76.4 is the correction to docs/75's method: callgrind counts **instructions**, and the
   6.21% of them that were `memcmp` were worth about 2% of the clock — an instruction profile ranks
-  candidates, and the wall clock decides between them.
+  candidates, and the wall clock decides between them. **docs/77 is that rule applied to docs/76's
+  own next item**, which turned out to be the wrong half: the same loop with 0, 8 and 24 bindings
+  in its body put **134 ns on a `let`** — three allocations, 77% of what a whole function call
+  costs — where the *read* it named was never the expensive part. A call now sizes its frame for
+  the parameters and every binding the body will make, so a `let` is a store and a counter at
+  **32 ns**; `beck_core::frames` counts, summing what runs in sequence and taking the maximum over
+  branches that cannot both run, and `Arc::get_mut` refuses the write once a closure holds the
+  frame. 4.2–8.2% across every benchmark, `fib(30)` unchanged because it binds nothing, and 3–6%
+  more peak memory. Its §77.6 corrects docs/75 §75.4, which called this third-order from an
+  allocation *count*: a candidate you have only counted has not been measured.
 - Security posture is [`docs/43-threat-model.md`](docs/43-threat-model.md) (who is defended
   against, and who is not) and `SECURITY.md` (how a report reaches us). What is *absent* is asserted
   as absent in `beck-cli/tests/pending_security.rs`: building one of those controls turns a test
@@ -333,7 +343,7 @@ Write the commit message as the author of the change: what changed, and why.
   *shape* rather than a rate, because docs/13 §13.7's "a gate that flakes gets deleted" rules out a
   wall-clock threshold on a shared runner.
 - The harnesses are the project's conscience (§4.8, §8.3): `compiler/crates/beck-cli/tests/` holds
-  the differential, replay-determinism, backend-seam, scaling, security, corpus, placement-property,
+  the differential, replay-determinism, backend-seam, scaling, frames, security, corpus, placement-property,
   general-slicer, incremental-analysis, incremental-engine, shared-arrangement, subscription,
   view-metrics, SICP, Are We Fast Yet, Benchmarks Game, tests-in-Beck, UI, workflow-cross-check,
   documentation, outbound, compile-speed and diagnostic-snapshot suites, plus the five release-only

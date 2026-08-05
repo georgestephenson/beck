@@ -981,8 +981,13 @@ impl<'h> Interp<'h> {
                 }
                 CoreKind::Let { var, value, body } => {
                     let v = self.operand(value, env)?;
-                    let next = env.extend(vec![(*var, v)]);
-                    owned = Some(next);
+                    // The call reserved a slot for this binding, so writing it costs nothing.
+                    // `put` refuses if a closure has captured this environment or if the program
+                    // was built without `beck_core::frames` having counted it, and then a `let`
+                    // chains a scope of its own as it always did.
+                    if let Err(v) = env.put_one(*var, v) {
+                        owned = Some(env.extend(vec![(*var, v)]));
+                    }
                     cur = body;
                 }
                 CoreKind::Match { scrutinee, arms } => {
@@ -996,8 +1001,10 @@ impl<'h> Interp<'h> {
                             cur.span,
                         ));
                     };
-                    let next = env.extend(bindings);
-                    owned = Some(next);
+                    let mut bindings = bindings;
+                    if !env.put(&mut bindings) {
+                        owned = Some(env.extend(bindings));
+                    }
                     cur = body;
                 }
                 CoreKind::App { func, args } => {
@@ -1058,6 +1065,7 @@ impl<'h> Interp<'h> {
                             params: Arc::clone(params),
                             body: Arc::clone(code),
                             env: Env::empty_shared(),
+                            locals: body.locals,
                         }));
                         self.globals
                             .borrow_mut()
@@ -1096,6 +1104,7 @@ impl<'h> Interp<'h> {
                 params: Arc::clone(params),
                 body: Arc::clone(body),
                 env: Arc::new(env.clone()),
+                locals: c.locals,
             }))),
             CoreKind::Prim { op, args } => self.eval_prim(*op, args, env, c.span),
             CoreKind::Make {
@@ -2122,13 +2131,11 @@ fn bind(
             span,
         ));
     }
-    // One allocation for the frame — `zip` of two exact-size iterators has a known length, so
-    // collecting straight into `Arc<[_]>` sizes it once — and a refcount bump for the parent,
-    // which is already behind an `Arc` because a closure holds it that way (`docs/74`).
-    Ok(Env::extend_shared(
-        &c.env,
-        c.params.iter().copied().zip(args).collect(),
-    ))
+    // One allocation for the frame — sized for the parameters *and* for every binding the body
+    // will make, so that a `let` writes into a slot rather than allocating a scope (`docs/77`) —
+    // and a refcount bump for the parent, which is already behind an `Arc` because a closure holds
+    // it that way (`docs/74`).
+    Ok(Env::call_frame(&c.env, &c.params, args, c.locals))
 }
 
 fn constant(k: &Const) -> Value {
@@ -2271,6 +2278,7 @@ mod tests {
                 Span::NONE,
             )),
             env: Env::empty_shared(),
+            locals: 0,
         }));
         let out = interp
             .prim(Prim::SortBy, vec![xs.clone(), key.clone()], Span::NONE)

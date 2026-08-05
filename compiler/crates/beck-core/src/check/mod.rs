@@ -1376,6 +1376,7 @@ impl<'a> Checker<'a> {
             tier,
             span,
             last_use: false,
+            locals: 0,
         };
 
         let mut declared_effects: Vec<Effect> = declared.atoms.iter().cloned().collect();

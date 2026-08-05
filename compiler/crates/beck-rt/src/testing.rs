@@ -498,6 +498,7 @@ fn build_stubs(
                     tier: Tier::Any,
                     span: value.span,
                     last_use: false,
+                    locals: 0,
                 };
                 Answer::FromTheCall(
                     backend
@@ -1052,6 +1053,7 @@ fn eval(
         tier: Tier::Any,
         span: code.span,
         last_use: false,
+        locals: 0,
     };
     let f = runtime
         .prepare(&lam)

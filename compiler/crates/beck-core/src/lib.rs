@@ -21,6 +21,7 @@ pub mod cost;
 pub mod digest;
 pub mod docgen;
 pub mod engine;
+pub mod frames;
 pub mod gen;
 pub mod graph;
 pub mod html;
@@ -91,8 +92,10 @@ pub fn compile_with(
         return None;
     }
     // Which read of a local is its last, computed once for every backend rather than by one of
-    // them (`liveness`).
+    // them (`liveness`), and how many bindings each body makes, so a call can reserve them in one
+    // frame (`frames`).
     liveness::mark_program(&mut program);
+    frames::reserve_program(&mut program);
     let mut placed = split::split(program, diags)?;
     placed.placement = solution;
     Some(placed)
@@ -133,6 +136,7 @@ pub fn compile_or_library_str(name: &str, src: &str) -> (Option<Placed>, Diagnos
         return (None, diags, map);
     }
     liveness::mark_program(&mut program);
+    frames::reserve_program(&mut program);
     let interface = iface::Interface::of(&program);
     let placed = project::slice_or_library(
         project::Project {
