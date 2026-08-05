@@ -110,7 +110,7 @@ impl Placed {
             Core::new(
                 CoreKind::Lam {
                     params: (0..n as VarId).collect(),
-                    body: Box::new(body),
+                    body: Arc::new(body),
                 },
                 Ty::fun((0..n).map(|_| Ty::unit()).collect(), Ty::unit()),
                 span,
@@ -402,7 +402,7 @@ pub fn split(mut program: Program, diags: &mut Diagnostics) -> Option<Placed> {
     let view = Core {
         kind: CoreKind::Lam {
             params: vec![state_var, session_var],
-            body: Box::new(view_body),
+            body: Arc::new(view_body),
         },
         ty: Ty::fun(vec![state_ty.clone(), Ty::con("Session")], Ty::html()),
         tier: Tier::Client,
@@ -478,7 +478,7 @@ pub fn split(mut program: Program, diags: &mut Diagnostics) -> Option<Placed> {
         Core {
             kind: CoreKind::Lam {
                 params: vec![s, p],
-                body: Box::new(Core {
+                body: Arc::new(Core {
                     kind: CoreKind::App {
                         func: Box::new(validate.clone()),
                         args: vec![
@@ -723,7 +723,7 @@ fn filtered_step(step: &Core, pred: &Core, state_ty: &Ty, vars: &mut Vars, span:
     Core {
         kind: CoreKind::Lam {
             params: vec![s, e],
-            body: Box::new(body),
+            body: Arc::new(body),
         },
         ty: Ty::fun(vec![state_ty.clone(), Ty::unit()], state_ty.clone()),
         tier: Tier::Data,
@@ -789,7 +789,7 @@ fn fuse(
         Core {
             kind: CoreKind::Lam {
                 params: vec![s, e],
-                body: Box::new(make(step_fields)),
+                body: Arc::new(make(step_fields)),
             },
             ty: Ty::fun(vec![state_ty.clone(), Ty::unit()], state_ty.clone()),
             tier: Tier::Data,

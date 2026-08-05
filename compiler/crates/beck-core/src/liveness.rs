@@ -41,6 +41,7 @@
 //!    anything.
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use crate::core::{Core, CoreKind, VarId};
 
@@ -69,7 +70,10 @@ pub fn mark(body: &mut Core) {
     // exactly the bindings worth moving. Looking through it is the difference between this pass
     // marking every function and marking nothing at all.
     if let CoreKind::Lam { body: inner, .. } = &mut body.kind {
-        mark_body(inner);
+        // `make_mut` rather than a clone: this runs once, on a program nothing else holds yet, so
+        // the copy-on-write never copies. The `Arc` is there for the *evaluator*, which shares one
+        // body across every closure built from it (`docs/73` §73.1).
+        mark_body(Arc::make_mut(inner));
     } else {
         mark_body(body);
     }
@@ -139,7 +143,7 @@ fn walk(c: &mut Core, live: &mut BTreeSet<VarId>, captured: &BTreeSet<VarId>) {
             // The body is still walked, so a variable it reads becomes live in the enclosing scope
             // — a closure that reads `xs` is a reader of `xs` for as long as it exists. Nothing
             // inside is marked, because `captured` already holds every variable it mentions.
-            walk(body, live, captured);
+            walk(Arc::make_mut(body), live, captured);
             for p in params.iter() {
                 live.remove(p);
             }
@@ -327,7 +331,7 @@ mod tests {
         let lam = Core::new(
             CoreKind::Lam {
                 params: vec![7],
-                body: Box::new(var(1)),
+                body: Arc::new(var(1)),
             },
             Ty::int(),
             Span::NONE,

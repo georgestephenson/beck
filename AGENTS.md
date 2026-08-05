@@ -55,8 +55,9 @@ Write the commit message as the author of the change: what changed, and why.
   [`68`](docs/68-clbg-report.md),
   [`69`](docs/69-standard-library-imports-report.md),
   [`70`](docs/70-last-use-moves-report.md),
-  [`71`](docs/71-strings-report.md) and
-  [`72`](docs/72-space-and-constants-report.md),
+  [`71`](docs/71-strings-report.md),
+  [`72`](docs/72-space-and-constants-report.md) and
+  [`73`](docs/73-closures-share-their-code-report.md),
   indexed in
   [`docs/README.md`](docs/README.md) — record what each
   phase does, what it refuses to claim, and the corrections it makes to the design documents.
@@ -219,7 +220,11 @@ Write the commit message as the author of the change: what changed, and why.
   holds, −23% peak on `havlak`. It also makes `--fuel` charge for the work a primitive does over a
   length the caller chose, so the budget bounds work rather than nodes and a scaling gate can be
   deterministic; the default is unchanged, because the charge is the size of the work rather than a
-  tax on it.
+  tax on it. **docs/73 is the largest single number any of it produced and is one line**: a closure
+  held its body by value, so evaluating a `lam` deep-copied the whole function body once per call of
+  a named function — every benchmark in the tree is **56–72% faster** now that it shares an `Arc`.
+  It survived four reports about performance because it is a constant rather than a shape, and
+  because `--fuel` cannot see a copy that happens between nodes rather than inside a primitive.
 - Security posture is [`docs/43-threat-model.md`](docs/43-threat-model.md) (who is defended
   against, and who is not) and `SECURITY.md` (how a report reaches us). What is *absent* is asserted
   as absent in `beck-cli/tests/pending_security.rs`: building one of those controls turns a test

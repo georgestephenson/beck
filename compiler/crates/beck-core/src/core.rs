@@ -405,7 +405,11 @@ pub enum CoreKind {
     Global(Arc<str>),
     Lam {
         params: Vec<VarId>,
-        body: Box<Core>,
+        /// Shared, not owned: a closure is built every time a `lam` node is *evaluated*, and a
+        /// `Box` meant deep-copying the whole function body each time. `docs/73` §73.1 measured
+        /// 20,000 calls to a function whose executed path never changed costing 42 ms, 227 ms and
+        /// 606 ms as the *unexecuted* part of its body grew.
+        body: Arc<Core>,
     },
     App {
         func: Box<Core>,
@@ -576,7 +580,7 @@ impl Core {
     pub fn place(&mut self, tier: Tier) {
         self.tier = tier;
         match &mut self.kind {
-            CoreKind::Lam { body, .. } => body.place(tier),
+            CoreKind::Lam { body, .. } => Arc::make_mut(body).place(tier),
             CoreKind::App { func, args } => {
                 func.place(tier);
                 for a in args {
@@ -879,7 +883,9 @@ pub enum AttrValue {
 #[derive(Debug)]
 pub struct Closure {
     pub params: Vec<VarId>,
-    pub body: Core,
+    /// The same `Arc` the [`CoreKind::Lam`] node holds, so building a closure is a refcount bump
+    /// rather than a copy of the code.
+    pub body: Arc<Core>,
     pub env: Env,
 }
 

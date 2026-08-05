@@ -492,7 +492,7 @@ fn build_stubs(
                 let lam = Core {
                     kind: CoreKind::Lam {
                         params: params.clone(),
-                        body: Box::new(value.clone()),
+                        body: std::sync::Arc::new(value.clone()),
                     },
                     ty: Ty::fun(Vec::new(), value.ty.clone()),
                     tier: Tier::Any,
@@ -1046,7 +1046,7 @@ fn eval(
     let lam = Core {
         kind: CoreKind::Lam {
             params,
-            body: Box::new(code.clone()),
+            body: std::sync::Arc::new(code.clone()),
         },
         ty: Ty::fun(Vec::new(), code.ty.clone()),
         tier: Tier::Any,

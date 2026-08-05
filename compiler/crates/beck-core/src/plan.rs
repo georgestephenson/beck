@@ -861,7 +861,7 @@ fn lam(params: Vec<VarId>, body: Core) -> Core {
         span: body.span,
         kind: CoreKind::Lam {
             params,
-            body: Box::new(body),
+            body: Arc::new(body),
         },
         last_use: false,
     }

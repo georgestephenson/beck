@@ -990,9 +990,12 @@ impl<'h> Interp<'h> {
             CoreKind::Const(k) => Ok(constant(k)),
             CoreKind::Var(v) => read_var(c, *v, env),
             CoreKind::Global(name) => self.global(name, c.span),
+            // A refcount bump, not a copy of the code. This used to be `(**body).clone()` — a deep
+            // copy of the whole function body, taken every time a `lam` node was evaluated, which
+            // is once per call of a named function. `docs/73` §73.1 has what that cost.
             CoreKind::Lam { params, body } => Ok(Value::Closure(Arc::new(Closure {
                 params: params.clone(),
-                body: (**body).clone(),
+                body: Arc::clone(body),
                 env: env.clone(),
             }))),
             CoreKind::Prim { op, args } => self.eval_prim(*op, args, env, c.span),
@@ -2153,14 +2156,14 @@ mod tests {
         ]));
         let key = Value::Closure(Arc::new(Closure {
             params: vec![0],
-            body: Core::new(
+            body: Arc::new(Core::new(
                 CoreKind::Field {
                     base: Box::new(Core::new(CoreKind::Var(0), Ty::int(), Span::NONE)),
                     name: Arc::from("k"),
                 },
                 Ty::str_(),
                 Span::NONE,
-            ),
+            )),
             env: Env::new(),
         }));
         let out = interp
@@ -2208,7 +2211,7 @@ mod tests {
         let n = || Core::new(CoreKind::Var(0), Ty::int(), Span::NONE);
         core(CoreKind::Lam {
             params: vec![0],
-            body: Box::new(core(CoreKind::If {
+            body: Arc::new(core(CoreKind::If {
                 cond: Box::new(Core::new(
                     CoreKind::Prim {
                         op: Prim::Eq,
@@ -2241,7 +2244,7 @@ mod tests {
         let n = || Core::new(CoreKind::Var(0), Ty::int(), Span::NONE);
         core(CoreKind::Lam {
             params: vec![0],
-            body: Box::new(core(CoreKind::If {
+            body: Arc::new(core(CoreKind::If {
                 cond: Box::new(Core::new(
                     CoreKind::Prim {
                         op: Prim::Eq,
