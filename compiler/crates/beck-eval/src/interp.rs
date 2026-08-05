@@ -109,15 +109,15 @@ fn reply_value(reply: &Reply) -> Value {
     let headers = reply.headers.iter().fold(PMap::new(), |m, (k, v)| {
         m.insert(Value::str_(k), Value::str_(v))
     });
-    Value::Data {
-        ty: Arc::from("HttpResponse"),
-        variant: None,
-        fields: Arc::new(BTreeMap::from([
+    Value::data(
+        Arc::from("HttpResponse"),
+        None,
+        BTreeMap::from([
             (Arc::from("status"), Value::Int(reply.status)),
             (Arc::from("headers"), Value::Map(headers)),
             (Arc::from("body"), Value::str_(&reply.body)),
-        ])),
-    }
+        ]),
+    )
 }
 
 /// The seam's [`NetFailure`] as the `HttpError` the call raises.
@@ -145,11 +145,11 @@ fn failure_value(host: &str, f: &NetFailure) -> Value {
             vec![(Arc::from("why"), Value::str_(why))],
         ),
     };
-    Value::Data {
-        ty: Arc::from("HttpError"),
-        variant: Some(Arc::from(variant)),
-        fields: Arc::new(fields.into_iter().collect()),
-    }
+    Value::data(
+        Arc::from("HttpError"),
+        Some(Arc::from(variant)),
+        fields.into_iter().collect(),
+    )
 }
 
 /// The three "this primitive wanted a `T`" conversions, so twenty-odd library primitives do not
@@ -264,16 +264,14 @@ fn raised<const N: usize>(
 ) -> EvalError {
     EvalError::raise(
         Arc::from(ty),
-        Value::Data {
-            ty: Arc::from(ty),
-            variant: Some(Arc::from(variant)),
-            fields: Arc::new(
-                fields
-                    .into_iter()
-                    .map(|(n, v)| (Arc::from(n), v))
-                    .collect::<BTreeMap<Arc<str>, Value>>(),
-            ),
-        },
+        Value::data(
+            Arc::from(ty),
+            Some(Arc::from(variant)),
+            fields
+                .into_iter()
+                .map(|(n, v)| (Arc::from(n), v))
+                .collect::<BTreeMap<Arc<str>, Value>>(),
+        ),
         span,
     )
 }
@@ -291,23 +289,20 @@ fn as_list<'a>(v: &'a Value, who: &str, span: Span) -> Result<&'a Vec<Value>, Ev
 // ------------------------------------------------------------------------------------ JSON
 
 fn json_node(variant: &str, field: &str, value: Value) -> Value {
-    Value::Data {
-        ty: Arc::from("Json"),
-        variant: Some(Arc::from(variant)),
-        fields: Arc::new(std::collections::BTreeMap::from([(
-            Arc::from(field),
-            value,
-        )])),
-    }
+    Value::data(
+        Arc::from("Json"),
+        Some(Arc::from(variant)),
+        std::collections::BTreeMap::from([(Arc::from(field), value)]),
+    )
 }
 
 fn json_to_value(j: &serde_json::Value) -> Value {
     match j {
-        serde_json::Value::Null => Value::Data {
-            ty: Arc::from("Json"),
-            variant: Some(Arc::from("JsonNull")),
-            fields: Arc::new(std::collections::BTreeMap::new()),
-        },
+        serde_json::Value::Null => Value::data(
+            Arc::from("Json"),
+            Some(Arc::from("JsonNull")),
+            std::collections::BTreeMap::new(),
+        ),
         serde_json::Value::Bool(b) => json_node("JsonBool", "value", Value::Bool(*b)),
         // JSON has one number type and so does this union, which is why an integer document reads
         // back as a `Float` and a caller who wants an `Int` says so.
@@ -592,6 +587,113 @@ fn read_var(c: &Core, v: VarId, env: &mut Env) -> EvalResult {
         .ok_or_else(|| EvalError::new(format!("unbound variable {v} at runtime"), c.span))
 }
 
+/// How much a primitive will touch, in elements, from the arguments it was given.
+///
+/// The budget used to count **nodes**, so `sort_by` over a million values and `list_len` over the
+/// same list were both one step. `docs/70` §70.7 is the proof that this is not a bound on work at
+/// all: over a loop whose wall clock quadrupled per doubling, the step count exactly doubled.
+///
+/// Only primitives whose cost is **proportional to a length the caller chose** appear here. A
+/// constant-time one — `list_get`, `list_len`, `map_len`, `str_len` — is already bounded by the node
+/// count, and charging it a length would make an ordinary indexed loop over a long list run out of
+/// fuel for doing nothing wrong. `sort_by` is charged its `n` rather than `n log n`, which
+/// understates it by a factor the budget does not need to be precise about.
+fn work_of(op: Prim, args: &[Value]) -> usize {
+    let list_len = |i: usize| match args.get(i) {
+        Some(Value::List(xs)) => xs.len(),
+        _ => 0,
+    };
+    let map_len = |i: usize| match args.get(i) {
+        Some(Value::Map(m)) => m.len(),
+        _ => 0,
+    };
+    let str_len = |i: usize| match args.get(i) {
+        Some(Value::Str(t)) => t.len(),
+        _ => 0,
+    };
+    match op {
+        // A slice costs what it *takes*, not what it is taken from — charging the whole list makes
+        // `str_join(list_slice(chars, i, k), "")` over a 10,245-element list cost 10,245 instead of
+        // `k`, which is a 500× overcharge and was the first thing this accounting got wrong.
+        Prim::ListSlice | Prim::ListTake => {
+            match args.get(if op == Prim::ListSlice { 2 } else { 1 }) {
+                Some(Value::Int(n)) => ((*n).max(0) as usize).min(list_len(0)),
+                _ => 0,
+            }
+        }
+        Prim::ListDrop => list_len(0).saturating_sub(match args.get(1) {
+            Some(Value::Int(n)) => (*n).max(0) as usize,
+            _ => 0,
+        }),
+        // Walks or rebuilds a whole list.
+        Prim::ListReverse
+        | Prim::ListContains
+        | Prim::ListIndexOf
+        | Prim::ListFold
+        | Prim::ListAll
+        | Prim::ListAny
+        | Prim::ListFlatMap
+        | Prim::MapList
+        | Prim::FilterList
+        | Prim::SortBy => list_len(0),
+        Prim::ListZip => list_len(0) + list_len(1),
+        Prim::ConcatLists => match args.first() {
+            Some(Value::List(xs)) => xs
+                .iter()
+                .map(|x| match x {
+                    Value::List(inner) => inner.len(),
+                    _ => 1,
+                })
+                .sum(),
+            _ => 0,
+        },
+        // Walks or rebuilds a map. `map_insert` and `map_remove` rebuild one path, not the tree.
+        Prim::MapKeys | Prim::MapValues | Prim::MapMerge => map_len(0),
+        // Walks a string. `str_len` is absent deliberately: it is O(1) since `docs/71`.
+        // Joining costs the text it produces, which is the parts and not their number.
+        Prim::StrJoin => match args.first() {
+            Some(Value::List(xs)) => xs
+                .iter()
+                .map(|x| match x {
+                    Value::Str(t) => t.len(),
+                    _ => 1,
+                })
+                .sum(),
+            _ => 0,
+        },
+        Prim::StrSplit
+        | Prim::StrChars
+        | Prim::StrContains
+        | Prim::StrStartsWith
+        | Prim::StrEndsWith
+        | Prim::StrIndexOf
+        | Prim::StrUpper
+        | Prim::StrLower
+        | Prim::StrReplace
+        | Prim::StrTrim
+        | Prim::StrToInt
+        | Prim::Digest
+        | Prim::DigestKeyed
+        | Prim::DigestEq
+        | Prim::HexEncode
+        | Prim::HexDecode
+        | Prim::Base64Encode
+        | Prim::Base64Decode
+        | Prim::JsonParse
+        | Prim::JsonRender => str_len(0),
+        // The length asked for, which is the only thing that bounds it.
+        Prim::StrRepeat => str_len(0).saturating_mul(match args.get(1) {
+            Some(Value::Int(n)) => (*n).max(0) as usize,
+            _ => 0,
+        }),
+        Prim::StrSlice => match args.get(2) {
+            Some(Value::Int(n)) => (*n).max(0) as usize,
+            _ => 0,
+        },
+        _ => 0,
+    }
+}
+
 /// One step of evaluation: a finished value, or a call in tail position that
 /// [`Interp::eval`]'s loop should make *instead of* the one it is already making.
 enum Step {
@@ -647,6 +749,28 @@ impl<'h> Interp<'h> {
             return Err(EvalError::new("evaluation ran out of fuel", span));
         }
         self.fuel.set(left - 1);
+        Ok(())
+    }
+
+    /// Charge for work a primitive does over `n` elements, on top of the one step the node cost.
+    ///
+    /// The budget counted **nodes** until `docs/72`, which meant it could not see a primitive that
+    /// touched a million values: `list_slice` over a long list, a sort, a digest and a concatenation
+    /// were each one step, so a program could do unbounded work inside a bounded number of them.
+    /// `docs/70` §70.7 is the measurement that proves it — over a loop whose wall clock quadrupled
+    /// per doubling, the step count exactly doubled.
+    ///
+    /// It is charged where the work is *proportional to a length the caller chose*, not for every
+    /// allocation: the point is that the budget bounds what a program can make the evaluator do, and
+    /// a constant is already bounded by the node count.
+    fn burn_work(&self, n: usize, span: Span) -> Result<(), EvalError> {
+        let left = self.fuel.get();
+        let cost = n as u64;
+        if left <= cost {
+            self.fuel.set(0);
+            return Err(EvalError::new("evaluation ran out of fuel", span));
+        }
+        self.fuel.set(left - cost);
         Ok(())
     }
 
@@ -915,11 +1039,7 @@ impl<'h> Interp<'h> {
         for (name, expr) in fields {
             map.insert(name.clone(), self.operand(expr, env)?);
         }
-        Ok(Value::Data {
-            ty: ty.clone(),
-            variant: variant.cloned(),
-            fields: Arc::new(map),
-        })
+        Ok(Value::data(ty.clone(), variant.cloned(), map))
     }
 
     #[cfg_attr(debug_assertions, inline(never))]
@@ -939,28 +1059,20 @@ impl<'h> Interp<'h> {
         span: Span,
     ) -> EvalResult {
         let v = self.operand(base, env)?;
-        let Value::Data {
-            ty,
-            variant,
-            fields: old,
-        } = v
-        else {
+        let Value::Data(old) = v else {
             return Err(EvalError::new("`with` expects a record", span));
         };
         // The base of a `with` is usually a last read — `t.with(done=…)` — so when it is, the
-        // field map arrives here held by nobody else and is rebuilt rather than copied.
-        let mut map = match Arc::try_unwrap(old) {
+        // record arrives here held by nobody else and is rebuilt rather than copied.
+        let mut record = match Arc::try_unwrap(old) {
             Ok(owned) => owned,
             Err(shared) => (*shared).clone(),
         };
         for (name, expr) in fields {
-            map.insert(name.clone(), self.operand(expr, env)?);
+            let value = self.operand(expr, env)?;
+            record.fields.insert(name.clone(), value);
         }
-        Ok(Value::Data {
-            ty,
-            variant,
-            fields: Arc::new(map),
-        })
+        Ok(Value::Data(Arc::new(record)))
     }
 
     #[cfg_attr(debug_assertions, inline(never))]
@@ -982,6 +1094,12 @@ impl<'h> Interp<'h> {
     }
 
     fn prim(&self, op: Prim, mut args: Vec<Value>, span: Span) -> EvalResult {
+        // What this one will actually touch, charged before it touches it (`work_of`).
+        let work = work_of(op, &args);
+        if work > 0 {
+            self.burn_work(work, span)?;
+        }
+
         let want = |n: usize| -> Result<(), EvalError> {
             if args.len() == n {
                 Ok(())
@@ -1035,7 +1153,7 @@ impl<'h> Interp<'h> {
                 want(1)?;
                 let v = args.pop().expect("arity checked");
                 let ty = match &v {
-                    Value::Data { ty, .. } => ty.clone(),
+                    Value::Data(d) => d.ty.clone(),
                     other => Arc::from(other.display()),
                 };
                 Err(EvalError::raise(ty, v, span))
@@ -1073,7 +1191,11 @@ impl<'h> Interp<'h> {
                     };
                     let left = match Arc::try_unwrap(x) {
                         Ok(owned) => owned,
-                        Err(shared) => (*shared).clone(),
+                        Err(shared) => {
+                            // Copied because somebody else holds it, so the copy is charged.
+                            self.burn_work(shared.len(), span)?;
+                            (*shared).clone()
+                        }
                     };
                     return Ok(Value::Str(Arc::new(left.appended(y.as_str()))));
                 }
@@ -1231,12 +1353,14 @@ impl<'h> Interp<'h> {
                 // into a range. A non-ASCII string still walks, because there is nothing else it
                 // could do without an index nobody has asked to pay for.
                 if let Value::Str(t) = &v {
-                    if t.is_ascii_text() {
-                        let bytes = t.as_str().as_bytes();
-                        let from = start.min(bytes.len());
-                        let to = from.saturating_add(len).min(bytes.len());
-                        return Ok(Value::str_(&t.as_str()[from..to]));
-                    }
+                    // A character index is a byte index when the text is ASCII, and otherwise the
+                    // string's own chunked index finds the byte in at most a stride's worth of
+                    // steps (`core::Text::byte_offset`). Either way this is `O(len)` in what is
+                    // *taken* rather than `O(start)` in what is skipped over — which is what made
+                    // walking a string by index quadratic (`docs/71`).
+                    let from = t.byte_offset(start);
+                    let to = t.byte_offset(start.saturating_add(len));
+                    return Ok(Value::str_(&t.as_str()[from..to]));
                 }
                 let s = as_str(&v, "str_slice", span)?;
                 let out: String = s.chars().skip(start).take(len).collect();
@@ -1408,7 +1532,11 @@ impl<'h> Interp<'h> {
                 if let Value::List(arc) = xs {
                     let mut out = match Arc::try_unwrap(arc) {
                         Ok(owned) => owned,
-                        Err(shared) => shared.to_vec(),
+                        Err(shared) => {
+                            // Ditto: a push costs nothing and a copy costs its length.
+                            self.burn_work(shared.len(), span)?;
+                            shared.to_vec()
+                        }
                     };
                     out.push(x);
                     return Ok(Value::List(Arc::new(out)));
@@ -1506,14 +1634,14 @@ impl<'h> Interp<'h> {
                     Ok(j) => Ok(json_to_value(&j)),
                     Err(e) => Err(EvalError::raise(
                         Arc::from("JsonError"),
-                        Value::Data {
-                            ty: Arc::from("JsonError"),
-                            variant: Some(Arc::from("BadJson")),
-                            fields: Arc::new(std::collections::BTreeMap::from([(
+                        Value::data(
+                            Arc::from("JsonError"),
+                            Some(Arc::from("BadJson")),
+                            std::collections::BTreeMap::from([(
                                 Arc::from("why"),
                                 Value::str_(e.to_string()),
-                            )])),
-                        },
+                            )]),
+                        ),
                         span,
                     )),
                 }
@@ -1537,14 +1665,14 @@ impl<'h> Interp<'h> {
                     Some(ms) => Ok(Value::Int(ms)),
                     None => Err(EvalError::raise(
                         Arc::from("TimeError"),
-                        Value::Data {
-                            ty: Arc::from("TimeError"),
-                            variant: Some(Arc::from("BadTime")),
-                            fields: Arc::new(std::collections::BTreeMap::from([(
+                        Value::data(
+                            Arc::from("TimeError"),
+                            Some(Arc::from("BadTime")),
+                            std::collections::BTreeMap::from([(
                                 Arc::from("why"),
                                 Value::str_(format!("`{text}` is not an RFC 3339 instant in UTC")),
-                            )])),
-                        },
+                            )]),
+                        ),
                         span,
                     )),
                 }
@@ -1827,11 +1955,11 @@ impl<'h> Interp<'h> {
             Prim::InternalOf => {
                 want(1)?;
                 let v = args.pop().expect("arity checked");
-                Ok(Value::Data {
-                    ty: Arc::from(beck_core::Ty::INTERNAL),
-                    variant: None,
-                    fields: Arc::new(std::collections::BTreeMap::from([(Arc::from("value"), v)])),
-                })
+                Ok(Value::data(
+                    Arc::from(beck_core::Ty::INTERNAL),
+                    None,
+                    std::collections::BTreeMap::from([(Arc::from("value"), v)]),
+                ))
             }
             Prim::Reveal => {
                 want(1)?;
@@ -1848,14 +1976,14 @@ impl<'h> Interp<'h> {
                 };
                 // A `secret[Str]` is a newtype at runtime, which is what keeps it distinguishable
                 // from the `Str` it wraps everywhere the wire format looks at a value.
-                Ok(Value::Data {
-                    ty: Arc::from(beck_core::Ty::SECRET),
-                    variant: None,
-                    fields: Arc::new(std::collections::BTreeMap::from([(
+                Ok(Value::data(
+                    Arc::from(beck_core::Ty::SECRET),
+                    None,
+                    std::collections::BTreeMap::from([(
                         Arc::from("value"),
                         Value::str_(self.host.secret(name)),
-                    )])),
-                })
+                    )]),
+                ))
             }
             // The signal vocabulary is *declarative*: the splitter reads these nodes out of the
             // program and wires the runtime accordingly (`split.rs`). Reaching one here means a
@@ -2006,22 +2134,22 @@ mod tests {
         let host = NoHost;
         let interp = Interp::new(&host);
         let xs = Value::List(Arc::new(vec![
-            Value::Data {
-                ty: Arc::from("T"),
-                variant: None,
-                fields: Arc::new(BTreeMap::from([
+            Value::data(
+                Arc::from("T"),
+                None,
+                BTreeMap::from([
                     (Arc::from("k"), Value::str_("a")),
                     (Arc::from("n"), Value::Int(1)),
-                ])),
-            },
-            Value::Data {
-                ty: Arc::from("T"),
-                variant: None,
-                fields: Arc::new(BTreeMap::from([
+                ]),
+            ),
+            Value::data(
+                Arc::from("T"),
+                None,
+                BTreeMap::from([
                     (Arc::from("k"), Value::str_("a")),
                     (Arc::from("n"), Value::Int(2)),
-                ])),
-            },
+                ]),
+            ),
         ]));
         let key = Value::Closure(Arc::new(Closure {
             params: vec![0],

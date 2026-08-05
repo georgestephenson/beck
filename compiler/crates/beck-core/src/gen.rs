@@ -215,11 +215,11 @@ fn build(
     match types.get(name) {
         Some(TyDecl::Newtype { inner, .. }) => {
             let v = build(inner, types, rng, depth + 1)?;
-            Ok(Value::Data {
-                ty: Arc::from(name),
-                variant: None,
-                fields: Arc::new(BTreeMap::from([(Arc::from("value"), v)])),
-            })
+            Ok(Value::data(
+                Arc::from(name),
+                None,
+                BTreeMap::from([(Arc::from("value"), v)]),
+            ))
         }
         Some(TyDecl::Alias { ty: inner, .. }) => build(inner, types, rng, depth),
         Some(TyDecl::Model { fields, .. }) => {
@@ -232,11 +232,7 @@ fn build(
                     build(&fty, types, reborrow(&mut rng), depth + 1 + i)?,
                 );
             }
-            Ok(Value::Data {
-                ty: Arc::from(name),
-                variant: None,
-                fields: Arc::new(out),
-            })
+            Ok(Value::data(Arc::from(name), None, out))
         }
         Some(TyDecl::Union { variants, .. }) => {
             if variants.is_empty() {
@@ -264,11 +260,7 @@ fn build(
                     build(&fty, types, reborrow(&mut rng), depth + 1 + i)?,
                 );
             }
-            Ok(Value::Data {
-                ty: Arc::from(name),
-                variant: Some(v.name.clone()),
-                fields: Arc::new(out),
-            })
+            Ok(Value::data(Arc::from(name), Some(v.name.clone()), out))
         }
         _ => Err(Uninhabitable {
             ty: ty.to_string(),
@@ -336,20 +328,12 @@ pub fn shrink(v: &Value) -> Vec<Value> {
                 out.push(Value::Map(m.remove(k)));
             }
         }
-        Value::Data {
-            ty,
-            variant,
-            fields,
-        } => {
-            for (name, f) in fields.iter() {
+        Value::Data(d) => {
+            for (name, f) in d.fields.iter() {
                 for smaller in shrink(f) {
-                    let mut copy = fields.as_ref().clone();
+                    let mut copy = d.fields.clone();
                     copy.insert(name.clone(), smaller);
-                    out.push(Value::Data {
-                        ty: ty.clone(),
-                        variant: variant.clone(),
-                        fields: Arc::new(copy),
-                    });
+                    out.push(Value::data(d.ty.clone(), d.variant.clone(), copy));
                 }
             }
         }
@@ -370,7 +354,7 @@ pub fn size(v: &Value) -> u64 {
         Value::Str(s) => s.len() as u64,
         Value::List(xs) => 1 + xs.iter().map(size).sum::<u64>(),
         Value::Map(m) => 1 + m.iter().map(|(k, val)| size(k) + size(val)).sum::<u64>(),
-        Value::Data { fields, .. } => fields.values().map(size).sum::<u64>(),
+        Value::Data(d) => d.fields.values().map(size).sum::<u64>(),
         Value::Html(_) | Value::Attr(_) | Value::Closure(_) => 1,
     }
 }

@@ -518,13 +518,12 @@ fn a_token_opens_only_under_the_key_that_minted_it() {
     };
     // `secret[Str]` is a newtype at runtime, so a key is built the way `secret_env` builds one
     // rather than by reading the environment: what is under test is the arithmetic, not the read.
-    let key = |text: &str| Value::Data {
-        ty: std::sync::Arc::from(beck_core::Ty::SECRET),
-        variant: None,
-        fields: std::sync::Arc::new(std::collections::BTreeMap::from([(
-            std::sync::Arc::from("value"),
-            Value::str_(text),
-        )])),
+    let key = |text: &str| {
+        Value::data(
+            std::sync::Arc::from(beck_core::Ty::SECRET),
+            None,
+            std::collections::BTreeMap::from([(std::sync::Arc::from("value"), Value::str_(text))]),
+        )
     };
 
     let token = call("minted", vec![key("k1"), Value::str_("actor-7")]);

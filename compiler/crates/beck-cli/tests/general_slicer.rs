@@ -635,14 +635,11 @@ async fn a_fused_accumulator_replays_bit_for_bit() {
 }
 
 fn arrive(who: &str) -> beck_core::Value {
-    beck_core::Value::Data {
-        ty: std::sync::Arc::from("Command"),
-        variant: Some(std::sync::Arc::from("Arrive")),
-        fields: std::sync::Arc::new(std::collections::BTreeMap::from([(
-            std::sync::Arc::from("who"),
-            beck_core::Value::str_(who),
-        )])),
-    }
+    beck_core::Value::record(
+        "Command",
+        Some("Arrive"),
+        [("who", beck_core::Value::str_(who))],
+    )
 }
 
 #[test]

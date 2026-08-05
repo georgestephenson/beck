@@ -345,22 +345,19 @@ fn a_count_over_a_maintained_collection_does_not_visit_the_collection() {
 
 /// Fold one `Added` event into the sketch's accumulator.
 fn fold_added(runtime: &Runtime, state: &Value, n: u64, actor: &str) -> Value {
-    let id = Value::Data {
-        ty: Arc::from("Id"),
-        variant: None,
-        fields: Arc::new(std::collections::BTreeMap::from([(
-            Arc::from("value"),
-            Value::str_(format!("{n:06}")),
-        )])),
-    };
-    let event = Value::Data {
-        ty: Arc::from("Event"),
-        variant: Some(Arc::from("Added")),
-        fields: Arc::new(std::collections::BTreeMap::from([
+    let id = Value::data(
+        Arc::from("Id"),
+        None,
+        std::collections::BTreeMap::from([(Arc::from("value"), Value::str_(format!("{n:06}")))]),
+    );
+    let event = Value::data(
+        Arc::from("Event"),
+        Some(Arc::from("Added")),
+        std::collections::BTreeMap::from([
             (Arc::from("id"), id),
             (Arc::from("text"), Value::str_(format!("item {n}"))),
-        ])),
-    };
+        ]),
+    );
     let env = Envelope {
         seq: n,
         at: Instant(n as i64),

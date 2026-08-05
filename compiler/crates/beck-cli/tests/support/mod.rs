@@ -37,19 +37,15 @@ pub fn command(variant: &str, fields: &[(&str, &str)]) -> Value {
     let mut map = BTreeMap::new();
     for (name, value) in fields {
         let v = if *name == "id" {
-            Value::Data {
-                ty: Arc::from("Id"),
-                variant: None,
-                fields: Arc::new(BTreeMap::from([(Arc::from("value"), Value::str_(value))])),
-            }
+            Value::data(
+                Arc::from("Id"),
+                None,
+                BTreeMap::from([(Arc::from("value"), Value::str_(value))]),
+            )
         } else {
             Value::str_(value)
         };
         map.insert(Arc::from(*name), v);
     }
-    Value::Data {
-        ty: Arc::from("Command"),
-        variant: Some(Arc::from(variant)),
-        fields: Arc::new(map),
-    }
+    Value::data(Arc::from("Command"), Some(Arc::from(variant)), map)
 }

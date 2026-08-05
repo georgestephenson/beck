@@ -1635,21 +1635,14 @@ fn same(a: &Value, b: &Value) -> bool {
         (Value::Map(x), Value::Map(y)) => x.same_root(y),
         (Value::Html(x), Value::Html(y)) => Arc::ptr_eq(x, y),
         (Value::Attr(x), Value::Attr(y)) => Arc::ptr_eq(x, y),
-        (
-            Value::Data {
-                ty: t1,
-                variant: v1,
-                fields: f1,
-            },
-            Value::Data {
-                ty: t2,
-                variant: v2,
-                fields: f2,
-            },
-        ) => {
-            if Arc::ptr_eq(f1, f2) {
-                return t1 == t2 && v1 == v2;
+        (Value::Data(a), Value::Data(b)) => {
+            // One pointer now compares the whole record, where three fields used to be compared
+            // one at a time — the shape `Value::Data(Arc<Record>)` was chosen for.
+            if Arc::ptr_eq(a, b) {
+                return true;
             }
+            let (t1, v1, f1) = (&a.ty, &a.variant, &a.fields);
+            let (t2, v2, f2) = (&b.ty, &b.variant, &b.fields);
             t1 == t2
                 && v1 == v2
                 && f1.len() == f2.len()
@@ -1812,12 +1805,12 @@ fn value_bytes(v: &Value, seen: &mut std::collections::BTreeSet<usize>) -> u64 {
             }
             n
         }
-        Value::Data { fields, .. } => {
-            if !fresh(Arc::as_ptr(fields) as usize) {
+        Value::Data(d) => {
+            if !fresh(Arc::as_ptr(d) as usize) {
                 return 0;
             }
-            let mut n = (fields.len() * (std::mem::size_of::<Value>() + 16 + 24)) as u64;
-            for f in fields.values() {
+            let mut n = (d.fields.len() * (std::mem::size_of::<Value>() + 16 + 24)) as u64;
+            for f in d.fields.values() {
                 n += value_bytes(f, seen);
             }
             n

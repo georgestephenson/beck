@@ -54,8 +54,9 @@ Write the commit message as the author of the change: what changed, and why.
   [`67`](docs/67-sqlite-report.md),
   [`68`](docs/68-clbg-report.md),
   [`69`](docs/69-standard-library-imports-report.md),
-  [`70`](docs/70-last-use-moves-report.md) and
-  [`71`](docs/71-strings-report.md),
+  [`70`](docs/70-last-use-moves-report.md),
+  [`71`](docs/71-strings-report.md) and
+  [`72`](docs/72-space-and-constants-report.md),
   indexed in
   [`docs/README.md`](docs/README.md) — record what each
   phase does, what it refuses to claim, and the corrections it makes to the design documents.
@@ -212,7 +213,13 @@ Write the commit message as the author of the change: what changed, and why.
   ASCII flag, so `str_len` is O(1) and a slice is a byte range, and it holds a `String` so `+`
   pushes into it under the same ownership test. Three quadratics found and removed in one branch —
   division's trial digit (docs/69 §69.6), the list accumulator (docs/70) and both halves of text —
-  each by asking what an operation should cost and measuring at two sizes.
+  each by asking what an operation should cost and measuring at two sizes. **docs/72 is the same
+  question asked of space and of the constants**: a `Value` was 48 bytes because of the record
+  variant most values are not, and is 16 now — a third off the memory of everything the language
+  holds, −23% peak on `havlak`. It also makes `--fuel` charge for the work a primitive does over a
+  length the caller chose, so the budget bounds work rather than nodes and a scaling gate can be
+  deterministic; the default is unchanged, because the charge is the size of the work rather than a
+  tax on it.
 - Security posture is [`docs/43-threat-model.md`](docs/43-threat-model.md) (who is defended
   against, and who is not) and `SECURITY.md` (how a report reaches us). What is *absent* is asserted
   as absent in `beck-cli/tests/pending_security.rs`: building one of those controls turns a test

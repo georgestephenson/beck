@@ -94,14 +94,11 @@ impl Repr {
                 }
                 Repr::Map(pairs)
             }
-            Value::Data {
-                ty,
-                variant,
-                fields,
-            } => Repr::Data {
-                ty: ty.to_string(),
-                variant: variant.as_ref().map(|v| v.to_string()),
-                fields: fields
+            Value::Data(d) => Repr::Data {
+                ty: d.ty.to_string(),
+                variant: d.variant.as_ref().map(|v| v.to_string()),
+                fields: d
+                    .fields
                     .iter()
                     .map(|(k, val)| Ok((k.to_string(), Repr::of(val)?)))
                     .collect::<Result<_, NotStorable>>()?,
@@ -132,16 +129,14 @@ impl Repr {
                 ty,
                 variant,
                 fields,
-            } => Value::Data {
-                ty: Arc::from(ty.as_str()),
-                variant: variant.as_deref().map(Arc::from),
-                fields: Arc::new(
-                    fields
-                        .iter()
-                        .map(|(k, v)| (Arc::from(k.as_str()), v.to_value()))
-                        .collect::<BTreeMap<Arc<str>, Value>>(),
-                ),
-            },
+            } => Value::data(
+                Arc::from(ty.as_str()),
+                variant.as_deref().map(Arc::from),
+                fields
+                    .iter()
+                    .map(|(k, v)| (Arc::from(k.as_str()), v.to_value()))
+                    .collect::<BTreeMap<Arc<str>, Value>>(),
+            ),
         }
     }
 }
@@ -168,10 +163,10 @@ mod tests {
         let mut m = PMap::new();
         m = m.insert(Value::str_("a"), Value::Int(1));
         m = m.insert(Value::str_("b"), Value::Bool(false));
-        Value::Data {
-            ty: Arc::from("Todo"),
-            variant: Some(Arc::from("Added")),
-            fields: Arc::new(BTreeMap::from([
+        Value::data(
+            Arc::from("Todo"),
+            Some(Arc::from("Added")),
+            BTreeMap::from([
                 (Arc::from("id"), Value::str_("t-1")),
                 (Arc::from("text"), Value::str_("milk")),
                 (Arc::from("n"), Value::Int(-7)),
@@ -181,8 +176,8 @@ mod tests {
                     Value::List(Arc::new(vec![Value::Unit, Value::Int(2)])),
                 ),
                 (Arc::from("m"), Value::Map(m)),
-            ])),
-        }
+            ]),
+        )
     }
 
     #[test]

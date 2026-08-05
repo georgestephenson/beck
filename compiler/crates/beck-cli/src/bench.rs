@@ -289,15 +289,15 @@ fn pending(i: i64) -> Pending {
 /// encoding equally and tell nobody anything.
 fn event(i: i64) -> Value {
     use std::collections::BTreeMap;
-    Value::Data {
-        ty: Arc::from("Event"),
-        variant: Some(Arc::from("Added")),
-        fields: Arc::new(BTreeMap::from([
+    Value::data(
+        Arc::from("Event"),
+        Some(Arc::from("Added")),
+        BTreeMap::from([
             (Arc::from("id"), Value::str_(format!("todo-{i}"))),
             (Arc::from("text"), Value::str_("buy milk on the way home")),
             (Arc::from("owner"), Value::str_("ana")),
             (Arc::from("at"), Value::Int(1_700_000_000_000 + i)),
             (Arc::from("done"), Value::Bool(false)),
-        ])),
-    }
+        ]),
+    )
 }

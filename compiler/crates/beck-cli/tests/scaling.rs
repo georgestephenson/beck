@@ -347,3 +347,54 @@ fn text_costs_the_same_per_character_however_long_it_gets() {
         long / short
     );
 }
+
+/// The same shape as the two gates above, asserted **deterministically**: the *budget* sees it.
+///
+/// `docs/70` §70.7 had to say the opposite — "it cannot be a fuel assertion […] a primitive that
+/// copies ten thousand values is one step" — and that was true of a budget that counted nodes.
+/// `docs/72` made `--fuel` charge for the work a primitive does over a length the caller chose, so
+/// a copy per append is now visible to it, and this gate needs no clock at all: same numbers on any
+/// machine, no 3× slack for a shared runner, no [`docs/13`](../../../../docs/13-testing.md) §13.7
+/// caveat.
+///
+/// It runs beside the wall-clock gates rather than replacing them, because the two see different
+/// things: fuel counts what the evaluator was *asked* to do, and the clock counts what it cost —
+/// an allocation per step, or a cache miss per element, is invisible here and real there.
+#[test]
+fn the_budget_itself_shows_that_accumulating_is_linear() {
+    let program = |n: usize| {
+        format!(
+            "def build(i: Int, n: Int, done: list[Int]) -> list[Int]:\n\
+             \x20   if i >= n:\n\
+             \x20       return done\n\
+             \x20   return build(i + 1, n, list_append(done, i))\n\
+             \n\
+             test \"accumulate\":\n\
+             \x20   expect list_len(build(0, {n}, [])) == {n}\n"
+        )
+    };
+    // Measured at 14 steps an element either side of 1,000 and 8,000; 20 is that with room for a
+    // node or two, and nowhere near the `n / 2` a copy per append would need.
+    const PER_ELEMENT: usize = 20;
+    for n in [1_000usize, 8_000] {
+        let file = std::env::temp_dir().join(format!("beck-scaling-fuel-{n}.beck"));
+        std::fs::write(&file, program(n)).expect("a scratch file");
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_beck"))
+            .args([
+                "test",
+                file.to_str().expect("a path"),
+                "--fuel",
+                &(PER_ELEMENT * n).to_string(),
+            ])
+            .output()
+            .expect("the compiler is built");
+        let _ = std::fs::remove_file(&file);
+        assert!(
+            out.status.success(),
+            "accumulating {n} elements needed more than {PER_ELEMENT} steps each, which is the \
+             shape of a copy per append rather than a push — see docs/70 and docs/72:\n{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}

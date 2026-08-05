@@ -52,14 +52,14 @@ impl Bench {
     fn feed_with(&self, n: usize) -> Value {
         let mut state = self.runtime.initial_state().expect("initial");
         for i in 0..n as u64 {
-            let event = Value::Data {
-                ty: Arc::from("Event"),
-                variant: Some(Arc::from("Published")),
-                fields: Arc::new(std::collections::BTreeMap::from([
+            let event = Value::data(
+                Arc::from("Event"),
+                Some(Arc::from("Published")),
+                std::collections::BTreeMap::from([
                     (Arc::from("id"), Value::str_(format!("p{i:05}"))),
                     (Arc::from("text"), Value::str_(format!("post {i}"))),
-                ])),
-            };
+                ]),
+            );
             let env = Envelope {
                 seq: i + 1,
                 at: At(i as i64 + 1),
@@ -90,22 +90,22 @@ impl Bench {
     }
 
     fn add_by(&self, state: &Value, n: u64, actor: &str) -> Value {
-        let id = Value::Data {
-            ty: Arc::from("Id"),
-            variant: None,
-            fields: Arc::new(std::collections::BTreeMap::from([(
+        let id = Value::data(
+            Arc::from("Id"),
+            None,
+            std::collections::BTreeMap::from([(
                 Arc::from("value"),
                 Value::str_(format!("{n:08}")),
-            )])),
-        };
-        let event = Value::Data {
-            ty: Arc::from("Event"),
-            variant: Some(Arc::from("Added")),
-            fields: Arc::new(std::collections::BTreeMap::from([
+            )]),
+        );
+        let event = Value::data(
+            Arc::from("Event"),
+            Some(Arc::from("Added")),
+            std::collections::BTreeMap::from([
                 (Arc::from("id"), id),
                 (Arc::from("text"), Value::str_(format!("item {n}"))),
-            ])),
-        };
+            ]),
+        );
         let env = Envelope {
             seq: n,
             at: At(n as i64),

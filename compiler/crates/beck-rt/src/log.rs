@@ -55,16 +55,16 @@ pub struct Envelope {
 impl Envelope {
     /// The envelope as the `Envelope[Event]` record a fold sees.
     pub fn to_value(&self, event: Value) -> Value {
-        Value::Data {
-            ty: Arc::from("Envelope"),
-            variant: None,
-            fields: Arc::new(BTreeMap::from([
+        Value::data(
+            Arc::from("Envelope"),
+            None,
+            BTreeMap::from([
                 (Arc::from("seq"), Value::Int(self.seq as i64)),
                 (Arc::from("at"), Value::Int(self.at.0)),
                 (Arc::from("actor"), Value::str_(&self.actor)),
                 (Arc::from("body"), event),
-            ])),
-        }
+            ]),
+        )
     }
 
     /// The event. Kept as a method because every caller had one and the type changed underneath

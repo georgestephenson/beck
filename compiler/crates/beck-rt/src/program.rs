@@ -97,14 +97,14 @@ impl Runtime {
 
     /// Build the `Proposal` record the program's `validate` expects.
     pub fn proposal(&self, actor: &str, command: Value) -> Value {
-        Value::Data {
-            ty: Arc::from("Proposal"),
-            variant: None,
-            fields: Arc::new(std::collections::BTreeMap::from([
+        Value::data(
+            Arc::from("Proposal"),
+            None,
+            std::collections::BTreeMap::from([
                 (Arc::from("session"), session(actor)),
                 (Arc::from("command"), command),
-            ])),
-        }
+            ]),
+        )
     }
 
     /// The authority chokepoint, as the program wrote it: the whole
@@ -280,25 +280,22 @@ impl Runtime {
                 .ok_or_else(|| anyhow!("`{tag}` needs a `{field}`"))?;
             fields.insert(field.clone(), decode_field(raw, ty, &self.placed.program)?);
         }
-        Ok(Value::Data {
-            ty: Arc::from(name),
-            variant: Some(variant.name.clone()),
-            fields: Arc::new(fields),
-        })
+        Ok(Value::data(
+            Arc::from(name),
+            Some(variant.name.clone()),
+            fields,
+        ))
     }
 }
 
 /// Build the `Session` the program sees. Phase 1 carries the actor only — dev-mode identity, as
 /// Phase 0 had; D6's OIDC relying party is Phase 3.
 fn session(actor: &str) -> Value {
-    Value::Data {
-        ty: Arc::from("Session"),
-        variant: None,
-        fields: Arc::new(std::collections::BTreeMap::from([(
-            Arc::from("actor"),
-            Value::str_(actor),
-        )])),
-    }
+    Value::data(
+        Arc::from("Session"),
+        None,
+        std::collections::BTreeMap::from([(Arc::from("actor"), Value::str_(actor))]),
+    )
 }
 
 fn decode_field(
@@ -312,14 +309,11 @@ fn decode_field(
     // "ids of different entities must not be interchangeable" (§3.1).
     if let Some(beck_core::TyDecl::Newtype { inner, .. }) = program.types.get(name) {
         let inner = decode_field(raw, inner, program)?;
-        return Ok(Value::Data {
-            ty: Arc::from(name),
-            variant: None,
-            fields: Arc::new(std::collections::BTreeMap::from([(
-                Arc::from("value"),
-                inner,
-            )])),
-        });
+        return Ok(Value::data(
+            Arc::from(name),
+            None,
+            std::collections::BTreeMap::from([(Arc::from("value"), inner)]),
+        ));
     }
     match name {
         Ty::STR => raw

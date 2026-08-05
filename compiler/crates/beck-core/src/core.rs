@@ -663,16 +663,29 @@ pub enum Value {
     Str(Arc<Text>),
     List(Arc<Vec<Value>>),
     Map(PMap<Value, Value>),
-    /// A model instance or a union variant. `variant` is `None` for a plain record.
-    Data {
-        ty: Arc<str>,
-        variant: Option<Arc<str>>,
-        fields: Arc<BTreeMap<Arc<str>, Value>>,
-    },
+    /// A model instance or a union variant — see [`Record`].
+    ///
+    /// Behind one pointer rather than inline, and that is a size decision rather than a style one:
+    /// the three fields inline made **every** `Value` 48 bytes, so a list of a million integers
+    /// carried 32 bytes of nothing per element and a call frame paid for the widest variant it did
+    /// not hold. One `Arc` makes a `Value` 16.
+    Data(Arc<Record>),
     Html(Arc<Html>),
     /// An attribute waiting to be attached to an element.
     Attr(Arc<AttrValue>),
     Closure(Arc<Closure>),
+}
+
+/// A model instance or a union variant. `variant` is `None` for a plain record.
+///
+/// Split out of [`Value::Data`] so that a `Value` is a discriminant and a pointer. Records are the
+/// widest thing the language has and the rarest thing in a hot loop, which is exactly the shape
+/// that should be behind an indirection.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Record {
+    pub ty: Arc<str>,
+    pub variant: Option<Arc<str>>,
+    pub fields: BTreeMap<Arc<str>, Value>,
 }
 
 /// A string that knows its own length in **characters**, and whether it is ASCII.
@@ -696,22 +709,72 @@ pub struct Text {
     chars: usize,
     /// Every character is one byte, so character index == byte index and a slice is a byte range.
     ascii: bool,
+    /// For text that is *not* ASCII: the byte offset of every 32nd character.
+    ///
+    /// Chunked rather than one entry per character, because the point is to stop paying `O(n)` per
+    /// slice and a jump to the nearest 32 does that for a thirty-second of the memory — `n / 8`
+    /// bytes, and only for text that needs it, since an ASCII character index *is* a byte index.
+    ///
+    /// Built eagerly, in the pass that counts the characters, rather than cached on first use. A
+    /// lazy one would be interior mutability inside a `Value`, and a `Value` is a `Map` key: the
+    /// cache would be invisible to `Ord` and `Hash` and therefore harmless, but "harmless interior
+    /// mutability in a key" is a sentence every reader and `clippy::mutable_key_type` would have to
+    /// re-check. One pass and an eighth of the bytes is the cheaper answer.
+    index: Box<[u32]>,
 }
+
+/// How many characters one entry of [`Text`]'s index skips.
+const INDEX_STRIDE: usize = 32;
 
 impl Text {
     pub fn new(bytes: String) -> Text {
         let ascii = bytes.is_ascii();
-        // The scan `is_ascii` already did answers this when it says yes, and a non-ASCII string
-        // pays one more pass — once, here, rather than on every `str_len`.
-        let chars = if ascii {
-            bytes.len()
-        } else {
-            bytes.chars().count()
-        };
+        // ASCII answers both questions from the scan `is_ascii` already did, and needs no index at
+        // all. Anything else pays one more pass — once, here — rather than paying it on every
+        // `str_len` and every `str_slice`.
+        if ascii {
+            let chars = bytes.len();
+            return Text {
+                bytes,
+                chars,
+                ascii,
+                index: Box::new([]),
+            };
+        }
+        let mut chars = 0usize;
+        let mut index = Vec::with_capacity(bytes.len() / INDEX_STRIDE + 1);
+        for (at, _) in bytes.char_indices() {
+            if chars.is_multiple_of(INDEX_STRIDE) {
+                index.push(at as u32);
+            }
+            chars += 1;
+        }
         Text {
             bytes,
             chars,
             ascii,
+            index: index.into_boxed_slice(),
+        }
+    }
+
+    /// The byte offset of character `i`, in constant time for ASCII text and in at most
+    /// [`INDEX_STRIDE`] steps for anything else. Past the end it answers the end, which is what a
+    /// clamping slice wants.
+    pub fn byte_offset(&self, i: usize) -> usize {
+        if self.ascii {
+            return i.min(self.bytes.len());
+        }
+        if i >= self.chars {
+            return self.bytes.len();
+        }
+        let chunk = i / INDEX_STRIDE;
+        let from = self.index.get(chunk).copied().unwrap_or(0) as usize;
+        match self.bytes[from..]
+            .char_indices()
+            .nth(i - chunk * INDEX_STRIDE)
+        {
+            Some((at, _)) => from + at,
+            None => self.bytes.len(),
         }
     }
 
@@ -731,18 +794,39 @@ impl Text {
     /// Append, consuming: the caller has established sole ownership, so this is a `push_str` and
     /// not a copy of both sides.
     pub fn appended(mut self, other: &str) -> Text {
-        self.bytes.push_str(other);
-        // Recomputed over the whole string rather than added to, because a character can be split
-        // across the join only if one side is invalid UTF-8, which `String` makes impossible — so
-        // this could be `self.chars + other.chars`. It is not, because `other` arrives as a `&str`
-        // and counting it is the same scan either way; what matters is that neither is quadratic.
+        let before = self.chars;
+        let start = self.bytes.len();
         let other_ascii = other.is_ascii();
-        self.chars += if other_ascii {
-            other.len()
-        } else {
-            other.chars().count()
-        };
-        self.ascii = self.ascii && other_ascii;
+        self.bytes.push_str(other);
+
+        // Everything here is `O(other)`, never `O(self)`, which is the property the whole change
+        // exists for: appending in a loop has to stay linear in the total.
+        if self.ascii && other_ascii {
+            self.chars = self.bytes.len();
+            return self;
+        }
+        if self.ascii {
+            // The left half was ASCII, so its character numbers *are* its byte offsets and its
+            // share of the index can be written down rather than walked for.
+            let mut index = Vec::with_capacity(self.bytes.len() / INDEX_STRIDE + 1);
+            let mut at = 0;
+            while at < before {
+                index.push(at as u32);
+                at += INDEX_STRIDE;
+            }
+            self.index = index.into_boxed_slice();
+            self.ascii = false;
+        }
+        let mut index = std::mem::take(&mut self.index).into_vec();
+        let mut chars = before;
+        for (at, _) in self.bytes[start..].char_indices() {
+            if chars.is_multiple_of(INDEX_STRIDE) {
+                index.push((start + at) as u32);
+            }
+            chars += 1;
+        }
+        self.chars = chars;
+        self.index = index.into_boxed_slice();
         self
     }
 }
@@ -919,7 +1003,7 @@ const TOMBSTONE: VarId = VarId::MAX;
 /// rebuilt in place by `with` — each only when nobody else holds them. Everything else is either a copy of a few bytes
 /// or an atomic increment, and moving it costs more than it saves — `Env::read` is the measurement.
 fn worth_moving(v: &Value) -> bool {
-    matches!(v, Value::List(_) | Value::Str(_) | Value::Data { .. })
+    matches!(v, Value::List(_) | Value::Str(_) | Value::Data(_))
 }
 
 /// The monotone `f64` → `u64` transform: for a non-negative float flip the sign bit, for a
@@ -1018,50 +1102,61 @@ impl Value {
         }
     }
 
+    /// Build a record or a union variant. The one constructor, so that the `Arc` and the map are
+    /// allocated in one place rather than at every call site.
+    pub fn data(
+        ty: impl Into<Arc<str>>,
+        variant: Option<Arc<str>>,
+        fields: BTreeMap<Arc<str>, Value>,
+    ) -> Value {
+        Value::Data(Arc::new(Record {
+            ty: ty.into(),
+            variant,
+            fields,
+        }))
+    }
+
+    /// The same from a list of pairs, which is how most call sites have them.
+    pub fn record<const N: usize>(
+        ty: impl Into<Arc<str>>,
+        variant: Option<&str>,
+        fields: [(&str, Value); N],
+    ) -> Value {
+        Value::data(
+            ty,
+            variant.map(Arc::from),
+            fields.into_iter().map(|(k, v)| (Arc::from(k), v)).collect(),
+        )
+    }
+
     pub fn field(&self, name: &str) -> Option<&Value> {
         match self {
-            Value::Data { fields, .. } => fields.get(name),
+            Value::Data(d) => d.fields.get(name),
             _ => None,
         }
     }
 
     pub fn variant(&self) -> Option<&str> {
         match self {
-            Value::Data { variant, .. } => variant.as_deref(),
+            Value::Data(d) => d.variant.as_deref(),
             _ => None,
         }
     }
 
     pub fn some(v: Value) -> Value {
-        Value::Data {
-            ty: Arc::from(Ty::OPTION),
-            variant: Some(Arc::from("Some")),
-            fields: Arc::new(BTreeMap::from([(Arc::from("value"), v)])),
-        }
+        Value::record(Ty::OPTION, Some("Some"), [("value", v)])
     }
 
     pub fn none() -> Value {
-        Value::Data {
-            ty: Arc::from(Ty::OPTION),
-            variant: Some(Arc::from("None")),
-            fields: Arc::new(BTreeMap::new()),
-        }
+        Value::record(Ty::OPTION, Some("None"), [])
     }
 
     pub fn ok(v: Value) -> Value {
-        Value::Data {
-            ty: Arc::from(Ty::RESULT),
-            variant: Some(Arc::from("Ok")),
-            fields: Arc::new(BTreeMap::from([(Arc::from("value"), v)])),
-        }
+        Value::record(Ty::RESULT, Some("Ok"), [("value", v)])
     }
 
     pub fn err(v: Value) -> Value {
-        Value::Data {
-            ty: Arc::from(Ty::RESULT),
-            variant: Some(Arc::from("Err")),
-            fields: Arc::new(BTreeMap::from([(Arc::from("error"), v)])),
-        }
+        Value::record(Ty::RESULT, Some("Err"), [("error", v)])
     }
 
     /// How `str(x)` renders a value, and how a value becomes a `Map` key's printed form.
@@ -1083,23 +1178,20 @@ impl Value {
                     .collect();
                 format!("{{{}}}", parts.join(", "))
             }
-            Value::Data {
-                ty,
-                variant,
-                fields,
-            } => {
+            Value::Data(d) => {
                 // A newtype wrapping one field prints as that field — `Id(uuid)` reads as the uuid,
                 // which is what a key attribute and a rendered list want.
-                if variant.is_none() && fields.len() == 1 {
-                    if let Some(v) = fields.values().next() {
+                if d.variant.is_none() && d.fields.len() == 1 {
+                    if let Some(v) = d.fields.values().next() {
                         return v.display();
                     }
                 }
-                let name = variant.as_deref().unwrap_or(ty);
-                if fields.is_empty() {
+                let name = d.variant.as_deref().unwrap_or(&d.ty);
+                if d.fields.is_empty() {
                     return name.to_string();
                 }
-                let parts: Vec<String> = fields
+                let parts: Vec<String> = d
+                    .fields
                     .iter()
                     .map(|(k, v)| format!("{k}: {}", v.display()))
                     .collect();
@@ -1130,19 +1222,17 @@ impl Value {
                 }
                 J::Object(obj)
             }
-            Value::Data {
-                variant, fields, ..
-            } => {
-                if variant.is_none() && fields.len() == 1 {
-                    if let Some(v) = fields.values().next() {
+            Value::Data(d) => {
+                if d.variant.is_none() && d.fields.len() == 1 {
+                    if let Some(v) = d.fields.values().next() {
                         return v.to_json();
                     }
                 }
                 let mut obj = JMap::new();
-                if let Some(v) = variant {
+                if let Some(v) = &d.variant {
                     obj.insert("c".into(), J::String(v.to_string()));
                 }
-                for (k, v) in fields.iter() {
+                for (k, v) in d.fields.iter() {
                     obj.insert(k.to_string(), v.to_json());
                 }
                 J::Object(obj)
@@ -1224,19 +1314,15 @@ pub fn value_to_repr(v: &Value) -> Result<serde_json::Value, NotStorable> {
             }
             json!({"$": "map", "v": pairs})
         }
-        Value::Data {
-            ty,
-            variant,
-            fields,
-        } => {
+        Value::Data(d) => {
             let mut f = JMap::new();
-            for (k, val) in fields.iter() {
+            for (k, val) in d.fields.iter() {
                 f.insert(k.to_string(), value_to_repr(val)?);
             }
             json!({
                 "$": "data",
-                "t": ty.as_ref(),
-                "c": variant.as_deref(),
+                "t": d.ty.as_ref(),
+                "c": d.variant.as_deref(),
                 "f": J::Object(f)
             })
         }
@@ -1277,11 +1363,11 @@ pub fn value_from_repr(j: &serde_json::Value) -> Option<Value> {
             for (k, val) in j.get("f")?.as_object()? {
                 fields.insert(Arc::from(k.as_str()), value_from_repr(val)?);
             }
-            Value::Data {
-                ty: Arc::from(j.get("t")?.as_str()?),
-                variant: j.get("c").and_then(|c| c.as_str()).map(Arc::from),
-                fields: Arc::new(fields),
-            }
+            Value::data(
+                Arc::from(j.get("t")?.as_str()?),
+                j.get("c").and_then(|c| c.as_str()).map(Arc::from),
+                fields,
+            )
         }
         _ => return None,
     })
@@ -1331,16 +1417,12 @@ fn hash_into(v: &Value, h: &mut blake3::Hasher) {
             }
             h
         }
-        Value::Data {
-            ty,
-            variant,
-            fields,
-        } => {
+        Value::Data(d) => {
             h.update(&[7]);
-            h.update(ty.as_bytes());
-            h.update(variant.as_deref().unwrap_or("").as_bytes());
-            h.update(&(fields.len() as u64).to_le_bytes());
-            for (k, val) in fields.iter() {
+            h.update(d.ty.as_bytes());
+            h.update(d.variant.as_deref().unwrap_or("").as_bytes());
+            h.update(&(d.fields.len() as u64).to_le_bytes());
+            for (k, val) in d.fields.iter() {
                 h.update(k.as_bytes());
                 hash_into(val, h);
             }
@@ -1412,33 +1494,33 @@ mod tests {
     fn the_log_encoding_round_trips_exactly() {
         // The wire encoding deliberately loses information the browser does not need; the log
         // encoding cannot, because replay compares digests of what it reads back.
-        let v = Value::Data {
-            ty: Arc::from("State"),
-            variant: None,
-            fields: Arc::new(BTreeMap::from([(
+        let v = Value::data(
+            Arc::from("State"),
+            None,
+            BTreeMap::from([(
                 Arc::from("todos"),
                 Value::Map(PMap::from_iter([(
                     Value::str_("k"),
-                    Value::Data {
-                        ty: Arc::from("Todo"),
-                        variant: None,
-                        fields: Arc::new(BTreeMap::from([
+                    Value::data(
+                        Arc::from("Todo"),
+                        None,
+                        BTreeMap::from([
                             (Arc::from("done"), Value::Bool(true)),
                             (Arc::from("n"), Value::Int(-3)),
-                        ])),
-                    },
+                        ]),
+                    ),
                 )])),
-            )])),
-        };
+            )]),
+        );
         assert_eq!(
             value_from_repr(&value_to_repr(&v).unwrap()),
             Some(v.clone())
         );
-        let evt = Value::Data {
-            ty: Arc::from("Event"),
-            variant: Some(Arc::from("Toggled")),
-            fields: Arc::new(BTreeMap::from([(Arc::from("id"), Value::str_("x"))])),
-        };
+        let evt = Value::data(
+            Arc::from("Event"),
+            Some(Arc::from("Toggled")),
+            BTreeMap::from([(Arc::from("id"), Value::str_("x"))]),
+        );
         assert_eq!(value_from_repr(&value_to_repr(&evt).unwrap()), Some(evt));
     }
 
@@ -1456,11 +1538,11 @@ mod tests {
         );
 
         // …and nesting does not launder it: a record holding one is refused too.
-        let state = Value::Data {
-            ty: Arc::from("State"),
-            variant: None,
-            fields: Arc::new(BTreeMap::from([(Arc::from("cached"), view.clone())])),
-        };
+        let state = Value::data(
+            Arc::from("State"),
+            None,
+            BTreeMap::from([(Arc::from("cached"), view.clone())]),
+        );
         assert!(
             value_to_repr(&state).is_err(),
             "a record holding a view is not data"
@@ -1486,22 +1568,22 @@ mod tests {
 
     #[test]
     fn a_newtype_renders_as_its_payload() {
-        let id = Value::Data {
-            ty: Arc::from("Id"),
-            variant: None,
-            fields: Arc::new(BTreeMap::from([(Arc::from("value"), Value::str_("u-1"))])),
-        };
+        let id = Value::data(
+            Arc::from("Id"),
+            None,
+            BTreeMap::from([(Arc::from("value"), Value::str_("u-1"))]),
+        );
         assert_eq!(id.display(), "u-1");
         assert_eq!(id.to_json(), serde_json::json!("u-1"));
     }
 
     #[test]
     fn a_command_serialises_with_its_variant_tag() {
-        let cmd = Value::Data {
-            ty: Arc::from("Command"),
-            variant: Some(Arc::from("Toggle")),
-            fields: Arc::new(BTreeMap::from([(Arc::from("id"), Value::str_("x"))])),
-        };
+        let cmd = Value::data(
+            Arc::from("Command"),
+            Some(Arc::from("Toggle")),
+            BTreeMap::from([(Arc::from("id"), Value::str_("x"))]),
+        );
         assert_eq!(cmd.to_json(), serde_json::json!({"c": "Toggle", "id": "x"}));
     }
 
