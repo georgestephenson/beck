@@ -58,8 +58,9 @@ Write the commit message as the author of the change: what changed, and why.
   [`71`](docs/71-strings-report.md),
   [`72`](docs/72-space-and-constants-report.md),
   [`73`](docs/73-closures-share-their-code-report.md),
-  [`74`](docs/74-the-cost-of-a-call-report.md) and
-  [`75`](docs/75-what-the-profiler-said-report.md),
+  [`74`](docs/74-the-cost-of-a-call-report.md),
+  [`75`](docs/75-what-the-profiler-said-report.md) and
+  [`76`](docs/76-the-record-and-the-read-report.md),
   indexed in
   [`docs/README.md`](docs/README.md) — record what each
   phase does, what it refuses to claim, and the corrections it makes to the design documents.
@@ -246,6 +247,14 @@ Write the commit message as the author of the change: what changed, and why.
   standing measurement: the same `fib(30)` is **0.797 s** rather than 4.120 s, so the tree-walker is
   **7.3× CPython** on calls, 5.1× on allocation and 2.7× on arithmetic where §25.3 measured 33×.
   A measurement rather than a claim — §25.9 still holds those until there is a second backend.
+  **docs/76 is the next three off that profile**: a record literal sorts once instead of
+  binary-searching per field, `with` scans by equality because `==` can stop at the length,
+  `Env::read` no longer proves the scope chain unshared on a read that is not a last use — two
+  atomic loads per scope *level*, paid by every read in the language — and a field name is decided
+  on its first byte. 4–8% on record-heavy programs and nothing on the one that builds no records.
+  Its §76.4 is the correction to docs/75's method: callgrind counts **instructions**, and the
+  6.21% of them that were `memcmp` were worth about 2% of the clock — an instruction profile ranks
+  candidates, and the wall clock decides between them.
 - Security posture is [`docs/43-threat-model.md`](docs/43-threat-model.md) (who is defended
   against, and who is not) and `SECURITY.md` (how a report reaches us). What is *absent* is asserted
   as absent in `beck-cli/tests/pending_security.rs`: building one of those controls turns a test

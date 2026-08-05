@@ -718,18 +718,41 @@ impl Fields {
     }
 
     pub fn get(&self, name: &str) -> Option<&Value> {
-        self.0.iter().find(|(k, _)| &**k == name).map(|(_, v)| v)
+        self.0
+            .iter()
+            .find(|(k, _)| same_name(k, name))
+            .map(|(_, v)| v)
     }
 
     /// Set `name`, keeping the order by name. Answers the value that was there.
+    ///
+    /// The search is by **equality** and not by order, which is the whole difference: `==` on two
+    /// `str`s compares their lengths first and reaches `memcmp` only for a pair that could match,
+    /// where a binary search has to order every probe it makes. A record has three to eight
+    /// fields, so a scan makes at most as many comparisons as a binary search and nearly all of
+    /// them are an integer test. Only a field that is genuinely new pays for the ordered insert,
+    /// and `with` — which is what calls this in a loop — never has one.
     pub fn insert(&mut self, name: Arc<str>, value: Value) -> Option<Value> {
-        match self.0.binary_search_by(|(k, _)| (**k).cmp(&name)) {
-            Ok(i) => Some(std::mem::replace(&mut self.0[i].1, value)),
-            Err(i) => {
-                self.0.insert(i, (name, value));
-                None
-            }
+        if let Some(slot) = self.0.iter_mut().find(|(k, _)| same_name(k, &name)) {
+            return Some(std::mem::replace(&mut slot.1, value));
         }
+        let at = self
+            .0
+            .partition_point(|(k, _)| cmp_name(k, &name) == std::cmp::Ordering::Less);
+        self.0.insert(at, (name, value));
+        None
+    }
+
+    /// Build from fields in **any** order, sorting once.
+    ///
+    /// This is how a record literal is built, and it is a separate entry point from `insert` in a
+    /// loop because the two cost differently: `sort_unstable_by` on a handful of elements is an
+    /// insertion sort, which makes `n - 1` comparisons and moves nothing when the fields already
+    /// arrive in order — as a record literal's usually do.
+    pub fn from_pairs(mut pairs: Vec<(Arc<str>, Value)>) -> Fields {
+        pairs.sort_unstable_by(|(a, _), (b, _)| cmp_name(a, b));
+        pairs.dedup_by(|(a, _), (b, _)| same_name(a, b));
+        Fields(pairs)
     }
 
     pub fn len(&self) -> usize {
@@ -751,10 +774,7 @@ impl Fields {
 
 impl FromIterator<(Arc<str>, Value)> for Fields {
     fn from_iter<I: IntoIterator<Item = (Arc<str>, Value)>>(it: I) -> Fields {
-        let mut f = Fields(it.into_iter().collect());
-        f.0.sort_by(|(a, _), (b, _)| a.cmp(b));
-        f.0.dedup_by(|(a, _), (b, _)| a == b);
-        f
+        Fields::from_pairs(it.into_iter().collect())
     }
 }
 
@@ -1061,6 +1081,14 @@ impl Env {
     /// caller that is wrong about liveness gets an unbound-variable error rather than somebody
     /// else's missing binding.
     pub fn read(&mut self, v: VarId, may_move: bool) -> Option<Value> {
+        // The overwhelmingly common read is not a last use, and it needs none of the machinery
+        // below: no scope on the way to the binding has to be proved unshared, because nothing is
+        // going to be taken out of one. That proof costs **two atomic loads per scope level**
+        // (`strong_count` and `weak_count`) plus an `Arc::get_mut`, and it was being paid on every
+        // variable a program reads. `get` is a plain walk.
+        if !may_move {
+            return self.get(v).cloned();
+        }
         let mut env = self;
         loop {
             if let Some(i) = env.frame.iter().rposition(|(id, _)| *id == v) {
@@ -1091,6 +1119,33 @@ impl Env {
                 None => return None,
             }
         }
+    }
+}
+
+/// Are these the same field name?
+///
+/// Length, then first byte, then the rest. `str`'s own `==` checks the length and hands the bytes
+/// to `memcmp`, and a `memcmp` call is dear next to what it decides here: field names are short,
+/// there are three to eight of them in a record, and two that share a length almost never share a
+/// first letter. Profiling `awfy/richards.beck` put 6% of the process inside `memcmp`, nearly all
+/// of it deciding between `kind` and `link`.
+#[inline]
+fn same_name(a: &str, b: &str) -> bool {
+    let (x, y) = (a.as_bytes(), b.as_bytes());
+    x.len() == y.len() && (x.is_empty() || x[0] == y[0]) && x == y
+}
+
+/// Order two field names, deciding on the first byte where it can.
+///
+/// `<[u8]>::cmp` calls `memcmp` over the common prefix before it looks at the lengths, so it pays
+/// a call to distinguish `id` from `kind`. Sorting a record's fields is the other half of what
+/// `same_name` documents.
+#[inline]
+fn cmp_name(a: &str, b: &str) -> std::cmp::Ordering {
+    let (x, y) = (a.as_bytes(), b.as_bytes());
+    match (x.first(), y.first()) {
+        (Some(p), Some(q)) if p != q => p.cmp(q),
+        _ => x.cmp(y),
     }
 }
 

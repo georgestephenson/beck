@@ -1137,10 +1137,13 @@ impl<'h> Interp<'h> {
         fields: &[(Arc<str>, Core)],
         env: &mut Env,
     ) -> EvalResult {
-        let mut map = Fields::with_capacity(fields.len());
+        // Evaluated in the order they are written — a field expression can raise — and sorted
+        // once afterwards, rather than placed one at a time into a sorted vector.
+        let mut pairs = Vec::with_capacity(fields.len());
         for (name, expr) in fields {
-            map.insert(name.clone(), self.operand(expr, env)?);
+            pairs.push((name.clone(), self.operand(expr, env)?));
         }
+        let map = Fields::from_pairs(pairs);
         Ok(Value::data(ty.clone(), variant.cloned(), map))
     }
 
