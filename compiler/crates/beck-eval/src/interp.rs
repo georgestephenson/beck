@@ -533,6 +533,15 @@ pub trait Host {
     fn intercept(&self, _name: &str, _args: &[Value]) -> Option<Value> {
         None
     }
+
+    /// Whether [`Host::intercept`] can ever answer, asked once per call so that a host with no
+    /// stubs installed does not pay for the arguments to be gathered into a slice.
+    ///
+    /// Defaulted to "yes" rather than "no": a host that overrides `intercept` and forgets this one
+    /// is slower than it needs to be, which is the harmless direction.
+    fn intercepts(&self) -> bool {
+        true
+    }
 }
 
 pub struct Interp<'h> {
@@ -546,6 +555,60 @@ pub struct Interp<'h> {
     /// used to abort the process, taking the server and any diagnostic with it.
     depth: std::cell::Cell<u32>,
     max_depth: u32,
+    /// The closure a top-level definition evaluates to, kept after the first time it is asked for.
+    ///
+    /// A definition *is* a lambda, and a lambda evaluates to a closure over the empty environment —
+    /// so every reference to `f` produces a value equal to every other, and building it again meant
+    /// a name lookup in the host, a copy of the parameter list, an `Arc` for the closure and a
+    /// clone of the environment, **per call**. `docs/73` §73.7 named this as what remained once the
+    /// body stopped being copied; it is a third of what a call cost.
+    ///
+    /// Only a `Closure` is cached. Nothing else a global can evaluate to is guaranteed to be the
+    /// same value twice, and the cache is not the place to decide that.
+    globals: std::cell::RefCell<std::collections::HashMap<Arc<str>, Value, BuildNameHasher>>,
+}
+
+/// A hash for definition names, on the path a call takes.
+///
+/// The standard-library hasher is SipHash, chosen to be hard to force collisions in. Nothing here
+/// is attacker-supplied: the keys are the names of the definitions the program itself declares, and
+/// the map is rebuilt per evaluation. This is FxHash — the multiply-and-rotate the Rust compiler
+/// uses for its own interners — over the name's bytes.
+#[derive(Default, Clone, Copy)]
+pub struct BuildNameHasher;
+
+impl std::hash::BuildHasher for BuildNameHasher {
+    type Hasher = NameHasher;
+    fn build_hasher(&self) -> NameHasher {
+        NameHasher(0)
+    }
+}
+
+pub struct NameHasher(u64);
+
+impl NameHasher {
+    const SEED: u64 = 0x51_7c_c1_b7_27_22_0a_95;
+
+    fn add(&mut self, word: u64) {
+        self.0 = (self.0.rotate_left(5) ^ word).wrapping_mul(Self::SEED);
+    }
+}
+
+impl std::hash::Hasher for NameHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        let mut rest = bytes;
+        while let Some((word, tail)) = rest.split_first_chunk::<8>() {
+            self.add(u64::from_le_bytes(*word));
+            rest = tail;
+        }
+        let mut last = [0u8; 8];
+        last[..rest.len()].copy_from_slice(rest);
+        self.add(u64::from_le_bytes(last));
+    }
+
+    fn finish(&self) -> u64 {
+        self.0
+    }
 }
 
 /// The number of evaluation steps one call gets before it is stopped.
@@ -729,6 +792,7 @@ impl<'h> Interp<'h> {
             fuel: std::cell::Cell::new(fuel),
             depth: std::cell::Cell::new(0),
             max_depth: DEFAULT_MAX_DEPTH,
+            globals: std::cell::RefCell::new(std::collections::HashMap::default()),
         }
     }
 
@@ -808,12 +872,23 @@ impl<'h> Interp<'h> {
         }
     }
 
-    /// Evaluate a top-level definition by name.
+    /// Evaluate a top-level definition by name, and remember the closure it is.
+    ///
+    /// A definition is a lambda over the empty environment, so the value is the same every time and
+    /// building it again per call was a name lookup, a parameter-list copy and two allocations.
+    /// Anything that is *not* a closure is evaluated as before and not remembered.
     pub fn global(&self, name: &str, span: Span) -> EvalResult {
-        match self.host.global(name) {
-            Some(core) => self.eval(core, &mut Env::new()),
-            None => Err(EvalError::new(format!("no such definition: {name}"), span)),
+        if let Some(v) = self.globals.borrow().get(name) {
+            return Ok(v.clone());
         }
+        let Some(core) = self.host.global(name) else {
+            return Err(EvalError::new(format!("no such definition: {name}"), span));
+        };
+        let v = self.eval(core, &mut Env::new())?;
+        if matches!(v, Value::Closure(_)) {
+            self.globals.borrow_mut().insert(Arc::from(name), v.clone());
+        }
+        Ok(v)
     }
 
     /// The trampoline.
@@ -938,9 +1013,14 @@ impl<'h> Interp<'h> {
                     // Only a direct call of a named definition is intercepted. A function passed as
                     // a value has lost its name by the time it is applied, and inventing one would
                     // be a guess; docs/22 records the limit rather than leaving it to be discovered.
-                    if let CoreKind::Global(name) = &func.kind {
-                        if let Some(v) = self.host.intercept(name, &vals) {
-                            return Ok(Step::Done(v));
+                    //
+                    // `intercepts` is asked first because it is a field test where `intercept` is a
+                    // virtual call, and no stub is installed in all but a handful of runs.
+                    if self.host.intercepts() {
+                        if let CoreKind::Global(name) = &func.kind {
+                            if let Some(v) = self.host.intercept(name, &vals) {
+                                return Ok(Step::Done(v));
+                            }
                         }
                     }
                     let f = self.operand(func, env)?;
@@ -961,12 +1041,32 @@ impl<'h> Interp<'h> {
                 // into it here rather than recursing saves a host frame on every call a program
                 // makes, which is most of what the trampoline would otherwise have cost (§31.5).
                 CoreKind::Global(name) => {
+                    // This arm is reached once per call of a named function, and the value it
+                    // produces is the same closure every time: a definition is a lambda over the
+                    // empty environment. Cached, because building it again is a name lookup, a copy
+                    // of the parameter list and two allocations — `docs/73` §73.7.
+                    if let Some(v) = self.globals.borrow().get(name.as_ref()) {
+                        return Ok(Step::Done(v.clone()));
+                    }
                     let Some(body) = self.host.global(name) else {
                         return Err(EvalError::new(
                             format!("no such definition: {name}"),
                             cur.span,
                         ));
                     };
+                    if let CoreKind::Lam { params, body: code } = &body.kind {
+                        let v = Value::Closure(Arc::new(Closure {
+                            params: Arc::clone(params),
+                            body: Arc::clone(code),
+                            env: Env::empty_shared(),
+                        }));
+                        self.globals
+                            .borrow_mut()
+                            .insert(Arc::clone(name), v.clone());
+                        return Ok(Step::Done(v));
+                    }
+                    // Anything that is not a lambda is evaluated as before and not remembered:
+                    // nothing guarantees it is the same value twice.
                     owned = Some(Env::new());
                     cur = body;
                 }
@@ -994,9 +1094,9 @@ impl<'h> Interp<'h> {
             // copy of the whole function body, taken every time a `lam` node was evaluated, which
             // is once per call of a named function. `docs/73` §73.1 has what that cost.
             CoreKind::Lam { params, body } => Ok(Value::Closure(Arc::new(Closure {
-                params: params.clone(),
+                params: Arc::clone(params),
                 body: Arc::clone(body),
-                env: env.clone(),
+                env: Arc::new(env.clone()),
             }))),
             CoreKind::Prim { op, args } => self.eval_prim(*op, args, env, c.span),
             CoreKind::Make {
@@ -2022,7 +2122,13 @@ fn bind(c: &Closure, args: Vec<Value>, span: Span) -> Result<Env, EvalError> {
             span,
         ));
     }
-    Ok(c.env.extend(c.params.iter().copied().zip(args).collect()))
+    // One allocation for the frame — `zip` of two exact-size iterators has a known length, so
+    // collecting straight into `Arc<[_]>` sizes it once — and a refcount bump for the parent,
+    // which is already behind an `Arc` because a closure holds it that way (`docs/74`).
+    Ok(Env::extend_shared(
+        &c.env,
+        c.params.iter().copied().zip(args).collect(),
+    ))
 }
 
 fn constant(k: &Const) -> Value {
@@ -2155,7 +2261,7 @@ mod tests {
             ),
         ]));
         let key = Value::Closure(Arc::new(Closure {
-            params: vec![0],
+            params: vec![0].into(),
             body: Arc::new(Core::new(
                 CoreKind::Field {
                     base: Box::new(Core::new(CoreKind::Var(0), Ty::int(), Span::NONE)),
@@ -2164,7 +2270,7 @@ mod tests {
                 Ty::str_(),
                 Span::NONE,
             )),
-            env: Env::new(),
+            env: Env::empty_shared(),
         }));
         let out = interp
             .prim(Prim::SortBy, vec![xs.clone(), key.clone()], Span::NONE)
@@ -2210,7 +2316,7 @@ mod tests {
     fn non_tail_recursion() -> Core {
         let n = || Core::new(CoreKind::Var(0), Ty::int(), Span::NONE);
         core(CoreKind::Lam {
-            params: vec![0],
+            params: vec![0].into(),
             body: Arc::new(core(CoreKind::If {
                 cond: Box::new(Core::new(
                     CoreKind::Prim {
@@ -2243,7 +2349,7 @@ mod tests {
     fn tail_recursion() -> Core {
         let n = || Core::new(CoreKind::Var(0), Ty::int(), Span::NONE);
         core(CoreKind::Lam {
-            params: vec![0],
+            params: vec![0].into(),
             body: Arc::new(core(CoreKind::If {
                 cond: Box::new(Core::new(
                     CoreKind::Prim {

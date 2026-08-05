@@ -401,7 +401,7 @@ pub fn split(mut program: Program, diags: &mut Diagnostics) -> Option<Placed> {
 
     let view = Core {
         kind: CoreKind::Lam {
-            params: vec![state_var, session_var],
+            params: vec![state_var, session_var].into(),
             body: Arc::new(view_body),
         },
         ty: Ty::fun(vec![state_ty.clone(), Ty::con("Session")], Ty::html()),
@@ -477,7 +477,7 @@ pub fn split(mut program: Program, diags: &mut Diagnostics) -> Option<Placed> {
         let span = graph.node(decide).span;
         Core {
             kind: CoreKind::Lam {
-                params: vec![s, p],
+                params: vec![s, p].into(),
                 body: Arc::new(Core {
                     kind: CoreKind::App {
                         func: Box::new(validate.clone()),
@@ -722,7 +722,7 @@ fn filtered_step(step: &Core, pred: &Core, state_ty: &Ty, vars: &mut Vars, span:
     );
     Core {
         kind: CoreKind::Lam {
-            params: vec![s, e],
+            params: vec![s, e].into(),
             body: Arc::new(body),
         },
         ty: Ty::fun(vec![state_ty.clone(), Ty::unit()], state_ty.clone()),
@@ -788,7 +788,7 @@ fn fuse(
     (
         Core {
             kind: CoreKind::Lam {
-                params: vec![s, e],
+                params: vec![s, e].into(),
                 body: Arc::new(make(step_fields)),
             },
             ty: Ty::fun(vec![state_ty.clone(), Ty::unit()], state_ty.clone()),
@@ -822,7 +822,7 @@ fn max_var(program: &Program) -> VarId {
             CoreKind::Const(_) | CoreKind::Global(_) => {}
             CoreKind::Var(v) => *max = (*max).max(*v),
             CoreKind::Lam { params, body } => {
-                for p in params {
+                for p in params.iter() {
                     *max = (*max).max(*p);
                 }
                 go(body, max);

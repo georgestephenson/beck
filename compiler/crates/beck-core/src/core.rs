@@ -404,7 +404,9 @@ pub enum CoreKind {
     /// A reference to a top-level definition.
     Global(Arc<str>),
     Lam {
-        params: Vec<VarId>,
+        /// Shared for the same reason `body` is: evaluating a `lam` hands the list to a closure,
+        /// and a refcount bump is cheaper than copying it once per call.
+        params: Arc<[VarId]>,
         /// Shared, not owned: a closure is built every time a `lam` node is *evaluated*, and a
         /// `Box` meant deep-copying the whole function body each time. `docs/73` §73.1 measured
         /// 20,000 calls to a function whose executed path never changed costing 42 ms, 227 ms and
@@ -762,7 +764,7 @@ impl Text {
     }
 
     /// The byte offset of character `i`, in constant time for ASCII text and in at most
-    /// [`INDEX_STRIDE`] steps for anything else. Past the end it answers the end, which is what a
+    /// one index stride for anything else. Past the end it answers the end, which is what a
     /// clamping slice wants.
     pub fn byte_offset(&self, i: usize) -> usize {
         if self.ascii {
@@ -882,11 +884,12 @@ pub enum AttrValue {
 
 #[derive(Debug)]
 pub struct Closure {
-    pub params: Vec<VarId>,
+    pub params: Arc<[VarId]>,
     /// The same `Arc` the [`CoreKind::Lam`] node holds, so building a closure is a refcount bump
     /// rather than a copy of the code.
     pub body: Arc<Core>,
-    pub env: Env,
+    /// Behind an `Arc` so that *calling* the closure clones a pointer rather than the environment.
+    pub env: Arc<Env>,
 }
 
 impl PartialEq for Closure {
@@ -916,7 +919,10 @@ impl Ord for Closure {
 /// A lexical environment: a persistent chain of frames, so a closure can capture cheaply.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Env {
-    frame: Arc<Vec<(VarId, Value)>>,
+    /// `Arc<[T]>` rather than `Arc<Vec<T>>`: the second is two allocations and two hops to reach a
+    /// binding, and a frame never changes length — a moved-out binding is tombstoned in place
+    /// (`Env::read`), which is what makes the fixed-size form possible.
+    frame: Arc<[(VarId, Value)]>,
     parent: Option<Arc<Env>>,
 }
 
@@ -927,9 +933,26 @@ impl Env {
 
     pub fn extend(&self, bindings: Vec<(VarId, Value)>) -> Env {
         Env {
-            frame: Arc::new(bindings),
+            frame: bindings.into(),
             parent: Some(Arc::new(self.clone())),
         }
+    }
+
+    /// Extend a parent that is **already** behind an `Arc` — which a closure's captured environment
+    /// is, so that a call clones a pointer instead of boxing a copy of the environment.
+    ///
+    /// This is the per-call path. `extend` above is the per-`let` path, where the parent is owned by
+    /// the evaluator's loop and has to be boxed; there are far fewer of those.
+    pub fn extend_shared(parent: &Arc<Env>, frame: Arc<[(VarId, Value)]>) -> Env {
+        Env {
+            frame,
+            parent: Some(Arc::clone(parent)),
+        }
+    }
+
+    /// An environment with nothing in it, behind an `Arc`, shared by every top-level definition.
+    pub fn empty_shared() -> Arc<Env> {
+        Arc::new(Env::new())
     }
 
     pub fn get(&self, v: VarId) -> Option<&Value> {

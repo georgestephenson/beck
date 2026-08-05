@@ -153,6 +153,9 @@ impl Host for Globals {
     fn intercept(&self, name: &str, args: &[Value]) -> Option<Value> {
         self.interceptor.as_ref()?.intercept(name, args)
     }
+    fn intercepts(&self) -> bool {
+        self.interceptor.is_some()
+    }
 }
 
 impl Backend for Evaluator {

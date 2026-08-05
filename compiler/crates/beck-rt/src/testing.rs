@@ -491,7 +491,7 @@ fn build_stubs(
             } else {
                 let lam = Core {
                     kind: CoreKind::Lam {
-                        params: params.clone(),
+                        params: params.clone().into(),
                         body: std::sync::Arc::new(value.clone()),
                     },
                     ty: Ty::fun(Vec::new(), value.ty.clone()),
@@ -1045,7 +1045,7 @@ fn eval(
     params.extend(t.params.iter().map(|(id, _, _)| *id));
     let lam = Core {
         kind: CoreKind::Lam {
-            params,
+            params: params.into(),
             body: std::sync::Arc::new(code.clone()),
         },
         ty: Ty::fun(Vec::new(), code.ty.clone()),

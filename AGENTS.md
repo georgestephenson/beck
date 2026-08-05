@@ -56,8 +56,9 @@ Write the commit message as the author of the change: what changed, and why.
   [`69`](docs/69-standard-library-imports-report.md),
   [`70`](docs/70-last-use-moves-report.md),
   [`71`](docs/71-strings-report.md),
-  [`72`](docs/72-space-and-constants-report.md) and
-  [`73`](docs/73-closures-share-their-code-report.md),
+  [`72`](docs/72-space-and-constants-report.md),
+  [`73`](docs/73-closures-share-their-code-report.md) and
+  [`74`](docs/74-the-cost-of-a-call-report.md),
   indexed in
   [`docs/README.md`](docs/README.md) — record what each
   phase does, what it refuses to claim, and the corrections it makes to the design documents.
@@ -225,6 +226,14 @@ Write the commit message as the author of the change: what changed, and why.
   a named function — every benchmark in the tree is **56–72% faster** now that it shares an `Arc`.
   It survived four reports about performance because it is a constant rather than a shape, and
   because `--fuel` cannot see a copy that happens between nodes rather than inside a primitive.
+  **docs/74 is the rest of that question**: what a *call* costs, worked down from 287 ns to 174 ns —
+  a definition's closure built once instead of per call, a frame that is one allocation instead of
+  three, an environment taken by refcount, and the two smallest of all, a cheaper hash for a
+  definition's name and a field test in place of the virtual call that asked whether a stub was
+  installed. Every benchmark is a further 17–27% faster. Its §74.6 is the one that measurement
+  *refused*: an argument stack removes the last avoidable allocation and made a call 20% slower,
+  and the version that would pay needs `unsafe`, which this workspace forbids — so two allocations
+  a call is the floor rather than an oversight.
 - Security posture is [`docs/43-threat-model.md`](docs/43-threat-model.md) (who is defended
   against, and who is not) and `SECURITY.md` (how a report reaches us). What is *absent* is asserted
   as absent in `beck-cli/tests/pending_security.rs`: building one of those controls turns a test

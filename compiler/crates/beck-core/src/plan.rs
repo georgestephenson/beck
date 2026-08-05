@@ -540,11 +540,11 @@ impl Builder<'_> {
     /// A function expression as parameters and a body, following one level of naming.
     fn as_lambda(&self, f: &Core) -> Option<(Vec<VarId>, Core)> {
         match &f.kind {
-            CoreKind::Lam { params, body } => Some((params.clone(), (**body).clone())),
+            CoreKind::Lam { params, body } => Some((params.to_vec(), (**body).clone())),
             CoreKind::Global(name) if !self.inlining.contains(name) => {
                 let def = self.program.defs.get(name)?;
                 match &def.body.kind {
-                    CoreKind::Lam { params, body } => Some((params.clone(), (**body).clone())),
+                    CoreKind::Lam { params, body } => Some((params.to_vec(), (**body).clone())),
                     _ => None,
                 }
             }
@@ -860,7 +860,7 @@ fn lam(params: Vec<VarId>, body: Core) -> Core {
         tier: body.tier,
         span: body.span,
         kind: CoreKind::Lam {
-            params,
+            params: params.into(),
             body: Arc::new(body),
         },
         last_use: false,

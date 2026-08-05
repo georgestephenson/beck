@@ -2194,7 +2194,7 @@ impl<'a> Checker<'a> {
                     .collect();
                 Core::new(
                     CoreKind::Lam {
-                        params: ids,
+                        params: ids.into(),
                         body: Arc::new(Core::new(
                             CoreKind::Prim { op: p, args },
                             *ret.clone(),
@@ -2336,7 +2336,7 @@ impl<'a> Checker<'a> {
         let result_ty = Ty::app(Ty::RESULT, vec![value_ty, Ty::con(&error)]);
         let thunk = Core::new(
             CoreKind::Lam {
-                params: Vec::new(),
+                params: Arc::from(Vec::new()),
                 body: Arc::new(core),
             },
             self.subst.fresh(),
@@ -2395,7 +2395,7 @@ impl<'a> Checker<'a> {
         let ret = body.ty.clone();
         Core::new(
             CoreKind::Lam {
-                params: ids,
+                params: ids.into(),
                 body: Arc::new(body),
             },
             Ty::fun_eff(tys, ret, row),

@@ -330,7 +330,7 @@ mod tests {
     fn nothing_inside_a_lambda_is_marked_and_what_it_reads_stays_live() {
         let lam = Core::new(
             CoreKind::Lam {
-                params: vec![7],
+                params: vec![7].into(),
                 body: Arc::new(var(1)),
             },
             Ty::int(),
