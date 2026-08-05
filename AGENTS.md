@@ -57,8 +57,9 @@ Write the commit message as the author of the change: what changed, and why.
   [`70`](docs/70-last-use-moves-report.md),
   [`71`](docs/71-strings-report.md),
   [`72`](docs/72-space-and-constants-report.md),
-  [`73`](docs/73-closures-share-their-code-report.md) and
-  [`74`](docs/74-the-cost-of-a-call-report.md),
+  [`73`](docs/73-closures-share-their-code-report.md),
+  [`74`](docs/74-the-cost-of-a-call-report.md) and
+  [`75`](docs/75-what-the-profiler-said-report.md),
   indexed in
   [`docs/README.md`](docs/README.md) — record what each
   phase does, what it refuses to claim, and the corrections it makes to the design documents.
@@ -233,7 +234,18 @@ Write the commit message as the author of the change: what changed, and why.
   installed. Every benchmark is a further 17–27% faster. Its §74.6 is the one that measurement
   *refused*: an argument stack removes the last avoidable allocation and made a call 20% slower,
   and the version that would pay needs `unsafe`, which this workspace forbids — so two allocations
-  a call is the floor rather than an oversight.
+  a call is the floor rather than an oversight. **docs/75 is the first time this project profiled
+  itself**, and it corrects docs/74's own list of what was left: `callgrind` put **35% of every
+  instruction inside glibc's `malloc` and `free`**, so mimalloc is the binary's global allocator
+  (docs/adr/0019) and a record's fields are a small sorted array rather than a `BTreeMap` — 4.9–17%
+  faster together, and 26–33% faster than docs/73. Three of docs/74 §74.8's four were **measured and
+  rejected**: a small-vector for arguments and a smaller `Core` are both slower, and a globals index
+  and a cheaper `let` are third-order. Reasoning about what an operation should cost found five real
+  defects and is still the first move; it examines the operations somebody names, and the largest
+  cost here was the sum of every small one. Its §75.6 is the first update to docs/25 §25.3's
+  standing measurement: the same `fib(30)` is **0.797 s** rather than 4.120 s, so the tree-walker is
+  **7.3× CPython** on calls, 5.1× on allocation and 2.7× on arithmetic where §25.3 measured 33×.
+  A measurement rather than a claim — §25.9 still holds those until there is a second backend.
 - Security posture is [`docs/43-threat-model.md`](docs/43-threat-model.md) (who is defended
   against, and who is not) and `SECURITY.md` (how a report reaches us). What is *absent* is asserted
   as absent in `beck-cli/tests/pending_security.rs`: building one of those controls turns a test

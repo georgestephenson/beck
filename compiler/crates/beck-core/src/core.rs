@@ -25,7 +25,6 @@
 //! says is what lets a backend slot in later. The Phase 1 report says plainly that native codegen
 //! is not done.
 
-use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
 
@@ -691,7 +690,80 @@ pub enum Value {
 pub struct Record {
     pub ty: Arc<str>,
     pub variant: Option<Arc<str>>,
-    pub fields: BTreeMap<Arc<str>, Value>,
+    pub fields: Fields,
+}
+
+/// A record's fields, sorted by name.
+///
+/// This was a `BTreeMap`, and a record is the wrong size for one: three to eight entries, built
+/// once and read many times. A B-tree pays a node allocation and a pointer chase per level to buy
+/// an asymptotic advantage that never arrives at that size, and profiling `awfy/havlak.beck` put
+/// a fifth of the process inside its search, its insert and the `memcmp` underneath them.
+///
+/// Sorted by name and searched linearly: one allocation for the whole record, the names lie next
+/// to each other in cache, and `get` compares lengths before bytes because it wants equality
+/// rather than order. Iteration is in name order, so the value order, the state digest and the
+/// wire format ([`crate::repr`]) are all bit-for-bit what the `BTreeMap` gave — which is what
+/// makes this a representation change and not a semantic one.
+#[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Fields(Vec<(Arc<str>, Value)>);
+
+impl Fields {
+    pub fn new() -> Fields {
+        Fields(Vec::new())
+    }
+
+    pub fn with_capacity(n: usize) -> Fields {
+        Fields(Vec::with_capacity(n))
+    }
+
+    pub fn get(&self, name: &str) -> Option<&Value> {
+        self.0.iter().find(|(k, _)| &**k == name).map(|(_, v)| v)
+    }
+
+    /// Set `name`, keeping the order by name. Answers the value that was there.
+    pub fn insert(&mut self, name: Arc<str>, value: Value) -> Option<Value> {
+        match self.0.binary_search_by(|(k, _)| (**k).cmp(&name)) {
+            Ok(i) => Some(std::mem::replace(&mut self.0[i].1, value)),
+            Err(i) => {
+                self.0.insert(i, (name, value));
+                None
+            }
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn iter(&self) -> std::slice::Iter<'_, (Arc<str>, Value)> {
+        self.0.iter()
+    }
+
+    pub fn values(&self) -> impl Iterator<Item = &Value> {
+        self.0.iter().map(|(_, v)| v)
+    }
+}
+
+impl FromIterator<(Arc<str>, Value)> for Fields {
+    fn from_iter<I: IntoIterator<Item = (Arc<str>, Value)>>(it: I) -> Fields {
+        let mut f = Fields(it.into_iter().collect());
+        f.0.sort_by(|(a, _), (b, _)| a.cmp(b));
+        f.0.dedup_by(|(a, _), (b, _)| a == b);
+        f
+    }
+}
+
+impl<'a> IntoIterator for &'a Fields {
+    type Item = &'a (Arc<str>, Value);
+    type IntoIter = std::slice::Iter<'a, (Arc<str>, Value)>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
 }
 
 /// A string that knows its own length in **characters**, and whether it is ASCII.
@@ -1133,11 +1205,7 @@ impl Value {
 
     /// Build a record or a union variant. The one constructor, so that the `Arc` and the map are
     /// allocated in one place rather than at every call site.
-    pub fn data(
-        ty: impl Into<Arc<str>>,
-        variant: Option<Arc<str>>,
-        fields: BTreeMap<Arc<str>, Value>,
-    ) -> Value {
+    pub fn data(ty: impl Into<Arc<str>>, variant: Option<Arc<str>>, fields: Fields) -> Value {
         Value::Data(Arc::new(Record {
             ty: ty.into(),
             variant,
@@ -1388,7 +1456,7 @@ pub fn value_from_repr(j: &serde_json::Value) -> Option<Value> {
             Value::Map(m)
         }
         "data" => {
-            let mut fields = BTreeMap::new();
+            let mut fields = Fields::new();
             for (k, val) in j.get("f")?.as_object()? {
                 fields.insert(Arc::from(k.as_str()), value_from_repr(val)?);
             }
@@ -1526,14 +1594,14 @@ mod tests {
         let v = Value::data(
             Arc::from("State"),
             None,
-            BTreeMap::from([(
+            Fields::from_iter([(
                 Arc::from("todos"),
                 Value::Map(PMap::from_iter([(
                     Value::str_("k"),
                     Value::data(
                         Arc::from("Todo"),
                         None,
-                        BTreeMap::from([
+                        Fields::from_iter([
                             (Arc::from("done"), Value::Bool(true)),
                             (Arc::from("n"), Value::Int(-3)),
                         ]),
@@ -1548,7 +1616,7 @@ mod tests {
         let evt = Value::data(
             Arc::from("Event"),
             Some(Arc::from("Toggled")),
-            BTreeMap::from([(Arc::from("id"), Value::str_("x"))]),
+            Fields::from_iter([(Arc::from("id"), Value::str_("x"))]),
         );
         assert_eq!(value_from_repr(&value_to_repr(&evt).unwrap()), Some(evt));
     }
@@ -1570,7 +1638,7 @@ mod tests {
         let state = Value::data(
             Arc::from("State"),
             None,
-            BTreeMap::from([(Arc::from("cached"), view.clone())]),
+            Fields::from_iter([(Arc::from("cached"), view.clone())]),
         );
         assert!(
             value_to_repr(&state).is_err(),
@@ -1600,7 +1668,7 @@ mod tests {
         let id = Value::data(
             Arc::from("Id"),
             None,
-            BTreeMap::from([(Arc::from("value"), Value::str_("u-1"))]),
+            Fields::from_iter([(Arc::from("value"), Value::str_("u-1"))]),
         );
         assert_eq!(id.display(), "u-1");
         assert_eq!(id.to_json(), serde_json::json!("u-1"));
@@ -1611,7 +1679,7 @@ mod tests {
         let cmd = Value::data(
             Arc::from("Command"),
             Some(Arc::from("Toggle")),
-            BTreeMap::from([(Arc::from("id"), Value::str_("x"))]),
+            Fields::from_iter([(Arc::from("id"), Value::str_("x"))]),
         );
         assert_eq!(cmd.to_json(), serde_json::json!({"c": "Toggle", "id": "x"}));
     }

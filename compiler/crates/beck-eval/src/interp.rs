@@ -24,12 +24,11 @@
 //!   the host's remaining stack would make a fold's outcome depend on the build profile and §3.7
 //!   needs it to depend only on the log.
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use beck_diag::Span;
 
-use beck_core::core::{Closure, Const, Core, CoreKind, Env, Pattern, Prim, Value, VarId};
+use beck_core::core::{Closure, Const, Core, CoreKind, Env, Fields, Pattern, Prim, Value, VarId};
 use beck_core::digest;
 use beck_core::html::Html;
 use beck_core::net::{Failure as NetFailure, Reply, Request};
@@ -112,7 +111,7 @@ fn reply_value(reply: &Reply) -> Value {
     Value::data(
         Arc::from("HttpResponse"),
         None,
-        BTreeMap::from([
+        Fields::from_iter([
             (Arc::from("status"), Value::Int(reply.status)),
             (Arc::from("headers"), Value::Map(headers)),
             (Arc::from("body"), Value::str_(&reply.body)),
@@ -254,7 +253,7 @@ fn digest_prim(op: Prim, mut args: Vec<Value>, span: Span) -> Result<Value, Eval
 /// A raised value of a prelude-declared union, built from its variant's fields.
 ///
 /// The shape `json_parse` and `time_parse` write out inline; the decoders raise three of these
-/// between them, and three copies of a `BTreeMap::from` would be three chances to name a field
+/// between them, and three copies of a `Fields::from_iter` would be three chances to name a field
 /// something the prelude does not declare.
 fn raised<const N: usize>(
     ty: &str,
@@ -270,7 +269,7 @@ fn raised<const N: usize>(
             fields
                 .into_iter()
                 .map(|(n, v)| (Arc::from(n), v))
-                .collect::<BTreeMap<Arc<str>, Value>>(),
+                .collect::<Fields>(),
         ),
         span,
     )
@@ -292,7 +291,7 @@ fn json_node(variant: &str, field: &str, value: Value) -> Value {
     Value::data(
         Arc::from("Json"),
         Some(Arc::from(variant)),
-        std::collections::BTreeMap::from([(Arc::from(field), value)]),
+        Fields::from_iter([(Arc::from(field), value)]),
     )
 }
 
@@ -301,7 +300,7 @@ fn json_to_value(j: &serde_json::Value) -> Value {
         serde_json::Value::Null => Value::data(
             Arc::from("Json"),
             Some(Arc::from("JsonNull")),
-            std::collections::BTreeMap::new(),
+            Fields::new(),
         ),
         serde_json::Value::Bool(b) => json_node("JsonBool", "value", Value::Bool(*b)),
         // JSON has one number type and so does this union, which is why an integer document reads
@@ -862,7 +861,7 @@ impl<'h> Interp<'h> {
     pub fn apply(&self, f: &Value, args: Vec<Value>, span: Span) -> EvalResult {
         match f {
             Value::Closure(c) => {
-                let mut env = bind(c, args, span)?;
+                let mut env = bind(c, args.into_iter(), span)?;
                 self.eval(&c.body, &mut env)
             }
             other => Err(EvalError::new(
@@ -907,7 +906,7 @@ impl<'h> Interp<'h> {
             };
             // The frame is owned here, which is what lets a last read move a value out of it
             // instead of copying it (`beck_core::liveness`).
-            let mut env = bind(&callee, args, span)?;
+            let mut env = bind(&callee, args.into_iter(), span)?;
             step = self.step(&callee.body, &mut env)?;
         }
     }
@@ -1138,7 +1137,7 @@ impl<'h> Interp<'h> {
         fields: &[(Arc<str>, Core)],
         env: &mut Env,
     ) -> EvalResult {
-        let mut map = BTreeMap::new();
+        let mut map = Fields::with_capacity(fields.len());
         for (name, expr) in fields {
             map.insert(name.clone(), self.operand(expr, env)?);
         }
@@ -1740,10 +1739,7 @@ impl<'h> Interp<'h> {
                         Value::data(
                             Arc::from("JsonError"),
                             Some(Arc::from("BadJson")),
-                            std::collections::BTreeMap::from([(
-                                Arc::from("why"),
-                                Value::str_(e.to_string()),
-                            )]),
+                            Fields::from_iter([(Arc::from("why"), Value::str_(e.to_string()))]),
                         ),
                         span,
                     )),
@@ -1771,7 +1767,7 @@ impl<'h> Interp<'h> {
                         Value::data(
                             Arc::from("TimeError"),
                             Some(Arc::from("BadTime")),
-                            std::collections::BTreeMap::from([(
+                            Fields::from_iter([(
                                 Arc::from("why"),
                                 Value::str_(format!("`{text}` is not an RFC 3339 instant in UTC")),
                             )]),
@@ -2061,7 +2057,7 @@ impl<'h> Interp<'h> {
                 Ok(Value::data(
                     Arc::from(beck_core::Ty::INTERNAL),
                     None,
-                    std::collections::BTreeMap::from([(Arc::from("value"), v)]),
+                    Fields::from_iter([(Arc::from("value"), v)]),
                 ))
             }
             Prim::Reveal => {
@@ -2082,10 +2078,7 @@ impl<'h> Interp<'h> {
                 Ok(Value::data(
                     Arc::from(beck_core::Ty::SECRET),
                     None,
-                    std::collections::BTreeMap::from([(
-                        Arc::from("value"),
-                        Value::str_(self.host.secret(name)),
-                    )]),
+                    Fields::from_iter([(Arc::from("value"), Value::str_(self.host.secret(name)))]),
                 ))
             }
             // The signal vocabulary is *declarative*: the splitter reads these nodes out of the
@@ -2115,7 +2108,11 @@ impl<'h> Interp<'h> {
 /// The new frame extends the *closure's* environment, not the caller's, so a tail call replaces
 /// the frame it returns into rather than stacking on top of it — the environment chain stays as
 /// short at the ten-thousandth iteration as at the first.
-fn bind(c: &Closure, args: Vec<Value>, span: Span) -> Result<Env, EvalError> {
+fn bind(
+    c: &Closure,
+    args: impl ExactSizeIterator<Item = Value>,
+    span: Span,
+) -> Result<Env, EvalError> {
     if c.params.len() != args.len() {
         return Err(EvalError::new(
             format!("expected {} arguments, got {}", c.params.len(), args.len()),
@@ -2246,7 +2243,7 @@ mod tests {
             Value::data(
                 Arc::from("T"),
                 None,
-                BTreeMap::from([
+                Fields::from_iter([
                     (Arc::from("k"), Value::str_("a")),
                     (Arc::from("n"), Value::Int(1)),
                 ]),
@@ -2254,7 +2251,7 @@ mod tests {
             Value::data(
                 Arc::from("T"),
                 None,
-                BTreeMap::from([
+                Fields::from_iter([
                     (Arc::from("k"), Value::str_("a")),
                     (Arc::from("n"), Value::Int(2)),
                 ]),

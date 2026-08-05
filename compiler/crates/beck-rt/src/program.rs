@@ -100,7 +100,7 @@ impl Runtime {
         Value::data(
             Arc::from("Proposal"),
             None,
-            std::collections::BTreeMap::from([
+            beck_core::core::Fields::from_iter([
                 (Arc::from("session"), session(actor)),
                 (Arc::from("command"), command),
             ]),
@@ -273,7 +273,7 @@ impl Runtime {
             .find(|v| v.name.as_ref() == tag)
             .ok_or_else(|| anyhow!("`{tag}` is not a variant of `{name}`"))?;
 
-        let mut fields = std::collections::BTreeMap::new();
+        let mut fields = beck_core::core::Fields::new();
         for (field, ty) in &variant.fields {
             let raw = json
                 .get(field.as_ref())
@@ -294,7 +294,7 @@ fn session(actor: &str) -> Value {
     Value::data(
         Arc::from("Session"),
         None,
-        std::collections::BTreeMap::from([(Arc::from("actor"), Value::str_(actor))]),
+        beck_core::core::Fields::from_iter([(Arc::from("actor"), Value::str_(actor))]),
     )
 }
 
@@ -312,7 +312,7 @@ fn decode_field(
         return Ok(Value::data(
             Arc::from(name),
             None,
-            std::collections::BTreeMap::from([(Arc::from("value"), inner)]),
+            beck_core::core::Fields::from_iter([(Arc::from("value"), inner)]),
         ));
     }
     match name {

@@ -36,6 +36,9 @@ blake3 = "1"
 clap = { version = "4", features = ["derive", "env"] }
 futures-util = "0.3"
 insta = "1"
+# The `beck` binary's global allocator. A tree-walker allocates a frame per call and a scope per
+# `let`, and a third of the process was inside glibc's `malloc` before this (docs/adr/0019).
+mimalloc = "0.1.52"
 # The Kubernetes API's own types, generated from its OpenAPI schema. `beck-infra` builds objects
 # rather than strings so that a wrong field name is a compile error; see `crates/beck-infra/src/k8s.rs`.
 k8s-openapi = { version = "0.28", features = ["v1_34"] }

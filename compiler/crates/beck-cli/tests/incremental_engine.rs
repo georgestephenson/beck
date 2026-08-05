@@ -348,12 +348,12 @@ fn fold_added(runtime: &Runtime, state: &Value, n: u64, actor: &str) -> Value {
     let id = Value::data(
         Arc::from("Id"),
         None,
-        std::collections::BTreeMap::from([(Arc::from("value"), Value::str_(format!("{n:06}")))]),
+        beck_core::core::Fields::from_iter([(Arc::from("value"), Value::str_(format!("{n:06}")))]),
     );
     let event = Value::data(
         Arc::from("Event"),
         Some(Arc::from("Added")),
-        std::collections::BTreeMap::from([
+        beck_core::core::Fields::from_iter([
             (Arc::from("id"), id),
             (Arc::from("text"), Value::str_(format!("item {n}"))),
         ]),

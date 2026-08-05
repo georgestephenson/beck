@@ -288,11 +288,10 @@ fn pending(i: i64) -> Pending {
 /// the shape here is the second — a benchmark on the smallest possible event would flatter every
 /// encoding equally and tell nobody anything.
 fn event(i: i64) -> Value {
-    use std::collections::BTreeMap;
     Value::data(
         Arc::from("Event"),
         Some(Arc::from("Added")),
-        BTreeMap::from([
+        beck_core::core::Fields::from_iter([
             (Arc::from("id"), Value::str_(format!("todo-{i}"))),
             (Arc::from("text"), Value::str_("buy milk on the way home")),
             (Arc::from("owner"), Value::str_("ana")),

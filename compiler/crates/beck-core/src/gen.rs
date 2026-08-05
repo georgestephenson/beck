@@ -25,7 +25,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use crate::core::Value;
+use crate::core::{Fields, Value};
 use crate::pmap::PMap;
 use crate::ty::{Ty, TyDecl};
 
@@ -218,13 +218,13 @@ fn build(
             Ok(Value::data(
                 Arc::from(name),
                 None,
-                BTreeMap::from([(Arc::from("value"), v)]),
+                Fields::from_iter([(Arc::from("value"), v)]),
             ))
         }
         Some(TyDecl::Alias { ty: inner, .. }) => build(inner, types, rng, depth),
         Some(TyDecl::Model { fields, .. }) => {
             let fields = fields.clone();
-            let mut out = BTreeMap::new();
+            let mut out = Fields::new();
             for (i, (fname, fty)) in fields.iter().enumerate() {
                 let fty = crate::ty::instantiate_decl(fty, args);
                 out.insert(
@@ -252,7 +252,7 @@ fn build(
                     .unwrap_or(0),
             };
             let v = &variants[idx];
-            let mut out = BTreeMap::new();
+            let mut out = Fields::new();
             for (i, (fname, fty)) in v.fields.iter().enumerate() {
                 let fty = crate::ty::instantiate_decl(fty, args);
                 out.insert(

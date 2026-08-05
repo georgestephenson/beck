@@ -35,12 +35,11 @@
 //! it produces plausible nonsense, which is the one outcome an append-only audit trail may never
 //! have.
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::core::{NotStorable, Value};
+use crate::core::{Fields, NotStorable, Value};
 use crate::pmap::PMap;
 
 /// The on-disk format version.
@@ -135,7 +134,7 @@ impl Repr {
                 fields
                     .iter()
                     .map(|(k, v)| (Arc::from(k.as_str()), v.to_value()))
-                    .collect::<BTreeMap<Arc<str>, Value>>(),
+                    .collect::<Fields>(),
             ),
         }
     }
@@ -166,7 +165,7 @@ mod tests {
         Value::data(
             Arc::from("Todo"),
             Some(Arc::from("Added")),
-            BTreeMap::from([
+            Fields::from_iter([
                 (Arc::from("id"), Value::str_("t-1")),
                 (Arc::from("text"), Value::str_("milk")),
                 (Arc::from("n"), Value::Int(-7)),

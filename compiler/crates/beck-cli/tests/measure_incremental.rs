@@ -55,7 +55,7 @@ impl Bench {
             let event = Value::data(
                 Arc::from("Event"),
                 Some(Arc::from("Published")),
-                std::collections::BTreeMap::from([
+                beck_core::core::Fields::from_iter([
                     (Arc::from("id"), Value::str_(format!("p{i:05}"))),
                     (Arc::from("text"), Value::str_(format!("post {i}"))),
                 ]),
@@ -93,7 +93,7 @@ impl Bench {
         let id = Value::data(
             Arc::from("Id"),
             None,
-            std::collections::BTreeMap::from([(
+            beck_core::core::Fields::from_iter([(
                 Arc::from("value"),
                 Value::str_(format!("{n:08}")),
             )]),
@@ -101,7 +101,7 @@ impl Bench {
         let event = Value::data(
             Arc::from("Event"),
             Some(Arc::from("Added")),
-            std::collections::BTreeMap::from([
+            beck_core::core::Fields::from_iter([
                 (Arc::from("id"), id),
                 (Arc::from("text"), Value::str_(format!("item {n}"))),
             ]),

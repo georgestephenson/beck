@@ -1,6 +1,5 @@
 //! Shared fixtures for the harnesses.
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use beck_core::{Placed, Value};
@@ -34,13 +33,13 @@ pub fn todo_runtime() -> Runtime {
 /// `Id` is a newtype over `Str`, so its payload is wrapped — nominal in the type system,
 /// transparent on the wire (§3.1).
 pub fn command(variant: &str, fields: &[(&str, &str)]) -> Value {
-    let mut map = BTreeMap::new();
+    let mut map = beck_core::core::Fields::new();
     for (name, value) in fields {
         let v = if *name == "id" {
             Value::data(
                 Arc::from("Id"),
                 None,
-                BTreeMap::from([(Arc::from("value"), Value::str_(value))]),
+                beck_core::core::Fields::from_iter([(Arc::from("value"), Value::str_(value))]),
             )
         } else {
             Value::str_(value)

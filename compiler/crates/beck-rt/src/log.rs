@@ -15,7 +15,6 @@
 //! We do not write a storage engine (`docs/01-vision-and-premise.md` §1.5). This is a small log
 //! engine on top of proven storage: redb for rung 0, PostgreSQL for everything above it.
 
-use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use anyhow::{bail, Context, Result};
@@ -58,7 +57,7 @@ impl Envelope {
         Value::data(
             Arc::from("Envelope"),
             None,
-            BTreeMap::from([
+            beck_core::core::Fields::from_iter([
                 (Arc::from("seq"), Value::Int(self.seq as i64)),
                 (Arc::from("at"), Value::Int(self.at.0)),
                 (Arc::from("actor"), Value::str_(&self.actor)),

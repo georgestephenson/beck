@@ -522,7 +522,10 @@ fn a_token_opens_only_under_the_key_that_minted_it() {
         Value::data(
             std::sync::Arc::from(beck_core::Ty::SECRET),
             None,
-            std::collections::BTreeMap::from([(std::sync::Arc::from("value"), Value::str_(text))]),
+            beck_core::core::Fields::from_iter([(
+                std::sync::Arc::from("value"),
+                Value::str_(text),
+            )]),
         )
     };
 

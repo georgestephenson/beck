@@ -185,7 +185,7 @@ fn feed_with(posts: usize) -> Subject {
             Value::data(
                 Arc::from("Event"),
                 Some(Arc::from("Published")),
-                std::collections::BTreeMap::from([
+                beck_core::core::Fields::from_iter([
                     (Arc::from("id"), Value::str_(format!("p{i:05}"))),
                     (Arc::from("text"), Value::str_(format!("post {i}"))),
                 ]),
