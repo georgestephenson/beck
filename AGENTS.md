@@ -62,7 +62,8 @@ Write the commit message as the author of the change: what changed, and why.
   [`75`](docs/75-what-the-profiler-said-report.md),
   [`76`](docs/76-the-record-and-the-read-report.md),
   [`77`](docs/77-a-let-is-a-slot-report.md) and
-  [`78`](docs/78-a-record-is-a-permutation-report.md),
+  [`78`](docs/78-a-record-is-a-permutation-report.md) and
+  [`79`](docs/79-a-lambda-is-a-frame-report.md),
   indexed in
   [`docs/README.md`](docs/README.md) — record what each
   phase does, what it refuses to claim, and the corrections it makes to the design documents.
@@ -286,6 +287,24 @@ Write the commit message as the author of the change: what changed, and why.
   as much as the effects in the low single digits that docs/69–77 report — so a measurement wants
   the binaries **rotated** and a **control**, the unchanged binary against a byte-identical copy of
   itself, whose number should be zero.
+  **docs/79 is what docs/78's leftover turned into.** Fixing §78.6 — none of the three annotating
+  passes walked a `test` block, since all three iterated `Program::defs` — was worth nothing on its
+  own, and the probe that should have got faster stayed quadratic. The reason is the finding: the
+  accumulator idiom written as a **fold** was `O(n²)`, three reports after docs/70 made the
+  *recursive* form linear. `list_fold(xs, [], lambda acc, x: list_append(acc, x))` copied on every
+  step because docs/70's rule 2 — a closure must not move what it **captured** — was implemented by
+  excluding every variable any lambda mentions, which swallowed what the lambda **binds**, and
+  `acc` is a lambda's own parameter and nothing else. A lambda body is now analysed as the frame it
+  is, with one new condition: a read may be handed over only by the frame that binds it.
+  **289 ms → 9 ms over 8,000 elements**, ×3.76 per doubling → ×1.38, and 640 → **18** evaluator
+  steps an element — which is the gate, in `scaling.rs`, because it needs no clock. No IR node and
+  no evaluator case. Two things it records rather than celebrates: **nothing in the tree got
+  faster**, because all eight of its `list_fold`s accumulate into persistent `Map`s and every loop
+  in `lib/`, `awfy/`, `clbg/`, the corpus and both SICP chapters is written the recursive way — the
+  defect was real and this repository had walked around it by habit; and the new condition is
+  asserted on the *flag* rather than by a program, because the evaluator refuses the unsound move
+  independently (`Arc::get_mut` on a shared captured environment), so six green program-level tests
+  are not evidence for it. docs/19 §19.4's defect has now been found three times.
 - Security posture is [`docs/43-threat-model.md`](docs/43-threat-model.md) (who is defended
   against, and who is not) and `SECURITY.md` (how a report reaches us). What is *absent* is asserted
   as absent in `beck-cli/tests/pending_security.rs`: building one of those controls turns a test

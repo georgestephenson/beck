@@ -398,3 +398,62 @@ fn the_budget_itself_shows_that_accumulating_is_linear() {
         );
     }
 }
+
+/// **The accumulator is linear when it is written as a fold, too** — the same shape as the gate
+/// above, in the form the language's own `list_fold` invites.
+///
+/// `docs/70` made the *recursive* accumulator linear by handing a local over on its last read. It
+/// did nothing for
+///
+/// ```text
+/// list_fold(xs, [], lambda acc, x: list_append(acc, x))
+/// ```
+///
+/// because `acc` is a lambda's parameter, and the liveness pass excluded every variable any lambda
+/// mentions — the exclusion that keeps a closure from having its captures moved out from under it,
+/// applied to a variable the closure itself binds. So the fold form stayed `O(n²)` for three
+/// reports while the recursive form was linear, which is `docs/19` §19.4's defect in its third
+/// place. `docs/79` is the fix: a lambda body is analysed as the frame it is.
+///
+/// Deterministic, like the gate above and for the same reason: the budget charges a primitive for
+/// the work it does over a length the caller chose (`docs/72`), so a copy per append is visible to
+/// it. Measured at 18 steps an element either side of 1,000 and 8,000; 25 is that with room to
+/// spare, against the 640 and 5,120 an element the copying version needed — which is the shape
+/// itself, since eight times the elements cost eight times as much *each*.
+#[test]
+fn accumulating_inside_a_fold_costs_the_same_per_element_however_long_it_gets() {
+    let program = |n: usize| {
+        format!(
+            "def upto(i: Int, n: Int, done: list[Int]) -> list[Int]:\n\
+             \x20   if i >= n:\n\
+             \x20       return done\n\
+             \x20   return upto(i + 1, n, list_append(done, i))\n\
+             \n\
+             test \"fold\":\n\
+             \x20   expect list_len(list_fold(upto(0, {n}, []), [], lambda acc, x: \
+             list_append(acc, x))) == {n}\n"
+        )
+    };
+    const PER_ELEMENT: usize = 25;
+    for n in [1_000usize, 8_000] {
+        let file = std::env::temp_dir().join(format!("beck-scaling-fold-{n}.beck"));
+        std::fs::write(&file, program(n)).expect("a scratch file");
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_beck"))
+            .args([
+                "test",
+                file.to_str().expect("a path"),
+                "--fuel",
+                &(PER_ELEMENT * n).to_string(),
+            ])
+            .output()
+            .expect("the compiler is built");
+        let _ = std::fs::remove_file(&file);
+        assert!(
+            out.status.success(),
+            "folding {n} elements into a list needed more than {PER_ELEMENT} steps each, which is \
+             the shape of a copy per append rather than a push — see docs/79:\n{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}
