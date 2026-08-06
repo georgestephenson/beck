@@ -52,6 +52,25 @@ def parse_shape(src: str) -> Result[Shape, ParseError]:
     shape_of(tokens)?                   # try:/catch e: sugar exists over the same Result
 ```
 
+`parallel:` is an expression too — a scope whose bindings are its children, and whose tail runs once
+after the join with all of them in scope:
+
+```python
+def screen(email: Str) -> Screening:
+    return parallel:
+        f = fraud_score(email)          # two outbound calls that do not wait
+        r = reputation_score(email)     # for each other
+        Screening(fraud=f, reputation=r)
+```
+
+No child may name another, and no child may perform an effect another child could observe — so the
+scope's answer does not depend on which ran first, and both halves of that are compile errors rather
+than conventions. The scope performs `spawn`, which §3.3's table places on the server and which the
+published signature carries; a failure in a child crosses the scope, and the ordered join makes
+*which* failure a function of the program rather than of a scheduler.
+[`80`](80-a-scope-owns-its-children-report.md) is the build report, including what it deliberately
+does not do.
+
 ## 11.3 Traits and derivation
 
 ```python

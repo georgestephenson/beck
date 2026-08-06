@@ -582,14 +582,19 @@ list:
    reach *(R)*
 7. ~~Retarget [`12`](12-standards-and-conformance.md)'s four moved rows~~ *(S)*
 
-**Wave 1 — weeks. `Result` and error rows. ✅ Half built** ([`45`](45-error-rows-report.md)).
+**Wave 1 — weeks. `Result` and error rows. ✅ Built, in two halves**
+([`45`](45-error-rows-report.md), [`80`](80-a-scope-owns-its-children-report.md)).
 Errors as a row label with `Result` reified, and row aliases: **built**. Lexical handlers: built in
 the narrow sense that `try:` is a form and therefore lexical by construction, and unbuilt in the
 general sense — there is no `handle … with`, no resumption, no user-defined effect. **Structured
-concurrency as scope-as-handler is not built**, and [`38`](38-literature-survey.md) §38.4 treats it
-as one piece of work with the above. It is separated here rather than quietly: the error half is
-what Wave 2 waits on, and the concurrency half waits on nothing, so pairing them would have meant
-designing a concurrency model inside an error model's change.
+concurrency as scope-as-handler is built too**, a wave later and separately, exactly as the split
+below predicted: the error half is what Wave 2 waited on, and the concurrency half waited on
+nothing, so pairing them would have meant designing a concurrency model inside an error model's
+change. `parallel:` is a scope whose bindings are its children — §38.4's shape, with `spawn` and
+`await` *not* separately reachable, so a child cannot outlive its scope by construction. Its claim
+is that the answer does not depend on which child ran first, and two compile errors hold it up:
+no child may name another, and no child may perform an effect another child could observe. What is
+**not** built is any backend that runs two children at once (§80.5).
 
 **Wave 2 — weeks to months. The standard library. ✅ Most of it built**
 ([`46`](46-standard-library-report.md)). Strings, list and map collections, JSON and time are
@@ -693,9 +698,12 @@ substrate; ~~the shared dataflow's three unfinished properties
 goes and the change history is compacted to the oldest reader's frontier, both as one reader-set
 rule rather than as the two items §26.9 listed. The third, the render lock, is still here and
 §51.7 records that this change made it a *harder* item rather than an unchanged one, because
-compaction is now safe partly because the lock is held the way it is; structured concurrency, which
-Wave 1 left behind and which has no predecessor; more of SICP, chapter 3 being the part closest to
-what Beck is for. No predecessors, and they never acquire any.
+compaction is now safe partly because the lock is held the way it is; ~~structured concurrency,
+which Wave 1 left behind and which has no predecessor~~ — **built**
+([`80`](80-a-scope-owns-its-children-report.md)), and it acquired one on the way out: running two
+children at the same time needs a `Sync` `Host`, which is a change to the execution half of
+[`19`](19-phase-1-report.md) §19.9's seam and wants its own measurement; more of SICP, chapter 3
+being the part closest to what Beck is for. No predecessors, and they never acquire any.
 
 **Wave 5 — the Phase 4 gates, arranged before Phase 4 rather than during it.** Supply-chain tooling
 (SLSA v1.2 provenance, 2026-element SBOMs, signing, trusted publishing configured *before* the first

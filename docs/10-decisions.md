@@ -725,6 +725,47 @@ collisions were waiting on the day this was taken, and the gate that finds them 
 notation and could change the precedence; that is a decision for
 [`16`](16-packages-and-ecosystem.md)'s wave, and it supersedes this record rather than amending it.
 
+## D24 — Concurrency is a scope, and its children may not observe each other — **DECIDED**
+
+[`38`](38-literature-survey.md) §38.4 said what shape to adopt — "a scope owns its children, and
+errors and cancellation join at the scope" — and left the rule that makes it *mean* something in
+Beck open. This is that rule.
+
+**A `parallel:` scope claims that its answer does not depend on which child ran first**, and the
+claim is enforced rather than documented. Two conditions, both compile errors: no child may name
+another (`B0398`), and no child may perform an effect another child could observe (`B0399`) — the
+log, the document, the merge point, a file, an external store. A backend may therefore run the
+children in any order or all at once, and running them in the order they are written is a correct
+implementation.
+
+**The alternative was a scheduler**, and it is the one this rejects. Letting a child read a sibling
+and ordering the children by their dependencies would accept more programs, and it would make the
+shape of a program's concurrency something a reader has to derive rather than see. The refusal is
+the feature: a child that has to run second is a next line, and writing it as one costs a keyword.
+
+**`net.out(host)` is deliberately not on the refused list.** Two outbound calls are the case the
+form exists for, and Beck has never claimed to order a remote host's state — §3.2 treats
+`net.out` as an effect on the outside world, and this decision declines to start ordering it. The
+consequence is honest and worth stating: two children calling the *same* host may interfere, and
+Beck will not say so. It cannot, and a rule that pretended otherwise would refuse every useful
+scope.
+
+**What this makes true that was not.** `spawn` — an atom §3.2 has listed since Phase 2 with nothing
+able to perform one — now decides a placement for real: a scope lands on the server off §3.3's
+table, `client` refuses it (`B0401`), and a function that starts spawning is a breaking change in
+the sentence §4.3 wrote for `net.out`.
+[`80`](80-a-scope-owns-its-children-report.md) is the build report.
+
+**What this reopens.** `fs(path)` is one atom for a read and a write, so refusing concurrent writes
+means refusing the pair, and two children reading two files is a thing this form should allow and
+cannot (§80.2). Splitting the atom is a decision with consequences past concurrency — §6.5 derives
+a volume's mount options from it — and is left open here rather than taken inside a feature.
+
+**What would reopen the rest.** A scope over a *collection* rather than over written-out children.
+"No child names another" is a scope check when the children are `let`s and a property of one lambda
+when they are elements; that is a different rule for a different form, and this record does not
+decide it.
+
 ## Still open (minor, non-blocking)
 
 - Security-headline vs productivity-headline positioning ([`09`](09-risks-and-open-questions.md)

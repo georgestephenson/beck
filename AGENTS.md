@@ -61,9 +61,10 @@ Write the commit message as the author of the change: what changed, and why.
   [`74`](docs/74-the-cost-of-a-call-report.md),
   [`75`](docs/75-what-the-profiler-said-report.md),
   [`76`](docs/76-the-record-and-the-read-report.md),
-  [`77`](docs/77-a-let-is-a-slot-report.md) and
-  [`78`](docs/78-a-record-is-a-permutation-report.md) and
-  [`79`](docs/79-a-lambda-is-a-frame-report.md),
+  [`77`](docs/77-a-let-is-a-slot-report.md),
+  [`78`](docs/78-a-record-is-a-permutation-report.md),
+  [`79`](docs/79-a-lambda-is-a-frame-report.md) and
+  [`80`](docs/80-a-scope-owns-its-children-report.md),
   indexed in
   [`docs/README.md`](docs/README.md) — record what each
   phase does, what it refuses to claim, and the corrections it makes to the design documents.
@@ -103,9 +104,14 @@ Write the commit message as the author of the change: what changed, and why.
   module — and `beck test --update` closes docs/21 §21.2's last open question, so a page assertion
   is a checked-in file rather than one string somebody thought to name (docs/66); and the **SQLite
   substrate** is built (docs/67) — for its transaction rather than its speed, since redb has no
-  query language for a projection to be written in. Five of the fourteen are
+  query language for a projection to be written in; and **structured concurrency** is built
+  (docs/80) — `parallel:`, a scope whose bindings are its children, claiming that its answer does
+  not depend on which ran first and holding that up with two compile errors rather than a
+  convention, which closes docs/08 §8.5.4's Wave 1 a wave after its error half. Its runtime half
+  is deliberately absent and says so: nothing runs two children at the same time, because `Host`
+  is not `Sync`. **Four** of the fourteen are
   untouched — identity has its seam but not its OIDC relying party (docs/48) — and docs/26 §26.9
-  names them one at a time, less the two docs/51 closed. **Wave 0** (docs/08 §8.5.4) is also
+  names them one at a time, less the two docs/51 closed and the one docs/80 did. **Wave 0** (docs/08 §8.5.4) is also
   built — a bounded front end, an injected clock, a threat model, a disclosure policy and an
   identifier profile — and is debt rather than a phase bullet, so it is in docs/44 and not in that
   list. All six of
@@ -172,7 +178,7 @@ Write the commit message as the author of the change: what changed, and why.
   `MODULES`, which `stdlib.rs` checks by importing every file from outside `lib/`; and the flat
   namespace spans the directory, so a name defined in two library files cannot be imported by one
   program — `the_whole_library_links_into_one_program` is that gate.
-- [`compiler/corpus/`](compiler/corpus/) is 30 programs — 29 single files and one three-module
+- [`compiler/corpus/`](compiler/corpus/) is 31 programs — 30 single files and one three-module
   project — carrying **no placement annotations**, and the measurement behind Phase 2's exit
   criterion. A program added there has to place itself.
 - [`compiler/sicp/`](compiler/sicp/) is the expressiveness benchmark
@@ -305,6 +311,18 @@ Write the commit message as the author of the change: what changed, and why.
   asserted on the *flag* rather than by a program, because the evaluator refuses the unsound move
   independently (`Arc::get_mut` on a shared captured environment), so six green program-level tests
   are not evidence for it. docs/19 §19.4's defect has now been found three times.
+  **docs/80 is the language feature that came after all of it**, and its largest finding is not
+  about concurrency: `beck-syntax/src/print.rs` states `parse(print(parse(src))) == parse(src)` in
+  its opening paragraph and **names the file that asserts it over the corpus**, and that file did
+  not exist — the property was checked by three hand-written snippets in the printer's own test
+  module. **Ten checked-in programs did not print back as themselves**, four of them in `lib/`, so
+  `beck fmt` on each emitted a file that does not compile: a block form used as an operand printed
+  as a call (`try(…)` is not surface syntax), a conditional expression printed without parentheses
+  so `a + (b if c else d)` came back as a different program that still parses, and `() -> T` printed
+  as `fn-type[T]` — docs/63 §63.3's off-by-one surviving in a third place. `roundtrip.rs` is the
+  gate, over every `.beck` file in the tree and through both surfaces rather than over the corpus.
+  A property stated in a doc comment is a property nothing checks; docs/78 §78.6 found three things
+  wrong with a gate that could not fail, and this is a gate cited by name that was never written.
 - Security posture is [`docs/43-threat-model.md`](docs/43-threat-model.md) (who is defended
   against, and who is not) and `SECURITY.md` (how a report reaches us). What is *absent* is asserted
   as absent in `beck-cli/tests/pending_security.rs`: building one of those controls turns a test
@@ -386,7 +404,8 @@ Write the commit message as the author of the change: what changed, and why.
   the differential, replay-determinism, backend-seam, scaling, frames, security, corpus, placement-property,
   general-slicer, incremental-analysis, incremental-engine, shared-arrangement, subscription,
   view-metrics, SICP, Are We Fast Yet, Benchmarks Game, tests-in-Beck, UI, workflow-cross-check,
-  documentation, outbound, compile-speed and diagnostic-snapshot suites, plus the five release-only
+  documentation, outbound, compile-speed, concurrency, round-trip and diagnostic-snapshot suites,
+  plus the five release-only
   measurement suites (`measure_phase2`, `measure_incremental`, `measure_awfy`, `measure_compile`,
   `measure_clbg`). Keep them green.
 - The CI workflow is an artefact too, and Phase 2 found that it had never run
