@@ -218,6 +218,11 @@ pub struct Checker<'a> {
     /// counts against. The reader's bound does not cover this one: a macro can expand into a tree
     /// deeper than the one that was written, and the checker is the first pass to see it.
     nesting: Nesting,
+    /// The names a `parallel:` scope has bound so far, while its *later* children are being
+    /// checked. They are deliberately not in `locals` — a child that could see a sibling would
+    /// have to run after it — so this is what turns the resulting "cannot find" into the
+    /// diagnostic that says why the name is absent rather than that it is unknown.
+    parallel_siblings: Vec<Arc<str>>,
     mode: Mode,
 }
 
@@ -279,6 +284,7 @@ pub fn check_module_with(
         dicts: BTreeMap::new(),
         generic_rows: BTreeMap::new(),
         nesting: Nesting::new(),
+        parallel_siblings: Vec::new(),
         mode,
     };
     for (name, prim, scheme) in prelude::prims() {
@@ -1860,6 +1866,7 @@ impl<'a> Checker<'a> {
             sym::FN if n.args.len() == 2 => self.lambda(n, expected, span),
             sym::RAISE if n.args.len() == 1 => self.raise_expr(&n.args[0], span),
             sym::TRY if n.args.len() == 1 => self.try_expr(&n.args[0], expected, span),
+            sym::PARALLEL if n.args.len() == 1 => self.parallel_expr(&n.args[0], expected, span),
             sym::MATCH if !n.args.is_empty() => self.match_expr(n, expected, span),
             sym::LIST => {
                 let elem = expected
@@ -2121,7 +2128,19 @@ impl<'a> Checker<'a> {
 
     fn var_ref(&mut self, s: &Symbol, span: Span) -> Core {
         let Some(b) = self.resolve(s).cloned() else {
-            self.error("B0340", format!("cannot find `{s}` in this scope"), span);
+            // A sibling in the same `parallel:` scope is absent for a reason, so say the reason.
+            if self.parallel_siblings.contains(&s.name) {
+                self.error(
+                    "B0398",
+                    format!(
+                        "`{s}` is another child of this `parallel:` scope, so it has not run yet — \
+                         children cannot see each other, which is what lets them run together"
+                    ),
+                    span,
+                );
+            } else {
+                self.error("B0340", format!("cannot find `{s}` in this scope"), span);
+            }
             let t = self.subst.fresh();
             return Core::new(CoreKind::Const(Const::Unit), t, span);
         };
@@ -2353,6 +2372,155 @@ impl<'a> Checker<'a> {
                 ],
             },
             result_ty,
+            span,
+        )
+    }
+
+    /// `parallel:` — a scope whose bindings are its children.
+    ///
+    /// Two rules make the scope's answer independent of the order its children ran in, which is
+    /// what lets a backend run them together:
+    ///
+    /// * **no child can name another.** Each initialiser is checked before any of the names is
+    ///   bound, so a reference to a sibling does not resolve; `parallel_siblings` is what turns
+    ///   that into `B0398` rather than into "cannot find".
+    /// * **no child performs an effect another child could observe.** [`observable_order`] is the
+    ///   list, and it is about state *inside* the program or its own substrate. `net.out` is not
+    ///   on it deliberately: a remote host's state is not Beck's to order, and two outbound calls
+    ///   are the case this form exists for.
+    ///
+    /// What the scope performs is `spawn`, every child's row, and the tail's — so a child that can
+    /// fail makes the scope fallible, and a `try:` outside it catches at the scope. That is
+    /// [`docs/38`](../../../../../docs/38-literature-survey.md) §38.4's "cancellation is the error
+    /// row crossing the scope", with the ordered join deciding *which* failure when more than one
+    /// child could raise: the earliest child in the order they are written, rather than the
+    /// earliest to finish.
+    fn parallel_expr(&mut self, body: &Node, expected: Option<&Ty>, span: Span) -> Core {
+        let stmts: &[Node] = if body.is_form(sym::DO) {
+            &body.args
+        } else {
+            std::slice::from_ref(body)
+        };
+
+        // The children are the leading bindings; everything from the first non-binding statement
+        // on is the tail, which runs after the join with all of them in scope.
+        let children = stmts
+            .iter()
+            .take_while(|s| (s.is_form(sym::LET) || s.is_form(sym::VAR)) && s.args.len() == 2)
+            .count();
+        if children < 2 {
+            self.error(
+                "B0397",
+                format!(
+                    "a `parallel:` scope runs its bindings as children, and this one has {children}"
+                ),
+                span,
+            );
+            let before = self.locals.len();
+            let out = self.block_from(stmts, expected, span);
+            self.locals.truncate(before);
+            return out;
+        }
+
+        // The scope starts concurrent work whatever its children do, so the atom is charged here
+        // rather than left to [`Prim::effects`] — nothing walks a prim's table on the way to a row,
+        // and a `parallel:` over two pure children still has to place on a tier that can run one.
+        self.perform(&Row::of([Effect::Spawn]));
+
+        let outer_siblings = std::mem::take(&mut self.parallel_siblings);
+        let before = self.locals.len();
+        let mut thunks = Vec::with_capacity(children);
+        let mut bound: Vec<(VarId, Ty)> = Vec::with_capacity(children);
+        let mut names: Vec<(Option<Symbol>, Ty)> = Vec::with_capacity(children);
+
+        for stmt in &stmts[..children] {
+            let target = &stmt.args[0];
+            let (name_node, annot) = if target.is_form(sym::ANNOT) && target.args.len() == 2 {
+                (&target.args[0], Some(&target.args[1]))
+            } else {
+                (target, None)
+            };
+            let want = annot.map(|t| self.ty_from_node(t));
+            // A child's effects belong to the child, so they are collected here and charged to the
+            // scope below — the same separation a lambda body gets, and for the same reason.
+            let (value, row) = self.in_scope(|ck| ck.expr(&stmt.args[1], want.as_ref()));
+            if let Some(w) = &want {
+                self.unify(&value.ty, w, value.span, "declared type");
+            }
+            let row = self.subst.resolve_row(&row);
+            let refused: Vec<String> = row
+                .atoms
+                .iter()
+                .filter(|a| observable_order(a))
+                .map(|a| format!("`{}`", a.name()))
+                .collect();
+            if !refused.is_empty() {
+                self.error(
+                    "B0399",
+                    format!(
+                        "a child of a `parallel:` scope may not perform {} — another child would \
+                         be able to tell what order they ran in",
+                        refused.join(", ")
+                    ),
+                    value.span,
+                );
+            }
+            self.perform(&row);
+
+            let ty = value.ty.clone();
+            let vspan = value.span;
+            thunks.push(Core::new(
+                CoreKind::Lam {
+                    params: Arc::from(Vec::new()),
+                    body: Arc::new(value),
+                },
+                Ty::fun_eff(Vec::new(), ty.clone(), row),
+                vspan,
+            ));
+            let id = self.fresh_var();
+            bound.push((id, ty.clone()));
+            names.push((name_node.as_var().cloned(), ty));
+            if let Some(s) = name_node.as_var() {
+                self.parallel_siblings.push(s.name.clone());
+            }
+        }
+
+        // Only now do the children's names exist, which is what the first rule means.
+        self.parallel_siblings = outer_siblings;
+        for ((id, _), (name, ty)) in bound.iter().zip(names.iter()) {
+            if let Some(s) = name {
+                self.locals.push(Binding {
+                    name: s.name.clone(),
+                    scopes: s.scopes.clone(),
+                    kind: BindKind::Local(*id, ty.clone()),
+                });
+            }
+        }
+        let tail = self.block_from(&stmts[children..], expected, span);
+        self.locals.truncate(before);
+
+        let tail_ty = tail.ty.clone();
+        let param_tys: Vec<Ty> = bound.iter().map(|(_, t)| t.clone()).collect();
+        let ids: Vec<VarId> = bound.iter().map(|(id, _)| *id).collect();
+        let k = Core::new(
+            CoreKind::Lam {
+                params: ids.into(),
+                body: Arc::new(tail),
+            },
+            // The continuation's own row is empty: whatever the tail performs has already been
+            // charged to the enclosing definition by `block_from`, and charging it twice would put
+            // it in the scope's row a second time.
+            Ty::fun_eff(param_tys, tail_ty.clone(), Row::empty()),
+            span,
+        );
+        let mut args = thunks;
+        args.push(k);
+        Core::new(
+            CoreKind::Prim {
+                op: Prim::Parallel,
+                args,
+            },
+            tail_ty,
             span,
         )
     }
@@ -3281,6 +3449,35 @@ fn error_ty_name(t: &Ty) -> Option<Arc<str>> {
         },
         _ => None,
     }
+}
+
+/// Could a second child of the same `parallel:` scope tell that this one had run?
+///
+/// The list is the atoms that write state the program or its own substrate holds: the log, the
+/// document, the merge point, the filesystem and an external store. Two children touching any of
+/// them would make the scope's answer a function of which ran first, and the whole claim for the
+/// form is that it is not.
+///
+/// What is deliberately absent is as much of the argument as what is present:
+///
+/// * **`net.out(host)`** — a remote host's state is not Beck's to order, and §3.2 never claimed it
+///   was. Two outbound calls are the case this form exists for, so refusing them would leave the
+///   feature with nothing to do.
+/// * **`nondet`** — a clock or a fresh id is a *read* of something outside the program. Two
+///   children reading the clock do not interfere; they already disagree when run in sequence, and
+///   §3.7 is what keeps them out of a fold.
+/// * **`raises(E)`** and **`partial`** — failing is control flow, and the scope's join is what
+///   orders it (see [`Checker::parallel_expr`]).
+/// * **`cap.*`** — an authority the caller holds, not state a child writes.
+///
+/// `fs(path)` is on the list for a reason worth recording rather than assuming: the atom does not
+/// distinguish a read from a write, so refusing writes means refusing the pair. Two children
+/// reading two files is a thing this form should allow and cannot, until `fs` is two atoms.
+fn observable_order(e: &Effect) -> bool {
+    matches!(
+        e,
+        Effect::Ingress | Effect::Durable | Effect::Dom | Effect::Fs(_) | Effect::ExternalWrite(_)
+    )
 }
 
 fn resolve_types(c: &mut Core, s: &Subst) {

@@ -4,7 +4,7 @@
 
 Every diagnostic the compiler can raise carries a stable code. `beck explain error B0341` prints one of these entries at the terminal.
 
-The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans every non-test source file for a `"Bnnnn"` literal and fails if the set differs from this table in either direction. **113 codes.**
+The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans every non-test source file for a `"Bnnnn"` literal and fails if the set differs from this table in either direction. **116 codes.**
 
 
 ## Reading the source — `B0100–B0121`
@@ -41,7 +41,7 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0212` | error | **`ui` block has more than one root** — An `Html` value is a single tree. Wrap the elements in one — a `div:` or `main:` block. |
 | `B0213` | error | **the form nests too deep to expand** — The expander walks a form's arguments as deeply as they nest, and stops at the count the reader stops at. This is not `B0201`: nothing here says a macro failed to terminate — the two were one counter until they were separated, and a deep expression with no macros in it reported the wrong one. |
 
-## Names, types and effects — `B0300–B0396`
+## Names, types and effects — `B0300–B0399`
 
 | Code | | Meaning |
 |---|---|---|
@@ -99,6 +99,9 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0394` | error | **the row is declared twice** — Two `row Name = …` declarations with the same name. A row alias is a name for a bundle of effect atoms, and a second one would make every `uses` clause mentioning it ambiguous. |
 | `B0395` | error | **the host of an outbound call has to be written at the call site** — `http_fetch` performs `net.out(host)`, and §6.5 derives the cluster's egress policy from that atom and nothing else. A host computed at run time is an outbound call the deployment cannot be told about, so the argument is read where it is written. Compute the path, the port, the headers and the body; or take a closure, so the caller names its own host and the row carries the atom out. |
 | `B0396` | error | **that is not a host an outbound call can name** — The host becomes a NetworkPolicy peer and a `uses net.out(…)` clause, both of which are written as bare DNS labels — so a scheme, a port or a path in it is a name neither could carry. `origin` is refused for a different reason: it is the one outbound atom a client tier discharges, and a client reaches its own server over the command channel. |
+| `B0397` | error | **a parallel scope has fewer than two children** — A `parallel:` scope runs its bindings as children. With one there is nothing to run it alongside, and with none there is nothing to run — either way the form is claiming a concurrency it does not have, and an ordinary block says the same thing without the claim. The tail is everything after the last binding, so a scope written with its work in the tail has no children either. |
+| `B0398` | error | **a child of a parallel scope names another child** — The children of a `parallel:` scope run together, so none of them can see another's result — a child that could would have to run second, and then it is not a child but a next line. Move the reader into the scope's tail, which runs after the join with every child's result in scope, or out into a second scope below this one. |
+| `B0399` | error | **a child of a parallel scope performs an effect another child could observe** — The claim a `parallel:` scope makes is that its answer does not depend on the order its children ran in, and an effect on state the program holds — the log, the document, the merge point, a file, an external store — breaks it: two children appending to the log in the other order is a different log. `net.out(host)` is not on that list and is the case the form exists for. Do the shared-state part in the tail, which runs once, after the join. |
 
 ## Placement — `B0400–B0404`
 

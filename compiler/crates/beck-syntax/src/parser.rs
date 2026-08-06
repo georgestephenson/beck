@@ -1695,6 +1695,13 @@ impl<'a> Parser<'a> {
             let bspan = body.span();
             return Some(Node::form(sym::TRY, vec![body], span.to(bspan)));
         }
+        if self.at_kw("parallel") {
+            self.bump();
+            self.expect(&Raw::Colon, "`:` after `parallel`");
+            let body = self.block()?;
+            let bspan = body.span();
+            return Some(Node::form(sym::PARALLEL, vec![body], span.to(bspan)));
+        }
         if self.at_kw("quote") {
             self.bump();
             self.expect(&Raw::Colon, "`:` after `quote`");

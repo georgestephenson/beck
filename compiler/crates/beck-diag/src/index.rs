@@ -678,6 +678,36 @@ pub const INDEX: &[CodeEntry] = &[
          carry. `origin` is refused for a different reason: it is the one outbound atom a client \
          tier discharges, and a client reaches its own server over the command channel.",
     ),
+    e(
+        "B0397",
+        Stage::Types,
+        "a parallel scope has fewer than two children",
+        "A `parallel:` scope runs its bindings as children. With one there is nothing to run it \
+         alongside, and with none there is nothing to run — either way the form is claiming a \
+         concurrency it does not have, and an ordinary block says the same thing without the \
+         claim. The tail is everything after the last binding, so a scope written with its work \
+         in the tail has no children either.",
+    ),
+    e(
+        "B0398",
+        Stage::Types,
+        "a child of a parallel scope names another child",
+        "The children of a `parallel:` scope run together, so none of them can see another's \
+         result — a child that could would have to run second, and then it is not a child but a \
+         next line. Move the reader into the scope's tail, which runs after the join with every \
+         child's result in scope, or out into a second scope below this one.",
+    ),
+    e(
+        "B0399",
+        Stage::Types,
+        "a child of a parallel scope performs an effect another child could observe",
+        "The claim a `parallel:` scope makes is that its answer does not depend on the order its \
+         children ran in, and an effect on state the program holds — the log, the document, the \
+         merge point, a file, an external store — breaks it: two children appending to the log in \
+         the other order is a different log. `net.out(host)` is not on that list and is the case \
+         the form exists for. Do the shared-state part in the tail, which runs once, after the \
+         join.",
+    ),
     // -------------------------------------------------------------------- B04xx: placement
     e(
         "B0400",

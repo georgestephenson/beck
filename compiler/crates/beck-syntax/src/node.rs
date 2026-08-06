@@ -316,6 +316,14 @@ pub mod sym {
     /// effects decide placement, an accidentally intercepted effect would be an accidental
     /// *re-placement*.
     pub const TRY: &str = "try";
+    /// `parallel: block` — a scope whose bindings are its children.
+    ///
+    /// The scope is a *form*, for the same reason [`TRY`] is: a handler that owns its children has
+    /// to own them lexically, and a nursery whose membership were decided at run time would be a
+    /// dynamic search with the same objection ([`docs/38`](../../../../../docs/38-literature-survey.md)
+    /// §38.4). Both halves of §38.4's shape are here — the children are the scope's `let`s, and
+    /// there is no handle for one to escape in.
+    pub const PARALLEL: &str = "parallel";
     pub const KW_ARG: &str = "kw";
     pub const WILDCARD: &str = "_";
     pub const SERVICE: &str = "service";

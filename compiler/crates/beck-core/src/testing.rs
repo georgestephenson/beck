@@ -199,6 +199,9 @@ pub enum Count {
 ///   `when` is that it "goes through the *real* `validate`, so authorisation is exercised rather
 ///   than bypassed". Stubbing a capability would bypass it. An explicit `stub cap.x:` is still
 ///   accepted — saying it out loud is the point — but nothing is stubbed automatically.
+/// * `spawn` — not on §21.3's list either, and not external at all: a `parallel:` scope is the
+///   program's own control flow, and standing in for it would delete the children rather than the
+///   boundary they cross. What a test wants stubbed is what a child *does*.
 pub fn is_auto_stubbable(e: &Effect) -> bool {
     matches!(
         e,
@@ -206,7 +209,6 @@ pub fn is_auto_stubbable(e: &Effect) -> bool {
             | Effect::NetIn
             | Effect::Fs(_)
             | Effect::Env
-            | Effect::Spawn
             | Effect::ExternalRead(_)
             | Effect::ExternalWrite(_)
     )

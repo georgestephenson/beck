@@ -371,6 +371,10 @@ impl Py {
                     self.line("return try:");
                     self.body(&e.args[0]);
                 }
+                Some(e) if e.is_form(sym::PARALLEL) && e.args.len() == 1 => {
+                    self.line("return parallel:");
+                    self.body(&e.args[0]);
+                }
                 Some(e) if e.is_form(sym::QUOTE) && e.args.len() == 1 => {
                     self.line("return quote:");
                     let body = &e.args[0];
@@ -405,6 +409,20 @@ impl Py {
                 let rendered = self.call_text(head, &args);
                 self.line(&format!("{keyword}{target} = {rendered}:"));
                 self.body(&block);
+            }
+            // `x = try:` and `x = parallel:` — a block form bound to a name. Neither is a call, so
+            // `split_block_call` above cannot see it, and printing `x = try((do …))` would not
+            // re-parse. Both are expressions (`docs/45` §45.2), so both can appear here.
+            Some(sym::LET) | Some(sym::VAR)
+                if n.args.len() == 2
+                    && (n.args[1].is_form(sym::TRY) || n.args[1].is_form(sym::PARALLEL))
+                    && n.args[1].args.len() == 1 =>
+            {
+                let keyword = if n.is_form(sym::VAR) { "var " } else { "" };
+                let target = self.expr(&n.args[0]);
+                let head = n.args[1].head_name().unwrap_or(sym::TRY);
+                self.line(&format!("{keyword}{target} = {head}:"));
+                self.body(&n.args[1].args[0]);
             }
             Some(sym::LET) if n.args.len() == 2 => {
                 let t = &n.args[0];
@@ -473,6 +491,12 @@ impl Py {
             // than as a call — `try((do …))` is not surface syntax and would not re-parse.
             Some(sym::TRY) if n.args.len() == 1 => {
                 self.line("try:");
+                self.body(&n.args[0]);
+            }
+            // `parallel:` + block, for the same reason: the scope's children *are* the indented
+            // statements, so there is no call form to print it as.
+            Some(sym::PARALLEL) if n.args.len() == 1 => {
+                self.line("parallel:");
                 self.body(&n.args[0]);
             }
             Some(sym::ROW) => self.item(n),
