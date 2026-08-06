@@ -756,18 +756,48 @@ table, `client` refuses it (`B0401`), and a function that starts spawning is a b
 the sentence §4.3 wrote for `net.out`.
 [`80`](80-a-scope-owns-its-children-report.md) is the build report.
 
-**What this reopens.** `fs(path)` is one atom for a read and a write, so refusing concurrent writes
-means refusing the pair, and two children reading two files is a thing this form should allow and
-cannot (§80.2). It is the only atom in §3.2's list that names a resource without saying what is done
-to it, and the precedent for splitting it is in the same list: §3.8's escape hatches are
-`external.read(store)` and `external.write(store)`. That is a decision with consequences past
-concurrency — §6.5 derives a volume's mount options from the same atom — and is left open here
-rather than taken inside a feature.
+**What this reopened, and D25 closes.** `fs(path)` was one atom for a read and a write, so refusing
+concurrent writes meant refusing the pair, and two children reading two files was a thing this form
+should allow and could not (§80.2). That is now D25.
 
 **What would reopen the rest.** A scope over a *collection* rather than over written-out children.
 "No child names another" is a scope check when the children are `let`s and a property of one lambda
 when they are elements; that is a different rule for a different form, and this record does not
 decide it.
+
+## D25 — `fs` is two atoms, `fs.read(path)` and `fs.write(path)` — **DECIDED**
+
+D24 left this open, and [`81`](81-fs-is-two-atoms-report.md) is it taken and built.
+
+**An effect atom that names a resource has to say what is being done to it.** `fs(path)` was the
+only atom in §3.2's list that did not. It was not wrong for three phases because nothing had asked
+it a question it could not answer; D24's rule asked one — could a second child of a `parallel:`
+scope tell this one had run? — and the honest answer for a read and for a write are different.
+
+**The precedent is in the same list.** §3.8's escape hatches have always been `external.read(store)`
+and `external.write(store)`, and `net.out(host)`/`net.in` have always been two. This is that split,
+for the same reason, applied to the one atom that had not had it.
+
+**What it changes.** Two children of a scope may read files; a child may not write one. Nothing
+else moved: `Tier::discharges` never looked at the operation, `breaks_replay` is true of both
+(a file can change between replays, which is a fact about reading), and both are stubbable, because
+§21.3's "genuinely external" is about the boundary rather than the direction.
+
+**What it costs.** The spelling `fs(path)` no longer parses, and gets a diagnostic naming both
+replacements rather than the generic "neither an effect nor a row". No program in this repository
+wrote it, so nothing broke — which is itself worth noting, because the atom has been in the
+vocabulary since Phase 2 with no primitive able to perform one. This makes the vocabulary correct;
+it does not make filesystem access available.
+
+**What it enables and does not do.** [`06`](06-kubernetes-and-packaging.md) §6.5's derived
+least-privilege manifests can now distinguish a `readOnly: true` mount from a writable one. They do
+not yet: `beck-infra` derives from `ingress`, `durable` and `net.out` and has never read this atom.
+[`81`](81-fs-is-two-atoms-report.md) §81.5 is the correction to
+[`80`](80-a-scope-owns-its-children-report.md) §80.7, which said otherwise.
+
+**What would reopen this.** A file operation whose interference is finer than the path — a
+lock, an append, an atomic rename. The scope rule refuses two writers to *any* paths rather than
+comparing them (§81.3), and a real filesystem library is where that becomes worth revisiting.
 
 ## Still open (minor, non-blocking)
 

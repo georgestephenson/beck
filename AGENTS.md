@@ -63,8 +63,9 @@ Write the commit message as the author of the change: what changed, and why.
   [`76`](docs/76-the-record-and-the-read-report.md),
   [`77`](docs/77-a-let-is-a-slot-report.md),
   [`78`](docs/78-a-record-is-a-permutation-report.md),
-  [`79`](docs/79-a-lambda-is-a-frame-report.md) and
-  [`80`](docs/80-a-scope-owns-its-children-report.md),
+  [`79`](docs/79-a-lambda-is-a-frame-report.md),
+  [`80`](docs/80-a-scope-owns-its-children-report.md) and
+  [`81`](docs/81-fs-is-two-atoms-report.md),
   indexed in
   [`docs/README.md`](docs/README.md) — record what each
   phase does, what it refuses to claim, and the corrections it makes to the design documents.
@@ -323,6 +324,14 @@ Write the commit message as the author of the change: what changed, and why.
   gate, over every `.beck` file in the tree and through both surfaces rather than over the corpus.
   A property stated in a doc comment is a property nothing checks; docs/78 §78.6 found three things
   wrong with a gate that could not fail, and this is a gate cited by name that was never written.
+  **docs/81 is docs/80's own leftover taken the next day**: `fs(path)` becomes `fs.read(path)` and
+  `fs.write(path)`, so a scope may have children that read files and still refuses children that
+  write them. It was the only atom in docs/03 §3.2's list naming a resource without saying what was
+  done to it, and §3.8's escape hatches had already been split the same way. Its §81.5 corrects
+  docs/80 §80.7, which justified the split partly by saying docs/06 §6.5 derives a mount's options
+  from the atom — **it does not**; `beck-infra` reads `ingress`, `durable` and `net.out` and has
+  never looked at `fs`. And §81.6 is the limit: no primitive touches a file, so this makes the
+  vocabulary correct rather than making filesystem access available.
 - Security posture is [`docs/43-threat-model.md`](docs/43-threat-model.md) (who is defended
   against, and who is not) and `SECURITY.md` (how a report reaches us). What is *absent* is asserted
   as absent in `beck-cli/tests/pending_security.rs`: building one of those controls turns a test

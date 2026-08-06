@@ -60,7 +60,8 @@ const FORCED: &[&str] = &[
     "net.out(api.example.com)",
     "external.read(legacy)",
     "external.write(legacy)",
-    "fs(\"/var/lib/beck\")",
+    "fs.read(\"/var/lib/beck\")",
+    "fs.write(\"/var/lib/beck\")",
 ];
 
 const OPEN: &[&str] = &["net.out(origin)", "dom"];

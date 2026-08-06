@@ -43,9 +43,9 @@ charge      : (Card, Money) -> Result[Receipt, Declined] ! { net.out(payments.ex
 ```
 
 Effect atoms: `ingress` (a merge point — arbitrary interleaving), `durable(S)` (persistent
-accumulator), `dom`, `net.out(host)`, `net.in`, `fs(path)`, `env`, `spawn`, `cap.X` (capabilities),
-`partial` (may diverge/panic), `raises(E)` (may fail with a value of type `E`),
-`external.read/write(store)` (escape-hatch stores, §3.8). An
+accumulator), `dom`, `net.out(host)`, `net.in`, `fs.read(path)`, `fs.write(path)`, `env`,
+`spawn`, `cap.X` (capabilities), `partial` (may diverge/panic), `raises(E)` (may fail with a value
+of type `E`), `external.read/write(store)` (escape-hatch stores, §3.8). An
 `ambient` set — **`log` and `metrics`** — is implicitly available on every tier, elided from
 signatures, and never a reason to place anything.
 

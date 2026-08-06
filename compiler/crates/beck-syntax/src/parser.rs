@@ -926,7 +926,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// `net.out(payments.example.com)`, `cap.session`, `fs(/tmp)`, `env`.
+    /// `net.out(payments.example.com)`, `cap.session`, `fs.read(/tmp)`, `env`.
     ///
     /// Reassembled from tokens rather than sliced from the source, because the parser does not hold
     /// the source; the atom vocabulary is small enough that this is exact.

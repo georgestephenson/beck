@@ -1002,7 +1002,7 @@ impl<'a> Checker<'a> {
             } else if let Some(alias) = self.row_aliases.get(text.as_str()).cloned() {
                 row = row.union(&alias);
             } else {
-                self.error(
+                let mut d = Diagnostic::error(
                     "B0305",
                     format!(
                         "`{}` is neither an effect nor a row",
@@ -1010,6 +1010,17 @@ impl<'a> Checker<'a> {
                     ),
                     e.span(),
                 );
+                // `fs(path)` was one atom until `docs/81` split it, and it is the one spelling a
+                // reader is likely to arrive with — from §3.2 as it stood, or from a habit. Saying
+                // which of the two to write is more use than saying the name is unknown.
+                if let Some(path) = text.strip_prefix("fs(").and_then(|r| r.strip_suffix(')')) {
+                    d = d.with_note(format!(
+                        "`fs` is two atoms: write `fs.read({path})` or `fs.write({path})`. One \
+                         name for both could not say whether a mount needs to be writable, or \
+                         whether two children of a `parallel:` scope may touch it at once"
+                    ));
+                }
+                self.diags.push(d);
             }
         }
         row
@@ -3453,10 +3464,10 @@ fn error_ty_name(t: &Ty) -> Option<Arc<str>> {
 
 /// Could a second child of the same `parallel:` scope tell that this one had run?
 ///
-/// The list is the atoms that write state the program or its own substrate holds: the log, the
-/// document, the merge point, the filesystem and an external store. Two children touching any of
-/// them would make the scope's answer a function of which ran first, and the whole claim for the
-/// form is that it is not.
+/// The list is the atoms that **write** state the program or its own substrate holds: the log, the
+/// document, the merge point, a file and an external store. Two children touching any of them would
+/// make the scope's answer a function of which ran first, and the whole claim for the form is that
+/// it is not. A *read* of any of them is fine, because nothing in the scope writes it.
 ///
 /// What is deliberately absent is as much of the argument as what is present:
 ///
@@ -3469,14 +3480,21 @@ fn error_ty_name(t: &Ty) -> Option<Arc<str>> {
 /// * **`raises(E)`** and **`partial`** — failing is control flow, and the scope's join is what
 ///   orders it (see [`Checker::parallel_expr`]).
 /// * **`cap.*`** — an authority the caller holds, not state a child writes.
-///
-/// `fs(path)` is on the list for a reason worth recording rather than assuming: the atom does not
-/// distinguish a read from a write, so refusing writes means refusing the pair. Two children
-/// reading two files is a thing this form should allow and cannot, until `fs` is two atoms.
+/// * **`fs.read(path)`** — a read of a file no child of this scope writes, since `fs.write` is
+///   refused. [`docs/80`](../../../../../docs/80-a-scope-owns-its-children-report.md) §80.2 had to
+///   refuse the pair because `fs(path)` was one atom;
+///   [`docs/81`](../../../../../docs/81-fs-is-two-atoms-report.md) split it, and this line is what
+///   the split was for.
+/// * **`external.read(store)`** — the same argument, and it needed no change because §3.8's
+///   escape hatches were two atoms from the start.
 fn observable_order(e: &Effect) -> bool {
     matches!(
         e,
-        Effect::Ingress | Effect::Durable | Effect::Dom | Effect::Fs(_) | Effect::ExternalWrite(_)
+        Effect::Ingress
+            | Effect::Durable
+            | Effect::Dom
+            | Effect::FsWrite(_)
+            | Effect::ExternalWrite(_)
     )
 }
 

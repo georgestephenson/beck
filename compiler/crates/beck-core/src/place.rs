@@ -917,7 +917,9 @@ fn verify(
                 }
                 "net.in" => "only the server accepts connections",
                 "cap" => "a capability is held where sessions are minted, which is the server",
-                "env" | "fs" => "there is no process environment or filesystem in a browser",
+                "env" | "fs.read" | "fs.write" => {
+                    "there is no process environment or filesystem in a browser"
+                }
                 "external.read" | "external.write" => {
                     "an external store is reached from the server, never from a browser"
                 }

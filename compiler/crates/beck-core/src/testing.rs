@@ -190,7 +190,7 @@ pub enum Count {
 /// Which effect atoms a stub can stand in for.
 ///
 /// §21.3: "What is left is the genuinely external: `net.out(host)`, `env`, `external.read/write
-/// (store)`, `fs(path)`, `cap.*`, `nondet`." Two of that list are handled by the harness rather than
+/// (store)`, `fs.read/write(path)`, `cap.*`, `nondet`." Two of that list are handled by the harness rather than
 /// by a stub and are excluded here for reasons worth stating:
 ///
 /// * `nondet` — ids and the clock are supplied deterministically by the harness, because §3.7
@@ -207,7 +207,8 @@ pub fn is_auto_stubbable(e: &Effect) -> bool {
         e,
         Effect::NetOut(_)
             | Effect::NetIn
-            | Effect::Fs(_)
+            | Effect::FsRead(_)
+            | Effect::FsWrite(_)
             | Effect::Env
             | Effect::ExternalRead(_)
             | Effect::ExternalWrite(_)
