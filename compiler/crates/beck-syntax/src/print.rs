@@ -638,7 +638,11 @@ impl Py {
 
     fn type_expr(&self, n: &Node) -> String {
         match n.head_name() {
-            Some("fn-type") if n.args.len() >= 2 => {
+            // `>= 1`, not `>= 2`: a `fn-type` node is its parameters followed by its result, so a
+            // function type taking **no** arguments has exactly one. `docs/63` §63.3 found `() -> T`
+            // missing from the parser and the checker; the printer kept the same off-by-one, and
+            // printed `fn-type[T]` — the internal head, in a file `beck fmt` had just written.
+            Some("fn-type") if !n.args.is_empty() => {
                 let params: Vec<String> = n.args[..n.args.len() - 1]
                     .iter()
                     .map(|a| self.type_expr(a))
@@ -663,6 +667,22 @@ impl Py {
         }
     }
 
+    /// The body of a block form, as one line.
+    ///
+    /// A `do` wrapping a single statement is §2.3's single-line block, which is what every block
+    /// form written as an operand is. A `do` with several is not expressible inline — the surface
+    /// has no separator for statements — so it is printed as its statements joined by `; `, which
+    /// does not re-parse and is why `beck-cli/tests/roundtrip.rs` would fail on one. Nothing in
+    /// this tree writes that shape; a program that does is a gap in the surface rather than in the
+    /// printer, and the failing test is where that argument gets had.
+    fn block_expr(&self, n: &Node) -> String {
+        if n.is_form(sym::DO) {
+            let parts: Vec<String> = n.args.iter().map(|a| self.expr(a)).collect();
+            return parts.join("; ");
+        }
+        self.expr(n)
+    }
+
     fn expr(&self, n: &Node) -> String {
         if !n.applied {
             let mut s = String::new();
@@ -673,6 +693,15 @@ impl Py {
         match head {
             "not" if n.args.len() == 1 => format!("not {}", self.expr(&n.args[0])),
             sym::RAISE if n.args.len() == 1 => format!("raise {}", self.expr(&n.args[0])),
+            // `try:` and `parallel:` are **expressions** (`docs/45` §45.2), so they turn up as
+            // operands — `expect (try: benchmark()) == Ok(True)` is how seven files in this tree
+            // assert a fallible answer. §2.3's single-line block form is the notation for one here,
+            // and the parentheses are what let it be an operand at all. Without this they printed
+            // as `try(…)`, which is not surface syntax: `beck fmt` emitted a program that does not
+            // compile, in ten files, until `beck-cli/tests/roundtrip.rs` existed to say so.
+            sym::TRY | sym::PARALLEL if n.args.len() == 1 => {
+                format!("({head}: {})", self.block_expr(&n.args[0]))
+            }
             "negate" if n.args.len() == 1 => format!("-{}", self.expr(&n.args[0])),
             sym::UNQUOTE if n.args.len() == 1 => format!("${}", self.expr(&n.args[0])),
             sym::SPLICE if n.args.len() == 1 => format!("$*{}", self.expr(&n.args[0])),
@@ -691,8 +720,11 @@ impl Py {
             "index" if n.args.len() == 2 => {
                 format!("{}[{}]", self.expr(&n.args[0]), self.expr(&n.args[1]))
             }
+            // Parenthesised, like every binary operator above it and for the same reason: without
+            // them `a + b if c else d` reads back as `a + (b if c else d)`, which is a different
+            // program that still parses. `clbg/fannkuchredux.beck` is where that showed up.
             sym::IF if n.args.len() == 3 && !n.args[1].is_form(sym::DO) => format!(
-                "{} if {} else {}",
+                "({} if {} else {})",
                 self.expr(&n.args[1]),
                 self.expr(&n.args[0]),
                 self.expr(&n.args[2])
