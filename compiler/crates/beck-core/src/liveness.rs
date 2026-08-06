@@ -57,6 +57,14 @@ pub fn mark_program(program: &mut crate::check::Program) {
     for signal in program.signals.iter_mut() {
         mark(&mut signal.expr);
     }
+    // A test's expressions are code, and the runner wraps each one in a lambda whose frame is
+    // built and dropped by a single call — so a last read inside one is exactly as safe to move as
+    // a last read inside a definition. `docs/79`.
+    for test in program.tests.iter_mut() {
+        for c in test.cores_mut() {
+            mark(c);
+        }
+    }
 }
 
 /// Mark every last read in `body`, given the parameters bound around it.
@@ -69,17 +77,38 @@ pub fn mark(body: &mut Core) {
     // closure: its frame is built fresh by each call and dies with it, so its parameters are
     // exactly the bindings worth moving. Looking through it is the difference between this pass
     // marking every function and marking nothing at all.
-    if let CoreKind::Lam { body: inner, .. } = &mut body.kind {
+    if let CoreKind::Lam {
+        params,
+        body: inner,
+    } = &mut body.kind
+    {
+        let params: Vec<VarId> = params.to_vec();
         // `make_mut` rather than a clone: this runs once, on a program nothing else holds yet, so
         // the copy-on-write never copies. The `Arc` is there for the *evaluator*, which shares one
         // body across every closure built from it (`docs/73` §73.1).
-        mark_body(Arc::make_mut(inner));
+        mark_frame(&params, Arc::make_mut(inner));
     } else {
-        mark_body(body);
+        // An expression that is not a definition: a signal, or a clause of a `test` block, which
+        // the runner wraps in a lambda of its own when it evaluates it. Every variable it reads is
+        // bound by that frame — its own bindings, or the wrapper's parameters — so all of them are
+        // this frame's to hand over.
+        let mut own = BTreeSet::new();
+        reads(body, &mut own);
+        mark_scope(body, own);
     }
 }
 
-fn mark_body(body: &mut Core) {
+/// Mark a frame's body, given the parameters its call binds.
+fn mark_frame(params: &[VarId], body: &mut Core) {
+    // What this frame owns: its parameters, and everything bound *directly* in the body. A binding
+    // made inside a nested lambda belongs to that lambda's own frame and is marked when this walk
+    // reaches it.
+    let mut own: BTreeSet<VarId> = params.iter().copied().collect();
+    collect_own_binders(body, &mut own);
+    mark_scope(body, own);
+}
+
+fn mark_scope(body: &mut Core, own: BTreeSet<VarId>) {
     // Rule 2, and it has to be a pre-pass rather than something the backward walk discovers. A
     // closure is created *before* the reads that follow it in the body, so walking backwards meets
     // those reads first and would call one of them the last — while the closure it already captured
@@ -88,7 +117,58 @@ fn mark_body(body: &mut Core) {
     let mut captured: BTreeSet<VarId> = BTreeSet::new();
     collect_captures(body, &mut captured, false);
     let mut live: BTreeSet<VarId> = BTreeSet::new();
-    walk(body, &mut live, &captured);
+    walk(body, &mut live, &captured, &own);
+}
+
+/// Every variable bound by *this* frame: a `let`, a match arm's binders, and a lambda's parameters
+/// only when that lambda is this node. A nested lambda's bindings live in the frame its own call
+/// makes, so the walk stops there.
+fn collect_own_binders(c: &Core, out: &mut BTreeSet<VarId>) {
+    match &c.kind {
+        CoreKind::Lam { .. } => return,
+        CoreKind::Let { var, .. } => {
+            out.insert(*var);
+        }
+        CoreKind::Match { arms, .. } => {
+            for arm in arms {
+                out.extend(arm.pattern.binders());
+            }
+        }
+        _ => {}
+    }
+    for child in children(c) {
+        collect_own_binders(child, out);
+    }
+}
+
+/// Every variable read anywhere inside, including inside nested lambdas.
+fn reads(c: &Core, out: &mut BTreeSet<VarId>) {
+    if let CoreKind::Var(v) = &c.kind {
+        out.insert(*v);
+    }
+    for child in children(c) {
+        reads(child, out);
+    }
+}
+
+/// Every variable bound anywhere inside, nested lambdas included — so that subtracting it from
+/// [`reads`] leaves exactly the variables a lambda takes from the scope around it.
+fn binds(c: &Core, out: &mut BTreeSet<VarId>) {
+    match &c.kind {
+        CoreKind::Lam { params, .. } => out.extend(params.iter().copied()),
+        CoreKind::Let { var, .. } => {
+            out.insert(*var);
+        }
+        CoreKind::Match { arms, .. } => {
+            for arm in arms {
+                out.extend(arm.pattern.binders());
+            }
+        }
+        _ => {}
+    }
+    for child in children(c) {
+        binds(child, out);
+    }
 }
 
 /// Every variable read anywhere inside a `lam`, over-approximated: a lambda's own parameters are
@@ -130,23 +210,45 @@ fn children(c: &Core) -> Vec<&Core> {
 
 /// Backwards over evaluation order. `live` is the set of variables read *after* this node, and
 /// `captured` is rule 2's exclusion list.
-fn walk(c: &mut Core, live: &mut BTreeSet<VarId>, captured: &BTreeSet<VarId>) {
+fn walk(
+    c: &mut Core,
+    live: &mut BTreeSet<VarId>,
+    captured: &BTreeSet<VarId>,
+    own: &BTreeSet<VarId>,
+) {
     match &mut c.kind {
         CoreKind::Var(v) => {
             let v = *v;
-            c.last_use = !captured.contains(&v) && !live.contains(&v);
+            // `own` is the third condition and the newest: a read may only be handed over by the
+            // frame that binds it. Without it a lambda would mark a read of a variable it took
+            // from the scope around it, and that binding outlives the call (`docs/79` §79.3).
+            c.last_use = own.contains(&v) && !captured.contains(&v) && !live.contains(&v);
             live.insert(v);
         }
         CoreKind::Const(_) | CoreKind::Global(_) => {}
 
         CoreKind::Lam { params, body } => {
-            // The body is still walked, so a variable it reads becomes live in the enclosing scope
-            // — a closure that reads `xs` is a reader of `xs` for as long as it exists. Nothing
-            // inside is marked, because `captured` already holds every variable it mentions.
-            walk(Arc::make_mut(body), live, captured);
-            for p in params.iter() {
-                live.remove(p);
-            }
+            // Two separate jobs, and conflating them is what made this pass mark nothing inside a
+            // lambda for three reports.
+            //
+            // Outwards: every variable the lambda takes from the scope around it becomes live
+            // here, because a closure that reads `xs` is a reader of `xs` for as long as it
+            // exists — and it may be called any number of times, at any point later.
+            //
+            // Inwards: the body is a frame of its own, built by each call to the closure and
+            // dropped with it, exactly as a definition's is. So it gets its own analysis, in which
+            // the lambda's parameters and bindings are the ones worth handing over. `list_fold`'s
+            // accumulator is a lambda's parameter and nothing else, which is why the fold form of
+            // the accumulator idiom stayed quadratic after `docs/70` made the recursive form
+            // linear.
+            let params: Vec<VarId> = params.to_vec();
+            let body = Arc::make_mut(body);
+            let (mut read, mut bound) = (BTreeSet::new(), BTreeSet::new());
+            reads(body, &mut read);
+            bound.extend(params.iter().copied());
+            binds(body, &mut bound);
+            live.extend(read.difference(&bound).copied());
+            mark_frame(&params, body);
         }
 
         CoreKind::App { func, args } => {
@@ -156,58 +258,58 @@ fn walk(c: &mut Core, live: &mut BTreeSet<VarId>, captured: &BTreeSet<VarId>) {
             // this the intuitive way round says the last read of `f` in `f(x, g(f))` is the inner
             // one, moves it there, and leaves the call itself with nothing to call — which is what
             // `sicp/ch1.beck`'s exercise 1.32 does, and what caught it.
-            walk(func, live, captured);
+            walk(func, live, captured, own);
             for a in args.iter_mut().rev() {
-                walk(a, live, captured);
+                walk(a, live, captured, own);
             }
         }
         CoreKind::Prim { op: _, args } => {
             for a in args.iter_mut().rev() {
-                walk(a, live, captured);
+                walk(a, live, captured, own);
             }
         }
         CoreKind::ListLit(items) => {
             for i in items.iter_mut().rev() {
-                walk(i, live, captured);
+                walk(i, live, captured, own);
             }
         }
         CoreKind::MapLit(kvs) => {
             for (k, v) in kvs.iter_mut().rev() {
-                walk(v, live, captured);
-                walk(k, live, captured);
+                walk(v, live, captured, own);
+                walk(k, live, captured, own);
             }
         }
         CoreKind::Make { fields, .. } => {
             for (_, f) in fields.iter_mut().rev() {
-                walk(f, live, captured);
+                walk(f, live, captured, own);
             }
         }
-        CoreKind::Field { base, .. } => walk(base, live, captured),
+        CoreKind::Field { base, .. } => walk(base, live, captured, own),
         CoreKind::With { base, fields } => {
             for (_, f) in fields.iter_mut().rev() {
-                walk(f, live, captured);
+                walk(f, live, captured, own);
             }
-            walk(base, live, captured);
+            walk(base, live, captured, own);
         }
 
         CoreKind::Let { var, value, body } => {
-            walk(body, live, captured);
+            walk(body, live, captured, own);
             // The binding dies with its `let`: a read of `var` after this node cannot be this
             // `var`, because the name is out of scope there.
             let var = *var;
             live.remove(&var);
-            walk(value, live, captured);
+            walk(value, live, captured, own);
         }
 
         CoreKind::If { cond, then, alt } => {
             // Rule 1: each arm sees what is live after the whole `if`, not what the other arm reads.
             let mut then_live = live.clone();
-            walk(then, &mut then_live, captured);
+            walk(then, &mut then_live, captured, own);
             let mut alt_live = std::mem::take(live);
-            walk(alt, &mut alt_live, captured);
+            walk(alt, &mut alt_live, captured, own);
             *live = then_live;
             live.extend(alt_live);
-            walk(cond, live, captured);
+            walk(cond, live, captured, own);
         }
 
         CoreKind::Match { scrutinee, arms } => {
@@ -215,7 +317,7 @@ fn walk(c: &mut Core, live: &mut BTreeSet<VarId>, captured: &BTreeSet<VarId>) {
             let mut union = BTreeSet::new();
             for arm in arms.iter_mut() {
                 let mut arm_live = after.clone();
-                walk(&mut arm.body, &mut arm_live, captured);
+                walk(&mut arm.body, &mut arm_live, captured, own);
                 // The arm's own binders die with the arm, the way a `let`'s does.
                 for b in arm.pattern.binders() {
                     arm_live.remove(&b);
@@ -223,7 +325,7 @@ fn walk(c: &mut Core, live: &mut BTreeSet<VarId>, captured: &BTreeSet<VarId>) {
                 union.extend(arm_live);
             }
             *live = union;
-            walk(scrutinee, live, captured);
+            walk(scrutinee, live, captured, own);
         }
     }
 }
@@ -325,9 +427,9 @@ mod tests {
         );
     }
 
-    /// Rule 2. A closure may be called twice, so it never gets to move what it captured.
+    /// Rule 2. A closure may be called twice, so it never gets to move what it **captured**.
     #[test]
-    fn nothing_inside_a_lambda_is_marked_and_what_it_reads_stays_live() {
+    fn a_lambda_never_moves_what_it_took_from_the_scope_around_it() {
         let lam = Core::new(
             CoreKind::Lam {
                 params: vec![7].into(),
@@ -341,6 +443,74 @@ mod tests {
         let mut c = prim(crate::core::Prim::Add, vec![lam, var(1)]);
         mark(&mut c);
         assert_eq!(marks(&c), vec![(1, false), (1, false)]);
+    }
+
+    /// …but a variable the lambda **binds itself** is another matter: its frame is built by the
+    /// call and dropped with it, exactly as a definition's is.
+    ///
+    /// This is `docs/79`, and `list_fold`'s accumulator is the case that matters — `acc` is a
+    /// lambda's parameter and nothing else, so before this the fold form of the accumulator idiom
+    /// copied where the recursive form moved.
+    #[test]
+    fn a_lambdas_own_parameter_is_moved_on_its_last_read() {
+        let mut c = Core::new(
+            CoreKind::Lam {
+                params: vec![7, 8].into(),
+                body: Arc::new(prim(crate::core::Prim::ListAppend, vec![var(7), var(8)])),
+            },
+            Ty::int(),
+            Span::NONE,
+        );
+        mark(&mut c);
+        assert_eq!(marks(&c), vec![(7, true), (8, true)]);
+    }
+
+    /// The line between the two, in one lambda: its own parameter is handed over and the variable
+    /// it took from outside is not.
+    ///
+    /// The evaluator would refuse the second one anyway — a captured environment is shared, so
+    /// `Env::read` cannot empty it — which is why this is asserted here, on the flag, rather than
+    /// by a program that could not tell the difference (`docs/79` §79.6).
+    #[test]
+    fn a_lambda_moves_its_parameter_and_lends_its_capture() {
+        let mut c = Core::new(
+            CoreKind::Lam {
+                params: vec![7].into(),
+                body: Arc::new(prim(crate::core::Prim::ListAppend, vec![var(1), var(7)])),
+            },
+            Ty::int(),
+            Span::NONE,
+        );
+        mark(&mut c);
+        assert_eq!(
+            marks(&c),
+            vec![(1, false), (7, true)],
+            "1 is free in the lambda and 7 is its parameter"
+        );
+    }
+
+    /// And a parameter a *deeper* lambda reads goes back to being lent, by the same rule one level
+    /// down.
+    #[test]
+    fn a_lambda_parameter_a_deeper_lambda_reads_is_not_moved() {
+        let deeper = Core::new(
+            CoreKind::Lam {
+                params: vec![9].into(),
+                body: Arc::new(var(7)),
+            },
+            Ty::int(),
+            Span::NONE,
+        );
+        let mut c = Core::new(
+            CoreKind::Lam {
+                params: vec![7].into(),
+                body: Arc::new(prim(crate::core::Prim::ListAppend, vec![var(7), deeper])),
+            },
+            Ty::int(),
+            Span::NONE,
+        );
+        mark(&mut c);
+        assert_eq!(marks(&c), vec![(7, false), (7, false)]);
     }
 
     #[test]

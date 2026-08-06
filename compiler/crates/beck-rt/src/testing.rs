@@ -1034,6 +1034,11 @@ fn fold(
 ///
 /// The expression is wrapped as a lambda and prepared through [`Backend::function`], so this goes
 /// through the same seam the runtime's roles do rather than reaching into a particular evaluator.
+///
+/// The wrapper is built here rather than by the compiler, which is why it has to ask for its own
+/// `locals`: the pass that sizes a frame runs over the program and this lambda does not exist
+/// until now. Without it every `let` inside a `test` block allocated a scope of its own, which is
+/// the cost `docs/77` removed everywhere else.
 fn eval(
     runtime: &Runtime,
     t: &TestDef,
@@ -1055,7 +1060,7 @@ fn eval(
         span: code.span,
         last_use: false,
         order: beck_core::fields::UNORDERED,
-        locals: 0,
+        locals: beck_core::frames::locals_of(code),
     };
     let f = runtime
         .prepare(&lam)

@@ -33,6 +33,20 @@ pub fn reserve_program(program: &mut crate::check::Program) {
     for def in program.defs.values_mut() {
         reserve(&mut def.body);
     }
+    for test in program.tests.iter_mut() {
+        for c in test.cores_mut() {
+            reserve(c);
+        }
+    }
+}
+
+/// How many bindings this expression makes before control leaves the frame it runs in.
+///
+/// The count [`reserve`] writes onto a lambda, for a caller holding an expression that is not one
+/// yet: the test runner wraps a clause in a lambda of its own at the moment it evaluates it, and
+/// this is how that lambda gets sized. `docs/79`.
+pub fn locals_of(c: &Core) -> u32 {
+    locals(c)
 }
 
 /// The same for one expression, whether or not it is a lambda.

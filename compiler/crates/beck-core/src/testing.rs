@@ -47,6 +47,42 @@ impl TestDef {
         !self.params.is_empty()
     }
 
+    /// Every expression this test evaluates, to be annotated in place.
+    ///
+    /// A `test` block's expressions are *code*, and the three passes that annotate a finished
+    /// program — [`crate::liveness`], [`crate::frames`] and [`crate::fields`] — reach them through
+    /// here. They did not until [`79`](../../../../../docs/79-a-lambda-is-a-frame-report.md): all three
+    /// walked `Program::defs`, a test's clauses are not in it, and so every expression inside a
+    /// `test` block ran on the paths those passes exist to replace.
+    ///
+    /// A clause that names something rather than computing it — `expect place(charge) == server`,
+    /// `expect no net.out` — contributes nothing, because there is no expression to annotate.
+    pub fn cores_mut(&mut self) -> Vec<&mut Core> {
+        let mut out = Vec::new();
+        for clause in &mut self.clauses {
+            match clause {
+                Clause::Given { events, .. } => out.push(events),
+                Clause::When { commands, .. } => out.extend(commands.iter_mut()),
+                Clause::Stub { value, .. } => out.push(value),
+                Clause::Expect { what, .. } => match what {
+                    Expectation::Holds(c) => out.push(c),
+                    Expectation::PageContains { needle, .. } => out.push(needle),
+                    Expectation::FoldEquals { events, .. } => out.push(events),
+                    Expectation::Performed {
+                        how: Count::With(c),
+                        ..
+                    } => out.push(c),
+                    Expectation::PageMatchesSnapshot { .. }
+                    | Expectation::Place { .. }
+                    | Expectation::Flow { .. }
+                    | Expectation::WireCompatible { .. }
+                    | Expectation::Performed { .. } => {}
+                },
+            }
+        }
+        out
+    }
+
     /// Every assertion that needs no execution — placement, flow, wire compatibility.
     ///
     /// §21.2: "These are compile-time queries, not runtime assertions — `beck test` answers them

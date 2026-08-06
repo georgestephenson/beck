@@ -82,6 +82,11 @@ pub fn order_program(program: &mut crate::check::Program) {
     for def in program.defs.values_mut() {
         order(&mut def.body);
     }
+    for test in program.tests.iter_mut() {
+        for c in test.cores_mut() {
+            order(c);
+        }
+    }
 }
 
 /// The same for one expression, and everything under it.
