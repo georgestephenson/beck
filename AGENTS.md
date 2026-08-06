@@ -64,8 +64,9 @@ Write the commit message as the author of the change: what changed, and why.
   [`77`](docs/77-a-let-is-a-slot-report.md),
   [`78`](docs/78-a-record-is-a-permutation-report.md),
   [`79`](docs/79-a-lambda-is-a-frame-report.md),
-  [`80`](docs/80-a-scope-owns-its-children-report.md) and
-  [`81`](docs/81-fs-is-two-atoms-report.md),
+  [`80`](docs/80-a-scope-owns-its-children-report.md),
+  [`81`](docs/81-fs-is-two-atoms-report.md) and
+  [`82`](docs/82-the-defaults-that-should-be-unavoidable-report.md),
   indexed in
   [`docs/README.md`](docs/README.md) — record what each
   phase does, what it refuses to claim, and the corrections it makes to the design documents.
@@ -331,7 +332,13 @@ Write the commit message as the author of the change: what changed, and why.
   docs/80 §80.7, which justified the split partly by saying docs/06 §6.5 derives a mount's options
   from the atom — **it does not**; `beck-infra` reads `ingress`, `durable` and `net.out` and has
   never looked at `fs`. And §81.6 is the limit: no primitive touches a file, so this makes the
-  vocabulary correct rather than making filesystem access available.
+  vocabulary correct rather than making filesystem access available. **docs/82 banks what that
+  split made possible**: docs/06 §6.5 has named four pod defaults as "unavoidable" since the design
+  was written and the emitter produced one, so it now produces all four — three constants on every
+  container, and `readOnlyRootFilesystem` **derived** from whether the program's row carries
+  `fs.write`, which one `fs(path)` atom could not express in either direction. Its §82.4 is what is
+  not established: `conformance.rs` skips without a cluster, so "the emitter writes these fields" is
+  proved and "the pod starts" is not.
 - Security posture is [`docs/43-threat-model.md`](docs/43-threat-model.md) (who is defended
   against, and who is not) and `SECURITY.md` (how a report reaches us). What is *absent* is asserted
   as absent in `beck-cli/tests/pending_security.rs`: building one of those controls turns a test
