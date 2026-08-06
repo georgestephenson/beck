@@ -758,8 +758,11 @@ the sentence §4.3 wrote for `net.out`.
 
 **What this reopens.** `fs(path)` is one atom for a read and a write, so refusing concurrent writes
 means refusing the pair, and two children reading two files is a thing this form should allow and
-cannot (§80.2). Splitting the atom is a decision with consequences past concurrency — §6.5 derives
-a volume's mount options from it — and is left open here rather than taken inside a feature.
+cannot (§80.2). It is the only atom in §3.2's list that names a resource without saying what is done
+to it, and the precedent for splitting it is in the same list: §3.8's escape hatches are
+`external.read(store)` and `external.write(store)`. That is a decision with consequences past
+concurrency — §6.5 derives a volume's mount options from the same atom — and is left open here
+rather than taken inside a feature.
 
 **What would reopen the rest.** A scope over a *collection* rather than over written-out children.
 "No child names another" is a scope check when the children are `let`s and a property of one lambda

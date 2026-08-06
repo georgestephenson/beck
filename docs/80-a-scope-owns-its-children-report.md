@@ -54,8 +54,11 @@ no handle type, so a child cannot outlive its scope, and the only thing in the l
 read a child's result is the lambda the scope itself built. Structured concurrency's central rule is
 usually a discipline a nursery API enforces at run time; here it is the shape of one IR node.
 
-**No IR node and one evaluator case**, which is the third feature running that costs neither
-([`37`](37-traits-report.md) §37.8 item 3, [`39`](39-bounds-report.md)).
+**No IR node and one evaluator case.** [`37`](37-traits-report.md) §37.8 item 3 and
+[`39`](39-bounds-report.md) each cost neither, which is one better; this one needs a case because a
+scope is the only thing in the language that runs several expressions and then a fourth, and
+`CoreKind` has no node for that. What it does *not* need is a `Task` type, a handle, a scheduler or
+a runtime — which is the part §38.4 said to aim for.
 
 ## 80.2 The two rules
 
@@ -103,10 +106,13 @@ to run. **`raises(E)`** and **`partial`** are control flow, ordered by the join 
 `fs(path)` is on the list for a reason worth recording rather than assuming, and it is a **finding**:
 the atom does not distinguish a read from a write. Refusing concurrent writes therefore means
 refusing the pair, so two children reading two files is something this form should allow and cannot.
-That is a fact about the effect vocabulary rather than about concurrency, and it is the second time
-one atom covering two operations has cost something — [`49`](49-http-client-report.md) §49.4 is the
-first shape of the same argument. Splitting it is [`10`](10-decisions.md)'s to take, not a
-benchmark's or a feature's; it is named in §80.7 and not taken here.
+That is a fact about the effect vocabulary rather than about concurrency: `fs(path)` is the only
+atom in §3.2's list that names a resource without saying what is being done to it, and this is the
+first thing that has needed the distinction. The shape of the answer is already in the list —
+§3.8's escape hatches are `external.read(store)` and `external.write(store)`, two atoms for one
+resource, and they were split for the same reason. Doing it to `fs` is
+[`10`](10-decisions.md)'s to take rather than a feature's, because §6.5 derives a volume's mount
+options from the same atom; it is named in §80.7 and not taken here.
 
 ## 80.3 Failure joins at the scope, and the join decides which
 
