@@ -98,8 +98,12 @@ The controls a reader would reasonably assume exist, that do not:
   host nobody wrote is a call the network refuses.
 - **Per-actor quotas** (F3, `APPROVED` and unbuilt), **subscription and connection quotas** (F15),
   and **the deploy choreography's bounded buffer** (F12).
-- **Message size limits and origin checks** on the websocket: the limits are the library's
-  defaults, and the upgrade never inspects `Origin`.
+- ~~**Message size limits and origin checks** on the websocket~~ — **built**
+  ([`83`](83-the-runtime-edge-report.md)). The limits are numbers this project chose and a unit test
+  holds it to them; the upgrade compares `Origin`'s authority against `Host` and refuses a mismatch
+  with `403`. What is *still* absent here is a cross-origin allowlist: a deployment whose client is
+  served from another host has nothing to configure, because a Beck app serves its own page and
+  same-origin is a description of that rather than a policy chosen over alternatives.
 - **Macro fuel** (F17). Expansion is bounded in *depth* — twice over, since
   [`adr/0012`](adr/0012-the-front-end-counts-its-own-recursion.md) separated the two counters that
   had been one — and not in *work*.

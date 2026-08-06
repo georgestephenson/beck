@@ -234,12 +234,16 @@ What an untrusted client can do to a running Beck app today:
   in every corpus program is therefore enforced against a value the caller chooses. This is honestly
   documented and correctly sequenced — it is Phase 3's work, not a defect — but it is *absent*, and
   §42.1 records it that way.
-- **Send a 64 MiB message.** `WebSocketStream::from_raw_socket(…, Role::Server, None)` in
-  `beck-rt/src/http.rs` passes `None` for the configuration, so the limits are tungstenite's
-  defaults — 64 MiB per message, 16 MiB per frame (`WebSocketConfig::default`). Bounded, then, but
-  bounded by somebody else's judgement rather than by a number this project chose and can defend.
-- **Open a socket from any origin.** The upgrade handler derives the accept key and never inspects
-  `Origin`.
+- ~~**Send a 64 MiB message.**~~ **Closed** ([`83`](83-the-runtime-edge-report.md)). The handshake
+  passed `None`, so the limits were tungstenite's — 64 MiB a message, 16 MiB a frame. They are now
+  256 KiB a message and a frame, 8 KiB of eagerly-allocated read buffer per connection rather than
+  128 KiB, and a bounded write buffer; §83.2 is the argument for each number, and a unit test holds
+  the file to them so a drift back to somebody else's defaults is a decision.
+- ~~**Open a socket from any origin.**~~ **Closed** ([`83`](83-the-runtime-edge-report.md)). The
+  upgrade compares `Origin`'s authority against `Host` and answers `403` when they differ. An absent
+  `Origin` is allowed, because the attack needs a browser and every browser sends one; the scheme is
+  not compared, because §6.5's gateway terminates TLS in front of a plaintext hop. §83.3 is why each
+  went that way.
 - **Spend the log.** [`14`](14-review-findings.md) F3's per-actor quotas are marked `APPROVED` and
   "on by default with generous limits". There is no quota in the tree; `rate_limit`, `quota` and
   `per_actor` match nothing across all nine crates. F15's connection quotas and F12's bounded deploy
@@ -250,10 +254,20 @@ today. What it should do is stop being invisible: these are four F-numbers whose
 [`14`](14-review-findings.md) is a word, and whose status in the code is silence. §42.11's
 `pending_security` row makes the silence audible.
 
-One smaller item, recorded so it does not rot: `dash.html`'s `esc` escapes `&<>` only, and the
-graph renderer interpolates `class="${n.tier}"` into an attribute without it. The value is a
-compiler-side enum, so this is not exploitable — but it is an unescaped attribute interpolation in
-the one surface an operator trusts, and the fix is smaller than the paragraph describing it.
+*Two of the four are closed, and the mechanism is why*: both were bullets whose gap was a **failing
+test**, so building them turned that test red and the person who built them had to come back to this
+paragraph. Neither would have been found by reading the code, and neither was on anybody's list of
+work — they were on a list of absences, which is a different and better thing to keep.
+
+~~One smaller item, recorded so it does not rot: `dash.html`'s `esc` escapes `&<>` only, and the
+graph renderer interpolates `class="${n.tier}"` into an attribute without it.~~ **Already fixed when
+[`83`](83-the-runtime-edge-report.md) went looking**, and this paragraph is the correction. `esc`
+escapes `&<>"'` and says in a comment why quotes are in the set — "half the interpolations below are
+into attributes" — and the graph renderer writes `class="${esc(n.tier)}"`. Every other interpolation
+in the file is escaped, a number computed by the layout, or a literal chosen by a ternary; §83.5
+records the audit. The item rotted in the *other* direction: it was fixed and the record was not, so
+this document has been describing a defect that stopped existing. That is the failure mode a
+`pending_security` test does not have, and it is the argument for turning a paragraph into one.
 
 ## 42.7 Supply chain: where Beck is ahead, and the four rows that have moved
 

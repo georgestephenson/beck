@@ -12,15 +12,15 @@ use anyhow::Result;
 use http_body_util::Full;
 use hyper::body::{Bytes, Incoming};
 use hyper::header::{
-    HeaderValue, CACHE_CONTROL, CONNECTION, CONTENT_TYPE, SEC_WEBSOCKET_ACCEPT, SEC_WEBSOCKET_KEY,
-    UPGRADE,
+    HeaderValue, CACHE_CONTROL, CONNECTION, CONTENT_TYPE, ORIGIN, SEC_WEBSOCKET_ACCEPT,
+    SEC_WEBSOCKET_KEY, UPGRADE,
 };
 use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::handshake::derive_accept_key;
-use tokio_tungstenite::tungstenite::protocol::Role;
+use tokio_tungstenite::tungstenite::protocol::{Role, WebSocketConfig};
 use tokio_tungstenite::WebSocketStream;
 
 use crate::app::App;
@@ -168,7 +168,85 @@ async fn document(app: Arc<App>, req: Request<Incoming>) -> Result<Response<Full
         .body(Full::new(Bytes::from(html)))?)
 }
 
+/// Is this upgrade coming from a page the server itself served?
+///
+/// `Origin` is a header a **browser** sets and a script cannot forge, so it answers exactly one
+/// question: is the page asking for this socket the one this server rendered? The check is
+/// `Origin`'s authority against `Host`, and it is what stops a page on any other host opening a
+/// socket to a Beck app with whatever ambient credentials the visitor's browser carries
+/// ([`docs/42`](../../../../../docs/42-security-assurance.md) §42.6, third bullet).
+///
+/// Three decisions, because each could have gone the other way:
+///
+/// * **An absent `Origin` is allowed.** Non-browser clients do not send one — `beck test`, a
+///   script, a load generator — and the attack this defends against needs a browser, which always
+///   sends one. Refusing an absent header would break every non-browser client for no security
+///   gain, since an attacker running their own client is not subject to a browser's rules anyway.
+/// * **The scheme is not compared.** Behind a TLS-terminating gateway — which is what
+///   [`docs/06`](../../../../../docs/06-kubernetes-and-packaging.md) §6.5's HTTPRoute is — the page
+///   is `https://app.example` and the request arriving here is plain HTTP. Comparing schemes would
+///   refuse every deployment this project generates.
+/// * **There is no allowlist.** A Beck app serves its own page (§5.2's first paint), so same-origin
+///   is not a policy choice but a description. A deployment that genuinely needs a cross-origin
+///   client has nothing to configure yet, and §42.6 is where that is recorded.
+///
+/// Takes the headers rather than the request so it can be tested as what it is — a function of two
+/// strings — rather than through a socket.
+pub(crate) fn same_origin(headers: &hyper::HeaderMap) -> bool {
+    let Some(origin) = headers.get(ORIGIN) else {
+        return true;
+    };
+    let Ok(origin) = origin.to_str() else {
+        return false;
+    };
+    // `Origin: null` — a sandboxed iframe or a `file://` page — has no authority and matches
+    // nothing, which is the answer it should get.
+    let authority = origin
+        .split_once("://")
+        .map(|(_, rest)| rest)
+        .unwrap_or(origin);
+    headers
+        .get(hyper::header::HOST)
+        .and_then(|h| h.to_str().ok())
+        .is_some_and(|host| host == authority)
+}
+
+/// What a client may send, in numbers this project chose.
+///
+/// [`docs/42`](../../../../../docs/42-security-assurance.md) §42.6's second bullet: the upgrade
+/// passed `None`, so the limits were tungstenite's defaults — 64 MiB a message and 16 MiB a frame.
+/// Bounded, but by somebody else's judgement. These are the arguments for these numbers:
+///
+/// * **256 KiB a message, and the same a frame.** A client sends two things: a `hello` naming a
+///   subscription and an actor, and a `Cmd` carrying one value of the program's own `union
+///   Command`. The largest field either can hold is text a person typed into a form, and 256 KiB
+///   is around a hundred pages of it. Nothing legitimate approaches it and 64 MiB is 256× further
+///   away.
+/// * **8 KiB of read buffer**, down from 128 KiB. It is **eagerly allocated per connection**, and
+///   §5.3 makes per-subscriber memory a number this project reports rather than hopes about — the
+///   library's own default is tuned for high read load, and a Beck client sends a few hundred
+///   bytes when somebody clicks something.
+/// * **8 MiB of write buffer at most**, down from unbounded. It only grows past
+///   `write_buffer_size` when writes are failing, so this is backpressure against a client that
+///   has stopped reading rather than a limit on what a healthy one is sent.
+///
+/// Outgoing patches are unaffected: `max_message_size` and `max_frame_size` bound what is *read*.
+fn socket_limits() -> WebSocketConfig {
+    WebSocketConfig::default()
+        .read_buffer_size(8 * 1024)
+        .max_write_buffer_size(8 << 20)
+        .max_message_size(Some(256 << 10))
+        .max_frame_size(Some(256 << 10))
+}
+
 fn upgrade(app: Arc<App>, mut req: Request<Incoming>) -> Result<Response<Full<Bytes>>> {
+    if !same_origin(req.headers()) {
+        // Coarse to the caller on purpose, and the same shape `docs/48` §48.3 chose for a refused
+        // identity: a cross-origin page learns that it was refused and nothing about why.
+        return Ok(Response::builder()
+            .status(StatusCode::FORBIDDEN)
+            .body(Full::new(Bytes::from_static(b"forbidden")))?);
+    }
     let key = req
         .headers()
         .get(SEC_WEBSOCKET_KEY)
@@ -184,9 +262,12 @@ fn upgrade(app: Arc<App>, mut req: Request<Incoming>) -> Result<Response<Full<By
     tokio::spawn(async move {
         match hyper::upgrade::on(&mut req).await {
             Ok(upgraded) => {
-                let socket =
-                    WebSocketStream::from_raw_socket(TokioIo::new(upgraded), Role::Server, None)
-                        .await;
+                let socket = WebSocketStream::from_raw_socket(
+                    TokioIo::new(upgraded),
+                    Role::Server,
+                    Some(socket_limits()),
+                )
+                .await;
                 if let Err(e) = crate::session::run(app, socket).await {
                     tracing::debug!(error = %e, "subscription ended");
                 }
@@ -219,4 +300,101 @@ fn asset(body: &str, mime: &'static str) -> Response<Full<Bytes>> {
         )
         .body(Full::new(Bytes::from(body.to_string())))
         .expect("static response builds")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hyper::HeaderMap;
+
+    fn headers(pairs: &[(hyper::header::HeaderName, &str)]) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        for (k, v) in pairs {
+            h.insert(k.clone(), HeaderValue::from_str(v).expect("a legal header"));
+        }
+        h
+    }
+
+    #[test]
+    fn a_page_this_server_served_may_open_a_socket() {
+        assert!(same_origin(&headers(&[
+            (ORIGIN, "http://app.example"),
+            (hyper::header::HOST, "app.example"),
+        ])));
+        // …including on a port, which is what `beck run` on a laptop looks like.
+        assert!(same_origin(&headers(&[
+            (ORIGIN, "http://localhost:8080"),
+            (hyper::header::HOST, "localhost:8080"),
+        ])));
+    }
+
+    #[test]
+    fn a_page_on_another_host_may_not() {
+        assert!(!same_origin(&headers(&[
+            (ORIGIN, "https://evil.example"),
+            (hyper::header::HOST, "app.example"),
+        ])));
+        // A different port is a different origin, which is the browser's rule and not ours.
+        assert!(!same_origin(&headers(&[
+            (ORIGIN, "http://app.example:9999"),
+            (hyper::header::HOST, "app.example:8080"),
+        ])));
+        // A prefix is not an authority: `app.example.evil.test` must not pass as `app.example`.
+        assert!(!same_origin(&headers(&[
+            (ORIGIN, "https://app.example.evil.test"),
+            (hyper::header::HOST, "app.example"),
+        ])));
+    }
+
+    /// `Origin: null` is what a sandboxed iframe and a `file://` page send, and it is a value with
+    /// no authority — so it matches no host and is refused rather than treated as absent.
+    #[test]
+    fn a_null_origin_is_refused_rather_than_ignored() {
+        assert!(!same_origin(&headers(&[
+            (ORIGIN, "null"),
+            (hyper::header::HOST, "app.example"),
+        ])));
+    }
+
+    /// The decision that lets every non-browser client keep working.
+    ///
+    /// `beck test`, a script and a load generator send no `Origin`; the attack this defends against
+    /// needs a browser, and a browser always sends one.
+    #[test]
+    fn a_client_that_is_not_a_browser_sends_no_origin_and_is_allowed() {
+        assert!(same_origin(&headers(&[(
+            hyper::header::HOST,
+            "app.example"
+        )])));
+        assert!(same_origin(&HeaderMap::new()));
+    }
+
+    /// The scheme is deliberately not compared: behind a TLS-terminating gateway the page is
+    /// `https://` and the request arriving here is not.
+    #[test]
+    fn the_scheme_is_not_part_of_the_comparison() {
+        assert!(same_origin(&headers(&[
+            (ORIGIN, "https://app.example"),
+            (hyper::header::HOST, "app.example"),
+        ])));
+    }
+
+    /// The numbers, asserted so that changing one is a decision rather than an edit.
+    ///
+    /// `docs/83` §83.2 is the argument for each; this is what stops the file drifting back to
+    /// somebody else's defaults without the argument moving too.
+    #[test]
+    fn the_socket_limits_are_the_numbers_this_project_chose() {
+        let c = socket_limits();
+        assert_eq!(c.max_message_size, Some(256 << 10));
+        assert_eq!(c.max_frame_size, Some(256 << 10));
+        assert_eq!(c.read_buffer_size, 8 * 1024);
+        assert_eq!(c.max_write_buffer_size, 8 << 20);
+        // …and every one of them is tighter than the library's, which is the point.
+        let d = WebSocketConfig::default();
+        assert!(c.max_message_size < d.max_message_size);
+        assert!(c.max_frame_size < d.max_frame_size);
+        assert!(c.read_buffer_size < d.read_buffer_size);
+        assert!(c.max_write_buffer_size < d.max_write_buffer_size);
+    }
 }

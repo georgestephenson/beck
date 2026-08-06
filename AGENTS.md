@@ -65,8 +65,9 @@ Write the commit message as the author of the change: what changed, and why.
   [`78`](docs/78-a-record-is-a-permutation-report.md),
   [`79`](docs/79-a-lambda-is-a-frame-report.md),
   [`80`](docs/80-a-scope-owns-its-children-report.md),
-  [`81`](docs/81-fs-is-two-atoms-report.md) and
-  [`82`](docs/82-the-defaults-that-should-be-unavoidable-report.md),
+  [`81`](docs/81-fs-is-two-atoms-report.md),
+  [`82`](docs/82-the-defaults-that-should-be-unavoidable-report.md) and
+  [`83`](docs/83-the-runtime-edge-report.md),
   indexed in
   [`docs/README.md`](docs/README.md) — record what each
   phase does, what it refuses to claim, and the corrections it makes to the design documents.
@@ -338,7 +339,16 @@ Write the commit message as the author of the change: what changed, and why.
   container, and `readOnlyRootFilesystem` **derived** from whether the program's row carries
   `fs.write`, which one `fs(path)` atom could not express in either direction. Its §82.4 is what is
   not established: `conformance.rs` skips without a cluster, so "the emitter writes these fields" is
-  proved and "the pod starts" is not.
+  proved and "the pod starts" is not. **docs/83 closes two of docs/42 §42.6's four bullets** about
+  what an untrusted client can do to a running app: the websocket's limits were its library's
+  (64 MiB a message, 128 KiB of eagerly-allocated read buffer per connection, an unbounded write
+  buffer) and are now numbers this project argues for, and nothing inspected `Origin`, so a page on
+  any host could open a socket — the upgrade now compares its authority against `Host`. Its §83.4 is
+  the methodological half: `runtime_edge.rs` is the **first test to drive `beck-rt`'s HTTP edge**,
+  since every session harness goes through an in-memory duplex and the handshake in front of it had
+  never been exercised. And §83.5 corrects §42.6's own smaller item, which had been **fixed and not
+  recorded** — a paragraph rotting in the direction nobody watches, which is the argument for
+  `pending_security.rs`'s shape over prose.
 - Security posture is [`docs/43-threat-model.md`](docs/43-threat-model.md) (who is defended
   against, and who is not) and `SECURITY.md` (how a report reaches us). What is *absent* is asserted
   as absent in `beck-cli/tests/pending_security.rs`: building one of those controls turns a test
@@ -420,8 +430,8 @@ Write the commit message as the author of the change: what changed, and why.
   the differential, replay-determinism, backend-seam, scaling, frames, security, corpus, placement-property,
   general-slicer, incremental-analysis, incremental-engine, shared-arrangement, subscription,
   view-metrics, SICP, Are We Fast Yet, Benchmarks Game, tests-in-Beck, UI, workflow-cross-check,
-  documentation, outbound, compile-speed, concurrency, round-trip and diagnostic-snapshot suites,
-  plus the five release-only
+  documentation, outbound, compile-speed, concurrency, round-trip, runtime-edge and
+  diagnostic-snapshot suites, plus the five release-only
   measurement suites (`measure_phase2`, `measure_incremental`, `measure_awfy`, `measure_compile`,
   `measure_clbg`). Keep them green.
 - The CI workflow is an artefact too, and Phase 2 found that it had never run

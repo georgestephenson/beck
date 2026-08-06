@@ -248,38 +248,12 @@ fn the_quiesce_buffer_has_no_declared_budget() {
 // The runtime edge — §42.6's second and third bullets
 // ---------------------------------------------------------------------------------------------
 
-/// The websocket's limits are tungstenite's defaults — 64 MiB a message — because the upgrade
-/// passes `None` for the configuration. Bounded, then, but by somebody else's judgement.
-#[test]
-fn the_websocket_takes_whatever_limits_its_library_defaults_to() {
-    let src = std::fs::read_to_string(crates_dir().join("beck-rt/src/http.rs"))
-        .expect("the http module is readable");
-    assert!(
-        src.contains("Role::Server, None"),
-        "the websocket now configures itself — pick the numbers this project can defend, then \
-         delete this test and correct §42.6's second bullet"
-    );
-}
-
-/// Nothing inspects `Origin` on the upgrade, so a page on any host may open a socket.
-///
-/// Scoped to the module that performs the upgrade rather than to the workspace: "origin" is an
-/// ordinary English word, and a scan wide enough to catch a header is wide enough to catch a
-/// comment about where a type came from.
-#[test]
-fn the_upgrade_does_not_look_at_the_origin() {
-    let src = std::fs::read_to_string(crates_dir().join("beck-rt/src/http.rs"))
-        .expect("the http module is readable");
-    let code: String = src
-        .lines()
-        .map(|l| l.split("//").next().unwrap_or(""))
-        .collect::<Vec<_>>()
-        .join("\n");
-    assert!(
-        !code.to_lowercase().contains("origin"),
-        "an origin check appears to exist now — delete this test and correct §42.6's third bullet"
-    );
-}
+// §42.6's second and third bullets were here — the websocket's limits were tungstenite's and
+// nothing inspected `Origin`. Both are built (`docs/83`), so both tests are gone, which is what
+// this file's own rule asks for: "the day somebody builds one of these, its test goes red, and the
+// person who built it has to come here and to the documents and say so." What replaces them is
+// `beck-cli/tests/runtime_edge.rs`, which asserts the behaviour over a real socket, and the unit
+// tests beside `beck_rt::http::same_origin`, which assert the rule.
 
 // ---------------------------------------------------------------------------------------------
 // F17 — macro fuel
