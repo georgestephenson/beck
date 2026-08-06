@@ -162,54 +162,29 @@ fn an_outbound_call_has_no_transport_security() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// F3 — per-actor quotas, `APPROVED` and "on by default with generous limits"
+// F3 — per-actor quotas: BUILT (`docs/84`), and the two tests that were here did not notice
 // ---------------------------------------------------------------------------------------------
-
-#[test]
-fn no_quota_limits_what_one_actor_can_write_to_the_log() {
-    let sites = mentions(&["rate_limit", "per_actor_quota", "QuotaConfig"]);
-    assert!(
-        sites.is_empty(),
-        "F3's per-actor quotas appear to exist now ({sites:?}) — good. Delete this test, and \
-         correct docs/14 F3 (whose status is `APPROVED`, not built), §42.1's table and §42.6"
-    );
-}
-
-/// The observable half of the same gap: one actor may append as much as it likes, and nothing in
-/// the runtime counts.
-#[tokio::test]
-async fn one_actor_may_fill_the_log_unchecked() {
-    use std::sync::Arc;
-
-    let placed = support::todo_program();
-    let backend = beck_eval::backend(&placed);
-    let runtime = beck_rt::Runtime::new(placed, backend).expect("the example prepares");
-    let store: Arc<dyn beck_rt::LogStore> = Arc::new(beck_rt::MemoryLog::new());
-    let app = beck_rt::App::start(runtime, store.clone(), beck_rt::AppConfig::default())
-        .await
-        .expect("the app starts");
-
-    // A small number, because the point is that nothing refuses — not how fast it does not.
-    for i in 0..200 {
-        app.propose(
-            format!("c{i}"),
-            "one-noisy-actor".into(),
-            support::command("Add", &[("id", &format!("t{i}")), ("text", "spam")]),
-        )
-        .await
-        .unwrap_or_else(|e| {
-            panic!(
-                "proposal {i} was refused: {e} — if that is a quota, F3 is \
-             built and this test should be deleted along with §42.6's fourth bullet"
-            )
-        });
-    }
-    assert_eq!(
-        store.head().await.expect("the log has a head"),
-        200,
-        "every proposal from one actor became a permanent event, which is F3's channel (b)"
-    );
-}
+//
+// They are gone, and how they failed is worth more than they were.
+//
+// `no_quota_limits_what_one_actor_can_write_to_the_log` grepped the workspace for `rate_limit`,
+// `per_actor_quota` and `QuotaConfig`. The quota was built as `RateLimit`, `Quota` and
+// `quota::admit`, so it matched nothing and the test stayed green through the change it existed to
+// detect. **A name grep is a proxy for a control, and a proxy can be defeated by naming** — not
+// deliberately, just by somebody choosing different words a year later.
+//
+// `one_actor_may_fill_the_log_unchecked` was the behavioural half, and it sent 200 proposals. The
+// limit that was eventually chosen is 600 a minute, so it passed under it. **A behavioural test
+// for an absence has to be calibrated against a limit that does not exist yet**, which is a thing
+// nobody can do — so the honest form is a *ratio*: send more than any plausible limit, or assert
+// the shape (unbounded) rather than a number.
+//
+// What replaces them is in `runtime_edge.rs`, where the assertions are on the log's head rather
+// than on identifiers: five events allowed out of fifty proposed, and the head stops at five.
+//
+// The rest of this file still uses the grep, because for a control that does not exist there is
+// often nothing else to look at. `docs/84` §84.5 is the caveat that now belongs to every one of
+// them.
 
 // ---------------------------------------------------------------------------------------------
 // F15 — subscription and connection quotas

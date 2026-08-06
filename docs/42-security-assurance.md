@@ -46,7 +46,8 @@ Taken from the tree, not from the design documents. Each row says what kind of c
 | Escaping, text vs attribute | tested | `beck-core/src/html.rs` separates the two contexts; `a_todo_whose_text_is_a_script_tag_renders_as_text` is the negative test |
 | Front-end recursion bound | **absent** | §42.2 |
 | Authentication | **absent** | §42.6 |
-| Request/connection limits, quotas | **absent** | §42.6 |
+| Request/connection limits | **tested** | [`83`](83-the-runtime-edge-report.md): the socket's limits are numbers this project argues for, and `Origin` is checked; `runtime_edge.rs` |
+| Per-actor write quotas | **tested** | [`84`](84-a-quota-is-only-as-good-as-its-actor-report.md): 600 events a minute, on by default; `runtime_edge.rs` asserts on the log's head. **Subscription quotas (F15) are still absent** |
 | Macro expansion fuel | **absent** | F17, unbuilt: nothing in `beck-macro` bounds expansion |
 | A written threat model | **absent** | §42.8 |
 | A disclosure policy | **absent** | no `SECURITY.md`, no contact, no policy |
@@ -244,20 +245,29 @@ What an untrusted client can do to a running Beck app today:
   `Origin` is allowed, because the attack needs a browser and every browser sends one; the scheme is
   not compared, because §6.5's gateway terminates TLS in front of a plaintext hop. §83.3 is why each
   went that way.
-- **Spend the log.** [`14`](14-review-findings.md) F3's per-actor quotas are marked `APPROVED` and
-  "on by default with generous limits". There is no quota in the tree; `rate_limit`, `quota` and
-  `per_actor` match nothing across all nine crates. F15's connection quotas and F12's bounded deploy
-  buffer are likewise unbuilt.
+- ~~**Spend the log.**~~ **Closed for F3** ([`84`](84-a-quota-is-only-as-good-as-its-actor-report.md)):
+  600 events a minute per actor, on by default, charged before the ingress queue and counted as
+  `throttled` apart from the other two ways a proposal can fail. F15's connection quotas and F12's
+  bounded deploy buffer are still unbuilt. §84.4 is what the F3 bound is worth in practice — a
+  per-actor limit composes with whichever identity provider is configured, so under `DevIdentity` an
+  attacker who rotates names is bounded by the *table* rather than by the limit.
 
 None of this is surprising for a project at Phase 3, and none of it should be fixed by writing code
 today. What it should do is stop being invisible: these are four F-numbers whose status in
 [`14`](14-review-findings.md) is a word, and whose status in the code is silence. §42.11's
 `pending_security` row makes the silence audible.
 
-*Two of the four are closed, and the mechanism is why*: both were bullets whose gap was a **failing
-test**, so building them turned that test red and the person who built them had to come back to this
-paragraph. Neither would have been found by reading the code, and neither was on anybody's list of
-work — they were on a list of absences, which is a different and better thing to keep.
+*Three of the four are closed*, and the mechanism worked for two of them: [`83`](83-the-runtime-edge-report.md)'s
+pair were bullets whose gap was a **failing test**, so building them turned that test red and the
+person who built them had to come back to this paragraph.
+
+*It did not work for the third.* Both tests guarding F3 stayed **green** through the change that
+closed it — one grepped for identifiers the implementation did not happen to use, and the other
+proposed 200 events against a limit that turned out to be 600.
+[`84`](84-a-quota-is-only-as-good-as-its-actor-report.md) §84.5 is the post-mortem, and the caveat it
+leaves belongs to every grep-shaped test in `pending_security.rs`: a proxy for a control is defeated
+by naming, and a behavioural test for an absence cannot be calibrated against a limit that does not
+exist yet.
 
 ~~One smaller item, recorded so it does not rot: `dash.html`'s `esc` escapes `&<>` only, and the
 graph renderer interpolates `class="${n.tier}"` into an attribute without it.~~ **Already fixed when

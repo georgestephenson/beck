@@ -268,6 +268,12 @@ pub struct Telemetry {
     /// are you" and the other is "you may not do that", and an operator watching for an attack
     /// needs to tell them apart.
     pub unauthenticated: Counter,
+    /// Proposals refused because the actor was over F3's write quota.
+    ///
+    /// A third counter beside `rejected` and `unauthenticated`, for the same reason those two are
+    /// apart: "you may not do that", "who are you" and "not that often" are three different things
+    /// for an operator watching an attack, and one number covering all three tells them nothing.
+    pub throttled: Counter,
 
     // --- what the log does record, counted here so a rate is available without folding ---
     pub events_appended: Counter,
@@ -354,6 +360,7 @@ impl Telemetry {
                 "events_appended": self.events_appended.get(),
                 "rejected": self.rejected.get(),
                 "unauthenticated": self.unauthenticated.get(),
+                "throttled": self.throttled.get(),
                 "deduplicated": self.deduplicated.get(),
                 "append_failures": self.append_failures.get(),
                 "snapshot_failures": self.snapshot_failures.get(),

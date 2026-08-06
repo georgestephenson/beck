@@ -66,8 +66,9 @@ Write the commit message as the author of the change: what changed, and why.
   [`79`](docs/79-a-lambda-is-a-frame-report.md),
   [`80`](docs/80-a-scope-owns-its-children-report.md),
   [`81`](docs/81-fs-is-two-atoms-report.md),
-  [`82`](docs/82-the-defaults-that-should-be-unavoidable-report.md) and
-  [`83`](docs/83-the-runtime-edge-report.md),
+  [`82`](docs/82-the-defaults-that-should-be-unavoidable-report.md),
+  [`83`](docs/83-the-runtime-edge-report.md) and
+  [`84`](docs/84-a-quota-is-only-as-good-as-its-actor-report.md),
   indexed in
   [`docs/README.md`](docs/README.md) — record what each
   phase does, what it refuses to claim, and the corrections it makes to the design documents.
@@ -348,7 +349,17 @@ Write the commit message as the author of the change: what changed, and why.
   since every session harness goes through an in-memory duplex and the handshake in front of it had
   never been exercised. And §83.5 corrects §42.6's own smaller item, which had been **fixed and not
   recorded** — a paragraph rotting in the direction nobody watches, which is the argument for
-  `pending_security.rs`'s shape over prose.
+  `pending_security.rs`'s shape over prose. **docs/84 builds docs/14 F3's per-actor write quota**,
+  `APPROVED` and unbuilt since the review: 600 events a minute, on by default, charged before the
+  ingress queue from the same instant that goes on the envelope, with counters **sharded** into a
+  fixed table because a map from actor to counter is unbounded memory keyed by a name the client
+  chooses. Its §84.4 is worth more than the quota — a per-actor bound is worth what the *actor* is
+  worth, so under `DevIdentity` rotating names is bounded by the table rather than by the limit —
+  and its §84.5 is worth more again: **both gates guarding the gap stayed green through the change
+  that closed it**, one grepping for identifiers the implementation did not use and one calibrated
+  under the limit that was eventually chosen. Fourth gate-that-could-not-fail, and the pattern is
+  that each was written by the person who knew the gap and tested the shape of the gap rather than
+  of the fix.
 - Security posture is [`docs/43-threat-model.md`](docs/43-threat-model.md) (who is defended
   against, and who is not) and `SECURITY.md` (how a report reaches us). What is *absent* is asserted
   as absent in `beck-cli/tests/pending_security.rs`: building one of those controls turns a test

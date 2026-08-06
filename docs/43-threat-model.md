@@ -96,8 +96,11 @@ The controls a reader would reasonably assume exist, that do not:
   bounded is the blast radius of a hostile peer: 8 MiB of reply read at most, a 10-second deadline
   per exchange, and an egress rule the cluster derives from the program's own atoms, so a call to a
   host nobody wrote is a call the network refuses.
-- **Per-actor quotas** (F3, `APPROVED` and unbuilt), **subscription and connection quotas** (F15),
-  and **the deploy choreography's bounded buffer** (F12).
+- ~~**Per-actor quotas** (F3)~~ — **built** ([`84`](84-a-quota-is-only-as-good-as-its-actor-report.md)),
+  on by default at 600 events a minute. What remains absent is what §84.4 measures rather than
+  claims: the bound is per *actor*, so under the default `DevIdentity` a client that rotates names
+  is bounded by the table (1,024 buckets) rather than by the limit. **Subscription and connection
+  quotas** (F15) and **the deploy choreography's bounded buffer** (F12) are still unbuilt.
 - ~~**Message size limits and origin checks** on the websocket~~ — **built**
   ([`83`](83-the-runtime-edge-report.md)). The limits are numbers this project chose and a unit test
   holds it to them; the upgrade compares `Origin`'s authority against `Host` and refuses a mismatch

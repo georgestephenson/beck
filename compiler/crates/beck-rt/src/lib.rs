@@ -20,6 +20,7 @@ pub mod outbound;
 pub mod patch;
 pub mod program;
 pub mod protocol;
+pub mod quota;
 pub mod session;
 pub mod telemetry;
 pub mod testing;

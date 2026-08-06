@@ -85,6 +85,13 @@ pub struct AppConfig {
     /// on a laptop must not need a secret, and `crate::identity` is where the consequences of that
     /// default are written down.
     pub identity: Arc<dyn crate::identity::Identity>,
+    /// How much one actor may turn into permanent storage — F3's channel (b).
+    ///
+    /// A tunable rather than a dependency, and **on by default**, which is what
+    /// [`docs/14`](../../../../../docs/14-review-findings.md) F3 decided: a quota a program has to
+    /// ask for is a quota most programs do not have. [`crate::quota`] is the mechanism, the numbers
+    /// and what the bound is actually worth.
+    pub quota: crate::quota::Quota,
 }
 
 impl Default for AppConfig {
@@ -98,6 +105,7 @@ impl Default for AppConfig {
             retention: beck_core::engine::Retention::default(),
             clock: Arc::new(beck_core::clock::SystemClock),
             identity: Arc::new(crate::identity::DevIdentity),
+            quota: crate::quota::Quota::default(),
         }
     }
 }
@@ -127,6 +135,9 @@ pub struct App {
     /// subscriber renders first at a new version, so a process with no subscribers does no view
     /// work at all.
     shared: Arc<beck_core::engine::SharedDataflow>,
+    /// F3's per-actor write quota. Held here rather than in the sequencer because it refuses
+    /// *before* the queue: a proposal that will not be admitted should not occupy a slot in it.
+    limit: crate::quota::RateLimit,
 }
 
 impl App {
@@ -167,6 +178,7 @@ impl App {
             head: AtomicU64::new(head),
             config: config.clone(),
             shared,
+            limit: crate::quota::RateLimit::new(config.quota),
         });
         tokio::spawn(sequencer(app.clone(), rx, config));
         Ok(app)
@@ -285,6 +297,15 @@ impl App {
         // process was configured with, and is data on the envelope from this line onwards — which
         // is what makes a replay of that envelope reproduce the run rather than re-read the clock.
         let at = Instant(self.config.clock.now_millis());
+
+        // F3's quota, charged from that same instant rather than from a second reading of a clock.
+        // Refused *before* the queue: a proposal nothing will admit should not occupy a slot in it,
+        // which is the difference between a quota and a slower queue.
+        if !self.limit.admit(&actor, at.0) {
+            telemetry().throttled.incr();
+            tracing::warn!(actor, "refused: over the write quota");
+            return Err("over the write quota".to_string());
+        }
         self.ingress
             .send(Proposal {
                 id,

@@ -117,3 +117,99 @@ async fn a_socket_opens_for_the_servers_own_page_and_not_for_another_hosts() {
 
     let _ = shutdown.send(true);
 }
+
+// ---------------------------------------------------------------------------------------------
+// F3 — what one actor may turn into permanent storage
+// ---------------------------------------------------------------------------------------------
+
+/// The quota refuses, and the log stops growing.
+///
+/// `docs/14` F3's channel (b): a *validated* command from a legitimate but abusive session is
+/// permanent by design, so the only place to stop it is before it becomes an event. The assertion
+/// is on the **log head**, not on the return value, because "the proposal was refused" and "nothing
+/// was written" are different claims and F3 is about the second.
+#[tokio::test]
+async fn one_actor_may_not_fill_the_log() {
+    let store: Arc<dyn beck_rt::LogStore> = Arc::new(beck_rt::MemoryLog::new());
+    let app = beck_rt::App::start(
+        support::todo_runtime(),
+        store.clone(),
+        beck_rt::AppConfig {
+            quota: beck_rt::quota::Quota {
+                events_per_window: Some(5),
+                window_ms: 60_000,
+            },
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("the app starts");
+
+    let mut refused = 0;
+    for i in 0..50 {
+        let r = app
+            .propose(
+                format!("c{i}"),
+                "one-noisy-actor".into(),
+                support::command("Add", &[("id", &format!("t{i}")), ("text", "spam")]),
+            )
+            .await;
+        if r.is_err() {
+            refused += 1;
+        }
+    }
+    assert_eq!(refused, 45, "everything past the fifth is refused");
+    assert_eq!(
+        store.head().await.expect("the log has a head"),
+        5,
+        "the log holds what the quota allowed and not one event more"
+    );
+}
+
+/// …and the refusal is counted apart from the other two ways a proposal can fail.
+///
+/// "You may not do that" (`rejected`), "who are you" (`unauthenticated`) and "not that often"
+/// (`throttled`) are three different things for an operator watching an attack, and one number
+/// covering all three tells them nothing.
+#[tokio::test]
+async fn a_throttled_proposal_is_counted_as_its_own_kind_of_refusal() {
+    let before = beck_rt::telemetry::telemetry().throttled.get();
+    let app = beck_rt::App::start(
+        support::todo_runtime(),
+        Arc::new(beck_rt::MemoryLog::new()),
+        beck_rt::AppConfig {
+            quota: beck_rt::quota::Quota {
+                events_per_window: Some(1),
+                window_ms: 60_000,
+            },
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("the app starts");
+
+    for i in 0..4 {
+        let _ = app
+            .propose(
+                format!("q{i}"),
+                "counted".into(),
+                support::command("Add", &[("id", &format!("q{i}")), ("text", "x")]),
+            )
+            .await;
+    }
+    assert!(
+        beck_rt::telemetry::telemetry().throttled.get() >= before + 3,
+        "three of the four were over the limit and the counter has to say so"
+    );
+}
+
+/// The default is **on**, which is the half of F3 that is a decision rather than a mechanism.
+///
+/// A quota a program has to ask for is a quota most programs do not have. This asserts the shipped
+/// default rather than a configured one, so turning it off by accident is a failing test.
+#[test]
+fn the_quota_is_on_by_default_and_generous() {
+    let q = beck_rt::AppConfig::default().quota;
+    assert_eq!(q.events_per_window, Some(600));
+    assert_eq!(q.window_ms, 60_000);
+}
