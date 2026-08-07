@@ -171,6 +171,10 @@ jobs:
           # beyond them are held by tests/sicp.rs, which `cargo test` above already runs.
           ./target/release/beck test sicp/ch1.beck
           ./target/release/beck test sicp/ch2.beck
+          # docs/87: chapter 3, the chapter the language disagrees with — §3.1's objects with the
+          # state they hide written down, §3.3.4's circuit simulator at the times the book prints,
+          # and §3.5.5's account with no assignment, asserted to agree with §3.1.1's fold.
+          ./target/release/beck test sicp/ch3.beck
           # docs/63: §25.9's Felleisen table — one section per special form SICP introduces, each
           # carrying the code that recovers it or the reorganisation that concedes it.
           ./target/release/beck test sicp/felleisen.beck

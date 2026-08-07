@@ -706,8 +706,16 @@ compaction is now safe partly because the lock is held the way it is; ~~structur
 which Wave 1 left behind and which has no predecessor~~ — **built**
 ([`80`](80-a-scope-owns-its-children-report.md)), and it acquired one on the way out: running two
 children at the same time needs a `Sync` `Host`, which is a change to the execution half of
-[`19`](19-phase-1-report.md) §19.9's seam and wants its own measurement; more of SICP, chapter 3
-being the part closest to what Beck is for. No predecessors, and they never acquire any.
+[`19`](19-phase-1-report.md) §19.9's seam and wants its own measurement; ~~more of SICP, chapter 3
+being the part closest to what Beck is for~~ — **built**
+([`87`](87-the-chapter-that-argues-back-report.md)), and it was the part closest to what Beck is for
+in the way that mattered: §3.5.5 rewrites §3.1.1's bank account with no assignment and calls it
+"fully functional … yet it embodies changing state", which is this project's premise stated by the
+book, and `sicp/ch3.beck` asserts that it agrees with the fold. It produced no wall and three other
+things — a declaration could take a builtin type's name (§87.4), `x.with(f = g(x.f))` was quadratic
+where the constructor spelling is linear (§87.5), and §3.5.1's memoised `delay` is the one thing the
+chapter cannot express, measured at ×5.2 per term (§87.7). Chapters 4 and 5 are still unattempted.
+No predecessors, and they never acquire any.
 
 **Wave 5 — the Phase 4 gates, arranged before Phase 4 rather than during it.** Supply-chain tooling
 (SLSA v1.2 provenance, 2026-element SBOMs, signing, trusted publishing configured *before* the first

@@ -487,6 +487,9 @@ impl<'a> Checker<'a> {
             else {
                 continue;
             };
+            if self.refuse_builtin_name(&name, item.span()) {
+                continue;
+            }
             // The placeholder carries the declaration's *parameters*, unlike its fields: a
             // recursive mention resolved while the real declaration is still being built —
             // `Node(kids: list[Tree[T]])` — is arity-checked against this, so the placeholder has
@@ -529,6 +532,38 @@ impl<'a> Checker<'a> {
             }
             self.own_types.push(name.clone());
         }
+    }
+
+    /// A declaration may not take a name the language already uses for a type.
+    ///
+    /// `Option` and `Result` were covered by [`Checker::collect_types`]'s "declared twice" check
+    /// only because they are prelude *declarations* and sit in `self.types`. The other fourteen —
+    /// `Int`, `Str`, `Bool`, `Float`, `Unit`, `Html`, `Attr`, `list`, `Map`, `Stream`, `Signal`,
+    /// `Envelope`, `secret` and `internal` — are builtin constructors that no declaration
+    /// registers, so a `model Int` was accepted and the name then meant the record in one
+    /// definition and the builtin in the next. [`Checker::bind_decl_typarams`] has refused the same
+    /// shadowing for a *type parameter* since `docs/36`; this is that rule at the production it was
+    /// missing (`docs/87` §87.4).
+    ///
+    /// Returns whether the name was refused, so the caller can skip registering it: leaving the
+    /// builtin in place is what keeps the rest of the module's errors about the module.
+    fn refuse_builtin_name(&mut self, name: &Arc<str>, span: Span) -> bool {
+        if prelude::builtin_arity(name).is_none() {
+            return false;
+        }
+        self.diags.push(
+            Diagnostic::error(
+                "B0317",
+                format!("`{name}` is already a type in the language"),
+                span,
+            )
+            .with_primary_label("this name is a builtin type")
+            .with_note(
+                "a declaration that took it would make every other mention in the module ambiguous \
+                 — the builtin in one signature and this declaration in the next",
+            ),
+        );
+        true
     }
 
     /// The names in a declaration's `(typarams …)` list, as written.
@@ -630,6 +665,12 @@ impl<'a> Checker<'a> {
                     format!("type `{name}` is declared twice"),
                     item.span(),
                 );
+                continue;
+            }
+            // Already reported by `declare_type_names`, which walks every declaration including
+            // this one. Skipped rather than reported twice, and skipped rather than registered so
+            // that `Int` still means `Int` in the rest of the module's diagnostics.
+            if prelude::builtin_arity(&name).is_some() {
                 continue;
             }
             // The whole item, not just its target: an alias may be parameterised, and its
@@ -4122,6 +4163,48 @@ def b() -> Tag[Str]:
 
         let repeat = "model Pair[T, T]:\n    a: T\n    b: T\n";
         assert!(codes(repeat).contains(&"B0315"), "{:?}", codes(repeat));
+    }
+
+    /// The same rule at the production it was missing — a *declaration* rather than a type
+    /// parameter (`docs/87` §87.4).
+    ///
+    /// Every builtin constructor, because the point of the finding is that the check existed for
+    /// two of them (`Option` and `Result`, which are prelude declarations and so were covered by
+    /// B0302's "declared twice") and for none of the other fourteen. A test that named one would
+    /// be the shape of the gap rather than the shape of the fix, which is `docs/84` §84.5's
+    /// pattern.
+    #[test]
+    fn a_declaration_may_not_take_a_builtin_types_name() {
+        for name in [
+            "Int", "Str", "Bool", "Float", "Unit", "Html", "Attr", "list", "Map", "Stream",
+            "Signal", "Envelope", "secret", "internal", "Option", "Result",
+        ] {
+            let src = format!("model {name}:\n    held: Int\n");
+            assert!(
+                codes(&src).contains(&"B0317"),
+                "`model {name}` was accepted: {:?}",
+                codes(&src)
+            );
+            let alias = format!("type {name} = Int\n");
+            assert!(
+                codes(&alias).contains(&"B0317"),
+                "`type {name}` was accepted: {:?}",
+                codes(&alias)
+            );
+        }
+
+        // And the builtin still means the builtin afterwards, which is what makes the rest of a
+        // module's diagnostics readable: refusing the declaration has to leave `Int` alone.
+        let src = "model Int:\n    held: Int\n\ndef f(n: Int) -> Int:\n    return n + 1\n";
+        assert_eq!(
+            codes(src),
+            vec!["B0317"],
+            "refusing the declaration should not cascade"
+        );
+
+        // A name that is not a builtin is still a name a program may have.
+        let fine = "model Note:\n    text: Str\n";
+        assert!(codes(fine).is_empty(), "{:?}", codes(fine));
     }
 
     #[test]

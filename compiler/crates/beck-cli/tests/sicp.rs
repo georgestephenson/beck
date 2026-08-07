@@ -983,3 +983,153 @@ test \"a thunk is a value\":
         beck_rt::testing::render(&report, true)
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// 5. Chapter 3 — the chapter the language disagrees with, and then agrees with
+// ---------------------------------------------------------------------------------------------
+
+const CH3: &str = include_str!("../../../sicp/ch3.beck");
+
+/// Chapter 3, run like the other two.
+///
+/// It is the first chapter whose *register* is mostly "re-expressed" rather than "translated"
+/// (`sicp/README.md`, §25.5): §3.1 introduces `set!` and Beck has no assignment, so every object
+/// in it becomes a function of the state it hid. The oracles are still the book's — the §3.1.1
+/// transcript, the §3.3.4 half-adder's trace at times 8, 11 and 16, and three tables of doubles in
+/// §3.5.3 asserted digit for digit, the way `ch1.beck` asserts `3.00009155413138`.
+#[test]
+fn chapter_three_ends_where_beck_begins() {
+    let (placed, rendered) = compile_module("sicp/ch3.beck", CH3);
+    let placed = placed.unwrap_or_else(|| panic!("chapter 3 compiles:\n{rendered}"));
+    assert!(!placed.is_application(), "chapter 3 is a library");
+
+    let backend = beck_eval::backend(&placed);
+    let report = beck_rt::testing::run(&placed, backend, &Options::default());
+    assert!(
+        report.cases.len() >= 25,
+        "chapter 3 is the evidence for docs/87 and has to carry the exercises it claims"
+    );
+    assert_eq!(
+        report.failed(),
+        0,
+        "{}",
+        beck_rt::testing::render(&report, true)
+    );
+    assert_eq!(
+        report.skipped(),
+        0,
+        "nothing in chapter 3 performs an effect"
+    );
+}
+
+/// §3.5.5 is the chapter's own last word, and it is this project's premise.
+///
+/// The book rewrites §3.1.1's bank account as a stream and says of it: "this implementation is
+/// fully functional ... yet it embodies changing state." `ch3.beck` asserts that the stream and
+/// the fold produce the same balances; what this asserts is that the file really does contain both
+/// halves, because a test that agreed with itself about one implementation would prove nothing.
+#[test]
+fn the_chapter_holds_both_halves_of_the_sentence_it_ends_on() {
+    assert!(
+        CH3.contains("def answers_of(") && CH3.contains("list_fold("),
+        "§3.1.1's account has to be a fold"
+    );
+    assert!(
+        CH3.contains("def stream_withdraw(") && CH3.contains("cons_seq(balance"),
+        "§3.5.5's account has to be a stream"
+    );
+    assert!(
+        CH3.contains("by_stream(100, [25, 25, 15]) == by_fold(100, [25, 25, 15])"),
+        "and the file has to assert that they agree"
+    );
+}
+
+/// §3.4 — "Concurrency: Time Is of the Essence" — REFUSED, and here is the refusal.
+///
+/// §3.4.1 draws a timing diagram of two people withdrawing from one account and shows the balance
+/// ending up wrong. `ch3.beck` cannot contain that program, because a chapter file has to compile;
+/// this is where the thirteen pages land. `docs/80`'s rule is that no child of a `parallel:` may
+/// perform an effect another child could observe, and a shared balance in a `durable` fold is
+/// exactly that.
+#[test]
+fn the_interleaving_section_3_4_is_about_is_a_compile_error() {
+    let src = "\
+def logged(balance: Signal[Int]) -> Signal[Int]:
+    return durable(balance)
+
+def peter_and_paul(balance: Signal[Int]) -> Int:
+    return parallel:
+        withdrawn_by_peter = str_len(str(logged(balance)))
+        withdrawn_by_paul = str_len(str(logged(balance)))
+        withdrawn_by_peter + withdrawn_by_paul
+";
+    let rendered = errors("sicp/3-4.beck", src);
+    assert!(rendered.contains("B0399"), "{rendered}");
+
+    // And exercise 3.8's question — whether `(+ (f 0) (f 1))` depends on the order of evaluation —
+    // cannot even be posed: the two children may not name each other, so there is no `f` with a
+    // hidden `balance` for the exercise to be about.
+    let names_a_sibling = "\
+def order() -> Int:
+    return parallel:
+        first = 1
+        second = first + 1
+        first + second
+";
+    assert!(
+        errors("sicp/3-8.beck", names_a_sibling).contains("B0398"),
+        "a child that names another is the shape exercise 3.8 needs"
+    );
+}
+
+/// §3.3.2's own argument for mutating — and the functional answer measured rather than asserted.
+///
+/// The book does not reach for `set-cdr!` for elegance. It gives a cost: "if we represent a queue
+/// as an ordinary list, `insert-queue!` must traverse the list to find the end". `ch3.beck`'s queue
+/// is two lists and is Θ(1) *amortised*, and this is that claim as a shape rather than a comment,
+/// in the form `scaling.rs` uses: steps per operation must not grow with the number of operations,
+/// which needs no clock and therefore cannot flake (`docs/13` §13.7).
+///
+/// Measured at 53 steps per insert-and-delete pair either side of 500 and 4,000; 70 is that with
+/// room to spare, and nowhere near the `n / 2` a scan-to-the-end would need. It was 380 and 2,661
+/// before `docs/87` §87.5 — this gate is what found that, and it is the reason it is a gate.
+#[test]
+fn the_functional_queue_costs_the_same_per_operation_however_long_it_gets() {
+    const PER_OPERATION: usize = 70;
+    for n in [500usize, 4_000] {
+        let program = format!(
+            "{CH3}\n\
+             def churn(i: Int, n: Int, q: Queue[Str]) -> Int uses raises(QueueError):\n\
+             \x20   if i >= n:\n\
+             \x20       return list_len(queue_items(q))\n\
+             \x20   return churn(i + 1, n, delete_queue(insert_queue(insert_queue(q, \"a\"), \"b\")))\n\
+             \n\
+             test \"churn\":\n\
+             \x20   expect (try: churn(0, {n}, empty_queue_of_str())) == Ok({n})\n"
+        );
+        let file = std::env::temp_dir().join(format!("beck-sicp-queue-{n}.beck"));
+        std::fs::write(&file, program).expect("a scratch file");
+        let out = Command::new(env!("CARGO_BIN_EXE_beck"))
+            .args([
+                "test",
+                file.to_str().expect("a path"),
+                // The whole chapter is appended so that the queue under measurement is the
+                // chapter's own, and `--fuel` is per expectation — so the filter is what keeps the
+                // budget about this loop rather than about §3.5.3's tableau.
+                "--filter",
+                "churn",
+                "--fuel",
+                &(PER_OPERATION * n).to_string(),
+            ])
+            .output()
+            .expect("the compiler is built");
+        let _ = std::fs::remove_file(&file);
+        assert!(
+            out.status.success(),
+            "{n} queue operations needed more than {PER_OPERATION} steps each, which is the shape \
+             §3.3.2 reaches for `set-cdr!` to avoid:\n{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}

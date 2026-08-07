@@ -28,7 +28,9 @@ use std::sync::Arc;
 
 use beck_diag::Span;
 
-use beck_core::core::{Closure, Const, Core, CoreKind, Env, Fields, Pattern, Prim, Value, VarId};
+use beck_core::core::{
+    Closure, Const, Core, CoreKind, Env, Fields, Pattern, Prim, Record, Value, VarId,
+};
 use beck_core::digest;
 use beck_core::html::Html;
 use beck_core::net::{Failure as NetFailure, Reply, Request};
@@ -1190,8 +1192,35 @@ impl<'h> Interp<'h> {
         // The base of a `with` is usually a last read — `t.with(done=…)` — so when it is, the
         // record arrives here held by nobody else and is rebuilt rather than copied.
         let mut record = match Arc::try_unwrap(old) {
+            // Nobody else holds it, so nothing else can be reading it: a field expression that
+            // mentioned the base would have made the base's own read something other than a last
+            // use, and this branch would not have been taken.
             Ok(owned) => owned,
-            Err(shared) => (*shared).clone(),
+            // Somebody does, and it is usually the field expressions themselves.
+            // `x.with(f = g(x.f))` reads `x` twice — once as the base and once inside `g` — so a
+            // straight clone leaves this copy holding `x.f` at the moment `g` reads it. That
+            // second reference is what makes `list_append` copy instead of push, and it left the
+            // accumulator idiom written with `with` at the `O(n²)` `docs/70` and `docs/79` removed
+            // from every other spelling of it. The fields about to be replaced arrive empty
+            // instead, which is one pass rather than the one the clone was already making
+            // (`docs/87` §87.5).
+            Err(shared) => Record {
+                ty: shared.ty.clone(),
+                variant: shared.variant.clone(),
+                fields: Fields::from_sorted(
+                    shared
+                        .fields
+                        .iter()
+                        .map(|(name, value)| {
+                            let replaced = fields.iter().any(|(f, _)| f == name);
+                            (
+                                name.clone(),
+                                if replaced { Value::Unit } else { value.clone() },
+                            )
+                        })
+                        .collect(),
+                ),
+            },
         };
         for (name, expr) in fields {
             let value = self.operand(expr, env)?;
