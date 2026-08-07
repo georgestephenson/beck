@@ -4,10 +4,10 @@
 
 Every diagnostic the compiler can raise carries a stable code. `beck explain error B0341` prints one of these entries at the terminal.
 
-The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans every non-test source file for a `"Bnnnn"` literal and fails if the set differs from this table in either direction. **116 codes.**
+The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans every non-test source file for a `"Bnnnn"` literal and fails if the set differs from this table in either direction. **118 codes.**
 
 
-## Reading the source — `B0100–B0121`
+## Reading the source — `B0100–B0122`
 
 | Code | | Meaning |
 |---|---|---|
@@ -24,6 +24,7 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0116` | error | **unreadable character** — The S-expression reader cannot begin an atom with this character. |
 | `B0120` | error | **unexpected token** — The Python-surface parser expected something else here; the message names what. One error per item: the parser recovers to the next top-level item, so a bad line does not make the rest of the file unparseable. |
 | `B0121` | error | **nesting is too deep to read** — The source nests deeper than the front end follows — `beck_diag::depth::MAX_NESTING` levels of brackets, indentation or S-expression lists. The bound is a fixed count rather than a reading of the stack, so the same file is accepted or refused identically in every build; without it, deep enough input aborted the process with no span at all. |
+| `B0122` | error | **an expression chains more operators than the reader will follow** — A left-associative chain — `1 + 1 + 1 + …` — is flat in source and builds a left-leaning tree of the same depth, one level per operator. The Pratt loop that reads it does not recurse, so none of the parser's recursion counters sees the depth, and a long enough chain reached the end of the host stack in whatever walked the tree afterwards. The bound is `beck_diag::depth::MAX_BLOCK` — the same ceiling a block of sequential bindings takes, because it is the same axis: a flat run of things that costs one tree level each. |
 
 ## Macro expansion — `B0200–B0213`
 
@@ -92,6 +93,7 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0385` | error | **orphan impl** — An impl belongs with the trait or with the type. Implementing somebody else's trait for somebody else's type is what lets two modules supply one and disagree. |
 | `B0386` | error | **no implementation can be chosen here** — An implementation comes from a concrete type or from a bound on a type parameter — write `[T: Trait]` to say the parameter has one. A trait method and a bounded definition are both called rather than passed: the implementation is supplied at the call site, so a reference that is never called has nowhere to receive it. |
 | `B0387` | error | **the type does not implement the trait** — There is no `impl Trait for Type` in scope for the receiver's type. |
+| `B0389` | error | **a block has more statements than the checker will follow** — A block is a chain of `let`s however flat it looks in source, so the checker recurses once per statement and a long enough body reaches the end of the host stack. The bound is `beck_diag::depth::MAX_BLOCK` — much larger than the nesting ceiling, because 256 levels of nesting is pathological and 256 sequential bindings is merely a long function. It is a fixed count rather than a reading of the stack, so the same file is accepted or refused identically in a debug and a release build; without it, a long enough body aborted the process with no span at all. |
 | `B0390` | error | **the expression nests too deep to check** — The checker walks an expression and a type as deeply as they nest, and stops at `beck_diag::depth::MAX_NESTING` levels — the same count the reader stops at, because the checker can be handed a tree a macro produced rather than one anybody typed. Everything downstream walks the `Core` this pass built, so it is bounded by the same number. |
 | `B0391` | error | **a raised value must have a declared type** — `raise` performs `raises(T)`, and the atom names `T` so that a handler can say what it catches. A builtin will not do: `raises(Int)` would make every integer failure in a program the same failure, and a handler could not tell them apart. |
 | `B0392` | error | **nothing here can fail, and nothing says what this would catch** — A `try:` reifies one failure into a `Result`, and it takes the error type from the enclosing signature's `Result[T, E]` where there is one and from the block's own row where there is not. Neither said anything here. Either the call you meant to make is not there, or the `try:` is left over from a signature that has stopped failing — which is the good case, and the diagnostic is how you find out. |

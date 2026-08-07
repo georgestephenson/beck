@@ -223,6 +223,17 @@ pub const INDEX: &[CodeEntry] = &[
          than a reading of the stack, so the same file is accepted or refused identically in every \
          build; without it, deep enough input aborted the process with no span at all.",
     ),
+    e(
+        "B0122",
+        Stage::Syntax,
+        "an expression chains more operators than the reader will follow",
+        "A left-associative chain — `1 + 1 + 1 + …` — is flat in source and builds a left-leaning \
+         tree of the same depth, one level per operator. The Pratt loop that reads it does not \
+         recurse, so none of the parser's recursion counters sees the depth, and a long enough \
+         chain reached the end of the host stack in whatever walked the tree afterwards. The bound \
+         is `beck_diag::depth::MAX_BLOCK` — the same ceiling a block of sequential bindings takes, \
+         because it is the same axis: a flat run of things that costs one tree level each.",
+    ),
     // ------------------------------------------------------------------------ B02xx: macros
     e(
         "B0200",
@@ -616,6 +627,18 @@ pub const INDEX: &[CodeEntry] = &[
         Stage::Types,
         "the type does not implement the trait",
         "There is no `impl Trait for Type` in scope for the receiver's type.",
+    ),
+    e(
+        "B0389",
+        Stage::Types,
+        "a block has more statements than the checker will follow",
+        "A block is a chain of `let`s however flat it looks in source, so the checker recurses once \
+         per statement and a long enough body reaches the end of the host stack. The bound is \
+         `beck_diag::depth::MAX_BLOCK` — much larger than the nesting ceiling, because 256 levels \
+         of nesting is pathological and 256 sequential bindings is merely a long function. It is a \
+         fixed count rather than a reading of the stack, so the same file is accepted or refused \
+         identically in a debug and a release build; without it, a long enough body aborted the \
+         process with no span at all.",
     ),
     e(
         "B0390",

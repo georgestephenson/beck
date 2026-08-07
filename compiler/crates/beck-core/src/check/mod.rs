@@ -218,6 +218,16 @@ pub struct Checker<'a> {
     /// counts against. The reader's bound does not cover this one: a macro can expand into a tree
     /// deeper than the one that was written, and the checker is the first pass to see it.
     nesting: Nesting,
+    /// How long a **flat** block this pass is inside, against its own ceiling.
+    ///
+    /// A second counter rather than a second use of `nesting`, because the two axes are not
+    /// comparable: 256 levels of nesting is pathological and 256 sequential bindings is merely a
+    /// long function. `block_from` recurses once per statement — a block is a chain of `Let`s in
+    /// `Core` whatever it looks like in source — so this is the recursion site, and counting it
+    /// here rather than at one grammar rule is [`docs/42`](../../../../../docs/42-security-assurance.md)
+    /// §42.2's Scriban lesson applied to the axis [`64`](../../../../../docs/64-compile-speed-report.md)
+    /// §64.4 found the ceiling did not cover.
+    block_nesting: Nesting,
     /// The names a `parallel:` scope has bound so far, while its *later* children are being
     /// checked. They are deliberately not in `locals` — a child that could see a sibling would
     /// have to run after it — so this is what turns the resulting "cannot find" into the
@@ -284,6 +294,7 @@ pub fn check_module_with(
         dicts: BTreeMap::new(),
         generic_rows: BTreeMap::new(),
         nesting: Nesting::new(),
+        block_nesting: Nesting::with_limit(beck_diag::depth::MAX_BLOCK),
         parallel_siblings: Vec::new(),
         mode,
     };
@@ -1488,6 +1499,29 @@ impl<'a> Checker<'a> {
     /// `false` means the ceiling is reached: the caller returns whatever it returns for an
     /// expression it could not check — a fresh variable, which unifies with anything and so raises
     /// no second error — without recursing and without leaving.
+    /// The same discipline for the flat axis: `false` means the block is longer than the front end
+    /// will follow, and the caller must not recurse and must not leave.
+    ///
+    /// [`64`](../../../../../docs/64-compile-speed-report.md) §64.4 measured what happened without
+    /// it — `thread 'beck-eval' has overflowed its stack`, SIGABRT, no diagnostic, at 12,000
+    /// bindings in a debug build and 100,000 in a release one. A refusal that depends on the build
+    /// profile is what [`adr/0007`](../../../../../docs/adr/0007-evaluator-stack-is-declared-not-discovered.md)
+    /// established a ceiling must never be.
+    fn enter_block(&mut self, span: Span) -> bool {
+        if self.block_nesting.enter() {
+            return true;
+        }
+        if self.block_nesting.should_report() {
+            let note = self.block_nesting.note_about("statements in one block");
+            self.diags.push(
+                Diagnostic::error("B0389", "this block has too many statements to check", span)
+                    .with_primary_label("the checker gave up here")
+                    .with_note(note),
+            );
+        }
+        false
+    }
+
     fn enter(&mut self, span: Span) -> bool {
         if self.nesting.enter() {
             return true;
@@ -1694,7 +1728,22 @@ impl<'a> Checker<'a> {
         let Some((first, rest)) = stmts.split_first() else {
             return Core::new(CoreKind::Const(Const::Unit), Ty::unit(), span);
         };
+        if !self.enter_block(first.span()) {
+            return Core::new(CoreKind::Const(Const::Unit), self.subst.fresh(), span);
+        }
+        let out = self.block_step(first, rest, expected, span);
+        self.block_nesting.leave();
+        out
+    }
 
+    /// One statement of a block, with the chain counter already entered.
+    fn block_step(
+        &mut self,
+        first: &Node,
+        rest: &[Node],
+        expected: Option<&Ty>,
+        span: Span,
+    ) -> Core {
         if first.is_form(sym::RETURN) {
             if !rest.is_empty() {
                 self.diags.push(Diagnostic::warning(
@@ -3604,6 +3653,77 @@ mod tests {
     fn codes(src: &str) -> Vec<&'static str> {
         let (_, d, _) = check_str("t.beck", src);
         d.iter().map(|x| x.code).collect()
+    }
+
+    /// A flat body of `n` sequential bindings — the shape `docs/64` §64.4 found unbounded.
+    fn flat_body(n: usize) -> String {
+        let mut src = String::from("def f() -> Int:\n");
+        for i in 0..n {
+            src.push_str(&format!("    v{i} = {i}\n"));
+        }
+        src.push_str("    return v0\n");
+        src
+    }
+
+    /// The refusal is a diagnostic, and it is the *same* diagnostic in every build.
+    ///
+    /// `docs/64` §64.4 measured what it was before: `thread 'beck-eval' has overflowed its stack`,
+    /// SIGABRT, no span, at 12,000 bindings in a debug build and 100,000 in a release one — so
+    /// "does this program compile" was a question about how the compiler was built. That is the
+    /// property `adr/0007` established a ceiling must never have.
+    #[test]
+    fn a_block_past_the_ceiling_is_refused_with_a_diagnostic() {
+        let over = beck_diag::depth::MAX_BLOCK as usize + 8;
+        assert!(codes(&flat_body(over)).contains(&"B0389"));
+        // …and one diagnostic, not one per statement on the way out.
+        assert_eq!(
+            codes(&flat_body(over))
+                .iter()
+                .filter(|c| **c == "B0389")
+                .count(),
+            1
+        );
+    }
+
+    /// A long body that is *under* the ceiling still checks, which is the half that says the
+    /// number is a backstop rather than an opinion about style.
+    #[test]
+    fn a_long_block_under_the_ceiling_is_ordinary() {
+        let codes = codes(&flat_body(beck_diag::depth::MAX_BLOCK as usize - 8));
+        assert!(codes.is_empty(), "{codes:?}");
+    }
+
+    /// The pair `adr/0012` established for the nesting axis, for this one: **measure** the bytes a
+    /// level costs and fail if the declaration has stopped covering the ceiling.
+    ///
+    /// The probe runs on a stack far larger than the one whose adequacy is being concluded, so the
+    /// measurement is never the thing that overflows.
+    #[test]
+    fn the_block_ceiling_fits_the_declared_stack() {
+        const PROBE: usize = 400;
+        let spent = std::thread::Builder::new()
+            .stack_size(256 * 1024 * 1024)
+            .spawn(|| {
+                let src = flat_body(PROBE);
+                beck_diag::depth::probe::stack_spent(|| check_str("probe.beck", &src))
+            })
+            .expect("a thread")
+            .join()
+            .expect("the probe checks");
+
+        let per_level = spent / PROBE;
+        println!("checker: {spent} bytes for {PROBE} statements ({per_level} per statement)");
+        // Twice over, as the parser's and the evaluator's are: whoever drives the checker has as
+        // much stack again above the ceiling as the ceiling itself needs.
+        let needed = beck_diag::depth::MAX_BLOCK as usize * per_level * 2;
+        assert!(
+            needed < beck_diag::depth::STACK_BYTES,
+            "a ceiling of {} statements at {per_level} bytes each needs {needed} bytes with the \
+             margin, against a declared STACK_BYTES of {} — raise the declaration or lower the \
+             ceiling",
+            beck_diag::depth::MAX_BLOCK,
+            beck_diag::depth::STACK_BYTES
+        );
     }
 
     #[test]

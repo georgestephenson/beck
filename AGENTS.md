@@ -67,8 +67,9 @@ Write the commit message as the author of the change: what changed, and why.
   [`80`](docs/80-a-scope-owns-its-children-report.md),
   [`81`](docs/81-fs-is-two-atoms-report.md),
   [`82`](docs/82-the-defaults-that-should-be-unavoidable-report.md),
-  [`83`](docs/83-the-runtime-edge-report.md) and
-  [`84`](docs/84-a-quota-is-only-as-good-as-its-actor-report.md),
+  [`83`](docs/83-the-runtime-edge-report.md),
+  [`84`](docs/84-a-quota-is-only-as-good-as-its-actor-report.md) and
+  [`85`](docs/85-what-the-generator-found-report.md),
   indexed in
   [`docs/README.md`](docs/README.md) — record what each
   phase does, what it refuses to claim, and the corrections it makes to the design documents.
@@ -359,7 +360,14 @@ Write the commit message as the author of the change: what changed, and why.
   that closed it**, one grepping for identifiers the implementation did not use and one calibrated
   under the limit that was eventually chosen. Fourth gate-that-could-not-fail, and the pattern is
   that each was written by the person who knew the gap and tested the shape of the gap rather than
-  of the fix.
+  of the fix. **docs/85 is grammar-aware fuzzing**, which docs/42 §42.9 pinned with the trigger "the
+  bound lands" — and it found **three** productions the recursion ceiling did not cover: the type
+  grammar was uncounted, `primary` released its counter *before* the recursion that makes a call
+  chain deep, and a left-associative operator chain is read by a **loop**, so no recursion counter
+  can see a tree it builds 300,000 deep without recursing. A counter counts recursion done; the
+  stack cares about tree depth built. It also fixes docs/64 §64.4's flat block (`MAX_BLOCK` = 2,048,
+  measured at 6.8 KiB a statement). Its §85.1 is the method: the **first generator passed and meant
+  nothing**, because its sizes stopped past every ceiling and short of every abort.
 - Security posture is [`docs/43-threat-model.md`](docs/43-threat-model.md) (who is defended
   against, and who is not) and `SECURITY.md` (how a report reaches us). What is *absent* is asserted
   as absent in `beck-cli/tests/pending_security.rs`: building one of those controls turns a test
@@ -441,7 +449,7 @@ Write the commit message as the author of the change: what changed, and why.
   the differential, replay-determinism, backend-seam, scaling, frames, security, corpus, placement-property,
   general-slicer, incremental-analysis, incremental-engine, shared-arrangement, subscription,
   view-metrics, SICP, Are We Fast Yet, Benchmarks Game, tests-in-Beck, UI, workflow-cross-check,
-  documentation, outbound, compile-speed, concurrency, round-trip, runtime-edge and
+  documentation, outbound, compile-speed, concurrency, round-trip, runtime-edge, grammar-fuzz and
   diagnostic-snapshot suites, plus the five release-only
   measurement suites (`measure_phase2`, `measure_incremental`, `measure_awfy`, `measure_compile`,
   `measure_clbg`). Keep them green.

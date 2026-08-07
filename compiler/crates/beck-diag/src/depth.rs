@@ -27,6 +27,26 @@
 /// not to have an opinion about style.
 pub const MAX_NESTING: u32 = 256;
 
+/// How many statements one block may hold before the front end refuses it.
+///
+/// A **second axis**, and [`64`](../../../../../docs/64-compile-speed-report.md) §64.4 is why it
+/// exists: a body of sequential local bindings is *flat*, so `v0 = …` followed by `v1 = …` sits at
+/// nesting level 2 and [`MAX_NESTING`] never sees it — while the front end recurses once per
+/// binding anyway, because a block is a chain in `Core` whatever it looks like in source. That
+/// report measured the consequence: a debug build aborted at 12,000 bindings and a release build at
+/// 100,000, with no diagnostic, so *which programs compile depended on how the compiler was built*.
+///
+/// It is much larger than [`MAX_NESTING`] because the two axes are not comparable. Nesting 256
+/// levels deep is pathological; writing 256 sequential bindings in one function is merely long, and
+/// a generated or macro-expanded body can be longer still. The number is chosen the way
+/// [`adr/0012`](../../../../../docs/adr/0012-the-front-end-counts-its-own-recursion.md) chose the
+/// other: `the_block_ceiling_fits_the_declared_stack` measures the checker at **6.8 KiB a
+/// statement** in an unoptimised build, so 2,048 of them cost 14 MiB and 28 MiB with the doubled
+/// margin — comfortably inside [`STACK_BYTES`], and with room for a future pass to make a frame
+/// bigger without silently spending the headroom. That test is in `beck-core::check` and fails if
+/// the declaration stops covering the ceiling.
+pub const MAX_BLOCK: u32 = 2048;
+
 /// The host stack the front end needs to reach [`MAX_NESTING`] on every one of its recursions.
 ///
 /// Declared rather than discovered, and held to the ceiling by a test in each crate that recurses
@@ -138,8 +158,17 @@ impl Nesting {
 
     /// The note every site prints, so the three of them say the same thing.
     pub fn note(&self) -> String {
+        self.note_about("levels of nesting")
+    }
+
+    /// The same note, naming the axis being counted.
+    ///
+    /// Two axes reach the same stack — nesting depth and the length of a flat chain
+    /// ([`MAX_BLOCK`]) — and a note that called the second "nesting" would send a reader looking
+    /// for brackets in a function that has none.
+    pub fn note_about(&self, what: &str) -> String {
         format!(
-            "the front end follows at most {} levels of nesting; this is a fixed count rather \
+            "the front end follows at most {} {what}; this is a fixed count rather \
              than a reading of the stack, so a program is accepted or refused identically in \
              every build",
             self.limit

@@ -69,7 +69,10 @@ reasons. It says something real about the lexer and the resolver, which is where
 layout algorithm would be expected to break first. And it is the reason §42.2 exists: random
 mutation cannot *generate structure*, so the one crash class the front end actually has is
 precisely the one this method is blind to. §42.11's grammar-aware fuzzing row is the version of
-this that counts.
+this that counts — and [`85`](85-what-the-generator-found-report.md) is it, built: a structure-aware
+generator found **three** productions the recursion ceiling did not cover, plus the flat-block axis
+[`64`](64-compile-speed-report.md) §64.4 had recorded and not fixed. This paragraph's caution was
+right, and understated: byte mutation was not merely blind to the class, the class was populated.
 
 ## 42.2 The front end has no recursion bound, and ADR 0007 already argued why it needs one
 
@@ -355,7 +358,7 @@ which §42.7 is already about, and **A10 Mishandling of Exceptional Conditions**
 
 | Area | Adopt | Borrow | Watch (trigger) | Decline |
 |---|---|---|---|---|
-| Front end (§42.2) | Counted recursion bound in parser, checker and lowering, with a diagnostic and a stack-fits-ceiling test, per ADR 0007's argument | Scriban's incomplete-fix lesson: bound the recursion site, not one grammar rule | Grammar-aware fuzzing as the method that finds the rest of this class (trigger: the bound lands) | — |
+| Front end (§42.2) | Counted recursion bound in parser, checker and lowering, with a diagnostic and a stack-fits-ceiling test, per ADR 0007's argument | Scriban's incomplete-fix lesson: bound the recursion site, not one grammar rule — **and the tree contained three violations of it**, found by the row to the right ([`85`](85-what-the-generator-found-report.md)) | ~~Grammar-aware fuzzing (trigger: the bound lands)~~ — **built** ([`85`](85-what-the-generator-found-report.md)); what is still watched is *coverage-guided* fuzzing, trigger: a nightly toolchain is taken for another reason | — |
 | Memory safety (§42.3) | A written memory-safety roadmap paragraph, in CISA's terms | verify-rust-std's null result as the stated reason for aiming verification elsewhere | — | Miri as routine CI (no yield against `forbid(unsafe)`); Kani *for memory safety* |
 | Verification (§42.3, §42.5) | Kani on the solver's security invariants — no `secret[T]` into a client partition, `durable`/`ingress` never client-side | Non-interference as the name of the §3.5 claim; the OOPSLA 2025 and graded-coeffect lineage | Mechanised non-interference over the core calculus (trigger: Phase 5's spec) | — |
 | Concurrency (§42.4) | Injected clock on the seam, now, so DST is never a retrofit | TigerBeetle/WarpStream/S2 as evidence DST is ordinary practice | `loom` (trigger: first hand-rolled synchronisation); DST proper (trigger: second runtime substrate) | — |
