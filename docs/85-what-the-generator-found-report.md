@@ -110,6 +110,24 @@ over it is `B0389` with a span, and the number does not move with the profile. T
 which is the good case and worth saying next to [`84`](84-a-quota-is-only-as-good-as-its-actor-report.md)
 §84.5's two that did not.
 
+**And the ceiling's own tests needed the declared stack, which CI found and this machine did not.**
+`MAX_BLOCK` is sized against `beck_diag::depth::STACK_BYTES` — 64 MiB — and a default test thread has
+2 MiB, so the first version of `a_block_past_the_ceiling_is_refused_with_a_diagnostic` called the
+checker directly and aborted the test binary. It is the same lesson [`80`](80-a-scope-owns-its-children-report.md)
+§80.6 recorded when `roundtrip.rs` overflowed on `awfy/havlak.beck`: **a harness is a caller of the
+front end, and a caller has to honour the declaration.** That is now three harnesses that have had
+to learn it separately, which is an argument for the entry point making it hard to get wrong rather
+than for remembering.
+
+Two smaller notes on how it was found, because both are about verification rather than about the
+front end. A stack overflow **aborts the test binary**, so it prints `fatal runtime error` and
+`error: test failed` and *not* `test result: FAILED` — a check that greps for the usual failure
+strings misses it entirely, and the exit code is the only reliable signal. And the type-grammar
+counter moved which pass refuses a deep type: `a_type_past_the_ceiling_is_a_diagnostic_rather_than_an_abort`
+expected the *checker's* `B0390` and now meets the *reader's* `B0121` a stage earlier. Its sibling
+for expressions already said "whichever pass reaches it first", which is the right shape for both —
+the property in the name is a claim about the front end, not about which half of it.
+
 ## 85.5 `proptest` rather than `cargo-fuzz`
 
 §42.11's row names `cargo-fuzz`, which needs libFuzzer and therefore nightly; this workspace pins

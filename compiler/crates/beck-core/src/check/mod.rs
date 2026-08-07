@@ -3671,26 +3671,32 @@ mod tests {
     /// SIGABRT, no span, at 12,000 bindings in a debug build and 100,000 in a release one — so
     /// "does this program compile" was a question about how the compiler was built. That is the
     /// property `adr/0007` established a ceiling must never have.
+    /// Every check here runs on the **declared front-end stack**, because that is the stack the
+    /// ceiling was sized against. A default test thread has 2 MiB and the ceiling is worth 14 MiB
+    /// of frames, so a test that called `check_str` directly would abort — which is how CI found
+    /// this, the first version of these two having been written without it.
+    fn block_codes(src: &str) -> Vec<&'static str> {
+        beck_diag::depth::on_the_front_end_stack(|| {
+            let (_, d, _) = check_str("t.beck", src);
+            d.iter().map(|x| x.code).collect()
+        })
+    }
+
     #[test]
     fn a_block_past_the_ceiling_is_refused_with_a_diagnostic() {
         let over = beck_diag::depth::MAX_BLOCK as usize + 8;
-        assert!(codes(&flat_body(over)).contains(&"B0389"));
+        let found = block_codes(&flat_body(over));
+        assert!(found.contains(&"B0389"), "{found:?}");
         // …and one diagnostic, not one per statement on the way out.
-        assert_eq!(
-            codes(&flat_body(over))
-                .iter()
-                .filter(|c| **c == "B0389")
-                .count(),
-            1
-        );
+        assert_eq!(found.iter().filter(|c| **c == "B0389").count(), 1);
     }
 
     /// A long body that is *under* the ceiling still checks, which is the half that says the
     /// number is a backstop rather than an opinion about style.
     #[test]
     fn a_long_block_under_the_ceiling_is_ordinary() {
-        let codes = codes(&flat_body(beck_diag::depth::MAX_BLOCK as usize - 8));
-        assert!(codes.is_empty(), "{codes:?}");
+        let found = block_codes(&flat_body(beck_diag::depth::MAX_BLOCK as usize - 8));
+        assert!(found.is_empty(), "{found:?}");
     }
 
     /// The pair `adr/0012` established for the nesting axis, for this one: **measure** the bytes a
@@ -4195,10 +4201,15 @@ mod nesting_tests {
 
     #[test]
     fn a_type_past_the_ceiling_is_a_diagnostic_rather_than_an_abort() {
+        // Either pass may be the one that refuses, exactly as for an expression below. The reader
+        // gets there first *now*: `docs/85` found `Parser::type_expr` recursing in four places with
+        // no counter at all, so a deep type used to arrive here and is now refused a stage earlier
+        // and more cheaply. What this test is for is the property in its name — a diagnostic rather
+        // than an abort — which is a claim about the front end and not about which half of it.
         let found = codes(&nested_type(MAX_NESTING as usize + 8));
         assert!(
-            found.contains(&"B0390".to_string()),
-            "expected the checker's own refusal, got {found:?}"
+            found.iter().any(|c| c == "B0121" || c == "B0390"),
+            "expected a nesting refusal from the reader or the checker, got {found:?}"
         );
     }
 
