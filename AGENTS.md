@@ -70,7 +70,11 @@ Write the commit message as the author of the change: what changed, and why.
   [`83`](docs/83-the-runtime-edge-report.md),
   [`84`](docs/84-a-quota-is-only-as-good-as-its-actor-report.md) and
   [`85`](docs/85-what-the-generator-found-report.md),
-  indexed in
+  plus [`86`](docs/86-getting-started.md), which is a guide rather than a report and is gated as
+  one — every program in it is compiled and run by `beck-cli/tests/getting_started.rs`. It is
+  docs/08 §8.5.4's named blocker on Phase 3's exit criterion, removed; §86.8 says what it still
+  does not establish, which is everything the criterion actually measures.
+  Indexed in
   [`docs/README.md`](docs/README.md) — record what each
   phase does, what it refuses to claim, and the corrections it makes to the design documents.
   Add a new report to that list and to the index; do not extend it with another "and".
@@ -449,8 +453,8 @@ Write the commit message as the author of the change: what changed, and why.
   the differential, replay-determinism, backend-seam, scaling, frames, security, corpus, placement-property,
   general-slicer, incremental-analysis, incremental-engine, shared-arrangement, subscription,
   view-metrics, SICP, Are We Fast Yet, Benchmarks Game, tests-in-Beck, UI, workflow-cross-check,
-  documentation, outbound, compile-speed, concurrency, round-trip, runtime-edge, grammar-fuzz and
-  diagnostic-snapshot suites, plus the five release-only
+  documentation, getting-started, outbound, compile-speed, concurrency, round-trip, runtime-edge,
+  grammar-fuzz and diagnostic-snapshot suites, plus the five release-only
   measurement suites (`measure_phase2`, `measure_incremental`, `measure_awfy`, `measure_compile`,
   `measure_clbg`). Keep them green.
 - The CI workflow is an artefact too, and Phase 2 found that it had never run

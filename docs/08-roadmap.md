@@ -687,8 +687,12 @@ dependency decision taken together, which is a better-shaped ADR than the three-
 used to describe.
 
 Then the playground rungs A and B (whose safety predecessor landed in Wave 0), then Phase 3's exit
-criterion — which still cannot honestly be attempted, and now for one reason rather than two: what
-it measures is documentation an outside developer could build from, and there is none.
+criterion. ~~What it measures is documentation an outside developer could build from, and there is
+none.~~ There is now: [`86`](86-getting-started.md), gated so that every program in it compiles and
+passes its own tests. That removes the *blocker* and not the criterion — which is a claim about a
+person building a non-trivial app without asking the authors questions, and cannot be met by
+anything this repository does to itself. §86.8 lists what the guide does not cover; the criterion
+needs an outside developer, and none has read it.
 
 **Wave 4 — free-standing, in parallel with Waves 2–3.** LLVM backend and native codegen; Mode B and
 client polish; the LSP; SQL read models, pgwire and query fusion; `test --update`; the SQLite

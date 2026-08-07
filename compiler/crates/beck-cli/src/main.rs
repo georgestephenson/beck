@@ -619,8 +619,19 @@ fn check(
             .iter()
             .all(|d| beck_core::project::NOT_AN_APPLICATION.contains(&d.code)) =>
         {
+            // Say *which* of the three made it a library. The message used to name the merge point
+            // whichever code had fired, so a module that had one and lacked a client signal was
+            // told to add a line it already had — which is the state every program passes through
+            // while it is being written, and the first thing `docs/86` found.
+            let why = if slicing.iter().any(|d| d.code == "B0500") {
+                "no merge point"
+            } else if slicing.iter().any(|d| d.code == "B0501") {
+                "no durable state"
+            } else {
+                "no signal placed on the client"
+            };
             println!(
-                "ok: {defs} definitions — a library. No merge point, so there is nothing to run; \n\
+                "ok: {defs} definitions — a library: {why}, so there is nothing to run; \n\
                  `beck iface` publishes what it offers."
             );
         }
