@@ -218,6 +218,88 @@ fn removing_an_effect_removes_the_object_and_the_manifest_with_it() {
     assert!(kinds(&without).contains(&"HTTPRoute".to_string()));
 }
 
+/// §6.5's read-only root filesystem, derived from the program's own row.
+///
+/// This is the assertion the golden file cannot make, because a golden file records one program.
+/// The claim is that the flag *moves*: the same derivation with `fs.write` in the row emits a
+/// writable root filesystem and without it emits a read-only one. It could not be made at all until
+/// `docs/81` split `fs` into a read and a write — one atom naming a path cannot say whether the
+/// program writes — and `fs.read` deliberately does **not** move it, which is the second assertion.
+#[test]
+fn the_root_filesystem_is_read_only_unless_the_program_says_it_writes() {
+    let root_is_read_only = |effects: &[(beck_core::Effect, String)]| -> Option<bool> {
+        let graph = beck_infra::derive("app", effects, true);
+        beck_infra::k8s::objects(&graph, WIRE_ID)
+            .into_iter()
+            .find(|(_, v)| v["kind"] == "Deployment")
+            .and_then(|(_, v)| {
+                v["spec"]["template"]["spec"]["containers"][0]["securityContext"]
+                    ["readOnlyRootFilesystem"]
+                    .as_bool()
+            })
+    };
+    let ingress = (beck_core::Effect::Ingress, "proposals".to_string());
+    let path = || std::sync::Arc::from("/var/lib/app");
+
+    assert_eq!(
+        root_is_read_only(std::slice::from_ref(&ingress)),
+        Some(true)
+    );
+    assert_eq!(
+        root_is_read_only(&[
+            ingress.clone(),
+            (beck_core::Effect::FsRead(path()), "load".to_string()),
+        ]),
+        Some(true),
+        "reading a file is not a reason to make the root filesystem writable"
+    );
+    assert_eq!(
+        root_is_read_only(&[
+            ingress,
+            (beck_core::Effect::FsWrite(path()), "save".to_string()),
+        ]),
+        Some(false),
+        "a program that writes needs somewhere to write"
+    );
+}
+
+/// The three constants are on **every** container, including the substrate's.
+///
+/// They cost a third-party image nothing — nothing Beck deploys needs a Linux capability, needs to
+/// gain privileges, or needs a syscall outside the runtime default. `readOnlyRootFilesystem` is the
+/// one that is not universal, and its absence from the substrate's container is asserted here so
+/// the asymmetry is a decision rather than an oversight (`docs/82` §82.3).
+#[test]
+fn every_container_drops_its_capabilities_and_refuses_privilege_escalation() {
+    let mut containers = 0;
+    for (name, v) in objects() {
+        let Some(specs) = v["spec"]["template"]["spec"]["containers"].as_array() else {
+            continue;
+        };
+        for c in specs {
+            containers += 1;
+            let sc = &c["securityContext"];
+            assert_eq!(sc["allowPrivilegeEscalation"], false, "{name}");
+            assert_eq!(sc["capabilities"]["drop"][0], "ALL", "{name}");
+            assert_eq!(sc["seccompProfile"]["type"], "RuntimeDefault", "{name}");
+        }
+    }
+    assert_eq!(containers, 2, "the app and the substrate");
+
+    // …and the substrate's root filesystem is *not* claimed to be read-only: Postgres writes its
+    // socket and its temporary files outside the volume, and no Beck effect row knows that.
+    let substrate = objects()
+        .into_iter()
+        .find(|(_, v)| v["kind"] == "StatefulSet")
+        .expect("a durable fold emits one");
+    assert!(
+        substrate.1["spec"]["template"]["spec"]["containers"][0]["securityContext"]
+            ["readOnlyRootFilesystem"]
+            .is_null(),
+        "the substrate's image is not ours to make claims about"
+    );
+}
+
 // ---------------------------------------------------------------------------------------------
 // The golden files
 // ---------------------------------------------------------------------------------------------
@@ -324,6 +406,7 @@ fn every_kind_of_node_produces_a_manifest_except_the_one_that_is_not_an_object()
                 replicas: 1,
                 serves_ui: true,
                 reads_log: true,
+                writes_files: false,
             },
             Node::Route {
                 name: "app-route".into(),

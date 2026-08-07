@@ -79,6 +79,17 @@ pub enum Node {
         /// — a pod that sits in `CreateContainerConfigError` forever. Found by the generated-graph
         /// suite; no program in the corpus lacks a durable fold, so no example test could see it.
         reads_log: bool,
+        /// Whether the program performs `fs.write(path)`, and therefore whether its container's
+        /// root filesystem may be read-only.
+        ///
+        /// [`docs/06`](../../../../docs/06-kubernetes-and-packaging.md) §6.5 lists a read-only root
+        /// filesystem among the defaults that "should be *unavoidable*", and it could not be
+        /// derived until [`docs/81`](../../../../docs/81-fs-is-two-atoms-report.md) split `fs` into
+        /// a read and a write: one atom naming a path could not say whether the program writes.
+        /// Secure is the default and the row is what relaxes it, which is the direction that fails
+        /// safe — a program that writes and forgets to say so gets a container that refuses the
+        /// write, not a container anybody can write to.
+        writes_files: bool,
     },
     /// `merge_clients()` ⇒ a websocket ingress route.
     Route {
@@ -391,6 +402,10 @@ pub fn derive(app: &str, effects: &[(Effect, String)], serves_ui: bool) -> Infra
             replicas: 1,
             serves_ui,
             reads_log: has(Effect::Durable).is_some(),
+            // Any path, not a named one: the flag is about the container's root filesystem, and a
+            // program that writes anywhere needs it writable. Deriving a *mount* for the path is a
+            // separate question and is not answered here (`docs/82` §82.5).
+            writes_files: effects.iter().any(|(e, _)| matches!(e, Effect::FsWrite(_))),
         },
         if serves_ui {
             "a signal is placed on `client`, so the server renders and streams patches"

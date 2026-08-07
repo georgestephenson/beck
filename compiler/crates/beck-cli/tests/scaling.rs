@@ -24,10 +24,26 @@ use beck_rt::{replay_from_genesis, App, AppConfig, LogStore, MemoryLog};
 mod support;
 use support::{command, todo_runtime};
 
+/// The default configuration with F3's per-actor write quota switched off.
+///
+/// Every measurement here proposes more events from one actor than any person could, which is the
+/// definition of what the quota refuses. `docs/84` §84.5 is the sharper version of the same point:
+/// a limit calibrated against human behaviour is tripped by a benchmark before it is tripped by an
+/// attacker, and a harness has to say which it is.
+fn unthrottled() -> AppConfig {
+    AppConfig {
+        quota: beck_rt::quota::Quota::unlimited(),
+        ..Default::default()
+    }
+}
+
 /// Record a log of `n` additions, then time a cold fold of it.
 async fn fold_cost_ns_per_event(n: usize) -> (u64, f64) {
     let store = Arc::new(MemoryLog::new());
-    let app = App::start(todo_runtime(), store.clone(), AppConfig::default())
+    // F3's write quota is on by default and this harness is exactly what it exists to refuse: one
+    // actor appending thousands of events as fast as a machine can. Off here, because what is being
+    // measured is the *shape* of a fold and the quota is not the thing under test (`docs/84` §84.3).
+    let app = App::start(todo_runtime(), store.clone(), unthrottled())
         .await
         .expect("app starts");
 
@@ -90,7 +106,7 @@ async fn a_view_over_a_large_state_is_still_one_pass() {
     // *not* happen on either path is the view becoming super-linear in the rows, which is what a
     // copying map would also cause.
     let store = Arc::new(MemoryLog::new());
-    let app = App::start(todo_runtime(), store, AppConfig::default())
+    let app = App::start(todo_runtime(), store, unthrottled())
         .await
         .expect("app starts");
     for i in 0..2_000 {

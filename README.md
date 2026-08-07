@@ -12,6 +12,10 @@ over an event stream, infrastructure is a function of the program, and a deploy 
 same stream it deploys. The compiler partitions one program into browser patch-streams, native
 services, incrementally-maintained views, reproducible OCI images, and a Kubernetes object graph.
 
+**Start here if you want to write one**: [`docs/86-getting-started.md`](docs/86-getting-started.md)
+— build the compiler, write a function, turn it into an application, and see what the compiler
+worked out on its own. Every program in it is compiled and run by a test.
+
 The design and implementation plan live in **[`docs/`](docs/)**:
 
 - [`docs/00-original-idea.md`](docs/00-original-idea.md) — the seed conversation the project grew

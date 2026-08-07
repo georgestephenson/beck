@@ -1,6 +1,6 @@
 # The corpus
 
-Twenty-nine programs, and the Phase 2 exit criterion measured against them:
+Thirty programs, and the Phase 2 exit criterion measured against them:
 
 > On a corpus of 20+ programs, placement is inferred with no annotations for the common cases.
 
@@ -34,7 +34,13 @@ of one shape would prove that the shape works, which Phase 1 already did. What v
   ([`docs/27`](../../docs/27-walls-report.md)), 27 for parameterised ones
   ([`docs/36`](../../docs/36-parameterised-types-report.md)) and 28 for traits
   ([`docs/37`](../../docs/37-traits-report.md)) — every pass here walks a type, and each is a place
-  one of those shapes can be silently dropped.
+  one of those shapes can be silently dropped;
+- **the shape of the control flow**: a `try:` at the boundary rather than a `Result` threaded by
+  hand (program 29, [`docs/45`](../../docs/45-error-rows-report.md)), and two outbound calls in one
+  `parallel:` scope that do not wait for each other (program 30,
+  [`docs/80`](../../docs/80-a-scope-owns-its-children-report.md)) — where what is being checked is
+  that the scope's `spawn` reaches the published signature and the placement without anybody
+  writing either down.
 
 Every file is a program someone could plausibly write. Where one exists to exercise a corner, its
 first comment says which corner and why.

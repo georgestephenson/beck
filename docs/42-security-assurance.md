@@ -46,7 +46,8 @@ Taken from the tree, not from the design documents. Each row says what kind of c
 | Escaping, text vs attribute | tested | `beck-core/src/html.rs` separates the two contexts; `a_todo_whose_text_is_a_script_tag_renders_as_text` is the negative test |
 | Front-end recursion bound | **absent** | §42.2 |
 | Authentication | **absent** | §42.6 |
-| Request/connection limits, quotas | **absent** | §42.6 |
+| Request/connection limits | **tested** | [`83`](83-the-runtime-edge-report.md): the socket's limits are numbers this project argues for, and `Origin` is checked; `runtime_edge.rs` |
+| Per-actor write quotas | **tested** | [`84`](84-a-quota-is-only-as-good-as-its-actor-report.md): 600 events a minute, on by default; `runtime_edge.rs` asserts on the log's head. **Subscription quotas (F15) are still absent** |
 | Macro expansion fuel | **absent** | F17, unbuilt: nothing in `beck-macro` bounds expansion |
 | A written threat model | **absent** | §42.8 |
 | A disclosure policy | **absent** | no `SECURITY.md`, no contact, no policy |
@@ -68,7 +69,10 @@ reasons. It says something real about the lexer and the resolver, which is where
 layout algorithm would be expected to break first. And it is the reason §42.2 exists: random
 mutation cannot *generate structure*, so the one crash class the front end actually has is
 precisely the one this method is blind to. §42.11's grammar-aware fuzzing row is the version of
-this that counts.
+this that counts — and [`85`](85-what-the-generator-found-report.md) is it, built: a structure-aware
+generator found **three** productions the recursion ceiling did not cover, plus the flat-block axis
+[`64`](64-compile-speed-report.md) §64.4 had recorded and not fixed. This paragraph's caution was
+right, and understated: byte mutation was not merely blind to the class, the class was populated.
 
 ## 42.2 The front end has no recursion bound, and ADR 0007 already argued why it needs one
 
@@ -234,26 +238,49 @@ What an untrusted client can do to a running Beck app today:
   in every corpus program is therefore enforced against a value the caller chooses. This is honestly
   documented and correctly sequenced — it is Phase 3's work, not a defect — but it is *absent*, and
   §42.1 records it that way.
-- **Send a 64 MiB message.** `WebSocketStream::from_raw_socket(…, Role::Server, None)` in
-  `beck-rt/src/http.rs` passes `None` for the configuration, so the limits are tungstenite's
-  defaults — 64 MiB per message, 16 MiB per frame (`WebSocketConfig::default`). Bounded, then, but
-  bounded by somebody else's judgement rather than by a number this project chose and can defend.
-- **Open a socket from any origin.** The upgrade handler derives the accept key and never inspects
-  `Origin`.
-- **Spend the log.** [`14`](14-review-findings.md) F3's per-actor quotas are marked `APPROVED` and
-  "on by default with generous limits". There is no quota in the tree; `rate_limit`, `quota` and
-  `per_actor` match nothing across all nine crates. F15's connection quotas and F12's bounded deploy
-  buffer are likewise unbuilt.
+- ~~**Send a 64 MiB message.**~~ **Closed** ([`83`](83-the-runtime-edge-report.md)). The handshake
+  passed `None`, so the limits were tungstenite's — 64 MiB a message, 16 MiB a frame. They are now
+  256 KiB a message and a frame, 8 KiB of eagerly-allocated read buffer per connection rather than
+  128 KiB, and a bounded write buffer; §83.2 is the argument for each number, and a unit test holds
+  the file to them so a drift back to somebody else's defaults is a decision.
+- ~~**Open a socket from any origin.**~~ **Closed** ([`83`](83-the-runtime-edge-report.md)). The
+  upgrade compares `Origin`'s authority against `Host` and answers `403` when they differ. An absent
+  `Origin` is allowed, because the attack needs a browser and every browser sends one; the scheme is
+  not compared, because §6.5's gateway terminates TLS in front of a plaintext hop. §83.3 is why each
+  went that way.
+- ~~**Spend the log.**~~ **Closed for F3** ([`84`](84-a-quota-is-only-as-good-as-its-actor-report.md)):
+  600 events a minute per actor, on by default, charged before the ingress queue and counted as
+  `throttled` apart from the other two ways a proposal can fail. F15's connection quotas and F12's
+  bounded deploy buffer are still unbuilt. §84.4 is what the F3 bound is worth in practice — a
+  per-actor limit composes with whichever identity provider is configured, so under `DevIdentity` an
+  attacker who rotates names is bounded by the *table* rather than by the limit.
 
 None of this is surprising for a project at Phase 3, and none of it should be fixed by writing code
 today. What it should do is stop being invisible: these are four F-numbers whose status in
 [`14`](14-review-findings.md) is a word, and whose status in the code is silence. §42.11's
 `pending_security` row makes the silence audible.
 
-One smaller item, recorded so it does not rot: `dash.html`'s `esc` escapes `&<>` only, and the
-graph renderer interpolates `class="${n.tier}"` into an attribute without it. The value is a
-compiler-side enum, so this is not exploitable — but it is an unescaped attribute interpolation in
-the one surface an operator trusts, and the fix is smaller than the paragraph describing it.
+*Three of the four are closed*, and the mechanism worked for two of them: [`83`](83-the-runtime-edge-report.md)'s
+pair were bullets whose gap was a **failing test**, so building them turned that test red and the
+person who built them had to come back to this paragraph.
+
+*It did not work for the third.* Both tests guarding F3 stayed **green** through the change that
+closed it — one grepped for identifiers the implementation did not happen to use, and the other
+proposed 200 events against a limit that turned out to be 600.
+[`84`](84-a-quota-is-only-as-good-as-its-actor-report.md) §84.5 is the post-mortem, and the caveat it
+leaves belongs to every grep-shaped test in `pending_security.rs`: a proxy for a control is defeated
+by naming, and a behavioural test for an absence cannot be calibrated against a limit that does not
+exist yet.
+
+~~One smaller item, recorded so it does not rot: `dash.html`'s `esc` escapes `&<>` only, and the
+graph renderer interpolates `class="${n.tier}"` into an attribute without it.~~ **Already fixed when
+[`83`](83-the-runtime-edge-report.md) went looking**, and this paragraph is the correction. `esc`
+escapes `&<>"'` and says in a comment why quotes are in the set — "half the interpolations below are
+into attributes" — and the graph renderer writes `class="${esc(n.tier)}"`. Every other interpolation
+in the file is escaped, a number computed by the layout, or a literal chosen by a ternary; §83.5
+records the audit. The item rotted in the *other* direction: it was fixed and the record was not, so
+this document has been describing a defect that stopped existing. That is the failure mode a
+`pending_security` test does not have, and it is the argument for turning a paragraph into one.
 
 ## 42.7 Supply chain: where Beck is ahead, and the four rows that have moved
 
@@ -331,7 +358,7 @@ which §42.7 is already about, and **A10 Mishandling of Exceptional Conditions**
 
 | Area | Adopt | Borrow | Watch (trigger) | Decline |
 |---|---|---|---|---|
-| Front end (§42.2) | Counted recursion bound in parser, checker and lowering, with a diagnostic and a stack-fits-ceiling test, per ADR 0007's argument | Scriban's incomplete-fix lesson: bound the recursion site, not one grammar rule | Grammar-aware fuzzing as the method that finds the rest of this class (trigger: the bound lands) | — |
+| Front end (§42.2) | Counted recursion bound in parser, checker and lowering, with a diagnostic and a stack-fits-ceiling test, per ADR 0007's argument | Scriban's incomplete-fix lesson: bound the recursion site, not one grammar rule — **and the tree contained three violations of it**, found by the row to the right ([`85`](85-what-the-generator-found-report.md)) | ~~Grammar-aware fuzzing (trigger: the bound lands)~~ — **built** ([`85`](85-what-the-generator-found-report.md)); what is still watched is *coverage-guided* fuzzing, trigger: a nightly toolchain is taken for another reason | — |
 | Memory safety (§42.3) | A written memory-safety roadmap paragraph, in CISA's terms | verify-rust-std's null result as the stated reason for aiming verification elsewhere | — | Miri as routine CI (no yield against `forbid(unsafe)`); Kani *for memory safety* |
 | Verification (§42.3, §42.5) | Kani on the solver's security invariants — no `secret[T]` into a client partition, `durable`/`ingress` never client-side | Non-interference as the name of the §3.5 claim; the OOPSLA 2025 and graded-coeffect lineage | Mechanised non-interference over the core calculus (trigger: Phase 5's spec) | — |
 | Concurrency (§42.4) | Injected clock on the seam, now, so DST is never a retrofit | TigerBeetle/WarpStream/S2 as evidence DST is ordinary practice | `loom` (trigger: first hand-rolled synchronisation); DST proper (trigger: second runtime substrate) | — |

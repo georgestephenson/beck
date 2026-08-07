@@ -224,8 +224,8 @@ minted at the edge (§3.7 F3). Those three are the bulk of real-world mock boile
 semantics **delete** them rather than easing them.
 
 What is left is the genuinely external: `net.out(host)`, `env`, `external.read/write(store)`,
-`fs(path)`, `cap.*`, `nondet`. A small, closed, *named* set — and the compiler already computes
-exactly which of them any definition performs.
+`fs.read/write(path)`, `cap.*`, `nondet`. A small, closed, *named* set — and the compiler already
+computes exactly which of them any definition performs.
 
 ### Rule 1 — everything is stubbed by default, so "any value" has no syntax
 

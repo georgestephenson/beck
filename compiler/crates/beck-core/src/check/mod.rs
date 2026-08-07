@@ -218,6 +218,21 @@ pub struct Checker<'a> {
     /// counts against. The reader's bound does not cover this one: a macro can expand into a tree
     /// deeper than the one that was written, and the checker is the first pass to see it.
     nesting: Nesting,
+    /// How long a **flat** block this pass is inside, against its own ceiling.
+    ///
+    /// A second counter rather than a second use of `nesting`, because the two axes are not
+    /// comparable: 256 levels of nesting is pathological and 256 sequential bindings is merely a
+    /// long function. `block_from` recurses once per statement — a block is a chain of `Let`s in
+    /// `Core` whatever it looks like in source — so this is the recursion site, and counting it
+    /// here rather than at one grammar rule is [`docs/42`](../../../../../docs/42-security-assurance.md)
+    /// §42.2's Scriban lesson applied to the axis [`64`](../../../../../docs/64-compile-speed-report.md)
+    /// §64.4 found the ceiling did not cover.
+    block_nesting: Nesting,
+    /// The names a `parallel:` scope has bound so far, while its *later* children are being
+    /// checked. They are deliberately not in `locals` — a child that could see a sibling would
+    /// have to run after it — so this is what turns the resulting "cannot find" into the
+    /// diagnostic that says why the name is absent rather than that it is unknown.
+    parallel_siblings: Vec<Arc<str>>,
     mode: Mode,
 }
 
@@ -279,6 +294,8 @@ pub fn check_module_with(
         dicts: BTreeMap::new(),
         generic_rows: BTreeMap::new(),
         nesting: Nesting::new(),
+        block_nesting: Nesting::with_limit(beck_diag::depth::MAX_BLOCK),
+        parallel_siblings: Vec::new(),
         mode,
     };
     for (name, prim, scheme) in prelude::prims() {
@@ -996,7 +1013,7 @@ impl<'a> Checker<'a> {
             } else if let Some(alias) = self.row_aliases.get(text.as_str()).cloned() {
                 row = row.union(&alias);
             } else {
-                self.error(
+                let mut d = Diagnostic::error(
                     "B0305",
                     format!(
                         "`{}` is neither an effect nor a row",
@@ -1004,6 +1021,17 @@ impl<'a> Checker<'a> {
                     ),
                     e.span(),
                 );
+                // `fs(path)` was one atom until `docs/81` split it, and it is the one spelling a
+                // reader is likely to arrive with — from §3.2 as it stood, or from a habit. Saying
+                // which of the two to write is more use than saying the name is unknown.
+                if let Some(path) = text.strip_prefix("fs(").and_then(|r| r.strip_suffix(')')) {
+                    d = d.with_note(format!(
+                        "`fs` is two atoms: write `fs.read({path})` or `fs.write({path})`. One \
+                         name for both could not say whether a mount needs to be writable, or \
+                         whether two children of a `parallel:` scope may touch it at once"
+                    ));
+                }
+                self.diags.push(d);
             }
         }
         row
@@ -1471,6 +1499,29 @@ impl<'a> Checker<'a> {
     /// `false` means the ceiling is reached: the caller returns whatever it returns for an
     /// expression it could not check — a fresh variable, which unifies with anything and so raises
     /// no second error — without recursing and without leaving.
+    /// The same discipline for the flat axis: `false` means the block is longer than the front end
+    /// will follow, and the caller must not recurse and must not leave.
+    ///
+    /// [`64`](../../../../../docs/64-compile-speed-report.md) §64.4 measured what happened without
+    /// it — `thread 'beck-eval' has overflowed its stack`, SIGABRT, no diagnostic, at 12,000
+    /// bindings in a debug build and 100,000 in a release one. A refusal that depends on the build
+    /// profile is what [`adr/0007`](../../../../../docs/adr/0007-evaluator-stack-is-declared-not-discovered.md)
+    /// established a ceiling must never be.
+    fn enter_block(&mut self, span: Span) -> bool {
+        if self.block_nesting.enter() {
+            return true;
+        }
+        if self.block_nesting.should_report() {
+            let note = self.block_nesting.note_about("statements in one block");
+            self.diags.push(
+                Diagnostic::error("B0389", "this block has too many statements to check", span)
+                    .with_primary_label("the checker gave up here")
+                    .with_note(note),
+            );
+        }
+        false
+    }
+
     fn enter(&mut self, span: Span) -> bool {
         if self.nesting.enter() {
             return true;
@@ -1677,7 +1728,22 @@ impl<'a> Checker<'a> {
         let Some((first, rest)) = stmts.split_first() else {
             return Core::new(CoreKind::Const(Const::Unit), Ty::unit(), span);
         };
+        if !self.enter_block(first.span()) {
+            return Core::new(CoreKind::Const(Const::Unit), self.subst.fresh(), span);
+        }
+        let out = self.block_step(first, rest, expected, span);
+        self.block_nesting.leave();
+        out
+    }
 
+    /// One statement of a block, with the chain counter already entered.
+    fn block_step(
+        &mut self,
+        first: &Node,
+        rest: &[Node],
+        expected: Option<&Ty>,
+        span: Span,
+    ) -> Core {
         if first.is_form(sym::RETURN) {
             if !rest.is_empty() {
                 self.diags.push(Diagnostic::warning(
@@ -1860,6 +1926,7 @@ impl<'a> Checker<'a> {
             sym::FN if n.args.len() == 2 => self.lambda(n, expected, span),
             sym::RAISE if n.args.len() == 1 => self.raise_expr(&n.args[0], span),
             sym::TRY if n.args.len() == 1 => self.try_expr(&n.args[0], expected, span),
+            sym::PARALLEL if n.args.len() == 1 => self.parallel_expr(&n.args[0], expected, span),
             sym::MATCH if !n.args.is_empty() => self.match_expr(n, expected, span),
             sym::LIST => {
                 let elem = expected
@@ -2121,7 +2188,19 @@ impl<'a> Checker<'a> {
 
     fn var_ref(&mut self, s: &Symbol, span: Span) -> Core {
         let Some(b) = self.resolve(s).cloned() else {
-            self.error("B0340", format!("cannot find `{s}` in this scope"), span);
+            // A sibling in the same `parallel:` scope is absent for a reason, so say the reason.
+            if self.parallel_siblings.contains(&s.name) {
+                self.error(
+                    "B0398",
+                    format!(
+                        "`{s}` is another child of this `parallel:` scope, so it has not run yet — \
+                         children cannot see each other, which is what lets them run together"
+                    ),
+                    span,
+                );
+            } else {
+                self.error("B0340", format!("cannot find `{s}` in this scope"), span);
+            }
             let t = self.subst.fresh();
             return Core::new(CoreKind::Const(Const::Unit), t, span);
         };
@@ -2353,6 +2432,155 @@ impl<'a> Checker<'a> {
                 ],
             },
             result_ty,
+            span,
+        )
+    }
+
+    /// `parallel:` — a scope whose bindings are its children.
+    ///
+    /// Two rules make the scope's answer independent of the order its children ran in, which is
+    /// what lets a backend run them together:
+    ///
+    /// * **no child can name another.** Each initialiser is checked before any of the names is
+    ///   bound, so a reference to a sibling does not resolve; `parallel_siblings` is what turns
+    ///   that into `B0398` rather than into "cannot find".
+    /// * **no child performs an effect another child could observe.** [`observable_order`] is the
+    ///   list, and it is about state *inside* the program or its own substrate. `net.out` is not
+    ///   on it deliberately: a remote host's state is not Beck's to order, and two outbound calls
+    ///   are the case this form exists for.
+    ///
+    /// What the scope performs is `spawn`, every child's row, and the tail's — so a child that can
+    /// fail makes the scope fallible, and a `try:` outside it catches at the scope. That is
+    /// [`docs/38`](../../../../../docs/38-literature-survey.md) §38.4's "cancellation is the error
+    /// row crossing the scope", with the ordered join deciding *which* failure when more than one
+    /// child could raise: the earliest child in the order they are written, rather than the
+    /// earliest to finish.
+    fn parallel_expr(&mut self, body: &Node, expected: Option<&Ty>, span: Span) -> Core {
+        let stmts: &[Node] = if body.is_form(sym::DO) {
+            &body.args
+        } else {
+            std::slice::from_ref(body)
+        };
+
+        // The children are the leading bindings; everything from the first non-binding statement
+        // on is the tail, which runs after the join with all of them in scope.
+        let children = stmts
+            .iter()
+            .take_while(|s| (s.is_form(sym::LET) || s.is_form(sym::VAR)) && s.args.len() == 2)
+            .count();
+        if children < 2 {
+            self.error(
+                "B0397",
+                format!(
+                    "a `parallel:` scope runs its bindings as children, and this one has {children}"
+                ),
+                span,
+            );
+            let before = self.locals.len();
+            let out = self.block_from(stmts, expected, span);
+            self.locals.truncate(before);
+            return out;
+        }
+
+        // The scope starts concurrent work whatever its children do, so the atom is charged here
+        // rather than left to [`Prim::effects`] — nothing walks a prim's table on the way to a row,
+        // and a `parallel:` over two pure children still has to place on a tier that can run one.
+        self.perform(&Row::of([Effect::Spawn]));
+
+        let outer_siblings = std::mem::take(&mut self.parallel_siblings);
+        let before = self.locals.len();
+        let mut thunks = Vec::with_capacity(children);
+        let mut bound: Vec<(VarId, Ty)> = Vec::with_capacity(children);
+        let mut names: Vec<(Option<Symbol>, Ty)> = Vec::with_capacity(children);
+
+        for stmt in &stmts[..children] {
+            let target = &stmt.args[0];
+            let (name_node, annot) = if target.is_form(sym::ANNOT) && target.args.len() == 2 {
+                (&target.args[0], Some(&target.args[1]))
+            } else {
+                (target, None)
+            };
+            let want = annot.map(|t| self.ty_from_node(t));
+            // A child's effects belong to the child, so they are collected here and charged to the
+            // scope below — the same separation a lambda body gets, and for the same reason.
+            let (value, row) = self.in_scope(|ck| ck.expr(&stmt.args[1], want.as_ref()));
+            if let Some(w) = &want {
+                self.unify(&value.ty, w, value.span, "declared type");
+            }
+            let row = self.subst.resolve_row(&row);
+            let refused: Vec<String> = row
+                .atoms
+                .iter()
+                .filter(|a| observable_order(a))
+                .map(|a| format!("`{}`", a.name()))
+                .collect();
+            if !refused.is_empty() {
+                self.error(
+                    "B0399",
+                    format!(
+                        "a child of a `parallel:` scope may not perform {} — another child would \
+                         be able to tell what order they ran in",
+                        refused.join(", ")
+                    ),
+                    value.span,
+                );
+            }
+            self.perform(&row);
+
+            let ty = value.ty.clone();
+            let vspan = value.span;
+            thunks.push(Core::new(
+                CoreKind::Lam {
+                    params: Arc::from(Vec::new()),
+                    body: Arc::new(value),
+                },
+                Ty::fun_eff(Vec::new(), ty.clone(), row),
+                vspan,
+            ));
+            let id = self.fresh_var();
+            bound.push((id, ty.clone()));
+            names.push((name_node.as_var().cloned(), ty));
+            if let Some(s) = name_node.as_var() {
+                self.parallel_siblings.push(s.name.clone());
+            }
+        }
+
+        // Only now do the children's names exist, which is what the first rule means.
+        self.parallel_siblings = outer_siblings;
+        for ((id, _), (name, ty)) in bound.iter().zip(names.iter()) {
+            if let Some(s) = name {
+                self.locals.push(Binding {
+                    name: s.name.clone(),
+                    scopes: s.scopes.clone(),
+                    kind: BindKind::Local(*id, ty.clone()),
+                });
+            }
+        }
+        let tail = self.block_from(&stmts[children..], expected, span);
+        self.locals.truncate(before);
+
+        let tail_ty = tail.ty.clone();
+        let param_tys: Vec<Ty> = bound.iter().map(|(_, t)| t.clone()).collect();
+        let ids: Vec<VarId> = bound.iter().map(|(id, _)| *id).collect();
+        let k = Core::new(
+            CoreKind::Lam {
+                params: ids.into(),
+                body: Arc::new(tail),
+            },
+            // The continuation's own row is empty: whatever the tail performs has already been
+            // charged to the enclosing definition by `block_from`, and charging it twice would put
+            // it in the scope's row a second time.
+            Ty::fun_eff(param_tys, tail_ty.clone(), Row::empty()),
+            span,
+        );
+        let mut args = thunks;
+        args.push(k);
+        Core::new(
+            CoreKind::Prim {
+                op: Prim::Parallel,
+                args,
+            },
+            tail_ty,
             span,
         )
     }
@@ -3283,6 +3511,42 @@ fn error_ty_name(t: &Ty) -> Option<Arc<str>> {
     }
 }
 
+/// Could a second child of the same `parallel:` scope tell that this one had run?
+///
+/// The list is the atoms that **write** state the program or its own substrate holds: the log, the
+/// document, the merge point, a file and an external store. Two children touching any of them would
+/// make the scope's answer a function of which ran first, and the whole claim for the form is that
+/// it is not. A *read* of any of them is fine, because nothing in the scope writes it.
+///
+/// What is deliberately absent is as much of the argument as what is present:
+///
+/// * **`net.out(host)`** — a remote host's state is not Beck's to order, and §3.2 never claimed it
+///   was. Two outbound calls are the case this form exists for, so refusing them would leave the
+///   feature with nothing to do.
+/// * **`nondet`** — a clock or a fresh id is a *read* of something outside the program. Two
+///   children reading the clock do not interfere; they already disagree when run in sequence, and
+///   §3.7 is what keeps them out of a fold.
+/// * **`raises(E)`** and **`partial`** — failing is control flow, and the scope's join is what
+///   orders it (see [`Checker::parallel_expr`]).
+/// * **`cap.*`** — an authority the caller holds, not state a child writes.
+/// * **`fs.read(path)`** — a read of a file no child of this scope writes, since `fs.write` is
+///   refused. [`docs/80`](../../../../../docs/80-a-scope-owns-its-children-report.md) §80.2 had to
+///   refuse the pair because `fs(path)` was one atom;
+///   [`docs/81`](../../../../../docs/81-fs-is-two-atoms-report.md) split it, and this line is what
+///   the split was for.
+/// * **`external.read(store)`** — the same argument, and it needed no change because §3.8's
+///   escape hatches were two atoms from the start.
+fn observable_order(e: &Effect) -> bool {
+    matches!(
+        e,
+        Effect::Ingress
+            | Effect::Durable
+            | Effect::Dom
+            | Effect::FsWrite(_)
+            | Effect::ExternalWrite(_)
+    )
+}
+
 fn resolve_types(c: &mut Core, s: &Subst) {
     c.ty = s.resolve(&c.ty);
     match &mut c.kind {
@@ -3389,6 +3653,83 @@ mod tests {
     fn codes(src: &str) -> Vec<&'static str> {
         let (_, d, _) = check_str("t.beck", src);
         d.iter().map(|x| x.code).collect()
+    }
+
+    /// A flat body of `n` sequential bindings — the shape `docs/64` §64.4 found unbounded.
+    fn flat_body(n: usize) -> String {
+        let mut src = String::from("def f() -> Int:\n");
+        for i in 0..n {
+            src.push_str(&format!("    v{i} = {i}\n"));
+        }
+        src.push_str("    return v0\n");
+        src
+    }
+
+    /// The refusal is a diagnostic, and it is the *same* diagnostic in every build.
+    ///
+    /// `docs/64` §64.4 measured what it was before: `thread 'beck-eval' has overflowed its stack`,
+    /// SIGABRT, no span, at 12,000 bindings in a debug build and 100,000 in a release one — so
+    /// "does this program compile" was a question about how the compiler was built. That is the
+    /// property `adr/0007` established a ceiling must never have.
+    /// Every check here runs on the **declared front-end stack**, because that is the stack the
+    /// ceiling was sized against. A default test thread has 2 MiB and the ceiling is worth 14 MiB
+    /// of frames, so a test that called `check_str` directly would abort — which is how CI found
+    /// this, the first version of these two having been written without it.
+    fn block_codes(src: &str) -> Vec<&'static str> {
+        beck_diag::depth::on_the_front_end_stack(|| {
+            let (_, d, _) = check_str("t.beck", src);
+            d.iter().map(|x| x.code).collect()
+        })
+    }
+
+    #[test]
+    fn a_block_past_the_ceiling_is_refused_with_a_diagnostic() {
+        let over = beck_diag::depth::MAX_BLOCK as usize + 8;
+        let found = block_codes(&flat_body(over));
+        assert!(found.contains(&"B0389"), "{found:?}");
+        // …and one diagnostic, not one per statement on the way out.
+        assert_eq!(found.iter().filter(|c| **c == "B0389").count(), 1);
+    }
+
+    /// A long body that is *under* the ceiling still checks, which is the half that says the
+    /// number is a backstop rather than an opinion about style.
+    #[test]
+    fn a_long_block_under_the_ceiling_is_ordinary() {
+        let found = block_codes(&flat_body(beck_diag::depth::MAX_BLOCK as usize - 8));
+        assert!(found.is_empty(), "{found:?}");
+    }
+
+    /// The pair `adr/0012` established for the nesting axis, for this one: **measure** the bytes a
+    /// level costs and fail if the declaration has stopped covering the ceiling.
+    ///
+    /// The probe runs on a stack far larger than the one whose adequacy is being concluded, so the
+    /// measurement is never the thing that overflows.
+    #[test]
+    fn the_block_ceiling_fits_the_declared_stack() {
+        const PROBE: usize = 400;
+        let spent = std::thread::Builder::new()
+            .stack_size(256 * 1024 * 1024)
+            .spawn(|| {
+                let src = flat_body(PROBE);
+                beck_diag::depth::probe::stack_spent(|| check_str("probe.beck", &src))
+            })
+            .expect("a thread")
+            .join()
+            .expect("the probe checks");
+
+        let per_level = spent / PROBE;
+        println!("checker: {spent} bytes for {PROBE} statements ({per_level} per statement)");
+        // Twice over, as the parser's and the evaluator's are: whoever drives the checker has as
+        // much stack again above the ceiling as the ceiling itself needs.
+        let needed = beck_diag::depth::MAX_BLOCK as usize * per_level * 2;
+        assert!(
+            needed < beck_diag::depth::STACK_BYTES,
+            "a ceiling of {} statements at {per_level} bytes each needs {needed} bytes with the \
+             margin, against a declared STACK_BYTES of {} — raise the declaration or lower the \
+             ceiling",
+            beck_diag::depth::MAX_BLOCK,
+            beck_diag::depth::STACK_BYTES
+        );
     }
 
     #[test]
@@ -3860,10 +4201,15 @@ mod nesting_tests {
 
     #[test]
     fn a_type_past_the_ceiling_is_a_diagnostic_rather_than_an_abort() {
+        // Either pass may be the one that refuses, exactly as for an expression below. The reader
+        // gets there first *now*: `docs/85` found `Parser::type_expr` recursing in four places with
+        // no counter at all, so a deep type used to arrive here and is now refused a stage earlier
+        // and more cheaply. What this test is for is the property in its name — a diagnostic rather
+        // than an abort — which is a claim about the front end and not about which half of it.
         let found = codes(&nested_type(MAX_NESTING as usize + 8));
         assert!(
-            found.contains(&"B0390".to_string()),
-            "expected the checker's own refusal, got {found:?}"
+            found.iter().any(|c| c == "B0121" || c == "B0390"),
+            "expected a nesting refusal from the reader or the checker, got {found:?}"
         );
     }
 

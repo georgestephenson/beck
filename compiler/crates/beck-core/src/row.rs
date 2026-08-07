@@ -58,8 +58,17 @@ pub enum Effect {
     NetOut(Arc<str>),
     /// `net.in` — accepts inbound connections.
     NetIn,
-    /// `fs(path)`.
-    Fs(Arc<str>),
+    /// `fs.read(path)` and `fs.write(path)` — two atoms for one resource.
+    ///
+    /// §3.2 listed a single `fs(path)` until [`docs/81`](../../../../../docs/81-fs-is-two-atoms-report.md).
+    /// One atom naming a resource without saying what is done to it cannot answer the two questions
+    /// that are actually asked of it: whether two things may happen at once
+    /// ([`crate::check`]'s `parallel:` rule) and whether a mount needs to be writable
+    /// ([`docs/06`](../../../../../docs/06-kubernetes-and-packaging.md) §6.5). §3.8's escape
+    /// hatches were already two — [`Effect::ExternalRead`] and [`Effect::ExternalWrite`] — and
+    /// this is the same split for the same reason.
+    FsRead(Arc<str>),
+    FsWrite(Arc<str>),
     /// Reads process environment.
     Env,
     /// Starts concurrent work.
@@ -100,7 +109,8 @@ impl Effect {
             Effect::Nondet => "nondet".into(),
             Effect::NetOut(h) => format!("net.out({h})"),
             Effect::NetIn => "net.in".into(),
-            Effect::Fs(p) => format!("fs({p})"),
+            Effect::FsRead(p) => format!("fs.read({p})"),
+            Effect::FsWrite(p) => format!("fs.write({p})"),
             Effect::Env => "env".into(),
             Effect::Spawn => "spawn".into(),
             Effect::Cap(c) => format!("cap.{c}"),
@@ -126,7 +136,8 @@ impl Effect {
             ("nondet" | "nondeterministic", None) => Effect::Nondet,
             ("net.out", Some(h)) => Effect::NetOut(Arc::from(h)),
             ("net.in", None) => Effect::NetIn,
-            ("fs", Some(p)) => Effect::Fs(Arc::from(p)),
+            ("fs.read", Some(p)) => Effect::FsRead(Arc::from(p)),
+            ("fs.write", Some(p)) => Effect::FsWrite(Arc::from(p)),
             ("env", None) => Effect::Env,
             ("spawn", None) => Effect::Spawn,
             ("partial", None) => Effect::Partial,
@@ -154,7 +165,8 @@ impl Effect {
             Effect::Nondet => "nondet",
             Effect::NetOut(_) => "net.out",
             Effect::NetIn => "net.in",
-            Effect::Fs(_) => "fs",
+            Effect::FsRead(_) => "fs.read",
+            Effect::FsWrite(_) => "fs.write",
             Effect::Env => "env",
             Effect::Spawn => "spawn",
             Effect::Cap(_) => "cap",
@@ -256,7 +268,8 @@ mod tests {
             "nondet",
             "net.out(api.example.com)",
             "net.in",
-            "fs(/var/lib/beck)",
+            "fs.read(/var/lib/beck)",
+            "fs.write(/var/lib/beck)",
             "env",
             "spawn",
             "cap.session",

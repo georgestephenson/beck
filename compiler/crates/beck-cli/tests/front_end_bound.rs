@@ -112,44 +112,53 @@ fn the_corpus_is_nowhere_near_the_ceiling() {
     }
 }
 
-/// The axis `MAX_NESTING` does **not** measure, and what does bound it.
+/// The axis `MAX_NESTING` does **not** measure, and the counter that now does.
 ///
 /// A block of sequential local bindings is flat: `v0 = …` then `v1 = …` is not one inside the
-/// other, so a body 25,000 bindings long is at nesting level 2 and the ceiling above never sees it.
-/// The front end still recurses once per binding — a block is a chain in `Core`, whatever it looks
-/// like in source — so what bounds this axis is the declared stack rather than the counter.
+/// other, so a body 25,000 bindings long is at nesting level 2 and the nesting ceiling never sees
+/// it. The front end still recurses once per binding — a block is a chain in `Core`, whatever it
+/// looks like in source.
 ///
-/// This asserts the guarantee that holds **in either profile**: a body far larger than anything a
-/// person writes compiles, on the thread `beck-cli` dispatches onto, without aborting. `docs/64`
-/// §64.4 records the other half — that the ceiling is a *profile-dependent abort* rather than a
-/// counted diagnostic (12,000 bindings abort a debug build and 100,000 abort a release one), which
-/// is [`42`]'s defect on an axis its ceiling does not count and
-/// [`adr/0007`](../../../../docs/adr/0007-evaluator-stack-is-declared-not-discovered.md)'s
-/// property the evaluator has and the front end does not.
+/// Until `docs/85` what bounded this axis was the **declared stack**, which is the property
+/// [`adr/0007`](../../../../docs/adr/0007-evaluator-stack-is-declared-not-discovered.md) says a
+/// ceiling must not have: `docs/64` §64.4 measured a debug build aborting at 12,000 bindings and a
+/// release build at 100,000, with no diagnostic, so *which programs compile depended on how the
+/// compiler was built*. `MAX_BLOCK` is the counted answer, and this test is the pair the nesting
+/// axis has had since [`adr/0012`](../../../../docs/adr/0012-the-front-end-counts-its-own-recursion.md):
+/// under the ceiling compiles, over it is a diagnostic, and the number does not move with the
+/// profile.
 ///
-/// The size is chosen from the **debug** limit for that reason. A test whose passing depended on
-/// `--release` would be measuring the profile.
+/// Through the binary, for this file's reason: the failure being ruled out is a process abort,
+/// which nothing inside the process can catch.
 ///
 /// [`42`]: ../../../../docs/42-security-assurance.md
 #[test]
-fn a_flat_block_is_bounded_by_the_declared_stack_rather_than_by_the_nesting_ceiling() {
-    const BINDINGS: usize = 5_000;
-    let mut src = String::from("def deep(x: Int) -> Int:\n    v0 = x + 1\n");
-    for i in 1..BINDINGS {
-        src.push_str(&format!("    v{i} = v{} + {i}\n", i - 1));
-    }
-    src.push_str(&format!("    return v{}\n", BINDINGS - 1));
+fn a_flat_block_is_bounded_by_a_counted_ceiling_rather_than_by_the_stack() {
+    let body = |n: usize| {
+        let mut src = String::from("def deep(x: Int) -> Int:\n    v0 = x + 1\n");
+        for i in 1..n {
+            src.push_str(&format!("    v{i} = v{} + {i}\n", i - 1));
+        }
+        src.push_str(&format!("    return v{}\n", n - 1));
+        src
+    };
+    let ceiling = beck_diag::depth::MAX_BLOCK as usize;
 
-    // Through the binary, for this file's reason: the failure being ruled out is a process abort,
-    // which nothing inside the process can catch.
-    let (ok, text) = check(&src, "flat-block");
+    // Under it: an ordinary, if long, function.
+    let (ok, text) = check(&body(ceiling - 16), "flat-block-under");
+    assert!(ok, "a body under the ceiling must compile:\n{text}");
+
+    // Over it: a diagnostic with a span, in *this* profile and in the other one — which is the
+    // whole point, and what an abort could never be.
+    let (ok, text) = check(&body(ceiling * 8), "flat-block-over");
+    assert!(!ok, "a body eight times the ceiling must be refused");
     assert!(
-        ok,
-        "{BINDINGS} sequential bindings is a large body and not a deep one — it must compile:\n{text}"
+        text.contains("B0389"),
+        "and refused by the block counter, with a span:\n{text}"
     );
     assert!(
         !text.contains("B0121"),
-        "and the nesting ceiling must not be what refuses it, because this is not nesting:\n{text}"
+        "not by the nesting ceiling, because this is not nesting:\n{text}"
     );
 }
 

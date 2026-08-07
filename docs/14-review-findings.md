@@ -39,7 +39,7 @@ check ownership against `actor`. **Language design consequence**: `insert`-shape
 get first-writer semantics as the primitive, and the `requires owns(ref)` capability pattern is the
 documented default for mutating commands — so the secure form is the path of least resistance.
 
-### F3 — Events-forever default turns attacker traffic into permanent storage — `FIXED` + quotas `APPROVED` (on by default)
+### F3 — Events-forever default turns attacker traffic into permanent storage — `FIXED` + quotas **`BUILT`** ([`84`](84-a-quota-is-only-as-good-as-its-actor-report.md))
 
 With D3's `retain=forever`, anything that becomes an event is immortal. Two channels: (a) rejected
 garbage — closed by the rule, now explicit in [`03`](03-type-and-effect-system.md) §3.7, that **only
@@ -48,6 +48,16 @@ idempotency only); (b) *validated* spam from a legitimate but abusive session �
 design. Remediation for (b): per-actor rate/volume quotas enforced at `validate` (a stdlib
 combinator, on by default with generous limits), and per-actor crypto-shredding as the abuse
 cleanup path. **Decided**: quotas are **on by default** with generous limits, overridable per command type.
+
+**Built** ([`84`](84-a-quota-is-only-as-good-as-its-actor-report.md)): 600 events a minute per
+actor, on by default, charged at the merge point from the same instant that goes on the envelope.
+The counters are sharded into a fixed table so the quota is not itself unbounded memory keyed by a
+name the client chooses. Two clauses of the decision are **not** built and §84.6 says so: "overridable
+per command type" (which is language surface rather than a config field) and crypto-shredding. And
+§84.4 is the part neither this finding nor [`48`](48-identity-report.md) said: a per-actor bound is
+worth what the *actor* is worth, so under `DevIdentity` — where the client names itself — rotating
+names spreads across the table rather than being stopped, and the bound is `buckets × limit` rather
+than `limit`.
 
 ### F4 — `beck fork --from prod` is a data-exfiltration channel — `DESIGNED`
 

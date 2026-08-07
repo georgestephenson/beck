@@ -1,0 +1,100 @@
+# Two outbound calls that do not wait for each other, in one scope.
+#
+# This file exists for the corner `parallel:` was built for. Screening a signup needs two answers
+# from two different services, and neither question depends on the other's answer — written as two
+# lines they run one after the other for no reason, and the chokepoint holds the accumulator while
+# they do.
+#
+# What the scope claims is not "these are fast" but "the answer does not depend on which ran
+# first", and both halves of that are checked rather than intended: no child can name another
+# (`B0398`), and no child may perform an effect another child could observe (`B0399`) — the log,
+# the document, the merge point, a file, an external store. `net.out(host)` is deliberately not on
+# that list, because a remote host's state was never Beck's to order, and it is what is left for
+# the form to be about.
+#
+# Look at `beck iface`: `screen` publishes `uses net.out(fraud.example.com),
+# net.out(reputation.example.com), spawn` and lands on the server, and not one line of that is
+# written in this file.
+
+model State:
+    admitted: Int
+    refused: Int
+
+model Screening:
+    fraud: Int
+    reputation: Int
+
+union Command:
+    Signup(email: Str)
+
+union Event:
+    Admitted(email: Str)
+    Refused(email: Str, score: Int)
+
+union Rejection:
+    TooRisky
+
+def fraud_score(email: Str) -> Int uses net.out(fraud.example.com):
+    return str_len(email)
+
+def reputation_score(email: Str) -> Int uses net.out(reputation.example.com):
+    return str_len(str_trim(email)) * 2
+
+# The scope's tail runs once, after the join, with both children's results in scope. Reading them
+# there rather than inside a child is the whole discipline: a child that read the other would have
+# to run second, and then it is not a child but a next line.
+def screen(email: Str) -> Screening:
+    return parallel:
+        f = fraud_score(email)
+        r = reputation_score(email)
+        Screening(fraud=f, reputation=r)
+
+def risky(s: Screening) -> Bool:
+    return s.fraud > s.reputation
+
+def apply_event(s: State, env: Envelope[Event]) -> State:
+    match env.body:
+        case Admitted(email):
+            return s.with(admitted=s.admitted + 1)
+        case Refused(email, score):
+            return s.with(refused=s.refused + 1)
+
+def validate(s: State, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Signup(email):
+            screening = screen(email)
+            if risky(screening):
+                return Err(error=TooRisky)
+            return Ok(value=[Admitted(email=email)])
+
+def view(s: State, session: Session) -> Html:
+    return ui:
+        main:
+            h1: "signups"
+            p: (str(s.admitted) + " admitted")
+            p: (str(s.refused) + " refused")
+
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, signups, validate)
+signups: Signal[State] = durable(fold(apply_event, State(admitted=0, refused=0), events))
+page: Signal[Html] = per_session(signups, view)
+
+test "an empty log has admitted nobody":
+    given []
+    expect page contains "0 admitted"
+
+test "an admission lands":
+    given [Admitted(email="a@example.com")]
+    expect page contains "1 admitted"
+
+# The scope itself runs: `spawn` is not stubbed, because a stub would delete the children rather
+# than the boundary they cross. What is stubbed is what each child *does* — and the two children
+# are stubbed apart, which is a fact about them being two definitions rather than one call.
+test "the scope runs, and its children are stubbed one at a time":
+    when Signup(email="a@example.com")
+    expect events == [Admitted(email="a@example.com")]
+
+test "a child that answers differently changes what the tail decides":
+    stub net.out(fraud.example.com): 99
+    when Signup(email="a@example.com")
+    expect Err(error=TooRisky)

@@ -61,10 +61,20 @@ Write the commit message as the author of the change: what changed, and why.
   [`74`](docs/74-the-cost-of-a-call-report.md),
   [`75`](docs/75-what-the-profiler-said-report.md),
   [`76`](docs/76-the-record-and-the-read-report.md),
-  [`77`](docs/77-a-let-is-a-slot-report.md) and
-  [`78`](docs/78-a-record-is-a-permutation-report.md) and
+  [`77`](docs/77-a-let-is-a-slot-report.md),
+  [`78`](docs/78-a-record-is-a-permutation-report.md),
   [`79`](docs/79-a-lambda-is-a-frame-report.md),
-  indexed in
+  [`80`](docs/80-a-scope-owns-its-children-report.md),
+  [`81`](docs/81-fs-is-two-atoms-report.md),
+  [`82`](docs/82-the-defaults-that-should-be-unavoidable-report.md),
+  [`83`](docs/83-the-runtime-edge-report.md),
+  [`84`](docs/84-a-quota-is-only-as-good-as-its-actor-report.md) and
+  [`85`](docs/85-what-the-generator-found-report.md),
+  plus [`86`](docs/86-getting-started.md), which is a guide rather than a report and is gated as
+  one — every program in it is compiled and run by `beck-cli/tests/getting_started.rs`. It is
+  docs/08 §8.5.4's named blocker on Phase 3's exit criterion, removed; §86.8 says what it still
+  does not establish, which is everything the criterion actually measures.
+  Indexed in
   [`docs/README.md`](docs/README.md) — record what each
   phase does, what it refuses to claim, and the corrections it makes to the design documents.
   Add a new report to that list and to the index; do not extend it with another "and".
@@ -103,9 +113,14 @@ Write the commit message as the author of the change: what changed, and why.
   module — and `beck test --update` closes docs/21 §21.2's last open question, so a page assertion
   is a checked-in file rather than one string somebody thought to name (docs/66); and the **SQLite
   substrate** is built (docs/67) — for its transaction rather than its speed, since redb has no
-  query language for a projection to be written in. Five of the fourteen are
+  query language for a projection to be written in; and **structured concurrency** is built
+  (docs/80) — `parallel:`, a scope whose bindings are its children, claiming that its answer does
+  not depend on which ran first and holding that up with two compile errors rather than a
+  convention, which closes docs/08 §8.5.4's Wave 1 a wave after its error half. Its runtime half
+  is deliberately absent and says so: nothing runs two children at the same time, because `Host`
+  is not `Sync`. **Four** of the fourteen are
   untouched — identity has its seam but not its OIDC relying party (docs/48) — and docs/26 §26.9
-  names them one at a time, less the two docs/51 closed. **Wave 0** (docs/08 §8.5.4) is also
+  names them one at a time, less the two docs/51 closed and the one docs/80 did. **Wave 0** (docs/08 §8.5.4) is also
   built — a bounded front end, an injected clock, a threat model, a disclosure policy and an
   identifier profile — and is debt rather than a phase bullet, so it is in docs/44 and not in that
   list. All six of
@@ -172,7 +187,7 @@ Write the commit message as the author of the change: what changed, and why.
   `MODULES`, which `stdlib.rs` checks by importing every file from outside `lib/`; and the flat
   namespace spans the directory, so a name defined in two library files cannot be imported by one
   program — `the_whole_library_links_into_one_program` is that gate.
-- [`compiler/corpus/`](compiler/corpus/) is 30 programs — 29 single files and one three-module
+- [`compiler/corpus/`](compiler/corpus/) is 31 programs — 30 single files and one three-module
   project — carrying **no placement annotations**, and the measurement behind Phase 2's exit
   criterion. A program added there has to place itself.
 - [`compiler/sicp/`](compiler/sicp/) is the expressiveness benchmark
@@ -305,6 +320,58 @@ Write the commit message as the author of the change: what changed, and why.
   asserted on the *flag* rather than by a program, because the evaluator refuses the unsound move
   independently (`Arc::get_mut` on a shared captured environment), so six green program-level tests
   are not evidence for it. docs/19 §19.4's defect has now been found three times.
+  **docs/80 is the language feature that came after all of it**, and its largest finding is not
+  about concurrency: `beck-syntax/src/print.rs` states `parse(print(parse(src))) == parse(src)` in
+  its opening paragraph and **names the file that asserts it over the corpus**, and that file did
+  not exist — the property was checked by three hand-written snippets in the printer's own test
+  module. **Ten checked-in programs did not print back as themselves**, four of them in `lib/`, so
+  `beck fmt` on each emitted a file that does not compile: a block form used as an operand printed
+  as a call (`try(…)` is not surface syntax), a conditional expression printed without parentheses
+  so `a + (b if c else d)` came back as a different program that still parses, and `() -> T` printed
+  as `fn-type[T]` — docs/63 §63.3's off-by-one surviving in a third place. `roundtrip.rs` is the
+  gate, over every `.beck` file in the tree and through both surfaces rather than over the corpus.
+  A property stated in a doc comment is a property nothing checks; docs/78 §78.6 found three things
+  wrong with a gate that could not fail, and this is a gate cited by name that was never written.
+  **docs/81 is docs/80's own leftover taken the next day**: `fs(path)` becomes `fs.read(path)` and
+  `fs.write(path)`, so a scope may have children that read files and still refuses children that
+  write them. It was the only atom in docs/03 §3.2's list naming a resource without saying what was
+  done to it, and §3.8's escape hatches had already been split the same way. Its §81.5 corrects
+  docs/80 §80.7, which justified the split partly by saying docs/06 §6.5 derives a mount's options
+  from the atom — **it does not**; `beck-infra` reads `ingress`, `durable` and `net.out` and has
+  never looked at `fs`. And §81.6 is the limit: no primitive touches a file, so this makes the
+  vocabulary correct rather than making filesystem access available. **docs/82 banks what that
+  split made possible**: docs/06 §6.5 has named four pod defaults as "unavoidable" since the design
+  was written and the emitter produced one, so it now produces all four — three constants on every
+  container, and `readOnlyRootFilesystem` **derived** from whether the program's row carries
+  `fs.write`, which one `fs(path)` atom could not express in either direction. Its §82.4 is what is
+  not established: `conformance.rs` skips without a cluster, so "the emitter writes these fields" is
+  proved and "the pod starts" is not. **docs/83 closes two of docs/42 §42.6's four bullets** about
+  what an untrusted client can do to a running app: the websocket's limits were its library's
+  (64 MiB a message, 128 KiB of eagerly-allocated read buffer per connection, an unbounded write
+  buffer) and are now numbers this project argues for, and nothing inspected `Origin`, so a page on
+  any host could open a socket — the upgrade now compares its authority against `Host`. Its §83.4 is
+  the methodological half: `runtime_edge.rs` is the **first test to drive `beck-rt`'s HTTP edge**,
+  since every session harness goes through an in-memory duplex and the handshake in front of it had
+  never been exercised. And §83.5 corrects §42.6's own smaller item, which had been **fixed and not
+  recorded** — a paragraph rotting in the direction nobody watches, which is the argument for
+  `pending_security.rs`'s shape over prose. **docs/84 builds docs/14 F3's per-actor write quota**,
+  `APPROVED` and unbuilt since the review: 600 events a minute, on by default, charged before the
+  ingress queue from the same instant that goes on the envelope, with counters **sharded** into a
+  fixed table because a map from actor to counter is unbounded memory keyed by a name the client
+  chooses. Its §84.4 is worth more than the quota — a per-actor bound is worth what the *actor* is
+  worth, so under `DevIdentity` rotating names is bounded by the table rather than by the limit —
+  and its §84.5 is worth more again: **both gates guarding the gap stayed green through the change
+  that closed it**, one grepping for identifiers the implementation did not use and one calibrated
+  under the limit that was eventually chosen. Fourth gate-that-could-not-fail, and the pattern is
+  that each was written by the person who knew the gap and tested the shape of the gap rather than
+  of the fix. **docs/85 is grammar-aware fuzzing**, which docs/42 §42.9 pinned with the trigger "the
+  bound lands" — and it found **three** productions the recursion ceiling did not cover: the type
+  grammar was uncounted, `primary` released its counter *before* the recursion that makes a call
+  chain deep, and a left-associative operator chain is read by a **loop**, so no recursion counter
+  can see a tree it builds 300,000 deep without recursing. A counter counts recursion done; the
+  stack cares about tree depth built. It also fixes docs/64 §64.4's flat block (`MAX_BLOCK` = 2,048,
+  measured at 6.8 KiB a statement). Its §85.1 is the method: the **first generator passed and meant
+  nothing**, because its sizes stopped past every ceiling and short of every abort.
 - Security posture is [`docs/43-threat-model.md`](docs/43-threat-model.md) (who is defended
   against, and who is not) and `SECURITY.md` (how a report reaches us). What is *absent* is asserted
   as absent in `beck-cli/tests/pending_security.rs`: building one of those controls turns a test
@@ -386,7 +453,8 @@ Write the commit message as the author of the change: what changed, and why.
   the differential, replay-determinism, backend-seam, scaling, frames, security, corpus, placement-property,
   general-slicer, incremental-analysis, incremental-engine, shared-arrangement, subscription,
   view-metrics, SICP, Are We Fast Yet, Benchmarks Game, tests-in-Beck, UI, workflow-cross-check,
-  documentation, outbound, compile-speed and diagnostic-snapshot suites, plus the five release-only
+  documentation, getting-started, outbound, compile-speed, concurrency, round-trip, runtime-edge,
+  grammar-fuzz and diagnostic-snapshot suites, plus the five release-only
   measurement suites (`measure_phase2`, `measure_incremental`, `measure_awfy`, `measure_compile`,
   `measure_clbg`). Keep them green.
 - The CI workflow is an artefact too, and Phase 2 found that it had never run

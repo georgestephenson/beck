@@ -139,24 +139,40 @@ fn the_front_end_cost_per_declaration_does_not_grow_with_a_module() {
     // second (docs/64 §64.2, which this caught), and re-walking the enclosing scope per binding is
     // the third. A program that grows along one is flat along the others, so none of the three is
     // a duplicate.
-    for (gen, axis, note) in [
+    // Each axis names its own pair of sizes, and only the **ratio** between them matters: this
+    // gate asserts a shape — cost per declaration must not grow with the declaration count — so
+    // sixteen times as many is the measurement whatever the absolute numbers are (docs/64 §64.7).
+    //
+    // `depth` runs smaller than the other two for a reason that is not about speed. A flat body is
+    // bounded at `beck_diag::depth::MAX_BLOCK` statements (`docs/85`), because the checker recurses
+    // once per statement and an unbounded body aborted the process — so 6,400 bindings in one
+    // function is now a program the front end refuses, and a gate that measured it would be
+    // measuring error recovery. The ceiling is a safety property and cannot move to suit a
+    // benchmark; the ratio is arbitrary and can.
+    for (gen, axis, small, large, note) in [
         (
             wide as fn(usize) -> String,
             "width",
+            400,
+            6_400,
             "the front end has gone superlinear in a module's width",
         ),
         (
             chained,
             "width, with one edge per definition",
+            400,
+            6_400,
             "placement is summing the whole graph per node again (docs/64 §64.2)",
         ),
         (
             deep,
             "depth",
+            100,
+            1_600,
             "something in the front end re-walks the enclosing scope per binding",
         ),
     ] {
-        let ratio = growth(gen, 400, 6_400, axis);
+        let ratio = growth(gen, small, large, axis);
         assert!(
             ratio < MAX_GROWTH,
             "along `{axis}`, sixteen times the declarations cost ×{ratio:.2} more *each* — that \

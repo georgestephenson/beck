@@ -434,7 +434,11 @@ fn atoms() -> Vec<(Effect, &'static str)> {
         (Effect::Nondet, "Reads a clock or a random source, or mints an id."),
         (Effect::NetOut(std::sync::Arc::from("host")), "An outbound call to a named host. The host is what becomes a NetworkPolicy peer (§6.5)."),
         (Effect::NetIn, "Accepts inbound connections."),
-        (Effect::Fs(std::sync::Arc::from("path")), "Reads or writes a path."),
+        (Effect::FsRead(std::sync::Arc::from("path")), "Reads a path."),
+        (
+            Effect::FsWrite(std::sync::Arc::from("path")),
+            "Writes a path.",
+        ),
         (Effect::Env, "Reads process environment."),
         (Effect::Spawn, "Starts concurrent work."),
         (Effect::Cap(std::sync::Arc::from("x")), "A capability the caller must hold. Forgetting an auth check leaves `cap.*` undischarged — a compile error, not a pentest finding (§3.5)."),

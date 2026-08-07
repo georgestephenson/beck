@@ -190,7 +190,7 @@ pub enum Count {
 /// Which effect atoms a stub can stand in for.
 ///
 /// §21.3: "What is left is the genuinely external: `net.out(host)`, `env`, `external.read/write
-/// (store)`, `fs(path)`, `cap.*`, `nondet`." Two of that list are handled by the harness rather than
+/// (store)`, `fs.read/write(path)`, `cap.*`, `nondet`." Two of that list are handled by the harness rather than
 /// by a stub and are excluded here for reasons worth stating:
 ///
 /// * `nondet` — ids and the clock are supplied deterministically by the harness, because §3.7
@@ -199,14 +199,17 @@ pub enum Count {
 ///   `when` is that it "goes through the *real* `validate`, so authorisation is exercised rather
 ///   than bypassed". Stubbing a capability would bypass it. An explicit `stub cap.x:` is still
 ///   accepted — saying it out loud is the point — but nothing is stubbed automatically.
+/// * `spawn` — not on §21.3's list either, and not external at all: a `parallel:` scope is the
+///   program's own control flow, and standing in for it would delete the children rather than the
+///   boundary they cross. What a test wants stubbed is what a child *does*.
 pub fn is_auto_stubbable(e: &Effect) -> bool {
     matches!(
         e,
         Effect::NetOut(_)
             | Effect::NetIn
-            | Effect::Fs(_)
+            | Effect::FsRead(_)
+            | Effect::FsWrite(_)
             | Effect::Env
-            | Effect::Spawn
             | Effect::ExternalRead(_)
             | Effect::ExternalWrite(_)
     )

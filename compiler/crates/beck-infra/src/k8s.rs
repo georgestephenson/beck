@@ -44,10 +44,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use k8s_openapi::api::apps::v1::{Deployment, DeploymentSpec, StatefulSet, StatefulSetSpec};
 use k8s_openapi::api::core::v1::{
-    ConfigMap, Container, ContainerPort, EnvVar, EnvVarSource, HTTPGetAction, Lifecycle,
-    LifecycleHandler, Namespace, PersistentVolumeClaim, PersistentVolumeClaimSpec,
-    PodSecurityContext, PodSpec, PodTemplateSpec, Probe, Secret, SecretKeySelector, Service,
-    ServicePort, ServiceSpec, SleepAction, VolumeMount, VolumeResourceRequirements,
+    Capabilities, ConfigMap, Container, ContainerPort, EnvVar, EnvVarSource, HTTPGetAction,
+    Lifecycle, LifecycleHandler, Namespace, PersistentVolumeClaim, PersistentVolumeClaimSpec,
+    PodSecurityContext, PodSpec, PodTemplateSpec, Probe, SeccompProfile, Secret, SecretKeySelector,
+    SecurityContext, Service, ServicePort, ServiceSpec, SleepAction, VolumeMount,
+    VolumeResourceRequirements,
 };
 use k8s_openapi::api::networking::v1::{
     IPBlock, NetworkPolicy, NetworkPolicyEgressRule, NetworkPolicyIngressRule, NetworkPolicyPeer,
@@ -200,7 +201,15 @@ pub fn objects(graph: &InfraGraph, wire_id: &str) -> Vec<(String, Value)> {
                 replicas,
                 serves_ui,
                 reads_log,
-            } => to_value(&workload(app, name, *replicas, *serves_ui, *reads_log)),
+                writes_files,
+            } => to_value(&workload(
+                app,
+                name,
+                *replicas,
+                *serves_ui,
+                *reads_log,
+                *writes_files,
+            )),
 
             Node::Route {
                 name,
@@ -318,6 +327,12 @@ fn log_store(app: &str, name: &str, volume_gb: u32) -> StatefulSet {
                     containers: vec![Container {
                         name: SUBSTRATE.store.to_string(),
                         image: Some(SUBSTRATE.image.to_string()),
+                        // The three constants, and deliberately **not** a read-only root
+                        // filesystem: this is somebody else's image, Postgres writes its socket
+                        // and its temporary files outside the volume, and whether it does is not a
+                        // fact any Beck effect row knows. `docs/82` §82.3 says so rather than
+                        // leaving the asymmetry to be noticed.
+                        security_context: Some(hardened(None)),
                         env: Some(vec![
                             from_secret("POSTGRES_PASSWORD", &credentials(app), "password"),
                             EnvVar {
@@ -364,8 +379,45 @@ fn log_store(app: &str, name: &str, volume_gb: u32) -> StatefulSet {
     }
 }
 
+/// §6.5's "unavoidable" container defaults, minus the one that is a function of the program.
+///
+/// > Non-obvious defaults that should be *unavoidable*, because they are what separates "generated
+/// > YAML" from "production-grade generated YAML": non-root + read-only root filesystem + dropped
+/// > capabilities + `seccomp: RuntimeDefault` …
+///
+/// These three are constants: nothing a Beck program can do needs a Linux capability, needs to gain
+/// privileges partway through, or needs a syscall outside the runtime's default profile. They are
+/// applied to **every** container this emitter writes, including the substrate's, because they cost
+/// a third-party image nothing either.
+///
+/// The fourth — `readOnlyRootFilesystem` — is not a constant and is passed in, because for the app
+/// container it is a function of the program's effect row and for the substrate's it is a fact
+/// about somebody else's image (`docs/82` §82.3).
+fn hardened(read_only_root: Option<bool>) -> SecurityContext {
+    SecurityContext {
+        allow_privilege_escalation: Some(false),
+        capabilities: Some(Capabilities {
+            drop: Some(vec!["ALL".to_string()]),
+            ..Default::default()
+        }),
+        seccomp_profile: Some(SeccompProfile {
+            type_: "RuntimeDefault".to_string(),
+            ..Default::default()
+        }),
+        read_only_root_filesystem: read_only_root,
+        ..Default::default()
+    }
+}
+
 /// The service partition: one binary, told which program to run.
-fn workload(app: &str, name: &str, replicas: u32, serves_ui: bool, reads_log: bool) -> Deployment {
+fn workload(
+    app: &str,
+    name: &str,
+    replicas: u32,
+    serves_ui: bool,
+    reads_log: bool,
+    writes_files: bool,
+) -> Deployment {
     let mut metadata = meta(app, name);
     metadata.annotations = Some(BTreeMap::from([(
         "beck.dev/serves-ui".to_string(),
@@ -376,6 +428,10 @@ fn workload(app: &str, name: &str, replicas: u32, serves_ui: bool, reads_log: bo
         spec: Some(DeploymentSpec {
             replicas: Some(replicas as i32),
             selector: selector(name),
+            // §6.5 names this among the unavoidable defaults. Two is enough to roll back to and
+            // enough to see what the last rollout changed; unbounded is a cluster keeping every
+            // ReplicaSet a deploy has ever made.
+            revision_history_limit: Some(2),
             template: pod(
                 name,
                 PodSpec {
@@ -387,6 +443,9 @@ fn workload(app: &str, name: &str, replicas: u32, serves_ui: bool, reads_log: bo
                     containers: vec![Container {
                         name: "app".to_string(),
                         image: Some(format!("{app}:dev")),
+                        // The one derived bit of the security context: the root filesystem is
+                        // read-only unless the program's own row says it writes a file.
+                        security_context: Some(hardened(Some(!writes_files))),
                         args: Some(vec![
                             "run".to_string(),
                             APP_SOURCE.to_string(),
@@ -394,6 +453,11 @@ fn workload(app: &str, name: &str, replicas: u32, serves_ui: bool, reads_log: bo
                             // The store follows the log: a program with no `durable` effect has no
                             // log store to point at, and telling it to use one is how a pod ends up
                             // waiting on a Secret nobody emitted.
+                            //
+                            // Both answers are stores the runtime does not keep in a *file*, which
+                            // is what makes `readOnlyRootFilesystem` above sound: the deployed path
+                            // writes nothing outside the substrate's own volume. A file-backed
+                            // store here would need a volume, and would need that flag to know.
                             if reads_log { SUBSTRATE.store } else { "memory" }.to_string(),
                             "--addr".to_string(),
                             format!("0.0.0.0:{APP_PORT}"),

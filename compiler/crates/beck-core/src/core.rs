@@ -170,6 +170,19 @@ pub enum Prim {
     /// what stops a handler from catching a failure it cannot type — a caller's function may raise
     /// something this `try` never heard of, and that has to keep travelling.
     Try,
+    /// `parallel: block` — run the scope's children, then its tail with their results bound.
+    ///
+    /// The arguments are the children's thunks followed by the continuation, so a child cannot
+    /// outlive the scope: there is no handle, and the only thing that can read a child's result is
+    /// the one lambda the scope built. That is [`docs/38`](../../../../../docs/38-literature-survey.md)
+    /// §38.4's "spawn/await as effect operations, the scope as their handler" with the handler as
+    /// the *only* form — the operations are not separately reachable.
+    ///
+    /// The children are independent by construction (none of them can name another) and no child
+    /// may perform an effect another child could observe, so the scope's answer does not depend on
+    /// the order they ran in. A backend may therefore run them together; running them in the order
+    /// they are written is a correct implementation of that, and is what the tree-walker does.
+    Parallel,
     /// Wraps a value as `internal[T]`: storable, never Sendable.
     InternalOf,
     /// Unwraps one. Performs `cap.internal`, so only the authority chokepoint can do it.
@@ -201,6 +214,7 @@ impl Prim {
             Neg => "negate",
             Raise => "raise",
             Try => "try",
+            Parallel => "parallel",
             Abs => "abs",
             Sqrt => "sqrt",
             Sin => "sin",
@@ -309,6 +323,10 @@ impl Prim {
             Prim::MergeClients => vec![Effect::Ingress],
             Prim::Durable => vec![Effect::Durable],
             Prim::NewUuid | Prim::Now => vec![Effect::Nondet],
+            // The scope performs `spawn` itself; what its children perform is charged by the
+            // checker, from each child's own row, because a thunk's effects belong to the thunk's
+            // type and this is the form that calls them.
+            Prim::Parallel => vec![Effect::Spawn],
             Prim::SecretEnv => vec![Effect::Env],
             // Wrapping is free; *reading* is the privileged half, and the capability is what stops
             // a view unwrapping one to render it.

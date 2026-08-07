@@ -4,10 +4,10 @@
 
 Every diagnostic the compiler can raise carries a stable code. `beck explain error B0341` prints one of these entries at the terminal.
 
-The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans every non-test source file for a `"Bnnnn"` literal and fails if the set differs from this table in either direction. **113 codes.**
+The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans every non-test source file for a `"Bnnnn"` literal and fails if the set differs from this table in either direction. **118 codes.**
 
 
-## Reading the source — `B0100–B0121`
+## Reading the source — `B0100–B0122`
 
 | Code | | Meaning |
 |---|---|---|
@@ -24,6 +24,7 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0116` | error | **unreadable character** — The S-expression reader cannot begin an atom with this character. |
 | `B0120` | error | **unexpected token** — The Python-surface parser expected something else here; the message names what. One error per item: the parser recovers to the next top-level item, so a bad line does not make the rest of the file unparseable. |
 | `B0121` | error | **nesting is too deep to read** — The source nests deeper than the front end follows — `beck_diag::depth::MAX_NESTING` levels of brackets, indentation or S-expression lists. The bound is a fixed count rather than a reading of the stack, so the same file is accepted or refused identically in every build; without it, deep enough input aborted the process with no span at all. |
+| `B0122` | error | **an expression chains more operators than the reader will follow** — A left-associative chain — `1 + 1 + 1 + …` — is flat in source and builds a left-leaning tree of the same depth, one level per operator. The Pratt loop that reads it does not recurse, so none of the parser's recursion counters sees the depth, and a long enough chain reached the end of the host stack in whatever walked the tree afterwards. The bound is `beck_diag::depth::MAX_BLOCK` — the same ceiling a block of sequential bindings takes, because it is the same axis: a flat run of things that costs one tree level each. |
 
 ## Macro expansion — `B0200–B0213`
 
@@ -41,7 +42,7 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0212` | error | **`ui` block has more than one root** — An `Html` value is a single tree. Wrap the elements in one — a `div:` or `main:` block. |
 | `B0213` | error | **the form nests too deep to expand** — The expander walks a form's arguments as deeply as they nest, and stops at the count the reader stops at. This is not `B0201`: nothing here says a macro failed to terminate — the two were one counter until they were separated, and a deep expression with no macros in it reported the wrong one. |
 
-## Names, types and effects — `B0300–B0396`
+## Names, types and effects — `B0300–B0399`
 
 | Code | | Meaning |
 |---|---|---|
@@ -92,6 +93,7 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0385` | error | **orphan impl** — An impl belongs with the trait or with the type. Implementing somebody else's trait for somebody else's type is what lets two modules supply one and disagree. |
 | `B0386` | error | **no implementation can be chosen here** — An implementation comes from a concrete type or from a bound on a type parameter — write `[T: Trait]` to say the parameter has one. A trait method and a bounded definition are both called rather than passed: the implementation is supplied at the call site, so a reference that is never called has nowhere to receive it. |
 | `B0387` | error | **the type does not implement the trait** — There is no `impl Trait for Type` in scope for the receiver's type. |
+| `B0389` | error | **a block has more statements than the checker will follow** — A block is a chain of `let`s however flat it looks in source, so the checker recurses once per statement and a long enough body reaches the end of the host stack. The bound is `beck_diag::depth::MAX_BLOCK` — much larger than the nesting ceiling, because 256 levels of nesting is pathological and 256 sequential bindings is merely a long function. It is a fixed count rather than a reading of the stack, so the same file is accepted or refused identically in a debug and a release build; without it, a long enough body aborted the process with no span at all. |
 | `B0390` | error | **the expression nests too deep to check** — The checker walks an expression and a type as deeply as they nest, and stops at `beck_diag::depth::MAX_NESTING` levels — the same count the reader stops at, because the checker can be handed a tree a macro produced rather than one anybody typed. Everything downstream walks the `Core` this pass built, so it is bounded by the same number. |
 | `B0391` | error | **a raised value must have a declared type** — `raise` performs `raises(T)`, and the atom names `T` so that a handler can say what it catches. A builtin will not do: `raises(Int)` would make every integer failure in a program the same failure, and a handler could not tell them apart. |
 | `B0392` | error | **nothing here can fail, and nothing says what this would catch** — A `try:` reifies one failure into a `Result`, and it takes the error type from the enclosing signature's `Result[T, E]` where there is one and from the block's own row where there is not. Neither said anything here. Either the call you meant to make is not there, or the `try:` is left over from a signature that has stopped failing — which is the good case, and the diagnostic is how you find out. |
@@ -99,6 +101,9 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0394` | error | **the row is declared twice** — Two `row Name = …` declarations with the same name. A row alias is a name for a bundle of effect atoms, and a second one would make every `uses` clause mentioning it ambiguous. |
 | `B0395` | error | **the host of an outbound call has to be written at the call site** — `http_fetch` performs `net.out(host)`, and §6.5 derives the cluster's egress policy from that atom and nothing else. A host computed at run time is an outbound call the deployment cannot be told about, so the argument is read where it is written. Compute the path, the port, the headers and the body; or take a closure, so the caller names its own host and the row carries the atom out. |
 | `B0396` | error | **that is not a host an outbound call can name** — The host becomes a NetworkPolicy peer and a `uses net.out(…)` clause, both of which are written as bare DNS labels — so a scheme, a port or a path in it is a name neither could carry. `origin` is refused for a different reason: it is the one outbound atom a client tier discharges, and a client reaches its own server over the command channel. |
+| `B0397` | error | **a parallel scope has fewer than two children** — A `parallel:` scope runs its bindings as children. With one there is nothing to run it alongside, and with none there is nothing to run — either way the form is claiming a concurrency it does not have, and an ordinary block says the same thing without the claim. The tail is everything after the last binding, so a scope written with its work in the tail has no children either. |
+| `B0398` | error | **a child of a parallel scope names another child** — The children of a `parallel:` scope run together, so none of them can see another's result — a child that could would have to run second, and then it is not a child but a next line. Move the reader into the scope's tail, which runs after the join with every child's result in scope, or out into a second scope below this one. |
+| `B0399` | error | **a child of a parallel scope performs an effect another child could observe** — The claim a `parallel:` scope makes is that its answer does not depend on the order its children ran in, and an effect on state the program holds — the log, the document, the merge point, a file, an external store — breaks it: two children appending to the log in the other order is a different log. `net.out(host)` is not on that list and is the case the form exists for. Do the shared-state part in the tail, which runs once, after the join. |
 
 ## Placement — `B0400–B0404`
 

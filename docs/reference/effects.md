@@ -12,7 +12,8 @@ A definition's effect row is **inferred**, not declared (§3.2), and its placeme
 | `nondet` | yes | yes | — | — | Reads a clock or a random source, or mints an id. |
 | `net.out(host)` | — | yes | — | — | An outbound call to a named host. The host is what becomes a NetworkPolicy peer (§6.5). |
 | `net.in` | — | yes | — | — | Accepts inbound connections. |
-| `fs(path)` | — | yes | — | — | Reads or writes a path. |
+| `fs.read(path)` | — | yes | — | — | Reads a path. |
+| `fs.write(path)` | — | yes | — | — | Writes a path. |
 | `env` | — | yes | — | — | Reads process environment. |
 | `spawn` | — | yes | — | — | Starts concurrent work. |
 | `cap.x` | — | yes | — | — | A capability the caller must hold. Forgetting an auth check leaves `cap.*` undischarged — a compile error, not a pentest finding (§3.5). |

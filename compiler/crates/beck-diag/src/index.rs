@@ -223,6 +223,17 @@ pub const INDEX: &[CodeEntry] = &[
          than a reading of the stack, so the same file is accepted or refused identically in every \
          build; without it, deep enough input aborted the process with no span at all.",
     ),
+    e(
+        "B0122",
+        Stage::Syntax,
+        "an expression chains more operators than the reader will follow",
+        "A left-associative chain — `1 + 1 + 1 + …` — is flat in source and builds a left-leaning \
+         tree of the same depth, one level per operator. The Pratt loop that reads it does not \
+         recurse, so none of the parser's recursion counters sees the depth, and a long enough \
+         chain reached the end of the host stack in whatever walked the tree afterwards. The bound \
+         is `beck_diag::depth::MAX_BLOCK` — the same ceiling a block of sequential bindings takes, \
+         because it is the same axis: a flat run of things that costs one tree level each.",
+    ),
     // ------------------------------------------------------------------------ B02xx: macros
     e(
         "B0200",
@@ -618,6 +629,18 @@ pub const INDEX: &[CodeEntry] = &[
         "There is no `impl Trait for Type` in scope for the receiver's type.",
     ),
     e(
+        "B0389",
+        Stage::Types,
+        "a block has more statements than the checker will follow",
+        "A block is a chain of `let`s however flat it looks in source, so the checker recurses once \
+         per statement and a long enough body reaches the end of the host stack. The bound is \
+         `beck_diag::depth::MAX_BLOCK` — much larger than the nesting ceiling, because 256 levels \
+         of nesting is pathological and 256 sequential bindings is merely a long function. It is a \
+         fixed count rather than a reading of the stack, so the same file is accepted or refused \
+         identically in a debug and a release build; without it, a long enough body aborted the \
+         process with no span at all.",
+    ),
+    e(
         "B0390",
         Stage::Types,
         "the expression nests too deep to check",
@@ -677,6 +700,36 @@ pub const INDEX: &[CodeEntry] = &[
          written as bare DNS labels — so a scheme, a port or a path in it is a name neither could \
          carry. `origin` is refused for a different reason: it is the one outbound atom a client \
          tier discharges, and a client reaches its own server over the command channel.",
+    ),
+    e(
+        "B0397",
+        Stage::Types,
+        "a parallel scope has fewer than two children",
+        "A `parallel:` scope runs its bindings as children. With one there is nothing to run it \
+         alongside, and with none there is nothing to run — either way the form is claiming a \
+         concurrency it does not have, and an ordinary block says the same thing without the \
+         claim. The tail is everything after the last binding, so a scope written with its work \
+         in the tail has no children either.",
+    ),
+    e(
+        "B0398",
+        Stage::Types,
+        "a child of a parallel scope names another child",
+        "The children of a `parallel:` scope run together, so none of them can see another's \
+         result — a child that could would have to run second, and then it is not a child but a \
+         next line. Move the reader into the scope's tail, which runs after the join with every \
+         child's result in scope, or out into a second scope below this one.",
+    ),
+    e(
+        "B0399",
+        Stage::Types,
+        "a child of a parallel scope performs an effect another child could observe",
+        "The claim a `parallel:` scope makes is that its answer does not depend on the order its \
+         children ran in, and an effect on state the program holds — the log, the document, the \
+         merge point, a file, an external store — breaks it: two children appending to the log in \
+         the other order is a different log. `net.out(host)` is not on that list and is the case \
+         the form exists for. Do the shared-state part in the tail, which runs once, after the \
+         join.",
     ),
     // -------------------------------------------------------------------- B04xx: placement
     e(

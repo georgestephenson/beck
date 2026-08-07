@@ -926,7 +926,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// `net.out(payments.example.com)`, `cap.session`, `fs(/tmp)`, `env`.
+    /// `net.out(payments.example.com)`, `cap.session`, `fs.read(/tmp)`, `env`.
     ///
     /// Reassembled from tokens rather than sliced from the source, because the parser does not hold
     /// the source; the atom vocabulary is small enough that this is exact.
@@ -1439,10 +1439,43 @@ impl<'a> Parser<'a> {
         self.expr_bp_from(lhs, min_bp)
     }
 
+    /// The Pratt loop. **Iterative**, and that is why it needs a counter of its own.
+    ///
+    /// A left-associative chain — `1 + 1 + 1 + …` — is flat in source and builds a *left-leaning
+    /// tree of the same depth*, one level per operator. Because the loop does not recurse, none of
+    /// the parser's recursion counters ever sees it: `docs/85` measured 300,000 terms aborting the
+    /// process while 120,000 was refused by the macro expander's ceiling, which is the wrong
+    /// counter catching it for the wrong reason and only sometimes.
+    ///
+    /// This is the same axis `beck_diag::depth::MAX_BLOCK` bounds for a block of sequential
+    /// bindings, and it takes the same ceiling for the same reason: a flat run of `n` things that
+    /// costs one tree level each. A counter on *tree depth built* rather than on *recursion done*
+    /// is the general lesson, and the one place the two differ is exactly here.
     fn expr_bp_from(&mut self, lhs: Node, min_bp: u8) -> Option<Node> {
         let mut lhs = lhs;
+        let mut chain: u32 = 0;
 
         loop {
+            chain += 1;
+            if chain > beck_diag::depth::MAX_BLOCK {
+                if self.nesting.should_report() {
+                    let span = lhs.span();
+                    let note = self.nesting.note_about("operators in one chain").replace(
+                        &format!("{} operators", self.nesting.limit()),
+                        &format!("{} operators", beck_diag::depth::MAX_BLOCK),
+                    );
+                    self.diags.push(
+                        beck_diag::Diagnostic::error(
+                            "B0122",
+                            "this expression chains too many operators to read",
+                            span,
+                        )
+                        .with_primary_label("the reader gave up here")
+                        .with_note(note),
+                    );
+                }
+                return None;
+            }
             // `a if c else b` — Python's conditional expression, at the lowest precedence, which
             // is what makes `x = if c: 1 else: 2` (§2.6) expressible without a statement.
             if self.at_kw("if") && min_bp == 0 {
@@ -1531,7 +1564,31 @@ impl<'a> Parser<'a> {
         self.postfix(false)
     }
 
+    /// A primary and everything applied to it — `.field`, `(args)`, `[index]`, `: block`.
+    ///
+    /// **Counted**, and that is not a duplicate of [`Parser::primary`]'s counter. `primary` enters
+    /// and *leaves* around the leaf; the recursion that makes `g(g(g(…)))` deep happens afterwards,
+    /// in the loop below, through `call_args` → `expr` → `postfix`. So the depth returned to zero
+    /// at every level and 80,000 nested calls aborted the process while 80,000 nested *parens* —
+    /// which recurse inside `primary_inner`, where the counter is still held — were refused with a
+    /// span. `docs/85` found it with a generator; `docs/42` §42.2 named the shape in advance,
+    /// quoting the Scriban advisory: a limit at the one production somebody thought of is bypassed
+    /// through a different one.
+    ///
+    /// The cost is that a nested expression spends two levels of the ceiling rather than one. That
+    /// is affordable at 256 against a corpus whose deepest expression is 11 and a SICP chapter's
+    /// under 20, and the ceiling exists "to turn an abort into a message, not to have an opinion
+    /// about style".
     fn postfix(&mut self, allow_block: bool) -> Option<Node> {
+        if !self.enter() {
+            return None;
+        }
+        let out = self.postfix_inner(allow_block);
+        self.nesting.leave();
+        out
+    }
+
+    fn postfix_inner(&mut self, allow_block: bool) -> Option<Node> {
         let mut e = self.primary()?;
         loop {
             if self.at(&Raw::Dot) {
@@ -1695,6 +1752,13 @@ impl<'a> Parser<'a> {
             let bspan = body.span();
             return Some(Node::form(sym::TRY, vec![body], span.to(bspan)));
         }
+        if self.at_kw("parallel") {
+            self.bump();
+            self.expect(&Raw::Colon, "`:` after `parallel`");
+            let body = self.block()?;
+            let bspan = body.span();
+            return Some(Node::form(sym::PARALLEL, vec![body], span.to(bspan)));
+        }
         if self.at_kw("quote") {
             self.bump();
             self.expect(&Raw::Colon, "`:` after `quote`");
@@ -1814,7 +1878,24 @@ impl<'a> Parser<'a> {
 
     /// A type is a name, a generic application `Map[K, V]`, or a function type `(A, B) -> R`.
     /// It reads to the same `Node` shape as any other application: `(Map K V)`.
+    /// A type, which nests exactly as an expression does — `list[list[list[Int]]]`, `(A, B) -> C`
+    /// — and recurses in four places below.
+    ///
+    /// Counted here rather than only in `expr`/`primary`, because bounding one production is not
+    /// bounding the grammar: `docs/42` §42.2 quotes the Scriban advisory for that lesson and
+    /// `docs/85` is where this project learned it the same way, from a generator that reached
+    /// 80,000 levels of `list[` and aborted the process while every other shape was refused with a
+    /// span.
     fn type_expr(&mut self) -> Option<Node> {
+        if !self.enter() {
+            return None;
+        }
+        let out = self.type_expr_inner();
+        self.nesting.leave();
+        out
+    }
+
+    fn type_expr_inner(&mut self) -> Option<Node> {
         let start = self.span();
         if self.at(&Raw::LParen) {
             self.bump();

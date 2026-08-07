@@ -333,7 +333,12 @@ impl Checker<'_> {
             .resolve_row(&row)
             .atoms
             .iter()
-            .filter(|e| !e.is_ambient())
+            // `spawn` is not one of these. The rule's reason is that a test must not depend on
+            // anything outside itself, and a `parallel:` scope is the program's own control flow —
+            // it crosses no boundary, reaches no host, and is the one atom on §3.3's list that
+            // `beck_core::testing` will not stand in for, because a stub would delete the
+            // children rather than the thing they call.
+            .filter(|e| !e.is_ambient() && **e != Effect::Spawn)
             .cloned()
             .collect();
         if !leaked.is_empty() {

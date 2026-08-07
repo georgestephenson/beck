@@ -1301,6 +1301,32 @@ impl<'h> Interp<'h> {
                     },
                 }
             }
+            // `parallel: block` — run the children, then the tail with their results bound.
+            //
+            // The children are run in the order they are written. The checker has proved that no
+            // child can observe another (`check::observable_order`) and that none can name another,
+            // so the scope's answer is the same whichever order they ran in — running them in one
+            // is a correct implementation of a form whose meaning is that the order is nobody's
+            // business. Nothing here runs them at the same time, and `docs/80` §80.5 says what
+            // would have to change for something to.
+            //
+            // A child that raises stops the scope at that child. With an ordered join that is the
+            // earliest failing child rather than the earliest failure, which is the deterministic
+            // half of "cancellation is the error row crossing the scope".
+            Prim::Parallel => {
+                if args.len() < 2 {
+                    return Err(EvalError::new(
+                        "`parallel` expects its children and a continuation",
+                        span,
+                    ));
+                }
+                let k = args.pop().expect("length checked");
+                let mut results = Vec::with_capacity(args.len());
+                for thunk in &args {
+                    results.push(self.apply(thunk, Vec::new(), span)?);
+                }
+                self.apply(&k, results, span)
+            }
             Prim::Add => {
                 want(2)?;
                 let b = args.pop().expect("arity checked");
