@@ -141,9 +141,14 @@ the thing you are guarding against would make it so.
   `rustup toolchain uninstall 1.94.1 && rustup toolchain install 1.94.1`.
 - **Verification, cheapest first** (from `compiler/`): `cargo test -p <crate>`, then
   `cargo test --workspace --all-targets`, `cargo clippy --workspace --all-targets`,
-  `cargo fmt --all --check` and `RUSTDOCFLAGS=-D warnings cargo doc --workspace --no-deps` before
+  `cargo fmt --all --check` and `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps` before
   pushing. CI denies warnings, and the last one is a separate gate rather than a formality:
   `.github/workflows/docs.yml` runs it, and a broken intra-doc link fails there and nowhere else.
+  **Quote the value.** Written without the quotes, the shell reads the assignment as
+  `RUSTDOCFLAGS=-D` and then takes the next word — `warnings` — as the command to run. It fails
+  with "command not found", `cargo` never runs, and the step reads as a verification that performed
+  none. That is worse than a missing step, because whoever followed it believes the check ran
+  (`docs/88` §88.8). `docs.rs::every_shell_command_in_the_instructions_runs` is the gate.
 - **Environment-dependent suites degrade by skipping, and a skip prints itself** — read the output
   for it:
   - Kubernetes conformance (`beck-infra/tests/conformance.rs`): skips without a cluster;

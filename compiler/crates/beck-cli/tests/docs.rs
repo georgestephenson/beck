@@ -512,3 +512,55 @@ fn the_published_guide_is_the_checked_guide() {
     // And nothing in it is raw HTML from the source.
     assert!(!html.contains("<script"), "the guide rendered a script tag");
 }
+
+/// Every shell command in `AGENTS.md` is one the shell would actually run.
+///
+/// One deterministic property, and it is the one that bit: an environment assignment whose value
+/// contains a space has to be quoted. Unquoted, `RUSTDOCFLAGS=-D warnings cargo doc …` is the
+/// assignment `RUSTDOCFLAGS=-D` followed by the command `warnings`, which fails with "command not
+/// found" — so the instruction reads as a verification step and performs none. That is worse than a
+/// missing step, because whoever follows it believes the check ran (`docs/88` §88.8).
+///
+/// Deliberately narrow. This does not run the commands — several take minutes and one needs a
+/// cluster — and it has no view on whether they are the right commands. It asserts the one thing a
+/// reader cannot see by looking.
+#[test]
+fn every_shell_command_in_the_instructions_runs() {
+    let text = std::fs::read_to_string(repo_root().join("AGENTS.md")).expect("AGENTS.md");
+    let mut bad = Vec::new();
+    // Commands appear in backticks in prose rather than in fenced blocks, so the span between two
+    // backticks is the unit — the same thing a reader would copy.
+    for span in text.split('`').skip(1).step_by(2) {
+        let Some(assignment) = span.split_whitespace().next() else {
+            continue;
+        };
+        let Some((name, value)) = assignment.split_once('=') else {
+            continue;
+        };
+        // An environment assignment: an upper-case name before the first `=`, and something after
+        // it that the rest of the line continues.
+        if name.is_empty()
+            || !name
+                .chars()
+                .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+        {
+            continue;
+        }
+        let rest = span[assignment.len()..].trim_start();
+        if rest.is_empty() {
+            continue;
+        }
+        let quoted = value.starts_with('"') || value.starts_with('\'');
+        // A flag as the value means the argument after it belongs to the flag, not to the command:
+        // `X=-D warnings cargo doc` runs `warnings`, not `cargo`.
+        if !quoted && value.starts_with('-') {
+            bad.push(span.to_string());
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "AGENTS.md gives a command whose environment assignment is unquoted, so the shell would \
+         run the next word as the command rather than passing it as part of the value:\n  {}",
+        bad.join("\n  ")
+    );
+}

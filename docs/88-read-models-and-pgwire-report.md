@@ -266,6 +266,23 @@ publish a tutorial with a step missing.
 been wrong since [`86`](86-getting-started.md) landed, in the row that is the criterion, which is
 the worst place for a document to rot. Corrected in the same change.
 
+**And the instruction that would have caught this change's own defect did not run.** `AGENTS.md`'s
+verification list ends with a rustdoc build under `-D warnings`, written without quotes around the
+flag. A shell reads that as the assignment `RUSTDOCFLAGS=-D` and then runs the *next word* as the
+command: it fails with "command not found", `cargo` is never invoked, and the step looks like it
+verified something. It has presumably never run. CI is unaffected — the workflow sets the variable
+in YAML, where no shell splits it — so the failure mode is exactly the dangerous one: the local
+check is silent and the remote one is the first to speak. Two broken intra-doc links in this change
+reached CI that way.
+
+The fix is one pair of quotes, and the gate is
+`docs.rs::every_shell_command_in_the_instructions_runs`: an environment assignment in `AGENTS.md`
+whose value begins with a flag must be quoted, or the word after it is the command. It was checked
+against the original text before the original text was fixed — which is the discipline
+[`84`](84-a-quota-is-only-as-good-as-its-actor-report.md) §84.5 asks for, and the fifth gate in this
+project's history that could not have failed. The pattern holds for all five: this one, too, would
+have been written by the person who already knew the answer.
+
 ## 88.9 What this corrects, elsewhere
 
 | Document | Correction |
@@ -277,6 +294,7 @@ the worst place for a document to rot. Corrected in the same change.
 | [`43`](43-threat-model.md) §43.4 | A new absence: no authentication on the read-model port, with the loopback bound as the compensating control |
 | [`67`](67-sqlite-report.md) §67.1 | "this substrate is what it would be built on" — it is not, and D26 is why. The transaction property is still available and still unused |
 | [`08`](08-roadmap.md) exit criterion | The tutorial row said "There is none". [`86`](86-getting-started.md) is one, and it is now published |
+| `AGENTS.md`'s verification list | Its rustdoc step never ran: `RUSTDOCFLAGS` was assigned an unquoted value beginning with a flag, so the shell ran the next word as the command. Quoted, and gated (§88.8) |
 
 ## 88.10 What Phase 3 is still not
 

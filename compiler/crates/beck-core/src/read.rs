@@ -46,9 +46,9 @@
 //!
 //! It is not a query planner. [`04`](../../../../../docs/04-compiler-architecture.md) §4.2 keeps the
 //! `Query` sub-language symbolic, and §20.5 holds `beck explain query` until an engine compiles one;
-//! [`Sql`] here is a hand-written subset over one table at a time, with no joins, no subqueries and
-//! no aggregation beyond `count(*)`. It exists so that an outside tool can read what the program
-//! holds, which is what §5.3's row is for.
+//! what [`parse`] accepts is a hand-written subset over one table at a time, with no joins, no
+//! subqueries and no aggregation beyond `count(*)`. It exists so that an outside tool can read what
+//! the program holds, which is what §5.3's row is for.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;

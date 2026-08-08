@@ -1347,7 +1347,7 @@ impl SharedDataflow {
     /// ([`51`](../../../../../docs/51-arrangement-lifecycle-report.md)). The alternative, reading the
     /// arrangements without joining the set, has a release racing every query.
     ///
-    /// Its frontier stays at [`UNRENDERED`]: a reader that never applies a delta cannot use the
+    /// Its frontier stays at the unrendered one: a reader that never applies a delta cannot use the
     /// change history, so pinning any of it for this reader would retain history nobody reads.
     pub fn reader(self: &Arc<Self>) -> Reader {
         let mut inner = self.write();
