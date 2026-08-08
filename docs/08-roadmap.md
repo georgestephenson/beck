@@ -128,7 +128,8 @@ dependencies whose signatures didn't change.
 > are untouched.
 >
 > *That paragraph is the count as those three reports were written. The incremental-views bullet is
-> now all but its query fusion ([`88`](88-read-models-and-pgwire-report.md)), and the reports since
+> now complete ([`88`](88-read-models-and-pgwire-report.md),
+> [`89`](89-query-fusion-report.md)), and the reports since
 > have moved several others; the bullet list below carries the current status of each and this
 > paragraph carries the arithmetic of the day it was written, which is what a report does.*
 >
@@ -199,9 +200,11 @@ dependencies whose signatures didn't change.
 > half paid once and the half paid per connection. The SQL read models, pgwire and query fusion in
 > the bullet below are still untouched.
 >
-> *The first two of those three are built ([`88`](88-read-models-and-pgwire-report.md)), on the same
-> cut this paragraph is about: a table is a view that does not depend on who is asking. Query fusion
-> is not.*
+> *All three are built: the read models and pgwire in
+> [`88`](88-read-models-and-pgwire-report.md), on the same cut this paragraph is about — a table is
+> a view that does not depend on who is asking — and query fusion in
+> [`89`](89-query-fusion-report.md), where that same cut turned out to be what **refuses** a
+> rewrite rather than what enables one.*
 >
 > The nine other bullets are **untouched**, and [`26`](26-arrangement-sharing-report.md) §26.9 names
 > them one at a time rather than by omission. Of the two added since (§8.4), the
@@ -240,8 +243,10 @@ dependencies whose signatures didn't change.
   arrangement projected as relations rather than a second copy written into Postgres
   ([`10`](10-decisions.md) D26), because a durable projection puts view maintenance back on the
   write path §26.2 argued it off. What decides which signals are tables is the same `per_session`
-  cut the fanout uses. **Query fusion is the only part of this bullet still untouched**, and
-  `beck explain query` and `beck explain cost` behind it.*
+  cut the fanout uses. **Query fusion is built too** ([`89`](89-query-fusion-report.md)), with
+  `beck explain query` and `beck explain cost` behind it — five local rewrites on the dataflow
+  plan, refused where the operator they would absorb is read twice, is named by a signal, or is
+  shared while its consumer is per session, which makes this **bullet complete**.*
 - **Mode B client**: per-component WASM (view + fold + signal kernel), optimistic application with
   `seq` reconciliation, freshness-typed pending state; size budget CI gate (< 150 KB brotli per
   component bundle).
@@ -337,12 +342,13 @@ dependencies whose signatures didn't change.
 
 **Exit**: an outside developer builds a non-trivial app from documentation alone, without asking the
 team a question. Track this literally as the acceptance test.
-**Not met.** Of the fourteen bullets: **six built outright** — `test` blocks, the SQLite substrate,
-the standard library, the language's own means of abstraction, the LSP, and the expressiveness suite
-(three chapters of SICP and the Felleisen table, with chapters 4–5 belonging to Phase 5).
-**Two built but for a named remainder**: incremental views want only their query fusion
-([`88`](88-read-models-and-pgwire-report.md)), and the concurrency-and-errors bullet has `Result`,
-error rows and `parallel:` but not the rest of pattern matching. **One half-built**: identity has
+**Not met.** Of the fourteen bullets: **seven built outright** — `test` blocks, the SQLite
+substrate, the standard library, the language's own means of abstraction, the LSP, the
+expressiveness suite (three chapters of SICP and the Felleisen table, with chapters 4–5 belonging
+to Phase 5), and incremental views, whose last part is
+[`89`](89-query-fusion-report.md)'s fusion.
+**One built but for a named remainder**: the concurrency-and-errors bullet has `Result`, error rows
+and `parallel:` but not the rest of pattern matching. **One half-built**: identity has
 its seam and not its relying party. **Five untouched**: the LLVM backend, Mode B, client polish, the
 playground, and the supply-chain tooling. The criterion is not a count of those, though — it is a
 claim about a *person*, and the honest way to say how close it is is by the questions such a
@@ -723,8 +729,9 @@ needs an outside developer, and none has read it.
 client polish; the LSP; ~~SQL read models, pgwire~~ — **built**
 ([`88`](88-read-models-and-pgwire-report.md)), and they were not a Lane B item in the shape this
 list assumed: the schema derivation is a pass over the plan, the wire is `beck-rt`, and neither
-touched `engine.rs` beyond one reader type — query fusion; `test --update`; the SQLite
-substrate; ~~the shared dataflow's three unfinished properties
+touched `engine.rs` beyond one reader type; ~~query fusion~~ — **built**
+([`89`](89-query-fusion-report.md)), and it is a pass over the plan that added one operator to the
+engine and no scheduling to it; `test --update`; the SQLite substrate; ~~the shared dataflow's three unfinished properties
 ([`26`](26-arrangement-sharing-report.md) §26.9)~~ — **two of the three built**
 ([`51`](51-arrangement-lifecycle-report.md)): the arrangements are released when the last subscriber
 goes and the change history is compacted to the oldest reader's frontier, both as one reader-set
@@ -787,7 +794,7 @@ Recommended pairings, in order:
 | ~~**Then**~~ | ~~Lane A: the rest of Wave 2 — `Set`, dates~~ | ~~Lane B: the shared dataflow's three loose ends~~ | **Half done.** `Set` and dates landed ([`50`](50-collections-and-dates-report.md)) and were not Lane A at all: two files in `compiler/lib/`, no primitive, and the only Rust touched was one diagnostic's label. Lane B is untouched, so the pairing was never tested — the prediction it made cannot be claimed to have held |
 | ~~**Then**~~ | ~~Lane A: bignums, coercion, `@derive`~~ | ~~Lane B: the shared dataflow's three loose ends~~ | **Half done, and the other half.** Lane B was taken at last, after being the recommended Branch 2 for three consecutive rewrites: two of the three loose ends are closed ([`51`](51-arrangement-lifecycle-report.md)) and the third — the render lock — is deliberately left. The prediction held exactly: `engine.rs`, `beck-rt/` and one test suite, and nothing in `check/`, `ty.rs` or `core.rs`. Lane A is untouched, so this pairing was again never actually run as a pair |
 | ~~**Then**~~ | ~~Lane A: bignums, coercion, `@derive`~~ | ~~Lane B: SQL read models and pgwire~~ | **Half done, and the other half again.** Lane B was taken ([`88`](88-read-models-and-pgwire-report.md)) and the prediction held: `beck-core/src/read.rs`, `beck-rt/src/pgwire.rs`, one reader type on `engine.rs`, and nothing in `check/`, `ty.rs` or `core.rs`. Lane A is untouched, so this pairing was never run as a pair either — the fourth consecutive rewrite in which it was not |
-| **Now** | Lane A: `Ord` as a trait, which [`54`](54-ordering.md) writes out and explicitly does *not* recommend, or the pattern-matching completion the error-rows bullet still names | Lane B: query fusion on symbolic plans — the last of the incremental-views bullet | `beck-rt` and `engine.rs` are untouched by anything in `check/` |
+| **Now** | Lane A: `Ord` as a trait, which [`54`](54-ordering.md) writes out and explicitly does *not* recommend, or the pattern-matching completion the error-rows bullet still names | Lane B: ~~query fusion on symbolic plans~~ — **built** ([`89`](89-query-fusion-report.md)); what is left in this lane is Mode B's server half and the render lock ([`51`](51-arrangement-lifecycle-report.md) §51.7) | `beck-rt` and `engine.rs` are untouched by anything in `check/` |
 | **Then** | Lane A, continued | Lane E: the LLVM backend — and per §8.4 the AWFY/CLBG harness lands with whichever arrives second | The backend seam exists so these do not interact |
 | **Any time** | — | Lane F; Lane C's LSP; more of SICP | No predecessors, no collisions |
 

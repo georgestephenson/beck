@@ -90,12 +90,35 @@ The signal graph, and what the splitter made of it — or, given a type, everywh
 
 Which views a dataflow plan could maintain by delta, and why the rest could not (§3.8).
 
-The analysis, not the engine: every view is a full recompute per event today, and the report says so before it says anything else.
+The analysis rather than the plan: it asks whether a *view* is built only from operations with delta rules, and `beck explain query` prints the operators the view actually compiles to. A view this reports as `recompute` may still have its collections maintained around whatever blocked it.
 
 | Argument | | |
 |---|---|---|
 | `<FILE>` | FILE |  |
 | `<VIEW>` | VIEW | One view, by the name `beck explain flow` gives it |
+
+
+## `beck explain query`
+
+The view as a dataflow plan, and what query fusion made of it (§4.7, §5.3).
+
+Every operator, what it reads, what orders its arrangement and which side of the session cut it is on — then the rewrites that fired, and the ones that matched a rule and were refused, with the condition that refused each.
+
+| Argument | | |
+|---|---|---|
+| `<FILE>` | FILE |  |
+| `--unfused` | true \| false | The plan as the decomposition produced it, before any rewrite — one operator per construct the source names, which is what the rules are applied to |
+
+
+## `beck explain cost`
+
+What one event costs this program's view, operator by operator (§4.7).
+
+In the engine's own units — applications, entries touched, entries copied, operators recomputed — as a function of the change `δ` and the collection `n`, so the answer is the same on every machine.
+
+| Argument | | |
+|---|---|---|
+| `<FILE>` | FILE |  |
 
 
 ## `beck explain sql`

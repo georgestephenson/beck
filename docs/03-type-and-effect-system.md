@@ -414,8 +414,9 @@ State schema evolution is a *language* concern, not an ops concern (Lamdera's pr
    — **all three are Phase 3** ([`24`](24-incremental-views-report.md),
    [`26`](26-arrangement-sharing-report.md), [`88`](88-read-models-and-pgwire-report.md)). The read
    models are not *materialized* in the sense this line assumed: they are the arrangements, served
-   as relations rather than projected into tables ([`10`](10-decisions.md) D26). Query fusion is
-   still untouched.
+   as relations rather than projected into tables ([`10`](10-decisions.md) D26). **Query fusion is
+   built too** ([`89`](89-query-fusion-report.md)), on the dataflow plan rather than on §4.2's
+   `Query` sub-language, which is still symbolic and still unwritten — so this item is complete.
 6. Migrations/upcasters + operator choreography; replay/fork tooling.
 
 Stages 1–2 are a "typed tierless framework" someone could adopt. Stages 3–6 are the moat.

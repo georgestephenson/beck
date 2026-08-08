@@ -104,7 +104,7 @@ different claims.**
 
 `compiler/crates/beck-cli/tests/` holds them, and they are how a claim in a document stays true:
 the differential, replay-determinism, backend-seam, scaling, frames, security, pending-security,
-corpus, placement-property, general-slicer, incremental-analysis, incremental-engine,
+corpus, placement-property, general-slicer, incremental-analysis, incremental-engine, fusion,
 shared-arrangement, subscription, view-metrics, read-model, SICP, Are We Fast Yet, Benchmarks Game,
 tests-in-Beck, UI, workflow-cross-check, documentation, getting-started, outbound, compile-speed,
 concurrency, round-trip, runtime-edge, grammar-fuzz and diagnostic-snapshot suites, plus the five

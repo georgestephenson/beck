@@ -137,7 +137,10 @@ functions. The lowering question is substrates. **We do not write a storage engi
   Per-session memory is exported ([`26`](26-arrangement-sharing-report.md) §26.7). **The read
   models and the pgwire exposure below are built too** ([`88`](88-read-models-and-pgwire-report.md)),
   and on the same cut: a table is a view that does not depend on who is asking, which is the
-  `per_session` boundary this paragraph draws, used a second time. Query fusion is not.
+  `per_session` boundary this paragraph draws, used a second time. **Query fusion is built too**
+  ([`89`](89-query-fusion-report.md)), and the condition that turned out to matter is this
+  paragraph's: a rewrite may not fuse a shared operator into a per-session one, because the smaller
+  plan is the slower program.
 - v0.1 does **not** need the dataflow engine: full recompute per event on in-memory folds is
   semantically identical and fine at todo-app scale; the incremental plan is an optimisation with
   an exact correctness oracle (recompute) to test against — a luxurious position for CI
@@ -147,6 +150,12 @@ functions. The lowering question is substrates. **We do not write a storage engi
 - Query fusion still matters (a `for` over a view of a view should become one plan, not N+1
   lookups); it is a plan-rewrite on symbolic `Query` nodes, kept symbolic in `Core` precisely for
   this ([`04`](04-compiler-architecture.md) §4.2).
+  *Built* ([`89`](89-query-fusion-report.md)), and on the **dataflow** plan rather than on the
+  `Query` sub-language this line names: `for t in todos:` decomposes to a `map_list` under a
+  `flatten` and fuses to one operator, so the arrangement between them is never built. Five local
+  rewrites, each sound against the change semantics; a rewrite is refused when the operator it would
+  absorb is read twice, is named by a signal, or is shared while its consumer is per session.
+  `beck explain query` prints both what fused and what did not, with the condition that refused it.
 
 **External stores** (`external store`) — existing databases the team already owns — get generated
 typed access with `external.*` effects, no fold guarantees, and honest documentation that they are

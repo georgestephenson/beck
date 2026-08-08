@@ -1,4 +1,5 @@
-//! Measurements quoted in `docs/24-incremental-views-report.md`.
+//! Measurements quoted in `docs/24-incremental-views-report.md`, `docs/26`, `docs/51` and
+//! `docs/89-query-fusion-report.md`.
 //!
 //! Run with `cargo test --release --test measure_incremental -- --nocapture`. Printed, never
 //! thresholded: §13.7's rule that a shared CI runner cannot hold a timing gate honestly. The claims
@@ -256,6 +257,119 @@ fn how_much_of_each_corpus_program_is_maintained() {
     println!(
         "\n  {} maintained operators and {} recomputed ones across the corpus.",
         totals.0, totals.1
+    );
+}
+
+/// The measurement `docs/89-query-fusion-report.md` quotes: what the rewrite is worth.
+///
+/// Two tables, and the first is the honest one. Counts — operators, arrangements, entries held,
+/// work per event — are properties of the plan and of the engine's own counters, so they are the
+/// same on every machine. The wall clock is second because it is the one a shared runner argues
+/// with, and it is measured with the two plans **alternating** rather than one after the other:
+/// `docs/78` §78.6 found that a fixed A-then-B order biases a comparison by as much as the effects
+/// this project reports.
+#[test]
+fn what_query_fusion_is_worth() {
+    println!(
+        "\n{:<24} {:>9} {:>9} {:>13} {:>13} {:>6}",
+        "program", "before", "after", "arr. before", "arr. after", "dead"
+    );
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus");
+    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&dir)
+        .expect("readable")
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|e| e == "beck"))
+        .collect();
+    files.sort();
+    let mut programs: Vec<(String, Placed)> =
+        vec![("examples/todo.beck".to_string(), support::todo_program())];
+    for path in files {
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        let src = std::fs::read_to_string(&path).expect("readable");
+        let (placed, d, map) = beck_core::compile_str(&name, &src);
+        assert!(!d.has_errors(), "{}", d.render(&map));
+        programs.push((name, placed.expect("slices")));
+    }
+    let (mut moved, mut arrangements) = (0usize, 0usize);
+    for (name, placed) in &programs {
+        let f = beck_core::fuse::fuse(Plan::unfused(placed)).1;
+        if f.operators.0 != f.operators.1 {
+            moved += 1;
+        }
+        arrangements += f.arrangements.0 - f.arrangements.1;
+        println!(
+            "{name:<24} {:>9} {:>9} {:>13} {:>13} {:>6}",
+            f.operators.0, f.operators.1, f.arrangements.0, f.arrangements.1, f.unreachable
+        );
+    }
+    println!(
+        "\n  {moved} of {} programs have an operator removed; {arrangements} arrangements in all.",
+        programs.len()
+    );
+
+    // What one of those arrangements costs, on the sketch, whose `for t in mine:` is the shape the
+    // rewrite is for.
+    let placed = support::todo_program();
+    let backend = beck_eval::backend(&placed);
+    let plans = [
+        ("unfused", Plan::unfused(&placed)),
+        ("fused", Plan::compile(&placed)),
+    ];
+    let prepared: Vec<Arc<Prepared>> = plans
+        .iter()
+        .map(|(_, p)| Arc::new(Prepared::new(Arc::new(p.clone()), backend.as_ref()).expect("prep")))
+        .collect();
+    let runtime = Runtime::new(placed, backend).expect("prepares");
+    let bench = Bench::new(support::todo_program());
+    let session = runtime.session("ana");
+
+    println!("\n{:>7}  {:^38}  {:^38}  {:>6}", "", "unfused", "fused", "");
+    println!(
+        "{:>7}  {:>13} {:>12} {:>10}  {:>13} {:>12} {:>10}  {:>6}",
+        "rows",
+        "entries held",
+        "work/event",
+        "µs/event",
+        "entries held",
+        "work/event",
+        "µs/event",
+        "held"
+    );
+    for n in [10usize, 100, 1_000, 5_000] {
+        let state = bench.state_with(n);
+        let next = bench.add(&state, n as u64 + 1);
+        let mut held = [0u64; 2];
+        let mut work = [0u64; 2];
+        let mut micros = [u128::MAX; 2];
+        // Alternating, best of five: the two plans see the same machine in the same state.
+        for _ in 0..5 {
+            for k in 0..2 {
+                let mut e = Engine::new(prepared[k].clone());
+                e.render(&state, &session).expect("warm");
+                let t = Instant::now();
+                e.render(&next, &session).expect("step");
+                micros[k] = micros[k].min(t.elapsed().as_micros());
+                held[k] = e.arranged();
+                work[k] = e.work().total();
+            }
+        }
+        println!(
+            "{n:>7}  {:>13} {:>12} {:>10}  {:>13} {:>12} {:>10}  {:>5.0}%",
+            held[0],
+            work[0],
+            micros[0],
+            held[1],
+            work[1],
+            micros[1],
+            100.0 * held[1] as f64 / held[0].max(1) as f64,
+        );
+    }
+    println!(
+        "\n  entries held — every arrangement's entries, per subscriber. The rewrite removes one"
+    );
+    println!("                 arrangement of the collection's size, which is the column to read.");
+    println!(
+        "  work/event   — applications + entries touched + entries copied + operators recomputed."
     );
 }
 

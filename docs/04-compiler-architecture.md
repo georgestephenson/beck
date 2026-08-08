@@ -204,8 +204,12 @@ Also ship `beck explain wire <op>`, `beck explain query <fn>`, `beck explain dep
 
 *Built*: `place`, `flow`, `wire`, `deploy`, and — with the general slicer, which gave it a plan to
 read — `beck explain incremental <view>`, which [`03`](03-type-and-effect-system.md) §3.8 asks for
-([`23`](23-general-slicer-report.md) §23.8). `query` and `cost` are not, and
-[`23`](23-general-slicer-report.md) §23.9 says why each is still waiting.
+([`23`](23-general-slicer-report.md) §23.8). **`query` and `cost` are built too**
+([`89`](89-query-fusion-report.md)) — `query` prints the view's dataflow plan, what orders each
+arrangement, which side of §5.3's session cut each operator is on, and what fusion made of it;
+`cost` prints what one event costs that plan, operator by operator, in the units the engine counts.
+Both take a *file* rather than a `<fn>`: a plan is a property of the program's page, and a program
+has one page.
 
 ## 4.8 Testing strategy for the compiler itself
 
