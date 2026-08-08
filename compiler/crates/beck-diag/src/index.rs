@@ -411,6 +411,16 @@ pub const INDEX: &[CodeEntry] = &[
          no body. The definitions that take the type apart are where the bound belongs.",
     ),
     e(
+        "B0317",
+        Stage::Types,
+        "a declaration shadows a builtin type",
+        "`Int`, `Str`, `Bool`, `Float`, `Unit`, `Html`, `Attr`, `list`, `Map`, `Stream`, `Signal`, \
+         `Envelope`, `secret` and `internal` are the language's own type names, and a `model`, \
+         `union`, `newtype` or `type` may not take one. B0314 has refused the same shadowing for a \
+         type *parameter* since docs/36; a declaration was the production it did not cover, so the \
+         name meant the builtin in one signature and the declaration in the next (docs/87 §87.4).",
+    ),
+    e(
         "B0320",
         Stage::Types,
         "type mismatch",

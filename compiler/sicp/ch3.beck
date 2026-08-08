@@ -1,0 +1,1125 @@
+# SICP chapter 3 — "Modularity, Objects, and State".
+#
+# `docs/08` §8.5.4 lists "more of SICP, chapter 3 being the part closest to what Beck is for" as a
+# free-standing item with no predecessors, and `sicp/README.md` has said since docs/41 that
+# "chapters 3, 4 and 5 are unattempted, and finding the next wall needs somebody to write more of
+# the book". This is chapter 3 attempted.
+#
+# It is the chapter where the book and the language disagree on purpose. §3.1 opens by introducing
+# `set!` — "we can model state with local variables and assignment" — and Beck has no assignment at
+# all. §3.4 spends its pages on what goes wrong when two processes share mutable state, which is a
+# question `parallel:` answers with a compile error (docs/80). And §3.5 arrives, forty pages later,
+# at a stream formulation of the very bank account §3.1.1 opened with, and says of it: *"this
+# implementation is fully functional ... yet it embodies changing state."* That sentence is
+# `docs/01` §1.1's premise, in the book's own words, and it is why this chapter was worth writing
+# out rather than declaring inexpressible.
+#
+# So the register (`sicp/README.md`, §25.5) matters more here than in either earlier chapter, and
+# every section below says which one it is in:
+#
+#   * **translated** — same algorithm, the book's own printed answer asserted;
+#   * **re-expressed** — the same problem in Beck's idiom, because a transliteration would be a
+#     caricature. Every §3.1 and §3.3 section is this one, and each says what the reorganisation is;
+#   * **refused** — Beck cannot, and the report says whether that is a gap or a decision.
+#
+# What is *not* here: §3.2 (the environment model — see §3.1.3 below, which is why), §3.3.1's
+# `set-car!`/`set-cdr!` surgery, §3.3.5's constraint propagator, and §3.4's serializers. docs/87
+# §87.6 is the list with a reason against each.
+
+# ---------------------------------------------------------------------------------------------
+# 3.1.1 Local State Variables — RE-EXPRESSED.
+#
+# The book:
+#
+#     (define balance 100)
+#     (define (withdraw amount)
+#       (if (>= balance amount)
+#           (begin (set! balance (- balance amount)) balance)
+#           "Insufficient funds"))
+#
+# and the transcript it prints: 75, 50, "Insufficient funds", 35.
+#
+# `withdraw` is not a function of `amount`. It is a function of `(balance, amount)` that returns
+# both a new balance and an answer, and `set!` is what hides the first half of each. Writing both
+# halves down is the whole reorganisation, and it is the same one docs/57 needed for Richards —
+# "a closure over mutable state is a function of the state" (§57.3), arrived at there by porting a
+# benchmark and here by reading the book that benchmark's language came from.
+#
+# Nothing is lost and one thing is gained: the transcript below is a *value*, so the book's four
+# printed answers are a single `expect` rather than four sessions at a REPL.
+# ---------------------------------------------------------------------------------------------
+
+union Request:
+    Withdraw(amount: Int)
+    Deposit(amount: Int)
+
+## An account is the balance. §3.1.1's object is this plus the identity `set!` gives it.
+model Account:
+    balance: Int
+
+## What the book prints, and what it does not print: the balance afterwards.
+model Reply:
+    account: Account
+    answer: Str
+
+def withdraw(a: Account, amount: Int) -> Reply:
+    if a.balance >= amount:
+        return Reply(account=Account(balance=a.balance - amount), answer=str(a.balance - amount))
+    return Reply(account=a, answer="Insufficient funds")
+
+def deposit(a: Account, amount: Int) -> Reply:
+    return Reply(account=Account(balance=a.balance + amount), answer=str(a.balance + amount))
+
+## §3.1.1's `make-account`, whose body is a `dispatch` on a symbol. A `union` is the dispatch, and
+## the book's "Unknown request" arm is gone because the checker covers it.
+def account_do(a: Account, r: Request) -> Reply:
+    match r:
+        case Withdraw(amount):
+            return withdraw(a, amount)
+        case Deposit(amount):
+            return deposit(a, amount)
+
+model Ledger:
+    account: Account
+    answers: list[Str]
+
+def transact(l: Ledger, r: Request) -> Ledger:
+    reply = account_do(l.account, r)
+    return Ledger(account=reply.account, answers=list_append(l.answers, reply.answer))
+
+## A session at the book's REPL, as one expression: the answers it printed, in order.
+def answers_of(start: Int, requests: list[Request]) -> list[Str]:
+    return list_fold(requests, Ledger(account=Account(balance=start), answers=[]), transact).answers
+
+test "3.1.1 — the first transcript, with the balance the book keeps in a global":
+    expect answers_of(100, [Withdraw(25), Withdraw(25), Withdraw(60), Withdraw(15)]) == [
+        "75",
+        "50",
+        "Insufficient funds",
+        "35",
+    ]
+
+## §3.1.1's `make-withdraw`: "W1 and W2 are completely independent objects, each with its own local
+## state variable `balance`". The book's transcript interleaves them —
+##
+##     (W1 50) → 50   (W2 70) → 30   (W2 40) → "Insufficient funds"   (W1 40) → 10
+##
+## — and here the independence is a property of the *text*: two folds, from two initial values,
+## whose answers the book's transcript happens to interleave. Nothing has to be said about frames.
+test "3.1.1 — two withdrawal processors that do not observe each other":
+    expect answers_of(100, [Withdraw(50), Withdraw(40)]) == ["50", "10"]
+    expect answers_of(100, [Withdraw(70), Withdraw(40)]) == ["30", "Insufficient funds"]
+
+## `make-account`'s `deposit` is `(set! balance (+ balance amount)) balance`, so it answers with the
+## new balance and not with what was paid in — which is why the book's third answer is 90 and not
+## 40, and why the fourth is 30.
+test "3.1.1 — make-account, whose dispatch is a union":
+    expect answers_of(100, [Withdraw(50), Withdraw(60), Deposit(40), Withdraw(60)]) == [
+        "50",
+        "Insufficient funds",
+        "90",
+        "30",
+    ]
+
+# ---------------------------------------------------------------------------------------------
+# Exercises 3.1, 3.2, 3.3 and 3.4 — RE-EXPRESSED, same reorganisation.
+# ---------------------------------------------------------------------------------------------
+
+## Exercise 3.1: `(define A (make-accumulator 5))`, then `(A 10)` → 15 and `(A 10)` → 25.
+## The accumulator threads a running total the way §3.1.1's ledger threads an account.
+model Running:
+    total: Int
+    seen: list[Int]
+
+def add_up(r: Running, amount: Int) -> Running:
+    return Running(total=r.total + amount, seen=list_append(r.seen, r.total + amount))
+
+def accumulate_from(start: Int, amounts: list[Int]) -> list[Int]:
+    return list_fold(amounts, Running(total=start, seen=[]), add_up).seen
+
+test "3.1 — an accumulator's answers are its running totals":
+    expect accumulate_from(5, [10, 10]) == [15, 25]
+
+## Exercise 3.2: `(define s (make-monitored sqrt))`, then `(s 100)` → 10 and
+## `(s 'how-many-calls?)` → 1. The `'how-many-calls?` message is what the book needs *because* the
+## count is hidden; here it is a field, so the question is answered by reading it.
+model Monitored:
+    calls: Int
+    answers: list[Str]
+
+def call_monitored(m: Monitored, f: (Float) -> Float, x: Float) -> Monitored:
+    return Monitored(calls=m.calls + 1, answers=list_append(m.answers, str(f(x))))
+
+def monitor_sqrt(xs: list[Float]) -> Monitored:
+    return list_fold(xs, Monitored(calls=0, answers=[]), monitor_step)
+
+def monitor_step(m: Monitored, x: Float) -> Monitored:
+    return call_monitored(m, sqrt, x)
+
+test "3.2 — a monitored procedure, whose call count is a field rather than a message":
+    expect monitor_sqrt([100.0]).answers == ["10"]
+    expect monitor_sqrt([100.0]).calls == 1
+    expect monitor_sqrt([100.0, 4.0, 9.0]).calls == 3
+
+## Exercises 3.3 and 3.4: an account that takes a password, and calls the cops on the seventh
+## consecutive wrong one. The book:
+##
+##     ((acc 'secret-password 'withdraw) 40) → 60
+##     ((acc 'some-other-password 'deposit) 50) → "Incorrect password"
+model Guarded:
+    account: Account
+    password: Str
+    wrong: Int
+
+model GuardedReply:
+    guarded: Guarded
+    answer: Str
+
+## Exercise 3.4's threshold, from the book: "more than seven consecutive times".
+def cops_after() -> Int:
+    return 7
+
+def guarded_do(g: Guarded, given: Str, r: Request) -> GuardedReply:
+    if given != g.password:
+        if g.wrong + 1 > cops_after():
+            return GuardedReply(
+                guarded=Guarded(account=g.account, password=g.password, wrong=g.wrong + 1),
+                answer="Calling the cops",
+            )
+        return GuardedReply(
+            guarded=Guarded(account=g.account, password=g.password, wrong=g.wrong + 1),
+            answer="Incorrect password",
+        )
+    reply = account_do(g.account, r)
+    return GuardedReply(
+        guarded=Guarded(account=reply.account, password=g.password, wrong=0),
+        answer=reply.answer,
+    )
+
+model Attempt:
+    password: Str
+    request: Request
+
+model GuardedLedger:
+    guarded: Guarded
+    answers: list[Str]
+
+def guarded_step(l: GuardedLedger, a: Attempt) -> GuardedLedger:
+    reply = guarded_do(l.guarded, a.password, a.request)
+    return GuardedLedger(guarded=reply.guarded, answers=list_append(l.answers, reply.answer))
+
+def guarded_answers(start: Int, password: Str, attempts: list[Attempt]) -> list[Str]:
+    return list_fold(
+        attempts,
+        GuardedLedger(
+            guarded=Guarded(account=Account(balance=start), password=password, wrong=0),
+            answers=[],
+        ),
+        guarded_step,
+    ).answers
+
+def wrong_password_times(n: Int, done: list[Attempt]) -> list[Attempt]:
+    if n == 0:
+        return done
+    return wrong_password_times(
+        n - 1, list_append(done, Attempt(password="wrong", request=Deposit(amount=1)))
+    )
+
+test "3.3 — the password guards the account, and the answer to a wrong one names nothing":
+    expect guarded_answers(
+        100,
+        "secret-password",
+        [
+            Attempt(password="secret-password", request=Withdraw(amount=40)),
+            Attempt(password="some-other-password", request=Deposit(amount=50)),
+        ],
+    ) == ["60", "Incorrect password"]
+
+test "3.4 — the eighth consecutive wrong password calls the cops, and a right one resets the count":
+    expect list_get(guarded_answers(100, "p", wrong_password_times(8, [])), 6) == Some("Incorrect password")
+    expect list_get(guarded_answers(100, "p", wrong_password_times(8, [])), 7) == Some("Calling the cops")
+    expect guarded_answers(
+        100,
+        "p",
+        [
+            Attempt(password="wrong", request=Deposit(amount=1)),
+            Attempt(password="p", request=Deposit(amount=1)),
+            Attempt(password="wrong", request=Deposit(amount=1)),
+        ],
+    ) == ["Incorrect password", "101", "Incorrect password"]
+
+# ---------------------------------------------------------------------------------------------
+# 3.1.2 The Benefits of Introducing Assignment — RE-EXPRESSED, and the re-expression is §3.5.5's.
+#
+# The book's argument for assignment is `rand`: "to implement `rand` we must have it produce a new
+# value each time it is called, and that requires local state." Then it builds `estimate-pi` on
+# Cesàro's theorem — the probability that two random integers are coprime is 6/π².
+#
+# Beck's answer is not an argument. It is that §3.5.5, forty pages later, is the book itself
+# withdrawing this one: *"we can eliminate the assignment by supplying the random numbers as a
+# stream."* So the generator is a value here, threaded like §3.1.1's balance, and this section is
+# a forward reference to the one at the bottom of the file.
+#
+# One thing that costs, and it is worth more than the estimate: the generator being a value makes
+# a **bad** generator reproducible. The first one written here was a textbook power-of-two LCG,
+# and it estimates π at 2.718 — because modulo 2^31 the low bit alternates, so consecutive draws
+# have opposite parity far more often than chance and Cesàro's test sees the wrong distribution.
+# That is a deterministic failure of a fixed input, found by a test. Hidden behind `set!` it would
+# have been a flaky one. docs/87 §87.3.
+# ---------------------------------------------------------------------------------------------
+
+## Lehmer's "minimal standard": a multiplicative generator modulo a *prime*, so no bit of the state
+## has a short period. §3.1.2's `rand` with its state written down.
+def rand_next(seed: Int) -> Int:
+    return (16807 * seed) % 2147483647
+
+def gcd_of(a: Int, b: Int) -> Int:
+    if b == 0:
+        return abs(a)
+    return gcd_of(b, a % b)
+
+model Trials:
+    seed: Int
+    passed: Int
+    total: Int
+
+## §3.1.2's `monte-carlo`, with the experiment inlined because Beck has no `set!` to hide the seam.
+def cesaro_trials(t: Trials, remaining: Int) -> Trials:
+    if remaining == 0:
+        return t
+    first = rand_next(t.seed)
+    second = rand_next(first)
+    return cesaro_trials(
+        Trials(
+            seed=second,
+            passed=t.passed + (1 if gcd_of(first, second) == 1 else 0),
+            total=t.total + 1,
+        ),
+        remaining - 1,
+    )
+
+def estimate_pi(trials: Int) -> Float:
+    done = cesaro_trials(Trials(seed=1, passed=0, total=0), trials)
+    return sqrt(6.0 / (float(done.passed) / float(done.total)))
+
+## The oracle is a *tolerance* rather than a digit, and that is the book's fault rather than
+## Beck's: §3.1.2 prints no number, because the value depends on the generator. What it does claim
+## is Cesàro's theorem, and this is that claim at a fixed seed.
+test "3.1.2 — estimating π from the probability that two draws are coprime":
+    expect abs(estimate_pi(3000) - 3.14159) < 0.02
+
+# ---------------------------------------------------------------------------------------------
+# 3.1.3 The Costs of Introducing Assignment, and 3.2 The Environment Model — TRANSLATED, and the
+# translation is that the costs are not paid.
+#
+# §3.1.3 is the book arguing against the previous two sections. Its example is a pair of procedures
+# that agree on the first call and diverge after it:
+#
+#     (define W (make-simplified-withdraw 25))   (W 20) → 5    (W 10) → -5
+#     (define D (make-decrementer 25))           (D 20) → 5    (D 10) → 15
+#
+# and its conclusion is that with `set!` the substitution model stops working, which is why §3.2 —
+# a whole section, an evaluator's worth of machinery — exists at all. It is the one section of the
+# book that this file can honestly say is **not needed**: Beck has one substitution model and it is
+# still valid at the end of the chapter, so §3.2 is not skipped for want of a feature.
+# ---------------------------------------------------------------------------------------------
+
+def decrement(balance: Int, amount: Int) -> Int:
+    return balance - amount
+
+## The same object as `W`, with the state written down. The book's -5 is here too — the property
+## §3.1.3 is about is not that the answer differs but that `W`'s does not follow from its argument.
+def simplified_withdraw(balance: Int, amounts: list[Int]) -> list[Int]:
+    return list_fold(amounts, Running(total=balance, seen=[]), take_away).seen
+
+def take_away(r: Running, amount: Int) -> Running:
+    return Running(total=r.total - amount, seen=list_append(r.seen, r.total - amount))
+
+test "3.1.3 — the decrementer and the withdrawer, the book's own pair":
+    expect decrement(25, 20) == 5
+    expect decrement(25, 10) == 15
+    expect simplified_withdraw(25, [20, 10]) == [5, -5]
+
+## §3.1.3's "sameness and change": `(define D1 (make-decrementer 25))` and
+## `(define D2 (make-decrementer 25))` are the same object and `(make-simplified-withdraw 25)` twice
+## are not, and the book has to introduce the word *identity* to say so. Here the question does not
+## arise, and this is the property that says why.
+property "3.1.3 — a call is a function of its arguments and nothing else"(balance: Int, amount: Int):
+    expect decrement(balance, amount) == decrement(balance, amount)
+
+## Exercise 3.8: "define a simple procedure `f` such that evaluating `(+ (f 0) (f 1))` will return 0
+## if the arguments are evaluated left to right, but 1 if right to left."
+##
+## **REFUSED, and it is a decision.** No such `f` exists in Beck, because `f` would have to be a
+## function of something other than its argument. The exercise is a demonstration that assignment
+## makes evaluation order observable; Beck makes it unobservable, which docs/80's `parallel:` then
+## turns into a compile error rather than a convention — `sicp.rs` asserts that half, because a
+## refused program cannot live in a file that has to compile.
+def ex_3_8(n: Int) -> Int:
+    return n
+
+test "3.8 — there is no such f, and this is the property that stands in its place":
+    expect ex_3_8(0) + ex_3_8(1) == ex_3_8(1) + ex_3_8(0)
+
+# ---------------------------------------------------------------------------------------------
+# 3.3.2 Representing Queues — RE-EXPRESSED, and the book's own reason for mutating is answered
+# rather than dodged.
+#
+# §3.3.2 does not reach for `set-cdr!` for elegance. It gives a cost: "if we represent a queue as
+# an ordinary list, `insert-queue!` must traverse the list to find the end", Θ(n) per insert. The
+# mutable version carries a rear pointer and is Θ(1).
+#
+# The functional answer is two lists — items waiting at the front, items arriving at the back — and
+# it is Θ(1) *amortised*, because every item moves from back to front exactly once. That claim is a
+# shape, so `sicp.rs` gates it the way `scaling.rs` gates the accumulator: steps per operation must
+# not grow with the number of operations. A comment saying "amortised" is not a measurement.
+#
+# The book's session prints the internal representation — `((a) a)`, `((a b) b)` — and what is
+# assertable in it is the *contents*, which is what `front-queue` and `delete-queue!` are about.
+# ---------------------------------------------------------------------------------------------
+
+## Items in the order they will leave, and items in the order they arrived. `list_append` puts an
+## arrival at the end, so refilling the front needs no reversal: the back list is already in order.
+model Queue[T]:
+    front: list[T]
+    back: list[T]
+
+union QueueError:
+    ## §3.3.2's `(error "DELETE! called with an empty queue" queue)`.
+    EmptyQueue
+
+def queue_is_empty[T](q: Queue[T]) -> Bool:
+    return list_is_empty(q.front) and list_is_empty(q.back)
+
+def insert_queue[T](q: Queue[T], item: T) -> Queue[T]:
+    return q.with(back=list_append(q.back, item))
+
+## The one place the two representations meet: when the front runs out, the back becomes the front.
+## Each item is moved once, over its whole life in the queue, which is the amortised bound.
+def refilled[T](q: Queue[T]) -> Queue[T]:
+    if list_is_empty(q.front):
+        return Queue(front=q.back, back=[])
+    return q
+
+def front_queue[T](q: Queue[T]) -> T uses raises(QueueError):
+    match refilled(q).front:
+        case []:
+            raise EmptyQueue
+        case [first, *_rest]:
+            return first
+
+def delete_queue[T](q: Queue[T]) -> Queue[T] uses raises(QueueError):
+    match refilled(q).front:
+        case []:
+            raise EmptyQueue
+        case [_first, *rest]:
+            return Queue(front=rest, back=refilled(q).back)
+
+## What the book's printed pair `((a b) b)` says about the queue, in the order items will leave it.
+def queue_items[T](q: Queue[T]) -> list[T]:
+    return concat_lists([q.front, q.back])
+
+def empty_queue_of_str() -> Queue[Str]:
+    return Queue(front=[], back=[])
+
+## The session §3.3.2 prints, as the contents after each operation.
+def queue_session() -> list[list[Str]] uses raises(QueueError):
+    one = insert_queue(empty_queue_of_str(), "a")
+    two = insert_queue(one, "b")
+    three = delete_queue(two)
+    four = insert_queue(three, "c")
+    five = delete_queue(four)
+    return [
+        queue_items(one),
+        queue_items(two),
+        queue_items(three),
+        queue_items(four),
+        queue_items(five),
+    ]
+
+test "3.3.2 — the book's queue session, as the contents after each operation":
+    expect (try: queue_session()) == Ok([["a"], ["a", "b"], ["b"], ["b", "c"], ["c"]])
+
+test "3.3.2 — and deleting from an empty queue is the book's error, as a row label":
+    expect (try: delete_queue(empty_queue_of_str())) == Err(EmptyQueue)
+    expect (try: front_queue(empty_queue_of_str())) == Err(EmptyQueue)
+
+# ---------------------------------------------------------------------------------------------
+# 3.3.3 Representing Tables — TRANSLATED, and the translation is one line.
+#
+# §3.3.3 builds a table out of mutable pairs and then a two-dimensional one out of those. Beck has
+# `Map`, so the exercise is what the book's figure asserts about it and nothing about the
+# representation. The book's figure holds `math: + 43, - 45, * 42` and `letters: a 97, b 98`.
+# ---------------------------------------------------------------------------------------------
+
+def operations() -> Map[Str, Int]:
+    return map_insert(map_insert(map_insert({}, "+", 43), "-", 45), "*", 42)
+
+def letters() -> Map[Str, Int]:
+    return map_insert(map_insert({}, "a", 97), "b", 98)
+
+def two_dimensional() -> Map[Str, Map[Str, Int]]:
+    return map_insert(map_insert({}, "math", operations()), "letters", letters())
+
+def lookup_2d(t: Map[Str, Map[Str, Int]], outer: Str, inner: Str) -> Option[Int]:
+    match map_get(t, outer):
+        case None:
+            return None
+        case Some(row):
+            return map_get(row, inner)
+
+test "3.3.3 — the two-dimensional table from the book's own figure":
+    expect lookup_2d(two_dimensional(), "math", "+") == Some(43)
+    expect lookup_2d(two_dimensional(), "math", "*") == Some(42)
+    expect lookup_2d(two_dimensional(), "letters", "b") == Some(98)
+    expect lookup_2d(two_dimensional(), "letters", "z") == None
+    expect lookup_2d(two_dimensional(), "greek", "a") == None
+
+## Exercise 3.27: `memo-fib`, and the exercise's answer — that it computes `fib(n)` in a number of
+## steps proportional to `n`. The memo is a local mutable table in the book and a threaded value
+## here, which is §3.1.1's reorganisation for the third time.
+##
+## The claim is not asserted with a comment: `ch1.beck`'s tree-recursive `fib` is Θ(φⁿ), so the
+## test below is one no unmemoised version could pass at all — 1.5 × 10¹² calls for `fib(60)`.
+model Memo:
+    table: Map[Int, Int]
+    value: Int
+
+def memo_fib(n: Int, table: Map[Int, Int]) -> Memo:
+    match map_get(table, n):
+        case Some(known):
+            return Memo(table=table, value=known)
+        case None:
+            if n < 2:
+                return Memo(table=map_insert(table, n, n), value=n)
+            first = memo_fib(n - 1, table)
+            second = memo_fib(n - 2, first.table)
+            return Memo(
+                table=map_insert(second.table, n, first.value + second.value),
+                value=first.value + second.value,
+            )
+
+test "3.27 — a memoised fib reaches a term no tree recursion could":
+    expect memo_fib(10, {}).value == 55
+    expect memo_fib(60, {}).value == 1548008755920
+
+# ---------------------------------------------------------------------------------------------
+# 3.3.4 A Simulator for Digital Circuits — RE-EXPRESSED, and it is the section that pays for
+# itself.
+#
+# This is the longest program in chapter 3 and the most mutation-shaped: wires hold a signal and a
+# list of procedures to run when it changes, gates register those procedures, and an agenda of
+# things-to-do-later drives the whole thing. Every one of those is a `set!`.
+#
+# The reorganisation is the same one §3.1.1 needed and it lands somewhere better than a
+# transliteration would: a wire's action procedures are not stored in the wire at all. A gate is a
+# *declaration* — three of them below — and "what to run when this wire changes" is read off the
+# gate list. So the circuit is a value, the agenda is a value, and the simulation is a fold. No
+# closure is ever stored in a data structure, which is what §3.3.4's `make-wire` exists to do.
+#
+# Two details are load-bearing and both are the book's:
+#
+#   * a gate computes its output from the input values it can see **now** and schedules that value
+#     for `now + delay` — it does not recompute at delivery;
+#   * `set-signal!` runs a wire's actions only if the value **changed**, so a redundant delivery is
+#     a no-op rather than a second wave.
+#
+# Get either wrong and the trace's times move. That is the oracle: the book prints `sum 8`,
+# `carry 11` and `sum 16`, and those three numbers are a consequence of the whole simulation.
+# ---------------------------------------------------------------------------------------------
+
+union Gate:
+    Inverter(input: Str, output: Str)
+    AndGate(left: Str, right: Str, output: Str)
+    OrGate(left: Str, right: Str, output: Str)
+
+## One item of §3.3.4's agenda: a value to put on a wire at a time.
+model Action:
+    at: Int
+    wire: Str
+    value: Int
+
+model Circuit:
+    gates: list[Gate]
+    signals: Map[Str, Int]
+    agenda: list[Action]
+    now: Int
+    probes: list[Str]
+    trace: list[Str]
+
+def inverter_delay() -> Int:
+    return 2
+
+def and_gate_delay() -> Int:
+    return 3
+
+def or_gate_delay() -> Int:
+    return 5
+
+def logical_not(s: Int) -> Int:
+    return 1 if s == 0 else 0
+
+def logical_and(a: Int, b: Int) -> Int:
+    return 1 if a == 1 and b == 1 else 0
+
+def logical_or(a: Int, b: Int) -> Int:
+    return 1 if a == 1 or b == 1 else 0
+
+## An unmentioned wire reads 0, which is `make-wire`'s initial value.
+def signal_of(c: Circuit, wire: Str) -> Int:
+    return unwrap_or(map_get(c.signals, wire), 0)
+
+def empty_circuit() -> Circuit:
+    return Circuit(gates=[], signals={}, agenda=[], now=0, probes=[], trace=[])
+
+## §3.3.4's `add-to-agenda!`, and its ordering rule: by time, and within a time by arrival. The
+## second half is what makes the trace reproducible, and it is why this is an insertion rather than
+## a sort — a sort would have to be told that ties keep their order, and this cannot forget.
+def schedule(c: Circuit, a: Action) -> Circuit:
+    return c.with(agenda=insert_action(c.agenda, a, []))
+
+def insert_action(agenda: list[Action], a: Action, seen: list[Action]) -> list[Action]:
+    match agenda:
+        case []:
+            return list_append(seen, a)
+        case [first, *rest]:
+            if first.at > a.at:
+                return concat_lists([seen, [a], agenda])
+            return insert_action(rest, a, list_append(seen, first))
+
+## A gate's output, computed from what it can see now and scheduled for after its delay.
+def fire_gate(c: Circuit, g: Gate) -> Circuit:
+    match g:
+        case Inverter(input, output):
+            return schedule(
+                c,
+                Action(
+                    at=c.now + inverter_delay(),
+                    wire=output,
+                    value=logical_not(signal_of(c, input)),
+                ),
+            )
+        case AndGate(left, right, output):
+            return schedule(
+                c,
+                Action(
+                    at=c.now + and_gate_delay(),
+                    wire=output,
+                    value=logical_and(signal_of(c, left), signal_of(c, right)),
+                ),
+            )
+        case OrGate(left, right, output):
+            return schedule(
+                c,
+                Action(
+                    at=c.now + or_gate_delay(),
+                    wire=output,
+                    value=logical_or(signal_of(c, left), signal_of(c, right)),
+                ),
+            )
+
+def gate_reads(g: Gate, wire: Str) -> Bool:
+    match g:
+        case Inverter(input, _output):
+            return input == wire
+        case AndGate(left, right, _output):
+            return left == wire or right == wire
+        case OrGate(left, right, _output):
+            return left == wire or right == wire
+
+## What `add-action!` accomplishes without storing a procedure in a wire: every gate that reads the
+## wire fires, in declaration order.
+def react(c: Circuit, wire: Str) -> Circuit:
+    return list_fold(c.gates, c, lambda acc, g: acc if not(gate_reads(g, wire)) else fire_gate(acc, g))
+
+def probed(c: Circuit, wire: Str, value: Int) -> Circuit:
+    if list_contains(c.probes, wire):
+        return c.with(
+            trace=list_append(c.trace, wire + " " + str(c.now) + "  New-value = " + str(value))
+        )
+    return c
+
+## §3.3.4's `set-signal!`: nothing happens when the value is the one already there.
+def set_signal(c: Circuit, wire: Str, value: Int) -> Circuit:
+    if signal_of(c, wire) == value:
+        return c
+    return react(probed(c.with(signals=map_insert(c.signals, wire, value)), wire, value), wire)
+
+## `add-action!` runs the new action once immediately, which is how a freshly built circuit settles
+## to its initial state. Here that is one firing per gate rather than one per input wire; the extra
+## firing the book performs delivers a value the wire already has, so it is a no-op either way.
+def add_gate(c: Circuit, g: Gate) -> Circuit:
+    return fire_gate(c.with(gates=list_append(c.gates, g)), g)
+
+def add_probe(c: Circuit, wire: Str) -> Circuit:
+    return probed(c.with(probes=list_append(c.probes, wire)), wire, signal_of(c, wire))
+
+## §3.3.4's `propagate`: run the agenda until it is empty. This is the fold the whole section is.
+def propagate(c: Circuit) -> Circuit:
+    match c.agenda:
+        case []:
+            return c
+        case [first, *rest]:
+            return propagate(
+                set_signal(c.with(agenda=rest, now=first.at), first.wire, first.value)
+            )
+
+## §3.3.4's `half-adder`, wire for wire.
+def half_adder(c: Circuit, a: Str, b: Str, sum_wire: Str, carry: Str) -> Circuit:
+    with_or = add_gate(c, OrGate(left=a, right=b, output="d"))
+    with_and = add_gate(with_or, AndGate(left=a, right=b, output=carry))
+    with_inv = add_gate(with_and, Inverter(input=carry, output="e"))
+    return add_gate(with_inv, AndGate(left="d", right="e", output=sum_wire))
+
+## The session §3.3.4 prints, start to finish.
+def half_adder_trace() -> list[Str]:
+    probes = add_probe(add_probe(empty_circuit(), "sum"), "carry")
+    built = half_adder(probes, "input-1", "input-2", "sum", "carry")
+    after_first = propagate(set_signal(built, "input-1", 1))
+    return propagate(set_signal(after_first, "input-2", 1)).trace
+
+test "3.3.4 — the half-adder's trace, at the times the book prints":
+    expect half_adder_trace() == [
+        "sum 0  New-value = 0",
+        "carry 0  New-value = 0",
+        "sum 8  New-value = 1",
+        "carry 11  New-value = 1",
+        "sum 16  New-value = 0",
+    ]
+
+## The half-adder is a half-adder: the truth table, read out of the settled circuit rather than out
+## of the trace. §3.3.4 never states this, and a simulator that produced the right *times* for the
+## wrong *values* would pass the test above.
+def settled(a: Int, b: Int, wire: Str) -> Int:
+    built = half_adder(empty_circuit(), "input-1", "input-2", "sum", "carry")
+    with_a = propagate(set_signal(built, "input-1", a))
+    return signal_of(propagate(set_signal(with_a, "input-2", b)), wire)
+
+test "3.3.4 — and it adds: sum is exclusive-or and carry is conjunction":
+    expect [settled(0, 0, "sum"), settled(0, 1, "sum"), settled(1, 0, "sum"), settled(1, 1, "sum")] == [0, 1, 1, 0]
+    expect [
+        settled(0, 0, "carry"),
+        settled(0, 1, "carry"),
+        settled(1, 0, "carry"),
+        settled(1, 1, "carry"),
+    ] == [0, 0, 0, 1]
+
+# ---------------------------------------------------------------------------------------------
+# 3.4 Concurrency: Time Is of the Essence — REFUSED, and it is a decision.
+#
+# §3.4.1 is thirteen pages on what two processes sharing a bank account can do to each other, and
+# §3.4.2 is the serializers that stop them. Beck has neither the problem nor the cure: `parallel:`
+# is a scope whose children may not name each other and may not perform an effect another child
+# could observe, and both are compile errors (docs/80 — `B0398` and `B0399`).
+#
+# So §3.4's exercises are not translated here, because a refused program cannot live in a file that
+# has to compile. `sicp.rs` holds that half: it asserts that Peterson's two-withdrawal interleaving
+# — the one §3.4.1 draws a timing diagram for — is `B0399` and names the atom.
+#
+# What Beck does *not* have is §3.4.2's answer to the question serializers are actually for, which
+# is two agents that must both write. That is the merge point (§3.7), it is one place rather than a
+# lock per object, and this file has no way to demonstrate it because it is a library.
+
+# ---------------------------------------------------------------------------------------------
+# 3.5 Streams, and the name collision that is worth more than the section.
+#
+# SICP's central abstraction in §3.5 is called a **stream**, and `Stream` is already a type in
+# Beck's prelude — `merge_clients() -> Stream[Proposal]`, the event stream every application folds.
+# They are the same idea: a sequence whose rest is not computed until it is asked for. That is why
+# §3.5.5 can end the chapter by rewriting §3.1.1's bank account as one, and why `docs/01` §1.1 says
+# Beck is SICP's three moves made into a language.
+#
+# They cannot share a name here, so the book's is `Seq[T]` below. Writing that sentence is what
+# found the defect docs/87 §87.4 reports: at the time this file was written, declaring
+# `model Stream[T]` in a program was **accepted silently**, and `Stream` then meant two different
+# types in the same module — the prelude's in one definition and the program's in the next. The
+# same checker refuses a *type parameter* that shadows a builtin (`B0314`) with a message
+# explaining exactly why. It is fixed, and `B0317` is the diagnostic.
+#
+# A `union` rather than a record, because §3.5.1 has `the-empty-stream` and a finite
+# `stream-enumerate-interval`, and because an exhaustive `match` is then the empty case handled.
+# ---------------------------------------------------------------------------------------------
+
+union Seq[T]:
+    Empty
+    Cons(head: T, rest: () -> Seq[T])
+
+## §3.5.1's `cons-stream`, which is a special form in Scheme for exactly the reason it is a macro
+## here: its second argument must not be evaluated. docs/63 §63.3 is the row in Felleisen's table.
+macro cons_seq(a, b):
+    return quote:
+        Cons(head=$a, rest=lambda: $b)
+
+def seq_ref[T](s: Seq[T], n: Int) -> Option[T]:
+    match s:
+        case Empty:
+            return None
+        case Cons(head, rest):
+            if n == 0:
+                return Some(head)
+            return seq_ref(rest(), n - 1)
+
+def seq_take[T](s: Seq[T], n: Int) -> list[T]:
+    return take_into(s, n, [])
+
+def take_into[T](s: Seq[T], n: Int, done: list[T]) -> list[T]:
+    if n <= 0:
+        return done
+    match s:
+        case Empty:
+            return done
+        case Cons(head, rest):
+            return take_into(rest(), n - 1, list_append(done, head))
+
+def seq_tail[T](s: Seq[T]) -> Seq[T]:
+    match s:
+        case Empty:
+            return Empty
+        case Cons(_head, rest):
+            return rest()
+
+def seq_map[A, B](s: Seq[A], f: (A) -> B) -> Seq[B]:
+    match s:
+        case Empty:
+            return Empty
+        case Cons(head, rest):
+            return Cons(head=f(head), rest=lambda: seq_map(rest(), f))
+
+## §3.5.2's `stream-map` with two arguments, which SICP writes as the general n-ary version and
+## uses only at two. `add-streams` is this with `+`.
+def seq_map2[A, B, C](a: Seq[A], b: Seq[B], f: (A, B) -> C) -> Seq[C]:
+    match a:
+        case Empty:
+            return Empty
+        case Cons(head_a, rest_a):
+            match b:
+                case Empty:
+                    return Empty
+                case Cons(head_b, rest_b):
+                    return Cons(
+                        head=f(head_a, head_b),
+                        rest=lambda: seq_map2(rest_a(), rest_b(), f),
+                    )
+
+def seq_filter[T](s: Seq[T], keep: (T) -> Bool) -> Seq[T]:
+    match s:
+        case Empty:
+            return Empty
+        case Cons(head, rest):
+            if keep(head):
+                return Cons(head=head, rest=lambda: seq_filter(rest(), keep))
+            return seq_filter(rest(), keep)
+
+def integers_from(n: Int) -> Seq[Int]:
+    return cons_seq(n, integers_from(n + 1))
+
+def integers() -> Seq[Int]:
+    return integers_from(1)
+
+def seq_interval(low: Int, high: Int) -> Seq[Int]:
+    if low > high:
+        return Empty
+    return cons_seq(low, seq_interval(low + 1, high))
+
+def divisible(x: Int, by: Int) -> Bool:
+    return x % by == 0
+
+def is_prime(n: Int) -> Bool:
+    return smallest_divisor(n, 2) == n
+
+def smallest_divisor(n: Int, candidate: Int) -> Int:
+    if candidate * candidate > n:
+        return n
+    if divisible(n, candidate):
+        return candidate
+    return smallest_divisor(n, candidate + 1)
+
+## §3.5.1's own demonstration that a stream is not a list: the interval is a million long, the
+## filter is a prime test, and the answer costs the work of finding two primes.
+test "3.5.1 — the second prime past 10,000, out of a stream a million long":
+    expect seq_ref(seq_filter(seq_interval(10000, 1000000), is_prime), 1) == Some(10009)
+
+test "3.5.2 — the integers that are not divisible by seven":
+    expect seq_ref(seq_filter(integers(), lambda x: not(divisible(x, 7))), 100) == Some(117)
+    expect seq_take(seq_filter(integers(), lambda x: not(divisible(x, 7))), 8) == [1, 2, 3, 4, 5, 6, 8, 9]
+
+## §3.5.2's sieve of Eratosthenes, which is the one self-referential-looking definition in the
+## section that is not: each `sieve` wraps the stream it was given, so a single traversal forces
+## each promise once. §3.5.4 below is where that stops being true.
+def sieve(s: Seq[Int]) -> Seq[Int]:
+    match s:
+        case Empty:
+            return Empty
+        case Cons(head, rest):
+            return Cons(
+                head=head,
+                rest=lambda: sieve(seq_filter(rest(), lambda x: not(divisible(x, head)))),
+            )
+
+def primes() -> Seq[Int]:
+    return sieve(integers_from(2))
+
+test "3.5.2 — the sieve of Eratosthenes, and the book's fifty-first prime":
+    expect seq_take(primes(), 10) == [2, 3, 5, 7, 11, 13, 17, 19, 23, 29]
+    expect seq_ref(primes(), 50) == Some(233)
+
+# ---------------------------------------------------------------------------------------------
+# 3.5.3 Exploiting the Stream Paradigm — TRANSLATED, digit for digit.
+#
+# The book prints three tables of doubles here, and they are the same kind of oracle as §1.1.7's
+# `3.00009155413138` in `ch1.beck`: IEEE 754 on both sides, so the assertion is equality and not a
+# tolerance. Getting an operand order wrong moves the last digit and the test says so.
+# ---------------------------------------------------------------------------------------------
+
+def average(a: Float, b: Float) -> Float:
+    return (a + b) / 2.0
+
+def square_real(x: Float) -> Float:
+    return x * x
+
+def sqrt_improve(guess: Float, x: Float) -> Float:
+    return average(guess, x / guess)
+
+## `(define guesses (cons-stream 1.0 (stream-map (lambda (g) (sqrt-improve g x)) guesses)))` — the
+## definition refers to itself, which a nullary definition is in Beck.
+def sqrt_seq(x: Float) -> Seq[Float]:
+    return cons_seq(1.0, seq_map(sqrt_seq(x), lambda g: sqrt_improve(g, x)))
+
+## `display-stream` of the first `n`, as the book prints them.
+def printed(s: Seq[Float], n: Int) -> list[Str]:
+    return map_list(seq_take(s, n), lambda x: str(x))
+
+test "3.5.3 — the square-root stream for 2, to the digit the book prints":
+    expect printed(sqrt_seq(2.0), 5) == [
+        "1",
+        "1.5",
+        "1.4166666666666665",
+        "1.4142156862745097",
+        "1.4142135623746899",
+    ]
+
+def pi_summands(n: Int) -> Seq[Float]:
+    return cons_seq(1.0 / float(n), seq_map(pi_summands(n + 2), lambda x: 0.0 - x))
+
+def partial_sums(s: Seq[Float]) -> Seq[Float]:
+    match s:
+        case Empty:
+            return Empty
+        case Cons(head, rest):
+            return Cons(
+                head=head,
+                rest=lambda: seq_map2(rest(), partial_sums(s), lambda a, b: a + b),
+            )
+
+def pi_seq() -> Seq[Float]:
+    return seq_map(partial_sums(pi_summands(1)), lambda x: x * 4.0)
+
+test "3.5.3 — π by Leibniz's series, converging slowly and printing exactly":
+    expect printed(pi_seq(), 8) == [
+        "4",
+        "2.666666666666667",
+        "3.466666666666667",
+        "2.8952380952380956",
+        "3.3396825396825403",
+        "2.9760461760461765",
+        "3.2837384837384844",
+        "3.017071817071818",
+    ]
+
+## §3.5.3's Euler acceleration. The association is the book's: `(+ s0 (* -2 s1) s2)` is
+## `(s0 + (-2 × s1)) + s2`, which is what Beck's left-associative `+` gives.
+def euler_transform(s: Seq[Float]) -> Seq[Float]:
+    match seq_take(s, 3):
+        case [s0, s1, s2]:
+            return Cons(
+                head=s2 - square_real(s2 - s1) / (s0 + (0.0 - 2.0) * s1 + s2),
+                rest=lambda: euler_transform(seq_tail(s)),
+            )
+        case _:
+            return Empty
+
+test "3.5.3 — the same series, accelerated once":
+    expect printed(euler_transform(pi_seq()), 8) == [
+        "3.166666666666667",
+        "3.1333333333333337",
+        "3.1452380952380956",
+        "3.13968253968254",
+        "3.1427128427128435",
+        "3.1408813408813416",
+        "3.142071817071818",
+        "3.1412548236077655",
+    ]
+
+## §3.5.3's tableau: a stream of streams, each the transform of the one before, and the answer is
+## the first element of each row. `make-tableau` is a stream whose elements are streams, which is
+## the closure property of chapter 2 applied to chapter 3's data type.
+def make_tableau(transform: (Seq[Float]) -> Seq[Float], s: Seq[Float]) -> Seq[Seq[Float]]:
+    return cons_seq(s, make_tableau(transform, transform(s)))
+
+def accelerated(s: Seq[Float]) -> Seq[Float]:
+    return seq_map(make_tableau(euler_transform, s), first_of)
+
+def first_of(s: Seq[Float]) -> Float:
+    match s:
+        case Empty:
+            return 0.0
+        case Cons(head, _rest):
+            return head
+
+## **The wall this chapter found, and it is a cost rather than an inexpressibility.**
+##
+## §3.5.1 says of `delay` that "the resulting stream will be computed more efficiently if we
+## arrange things so that the promise is forced only once", and implements that with `memo-proc`:
+##
+##     (define (memo-proc proc)
+##       (let ((already-run? false) (result false))
+##         (lambda () (if (not already-run?)
+##                        (begin (set! result (proc)) (set! already-run? true) result)
+##                        result))))
+##
+## Two `set!`s, on state private to one promise. Beck has no assignment, so a promise is a `lambda`
+## and forcing it twice does the work twice — which is invisible in every stream above, because
+## each of those is forced once along a single traversal, and ruinous here, where element *j* of a
+## tableau row needs elements *j*, *j+1* and *j+2* of the row before it. Measured with
+## `beck test --fuel`, the stream tableau costs 148,391 steps for four terms, 814,819 for five,
+## 4,284,667 for six and 21,777,343 for seven — **×5.2 per term**, so nine is past the evaluator's
+## whole 50,000,000-step budget and ten is out of reach at any budget worth spending. docs/87 §87.5.
+test "3.5.3 — the tableau as the book writes it, as far as an unmemoised promise reaches":
+    expect printed(accelerated(pi_seq()), 6) == [
+        "4",
+        "3.166666666666667",
+        "3.142105263157895",
+        "3.141599357319005",
+        "3.1415927140337785",
+        "3.1415926539752927",
+    ]
+
+## The same nine numbers, from a tableau whose rows are **lists**. Materialising a row is what
+## `memo-proc` accomplishes with two assignments, and doing it by hand costs one prefix length that
+## the stream version did not have to name — seventeen, because the triangle above nine answers is
+## seventeen terms wide. By Felleisen's criterion nothing is lost: this is a local rewrite of one
+## definition, and it produces the book's numbers bit for bit.
+def at_float(xs: list[Float], i: Int) -> Float:
+    return unwrap_or(list_get(xs, i), 0.0)
+
+def euler_row(xs: list[Float], i: Int, done: list[Float]) -> list[Float]:
+    if i + 2 >= list_len(xs):
+        return done
+    return euler_row(
+        xs,
+        i + 1,
+        list_append(
+            done,
+            at_float(xs, i + 2)
+                - square_real(at_float(xs, i + 2) - at_float(xs, i + 1))
+                    / (at_float(xs, i) + (0.0 - 2.0) * at_float(xs, i + 1) + at_float(xs, i + 2)),
+        ),
+    )
+
+def accelerated_rows(row: list[Float], remaining: Int, done: list[Float]) -> list[Float]:
+    if remaining == 0:
+        return done
+    match row:
+        case []:
+            return done
+        case [first, *_rest]:
+            return accelerated_rows(euler_row(row, 0, []), remaining - 1, list_append(done, first))
+
+test "3.5.3 — and the nine terms the book prints, once a row is forced only once":
+    expect map_list(accelerated_rows(seq_take(pi_seq(), 17), 9, []), lambda x: str(x)) == [
+        "4",
+        "3.166666666666667",
+        "3.142105263157895",
+        "3.141599357319005",
+        "3.1415927140337785",
+        "3.1415926539752927",
+        "3.1415926535911765",
+        "3.141592653589778",
+        "3.1415926535897953",
+    ]
+
+## Exercise 3.56 — Hamming's problem: the numbers whose only prime factors are 2, 3 and 5, each
+## once and in order. The book's definition names itself **three times**, which is the sharpest
+## case of the unmemoised promise above and turns out to be the *mild* one: taking twenty terms
+## costs 8,273 evaluator steps, forty costs 35,859, eighty 213,623 and a hundred and sixty
+## 2,172,851 — ×4.3, ×6.0 and then ×10.2 per doubling, so the cost per term grows without ever
+## becoming exponential in the way the tableau does. Twenty terms is what the exercise asks for.
+def seq_merge(a: Seq[Int], b: Seq[Int]) -> Seq[Int]:
+    match a:
+        case Empty:
+            return b
+        case Cons(head_a, rest_a):
+            match b:
+                case Empty:
+                    return a
+                case Cons(head_b, rest_b):
+                    if head_a < head_b:
+                        return Cons(head=head_a, rest=lambda: seq_merge(rest_a(), b))
+                    if head_b < head_a:
+                        return Cons(head=head_b, rest=lambda: seq_merge(a, rest_b()))
+                    return Cons(head=head_a, rest=lambda: seq_merge(rest_a(), rest_b()))
+
+def scaled(s: Seq[Int], by: Int) -> Seq[Int]:
+    return seq_map(s, lambda x: x * by)
+
+def hamming() -> Seq[Int]:
+    return cons_seq(
+        1, seq_merge(scaled(hamming(), 2), seq_merge(scaled(hamming(), 3), scaled(hamming(), 5)))
+    )
+
+test "3.56 — Hamming's numbers, from a stream defined three times in terms of itself":
+    expect seq_take(hamming(), 20) == [
+        1, 2, 3, 4, 5, 6, 8, 9, 10, 12, 15, 16, 18, 20, 24, 25, 27, 30, 32, 36,
+    ]
+
+# ---------------------------------------------------------------------------------------------
+# 3.5.5 Modularity of Functional Programs and Modularity of Objects — TRANSLATED, and it is the
+# reason the chapter was worth writing.
+#
+# §3.5.5 rewrites §3.1.1's bank account with no assignment at all:
+#
+#     (define (stream-withdraw balance amount-stream)
+#       (cons-stream balance
+#                    (stream-withdraw (- balance (stream-car amount-stream))
+#                                     (stream-cdr amount-stream))))
+#
+# and says of it: *"this implementation is fully functional ... yet it embodies changing state."*
+#
+# That is `docs/01` §1.1's premise in the book's own words, and it is the whole of Beck's answer to
+# §3.1: the state is a fold over a stream of requests, and `set!` was never doing anything the fold
+# does not. The test below asserts the two agree — §3.1.1's `answers_of`, which is a `list_fold`,
+# and this, which is a stream — because the claim is that they are the same program.
+# ---------------------------------------------------------------------------------------------
+
+def stream_withdraw(balance: Int, amounts: Seq[Int]) -> Seq[Int]:
+    match amounts:
+        case Empty:
+            return cons_seq(balance, Empty)
+        case Cons(head, rest):
+            return cons_seq(balance, stream_withdraw(balance - head, rest()))
+
+def seq_of_ints(xs: list[Int]) -> Seq[Int]:
+    match xs:
+        case []:
+            return Empty
+        case [first, *others]:
+            return cons_seq(first, seq_of_ints(others))
+
+## The balances after each withdrawal, from the stream, dropping the one it starts with.
+def by_stream(start: Int, amounts: list[Int]) -> list[Int]:
+    return list_drop(seq_take(stream_withdraw(start, seq_of_ints(amounts)), list_len(amounts) + 1), 1)
+
+## The same, from §3.1.1's fold, which answers in `Str` because the book's `withdraw` answers with
+## either a balance or a sentence.
+def by_fold(start: Int, amounts: list[Int]) -> list[Int]:
+    return map_list(
+        answers_of(start, map_list(amounts, lambda a: Withdraw(amount=a))), str_to_int_or_zero
+    )
+
+def str_to_int_or_zero(s: Str) -> Int:
+    return unwrap_or(str_to_int(s), 0)
+
+test "3.5.5 — the account of §3.1.1 with no assignment, which is what Beck's fold is":
+    expect seq_take(stream_withdraw(100, seq_of_ints([25, 25, 15])), 4) == [100, 75, 50, 35]
+    expect by_stream(100, [25, 25, 15]) == by_fold(100, [25, 25, 15])
+    expect by_stream(100, [25, 25, 15]) == [75, 50, 35]

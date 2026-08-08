@@ -68,8 +68,9 @@ Write the commit message as the author of the change: what changed, and why.
   [`81`](docs/81-fs-is-two-atoms-report.md),
   [`82`](docs/82-the-defaults-that-should-be-unavoidable-report.md),
   [`83`](docs/83-the-runtime-edge-report.md),
-  [`84`](docs/84-a-quota-is-only-as-good-as-its-actor-report.md) and
-  [`85`](docs/85-what-the-generator-found-report.md),
+  [`84`](docs/84-a-quota-is-only-as-good-as-its-actor-report.md),
+  [`85`](docs/85-what-the-generator-found-report.md) and
+  [`87`](docs/87-the-chapter-that-argues-back-report.md),
   plus [`86`](docs/86-getting-started.md), which is a guide rather than a report and is gated as
   one — every program in it is compiled and run by `beck-cli/tests/getting_started.rs`. It is
   docs/08 §8.5.4's named blocker on Phase 3's exit criterion, removed; §86.8 says what it still
@@ -199,7 +200,15 @@ Write the commit message as the author of the change: what changed, and why.
   Beck expresses SICP. `sicp/refusals/README.md` holds that distinction and says what puts a file
   back. `sicp/felleisen.beck` is the suite's *formal* half rather than its running half — §25.9's
   table, one section per special form SICP introduces, each carrying the code that recovers it or
-  the reorganisation that concedes it (docs/63).
+  the reorganisation that concedes it (docs/63). `sicp/ch3.beck` is **chapter 3**, the chapter the
+  language disagrees with and then agrees with (docs/87): §3.1's objects with the state they hide
+  written down, §3.3.4's circuit simulator at the times the book prints, §3.5's streams with three
+  tables of doubles digit for digit, and §3.5.5's account with no assignment — which SICP calls
+  "fully functional … yet it embodies changing state" and the file asserts agrees with §3.1.1's
+  fold. It produced no wall; what it produced was a diagnostic that did not exist (`B0317`), a
+  quadratic in `x.with(f = g(x.f))` and the one thing the chapter cannot express — §3.5.1's
+  memoised `delay`, which is two `set!`s. Two of its refusals live in `sicp.rs` rather than in the
+  file, because a refused program cannot live in one that has to compile.
 - [`compiler/awfy/`](compiler/awfy/README.md) is the performance benchmark
   ([`docs/25`](docs/25-benchmarks-and-expressiveness.md) §25.2): **all fourteen** of Are We Fast
   Yet's benchmarks — its nine micro and all five macro — ported, each verified against the constant
@@ -372,6 +381,29 @@ Write the commit message as the author of the change: what changed, and why.
   stack cares about tree depth built. It also fixes docs/64 §64.4's flat block (`MAX_BLOCK` = 2,048,
   measured at 6.8 KiB a statement). Its §85.1 is the method: the **first generator passed and meant
   nothing**, because its sizes stopped past every ceiling and short of every abort.
+  **docs/87 is SICP chapter 3**, the last free-standing item docs/08 §8.5.4's Wave 4 named without a
+  predecessor — and the first chapter of the book to produce **no wall**. Every section of it is
+  expressible; the reorganisation is one rule applied twelve times, and §3.5.5 ends the chapter by
+  rewriting §3.1.1's bank account with no assignment and calling it *"fully functional … yet it
+  embodies changing state"*, which is docs/01 §1.1's premise stated by the book. What it produced
+  instead was three things that are not about expressiveness. A program could declare `model Int`
+  and the name then meant the record in one definition and the builtin in the next — for **fourteen
+  of the sixteen** builtin type constructors, the two exceptions covered by accident because they
+  are prelude declarations; `B0314` has refused the same shadowing for a *type parameter* since
+  docs/36 off the same table, and a declaration was the production it did not cover, which is
+  docs/85 §85.7 one report later from the other direction (`B0317`). `x.with(f = g(x.f))` was
+  **quadratic** where the record-constructor spelling of it is linear — 520 evaluator steps an
+  element at 1,000 and 4,028 at 8,000 — because `with` held the base's clone, and therefore a second
+  reference to `x.f`, while `g` read it; that is docs/19 §19.4's defect in a **fourth** spelling, it
+  is 20.0 steps an element at both sizes now, and it survived docs/70 and docs/79 for docs/79
+  §79.5's exact reason — **nothing in the tree accumulates into a `list` or a `Str` field through
+  `with`**, so the repository walked around it by habit for a second time. And §3.5.1's **memoised
+  `delay`** is the one thing chapter 3 cannot express, because `memo-proc` is two `set!`s: §3.5.3's
+  tableau costs ×5.2 per term, so nine terms is past the whole 50,000,000-step budget. The book's
+  nine numbers are in the file anyway, from a tableau whose rows are lists — a local rewrite, and
+  therefore no loss by Felleisen's criterion. §87.8 is the uncomfortable half: the quadratic was
+  found by writing the gate that answers §3.3.2's *argument* for mutation, and "amortised Θ(1)" in a
+  comment would have been the end of it.
 - Security posture is [`docs/43-threat-model.md`](docs/43-threat-model.md) (who is defended
   against, and who is not) and `SECURITY.md` (how a report reaches us). What is *absent* is asserted
   as absent in `beck-cli/tests/pending_security.rs`: building one of those controls turns a test
