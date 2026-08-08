@@ -35,6 +35,7 @@ pub mod plan;
 pub mod pmap;
 pub mod prelude;
 pub mod project;
+pub mod read;
 pub mod repr;
 pub mod row;
 pub mod secure;

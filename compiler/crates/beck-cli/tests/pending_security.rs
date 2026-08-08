@@ -268,3 +268,48 @@ fn macro_expansion_is_bounded_in_depth_but_not_in_work() {
         d.render(&map)
     );
 }
+
+/// The read-model port has no authentication, and the loopback bound is what stands in for one.
+///
+/// Behaviour rather than a grep, which is the second rule above and `docs/84` §84.5's lesson: a
+/// password is a thing a client either has to send or does not, so the honest test connects without
+/// one. Two halves, and they fail on different days — the first when authentication is built, the
+/// second if the bound is ever lifted without one.
+#[tokio::test]
+async fn the_read_model_port_authenticates_nobody_and_answers_only_to_localhost() {
+    let app = beck_rt::App::start(
+        support::todo_runtime(),
+        std::sync::Arc::new(beck_rt::MemoryLog::new()),
+        beck_rt::AppConfig::default(),
+    )
+    .await
+    .expect("the app starts");
+    let listener = beck_rt::pgwire::bind("127.0.0.1:0".parse().expect("an address"))
+        .await
+        .expect("binds on loopback");
+    let port = listener.local_addr().expect("a bound port").port();
+    tokio::spawn(async move {
+        let _ = beck_rt::pgwire::serve_on(listener, app).await;
+    });
+
+    let connected = tokio_postgres::connect(
+        &format!("host=127.0.0.1 port={port} user=whoever dbname=whatever"),
+        tokio_postgres::NoTls,
+    )
+    .await;
+    assert!(
+        connected.is_ok(),
+        "the read-model port asked for a credential. If authentication has been built, this test \
+         is the record that it had not been: delete it, correct docs/43 §43.4, and revisit \
+         docs/adr/0020 — the loopback bound exists *because* there is no authentication"
+    );
+
+    assert!(
+        beck_rt::pgwire::bind("0.0.0.0:0".parse().expect("an address"))
+            .await
+            .is_err(),
+        "the read-model port bound to a non-loopback address. With no authentication that is an \
+         unauthenticated read of the whole application state from any host on the network; \
+         docs/adr/0020 is the record that would have to change first"
+    );
+}

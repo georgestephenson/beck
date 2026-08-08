@@ -2,7 +2,7 @@
 
 George's answers to [`09`](09-risks-and-open-questions.md) §9.5, recorded with the reasoning spelled
 out. Decisions marked **DECIDED** are settled and the other documents assume them. All decisions
-D1–D23 are settled. A decision that revises an earlier one says so in both directions rather than
+D1–D26 are settled. A decision that revises an earlier one says so in both directions rather than
 quietly diverging (D20 revises D2).
 
 ---
@@ -798,6 +798,42 @@ not yet: `beck-infra` derives from `ingress`, `durable` and `net.out` and has ne
 **What would reopen this.** A file operation whose interference is finer than the path — a
 lock, an append, an atomic rename. The scope rule refuses two writers to *any* paths rather than
 comparing them (§81.3), and a real filesystem library is where that becomes worth revisiting.
+
+## D26 — A read model is the arrangement, not a second copy of it — **DECIDED**
+
+[`05`](05-tier-lowering.md) §5.3 has said since the design was written that a read model is
+"generated tables in the same Postgres", queried over pgwire by whoever wants them. Building it
+found that the first half of that sentence and the second half are separable, and that only the
+second half is what the row is *for*.
+
+**A read model is the collection the fold already holds and the arrangement the view engine already
+maintains, projected as relations.** Nothing is written on the append path, no table is created, and
+there is no projection to lag behind. What an outside tool connects to is a SQL surface over the
+same values the page is rendered from.
+
+**Why not the durable projection §5.3 describes.** Three reasons, in the order they bite.
+
+1. **It puts view maintenance on the write path**, which is exactly the choice
+   [`26`](26-arrangement-sharing-report.md) §26.2 argued *out* of the design for subscribers: the
+   sequencer would pay, per event, for a projection nobody may read. The read model's own case is
+   weaker still than the page's, because a BI tool connects twice a day.
+2. **It is a second code path over the same events**, and a second code path can drift. The
+   recompute oracle covers the arrangement; it would not cover a projection written beside it.
+3. **It doubles the storage** of every maintained collection, to hold what is already in memory.
+
+**What this forfeits, said plainly.** The "append and project in one transaction" property
+[`07`](07-dependencies.md) §7.8.1 gives as the reason for the SQLite substrate, and which
+[`67`](67-sqlite-report.md) §67.1 was loud about being *available and unused*. It is still unused.
+A query is as fresh as the log — it advances the dataflow itself and reads under the accumulator's
+lock — so the property buys atomicity between a durable log and a durable projection that does not
+exist. The day a read model has to survive the process, or be reachable by a tool that cannot reach
+this port, that transaction is what it is built on, and this record is what it supersedes.
+
+**What decides which signals are tables.** The same cut §5.3 draws for arrangement sharing: a table
+is a view that does not depend on *who is asking*. A `per_session` signal is not a table, because a
+SQL client has no session and inventing one would answer a question nobody asked.
+[`88`](88-read-models-and-pgwire-report.md) is the build report and
+[`adr/0020`](adr/0020-the-read-model-speaks-pgwire-by-hand.md) the engineering record of the wire.
 
 ## Still open (minor, non-blocking)
 

@@ -223,6 +223,9 @@ fn index_page(pages: &[Page]) -> (String, String) {
     // `module/` do not exist — they are built alongside the HTML by `.github/workflows/docs.yml`.
     html.push_str(
         "<h2>Also published</h2>\n<table><tr><th>Page</th><th></th></tr>\n\
+         <tr><td><a href=\"guide/getting-started.html\">Getting started</a></td>\
+         <td>build the compiler, write a program, and see what it worked out on its own — \
+         every program on the page is compiled and run by a test</td></tr>\n\
          <tr><td><a href=\"module/todo.html\"><code>todo</code></a></td>\
          <td>the sketch from the original idea, documented by <code>beck doc</code></td></tr>\n\
          <tr><td><a href=\"module/documented.html\"><code>documented</code></a></td>\
@@ -232,6 +235,47 @@ fn index_page(pages: &[Page]) -> (String, String) {
          </table>\n",
     );
     (md, html)
+}
+
+// ------------------------------------------------------------------------------------- a guide
+
+/// `beck doc guide <file.md>` — a written guide, rendered into the same shell as everything else.
+///
+/// The site has two kinds of page and they are made differently on purpose. A reference page is
+/// *derived*, and a drift gate holds it to the compiler. A guide is *written*, and what holds it
+/// honest is that its programs are compiled and run by a harness — `getting_started.rs` for the one
+/// this exists to publish. Rendering it here rather than checking in a second HTML copy is the same
+/// rule as `docs/reference/`: one source, and a build that produces the rest.
+pub fn guide(file: &Path, out: &Path, link_base: Option<&str>, stdout: bool) -> Result<()> {
+    let src =
+        std::fs::read_to_string(file).with_context(|| format!("reading {}", file.display()))?;
+    let links = link_base.map(|base| docgen::Links { base });
+    let title = docgen::guide_title(&src).unwrap_or("Guide");
+    let body = docgen::guide(&src, links);
+    let rendered = docgen::page(
+        &format!("{title} — beck"),
+        "../index.html",
+        " / guide",
+        &body,
+    );
+    if stdout {
+        print!("{rendered}");
+        return Ok(());
+    }
+    std::fs::create_dir_all(out).with_context(|| format!("creating {}", out.display()))?;
+    let stem = file
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "guide".to_string());
+    // `86-getting-started` is a file name in a numbered directory; `getting-started` is a URL.
+    let slug = stem.trim_start_matches(|c: char| c.is_ascii_digit() || c == '-');
+    let path = out.join(format!(
+        "{}.html",
+        if slug.is_empty() { &stem } else { slug }
+    ));
+    std::fs::write(&path, &rendered).with_context(|| format!("writing {}", path.display()))?;
+    println!("{} — \"{title}\"", path.display());
+    Ok(())
 }
 
 // ------------------------------------------------------------------------------- the error index

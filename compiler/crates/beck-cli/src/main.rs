@@ -173,6 +173,13 @@ enum Cmd {
         path: PathBuf,
         #[arg(long, env = "BECK_POSTGRES_URL")]
         url: Option<String>,
+        /// Also serve the read models on the PostgreSQL wire protocol (§5.3).
+        ///
+        /// Off by default, and loopback only: the port answers every question about the
+        /// application's state, and it has no authentication and no transport security. Forward it
+        /// rather than exposing it.
+        #[arg(long, value_name = "ADDR")]
+        pgwire: Option<String>,
     },
     /// Fold a recorded log and report the state it produces (§3.7).
     Replay {
@@ -264,6 +271,28 @@ enum Doc {
         #[arg(long)]
         stdout: bool,
     },
+    /// A written guide, rendered for the published site.
+    ///
+    /// The reference is derived from the compiler; a guide is written by a person and *checked* by
+    /// a harness — every program in `docs/86-getting-started.md` is compiled and run by
+    /// `beck-cli/tests/getting_started.rs`. This is what puts the checked file on the site instead
+    /// of a second copy of it that nothing compiles.
+    Guide {
+        /// The markdown file.
+        file: PathBuf,
+        #[arg(long, short, default_value = "site/guide")]
+        out: PathBuf,
+        /// Rewrite relative links against this URL — the *directory* the guide lives in, in the
+        /// repository it is published from.
+        ///
+        /// Without it they are left as written, which is right for reading the file in place and
+        /// wrong for a static site, where `08-roadmap.md` is not a page.
+        #[arg(long, value_name = "URL")]
+        link_base: Option<String>,
+        /// Print it instead of writing it.
+        #[arg(long)]
+        stdout: bool,
+    },
     /// The language reference: the error index, the command reference, the effect and tier
     /// matrix, the prelude, and the forms.
     ///
@@ -306,6 +335,12 @@ enum Explain {
         /// One view, by the name `beck explain flow` gives it.
         view: Option<String>,
     },
+    /// The read model: what an outside SQL client sees, as `create table` (§5.3).
+    ///
+    /// Nothing executes this DDL. There is no table to create — a read model is the collection the
+    /// fold already holds and the arrangement the view engine already maintains, projected — so
+    /// this is the shape of the relations `beck run --pgwire` serves rather than a migration.
+    Sql { file: PathBuf },
     /// The infrastructure the program's effects imply (§6.5).
     Deploy { file: PathBuf },
     /// What a diagnostic code means — `beck explain error B0341`.
@@ -384,6 +419,12 @@ fn dispatch(cli: Cli) -> Result<()> {
                 })?;
                 docs::module(&project, Some(&out), format, stdout)
             }
+            Doc::Guide {
+                file,
+                out,
+                link_base,
+                stdout,
+            } => docs::guide(&file, &out, link_base.as_deref(), stdout),
             Doc::Reference { out, format, check } => docs::reference(&out, format, check),
         },
         Cmd::Bench { what } => match what {
@@ -409,7 +450,15 @@ fn dispatch(cli: Cli) -> Result<()> {
             store,
             path,
             url,
-        } => run(&file, &addr, store, &path, url.as_deref()),
+            pgwire,
+        } => run(
+            &file,
+            &addr,
+            store,
+            &path,
+            url.as_deref(),
+            pgwire.as_deref(),
+        ),
         Cmd::Replay {
             file,
             store,
@@ -1096,6 +1145,13 @@ fn explain(what: Explain) -> Result<()> {
             );
             Ok(())
         }
+        Explain::Sql { file } => {
+            let placed = compiled(&file)?;
+            let plan = beck_core::plan::Plan::compile(&placed);
+            let schema = beck_core::read::Schema::of(&placed, &plan);
+            print!("{}", schema.ddl());
+            Ok(())
+        }
         Explain::Deploy { file } => {
             let placed = compiled(&file)?;
             print!("{}", beck_infra::graph(&placed).explain());
@@ -1109,12 +1165,19 @@ fn explain(what: Explain) -> Result<()> {
 ///
 /// `#[tokio::main]` cannot say that, and the folds and views of a served program run on these
 /// threads: a stack a worker did not have would take the server down rather than the request.
-fn run(file: &Path, addr: &str, store: Store, path: &Path, url: Option<&str>) -> Result<()> {
+fn run(
+    file: &Path,
+    addr: &str,
+    store: Store,
+    path: &Path,
+    url: Option<&str>,
+    pgwire: Option<&str>,
+) -> Result<()> {
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .thread_stack_size(beck_eval::STACK_BYTES)
         .build()?
-        .block_on(serve(file, addr, store, path, url))
+        .block_on(serve(file, addr, store, path, url, pgwire))
 }
 
 async fn serve(
@@ -1123,6 +1186,7 @@ async fn serve(
     store: Store,
     path: &Path,
     url: Option<&str>,
+    pgwire: Option<&str>,
 ) -> Result<()> {
     let placed = compiled(file)?;
     // A serving process is one that may make outbound calls, so it is the process that installs a
@@ -1153,6 +1217,20 @@ async fn serve(
         app.store_kind(),
         app.head()
     );
+    if let Some(pg) = pgwire {
+        let pg: std::net::SocketAddr = pg.parse()?;
+        // Bound here rather than inside the spawned task, so an address this process may not have
+        // — anything but loopback — fails the command instead of a background task nobody reads.
+        let listener = beck_rt::pgwire::bind(pg).await?;
+        let bound = listener.local_addr()?;
+        eprintln!("read models   psql -h {} -p {}", bound.ip(), bound.port());
+        let for_sql = app.clone();
+        tokio::spawn(async move {
+            if let Err(e) = beck_rt::pgwire::serve_on(listener, for_sql).await {
+                tracing::error!(error = %e, "the read-model port stopped");
+            }
+        });
+    }
     beck_rt::http::serve_with_dashboard(app, addr.parse()?, rx, Some(dashboard)).await
 }
 

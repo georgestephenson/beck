@@ -135,6 +135,7 @@ dependencies = [
  "proptest",
  "serde_json",
  "tokio",
+ "tokio-postgres",
  "tokio-tungstenite",
  "tracing",
  "tracing-subscriber",

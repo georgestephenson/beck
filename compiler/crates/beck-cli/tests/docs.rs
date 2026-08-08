@@ -264,6 +264,7 @@ fn every_link_in_the_generated_site_resolves() {
     let site = std::env::temp_dir().join(format!("beck-doc-site-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&site);
     let module_dir = site.join("module");
+    let guide_dir = site.join("guide");
 
     let out = beck(&[
         "doc",
@@ -295,8 +296,26 @@ fn every_link_in_the_generated_site_resolves() {
         );
     }
 
+    // The index links to the guide, so the guide is part of the site rather than beside it: this
+    // test is what says the workflow cannot publish one without the other.
+    let guide = repo_root().join("docs/86-getting-started.md");
+    let out = beck(&[
+        "doc",
+        "guide",
+        &guide.to_string_lossy(),
+        "--out",
+        &guide_dir.to_string_lossy(),
+        "--link-base",
+        "https://example.invalid/repo/docs",
+    ]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
     let mut pages: Vec<PathBuf> = Vec::new();
-    for dir in [&site, &module_dir] {
+    for dir in [&site, &module_dir, &guide_dir] {
         for entry in std::fs::read_dir(dir)
             .expect("the site was written")
             .flatten()
@@ -434,4 +453,62 @@ fn a_relative_link_out_of_a_rustdoc_page_lands_on_the_file_it_names() {
         checked > 40,
         "the link sweep found almost nothing: {checked}"
     );
+}
+
+/// The published guide is the checked file, rendered — not a second copy of it.
+///
+/// `docs/86-getting-started.md` is gated twice over: `getting_started.rs` compiles and runs every
+/// program in it, and this asserts the page the site serves is made from that same file. The two
+/// together are what let the site claim a tutorial whose examples work, which is
+/// [`docs/08-roadmap.md`](../../../../docs/08-roadmap.md) §8.5.4's exit criterion having a
+/// prerequisite met rather than a page written.
+#[test]
+fn the_published_guide_is_the_checked_guide() {
+    let source = repo_root().join("docs/86-getting-started.md");
+    let markdown = std::fs::read_to_string(&source).expect("the guide is checked in");
+    let out = beck(&[
+        "doc",
+        "guide",
+        &source.to_string_lossy(),
+        "--stdout",
+        "--link-base",
+        "https://example.invalid/repo/docs",
+    ]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let html = String::from_utf8_lossy(&out.stdout);
+
+    // Every fenced block in the file reaches the page. This is the assertion that matters: a
+    // renderer that silently drops a block would publish a tutorial with a step missing.
+    let fences = markdown
+        .lines()
+        .filter(|l| l.trim_start().starts_with("```"))
+        .count();
+    assert!(fences >= 20, "the guide has {fences} fenced blocks");
+    assert_eq!(
+        html.matches("<pre><code>").count(),
+        fences / 2,
+        "the rendered guide has a different number of code blocks than the source"
+    );
+
+    // Its relative links are rewritten, because `08-roadmap.md` is not a page on a static site.
+    assert!(
+        html.contains("https://example.invalid/repo/docs/08-roadmap.md"),
+        "a relative link was published unrewritten"
+    );
+    assert!(
+        !html.contains("href=\"08-roadmap.md\""),
+        "a link was published as written rather than as a URL"
+    );
+    // And a link that walks out of the guide's directory lands beside it rather than inside it.
+    assert!(
+        html.contains("https://example.invalid/repo/compiler/")
+            || !markdown.contains("](../compiler/"),
+        "a `..` link was resolved without leaving the guide's directory"
+    );
+    // And nothing in it is raw HTML from the source.
+    assert!(!html.contains("<script"), "the guide rendered a script tag");
 }

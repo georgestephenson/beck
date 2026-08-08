@@ -320,6 +320,19 @@ impl App {
             .map_err(|_| "ingress dropped the proposal".to_string())?
     }
 
+    /// Run something against a consistent snapshot of the accumulator and the version it is at.
+    ///
+    /// The read lock is held for the whole of `f`, which is what makes it a snapshot rather than
+    /// two facts read at two times: the sequencer commits under the write lock, so nothing can move
+    /// the state — and therefore nothing can advance the shared dataflow past this version — while
+    /// this runs. [`crate::pgwire`] is the caller, and it is the one place a *reader* needs the two
+    /// together; a rendering subscriber takes a clone instead, because a render is `O(page)` and a
+    /// scan is `O(rows)`.
+    pub async fn read_snapshot<T>(&self, f: impl FnOnce(&Value, Seq) -> T) -> T {
+        let guard = self.state.read().await;
+        f(&guard, self.head.load(Ordering::Relaxed))
+    }
+
     /// The state as of `seq`, for a resuming subscriber.
     pub async fn state_at(&self, seq: Seq) -> Result<Value> {
         let (state, _) = replay_to(&self.runtime, self.store.as_ref(), seq).await?;

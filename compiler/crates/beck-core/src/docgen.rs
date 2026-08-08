@@ -640,6 +640,377 @@ fn json_opt(s: &Option<Arc<str>>) -> String {
     }
 }
 
+// -------------------------------------------------------------------------------------------
+// Guides
+// -------------------------------------------------------------------------------------------
+
+/// Where a guide's relative links should point once it is published.
+///
+/// A checked-in guide links to the repository it lives in — other documents, source files, a
+/// harness. Those links resolve when the file is read on GitHub and resolve nowhere on a static
+/// site, so publishing one means rewriting them.
+///
+/// `base` is the URL of the directory the guide itself lives in, because that is what its links are
+/// written relative to. A `..` in a link therefore has to walk *out* of the base, which is why this
+/// resolves path components rather than concatenating strings.
+pub struct Links<'a> {
+    pub base: &'a str,
+}
+
+impl Links<'_> {
+    /// A link target as it should appear on the published page.
+    fn resolve(&self, target: &str) -> String {
+        if target.starts_with("http://")
+            || target.starts_with("https://")
+            || target.starts_with("mailto:")
+            || target.starts_with('#')
+        {
+            return target.to_string();
+        }
+        let (path, anchor) = match target.split_once('#') {
+            Some((p, a)) => (p, format!("#{a}")),
+            None => (target, String::new()),
+        };
+        // The scheme and authority are not path: `..` must not eat the host.
+        let (prefix, rest) = match self.base.find("://") {
+            Some(i) => match self.base[i + 3..].find('/') {
+                Some(j) => self.base.split_at(i + 3 + j),
+                None => (self.base, ""),
+            },
+            None => ("", self.base),
+        };
+        let mut parts: Vec<&str> = Vec::new();
+        for part in rest.split('/').chain(path.split('/')) {
+            match part {
+                "" | "." => {}
+                ".." => {
+                    parts.pop();
+                }
+                other => parts.push(other),
+            }
+        }
+        format!("{prefix}/{}{anchor}", parts.join("/"))
+    }
+}
+
+/// A written guide as HTML: the subset of Markdown the guides in `docs/` actually use.
+///
+/// Headings, fenced code, block quotes, tables, bullets, and inline code, emphasis and links.
+/// Deliberately not a Markdown implementation — `docs/07` §7.2 lists mdBook for the eventual book,
+/// and a guide is not a book. What it is instead is *checked*: the guide it renders is the one
+/// `beck-cli/tests/getting_started.rs` compiles and runs, so the published page cannot describe a
+/// program that does not work.
+///
+/// Anything it does not understand is emitted as escaped text rather than dropped, which is the
+/// safe direction: a page with a stray asterisk is a page, and a page missing a paragraph is a lie.
+pub fn guide(src: &str, links: Option<Links<'_>>) -> String {
+    let mut out = String::new();
+    let mut para: Vec<&str> = Vec::new();
+    let mut quote: Vec<&str> = Vec::new();
+    let mut table: Vec<&str> = Vec::new();
+    let mut list = false;
+    let mut fence: Option<Vec<&str>> = None;
+    let links = links.as_ref();
+
+    // Every block form ends the paragraph before it, so flushing is one closure rather than a rule
+    // repeated at each branch — which is where a renderer like this usually goes wrong.
+    macro_rules! flush {
+        ($out:expr) => {{
+            if !para.is_empty() {
+                let _ = writeln!($out, "<p>{}</p>", inline(&para.join(" "), links));
+                para.clear();
+            }
+            if !quote.is_empty() {
+                // Lines join into a paragraph and a blank one starts the next, exactly as they do
+                // outside a quote. Rendering each line as its own paragraph is the mistake that
+                // makes a quoted paragraph look like a list of sentences.
+                let _ = writeln!(
+                    $out,
+                    "<blockquote>{}</blockquote>",
+                    quote
+                        .split(|l: &&str| l.trim().is_empty())
+                        .filter(|p| !p.is_empty())
+                        .map(|p| format!("<p>{}</p>", inline(&p.join(" "), links)))
+                        .collect::<Vec<_>>()
+                        .join("")
+                );
+                quote.clear();
+            }
+            if !table.is_empty() {
+                $out.push_str(&table_html(&table, links));
+                table.clear();
+            }
+            if list {
+                $out.push_str("</ul>\n");
+                list = false;
+            }
+        }};
+    }
+
+    for line in src.lines() {
+        // Inside a fence, nothing is markup: that is what a fence is for.
+        if let Some(code) = &mut fence {
+            if line.trim_start().starts_with("```") {
+                let _ = writeln!(out, "<pre><code>{}</code></pre>", escape(&code.join("\n")));
+                fence = None;
+            } else {
+                code.push(line);
+            }
+            continue;
+        }
+        let trimmed = line.trim();
+        if trimmed.starts_with("```") {
+            flush!(out);
+            fence = Some(Vec::new());
+        } else if let Some(rest) = heading(trimmed) {
+            flush!(out);
+            let (level, text) = rest;
+            let text = if level == 1 {
+                untitled_number(text)
+            } else {
+                text
+            };
+            let id = slug(text);
+            let _ = writeln!(
+                out,
+                "<h{level} id=\"{id}\">{}</h{level}>",
+                inline(text, links)
+            );
+        } else if trimmed.is_empty() {
+            flush!(out);
+        } else if let Some(rest) = trimmed.strip_prefix("> ").or(trimmed.strip_prefix(">")) {
+            if !para.is_empty() || !table.is_empty() || list {
+                flush!(out);
+            }
+            quote.push(rest);
+        } else if trimmed.starts_with('|') {
+            if !para.is_empty() || !quote.is_empty() || list {
+                flush!(out);
+            }
+            table.push(trimmed);
+        } else if let Some(item) = trimmed.strip_prefix("- ").or(trimmed.strip_prefix("* ")) {
+            if !para.is_empty() || !quote.is_empty() || !table.is_empty() {
+                flush!(out);
+            }
+            if !list {
+                out.push_str("<ul>\n");
+                list = true;
+            }
+            let _ = writeln!(out, "<li>{}</li>", inline(item, links));
+        } else if list && line.starts_with("  ") {
+            // A continuation of the item above, which is how every wrapped bullet in `docs/` is
+            // written. Appending to the last `<li>` would need a buffer per item; a paragraph
+            // inside the list reads the same and costs nothing.
+            let _ = writeln!(out, "<li class=\"cont\">{}</li>", inline(trimmed, links));
+        } else if trimmed.chars().all(|c| c == '-') && trimmed.len() >= 3 {
+            flush!(out);
+            out.push_str("<hr>\n");
+        } else {
+            if !quote.is_empty() || !table.is_empty() || list {
+                flush!(out);
+            }
+            para.push(trimmed);
+        }
+    }
+    if let Some(code) = fence {
+        let _ = writeln!(out, "<pre><code>{}</code></pre>", escape(&code.join("\n")));
+    }
+    flush!(out);
+    // The last flush closes an open list and then nothing reads the flag again.
+    let _ = list;
+    out
+}
+
+/// A guide's own title: its first heading, without the document number `docs/` files carry.
+///
+/// `# 86 — Getting started` is a file in a numbered directory; "Getting started" is a page.
+pub fn guide_title(src: &str) -> Option<&str> {
+    src.lines().find_map(|l| {
+        l.trim()
+            .strip_prefix("# ")
+            .map(|t| untitled_number(t.trim()))
+    })
+}
+
+/// Strip a leading `NN — ` or `NN. `, which is how a numbered document names itself.
+fn untitled_number(title: &str) -> &str {
+    let rest = title.trim_start_matches(|c: char| c.is_ascii_digit());
+    if rest.len() == title.len() {
+        return title;
+    }
+    for sep in [" — ", " - ", ". ", " "] {
+        if let Some(t) = rest.strip_prefix(sep) {
+            return t.trim();
+        }
+    }
+    title
+}
+
+fn heading(line: &str) -> Option<(usize, &str)> {
+    let hashes = line.chars().take_while(|c| *c == '#').count();
+    if hashes == 0 || hashes > 6 {
+        return None;
+    }
+    let rest = line[hashes..].strip_prefix(' ')?;
+    // `h1` is the page title, so a guide's own `#` becomes the page's `h1` and everything below it
+    // keeps its relative depth.
+    Some((hashes.min(6), rest.trim()))
+}
+
+/// A heading's anchor: lower-case, words joined by hyphens — the same shape GitHub produces, so a
+/// `#section` link written for the repository still lands on the published page.
+fn slug(text: &str) -> String {
+    let mut out = String::new();
+    for c in text.chars() {
+        if c.is_alphanumeric() {
+            out.extend(c.to_lowercase());
+        } else if matches!(c, ' ' | '-' | '_' | '.') && !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    out.trim_matches('-').to_string()
+}
+
+fn table_html(rows: &[&str], links: Option<&Links<'_>>) -> String {
+    let cells = |row: &str| -> Vec<String> {
+        row.trim_matches('|')
+            .split('|')
+            .map(|c| c.trim().to_string())
+            .collect()
+    };
+    let mut out = String::from("<table>\n");
+    for (i, row) in rows.iter().enumerate() {
+        // The `|---|---|` separator is layout rather than data.
+        if row.chars().all(|c| matches!(c, '|' | '-' | ':' | ' ')) {
+            continue;
+        }
+        let tag = if i == 0 { "th" } else { "td" };
+        let _ = writeln!(
+            out,
+            "<tr>{}</tr>",
+            cells(row)
+                .iter()
+                .map(|c| format!("<{tag}>{}</{tag}>", inline(c, links)))
+                .collect::<Vec<_>>()
+                .join("")
+        );
+    }
+    out.push_str("</table>\n");
+    out
+}
+
+/// Inline markup: code spans first, because nothing inside one is markup.
+fn inline(src: &str, links: Option<&Links<'_>>) -> String {
+    let cs: Vec<char> = src.chars().collect();
+    let mut out = String::new();
+    let mut i = 0;
+    while i < cs.len() {
+        match cs[i] {
+            // A code span is delimited by a *run* of backticks, and the closing run has to be the
+            // same length. `docs/86` quotes a fenced block inline with four of them, so counting is
+            // not a nicety: taking the first backtick as the close cuts the sentence in half.
+            '`' => {
+                let run = cs[i..].iter().take_while(|c| **c == '`').count();
+                match closing_run(&cs, i + run, run) {
+                    Some(end) => {
+                        let text: String = cs[i + run..end].iter().collect();
+                        let _ = write!(out, "<code>{}</code>", escape(text.trim()));
+                        i = end + run;
+                    }
+                    None => {
+                        for _ in 0..run {
+                            out.push_str("&#96;");
+                        }
+                        i += run;
+                    }
+                }
+            }
+            '[' => match link_at(&cs, i) {
+                Some((text, target, next)) => {
+                    let href = match links {
+                        Some(l) => l.resolve(&target),
+                        None => target,
+                    };
+                    let _ = write!(
+                        out,
+                        "<a href=\"{}\">{}</a>",
+                        escape(&href),
+                        inline(&text, links)
+                    );
+                    i = next;
+                }
+                None => {
+                    out.push('[');
+                    i += 1;
+                }
+            },
+            '*' if cs.get(i + 1) == Some(&'*') => match find(&cs, i + 2, "**") {
+                Some(end) => {
+                    let text: String = cs[i + 2..end].iter().collect();
+                    let _ = write!(out, "<strong>{}</strong>", inline(&text, links));
+                    i = end + 2;
+                }
+                None => {
+                    out.push_str("**");
+                    i += 2;
+                }
+            },
+            '*' => match cs[i + 1..].iter().position(|c| *c == '*') {
+                Some(end) if end > 0 => {
+                    let text: String = cs[i + 1..i + 1 + end].iter().collect();
+                    let _ = write!(out, "<em>{}</em>", inline(&text, links));
+                    i += end + 2;
+                }
+                _ => {
+                    out.push('*');
+                    i += 1;
+                }
+            },
+            c => {
+                out.push_str(&escape(&c.to_string()));
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
+/// The start of the next run of exactly `run` backticks at or after `from`.
+fn closing_run(cs: &[char], from: usize, run: usize) -> Option<usize> {
+    let mut i = from;
+    while i < cs.len() {
+        if cs[i] != '`' {
+            i += 1;
+            continue;
+        }
+        let here = cs[i..].iter().take_while(|c| **c == '`').count();
+        if here == run {
+            return Some(i);
+        }
+        i += here;
+    }
+    None
+}
+
+fn find(cs: &[char], from: usize, needle: &str) -> Option<usize> {
+    let n: Vec<char> = needle.chars().collect();
+    (from..cs.len().saturating_sub(n.len() - 1)).find(|&i| cs[i..i + n.len()] == n[..])
+}
+
+/// `[text](target)` starting at `i`, and where it ends.
+fn link_at(cs: &[char], i: usize) -> Option<(String, String, usize)> {
+    let close = cs[i..].iter().position(|c| *c == ']')? + i;
+    if cs.get(close + 1) != Some(&'(') {
+        return None;
+    }
+    let end = cs[close + 2..].iter().position(|c| *c == ')')? + close + 2;
+    Some((
+        cs[i + 1..close].iter().collect(),
+        cs[close + 2..end].iter().collect(),
+        end + 1,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

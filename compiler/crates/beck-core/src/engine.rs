@@ -1338,6 +1338,28 @@ impl SharedDataflow {
         engine
     }
 
+    /// A reader of the shared arrangements that renders no page: [`crate::read`]'s SQL client.
+    ///
+    /// It is a member of the same reader set as a subscription, and that is the design rather than
+    /// an implementation convenience. A SQL client holding a connection is a reason to keep the
+    /// arrangements — it is going to ask again — and a SQL client that has gone is not, which is
+    /// exactly what the reader set already decides for subscribers
+    /// ([`51`](../../../../../docs/51-arrangement-lifecycle-report.md)). The alternative, reading the
+    /// arrangements without joining the set, has a release racing every query.
+    ///
+    /// Its frontier stays at [`UNRENDERED`]: a reader that never applies a delta cannot use the
+    /// change history, so pinning any of it for this reader would retain history nobody reads.
+    pub fn reader(self: &Arc<Self>) -> Reader {
+        let mut inner = self.write();
+        let id = self.next_reader.fetch_add(1, Ordering::Relaxed);
+        let frontier = Arc::new(AtomicU64::new(UNRENDERED));
+        inner.readers.insert(id, frontier);
+        Reader {
+            shared: self.clone(),
+            id,
+        }
+    }
+
     /// A subscriber has gone. Drop what only it could still have asked for.
     ///
     /// Called from [`Engine`]'s `Drop`, so it must not be reachable while this thread holds either
@@ -1501,6 +1523,48 @@ impl SharedDataflow {
         self.inner
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+/// A reader of a [`SharedDataflow`]'s arrangements that renders nothing.
+///
+/// The read model's half of §5.3's cut: the operators that do not read the session are exactly the
+/// ones a client with no session can be shown ([`crate::read`]). Holding one keeps the arrangements
+/// from being released; dropping it is how a SQL connection ends.
+pub struct Reader {
+    shared: Arc<SharedDataflow>,
+    id: ReaderId,
+}
+
+impl Drop for Reader {
+    fn drop(&mut self) {
+        self.shared.detach(self.id);
+    }
+}
+
+impl Reader {
+    /// One shared operator's output, as the rows it stands for, at `version`.
+    ///
+    /// Advances the shared prefix first, by the same path a rendering subscriber takes — so a query
+    /// issued after an ack sees that ack's event, and a query issued when nothing is subscribed
+    /// pays for the advance nobody else has paid for. That is the read model's whole freshness
+    /// story: there is no projection to lag behind.
+    ///
+    /// An arrangement answers its entries in key order, which is the order the plan gives it and
+    /// therefore the order the page renders in. A value answers itself, once.
+    pub fn read(&self, state: &Value, version: u64, id: OpId) -> Result<Vec<Value>, ExecError> {
+        self.shared.advance(state, version)?;
+        let inner = self.shared.read();
+        if !inner.engine.owns.get(id).copied().unwrap_or(false) {
+            return Err(ExecError::new(
+                format!("operator {id} is not part of the shared dataflow"),
+                Span::NONE,
+            ));
+        }
+        Ok(match &inner.engine.cells[id].out {
+            Out::Arr(a) => a.entries.values().cloned().collect(),
+            Out::Val(v) => vec![v.clone()],
+        })
     }
 }
 
