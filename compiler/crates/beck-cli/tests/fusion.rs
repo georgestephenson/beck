@@ -77,6 +77,37 @@ const RULE_PROGRAMS: &[(&str, &str, &str)] = &[
     ),
 ];
 
+/// Programs written for an *operator* the rest of the tree does not reach, rather than for a rule.
+///
+/// `flatten` is here because fusion took its only shape away: a `for` loop is a `map_list` under a
+/// `flatten` and now compiles to one `flat_map`, so what remains of `flatten` is a collection of
+/// lists that came from somewhere else. An operator with an engine implementation and no program
+/// is a hole in the differential, and `every_operator_the_engine_implements_is_exercised` is what
+/// keeps it from opening again.
+const OPERATOR_PROGRAMS: &[(&str, &str)] = &[
+    (
+        "flatten-over-filter.beck",
+        "def render(s: State, session: Session) -> Html:\n\
+        \x20   parts = map_list(map_values(s.posts), lambda p: [p.id, p.text])\n\
+        \x20   kept = filter_list(parts, lambda l: not list_is_empty(l))\n\
+        \x20   return ui:\n\
+        \x20       main:\n\
+        \x20           ul:\n\
+        \x20               for t in concat_lists(kept):\n\
+        \x20                   li: t",
+    ),
+    // `list_is_empty` is written twice in the corpus and reaches the plan neither time: both are
+    // inside an `if`, and an `if` is one opaque operator. So the engine's emptiness arm had never
+    // run against recompute — a hole this gate found rather than one fusion made.
+    (
+        "emptiness.beck",
+        "def render(s: State, session: Session) -> Html:\n\
+        \x20   return ui:\n\
+        \x20       main:\n\
+        \x20           p: (\"empty \" + str(list_is_empty(map_list(map_values(s.posts), lambda p: p.text))))",
+    ),
+];
+
 fn corpus() -> Vec<(String, Placed)> {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus");
     let mut paths: Vec<std::path::PathBuf> = std::fs::read_dir(&dir)
@@ -93,6 +124,9 @@ fn corpus() -> Vec<(String, Placed)> {
         out.push((name, placed));
     }
     for (name, view, _) in RULE_PROGRAMS {
+        out.push((name.to_string(), program(name, view)));
+    }
+    for (name, view) in OPERATOR_PROGRAMS {
         out.push((name.to_string(), program(name, view)));
     }
     out
@@ -128,8 +162,15 @@ fn ops(plan: &Plan) -> Vec<&'static str> {
 // 1. The rewrite is the identity, on every program in the tree
 // ---------------------------------------------------------------------------------------------
 
+/// Three plans over one log: the fused one, the unfused one, and the recompute that is the whole
+/// engine's oracle.
+///
+/// Recompute is here rather than left to `incremental_engine.rs` because that harness runs the
+/// corpus and this one also runs the programs written for the rules and operators the corpus does
+/// not reach — and a fixture compared only against the unfused plan would agree with it about a
+/// shared mistake. `list_is_empty` is exactly that case: both plans reach the same engine arm.
 #[test]
-fn the_fused_plan_renders_what_the_unfused_plan_renders() {
+fn the_fused_plan_the_unfused_plan_and_recompute_all_agree() {
     let all = corpus();
     assert!(
         all.len() >= 24,
@@ -188,6 +229,15 @@ fn the_fused_plan_renders_what_the_unfused_plan_renders() {
                 assert_eq!(
                     got, want,
                     "{name} at event {i}, subscriber `{actor}`: fusion changed the page"
+                );
+                let oracle = runtime
+                    .view(&state, actor)
+                    .unwrap_or_else(|e| panic!("{name}: recompute: {e}"))
+                    .render();
+                assert_eq!(
+                    got, oracle,
+                    "{name} at event {i}, subscriber `{actor}`: the fused plan is not the \
+                     recomputed view"
                 );
                 compared += 1;
             }
@@ -295,6 +345,29 @@ fn every_rule_fires_on_a_program_somebody_can_open() {
         seen,
         all,
         "these rules have no program that reaches them: {:?}",
+        all.difference(&seen).collect::<Vec<_>>()
+    );
+}
+
+/// Every operator the engine implements, and a program that compiles to it.
+///
+/// The sibling of the rule test above, and it exists because this pass *closed* a hole rather than
+/// only opening one: `flatten` was reached by every `ui:` loop in the tree until fusion turned that
+/// pair into `flat_map`, and nothing would have said so. An operator the differential never runs is
+/// an engine arm nobody checks against recompute.
+#[test]
+fn every_operator_the_engine_implements_is_exercised() {
+    let mut seen: BTreeSet<&'static str> = BTreeSet::new();
+    for (_, placed) in corpus() {
+        for name in ops(&Plan::compile(&placed)) {
+            seen.insert(name);
+        }
+    }
+    let all: BTreeSet<&str> = beck_core::plan::OPERATORS.iter().copied().collect();
+    assert_eq!(
+        seen,
+        all,
+        "no program in the tree compiles to these operators: {:?}",
         all.difference(&seen).collect::<Vec<_>>()
     );
 }

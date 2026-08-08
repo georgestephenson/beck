@@ -98,21 +98,11 @@ pub struct Fusions {
     /// for, since an arrangement removed is memory per subscriber as well as work per event.
     pub operators: (usize, usize),
     pub arrangements: (usize, usize),
-    /// Operators the decomposition built that nothing could reach, removed before the first
-    /// rewrite so that they are not counted as one.
-    pub unreachable: usize,
 }
 
 /// Rewrite a plan to a fixed point.
 pub fn fuse(mut plan: Plan) -> (Plan, Fusions) {
-    // Before any rewrite, because otherwise it would be counted as one. The decomposition builds
-    // an operator for every argument of a call it inlines and for every `let`'s value, before it
-    // knows whether the body reads them — and a bounded call's arguments include one dictionary per
-    // method of each bound (`docs/39`), of which the body may use none.
-    let built = plan.nodes.len();
-    compact(&mut plan);
     let mut rec = Fusions {
-        unreachable: built - plan.nodes.len(),
         operators: (plan.nodes.len(), 0),
         arrangements: (arrangements(&plan), 0),
         ..Fusions::default()
@@ -141,7 +131,7 @@ pub fn fuse(mut plan: Plan) -> (Plan, Fusions) {
                 *kept = survivor;
             }
         }
-        let map = compact(&mut plan);
+        let map = plan.prune();
         remap(&mut fired, &mut refused, &map);
     }
 
@@ -570,58 +560,6 @@ fn substitute(plan: &mut Plan, from: OpId, to: OpId) {
     }
 }
 
-/// Drop everything the root can no longer reach, renumber, and recompute what `finish` computes.
-///
-/// Returns the old-to-new map, which is what lets a fusion recorded three rounds ago still name the
-/// operator it produced.
-fn compact(plan: &mut Plan) -> BTreeMap<OpId, OpId> {
-    let mut live = vec![false; plan.nodes.len()];
-    let mut stack = vec![plan.root, plan.state, plan.session];
-    stack.extend(plan.signals.iter().map(|(_, id)| *id));
-    while let Some(id) = stack.pop() {
-        if std::mem::replace(&mut live[id], true) {
-            continue;
-        }
-        stack.extend(plan.dependencies(id));
-    }
-
-    let mut map = BTreeMap::new();
-    let mut next = 0;
-    for (i, &keep) in live.iter().enumerate() {
-        if keep {
-            map.insert(i, next);
-            next += 1;
-        }
-    }
-    // Dependency order survives renumbering because it is monotone: an input's index was below its
-    // consumer's, and a monotone map keeps it there.
-    let mut nodes = Vec::with_capacity(next);
-    for (i, node) in std::mem::take(&mut plan.nodes).into_iter().enumerate() {
-        if !live[i] {
-            continue;
-        }
-        let mut node = node;
-        node.inputs.iter_mut().for_each(|id| *id = map[id]);
-        if let Op::MapList { f } | Op::FilterList { f } | Op::SortBy { f } | Op::FlatMap { f } =
-            &mut node.op
-        {
-            f.captures.iter_mut().for_each(|id| *id = map[id]);
-        }
-        nodes.push(node);
-    }
-    plan.nodes = nodes;
-    plan.constants = std::mem::take(&mut plan.constants)
-        .into_iter()
-        .filter_map(|(id, c)| map.get(&id).map(|&n| (n, c)))
-        .collect();
-    plan.signals.iter_mut().for_each(|(_, id)| *id = map[&*id]);
-    plan.root = map[&plan.root];
-    plan.state = map[&plan.state];
-    plan.session = map[&plan.session];
-    plan.finish();
-    map
-}
-
 fn remap(
     fired: &mut [(OpId, Fusion)],
     refused: &mut Vec<(OpId, OpId, Refusal)>,
@@ -683,13 +621,5 @@ pub fn report(f: &Fusions) -> String {
          pair is the one to read.",
         f.operators.0, f.operators.1, f.arrangements.0, f.arrangements.1
     );
-    if f.unreachable > 0 {
-        let _ = writeln!(
-            out,
-            "  {} operator{} the decomposition built and nothing could reach, dropped before the \n               first rewrite so that dead code is not counted as fusion.",
-            f.unreachable,
-            if f.unreachable == 1 { "" } else { "s" }
-        );
-    }
     out
 }

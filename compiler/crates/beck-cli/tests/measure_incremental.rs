@@ -271,8 +271,8 @@ fn how_much_of_each_corpus_program_is_maintained() {
 #[test]
 fn what_query_fusion_is_worth() {
     println!(
-        "\n{:<24} {:>9} {:>9} {:>13} {:>13} {:>6}",
-        "program", "before", "after", "arr. before", "arr. after", "dead"
+        "\n{:<24} {:>9} {:>9} {:>13} {:>13}",
+        "program", "before", "after", "arr. before", "arr. after"
     );
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus");
     let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&dir)
@@ -298,8 +298,8 @@ fn what_query_fusion_is_worth() {
         }
         arrangements += f.arrangements.0 - f.arrangements.1;
         println!(
-            "{name:<24} {:>9} {:>9} {:>13} {:>13} {:>6}",
-            f.operators.0, f.operators.1, f.arrangements.0, f.arrangements.1, f.unreachable
+            "{name:<24} {:>9} {:>9} {:>13} {:>13}",
+            f.operators.0, f.operators.1, f.arrangements.0, f.arrangements.1
         );
     }
     println!(

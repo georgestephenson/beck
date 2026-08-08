@@ -180,18 +180,25 @@ difference between the two columns. Per event the rewrite saves exactly one arra
 inside what this measurement can distinguish. Saying otherwise would be
 [`78`](78-a-record-is-a-permutation-report.md) §78.4's mistake in the other direction.
 
-## 89.5 What building it found
+## 89.5 What building it found, and it is three kinds of unreachable
 
-**The plan contained operators nothing could reach, and they came from dictionary passing.**
-`corpus/28-catalogue.beck` arrives at the pass with two operators no other operator, name or root
-refers to. The decomposition builds an operator for every argument of a call it inlines, before it
-knows whether the body reads it — and a bounded definition's arguments include one **dictionary per
-method of each bound** ([`39`](39-bounds-report.md)). `Priced` declares `pence` and `describe`;
-`priced_total[T: Priced]` calls only `pence`; so each of its two call sites contributes an operator
-for a `describe` the body never mentions. They were harmless — a `Pointwise` nothing reads is never
-evaluated — and they were counted, in `beck explain incremental`'s operator totals and in every
-report that quoted one. They are dropped now, before the first rewrite rather than as one, so dead
-code is not reported as fusion.
+**A plan contained operators nothing could reach, and they came from dictionary passing.**
+`corpus/28-catalogue.beck` built two operators that no other operator, no name and no root referred
+to. The decomposition builds an operator for every argument of a call it inlines and for every
+`let`'s value, before it knows whether the body reads them — and a bounded definition's arguments
+include one **dictionary per method of each bound** ([`39`](39-bounds-report.md)). `Priced` declares
+`pence` and `describe`; `priced_total[T: Priced]` calls only `pence`; so each of its two call sites
+contributed an operator for a `describe` the body never mentions. They were harmless — a `Pointwise`
+nothing reads is never evaluated — and they were *counted*, in `beck explain incremental`'s operator
+totals and in every report that quoted one.
+
+The fix is in the decomposition rather than in this pass: `Plan::unfused` ends by dropping whatever
+the roots cannot reach, so no plan in the compiler has an unreachable operator and no report counts
+one. Deciding it earlier — not building the argument until the body asks for it — would mean a scope
+of thunks rather than of operators, which changes the order operators are created in and therefore
+what the hash-consing shares; a pass afterwards costs one traversal and changes nothing else. The
+roots are the page, the two sources, and **every named signal**, because a name is a read-model
+table whether or not the page reads it.
 
 **A rule that could not fire was written, found and deleted.** `flat_map over map_list` is the same
 composition as `flatten over map_list`, one operator further down, and it looked necessary: a `for`
@@ -203,6 +210,22 @@ other allowed. It is deleted, and `beck_core::fuse::RULES` now lists every rule 
 `fusion.rs` can assert **each one is exercised by a program somebody can open**. A rule with no
 program is a rule the differential harness says nothing about, sitting in the module looking like
 coverage.
+
+**An operator the engine implements was reached by no program in the tree — and this pass is what
+took the last one away.** `flatten` had exactly one shape in the whole repository: the `map_list`
+under it that every `ui:` loop compiles to. Fusing that pair means `flatten` now survives only when
+its collection of lists came from somewhere else, and no program in the corpus, the sketch or the
+examples has one — so the arm the engine runs it with stopped being exercised, silently, in the same
+commit that made the rewrite. `fusion.rs` gains a program that reaches it and
+`beck_core::plan::OPERATORS` is held to the set the programs compile to, the same discipline as
+`RULES` one level down.
+
+That gate then found a hole **this work did not make**: `list_is_empty` has never reached a plan at
+all. The corpus writes it twice and both are inside an `if`, which is one opaque operator — so the
+engine's emptiness arm had never once been compared with recompute. It has a program now, and the
+differential in this file runs **recompute as a third plan** rather than only comparing the two
+plans with each other, because a fixture checked only against the unfused plan would agree with it
+about a shared mistake.
 
 **A refusal outlives the operator it was recorded against.** The first version dropped a refusal
 whose consumer was later fused into something else, which is exactly the case a developer most needs
@@ -241,6 +264,10 @@ pass — which is exactly why this one exists separately. Three things it cannot
    rule added without a program fails here;
 3. **whether a refusal still refuses.** Both conditions in §89.3 are *pessimisations* when dropped,
    never errors, so they are asserted on programs built to make each one bite.
+
+It also holds two published sets to the programs that reach them — `fuse::RULES` and
+`plan::OPERATORS` — so a rule or an operator with no program fails here rather than sitting in a
+match arm looking like coverage (§89.5).
 
 [`84`](84-a-quota-is-only-as-good-as-its-actor-report.md) §84.5 asks what would have to be true for a
 gate to go red, and to check it rather than assume it. Four mutations, each applied to the shipped
