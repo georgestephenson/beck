@@ -2230,35 +2230,37 @@ fn match_pattern(p: &Pattern, v: &Value) -> Option<Vec<(u32, Value)>> {
             };
             matches.then(Vec::new)
         }
+        // Recursive since nested patterns arrived, and the whole of what the evaluator had to
+        // learn: a field's pattern is matched the same way the scrutinee's was, and a failure
+        // anywhere under it fails the arm. Depth is bounded by the checker's own counter, which
+        // refuses a pattern that nests past the front end's ceiling before this ever sees it.
         Pattern::Ctor { variant, binds } => {
             if v.variant() != Some(variant.as_ref()) {
                 return None;
             }
             let mut out = Vec::with_capacity(binds.len());
-            for (field, id) in binds {
-                out.push((*id, v.field(field)?.clone()));
+            for (field, sub) in binds {
+                out.extend(match_pattern(sub, v.field(field)?)?);
             }
             Some(out)
         }
-        Pattern::List { binds, rest } => {
+        Pattern::List { items, rest } => {
             let xs = v.as_list()?;
             // No tail binder means an exact length; a tail binder means "at least this many".
             match rest {
-                None if xs.len() != binds.len() => return None,
-                Some(_) if xs.len() < binds.len() => return None,
+                None if xs.len() != items.len() => return None,
+                Some(_) if xs.len() < items.len() => return None,
                 _ => {}
             }
-            let mut out = Vec::with_capacity(binds.len() + 1);
-            for (b, x) in binds.iter().zip(xs.iter()) {
-                if let Some(id) = b {
-                    out.push((*id, x.clone()));
-                }
+            let mut out = Vec::with_capacity(items.len() + 1);
+            for (sub, x) in items.iter().zip(xs.iter()) {
+                out.extend(match_pattern(sub, x)?);
             }
             if let Some(Some(id)) = rest {
                 // The tail is a fresh list. `Arc<Vec<_>>` cannot share a suffix, so this is `O(n)`
                 // per step and a fold written over it is `O(n²)` — stated in `docs/33` §33.6
                 // rather than discovered on a long list.
-                out.push((*id, Value::List(Arc::new(xs[binds.len()..].to_vec()))));
+                out.push((*id, Value::List(Arc::new(xs[items.len()..].to_vec()))));
             }
             Some(out)
         }

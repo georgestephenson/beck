@@ -266,7 +266,12 @@ dependencies whose signatures didn't change.
   `.becki` and `--wire-compat` all applied to failure unchanged. Structured concurrency is **not**:
   §38.4 treats it as the same piece of work, and it is the half that gates nothing yet. `match`
   exhaustiveness is built for unions ([`33`](33-effect-polymorphism-and-list-patterns-report.md)
-  added lists); the rest of pattern matching is untouched.*
+  added lists). **Pattern matching nests** ([`90`](90-nested-patterns-report.md)):
+  `case Some(Circle(r))`, a literal or a constructor wherever a binder goes, through a type
+  parameter and inside a list — and the exhaustiveness check was rebuilt for it, because a set of
+  variant names cannot answer a pattern that names a variant and covers part of it. Unreachable
+  arms come with it, as a warning. What is left of this bullet is **guards, or-patterns and `@`
+  bindings**, and §90.6 lists them.*
 - **SQLite as a durable substrate** ([`07`](07-dependencies.md) §7.8.1): a `LogStore`
   implementation beside redb and Postgres. The reason is not speed — the measurements say the
   durable substrates are within ~16% of each other — it is that SQLite is *also* the read-model
@@ -347,8 +352,9 @@ substrate, the standard library, the language's own means of abstraction, the LS
 expressiveness suite (three chapters of SICP and the Felleisen table, with chapters 4–5 belonging
 to Phase 5), and incremental views, whose last part is
 [`89`](89-query-fusion-report.md)'s fusion.
-**One built but for a named remainder**: the concurrency-and-errors bullet has `Result`, error rows
-and `parallel:` but not the rest of pattern matching. **One half-built**: identity has
+**One built but for a named remainder**: the concurrency-and-errors bullet has `Result`, error
+rows, `parallel:` and pattern matching that nests ([`90`](90-nested-patterns-report.md)), but not
+guards or or-patterns. **One half-built**: identity has
 its seam and not its relying party. **Five untouched**: the LLVM backend, Mode B, client polish, the
 playground, and the supply-chain tooling. The criterion is not a count of those, though — it is a
 claim about a *person*, and the honest way to say how close it is is by the questions such a
@@ -794,7 +800,7 @@ Recommended pairings, in order:
 | ~~**Then**~~ | ~~Lane A: the rest of Wave 2 — `Set`, dates~~ | ~~Lane B: the shared dataflow's three loose ends~~ | **Half done.** `Set` and dates landed ([`50`](50-collections-and-dates-report.md)) and were not Lane A at all: two files in `compiler/lib/`, no primitive, and the only Rust touched was one diagnostic's label. Lane B is untouched, so the pairing was never tested — the prediction it made cannot be claimed to have held |
 | ~~**Then**~~ | ~~Lane A: bignums, coercion, `@derive`~~ | ~~Lane B: the shared dataflow's three loose ends~~ | **Half done, and the other half.** Lane B was taken at last, after being the recommended Branch 2 for three consecutive rewrites: two of the three loose ends are closed ([`51`](51-arrangement-lifecycle-report.md)) and the third — the render lock — is deliberately left. The prediction held exactly: `engine.rs`, `beck-rt/` and one test suite, and nothing in `check/`, `ty.rs` or `core.rs`. Lane A is untouched, so this pairing was again never actually run as a pair |
 | ~~**Then**~~ | ~~Lane A: bignums, coercion, `@derive`~~ | ~~Lane B: SQL read models and pgwire~~ | **Half done, and the other half again.** Lane B was taken ([`88`](88-read-models-and-pgwire-report.md)) and the prediction held: `beck-core/src/read.rs`, `beck-rt/src/pgwire.rs`, one reader type on `engine.rs`, and nothing in `check/`, `ty.rs` or `core.rs`. Lane A is untouched, so this pairing was never run as a pair either — the fourth consecutive rewrite in which it was not |
-| **Now** | Lane A: `Ord` as a trait, which [`54`](54-ordering.md) writes out and explicitly does *not* recommend, or the pattern-matching completion the error-rows bullet still names | Lane B: ~~query fusion on symbolic plans~~ — **built** ([`89`](89-query-fusion-report.md)); what is left in this lane is Mode B's server half and the render lock ([`51`](51-arrangement-lifecycle-report.md) §51.7) | `beck-rt` and `engine.rs` are untouched by anything in `check/` |
+| **Now** | Lane A: ~~the pattern-matching completion the error-rows bullet still names~~ — **nested patterns built** ([`90`](90-nested-patterns-report.md)); what is left there is guards and or-patterns, and beside it `Ord` as a trait, which [`54`](54-ordering.md) writes out and explicitly does *not* recommend | Lane B: ~~query fusion on symbolic plans~~ — **built** ([`89`](89-query-fusion-report.md)); what is left in this lane is Mode B's server half and the render lock ([`51`](51-arrangement-lifecycle-report.md) §51.7) | `beck-rt` and `engine.rs` are untouched by anything in `check/` |
 | **Then** | Lane A, continued | Lane E: the LLVM backend — and per §8.4 the AWFY/CLBG harness lands with whichever arrives second | The backend seam exists so these do not interact |
 | **Any time** | — | Lane F; Lane C's LSP; more of SICP | No predecessors, no collisions |
 

@@ -161,7 +161,10 @@ mod tests {
             Arm {
                 pattern: Pattern::Ctor {
                     variant: "Node".into(),
-                    binds: vec![("l".into(), 3), ("r".into(), 4)],
+                    binds: vec![
+                        ("l".into(), Pattern::Bind(3)),
+                        ("r".into(), Pattern::Bind(4)),
+                    ],
                 },
                 body: var(3),
                 span: Span::NONE,

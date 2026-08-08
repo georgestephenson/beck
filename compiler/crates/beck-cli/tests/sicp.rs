@@ -543,6 +543,9 @@ test \"one fold, two element types\":
     );
 
     // Each of these is a `match` on a list that misses a shape, and each names the shape it misses.
+    // The third names a *length* — a fixed-length pattern leaves the empty list and a
+    // one-element list uncovered, and saying `[_]` gives the author an input to test with
+    // (`docs/90`).
     for (arms, missing) in [
         (
             "        case []:\n            return 0\n",
@@ -554,7 +557,7 @@ test \"one fold, two element types\":
         ),
         (
             "        case [a, b]:\n            return a\n",
-            "the empty list and a list with",
+            "the empty list — `case []`, [_]",
         ),
     ] {
         let src = format!("def f(xs: list[Int]) -> Int:\n    match xs:\n{arms}");
