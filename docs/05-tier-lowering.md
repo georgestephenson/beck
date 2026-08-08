@@ -109,7 +109,7 @@ functions. The lowering question is substrates. **We do not write a storage engi
 |---|---|---|
 | The log | **PostgreSQL** (append-only table per app; `seq` from a sequence; logical decoding for tailing) | Boring, transactional, operable everywhere, PITR for free; licence-clean. A dedicated log store (e.g. NATS JetStream, Apache-2.0) is a post-1.0 option when fan-out demands it — Kafka's JVM weight is unnecessary; Redpanda is BSL, excluded |
 | Snapshots | object storage (S3-compatible) or Postgres large objects | Cheap, versioned, feeds `beck fork` |
-| Read models | generated tables in the same Postgres | One-shot queries and **pgwire access for the outside world**: `psql`, BI tools, DBeaver see materialized views as ordinary tables — the single cheapest trust-builder for adopting teams |
+| Read models | ~~generated tables in the same Postgres~~ — **the arrangement itself** ([`88`](88-read-models-and-pgwire-report.md), [`10`](10-decisions.md) D26) | One-shot queries and **pgwire access for the outside world**: `psql`, BI tools, DBeaver see materialized views as ordinary tables — the single cheapest trust-builder for adopting teams. Built, and the first half of this row is what changed: a read model is not a second copy written on the append path, it is the collection the fold holds and the arrangement the view engine maintains, projected. Nothing is written per event, and nothing can drift from the page |
 | Dev (rung 0) | in-memory folds + embedded append-only log (**redb**, MIT/Apache) | `beck run` needs no server; the log file is still replayable |
 | Analytical stores | **Apache DataFusion** over Arrow/Parquet (log archives Parquet-partitioned) | Fastest single-node Parquet engine (ClickBench); designed to be embedded/extended — the right shape for our plans, where DuckDB is a complete system designed to be used as-is |
 
@@ -134,8 +134,10 @@ functions. The lowering question is substrates. **We do not write a storage engi
   operators above the session cut are held once for the whole fanout rather than once per
   subscriber. What that is worth is a property of the program: 55× less work per event on a public
   feed, 1.3× on the todo sketch, because where a program reads the session decides its fanout cost.
-  Per-session memory is exported ([`26`](26-arrangement-sharing-report.md) §26.7); the SQL read
-  models and pgwire exposure below are not built.
+  Per-session memory is exported ([`26`](26-arrangement-sharing-report.md) §26.7). **The read
+  models and the pgwire exposure below are built too** ([`88`](88-read-models-and-pgwire-report.md)),
+  and on the same cut: a table is a view that does not depend on who is asking, which is the
+  `per_session` boundary this paragraph draws, used a second time. Query fusion is not.
 - v0.1 does **not** need the dataflow engine: full recompute per event on in-memory folds is
   semantically identical and fine at todo-app scale; the incremental plan is an optimisation with
   an exact correctness oracle (recompute) to test against — a luxurious position for CI

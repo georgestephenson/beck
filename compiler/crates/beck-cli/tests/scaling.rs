@@ -473,3 +473,147 @@ fn accumulating_inside_a_fold_costs_the_same_per_element_however_long_it_gets() 
         );
     }
 }
+
+/// **Keeping a read model fresh costs the change, not the collection** — and costs nothing at all
+/// until somebody asks.
+///
+/// [`docs/88-read-models-and-pgwire-report.md`](../../../../docs/88-read-models-and-pgwire-report.md)
+/// claims two things about what a read model costs, and both are shapes rather than rates, so both
+/// are counted rather than timed:
+///
+/// 1. **Nothing per event.** No projection is written, so a connected SQL client that asks nothing
+///    leaves the write path exactly as it was: `advances()` stays at zero however many events land.
+/// 2. **The delta per query.** The first query after an event advances the shared dataflow, and
+///    that advance is `O(δ)` — so the work it does must not grow with the number of rows already
+///    in the collection.
+///
+/// The second is the one that could regress into a recount, and it is measured at two sizes for
+/// [`docs/64`](../../../../docs/64-compile-speed-report.md)'s reason: one measurement cannot tell
+/// linear from constant. It needs no clock, because
+/// [`beck_core::engine::Work`] counts entries touched and operators recomputed.
+#[tokio::test]
+async fn a_read_model_costs_nothing_per_event_and_a_delta_per_query() {
+    // A derived *collection* signal — the shape whose rows come from an arrangement rather than
+    // from the accumulator. `ranking` does not read the session, so it is on the shared side of
+    // §5.3's cut and is therefore a table.
+    const PROGRAM: &str = r#"
+model Item:
+    id: Str
+    n: Int
+
+model State:
+    items: Map[Str, Item]
+
+union Command:
+    Add(id: Str, n: Int)
+
+union Event:
+    Added(id: Str, n: Int)
+
+union Rejection:
+    Blank
+
+def apply_event(s: State, env: Envelope[Event]) -> State:
+    match env.body:
+        case Added(id, n):
+            return s.with(items=map_insert(s.items, id, Item(id=id, n=n)))
+
+def validate(s: State, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Add(id, n):
+            if str_is_empty(id):
+                return Err(error=Blank)
+            return Ok(value=[Added(id=id, n=n)])
+
+def ranked(s: State) -> list[Item]:
+    return sort_by(map_values(s.items), lambda i: i.id)
+
+def render(items: list[Item], session: Session) -> Html:
+    return ui:
+        main:
+            p: (str(list_len(items)) + " items")
+
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, store, validate)
+store: Signal[State] = durable(fold(apply_event, State(items={}), events))
+ranking: Signal[list[Item]] = signal_map(store, ranked)
+page: Signal[Html] = per_session(ranking, render)
+"#;
+
+    let (placed, diags, map) = beck_core::compile_str("scaling-read-model.beck", PROGRAM);
+    assert!(!diags.has_errors(), "{}", diags.render(&map));
+    let placed = placed.expect("compiles");
+    let plan = beck_core::plan::Plan::compile(&placed);
+    let schema = beck_core::read::Schema::of(&placed, &plan);
+    let table = schema.table("ranking").expect("a derived collection table");
+    let op = match &table.source {
+        beck_core::read::Source::View(op) => *op,
+        other => panic!("`ranking` is read from {other:?} rather than from the dataflow"),
+    };
+
+    let add = |id: String, n: i64| {
+        let mut fields = beck_core::core::Fields::new();
+        fields.insert(Arc::from("id"), beck_core::Value::str_(&id));
+        fields.insert(Arc::from("n"), beck_core::Value::Int(n));
+        beck_core::Value::data(Arc::from("Command"), Some(Arc::from("Add")), fields)
+    };
+
+    let mut work_at = Vec::new();
+    for n in [200usize, 1_600] {
+        let backend = beck_eval::backend(&placed);
+        let runtime = beck_rt::Runtime::new(placed.clone(), backend).expect("prepares");
+        let app = App::start(runtime, Arc::new(MemoryLog::new()), unthrottled())
+            .await
+            .expect("starts");
+        let reader = app.shared_dataflow().reader();
+
+        for i in 0..n {
+            app.propose(
+                format!("k{i}"),
+                "ana".into(),
+                add(format!("i{i:06}"), i as i64),
+            )
+            .await
+            .expect("accepted");
+        }
+
+        // Claim 1: a connected reader that has asked nothing has cost the write path nothing.
+        assert_eq!(
+            app.shared_dataflow().advances(),
+            0,
+            "{n}: the shared dataflow was advanced without anybody reading it"
+        );
+
+        // The first query pays the cold build of the arrangement — `O(n)`, once, and not what is
+        // being measured. Then one more event, and the query after it is the delta.
+        let rows = app
+            .read_snapshot(|state, version| reader.read(state, version, op))
+            .await
+            .expect("the first read builds the arrangement");
+        // `ranked` is `sort_by(map_values(...))`, so the node is a maintained arrangement and its
+        // entries are the rows — the read model is the arrangement, with nothing copied into it.
+        assert_eq!(rows.len(), n, "the arrangement holds a row per element");
+
+        app.propose("last".into(), "ana".into(), add("zzz".into(), 0))
+            .await
+            .expect("accepted");
+        app.read_snapshot(|state, version| reader.read(state, version, op))
+            .await
+            .expect("the second read advances by a delta");
+
+        let work = app.shared_dataflow().work();
+        println!(
+            "read model at {n} rows: advance touched {} entries, applied {} functions, \
+             recomputed {} operators, materialised {}",
+            work.touched, work.applications, work.recomputed, work.materialised
+        );
+        work_at.push(work.touched + work.applications);
+    }
+
+    let (small, large) = (work_at[0], work_at[1]);
+    assert!(
+        large <= small * 3,
+        "eight times the rows cost {large} units of delta work against {small} — that is a \
+         recount rather than a delta"
+    );
+}

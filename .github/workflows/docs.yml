@@ -14,9 +14,14 @@ name: docs
 # difference. It is also a `cargo test` (`beck-cli/tests/docs.rs`), so it cannot be skipped by
 # deleting this job.
 #
-# `publish` builds the site: the reference, two module pages, and rustdoc for the nine crates.
-# Only from `main` — a pull request builds it and throws it away, which is enough to know it
-# builds.
+# `publish` builds the site: the reference, the written guide, two module pages, and rustdoc for
+# the nine crates. Only from `main` — a pull request builds it and throws it away, which is enough
+# to know it builds.
+#
+# The site has two kinds of page and they are honest in different ways. A reference page is
+# *derived* from the compiler and the `generated` job above holds it there. A guide is *written*,
+# and what holds it is that its programs are compiled and run by `beck-cli/tests/getting_started.rs`
+# — so the tutorial on the site cannot describe a program that does not work.
 
 on:
   push:
@@ -131,6 +136,14 @@ jobs:
         run: cargo build --release --locked
       - name: the language reference
         run: ./target/release/beck doc reference --out ../site --format html
+      # The written guide, rendered into the same shell. `--link-base` is the directory the guide
+      # lives in *in the repository*, because its links are written relative to itself and a
+      # relative link to `08-roadmap.md` is not a page on a static site.
+      - name: the guide
+        run: |
+          ./target/release/beck doc guide ../docs/86-getting-started.md \
+            --out ../site/guide \
+            --link-base "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/docs"
       # Two module pages: the sketch the project grew from, and the library written to show what a
       # doc comment adds to a page that is otherwise entirely derived.
       - name: module pages
@@ -147,6 +160,7 @@ jobs:
           cp -r target/doc/. ../site/api/
           test -f ../site/index.html
           test -f ../site/errors.html
+          test -f ../site/guide/getting-started.html
           test -f ../site/module/todo.html
           test -f ../site/api/beck_core/index.html
       - uses: actions/configure-pages@v5

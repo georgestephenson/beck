@@ -98,6 +98,17 @@ The analysis, not the engine: every view is a full recompute per event today, an
 | `<VIEW>` | VIEW | One view, by the name `beck explain flow` gives it |
 
 
+## `beck explain sql`
+
+The read model: what an outside SQL client sees, as `create table` (§5.3).
+
+Nothing executes this DDL. There is no table to create — a read model is the collection the fold already holds and the arrangement the view engine already maintains, projected — so this is the shape of the relations `beck run --pgwire` serves rather than a migration.
+
+| Argument | | |
+|---|---|---|
+| `<FILE>` | FILE |  |
+
+
 ## `beck explain deploy`
 
 The infrastructure the program's effects imply (§6.5)
@@ -167,6 +178,7 @@ Run the program in a single process — rung 0 of the parity ladder
 | `--store` | redb \| sqlite \| postgres \| memory |  |
 | `--path` | PATH |  |
 | `--url` | URL |  |
+| `--pgwire` | ADDR | Also serve the read models on the PostgreSQL wire protocol (§5.3).  Off by default, and loopback only: the port answers every question about the application's state, and it has no authentication and no transport security. Forward it rather than exposing it. |
 
 
 ## `beck replay`
@@ -211,6 +223,20 @@ One module's reference page: every published name, with its signature, effects a
 | `<FILE>` | FILE |  |
 | `-o, --out` | OUT | Where to write it. One file per module, named after the module |
 | `--format` | md \| html \| json |  |
+| `--stdout` | true \| false | Print it instead of writing it |
+
+
+## `beck doc guide`
+
+A written guide, rendered for the published site.
+
+The reference is derived from the compiler; a guide is written by a person and *checked* by a harness — every program in `docs/86-getting-started.md` is compiled and run by `beck-cli/tests/getting_started.rs`. This is what puts the checked file on the site instead of a second copy of it that nothing compiles.
+
+| Argument | | |
+|---|---|---|
+| `<FILE>` | FILE | The markdown file |
+| `-o, --out` | OUT |  |
+| `--link-base` | URL | Rewrite relative links against this URL — the *directory* the guide lives in, in the repository it is published from.  Without it they are left as written, which is right for reading the file in place and wrong for a static site, where `08-roadmap.md` is not a page. |
 | `--stdout` | true \| false | Print it instead of writing it |
 
 

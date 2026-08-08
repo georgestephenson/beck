@@ -18,6 +18,7 @@ pub mod identity;
 pub mod log;
 pub mod outbound;
 pub mod patch;
+pub mod pgwire;
 pub mod program;
 pub mod protocol;
 pub mod quota;

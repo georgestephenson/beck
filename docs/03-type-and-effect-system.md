@@ -411,8 +411,11 @@ State schema evolution is a *language* concern, not an ops concern (Lamdera's pr
    does is charge a crossing the *smaller* of its two ends, which is that choice expressed as a cost
    and ready for the second lowering ([`20`](20-phase-2-report.md) §20.4 item 1).
 5. Incremental view compilation (differential lineage); materialized read models; pgwire exposure.
-   — **the view compilation is Phase 3** ([`24`](24-incremental-views-report.md),
-   [`26`](26-arrangement-sharing-report.md)); the read models and pgwire are untouched.
+   — **all three are Phase 3** ([`24`](24-incremental-views-report.md),
+   [`26`](26-arrangement-sharing-report.md), [`88`](88-read-models-and-pgwire-report.md)). The read
+   models are not *materialized* in the sense this line assumed: they are the arrangements, served
+   as relations rather than projected into tables ([`10`](10-decisions.md) D26). Query fusion is
+   still untouched.
 6. Migrations/upcasters + operator choreography; replay/fork tooling.
 
 Stages 1–2 are a "typed tierless framework" someone could adopt. Stages 3–6 are the moat.

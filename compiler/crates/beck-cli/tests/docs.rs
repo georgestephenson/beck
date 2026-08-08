@@ -264,6 +264,7 @@ fn every_link_in_the_generated_site_resolves() {
     let site = std::env::temp_dir().join(format!("beck-doc-site-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&site);
     let module_dir = site.join("module");
+    let guide_dir = site.join("guide");
 
     let out = beck(&[
         "doc",
@@ -295,8 +296,26 @@ fn every_link_in_the_generated_site_resolves() {
         );
     }
 
+    // The index links to the guide, so the guide is part of the site rather than beside it: this
+    // test is what says the workflow cannot publish one without the other.
+    let guide = repo_root().join("docs/86-getting-started.md");
+    let out = beck(&[
+        "doc",
+        "guide",
+        &guide.to_string_lossy(),
+        "--out",
+        &guide_dir.to_string_lossy(),
+        "--link-base",
+        "https://example.invalid/repo/docs",
+    ]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
     let mut pages: Vec<PathBuf> = Vec::new();
-    for dir in [&site, &module_dir] {
+    for dir in [&site, &module_dir, &guide_dir] {
         for entry in std::fs::read_dir(dir)
             .expect("the site was written")
             .flatten()
@@ -433,5 +452,115 @@ fn a_relative_link_out_of_a_rustdoc_page_lands_on_the_file_it_names() {
     assert!(
         checked > 40,
         "the link sweep found almost nothing: {checked}"
+    );
+}
+
+/// The published guide is the checked file, rendered — not a second copy of it.
+///
+/// `docs/86-getting-started.md` is gated twice over: `getting_started.rs` compiles and runs every
+/// program in it, and this asserts the page the site serves is made from that same file. The two
+/// together are what let the site claim a tutorial whose examples work, which is
+/// [`docs/08-roadmap.md`](../../../../docs/08-roadmap.md) §8.5.4's exit criterion having a
+/// prerequisite met rather than a page written.
+#[test]
+fn the_published_guide_is_the_checked_guide() {
+    let source = repo_root().join("docs/86-getting-started.md");
+    let markdown = std::fs::read_to_string(&source).expect("the guide is checked in");
+    let out = beck(&[
+        "doc",
+        "guide",
+        &source.to_string_lossy(),
+        "--stdout",
+        "--link-base",
+        "https://example.invalid/repo/docs",
+    ]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let html = String::from_utf8_lossy(&out.stdout);
+
+    // Every fenced block in the file reaches the page. This is the assertion that matters: a
+    // renderer that silently drops a block would publish a tutorial with a step missing.
+    let fences = markdown
+        .lines()
+        .filter(|l| l.trim_start().starts_with("```"))
+        .count();
+    assert!(fences >= 20, "the guide has {fences} fenced blocks");
+    assert_eq!(
+        html.matches("<pre><code>").count(),
+        fences / 2,
+        "the rendered guide has a different number of code blocks than the source"
+    );
+
+    // Its relative links are rewritten, because `08-roadmap.md` is not a page on a static site.
+    assert!(
+        html.contains("https://example.invalid/repo/docs/08-roadmap.md"),
+        "a relative link was published unrewritten"
+    );
+    assert!(
+        !html.contains("href=\"08-roadmap.md\""),
+        "a link was published as written rather than as a URL"
+    );
+    // And a link that walks out of the guide's directory lands beside it rather than inside it.
+    assert!(
+        html.contains("https://example.invalid/repo/compiler/")
+            || !markdown.contains("](../compiler/"),
+        "a `..` link was resolved without leaving the guide's directory"
+    );
+    // And nothing in it is raw HTML from the source.
+    assert!(!html.contains("<script"), "the guide rendered a script tag");
+}
+
+/// Every shell command in `AGENTS.md` is one the shell would actually run.
+///
+/// One deterministic property, and it is the one that bit: an environment assignment whose value
+/// contains a space has to be quoted. Unquoted, `RUSTDOCFLAGS=-D warnings cargo doc …` is the
+/// assignment `RUSTDOCFLAGS=-D` followed by the command `warnings`, which fails with "command not
+/// found" — so the instruction reads as a verification step and performs none. That is worse than a
+/// missing step, because whoever follows it believes the check ran (`docs/88` §88.8).
+///
+/// Deliberately narrow. This does not run the commands — several take minutes and one needs a
+/// cluster — and it has no view on whether they are the right commands. It asserts the one thing a
+/// reader cannot see by looking.
+#[test]
+fn every_shell_command_in_the_instructions_runs() {
+    let text = std::fs::read_to_string(repo_root().join("AGENTS.md")).expect("AGENTS.md");
+    let mut bad = Vec::new();
+    // Commands appear in backticks in prose rather than in fenced blocks, so the span between two
+    // backticks is the unit — the same thing a reader would copy.
+    for span in text.split('`').skip(1).step_by(2) {
+        let Some(assignment) = span.split_whitespace().next() else {
+            continue;
+        };
+        let Some((name, value)) = assignment.split_once('=') else {
+            continue;
+        };
+        // An environment assignment: an upper-case name before the first `=`, and something after
+        // it that the rest of the line continues.
+        if name.is_empty()
+            || !name
+                .chars()
+                .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+        {
+            continue;
+        }
+        let rest = span[assignment.len()..].trim_start();
+        if rest.is_empty() {
+            continue;
+        }
+        let quoted = value.starts_with('"') || value.starts_with('\'');
+        // A flag as the value means the argument after it belongs to the flag, not to the command:
+        // `X=-D warnings cargo doc` runs `warnings`, not `cargo`.
+        if !quoted && value.starts_with('-') {
+            bad.push(span.to_string());
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "AGENTS.md gives a command whose environment assignment is unquoted, so the shell would \
+         run the next word as the command rather than passing it as part of the value:\n  {}",
+        bad.join("\n  ")
     );
 }
