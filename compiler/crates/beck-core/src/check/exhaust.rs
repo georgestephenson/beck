@@ -82,6 +82,12 @@ impl Ctor {
 fn view(p: &Pattern, fields: &[Arc<str>]) -> Option<(Ctor, Vec<Pattern>)> {
     match p {
         Pattern::Wildcard | Pattern::Bind(_) => None,
+        // An or-pattern is several rows rather than one constructor, and [`heads`] has already
+        // made them several by the time anything asks: both functions that inspect column zero
+        // expand it first. `alternatives_are_rows_before_anything_views_them` is the test that
+        // says so, because a `None` here would quietly read an or-pattern as a wildcard and call
+        // a `match` exhaustive that is not.
+        Pattern::Or(_) => None,
         Pattern::Const(k) => Some((Ctor::Lit(format!("{k:?}")), Vec::new())),
         Pattern::Ctor { variant, binds } => {
             // Written by name or by position, a pattern may bind a subset of the fields; the ones
@@ -118,6 +124,34 @@ fn view(p: &Pattern, fields: &[Arc<str>]) -> Option<(Ctor, Vec<Pattern>)> {
     }
 }
 
+/// Split any or-pattern in column zero into one row per alternative.
+///
+/// Lazy rather than a full or-normal form: only column zero is ever inspected, and specialising
+/// into a constructor puts that constructor's sub-patterns at column zero of the next matrix,
+/// where this runs again. Distributing every nested alternative up front would be exponential in
+/// the number of them, which is a cost with no reader.
+fn heads(rows: &[Vec<Pattern>]) -> Vec<Vec<Pattern>> {
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        let Some(first) = row.first() else {
+            out.push(row.clone());
+            continue;
+        };
+        let mut stack = vec![first.clone()];
+        while let Some(p) = stack.pop() {
+            match p {
+                Pattern::Or(alts) => stack.extend(alts),
+                other => {
+                    let mut next = vec![other];
+                    next.extend_from_slice(&row[1..]);
+                    out.push(next);
+                }
+            }
+        }
+    }
+    out
+}
+
 /// What the columns of a matrix are matching.
 #[derive(Clone)]
 struct Column {
@@ -142,7 +176,15 @@ pub enum Coverage {
 /// there is one witness, and it is a whole value: `Some(Removed(_))`, not "some `Some`".
 pub fn coverage(arms: &[Pattern], ty: &Ty, types: &Types) -> Coverage {
     let ctx = Ctx { types };
-    let rows: Vec<Vec<Pattern>> = arms.iter().map(|p| vec![p.clone()]).collect();
+    // Expanded here and not only inside [`Ctx::missing`], because this function specialises the
+    // top-level matrix itself: an or-pattern that reached `view` unexpanded would be read as a
+    // wildcard, and a `match` covering two of three variants would be called exhaustive.
+    let rows = heads(
+        &arms
+            .iter()
+            .map(|p| vec![p.clone()])
+            .collect::<Vec<Vec<Pattern>>>(),
+    );
     let col = ctx.column(ty);
     let Some(sig) = ctx.signature(&col.ty) else {
         return match ctx.missing(&rows, &[col]) {
@@ -360,9 +402,17 @@ impl Ctx<'_> {
     /// check needs, since the question there is about the arm's own pattern rather than about any
     /// value at all.
     fn escapes(&self, rows: &[Vec<Pattern>], cols: &[Column], q: &[Pattern]) -> bool {
+        let rows = &heads(rows);
         if cols.is_empty() {
             return rows.is_empty();
         }
+        // The *query* may be an or-pattern too — `case A | B` asks whether either alternative
+        // escapes — so it is expanded the same way and the arm is reachable if any of them is.
+        let split = heads(std::slice::from_ref(&q.to_vec()));
+        if split.len() > 1 {
+            return split.iter().any(|q| self.escapes(rows, cols, q));
+        }
+        let q = split.first().map(|v| v.as_slice()).unwrap_or(q);
         let head = &cols[0];
         match view(&q[0], &head.fields) {
             // `q` names a constructor: only the rows that could match it matter.
@@ -411,6 +461,7 @@ impl Ctx<'_> {
 
     /// The heart of it: a value of these columns that no row matches, if there is one.
     fn missing(&self, rows: &[Vec<Pattern>], cols: &[Column]) -> Option<Vec<Witness>> {
+        let rows = &heads(rows);
         if cols.is_empty() {
             // No columns left: the value is fully described. It escapes only if no row remains.
             return rows.is_empty().then(Vec::new);

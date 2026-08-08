@@ -994,9 +994,24 @@ impl<'h> Interp<'h> {
                 }
                 CoreKind::Match { scrutinee, arms } => {
                     let v = self.operand(scrutinee, env)?;
-                    let hit = arms
-                        .iter()
-                        .find_map(|arm| match_pattern(&arm.pattern, &v).map(|b| (b, &arm.body)));
+                    let mut hit = None;
+                    for arm in arms {
+                        let Some(bindings) = match_pattern(&arm.pattern, &v) else {
+                            continue;
+                        };
+                        if let Some(guard) = &arm.guard {
+                            // A guard reads what the pattern bound, so it needs a scope — and a
+                            // scope of its own, because an arm whose guard is false has to leave
+                            // the frame as it found it for the next arm to match into.
+                            let mut scope = env.extend(bindings.clone());
+                            let ok = self.operand(guard, &mut scope)?;
+                            if ok.as_bool() != Some(true) {
+                                continue;
+                            }
+                        }
+                        hit = Some((bindings, &arm.body));
+                        break;
+                    }
                     let Some((bindings, body)) = hit else {
                         return Err(EvalError::new(
                             format!("no match arm applies to {}", v.display()),
@@ -2230,6 +2245,9 @@ fn match_pattern(p: &Pattern, v: &Value) -> Option<Vec<(u32, Value)>> {
             };
             matches.then(Vec::new)
         }
+        // First alternative that matches wins, and the checker has made every alternative bind the
+        // same variables — so the body reads one set of bindings whichever one it was.
+        Pattern::Or(alts) => alts.iter().find_map(|a| match_pattern(a, v)),
         // Recursive since nested patterns arrived, and the whole of what the evaluator had to
         // learn: a field's pattern is matched the same way the scrutinee's was, and a failure
         // anywhere under it fails the arm. Depth is bounded by the checker's own counter, which

@@ -575,6 +575,20 @@ pub const INDEX: &[CodeEntry] = &[
          rather than a mistake.",
     ),
     e(
+        "B0356",
+        Stage::Types,
+        "the alternatives of an or-pattern bind different names",
+        "Every alternative of `a | b` has to bind the same names at the same types, because the \
+         body reads them without knowing which one matched.",
+    ),
+    e(
+        "B0357",
+        Stage::Types,
+        "`|` is only meaningful in a `case` pattern",
+        "Beck has no bitwise operators. `|` separates the alternatives of an or-pattern and means \
+         nothing anywhere else.",
+    ),
+    e(
         "B0360",
         Stage::Types,
         "cannot be called inside a fold",

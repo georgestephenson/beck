@@ -1291,7 +1291,9 @@ fn free_vars(c: &Core, bound: &mut BTreeSet<VarId>, out: &mut BTreeSet<VarId>) {
                     .into_iter()
                     .filter(|p| bound.insert(*p))
                     .collect();
-                free_vars(&a.body, bound, out);
+                for e in a.exprs() {
+                    free_vars(e, bound, out);
+                }
                 for p in added {
                     bound.remove(&p);
                 }

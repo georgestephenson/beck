@@ -341,6 +341,15 @@ impl Py {
             .join(", ")
     }
 
+    /// The pattern of a `case`, and its guard when it has one.
+    fn case_head(&self, arm: &Node) -> String {
+        let pat = self.expr(&arm.args[0]);
+        match arm.args.get(2) {
+            Some(g) => format!("{pat} if {}", self.expr(g)),
+            None => pat,
+        }
+    }
+
     fn body(&mut self, n: &Node) {
         self.indent += 1;
         if n.args.is_empty() {
@@ -481,8 +490,7 @@ impl Py {
                 self.line(&format!("match {s}:"));
                 self.indent += 1;
                 for arm in &n.args[1..] {
-                    let pat = self.expr(&arm.args[0]);
-                    self.line(&format!("case {pat}:"));
+                    self.line(&format!("case {}:", self.case_head(arm)));
                     self.body(&arm.args[1]);
                 }
                 self.indent -= 1;
@@ -600,8 +608,7 @@ impl Py {
                     self.line(&format!("stub {atom}:"));
                     self.indent += 1;
                     for arm in &body.args {
-                        let pat = self.expr(&arm.args[0]);
-                        self.line(&format!("case {pat}:"));
+                        self.line(&format!("case {}:", self.case_head(arm)));
                         self.body(&arm.args[1]);
                     }
                     self.indent -= 1;
@@ -705,7 +712,8 @@ impl Py {
             "negate" if n.args.len() == 1 => format!("-{}", self.expr(&n.args[0])),
             sym::UNQUOTE if n.args.len() == 1 => format!("${}", self.expr(&n.args[0])),
             sym::SPLICE if n.args.len() == 1 => format!("$*{}", self.expr(&n.args[0])),
-            "and" | "or" | "==" | "!=" | "<" | "<=" | ">" | ">=" | "+" | "-" | "*" | "/" | "%"
+            "and" | "or" | "|" | "==" | "!=" | "<" | "<=" | ">" | ">=" | "+" | "-" | "*" | "/"
+            | "%"
                 if n.args.len() == 2 =>
             {
                 format!(

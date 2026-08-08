@@ -196,7 +196,7 @@ fn children(c: &Core) -> Vec<&Core> {
         CoreKind::Let { value, body, .. } => vec![&**value, &**body],
         CoreKind::If { cond, then, alt } => vec![&**cond, &**then, &**alt],
         CoreKind::Match { scrutinee, arms } => std::iter::once(&**scrutinee)
-            .chain(arms.iter().map(|a| &a.body))
+            .chain(arms.iter().flat_map(|a| a.exprs()))
             .collect(),
         CoreKind::Make { fields, .. } => fields.iter().map(|(_, f)| f).collect(),
         CoreKind::Field { base, .. } => vec![&**base],
@@ -317,7 +317,12 @@ fn walk(
             let mut union = BTreeSet::new();
             for arm in arms.iter_mut() {
                 let mut arm_live = after.clone();
+                // Backwards through the arm: the body runs after the guard, so it is walked
+                // first — a read in the guard is *earlier*, and a last use is the latest read.
                 walk(&mut arm.body, &mut arm_live, captured, own);
+                if let Some(guard) = &mut arm.guard {
+                    walk(guard, &mut arm_live, captured, own);
+                }
                 // The arm's own binders die with the arm, the way a `let`'s does.
                 for b in arm.pattern.binders() {
                     arm_live.remove(&b);

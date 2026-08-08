@@ -4,7 +4,7 @@
 
 Every diagnostic the compiler can raise carries a stable code. `beck explain error B0341` prints one of these entries at the terminal.
 
-The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans every non-test source file for a `"Bnnnn"` literal and fails if the set differs from this table in either direction. **120 codes.**
+The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans every non-test source file for a `"Bnnnn"` literal and fails if the set differs from this table in either direction. **122 codes.**
 
 
 ## Reading the source — `B0100–B0122`
@@ -85,6 +85,8 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0353` | error | **no such variant** — The union being constructed or matched has no variant of that name. The type is named in the message. |
 | `B0354` | error | **cannot construct this type** — The name is a type, but not one with a constructor — an alias or a builtin. |
 | `B0355` | error | **this case can never match** — Every value the arm matches is already matched by an arm above it, so it cannot run. A warning rather than an error: `case _` written after every variant of a union is a habit rather than a mistake. |
+| `B0356` | error | **the alternatives of an or-pattern bind different names** — Every alternative of `a | b` has to bind the same names at the same types, because the body reads them without knowing which one matched. |
+| `B0357` | error | **`|` is only meaningful in a `case` pattern** — Beck has no bitwise operators. `|` separates the alternatives of an or-pattern and means nothing anywhere else. |
 | `B0360` | error | **cannot be called inside a fold** — A fold must be replay-pure, and this would make replay non-deterministic. Time is data on the envelope (`env.at`) and entity ids are minted at the edge: mint the id in the client's command and read it from the event. |
 | `B0370` | error | **performs more than its signature declares** — The undeclared atoms are listed. A `uses` clause is the published bound, and widening it is a breaking API change — so the compiler will not widen it for you. |
 | `B0380` | error | **a trait cannot be declared here** — The name already belongs to a type, the trait is declared twice, or the file is a `.becki` — a trait does not cross a module boundary, so an interface may not hold one. |

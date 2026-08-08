@@ -398,3 +398,230 @@ fn nest(open: &str, leaf: &str, close: &str, depth: usize) -> String {
     }
     s
 }
+
+// ---------------------------------------------------------------------------------------------
+// 4. Or-patterns and guards — the rest of `docs/90` §90.6's list
+// ---------------------------------------------------------------------------------------------
+
+#[test]
+fn an_or_pattern_binds_one_name_from_either_alternative() {
+    let out = run_tests(
+        "or.beck",
+        "union Shape:\n    \
+         Circle(r: Int)\n    \
+         Square(side: Int)\n    \
+         Point\n\n\
+         def size(s: Shape) -> Int:\n    \
+         match s:\n        \
+         case Circle(r) | Square(r):\n            \
+         return r\n        \
+         case Point:\n            \
+         return 0\n\n\
+         test \"either alternative binds the one name the body reads\":\n    \
+         expect size(Circle(r=3)) == 3\n    \
+         expect size(Square(side=4)) == 4\n    \
+         expect size(Point) == 0\n",
+    );
+    assert!(out.contains("1 passed, 0 failed"), "{out}");
+}
+
+#[test]
+fn an_or_pattern_covers_what_its_alternatives_cover() {
+    // Two variants covered by one arm, and the third by another: exhaustive with no `case _`.
+    // A check that read the arm as one constructor would refuse this.
+    let out = check(
+        "or-covers.beck",
+        "union Shape:\n    \
+         Circle(r: Int)\n    \
+         Square(side: Int)\n    \
+         Point\n\n\
+         def size(s: Shape) -> Int:\n    \
+         match s:\n        \
+         case Circle(r) | Square(r):\n            \
+         return r\n        \
+         case Point:\n            \
+         return 0\n",
+    );
+    assert!(
+        !out.contains("B0341"),
+        "wrongly refused as inexhaustive:\n{out}"
+    );
+}
+
+#[test]
+fn an_or_pattern_that_does_not_cover_a_variant_still_says_so() {
+    // The control for the test above: the same shape with a variant left out. Without this, an
+    // or-pattern read as a wildcard would pass both.
+    let out = check(
+        "or-misses.beck",
+        "union Shape:\n    \
+         Circle(r: Int)\n    \
+         Square(side: Int)\n    \
+         Point\n\n\
+         def size(s: Shape) -> Int:\n    \
+         match s:\n        \
+         case Circle(r) | Square(r):\n            \
+         return r\n",
+    );
+    assert!(out.contains("B0341"), "{out}");
+    assert!(out.contains("Point"), "{out}");
+}
+
+#[test]
+fn an_or_pattern_nested_inside_a_constructor_is_not_a_wildcard() {
+    // The shape that would go wrong if the exhaustiveness matrix ever inspected an alternative
+    // without expanding it: the or-pattern is a *field* rather than the whole arm, so it reaches
+    // column zero only after specialising into `Yes`.
+    let out = check(
+        "or-nested.beck",
+        &format!(
+            "{SHAPES}
+def area(f: Found) -> Int:
+    match f:
+        case Yes(Circle(r) | Square(r)):
+            return r
+        case No:
+            return 0
+"
+        ),
+    );
+    assert!(
+        !out.contains("B0341"),
+        "wrongly refused as inexhaustive:\n{out}"
+    );
+
+    // …and with one alternative removed it is not exhaustive, which is the half that would pass
+    // anyway if an unexpanded alternative were read as a wildcard.
+    let out = check(
+        "or-nested-partial.beck",
+        &format!(
+            "{SHAPES}
+def area(f: Found) -> Int:
+    match f:
+        case Yes(Circle(r)):
+            return r
+        case No:
+            return 0
+"
+        ),
+    );
+    assert!(out.contains("B0341"), "{out}");
+}
+
+#[test]
+fn the_alternatives_of_an_or_pattern_have_to_bind_the_same_names() {
+    let out = check(
+        "or-mismatch.beck",
+        "union Shape:\n    \
+         Circle(r: Int)\n    \
+         Point\n\n\
+         def size(s: Shape) -> Int:\n    \
+         match s:\n        \
+         case Circle(r) | Point:\n            \
+         return r\n",
+    );
+    assert!(out.contains("B0356"), "{out}");
+    assert!(out.contains("does not bind r"), "{out}");
+}
+
+#[test]
+fn a_pipe_outside_a_pattern_is_refused() {
+    // Beck has no bitwise operators, so `|` means one thing. The checker is where that is said,
+    // because the token is in the expression grammar — the same division `*rest` has.
+    let out = check(
+        "pipe.beck",
+        "def f(a: Int, b: Int) -> Int:\n    return a | b\n",
+    );
+    assert!(out.contains("B0357"), "{out}");
+}
+
+#[test]
+fn a_guard_falls_through_to_the_next_arm() {
+    // The whole of what makes a guard a guard rather than an `if` in the body: a false one does
+    // not take the arm, it moves on.
+    let out = run_tests(
+        "guard.beck",
+        "def classify(n: Int) -> Str:\n    \
+         match n:\n        \
+         case 0:\n            \
+         return \"zero\"\n        \
+         case x if x < 0:\n            \
+         return \"negative\"\n        \
+         case _:\n            \
+         return \"positive\"\n\n\
+         test \"a false guard falls through\":\n    \
+         expect classify(0) == \"zero\"\n    \
+         expect classify(-5) == \"negative\"\n    \
+         expect classify(7) == \"positive\"\n",
+    );
+    assert!(out.contains("1 passed, 0 failed"), "{out}");
+}
+
+#[test]
+fn a_guarded_arm_covers_nothing() {
+    // The rule a guard forces on exhaustiveness, and the one that is easy to get wrong: whether
+    // a guarded arm matches depends on a *value*, so it cannot be counted as covering a shape.
+    // `case Square(side) if side > 0` leaves `Square` uncovered.
+    let out = check(
+        "guard-covers.beck",
+        "union Shape:\n    \
+         Circle(r: Int)\n    \
+         Square(side: Int)\n\n\
+         def size(s: Shape) -> Int:\n    \
+         match s:\n        \
+         case Circle(r):\n            \
+         return r\n        \
+         case Square(side) if side > 0:\n            \
+         return side\n",
+    );
+    assert!(out.contains("B0341"), "{out}");
+    assert!(out.contains("Square"), "{out}");
+}
+
+#[test]
+fn a_guarded_arm_above_does_not_make_an_arm_unreachable() {
+    // The other side of the same rule. `case Circle(r) if r > 0` does not swallow every `Circle`,
+    // so the arm below it is live — and reporting it dead would be a warning about a correct
+    // program, which is worse than no warning.
+    let out = check(
+        "guard-live.beck",
+        "union Shape:\n    \
+         Circle(r: Int)\n    \
+         Square(side: Int)\n\n\
+         def size(s: Shape) -> Int:\n    \
+         match s:\n        \
+         case Circle(r) if r > 0:\n            \
+         return r\n        \
+         case Circle(r):\n            \
+         return 0\n        \
+         case Square(side):\n            \
+         return side\n",
+    );
+    assert!(!out.contains("B0355"), "{out}");
+    assert!(!out.contains("B0341"), "{out}");
+}
+
+#[test]
+fn a_guard_reads_a_binding_and_the_analyses_see_it() {
+    // `Arm` gained a field, and fourteen passes walk an arm's expressions — liveness, the frame
+    // pass, the plan's free variables, placement, the effect walk. A guard those passes did not
+    // see is not a compile error: it is a variable liveness never marks and a slot `frames` never
+    // reserves, which shows up as a missing binding on a program that uses one. This is that
+    // program, and it binds inside the guard as well as reading through it.
+    let out = run_tests(
+        "guard-analyses.beck",
+        "def f(xs: list[Int]) -> Int:\n    \
+         match xs:\n        \
+         case [a, *rest] if list_len(rest) + a > 3:\n            \
+         return a\n        \
+         case [a, *rest]:\n            \
+         return 0 - a\n        \
+         case []:\n            \
+         return 0\n\n\
+         test \"a guard reads the pattern's binders and the passes see it\":\n    \
+         expect f([9, 1, 2]) == 9\n    \
+         expect f([1]) == -1\n    \
+         expect f([]) == 0\n",
+    );
+    assert!(out.contains("1 passed, 0 failed"), "{out}");
+}

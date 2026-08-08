@@ -1396,11 +1396,23 @@ impl<'a> Parser<'a> {
             }
             // Patterns are ordinary `Node`s: `Added(id, text)` is the form `(Added id text)`,
             // `_` is the wildcard symbol, a literal is a literal. Nothing new to represent.
-            let pat = self.expr()?;
+            //
+            // Read at binding power 1 rather than 0, which is what makes `case p if g:` readable
+            // at all: the postfix conditional `a if c else b` is only offered at 0, so the `if`
+            // here is the guard's and not a conditional expression missing its `else`. An
+            // or-pattern's `|` binds at 1 and so is still read as part of the pattern.
+            let pat = self.expr_bp(1)?;
+            let guard = if self.eat_kw("if") {
+                Some(self.expr()?)
+            } else {
+                None
+            };
             self.expect(&Raw::Colon, "`:`");
             let body = self.block()?;
             let span = arm_start.to(body.span());
-            arms.push(Node::form(sym::CASE, vec![pat, body], span));
+            let mut args = vec![pat, body];
+            args.extend(guard);
+            arms.push(Node::form(sym::CASE, args, span));
         }
         Some(arms)
     }
@@ -1520,6 +1532,12 @@ impl<'a> Parser<'a> {
         }
         let r = self.cur().raw()?;
         Some(match r {
+            // An **or-pattern**, and only that: `case Circle(r) | Square(r):`. It is in the
+            // expression grammar rather than in a pattern grammar of its own for §2.6's reason —
+            // patterns *are* expressions, "nothing new to represent" — and the checker is what
+            // refuses it where a pattern is not wanted, exactly as it does for `*rest`. Beck has
+            // no bitwise operators (`docs/53` §53.6), so the token was free.
+            Raw::Pipe => ("|", 1, 2),
             Raw::EqEq => ("==", 5, 6),
             Raw::NotEq => ("!=", 5, 6),
             Raw::Lt => ("<", 5, 6),

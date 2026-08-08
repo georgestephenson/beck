@@ -386,6 +386,48 @@ mod traits;
 
 pub use traits::is_impl_method;
 
+/// `a | b | c` parses as `(| (| a b) c)`; the alternatives are its leaves.
+fn flatten_alts(p: &Node, out: &mut Vec<Node>) {
+    if p.has_head("|") && p.args.len() == 2 {
+        flatten_alts(&p.args[0], out);
+        flatten_alts(&p.args[1], out);
+        return;
+    }
+    out.push(p.clone());
+}
+
+/// Point one alternative's binders at the variables the first alternative made.
+fn rename_binders(p: &mut Pattern, map: &BTreeMap<VarId, VarId>) {
+    match p {
+        Pattern::Wildcard | Pattern::Const(_) => {}
+        Pattern::Bind(v) => {
+            if let Some(&to) = map.get(v) {
+                *v = to;
+            }
+        }
+        Pattern::Ctor { binds, .. } => {
+            for (_, sub) in binds {
+                rename_binders(sub, map);
+            }
+        }
+        Pattern::List { items, rest } => {
+            for sub in items {
+                rename_binders(sub, map);
+            }
+            if let Some(Some(v)) = rest {
+                if let Some(&to) = map.get(v) {
+                    *v = to;
+                }
+            }
+        }
+        Pattern::Or(alts) => {
+            for sub in alts {
+                rename_binders(sub, map);
+            }
+        }
+    }
+}
+
 impl<'a> Checker<'a> {
     fn error(&mut self, code: &'static str, msg: impl Into<String>, span: Span) {
         self.diags.push(Diagnostic::error(code, msg, span));
@@ -1922,6 +1964,14 @@ impl<'a> Checker<'a> {
     fn expr_inner(&mut self, n: &Node, expected: Option<&Ty>) -> Core {
         let span = n.span();
 
+        // `|` is an or-pattern and nothing else. It is in the expression grammar because §2.6's
+        // patterns *are* expressions, so this is where it is refused — the same division `*rest`
+        // has had since `docs/33`.
+        if n.has_head("|") && n.args.len() == 2 {
+            self.error("B0357", "`|` is only meaningful in a `case` pattern", span);
+            return Core::new(CoreKind::Const(Const::Unit), self.subst.fresh(), span);
+        }
+
         if let Some(l) = n.as_lit() {
             return match l {
                 Lit::Int(i) => Core::new(CoreKind::Const(Const::Int(*i)), Ty::int(), span),
@@ -2682,16 +2732,26 @@ impl<'a> Checker<'a> {
 
         let mut arms = Vec::new();
         for arm in &n.args[1..] {
-            if !arm.is_form(sym::CASE) || arm.args.len() != 2 {
+            // Two arguments is `case p:`; three is `case p if g:`, with the guard last so that
+            // everything reading `args[1]` for the body still reads the body.
+            if !arm.is_form(sym::CASE) || !(2..=3).contains(&arm.args.len()) {
                 continue;
             }
             let before = self.locals.len();
             let pattern = self.pattern(&arm.args[0], &scrut_ty);
+            // In the scope of what the pattern bound, which is the whole reason a guard is not an
+            // `if` around the `match`.
+            let guard = arm.args.get(2).map(|g| {
+                let c = self.expr(g, Some(&Ty::bool_()));
+                self.unify(&c.ty, &Ty::bool_(), c.span, "a `case` guard");
+                c
+            });
             let body = self.body_expr(&arm.args[1], Some(&result));
             self.unify(&body.ty, &result, body.span, "match arm");
             self.locals.truncate(before);
             arms.push(Arm {
                 pattern,
+                guard,
                 body,
                 span: arm.span(),
             });
@@ -2701,7 +2761,14 @@ impl<'a> Checker<'a> {
         // check carries the migration story" (§3.9). What counts as covered is not a set of names
         // any more, because `case Some(Added(id))` names `Some` and covers a fraction of it —
         // [`exhaust`] is the check, and it answers for a list and a union with one algorithm.
-        let shapes: Vec<Pattern> = arms.iter().map(|a| a.pattern.clone()).collect();
+        // A guarded arm contributes **nothing** to coverage: whether it matches depends on a value
+        // rather than on a shape, so a checker that counted it would call a `match` exhaustive on
+        // the strength of a condition that can be false. `case _ if ok(x):` is not a `case _`.
+        let shapes: Vec<Pattern> = arms
+            .iter()
+            .filter(|a| a.guard.is_none())
+            .map(|a| a.pattern.clone())
+            .collect();
         // The scrutinee's type has to be *resolved* here rather than where it was read: an arm's
         // body can be what decides it, so asking before the arms are checked asks a variable.
         let scrut_ty = self.subst.resolve(&scrut_ty);
@@ -2709,7 +2776,19 @@ impl<'a> Checker<'a> {
         // write by accident: `case Some(Circle(r))`, then `case Some(_)`, then `case Some(Square)`.
         // A warning rather than an error — a `case _` after every variant is a habit, and refusing
         // a habit changes what compiles rather than telling somebody something.
-        for i in exhaust::unreachable(&shapes, &scrut_ty, &self.types) {
+        // Judged against the *unguarded* arms above each one, for the same reason: an arm above
+        // that only sometimes matches cannot make this one dead. `guarded` maps a position in
+        // `shapes` back to the arm it came from.
+        let guarded: Vec<usize> = arms
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| a.guard.is_none())
+            .map(|(i, _)| i)
+            .collect();
+        for i in exhaust::unreachable(&shapes, &scrut_ty, &self.types)
+            .into_iter()
+            .map(|i| guarded[i])
+        {
             self.diags.push(
                 Diagnostic::warning("B0355", "this case can never match", arms[i].span)
                     .with_primary_label("the arms above it already cover every value this matches")
@@ -2747,6 +2826,100 @@ impl<'a> Checker<'a> {
         )
     }
 
+    /// `Circle(r) | Square(r)` — several patterns for one arm.
+    ///
+    /// The rule that makes this a *pattern* rather than two arms sharing a body is that every
+    /// alternative binds the same names at the same types. That is checked here, and then the
+    /// alternatives' variables are **unified onto the first's**, so the body reads one `r` and the
+    /// evaluator does not have to say which alternative matched.
+    fn or_pattern(&mut self, p: &Node, scrut: &Ty, span: Span) -> Pattern {
+        // `a | b | c` is `(| (| a b) c)`, so the alternatives are collected by flattening rather
+        // than by a list in the grammar.
+        let mut nodes = Vec::new();
+        flatten_alts(p, &mut nodes);
+
+        let before = self.locals.len();
+        let mut alts: Vec<Pattern> = Vec::new();
+        let mut first: Vec<(Arc<str>, VarId, Ty)> = Vec::new();
+        for (i, node) in nodes.iter().enumerate() {
+            self.locals.truncate(before);
+            let pat = self.pattern(node, scrut);
+            let bound: Vec<(Arc<str>, VarId, Ty)> = self.locals[before..]
+                .iter()
+                .filter_map(|b| match &b.kind {
+                    BindKind::Local(id, ty) => Some((b.name.clone(), *id, ty.clone())),
+                    _ => None,
+                })
+                .collect();
+            if i == 0 {
+                first = bound;
+                alts.push(pat);
+                continue;
+            }
+            // Same names, or the body would read a variable that is only sometimes bound.
+            let missing: Vec<&str> = first
+                .iter()
+                .filter(|(n, _, _)| !bound.iter().any(|(m, _, _)| m == n))
+                .map(|(n, _, _)| n.as_ref())
+                .collect();
+            let extra: Vec<&str> = bound
+                .iter()
+                .filter(|(n, _, _)| !first.iter().any(|(m, _, _)| m == n))
+                .map(|(n, _, _)| n.as_ref())
+                .collect();
+            if !missing.is_empty() || !extra.is_empty() {
+                let mut said = Vec::new();
+                if !missing.is_empty() {
+                    said.push(format!(
+                        "this alternative does not bind {}",
+                        missing.join(", ")
+                    ));
+                }
+                if !extra.is_empty() {
+                    said.push(format!("only this one binds {}", extra.join(", ")));
+                }
+                self.diags.push(
+                    Diagnostic::error(
+                        "B0356",
+                        "the alternatives of an or-pattern bind different names",
+                        node.span(),
+                    )
+                    .with_primary_label(said.join("; "))
+                    .with_note(
+                        "every alternative has to bind the same names, because the body reads them \
+                         without knowing which one matched",
+                    ),
+                );
+            }
+            // One variable per name, taken from the first alternative — and the types unified, so
+            // `Circle(r) | Named(r)` over an `Int` and a `Str` is a mismatch rather than a value
+            // whose type depends on which alternative ran.
+            let mut rename: BTreeMap<VarId, VarId> = BTreeMap::new();
+            for (name, id, ty) in &bound {
+                if let Some((_, target, want)) = first.iter().find(|(n, _, _)| n == name) {
+                    self.unify(ty, want, node.span(), "an or-pattern's alternatives");
+                    rename.insert(*id, *target);
+                }
+            }
+            let mut pat = pat;
+            rename_binders(&mut pat, &rename);
+            alts.push(pat);
+        }
+
+        // The arm's scope is the first alternative's bindings, which the renaming made the only
+        // ones any alternative produces.
+        self.locals.truncate(before);
+        for (name, id, ty) in first {
+            self.locals.push(Binding {
+                name,
+                scopes: ScopeSet::default(),
+                kind: BindKind::Local(id, ty),
+            });
+        }
+        let _ = span;
+        Pattern::Or(alts)
+    }
+
     /// One pattern, against the type of what it matches.
     ///
     /// Recursive since nested patterns arrived, so it is **counted**: a pattern is an ordinary
@@ -2765,6 +2938,9 @@ impl<'a> Checker<'a> {
     }
 
     fn pattern_inner(&mut self, p: &Node, scrut: &Ty, span: Span) -> Pattern {
+        if p.has_head("|") && p.args.len() == 2 {
+            return self.or_pattern(p, scrut, span);
+        }
         if let Some(l) = p.as_lit() {
             return Pattern::Const(match l {
                 Lit::Int(i) => Const::Int(*i),
