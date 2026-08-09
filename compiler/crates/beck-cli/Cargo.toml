@@ -50,3 +50,6 @@ tokio-postgres.workspace = true
 # hexadecimal a port asserts is derived from the checked-in file rather than chosen. It is the same
 # BLAKE3 the `digest` primitive is, which is what makes the two comparable.
 blake3.workspace = true
+# `mode_b.rs` drives the Mode B client kernel natively. The kernel is a `cdylib` for the browser and
+# an `rlib` here, which is what makes its behaviour gateable without one.
+beck-wasm.workspace = true

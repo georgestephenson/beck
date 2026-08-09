@@ -38,6 +38,9 @@ pub struct Runtime {
     /// holds the code.
     plan: Arc<Prepared>,
     init: Value,
+    /// The program's `Command` union, resolved to a decoder. Shared with a Mode B client through
+    /// its bundle, so both tiers decode a command the same way.
+    command: beck_core::command::Schema,
     /// The one impure capability the program may reach: minting ids outside a fold.
     uuid: Box<dyn Fn() -> Arc<str> + Send + Sync>,
 }
@@ -65,6 +68,7 @@ impl Runtime {
             .constant(&placed.roles.init)
             .map_err(|e| anyhow!("evaluating the initial state: {e}"))?;
 
+        let command = beck_core::command::Schema::of(&placed);
         Ok(Runtime {
             placed,
             backend,
@@ -73,6 +77,7 @@ impl Runtime {
             view_fn,
             plan,
             init,
+            command,
             uuid: Box::new(|| Arc::from(uuid::Uuid::now_v7().to_string())),
         })
     }
@@ -97,14 +102,7 @@ impl Runtime {
 
     /// Build the `Proposal` record the program's `validate` expects.
     pub fn proposal(&self, actor: &str, command: Value) -> Value {
-        Value::data(
-            Arc::from("Proposal"),
-            None,
-            beck_core::core::Fields::from_iter([
-                (Arc::from("session"), session(actor)),
-                (Arc::from("command"), command),
-            ]),
-        )
+        beck_core::edge::proposal(actor, command)
     }
 
     /// The authority chokepoint, as the program wrote it: the whole
@@ -254,91 +252,21 @@ impl Runtime {
 
     /// Decode a command from the wire, against the program's own `Command` union.
     ///
-    /// §3.5: "the client's entire write surface is `send(cmd)` into a typed `Command` union. There
-    /// is no other mutation path — mass assignment and over-posting have no representation." That
-    /// property is enforced here: a field the union does not declare is not decoded, it is
-    /// rejected.
+    /// The union is resolved to a [`beck_core::command::Schema`] once, at compile time, and both
+    /// tiers decode with it: Mode B's client holds a bundle rather than a program, and a second
+    /// decoder written against a second reading of the same union is the failure mode that is
+    /// worth designing out ([`beck_core::command`]).
     pub fn decode_command(&self, json: &serde_json::Value) -> Result<Value> {
-        let name = self.placed.roles.command_ty.con_name().unwrap_or("Command");
-        let Some(beck_core::TyDecl::Union { variants, .. }) = self.placed.program.types.get(name)
-        else {
-            return Err(anyhow!("`{name}` is not a union"));
-        };
-        let tag = json
-            .get("c")
-            .and_then(|c| c.as_str())
-            .ok_or_else(|| anyhow!("a command needs a `c` tag naming its variant"))?;
-        let variant = variants
-            .iter()
-            .find(|v| v.name.as_ref() == tag)
-            .ok_or_else(|| anyhow!("`{tag}` is not a variant of `{name}`"))?;
+        self.command.decode(json).map_err(|e| anyhow!(e))
+    }
 
-        let mut fields = beck_core::core::Fields::new();
-        for (field, ty) in &variant.fields {
-            let raw = json
-                .get(field.as_ref())
-                .ok_or_else(|| anyhow!("`{tag}` needs a `{field}`"))?;
-            fields.insert(field.clone(), decode_field(raw, ty, &self.placed.program)?);
-        }
-        Ok(Value::data(
-            Arc::from(name),
-            Some(variant.name.clone()),
-            fields,
-        ))
+    /// What this program's clients may send.
+    pub fn command_schema(&self) -> &beck_core::command::Schema {
+        &self.command
     }
 }
 
-/// Build the `Session` the program sees. Phase 1 carries the actor only — dev-mode identity, as
-/// Phase 0 had; D6's OIDC relying party is Phase 3.
-fn session(actor: &str) -> Value {
-    Value::data(
-        Arc::from("Session"),
-        None,
-        beck_core::core::Fields::from_iter([(Arc::from("actor"), Value::str_(actor))]),
-    )
-}
-
-fn decode_field(
-    raw: &serde_json::Value,
-    ty: &beck_core::Ty,
-    program: &beck_core::Program,
-) -> Result<Value> {
-    use beck_core::Ty;
-    let name = ty.con_name().unwrap_or("");
-    // A newtype is transparent on the wire and nominal in the type system — the whole point of
-    // "ids of different entities must not be interchangeable" (§3.1).
-    if let Some(beck_core::TyDecl::Newtype { inner, .. }) = program.types.get(name) {
-        let inner = decode_field(raw, inner, program)?;
-        return Ok(Value::data(
-            Arc::from(name),
-            None,
-            beck_core::core::Fields::from_iter([(Arc::from("value"), inner)]),
-        ));
-    }
-    match name {
-        Ty::STR => raw
-            .as_str()
-            .map(Value::str_)
-            .ok_or_else(|| anyhow!("expected a string, got {raw}")),
-        Ty::INT => raw
-            .as_i64()
-            .map(Value::Int)
-            .ok_or_else(|| anyhow!("expected an integer, got {raw}")),
-        Ty::BOOL => raw
-            .as_bool()
-            .map(Value::Bool)
-            .ok_or_else(|| anyhow!("expected a boolean, got {raw}")),
-        // A real crosses the wire as a JSON number, and an integral one arrives as an integer —
-        // `1` and `1.0` are the same JSON token — so this accepts either and canonicalises through
-        // `Value::float`. Nothing in SICP needed it; a command with a `Float` field does, and it
-        // would have been a runtime error nobody had written a test for (`docs/32` §32.6).
-        Ty::FLOAT => raw
-            .as_f64()
-            .map(Value::float)
-            .ok_or_else(|| anyhow!("expected a number, got {raw}")),
-        other => Err(anyhow!("Phase 1 cannot decode `{other}` from the wire")),
-    }
-}
+use beck_core::edge::session;
 
 /// A `Core` value's shape, for `beck explain`.
 pub fn describe(c: &Core) -> String {

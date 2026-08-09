@@ -31,6 +31,7 @@
 
 pub mod interp;
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use beck_core::backend::{Backend, Callable, ExecError, Interceptor};
@@ -93,7 +94,7 @@ pub fn on_the_evaluator_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
 /// `validate`, the fold and the view once at startup and calls them for the process's lifetime,
 /// which a borrowed `Interp<'h>` cannot support.
 pub struct Evaluator {
-    program: Arc<Program>,
+    defs: Defs,
     /// The one impure capability the program may reach. Injected, so a test can make ids
     /// deterministic and a replay can refuse to mint them at all.
     uuid: Arc<dyn Fn() -> Arc<str> + Send + Sync>,
@@ -107,10 +108,41 @@ pub struct Evaluator {
     fuel: u64,
 }
 
+/// Where a `Global` resolves to a body.
+///
+/// A program is what a server holds; a bare table of definitions is what a **Mode B client**
+/// holds, because a [`beck_core::bundle::Bundle`] carries the slice its component reaches and
+/// nothing else — no types, no signals, no tests. Both answer the one question the evaluator asks
+/// of a name, and the enum is here rather than a second `Host` implementation so the two cannot
+/// resolve a name differently.
+#[derive(Clone)]
+enum Defs {
+    Program(Arc<Program>),
+    Slice(Arc<BTreeMap<Arc<str>, Core>>),
+}
+
+impl Defs {
+    fn global(&self, name: &str) -> Option<&Core> {
+        match self {
+            Defs::Program(p) => p.defs.get(name).map(|d| &d.body),
+            Defs::Slice(defs) => defs.get(name),
+        }
+    }
+}
+
 impl Evaluator {
     pub fn new(program: Arc<Program>) -> Evaluator {
+        Evaluator::over(Defs::Program(program))
+    }
+
+    /// A backend over a bundle's definitions rather than a whole program.
+    pub fn for_defs(defs: BTreeMap<Arc<str>, Core>) -> Evaluator {
+        Evaluator::over(Defs::Slice(Arc::new(defs)))
+    }
+
+    fn over(defs: Defs) -> Evaluator {
         Evaluator {
-            program,
+            defs,
             uuid: Arc::new(|| Arc::from(uuid_v7())),
             interceptor: None,
             fuel: interp::DEFAULT_FUEL,
@@ -138,14 +170,14 @@ impl Evaluator {
 
 /// Bound to the program and the id source for one call.
 struct Globals {
-    program: Arc<Program>,
+    defs: Defs,
     uuid: Arc<dyn Fn() -> Arc<str> + Send + Sync>,
     interceptor: Option<Arc<dyn Interceptor>>,
 }
 
 impl Host for Globals {
     fn global(&self, name: &str) -> Option<&Core> {
-        self.program.defs.get(name).map(|d| &d.body)
+        self.defs.global(name)
     }
     fn new_uuid(&self) -> Arc<str> {
         (self.uuid)()
@@ -171,7 +203,7 @@ impl Backend for Evaluator {
 
     fn constant(&self, code: &Core) -> Result<Value, ExecError> {
         let host = Globals {
-            program: self.program.clone(),
+            defs: self.defs.clone(),
             uuid: self.uuid.clone(),
             interceptor: self.interceptor.clone(),
         };
@@ -182,7 +214,7 @@ impl Backend for Evaluator {
 
     fn intercepting(&self, by: Arc<dyn Interceptor>) -> Option<Arc<dyn Backend>> {
         Some(Arc::new(Evaluator {
-            program: self.program.clone(),
+            defs: self.defs.clone(),
             uuid: self.uuid.clone(),
             interceptor: Some(by),
             fuel: self.fuel,
@@ -194,13 +226,13 @@ impl Backend for Evaluator {
         // call is the walk. A compiling backend would do the opposite, which is the whole reason
         // this is two methods rather than one `call(code, args)`.
         let closure = self.constant(code)?;
-        let program = self.program.clone();
+        let defs = self.defs.clone();
         let uuid = self.uuid.clone();
         let interceptor = self.interceptor.clone();
         let fuel = self.fuel;
         Ok(Arc::new(move |args: Vec<Value>| {
             let host = Globals {
-                program: program.clone(),
+                defs: defs.clone(),
                 uuid: uuid.clone(),
                 interceptor: interceptor.clone(),
             };

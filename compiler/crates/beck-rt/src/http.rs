@@ -97,7 +97,17 @@ async fn route(
     }
     match (req.method(), path.as_str()) {
         (&Method::GET, "/healthz") | (&Method::GET, "/readyz") => Ok(text("ok")),
+        (&Method::GET, "/beck-patch.js") => Ok(asset(crate::PATCH_CLIENT, "text/javascript")),
         (&Method::GET, "/beck-thin.js") => Ok(asset(crate::THIN_CLIENT, "text/javascript")),
+        (&Method::GET, "/beck-mode-b.js") => Ok(asset(crate::MODE_B_CLIENT, "text/javascript")),
+        // The component's slice, for a browser that renders it (§5.1's Mode B). Derived from the
+        // running program rather than read from disk, so a tab can never load a bundle the server
+        // is not itself executing.
+        (&Method::GET, "/beck-bundle.bpk") => Ok(bytes(
+            beck_core::Bundle::of(app.runtime().placed()).to_bytes(),
+            "application/octet-stream",
+        )),
+        (&Method::GET, "/beck-kernel.wasm") => Ok(kernel()),
         (&Method::GET, "/beck.css") => Ok(asset(&crate::css::stylesheet(), "text/css")),
         (&Method::GET, "/socket") => upgrade(app, req),
         (&Method::GET, "/") => document(app, req).await,
@@ -156,8 +166,16 @@ async fn document(app: Arc<App>, req: Request<Incoming>) -> Result<Response<Full
          <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
          <title>{title}</title><link rel=\"stylesheet\" href=\"/beck.css\">\
          </head><body data-b-seq=\"{seq}\" data-b-actor=\"{actor}\">{body}\
-         <script src=\"/beck-thin.js\" defer></script></body></html>",
+         <script src=\"/beck-patch.js\" defer></script>\
+         <script src=\"{client}\" defer></script></body></html>",
         title = app.runtime().placed().program.name,
+        // Which residue this page needs is the component's rendering mode, and the server is the
+        // one that knows it: a Mode B document that loaded the thin client would sit waiting for
+        // DOM patches the server is never going to send.
+        client = match app.runtime().placed().render.mode {
+            beck_core::render::Mode::Server => "/beck-thin.js",
+            beck_core::render::Mode::Client => "/beck-mode-b.js",
+        },
     );
     Ok(Response::builder()
         .header(
@@ -300,6 +318,50 @@ fn asset(body: &str, mime: &'static str) -> Response<Full<Bytes>> {
         )
         .body(Full::new(Bytes::from(body.to_string())))
         .expect("static response builds")
+}
+
+fn bytes(body: Vec<u8>, mime: &'static str) -> Response<Full<Bytes>> {
+    Response::builder()
+        .header(CONTENT_TYPE, HeaderValue::from_static(mime))
+        .header(
+            CACHE_CONTROL,
+            HeaderValue::from_static("public, max-age=60"),
+        )
+        .body(Full::new(Bytes::from(body)))
+        .expect("static response builds")
+}
+
+/// Where the Mode B kernel is looked for.
+///
+/// `BECK_KERNEL` names the module; without it, the path `cargo build -p beck-wasm --release
+/// --target wasm32-unknown-unknown` writes to, relative to the working directory. The kernel is a
+/// *build artefact of this workspace* rather than something compiled into the binary, because
+/// building it needs a target the compiler's own build does not: making `beck` depend on a wasm
+/// toolchain to serve a Mode A page would be the wrong trade.
+pub fn kernel_path() -> std::path::PathBuf {
+    std::env::var_os("BECK_KERNEL").map_or_else(
+        || std::path::PathBuf::from("target/wasm32-unknown-unknown/release/beck_wasm.wasm"),
+        std::path::PathBuf::from,
+    )
+}
+
+/// The kernel, or a refusal that says what to do about it.
+fn kernel() -> Response<Full<Bytes>> {
+    let path = kernel_path();
+    match std::fs::read(&path) {
+        Ok(module) => bytes(module, "application/wasm"),
+        Err(e) => {
+            tracing::error!(path = %path.display(), error = %e, "no Mode B kernel to serve");
+            Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .body(Full::new(Bytes::from(format!(
+                    "no kernel at {}: build it with `cargo build -p beck-wasm --release \
+                     --target wasm32-unknown-unknown`, or set BECK_KERNEL",
+                    path.display()
+                ))))
+                .expect("static response builds")
+        }
+    }
 }
 
 #[cfg(test)]

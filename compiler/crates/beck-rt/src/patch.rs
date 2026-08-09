@@ -12,8 +12,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::diff::Op;
 use crate::log::Seq;
+use beck_core::diff::Op;
 use beck_core::html::Html;
 
 /// A subscription id — content-independent, minted by the client, stable across reconnects.
@@ -41,6 +41,54 @@ impl PatchFrame {
             "q": self.seq,
             "o": self.ops.iter().map(Op::to_wire).collect::<Vec<_>>(),
         })
+    }
+}
+
+/// A **data** patch frame: what a Mode B subscription carries instead of DOM ops (§5.1).
+///
+/// Two shapes rather than one, and the difference is the same one [`Resumption`] draws for Mode A:
+/// a client with nothing gets the accumulator, and a client with a position gets the difference
+/// from it. `beck_core::delta` is the vocabulary; this is the envelope it travels in.
+///
+/// [`Resumption`]: crate::protocol::Resumption
+#[derive(Clone, Debug, PartialEq)]
+pub enum DataFrame {
+    /// `{"t":"s","q":<seq>,"v":<state>}` — the whole accumulator, for a client with no position.
+    Whole {
+        seq: Seq,
+        state: beck_core::repr::Repr,
+    },
+    /// `{"t":"d","q":<seq>,"o":[<op>...]}` — the difference, for a client that has one.
+    Ops {
+        seq: Seq,
+        ops: Vec<beck_core::delta::Op>,
+    },
+}
+
+impl DataFrame {
+    /// The whole accumulator, or nothing if it holds something unstorable — which the checker
+    /// makes unreachable (`B0411`), and which is a refusal rather than a fabrication here.
+    pub fn whole(seq: Seq, state: &beck_core::Value) -> Option<DataFrame> {
+        beck_core::repr::Repr::of(state)
+            .ok()
+            .map(|state| DataFrame::Whole { seq, state })
+    }
+
+    pub fn seq(&self) -> Seq {
+        match self {
+            DataFrame::Whole { seq, .. } | DataFrame::Ops { seq, .. } => *seq,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        matches!(self, DataFrame::Ops { ops, .. } if ops.is_empty())
+    }
+
+    pub fn to_json(&self) -> Value {
+        match self {
+            DataFrame::Whole { seq, state } => json!({"t": "s", "q": seq, "v": state}),
+            DataFrame::Ops { seq, ops } => json!({"t": "d", "q": seq, "o": ops}),
+        }
     }
 }
 
@@ -140,7 +188,7 @@ impl From<&Html> for WireHtml {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::diff::diff;
+    use beck_core::diff::diff;
 
     /// A rendered list of `n` rows, as the compiled `view` produces one.
     fn list(n: usize, done: Option<usize>) -> Html {

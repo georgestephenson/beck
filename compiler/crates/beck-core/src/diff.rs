@@ -1,5 +1,9 @@
-//! Structural diff of two `Html` values — the server half of "the browser is
+//! Structural diff of two `Html` values — the producer half of "the browser is
 //! `fold(apply_patch, initial_html, patch_stream)`".
+//!
+//! Which side produces the ops is the mode: in Mode A the server diffs two renderings and streams
+//! them; in Mode B the browser renders locally and diffs its own two renderings ([`crate::render`]).
+//! It is the same function either way, which is why it lives here rather than in the runtime.
 //!
 //! Properties this implementation holds, because the whole Mode A story rests on them:
 //!
@@ -15,7 +19,7 @@ use std::collections::HashSet;
 
 use serde_json::{json, Value};
 
-use beck_core::html::Html;
+use crate::html::Html;
 
 /// A node address: child indices from the root of the subscription's frame.
 pub type Path = Vec<u32>;

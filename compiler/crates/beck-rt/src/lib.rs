@@ -12,7 +12,6 @@
 pub mod app;
 pub mod css;
 pub mod dash;
-pub mod diff;
 pub mod http;
 pub mod identity;
 pub mod log;
@@ -27,8 +26,8 @@ pub mod telemetry;
 pub mod testing;
 
 pub use app::{replay_from_genesis, replay_to, App, AppConfig};
+pub use beck_core::diff::{self, diff, Op, Path};
 pub use dash::{Dashboard, ResourceRow};
-pub use diff::{diff, Op, Path};
 pub use log::{
     Durability, Envelope, Instant, LogStore, MemoryLog, PgLog, RedbLog, Seq, Snapshot, SqliteLog,
 };
@@ -37,10 +36,15 @@ pub use program::Runtime;
 pub use telemetry::{telemetry, timed, Telemetry};
 pub use testing::{run as run_tests, Case, Options as TestOptions, Outcome, Report as TestReport};
 
-/// The thin client: compiler residue, and the only JavaScript in the system (§5.1).
+/// The patch interpreter and the socket, shared by both rendering modes (§5.1).
 ///
 /// "Hand-written JavaScript never appears in the source — it's compiler residue: the patch
 /// interpreter plus the compiled view. You stopped writing it the moment the page became a
-/// function." This file is that residue, and it holds no application logic: it applies patches,
-/// captures declared events, and posts commands back up the socket.
+/// function." These three files are that residue, and they hold no application logic.
+pub const PATCH_CLIENT: &str = include_str!("../client/beck-patch.js");
+
+/// Mode A: apply the patches the server sends, post commands back up the socket.
 pub const THIN_CLIENT: &str = include_str!("../client/beck-thin.js");
+
+/// Mode B: load the kernel, hold the state, render locally ([`beck_core::render`]).
+pub const MODE_B_CLIENT: &str = include_str!("../client/beck-mode-b.js");

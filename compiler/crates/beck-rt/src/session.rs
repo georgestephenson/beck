@@ -13,10 +13,13 @@ use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::Message;
 
 use crate::app::App;
-use crate::diff::{diff, Op};
-use crate::patch::PatchFrame;
+use crate::patch::{DataFrame, PatchFrame};
 use crate::protocol::{ClientMsg, Resumption, ServerMsg};
 use crate::telemetry::telemetry;
+use beck_core::delta;
+use beck_core::diff::{diff, Op};
+use beck_core::render::Mode;
+use beck_core::Value;
 
 /// Anything that behaves like a websocket connection: the upgraded socket in the server, and an
 /// in-memory duplex in the tests.
@@ -39,10 +42,6 @@ pub async fn run<S: Socket>(app: Arc<App>, mut socket: S) -> Result<()> {
     // A guard, not a pair of calls: a session ends by returning, by erroring, or by the socket
     // dying, and a gauge that only decrements on the happy path drifts upward forever.
     let _connected = SessionGuard::new();
-    // Subscribe *before* reading the current view, so an event that lands in between wakes us
-    // rather than being missed.
-    let mut version = app.subscribe();
-
     let Some((sub, from, claimed)) = wait_for_hello(&mut socket).await? else {
         return Ok(());
     };
@@ -77,6 +76,25 @@ pub async fn run<S: Socket>(app: Arc<App>, mut socket: S) -> Result<()> {
         }
     };
 
+    // The one branch a rendering mode makes to a subscription.
+    match app.runtime().placed().render.mode {
+        Mode::Server => mode_a(app, socket, sub, actor, from, how).await,
+        Mode::Client => mode_b(app, socket, sub, actor, from, how).await,
+    }
+}
+
+/// Mode A: the server renders, and the frames are DOM patches.
+async fn mode_a<S: Socket>(
+    app: Arc<App>,
+    mut socket: S,
+    sub: String,
+    actor: String,
+    from: u64,
+    how: Resumption,
+) -> Result<()> {
+    // Subscribe *before* reading the current view, so an event that lands in between wakes us
+    // rather than being missed.
+    let mut version = app.subscribe();
     // Declared *before* the engine so it is dropped after it: what the shared dataflow holds
     // changes when this subscription's engine goes, and sampling before that would leave the gauge
     // describing arrangements the process has just released.
@@ -111,6 +129,7 @@ pub async fn run<S: Socket>(app: Arc<App>, mut socket: S) -> Result<()> {
             diff(&view_then, &view_now)
         }
     };
+    let initial = (!ops.is_empty()).then(|| PatchFrame::new(seq, ops).to_json());
 
     drive(
         &app,
@@ -118,14 +137,124 @@ pub async fn run<S: Socket>(app: Arc<App>, mut socket: S) -> Result<()> {
         sub,
         actor,
         seq,
-        view_now,
         how,
-        ops,
+        initial,
         &mut version,
-        &mut engine,
-        &mut arranged,
+        Feed::Dom {
+            engine,
+            arranged,
+            last: view_now,
+        },
     )
     .await
+}
+
+/// Mode B: the browser renders, and the frames are state diffs.
+///
+/// Note what this function does not construct: a view engine, and therefore no per-session
+/// arrangements. That is D5's "less server work per user", and it is a consequence of the mode
+/// rather than an optimisation applied to it.
+async fn mode_b<S: Socket>(
+    app: Arc<App>,
+    mut socket: S,
+    sub: String,
+    actor: String,
+    from: u64,
+    how: Resumption,
+) -> Result<()> {
+    // Subscribe *before* reading the state, for the same reason Mode A does: an event that lands
+    // in between has to wake us rather than be missed.
+    let mut version = app.subscribe();
+    // The state and the position it reflects, read together: a client told "this is the state at
+    // 41" when it is the state at 42 would apply the next patch to the wrong base, and every patch
+    // after that would be wrong too.
+    let (state, seq) = app.read_snapshot(|s, q| (s.clone(), q)).await;
+
+    let frame = match how {
+        Resumption::Fresh | Resumption::Reset { .. } => DataFrame::whole(seq, &state),
+        Resumption::Resumed { .. } => {
+            let then = app.state_at(from).await?;
+            Some(DataFrame::Ops {
+                seq,
+                ops: delta::diff(&then, &state),
+            })
+        }
+    };
+    let initial = frame.filter(|f| !f.is_empty()).map(|f| f.to_json());
+
+    drive(
+        &app,
+        &mut socket,
+        sub,
+        actor,
+        seq,
+        how,
+        initial,
+        &mut version,
+        Feed::Data { last: state },
+    )
+    .await
+}
+
+/// What this subscription sends when the state moves — §5.1's table, as two variants.
+///
+/// The variants are deliberately different sizes: a Mode A subscription carries a view engine and
+/// its arrangements, a Mode B one carries a `Value`. Boxing the larger to even them out would hide
+/// the asymmetry that is the mode's whole point (D5's "less server work per user"), for one
+/// allocation per connection.
+#[allow(clippy::large_enum_variant)]
+enum Feed {
+    /// The server renders per subscriber and streams the difference between two pages.
+    Dom {
+        engine: beck_core::engine::Engine,
+        arranged: Arranged,
+        last: Html,
+    },
+    /// The browser renders, so what moves is the accumulator.
+    Data { last: Value },
+}
+
+impl Feed {
+    /// The frame this subscriber is owed now, and the position it brings them to.
+    ///
+    /// `None` means nothing changed *for this subscriber* — the common case on a busy application,
+    /// and the reason an idle connection costs no bytes in either mode.
+    async fn advance(
+        &mut self,
+        app: &Arc<App>,
+        actor: &str,
+    ) -> Result<(Option<serde_json::Value>, u64)> {
+        match self {
+            Feed::Dom {
+                engine,
+                arranged,
+                last,
+            } => {
+                let (view, at) = app.maintain(engine, actor).await?;
+                arranged.update(engine.arranged());
+                report_shared(app);
+                let started = std::time::Instant::now();
+                let ops = diff(last, &view);
+                telemetry().diff.record(started.elapsed());
+                *last = view;
+                Ok((
+                    (!ops.is_empty()).then(|| PatchFrame::new(at, ops).to_json()),
+                    at,
+                ))
+            }
+            Feed::Data { last } => {
+                let (state, at) = app.read_snapshot(|s, q| (s.clone(), q)).await;
+                let started = std::time::Instant::now();
+                let ops = delta::diff(last, &state);
+                telemetry().diff.record(started.elapsed());
+                *last = state;
+                Ok((
+                    (!ops.is_empty()).then(|| DataFrame::Ops { seq: at, ops }.to_json()),
+                    at,
+                ))
+            }
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -135,19 +264,17 @@ async fn drive<S: Socket>(
     sub: String,
     actor: String,
     mut seq: u64,
-    mut last_view: Html,
     how: Resumption,
-    initial_ops: Vec<Op>,
+    initial: Option<serde_json::Value>,
     version: &mut tokio::sync::watch::Receiver<u64>,
-    engine: &mut beck_core::engine::Engine,
-    arranged: &mut Arranged,
+    mut feed: Feed,
 ) -> Result<()> {
     // How a subscriber was brought up to date is exactly the distinction Phase 0 got wrong twice
     // (§18.5 item 1): an ack means committed, a frame means your view has caught up.
     tracing::info!(seq, sub = %sub, how = how.label(), "subscribed");
     send_json(socket, &ServerMsg::welcome(&sub, seq, how)).await?;
-    if !initial_ops.is_empty() {
-        send_json(socket, &PatchFrame::new(seq, initial_ops).to_json()).await?;
+    if let Some(frame) = initial {
+        send_json(socket, &frame).await?;
     }
 
     // The highest seq this client was told about but has not yet seen reflected in its view. Only
@@ -160,16 +287,10 @@ async fn drive<S: Socket>(
                 if changed.is_err() {
                     break; // the application is gone
                 }
-                let (view, at) = app.maintain(engine, &actor).await?;
-                arranged.update(engine.arranged());
-                report_shared(app);
-                let started = std::time::Instant::now();
-                let ops = diff(&last_view, &view);
-                telemetry().diff.record(started.elapsed());
-                last_view = view;
+                let (frame, at) = feed.advance(app, &actor).await?;
                 seq = at;
-                if !ops.is_empty() {
-                    send_json(socket, &PatchFrame::new(seq, ops).to_json()).await?;
+                if let Some(frame) = frame {
+                    send_json(socket, &frame).await?;
                     awaiting = awaiting.filter(|w| *w > seq);
                 } else if let Some(w) = awaiting {
                     // No frame is owed, but this client is waiting on its own command. Tell it
