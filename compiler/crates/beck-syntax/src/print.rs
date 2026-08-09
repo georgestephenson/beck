@@ -261,6 +261,10 @@ impl Py {
                 let atoms: Vec<String> = n.args[1..].iter().map(|a| self.expr(a)).collect();
                 self.line(&format!("row {name} = {}", atoms.join(", ")));
             }
+            Some(sym::IDENTITY) if n.args.len() == 1 => {
+                let provider = self.expr(&n.args[0]);
+                self.line(&format!("identity = {provider}"));
+            }
             Some(sym::TEST) => {
                 let name = self.expr(&n.args[0]);
                 self.line(&format!("test {name}:"));
@@ -507,7 +511,7 @@ impl Py {
                 self.line("parallel:");
                 self.body(&n.args[0]);
             }
-            Some(sym::ROW) => self.item(n),
+            Some(sym::ROW | sym::IDENTITY) => self.item(n),
             Some(sym::DEF | sym::MACRO | sym::MODEL | sym::UNION | sym::TYPE | sym::NEWTYPE)
             | Some(sym::TRAIT | sym::IMPL | sym::IMPORT | sym::DECORATE | sym::TEST)
             | Some(sym::PROPERTY) => self.item(n),

@@ -112,52 +112,43 @@ fn identity_defaults_to_believing_the_client() {
 /// What is still absent about identity: the **provisioning** half of D6.
 ///
 /// `identity = managed()` asks Beck to stand a Keycloak or Ory workload up in the object graph, and
-/// nothing does. It is an infra derivation and belongs with `beck-infra`
-/// ([`48`](../../../../docs/48-identity-report.md) §48.5), and the consequence worth asserting is
-/// the one a deployment meets: **the derived NetworkPolicy does not allow egress to the issuer**,
-/// because the egress rule is derived from the program's `net.out` atoms and the issuer is
-/// configuration `beck run` was given rather than something the program wrote
-/// ([`94`](../../../../docs/94-oidc-relying-party-report.md) §94.6).
+/// nothing does — [`94`](../../../../docs/94-oidc-relying-party-report.md) §94.7 built the
+/// `external(…)` half and left this one, so `managed()` is a diagnostic rather than a derivation.
 ///
-/// Behaviour rather than a grep: it emits the object graph for a program with an outbound call and
-/// looks at what egress the policy allows.
+/// Behaviour rather than a grep, and in both directions, because "no identity provider is
+/// provisioned" is only interesting beside "the one the program names *is* reachable" — that half
+/// is `the_declared_issuer_is_the_egress_rule` in `oidc.rs`, and this one is the workload.
 #[test]
-fn the_identity_provider_is_not_in_the_derived_egress_rule() {
+fn no_identity_provider_is_provisioned_into_the_object_graph() {
     let src = r#"
+identity = external(issuer="https://login.acme.com")
+
 model State:
-    rate: Int
+    n: Int
 
 union Command:
-    Refresh
+    Bump
 
 union Event:
-    Refreshed(rate: Int)
-
-def fresh_rate() -> Int:
-    return unwrap_or(str_to_int(http_fetch("payments.example.com",
-        HttpRequest(method="GET", path="/usd", headers={}, body="", port=443, tls=True, secrets={})).body), 0)
+    Bumped
 
 def apply_event(s: State, env: Envelope[Event]) -> State:
-    match env.body:
-        case Refreshed(rate):
-            return s.with(rate=rate)
+    return s.with(n=s.n + 1)
 
 def validate(s: State, p: Proposal) -> Result[list[Event], Str]:
-    match p.command:
-        case Refresh:
-            return Ok(value=[Refreshed(rate=fresh_rate())])
+    return Ok(value=[Bumped])
 
 def view(s: State, session: Session) -> Html:
     return ui:
         main:
-            p: str(s.rate)
+            p: str(s.n)
 
 proposals: Stream[Proposal] = merge_clients()
 events: Stream[Event] = decide(proposals, book, validate)
-book: Signal[State] = durable(fold(apply_event, State(rate=0), events))
+book: Signal[State] = durable(fold(apply_event, State(n=0), events))
 page: Signal[Html] = per_session(book, view)
 "#;
-    let (placed, diags, map) = beck_core::compile_str("egress.beck", src);
+    let (placed, diags, map) = beck_core::compile_str("provisioning.beck", src);
     assert!(!diags.has_errors(), "{}", diags.render(&map));
     let placed = placed.expect("it slices");
     let graph = beck_infra::graph(&placed);
@@ -166,17 +157,31 @@ page: Signal[Html] = per_session(book, view)
         .map(|(_, yaml)| yaml)
         .collect();
 
+    // The peer is derived — otherwise this test would pass against a compiler that ignored the
+    // declaration entirely, which is the shape of gate `docs/84` §84.5 warns about.
     assert!(
-        rendered.contains("payments.example.com"),
-        "the program's own peer is not in the egress rule; this test is testing nothing"
+        rendered.contains("login.acme.com"),
+        "the declared issuer is not in the object graph at all; this test is testing nothing"
     );
-    for issuer in ["login.acme.com", "accounts.google.com", "keycloak"] {
+    // What is absent is a *workload*: `managed()` would put an identity provider in the cluster,
+    // and `external(…)` names one that is already somewhere else.
+    for provisioned in ["keycloak", "Keycloak", "ory", "Kratos"] {
         assert!(
-            !rendered.contains(issuer),
-            "an identity provider reached the object graph. If `identity = external(...)` is a \
-             declaration now, delete this test and correct docs/94 §94.6 and docs/48 §48.5"
+            !rendered.contains(provisioned),
+            "an identity provider is being provisioned. If `identity = managed()` is built, delete \
+             this test and correct docs/94 §94.6 and docs/48 §48.5"
         );
     }
+    assert!(
+        beck_core::compile_str(
+            "managed.beck",
+            &src.replace("external(issuer=\"https://login.acme.com\")", "managed()")
+        )
+        .1
+        .iter()
+        .any(|d| d.code == "B0359"),
+        "`managed()` compiles now, so something derives it — correct docs/94 §94.6"
+    );
 }
 
 // ---------------------------------------------------------------------------------------------

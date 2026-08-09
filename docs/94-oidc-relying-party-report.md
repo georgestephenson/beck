@@ -156,7 +156,7 @@ Nothing else moved. `beck explain incremental` and the plan are untouched by the
 field, the corpus, differential, fusion and incremental-engine harnesses are unchanged, and the
 empty claim map allocates nothing — `PMap::new()` is a `None` root.
 
-## 94.6 What is **not** built, and one thing that is worse than not built
+## 94.6 What is **not** built
 
 Against [`48`](48-identity-report.md) §48.5's table:
 
@@ -166,19 +166,17 @@ Against [`48`](48-identity-report.md) §48.5's table:
 | A verifying provider, symmetric | **built** ([`48`](48-identity-report.md)) |
 | OIDC relying party | **built** — discovery, JWKS, RS/PS/ES, issuer, audience, azp, expiry, nbf, nonce, and the code flow with PKCE |
 | Claims → `Session` | **built** — §94.4 |
-| `identity = managed()` provisioning | **not built**, and see below |
+| `identity = external(issuer=…)` as a declaration | **built** — §94.7, and it is what makes the egress rule derivable |
+| `identity = managed()` provisioning | **not built**. `B0359` says so by name rather than calling it unknown |
 | Presence as a first-class signal | **not built**, and untouched by this |
 
 And the things a reader would reasonably assume and should not:
 
-- **The derived NetworkPolicy does not allow egress to the issuer.** This is the row that is worse
-  than not built, so it is first. §6.5 derives the egress rule from the program's own `net.out`
-  atoms; the issuer is configuration `beck run` was given, so `beck build` has never heard of it and
-  the generated policy will refuse the JWKS fetch. The fix is D6's own language surface —
-  `identity = external(issuer="…")` as a *declaration*, which would make the issuer a fact about the
-  program and the egress rule total again — and it is a language change rather than a runtime one,
-  so it is not here. `pending_security.rs` asserts the gap by emitting the object graph and looking,
-  so the day the declaration exists a test goes red.
+- **No identity provider is provisioned.** `external(…)` names one that is already somewhere else;
+  `managed()` would put a Keycloak or Ory workload in the object graph, and nothing does.
+  `pending_security.rs` asserts that in both directions — the declared issuer *is* in the derived
+  policy, and no provider workload is — because "nothing is provisioned" is only interesting beside
+  "the one the program names is reachable".
 - **No `Secure` on the cookie.** §6.5's gateway terminates TLS in front of a plaintext hop, so
   setting it would make the cookie unusable in the deployment this project generates. It is the same
   reason [`83`](83-the-runtime-edge-report.md) §83.3 does not compare schemes in the `Origin` check,
@@ -206,7 +204,53 @@ And the things a reader would reasonably assume and should not:
   authenticates a person to *this* application. Calling somebody else's API on their behalf is a
   different feature and none of it is here.
 
-## 94.7 What this corrects
+## 94.7 The issuer is a declaration, because an egress rule is derived from what a program names
+
+[`10`](10-decisions.md) D6 has always written the language surface as one block:
+
+```python
+identity = external(issuer="https://login.acme.com")
+```
+
+It is here, and the reason to build it is not tidiness. §6.5 derives the cluster's egress rule from
+the hosts a program *names* — that is
+[`adr/0013`](adr/0013-the-host-of-an-outbound-call-is-written-at-the-call-site.md)'s property, and
+it is what makes the derivation **total**: a computed host is `B0395`, so there is no outbound call
+the deployment cannot be told about. An issuer supplied as a `beck run` flag broke that from the
+other end. Nothing was wrong with the flag; the *runtime* had a peer the *compiler* had never heard
+of, so `beck build` would emit a policy that refuses the JWKS fetch, and a deployment would come up
+authenticating nobody.
+
+So the declaration is not a configuration file in the language. It is a **host the program named**,
+and `beck-infra` treats it as exactly that: `graph()` pushes one more `net.out(login.acme.com)`
+onto the effect list, and not a line below that knows the difference between a host `http_fetch`
+reaches and a host the runtime fetches a key set from. The egress rule, the `derived_from`
+explanation and `beck explain` all follow without being told.
+
+Three decisions inside it:
+
+- **It is guarded on the `=`, not on the word.** `identity` is an ordinary name, and `sicp/ch1.beck`
+  defines `def identity(n: Int)` at §1.3.1 — a program in this repository, checked by a harness. Only `identity =` at the top level
+  is the declaration, so `identity` is **not** in `RESERVED_FORMS` and `B0312` does not refuse it.
+  `oidc.rs` gates that with a program that defines and calls one.
+- **The issuer is checked at compile time, by the same two rules the runtime uses.** `https` only,
+  and a host `beck_core::net::is_nameable_host` accepts. Those are not new rules: they are the two
+  refusals `beck_rt::oidc` already made at startup, moved to where they are a diagnostic with a span
+  instead of a process that starts and cannot authenticate anybody. `B0359` is the code.
+- **`--issuer` is gone.** It is the first thing this work built and it does not survive it: two
+  sources for one fact is the drift this project spends its gates on, and the flag could not have
+  been the one the derivation read. What stays on the command line is what is genuinely a
+  *deployment* fact rather than a program fact — `--client-id`, `--client-secret` and
+  `--redirect-uri`, since staging and production register different clients against one issuer.
+
+`corpus/31-tenants.beck` is the program that exercises it, and it earns its place twice over: it is
+the thirty-first corpus program, so the round-trip property, the placement property and the
+formatter all run over the new form, and it is the first program in the tree whose `validate` reads
+`session.claims` — a note is refused unless the *issuer* said which tenant is asking. Its test
+block is the honest half of §94.4's limit: a test names an actor and cannot forge a session, so the
+tests it can write are the **refusals**.
+
+## 94.8 What this corrects
 
 - **[`43`](43-threat-model.md) §43.4's first two bullets** are rewritten in the same change, which
   is what that section's own mechanism requires. Identity: the default is still `DevIdentity` and
@@ -234,7 +278,7 @@ And the things a reader would reasonably assume and should not:
   `an_outbound_call_has_no_transport_security`; the one is the egress gap above. §94.8 is about the
   first of them.
 
-## 94.8 The uncomfortable half: a grep that would have fired, and still proves nothing
+## 94.9 The uncomfortable half: a grep that would have fired, and still proves nothing
 
 `nothing_here_speaks_oidc` searched every `.rs` file in the workspace for `jwks`, `id_token`,
 `issuer` and `RS256`. It *would* have gone red on this change — all four appear — so it is not a

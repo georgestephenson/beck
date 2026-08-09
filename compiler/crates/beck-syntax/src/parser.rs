@@ -235,6 +235,20 @@ impl<'a> Parser<'a> {
             items.extend(atoms);
             return Some(Node::form(sym::ROW, items, span));
         }
+        // `identity = external(issuer="https://login.acme.com")` — D6's block, as a declaration.
+        //
+        // Guarded on the `=` rather than on the word, because `identity` is an ordinary name a
+        // program may already use: SICP's §1.3.3 defines `def identity(n: Int)`, which starts with
+        // `def` and never reaches here, and a signal called `identity` would be followed by a `:`.
+        // Only `identity =` at the top level is this.
+        if self.at_kw("identity") && matches!(self.peek_raw(1), Some(Raw::Eq)) {
+            self.bump();
+            self.expect(&Raw::Eq, "`=`");
+            let provider = self.expr()?;
+            let span = start.to(provider.span());
+            self.end_of_line();
+            return Some(Node::form(sym::IDENTITY, vec![provider], span));
+        }
         if self.at_kw("macro") {
             return self.macro_item();
         }

@@ -275,6 +275,17 @@ pub fn graph(placed: &Placed) -> InfraGraph {
             effects.push((e.clone(), name.to_string()));
         }
     }
+    // `identity = external(issuer="…")` is a **peer**, so it enters the derivation as the atom a
+    // peer enters it as. Nothing below this line knows the difference between a host the program
+    // calls with `http_fetch` and the one the runtime fetches a key set from, which is the point:
+    // §6.5's egress rule is "the hosts this program named", and an issuer is one of them
+    // ([`docs/94`](../../../../docs/94-oidc-relying-party-report.md) §94.7).
+    if let Some(identity) = &placed.program.identity {
+        effects.push((
+            Effect::NetOut(identity.host.clone()),
+            "identity".to_string(),
+        ));
+    }
     let serves_ui = placed
         .program
         .signals

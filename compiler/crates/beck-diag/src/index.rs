@@ -596,6 +596,16 @@ pub const INDEX: &[CodeEntry] = &[
          left of `@` is the name being bound.",
     ),
     e(
+        "B0359",
+        Stage::Types,
+        "an identity declaration this compiler cannot derive a deployment from",
+        "`identity = external(issuer=\"https://login.acme.com\")` is the one form. The issuer is an \
+         `https` URL — the key set's only integrity protection is the transport it arrives over — \
+         and its host has to be one an egress rule could name, because §6.5 derives the cluster's \
+         rule from it. `managed()` is D6's other half, which provisions an identity provider into \
+         the object graph, and is not built.",
+    ),
+    e(
         "B0360",
         Stage::Types,
         "cannot be called inside a fold",

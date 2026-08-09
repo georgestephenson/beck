@@ -4,7 +4,7 @@
 
 Every diagnostic the compiler can raise carries a stable code. `beck explain error B0341` prints one of these entries at the terminal.
 
-The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans every non-test source file for a `"Bnnnn"` literal and fails if the set differs from this table in either direction. **123 codes.**
+The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans every non-test source file for a `"Bnnnn"` literal and fails if the set differs from this table in either direction. **124 codes.**
 
 
 ## Reading the source — `B0100–B0122`
@@ -88,6 +88,7 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0356` | error | **the alternatives of an or-pattern bind different names** — Every alternative of `a | b` has to bind the same names at the same types, because the body reads them without knowing which one matched. |
 | `B0357` | error | **`|` and `@` are only meaningful in a `case` pattern** — Beck has no bitwise operators. `|` separates the alternatives of an or-pattern, `@` names the value a pattern takes apart, and neither means anything anywhere else. |
 | `B0358` | error | **the left of `@` is a name** — `whole @ Circle(r)` binds `whole` to the value the pattern matched. What stands to the left of `@` is the name being bound. |
+| `B0359` | error | **an identity declaration this compiler cannot derive a deployment from** — `identity = external(issuer="https://login.acme.com")` is the one form. The issuer is an `https` URL — the key set's only integrity protection is the transport it arrives over — and its host has to be one an egress rule could name, because §6.5 derives the cluster's rule from it. `managed()` is D6's other half, which provisions an identity provider into the object graph, and is not built. |
 | `B0360` | error | **cannot be called inside a fold** — A fold must be replay-pure, and this would make replay non-deterministic. Time is data on the envelope (`env.at`) and entity ids are minted at the edge: mint the id in the client's command and read it from the event. |
 | `B0370` | error | **performs more than its signature declares** — The undeclared atoms are listed. A `uses` clause is the published bound, and widening it is a breaking API change — so the compiler will not widen it for you. |
 | `B0380` | error | **a trait cannot be declared here** — The name already belongs to a type, the trait is declared twice, or the file is a `.becki` — a trait does not cross a module boundary, so an interface may not hold one. |

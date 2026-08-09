@@ -458,6 +458,26 @@ fn link(root: &str, modules: Vec<Checked>, diags: &mut Diagnostics) -> Option<Pr
         // one (`docs/56` §56.5); a clash is impossible for a definition, because `B0601` above
         // already refuses two modules defining one name.
         acc.docs.extend(program.docs);
+        // `identity = external(issuer=…)` is a property of the *program*, so it survives the link
+        // from whichever module wrote it — and the accumulator starts as the **first** module,
+        // which is the deepest import rather than the root (`docs/56` §56.5's shape). Leaving it
+        // to `out`'s initial value would mean a root that declares one and imports a module that
+        // does not gets no identity at all.
+        match (acc.identity.is_some(), program.identity) {
+            (false, Some(decl)) => acc.identity = Some(decl),
+            (true, Some(decl)) => diags.push(
+                Diagnostic::error(
+                    "B0359",
+                    "identity is declared in more than one module",
+                    decl.span,
+                )
+                .with_note(
+                    "who authenticates a program's clients is one answer for the whole program, \
+                     and a linked module set is one program",
+                ),
+            ),
+            (_, None) => {}
+        }
     }
 
     let mut merged = out?;

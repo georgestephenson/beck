@@ -180,14 +180,12 @@ enum Cmd {
         /// rather than exposing it.
         #[arg(long, value_name = "ADDR")]
         pgwire: Option<String>,
-        /// Authenticate against an OpenID Connect issuer (D6) — the `https` URL of the provider.
+        /// This application, as its identity provider knows it.
         ///
-        /// Without it the process uses `DevIdentity`, which believes whatever a client says it is.
-        /// With it, `/auth/login` starts an authorization-code flow and every connection presents
-        /// an ID token the *issuer* signed. Needs `--client-id`.
-        #[arg(long, value_name = "URL")]
-        issuer: Option<String>,
-        /// This application, as the issuer knows it.
+        /// The **issuer** is not a flag: a program says who authenticates its clients with
+        /// `identity = external(issuer="https://…")`, because §6.5 derives the cluster's egress
+        /// rule from the peers a program names and a flag is not one of them. A client id is a
+        /// deployment fact — staging and production register different ones — so it is here.
         #[arg(long, value_name = "ID")]
         client_id: Option<String>,
         /// The client secret, for a confidential client. Read from the environment because a
@@ -545,7 +543,6 @@ fn dispatch(cli: Cli) -> Result<()> {
             path,
             url,
             pgwire,
-            issuer,
             client_id,
             client_secret,
             redirect_uri,
@@ -557,7 +554,6 @@ fn dispatch(cli: Cli) -> Result<()> {
             url.as_deref(),
             pgwire.as_deref(),
             Auth {
-                issuer,
                 client_id,
                 client_secret,
                 redirect_uri,
@@ -1384,7 +1380,6 @@ fn explain(what: Explain) -> Result<()> {
 /// threads: a stack a worker did not have would take the server down rather than the request.
 /// What `beck run` was told about who may connect. All four absent is `DevIdentity`.
 struct Auth {
-    issuer: Option<String>,
     client_id: Option<String>,
     client_secret: Option<String>,
     redirect_uri: Option<String>,
@@ -1412,20 +1407,24 @@ fn run(
 /// its identity provider has a configuration problem, and the moment to say so is now — not when
 /// somebody tries to sign in.
 fn identity(
+    declared: Option<&beck_core::check::IdentityDecl>,
     auth: &Auth,
     addr: &str,
     clock: &Arc<dyn beck_core::clock::Clock>,
 ) -> Result<Option<Arc<beck_rt::oidc::RelyingParty>>> {
-    let Some(issuer) = &auth.issuer else {
+    let Some(declared) = declared else {
         if auth.client_id.is_some() {
-            anyhow::bail!("`--client-id` needs an `--issuer` to be a client of");
+            anyhow::bail!(
+                "`--client-id` needs a program that says who its clients are: add \
+                 `identity = external(issuer=\"https://…\")`"
+            );
         }
         return Ok(None);
     };
-    let client_id = auth
-        .client_id
-        .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("`--issuer` needs a `--client-id`"))?;
+    let issuer = declared.issuer.as_ref();
+    let client_id = auth.client_id.as_deref().ok_or_else(|| {
+        anyhow::anyhow!("this program authenticates against `{issuer}` and needs a `--client-id`")
+    })?;
     let redirect = auth
         .redirect_uri
         .clone()
@@ -1472,10 +1471,13 @@ async fn serve(
     // expression here and nothing else (docs/19 §19.8).
     let backend = beck_eval::backend(&placed);
     let log = open_store(store, path, url).await?;
+    // Read before the program is moved into the runtime: who authenticates this program's clients
+    // is a property of the program (D6), and this is the one place it is turned into a provider.
+    let declared = placed.program.identity.clone();
     let runtime = beck_rt::Runtime::new(placed, backend)?;
 
     let mut config = beck_rt::AppConfig::default();
-    let relying_party = identity(&auth, addr, &config.clock)?;
+    let relying_party = identity(declared.as_ref(), &auth, addr, &config.clock)?;
     if let Some(party) = &relying_party {
         config.identity = party.clone();
     }

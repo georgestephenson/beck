@@ -308,6 +308,16 @@ pub mod sym {
     pub const RAISE: &str = "raise";
     /// `row Name = a, b` — a name for a bundle of effect atoms, usable in a `uses` clause.
     pub const ROW: &str = "row";
+    /// `identity = external(issuer="https://login.acme.com")` — who authenticates this program's
+    /// clients ([`docs/10`](../../../../../docs/10-decisions.md) D6).
+    ///
+    /// A declaration rather than a runtime flag because the issuer is a **peer**: §6.5 derives the
+    /// cluster's egress rule from the hosts a program names, and an issuer nobody wrote is a host
+    /// the deployment cannot be told about — the same argument
+    /// [`adr/0013`](../../../../../docs/adr/0013-the-host-of-an-outbound-call-is-written-at-the-call-site.md)
+    /// makes about `http_fetch`, arriving at the runtime's own outbound call rather than a
+    /// program's.
+    pub const IDENTITY: &str = "identity";
     /// `try: block` — run the block and reify a failure as a `Result[T, E]`.
     ///
     /// The handler is a *form*, so it is lexically scoped by construction rather than by a search

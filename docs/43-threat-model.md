@@ -95,10 +95,11 @@ The controls a reader would reasonably assume exist, that do not:
   claims reach the program**, as `Session.claims`. What remains is that the **default** is still
   `DevIdentity`, which believes the claim: a deployment that has not chosen a provider has the old
   behaviour, deliberately rather than structurally, and `beck run` prints which one is in force.
-  What is *newly* absent and named in [`94`](94-oidc-relying-party-report.md) §94.6: the derived
-  NetworkPolicy does not allow egress to the issuer, because §6.5 derives egress from the program's
-  own atoms and the issuer is a flag rather than a declaration — so a deployed pod cannot fetch the
-  key set the relying party depends on. That is a **failing test**, not a sentence.
+  What remains absent is `identity = managed()`, which would provision an identity provider into
+  the object graph; `external(…)` names one that is already somewhere else. The issuer **is** in the
+  derived NetworkPolicy — it is a declaration, so §6.5's egress derivation covers it like any other
+  peer ([`94`](94-oidc-relying-party-report.md) §94.7) — and `pending_security.rs` asserts both
+  halves: the declared issuer is reachable, and no provider workload is emitted.
 - **Transport security on an outbound call, unless the program asked for it.**
   [`49`](49-http-client-report.md) built `http_fetch` over **plaintext HTTP/1.1**;
   [`adr/0022`](adr/0022-tls-and-the-signature-it-brings.md) took rustls, so `over_tls(req)` now puts
@@ -166,8 +167,9 @@ day it is written and quietly wrong six months later.
                              and the certificate must answer for that same literal (0021);
                              plaintext unless `over_tls`; bounded at 8 MiB and 10 s (§43.4)
 
-   runtime ──JWKS/token──▶│ the issuer │  over TLS, at startup and on a timer — never on
-                          └─ the connection path, and not in the derived egress rule (94 §94.6)
+   runtime ──JWKS/token──▶│ the issuer │  over TLS, at startup and on a timer — never on the
+                          └─ connection path. The host is `identity = external(issuer=…)`, so
+                             §6.5's egress rule covers it like any other peer (94 §94.7)
 ```
 
 Five crossings, and what each one is:
@@ -199,7 +201,8 @@ named so the edit is not left to somebody noticing:
 |---|---|
 | ~~Identity lands~~ | **Done, except for the default** ([`48`](48-identity-report.md), [`94`](94-oidc-relying-party-report.md)): §43.2 has three rows, and §43.4's remaining gap is that `DevIdentity` is what a deployment gets when it chooses nothing. A2 splits into authenticated and anonymous when a *verifying* provider becomes the default, which is still not yet |
 | TLS on the way *in* | §43.4 loses its third bullet, the session cookie gains `Secure`, and [`83`](83-the-runtime-edge-report.md) §83.3's decision not to compare `Origin`'s scheme is re-argued |
-| `identity = external(…)` becomes a declaration | §43.4's first bullet loses the egress paragraph, `pending_security.rs` loses `the_identity_provider_is_not_in_the_derived_egress_rule`, and §6.5's derivation becomes total again — all in one change |
+| ~~`identity = external(…)` becomes a declaration~~ | **Done** ([`94`](94-oidc-relying-party-report.md) §94.7): §6.5's derivation is total again, and what `pending_security.rs` asserts is now the *provisioning* half |
+| `identity = managed()` is built | §43.4's first bullet loses its last clause, `pending_security.rs` loses `no_identity_provider_is_provisioned_into_the_object_graph`, and an identity provider becomes a workload this project's manifests start |
 | The playground ships | A1 stops being hypothetical; the isolation story (§17.3) enters §43.2 |
 | The registry ships | A3 stops being anticipated; tarn signing and effect diffs enter §43.2 |
 | Any quota is built | §43.4 loses a bullet, `pending_security.rs` loses a test, both in one change |

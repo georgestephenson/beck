@@ -1,0 +1,107 @@
+# Who is asking, and what their identity provider said about them.
+#
+# One line at the top decides two things a program would otherwise state twice. `identity =
+# external(issuer=…)` says that clients authenticate against Acme's OpenID Connect provider, so the
+# runtime verifies an ID token that provider signed rather than believing a name — and `beck build`
+# derives an egress rule for `login.acme.com`, because an issuer is a peer and §6.5's rule is the
+# peers a program named. There is no flag: a host a deployment cannot be told about is the thing
+# `docs/adr/0013` exists to prevent, arriving at the runtime's own outbound call.
+#
+# `session.claims` is what the provider verified. It is a `map[Str, Str]` because what an issuer
+# emits is that issuer's decision, and it is **empty** under the default provider — which is what
+# makes reading one a check rather than a decoration.
+#
+# Look at `beck explain place`: `validate` lands on the server because it reads the accumulator, and
+# nothing in this file says so.
+
+identity = external(issuer="https://login.acme.com")
+
+model Note:
+    id: Str
+    tenant: Str
+    text: Str
+
+model State:
+    notes: Map[Str, Note]
+
+union Command:
+    Write(id: Str, text: Str)
+    Erase(id: Str)
+
+union Event:
+    Written(id: Str, tenant: Str, text: Str)
+    Erased(id: Str)
+
+union Rejection:
+    NoTenant
+    NotYours
+    Blank
+
+def apply_event(s: State, env: Envelope[Event]) -> State:
+    match env.body:
+        case Written(id, tenant, text):
+            return s.with(notes=map_insert(s.notes, id, Note(id=id, tenant=tenant, text=text)))
+        case Erased(id):
+            return s.with(notes=map_remove(s.notes, id))
+
+# The claim the whole file is about: authority is a function of what the *issuer* said, not of what
+# the client sent. A session with no `tenant` claim can write nothing, which is the default
+# provider's answer and is the right one.
+def tenant_of(session: Session) -> Str:
+    return unwrap_or(map_get(session.claims, "tenant"), "")
+
+def owner_of(s: State, id: Str) -> Str:
+    match map_get(s.notes, id):
+        case Some(value):
+            return value.tenant
+        case None:
+            return ""
+
+def validate(s: State, p: Proposal) -> Result[list[Event], Rejection]:
+    if str_is_empty(tenant_of(p.session)):
+        return Err(error=NoTenant)
+    match p.command:
+        case Write(id, text):
+            if str_is_empty(str_trim(text)):
+                return Err(error=Blank)
+            if not str_is_empty(owner_of(s, id)) and owner_of(s, id) != tenant_of(p.session):
+                return Err(error=NotYours)
+            return Ok(value=[Written(id=id, tenant=tenant_of(p.session), text=text)])
+        case Erase(id):
+            if owner_of(s, id) != tenant_of(p.session):
+                return Err(error=NotYours)
+            return Ok(value=[Erased(id=id)])
+
+# A per-session view over a shared accumulator: everybody's notes are folded once, and each
+# subscriber sees the ones their own tenant claim admits.
+def mine(s: State, session: Session) -> list[Note]:
+    return filter_list(map_values(s.notes), lambda n: n.tenant == tenant_of(session))
+
+def view(s: State, session: Session) -> Html:
+    return ui:
+        main:
+            h1: "notes for " + tenant_of(session)
+            ul:
+                for n in mine(s, session):
+                    li: n.text
+
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, notes, validate)
+notes: Signal[State] = durable(fold(apply_event, State(notes={}), events))
+page: Signal[Html] = per_session(notes, view)
+
+# A test names an actor and not a credential (§21.2): a session is minted by the identity subsystem,
+# and a test that could build one out of an expression would be a way to forge one. What that costs
+# is visible here — a test's session carries no claims, so it exercises the refusal rather than the
+# admission, which is the honest half to be able to write.
+test "an empty log shows nothing":
+    given []
+    expect page contains "notes for "
+
+test "a session with no verified tenant may write nothing":
+    when session("ana") sends Write(id="n1", text="hello")
+    expect Err(error=NoTenant)
+
+test "and the fold still applies an event that was admitted elsewhere":
+    given [Written(id="n1", tenant="acme", text="hello")]
+    expect page contains "notes for "

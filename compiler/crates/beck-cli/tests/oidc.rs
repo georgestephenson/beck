@@ -656,6 +656,146 @@ fn the_cost_of_a_verification() {
 }
 
 // ---------------------------------------------------------------------------------------------
+// The declaration
+// ---------------------------------------------------------------------------------------------
+//
+// `identity = external(issuer="…")` is D6's block. What makes it a declaration rather than a flag
+// is this section: the compiler knows the issuer, so §6.5's derivation does too.
+
+/// A program with an identity declaration and nothing else about networking.
+fn declaring(issuer: &str) -> String {
+    format!(
+        r#"
+identity = external(issuer="{issuer}")
+
+model State:
+    n: Int
+
+union Command:
+    Bump
+
+union Event:
+    Bumped
+
+def apply_event(s: State, env: Envelope[Event]) -> State:
+    return s.with(n=s.n + 1)
+
+def validate(s: State, p: Proposal) -> Result[list[Event], Str]:
+    return Ok(value=[Bumped])
+
+def view(s: State, session: Session) -> Html:
+    return ui:
+        main:
+            p: str(s.n)
+
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, book, validate)
+book: Signal[State] = durable(fold(apply_event, State(n=0), events))
+page: Signal[Html] = per_session(book, view)
+"#
+    )
+}
+
+/// The whole reason the issuer is in the program: `beck build` can write the egress rule for it.
+///
+/// Both directions, because "the rule contains the host" would also pass against an emitter that
+/// allowed everything: a program that declares nothing gets no rule for it.
+#[test]
+fn the_declared_issuer_is_the_egress_rule() {
+    let src = declaring("https://login.acme.com");
+    let (placed, diags, map) = beck_core::compile_str("declared.beck", &src);
+    assert!(!diags.has_errors(), "{}", diags.render(&map));
+    let placed = placed.expect("it slices");
+
+    let declared = placed
+        .program
+        .identity
+        .as_ref()
+        .expect("the program declares an identity provider");
+    assert_eq!(declared.issuer.as_ref(), "https://login.acme.com");
+    assert_eq!(
+        declared.host.as_ref(),
+        "login.acme.com",
+        "the host is what an egress rule is written from"
+    );
+
+    let rendered = manifests(&placed);
+    assert!(
+        rendered.contains("login.acme.com"),
+        "the derived policy cannot reach the issuer, so a deployed pod could not fetch its key set"
+    );
+    // The same program without the line: no rule, and therefore nothing to have got right by
+    // accident.
+    let bare = src.replace(
+        "identity = external(issuer=\"https://login.acme.com\")\n",
+        "",
+    );
+    let (placed, diags, map) = beck_core::compile_str("bare.beck", &bare);
+    assert!(!diags.has_errors(), "{}", diags.render(&map));
+    let rendered = manifests(&placed.expect("it slices"));
+    assert!(
+        !rendered.contains("login.acme.com"),
+        "a program that names no issuer got an egress rule for one:\n{rendered}"
+    );
+}
+
+fn manifests(placed: &beck_core::Placed) -> String {
+    beck_infra::k8s::render(&beck_infra::graph(placed), &placed.wire_id)
+        .into_iter()
+        .map(|(_, yaml)| yaml)
+        .collect()
+}
+
+/// Every way the declaration can be wrong, refused with a span.
+///
+/// The two that matter are the two `beck_rt::oidc` also refuses at run time, and refusing them here
+/// is the difference between a diagnostic and a deployment that builds and authenticates nobody.
+#[test]
+fn a_declaration_this_compiler_cannot_deploy_is_a_diagnostic() {
+    let refused = |what: &str, src: String| {
+        let (_, diags, map) = beck_core::compile_str("bad.beck", &src);
+        assert!(
+            diags.iter().any(|d| d.code == "B0359"),
+            "{what} was accepted:\n{}",
+            diags.render(&map)
+        );
+    };
+    // Plaintext: the key set has no integrity protection but the transport it arrives over.
+    refused("a plaintext issuer", declaring("http://login.acme.com"));
+    // A host §6.5 could not write a rule from.
+    refused(
+        "an issuer with credentials",
+        declaring("https://a:b@login.acme.com"),
+    );
+    refused("an issuer that is not a URL", declaring("login.acme.com"));
+    // D6's other half, named rather than called unknown.
+    refused(
+        "managed provisioning",
+        declaring("https://login.acme.com")
+            .replace("external(issuer=\"https://login.acme.com\")", "managed()"),
+    );
+    // And two declarations are two answers to one question.
+    refused(
+        "a second declaration",
+        declaring("https://login.acme.com").replace(
+            "identity = external(issuer=\"https://login.acme.com\")",
+            "identity = external(issuer=\"https://login.acme.com\")\nidentity = external(issuer=\"https://login.other.com\")",
+        ),
+    );
+}
+
+/// `identity` is an ordinary name, and a program that uses it as one still compiles.
+///
+/// SICP §1.3.3 defines `identity`, and the declaration is guarded on the `=` rather than on the
+/// word for exactly that reason. This is the gate that says so.
+#[test]
+fn identity_is_still_a_name_a_program_may_use() {
+    let src = "def identity(n: Int) -> Int:\n    return n\n\ndef twice(n: Int) -> Int:\n    return identity(n) + identity(n)\n";
+    let (_, diags, map) = beck_core::check_str("names.beck", src);
+    assert!(!diags.has_errors(), "{}", diags.render(&map));
+}
+
+// ---------------------------------------------------------------------------------------------
 // The HTTP edge, over a real socket
 // ---------------------------------------------------------------------------------------------
 //

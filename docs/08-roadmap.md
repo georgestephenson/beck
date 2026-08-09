@@ -347,9 +347,9 @@ dependencies whose signatures didn't change.
   choose. The **relying party** and the **claims mapping** are built too
   ([`94`](94-oidc-relying-party-report.md)): discovery, a cached JWKS, RS/PS/ES signatures, every
   claim check, the authorization-code flow with PKCE, and `Session.claims`. What is left of this
-  bullet is `managed()` provisioning and presence — and the consequence §94.6 names first, that the
-  derived NetworkPolicy has never heard of the issuer, which is what D6's own
-  `identity = external(issuer=…)` declaration would fix.*
+  bullet is `managed()` provisioning and presence. D6's language surface is built as written —
+  `identity = external(issuer=…)` is a declaration, so §6.5's egress rule covers the issuer like any
+  other peer (§94.7).*
 - LSP: completion, hover with *inferred placement*, go-to-def, rename, inline diagnostics.
 - **The playground** ([`17`](17-playground.md)) — highest-leverage adoption artefact: rung A
   (compile-time, static) and rung B (the whole app in the tab — the worker-server is the rung-0
@@ -748,11 +748,13 @@ handed one. The **claims → `Session` mapping** is built with it, and §94.4 dr
 at: `validate` may read a claim, and a fold has nothing to read, because an envelope carries the
 actor's name and nothing else.
 
-**Unbuilt**: `identity = managed()` provisioning, presence — and, named first because it is worse
-than not built, the **derived NetworkPolicy has never heard of the issuer** (§94.6), since §6.5
-derives egress from the program's own atoms and the issuer is a `beck run` flag. D6's own
-`identity = external(issuer=…)` declaration is what would fix that, and `pending_security.rs` now
-asserts the gap by emitting the object graph and reading it.
+D6's **language surface** is built as written: `identity = external(issuer="https://…")` is a
+declaration, not a flag, so the compiler knows the issuer and §6.5's egress rule covers it like any
+other peer (§94.7). That was the one thing this work found that was *worse* than unbuilt — a runtime
+with a peer the compiler had never heard of — and it is closed rather than recorded.
+
+**Unbuilt**: `identity = managed()` provisioning, and presence. `pending_security.rs` asserts the
+first by emitting the object graph and reading it, in both directions.
 
 *Both of that row's predecessors are gone.* §48.5 said the relying party "needs an HTTP client and a
 signature library, so it is an ADR rather than a line in a module". The HTTP client was built
