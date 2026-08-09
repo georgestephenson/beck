@@ -14,9 +14,13 @@ That is §94.2, it is a compile error with the reason attached, and it is the on
 
 What this is not is codegen. The kernel is `beck-eval` compiled to `wasm32-unknown-unknown` —
 [`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md) is that decision, with its cost measured
-rather than estimated in §94.6. And nothing here has been loaded by a real browser: §94.7 says so
-first, because "built", "runs" and "measured" are three different claims and this report makes two
-of them.
+rather than estimated in §94.6. [`93`](93-llvm-backend-report.md) landed a *second* backend while
+this was being written, and it sharpens the decision rather than changing it: what `beck-llvm`
+compiles is the scalar subset, and a `view` is nothing but heap — records, lists, strings, a map,
+and an `Html` tree at the end. The tree's compiling backend could not execute a view either, so
+what is missing is the same thing on both targets, and it is not a client feature. And nothing here
+has been loaded by a real browser: §94.7 says so first, because "built", "runs" and "measured" are
+three different claims and this report makes two of them.
 
 ## 94.1 The one row in §5.1's table that decides everything
 
@@ -150,7 +154,8 @@ worse than an unreadable one.
 **The kernel** — `crates/beck-wasm`, a `wasm32-unknown-unknown` module with four exports
 (`beck_alloc`, `beck_free`, `beck_load`, `beck_call`) and a length-prefixed byte buffer between
 them. No `wasm-bindgen`, no generated glue. It is the same program for every Beck application,
-because it is a backend rather than a compilation of anything.
+because it is a backend rather than a compilation of anything — which is why it is a fixed download
+in §94.6 rather than a per-component one.
 
 **No `unsafe` code**, which took one idea: a buffer is a `Vec<u8>` the module keeps in a table keyed
 by the address of its own allocation. The host writes through linear memory — that is what linear
@@ -279,7 +284,11 @@ browser in CI that §94.8 still owes.
 - **No codegen.** The kernel interprets `Core`; §5.1's "compiled to WASM (GC proposal where
   available; Perceus-style refcounting fallback)" is a backend, and
   [`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md) records why this is the seam it arrives
-  at rather than a rewrite.
+  at rather than a rewrite. The seam now has two implementations behind it
+  ([`93`](93-llvm-backend-report.md)) and **neither of them can render a page**: `beck-llvm` refuses
+  anything needing a heap, which a view is made of. The heap is the shared prerequisite, and it is
+  Phase 4's rather than this bullet's — [`08`](08-roadmap.md) §8.19's Lane E is where it is
+  scheduled.
 - **No browser has run it.** The shim (`beck-mode-b.js`), the routes (`/beck-kernel.wasm`,
   `/beck-bundle.bpk`) and the mode-dependent `<script>` tag are written and served; the kernel is
   driven natively in `mode_b.rs` and over a real subscription socket. Nobody has opened a tab.
@@ -351,11 +360,13 @@ which is the snapshot §94.7 ends on.
 
 ## 94.11 What Phase 3 is still not
 
-Unchanged except for this bullet: **no LLVM backend and no native codegen**; **no playground**;
-identity's OIDC relying party, `managed()` provisioning, the claims mapping and presence
-([`48`](48-identity-report.md) §48.5); three of the supply-chain bullet's four pieces
-([`92`](92-sbom-report.md) §92.5). **Client polish** is untouched, and Mode B now has a browser-half
-that no browser has run.
+Unchanged except for this bullet: **no playground**; identity's OIDC relying party, `managed()`
+provisioning, the claims mapping and presence ([`48`](48-identity-report.md) §48.5); three of the
+supply-chain bullet's four pieces ([`92`](92-sbom-report.md) §92.5). **Client polish** is untouched,
+and Mode B now has a browser-half that no browser has run. The LLVM backend arrived in
+[`93`](93-llvm-backend-report.md) and covers the scalar subset, so "no native codegen" is no longer
+one of these — what is still missing there is a heap, which is also what a compiled Mode B kernel
+waits on.
 
 The exit criterion is a claim about a person, and no outside developer has read the guide
 [`86`](86-getting-started.md) published.

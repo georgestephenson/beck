@@ -39,7 +39,7 @@ WASM, no size crisis, trivially good Lighthouse scores) — with Mode B in Phase
 > program has one `page`. And the promotion carries a **refusal this section did not anticipate** —
 > a component whose view reads the session cannot render on the client, since Mode B hands the
 > browser the state a per-session view was filtering (§94.2). The kernel interprets rather than
-> compiles ([`adr/0021`](adr/0021-mode-b-ships-the-backend-it-has.md)), which is what the size
+> compiles ([`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md)), which is what the size
 > budget below has to be read against: 179,195 bytes brotli once per application, 1,753 per
 > component.
 

@@ -143,7 +143,7 @@ audience it courts.
 |---|---|---|---|
 | Semantic core | Event-sourced: commands → validate → events → durable folds → views (per the original) | Relational-first with SQL pushdown | High — it *is* the language now |
 | Host language | Rust | OCaml, Zig | Total rewrite — decide now |
-| Client default | Thin patch interpreter (Mode A); local WASM (Mode B) opt-in per component | WASM-first everywhere | Low-moderate — modes share one source, and that is now a gate rather than an argument: `mode_b.rs` asserts the two modes render the *same `Html` value* from the same state ([`93`](93-mode-b-report.md) §93.5) |
+| Client default | Thin patch interpreter (Mode A); local WASM (Mode B) opt-in per component | WASM-first everywhere | Low-moderate — modes share one source, and that is now a gate rather than an argument: `mode_b.rs` asserts the two modes render the *same `Html` value* from the same state ([`94`](94-mode-b-report.md) §94.5) |
 | Log substrate v1 | Postgres (+ object storage snapshots; redb embedded for dev) | Purpose-built log store | Low — behind the log-engine interface |
 | Incremental views | Differential-dataflow lineage, recompute as oracle | Recompute always / hand-rolled IVM | Moderate — plans are symbolic either way |
 | Migration doctrine | Events-forever default (genesis replay is the invariant); per-store bounded-retention opt-in | Snapshots-authoritative default | Decided — [`10`](10-decisions.md) D3 |
