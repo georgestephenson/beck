@@ -95,7 +95,7 @@ async fn hello_with(
     let _session = tokio::spawn(beck_rt::session::run(app.clone(), socket));
     client_tx
         .send(Message::Text(
-            serde_json::json!({"t":"hello","sub":"s1","seq":0,"actor":claim})
+            serde_json::json!({"t":"hello","sub":"s1","actor":claim})
                 .to_string()
                 .into(),
         ))

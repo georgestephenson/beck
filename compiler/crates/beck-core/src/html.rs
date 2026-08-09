@@ -213,16 +213,20 @@ impl Html {
                 children,
                 ..
             } => {
-                let mut obj = serde_json::Map::with_capacity(attrs.len() + 1);
-                for (k, v) in attrs {
-                    obj.insert(k.clone(), Value::String(v.clone()));
-                }
+                // Pairs rather than an object, because a JSON object is not ordered and this one
+                // has to be: the client sets attributes in the order it reads them, so an object
+                // — which `serde_json` sorts — makes a rebuilt element carry its attributes in a
+                // different order than the same element the server rendered into the document. It
+                // is invisible until something compares the two, and then it is the difference
+                // between "the DOM is the page" and "the DOM is nearly the page"
+                // (`docs/94` §94.7).
+                let mut pairs: Vec<Value> = attrs.iter().map(|(k, v)| json!([k, v])).collect();
                 if let Some(k) = key {
-                    obj.insert(KEY_ATTR.to_string(), Value::String(k.clone()));
+                    pairs.push(json!([KEY_ATTR, k]));
                 }
                 json!([
                     tag,
-                    Value::Object(obj),
+                    Value::Array(pairs),
                     children.iter().map(Html::to_wire).collect::<Vec<_>>()
                 ])
             }

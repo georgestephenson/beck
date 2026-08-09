@@ -31,8 +31,11 @@
       // "current as of q, nothing changed" — keeps `seq` moving so a later reconnect does not ask
       // the server to replay a gap that turns out to be empty.
       state.seq = msg.q;
+      // A welcome means the subscription exists, which is the whole of readiness in Mode A: the
+      // handlers were installed synchronously and the page was rendered by the server.
+      if (msg.t === "w") beck.ready(root, "a");
     } else if (msg.t === "n") {
-      root.dispatchEvent(new CustomEvent("beck:rejected", { detail: msg }));
+      beck.announce(root, "beck:rejected", msg);
     }
   });
 

@@ -18,9 +18,9 @@ rather than estimated in §94.6. [`93`](93-llvm-backend-report.md) landed a *sec
 this was being written, and it sharpens the decision rather than changing it: what `beck-llvm`
 compiles is the scalar subset, and a `view` is nothing but heap — records, lists, strings, a map,
 and an `Html` tree at the end. The tree's compiling backend could not execute a view either, so
-what is missing is the same thing on both targets, and it is not a client feature. And nothing here
-has been loaded by a real browser: §94.7 says so first, because "built", "runs" and "measured" are
-three different claims and this report makes two of them.
+what is missing is the same thing on both targets, and it is not a client feature. A browser
+has now run all of it (§94.12), which is where three more defects are — and which is why this
+report claims "runs" as well as "built": both are measured, and neither is inferred.
 
 ## 94.1 The one row in §5.1's table that decides everything
 
@@ -289,11 +289,9 @@ browser in CI that §94.8 still owes.
   anything needing a heap, which a view is made of. The heap is the shared prerequisite, and it is
   Phase 4's rather than this bullet's — [`08`](08-roadmap.md) §8.19's Lane E is where it is
   scheduled.
-- **No browser has run it.** The shim (`beck-mode-b.js`), the routes (`/beck-kernel.wasm`,
-  `/beck-bundle.bpk`) and the mode-dependent `<script>` tag are written and served; the kernel is
-  driven natively in `mode_b.rs` and over a real subscription socket. Nobody has opened a tab.
-  [`21`](21-tests-in-beck-and-proof.md) §21.4 already said what closes this — "Phase 3's Mode B will
-  need a browser in CI" — and it is still owed. §94.7's second finding is what that gap costs.
+- ~~**No browser has run it.**~~ **One has** — see §94.12, which was written after the rest of this
+  report and which is where three more defects are. What is still not built is a browser *other*
+  than Chromium, and a page more complicated than the board.
 - **No offline.** D7's rung 2 "falls out of Mode B + determinism" and it does not fall out yet:
   there is no local log, no queued command surviving a reload, no service worker. The kernel carries
   `init` so a client with no server has a state to render, which is the first brick and not the
@@ -331,6 +329,16 @@ browser in CI that §94.8 still owes.
 | The `unsafe` exception grows past four export attributes | `the_wasm_boundary_is_the_only_exception_to_forbid_unsafe` |
 | The kernel stops building for the browser | `the_kernel_builds_for_the_browser` (skips, loudly, without the target; `BECK_REQUIRE_WASM=1` forbids the skip) |
 
+And `crates/beck-cli/tests/browser.rs`, in Chromium (§94.12):
+
+| What would break it | The test |
+|---|---|
+| The residue stops working in a browser at all | `mode_a_applies_the_servers_patches` |
+| A rebuilt DOM stops being the page the server rendered | both suites' final `assert_eq!` on `innerHTML` |
+| The kernel, the bundle or the shim stops loading over HTTP | `mode_b_renders_in_the_browser_and_guesses_ahead_of_the_server` |
+| A local guess stops reaching the DOM, or the server stops agreeing with it | the same test's two halves |
+| A reloaded tab cannot rebuild its state | `mode_b_survives_a_reload` |
+
 Plus `beck_core::delta`'s own round-trip tests — every patch this module produces, applied, has to
 reproduce the value it was derived from — and `examples/board.beck`'s seven tests in Beck, one of
 which is the snapshot §94.7 ends on.
@@ -357,16 +365,68 @@ which is the snapshot §94.7 ends on.
   against a document Phase 1's runtime never produced, so "the thin client applies patches in the
   browser" has been an untested claim rather than a false one — but it was not true of anything
   this repository serves, and now it is.
+- **The patch wire format changed** (§94.12): an element's attributes cross as ordered pairs rather
+  than as a JSON object, because a JSON object is not ordered. §4.4's binary mirror already carried
+  them as pairs, so this is the JSON form catching up with it.
+- **`Hello.seq` is optional** (§94.12), and its absence means "I hold nothing". [`18`](18-phase-0-report.md)
+  §18.5's resumption rule is unchanged; what changed is that position zero can now be *claimed*,
+  which is what makes §5.1's "first paint is free" true of a document rendered from an empty log.
 
 ## 94.11 What Phase 3 is still not
 
 Unchanged except for this bullet: **no playground**; identity's OIDC relying party, `managed()`
 provisioning, the claims mapping and presence ([`48`](48-identity-report.md) §48.5); three of the
-supply-chain bullet's four pieces ([`92`](92-sbom-report.md) §92.5). **Client polish** is untouched,
-and Mode B now has a browser-half that no browser has run. The LLVM backend arrived in
+supply-chain bullet's four pieces ([`92`](92-sbom-report.md) §92.5). **Client polish** is untouched. The LLVM backend arrived in
 [`93`](93-llvm-backend-report.md) and covers the scalar subset, so "no native codegen" is no longer
 one of these — what is still missing there is a heap, which is also what a compiled Mode B kernel
 waits on.
 
 The exit criterion is a claim about a person, and no outside developer has read the guide
 [`86`](86-getting-started.md) published.
+
+## 94.12 The browser, and the three things it found
+
+
+[`21`](21-tests-in-beck-and-proof.md) §21.4 said what was owed: "§21.2's cross-boundary tests run
+the tiers co-located. That proves what the boundary *means*, not that a particular browser renders
+it. Phase 3's Mode B will need a browser in CI." `beck-cli/tests/browser.rs` is that browser, and it
+is headless Chromium driven over the Chrome DevTools Protocol — **no new dependency**, because CDP
+is JSON over a websocket and `tokio-tungstenite` was already here for the subscription harness. No
+Node, no driver binary, no automation library. It skips loudly without a browser;
+`BECK_REQUIRE_BROWSER=1` forbids the skip.
+
+What it asserts is not that the page "works". It is that **the DOM in the browser is the page the
+server would have rendered** — `document.getElementById('b-root').innerHTML` compared to
+`Html::render`, as strings — in both modes, after an interaction. That is §94.5's claim, in the
+place it is actually made.
+
+It went red three times before it went green, and each was a real defect that every other test in
+the workspace was blind to.
+
+**1. The patch protocol sorted attributes.** `Html::to_wire` put an element's attributes in a
+`serde_json::Map`, which is a `BTreeMap` — so a rebuilt element carried `autofocus`,
+`data-b-enter`, `placeholder` where the server-rendered document had `placeholder`, `autofocus`,
+`data-b-enter`. Nothing was *wrong* with the page; it simply was not the same page, and no
+assertion in the tree had ever compared the two. The wire form is now pairs, in the order the
+program wrote them.
+
+**2. First paint was not free at position zero.** §5.1 promises "First paint: free — it *is* the
+SSR output". The thin client resumes from `data-b-seq`, and the protocol read `seq = 0` as "I have
+nothing; send me the world" — so a document rendered from an empty log was immediately replaced by
+a full frame the browser had just been given. `Hello.seq` is now `Option<Seq>`: **absent** means "I
+hold nothing" and `Some(0)` means "I hold the frame as of zero", which are different facts that had
+been spelled the same way since Phase 0. A Mode B client sends the absent form, because it holds
+the *state* and starts holding none — that distinction is exactly what the field could not express.
+
+**3. There was no way to know the client was live.** Mode B's handlers are installed at the end of
+an asynchronous load — fetch the kernel, instantiate it, load the bundle, open the socket — and
+before that a click reaches nothing. The first version of this suite waited for `window.beck`,
+which only proves a script tag ran, and then interacted into the void. The residue now says so:
+`data-b-ready` carries the mode's letter and a bubbling `beck:ready` fires, so a spinner, a
+devtools panel and a test all wait on the same signal. The other three events bubble now too —
+listening on `document` is the natural thing, and a non-bubbling event dispatched on the frame root
+made that impossible.
+
+The pattern across all three is the one [`84`](84-a-quota-is-only-as-good-as-its-actor-report.md)
+§84.5 names: none of them could have been caught by a test that does not execute the residue, and
+all three had been shipped for as long as the residue has existed.

@@ -446,7 +446,7 @@ async fn a_mode_b_subscription_carries_the_state_and_the_browser_renders_it() {
 
     client_tx
         .send(Message::Text(
-            serde_json::json!({"t":"hello","sub":"s1","seq":0,"actor":"ana"})
+            serde_json::json!({"t":"hello","sub":"s1","actor":"ana"})
                 .to_string()
                 .into(),
         ))

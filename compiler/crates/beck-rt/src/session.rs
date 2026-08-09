@@ -63,23 +63,28 @@ pub async fn run<S: Socket>(app: Arc<App>, mut socket: S) -> Result<()> {
 
     let floor = app.floor().await?;
     let head = app.head();
-    let how = if from == 0 {
-        Resumption::Fresh
-    } else if from < floor || from > head {
+    let how = match from {
+        // The client holds nothing, so there is nothing to be a difference from.
+        None => Resumption::Fresh,
+        // Position zero is always reachable whatever the log's floor is: the state at zero is the
+        // fold's initial accumulator, which is reconstructed rather than read.
+        Some(0) => Resumption::Resumed {
+            from: 0,
+            replayed: head,
+        },
         // The gap is unreachable — the log was trimmed, or this `seq` is from another lifetime of
         // the application. Reset, and say so rather than pretending.
-        Resumption::Reset { from }
-    } else {
-        Resumption::Resumed {
-            from,
-            replayed: head - from,
-        }
+        Some(n) if n < floor || n > head => Resumption::Reset { from: n },
+        Some(n) => Resumption::Resumed {
+            from: n,
+            replayed: head - n,
+        },
     };
 
     // The one branch a rendering mode makes to a subscription.
     match app.runtime().placed().render.mode {
-        Mode::Server => mode_a(app, socket, sub, actor, from, how).await,
-        Mode::Client => mode_b(app, socket, sub, actor, from, how).await,
+        Mode::Server => mode_a(app, socket, sub, actor, how).await,
+        Mode::Client => mode_b(app, socket, sub, actor, how).await,
     }
 }
 
@@ -89,7 +94,6 @@ async fn mode_a<S: Socket>(
     mut socket: S,
     sub: String,
     actor: String,
-    from: u64,
     how: Resumption,
 ) -> Result<()> {
     // Subscribe *before* reading the current view, so an event that lands in between wakes us
@@ -123,7 +127,7 @@ async fn mode_a<S: Socket>(
             html: view_now.clone(),
         }],
         // The client has the view as of `from`: send it exactly the difference.
-        Resumption::Resumed { .. } => {
+        Resumption::Resumed { from, .. } => {
             let then = app.state_at(from).await?;
             let view_then = app.runtime().view(&then, &actor)?;
             diff(&view_then, &view_now)
@@ -159,7 +163,6 @@ async fn mode_b<S: Socket>(
     mut socket: S,
     sub: String,
     actor: String,
-    from: u64,
     how: Resumption,
 ) -> Result<()> {
     // Subscribe *before* reading the state, for the same reason Mode A does: an event that lands
@@ -172,7 +175,7 @@ async fn mode_b<S: Socket>(
 
     let frame = match how {
         Resumption::Fresh | Resumption::Reset { .. } => DataFrame::whole(seq, &state),
-        Resumption::Resumed { .. } => {
+        Resumption::Resumed { from, .. } => {
             let then = app.state_at(from).await?;
             Some(DataFrame::Ops {
                 seq,
@@ -346,7 +349,9 @@ async fn drive<S: Socket>(
     Ok(())
 }
 
-async fn wait_for_hello<S: Socket>(socket: &mut S) -> Result<Option<(String, u64, String)>> {
+async fn wait_for_hello<S: Socket>(
+    socket: &mut S,
+) -> Result<Option<(String, Option<u64>, String)>> {
     while let Some(message) = socket.next().await {
         match message? {
             Message::Text(t) => match ClientMsg::parse(&t) {

@@ -8,8 +8,10 @@
   const build = (h) => {
     if (typeof h === "string") return document.createTextNode(h);
     const el = document.createElement(h[0]);
+    // Pairs, in the order the server wrote them: an element rebuilt here carries its attributes in
+    // the order the same element has in the server-rendered document.
     const attrs = h[1];
-    for (const name in attrs) el.setAttribute(name, attrs[name]);
+    for (let a = 0; a < attrs.length; a++) el.setAttribute(attrs[a][0], attrs[a][1]);
     const kids = h[2];
     for (let i = 0; i < kids.length; i++) el.appendChild(build(kids[i]));
     return el;
@@ -103,6 +105,10 @@
   // `state` is read at every open rather than at the first one, so a caller that keeps
   // `state.seq` current resumes from where it actually is. A snapshot would make every reconnect
   // ask for the gap since first paint and then apply it to a DOM that had already moved.
+  //
+  // A null `state.seq` is sent as an *absent* field, which is the protocol's "I hold nothing".
+  // Zero would mean "I hold the frame as of zero", which is true of a server-rendered document
+  // and false of a client that has only just started.
   const connect = (state, on) => {
     let backoff = 250;
     const outbox = [];
@@ -112,7 +118,9 @@
       socket = new WebSocket(url);
       socket.onopen = () => {
         backoff = 250;
-        socket.send(JSON.stringify({ t: "hello", sub: state.sub, seq: state.seq, actor: state.actor }));
+        const hello = { t: "hello", sub: state.sub, actor: state.actor };
+        if (state.seq !== null && state.seq !== undefined) hello.seq = state.seq;
+        socket.send(JSON.stringify(hello));
         // Commands sent while disconnected are safe to repeat: each carries an id, and the server
         // de-duplicates by it.
         while (outbox.length) socket.send(outbox.shift());
@@ -133,5 +141,19 @@
     };
   };
 
-  window.beck = { build, apply, uuid7, fill, capture, connect };
+  // An event anybody can listen for, on any ancestor. `bubbles` because the natural place to
+  // listen is `document` — a page showing "reconnecting…" should not have to know which element
+  // the residue chose as its frame root.
+  const announce = (root, kind, detail) =>
+    root.dispatchEvent(new CustomEvent(kind, { detail, bubbles: true }));
+
+  // "This component is live." `data-b-ready` is the mode's letter, so a stylesheet can hide a
+  // spinner with a selector and a script can wait for one attribute whichever mode it is in.
+  const ready = (root, mode) => {
+    if (root.dataset.bReady === mode) return;
+    root.dataset.bReady = mode;
+    announce(root, "beck:ready", { mode });
+  };
+
+  window.beck = { build, apply, uuid7, fill, capture, connect, announce, ready };
 })();

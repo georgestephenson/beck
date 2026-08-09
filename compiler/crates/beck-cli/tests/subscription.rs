@@ -44,7 +44,7 @@ async fn a_subscription_maintains_its_view_and_streams_the_patches() {
 
     client_tx
         .send(Message::Text(
-            serde_json::json!({"t":"hello","sub":"s1","seq":0,"actor":"ana"})
+            serde_json::json!({"t":"hello","sub":"s1","actor":"ana"})
                 .to_string()
                 .into(),
         ))
@@ -135,7 +135,7 @@ async fn a_subscription_serves_the_same_page_with_maintenance_switched_off() {
     let session = tokio::spawn(beck_rt::session::run(app.clone(), socket));
     client_tx
         .send(Message::Text(
-            serde_json::json!({"t":"hello","sub":"s1","seq":0,"actor":"ana"})
+            serde_json::json!({"t":"hello","sub":"s1","actor":"ana"})
                 .to_string()
                 .into(),
         ))
@@ -182,7 +182,7 @@ async fn two_live_subscriptions_over_one_shared_dataflow_get_their_own_pages() {
         let task = tokio::spawn(beck_rt::session::run(app.clone(), socket));
         client_tx
             .send(Message::Text(
-                serde_json::json!({"t":"hello","sub":sub,"seq":0,"actor":actor})
+                serde_json::json!({"t":"hello","sub":sub,"actor":actor})
                     .to_string()
                     .into(),
             ))
@@ -274,7 +274,7 @@ async fn a_subscription_serves_the_same_page_with_sharing_switched_off() {
     let session = tokio::spawn(beck_rt::session::run(app.clone(), socket));
     client_tx
         .send(Message::Text(
-            serde_json::json!({"t":"hello","sub":"s1","seq":0,"actor":"ana"})
+            serde_json::json!({"t":"hello","sub":"s1","actor":"ana"})
                 .to_string()
                 .into(),
         ))

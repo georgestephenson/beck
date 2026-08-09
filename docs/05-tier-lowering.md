@@ -75,6 +75,11 @@ WASM, no size crisis, trivially good Lighthouse scores) — with Mode B in Phase
 **Debugging**: source maps from patch frames back to `view` expressions; a devtools extension
 showing the signal graph, patch traffic, and pending (optimistic) state; DWARF for Mode B WASM.
 
+> None of that is built. What a page *can* be asked today is whether its client is live —
+> `data-b-ready` carries the mode's letter and `beck:ready`, `beck:rejected` and `beck:error` are
+> bubbling events on the frame root ([`94`](94-mode-b-report.md) §94.12). That is the smallest
+> version of the same idea: a devtools panel needs somewhere to attach, and so does a spinner.
+
 ## 5.2 Service tier → native code (dual backend)
 
 The server partition — ingress, `validate`, folds, view evaluation for Mode A sessions, boundary

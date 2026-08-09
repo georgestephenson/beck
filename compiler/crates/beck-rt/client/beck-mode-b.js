@@ -15,10 +15,10 @@
   // The position the server-rendered document reflects. It is *not* what this client resumes
   // from: a Mode A client resuming at `seq` is claiming to hold the page as of `seq`, and the
   // document is that page — but a Mode B client holds the *state*, and it starts holding nothing
-  // but `init`. So the first connection asks for everything (`seq: 0`) and `state.seq` moves only
-  // as frames arrive.
+  // but `init`. So the first connection says it holds nothing (`seq: null`, which the protocol
+  // reads as "send me the world") and `state.seq` moves only as frames arrive.
   const painted = Number(root.dataset.bSeq) || 0;
-  const state = { sub, seq: 0, actor };
+  const state = { sub, seq: null, actor };
 
   let wasm = null;
   const memory = () => new Uint8Array(wasm.memory.buffer);
@@ -45,7 +45,7 @@
 
   const apply = (response) => {
     if (response.error) {
-      root.dispatchEvent(new CustomEvent("beck:error", { detail: response }));
+      beck.announce(root, "beck:error", response);
       return;
     }
     if (response.dom && response.dom.length) beck.apply(root, response.dom);
@@ -67,7 +67,7 @@
     payload.set(new Uint8Array(bundle), 4 + name.length);
     const loaded = read(wasm.beck_load(write(payload), payload.length));
     if (loaded.error) {
-      root.dispatchEvent(new CustomEvent("beck:error", { detail: loaded }));
+      beck.announce(root, "beck:error", loaded);
       return;
     }
 
@@ -93,7 +93,7 @@
         // The server refused a command this client accepted — a race rather than a bug, and the
         // correction is to drop the guess and re-render.
         apply(call({ op: "refused", id: msg.id }));
-        root.dispatchEvent(new CustomEvent("beck:rejected", { detail: msg }));
+        beck.announce(root, "beck:rejected", msg);
       }
     });
 
@@ -103,15 +103,19 @@
       if (out.accepted === false) {
         // Refused by the program's own `validate`, running here. No round trip, and the reason is
         // the program's `Rejection` rather than a string this file invented.
-        root.dispatchEvent(new CustomEvent("beck:rejected", { detail: { id, e: out.why } }));
+        beck.announce(root, "beck:rejected", { id, e: out.why });
         return;
       }
       apply(out);
       send({ t: "c", id, command });
     });
+
+    // The component is live: the kernel holds the bundle, the socket is open and interactions are
+    // being captured. Before this, a click reaches nothing — the handlers are installed at the end
+    // of an asynchronous load — so a page with a spinner, a devtools panel, or a test has to be
+    // able to tell "not yet" from "nothing happened".
+    beck.ready(root, "b");
   };
 
-  start().catch((e) =>
-    root.dispatchEvent(new CustomEvent("beck:error", { detail: { error: String(e) } })),
-  );
+  start().catch((e) => beck.announce(root, "beck:error", { error: String(e) }));
 })();
