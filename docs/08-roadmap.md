@@ -387,10 +387,11 @@ to Phase 5), incremental views, whose last part is
 ([`90`](90-nested-patterns-report.md), [`91`](91-guards-and-alternatives-report.md)); what
 `parallel:` lacks is a backend that runs two children at once, which is
 [`80`](80-a-scope-owns-its-children-report.md) §80.5's item rather than this bullet's. **Two
-half-built**: the codegen bullet has LLVM over the scalar subset and no Cranelift
-([`93`](93-llvm-backend-report.md) §93.6); and Mode B has the mode, the bundle, the data patch, the
-reconciliation, a browser that runs it and an offline queue, without codegen
-([`94`](94-mode-b-report.md) §94.8). **Two untouched**: client polish and the
+half-built**: the codegen bullet has **both** of §5.2's code generators over the scalar subset
+([`93`](93-llvm-backend-report.md), [`97`](97-cranelift-report.md)) and no heap, so what it does not
+compile is everything the language stores; and Mode B has the mode, the bundle, the data patch, the
+reconciliation, a browser that runs it and an offline queue, without codegen — which is the *same*
+missing heap ([`94`](94-mode-b-report.md) §94.8, [`97`](97-cranelift-report.md) §97.7). **Two untouched**: client polish and the
 playground; the supply-chain bullet has one of its four pieces
 ([`92`](92-sbom-report.md)). The criterion is not a count of those, though — it is a
 claim about a *person*, and the honest way to say how close it is is by the questions such a
@@ -799,9 +800,13 @@ anything this repository does to itself. §86.8 lists what the guide does not co
 needs an outside developer, and none has read it.
 
 **Wave 4 — free-standing, in parallel with Waves 2–3.** ~~LLVM backend and native codegen~~ —
-**half built** ([`93`](93-llvm-backend-report.md)): the scalar subset compiles and the differential
-exists; there is no heap, so no record, list, string or effect compiles, and Cranelift is untouched;
-Mode B and
+**both code generators built** ([`93`](93-llvm-backend-report.md),
+[`97`](97-cranelift-report.md)): §5.2's dual codegen exists over the scalar subset, `beck native
+--backend cranelift|llvm` chooses, and §4.8's differential is **three-way** — the tree-walker, LLVM
+and Cranelift on every call, with the two emitters held to accepting and refusing the same
+definitions. What still bounds *both* is the **heap**: no record, list, string or effect compiles,
+which is Phase 4's Lane E and the same prerequisite Mode B codegen is behind
+([`94`](94-mode-b-report.md) §94.8). Mode B and
 client polish; the LSP; ~~SQL read models, pgwire~~ — **built**
 ([`88`](88-read-models-and-pgwire-report.md)), and they were not a Lane B item in the shape this
 list assumed: the schema derivation is a pass over the plan, the wire is `beck-rt`, and neither

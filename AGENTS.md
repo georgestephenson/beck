@@ -115,7 +115,7 @@ fusion,
 shared-arrangement, subscription, view-metrics, read-model, SICP, Are We Fast Yet, Benchmarks Game,
 tests-in-Beck, UI, workflow-cross-check, documentation, getting-started, outbound, compile-speed,
 concurrency, round-trip, runtime-edge, grammar-fuzz, supply-chain, native-backend, mode-B, browser,
-identity, OIDC, presence and diagnostic-snapshot suites, plus the eight
+identity, OIDC, presence, cranelift and diagnostic-snapshot suites, plus the eight
 release-only measurement suites. **Keep them green.**
 
 Four gates in this project's history could not have failed
@@ -169,10 +169,11 @@ the thing you are guarding against would make it so.
     `BECK_REQUIRE_CLUSTER=1` forbids the skip. Do not claim this rung ran without one.
   - Postgres log contract (`beck-rt/src/log.rs`): runs only with `BECK_PG=<url>`
     (`BECK_REQUIRE_PG=1` forbids the skip).
-  - The native backend (`beck-cli/tests/native.rs`, `tests/measure_native.rs`): skips without a
-    `clang` on the path; `BECK_REQUIRE_LLVM=1` forbids the skip, and `BECK_CLANG` names one
-    explicitly on a machine with several. A skipped run means the differential *between backends*
-    did not happen.
+  - The native backends (`beck-cli/tests/native.rs`, `tests/cranelift.rs`,
+    `tests/measure_native.rs`): the LLVM half skips without a `clang` on the path and the Cranelift
+    half without a linker; `BECK_REQUIRE_LLVM=1` forbids both skips, `BECK_CLANG` names a `clang`
+    and `BECK_LINKER` a linker on a machine with several. A skipped run means the differential
+    *between backends* did not happen.
   - Mode B's kernel (`beck-cli/tests/mode_b.rs`) needs the `wasm32-unknown-unknown` target; it
     skips without one, and `BECK_REQUIRE_WASM=1` forbids the skip.
   - The browser suite (`beck-cli/tests/browser.rs`) needs a Chromium; it looks under

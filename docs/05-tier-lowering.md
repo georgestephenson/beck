@@ -89,7 +89,7 @@ endpoints — compiles to native binaries, statically linked, one per `service`.
 
 | Mode | Backend | Evidence |
 |---|---|---|
-| `beck dev`, hot reload | **Cranelift** | ~40% faster whole-compiles; codegen step ~an order of magnitude faster than LLVM |
+| `beck dev`, hot reload | **Cranelift**, as a crate, emitting an object a linker turns into a program — **built** for the scalar subset ([`97`](97-cranelift-report.md), [`adr/0024`](adr/0024-cranelift-emits-an-object-and-a-linker-makes-it-a-program.md)) | ~40% faster whole-compiles; codegen step ~an order of magnitude faster than LLVM |
 | `beck build --release` | **LLVM**, as textual IR through the host's `clang` — **built** for the scalar subset ([`93`](93-llvm-backend-report.md)), not via `inkwell` ([`adr/0021`](adr/0021-the-native-backend-writes-ir-and-runs-a-process.md)) | Cranelift output ~14% slower; Perry's 2026 Cranelift→LLVM move turned a deficit into 1.7–24.6× wins over Node.js |
 
 The two must agree observably — enforced by differential tests ([`04`](04-compiler-architecture.md)
@@ -101,6 +101,13 @@ The two must agree observably — enforced by differential tests ([`04`](04-comp
 > view that builds `Html` and every effect in this section still run on the tree-walker, and this
 > section's "compiles to native binaries, statically linked, one per `service`" remains a design.
 > The seam held: not one line of `beck-rt` changed.
+>
+> *Both rows exist now* ([`97`](97-cranelift-report.md)), over the same scalar subset and held to
+> the same programs: `beck native --backend cranelift|llvm`, and "the two must agree observably" is
+> a **three-way** differential — the tree-walker, LLVM and Cranelift on every call. The heap is
+> what still bounds them, and it bounds both equally, so the sentence above about records, `Html`
+> and effects is unchanged. What *is* new is that the second implementation exists to disagree:
+> §97.4 is what holding two emitters to one subset found.
 
 **Runtime we must ship** (the "Roc platform" of Beck — an effectful Rust host owning I/O, scheduling
 and memory, executing the pure program):
