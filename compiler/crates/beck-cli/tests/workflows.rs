@@ -74,6 +74,49 @@ fn no_workflow_starts_a_value_with_a_character_yaml_reserves() {
 }
 
 #[test]
+fn every_published_page_is_built_with_a_link_back_to_the_repository() {
+    // The site links back to the repository through `beck doc --repo`, and `docs.rs` asserts that
+    // the flag reaches every page. Neither says anything about a page the *workflow* builds without
+    // it, which is the way this actually goes wrong: a page kind is added to `publish`, the flag is
+    // forgotten, and one page on the site is a dead end. So the gap tested here is the workflow's,
+    // not the compiler's.
+    //
+    // `--check` is exempt because it writes nothing: it is the markdown drift gate, and markdown
+    // has no page shell to put a link in.
+    let path = workflows()
+        .into_iter()
+        .find(|p| p.file_name().is_some_and(|n| n == "docs.yml"))
+        .expect("the docs workflow is checked in");
+    let text = std::fs::read_to_string(path).expect("readable");
+
+    // Shell continuations first: a `beck doc` invocation is spread over as many lines as it needs,
+    // and `--repo` is usually on a later one.
+    let joined = text.replace("\\\n", " ");
+    let mut naked = Vec::new();
+    for line in joined.lines() {
+        if !line.contains("beck doc ") || line.trim_start().starts_with('#') {
+            continue;
+        }
+        if !line.contains("--check") && !line.contains("--repo") {
+            naked.push(line.trim().to_string());
+        }
+    }
+    assert!(
+        naked.is_empty(),
+        "the docs workflow publishes a page with no link back to the repository — pass \
+         `--repo \"${{GITHUB_SERVER_URL}}/${{GITHUB_REPOSITORY}}\"`:\n  {}",
+        naked.join("\n  ")
+    );
+    // And the property above is worth nothing if it looked at no commands at all.
+    assert!(
+        joined.matches("beck doc ").count() >= 4,
+        "only {} `beck doc` invocations found in the docs workflow — the check above passed by \
+         looking at nothing",
+        joined.matches("beck doc ").count()
+    );
+}
+
+#[test]
 fn the_compiler_workflow_still_runs_the_harnesses_it_exists_for() {
     // §8.3 names three things as gates. A workflow that quietly stopped running one of them would
     // be the same failure in a different form, so the gates are asserted by name.

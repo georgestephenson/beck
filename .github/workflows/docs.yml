@@ -134,8 +134,14 @@ jobs:
           workspaces: compiler
       - name: build
         run: cargo build --release --locked
+      # `--repo` puts a link to this repository in every page's header: the site is derived from the
+      # source, and a reader who wants the source should not have to guess. It is passed rather than
+      # compiled in so a fork's site links to the fork, and every `beck doc` invocation here carries
+      # it — `beck-cli/tests/workflows.rs` is what says a page added later cannot quietly omit it.
       - name: the language reference
-        run: ./target/release/beck doc reference --out ../site --format html
+        run: |
+          ./target/release/beck doc reference --out ../site --format html \
+            --repo "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
       # The written guide, rendered into the same shell. `--link-base` is the directory the guide
       # lives in *in the repository*, because its links are written relative to itself and a
       # relative link to `08-roadmap.md` is not a page on a static site.
@@ -143,13 +149,16 @@ jobs:
         run: |
           ./target/release/beck doc guide ../docs/86-getting-started.md \
             --out ../site/guide \
+            --repo "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
             --link-base "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/docs"
       # Two module pages: the sketch the project grew from, and the library written to show what a
       # doc comment adds to a page that is otherwise entirely derived.
       - name: module pages
         run: |
-          ./target/release/beck doc module examples/todo.beck       --out ../site/module --format html
-          ./target/release/beck doc module examples/documented.beck --out ../site/module --format html
+          ./target/release/beck doc module examples/todo.beck       --out ../site/module --format html \
+            --repo "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
+          ./target/release/beck doc module examples/documented.beck --out ../site/module --format html \
+            --repo "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
       - name: rustdoc
         run: cargo doc --release --locked --workspace --no-deps
         env:

@@ -277,6 +277,9 @@ enum Doc {
         out: PathBuf,
         #[arg(long, value_enum, default_value_t = docs::Format::Html)]
         format: docs::Format,
+        /// Link the page back to the repository it was generated from. HTML only.
+        #[arg(long, value_name = "URL")]
+        repo: Option<String>,
         /// Print it instead of writing it.
         #[arg(long)]
         stdout: bool,
@@ -299,6 +302,9 @@ enum Doc {
         /// wrong for a static site, where `08-roadmap.md` is not a page.
         #[arg(long, value_name = "URL")]
         link_base: Option<String>,
+        /// Link the page back to the repository it was generated from.
+        #[arg(long, value_name = "URL")]
+        repo: Option<String>,
         /// Print it instead of writing it.
         #[arg(long)]
         stdout: bool,
@@ -313,6 +319,9 @@ enum Doc {
         out: PathBuf,
         #[arg(long, value_enum, default_value_t = docs::Format::Md)]
         format: docs::Format,
+        /// Link every generated page back to the repository it was generated from. HTML only.
+        #[arg(long, value_name = "URL")]
+        repo: Option<String>,
         /// Regenerate in memory and fail if what is on disk differs. The gate CI runs.
         #[arg(long)]
         check: bool,
@@ -433,6 +442,7 @@ fn dispatch(cli: Cli) -> Result<()> {
                 file,
                 out,
                 format,
+                repo,
                 stdout,
             } => {
                 // Through the project loader, not a single-file read: a module that imports another
@@ -447,15 +457,21 @@ fn dispatch(cli: Cli) -> Result<()> {
                         file.display()
                     )
                 })?;
-                docs::module(&project, Some(&out), format, stdout)
+                docs::module(&project, Some(&out), format, stdout, repo.as_deref())
             }
             Doc::Guide {
                 file,
                 out,
                 link_base,
+                repo,
                 stdout,
-            } => docs::guide(&file, &out, link_base.as_deref(), stdout),
-            Doc::Reference { out, format, check } => docs::reference(&out, format, check),
+            } => docs::guide(&file, &out, link_base.as_deref(), stdout, repo.as_deref()),
+            Doc::Reference {
+                out,
+                format,
+                repo,
+                check,
+            } => docs::reference(&out, format, check, repo.as_deref()),
         },
         Cmd::Bench { what } => match what {
             Bench::Log { url, dir } => {
