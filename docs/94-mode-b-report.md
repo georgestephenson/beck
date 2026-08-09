@@ -417,7 +417,13 @@ server would have rendered** — `document.getElementById('b-root').innerHTML` c
 place it is actually made.
 
 It went red three times before it went green, and each was a real defect that every other test in
-the workspace was blind to.
+the workspace was blind to. It then went red a fourth time, in a way that was the suite's own fault
+and worth recording: launching a browser per test put six headless Chromiums on a machine that was
+also running the debug measurement suites, and under that load a DevTools command went unanswered
+for thirty seconds. It passed run on its own — which is exactly the gate [`13`](13-testing.md) §13.7
+refuses to have. There is **one** browser now, behind a lock, so the tests are serial; their pages
+stay isolated for free, because each serves on a port of its own and a different port is a different
+origin. The suite also stopped taking fifty seconds and started taking two.
 
 **1. The patch protocol sorted attributes.** `Html::to_wire` put an element's attributes in a
 `serde_json::Map`, which is a `BTreeMap` — so a rebuilt element carried `autofocus`,

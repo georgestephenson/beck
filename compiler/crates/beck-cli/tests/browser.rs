@@ -158,18 +158,17 @@ async fn dom(page: &Page, browser: &mut Browser) -> String {
 
 // --------------------------------------------------------------- Mode A
 
+browser_test! {
 /// The thin client connects, renders and applies a patch — in a browser, for the first time.
 ///
 /// The `contains` assertions are about *the DOM after a round trip*: the card is not in the
 /// server-rendered document, so its appearance is a patch this browser received over a websocket
 /// and applied with `beck-patch.js`.
-#[tokio::test]
 async fn mode_a_applies_the_servers_patches() {
-    let Some(binary) = browser::available() else {
+    let Some(mut browser) = browser::shared().await else {
         return;
     };
     let serving = Serving::start(example("todo.beck")).await;
-    let mut browser = Browser::launch(&binary).await;
     let page = browser.open(&serving.url()).await;
 
     // "Live" is the client's own signal, not a guess about how long a socket takes: `data-b-ready`
@@ -217,16 +216,17 @@ async fn mode_a_applies_the_servers_patches() {
         "the browser's DOM and the server's render disagree"
     );
 }
+}
 
 // --------------------------------------------------------------- Mode B
 
+browser_test! {
 /// The whole of Mode B, in the program it was written for.
 ///
 /// Loads the kernel and the bundle over HTTP, renders locally from a data patch, applies a command
 /// optimistically, and ends up with the page the server would have rendered.
-#[tokio::test]
 async fn mode_b_renders_in_the_browser_and_guesses_ahead_of_the_server() {
-    let Some(binary) = browser::available() else {
+    let Some(mut browser) = browser::shared().await else {
         return;
     };
     if !point_at_the_kernel() {
@@ -242,7 +242,6 @@ async fn mode_b_renders_in_the_browser_and_guesses_ahead_of_the_server() {
     }
 
     let serving = Serving::start(example("board.beck")).await;
-    let mut browser = Browser::launch(&binary).await;
     let page = browser.open(&serving.url()).await;
 
     // The document says which residue it loaded, and for a Mode B component that is the kernel.
@@ -351,6 +350,7 @@ async fn mode_b_renders_in_the_browser_and_guesses_ahead_of_the_server() {
         tokio::time::sleep(std::time::Duration::from_millis(25)).await;
     }
 }
+}
 
 // A Mode B client refuses what the program would refuse, locally and without a round trip. That is
 // gated in `mode_b.rs` rather than here, and the reason is a property of the example rather than a
@@ -359,14 +359,14 @@ async fn mode_b_renders_in_the_browser_and_guesses_ahead_of_the_server() {
 // command exists. A browser test would have to reach past the page to manufacture one, and a test
 // that has to bypass the page is not testing the browser.
 
+browser_test! {
 /// Reloading is a fresh subscription, and the page comes back.
 ///
 /// A Mode B client resumes from nothing — it holds the state, and after a reload it holds `init`
 /// again (`docs/94` §94.5). This is the assertion that the `seq` a reloaded tab claims is the one
 /// that gets it a state rather than a gap it cannot apply.
-#[tokio::test]
 async fn mode_b_survives_a_reload() {
-    let Some(binary) = browser::available() else {
+    let Some(mut browser) = browser::shared().await else {
         return;
     };
     if !point_at_the_kernel() {
@@ -387,7 +387,6 @@ async fn mode_b_survives_a_reload() {
         .await
         .expect("accepted");
 
-    let mut browser = Browser::launch(&binary).await;
     let mut page = browser.open(&serving.url()).await;
     page.wait_for(
         &mut browser,
@@ -418,6 +417,7 @@ async fn mode_b_survives_a_reload() {
         "the reloaded page is not the page the server would have sent"
     );
 }
+}
 
 /// Keeps `Value` referenced: the harness builds commands through the runtime's own decoder.
 #[allow(dead_code)]
@@ -425,6 +425,7 @@ fn _value(_: Value) {}
 
 // --------------------------------------------------------------- offline (D7 rung 2)
 
+browser_test! {
 /// The claim [`docs/10-decisions.md`](../../../../docs/10-decisions.md) D7 makes for Mode B, with
 /// the server gone.
 ///
@@ -436,9 +437,8 @@ fn _value(_: Value) {}
 /// each command, because the idempotency key the queue kept is the one `App::propose` already
 /// de-duplicates by. Offline tolerance is the fold plus that key — no new agreement between the
 /// two sides, which is what D7 predicted and is worth checking rather than assuming.
-#[tokio::test]
 async fn mode_b_works_with_the_server_gone_and_catches_up_when_it_returns() {
-    let Some(binary) = browser::available() else {
+    let Some(mut browser) = browser::shared().await else {
         return;
     };
     if !point_at_the_kernel() {
@@ -447,7 +447,6 @@ async fn mode_b_works_with_the_server_gone_and_catches_up_when_it_returns() {
     }
 
     let mut serving = Serving::start(example("board.beck")).await;
-    let mut browser = Browser::launch(&binary).await;
     let page = browser.open(&serving.url()).await;
     page.wait_for(
         &mut browser,
@@ -510,15 +509,16 @@ async fn mode_b_works_with_the_server_gone_and_catches_up_when_it_returns() {
         tokio::time::sleep(std::time::Duration::from_millis(25)).await;
     }
 }
+}
 
+browser_test! {
 /// A snapshot of another program is refused rather than folded into this one.
 ///
 /// A deployment that changes the command channel's types changes the wire id (§4.3), and a tab that
 /// comes back to it is holding a copy of something else. Restoring it would be a state no log ever
 /// produced.
-#[tokio::test]
 async fn a_local_copy_of_another_program_is_dropped() {
-    let Some(binary) = browser::available() else {
+    let Some(mut browser) = browser::shared().await else {
         return;
     };
     if !point_at_the_kernel() {
@@ -527,7 +527,6 @@ async fn a_local_copy_of_another_program_is_dropped() {
     }
 
     let serving = Serving::start(example("board.beck")).await;
-    let mut browser = Browser::launch(&binary).await;
     let mut page = browser.open(&serving.url()).await;
     page.wait_for(
         &mut browser,
@@ -570,6 +569,7 @@ async fn a_local_copy_of_another_program_is_dropped() {
         serving.rendered("ana").await
     );
 }
+}
 
 async fn add_card(page: &Page, browser: &mut Browser, text: &str) {
     page.eval(
@@ -597,15 +597,15 @@ async fn wait_for_server(serving: &Serving, text: &str) {
     }
 }
 
+browser_test! {
 /// A cold start with the server gone: the tab is closed, reopened, and the application is there.
 ///
 /// This is the half of D7 rung 2 the queue alone cannot reach. The state was already in the
 /// browser; what was not was the *document*, the scripts and the kernel, all of which come from the
 /// server — so a reload with nothing listening never got as far as consulting the local copy. The
 /// service worker caches that shell, network-first, keyed by the program's wire id.
-#[tokio::test]
 async fn mode_b_cold_starts_with_the_server_gone() {
-    let Some(binary) = browser::available() else {
+    let Some(mut browser) = browser::shared().await else {
         return;
     };
     if !point_at_the_kernel() {
@@ -614,7 +614,6 @@ async fn mode_b_cold_starts_with_the_server_gone() {
     }
 
     let mut serving = Serving::start(example("board.beck")).await;
-    let mut browser = Browser::launch(&binary).await;
     let mut page = browser.open(&serving.url()).await;
     page.wait_for(
         &mut browser,
@@ -673,4 +672,5 @@ async fn mode_b_cold_starts_with_the_server_gone() {
         connected + 1,
         "the queued command was appended more than once"
     );
+}
 }

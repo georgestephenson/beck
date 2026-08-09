@@ -94,6 +94,63 @@ pub struct Browser {
     socket: Socket,
     profile: PathBuf,
     next_id: i64,
+    /// The page this browser last opened, closed when the next one is.
+    open_target: Option<String>,
+}
+
+/// The runtime every browser test runs on.
+///
+/// `#[tokio::test]` builds a runtime *per test*, and a `tokio` socket or child process belongs to
+/// the runtime that created it — so a browser shared between tests is a connection used from a
+/// runtime that does not own it, which hangs rather than failing. One runtime for the suite, and
+/// [`browser_test!`] is what puts each test on it.
+pub fn runtime() -> &'static tokio::runtime::Runtime {
+    static RT: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+    RT.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("a runtime for the browser suite")
+    })
+}
+
+/// A test that needs the browser: an ordinary `#[test]`, run on [`runtime`].
+#[macro_export]
+macro_rules! browser_test {
+    ($(#[$meta:meta])* async fn $name:ident() $body:block) => {
+        $(#[$meta])*
+        #[test]
+        fn $name() {
+            support::browser::runtime().block_on(async $body);
+        }
+    };
+}
+
+/// The one browser this suite runs, and the lock that makes its tests serial.
+///
+/// Launching one per test meant six headless Chromiums on a machine that was also running the rest
+/// of `cargo test --workspace` — the debug measurement suites among them — and under that load a
+/// DevTools command went unanswered for thirty seconds and the suite failed. It passed run on its
+/// own, which is the definition of the gate `docs/13` §13.7 refuses to have: "a gate that flakes is
+/// worse than no gate".
+///
+/// So: one browser, and a lock held for the length of a test. Browser tests are heavy and there is
+/// nothing to be gained by overlapping them. Their *pages* stay isolated from each other for free —
+/// each test serves on a port of its own, and a different port is a different origin, so no two
+/// share a `localStorage`.
+static BROWSER: tokio::sync::OnceCell<tokio::sync::Mutex<Browser>> =
+    tokio::sync::OnceCell::const_new();
+
+/// The browser, locked. `None` when there is none to be had — see [`available`].
+pub async fn shared() -> Option<tokio::sync::MutexGuard<'static, Browser>> {
+    let binary = available()?;
+    Some(
+        BROWSER
+            .get_or_init(|| async { tokio::sync::Mutex::new(Browser::launch(&binary).await) })
+            .await
+            .lock()
+            .await,
+    )
 }
 
 impl Browser {
@@ -146,6 +203,7 @@ impl Browser {
             socket,
             profile,
             next_id: 0,
+            open_target: None,
         }
     }
 
@@ -166,7 +224,10 @@ impl Browser {
             .await
             .expect("sends a command");
 
-        let deadline = Instant::now() + Duration::from_secs(30);
+        // Generous, because a machine running this suite is running the rest of the workspace too
+        // and a browser is the first thing to be starved of a core. It is still bounded: a command
+        // that never answers is a bug, and hanging on it would be a suite that never fails.
+        let deadline = Instant::now() + Duration::from_secs(120);
         loop {
             assert!(Instant::now() < deadline, "`{method}` never answered");
             let Some(Ok(Message::Text(text))) = self.socket.next().await else {
@@ -184,6 +245,14 @@ impl Browser {
 
     /// Open a page on `url` and attach to it.
     pub async fn open(&mut self, url: &str) -> Page {
+        // The previous test's page first. A shared browser makes leaving them open a real cost:
+        // each one keeps a script running, a socket dialling a server that has stopped, and a
+        // service worker registered — and the next test would be measuring a machine carrying all
+        // of them.
+        if let Some(previous) = self.open_target.take() {
+            self.call("Target.closeTarget", json!({"targetId": previous}), None)
+                .await;
+        }
         let target = self
             .call("Target.createTarget", json!({"url": "about:blank"}), None)
             .await["targetId"]
@@ -201,6 +270,7 @@ impl Browser {
             .expect("a session id")
             .to_string();
 
+        self.open_target = Some(target);
         let mut page = Page {
             session,
             url: url.to_string(),
