@@ -1,6 +1,6 @@
 # The corpus
 
-Thirty programs, and the Phase 2 exit criterion measured against them:
+Thirty-one programs, and the Phase 2 exit criterion measured against them:
 
 > On a corpus of 20+ programs, placement is inferred with no annotations for the common cases.
 
@@ -40,7 +40,12 @@ of one shape would prove that the shape works, which Phase 1 already did. What v
   `parallel:` scope that do not wait for each other (program 30,
   [`docs/80`](../../docs/80-a-scope-owns-its-children-report.md)) — where what is being checked is
   that the scope's `spawn` reaches the published signature and the placement without anybody
-  writing either down.
+  writing either down;
+- **who is asking**: a program that declares `identity = external(issuer=…)` and whose `validate`
+  refuses a command unless the *issuer* said which tenant is asking (program 31,
+  [`docs/95`](../../docs/95-oidc-relying-party-report.md)). It is the only file here with a
+  top-level form that is neither a definition nor a signal, so it is what holds the printer, the
+  round-trip property and the placement property to it.
 
 Every file is a program someone could plausibly write. Where one exists to exercise a corner, its
 first comment says which corner and why.

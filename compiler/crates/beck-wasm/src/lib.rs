@@ -46,14 +46,14 @@
 
 pub mod kernel;
 
-pub use kernel::{Client, Proposed};
+pub use kernel::{Client, Proposed, Viewer};
 
 #[cfg(target_arch = "wasm32")]
 mod exports {
     use std::cell::RefCell;
     use std::collections::BTreeMap;
 
-    use super::kernel::Client;
+    use super::kernel::{Client, Viewer};
 
     thread_local! {
         /// Buffers this module has handed the host, by the address of each one's allocation.
@@ -110,8 +110,12 @@ mod exports {
         take(ptr);
     }
 
-    /// Load a bundle. The request is the bundle's bytes with the actor's name on the front, as
-    /// `<u32 len><actor><bundle>`.
+    /// Load a bundle. The request is the bundle's bytes with the viewer on the front, as
+    /// `<u32 len><viewer json><bundle>`.
+    ///
+    /// The viewer is JSON rather than a bare name because it carries the claims as well — the
+    /// `Session` the view is rendered against is the actor *and* what the provider said about them
+    /// ([`crate::kernel::Viewer`]).
     #[allow(unsafe_code)] // the export attribute, and nothing else — see the crate docs
     #[no_mangle]
     pub extern "C" fn beck_load(ptr: i32, len: i32) -> i32 {
@@ -120,14 +124,17 @@ mod exports {
         };
         let bytes = &bytes[..(len.max(0) as usize).min(bytes.len())];
         if bytes.len() < 4 {
-            return error("a load needs an actor and a bundle");
+            return error("a load needs a viewer and a bundle");
         }
         let n = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
         if bytes.len() < 4 + n {
-            return error("the actor is longer than the request");
+            return error("the viewer is longer than the request");
         }
-        let actor = String::from_utf8_lossy(&bytes[4..4 + n]).to_string();
-        match Client::load(&bytes[4 + n..], &actor) {
+        let viewer = match serde_json::from_slice::<Viewer>(&bytes[4..4 + n]) {
+            Ok(v) => v,
+            Err(e) => return error(format!("the viewer is not readable: {e}")),
+        };
+        match Client::load(&bytes[4 + n..], viewer) {
             Ok(client) => {
                 let info = serde_json::json!({
                     "component": client.component(),

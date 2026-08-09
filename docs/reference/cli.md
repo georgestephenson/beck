@@ -213,6 +213,9 @@ Run the program in a single process — rung 0 of the parity ladder
 | `--path` | PATH |  |
 | `--url` | URL |  |
 | `--pgwire` | ADDR | Also serve the read models on the PostgreSQL wire protocol (§5.3).  Off by default, and loopback only: the port answers every question about the application's state, and it has no authentication and no transport security. Forward it rather than exposing it. |
+| `--client-id` | ID | This application, as its identity provider knows it.  The **issuer** is not a flag: a program says who authenticates its clients with `identity = external(issuer="https://…")`, because §6.5 derives the cluster's egress rule from the peers a program names and a flag is not one of them. A client id is a deployment fact — staging and production register different ones — so it is here. |
+| `--client-secret` | SECRET | The client secret, for a confidential client. Read from the environment because a secret on a command line is a secret in the process table |
+| `--redirect-uri` | URL | Where the issuer sends the browser back — the redirect URI registered with it.  Defaults to `http://<addr>/auth/callback`, which is what a laptop needs and what a deployment behind a gateway must override, because the address this process bound is not the address a browser typed. |
 
 
 ## `beck replay`

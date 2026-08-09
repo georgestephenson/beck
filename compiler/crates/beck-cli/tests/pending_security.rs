@@ -91,75 +91,38 @@ fn identity_defaults_to_believing_the_client() {
     assert_eq!(config.identity.kind(), "dev");
 }
 
-/// No OIDC relying party: no JWKS, no issuer or audience validation, no asymmetric signature.
-///
-/// `SignedIdentity` is symmetric — everything that can verify a credential can also mint one —
-/// which suits a gateway in front of a Beck process and does not suit a public identity provider.
-/// D6 asks for the second.
-#[test]
-fn nothing_here_speaks_oidc() {
-    let sites = mentions(&["jwks", "Jwks", "id_token", "issuer", "RS256"]);
-    assert!(
-        sites.is_empty(),
-        "an OIDC relying party appears to exist now ({sites:?}) — delete this test, and correct \
-         docs/48 §48.5, docs/43 §43.4 and the roadmap's identity bullet"
-    );
-}
+// `nothing_here_speaks_oidc` and `a_verified_identitys_claims_do_not_reach_the_program` were here,
+// and both are **built** (`docs/95`): `beck_rt::oidc` is an asymmetric relying party, and `Session`
+// carries the claims it verified. Both are gone, which is what this file's own rule asks for, and
+// what replaces them is `beck-cli/tests/oidc.rs` — where the tokens are signed by a key pair
+// generated for the test and the relying party is given nothing but the public half.
+//
+// The first of the two is worth a note beside `docs/84` §84.5's list. It was a **name grep**, for
+// `jwks`, `id_token`, `issuer` and `RS256`, and it would have fired on this change — all four
+// appear. But it would equally have fired on a module that fetched a JWKS and checked nothing, and
+// on a comment. A grep proves a subject was touched; it cannot prove a control works, and it is
+// used here only where there is no behaviour to look at.
+//
+// `an_outbound_call_has_no_transport_security` is gone too (`docs/adr/0022`). It grepped for
+// `rustls`, `TlsConnector`, `tokio_rustls` and `webpki`, and it also asserted that `lib/http.beck`
+// defaults to `port=80` — which is *still true*, and is now a statement about a default rather than
+// about a missing capability, since `over_tls` is the call that changes it. That half moved into
+// `lib/http.beck`'s own tests, where a reader of the library meets it.
 
-/// And the claims a verified identity carries do not reach the program yet.
-///
-/// D6 asks for "claims → `Session` capability mapping". The verification half is built; the
-/// mapping half is not, because the actor travels through the view path as a `String`
-/// ([`48`](../../../../docs/48-identity-report.md) §48.5).
-#[test]
-fn a_verified_identitys_claims_do_not_reach_the_program() {
-    let session = beck_core::prelude::types()
-        .get("Session")
-        .cloned()
-        .expect("the prelude declares a Session");
-    let fields = match session {
-        beck_core::ty::TyDecl::Model { fields, .. } => fields,
-        _ => panic!("Session is a model"),
-    };
-    assert!(
-        !fields.iter().any(|(n, _)| n.as_ref() == "claims"),
-        "`Session` carries claims now — delete this test and correct docs/48 §48.5"
-    );
-}
-
-// ---------------------------------------------------------------------------------------------
-// The outbound call — built, and plaintext
-// ---------------------------------------------------------------------------------------------
-
-/// An outbound request is not encrypted, and nothing in the tree pretends otherwise.
-///
-/// `http_fetch` speaks HTTP/1.1 over TCP. [`docs/07`](../../../../docs/07-dependencies.md) chooses
-/// rustls for the other half, and taking a TLS stack is a dependency decision rather than a line
-/// in `beck-rt/src/outbound.rs` — so until it is taken, a credential sent with
-/// `with_secret_header` is confidential exactly as far as the network under it is. Whoever adds
-/// TLS deletes this test and corrects docs/43 §43.4 and docs/49 §49.6.
-#[test]
-fn an_outbound_call_has_no_transport_security() {
-    let sites = mentions(&["rustls", "TlsConnector", "tokio_rustls", "webpki"]);
-    assert!(
-        sites.is_empty(),
-        "a TLS stack appears to exist now ({sites:?}) — delete this test, and correct docs/43 \
-         §43.4, docs/49 §49.6 and the `net.rs` seam's own module comment"
-    );
-    // The port a request defaults to is the plaintext one, which is the same fact stated where a
-    // reader of the library will meet it.
-    let lib = std::fs::read_to_string(
-        crates_dir()
-            .parent()
-            .expect("compiler/")
-            .join("lib/http.beck"),
-    )
-    .expect("lib/http.beck is readable");
-    assert!(
-        lib.contains("port=80"),
-        "`lib/http.beck` no longer defaults to the plaintext port; this test is out of date"
-    );
-}
+// `no_identity_provider_is_provisioned_into_the_object_graph` was here, and it is **built**
+// (`docs/95` §95.10): `identity = managed()` derives a provider, its Service, its volume, its
+// credentials and a realm wired to this application's own route, and the application's egress to it
+// is a `Peer` rather than a DNS name. What replaces it is `oidc.rs`, in both directions — the
+// declaration with it and the same program without.
+//
+// That test is also the one this file's own rules were hardest on. Its first version searched the
+// rendered YAML for `keycloak`, `ory` and `Kratos`, and went red on **`revisionHistoryLimit`**; the
+// second counted `Workload` nodes. Both were asserting an absence by looking at the shape of the
+// fix rather than the shape of the gap, which is `docs/84` §84.5's pattern from the other side.
+//
+// **Nothing about identity is asserted as absent here now.** Presence — D6's "who is connected now,
+// as a first-class non-durable Signal" — is the last unbuilt row of that bullet, and it is a
+// language feature rather than a control, so it belongs in `docs/08`'s list and not in this file.
 
 // ---------------------------------------------------------------------------------------------
 // F3 — per-actor quotas: BUILT (`docs/84`), and the two tests that were here did not notice

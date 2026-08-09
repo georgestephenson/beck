@@ -568,13 +568,9 @@ page: Signal[Html] = per_session(ranking, render)
         let reader = app.shared_dataflow().reader();
 
         for i in 0..n {
-            app.propose(
-                format!("k{i}"),
-                "ana".into(),
-                add(format!("i{i:06}"), i as i64),
-            )
-            .await
-            .expect("accepted");
+            app.propose(format!("k{i}"), "ana", add(format!("i{i:06}"), i as i64))
+                .await
+                .expect("accepted");
         }
 
         // Claim 1: a connected reader that has asked nothing has cost the write path nothing.
@@ -594,7 +590,7 @@ page: Signal[Html] = per_session(ranking, render)
         // entries are the rows — the read model is the arrangement, with nothing copied into it.
         assert_eq!(rows.len(), n, "the arrangement holds a row per element");
 
-        app.propose("last".into(), "ana".into(), add("zzz".into(), 0))
+        app.propose("last".into(), "ana", add("zzz".into(), 0))
             .await
             .expect("accepted");
         app.read_snapshot(|state, version| reader.read(state, version, op))

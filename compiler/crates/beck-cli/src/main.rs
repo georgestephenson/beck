@@ -180,6 +180,30 @@ enum Cmd {
         /// rather than exposing it.
         #[arg(long, value_name = "ADDR")]
         pgwire: Option<String>,
+        /// This application, as its identity provider knows it.
+        ///
+        /// The **issuer** is not a flag: a program says who authenticates its clients with
+        /// `identity = external(issuer="https://…")`, because §6.5 derives the cluster's egress
+        /// rule from the peers a program names and a flag is not one of them. A client id is a
+        /// deployment fact — staging and production register different ones — so it is here.
+        #[arg(long, value_name = "ID")]
+        client_id: Option<String>,
+        /// The client secret, for a confidential client. Read from the environment because a
+        /// secret on a command line is a secret in the process table.
+        #[arg(
+            long,
+            env = "BECK_CLIENT_SECRET",
+            value_name = "SECRET",
+            hide_env_values = true
+        )]
+        client_secret: Option<String>,
+        /// Where the issuer sends the browser back — the redirect URI registered with it.
+        ///
+        /// Defaults to `http://<addr>/auth/callback`, which is what a laptop needs and what a
+        /// deployment behind a gateway must override, because the address this process bound is
+        /// not the address a browser typed.
+        #[arg(long, value_name = "URL")]
+        redirect_uri: Option<String>,
     },
     /// Fold a recorded log and report the state it produces (§3.7).
     Replay {
@@ -526,6 +550,9 @@ fn dispatch(cli: Cli) -> Result<()> {
             path,
             url,
             pgwire,
+            client_id,
+            client_secret,
+            redirect_uri,
         } => run(
             &file,
             &addr,
@@ -533,6 +560,11 @@ fn dispatch(cli: Cli) -> Result<()> {
             &path,
             url.as_deref(),
             pgwire.as_deref(),
+            Auth {
+                client_id,
+                client_secret,
+                redirect_uri,
+            },
         ),
         Cmd::Replay {
             file,
@@ -1372,6 +1404,13 @@ fn explain(what: Explain) -> Result<()> {
 ///
 /// `#[tokio::main]` cannot say that, and the folds and views of a served program run on these
 /// threads: a stack a worker did not have would take the server down rather than the request.
+/// What `beck run` was told about who may connect. All four absent is `DevIdentity`.
+struct Auth {
+    client_id: Option<String>,
+    client_secret: Option<String>,
+    redirect_uri: Option<String>,
+}
+
 fn run(
     file: &Path,
     addr: &str,
@@ -1379,14 +1418,91 @@ fn run(
     path: &Path,
     url: Option<&str>,
     pgwire: Option<&str>,
+    auth: Auth,
 ) -> Result<()> {
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .thread_stack_size(beck_eval::STACK_BYTES)
         .build()?
-        .block_on(serve(file, addr, store, path, url, pgwire))
+        .block_on(serve(file, addr, store, path, url, pgwire, auth))
 }
 
+/// Build the identity provider this process will hold, and discover it before anything is served.
+///
+/// Discovery is at startup rather than at the first login on purpose: a process that cannot reach
+/// its identity provider has a configuration problem, and the moment to say so is now — not when
+/// somebody tries to sign in.
+fn identity(
+    declared: Option<&beck_core::check::IdentityDecl>,
+    auth: &Auth,
+    addr: &str,
+    clock: &Arc<dyn beck_core::clock::Clock>,
+) -> Result<Option<Arc<beck_rt::oidc::RelyingParty>>> {
+    let Some(declared) = declared else {
+        if auth.client_id.is_some() {
+            anyhow::bail!(
+                "`--client-id` needs a program that says who its clients are: add \
+                 `identity = external(issuer=\"https://…\")`"
+            );
+        }
+        return Ok(None);
+    };
+    // `managed()` says the *deployment* provisions the provider, so at rung 0 there is nothing to
+    // reach: D6's own answer is that "rung 0 (`beck run`) uses a dev-mode identity", and the
+    // deployment supplies the issuer through the environment exactly as it supplies the log's URL.
+    let issuer = match declared {
+        beck_core::check::IdentityDecl::External { issuer, .. } => issuer.to_string(),
+        beck_core::check::IdentityDecl::Managed { .. } => {
+            match std::env::var(beck_infra::provider::DEFAULT.issuer_var) {
+                Ok(url) if !url.is_empty() => url,
+                _ => {
+                    eprintln!(
+                        "identity     dev — this program's provider is provisioned by `beck \
+                         build`, and there is none here"
+                    );
+                    return Ok(None);
+                }
+            }
+        }
+    };
+    let client_id = auth.client_id.as_deref().ok_or_else(|| {
+        anyhow::anyhow!("this program authenticates against `{issuer}` and needs a `--client-id`")
+    })?;
+    let redirect = auth
+        .redirect_uri
+        .clone()
+        .unwrap_or_else(|| format!("http://{addr}{}", beck_rt::http::CALLBACK_PATH));
+
+    // Two constructors, and which one is chosen is decided by the *declaration* rather than by the
+    // URL's scheme: a provider this deployment provisioned is reached inside one namespace, and one
+    // it did not must be reached over TLS (`docs/95` §95.10).
+    let mut config = match declared {
+        beck_core::check::IdentityDecl::Managed { .. } => {
+            beck_rt::oidc::Config::in_cluster(&issuer, client_id, &redirect)
+        }
+        beck_core::check::IdentityDecl::External { .. } => {
+            beck_rt::oidc::Config::new(&issuer, client_id, &redirect)
+        }
+    };
+    config.client_secret = auth.client_secret.clone();
+    // Its own client, not the process-global one the evaluator reads. A program's outbound calls
+    // and the runtime's calls to its identity provider are two different things to be able to
+    // stub, to bound and to read in a log — and the process-global one is installed once and
+    // never replaced, so sharing it would make identity depend on whether a program made a call.
+    let client: Arc<dyn beck_core::net::Outbound> =
+        Arc::new(beck_rt::outbound::HttpOutbound::new()?);
+    let party = Arc::new(beck_rt::oidc::RelyingParty::new(
+        config,
+        clock.clone(),
+        client,
+    ));
+    party
+        .refresh()
+        .map_err(|why| anyhow::anyhow!("the identity provider could not be read: {why}"))?;
+    Ok(Some(party))
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn serve(
     file: &Path,
     addr: &str,
@@ -1394,6 +1510,7 @@ async fn serve(
     path: &Path,
     url: Option<&str>,
     pgwire: Option<&str>,
+    auth: Auth,
 ) -> Result<()> {
     let placed = compiled(file)?;
     // A serving process is one that may make outbound calls, so it is the process that installs a
@@ -1421,9 +1538,40 @@ async fn serve(
         }
     }
     let log = open_store(store, path, url).await?;
+    // Read before the program is moved into the runtime: who authenticates this program's clients
+    // is a property of the program (D6), and this is the one place it is turned into a provider.
+    let declared = placed.program.identity.clone();
     let runtime = beck_rt::Runtime::new(placed, backend)?;
-    let app = beck_rt::App::start(runtime, log, beck_rt::AppConfig::default()).await?;
+
+    let mut config = beck_rt::AppConfig::default();
+    let relying_party = identity(declared.as_ref(), &auth, addr, &config.clock)?;
+    if let Some(party) = &relying_party {
+        config.identity = party.clone();
+    }
+    let app = beck_rt::App::start(runtime, log, config).await?;
     let (tx, rx) = tokio::sync::watch::channel(false);
+
+    // The key set is fetched again on a timer and whenever a token named a key it does not carry.
+    // A task rather than a fetch on the connection path: verifying an ID token must not be a way
+    // for an anonymous client to make this process call its identity provider (§95.3).
+    if let Some(party) = relying_party.clone() {
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(
+                    (beck_rt::oidc::REFETCH_FLOOR_MS / 1_000).max(1) as u64,
+                ))
+                .await;
+                let due = party.clone();
+                if !due.refresh_due() {
+                    continue;
+                }
+                let attempt = party.clone();
+                if let Ok(Err(why)) = tokio::task::spawn_blocking(move || attempt.refresh()).await {
+                    tracing::warn!(why, "the identity provider's key set was not refreshed");
+                }
+            }
+        });
+    }
 
     tokio::spawn(async move {
         let _ = tokio::signal::ctrl_c().await;
@@ -1432,11 +1580,33 @@ async fn serve(
         let _ = tx.send(true);
     });
 
+    // Which provider is in force, on the line an operator reads first. `docs/48` §48.3: an
+    // operator who cannot tell from the logs whether authentication is on does not have
+    // authentication.
+    let entry = match &relying_party {
+        Some(party) => format!(
+            "identity     {} ({}, {} keys), sign in at http://{addr}{}",
+            app.identity().kind(),
+            party.config().issuer,
+            party.key_count(),
+            beck_rt::http::LOGIN_PATH,
+        ),
+        None => format!(
+            "identity     {} — this process believes whatever a client says it is",
+            app.identity().kind()
+        ),
+    };
     eprintln!(
-        "beck run — store {}, head {}, open http://{addr}/?actor=dev\n\
+        "beck run — store {}, head {}, open http://{addr}/{}\n\
+         {entry}\n\
          dashboard    http://{addr}/_beck",
         app.store_kind(),
-        app.head()
+        app.head(),
+        if relying_party.is_some() {
+            ""
+        } else {
+            "?actor=dev"
+        },
     );
     if let Some(pg) = pgwire {
         let pg: std::net::SocketAddr = pg.parse()?;
@@ -1545,6 +1715,7 @@ fn detail_of(n: &beck_infra::Node) -> String {
         Service { port, headless, .. } => {
             format!(":{port}{}", if *headless { " headless" } else { "" })
         }
+        IdentityProvider { volume_gb, .. } => format!("{volume_gb}Gi, one realm"),
         LogStore { volume_gb, .. } => format!("{volume_gb} GiB volume"),
         SnapshotSchedule { every_events, .. } => format!("every {every_events} events"),
         Secret { keys, .. } => keys.join(", "),

@@ -351,8 +351,12 @@ dependencies whose signatures didn't change.
   signal ([`10`](10-decisions.md) D6). *The **seam** is built ([`48`](48-identity-report.md)):
   dev-mode identity is named rather than implied, a verifying provider exists, and both edges
   refuse before rendering — so an ownership check compares against something the caller did not
-  choose. The OIDC relying party, `managed()` provisioning, the claims mapping and presence are
-  not, and §48.5 says so row by row.*
+  choose. The **relying party** and the **claims mapping** are built too
+  ([`95`](95-oidc-relying-party-report.md)): discovery, a cached JWKS, RS/PS/ES signatures, every
+  claim check, the authorization-code flow with PKCE, and `Session.claims`. What is left of this
+  bullet is presence. D6's language surface is built as written, both forms —
+  `identity = external(issuer=…)` is a declaration, so §6.5's egress rule covers the issuer like any
+  other peer (§95.7).*
 - LSP: completion, hover with *inferred placement*, go-to-def, rename, inline diagnostics.
 - **The playground** ([`17`](17-playground.md)) — highest-leverage adoption artefact: rung A
   (compile-time, static) and rung B (the whole app in the tab — the worker-server is the rung-0
@@ -379,10 +383,12 @@ to Phase 5), and incremental views, whose last part is
 ([`90`](90-nested-patterns-report.md), [`91`](91-guards-and-alternatives-report.md)); what
 `parallel:` lacks is a backend that runs two children at once, which is
 [`80`](80-a-scope-owns-its-children-report.md) §80.5's item rather than this bullet's. **Three
-half-built**: identity has its seam and not its relying party; the codegen bullet has LLVM over the
-scalar subset and no Cranelift ([`93`](93-llvm-backend-report.md) §93.6); and Mode B has the mode,
-the bundle, the data patch, the reconciliation, a browser that runs it and an offline queue,
-without codegen ([`94`](94-mode-b-report.md) §94.8). **Two untouched**: client polish and the
+half-built**: identity has its seam, its relying party, its claims mapping and both halves of its
+declaration ([`48`](48-identity-report.md), [`95`](95-oidc-relying-party-report.md)) and not
+presence; the codegen bullet has LLVM over the scalar subset and no Cranelift
+([`93`](93-llvm-backend-report.md) §93.6); and Mode B has the mode, the bundle, the data patch, the
+reconciliation, a browser that runs it and an offline queue, without codegen
+([`94`](94-mode-b-report.md) §94.8). **Two untouched**: client polish and the
 playground; the supply-chain bullet has one of its four pieces
 ([`92`](92-sbom-report.md)). The criterion is not a count of those, though — it is a
 claim about a *person*, and the honest way to say how close it is is by the questions such a
@@ -395,7 +401,7 @@ developer would ask in order:
 | "Can I write my own abstractions, or only the ones the todo sketch needed?" | Ten walls down and an empty `sicp/refusals/` |
 | "How do I say something failed?" | `raise` and `try:`, and the signature says so whether or not I wrote it down ([`45`](45-error-rows-report.md)) |
 | "Is there a string library? A JSON parser?" | Yes, and `compiler/lib/` shows how to write the next one ([`46`](46-standard-library-report.md)) |
-| "Can I trust the actor in my ownership check?" | With a verifying provider, yes ([`48`](48-identity-report.md)) — the default still believes the client, and says so |
+| "Can I trust the actor in my ownership check?" | With a verifying provider, yes ([`48`](48-identity-report.md)); against a real identity provider, yes ([`95`](95-oidc-relying-party-report.md)) — and `session.claims` says what they may do. The default still believes the client, and says so |
 | "Can my DBA see the data?" | `psql` against the read models ([`88`](88-read-models-and-pgwire-report.md)) — one table per collection, derived, no annotation |
 | "Where's the tutorial?" | [`86`](86-getting-started.md), published on the site since [`88`](88-read-models-and-pgwire-report.md) §88.8, and every program in it compiled and run by a test |
 
@@ -740,19 +746,38 @@ that could only read atoms was wrong about exactly the forward references a prog
 and it catches the failure its signature names while the others travel, instead of refusing a block
 that can fail two ways.*
 
-**Wave 3 — months. ✅ First half built** ([`48`](48-identity-report.md)). Identity is a **seam**:
+**Wave 3 — months. ✅ Built, except for provisioning and presence**
+([`48`](48-identity-report.md), [`95`](95-oidc-relying-party-report.md)). Identity is a **seam**:
 an `Actor` only a provider can mint, `DevIdentity` as the named default, and a `SignedIdentity`
 that verifies a keyed-BLAKE3 credential — so an ownership check compares against something the
-caller did not choose. **Unbuilt**: the OIDC relying party (JWKS, asymmetric signatures, issuer and
-audience validation), `identity = managed()` provisioning, the claims → `Session` mapping, and
-presence. §48.5 is the row-by-row list and `pending_security.rs` asserts each gap.
+caller did not choose. And there is a third provider: an **OIDC relying party**, with discovery, a
+cached JWKS, RS/PS/ES signatures, issuer, audience, authorized-party, expiry, not-before and nonce
+checks, and the authorization-code flow with PKCE, so a browser can obtain a token rather than being
+handed one. The **claims → `Session` mapping** is built with it, and §95.4 draws the line it stops
+at: `validate` may read a claim, and a fold has nothing to read, because an envelope carries the
+actor's name and nothing else.
 
-*One of that row's two predecessors is gone.* §48.5 said the relying party "needs an HTTP client
-and a signature library, so it is an ADR rather than a line in a module". The HTTP client is built
-([`49`](49-http-client-report.md)). What is left is the signature library — and TLS, because JWKS
-is fetched over it and [`49`](49-http-client-report.md) §49.6 is plaintext. Those two are one
-dependency decision taken together, which is a better-shaped ADR than the three-way one this row
-used to describe.
+D6's **language surface** is built as written: `identity = external(issuer="https://…")` is a
+declaration, not a flag, so the compiler knows the issuer and §6.5's egress rule covers it like any
+other peer (§95.7). That was the one thing this work found that was *worse* than unbuilt — a runtime
+with a peer the compiler had never heard of — and it is closed rather than recorded.
+
+`identity = managed()` is built too (§95.10): the object graph gains a provider, its Service, its
+volume, its credentials and a **realm wired to this application's own route**, and the application's
+egress to it is a `Peer` — a rule Kubernetes enforces, which the DNS-name rule an external issuer
+gets is not. It is the one place in the project where a plaintext issuer is admissible, and the
+argument is written out rather than left in a URL.
+
+**Unbuilt**: presence — "who is connected now, as a first-class non-durable `Signal`" — which is the
+last row of this bullet.
+
+*Both of that row's predecessors are gone.* §48.5 said the relying party "needs an HTTP client and a
+signature library, so it is an ADR rather than a line in a module". The HTTP client was built
+([`49`](49-http-client-report.md)); the signature library and TLS were **one decision**, taken in
+[`adr/0023`](adr/0023-tls-and-the-signature-it-brings.md) — because rustls's cryptography provider
+*is* a signature library, so [`07`](07-dependencies.md) §7.2's TLS row buys the asymmetric half for
+nothing. This row's forecast that the two were one ADR was right; the reason turned out to be
+better than the one it gave.
 
 Then the playground rungs A and B (whose safety predecessor landed in Wave 0), then Phase 3's exit
 criterion. ~~What it measures is documentation an outside developer could build from, and there is

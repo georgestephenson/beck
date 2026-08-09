@@ -88,6 +88,10 @@ fn outbound_request(host: &str, v: &Value, span: Span) -> Result<Request, EvalEr
     Ok(Request {
         host: Arc::from(host),
         port,
+        // Plaintext unless the program said otherwise, which is the same default `lib/http.beck`
+        // writes: `over_tls` is a call somebody makes, so a request that crosses the internet
+        // without one is a thing in the source rather than a thing in the runtime.
+        tls: field("tls").as_bool().unwrap_or(false),
         method: if method.is_empty() {
             Arc::from("GET")
         } else {

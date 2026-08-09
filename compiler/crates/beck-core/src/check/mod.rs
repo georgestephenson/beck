@@ -71,6 +71,66 @@ pub struct Program {
     /// checker, the solver or the runtime may read: nothing downstream of here may behave
     /// differently because a definition is documented.
     pub docs: BTreeMap<Arc<str>, Arc<str>>,
+    /// `identity = external(issuer="…")` — who authenticates this program's clients (D6).
+    ///
+    /// On the `Program` rather than in the runtime's configuration because it is a fact about the
+    /// program that §6.5's derivation needs: the issuer is a **peer**, and an egress rule is
+    /// derived from the peers a program names. `None` is the default provider, which believes
+    /// whatever a client says it is.
+    pub identity: Option<IdentityDecl>,
+}
+
+/// The host of an issuer URL, if it is one an egress rule could be written from.
+///
+/// `https` only, because the key set has no integrity protection but the transport
+/// ([`crate::net::is_nameable_host`] is the other half: a host with a port or a userinfo section
+/// is not a NetworkPolicy peer). Deliberately the same two refusals `beck_rt::oidc` makes at run
+/// time — stated here so the failure is a diagnostic rather than a deployment that will not
+/// authenticate anybody.
+fn issuer_host(url: &str) -> Option<String> {
+    let rest = url.strip_prefix("https://")?;
+    let authority = rest.split('/').next().unwrap_or(rest);
+    if authority.contains('@') {
+        return None;
+    }
+    let host = authority.rsplit_once(':').map_or(authority, |(h, _)| h);
+    crate::net::is_nameable_host(host).then(|| host.to_string())
+}
+
+/// Who authenticates a program's clients, as the program declared it.
+///
+/// D6's two forms, and the difference between them is a difference in *who provisions the
+/// provider* — which is why they are one declaration with two shapes rather than two features.
+/// [`IdentityDecl::External`] names somebody else's; [`IdentityDecl::Managed`] asks this
+/// deployment to stand one up, and the URL is then not the program's to write because it is a
+/// service the derivation has not named yet.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum IdentityDecl {
+    /// `identity = external(issuer="https://login.acme.com")`.
+    External {
+        /// The issuer URL, exactly as written. Both what is fetched and what every token's `iss` is
+        /// compared against.
+        issuer: Arc<str>,
+        /// The host of that URL — the peer §6.5's egress rule is written from, and the same shape
+        /// a `net.out(host)` atom carries.
+        host: Arc<str>,
+        span: Span,
+    },
+    /// `identity = managed()`.
+    ///
+    /// There is no URL here on purpose. The issuer is a `Service` §6.5 derives, so its name is a
+    /// function of the application's name and the platform's conventions — and a program that
+    /// wrote it down would be a program that has to be edited when either changes.
+    Managed { span: Span },
+}
+
+impl IdentityDecl {
+    /// Where it was written, so a second declaration in a second module has somewhere to point.
+    pub fn span(&self) -> Span {
+        match self {
+            IdentityDecl::External { span, .. } | IdentityDecl::Managed { span } => *span,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -194,6 +254,7 @@ pub struct Checker<'a> {
     /// Module-local by design. A `.becki` renders the expanded atoms, because a published contract
     /// that referred to a name the reader has to look up somewhere else would not be a contract.
     row_aliases: BTreeMap<Arc<str>, Row>,
+    identity: Option<IdentityDecl>,
     /// Types declared in this module, in source order.
     own_types: Vec<Arc<str>>,
     /// The row *variable* standing for each definition's inferred row, minted before any body is
@@ -295,6 +356,7 @@ pub fn check_module_with(
         globals: Vec::new(),
         declared: BTreeMap::new(),
         row_aliases: BTreeMap::new(),
+        identity: None,
         own_types: Vec::new(),
         def_row: BTreeMap::new(),
         row: Row::empty(),
@@ -370,6 +432,7 @@ pub fn check_module_with(
     // Row aliases before anything reads a `uses` clause, and after the types so a `raises(E)`
     // names a type that exists.
     ck.collect_row_aliases(&items);
+    ck.collect_identity(&items);
     ck.collect_traits(&items);
     let expanded = ck.expand_impls(&items);
     // A bounded `def` is rewritten in place, so what follows sees a definition with one more
@@ -1186,6 +1249,80 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// Read `identity = external(issuer="…")` — D6's block, as a declaration.
+    ///
+    /// Everything here is checked at compile time because everything here is read at compile time:
+    /// [`crate::Placed`] carries it, `beck-infra` turns the host into an egress rule, and `beck run`
+    /// builds the relying party from the same string. A URL that only fails at startup would be a
+    /// deployment that builds and cannot authenticate anybody.
+    fn collect_identity(&mut self, items: &[&Node]) {
+        for item in items {
+            let (item, _) = self.undecorate(item);
+            if !item.is_form(sym::IDENTITY) || item.args.len() != 1 {
+                continue;
+            }
+            let span = item.span();
+            if self.identity.is_some() {
+                self.error("B0359", "identity is declared twice", span);
+                continue;
+            }
+            // D6's two forms. `managed()` carries nothing, because the issuer is a Service the
+            // deployment has not named yet (§6.5), and `external` carries the URL because nothing
+            // in this repository is going to provision somebody else's provider.
+            let call = &item.args[0];
+            if call.is_form("managed") {
+                if !call.args.is_empty() {
+                    self.error("B0359", "`managed()` takes no arguments", span);
+                    continue;
+                }
+                self.identity = Some(IdentityDecl::Managed { span });
+                continue;
+            }
+            if !call.is_form("external") {
+                self.error(
+                    "B0359",
+                    "`external(issuer=\"…\")` and `managed()` are the identity providers",
+                    span,
+                );
+                continue;
+            }
+            // `issuer=` by name rather than by position, because a second argument will be added
+            // one day and a positional URL would move.
+            let issuer: Option<String> = call.args.iter().find_map(|a| {
+                let named = a.is_form(sym::KW_ARG)
+                    && a.args.first().and_then(|n| n.as_var()).map(|v| &*v.name) == Some("issuer");
+                if !named {
+                    return None;
+                }
+                match a.args.get(1).and_then(|v| v.as_lit()) {
+                    Some(beck_syntax::Lit::Str(s)) => Some(s.to_string()),
+                    _ => None,
+                }
+            });
+            let Some(issuer) = issuer else {
+                self.error(
+                    "B0359",
+                    "`external` needs `issuer=\"https://…\"`, written as a literal",
+                    span,
+                );
+                continue;
+            };
+            let Some(host) = issuer_host(&issuer) else {
+                self.error(
+                    "B0359",
+                    format!("`{issuer}` is not an https URL whose host an egress rule could name"),
+                    span,
+                );
+                continue;
+            };
+            self.identity = Some(IdentityDecl::External {
+                issuer: Arc::from(issuer.trim_end_matches('/')),
+                host: Arc::from(host.as_str()),
+                span,
+            });
+        }
+    }
+
     /// Register every top-level signal before checking any of them.
     ///
     /// The signal graph is legitimately *cyclic*: `events` is decided from `todos`, and `todos` is
@@ -1280,6 +1417,7 @@ impl<'a> Checker<'a> {
                 || inner.is_form(sym::TRAIT)
                 || inner.is_form(sym::IMPL)
                 || inner.is_form(sym::ROW)
+                || inner.is_form(sym::IDENTITY)
             {
                 // Declarations, all of them already collected. A `trait` was read by
                 // `collect_traits` and an `impl` was expanded into the `def`s this loop is
@@ -1447,6 +1585,7 @@ impl<'a> Checker<'a> {
             signals,
             tests,
             docs,
+            identity: self.identity,
         }
     }
 
@@ -4192,7 +4331,7 @@ def charge(amount: Int) -> Str uses net.out(payments.example.com), nondet:
         // makes it, and the atom in it came from the string on the line above.
         let src = "\
 def fetch_rate() -> Str uses net.out(rates.example.com), raises(HttpError):
-    r = http_fetch(\"rates.example.com\", HttpRequest(method=\"GET\", path=\"/usd\", headers={}, body=\"\", port=80, secrets={}))
+    r = http_fetch(\"rates.example.com\", HttpRequest(method=\"GET\", path=\"/usd\", headers={}, body=\"\", port=80, tls=False, secrets={}))
     return r.body
 ";
         assert_eq!(
@@ -4204,7 +4343,7 @@ def fetch_rate() -> Str uses net.out(rates.example.com), raises(HttpError):
     #[test]
     fn an_outbound_call_to_a_host_it_cannot_name_is_refused() {
         let req =
-            "HttpRequest(method=\"GET\", path=\"/\", headers={}, body=\"\", port=80, secrets={})";
+            "HttpRequest(method=\"GET\", path=\"/\", headers={}, body=\"\", port=80, tls=False, secrets={})";
         // Computed: nothing downstream could write the NetworkPolicy peer.
         let computed = format!(
             "def go(host: Str) -> Str uses net.out(x.example.com), raises(HttpError):\n    \

@@ -19,14 +19,14 @@ What a user's type may implement to join something the language already has. `Nu
 | `EncodingError` | `union EncodingError = BadEncoding(encoding: Str, why: Str)` |
 | `Envelope` | `model Envelope[T] {seq: Int, at: Int, actor: Str, body: T}` |
 | `HttpError` | `union HttpError = HttpUnreachable(host: Str, why: Str) \| HttpTimedOut(host: Str, millis: Int) \| HttpBadResponse(why: Str) \| HttpStatus(status: Int, body: Str)` |
-| `HttpRequest` | `model HttpRequest {method: Str, path: Str, headers: Map[Str, Str], body: Str, port: Int, secrets: Map[Str, secret[Str]]}` |
+| `HttpRequest` | `model HttpRequest {method: Str, path: Str, headers: Map[Str, Str], body: Str, port: Int, tls: Bool, secrets: Map[Str, secret[Str]]}` |
 | `HttpResponse` | `model HttpResponse {status: Int, headers: Map[Str, Str], body: Str}` |
 | `Json` | `union Json = JsonNull \| JsonBool(value: Bool) \| JsonNumber(value: Float) \| JsonStr(value: Str) \| JsonList(items: list[Json]) \| JsonObject(fields: Map[Str, Json])` |
 | `JsonError` | `union JsonError = BadJson(why: Str)` |
 | `Option` | `union Option[T] = Some(value: T) \| None` |
 | `Proposal` | `model Proposal {session: Session, command: Command}` |
 | `Result` | `union Result[T, E] = Ok(value: T) \| Err(error: E)` |
-| `Session` | `model Session {actor: Str}` |
+| `Session` | `model Session {actor: Str, claims: Map[Str, Str]}` |
 | `TimeError` | `union TimeError = BadTime(why: Str)` |
 | `UuidError` | `union UuidError = BadUuid(why: Str)` |
 

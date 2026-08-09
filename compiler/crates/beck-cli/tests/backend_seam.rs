@@ -116,7 +116,7 @@ async fn the_runtime_drives_a_backend_it_has_never_heard_of() {
     for i in 0..5 {
         app.propose(
             format!("k{i}"),
-            "alice".into(),
+            "alice",
             command(
                 "Add",
                 &[("id", &format!("t{i}")), ("text", &format!("todo {i}"))],

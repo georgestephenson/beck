@@ -34,6 +34,7 @@
 //! rule: it is the same rule, run early. The server still runs it — the client's copy is advice to
 //! the person typing, and authority stays at the chokepoint (§3.5).
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use beck_core::backend::{Backend, Callable};
@@ -96,13 +97,52 @@ pub enum Proposed {
     Refused { why: String },
 }
 
+/// Who this tab is, as the edge would build it.
+///
+/// The claims travel with the actor rather than being looked up, because this side has no
+/// provider to ask: the server verified an ID token and put what it found in the document, and a
+/// client that filled in a blank map would render a *different page* than the server did for a
+/// program whose view reads them. Mode B's claim is that the client runs the same fold; the same
+/// fold over a different `Session` is not the same render.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Viewer {
+    pub actor: String,
+    #[serde(default)]
+    pub claims: BTreeMap<String, String>,
+}
+
+impl Viewer {
+    /// A viewer with a name and nothing else — a program whose view does not read `session.claims`
+    /// renders the same page either way, and one that does gets an empty map rather than a wrong
+    /// one.
+    pub fn named(actor: &str) -> Viewer {
+        Viewer {
+            actor: actor.to_string(),
+            claims: BTreeMap::new(),
+        }
+    }
+
+    pub fn claiming<'a>(
+        actor: &str,
+        claims: impl IntoIterator<Item = (&'a str, &'a str)>,
+    ) -> Viewer {
+        Viewer {
+            actor: actor.to_string(),
+            claims: claims
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+        }
+    }
+}
+
 /// One Mode B component, running in one browser tab.
 pub struct Client {
     bundle: Bundle,
     validate: Callable,
     fold: Callable,
     view: Callable,
-    actor: String,
+    viewer: Viewer,
     confirmed: Value,
     seq: u64,
     pending: Vec<Pending>,
@@ -135,7 +175,7 @@ impl Client {
     ///
     /// The initial state is what the client renders before it has heard anything — an offline cold
     /// start (D7), and the reason `init` is in the bundle at all.
-    pub fn load(bytes: &[u8], actor: &str) -> Result<Client, String> {
+    pub fn load(bytes: &[u8], viewer: Viewer) -> Result<Client, String> {
         let bundle = Bundle::from_bytes(bytes).map_err(|e| e.to_string())?;
         // The kernel picks a backend exactly as the server does, through the same seam: a
         // compiling client backend is a different argument here and no change anywhere else
@@ -160,7 +200,7 @@ impl Client {
             validate,
             fold,
             view,
-            actor: actor.to_string(),
+            viewer,
             confirmed,
             seq: 0,
             pending: Vec::new(),
@@ -171,6 +211,14 @@ impl Client {
 
     pub fn component(&self) -> &str {
         &self.bundle.component
+    }
+
+    /// This tab's claims, in the shape [`edge::session`] takes them.
+    fn claims(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.viewer
+            .claims
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
     }
 
     /// The program the bundle was cut from, by its command channel's content-derived id (§4.3).
@@ -266,7 +314,7 @@ impl Client {
     pub fn snapshot(&self) -> Option<Snapshot> {
         Some(Snapshot {
             wire: self.bundle.wire_id.clone(),
-            actor: self.actor.clone(),
+            actor: self.viewer.actor.clone(),
             seq: self.seq,
             state: Repr::of(&self.confirmed).ok()?,
             pending: self
@@ -296,10 +344,10 @@ impl Client {
                 snapshot.wire, self.bundle.wire_id
             ));
         }
-        if snapshot.actor != self.actor {
+        if snapshot.actor != self.viewer.actor {
             return Err(format!(
                 "this snapshot is another actor's ({} rather than {})",
-                snapshot.actor, self.actor
+                snapshot.actor, self.viewer.actor
             ));
         }
         self.confirmed = snapshot.state.to_value();
@@ -408,7 +456,7 @@ impl Client {
             };
             for event in events {
                 seq += 1;
-                let env = edge::envelope(seq, p.at, &self.actor, event);
+                let env = edge::envelope(seq, p.at, &self.viewer.actor, event);
                 state = (self.fold)(vec![state, env]).map_err(|e| format!("folding: {e}"))?;
             }
         }
@@ -452,7 +500,10 @@ impl Client {
     /// state, so a measurement that cannot call it separately cannot say which half is which
     /// (`measure_mode_b.rs`).
     pub fn render(&self, state: &Value) -> Result<Html, String> {
-        match (self.view)(vec![state.clone(), edge::session(&self.actor)]) {
+        match (self.view)(vec![
+            state.clone(),
+            edge::session(&self.viewer.actor, self.claims()),
+        ]) {
             Ok(Value::Html(h)) => Ok((*h).clone()),
             Ok(other) => Err(format!(
                 "the view produced {} rather than Html",
@@ -464,7 +515,7 @@ impl Client {
 
     /// The program's own chokepoint, run locally: the events a command becomes, or why not.
     fn decide(&self, state: &Value, command: &Value) -> Result<Vec<Value>, String> {
-        let proposal = edge::proposal(&self.actor, command.clone());
+        let proposal = edge::proposal(&self.viewer.actor, self.claims(), command.clone());
         let out = (self.validate)(vec![state.clone(), proposal]).map_err(|e| e.to_string())?;
         match out.variant() {
             Some("Ok") => out

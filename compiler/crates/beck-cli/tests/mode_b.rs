@@ -22,7 +22,7 @@ use std::sync::Arc;
 
 use beck_core::render::Mode;
 use beck_core::{Bundle, Placed, Value};
-use beck_wasm::{Client, Proposed};
+use beck_wasm::{Client, Proposed, Viewer};
 use tokio_tungstenite::tungstenite::Message;
 
 mod support;
@@ -61,7 +61,7 @@ fn board() -> Placed {
 /// A client with the bundle loaded and the state the server would have at `seq`.
 fn client_of(placed: &Placed, actor: &str) -> Client {
     let bytes = Bundle::of(placed).to_bytes();
-    Client::load(&bytes, actor).expect("the bundle loads")
+    Client::load(&bytes, Viewer::named(actor)).expect("the bundle loads")
 }
 
 /// The server's own runtime for the same program, so the two can be compared.
@@ -140,6 +140,77 @@ fn the_two_modes_agree_on_every_state_a_log_can_reach() {
             "the modes disagreed after command {i}"
         );
     }
+}
+
+/// The claims the server verified reach the client's own `validate`, or the two sides disagree.
+///
+/// B0514 keeps a *page* from being a function of the session, so the view is safe by construction.
+/// `validate` is not: it is in the bundle, it runs in the browser speculatively, and it is handed a
+/// `Proposal` carrying a `Session`. A client whose claims map was left empty would refuse a command
+/// the server accepts — the page would flash a rejection the log never saw, which is the precise
+/// failure optimism exists to be free of.
+///
+/// So the gap being gated is *claims that do not travel*, not the mechanism that carries them: both
+/// clients below load the same bundle and propose the same command, and only the viewer differs.
+#[test]
+fn a_mode_b_client_decides_against_the_claims_the_server_verified() {
+    let placed = compile(&tenant_program());
+    assert_eq!(
+        placed.render.mode,
+        Mode::Client,
+        "this program has to be the mode under test"
+    );
+    let bytes = Bundle::of(&placed).to_bytes();
+    let take = command(json_command("Take", &[("id", "c1")]));
+
+    let mut inside = Client::load(&bytes, Viewer::claiming("ana", [("tenant", "acme")]))
+        .expect("the bundle loads");
+    inside.hydrate().expect("hydrates");
+    match inside.propose("k1", &take, 0) {
+        Proposed::Accepted { .. } => {}
+        Proposed::Refused { why } => {
+            panic!("the tenant's own claim did not reach the client's validate: {why}")
+        }
+    }
+
+    // The same bundle and the same command, for somebody the provider said nothing about.
+    let mut outside = Client::load(&bytes, Viewer::named("ana")).expect("the bundle loads");
+    outside.hydrate().expect("hydrates");
+    match outside.propose("k1", &take, 0) {
+        Proposed::Refused { why } => assert!(why.contains("NotYours"), "{why}"),
+        Proposed::Accepted { .. } => panic!("a missing claim was as good as the right one"),
+    }
+
+    // And the map is the provider's rather than a fixed set: a claim the program does not read
+    // changes nothing, and a wrong value is refused like an absent one.
+    let mut elsewhere = Client::load(
+        &bytes,
+        Viewer::claiming("ana", [("tenant", "other"), ("email", "ana@acme.test")]),
+    )
+    .expect("the bundle loads");
+    elsewhere.hydrate().expect("hydrates");
+    assert!(
+        matches!(elsewhere.propose("k1", &take, 0), Proposed::Refused { .. }),
+        "another tenant's claim was accepted"
+    );
+}
+
+/// The viewer crosses the wasm boundary as JSON, so that is asserted rather than assumed: the
+/// browser writes this header and a kernel that read it differently would be a client deciding
+/// against claims nobody sent it.
+#[test]
+fn the_viewer_survives_the_boundary_the_browser_writes_it_across() {
+    let viewer = Viewer::claiming("ana", [("tenant", "acme"), ("email", "ana@acme.test")]);
+    let json = serde_json::to_string(&viewer).expect("encodes");
+    let back: Viewer = serde_json::from_str(&json).expect("decodes");
+    assert_eq!(back.actor, "ana");
+    assert_eq!(back.claims.get("tenant").map(String::as_str), Some("acme"));
+
+    // A document served before this field existed carries no claims, and that has to load rather
+    // than fail: an unauthenticated `beck run` on a laptop is exactly this case.
+    let bare: Viewer = serde_json::from_str(r#"{"actor":"dev"}"#).expect("decodes");
+    assert_eq!(bare.actor, "dev");
+    assert!(bare.claims.is_empty());
 }
 
 // --------------------------------------------------------------- 2. what Mode B refuses
@@ -462,7 +533,7 @@ fn a_bundle_from_another_program_is_refused_rather_than_run() {
     bytes[middle] ^= 0xff;
     // Either it fails to decode or it decodes to something that will not prepare. What it must not
     // do is load and then render something.
-    if let Ok(mut client) = Client::load(&bytes, "ana") {
+    if let Ok(mut client) = Client::load(&bytes, Viewer::named("ana")) {
         let _ = client.repaint();
     }
 }
@@ -791,6 +862,58 @@ items: Signal[Items] = durable(fold(apply_event, Items(items=[]), events))
 {page}
 "#
     )
+}
+
+/// A Mode B program whose *page* is a function of the state alone — so B0514 lets it render on the
+/// client — and whose `validate` reads a claim. That combination is what makes the claims a client
+/// holds load-bearing rather than decorative.
+fn tenant_program() -> String {
+    r#"
+model Item:
+    id: Str
+
+model Items:
+    items: list[Item]
+
+union Command:
+    Take(id: Str)
+
+union Event:
+    Taken(id: Str)
+
+union Rejection:
+    NotYours
+
+def apply_event(s: Items, env: Envelope[Event]) -> Items:
+    return s
+
+def validate(s: Items, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Take(id):
+            if unwrap_or(map_get(p.session.claims, "tenant"), "") != "acme":
+                return Err(error=NotYours)
+            return Ok(value=[Taken(id=id)])
+
+def view_of(s: Items) -> Html:
+    return ui:
+        ul:
+            for i in s.items:
+                li: i.id
+
+@on(server)
+proposals: Stream[Proposal] = merge_clients()
+
+@on(server)
+events: Stream[Event] = decide(proposals, items, validate)
+
+@on(data)
+items: Signal[Items] = durable(fold(apply_event, Items(items=[]), events))
+
+@on(client)
+@render(client)
+page: Signal[Html] = signal_map(items, view_of)
+"#
+    .to_string()
 }
 
 /// A program that tries to keep a secret in its accumulator.

@@ -38,7 +38,7 @@ union Rejection:
 
 def fresh_rate() -> Int:
     return unwrap_or(str_to_int(http_fetch("rates.example.com",
-        HttpRequest(method="GET", path="/usd", headers={}, body="", port=80, secrets={})).body), 0)
+        HttpRequest(method="GET", path="/usd", headers={}, body="", port=80, tls=False, secrets={})).body), 0)
 
 def rate_or_error() -> Result[Int, HttpError]:
     return try: fresh_rate()
@@ -136,7 +136,7 @@ fn the_clusters_egress_rule_is_that_same_string() {
 fn a_computed_host_is_refused_because_nothing_downstream_could_name_it() {
     let computed = RATES.replace(
         "def fresh_rate() -> Int:",
-        "def fresh_rate_at(where: Str) -> Int:\n    return unwrap_or(str_to_int(http_fetch(where,\n        HttpRequest(method=\"GET\", path=\"/usd\", headers={}, body=\"\", port=80, secrets={})).body), 0)\n\ndef fresh_rate() -> Int:",
+        "def fresh_rate_at(where: Str) -> Int:\n    return unwrap_or(str_to_int(http_fetch(where,\n        HttpRequest(method=\"GET\", path=\"/usd\", headers={}, body=\"\", port=80, tls=False, secrets={})).body), 0)\n\ndef fresh_rate() -> Int:",
     );
     assert!(
         codes(&computed).contains(&"B0395".to_string()),
@@ -225,6 +225,7 @@ def rate() -> Int:
         headers={\"accept\": \"text/plain\"},
         body=\"\",
         port=443,
+        tls=True,
         secrets={\"authorization\": secret_env(\"RATES_TOKEN\")})).body), 0)
 ";
     std::env::set_var("RATES_TOKEN", "Bearer s3cret");

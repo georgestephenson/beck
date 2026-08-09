@@ -16,17 +16,16 @@
 //! operator *chooses* rather than a thing the runtime assumes. Two implementations, because a seam
 //! with one is an abstraction nobody has checked.
 //!
-//! It is **not an OIDC relying party**, which is what [`10`](../../../../../docs/10-decisions.md) D6
-//! asks for and what a production deployment needs: no JWKS fetch, no RSA or ECDSA, no issuer or
-//! audience validation, no token refresh. Those need an HTTP client and a signature library, and
-//! taking either is an ADR rather than a line in a module. [`48`](../../../../../docs/48-identity-report.md)
-//! §48.5 says so plainly, and `pending_security.rs` keeps saying it after this file stops being new.
+//! What it does is remove the thing that made the gap structural: an actor arrives through one
+//! function that can **refuse**, and nothing else in the runtime can mint one.
 //!
-//! What it *does* do is remove the thing that made the gap structural: an actor now arrives
-//! through one function that can **refuse**, and nothing else in the runtime can mint one. Claims
-//! are verified and available here; they do not yet reach the program, because the actor travels
-//! through the view path as a `String` — §48.5 records that as the unbuilt half rather than
-//! implying this is D6.
+//! # The third implementation is in [`crate::oidc`]
+//!
+//! Both providers here are **symmetric or nothing**: `DevIdentity` verifies nothing, and
+//! `SignedIdentity` verifies a secret this process also holds, so neither can tell "the user
+//! authenticated" from "this process said so". [`crate::oidc::RelyingParty`] is the asymmetric one
+//! — [`10`](../../../../../docs/10-decisions.md) D6's OIDC relying party — and it is a third
+//! implementation of this trait rather than a change to it, which is what the seam existed for.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -43,19 +42,58 @@ pub struct Actor {
 }
 
 impl Actor {
+    /// The one constructor, and it is `pub(crate)` because every [`Identity`] implementation is in
+    /// this crate. A `String` that arrived in a frame becomes an actor by being *verified*, which
+    /// is one function call away from being audited rather than spread over the runtime.
+    pub(crate) fn verified(name: &str, claims: BTreeMap<Arc<str>, Arc<str>>) -> Actor {
+        Actor {
+            name: Arc::from(name),
+            claims,
+        }
+    }
+
     pub fn name(&self) -> &str {
         &self.name
     }
 
     /// The claims this identity carries.
     ///
-    /// D6 asks for "claims → `Session` capability mapping". This is the first half — verified
-    /// claims exist and are available at the edge — and not the second: nothing maps them onto a
-    /// `Session`, because the actor travels through the view path as a `String`.
-    /// [`48`](../../../../../docs/48-identity-report.md) §48.5 records that, and
-    /// `pending_security.rs` asserts it, so the gap is a failing test rather than a sentence.
+    /// D6 asks for "claims → `Session` capability mapping", and both halves are here now: these
+    /// are the claims [`crate::oidc`] verified, and [`crate::program`] puts them on the `Session`
+    /// the program sees. They do **not** reach the log — an envelope carries the actor's name and
+    /// nothing else, because a fold that read a claim would be a fold whose replay depended on
+    /// what the issuer was saying at the time
+    /// ([`docs/95`](../../../../../docs/95-oidc-relying-party-report.md) §95.4).
     pub fn claims(&self) -> &BTreeMap<Arc<str>, Arc<str>> {
         &self.claims
+    }
+}
+
+/// Whoever a proposal is charged to, on the way into [`crate::App::propose`].
+///
+/// A wrapper rather than an `impl From<String> for Actor`, and the difference is the whole point:
+/// a conversion on `Actor` itself would be a public way to make one out of a string, which is what
+/// [`Actor`]'s private field exists to prevent. This converts into a *proposal's* actor — a
+/// harness naming one, a benchmark, `beck test` — and the wire path does not use it, because
+/// `session.rs` already holds an `Actor` that [`Identity::verify`] produced.
+#[derive(Clone, Debug)]
+pub struct Proposer(pub(crate) Actor);
+
+impl From<Actor> for Proposer {
+    fn from(actor: Actor) -> Proposer {
+        Proposer(actor)
+    }
+}
+
+impl From<String> for Proposer {
+    fn from(name: String) -> Proposer {
+        Proposer(Actor::verified(&name, BTreeMap::new()))
+    }
+}
+
+impl From<&str> for Proposer {
+    fn from(name: &str) -> Proposer {
+        Proposer(Actor::verified(name, BTreeMap::new()))
     }
 }
 
@@ -106,6 +144,16 @@ pub trait Identity: Send + Sync + std::fmt::Debug {
     fn verifies(&self) -> bool {
         true
     }
+
+    /// The browser-facing half, for a provider that can run a login flow.
+    ///
+    /// `None` for both of this module's providers, and that is the honest answer rather than a
+    /// missing feature: neither *issues* anything, so neither has anywhere to send a browser.
+    /// [`crate::oidc::RelyingParty`] does, and the HTTP edge asks this rather than being told which
+    /// provider is configured.
+    fn login(&self) -> Option<&crate::oidc::RelyingParty> {
+        None
+    }
 }
 
 /// Believe whatever the client says. The behaviour every phase before this had.
@@ -123,10 +171,7 @@ impl Identity for DevIdentity {
         if claim.is_empty() {
             return Err(Rejected::Missing);
         }
-        Ok(Actor {
-            name: Arc::from(claim),
-            claims: BTreeMap::new(),
-        })
+        Ok(Actor::verified(claim, BTreeMap::new()))
     }
 
     fn kind(&self) -> &'static str {
@@ -222,10 +267,7 @@ impl Identity for SignedIdentity {
             .filter_map(|kv| kv.split_once('='))
             .map(|(k, v)| (Arc::from(k), Arc::from(v)))
             .collect();
-        Ok(Actor {
-            name: Arc::from(name),
-            claims,
-        })
+        Ok(Actor::verified(name, claims))
     }
 
     fn kind(&self) -> &'static str {

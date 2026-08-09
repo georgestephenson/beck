@@ -28,24 +28,43 @@ pub fn envelope(seq: u64, at: i64, actor: &str, event: Value) -> Value {
     )
 }
 
-/// `Session` — who is asking. Phase 1 carries the actor only; D6's relying party is what would add
-/// to it.
-pub fn session(actor: &str) -> Value {
+/// `Session` — who is asking, and what the identity provider said about them.
+///
+/// The claims are a `Map[Str, Str]` and not a record, because the set is the provider's rather
+/// than the program's: a tenant claim one deployment issues is one another has never heard of.
+/// They are copied in at the edge for the same reason the actor is — a fold that read them from a
+/// token would be a fold that could not replay ([`crate::render`], §3.7).
+pub fn session<'a>(actor: &str, claims: impl IntoIterator<Item = (&'a str, &'a str)>) -> Value {
     Value::data(
         Arc::from("Session"),
         None,
-        Fields::from_iter([(Arc::from("actor"), Value::str_(actor))]),
+        Fields::from_iter([
+            (Arc::from("actor"), Value::str_(actor)),
+            (
+                Arc::from("claims"),
+                Value::Map(
+                    claims
+                        .into_iter()
+                        .map(|(k, v)| (Value::str_(k), Value::str_(v)))
+                        .collect(),
+                ),
+            ),
+        ]),
     )
 }
 
 /// `Proposal` — a command and who proposed it, which is what `validate` is given and the only
 /// place a `Session` reaches (§3.5).
-pub fn proposal(actor: &str, command: Value) -> Value {
+pub fn proposal<'a>(
+    actor: &str,
+    claims: impl IntoIterator<Item = (&'a str, &'a str)>,
+    command: Value,
+) -> Value {
     Value::data(
         Arc::from("Proposal"),
         None,
         Fields::from_iter([
-            (Arc::from("session"), session(actor)),
+            (Arc::from("session"), session(actor, claims)),
             (Arc::from("command"), command),
         ]),
     )

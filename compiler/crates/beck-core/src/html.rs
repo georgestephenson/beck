@@ -297,6 +297,18 @@ fn escape_text_into(s: &str, out: &mut String) {
     }
 }
 
+/// Escape a string for an attribute value the *shell* writes rather than a view.
+///
+/// The runtime builds the surrounding document with `format!` and puts two values from outside the
+/// program into it — the actor's name and its claims — and those are the identity provider's
+/// strings, not the program's. Exported so that they go through the same escaping the view's own
+/// attributes do rather than a second one written beside it.
+pub fn escape_attr(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    escape_attr_into(s, &mut out);
+    out
+}
+
 fn escape_attr_into(s: &str, out: &mut String) {
     for c in s.chars() {
         match c {

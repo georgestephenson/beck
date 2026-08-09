@@ -383,7 +383,7 @@ async fn mode_b_survives_a_reload() {
         .expect("decodes");
     serving
         .app
-        .propose("k1".into(), "ana".into(), command)
+        .propose("k1".into(), "ana", command)
         .await
         .expect("accepted");
 

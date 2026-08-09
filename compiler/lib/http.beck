@@ -17,11 +17,12 @@
 
 ## A request with nothing in it but a method and a path.
 ##
-## Port 80 because this is HTTP; `on_port` changes it. The path is origin-form and is sent as
-## written — `"/v1/todos?limit=10"` is one string, because only the caller knows which part of it
-## was data and therefore which part needed encoding.
+## Port 80 and no TLS, because this is HTTP; `on_port` changes the first and `over_tls` changes
+## both. The path is origin-form and is sent as written — `"/v1/todos?limit=10"` is one string,
+## because only the caller knows which part of it was data and therefore which part needed
+## encoding.
 def request(method: Str, path: Str) -> HttpRequest:
-    return HttpRequest(method=method, path=path, headers={}, body="", port=80, secrets={})
+    return HttpRequest(method=method, path=path, headers={}, body="", port=80, tls=False, secrets={})
 
 def get(path: Str) -> HttpRequest:
     return request("GET", path)
@@ -66,6 +67,17 @@ def with_secret_header(req: HttpRequest, name: Str, value: secret[Str]) -> HttpR
 
 def on_port(req: HttpRequest, port: Int) -> HttpRequest:
     return req.with(port=port)
+
+## Make the exchange happen inside a TLS session, and move to the port that implies.
+##
+## The certificate is checked against the host the *call site* wrote — the same string the
+## `net.out(host)` atom carries and the same string the cluster's egress rule is made of — so there
+## is no way to verify a name other than the one the deployment was told about.
+##
+## Both changes together, because a request that asked for TLS on port 80 is a mistake nobody
+## means. `on_port` afterwards is how a peer on 8443 is reached.
+def over_tls(req: HttpRequest) -> HttpRequest:
+    return req.with(tls=True, port=443)
 
 def sending_json(req: HttpRequest, body: Str) -> HttpRequest:
     return with_header(with_body(req, body), "content-type", "application/json")
@@ -127,12 +139,25 @@ def twice_named() -> HttpRequest:
 def patched() -> HttpRequest:
     return sending_json(request("PATCH", "/v1/todos/1"), "{\"done\":true}")
 
+def secured() -> HttpRequest:
+    return over_tls(get("/v1/keys"))
+
+def secured_elsewhere() -> HttpRequest:
+    return on_port(over_tls(get("/v1/keys")), 8443)
+
 test "a request is built up, and every part of it is data":
     expect listing().method == "GET"
     expect listing().path == "/v1/todos?limit=10"
     expect listing().port == 8080
     expect listing().body == ""
+    expect listing().tls == False
     expect unwrap_or(map_get(listing().headers, "accept"), "") == "application/json"
+
+test "asking for tls moves the port, and the port can still be moved after":
+    expect secured().tls == True
+    expect secured().port == 443
+    expect secured_elsewhere().tls == True
+    expect secured_elsewhere().port == 8443
 
 test "a body carries its own length":
     expect created().method == "POST"

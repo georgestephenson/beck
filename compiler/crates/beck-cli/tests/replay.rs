@@ -165,7 +165,7 @@ async fn a_new_process_folding_the_log_lands_where_the_old_one_was() {
     reborn
         .propose(
             "after".into(),
-            "alice".into(),
+            "alice",
             command("Add", &[("id", "after"), ("text", "after recovery")]),
         )
         .await

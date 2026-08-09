@@ -143,7 +143,7 @@ fn what_the_kernel_costs() {
 /// of the interpreter running it.
 #[test]
 fn what_an_interaction_costs_in_the_browser() {
-    use beck_wasm::{Client, Proposed};
+    use beck_wasm::{Client, Proposed, Viewer};
     use std::time::Instant;
 
     // Enough repetitions that the timer is not what is being measured, and a discarded warm-up so
@@ -188,7 +188,7 @@ fn what_an_interaction_costs_in_the_browser() {
         // A fresh client per repetition: `propose` mutates what is shown and what is pending, so
         // timing the same client twice would time a second, different interaction.
         let prepared = || {
-            let mut client = Client::load(&bytes, "ana").expect("the bundle loads");
+            let mut client = Client::load(&bytes, Viewer::named("ana")).expect("the bundle loads");
             client.reset(n as u64, state.clone()).expect("a state");
             client
         };

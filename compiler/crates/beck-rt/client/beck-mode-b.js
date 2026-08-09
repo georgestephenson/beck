@@ -11,6 +11,15 @@
   if (!root) return;
 
   const actor = root.dataset.bActor || "dev";
+  // What the provider said about this person, as the server verified it. The kernel renders the
+  // view against a `Session` built from both, so a claims map missing here is a page that differs
+  // from the one being hydrated — see `crates/beck-wasm`'s `Viewer`.
+  let claims = {};
+  try {
+    claims = JSON.parse(root.dataset.bClaims || "{}");
+  } catch (e) {
+    beck.announce(root, "beck:error", { error: "unreadable claims: " + e });
+  }
   const sub = beck.uuid7();
   // The position the server-rendered document reflects. It is *not* what this client resumes
   // from: a Mode A client resuming at `seq` is claiming to hold the page as of `seq`, and the
@@ -112,9 +121,9 @@
     ]);
     wasm = module.instance.exports;
 
-    // `<u32 len><actor><bundle>` — the actor first because the kernel needs it to build the
+    // `<u32 len><viewer json><bundle>` — the viewer first because the kernel needs it to build the
     // `Session` the view is rendered against.
-    const name = new TextEncoder().encode(actor);
+    const name = new TextEncoder().encode(JSON.stringify({ actor, claims }));
     const payload = new Uint8Array(4 + name.length + bundle.byteLength);
     new DataView(payload.buffer).setUint32(0, name.length, true);
     payload.set(name, 4);

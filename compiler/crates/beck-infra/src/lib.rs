@@ -20,6 +20,7 @@ use beck_core::{Effect, Placed, Tier};
 pub mod compose;
 pub mod k8s;
 pub mod platform;
+pub mod provider;
 pub mod sbom;
 
 /// What `beck build` calls the bill of materials it writes. The `.cdx.json` suffix is CycloneDX's
@@ -95,6 +96,13 @@ pub enum Node {
         /// safe — a program that writes and forgets to say so gets a container that refuses the
         /// write, not a container anybody can write to.
         writes_files: bool,
+        /// Whether the program declared `identity = managed()`, and therefore whether its container
+        /// is told where its issuer is.
+        ///
+        /// The same field as [`Node::Workload::reads_log`] and the same failure it exists to
+        /// prevent: a `secretKeyRef` to a Secret nothing derived is a pod that sits in
+        /// `CreateContainerConfigError` forever.
+        reads_identity: bool,
     },
     /// `merge_clients()` ⇒ a websocket ingress route.
     Route {
@@ -142,6 +150,19 @@ pub enum Node {
         /// matches no pod, so the rule the §3.5 claim rests on allowed nothing at all. See
         /// [`crate::k8s`] for what is emitted instead and what it does not enforce.
         allow_egress_hosts: Vec<String>,
+    },
+    /// `identity = managed()` ⇒ an identity provider, a volume, and a realm derived from the
+    /// application (D6).
+    ///
+    /// Vendor-free like every other node: "an identity provider with a volume", and
+    /// [`crate::provider`] is what turns it into an image. The `realm` is JSON rather than a
+    /// structure because it is *somebody else's* schema — Keycloak's — and a typed mirror of it
+    /// here would be a second copy to keep in step with a product this project does not own.
+    IdentityProvider {
+        name: String,
+        volume_gb: u32,
+        /// The realm to import at startup, derived from the application's own name and route.
+        realm: String,
     },
     /// Effect rows ⇒ database grants.
     Grant {
@@ -257,8 +278,17 @@ fn kind_of(n: &Node) -> String {
         Node::Secret { name, .. } => format!("Secret/{name}"),
         Node::Service { name, .. } => format!("Service/{name}"),
         Node::Policy { name, .. } => format!("Policy/{name}"),
+        Node::IdentityProvider { name, .. } => format!("IdentityProvider/{name}"),
         Node::Grant { role, .. } => format!("Grant/{role}"),
     }
+}
+
+/// The name a browser reaches this application at.
+///
+/// One function because three objects have to agree about it: the `Route` that admits the request,
+/// the realm's redirect URI, and its allowed web origin.
+pub fn route_host(app: &str) -> String {
+    format!("{app}.beck.localhost")
 }
 
 /// Derive the infrastructure a placed program implies.
@@ -275,12 +305,34 @@ pub fn graph(placed: &Placed) -> InfraGraph {
             effects.push((e.clone(), name.to_string()));
         }
     }
+    // `identity = external(issuer="…")` is a **peer**, so it enters the derivation as the atom a
+    // peer enters it as. Nothing below this line knows the difference between a host the program
+    // calls with `http_fetch` and the one the runtime fetches a key set from, which is the point:
+    // §6.5's egress rule is "the hosts this program named", and an issuer is one of them
+    // ([`docs/95`](../../../../docs/95-oidc-relying-party-report.md) §95.7).
+    //
+    // `managed()` deliberately does **not**: its issuer is a `Service` this same derivation is
+    // about to emit, so it is a peer *inside* the cluster and a `net.out` host is the wrong
+    // vocabulary for it — `derive` gets the declaration instead, and the difference between the two
+    // shows up as the difference between a rule Kubernetes enforces and one it cannot (§95.10).
+    if let Some(beck_core::check::IdentityDecl::External { host, .. }) = &placed.program.identity {
+        effects.push((Effect::NetOut(host.clone()), "identity".to_string()));
+    }
+    let managed = matches!(
+        placed.program.identity,
+        Some(beck_core::check::IdentityDecl::Managed { .. })
+    );
     let serves_ui = placed
         .program
         .signals
         .iter()
         .any(|s| s.tier == Tier::Client);
-    derive(&sanitise(&placed.program.name), &effects, serves_ui)
+    derive_with(
+        &sanitise(&placed.program.name),
+        &effects,
+        serves_ui,
+        managed,
+    )
 }
 
 /// The derivation itself: effects in, objects out.
@@ -290,6 +342,20 @@ pub fn graph(placed: &Placed) -> InfraGraph {
 /// a program would only prove that a program without durable state does not compile — which is a
 /// different, and less interesting, fact.
 pub fn derive(app: &str, effects: &[(Effect, String)], serves_ui: bool) -> InfraGraph {
+    derive_with(app, effects, serves_ui, false)
+}
+
+/// The same, for a program that asked this deployment to provision its identity provider.
+///
+/// A separate entry point rather than a fourth argument on [`derive()`], because every existing
+/// caller is asserting something about the effect row and `managed()` is not in one: it is a
+/// declaration, and the two arrive by different routes on purpose (§95.10).
+pub fn derive_with(
+    app: &str,
+    effects: &[(Effect, String)],
+    serves_ui: bool,
+    managed_identity: bool,
+) -> InfraGraph {
     let app = app.to_string();
     let mut out = Emit::default();
     // Named up front so the `needs` edges below read as references rather than as string building.
@@ -334,7 +400,7 @@ pub fn derive(app: &str, effects: &[(Effect, String)], serves_ui: bool) -> Infra
         out.push(
             Node::Route {
                 name: format!("{app}-route"),
-                host: format!("{app}.beck.localhost"),
+                host: route_host(&app),
                 websocket: true,
             },
             &format!("`{from}` carries `ingress`, so clients need a websocket route"),
@@ -411,6 +477,7 @@ pub fn derive(app: &str, effects: &[(Effect, String)], serves_ui: bool) -> Infra
             // program that writes anywhere needs it writable. Deriving a *mount* for the path is a
             // separate question and is not answered here (`docs/82` §82.5).
             writes_files: effects.iter().any(|(e, _)| matches!(e, Effect::FsWrite(_))),
+            reads_identity: managed_identity,
         },
         if serves_ui {
             "a signal is placed on `client`, so the server renders and streams patches"
@@ -425,6 +492,52 @@ pub fn derive(app: &str, effects: &[(Effect, String)], serves_ui: bool) -> Infra
             .collect::<Vec<_>>(),
     );
 
+    // `identity = managed()` ⇒ an identity provider, wired to this application. D6: "the InfraGraph
+    // provisions Keycloak … wired via OIDC automatically" — and *wired* is the word that costs
+    // something, because a provider a browser is sent to and that does not know this application's
+    // redirect URI is a provider that refuses every login. The realm is derived from the two things
+    // the graph already knows: the application's name and the route's own origin.
+    let identity_svc = format!("Service/{app}-identity");
+    if managed_identity {
+        // The same host the Route above carries, because the realm's redirect URI has to be a
+        // URL a browser will actually arrive from — two places that build it are two places for a
+        // login to fail with `invalid_redirect_uri`.
+        let origin = format!("https://{}", route_host(&app));
+        let realm = provider::DEFAULT.realm(&app, &origin).to_string();
+        out.push(
+            Node::IdentityProvider {
+                name: format!("{app}-identity"),
+                volume_gb: 1,
+                realm,
+            },
+            "`identity = managed()`, so the deployment provisions the provider rather than naming \
+             somebody else's",
+        )
+        .caused_by("identity");
+        out.push(
+            Node::Service {
+                name: format!("{app}-identity"),
+                selector: format!("{app}-identity"),
+                port: provider::DEFAULT.port,
+                headless: false,
+            },
+            "the application resolves its issuer by name, so the provider needs an address",
+        )
+        .needing(&[&format!("IdentityProvider/{app}-identity")]);
+        out.push(
+            Node::Secret {
+                name: format!("{app}-identity-credentials"),
+                keys: vec![
+                    "admin-password".into(),
+                    "issuer".into(),
+                    "realm.json".into(),
+                ],
+            },
+            "the provider is administered with a credential, and the application is told where its \
+             issuer is rather than computing it",
+        );
+    }
+
     // Effect rows ⇒ least-privilege network policy. §3.5's "least-privilege infra, computed": the
     // egress list *is* the program's `net.out` atoms, so a host nobody calls is a host the cluster
     // will not let this workload reach — and adding a call adds the rule, in the same commit.
@@ -437,6 +550,16 @@ pub fn derive(app: &str, effects: &[(Effect, String)], serves_ui: bool) -> Infra
         });
         policy_needs.push(log_svc.clone());
     }
+    // A **peer**, not a host: a managed issuer is a pod in this namespace, so the egress rule is
+    // one Kubernetes can actually enforce — which the `allow_egress_hosts` list for an external
+    // issuer is not (see [`Node::Policy`]). §95.10 is why that asymmetry is worth stating.
+    if managed_identity {
+        egress.push(Peer {
+            app: format!("{app}-identity"),
+            port: provider::DEFAULT.port,
+        });
+        policy_needs.push(identity_svc.clone());
+    }
     let mut hosts: Vec<String> = effects
         .iter()
         .filter_map(|(e, _)| match e {
@@ -447,11 +570,19 @@ pub fn derive(app: &str, effects: &[(Effect, String)], serves_ui: bool) -> Infra
         .collect();
     hosts.sort();
     hosts.dedup();
-    let derived_from: Vec<String> = effects
+    // What the rule is derived *from*, in the program's own words. `net.out` atoms and — since the
+    // provider a `managed()` declaration provisions is a peer rather than a host — the declaration
+    // itself, which reaches the policy by a different route and would otherwise be an egress rule
+    // `beck explain deploy` said the program had no reason for.
+    let mut derived_from: Vec<String> = effects
         .iter()
         .filter(|(e, _)| matches!(e, Effect::NetOut(_)))
         .map(|(e, w)| format!("`{w}` performs `{}`", e.name()))
         .collect();
+    if managed_identity {
+        derived_from
+            .push("`identity = managed()`, so the provider is a peer in this namespace".into());
+    }
     out.push(
         Node::Policy {
             name: format!("{app}-policy"),

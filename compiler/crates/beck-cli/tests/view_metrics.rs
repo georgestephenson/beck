@@ -78,7 +78,7 @@ async fn what_the_views_cost_is_exported_while_the_process_is_running() {
     for i in 0..5 {
         app.propose(
             format!("c{i}"),
-            "ana".into(),
+            "ana",
             command("Add", &[("id", &format!("t{i}")), ("text", "milk")]),
         )
         .await

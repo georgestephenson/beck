@@ -175,7 +175,7 @@ async fn app_with_todos() -> Arc<App> {
     for (id, text) in [("1", "milk"), ("2", "bread"), ("3", "jam")] {
         app.propose(
             format!("cmd-{id}"),
-            "ana".into(),
+            "ana",
             command("Add", &[("id", id), ("text", text)]),
         )
         .await
@@ -183,7 +183,7 @@ async fn app_with_todos() -> Arc<App> {
     }
     app.propose(
         "cmd-toggle".into(),
-        "ana".into(),
+        "ana",
         command("Toggle", &[("id", "2")]),
     )
     .await
@@ -266,7 +266,7 @@ async fn a_query_sees_an_event_as_soon_as_it_is_acknowledged() {
 
     app.propose(
         "cmd-4".into(),
-        "ana".into(),
+        "ana",
         command("Add", &[("id", "4"), ("text", "tea")]),
     )
     .await
@@ -391,7 +391,7 @@ async fn a_derived_table_is_served_from_the_arrangement_the_page_uses() {
     for (i, option) in ["yes", "no"].iter().enumerate() {
         app.propose(
             format!("v{i}"),
-            "ana".into(),
+            "ana",
             command("Vote", &[("option", option)]),
         )
         .await

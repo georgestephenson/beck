@@ -38,7 +38,21 @@ impl<T> Socket for T where
 }
 
 /// Drive one subscription until the socket closes.
-pub async fn run<S: Socket>(app: Arc<App>, mut socket: S) -> Result<()> {
+pub async fn run<S: Socket>(app: Arc<App>, socket: S) -> Result<()> {
+    run_as(app, socket, None).await
+}
+
+/// The same, for a connection whose identity was already decided at the HTTP upgrade.
+///
+/// A browser logged in through [`crate::oidc`] carries its credential in a **cookie**, which the
+/// `hello` frame cannot see and must not: putting the token in the frame would mean putting it in
+/// the document, where a script can read it. So the upgrade verifies, and hands the result here —
+/// and when it does, the frame's `actor` is not consulted at all.
+pub async fn run_as<S: Socket>(
+    app: Arc<App>,
+    mut socket: S,
+    verified: Option<crate::identity::Actor>,
+) -> Result<()> {
     // A guard, not a pair of calls: a session ends by returning, by erroring, or by the socket
     // dying, and a gauge that only decrements on the happy path drifts upward forever.
     let _connected = SessionGuard::new();
@@ -46,20 +60,22 @@ pub async fn run<S: Socket>(app: Arc<App>, mut socket: S) -> Result<()> {
         return Ok(());
     };
 
-    // The one place a socket's actor is decided. Before this existed the claim *was* the actor,
-    // and every ownership check in every program was enforced against a value the caller chose
-    // (`docs/42` §42.6, `docs/43` §43.4).
-    let actor = match app.identity().verify(&claimed) {
-        Ok(a) => a,
-        Err(why) => {
-            // The operator learns which refusal it was; the client learns that it was refused.
-            tracing::warn!(sub = %sub, reason = why.reason(), "identity refused");
-            telemetry().unauthenticated.incr();
-            send_json(&mut socket, &ServerMsg::error(why.message())).await?;
-            return Ok(());
-        }
+    // The one place a socket's actor is decided, when the upgrade did not already decide it.
+    // Before this existed the claim *was* the actor, and every ownership check in every program
+    // was enforced against a value the caller chose (`docs/42` §42.6, `docs/43` §43.4).
+    let actor = match verified {
+        Some(actor) => actor,
+        None => match app.identity().verify(&claimed) {
+            Ok(a) => a,
+            Err(why) => {
+                // The operator learns which refusal it was; the client learns that it was refused.
+                tracing::warn!(sub = %sub, reason = why.reason(), "identity refused");
+                telemetry().unauthenticated.incr();
+                send_json(&mut socket, &ServerMsg::error(why.message())).await?;
+                return Ok(());
+            }
+        },
     };
-    let actor = actor.name().to_string();
 
     let floor = app.floor().await?;
     let head = app.head();
@@ -93,7 +109,7 @@ async fn mode_a<S: Socket>(
     app: Arc<App>,
     mut socket: S,
     sub: String,
-    actor: String,
+    actor: crate::identity::Actor,
     how: Resumption,
 ) -> Result<()> {
     // Subscribe *before* reading the current view, so an event that lands in between wakes us
@@ -162,7 +178,7 @@ async fn mode_b<S: Socket>(
     app: Arc<App>,
     mut socket: S,
     sub: String,
-    actor: String,
+    actor: crate::identity::Actor,
     how: Resumption,
 ) -> Result<()> {
     // Subscribe *before* reading the state, for the same reason Mode A does: an event that lands
@@ -225,7 +241,7 @@ impl Feed {
     async fn advance(
         &mut self,
         app: &Arc<App>,
-        actor: &str,
+        actor: &crate::identity::Actor,
     ) -> Result<(Option<serde_json::Value>, u64)> {
         match self {
             Feed::Dom {
@@ -265,7 +281,7 @@ async fn drive<S: Socket>(
     app: &Arc<App>,
     socket: &mut S,
     sub: String,
-    actor: String,
+    actor: crate::identity::Actor,
     mut seq: u64,
     how: Resumption,
     initial: Option<serde_json::Value>,

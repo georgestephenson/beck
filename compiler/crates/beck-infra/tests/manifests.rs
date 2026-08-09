@@ -407,6 +407,7 @@ fn every_kind_of_node_produces_a_manifest_except_the_one_that_is_not_an_object()
                 serves_ui: true,
                 reads_log: true,
                 writes_files: false,
+                reads_identity: false,
             },
             Node::Route {
                 name: "app-route".into(),

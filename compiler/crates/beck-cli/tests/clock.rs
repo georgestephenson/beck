@@ -136,7 +136,7 @@ async fn an_envelopes_instant_is_the_clock_the_app_was_given() {
 
     app.propose(
         "c1".into(),
-        "alice".into(),
+        "alice",
         support::command("Add", &[("id", "t1"), ("text", "write it down")]),
     )
     .await
@@ -145,7 +145,7 @@ async fn an_envelopes_instant_is_the_clock_the_app_was_given() {
     clock.advance(60_000);
     app.propose(
         "c2".into(),
-        "alice".into(),
+        "alice",
         support::command("Add", &[("id", "t2"), ("text", "and again")]),
     )
     .await

@@ -120,6 +120,9 @@ async fn route(
         )),
         (&Method::GET, "/beck-kernel.wasm") => Ok(kernel()),
         (&Method::GET, "/beck.css") => Ok(asset(&crate::css::stylesheet(), "text/css")),
+        (&Method::GET, LOGIN_PATH) => login(app, &req).await,
+        (&Method::GET, CALLBACK_PATH) => callback(app, &req).await,
+        (&Method::GET, LOGOUT_PATH) => Ok(logout()),
         (&Method::GET, "/socket") => upgrade(app, req),
         (&Method::GET, "/") => document(app, req).await,
         _ => Ok(Response::builder()
@@ -128,19 +131,203 @@ async fn route(
     }
 }
 
-/// What this request *claims* to be — `?actor=alice`, or nothing.
+/// Where the login flow lives. Fixed paths rather than configurable ones: they are registered with
+/// an identity provider as a redirect URI, and a path an operator can move is a path that stops
+/// matching what was registered.
+pub const LOGIN_PATH: &str = "/auth/login";
+pub const CALLBACK_PATH: &str = "/auth/callback";
+pub const LOGOUT_PATH: &str = "/auth/logout";
+
+/// The cookie carrying the credential a verified connection is identified by.
+///
+/// Under [`crate::oidc`] its value is the **ID token itself** — the issuer's, not one this process
+/// made — so every connection re-verifies the issuer's signature rather than a local session's.
+const SESSION_COOKIE: &str = "beck_id";
+/// The cookie carrying the sealed login transaction, alive only between `/auth/login` and
+/// `/auth/callback`.
+const TRANSACTION_COOKIE: &str = "beck_login";
+
+/// What this request *claims* to be: the session cookie, then a bearer credential, then
+/// `?actor=alice`, then nothing.
 ///
 /// A claim, not an actor. [`crate::identity`] is what turns one into the other, and this function
 /// deliberately does no defaulting: "nobody said" and "somebody said `dev`" are different facts,
 /// and the provider is what decides whether the first is acceptable.
-fn claimed_actor(req: &Request<Incoming>) -> String {
-    req.uri()
-        .query()
+///
+/// The cookie comes first because it is the one a **browser** sends by itself, and the query
+/// parameter comes last because a credential in a URL is a credential in a log file — it stays
+/// because it is what `beck run` on a laptop has always used, and under a verifying provider it
+/// carries a token nobody would put there.
+fn claimed_actor(headers: &hyper::HeaderMap, query: Option<&str>) -> String {
+    if let Some(cookie) = cookie(headers, SESSION_COOKIE) {
+        return cookie;
+    }
+    if let Some(bearer) = headers
+        .get(hyper::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+    {
+        return bearer.trim().to_string();
+    }
+    query
         .and_then(|q| {
-            q.split('&')
-                .find_map(|kv| kv.strip_prefix("actor=").map(|v| v.to_string()))
+            crate::oidc::query_params(q)
+                .into_iter()
+                .find(|(k, _)| k == "actor")
+                .map(|(_, v)| v)
         })
         .unwrap_or_default()
+}
+
+/// One cookie's value out of a `Cookie` header, or nothing.
+fn cookie(headers: &hyper::HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get_all(hyper::header::COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(';'))
+        .filter_map(|pair| pair.trim().split_once('='))
+        .find(|(k, _)| *k == name)
+        .map(|(_, v)| v.to_string())
+}
+
+/// A cookie a script cannot read and a cross-site request does not send.
+///
+/// `HttpOnly` because the value is a credential and §5.1's thin client has no reason to read it.
+/// `SameSite=Lax` rather than `Strict` because the identity provider redirects the browser back to
+/// `/auth/callback` and `Strict` would withhold the transaction cookie on exactly that navigation.
+/// `Secure` is **not** set: §6.5's gateway terminates TLS in front of a plaintext hop, so setting
+/// it would make the cookie unusable in the deployment this project generates — the same reason
+/// `same_origin` does not compare schemes, and it is recorded in `docs/95` §95.6 rather than left
+/// to be discovered.
+fn set_cookie(name: &str, value: &str, max_age: i64) -> String {
+    format!("{name}={value}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age}")
+}
+
+/// Send the browser somewhere, setting or clearing cookies on the way.
+fn redirect(to: &str, cookies: &[String]) -> Response<Full<Bytes>> {
+    let mut builder = Response::builder()
+        .status(StatusCode::FOUND)
+        .header(hyper::header::LOCATION, to)
+        .header(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    for cookie in cookies {
+        builder = builder.header(hyper::header::SET_COOKIE, cookie);
+    }
+    builder
+        .body(Full::new(Bytes::new()))
+        .expect("a redirect builds")
+}
+
+/// `/auth/login` — begin the authorization-code flow.
+async fn login(app: Arc<App>, req: &Request<Incoming>) -> Result<Response<Full<Bytes>>> {
+    let Some(party) = app.identity().login() else {
+        return Ok(not_found());
+    };
+    let return_to = req
+        .uri()
+        .query()
+        .and_then(|q| {
+            crate::oidc::query_params(q)
+                .into_iter()
+                .find(|(k, _)| k == "next")
+                .map(|(_, v)| v)
+        })
+        .unwrap_or_else(|| "/".to_string());
+    match party.begin_login(&return_to) {
+        Ok(begun) => Ok(redirect(
+            &begun.url,
+            &[set_cookie(
+                TRANSACTION_COOKIE,
+                &begun.transaction,
+                crate::oidc::LOGIN_WINDOW_MS / 1_000,
+            )],
+        )),
+        Err(why) => {
+            tracing::warn!(why, "a login could not be started");
+            Ok(unavailable())
+        }
+    }
+}
+
+/// `/auth/callback` — the browser is back from the identity provider.
+async fn callback(app: Arc<App>, req: &Request<Incoming>) -> Result<Response<Full<Bytes>>> {
+    if app.identity().login().is_none() {
+        return Ok(not_found());
+    }
+    let transaction = cookie(req.headers(), TRANSACTION_COOKIE).unwrap_or_default();
+    let query = req.uri().query().unwrap_or_default().to_string();
+    // Synchronous, and `beck_core::net::Outbound` is deliberately synchronous too (a tree-walker
+    // cannot await), so the token exchange goes on a blocking thread rather than on a worker
+    // serving pages.
+    let holder = app.clone();
+    let completed = tokio::task::spawn_blocking(move || match holder.identity().login() {
+        Some(party) => party.complete_login(&query, &transaction),
+        None => Err("this process has no relying party".to_string()),
+    })
+    .await;
+
+    match completed {
+        Ok(Ok(done)) => {
+            tracing::info!(actor = %done.verified.subject, "a login completed");
+            let seconds =
+                (done.verified.expires_at_millis - app.clock().now_millis()).max(0) / 1_000;
+            Ok(redirect(
+                &done.return_to,
+                &[
+                    set_cookie(SESSION_COOKIE, &done.id_token, seconds),
+                    // The transaction is spent. Clearing it is not tidiness: a state and a PKCE
+                    // verifier that outlive their one use are a replayable login.
+                    set_cookie(TRANSACTION_COOKIE, "", 0),
+                ],
+            ))
+        }
+        Ok(Err(why)) => {
+            // Specific to the operator, and the browser is told it was refused and nothing else.
+            tracing::warn!(why, "a login did not complete");
+            crate::telemetry::telemetry().unauthenticated.incr();
+            Ok(Response::builder()
+                .status(StatusCode::UNAUTHORIZED)
+                .header(
+                    hyper::header::SET_COOKIE,
+                    set_cookie(TRANSACTION_COOKIE, "", 0),
+                )
+                .body(Full::new(Bytes::from_static(b"unauthenticated")))?)
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "the token exchange panicked");
+            Ok(unavailable())
+        }
+    }
+}
+
+/// `/auth/logout` — forget the credential.
+///
+/// Local only: it clears this app's cookie and does not call the issuer's end-session endpoint, so
+/// the browser is still signed in to the identity provider and `/auth/login` will complete without
+/// another password. That is the ordinary meaning of "log out of this app" and `docs/95` §95.6 says
+/// so rather than leaving somebody to find out.
+fn logout() -> Response<Full<Bytes>> {
+    redirect(
+        "/",
+        &[
+            set_cookie(SESSION_COOKIE, "", 0),
+            set_cookie(TRANSACTION_COOKIE, "", 0),
+        ],
+    )
+}
+
+fn not_found() -> Response<Full<Bytes>> {
+    Response::builder()
+        .status(StatusCode::NOT_FOUND)
+        .body(Full::new(Bytes::from_static(b"not found")))
+        .expect("static response builds")
+}
+
+fn unavailable() -> Response<Full<Bytes>> {
+    Response::builder()
+        .status(StatusCode::SERVICE_UNAVAILABLE)
+        .body(Full::new(Bytes::from_static(b"identity is unavailable")))
+        .expect("static response builds")
 }
 
 async fn document(app: Arc<App>, req: Request<Incoming>) -> Result<Response<Full<Bytes>>> {
@@ -148,20 +335,26 @@ async fn document(app: Arc<App>, req: Request<Incoming>) -> Result<Response<Full
     // rendering a page for whoever asked would leak exactly what a per-session view exists to keep
     // separate. Under `DevIdentity` a claim of `dev` is what an unauthenticated laptop gets, and
     // that default lives in one place.
-    let claimed = claimed_actor(&req);
+    let claimed = claimed_actor(req.headers(), req.uri().query());
     let claimed = if claimed.is_empty() && !app.identity().verifies() {
         "dev".to_string()
     } else {
         claimed
     };
     let actor = match app.identity().verify(&claimed) {
-        Ok(a) => a.name().to_string(),
+        Ok(a) => a,
         Err(why) => {
             tracing::warn!(
                 reason = why.reason(),
                 "identity refused for a document request"
             );
             crate::telemetry::telemetry().unauthenticated.incr();
+            // A provider that can run a login flow sends the browser to it rather than answering
+            // 401: a person who is not signed in has somewhere to go, and a person whose token has
+            // expired has the same somewhere.
+            if app.identity().login().is_some() {
+                return Ok(redirect(LOGIN_PATH, &[set_cookie(SESSION_COOKIE, "", 0)]));
+            }
             return Ok(Response::builder()
                 .status(StatusCode::UNAUTHORIZED)
                 .body(Full::new(Bytes::from_static(b"unauthenticated")))?);
@@ -169,26 +362,34 @@ async fn document(app: Arc<App>, req: Request<Incoming>) -> Result<Response<Full
     };
     let seq = app.head();
     let body = app.render(&actor).await?.render();
+    // The claims go into the document because Mode B's client renders the same view against the
+    // same `Session`, and it has no provider to ask: a client left to fill in a blank map would
+    // show a different page than the one it is hydrating. They are what the server already
+    // verified and already rendered against, so the document is not telling the browser anything
+    // the page it carries does not — and the browser's copy is advice, exactly as its `validate`
+    // is: the server verifies the token again on the socket and every command goes through the
+    // chokepoint there (§3.5).
+    let claims = serde_json::to_string(
+        &actor
+            .claims()
+            .iter()
+            .map(|(k, v)| (k.as_ref(), v.as_ref()))
+            .collect::<std::collections::BTreeMap<&str, &str>>(),
+    )
+    .unwrap_or_else(|_| "{}".into());
+    let actor = beck_core::html::escape_attr(actor.name());
+    let claims = beck_core::html::escape_attr(&claims);
 
-    // The document carries the position it reflects, so the first socket message either finds
-    // nothing to do or is exactly the gap. That is what made hydration free in Phase 0.
-    //
-    // `#b-root` is the subscription's frame: a patch path is child indices *from it*, so it has to
-    // be an element of its own rather than the body — whose other children are the two script tags
-    // below, which an insertion at the frame's root would otherwise be counted against.
-    let html = format!(
-        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
-         <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
-         <title>{title}</title><link rel=\"stylesheet\" href=\"/beck.css\">\
-         </head><body>\
-         <div id=\"b-root\" data-b-seq=\"{seq}\" data-b-actor=\"{actor}\">{body}</div>\
-         <script src=\"/beck-patch.js\" defer></script>\
-         <script src=\"{client}\" defer></script></body></html>",
-        title = app.runtime().placed().program.name,
+    let html = shell(
+        &app.runtime().placed().program.name,
+        seq,
+        &actor,
+        &claims,
+        &body,
         // Which residue this page needs is the component's rendering mode, and the server is the
         // one that knows it: a Mode B document that loaded the thin client would sit waiting for
         // DOM patches the server is never going to send.
-        client = match app.runtime().placed().render.mode {
+        match app.runtime().placed().render.mode {
             beck_core::render::Mode::Server => "/beck-thin.js",
             beck_core::render::Mode::Client => "/beck-mode-b.js",
         },
@@ -200,6 +401,35 @@ async fn document(app: Arc<App>, req: Request<Incoming>) -> Result<Response<Full
         )
         .header(CACHE_CONTROL, HeaderValue::from_static("no-store"))
         .body(Full::new(Bytes::from(html)))?)
+}
+
+/// The document around a rendered page: what the browser needs in order to become a client of it.
+///
+/// A function rather than a `format!` inside [`document`] so that the attributes it writes can be
+/// held against the attributes the served JavaScript reads, in both directions
+/// (`the_document_carries_every_attribute_the_residue_reads_off_it`). An attribute a client reads
+/// and this does not write is a page that never connects, and nothing else in this workspace would
+/// say so.
+///
+/// `seq` is the position the page reflects, so the first socket message either finds nothing to do
+/// or is exactly the gap — that is what made hydration free in Phase 0. `actor` and `claims` are
+/// already escaped: they are the identity provider's strings, and the caller is where the value to
+/// escape exists.
+///
+/// `#b-root` is the subscription's frame: a patch path is child indices *from it*, so it has to be
+/// an element of its own rather than the body — whose other children are the two script tags below,
+/// which an insertion at the frame's root would otherwise be counted against.
+fn shell(title: &str, seq: u64, actor: &str, claims: &str, body: &str, client: &str) -> String {
+    format!(
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
+         <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
+         <title>{title}</title><link rel=\"stylesheet\" href=\"/beck.css\">\
+         </head><body>\
+         <div id=\"b-root\" data-b-seq=\"{seq}\" data-b-actor=\"{actor}\" \
+         data-b-claims=\"{claims}\">{body}</div>\
+         <script src=\"/beck-patch.js\" defer></script>\
+         <script src=\"{client}\" defer></script></body></html>"
+    )
 }
 
 /// Is this upgrade coming from a page the server itself served?
@@ -293,6 +523,29 @@ fn upgrade(app: Arc<App>, mut req: Request<Incoming>) -> Result<Response<Full<By
             )))?);
     };
 
+    // A browser's credential is in a cookie, which the `hello` frame cannot see: the document may
+    // not contain the token, because a script that reads the document reads the token. So the
+    // *upgrade* is where a cookie-carrying connection is identified, and the frame's `actor` is
+    // then not consulted at all (`crate::session::run_as`).
+    //
+    // A connection with no cookie is not refused here — `beck test`, a script and the corpus
+    // harnesses all connect without one — it is passed on as `None` and `session::run_as` asks the
+    // provider about the `hello` frame's claim exactly as before.
+    let verified = match cookie(req.headers(), SESSION_COOKIE) {
+        Some(claim) => match app.identity().verify(&claim) {
+            Ok(actor) => Some(actor),
+            Err(why) => {
+                tracing::warn!(reason = why.reason(), "identity refused at the upgrade");
+                crate::telemetry::telemetry().unauthenticated.incr();
+                return Ok(Response::builder()
+                    .status(StatusCode::UNAUTHORIZED)
+                    .header(hyper::header::SET_COOKIE, set_cookie(SESSION_COOKIE, "", 0))
+                    .body(Full::new(Bytes::from_static(b"unauthenticated")))?);
+            }
+        },
+        None => None,
+    };
+
     tokio::spawn(async move {
         match hyper::upgrade::on(&mut req).await {
             Ok(upgraded) => {
@@ -302,7 +555,7 @@ fn upgrade(app: Arc<App>, mut req: Request<Incoming>) -> Result<Response<Full<By
                     Some(socket_limits()),
                 )
                 .await;
-                if let Err(e) = crate::session::run(app, socket).await {
+                if let Err(e) = crate::session::run_as(app, socket, verified).await {
                     tracing::debug!(error = %e, "subscription ended");
                 }
             }
@@ -401,6 +654,48 @@ mod tests {
                 "nothing reads {read}"
             );
         }
+    }
+
+    /// The other direction, which is the one that bites: **every attribute a client reads is one
+    /// the document writes.**
+    ///
+    /// The test above says something reads each attribute somebody thought to list; it cannot fail
+    /// when a client starts reading an attribute the server never writes. That failure is silent —
+    /// `dataset.bClaims` on a document without it is `undefined`, so the Mode B kernel would build
+    /// a `Session` with no claims and refuse commands the server accepts — and it is exactly the
+    /// shape of the defect Mode B's own `#b-root` finding was (`docs/94` §94.8).
+    ///
+    /// So the list is derived from the residue rather than written down: whatever `dataset.bFoo`
+    /// the shipped JavaScript reads, `data-b-foo` has to be in the shell.
+    #[test]
+    fn the_document_carries_every_attribute_the_residue_reads_off_it() {
+        let page = super::shell("t", 7, "ana", "{}", "<p>hi</p>", "/beck-thin.js");
+        let mut checked = 0;
+        for client in [crate::THIN_CLIENT, crate::MODE_B_CLIENT] {
+            for (i, _) in client.match_indices("dataset.b") {
+                let name: String = client[i + "dataset.".len()..]
+                    .chars()
+                    .take_while(|c| c.is_ascii_alphanumeric())
+                    .collect();
+                // `bActor` is `data-b-actor`; a second capital would be a second dash.
+                let mut attr = String::from("data-");
+                for c in name.chars() {
+                    if c.is_ascii_uppercase() {
+                        attr.push('-');
+                        attr.push(c.to_ascii_lowercase());
+                    } else {
+                        attr.push(c);
+                    }
+                }
+                assert!(
+                    page.contains(&format!("{attr}=")),
+                    "the residue reads `dataset.{name}` and the document has no `{attr}`"
+                );
+                checked += 1;
+            }
+        }
+        // A rename that made the loop match nothing would otherwise pass in silence.
+        assert!(checked >= 3, "only {checked} attribute reads were found");
     }
 
     use super::*;

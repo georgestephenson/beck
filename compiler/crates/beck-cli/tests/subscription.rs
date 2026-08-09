@@ -120,7 +120,7 @@ async fn a_subscription_serves_the_same_page_with_maintenance_switched_off() {
 
     app.propose(
         "c1".into(),
-        "ana".into(),
+        "ana",
         command("Add", &[("id", "t1"), ("text", "milk")]),
     )
     .await
@@ -259,7 +259,7 @@ async fn a_subscription_serves_the_same_page_with_sharing_switched_off() {
 
     app.propose(
         "c1".into(),
-        "ana".into(),
+        "ana",
         command("Add", &[("id", "t1"), ("text", "milk")]),
     )
     .await
@@ -320,7 +320,7 @@ async fn a_maintained_page_comes_back_with_the_version_it_reflects() {
     for i in 0..12 {
         app.propose(
             format!("c{i}"),
-            "ana".into(),
+            "ana",
             command("Add", &[("id", &format!("t{i}")), ("text", "milk")]),
         )
         .await
