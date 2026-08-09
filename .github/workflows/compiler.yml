@@ -74,6 +74,10 @@ jobs:
       # failure rather than a silent skip.
       BECK_PG: postgres://postgres:postgres@localhost/beck_ci
       BECK_REQUIRE_PG: "1"
+      # `native.rs` and `measure_native.rs` skip when there is no `clang`, and print why. This
+      # runner has one, so a skip here would mean the differential between backends silently did
+      # not run — which is the failure mode §19.4 item 10 is about.
+      BECK_REQUIRE_LLVM: "1"
     steps:
       - uses: actions/checkout@v4
       # rust-toolchain.toml's pin (1.94.1, with components) wins over the default this action
@@ -546,6 +550,10 @@ jobs:
     # the published numbers stay reproducible (docs/adr/0006).
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      # ubuntu-latest ships clang, so a skipped native measurement here would mean docs/93 §93.5's
+      # table stopped being reproducible without anything saying so.
+      BECK_REQUIRE_LLVM: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -568,6 +576,11 @@ jobs:
           # latency. Printed, never thresholded — the *gate* is `compile_speed`, which asserts a
           # shape rather than a rate and runs under `cargo test` above.
           cargo test --release --test measure_compile -- --nocapture
+          # docs/93 §93.5. The native backend against the tree-walker, at two sizes each, plus the
+          # pipe round trip on its own and what `clang -O2` costs. The *gate* is a shape — the
+          # ratio must not fall as the problem grows — and it runs here rather than under
+          # `cargo test` because it is a release measurement.
+          cargo test --release --test measure_native -- --nocapture
           # The evaluator's host stack per level of non-tail recursion, in both profiles — the
           # number `beck_eval::STACK_BYTES` is chosen from, and the equality that says a tail call
           # costs nothing (docs/31 §31.3, §31.5). It prints in release and gates in either.

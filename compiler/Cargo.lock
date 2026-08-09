@@ -124,6 +124,7 @@ dependencies = [
  "beck-diag",
  "beck-eval",
  "beck-infra",
+ "beck-llvm",
  "beck-macro",
  "beck-rt",
  "beck-syntax",
@@ -191,6 +192,14 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_norway",
+]
+
+[[package]]
+name = "beck-llvm"
+version = "0.1.0"
+dependencies = [
+ "beck-core",
+ "beck-diag",
 ]
 
 [[package]]

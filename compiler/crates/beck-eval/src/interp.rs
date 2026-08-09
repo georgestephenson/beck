@@ -1418,7 +1418,13 @@ impl<'h> Interp<'h> {
                 want(1)?;
                 let v = args.pop().expect("arity checked");
                 match v {
-                    Value::Int(x) => Ok(Value::Int(-x)),
+                    // Checked, like every other integer operation here: `-i64::MIN` has no
+                    // representable answer, so it is an error carrying a span and not a wrapped
+                    // result.
+                    Value::Int(x) => x
+                        .checked_neg()
+                        .map(Value::Int)
+                        .ok_or_else(|| EvalError::new("`negate` overflowed", span)),
                     Value::Float(_) => Ok(Value::float(-v.as_f64().expect("a Float"))),
                     _ => Err(EvalError::new("`-` expects an Int or a Float", span)),
                 }
@@ -2330,10 +2336,27 @@ mod tests {
         );
     }
 
+    /// Every integer operation without a representable answer, and there is no exception.
+    ///
+    /// `negate` was one until `docs/93` §93.2: it computed `-x`, which *panics the compiler* on
+    /// `i64::MIN` in a debug build and wraps in a release one. That is worse than either answer on
+    /// its own — which programs run depended on how the compiler was built — and it is the shape
+    /// of defect `docs/64` §64.4 found on the front end's axis. `%` and `/` are here for
+    /// `i64::MIN / -1`, whose quotient overflows for the same reason and is not a division by
+    /// zero.
     #[test]
     fn overflow_and_division_by_zero_are_errors_not_panics() {
         assert!(run(&prim(Prim::Div, vec![int(1), int(0)])).is_err());
+        assert!(run(&prim(Prim::Rem, vec![int(1), int(0)])).is_err());
         assert!(run(&prim(Prim::Add, vec![int(i64::MAX), int(1)])).is_err());
+        assert!(run(&prim(Prim::Sub, vec![int(i64::MIN), int(1)])).is_err());
+        assert!(run(&prim(Prim::Mul, vec![int(i64::MAX), int(2)])).is_err());
+        assert!(run(&prim(Prim::Div, vec![int(i64::MIN), int(-1)])).is_err());
+        assert!(run(&prim(Prim::Rem, vec![int(i64::MIN), int(-1)])).is_err());
+        assert!(run(&prim(Prim::Abs, vec![int(i64::MIN)])).is_err());
+        assert!(run(&prim(Prim::Neg, vec![int(i64::MIN)])).is_err());
+        // …and the ordinary case still answers.
+        assert_eq!(run(&prim(Prim::Neg, vec![int(7)])).unwrap(), Value::Int(-7));
     }
 
     #[test]

@@ -94,8 +94,9 @@ is part of a change's correctness rather than a follow-up to it.
 If you write a number, it must be reproducible, and the report that quotes it must name the command
 that produces it. The measurement suites are release-only by convention:
 `cargo test --release --test <suite> -- --nocapture`, where `<suite>` is one of `measure_phase2`,
-`measure_incremental`, `measure_awfy`, `measure_compile`, `measure_clbg`. Everything else comes from
-`cargo test --workspace` or from `beck` invocations the report quotes in full.
+`measure_incremental`, `measure_awfy`, `measure_compile`, `measure_clbg`, `measure_native`.
+Everything else comes from `cargo test --workspace` or from `beck` invocations the report quotes in
+full.
 
 Say plainly when something is written but unproven. **"Built", "runs" and "measured" are three
 different claims.**
@@ -108,8 +109,8 @@ corpus, placement-property, patterns, general-slicer, incremental-analysis, incr
 fusion,
 shared-arrangement, subscription, view-metrics, read-model, SICP, Are We Fast Yet, Benchmarks Game,
 tests-in-Beck, UI, workflow-cross-check, documentation, getting-started, outbound, compile-speed,
-concurrency, round-trip, runtime-edge, grammar-fuzz, supply-chain and diagnostic-snapshot suites,
-plus the five
+concurrency, round-trip, runtime-edge, grammar-fuzz, supply-chain, native-backend and
+diagnostic-snapshot suites, plus the six
 release-only measurement suites. **Keep them green.**
 
 Four gates in this project's history could not have failed
@@ -157,6 +158,10 @@ the thing you are guarding against would make it so.
     `BECK_REQUIRE_CLUSTER=1` forbids the skip. Do not claim this rung ran without one.
   - Postgres log contract (`beck-rt/src/log.rs`): runs only with `BECK_PG=<url>`
     (`BECK_REQUIRE_PG=1` forbids the skip).
+  - The native backend (`beck-cli/tests/native.rs`, `tests/measure_native.rs`): skips without a
+    `clang` on the path; `BECK_REQUIRE_LLVM=1` forbids the skip, and `BECK_CLANG` names one
+    explicitly on a machine with several. A skipped run means the differential *between backends*
+    did not happen.
   - Compose parity needs Docker; the thin-client budget needs `brotli` (apt-installable).
 - **The network is proxied and partial.** crates.io and the toolchain host work; docs hosts may
   not. Read a dependency's API from its vendored source under `~/.cargo/registry/src/`.

@@ -71,10 +71,17 @@ endpoints — compiles to native binaries, statically linked, one per `service`.
 | Mode | Backend | Evidence |
 |---|---|---|
 | `beck dev`, hot reload | **Cranelift** | ~40% faster whole-compiles; codegen step ~an order of magnitude faster than LLVM |
-| `beck build --release` | **LLVM** (inkwell) | Cranelift output ~14% slower; Perry's 2026 Cranelift→LLVM move turned a deficit into 1.7–24.6× wins over Node.js |
+| `beck build --release` | **LLVM**, as textual IR through the host's `clang` — **built** for the scalar subset ([`93`](93-llvm-backend-report.md)), not via `inkwell` ([`adr/0021`](adr/0021-the-native-backend-writes-ir-and-runs-a-process.md)) | Cranelift output ~14% slower; Perry's 2026 Cranelift→LLVM move turned a deficit into 1.7–24.6× wins over Node.js |
 
 The two must agree observably — enforced by differential tests ([`04`](04-compiler-architecture.md)
 §4.8). The `Core → Target` seam stays narrow so a third backend (or MLIR) can slot in later.
+
+> **Built, half of it.** [`93`](93-llvm-backend-report.md): the LLVM row exists over the **scalar
+> subset** — `Int`, `Float` and `Bool` — and the differential is against the *evaluator*, since
+> Cranelift is still not built. There is no heap in the emitted code, so a fold over a record, a
+> view that builds `Html` and every effect in this section still run on the tree-walker, and this
+> section's "compiles to native binaries, statically linked, one per `service`" remains a design.
+> The seam held: not one line of `beck-rt` changed.
 
 **Runtime we must ship** (the "Roc platform" of Beck — an effectful Rust host owning I/O, scheduling
 and memory, executing the pure program):
