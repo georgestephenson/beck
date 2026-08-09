@@ -469,7 +469,7 @@ fn link(root: &str, modules: Vec<Checked>, diags: &mut Diagnostics) -> Option<Pr
                 Diagnostic::error(
                     "B0359",
                     "identity is declared in more than one module",
-                    decl.span,
+                    decl.span(),
                 )
                 .with_note(
                     "who authenticates a program's clients is one answer for the whole program, \

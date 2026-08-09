@@ -109,90 +109,20 @@ fn identity_defaults_to_believing_the_client() {
 // about a missing capability, since `over_tls` is the call that changes it. That half moved into
 // `lib/http.beck`'s own tests, where a reader of the library meets it.
 
-/// What is still absent about identity: the **provisioning** half of D6.
-///
-/// `identity = managed()` asks Beck to stand a Keycloak or Ory workload up in the object graph, and
-/// nothing does — [`94`](../../../../docs/94-oidc-relying-party-report.md) §94.7 built the
-/// `external(…)` half and left this one, so `managed()` is a diagnostic rather than a derivation.
-///
-/// Behaviour rather than a grep, and in both directions, because "no identity provider is
-/// provisioned" is only interesting beside "the one the program names *is* reachable" — that half
-/// is `the_declared_issuer_is_the_egress_rule` in `oidc.rs`, and this one is the workload.
-#[test]
-fn no_identity_provider_is_provisioned_into_the_object_graph() {
-    let src = r#"
-identity = external(issuer="https://login.acme.com")
-
-model State:
-    n: Int
-
-union Command:
-    Bump
-
-union Event:
-    Bumped
-
-def apply_event(s: State, env: Envelope[Event]) -> State:
-    return s.with(n=s.n + 1)
-
-def validate(s: State, p: Proposal) -> Result[list[Event], Str]:
-    return Ok(value=[Bumped])
-
-def view(s: State, session: Session) -> Html:
-    return ui:
-        main:
-            p: str(s.n)
-
-proposals: Stream[Proposal] = merge_clients()
-events: Stream[Event] = decide(proposals, book, validate)
-book: Signal[State] = durable(fold(apply_event, State(n=0), events))
-page: Signal[Html] = per_session(book, view)
-"#;
-    let (placed, diags, map) = beck_core::compile_str("provisioning.beck", src);
-    assert!(!diags.has_errors(), "{}", diags.render(&map));
-    let placed = placed.expect("it slices");
-    let graph = beck_infra::graph(&placed);
-    let rendered: String = beck_infra::k8s::render(&graph, &placed.wire_id)
-        .into_iter()
-        .map(|(_, yaml)| yaml)
-        .collect();
-
-    // The peer is derived — otherwise this test would pass against a compiler that ignored the
-    // declaration entirely, which is the shape of gate `docs/84` §84.5 warns about.
-    assert!(
-        rendered.contains("login.acme.com"),
-        "the declared issuer is not in the object graph at all; this test is testing nothing"
-    );
-
-    // What is absent is a **workload**, and the honest way to say that is to count them rather than
-    // to search the YAML for a product's name. The first version of this test did search, for
-    // `keycloak`, `ory` and `Kratos` — and went red on `revisionHistoryLimit`, which is what a
-    // substring match over generated text is worth.
-    let workloads: Vec<&str> = graph
-        .nodes
-        .iter()
-        .filter_map(|d| match &d.node {
-            beck_infra::Node::Workload { name, .. } => Some(name.as_str()),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(
-        workloads,
-        vec!["provisioning"],
-        "something other than the program itself is being deployed. If `identity = managed()` is \
-         built, delete this test and correct docs/94 §94.6 and docs/48 §48.5"
-    );
-    assert!(
-        beck_core::compile_str(
-            "managed.beck",
-            &src.replace("external(issuer=\"https://login.acme.com\")", "managed()")
-        )
-        .1
-        .iter()
-        .any(|d| d.code == "B0359"),
-        "`managed()` compiles now, so something derives it — correct docs/94 §94.6"
-    );
-}
+// `no_identity_provider_is_provisioned_into_the_object_graph` was here, and it is **built**
+// (`docs/94` §94.10): `identity = managed()` derives a provider, its Service, its volume, its
+// credentials and a realm wired to this application's own route, and the application's egress to it
+// is a `Peer` rather than a DNS name. What replaces it is `oidc.rs`, in both directions — the
+// declaration with it and the same program without.
+//
+// That test is also the one this file's own rules were hardest on. Its first version searched the
+// rendered YAML for `keycloak`, `ory` and `Kratos`, and went red on **`revisionHistoryLimit`**; the
+// second counted `Workload` nodes. Both were asserting an absence by looking at the shape of the
+// fix rather than the shape of the gap, which is `docs/84` §84.5's pattern from the other side.
+//
+// **Nothing about identity is asserted as absent here now.** Presence — D6's "who is connected now,
+// as a first-class non-durable Signal" — is the last unbuilt row of that bullet, and it is a
+// language feature rather than a control, so it belongs in `docs/08`'s list and not in this file.
 
 // ---------------------------------------------------------------------------------------------
 // F3 — per-actor quotas: BUILT (`docs/84`), and the two tests that were here did not notice

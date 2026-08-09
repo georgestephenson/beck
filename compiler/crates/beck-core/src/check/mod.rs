@@ -97,16 +97,39 @@ fn issuer_host(url: &str) -> Option<String> {
 }
 
 /// Who authenticates a program's clients, as the program declared it.
+///
+/// D6's two forms, and the difference between them is a difference in *who provisions the
+/// provider* — which is why they are one declaration with two shapes rather than two features.
+/// [`IdentityDecl::External`] names somebody else's; [`IdentityDecl::Managed`] asks this
+/// deployment to stand one up, and the URL is then not the program's to write because it is a
+/// service the derivation has not named yet.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct IdentityDecl {
-    /// The issuer URL, exactly as written. Both what is fetched and what every token's `iss` is
-    /// compared against.
-    pub issuer: Arc<str>,
-    /// The host of that URL — the peer §6.5's egress rule is written from, and the same shape a
-    /// `net.out(host)` atom carries.
-    pub host: Arc<str>,
+pub enum IdentityDecl {
+    /// `identity = external(issuer="https://login.acme.com")`.
+    External {
+        /// The issuer URL, exactly as written. Both what is fetched and what every token's `iss` is
+        /// compared against.
+        issuer: Arc<str>,
+        /// The host of that URL — the peer §6.5's egress rule is written from, and the same shape
+        /// a `net.out(host)` atom carries.
+        host: Arc<str>,
+        span: Span,
+    },
+    /// `identity = managed()`.
+    ///
+    /// There is no URL here on purpose. The issuer is a `Service` §6.5 derives, so its name is a
+    /// function of the application's name and the platform's conventions — and a program that
+    /// wrote it down would be a program that has to be edited when either changes.
+    Managed { span: Span },
+}
+
+impl IdentityDecl {
     /// Where it was written, so a second declaration in a second module has somewhere to point.
-    pub span: Span,
+    pub fn span(&self) -> Span {
+        match self {
+            IdentityDecl::External { span, .. } | IdentityDecl::Managed { span } => *span,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1214,13 +1237,22 @@ impl<'a> Checker<'a> {
                 self.error("B0359", "identity is declared twice", span);
                 continue;
             }
-            // One provider, and the diagnostic names the other rather than calling it unknown:
-            // `managed()` is a real half of D6 and "not built" is a more useful answer than "no".
+            // D6's two forms. `managed()` carries nothing, because the issuer is a Service the
+            // deployment has not named yet (§6.5), and `external` carries the URL because nothing
+            // in this repository is going to provision somebody else's provider.
             let call = &item.args[0];
+            if call.is_form("managed") {
+                if !call.args.is_empty() {
+                    self.error("B0359", "`managed()` takes no arguments", span);
+                    continue;
+                }
+                self.identity = Some(IdentityDecl::Managed { span });
+                continue;
+            }
             if !call.is_form("external") {
                 self.error(
                     "B0359",
-                    "`external(issuer=\"…\")` is the only identity provider available",
+                    "`external(issuer=\"…\")` and `managed()` are the identity providers",
                     span,
                 );
                 continue;
@@ -1254,7 +1286,7 @@ impl<'a> Checker<'a> {
                 );
                 continue;
             };
-            self.identity = Some(IdentityDecl {
+            self.identity = Some(IdentityDecl::External {
                 issuer: Arc::from(issuer.trim_end_matches('/')),
                 host: Arc::from(host.as_str()),
                 span,

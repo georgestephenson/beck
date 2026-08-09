@@ -39,8 +39,9 @@
 //! cookie. §94.6 of the report says what it costs: a user is sent back to the issuer when the token
 //! expires, and an issuer that mints five-minute tokens will do that every five minutes.
 //!
-//! No **`identity = managed()` provisioning**, and no **UserInfo request**: the claims are the ID
-//! token's.
+//! No **UserInfo request**: the claims are the ID token's. `identity = managed()` is built and is
+//! `beck-infra`'s (§94.10) — what reaches here from it is one thing, [`Config::in_cluster`], and its
+//! field says what it costs.
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
@@ -113,9 +114,22 @@ pub struct Config {
     /// Which claim names the actor. `sub` is the only one an issuer guarantees is stable and
     /// unique, which is why it is the default and why choosing another is a decision.
     pub actor_claim: String,
+    /// Whether the issuer may be reached over a plaintext hop.
+    ///
+    /// **False except for a provider this deployment provisioned.** An external issuer must be
+    /// `https`, because the key set has no integrity protection but the transport. A *managed* one
+    /// is a `Service` §6.5 emitted, in the application's own namespace, reachable only through a
+    /// NetworkPolicy §6.5 wrote — so what protects the key set there is the policy, and §6.5's
+    /// gateway is where TLS is terminated for everything that crosses a network anybody else is on
+    /// ([`docs/94`](../../../../../docs/94-oidc-relying-party-report.md) §94.10).
+    ///
+    /// Private, and set by [`Config::in_cluster`] rather than assignable: a `pub` bool here would
+    /// be the flag §94.2 says does not exist.
+    in_cluster: bool,
 }
 
 impl Config {
+    /// A relying party to somebody else's identity provider. The issuer must be `https`.
     pub fn new(issuer: &str, client_id: &str, redirect_uri: &str) -> Config {
         Config {
             issuer: issuer.trim_end_matches('/').to_string(),
@@ -124,7 +138,25 @@ impl Config {
             redirect_uri: redirect_uri.to_string(),
             scopes: "openid profile email".to_string(),
             actor_claim: "sub".to_string(),
+            in_cluster: false,
         }
+    }
+
+    /// A relying party to a provider **this deployment provisioned**, reached inside one namespace.
+    ///
+    /// A second constructor rather than a field, so that the trust story is chosen by name at the
+    /// one place that knows which of the two this is — `identity = managed()` in the program, read
+    /// by `beck run`. See [`Config::in_cluster`]'s field for what it costs.
+    pub fn in_cluster(issuer: &str, client_id: &str, redirect_uri: &str) -> Config {
+        Config {
+            in_cluster: true,
+            ..Config::new(issuer, client_id, redirect_uri)
+        }
+    }
+
+    /// Whether this relying party's issuer is one the deployment provisioned.
+    pub fn is_in_cluster(&self) -> bool {
+        self.in_cluster
     }
 }
 
@@ -296,16 +328,16 @@ impl RelyingParty {
         // stops a discovery document moving the token exchange — and the client secret with it —
         // somewhere else. An issuer that splits its endpoints across hosts is not usable here, and
         // that is a limit rather than an oversight (§94.6).
-        let host = url_host(&self.config.issuer)?;
+        let host = url_host(&self.config.issuer, self.config.in_cluster)?;
         for (name, endpoint) in [
             ("authorization_endpoint", &provider.authorization_endpoint),
             ("token_endpoint", &provider.token_endpoint),
             ("jwks_uri", &provider.jwks_uri),
         ] {
-            if url_host(endpoint)? != host {
+            let elsewhere = url_host(endpoint, self.config.in_cluster)?;
+            if elsewhere != host {
                 return Err(format!(
-                    "`{name}` is on `{}`, and this relying party only reaches `{host}`",
-                    url_host(endpoint)?
+                    "`{name}` is on `{elsewhere}`, and this relying party only reaches `{host}`"
                 ));
             }
         }
@@ -313,13 +345,13 @@ impl RelyingParty {
     }
 
     fn get(&self, url: &str) -> Result<String, String> {
-        let target = Target::parse(url)?;
+        let target = Target::parse(url, self.config.in_cluster)?;
         let reply = self
             .http
             .fetch(&Request {
                 host: Arc::from(target.host.as_str()),
                 port: target.port,
-                tls: true,
+                tls: target.tls,
                 method: Arc::from("GET"),
                 path: Arc::from(target.path.as_str()),
                 headers: vec![(Arc::from("accept"), Arc::from("application/json"))],
@@ -559,7 +591,7 @@ impl RelyingParty {
         let provider = self
             .provider()
             .ok_or_else(|| "the identity provider has not been discovered yet".to_string())?;
-        let target = Target::parse(&provider.token_endpoint)?;
+        let target = Target::parse(&provider.token_endpoint, self.config.in_cluster)?;
 
         let mut form = vec![
             ("grant_type", "authorization_code".to_string()),
@@ -604,7 +636,7 @@ impl RelyingParty {
             .fetch(&Request {
                 host: Arc::from(target.host.as_str()),
                 port: target.port,
-                tls: true,
+                tls: target.tls,
                 method: Arc::from("POST"),
                 path: Arc::from(target.path.as_str()),
                 headers,
@@ -1009,6 +1041,8 @@ struct Target {
     host: String,
     port: u16,
     path: String,
+    /// Whether the exchange goes inside a TLS session. Always true for an external issuer.
+    tls: bool,
 }
 
 impl Target {
@@ -1018,10 +1052,18 @@ impl Target {
     /// says who sent it, so an `http` issuer is not a weaker configuration but a different feature.
     /// And a host with a userinfo section or a port in the name is a host §6.5's egress rule cannot
     /// be written from.
-    fn parse(url: &str) -> Result<Target, String> {
-        let rest = url
-            .strip_prefix("https://")
-            .ok_or_else(|| format!("`{url}` is not an https URL, and this one has to be"))?;
+    fn parse(url: &str, in_cluster: bool) -> Result<Target, String> {
+        let (rest, tls) = match url.strip_prefix("https://") {
+            Some(rest) => (rest, true),
+            None => match url.strip_prefix("http://").filter(|_| in_cluster) {
+                Some(rest) => (rest, false),
+                None => {
+                    return Err(format!(
+                        "`{url}` is not an https URL, and this one has to be"
+                    ))
+                }
+            },
+        };
         let (authority, path) = match rest.find('/') {
             Some(at) => (&rest[..at], &rest[at..]),
             None => (rest, "/"),
@@ -1035,7 +1077,7 @@ impl Target {
                 p.parse::<u16>()
                     .map_err(|_| format!("`{url}` has no readable port"))?,
             ),
-            None => (authority, 443),
+            None => (authority, if tls { 443 } else { 80 }),
         };
         if !beck_core::net::is_nameable_host(host) {
             return Err(format!(
@@ -1046,12 +1088,13 @@ impl Target {
             host: host.to_string(),
             port,
             path: path.to_string(),
+            tls,
         })
     }
 }
 
-fn url_host(url: &str) -> Result<String, String> {
-    Ok(Target::parse(url)?.host)
+fn url_host(url: &str, in_cluster: bool) -> Result<String, String> {
+    Ok(Target::parse(url, in_cluster)?.host)
 }
 
 /// RFC 3986's unreserved set, and everything else escaped.
@@ -1127,25 +1170,48 @@ mod tests {
     #[test]
     fn only_an_https_url_with_a_nameable_host_is_a_target() {
         assert_eq!(
-            Target::parse("https://login.acme.com/authorize"),
+            Target::parse("https://login.acme.com/authorize", false),
             Ok(Target {
                 host: "login.acme.com".into(),
                 port: 443,
-                path: "/authorize".into()
+                path: "/authorize".into(),
+                tls: true,
             })
         );
         assert_eq!(
-            Target::parse("https://login.acme.com:8443"),
+            Target::parse("https://login.acme.com:8443", false),
             Ok(Target {
                 host: "login.acme.com".into(),
                 port: 8443,
-                path: "/".into()
+                path: "/".into(),
+                tls: true,
             })
         );
         // The three refusals, each for its own reason.
-        assert!(Target::parse("http://login.acme.com/").is_err());
-        assert!(Target::parse("https://user:pw@login.acme.com/").is_err());
-        assert!(Target::parse("https://not a host/").is_err());
+        assert!(Target::parse("http://login.acme.com/", false).is_err());
+        assert!(Target::parse("https://user:pw@login.acme.com/", false).is_err());
+        assert!(Target::parse("https://not a host/", false).is_err());
+    }
+
+    /// A provider this deployment provisioned is reached inside one namespace, so `http` is
+    /// admissible there and **only** there — and it is the declaration that decides, not the URL.
+    #[test]
+    fn a_plaintext_issuer_is_a_target_only_for_a_provisioned_provider() {
+        assert_eq!(
+            Target::parse("http://todo-identity:8080/realms/todo", true),
+            Ok(Target {
+                host: "todo-identity".into(),
+                port: 8080,
+                path: "/realms/todo".into(),
+                tls: false,
+            })
+        );
+        // The same URL, for a relying party that did not provision its provider.
+        assert!(Target::parse("http://todo-identity:8080/realms/todo", false).is_err());
+        // And the relaxation is about the transport only: a host an egress rule could not name is
+        // still refused, in cluster or out.
+        assert!(Target::parse("http://user:pw@todo-identity/", true).is_err());
+        assert!(Target::parse("http://not a host/", true).is_err());
     }
 
     #[test]

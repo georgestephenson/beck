@@ -347,7 +347,7 @@ dependencies whose signatures didn't change.
   choose. The **relying party** and the **claims mapping** are built too
   ([`94`](94-oidc-relying-party-report.md)): discovery, a cached JWKS, RS/PS/ES signatures, every
   claim check, the authorization-code flow with PKCE, and `Session.claims`. What is left of this
-  bullet is `managed()` provisioning and presence. D6's language surface is built as written —
+  bullet is presence. D6's language surface is built as written, both forms —
   `identity = external(issuer=…)` is a declaration, so §6.5's egress rule covers the issuer like any
   other peer (§94.7).*
 - LSP: completion, hover with *inferred placement*, go-to-def, rename, inline diagnostics.
@@ -376,8 +376,8 @@ to Phase 5), and incremental views, whose last part is
 ([`90`](90-nested-patterns-report.md), [`91`](91-guards-and-alternatives-report.md)); what
 `parallel:` lacks is a backend that runs two children at once, which is
 [`80`](80-a-scope-owns-its-children-report.md) §80.5's item rather than this bullet's. **Two half-built**: identity has
-its seam, its relying party and its claims mapping ([`48`](48-identity-report.md),
-[`94`](94-oidc-relying-party-report.md)) and not `managed()` provisioning or presence, and the
+its seam, its relying party, its claims mapping and both halves of its declaration
+([`48`](48-identity-report.md), [`94`](94-oidc-relying-party-report.md)) and not presence, and the
 codegen bullet has LLVM over the scalar subset and no
 Cranelift ([`93`](93-llvm-backend-report.md) §93.6). **Three untouched**: Mode B, client polish and the
 playground; the supply-chain bullet has one of its four pieces
@@ -753,8 +753,14 @@ declaration, not a flag, so the compiler knows the issuer and §6.5's egress rul
 other peer (§94.7). That was the one thing this work found that was *worse* than unbuilt — a runtime
 with a peer the compiler had never heard of — and it is closed rather than recorded.
 
-**Unbuilt**: `identity = managed()` provisioning, and presence. `pending_security.rs` asserts the
-first by emitting the object graph and reading it, in both directions.
+`identity = managed()` is built too (§94.10): the object graph gains a provider, its Service, its
+volume, its credentials and a **realm wired to this application's own route**, and the application's
+egress to it is a `Peer` — a rule Kubernetes enforces, which the DNS-name rule an external issuer
+gets is not. It is the one place in the project where a plaintext issuer is admissible, and the
+argument is written out rather than left in a URL.
+
+**Unbuilt**: presence — "who is connected now, as a first-class non-durable `Signal`" — which is the
+last row of this bullet.
 
 *Both of that row's predecessors are gone.* §48.5 said the relying party "needs an HTTP client and a
 signature library, so it is an ADR rather than a line in a module". The HTTP client was built

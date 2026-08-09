@@ -167,16 +167,10 @@ Against [`48`](48-identity-report.md) §48.5's table:
 | OIDC relying party | **built** — discovery, JWKS, RS/PS/ES, issuer, audience, azp, expiry, nbf, nonce, and the code flow with PKCE |
 | Claims → `Session` | **built** — §94.4 |
 | `identity = external(issuer=…)` as a declaration | **built** — §94.7, and it is what makes the egress rule derivable |
-| `identity = managed()` provisioning | **not built**. `B0359` says so by name rather than calling it unknown |
-| Presence as a first-class signal | **not built**, and untouched by this |
+| `identity = managed()` provisioning | **built** — §94.10 |
+| Presence as a first-class signal | **not built**, and untouched by this. It is the last unbuilt row of [`08`](08-roadmap.md)'s identity bullet |
 
 And the things a reader would reasonably assume and should not:
-
-- **No identity provider is provisioned.** `external(…)` names one that is already somewhere else;
-  `managed()` would put a Keycloak or Ory workload in the object graph, and nothing does.
-  `pending_security.rs` asserts that in both directions — the declared issuer *is* in the derived
-  policy, and no provider workload is — because "nothing is provisioned" is only interesting beside
-  "the one the program names is reachable".
 - **No `Secure` on the cookie.** §6.5's gateway terminates TLS in front of a plaintext hop, so
   setting it would make the cookie unusable in the deployment this project generates. It is the same
   reason [`83`](83-the-runtime-edge-report.md) §83.3 does not compare schemes in the `Origin` check,
@@ -308,3 +302,58 @@ the expiry comparison each turned exactly one test red; making the websocket upg
 cookie turned `the_websocket_upgrade_is_where_a_cookie_is_checked` red — and the *first* attempt at
 that last mutation left the refusal in place and the suite stayed green, which is a small reminder
 that a mutation you did not verify is a mutation you did not perform.
+
+## 94.10 `managed()`, and the one place `http` is not a defect
+
+D6's other form asks Beck to *provision* the provider: "the InfraGraph provisions **Keycloak**
+(Apache-2.0, CNCF) … wired via OIDC automatically." `identity = managed()` does that now —
+[`provider.rs`](../compiler/crates/beck-infra/src/provider.rs) is
+[`substrate.rs`](../compiler/crates/beck-infra/src/substrate.rs)'s argument applied to the other
+thing a deployment stands up on a program's behalf, and the emitter derives a StatefulSet with a
+volume, a Service, a Secret and a realm.
+
+**"Wired" is the word that costs something.** A Keycloak that is running and does not know this
+application's redirect URI refuses every login with `invalid_redirect_uri`, so the derivation has to
+produce a *realm*, and the realm has to agree with objects the same graph produced. It does, because
+both read the same two facts: `realm` is the application's name, and the redirect URI is
+`route_host(app)` — the same function the `Route` uses, extracted for this so the host is written
+once rather than twice. The client is **public**, because that is what a browser-facing application
+with PKCE is (§94.3) and because a confidential client would need a secret that this file invented
+and wrote into a manifest in a git repository.
+
+The interesting result is the **egress rule**, and it is better than `external`'s. §6.5's derivation
+has two lists, and [`Node::Policy`](../compiler/crates/beck-infra/src/lib.rs) has carried the reason
+since Phase 1: a core `NetworkPolicy` egress peer is an `ipBlock`, a namespace selector or a pod
+selector — *never* a DNS name, so the hosts an `external` issuer and `http_fetch` contribute are
+emitted and not enforced. A **managed** issuer is a pod in this application's own namespace, so it
+is a `Peer`, and the rule is one the cluster actually applies. Asking for a provider you control
+therefore buys a guarantee that naming somebody else's cannot.
+
+That is also the answer to the question this section exists for. The issuer of a managed provider is
+`http://todo-identity:8080/realms/todo` — **plaintext**, in a project that has just spent §94.2
+arguing there is no flag to relax `https`. There is still no flag. There are two constructors:
+`Config::new` requires `https`, `Config::in_cluster` does not, and *which one is used is decided by
+the declaration* rather than by the URL's scheme — `managed()` in the program, read by `beck run`.
+The trust argument is different because the situation is: an external key set crosses a network
+nobody in this deployment controls and TLS is its only integrity protection, while a managed one
+crosses one pod-to-pod hop, to a Service this derivation emitted, permitted by a NetworkPolicy this
+derivation wrote and enforced by the cluster. What protects it there is the policy. Writing that
+down is the whole of why `in_cluster` is a private field with a constructor rather than a `pub bool`
+somebody could set.
+
+Two limits, stated rather than left:
+
+- **`start-dev`.** Keycloak's production mode wants a hostname, a database and TLS material this
+  derivation does not have, and starting it in a mode it cannot satisfy is a crash-loop rather than
+  a deployment. So the derived provider is rung-1 shaped — development and staging — and a
+  production one needs a database this graph does not emit.
+- **Nothing here has been started.** `beck-infra/tests/conformance.rs` skips without a cluster and
+  there is none here, so what is established is that *the object graph contains these objects, wired
+  to each other* — the realm admits the path the runtime serves, the application is told the issuer
+  that names the Service, the policy admits the peer. "You can log in" is a different claim, and
+  [`82`](82-the-defaults-that-should-be-unavoidable-report.md) §82.4 is the precedent for saying so.
+
+And at rung 0 there is no cluster at all, so `beck run` on a program that says `managed()` prints
+`identity dev — this program's provider is provisioned by \`beck build\`, and there is none here`
+and believes the client. That is D6's own answer ("rung 0 uses a dev-mode identity"), and the
+startup line is what keeps it from being a silent one.

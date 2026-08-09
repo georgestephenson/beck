@@ -707,14 +707,17 @@ fn the_declared_issuer_is_the_egress_rule() {
     assert!(!diags.has_errors(), "{}", diags.render(&map));
     let placed = placed.expect("it slices");
 
-    let declared = placed
+    let beck_core::check::IdentityDecl::External { issuer, host, .. } = placed
         .program
         .identity
         .as_ref()
-        .expect("the program declares an identity provider");
-    assert_eq!(declared.issuer.as_ref(), "https://login.acme.com");
+        .expect("the program declares an identity provider")
+    else {
+        panic!("`external(…)` did not read as external");
+    };
+    assert_eq!(issuer.as_ref(), "https://login.acme.com");
     assert_eq!(
-        declared.host.as_ref(),
+        host.as_ref(),
         "login.acme.com",
         "the host is what an egress rule is written from"
     );
@@ -746,6 +749,133 @@ fn manifests(placed: &beck_core::Placed) -> String {
         .collect()
 }
 
+/// `identity = managed()` provisions the provider, wired to this application (D6).
+///
+/// The claim is the *wiring*, not that a pod starts — `beck-infra/tests/conformance.rs` skips
+/// without a cluster and there is none here. So what is asserted is that the objects refer to each
+/// other: the realm admits the redirect URI the route serves, the application is told the issuer
+/// that names the Service, and the egress rule is a peer rather than a DNS name.
+#[test]
+fn managed_identity_provisions_a_provider_and_wires_it_to_this_application() {
+    let src = declaring("https://login.acme.com").replace(
+        "identity = external(issuer=\"https://login.acme.com\")",
+        "identity = managed()",
+    );
+    let (placed, diags, map) = beck_core::compile_str("managed.beck", &src);
+    assert!(!diags.has_errors(), "{}", diags.render(&map));
+    let placed = placed.expect("it slices");
+    assert!(matches!(
+        placed.program.identity,
+        Some(beck_core::check::IdentityDecl::Managed { .. })
+    ));
+
+    let graph = beck_infra::graph(&placed);
+    let app = &graph.app;
+    let provider = graph
+        .nodes
+        .iter()
+        .find_map(|d| match &d.node {
+            beck_infra::Node::IdentityProvider { name, realm, .. } => Some((name, realm)),
+            _ => None,
+        })
+        .expect("a provider is provisioned");
+    assert_eq!(provider.0, &format!("{app}-identity"));
+
+    // The realm is derived from the two things the graph already knows: this application's name,
+    // and the host its own Route admits. A realm whose redirect URI is not the path the runtime
+    // serves is a provider that refuses every login with `invalid_redirect_uri`.
+    let realm: serde_json::Value = serde_json::from_str(provider.1).expect("the realm is JSON");
+    assert_eq!(realm["realm"], app.as_str());
+    assert_eq!(
+        realm["clients"][0]["redirectUris"][0],
+        format!(
+            "https://{}{}",
+            beck_infra::route_host(app),
+            beck_rt::http::CALLBACK_PATH
+        ),
+        "the realm admits a URI the application does not serve"
+    );
+
+    // The application's egress to it is a **peer**, which Kubernetes enforces — an external issuer
+    // can only be an `allow_egress_hosts` entry, which it does not (§94.10).
+    let policy = graph
+        .nodes
+        .iter()
+        .find_map(|d| match &d.node {
+            beck_infra::Node::Policy {
+                allow_egress_to,
+                allow_egress_hosts,
+                ..
+            } => Some((allow_egress_to, allow_egress_hosts)),
+            _ => None,
+        })
+        .expect("a policy");
+    assert!(
+        policy.0.iter().any(|p| p.app == format!("{app}-identity")),
+        "the application may not reach the provider this deployment stood up: {:?}",
+        policy.0
+    );
+    assert!(
+        policy.1.is_empty(),
+        "a provisioned provider became a DNS-name rule, which the cluster cannot enforce: {:?}",
+        policy.1
+    );
+
+    // And `beck explain deploy` says *why* the rule is there. A policy with an egress peer and a
+    // provenance line reading "no `net.out` in the program, no egress rule in the cluster" is an
+    // explanation that contradicts the object it explains.
+    let why = graph.explain();
+    assert!(
+        why.contains("`identity = managed()`"),
+        "the policy's egress peer has no explanation:\n{why}"
+    );
+
+    // And the same program without the declaration provisions nothing, so none of the above is
+    // something the emitter does anyway.
+    let (bare, _, _) =
+        beck_core::compile_str("bare.beck", &src.replace("identity = managed()\n", ""));
+    let bare = beck_infra::graph(&bare.expect("it slices"));
+    assert!(
+        !bare
+            .nodes
+            .iter()
+            .any(|d| matches!(d.node, beck_infra::Node::IdentityProvider { .. })),
+        "a program that asked for nothing got a provider"
+    );
+}
+
+/// The container is told where its issuer is, and who it is there — so an operator writes neither.
+///
+/// "Wired via OIDC automatically" is D6's phrase, and this is what it has to mean: the client id is
+/// the realm's, the redirect URI is the route's, and the issuer is the Service's. Read off the
+/// rendered manifest rather than off the functions that produced it, which is `docs/92` §92.2's
+/// rule — calling them here would be agreeing with myself.
+#[test]
+fn the_deployment_tells_the_application_where_its_issuer_is() {
+    let src = declaring("https://login.acme.com").replace(
+        "identity = external(issuer=\"https://login.acme.com\")",
+        "identity = managed()",
+    );
+    let (placed, diags, map) = beck_core::compile_str("managed.beck", &src);
+    assert!(!diags.has_errors(), "{}", diags.render(&map));
+    let placed = placed.expect("it slices");
+    let rendered = manifests(&placed);
+
+    // The env var the runtime reads, from the Secret the graph derived.
+    assert!(
+        rendered.contains(beck_infra::provider::DEFAULT.issuer_var),
+        "the application container is not told its issuer:\n{rendered}"
+    );
+    // The issuer value itself: the Service, the provider's port and the realm.
+    assert!(
+        rendered.contains(&beck_infra::provider::DEFAULT.issuer(
+            &format!("{}-identity", placed.program.name.replace('_', "-")),
+            &placed.program.name.replace('_', "-")
+        )),
+        "the issuer written into the Secret does not name the Service the graph emitted:\n{rendered}"
+    );
+}
+
 /// Every way the declaration can be wrong, refused with a span.
 ///
 /// The two that matter are the two `beck_rt::oidc` also refuses at run time, and refusing them here
@@ -768,11 +898,22 @@ fn a_declaration_this_compiler_cannot_deploy_is_a_diagnostic() {
         declaring("https://a:b@login.acme.com"),
     );
     refused("an issuer that is not a URL", declaring("login.acme.com"));
-    // D6's other half, named rather than called unknown.
+    // A provider that is neither of D6's two.
     refused(
-        "managed provisioning",
-        declaring("https://login.acme.com")
-            .replace("external(issuer=\"https://login.acme.com\")", "managed()"),
+        "an unknown provider",
+        declaring("https://login.acme.com").replace(
+            "external(issuer=\"https://login.acme.com\")",
+            "whatever(issuer=\"https://login.acme.com\")",
+        ),
+    );
+    // `managed()` provisions the provider, so there is nothing to tell it about: an issuer here
+    // would be a URL the deployment is about to decide for itself.
+    refused(
+        "managed with an issuer",
+        declaring("https://login.acme.com").replace(
+            "external(issuer=\"https://login.acme.com\")",
+            "managed(issuer=\"https://login.acme.com\")",
+        ),
     );
     // And two declarations are two answers to one question.
     refused(
@@ -786,7 +927,7 @@ fn a_declaration_this_compiler_cannot_deploy_is_a_diagnostic() {
 
 /// `identity` is an ordinary name, and a program that uses it as one still compiles.
 ///
-/// SICP §1.3.3 defines `identity`, and the declaration is guarded on the `=` rather than on the
+/// `sicp/ch1.beck` defines `identity` at §1.3.1, and the declaration is guarded on the `=` rather than on the
 /// word for exactly that reason. This is the gate that says so.
 #[test]
 fn identity_is_still_a_name_a_program_may_use() {

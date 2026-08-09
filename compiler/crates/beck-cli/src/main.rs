@@ -1421,7 +1421,24 @@ fn identity(
         }
         return Ok(None);
     };
-    let issuer = declared.issuer.as_ref();
+    // `managed()` says the *deployment* provisions the provider, so at rung 0 there is nothing to
+    // reach: D6's own answer is that "rung 0 (`beck run`) uses a dev-mode identity", and the
+    // deployment supplies the issuer through the environment exactly as it supplies the log's URL.
+    let issuer = match declared {
+        beck_core::check::IdentityDecl::External { issuer, .. } => issuer.to_string(),
+        beck_core::check::IdentityDecl::Managed { .. } => {
+            match std::env::var(beck_infra::provider::DEFAULT.issuer_var) {
+                Ok(url) if !url.is_empty() => url,
+                _ => {
+                    eprintln!(
+                        "identity     dev — this program's provider is provisioned by `beck \
+                         build`, and there is none here"
+                    );
+                    return Ok(None);
+                }
+            }
+        }
+    };
     let client_id = auth.client_id.as_deref().ok_or_else(|| {
         anyhow::anyhow!("this program authenticates against `{issuer}` and needs a `--client-id`")
     })?;
@@ -1430,7 +1447,17 @@ fn identity(
         .clone()
         .unwrap_or_else(|| format!("http://{addr}{}", beck_rt::http::CALLBACK_PATH));
 
-    let mut config = beck_rt::oidc::Config::new(issuer, client_id, &redirect);
+    // Two constructors, and which one is chosen is decided by the *declaration* rather than by the
+    // URL's scheme: a provider this deployment provisioned is reached inside one namespace, and one
+    // it did not must be reached over TLS (`docs/94` §94.10).
+    let mut config = match declared {
+        beck_core::check::IdentityDecl::Managed { .. } => {
+            beck_rt::oidc::Config::in_cluster(&issuer, client_id, &redirect)
+        }
+        beck_core::check::IdentityDecl::External { .. } => {
+            beck_rt::oidc::Config::new(&issuer, client_id, &redirect)
+        }
+    };
     config.client_secret = auth.client_secret.clone();
     // Its own client, not the process-global one the evaluator reads. A program's outbound calls
     // and the runtime's calls to its identity provider are two different things to be able to
@@ -1648,6 +1675,7 @@ fn detail_of(n: &beck_infra::Node) -> String {
         Service { port, headless, .. } => {
             format!(":{port}{}", if *headless { " headless" } else { "" })
         }
+        IdentityProvider { volume_gb, .. } => format!("{volume_gb}Gi, one realm"),
         LogStore { volume_gb, .. } => format!("{volume_gb} GiB volume"),
         SnapshotSchedule { every_events, .. } => format!("every {every_events} events"),
         Secret { keys, .. } => keys.join(", "),

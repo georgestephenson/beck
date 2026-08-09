@@ -45,10 +45,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use k8s_openapi::api::apps::v1::{Deployment, DeploymentSpec, StatefulSet, StatefulSetSpec};
 use k8s_openapi::api::core::v1::{
     Capabilities, ConfigMap, Container, ContainerPort, EnvVar, EnvVarSource, HTTPGetAction,
-    Lifecycle, LifecycleHandler, Namespace, PersistentVolumeClaim, PersistentVolumeClaimSpec,
-    PodSecurityContext, PodSpec, PodTemplateSpec, Probe, SeccompProfile, Secret, SecretKeySelector,
-    SecurityContext, Service, ServicePort, ServiceSpec, SleepAction, VolumeMount,
-    VolumeResourceRequirements,
+    KeyToPath, Lifecycle, LifecycleHandler, Namespace, PersistentVolumeClaim,
+    PersistentVolumeClaimSpec, PodSecurityContext, PodSpec, PodTemplateSpec, Probe, SeccompProfile,
+    Secret, SecretKeySelector, SecretVolumeSource, SecurityContext, Service, ServicePort,
+    ServiceSpec, SleepAction, Volume, VolumeMount, VolumeResourceRequirements,
 };
 use k8s_openapi::api::networking::v1::{
     IPBlock, NetworkPolicy, NetworkPolicyEgressRule, NetworkPolicyIngressRule, NetworkPolicyPeer,
@@ -59,6 +59,7 @@ use k8s_openapi::apimachinery::pkg::apis::meta::v1::{LabelSelector, ObjectMeta};
 use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
 use serde_json::Value;
 
+use crate::provider::DEFAULT as PROVIDER;
 use crate::substrate::DEFAULT as SUBSTRATE;
 use crate::yaml;
 use crate::{InfraGraph, Node};
@@ -187,6 +188,23 @@ pub fn objects(graph: &InfraGraph, wire_id: &str) -> Vec<(String, Value)> {
                             let v = match k.as_str() {
                                 "url" => log_url(app),
                                 "password" => SUBSTRATE.dev_password().to_string(),
+                                "admin-password" => PROVIDER.dev_password().to_string(),
+                                // The issuer the application will be told about — the Service this
+                                // graph emitted, and the realm it derived. Written here rather than
+                                // computed by the runtime, for `log_url`'s reason: two places that
+                                // build one URL are two places for it to be wrong.
+                                "issuer" => PROVIDER.issuer(&format!("{app}-identity"), app),
+                                // Read off the node the graph already derived rather than derived
+                                // again here: `docs/92` §92.2's rule — one function, and the gate
+                                // reads the rendered output back rather than calling it twice.
+                                "realm.json" => graph
+                                    .nodes
+                                    .iter()
+                                    .find_map(|d| match &d.node {
+                                        Node::IdentityProvider { realm, .. } => Some(realm.clone()),
+                                        _ => None,
+                                    })
+                                    .unwrap_or_default(),
                                 _ => String::new(),
                             };
                             (k.clone(), v)
@@ -202,6 +220,7 @@ pub fn objects(graph: &InfraGraph, wire_id: &str) -> Vec<(String, Value)> {
                 serves_ui,
                 reads_log,
                 writes_files,
+                reads_identity,
             } => to_value(&workload(
                 app,
                 name,
@@ -209,7 +228,14 @@ pub fn objects(graph: &InfraGraph, wire_id: &str) -> Vec<(String, Value)> {
                 *serves_ui,
                 *reads_log,
                 *writes_files,
+                *reads_identity,
             )),
+
+            Node::IdentityProvider {
+                name,
+                volume_gb,
+                realm,
+            } => to_value(&identity_provider(app, name, *volume_gb, realm)),
 
             Node::Route {
                 name,
@@ -314,6 +340,116 @@ pub fn apply_order(graph: &InfraGraph) -> Vec<&crate::Derived> {
 }
 
 /// The log store: a StatefulSet, because its volume is its identity.
+/// The identity provider: somebody else's image, a volume, and the realm this graph derived.
+///
+/// A StatefulSet for [`log_store`]'s reason — its volume is its identity — and with the three
+/// hardening constants but **not** a read-only root filesystem, which is `docs/82` §82.3's
+/// asymmetry: a derived manifest may make claims about the program's own container and not about a
+/// dependency's.
+fn identity_provider(app: &str, name: &str, volume_gb: u32, realm: &str) -> StatefulSet {
+    StatefulSet {
+        metadata: meta(app, name),
+        spec: Some(StatefulSetSpec {
+            service_name: Some(name.to_string()),
+            replicas: Some(1),
+            selector: selector(name),
+            template: {
+                let mut template = pod(
+                    name,
+                    PodSpec {
+                        containers: vec![Container {
+                            name: "identity".to_string(),
+                            image: Some(PROVIDER.image.to_string()),
+                            security_context: Some(hardened(None)),
+                            args: Some(PROVIDER.start_args.iter().map(|a| a.to_string()).collect()),
+                            env: Some(vec![
+                                EnvVar {
+                                    name: "KC_BOOTSTRAP_ADMIN_USERNAME".to_string(),
+                                    value: Some("admin".to_string()),
+                                    ..Default::default()
+                                },
+                                from_secret(
+                                    "KC_BOOTSTRAP_ADMIN_PASSWORD",
+                                    &format!("{app}-identity-credentials"),
+                                    "admin-password",
+                                ),
+                                // The provider is reached at its Service name from inside the
+                                // cluster and at the gateway from outside, and a token's `iss` has
+                                // to be the one the application compares against — so it is told
+                                // the same string the application is told.
+                                EnvVar {
+                                    name: "KC_HOSTNAME_STRICT".to_string(),
+                                    value: Some("false".to_string()),
+                                    ..Default::default()
+                                },
+                            ]),
+                            ports: Some(vec![ContainerPort {
+                                container_port: i32::from(PROVIDER.port),
+                                ..Default::default()
+                            }]),
+                            volume_mounts: Some(vec![
+                                VolumeMount {
+                                    name: "data".to_string(),
+                                    mount_path: PROVIDER.data_dir.to_string(),
+                                    ..Default::default()
+                                },
+                                VolumeMount {
+                                    name: "realm".to_string(),
+                                    mount_path: PROVIDER.import_dir.to_string(),
+                                    ..Default::default()
+                                },
+                            ]),
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    },
+                );
+                // The realm travels as a projected file rather than as an argument: it is JSON with
+                // a redirect URI in it, and a command line is visible in the process table.
+                if let Some(spec) = template.spec.as_mut() {
+                    spec.volumes = Some(vec![Volume {
+                        name: "realm".to_string(),
+                        secret: Some(SecretVolumeSource {
+                            secret_name: Some(format!("{app}-identity-credentials")),
+                            // Only the realm, not the admin password: a Secret mounted whole would
+                            // put the administrator's credential on the provider's import path.
+                            items: Some(vec![KeyToPath {
+                                key: "realm.json".to_string(),
+                                path: "realm.json".to_string(),
+                                ..Default::default()
+                            }]),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }]);
+                }
+                let _ = realm;
+                template
+            },
+            volume_claim_templates: Some(vec![PersistentVolumeClaim {
+                metadata: ObjectMeta {
+                    name: Some("data".to_string()),
+                    ..Default::default()
+                },
+                spec: Some(PersistentVolumeClaimSpec {
+                    access_modes: Some(vec!["ReadWriteOnce".to_string()]),
+                    resources: Some(VolumeResourceRequirements {
+                        requests: Some(BTreeMap::from([(
+                            "storage".to_string(),
+                            Quantity(format!("{volume_gb}Gi")),
+                        )])),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }]),
+            ..Default::default()
+        }),
+        ..Default::default()
+    }
+}
+
 fn log_store(app: &str, name: &str, volume_gb: u32) -> StatefulSet {
     StatefulSet {
         metadata: meta(app, name),
@@ -410,6 +546,7 @@ fn hardened(read_only_root: Option<bool>) -> SecurityContext {
 }
 
 /// The service partition: one binary, told which program to run.
+#[allow(clippy::too_many_arguments)]
 fn workload(
     app: &str,
     name: &str,
@@ -417,6 +554,7 @@ fn workload(
     serves_ui: bool,
     reads_log: bool,
     writes_files: bool,
+    reads_identity: bool,
 ) -> Deployment {
     let mut metadata = meta(app, name);
     metadata.annotations = Some(BTreeMap::from([(
@@ -462,9 +600,26 @@ fn workload(
                             "--addr".to_string(),
                             format!("0.0.0.0:{APP_PORT}"),
                         ]),
-                        env: reads_log.then(|| {
-                            vec![from_secret("BECK_POSTGRES_URL", &credentials(app), "url")]
-                        }),
+                        // Where the log is, and where the issuer is: two facts the program does
+                        // not write down, supplied by the deployment that provisioned each.
+                        env: {
+                            let mut env = Vec::new();
+                            if reads_log {
+                                env.push(from_secret(
+                                    "BECK_POSTGRES_URL",
+                                    &credentials(app),
+                                    "url",
+                                ));
+                            }
+                            if reads_identity {
+                                env.push(from_secret(
+                                    PROVIDER.issuer_var,
+                                    &format!("{app}-identity-credentials"),
+                                    "issuer",
+                                ));
+                            }
+                            (!env.is_empty()).then_some(env)
+                        },
                         ports: Some(vec![ContainerPort {
                             container_port: APP_PORT,
                             ..Default::default()
@@ -892,6 +1047,7 @@ fn slug(n: &Node) -> String {
         Node::Workload { .. } => "workload".into(),
         Node::Route { .. } => "route".into(),
         Node::LogStore { .. } => "log-store".into(),
+        Node::IdentityProvider { .. } => "identity".into(),
         Node::SnapshotSchedule { .. } => "snapshots".into(),
         Node::Secret { .. } => "secret".into(),
         Node::Policy { .. } => "policy".into(),
