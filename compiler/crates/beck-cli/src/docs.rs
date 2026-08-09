@@ -57,12 +57,13 @@ pub fn module(
     out: Option<&Path>,
     format: Format,
     stdout: bool,
+    repo: Option<&str>,
 ) -> Result<()> {
     let docs = Docs::of_interface(&project.interface, &project.program.docs);
 
     let rendered = match format {
         Format::Md => docs.to_markdown(),
-        Format::Html => docs.to_html(),
+        Format::Html => docs.to_html(repo),
         Format::Json => docs.to_json(),
     };
 
@@ -105,7 +106,7 @@ struct Page {
 ///
 /// `check` is the drift gate: nothing is written, and a file that differs from what the compiler
 /// would generate is an error naming the file.
-pub fn reference(out: &Path, format: Format, check: bool) -> Result<()> {
+pub fn reference(out: &Path, format: Format, check: bool, repo: Option<&str>) -> Result<()> {
     if format == Format::Json {
         bail!("the reference is generated as markdown or html; json is for module pages");
     }
@@ -120,6 +121,7 @@ pub fn reference(out: &Path, format: Format, check: bool) -> Result<()> {
                 &format!("{} — beck", p.title),
                 docgen::REFERENCE_PAGE_HOME,
                 &breadcrumb(p.title),
+                repo,
                 &p.body,
             ),
         };
@@ -133,6 +135,7 @@ pub fn reference(out: &Path, format: Format, check: bool) -> Result<()> {
                 "The beck language reference",
                 docgen::REFERENCE_PAGE_HOME,
                 "",
+                repo,
                 &index.1,
             ),
         },
@@ -246,7 +249,13 @@ fn index_page(pages: &[Page]) -> (String, String) {
 /// honest is that its programs are compiled and run by a harness — `getting_started.rs` for the one
 /// this exists to publish. Rendering it here rather than checking in a second HTML copy is the same
 /// rule as `docs/reference/`: one source, and a build that produces the rest.
-pub fn guide(file: &Path, out: &Path, link_base: Option<&str>, stdout: bool) -> Result<()> {
+pub fn guide(
+    file: &Path,
+    out: &Path,
+    link_base: Option<&str>,
+    stdout: bool,
+    repo: Option<&str>,
+) -> Result<()> {
     let src =
         std::fs::read_to_string(file).with_context(|| format!("reading {}", file.display()))?;
     let links = link_base.map(|base| docgen::Links { base });
@@ -256,6 +265,7 @@ pub fn guide(file: &Path, out: &Path, link_base: Option<&str>, stdout: bool) -> 
         &format!("{title} — beck"),
         "../index.html",
         " / guide",
+        repo,
         &body,
     );
     if stdout {

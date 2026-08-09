@@ -41,7 +41,9 @@ either: **placement is inferred**, and the compiler can show its working.
 ## Getting started
 
 **[The guide](docs/86-getting-started.md)** takes you from an empty directory to a Kubernetes object
-graph. Every program in it is compiled and run by a test. In short:
+graph. Every program in it is compiled and run by a test. It is
+[published on the site](https://georgestephenson.github.io/beck/guide/getting-started.html)
+alongside the generated language reference and the compiler's API docs. In short:
 
 ```console
 $ cd compiler
@@ -79,6 +81,7 @@ and `beck up` round it out. The full command tree is in
 
 | | |
 |---|---|
+| [The site](https://georgestephenson.github.io/beck/) | The published documentation: the reference, the guide, two module pages and rustdoc — rebuilt from `main` on every push, and linked back here from every page |
 | [`docs/`](docs/README.md) | The design, the plan and the build reports — indexed, and the place to start reading |
 | [`docs/86-getting-started.md`](docs/86-getting-started.md) | The guide |
 | [`docs/reference/`](docs/reference/README.md) | The **generated** language reference: errors, commands, effects and tiers, the prelude, the forms |
