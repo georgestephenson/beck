@@ -55,8 +55,8 @@ What that buys, beyond the property:
 
 ## What it costs, named
 
-- **A pipe round trip per call**, measured at **23.2 µs** ([`93`](../93-llvm-backend-report.md)
-  §93.5). It is a constant, so it is the whole cost of a call that computes nothing and a rounding
+- **A pipe round trip per call**, measured at **36–43 µs** across §93.5's two harnesses
+  ([`93`](../93-llvm-backend-report.md)) — one constant, read twice on a noisy runner. It is a constant, so it is the whole cost of a call that computes nothing and a rounding
   error on one that computes for a millisecond — but it means this backend is for *compute*, and a
   program that crosses it a million times to do a nanosecond of work each time would be slower than
   the tree-walker. §93.7 says what would remove it.
@@ -68,7 +68,7 @@ What that buys, beyond the property:
   and [`0019`](0019-a-modern-allocator-for-the-evaluator.md) already need, so it changes what a
   person has to install by approximately nothing — but the *version* of it is now a variable in a
   performance number, which is why [`93`](../93-llvm-backend-report.md) quotes it.
-- **`-O2` runs on every build.** Compiling nine definitions and linking took 132.8 ms
+- **`-O2` runs on every build.** Compiling nine definitions and linking took 195 ms
   ([`93`](../93-llvm-backend-report.md) §93.5). That is fine for `beck build` and it is exactly the
   cost §5.2 buys Cranelift to avoid for `beck dev`, so this ADR does not settle the dual-codegen
   question — it builds one half of it and measures the reason the other half exists.

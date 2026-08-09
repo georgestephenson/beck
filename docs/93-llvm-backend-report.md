@@ -47,10 +47,12 @@ front of a reader here:
 
 ## 93.2 Agreeing with the evaluator is most of the work
 
-A backend that is 160× faster and answers something else is worthless, and the interesting thing
-about matching `beck-eval` is that the *obvious* lowering is wrong in four places. Each is a
-handful of instructions and each was found by reading the evaluator rather than by a failing test,
-which is the wrong order and is why every one of them now has a test that fails without it.
+A backend that is 173× faster and answers something else is worthless, and the interesting thing
+about matching `beck-eval` is that the *obvious* lowering is wrong in **five** places. Each is a
+handful of instructions, and four of the five were found by reading the evaluator rather than by a
+failing test — which is the wrong order, and is why every one of them now has a test that fails
+without it. The fifth was found the right way round, by a test written for something else, and it
+is the last bullet below.
 
 **Integer arithmetic is checked, so it cannot be an instruction.** `beck-eval` uses
 `i64::checked_*`: an overflow is a *value* — `` `+` overflowed `` — and not a wrapped result. So
@@ -264,8 +266,9 @@ Every row computes `832040`, `500000500000`, `3688` and `2220064`, and **that is
 the ports than eight files that look alike.
 
 Against the two rows that carry Beck's own semantics — Rust and checked C — Beck is **1.2× to 1.6×
-off** at worst, edges Rust on `sum_to` and beats checked C on `xor_sweep`. The 36 µs round trip is
-inside every Beck number and inside none of the others; subtracting it leaves `xor_sweep` at
+off** at worst, edges Rust on `sum_to` and beats checked C on `xor_sweep`. The round trip — 36 µs
+in this run, 43 µs in the table above, one constant read twice on a shared machine — is inside
+every Beck number and inside none of the others; subtracting it leaves `xor_sweep` at
 0.384 ms, still behind Rust's 0.270 ms and 1.23× ahead of checked C. Against the rest: 2.1–3.1×
 ahead of warmed V8 on three benchmarks of four and behind it on the mandelbrot, 15–45× ahead of
 Ruby, and 15–126× ahead of Python.
