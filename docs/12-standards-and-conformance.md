@@ -47,7 +47,7 @@ implement this:
 | **OAuth 2.1 / OpenID Connect Core + Discovery** | the identity subsystem ([`10`](10-decisions.md) D6); validated against the OpenID Foundation conformance suite |
 | **WebAuthn L3** | inherited via the bundled IdP (Keycloak) |
 | **CloudEvents 1.0** | `ingest(source)` — external webhooks/feeds enter the merge point as CloudEvents, so every event bus on earth can feed a Beck app |
-| **W3C WebAssembly core + WASI Preview 2 + Component Model** | Mode B client artefacts and the WASM server target; validated with the official spec test suites |
+| **W3C WebAssembly core + WASI Preview 2 + Component Model** | Mode B client artefacts and the WASM server target; validated with the official spec test suites. *Mode B's kernel is built ([`93`](93-mode-b-report.md)) and it is **core WebAssembly only** — a `wasm32-unknown-unknown` module with four `i32` exports, no WASI and no component model, and nothing in this repository runs the spec suites* |
 
 ## 12.4 Web output: accessibility as a compile-time property
 
