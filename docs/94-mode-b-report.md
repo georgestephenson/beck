@@ -189,7 +189,7 @@ server ever stopped being the same program.
 | | bytes | brotli | against §5.1's 150 KB |
 |---|---:|---:|---|
 | The bundle — `examples/board.beck`, 10 definitions, 252 `Core` nodes | 4,872 | **1,753** | 1.1% |
-| The kernel — every Beck application, whatever the program | 723,354 | **179,401** | **116.8%** |
+| The kernel — every Beck application, whatever the program | 724,031 | **179,195** | **116.7%** |
 
 Read the two rows separately, because the budget answers a different question for each. "< 150 KB
 brotli for a typical Mode-B component bundle" was written about compiled output, where the component
@@ -199,7 +199,7 @@ kernel is 17% over a budget written for something else; the component is 1% of i
 is flattering on its own and neither is the whole answer, so both are here.
 
 `wasm-opt -Oz`, which §5.1's release path calls for, has **not** been run — it is not installed on
-this machine and the number above is what `--release` produces. So 179,401 is a ceiling on the
+this machine and the number above is what `--release` produces. So 179,195 is a ceiling on the
 kernel rather than a measurement of the best it can do.
 
 And what one event costs on the wire, for the same program, at two sizes — because one size cannot
