@@ -461,11 +461,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: compiler
+
+      - name: the pinned toolchain gets the browser's target
+        # Not the action's `targets:` input, and the difference is the reason this job failed the
+        # first time it ran: `compiler/rust-toolchain.toml` pins 1.94.1, so `cargo` here selects
+        # that toolchain while the action had added the target to *stable*. `rustup` respects the
+        # same directory override `cargo` does, so adding it from here adds it to the toolchain
+        # that will be asked for it.
+        run: rustup target add wasm32-unknown-unknown
 
       - name: the kernel builds for the browser
         run: cargo build -p beck-wasm --release --target wasm32-unknown-unknown
