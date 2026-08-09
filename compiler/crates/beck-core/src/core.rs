@@ -410,6 +410,13 @@ pub enum Pattern {
         variant: Arc<str>,
         binds: Vec<(Arc<str>, Pattern)>,
     },
+    /// `whole @ Circle(r)` — a name for the value, and a pattern that takes it apart.
+    ///
+    /// The binder is irrefutable, so whether this matches is entirely `inner`'s question.
+    At {
+        var: VarId,
+        inner: Box<Pattern>,
+    },
     /// `Circle(r) | Square(r)` — one of several, and every alternative binds the same names.
     ///
     /// The checker unifies the alternatives' binders onto one set of variables, so the body reads
@@ -447,6 +454,10 @@ impl Pattern {
         match self {
             Pattern::Wildcard | Pattern::Const(_) => {}
             Pattern::Bind(v) => out.push(*v),
+            Pattern::At { var, inner } => {
+                out.push(*var);
+                inner.collect_binders(out);
+            }
             Pattern::Ctor { binds, .. } => {
                 for (_, p) in binds {
                     p.collect_binders(out);
@@ -479,6 +490,7 @@ impl Pattern {
             Pattern::Wildcard | Pattern::Bind(_) => true,
             Pattern::List { items, rest } => items.is_empty() && rest.is_some(),
             Pattern::Or(alts) => alts.iter().any(Pattern::irrefutable),
+            Pattern::At { inner, .. } => inner.irrefutable(),
             Pattern::Const(_) | Pattern::Ctor { .. } => false,
         }
     }

@@ -1,10 +1,10 @@
-# 91 — Phase 3 report, part 59: a guard, an alternative, and a field nobody would have walked
+# 91 — Phase 3 report, part 59: a guard, an alternative, a name, and a field nobody would have walked
 
-**Built.** The two items [`90`](90-nested-patterns-report.md) §90.6 left on the pattern-matching
-list: **or-patterns** — `case Circle(r) | Square(r):` — and **guards** — `case x if x < 0:`. With
-them, [`08`](08-roadmap.md)'s concurrency-and-errors bullet has no named remainder except
-structured concurrency's missing backend, and **no bullet of Phase 3's fourteen has a named
-remainder at all**.
+**Built.** Everything [`90`](90-nested-patterns-report.md) §90.6 left on the pattern-matching list:
+**or-patterns** — `case Circle(r) | Square(r):` — **guards** — `case x if x < 0:` — and **`@`
+bindings** — `case whole @ Circle(r):`. The list is empty, [`08`](08-roadmap.md)'s
+concurrency-and-errors bullet has no named remainder except structured concurrency's missing
+backend, and **no bullet of Phase 3's fourteen has a named remainder at all**.
 
 Neither feature needed a new algorithm. §90.2's exhaustiveness check already answers both: an
 or-pattern is *several rows of the same matrix*, and a guarded arm is *no row*. What each of them
@@ -124,10 +124,11 @@ and §91.6 is where it would go.
 | | Status |
 |---|---|
 | Or-patterns, at any depth, with binders | **built** |
+| `@` bindings, including under a constructor and beside a guard | **built** |
 | Guards, in the scope of the pattern's binders | **built** |
 | Exhaustiveness and unreachability over both | **built**, and gated in both directions |
 | A pattern in a list's **tail** — `[a, *[b, c]]` | **refused**, unchanged from [`90`](90-nested-patterns-report.md) |
-| **`@` bindings** — `case c @ Circle(r):` | **not built**, and it is the whole of what remains of this list. It needs no new checking: the binder is irrefutable and the pattern under it decides coverage |
+| **`@` bindings** — `case whole @ Circle(r):` | **built**, and the forecast held: the binder is irrefutable and the pattern under it decides coverage, so `view` reads an `At` as whatever is inside it and nothing else changed. `@` is an infix operator at a precedence tighter than `\|`, and it is unambiguous because `@` is only special at the *start* of a statement, where it opens a decorator |
 | A guard on a `stub` arm | **built by construction and untested** — `stub` shares `case_arms` with `match`, so the grammar accepts it and §21.3's stubs go through the same checker. No program writes one |
 | Compiling a `match` to a decision tree | **not built** (§91.4) |
 | Exhaustiveness over `Int`, `Str`, `Float` literals | **not built and not buildable** ([`90`](90-nested-patterns-report.md) §90.3) |
@@ -155,7 +156,7 @@ treats as a bug report. It is listed rather than claimed.
 | [`90`](90-nested-patterns-report.md) §90.6 | "**Guards** … not built, and it is the largest thing left in this bullet" and "**Or-patterns** … not built. The check would need no change: an or-pattern is two rows of the same matrix". Both built; the second forecast was right about the algorithm and wrong that it cost nothing — §91.1's bug is what it cost |
 | [`08`](08-roadmap.md) | The concurrency-and-errors bullet's remainder is now structured concurrency's missing backend alone |
 | [`33`](33-effect-polymorphism-and-list-patterns-report.md) §33.5 | Its `Pattern::binders` argument, applied to `Arm` (§91.3) |
-| The error index | `B0356` and `B0357` are new |
+| The error index | `B0356`, `B0357` and `B0358` are new |
 
 ## 91.8 What Phase 3 is still not
 

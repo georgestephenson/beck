@@ -274,9 +274,9 @@ dependencies whose signatures didn't change.
   arms come with it, as a warning. **Guards and or-patterns are built too**
   ([`91`](91-guards-and-alternatives-report.md)) — `case Circle(r) | Square(r):` and
   `case x if x < 0:`, neither of which needed a new algorithm, because an or-pattern is several
-  rows of the same matrix and a guarded arm is no row. What is left of this bullet is **structured
-  concurrency's missing backend** ([`80`](80-a-scope-owns-its-children-report.md) §80.5) and `@`
-  bindings, and §91.5 lists what is not there.*
+  rows of the same matrix and a guarded arm is no row — and `@` bindings with them. Pattern
+  matching is **done**; what is left of this bullet is **structured concurrency's missing backend**
+  ([`80`](80-a-scope-owns-its-children-report.md) §80.5), and §91.5 lists what is not there.*
 - **SQLite as a durable substrate** ([`07`](07-dependencies.md) §7.8.1): a `LogStore`
   implementation beside redb and Postgres. The reason is not speed — the measurements say the
   durable substrates are within ~16% of each other — it is that SQLite is *also* the read-model

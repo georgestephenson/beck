@@ -2245,6 +2245,11 @@ fn match_pattern(p: &Pattern, v: &Value) -> Option<Vec<(u32, Value)>> {
             };
             matches.then(Vec::new)
         }
+        // The name binds the whole value, and only if the pattern under it matched.
+        Pattern::At { var, inner } => match_pattern(inner, v).map(|mut b| {
+            b.push((*var, v.clone()));
+            b
+        }),
         // First alternative that matches wins, and the checker has made every alternative bind the
         // same variables — so the body reads one set of bindings whichever one it was.
         Pattern::Or(alts) => alts.iter().find_map(|a| match_pattern(a, v)),

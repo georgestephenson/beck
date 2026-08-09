@@ -625,3 +625,70 @@ fn a_guard_reads_a_binding_and_the_analyses_see_it() {
     );
     assert!(out.contains("1 passed, 0 failed"), "{out}");
 }
+
+#[test]
+fn an_at_binding_names_the_value_a_pattern_takes_apart() {
+    let out = run_tests(
+        "at.beck",
+        &format!(
+            "{SHAPES}
+def keep(f: Found, fallback: Shape) -> Shape:
+    match f:
+        case Yes(whole @ Circle(r)) if r > 100:
+            return whole
+        case Yes(whole @ Square(_)):
+            return whole
+        case _:
+            return fallback
+
+test \"the name is the whole value the pattern matched\":
+    expect keep(Yes(shape=Circle(r=200)), Square(side=1)) == Circle(r=200)
+    expect keep(Yes(shape=Circle(r=2)), Square(side=1)) == Square(side=1)
+    expect keep(Yes(shape=Square(side=7)), Circle(r=1)) == Square(side=7)
+"
+        ),
+    );
+    assert!(out.contains("1 passed, 0 failed"), "{out}");
+}
+
+#[test]
+fn an_at_binding_covers_what_the_pattern_under_it_covers() {
+    // A name refuses nothing, so `whole @ Circle(r)` covers exactly `Circle`. Both directions,
+    // because a check that read the binder as irrefutable would call the first program exhaustive
+    // and both would pass.
+    let covered = check(
+        "at-covers.beck",
+        "union Shape:\n    \
+         Circle(r: Int)\n    \
+         Square(side: Int)\n\n\
+         def size(s: Shape) -> Int:\n    \
+         match s:\n        \
+         case whole @ Circle(r):\n            \
+         return r\n",
+    );
+    assert!(covered.contains("B0341"), "{covered}");
+    assert!(covered.contains("Square"), "{covered}");
+
+    let full = check(
+        "at-full.beck",
+        "union Shape:\n    \
+         Circle(r: Int)\n    \
+         Square(side: Int)\n\n\
+         def size(s: Shape) -> Int:\n    \
+         match s:\n        \
+         case whole @ Circle(r):\n            \
+         return r\n        \
+         case Square(side):\n            \
+         return side\n",
+    );
+    assert!(!full.contains("B0341"), "{full}");
+}
+
+#[test]
+fn an_at_outside_a_pattern_is_refused() {
+    let out = check(
+        "at-expr.beck",
+        "def f(a: Int, b: Int) -> Int:\n    return a @ b\n",
+    );
+    assert!(out.contains("B0357"), "{out}");
+}

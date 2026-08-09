@@ -425,6 +425,12 @@ fn rename_binders(p: &mut Pattern, map: &BTreeMap<VarId, VarId>) {
                 rename_binders(sub, map);
             }
         }
+        Pattern::At { var, inner } => {
+            if let Some(&to) = map.get(var) {
+                *var = to;
+            }
+            rename_binders(inner, map);
+        }
     }
 }
 
@@ -1964,11 +1970,16 @@ impl<'a> Checker<'a> {
     fn expr_inner(&mut self, n: &Node, expected: Option<&Ty>) -> Core {
         let span = n.span();
 
-        // `|` is an or-pattern and nothing else. It is in the expression grammar because §2.6's
-        // patterns *are* expressions, so this is where it is refused — the same division `*rest`
-        // has had since `docs/33`.
-        if n.has_head("|") && n.args.len() == 2 {
-            self.error("B0357", "`|` is only meaningful in a `case` pattern", span);
+        // `|` and `@` mean one thing each and both are patterns. They are in the expression
+        // grammar because §2.6's patterns *are* expressions, so this is where they are refused —
+        // the same division `*rest` has had since `docs/33`.
+        if n.args.len() == 2 && (n.has_head("|") || n.has_head("@")) {
+            let op = if n.has_head("|") { "|" } else { "@" };
+            self.error(
+                "B0357",
+                format!("`{op}` is only meaningful in a `case` pattern"),
+                span,
+            );
             return Core::new(CoreKind::Const(Const::Unit), self.subst.fresh(), span);
         }
 
@@ -2940,6 +2951,25 @@ impl<'a> Checker<'a> {
     fn pattern_inner(&mut self, p: &Node, scrut: &Ty, span: Span) -> Pattern {
         if p.has_head("|") && p.args.len() == 2 {
             return self.or_pattern(p, scrut, span);
+        }
+        if p.has_head("@") && p.args.len() == 2 {
+            let Some(name) = p.args[0].as_var() else {
+                self.error("B0358", "the left of `@` is a name", p.args[0].span());
+                return self.pattern(&p.args[1], scrut);
+            };
+            // The inner pattern first, so the name is bound *after* it and shadows nothing the
+            // pattern itself introduced — and the whole value has the scrutinee's own type.
+            let inner = self.pattern(&p.args[1], scrut);
+            let id = self.fresh_var();
+            self.locals.push(Binding {
+                name: name.name.clone(),
+                scopes: name.scopes.clone(),
+                kind: BindKind::Local(id, scrut.clone()),
+            });
+            return Pattern::At {
+                var: id,
+                inner: Box::new(inner),
+            };
         }
         if let Some(l) = p.as_lit() {
             return Pattern::Const(match l {

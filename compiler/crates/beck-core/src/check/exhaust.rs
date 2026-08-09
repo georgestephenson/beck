@@ -83,11 +83,14 @@ fn view(p: &Pattern, fields: &[Arc<str>]) -> Option<(Ctor, Vec<Pattern>)> {
     match p {
         Pattern::Wildcard | Pattern::Bind(_) => None,
         // An or-pattern is several rows rather than one constructor, and [`heads`] has already
-        // made them several by the time anything asks: both functions that inspect column zero
-        // expand it first. `alternatives_are_rows_before_anything_views_them` is the test that
-        // says so, because a `None` here would quietly read an or-pattern as a wildcard and call
-        // a `match` exhaustive that is not.
+        // made them several by the time anything asks: [`coverage`] and the two functions that
+        // inspect column zero expand first. A `None` here read as a wildcard is not a theory —
+        // it is what `coverage` did before it expanded, and it called a `match` covering two of
+        // three variants exhaustive. `patterns.rs` holds the pair of programs that say so.
         Pattern::Or(_) => None,
+        // A name for the whole value refuses nothing, so what this matches is entirely the
+        // pattern under it.
+        Pattern::At { inner, .. } => view(inner, fields),
         Pattern::Const(k) => Some((Ctor::Lit(format!("{k:?}")), Vec::new())),
         Pattern::Ctor { variant, binds } => {
             // Written by name or by position, a pattern may bind a subset of the fields; the ones

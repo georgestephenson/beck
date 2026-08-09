@@ -1538,6 +1538,10 @@ impl<'a> Parser<'a> {
             // refuses it where a pattern is not wanted, exactly as it does for `*rest`. Beck has
             // no bitwise operators (`docs/53` §53.6), so the token was free.
             Raw::Pipe => ("|", 1, 2),
+            // `case whole @ Circle(r):` — a name for the value a pattern is taking apart. Binds
+            // tighter than `|`, so `A | b @ B` is `A | (b @ B)`. `@` is only special at the start
+            // of a statement, where it opens a decorator, so nothing here is ambiguous.
+            Raw::At => ("@", 3, 4),
             Raw::EqEq => ("==", 5, 6),
             Raw::NotEq => ("!=", 5, 6),
             Raw::Lt => ("<", 5, 6),

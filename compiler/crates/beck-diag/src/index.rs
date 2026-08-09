@@ -584,9 +584,16 @@ pub const INDEX: &[CodeEntry] = &[
     e(
         "B0357",
         Stage::Types,
-        "`|` is only meaningful in a `case` pattern",
-        "Beck has no bitwise operators. `|` separates the alternatives of an or-pattern and means \
-         nothing anywhere else.",
+        "`|` and `@` are only meaningful in a `case` pattern",
+        "Beck has no bitwise operators. `|` separates the alternatives of an or-pattern, `@` names \
+         the value a pattern takes apart, and neither means anything anywhere else.",
+    ),
+    e(
+        "B0358",
+        Stage::Types,
+        "the left of `@` is a name",
+        "`whole @ Circle(r)` binds `whole` to the value the pattern matched. What stands to the \
+         left of `@` is the name being bound.",
     ),
     e(
         "B0360",

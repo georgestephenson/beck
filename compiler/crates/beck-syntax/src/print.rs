@@ -712,8 +712,8 @@ impl Py {
             "negate" if n.args.len() == 1 => format!("-{}", self.expr(&n.args[0])),
             sym::UNQUOTE if n.args.len() == 1 => format!("${}", self.expr(&n.args[0])),
             sym::SPLICE if n.args.len() == 1 => format!("$*{}", self.expr(&n.args[0])),
-            "and" | "or" | "|" | "==" | "!=" | "<" | "<=" | ">" | ">=" | "+" | "-" | "*" | "/"
-            | "%"
+            "and" | "or" | "|" | "@" | "==" | "!=" | "<" | "<=" | ">" | ">=" | "+" | "-" | "*"
+            | "/" | "%"
                 if n.args.len() == 2 =>
             {
                 format!(
