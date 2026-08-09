@@ -230,6 +230,18 @@ Emit the deployable system: the object graph and the image config (§4.1 stage 1
 | `--platform` | PLATFORM | Which deployment target to render for (§6.1's `Platform`): `kubernetes` or `compose` |
 
 
+## `beck sbom`
+
+The bill of materials for what `beck build` emits, as CycloneDX 1.6 JSON.
+
+Derived from the same object graph the image config is, so the two cannot disagree about what is in the image. `beck build` writes one beside the manifests; this prints it.
+
+| Argument | | |
+|---|---|---|
+| `<FILE>` | FILE |  |
+| `-o, --out` | OUT | Write it here instead of to standard output |
+
+
 ## `beck doc`
 
 Generate reference documentation — for a module, or for the language itself.

@@ -209,6 +209,16 @@ enum Cmd {
         #[arg(long, default_value = "kubernetes")]
         platform: String,
     },
+    /// The bill of materials for what `beck build` emits, as CycloneDX 1.6 JSON.
+    ///
+    /// Derived from the same object graph the image config is, so the two cannot disagree about
+    /// what is in the image. `beck build` writes one beside the manifests; this prints it.
+    Sbom {
+        file: PathBuf,
+        /// Write it here instead of to standard output.
+        #[arg(long, short)]
+        out: Option<PathBuf>,
+    },
     /// Generate reference documentation — for a module, or for the language itself.
     ///
     /// A module's page is derived from the module: signatures come from inference, effects from
@@ -501,6 +511,21 @@ fn dispatch(cli: Cli) -> Result<()> {
                 println!("{}", w.display());
             }
             println!("{} files, wire id {}", written.len(), placed.wire_id);
+            Ok(())
+        }
+        Cmd::Sbom { file, out } => {
+            let placed = compiled(&file)?;
+            let source = read(&file)?;
+            let graph = beck_infra::graph(&placed);
+            let body = beck_infra::sbom::render(&graph, &source, &placed.wire_id);
+            match out {
+                Some(path) => {
+                    std::fs::write(&path, body)
+                        .with_context(|| format!("writing {}", path.display()))?;
+                    println!("{}", path.display());
+                }
+                None => print!("{body}"),
+            }
             Ok(())
         }
         Cmd::Up {

@@ -348,7 +348,15 @@ dependencies whose signatures didn't change.
 - **The playground** ([`17`](17-playground.md)) — highest-leverage adoption artefact: rung A
   (compile-time, static) and rung B (the whole app in the tab — the worker-server is the rung-0
   platform compiled to WASM, riding Mode B's kernel work; `seq` scrubber and two-client demos).
-- `beck init ci`, apko image build in-process, cosign signing, SBOM.
+- `beck init ci`, apko image build in-process, cosign signing, SBOM. *The **SBOM** is built
+  ([`92`](92-sbom-report.md)): `beck sbom` emits CycloneDX 1.6 and `beck build` writes one beside
+  the manifests, derived from the same object graph the image config is — so the package list and
+  the apko `packages:` block cannot disagree, and a test parses the rendered YAML back to say so.
+  It can exist before a release pipeline because §6.2's "no arbitrary execution" means the image's
+  contents are already a list rather than something to scan for. What it does **not** carry is
+  package **versions** (§92.5), which apko resolves at build time and this resolves at compile
+  time — so CISA's minimum elements are partly met rather than met. The other three are
+  untouched.*
 
 **Exit**: an outside developer builds a non-trivial app from documentation alone, without asking the
 team a question. Track this literally as the acceptance test.
@@ -362,8 +370,9 @@ to Phase 5), and incremental views, whose last part is
 ([`90`](90-nested-patterns-report.md), [`91`](91-guards-and-alternatives-report.md)); what
 `parallel:` lacks is a backend that runs two children at once, which is
 [`80`](80-a-scope-owns-its-children-report.md) §80.5's item rather than this bullet's. **One half-built**: identity has
-its seam and not its relying party. **Five untouched**: the LLVM backend, Mode B, client polish, the
-playground, and the supply-chain tooling. The criterion is not a count of those, though — it is a
+its seam and not its relying party. **Four untouched**: the LLVM backend, Mode B, client polish and the
+playground; the supply-chain bullet has one of its four pieces
+([`92`](92-sbom-report.md)). The criterion is not a count of those, though — it is a
 claim about a *person*, and the honest way to say how close it is is by the questions such a
 developer would ask in order:
 

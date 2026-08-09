@@ -108,7 +108,8 @@ corpus, placement-property, patterns, general-slicer, incremental-analysis, incr
 fusion,
 shared-arrangement, subscription, view-metrics, read-model, SICP, Are We Fast Yet, Benchmarks Game,
 tests-in-Beck, UI, workflow-cross-check, documentation, getting-started, outbound, compile-speed,
-concurrency, round-trip, runtime-edge, grammar-fuzz and diagnostic-snapshot suites, plus the five
+concurrency, round-trip, runtime-edge, grammar-fuzz, supply-chain and diagnostic-snapshot suites,
+plus the five
 release-only measurement suites. **Keep them green.**
 
 Four gates in this project's history could not have failed
