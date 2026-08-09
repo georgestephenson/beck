@@ -180,6 +180,32 @@ enum Cmd {
         /// rather than exposing it.
         #[arg(long, value_name = "ADDR")]
         pgwire: Option<String>,
+        /// Authenticate against an OpenID Connect issuer (D6) — the `https` URL of the provider.
+        ///
+        /// Without it the process uses `DevIdentity`, which believes whatever a client says it is.
+        /// With it, `/auth/login` starts an authorization-code flow and every connection presents
+        /// an ID token the *issuer* signed. Needs `--client-id`.
+        #[arg(long, value_name = "URL")]
+        issuer: Option<String>,
+        /// This application, as the issuer knows it.
+        #[arg(long, value_name = "ID")]
+        client_id: Option<String>,
+        /// The client secret, for a confidential client. Read from the environment because a
+        /// secret on a command line is a secret in the process table.
+        #[arg(
+            long,
+            env = "BECK_CLIENT_SECRET",
+            value_name = "SECRET",
+            hide_env_values = true
+        )]
+        client_secret: Option<String>,
+        /// Where the issuer sends the browser back — the redirect URI registered with it.
+        ///
+        /// Defaults to `http://<addr>/auth/callback`, which is what a laptop needs and what a
+        /// deployment behind a gateway must override, because the address this process bound is
+        /// not the address a browser typed.
+        #[arg(long, value_name = "URL")]
+        redirect_uri: Option<String>,
     },
     /// Fold a recorded log and report the state it produces (§3.7).
     Replay {
@@ -519,6 +545,10 @@ fn dispatch(cli: Cli) -> Result<()> {
             path,
             url,
             pgwire,
+            issuer,
+            client_id,
+            client_secret,
+            redirect_uri,
         } => run(
             &file,
             &addr,
@@ -526,6 +556,12 @@ fn dispatch(cli: Cli) -> Result<()> {
             &path,
             url.as_deref(),
             pgwire.as_deref(),
+            Auth {
+                issuer,
+                client_id,
+                client_secret,
+                redirect_uri,
+            },
         ),
         Cmd::Replay {
             file,
@@ -1346,6 +1382,14 @@ fn explain(what: Explain) -> Result<()> {
 ///
 /// `#[tokio::main]` cannot say that, and the folds and views of a served program run on these
 /// threads: a stack a worker did not have would take the server down rather than the request.
+/// What `beck run` was told about who may connect. All four absent is `DevIdentity`.
+struct Auth {
+    issuer: Option<String>,
+    client_id: Option<String>,
+    client_secret: Option<String>,
+    redirect_uri: Option<String>,
+}
+
 fn run(
     file: &Path,
     addr: &str,
@@ -1353,14 +1397,60 @@ fn run(
     path: &Path,
     url: Option<&str>,
     pgwire: Option<&str>,
+    auth: Auth,
 ) -> Result<()> {
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .thread_stack_size(beck_eval::STACK_BYTES)
         .build()?
-        .block_on(serve(file, addr, store, path, url, pgwire))
+        .block_on(serve(file, addr, store, path, url, pgwire, auth))
 }
 
+/// Build the identity provider this process will hold, and discover it before anything is served.
+///
+/// Discovery is at startup rather than at the first login on purpose: a process that cannot reach
+/// its identity provider has a configuration problem, and the moment to say so is now — not when
+/// somebody tries to sign in.
+fn identity(
+    auth: &Auth,
+    addr: &str,
+    clock: &Arc<dyn beck_core::clock::Clock>,
+) -> Result<Option<Arc<beck_rt::oidc::RelyingParty>>> {
+    let Some(issuer) = &auth.issuer else {
+        if auth.client_id.is_some() {
+            anyhow::bail!("`--client-id` needs an `--issuer` to be a client of");
+        }
+        return Ok(None);
+    };
+    let client_id = auth
+        .client_id
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("`--issuer` needs a `--client-id`"))?;
+    let redirect = auth
+        .redirect_uri
+        .clone()
+        .unwrap_or_else(|| format!("http://{addr}{}", beck_rt::http::CALLBACK_PATH));
+
+    let mut config = beck_rt::oidc::Config::new(issuer, client_id, &redirect);
+    config.client_secret = auth.client_secret.clone();
+    // Its own client, not the process-global one the evaluator reads. A program's outbound calls
+    // and the runtime's calls to its identity provider are two different things to be able to
+    // stub, to bound and to read in a log — and the process-global one is installed once and
+    // never replaced, so sharing it would make identity depend on whether a program made a call.
+    let client: Arc<dyn beck_core::net::Outbound> =
+        Arc::new(beck_rt::outbound::HttpOutbound::new()?);
+    let party = Arc::new(beck_rt::oidc::RelyingParty::new(
+        config,
+        clock.clone(),
+        client,
+    ));
+    party
+        .refresh()
+        .map_err(|why| anyhow::anyhow!("the identity provider could not be read: {why}"))?;
+    Ok(Some(party))
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn serve(
     file: &Path,
     addr: &str,
@@ -1368,6 +1458,7 @@ async fn serve(
     path: &Path,
     url: Option<&str>,
     pgwire: Option<&str>,
+    auth: Auth,
 ) -> Result<()> {
     let placed = compiled(file)?;
     // A serving process is one that may make outbound calls, so it is the process that installs a
@@ -1382,8 +1473,36 @@ async fn serve(
     let backend = beck_eval::backend(&placed);
     let log = open_store(store, path, url).await?;
     let runtime = beck_rt::Runtime::new(placed, backend)?;
-    let app = beck_rt::App::start(runtime, log, beck_rt::AppConfig::default()).await?;
+
+    let mut config = beck_rt::AppConfig::default();
+    let relying_party = identity(&auth, addr, &config.clock)?;
+    if let Some(party) = &relying_party {
+        config.identity = party.clone();
+    }
+    let app = beck_rt::App::start(runtime, log, config).await?;
     let (tx, rx) = tokio::sync::watch::channel(false);
+
+    // The key set is fetched again on a timer and whenever a token named a key it does not carry.
+    // A task rather than a fetch on the connection path: verifying an ID token must not be a way
+    // for an anonymous client to make this process call its identity provider (§94.3).
+    if let Some(party) = relying_party.clone() {
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(
+                    (beck_rt::oidc::REFETCH_FLOOR_MS / 1_000).max(1) as u64,
+                ))
+                .await;
+                let due = party.clone();
+                if !due.refresh_due() {
+                    continue;
+                }
+                let attempt = party.clone();
+                if let Ok(Err(why)) = tokio::task::spawn_blocking(move || attempt.refresh()).await {
+                    tracing::warn!(why, "the identity provider's key set was not refreshed");
+                }
+            }
+        });
+    }
 
     tokio::spawn(async move {
         let _ = tokio::signal::ctrl_c().await;
@@ -1392,11 +1511,33 @@ async fn serve(
         let _ = tx.send(true);
     });
 
+    // Which provider is in force, on the line an operator reads first. `docs/48` §48.3: an
+    // operator who cannot tell from the logs whether authentication is on does not have
+    // authentication.
+    let entry = match &relying_party {
+        Some(party) => format!(
+            "identity     {} ({}, {} keys), sign in at http://{addr}{}",
+            app.identity().kind(),
+            party.config().issuer,
+            party.key_count(),
+            beck_rt::http::LOGIN_PATH,
+        ),
+        None => format!(
+            "identity     {} — this process believes whatever a client says it is",
+            app.identity().kind()
+        ),
+    };
     eprintln!(
-        "beck run — store {}, head {}, open http://{addr}/?actor=dev\n\
+        "beck run — store {}, head {}, open http://{addr}/{}\n\
+         {entry}\n\
          dashboard    http://{addr}/_beck",
         app.store_kind(),
-        app.head()
+        app.head(),
+        if relying_party.is_some() {
+            ""
+        } else {
+            "?actor=dev"
+        },
     );
     if let Some(pg) = pgwire {
         let pg: std::net::SocketAddr = pg.parse()?;

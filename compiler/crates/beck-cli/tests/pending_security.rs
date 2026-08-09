@@ -91,74 +91,92 @@ fn identity_defaults_to_believing_the_client() {
     assert_eq!(config.identity.kind(), "dev");
 }
 
-/// No OIDC relying party: no JWKS, no issuer or audience validation, no asymmetric signature.
-///
-/// `SignedIdentity` is symmetric — everything that can verify a credential can also mint one —
-/// which suits a gateway in front of a Beck process and does not suit a public identity provider.
-/// D6 asks for the second.
-#[test]
-fn nothing_here_speaks_oidc() {
-    let sites = mentions(&["jwks", "Jwks", "id_token", "issuer", "RS256"]);
-    assert!(
-        sites.is_empty(),
-        "an OIDC relying party appears to exist now ({sites:?}) — delete this test, and correct \
-         docs/48 §48.5, docs/43 §43.4 and the roadmap's identity bullet"
-    );
-}
+// `nothing_here_speaks_oidc` and `a_verified_identitys_claims_do_not_reach_the_program` were here,
+// and both are **built** (`docs/94`): `beck_rt::oidc` is an asymmetric relying party, and `Session`
+// carries the claims it verified. Both are gone, which is what this file's own rule asks for, and
+// what replaces them is `beck-cli/tests/oidc.rs` — where the tokens are signed by a key pair
+// generated for the test and the relying party is given nothing but the public half.
+//
+// The first of the two is worth a note beside `docs/84` §84.5's list. It was a **name grep**, for
+// `jwks`, `id_token`, `issuer` and `RS256`, and it would have fired on this change — all four
+// appear. But it would equally have fired on a module that fetched a JWKS and checked nothing, and
+// on a comment. A grep proves a subject was touched; it cannot prove a control works, and it is
+// used here only where there is no behaviour to look at.
+//
+// `an_outbound_call_has_no_transport_security` is gone too (`docs/adr/0021`). It grepped for
+// `rustls`, `TlsConnector`, `tokio_rustls` and `webpki`, and it also asserted that `lib/http.beck`
+// defaults to `port=80` — which is *still true*, and is now a statement about a default rather than
+// about a missing capability, since `over_tls` is the call that changes it. That half moved into
+// `lib/http.beck`'s own tests, where a reader of the library meets it.
 
-/// And the claims a verified identity carries do not reach the program yet.
+/// What is still absent about identity: the **provisioning** half of D6.
 ///
-/// D6 asks for "claims → `Session` capability mapping". The verification half is built; the
-/// mapping half is not, because the actor travels through the view path as a `String`
-/// ([`48`](../../../../docs/48-identity-report.md) §48.5).
-#[test]
-fn a_verified_identitys_claims_do_not_reach_the_program() {
-    let session = beck_core::prelude::types()
-        .get("Session")
-        .cloned()
-        .expect("the prelude declares a Session");
-    let fields = match session {
-        beck_core::ty::TyDecl::Model { fields, .. } => fields,
-        _ => panic!("Session is a model"),
-    };
-    assert!(
-        !fields.iter().any(|(n, _)| n.as_ref() == "claims"),
-        "`Session` carries claims now — delete this test and correct docs/48 §48.5"
-    );
-}
-
-// ---------------------------------------------------------------------------------------------
-// The outbound call — built, and plaintext
-// ---------------------------------------------------------------------------------------------
-
-/// An outbound request is not encrypted, and nothing in the tree pretends otherwise.
+/// `identity = managed()` asks Beck to stand a Keycloak or Ory workload up in the object graph, and
+/// nothing does. It is an infra derivation and belongs with `beck-infra`
+/// ([`48`](../../../../docs/48-identity-report.md) §48.5), and the consequence worth asserting is
+/// the one a deployment meets: **the derived NetworkPolicy does not allow egress to the issuer**,
+/// because the egress rule is derived from the program's `net.out` atoms and the issuer is
+/// configuration `beck run` was given rather than something the program wrote
+/// ([`94`](../../../../docs/94-oidc-relying-party-report.md) §94.6).
 ///
-/// `http_fetch` speaks HTTP/1.1 over TCP. [`docs/07`](../../../../docs/07-dependencies.md) chooses
-/// rustls for the other half, and taking a TLS stack is a dependency decision rather than a line
-/// in `beck-rt/src/outbound.rs` — so until it is taken, a credential sent with
-/// `with_secret_header` is confidential exactly as far as the network under it is. Whoever adds
-/// TLS deletes this test and corrects docs/43 §43.4 and docs/49 §49.6.
+/// Behaviour rather than a grep: it emits the object graph for a program with an outbound call and
+/// looks at what egress the policy allows.
 #[test]
-fn an_outbound_call_has_no_transport_security() {
-    let sites = mentions(&["rustls", "TlsConnector", "tokio_rustls", "webpki"]);
+fn the_identity_provider_is_not_in_the_derived_egress_rule() {
+    let src = r#"
+model State:
+    rate: Int
+
+union Command:
+    Refresh
+
+union Event:
+    Refreshed(rate: Int)
+
+def fresh_rate() -> Int:
+    return unwrap_or(str_to_int(http_fetch("payments.example.com",
+        HttpRequest(method="GET", path="/usd", headers={}, body="", port=443, tls=True, secrets={})).body), 0)
+
+def apply_event(s: State, env: Envelope[Event]) -> State:
+    match env.body:
+        case Refreshed(rate):
+            return s.with(rate=rate)
+
+def validate(s: State, p: Proposal) -> Result[list[Event], Str]:
+    match p.command:
+        case Refresh:
+            return Ok(value=[Refreshed(rate=fresh_rate())])
+
+def view(s: State, session: Session) -> Html:
+    return ui:
+        main:
+            p: str(s.rate)
+
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, book, validate)
+book: Signal[State] = durable(fold(apply_event, State(rate=0), events))
+page: Signal[Html] = per_session(book, view)
+"#;
+    let (placed, diags, map) = beck_core::compile_str("egress.beck", src);
+    assert!(!diags.has_errors(), "{}", diags.render(&map));
+    let placed = placed.expect("it slices");
+    let graph = beck_infra::graph(&placed);
+    let rendered: String = beck_infra::k8s::render(&graph, &placed.wire_id)
+        .into_iter()
+        .map(|(_, yaml)| yaml)
+        .collect();
+
     assert!(
-        sites.is_empty(),
-        "a TLS stack appears to exist now ({sites:?}) — delete this test, and correct docs/43 \
-         §43.4, docs/49 §49.6 and the `net.rs` seam's own module comment"
+        rendered.contains("payments.example.com"),
+        "the program's own peer is not in the egress rule; this test is testing nothing"
     );
-    // The port a request defaults to is the plaintext one, which is the same fact stated where a
-    // reader of the library will meet it.
-    let lib = std::fs::read_to_string(
-        crates_dir()
-            .parent()
-            .expect("compiler/")
-            .join("lib/http.beck"),
-    )
-    .expect("lib/http.beck is readable");
-    assert!(
-        lib.contains("port=80"),
-        "`lib/http.beck` no longer defaults to the plaintext port; this test is out of date"
-    );
+    for issuer in ["login.acme.com", "accounts.google.com", "keycloak"] {
+        assert!(
+            !rendered.contains(issuer),
+            "an identity provider reached the object graph. If `identity = external(...)` is a \
+             declaration now, delete this test and correct docs/94 §94.6 and docs/48 §48.5"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------------------------

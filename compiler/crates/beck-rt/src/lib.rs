@@ -16,6 +16,7 @@ pub mod diff;
 pub mod http;
 pub mod identity;
 pub mod log;
+pub mod oidc;
 pub mod outbound;
 pub mod patch;
 pub mod pgwire;

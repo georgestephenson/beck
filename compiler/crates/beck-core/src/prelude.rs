@@ -1060,6 +1060,11 @@ pub fn types() -> BTreeMap<Arc<str>, TyDecl> {
             (Arc::from("headers"), Ty::map(Ty::str_(), Ty::str_())),
             (Arc::from("body"), Ty::str_()),
             (Arc::from("port"), Ty::int()),
+            // Whether the exchange is inside a TLS session whose certificate names the host the
+            // call site wrote. A field of the request rather than a mode of the client: a program
+            // may reach one peer over a plaintext hop inside its own cluster and another across
+            // the internet, and the two calls are two requests.
+            (Arc::from("tls"), Ty::bool_()),
             // Headers whose *value* is a secret, kept apart from the ones whose value is a `Str`.
             //
             // §3.5 makes a `secret[T]` unreadable — there is no `reveal` for one, which is the
@@ -1159,11 +1164,24 @@ pub fn types() -> BTreeMap<Arc<str>, TyDecl> {
         ],
     });
     // "`Session` is minted by the identity subsystem … with verified claims mapped to typed
-    // capabilities" (§3.7). Phase 1 carries the actor only — dev-mode identity, as Phase 0 had.
+    // capabilities" (§3.7).
+    //
+    // `claims` is the second half, and it is a `map[Str, Str]` rather than a type per issuer: what
+    // an issuer emits is that issuer's decision, so a program that reads `session.claims` is
+    // reading somebody else's vocabulary and the type says so. It is **empty** under a provider
+    // that verifies nothing, which is what makes `map_get(session.claims, "role")` a check rather
+    // than a decoration.
+    //
+    // It does not reach the log: an `Envelope` carries `actor` and nothing else, because a fold
+    // whose replay depended on what the issuer was saying at the time would not be a fold
+    // (`docs/94` §94.4).
     add(TyDecl::Model {
         name: Arc::from("Session"),
         params: Vec::new(),
-        fields: vec![(Arc::from("actor"), Ty::str_())],
+        fields: vec![
+            (Arc::from("actor"), Ty::str_()),
+            (Arc::from("claims"), Ty::map(Ty::str_(), Ty::str_())),
+        ],
     });
     add(TyDecl::Model {
         name: Arc::from("Proposal"),

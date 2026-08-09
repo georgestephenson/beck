@@ -4139,7 +4139,7 @@ def charge(amount: Int) -> Str uses net.out(payments.example.com), nondet:
         // makes it, and the atom in it came from the string on the line above.
         let src = "\
 def fetch_rate() -> Str uses net.out(rates.example.com), raises(HttpError):
-    r = http_fetch(\"rates.example.com\", HttpRequest(method=\"GET\", path=\"/usd\", headers={}, body=\"\", port=80, secrets={}))
+    r = http_fetch(\"rates.example.com\", HttpRequest(method=\"GET\", path=\"/usd\", headers={}, body=\"\", port=80, tls=False, secrets={}))
     return r.body
 ";
         assert_eq!(
@@ -4151,7 +4151,7 @@ def fetch_rate() -> Str uses net.out(rates.example.com), raises(HttpError):
     #[test]
     fn an_outbound_call_to_a_host_it_cannot_name_is_refused() {
         let req =
-            "HttpRequest(method=\"GET\", path=\"/\", headers={}, body=\"\", port=80, secrets={})";
+            "HttpRequest(method=\"GET\", path=\"/\", headers={}, body=\"\", port=80, tls=False, secrets={})";
         // Computed: nothing downstream could write the NetworkPolicy peer.
         let computed = format!(
             "def go(host: Str) -> Str uses net.out(x.example.com), raises(HttpError):\n    \

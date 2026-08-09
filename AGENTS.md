@@ -114,8 +114,8 @@ corpus, placement-property, patterns, general-slicer, incremental-analysis, incr
 fusion,
 shared-arrangement, subscription, view-metrics, read-model, SICP, Are We Fast Yet, Benchmarks Game,
 tests-in-Beck, UI, workflow-cross-check, documentation, getting-started, outbound, compile-speed,
-concurrency, round-trip, runtime-edge, grammar-fuzz, supply-chain, native-backend and
-diagnostic-snapshot suites, plus the seven
+concurrency, round-trip, runtime-edge, grammar-fuzz, supply-chain, native-backend, identity, OIDC
+and diagnostic-snapshot suites, plus the seven
 release-only measurement suites. **Keep them green.**
 
 Four gates in this project's history could not have failed
@@ -147,6 +147,12 @@ the thing you are guarding against would make it so.
   ~2 minutes). Do not run a second `cargo` or `rustup` process until it finishes: concurrent
   first-runs race inside rustup and corrupt the install. Repair:
   `rustup toolchain uninstall 1.94.1 && rustup toolchain install 1.94.1`.
+- **Building needs a C compiler *and* CMake.** SQLite and mimalloc are vendored C
+  ([`adr/0017`](docs/adr/0017-sqlite-is-a-substrate-for-its-transaction-not-its-speed.md),
+  [`adr/0019`](docs/adr/0019-a-modern-allocator-for-the-evaluator.md)) and aws-lc-rs builds with
+  CMake ([`adr/0022`](docs/adr/0022-tls-and-the-signature-it-brings.md)). GitHub's `ubuntu-latest`
+  has both; a bare container does not, and the failure reads as a linker error rather than as a
+  missing tool.
 - **Verification, cheapest first** (from `compiler/`): `cargo test -p <crate>`, then
   `cargo test --workspace --all-targets`, `cargo clippy --workspace --all-targets`,
   `cargo fmt --all --check` and `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps` before

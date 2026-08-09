@@ -9,6 +9,7 @@
 //! Phase 1 over Phase 0 — the same runtime, with the application arriving as compiled `Core`
 //! rather than as hand-written Rust.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
@@ -96,7 +97,7 @@ impl Runtime {
     }
 
     /// Build the `Proposal` record the program's `validate` expects.
-    pub fn proposal(&self, actor: &str, command: Value) -> Value {
+    pub fn proposal(&self, actor: &(impl Viewer + ?Sized), command: Value) -> Value {
         Value::data(
             Arc::from("Proposal"),
             None,
@@ -142,7 +143,7 @@ impl Runtime {
     }
 
     /// The per-session view. In Mode A this runs server-side and its output is diffed (§5.1).
-    pub fn view(&self, state: &Value, actor: &str) -> Result<Html> {
+    pub fn view(&self, state: &Value, actor: &(impl Viewer + ?Sized)) -> Result<Html> {
         let out = (self.view_fn)(vec![state.clone(), session(actor)])
             .map_err(|e| anyhow!("{e}"))
             .context("rendering the view")?;
@@ -186,7 +187,12 @@ impl Runtime {
     ///
     /// Identical output to [`Runtime::view`] — `beck-cli/tests/incremental_engine.rs` is the gate,
     /// over every corpus program and every event of a generated log.
-    pub fn render(&self, engine: &mut Engine, state: &Value, actor: &str) -> Result<Html> {
+    pub fn render(
+        &self,
+        engine: &mut Engine,
+        state: &Value,
+        actor: &(impl Viewer + ?Sized),
+    ) -> Result<Html> {
         let out = engine
             .render(state, &session(actor))
             .map_err(|e| anyhow!("{e}"))
@@ -212,7 +218,7 @@ impl Runtime {
         engine: &mut Engine,
         state: &Value,
         version: u64,
-        actor: &str,
+        actor: &(impl Viewer + ?Sized),
     ) -> Result<(Html, u64)> {
         let (out, at) = shared
             .render(engine, state, version, &session(actor))
@@ -243,7 +249,7 @@ impl Runtime {
     /// Public because the incremental view engine takes it as an input rather than receiving it
     /// through [`Runtime::view`]: a plan's session is a *node*, and everything not downstream of it
     /// is what §5.3 shares between subscribers.
-    pub fn session(&self, actor: &str) -> Value {
+    pub fn session(&self, actor: &(impl Viewer + ?Sized)) -> Value {
         session(actor)
     }
 
@@ -288,13 +294,85 @@ impl Runtime {
     }
 }
 
-/// Build the `Session` the program sees. Phase 1 carries the actor only — dev-mode identity, as
-/// Phase 0 had; D6's OIDC relying party is Phase 3.
-fn session(actor: &str) -> Value {
+/// Who a view is rendered for, or a command proposed by.
+///
+/// A trait rather than a type because the two sources of one are genuinely different and both are
+/// legitimate. A **connection** supplies an [`crate::identity::Actor`], which only
+/// [`crate::identity::Identity::verify`] can make and which carries the claims the provider
+/// verified. A **name** supplies itself: `beck test`'s `when session("ana") sends …`, the
+/// differential harness, a benchmark — none of them is a connection, so none of them has a
+/// credential to check, and each of them has no claims because there was nobody to make any.
+///
+/// One code path either way, which is the point: a `&str` and an `Actor` reach the same `Session`
+/// constructor, so a claim cannot appear in one render path and not another.
+pub trait Viewer {
+    fn actor(&self) -> &str;
+
+    /// Empty unless a provider verified them.
+    fn claims(&self) -> &BTreeMap<Arc<str>, Arc<str>> {
+        static NONE: std::sync::OnceLock<BTreeMap<Arc<str>, Arc<str>>> = std::sync::OnceLock::new();
+        NONE.get_or_init(BTreeMap::new)
+    }
+}
+
+impl Viewer for str {
+    fn actor(&self) -> &str {
+        self
+    }
+}
+
+/// So a caller holding a `&&str` — which is what iterating a `[&str]` gives — needs no ceremony.
+impl<T: Viewer + ?Sized> Viewer for &T {
+    fn actor(&self) -> &str {
+        (**self).actor()
+    }
+
+    fn claims(&self) -> &BTreeMap<Arc<str>, Arc<str>> {
+        (**self).claims()
+    }
+}
+
+impl Viewer for String {
+    fn actor(&self) -> &str {
+        self
+    }
+}
+
+impl Viewer for Arc<str> {
+    fn actor(&self) -> &str {
+        self
+    }
+}
+
+impl Viewer for crate::identity::Actor {
+    fn actor(&self) -> &str {
+        self.name()
+    }
+
+    fn claims(&self) -> &BTreeMap<Arc<str>, Arc<str>> {
+        crate::identity::Actor::claims(self)
+    }
+}
+
+/// Build the `Session` the program sees: the actor, and the claims the provider verified.
+///
+/// The claims are the second half of D6's "claims → `Session` capability mapping" and they stop
+/// here — an `Envelope` carries `actor` and nothing else, so a `validate` may read a claim to
+/// decide, and a *fold* has nothing to read (`docs/94` §94.4).
+fn session(viewer: &(impl Viewer + ?Sized)) -> Value {
+    let claims = viewer.claims().iter().fold(
+        beck_core::PMap::new(),
+        |acc: beck_core::PMap<Value, Value>, (name, value)| {
+            acc.insert(Value::str_(name), Value::str_(value))
+        },
+    );
     Value::data(
         Arc::from("Session"),
         None,
-        beck_core::core::Fields::from_iter([(Arc::from("actor"), Value::str_(actor))]),
+        beck_core::core::Fields::from_iter([
+            (Arc::from("actor"), Value::str_(viewer.actor())),
+            (Arc::from("claims"), Value::Map(claims)),
+        ]),
     )
 }
 

@@ -34,6 +34,10 @@ beck-db = { path = "crates/beck-db", version = "0.1.0" }
 
 anyhow = "1"
 async-trait = "0.1"
+# One dependency, two capabilities: rustls's default cryptography provider is also the library the
+# OIDC relying party verifies an RSA or ECDSA signature with, so the asymmetric half of `beck-rt`'s
+# identity work costs no second crate (docs/adr/0022).
+aws-lc-rs = "1"
 blake3 = "1"
 clap = { version = "4", features = ["derive", "env"] }
 futures-util = "0.3"
@@ -50,6 +54,10 @@ proptest = "1"
 # (RUSTSEC-2023-0089). We serialise into `Vec`, so `alloc` is all we need.
 postcard = { version = "1", default-features = false, features = ["alloc"] }
 redb = "2"
+# §7's TLS row, taken. The default cryptography provider is `aws-lc-rs`, which is the row as
+# written; `webpki-roots` is the Mozilla trust store as data, so a container built by apko needs no
+# `ca-certificates` package for an outbound call to verify a name (docs/adr/0022).
+rustls = "0.23"
 # Bundled: SQLite is compiled from the vendored amalgamation rather than linked against
 # whatever the host has, so a log written on a laptop and a log written in CI are written by the
 # same engine (docs/adr/0017).
@@ -63,10 +71,12 @@ serde_json = "1"
 serde_norway = "0.9"
 tokio = { version = "1", features = ["full"] }
 tokio-postgres = "0.7"
+tokio-rustls = "0.26"
 tokio-tungstenite = "0.30"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4", "v7", "serde"] }
+webpki-roots = "1"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

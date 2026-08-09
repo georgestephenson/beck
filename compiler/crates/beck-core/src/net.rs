@@ -12,13 +12,13 @@
 //! reuse, not a pool, not a redirect policy, not retries — those are decisions of an
 //! implementation, and an implementation is what this trait is for.
 //!
-//! # What is not here
+//! # Transport security is a field, not a mode
 //!
-//! **TLS.** [`Request`] carries a host and a port and nothing about transport security, and the
-//! implementation in `beck-rt` speaks plaintext HTTP/1.1. That is a stated absence rather than an
-//! oversight: [`docs/07`](../../../../../docs/07-dependencies.md) chooses rustls, taking it is a
-//! dependency decision, and `beck-cli/tests/pending_security.rs` asserts the gap so it cannot go
-//! quietly stale.
+//! [`Request::tls`] says whether the exchange is over TLS, and it is a field of the request rather
+//! than a property of the client, because a program that calls two peers may reach one of them
+//! over a plaintext hop inside a cluster and the other across the internet. What a *name* is
+//! verified against is the implementation's business; that the caller asked for TLS is the
+//! program's ([`docs/adr/0021`](../../../../../docs/adr/0022-tls-and-the-signature-it-brings.md)).
 
 use std::fmt;
 use std::sync::Arc;
@@ -33,6 +33,11 @@ use std::sync::OnceLock;
 pub struct Request {
     pub host: Arc<str>,
     pub port: u16,
+    /// Whether the exchange happens inside a TLS session whose certificate names [`Request::host`].
+    ///
+    /// A field rather than a scheme in the path, because the host is already the atom the call
+    /// site performs and a URL would give a program a second place to write it.
+    pub tls: bool,
     pub method: Arc<str>,
     /// Origin-form: `/v1/todos?limit=10`. Sent as written — this seam does not encode, because a
     /// program that built a path is the only thing that knows what in it was data.
@@ -180,6 +185,7 @@ mod tests {
         let r = Request {
             host: Arc::from("api.example.com"),
             port: 80,
+            tls: false,
             method: Arc::from("GET"),
             path: Arc::from("/"),
             headers: Vec::new(),
@@ -204,6 +210,7 @@ mod tests {
         let req = |path: &str| Request {
             host: Arc::from("h.example.com"),
             port: 80,
+            tls: false,
             method: Arc::from("GET"),
             path: Arc::from(path),
             headers: Vec::new(),

@@ -221,7 +221,7 @@ async fn a_per_session_view_never_shows_another_actors_state() {
     let mut alice_last = app.render("alice").await.expect("render");
     app.propose(
         "c1".into(),
-        "bob".into(),
+        "bob",
         command("Add", &[("id", "b1"), ("text", "bob's secret")]),
     )
     .await

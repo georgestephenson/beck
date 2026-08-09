@@ -117,7 +117,15 @@ fn digit(c: u8) -> Result<u8, String> {
 /// reason — `=` is `%3D` in a query string — and [`base64_decode`] accepts it anyway, because a
 /// decoder that refuses what other encoders emit is a decoder that fails in production.
 pub fn base64_encode(text: &str) -> String {
-    let bytes = text.as_bytes();
+    base64_encode_bytes(text.as_bytes())
+}
+
+/// The same encoder, starting before the text.
+///
+/// A PKCE code challenge is the base64url of a SHA-256 digest, which is 32 bytes and not a string;
+/// [`base64_encode`] is the primitive a Beck program calls and takes the `Str` it has. One encoder,
+/// two entry points.
+pub fn base64_encode_bytes(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
         let b = [
@@ -142,6 +150,15 @@ const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz012
 /// have to know which of the two alphabets they chose, and the two do not overlap, so accepting
 /// both is unambiguous rather than lenient.
 pub fn base64_decode(text: &str) -> Result<String, String> {
+    utf8(base64_decode_bytes(text)?)
+}
+
+/// The same decoder, stopping before the text.
+///
+/// [`base64_decode`] is the primitive a Beck program calls and a `Str` is UTF-8, so it ends in a
+/// validation. A JOSE signature segment is not text and never will be, so the runtime's OIDC
+/// verifier reads the bytes: this is the shared half rather than a second decoder beside it.
+pub fn base64_decode_bytes(text: &str) -> Result<Vec<u8>, String> {
     let text = text.trim_end_matches('=');
     let mut acc: u32 = 0;
     let mut bits = 0u32;
@@ -162,7 +179,7 @@ pub fn base64_decode(text: &str) -> Result<String, String> {
             text.escape_default()
         ));
     }
-    utf8(bytes)
+    Ok(bytes)
 }
 
 fn sextet(c: u8) -> Result<u8, String> {

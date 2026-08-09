@@ -115,7 +115,10 @@ impl Default for AppConfig {
 struct Proposal {
     id: String,
     at: Instant,
-    actor: String,
+    /// The whole viewer rather than its name: `validate` is handed a `Session`, and D6's claims →
+    /// capability mapping is the chokepoint's to use. Only the **name** goes on the envelope
+    /// (`docs/94` §94.4), so what is durable is unchanged.
+    actor: crate::identity::Actor,
     command: Value,
     reply: oneshot::Sender<Result<Seq, String>>,
 }
@@ -209,7 +212,10 @@ impl App {
     /// Kept for the two callers that render a state nobody is subscribed to: the server-side render
     /// of the first document, and the resumption path's reconstruction of the view as of an old
     /// `seq`. A live subscription goes through [`App::maintain`] instead.
-    pub async fn render(&self, actor: &str) -> Result<beck_core::Html> {
+    pub async fn render(
+        &self,
+        actor: &(impl crate::program::Viewer + ?Sized),
+    ) -> Result<beck_core::Html> {
         let state = self.state.read().await.clone();
         timed(&telemetry().view, || self.runtime.view(&state, actor))
     }
@@ -243,7 +249,7 @@ impl App {
     pub async fn maintain(
         &self,
         engine: &mut beck_core::engine::Engine,
-        actor: &str,
+        actor: &(impl crate::program::Viewer + ?Sized),
     ) -> Result<(beck_core::Html, Seq)> {
         let (state, version) = {
             let guard = self.state.read().await;
@@ -273,6 +279,14 @@ impl App {
         &self.config.identity
     }
 
+    /// The clock this process was configured with — F11's supplied one, never an ambient reading.
+    ///
+    /// Public for the same reason [`App::identity`] is: the HTTP edge has to answer "how long is
+    /// this credential good for" and must not reach for a second clock to do it.
+    pub fn clock(&self) -> &Arc<dyn beck_core::clock::Clock> {
+        &self.config.clock
+    }
+
     pub fn maintains_views(&self) -> bool {
         self.config.maintain_views
     }
@@ -291,7 +305,13 @@ impl App {
     ///
     /// The reply is the **ack**, and it means *committed* — not "your view has caught up". Phase 0
     /// found out the hard way that those are different facts (§18.5 item 1).
-    pub async fn propose(&self, id: String, actor: String, command: Value) -> Result<Seq, String> {
+    pub async fn propose(
+        &self,
+        id: String,
+        actor: impl Into<crate::identity::Proposer>,
+        command: Value,
+    ) -> Result<Seq, String> {
+        let actor = actor.into().0;
         let (reply, rx) = oneshot::channel();
         // §3.7: the merge point is the one place time enters. It enters *here*, from the clock the
         // process was configured with, and is data on the envelope from this line onwards — which
@@ -301,9 +321,9 @@ impl App {
         // F3's quota, charged from that same instant rather than from a second reading of a clock.
         // Refused *before* the queue: a proposal nothing will admit should not occupy a slot in it,
         // which is the difference between a quota and a slower queue.
-        if !self.limit.admit(&actor, at.0) {
+        if !self.limit.admit(actor.name(), at.0) {
             telemetry().throttled.incr();
-            tracing::warn!(actor, "refused: over the write quota");
+            tracing::warn!(actor = actor.name(), "refused: over the write quota");
             return Err("over the write quota".to_string());
         }
         self.ingress
@@ -402,7 +422,7 @@ async fn sequencer(app: Arc<App>, mut rx: mpsc::Receiver<Proposal>, config: AppC
                         let env = crate::log::Envelope {
                             seq,
                             at: p.at,
-                            actor: p.actor.clone(),
+                            actor: p.actor.name().to_string(),
                             body: e.clone(),
                         };
                         // Apply as we validate, so the next command in the batch sees it:
@@ -418,7 +438,7 @@ async fn sequencer(app: Arc<App>, mut rx: mpsc::Receiver<Proposal>, config: AppC
                         }
                         pending.push(Pending {
                             at: p.at,
-                            actor: p.actor.clone(),
+                            actor: p.actor.name().to_string(),
                             body: e,
                         });
                     }

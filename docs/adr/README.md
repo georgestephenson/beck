@@ -37,3 +37,4 @@ The split this directory creates:
 | [0019](0019-a-modern-allocator-for-the-evaluator.md) | mimalloc is the `beck` binary's global allocator — a third of the evaluator was inside `malloc` |
 | [0020](0020-the-read-model-speaks-pgwire-by-hand.md) | The read model speaks pgwire by hand, and answers to nobody — loopback only, off by default |
 | [0021](0021-the-native-backend-writes-ir-and-runs-a-process.md) | The native backend writes LLVM IR as text and runs the result as a process, so `forbid(unsafe)` survives it |
+| [0022](0022-tls-and-the-signature-it-brings.md) | rustls with aws-lc-rs — one dependency for transport security *and* the asymmetric signature an OIDC relying party verifies |

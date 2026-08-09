@@ -150,7 +150,7 @@ async fn one_actor_may_not_fill_the_log() {
         let r = app
             .propose(
                 format!("c{i}"),
-                "one-noisy-actor".into(),
+                "one-noisy-actor",
                 support::command("Add", &[("id", &format!("t{i}")), ("text", "spam")]),
             )
             .await;
@@ -192,7 +192,7 @@ async fn a_throttled_proposal_is_counted_as_its_own_kind_of_refusal() {
         let _ = app
             .propose(
                 format!("q{i}"),
-                "counted".into(),
+                "counted",
                 support::command("Add", &[("id", &format!("q{i}")), ("text", "x")]),
             )
             .await;
