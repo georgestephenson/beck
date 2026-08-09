@@ -232,7 +232,9 @@ dependencies whose signatures didn't change.
 > design; what the expressiveness suite needs next is more of the book, and chapter 3 is state and
 > time, which is the part of SICP closest to what Beck is for.
 
-- LLVM release backend + differential tests against Cranelift (§5.2).
+- LLVM release backend + differential tests against Cranelift (§5.2). *The LLVM half is **built**
+  over the scalar subset ([`93`](93-llvm-backend-report.md)), and the differential is against the
+  **evaluator** rather than against Cranelift, because Cranelift is still not built.*
 - **Incremental views**: compile subscribed/materialized views to differential-dataflow plans with
   arrangement sharing (per-session fanout, §5.3); recompute stays as the CI oracle; SQL read models
   + pgwire exposure; query fusion on symbolic plans. *The plans and the oracle are **built**
@@ -369,8 +371,9 @@ to Phase 5), and incremental views, whose last part is
 `parallel:` and pattern matching with nesting, guards and alternatives
 ([`90`](90-nested-patterns-report.md), [`91`](91-guards-and-alternatives-report.md)); what
 `parallel:` lacks is a backend that runs two children at once, which is
-[`80`](80-a-scope-owns-its-children-report.md) §80.5's item rather than this bullet's. **One half-built**: identity has
-its seam and not its relying party. **Four untouched**: the LLVM backend, Mode B, client polish and the
+[`80`](80-a-scope-owns-its-children-report.md) §80.5's item rather than this bullet's. **Two half-built**: identity has
+its seam and not its relying party, and the codegen bullet has LLVM over the scalar subset and no
+Cranelift ([`93`](93-llvm-backend-report.md) §93.6). **Three untouched**: Mode B, client polish and the
 playground; the supply-chain bullet has one of its four pieces
 ([`92`](92-sbom-report.md)). The criterion is not a count of those, though — it is a
 claim about a *person*, and the honest way to say how close it is is by the questions such a
@@ -519,12 +522,15 @@ matters more than any individual suite:
 
 The consequence, stated so it cannot be quietly dropped: **the first numbers we publish will be
 bad**, because §25.3 measures the tree-walking evaluator at roughly 33× CPython on `fib(30)` and
-native codegen is unbuilt. Publishing them anyway is the point.
+native codegen is unbuilt. Publishing them anyway is the point. *Native codegen is now built for
+the scalar subset, and the first comparative number is
+[`93`](93-llvm-backend-report.md) §93.5's — **against the evaluator**, not against another
+language, because the benchmark suites run whole programs and a whole program still walks.*
 
 | Phase | Stand up | Publish |
 |---|---|---|
 | **3** | The **expressiveness** work, which needs nothing that is not built: SICP stage 1 (chapter 1 complete) and the **Felleisen macro-expressibility table**. Macros are built and hygienic ([`19`](19-phase-1-report.md)), so this is independent of §25.7's six walls and is the cheapest item on this table. Also: the compile-speed budgets §13.7 already lists, on the rustc-perf model | Chapter 1's line-count comparison against the pinned Scheme baseline — the first honest number in either half of §24 |
-| **3** (with the standard library and the LLVM backend) | **Are We Fast Yet** and **CLBG** harnesses, run against the evaluator | Nothing comparative. The interpreter-vs-Cranelift-vs-LLVM differential ([`13`](13-testing.md) §13.1) and the first honest compute number arrive together, and not before |
+| **3** (with the standard library and the LLVM backend) | **Are We Fast Yet** and **CLBG** harnesses, run against the evaluator | Nothing comparative. The interpreter-vs-Cranelift-vs-LLVM differential ([`13`](13-testing.md) §13.1) and the first honest compute number arrive together, and not before. *Both arrived in [`93`](93-llvm-backend-report.md), without the Cranelift term: the differential is `beck-cli/tests/native.rs` and the number is §93.5's. What is still not published is a comparison against **another language** — AWFY and CLBG run whole programs, and a whole program has records and lists in it, so it still walks* |
 | **4** | **TechEmpower** (the five tests that map without argument; the two that assume update-in-place stated as run against a read model), **js-framework-benchmark** (three columns — Mode A at a stated RTT, Mode A at RTT 0, Mode B — never averaged), **YCSB** against the log, **Lighthouse/Core Web Vitals** as gates on the example apps. SICP stages 2–3. **The DDIA matrix** ([`15`](15-scale-and-distribution.md) §15.6) — beside the Jepsen and simulation work that discharges its rows, never before it, because a matrix written ahead of its tests is the table of intentions it exists not to be | The whole-system numbers, unflattering, with the methodology notes of §25.2 attached to each. This is [`01`](01-vision-and-premise.md) §1.5 item 3 measured by somebody else's harness rather than ours |
 | **5** | **TPC-H/ClickBench** on read models once §5.3's engine exists; the incremental-view workload §25.2 records as having *no* standard, which we would be defining rather than borrowing. SICP stage 4 | The Phase 5 suite above, and the expressiveness result — including the rows §25.5 forecasts Beck will lose (§2.4–2.5 generic operations, chapter 4's evaluator), which are published or the exercise was not run honestly |
 
@@ -563,8 +569,8 @@ Only two of these can be got wrong, which is what makes the ordering decidable.
 | **G — gate** | Something already scheduled is unsafe or dishonest until this exists | **Immediately before what it gates**, never after |
 | **S — free-standing** | Flat cost, no successors waiting | By **value and team shape** (§8.2). Order is genuinely free |
 
-Most of the outstanding work is **S** — LLVM codegen, Mode B, the LSP, SQL read models, query
-fusion — and S is where attention naturally goes, because it is where the interesting engineering
+Most of the outstanding work is **S** — Cranelift and the rest of the codegen bullet, Mode B, the
+LSP, SQL read models, query fusion — and S is where attention naturally goes, because it is where the interesting engineering
 is. The items that are actually urgent are small, and several of them are prose.
 
 The classification has just paid for itself once. Bounds were the project's textbook **F**: one
@@ -747,7 +753,10 @@ person building a non-trivial app without asking the authors questions, and cann
 anything this repository does to itself. §86.8 lists what the guide does not cover; the criterion
 needs an outside developer, and none has read it.
 
-**Wave 4 — free-standing, in parallel with Waves 2–3.** LLVM backend and native codegen; Mode B and
+**Wave 4 — free-standing, in parallel with Waves 2–3.** ~~LLVM backend and native codegen~~ —
+**half built** ([`93`](93-llvm-backend-report.md)): the scalar subset compiles and the differential
+exists; there is no heap, so no record, list, string or effect compiles, and Cranelift is untouched;
+Mode B and
 client polish; the LSP; ~~SQL read models, pgwire~~ — **built**
 ([`88`](88-read-models-and-pgwire-report.md)), and they were not a Lane B item in the shape this
 list assumed: the schema derivation is a pass over the plan, the wire is `beck-rt`, and neither
@@ -795,7 +804,7 @@ boundaries are real directories.
 | **B — runtime and views** | `beck-rt/`, `beck-core/src/{engine,plan,incremental,pmap,signal}.rs` | Clock injection; the shared dataflow's release policy, history constant and render lock; SQL read models, pgwire, query fusion; Mode B's server half | Nothing in A, C, E or F |
 | **C — front end and tooling** | `beck-syntax/`, `beck-cli/`, `beck-diag/` | The recursion bound; the two syntax decisions; Unicode and UTS #39; LSP; `test --update`; fuzzing | A, if a syntax decision changes what the checker sees |
 | **D — process and supply chain** | `docs/`, `.github/`, `deny.toml`, `SECURITY.md` | Threat model, disclosure policy, memory-safety roadmap, `pending_security`, the four retargeted §12 rows, SLSA/SBOM/trusted publishing | Nothing in code |
-| **E — backends** | `beck-eval/`, `beck-core/src/backend.rs`, any new codegen crate | LLVM backend, native codegen, the differential suite | Nothing — the seam is why ([`19`](19-phase-1-report.md) §19.9) |
+| **E — backends** | `beck-eval/`, `beck-llvm/`, `beck-core/src/backend.rs`, any new codegen crate | ~~LLVM backend, native codegen, the differential suite~~ — **built for the scalar subset** ([`93`](93-llvm-backend-report.md)); what is left is a heap, the effects, and Cranelift | Nothing — the seam is why ([`19`](19-phase-1-report.md) §19.9), and [`93`](93-llvm-backend-report.md) is the first thing to test that claim: not one line of `beck-rt` changed |
 | **F — infrastructure** | `beck-infra/` | Effect-derived NetworkPolicy/RBAC/grants; Crossplane emitter; conformance rungs | Nothing |
 
 **Lane A is strictly serial, and that is the real staffing constraint.** It is tempting to run two
@@ -817,7 +826,8 @@ Recommended pairings, in order:
 | ~~**Then**~~ | ~~Lane A: bignums, coercion, `@derive`~~ | ~~Lane B: the shared dataflow's three loose ends~~ | **Half done, and the other half.** Lane B was taken at last, after being the recommended Branch 2 for three consecutive rewrites: two of the three loose ends are closed ([`51`](51-arrangement-lifecycle-report.md)) and the third — the render lock — is deliberately left. The prediction held exactly: `engine.rs`, `beck-rt/` and one test suite, and nothing in `check/`, `ty.rs` or `core.rs`. Lane A is untouched, so this pairing was again never actually run as a pair |
 | ~~**Then**~~ | ~~Lane A: bignums, coercion, `@derive`~~ | ~~Lane B: SQL read models and pgwire~~ | **Half done, and the other half again.** Lane B was taken ([`88`](88-read-models-and-pgwire-report.md)) and the prediction held: `beck-core/src/read.rs`, `beck-rt/src/pgwire.rs`, one reader type on `engine.rs`, and nothing in `check/`, `ty.rs` or `core.rs`. Lane A is untouched, so this pairing was never run as a pair either — the fourth consecutive rewrite in which it was not |
 | **Now** | Lane A: ~~the pattern-matching completion the error-rows bullet still names~~ — **built**, with nesting, guards and alternatives ([`90`](90-nested-patterns-report.md), [`91`](91-guards-and-alternatives-report.md)); what is left in this lane is `Ord` as a trait, which [`54`](54-ordering.md) writes out and explicitly does *not* recommend | Lane B: ~~query fusion on symbolic plans~~ — **built** ([`89`](89-query-fusion-report.md)); what is left in this lane is Mode B's server half and the render lock ([`51`](51-arrangement-lifecycle-report.md) §51.7) | `beck-rt` and `engine.rs` are untouched by anything in `check/` |
-| **Then** | Lane A, continued | Lane E: the LLVM backend — and per §8.4 the AWFY/CLBG harness lands with whichever arrives second | The backend seam exists so these do not interact |
+| ~~**Then**~~ | ~~Lane A, continued~~ | ~~Lane E: the LLVM backend~~ | **Half done, and the other half.** Lane E was taken ([`93`](93-llvm-backend-report.md)) and the prediction held to the letter: a new crate, one new CLI command, and one defect fixed in `beck-eval` — and nothing in `beck-rt`, `engine.rs`, `check/`, `ty.rs` or `core.rs`. Lane A is untouched, so the pairing was again not run as a pair |
+| **Then** | Lane A, continued | Lane E: a heap for the native backend, then Cranelift ([`93`](93-llvm-backend-report.md) §93.6) | The backend seam exists so these do not interact, and it has now been tested |
 | **Any time** | — | Lane F; Lane C's LSP; more of SICP | No predecessors, no collisions |
 
 A third branch is viable whenever E or F is staffed. The ceiling is four, because of these:

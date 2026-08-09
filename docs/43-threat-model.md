@@ -39,7 +39,7 @@ harness goes red, **absent** means it is not there and §43.4 says so by name.
 | `durable` and `ingress` are never placed client-side | A2 | structural + tested | Same |
 | A fold is deterministic, so replay is exact | A2, A4 | structural + tested | §3.7's rule in the checker; the replay-determinism harness |
 | Only validated events are logged | A2 | structural | F1/F3's rule: a command envelope is transient |
-| No memory-unsafety in first-party code | all | structural | `unsafe_code = "forbid"`, inherited by all nine crates |
+| No memory-unsafety in first-party code | all | structural | `unsafe_code = "forbid"`, inherited by all ten crates. The claim is about the compiler and the runtime; **machine code `beck native` generates is not first-party code in this sense** — it is an artefact, and it runs as a separate process for that reason ([`93`](93-llvm-backend-report.md) §93.1) |
 | No SQL injection | A2 | structural | Every value is a bind parameter |
 | No hash flooding | A2 | structural | `Map`/`Set` are ordered, not hashed (F8) |
 | Deeply nested source is refused, not fatal | **A1** | tested | [`adr/0012`](adr/0012-the-front-end-counts-its-own-recursion.md); `front_end_bound.rs` |

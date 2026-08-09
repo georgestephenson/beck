@@ -209,6 +209,28 @@ enum Cmd {
         #[arg(long, default_value = "kubernetes")]
         platform: String,
     },
+    /// Compile what can be compiled to native code, and say what could not (§5.2).
+    ///
+    /// The LLVM half of §5.2's dual codegen, over the scalar subset of the language: a definition
+    /// whose parameters and result are `Int`, `Float` or `Bool` and whose body is arithmetic,
+    /// comparison, `if`, `match` and direct calls. Everything else — anything that needs a heap,
+    /// and every effect — stays with the evaluator, and this prints which went which way.
+    ///
+    /// Needs `clang` on the path, or `BECK_CLANG` pointing at one.
+    Native {
+        file: PathBuf,
+        /// Keep the generated `.ll` and the executable here instead of in a temporary directory.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Call a compiled definition and print what it answered.
+        ///
+        /// `beck native fib.beck --call fib --arg 30`. An argument is read as an `Int` if it looks
+        /// like one and a `Float` otherwise; `true` and `false` are `Bool`s.
+        #[arg(long)]
+        call: Option<String>,
+        #[arg(long = "arg")]
+        args: Vec<String>,
+    },
     /// The bill of materials for what `beck build` emits, as CycloneDX 1.6 JSON.
     ///
     /// Derived from the same object graph the image config is, so the two cannot disagree about
@@ -529,6 +551,12 @@ fn dispatch(cli: Cli) -> Result<()> {
             println!("{} files, wire id {}", written.len(), placed.wire_id);
             Ok(())
         }
+        Cmd::Native {
+            file,
+            out,
+            call,
+            args,
+        } => native(&file, out.as_deref(), call.as_deref(), &args),
         Cmd::Sbom { file, out } => {
             let placed = compiled(&file)?;
             let source = read(&file)?;
@@ -912,6 +940,80 @@ fn explain_place(file: &Path, only: Option<&str>) -> Result<()> {
         solution.total as f64 / 100.0
     );
     Ok(())
+}
+
+/// `beck native` — compile to machine code, and account for every definition.
+///
+/// The report is the command's main output rather than a footnote, because a native backend that
+/// covers part of a language is only honest if it says which part. A definition is either in the
+/// first list, compiled, or in the second with the reason it is not.
+fn native(file: &Path, out: Option<&Path>, call: Option<&str>, args: &[String]) -> Result<()> {
+    // Not `compiled`: a module with no merge point is a **library**, and a library of arithmetic
+    // is exactly what this backend compiles best — `awfy/mandelbrot.beck` is one. `test_cmd` takes
+    // the same route for the same reason.
+    let (project, map, mut diags) = checked_project(file)?;
+    let placed = project.and_then(|p| beck_core::project::slice_or_library(p, &mut diags));
+    print!("{}", diags.render(&map));
+    let placed = placed.ok_or_else(|| anyhow::anyhow!("{} does not compile", file.display()))?;
+    let program = placed.program;
+
+    let Some(toolchain) = beck_llvm::Toolchain::find() else {
+        bail!(
+            "no LLVM toolchain: no `clang` on the path, and BECK_CLANG does not name a working \
+             one. Everything else `beck` does works without one"
+        );
+    };
+    let artifact = beck_llvm::Artifact::build_with(&program, toolchain, out)
+        .map_err(|e| anyhow::anyhow!(e))?;
+    print!("{}", artifact.report());
+    if out.is_some() {
+        println!(
+            "\n{}\n{}",
+            artifact.ir_path().display(),
+            artifact.executable().display()
+        );
+    }
+
+    let Some(name) = call else {
+        return Ok(());
+    };
+    let sig = artifact
+        .module()
+        .signature(name)
+        .ok_or_else(|| anyhow::anyhow!("`{name}` is not one of the definitions that compiled"))?;
+    if args.len() != sig.params.len() {
+        bail!(
+            "`{name}` takes {} arguments, got {}",
+            sig.params.len(),
+            args.len()
+        );
+    }
+    let mut values = Vec::with_capacity(args.len());
+    for (text, want) in args.iter().zip(&sig.params) {
+        values.push(match want {
+            beck_llvm::Scalar::Int => beck_core::Value::Int(
+                text.parse()
+                    .with_context(|| format!("`{text}` is not an Int"))?,
+            ),
+            beck_llvm::Scalar::Float => beck_core::Value::float(
+                text.parse()
+                    .with_context(|| format!("`{text}` is not a Float"))?,
+            ),
+            beck_llvm::Scalar::Bool => beck_core::Value::Bool(
+                text.parse()
+                    .with_context(|| format!("`{text}` is not a Bool"))?,
+            ),
+        });
+    }
+    match artifact.call(name, &values) {
+        Ok(v) => {
+            println!("\n{name} = {}", v.display());
+            Ok(())
+        }
+        // A trap carries the span of the operation that could not answer, so this is a diagnostic
+        // and not a status code — the same message the evaluator would have printed.
+        Err(e) => bail!("{name}: {}", e.message),
+    }
 }
 
 fn compiled(file: &Path) -> Result<Placed> {

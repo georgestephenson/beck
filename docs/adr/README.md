@@ -36,3 +36,4 @@ The split this directory creates:
 | [0018](0018-the-standard-library-is-carried-in-the-compiler.md) | The standard library's Beck half is carried in the compiler, and an import resolves against the caller's directory first |
 | [0019](0019-a-modern-allocator-for-the-evaluator.md) | mimalloc is the `beck` binary's global allocator — a third of the evaluator was inside `malloc` |
 | [0020](0020-the-read-model-speaks-pgwire-by-hand.md) | The read model speaks pgwire by hand, and answers to nobody — loopback only, off by default |
+| [0021](0021-the-native-backend-writes-ir-and-runs-a-process.md) | The native backend writes LLVM IR as text and runs the result as a process, so `forbid(unsafe)` survives it |

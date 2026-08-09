@@ -113,7 +113,13 @@ deferral:
    reason.
 2. **Publish no comparative claim until the second backend exists.** [`13`](13-testing.md) §13.1's
    oracle table wants Cranelift-vs-LLVM-vs-interpreter differentials anyway; the first honest
-   performance claim and the first correctness differential arrive on the same day.
+   performance claim and the first correctness differential arrive on the same day. *They did —
+   [`93`](93-llvm-backend-report.md), and the prediction was exactly right about the sequencing. The
+   comparative claim is [`93`](93-llvm-backend-report.md) §93.5's, and it is **narrower than this
+   rule assumed**: it is four arithmetic kernels against C, Rust, Node, Python and Ruby, in
+   [`compiler/xlang/`](../compiler/xlang/README.md), because the native backend has no heap and
+   every suite in §25.2 runs whole programs — so AWFY and CLBG still measure the tree-walker and
+   still publish no comparison.*
 3. **Order the suites by what Beck actually claims.** §1.5 says the claim is about the shipped
    system, not any one layer — so TechEmpower and js-framework-benchmark and Lighthouse come
    *before* CLBG, even though CLBG is the one people ask about. The suite that measures the claim

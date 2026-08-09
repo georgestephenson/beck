@@ -75,7 +75,7 @@ written in memory-unsafe languages to publish a memory-safety roadmap), Beck's r
 because the work was done at the start rather than scheduled:
 
 **Every line of first-party code in this repository is Rust with `unsafe` forbidden at the
-workspace root**, and all nine crates inherit that lint — inheritance is what makes a workspace lint
+workspace root**, and all ten crates inherit that lint — inheritance is what makes a workspace lint
 real, and it is present in every member. There is no `unsafe impl Send`/`Sync` anywhere; every
 cross-thread type is auto-derived, so the compiler is the reviewer. The network-facing tier — the
 parser, the protocol decoder, the patch encoder — therefore has no unsafe code to prioritise, which
