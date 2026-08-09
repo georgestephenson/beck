@@ -245,7 +245,7 @@ would be describing a different system.
 Removing the remainder is a known piece of work rather than an open question, and it is the same
 piece of work in both directions: the delta at the top of the plan **is** the patch set. `beck-rt`
 currently renders a whole page and structurally diffs it against the previous one
-([`diff.rs`](../compiler/crates/beck-rt/src/diff.rs)) to produce the patches §5.1 streams; an engine
+([`diff.rs`](../compiler/crates/beck-core/src/diff.rs)) to produce the patches §5.1 streams; an engine
 that emitted patches from its own output changes would skip both the assembly and the diff. That is
 also precisely what Mode B's per-component kernel needs, which is why it is not done here — it is a
 protocol change and a client change, not an engine change.

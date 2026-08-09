@@ -251,7 +251,14 @@ dependencies whose signatures didn't change.
   shared while its consumer is per session, which makes this **bullet complete**.*
 - **Mode B client**: per-component WASM (view + fold + signal kernel), optimistic application with
   `seq` reconciliation, freshness-typed pending state; size budget CI gate (< 150 KB brotli per
-  component bundle).
+  component bundle). — ***Built*** ([`94`](94-mode-b-report.md)): `@render(client)`, a bundle that
+  is the component's slice, a `wasm32` kernel, data patches instead of DOM patches, and
+  reconciliation by `seq`. Chromium runs all of it (§94.12), and a tab survives a cold start with
+  the server switched off (§94.13). An interaction is measured rather than asserted (§94.14):
+  13 ms on a thousand-card board, 97% of it `view`, and growing with the board rather than with the
+  change. **Not** codegen ([`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md)) — which
+  §94.14 finds is not what the 13 ms is — not freshness-typed, and no size-budget gate; §94.8 is
+  the list.
 - Client polish for both modes: router, forms, lazy routes, focus/scroll preservation, devtools
   extension showing signal graph, patch traffic and pending state.
 - **`test` blocks and inferred mocks** ([`21`](21-tests-in-beck-and-proof.md) §21.2–§21.3) —
@@ -371,9 +378,11 @@ to Phase 5), and incremental views, whose last part is
 `parallel:` and pattern matching with nesting, guards and alternatives
 ([`90`](90-nested-patterns-report.md), [`91`](91-guards-and-alternatives-report.md)); what
 `parallel:` lacks is a backend that runs two children at once, which is
-[`80`](80-a-scope-owns-its-children-report.md) §80.5's item rather than this bullet's. **Two half-built**: identity has
-its seam and not its relying party, and the codegen bullet has LLVM over the scalar subset and no
-Cranelift ([`93`](93-llvm-backend-report.md) §93.6). **Three untouched**: Mode B, client polish and the
+[`80`](80-a-scope-owns-its-children-report.md) §80.5's item rather than this bullet's. **Three
+half-built**: identity has its seam and not its relying party; the codegen bullet has LLVM over the
+scalar subset and no Cranelift ([`93`](93-llvm-backend-report.md) §93.6); and Mode B has the mode,
+the bundle, the data patch, the reconciliation, a browser that runs it and an offline queue,
+without codegen ([`94`](94-mode-b-report.md) §94.8). **Two untouched**: client polish and the
 playground; the supply-chain bullet has one of its four pieces
 ([`92`](92-sbom-report.md)). The criterion is not a count of those, though — it is a
 claim about a *person*, and the honest way to say how close it is is by the questions such a
@@ -825,7 +834,7 @@ Recommended pairings, in order:
 | ~~**Then**~~ | ~~Lane A: the rest of Wave 2 — `Set`, dates~~ | ~~Lane B: the shared dataflow's three loose ends~~ | **Half done.** `Set` and dates landed ([`50`](50-collections-and-dates-report.md)) and were not Lane A at all: two files in `compiler/lib/`, no primitive, and the only Rust touched was one diagnostic's label. Lane B is untouched, so the pairing was never tested — the prediction it made cannot be claimed to have held |
 | ~~**Then**~~ | ~~Lane A: bignums, coercion, `@derive`~~ | ~~Lane B: the shared dataflow's three loose ends~~ | **Half done, and the other half.** Lane B was taken at last, after being the recommended Branch 2 for three consecutive rewrites: two of the three loose ends are closed ([`51`](51-arrangement-lifecycle-report.md)) and the third — the render lock — is deliberately left. The prediction held exactly: `engine.rs`, `beck-rt/` and one test suite, and nothing in `check/`, `ty.rs` or `core.rs`. Lane A is untouched, so this pairing was again never actually run as a pair |
 | ~~**Then**~~ | ~~Lane A: bignums, coercion, `@derive`~~ | ~~Lane B: SQL read models and pgwire~~ | **Half done, and the other half again.** Lane B was taken ([`88`](88-read-models-and-pgwire-report.md)) and the prediction held: `beck-core/src/read.rs`, `beck-rt/src/pgwire.rs`, one reader type on `engine.rs`, and nothing in `check/`, `ty.rs` or `core.rs`. Lane A is untouched, so this pairing was never run as a pair either — the fourth consecutive rewrite in which it was not |
-| **Now** | Lane A: ~~the pattern-matching completion the error-rows bullet still names~~ — **built**, with nesting, guards and alternatives ([`90`](90-nested-patterns-report.md), [`91`](91-guards-and-alternatives-report.md)); what is left in this lane is `Ord` as a trait, which [`54`](54-ordering.md) writes out and explicitly does *not* recommend | Lane B: ~~query fusion on symbolic plans~~ — **built** ([`89`](89-query-fusion-report.md)); what is left in this lane is Mode B's server half and the render lock ([`51`](51-arrangement-lifecycle-report.md) §51.7) | `beck-rt` and `engine.rs` are untouched by anything in `check/` |
+| **Now** | Lane A: ~~the pattern-matching completion the error-rows bullet still names~~ — **built**, with nesting, guards and alternatives ([`90`](90-nested-patterns-report.md), [`91`](91-guards-and-alternatives-report.md)); what is left in this lane is `Ord` as a trait, which [`54`](54-ordering.md) writes out and explicitly does *not* recommend | Lane B: ~~query fusion on symbolic plans~~ — **built** ([`89`](89-query-fusion-report.md)); ~~Mode B's server half~~ — **built** ([`94`](94-mode-b-report.md)), and it is one branch in `session.rs`; what is left in this lane is the render lock ([`51`](51-arrangement-lifecycle-report.md) §51.7) | `beck-rt` and `engine.rs` are untouched by anything in `check/` |
 | ~~**Then**~~ | ~~Lane A, continued~~ | ~~Lane E: the LLVM backend~~ | **Half done, and the other half.** Lane E was taken ([`93`](93-llvm-backend-report.md)) and the prediction held to the letter: a new crate, one new CLI command, and one defect fixed in `beck-eval` — and nothing in `beck-rt`, `engine.rs`, `check/`, `ty.rs` or `core.rs`. Lane A is untouched, so the pairing was again not run as a pair |
 | **Then** | Lane A, continued | Lane E: a heap for the native backend, then Cranelift ([`93`](93-llvm-backend-report.md) §93.6) | The backend seam exists so these do not interact, and it has now been tested |
 | **Any time** | — | Lane F; Lane C's LSP; more of SICP | No predecessors, no collisions |

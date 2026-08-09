@@ -7,6 +7,7 @@ members = [
     "crates/beck-core",
     "crates/beck-eval",
     "crates/beck-llvm",
+    "crates/beck-wasm",
     "crates/beck-rt",
     "crates/beck-infra",
     "crates/beck-db",
@@ -28,6 +29,7 @@ beck-macro = { path = "crates/beck-macro", version = "0.1.0" }
 beck-core = { path = "crates/beck-core", version = "0.1.0" }
 beck-eval = { path = "crates/beck-eval", version = "0.1.0" }
 beck-llvm = { path = "crates/beck-llvm", version = "0.1.0" }
+beck-wasm = { path = "crates/beck-wasm", version = "0.1.0" }
 beck-rt = { path = "crates/beck-rt", version = "0.1.0" }
 beck-infra = { path = "crates/beck-infra", version = "0.1.0" }
 beck-db = { path = "crates/beck-db", version = "0.1.0" }

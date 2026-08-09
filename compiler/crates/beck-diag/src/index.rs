@@ -348,6 +348,13 @@ pub const INDEX: &[CodeEntry] = &[
          name for a bundle of them.",
     ),
     e(
+        "B0306",
+        Stage::Types,
+        "is not a rendering mode",
+        "`@render` takes `server` (Mode A: the server renders and the wire carries DOM patches) \
+         or `client` (Mode B: the browser renders and the wire carries the state).",
+    ),
+    e(
         "B0307",
         Stage::Types,
         "unsupported top-level item",
@@ -808,6 +815,13 @@ pub const INDEX: &[CodeEntry] = &[
          fix-it names the tiers that can.",
     ),
     e(
+        "B0405",
+        Stage::Placement,
+        "only a component can say where it renders",
+        "`@render` was written on something that is not a `Signal[Html]`. A definition is unplaced \
+         code compiled to every tier that needs it (§3.3); rendering is decided per component.",
+    ),
+    e(
         "B0410",
         Stage::Security,
         "runs on the client, so its value must be Sendable",
@@ -920,6 +934,14 @@ pub const INDEX: &[CodeEntry] = &[
         "a fold that is not durable",
         "Its accumulator has nowhere to live across a restart. The log is what survives, and \
          `durable` is what says an accumulator is folded from it.",
+    ),
+    e(
+        "B0514",
+        Stage::Signals,
+        "renders differently for each session, so it cannot render on the client",
+        "The page reads the session as well as the state, so it filters, scopes or hides by \
+         identity. `@render(client)` sends the browser the state rather than the page, which \
+         would hand every actor what the filter was removing (docs/94 §94.2).",
     ),
     // --------------------------------------------------------- B06xx: modules and interfaces
     e(

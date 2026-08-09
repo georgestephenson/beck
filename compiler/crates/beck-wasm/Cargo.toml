@@ -1,0 +1,29 @@
+[package]
+name = "beck-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Mode B's client kernel: a component's slice, executed in the browser"
+
+[lib]
+# `cdylib` is the WebAssembly module; `rlib` is the same kernel linked into a native test, which is
+# how its behaviour is gated without a browser (`beck-cli/tests/mode_b.rs`).
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+beck-core.workspace = true
+beck-eval.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+# The workspace forbids `unsafe_code`, and this crate cannot inherit that: rustc counts
+# `#[no_mangle]` as unsafe code because two libraries exporting one symbol is undefined at link
+# time. A WebAssembly module has to export something or the host cannot call it.
+#
+# So the exception is `deny` plus four `#[allow]`s on the export attributes themselves, and its
+# extent is a test rather than a promise: `mode_b.rs::the_wasm_boundary_is_the_only_exception_to_forbid_unsafe`
+# asserts that this crate contains no `unsafe` block, no `unsafe fn` and no allow site that is not
+# on an export. There is no `unsafe` *code* here, only an attribute rustc classifies with it.
+[lints.rust]
+unsafe_code = "deny"

@@ -13,13 +13,18 @@
 //! §4.1 calls out as "novel … where the engineering budget goes".
 
 pub mod backend;
+pub mod bundle;
 pub mod check;
 pub mod clock;
+pub mod command;
 pub mod compat;
 pub mod core;
 pub mod cost;
+pub mod delta;
+pub mod diff;
 pub mod digest;
 pub mod docgen;
+pub mod edge;
 pub mod engine;
 pub mod fields;
 pub mod frames;
@@ -37,6 +42,7 @@ pub mod pmap;
 pub mod prelude;
 pub mod project;
 pub mod read;
+pub mod render;
 pub mod repr;
 pub mod row;
 pub mod secure;
@@ -47,9 +53,11 @@ pub mod testing;
 pub mod ty;
 
 pub use backend::{Backend, Callable, ExecError};
+pub use bundle::Bundle;
 pub use check::{check_module, Def, Program, SignalDecl};
 pub use compat::{compare, is_breaking, Change};
 pub use core::{digest, Const, Core, CoreKind, Env, Prim, Value, VarId};
+pub use diff::{diff, Op as DiffOp, Path as DiffPath};
 pub use graph::{DepGraph, EdgeKind, GraphBuilder, GraphNode, NodeId, NodeKind};
 pub use html::Html;
 pub use iface::Interface;

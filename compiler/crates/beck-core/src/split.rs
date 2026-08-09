@@ -70,6 +70,10 @@ pub struct Placed {
     /// The signal graph itself, kept so that `beck explain flow`, the incremental analysis and any
     /// later view engine read what the slicer read rather than re-deriving it.
     pub graph: Graph,
+    /// Where this program's component renders, and what follows ([`crate::render`]). Decided here
+    /// because the fact it turns on — whether the sliced view reads the session — is this module's
+    /// to know.
+    pub render: crate::render::Decision,
     /// Whether this is an application or a **library** — a module with no merge point, whose
     /// [`Placed::roles`] are placeholders rather than a slice of anything.
     ///
@@ -116,24 +120,24 @@ impl Placed {
                 span,
             )
         };
+        let roles = Roles {
+            validate: lam(2, unit()),
+            fold: lam(2, Core::new(CoreKind::Var(0), Ty::unit(), span)),
+            init: unit(),
+            view: lam(2, unit()),
+            state_ty: Ty::unit(),
+            event_ty: Ty::unit(),
+            command_ty: Ty::unit(),
+            proposals_name: Arc::from(""),
+            events_name: Arc::from(""),
+            state_name: Arc::from(""),
+            page_name: Arc::from(""),
+            inlined: Vec::new(),
+            shared: Vec::new(),
+            states: Vec::new(),
+            view_is_per_session: false,
+        };
         Placed {
-            roles: Roles {
-                validate: lam(2, unit()),
-                fold: lam(2, Core::new(CoreKind::Var(0), Ty::unit(), span)),
-                init: unit(),
-                view: lam(2, unit()),
-                state_ty: Ty::unit(),
-                event_ty: Ty::unit(),
-                command_ty: Ty::unit(),
-                proposals_name: Arc::from(""),
-                events_name: Arc::from(""),
-                state_name: Arc::from(""),
-                page_name: Arc::from(""),
-                inlined: Vec::new(),
-                shared: Vec::new(),
-                states: Vec::new(),
-                view_is_per_session: false,
-            },
             program,
             wire_id,
             placement: crate::place::Solution {
@@ -144,6 +148,8 @@ impl Placed {
                 churn: Vec::new(),
                 ties: Vec::new(),
             },
+            render: crate::render::Decision::of(&roles, false, None, span),
+            roles,
             graph,
             kind: Kind::Library,
         }
@@ -528,6 +534,39 @@ pub fn split(mut program: Program, diags: &mut Diagnostics) -> Option<Placed> {
     }
     let wire_id = hasher.finalize().to_hex()[..16].to_string();
 
+    let roles = Roles {
+        validate,
+        fold,
+        init,
+        view,
+        state_ty,
+        event_ty,
+        command_ty,
+        proposals_name: graph.node(proposals).label.clone(),
+        events_name: graph.node(decide).label.clone(),
+        state_name: state_roles[0].name.clone(),
+        page_name: graph.node(page).label.clone(),
+        inlined,
+        shared,
+        states: state_roles,
+        view_is_per_session: per_session,
+    };
+
+    // Where the page renders, and whether it may. `@render(client)` turns the crossing from a
+    // rendering of the state into the state itself, so this is the one decision in the splitter
+    // that can disclose something — and it is refused here rather than at build time, because a
+    // program that would leak should not compile.
+    let declared = program
+        .signals
+        .iter()
+        .find(|s| s.name == graph.node(page).label)
+        .and_then(|s| s.render);
+    let render = crate::render::Decision::of(&roles, true, declared, graph.node(page).span);
+    render.refuse(diags);
+    if diags.has_errors() {
+        return None;
+    }
+
     Some(Placed {
         kind: Kind::Application,
         placement: crate::place::Solution {
@@ -538,23 +577,8 @@ pub fn split(mut program: Program, diags: &mut Diagnostics) -> Option<Placed> {
             churn: Vec::new(),
             ties: Vec::new(),
         },
-        roles: Roles {
-            validate,
-            fold,
-            init,
-            view,
-            state_ty,
-            event_ty,
-            command_ty,
-            proposals_name: graph.node(proposals).label.clone(),
-            events_name: graph.node(decide).label.clone(),
-            state_name: state_roles[0].name.clone(),
-            page_name: graph.node(page).label.clone(),
-            inlined,
-            shared,
-            states: state_roles,
-            view_is_per_session: per_session,
-        },
+        render,
+        roles,
         wire_id,
         program,
         graph,
