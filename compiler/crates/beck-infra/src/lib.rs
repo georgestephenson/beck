@@ -347,7 +347,7 @@ pub fn derive(app: &str, effects: &[(Effect, String)], serves_ui: bool) -> Infra
 
 /// The same, for a program that asked this deployment to provision its identity provider.
 ///
-/// A separate entry point rather than a fourth argument on [`derive`], because every existing
+/// A separate entry point rather than a fourth argument on [`derive()`], because every existing
 /// caller is asserting something about the effect row and `managed()` is not in one: it is a
 /// declaration, and the two arrive by different routes on purpose (§94.10).
 pub fn derive_with(
