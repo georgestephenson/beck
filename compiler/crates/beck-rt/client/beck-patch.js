@@ -99,6 +99,10 @@
   };
 
   // One websocket, resumable by `(subscription, seq)`. `on` is the frame handler the mode supplies.
+  //
+  // `state` is read at every open rather than at the first one, so a caller that keeps
+  // `state.seq` current resumes from where it actually is. A snapshot would make every reconnect
+  // ask for the gap since first paint and then apply it to a DOM that had already moved.
   const connect = (state, on) => {
     let backoff = 250;
     const outbox = [];
