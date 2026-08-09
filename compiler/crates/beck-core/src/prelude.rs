@@ -826,6 +826,23 @@ pub fn prims() -> Vec<(&'static str, Prim, Scheme)> {
                 Row::of([Effect::Ingress]),
             )),
         ),
+        // `presence : () -> Signal[Map[Str, Int]] ! { cap.presence }` — D6's "who is connected
+        // now, as a first-class non-durable `Signal`".
+        //
+        // A map from actor to how many connections that actor has open, rather than a declared
+        // model: `corpus/15-presence.beck` had already written `here: Map[Str, Int]` by hand, the
+        // ordering is the key's and therefore a function of the value (`docs/54`), and every
+        // question a page asks of it — how many, who, is this one here — is a `Map` primitive that
+        // already exists.
+        (
+            "presence",
+            Prim::Presence,
+            Scheme::mono(fun_eff(
+                vec![],
+                Ty::signal(Ty::map(Ty::str_(), Ty::int())),
+                Row::of([Effect::Cap(Arc::from("presence"))]),
+            )),
+        ),
         (
             "filter_map",
             Prim::StreamFilterMap,

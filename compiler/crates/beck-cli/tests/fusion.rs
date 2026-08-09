@@ -216,14 +216,15 @@ fn the_fused_plan_the_unfused_plan_and_recompute_all_agree() {
             }
             for (k, actor) in ACTORS.iter().enumerate() {
                 let session = runtime.session(actor);
+                let here = beck_core::edge::presence_of(actor);
                 let want = page(
                     before[k]
-                        .render(&state, &session)
+                        .render(&state, &session, &here)
                         .unwrap_or_else(|e| panic!("{name}: unfused engine: {e}")),
                 );
                 let got = page(
                     after[k]
-                        .render(&state, &session)
+                        .render(&state, &session, &here)
                         .unwrap_or_else(|e| panic!("{name}: fused engine: {e}")),
                 );
                 assert_eq!(
@@ -463,6 +464,7 @@ fn cost(placed: &Placed, plan: Plan, n: usize) -> (u64, u64) {
     let runtime = Runtime::new(placed.clone(), backend).expect("the program prepares");
     let mut engine = Engine::new(prepared);
     let session = runtime.session("ana");
+    let here = beck_core::edge::presence_of("ana");
     let mut state = runtime.initial_state().expect("an initial accumulator");
     let fold = |state: &Value, i: usize| -> Value {
         let mut fields = beck_core::core::Fields::new();
@@ -480,9 +482,9 @@ fn cost(placed: &Placed, plan: Plan, n: usize) -> (u64, u64) {
     for i in 0..n {
         state = fold(&state, i);
     }
-    engine.render(&state, &session).expect("warm");
+    engine.render(&state, &session, &here).expect("warm");
     let next = fold(&state, n);
-    engine.render(&next, &session).expect("step");
+    engine.render(&next, &session, &here).expect("step");
     (engine.arranged(), engine.work().total())
 }
 

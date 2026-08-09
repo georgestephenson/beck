@@ -354,7 +354,10 @@ dependencies whose signatures didn't change.
   choose. The **relying party** and the **claims mapping** are built too
   ([`95`](95-oidc-relying-party-report.md)): discovery, a cached JWKS, RS/PS/ES signatures, every
   claim check, the authorization-code flow with PKCE, and `Session.claims`. What is left of this
-  bullet is presence. D6's language surface is built as written, both forms —
+  bullet was presence, and it is **built** too ([`96`](96-presence-report.md)): a source in the
+  signal graph performing `cap.presence`, refused to the chokepoint and to a Mode B page, and
+  bounded because it is keyed by a name the client chooses. D6's
+  language surface is built as written, both forms —
   `identity = external(issuer=…)` is a declaration, so §6.5's egress rule covers the issuer like any
   other peer (§95.7).*
 - LSP: completion, hover with *inferred placement*, go-to-def, rename, inline diagnostics.
@@ -373,19 +376,18 @@ dependencies whose signatures didn't change.
 
 **Exit**: an outside developer builds a non-trivial app from documentation alone, without asking the
 team a question. Track this literally as the acceptance test.
-**Not met.** Of the fourteen bullets: **seven built outright** — `test` blocks, the SQLite
+**Not met.** Of the fourteen bullets: **eight built outright** — `test` blocks, the SQLite
 substrate, the standard library, the language's own means of abstraction, the LSP, the
 expressiveness suite (three chapters of SICP and the Felleisen table, with chapters 4–5 belonging
-to Phase 5), and incremental views, whose last part is
-[`89`](89-query-fusion-report.md)'s fusion.
+to Phase 5), incremental views, whose last part is
+[`89`](89-query-fusion-report.md)'s fusion, and **identity**, whose last part is
+[`96`](96-presence-report.md)'s presence.
 **No bullet has a named remainder**: the concurrency-and-errors bullet has `Result`, error rows,
 `parallel:` and pattern matching with nesting, guards and alternatives
 ([`90`](90-nested-patterns-report.md), [`91`](91-guards-and-alternatives-report.md)); what
 `parallel:` lacks is a backend that runs two children at once, which is
-[`80`](80-a-scope-owns-its-children-report.md) §80.5's item rather than this bullet's. **Three
-half-built**: identity has its seam, its relying party, its claims mapping and both halves of its
-declaration ([`48`](48-identity-report.md), [`95`](95-oidc-relying-party-report.md)) and not
-presence; the codegen bullet has LLVM over the scalar subset and no Cranelift
+[`80`](80-a-scope-owns-its-children-report.md) §80.5's item rather than this bullet's. **Two
+half-built**: the codegen bullet has LLVM over the scalar subset and no Cranelift
 ([`93`](93-llvm-backend-report.md) §93.6); and Mode B has the mode, the bundle, the data patch, the
 reconciliation, a browser that runs it and an offline queue, without codegen
 ([`94`](94-mode-b-report.md) §94.8). **Two untouched**: client polish and the
@@ -746,8 +748,8 @@ that could only read atoms was wrong about exactly the forward references a prog
 and it catches the failure its signature names while the others travel, instead of refusing a block
 that can fail two ways.*
 
-**Wave 3 — months. ✅ Built, except for provisioning and presence**
-([`48`](48-identity-report.md), [`95`](95-oidc-relying-party-report.md)). Identity is a **seam**:
+**Wave 3 — months. ✅ Built** ([`48`](48-identity-report.md),
+[`95`](95-oidc-relying-party-report.md), [`96`](96-presence-report.md)). Identity is a **seam**:
 an `Actor` only a provider can mint, `DevIdentity` as the named default, and a `SignedIdentity`
 that verifies a keyed-BLAKE3 credential — so an ownership check compares against something the
 caller did not choose. And there is a third provider: an **OIDC relying party**, with discovery, a
@@ -768,8 +770,17 @@ egress to it is a `Peer` — a rule Kubernetes enforces, which the DNS-name rule
 gets is not. It is the one place in the project where a plaintext issuer is admissible, and the
 argument is written out rather than left in a URL.
 
-**Unbuilt**: presence — "who is connected now, as a first-class non-durable `Signal`" — which is the
-last row of this bullet.
+~~**Unbuilt**: presence — "who is connected now, as a first-class non-durable `Signal`" — which is
+the last row of this bullet.~~ **Built** ([`96`](96-presence-report.md)): `presence()` is a source
+in the signal graph performing `cap.presence`, which is [`14`](14-review-findings.md) F16's "gate
+behind a capability" taken literally — and is what places it on the server, keeps it out of a fold
+and publishes it in the row. The chokepoint may not read it (`B0515`, checked by reachability
+rather than by an argument's shape) and a Mode B page may not either (`B0516`). It is **per
+subscriber** rather than shared, and the reason is a clock: §5.3's shared dataflow is versioned by
+the log's `seq` and this is the one input that moves when `seq` does not — §96.8's first unbuilt
+item. The roster is **bounded**, because it is keyed by a name the client chooses
+([`84`](84-a-quota-is-only-as-good-as-its-actor-report.md) §84.4 one subsystem over), and a page
+that never asks who is connected is not re-rendered when somebody connects.
 
 *Both of that row's predecessors are gone.* §48.5 said the relying party "needs an HTTP client and a
 signature library, so it is an ADR rather than a line in a module". The HTTP client was built

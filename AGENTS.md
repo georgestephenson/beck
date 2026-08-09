@@ -22,7 +22,7 @@ holds the *rules*; that file holds the *state*, and it is the one that stays cur
 | [`docs/adr/`](docs/adr/) | Engineering decisions — a dependency taken or refused, a gate's shape, an upgrade path |
 | [`compiler/`](compiler/) | The compiler, the runtime, and the standard library. Where new work goes |
 | [`compiler/lib/`](compiler/lib/README.md) | The standard library's Beck half |
-| [`compiler/corpus/`](compiler/corpus/) | 31 programs carrying **no placement annotations** — Phase 2's exit measurement |
+| [`compiler/corpus/`](compiler/corpus/) | 32 programs carrying **no placement annotations** — Phase 2's exit measurement |
 | [`compiler/sicp/`](compiler/sicp/) | The expressiveness benchmark ([`docs/25`](docs/25-benchmarks-and-expressiveness.md) §25.5) |
 | [`compiler/awfy/`](compiler/awfy/README.md), [`compiler/clbg/`](compiler/clbg/README.md) | The performance benchmarks — somebody else's programs, verified against somebody else's constants |
 | [`compiler/xlang/`](compiler/xlang/README.md) | One program in six languages — the only place a Beck number sits beside another language's ([`docs/93`](docs/93-llvm-backend-report.md) §93.5) |
@@ -115,7 +115,7 @@ fusion,
 shared-arrangement, subscription, view-metrics, read-model, SICP, Are We Fast Yet, Benchmarks Game,
 tests-in-Beck, UI, workflow-cross-check, documentation, getting-started, outbound, compile-speed,
 concurrency, round-trip, runtime-edge, grammar-fuzz, supply-chain, native-backend, mode-B, browser,
-identity, OIDC and diagnostic-snapshot suites, plus the eight
+identity, OIDC, presence and diagnostic-snapshot suites, plus the eight
 release-only measurement suites. **Keep them green.**
 
 Four gates in this project's history could not have failed

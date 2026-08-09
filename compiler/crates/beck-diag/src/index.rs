@@ -954,6 +954,23 @@ pub const INDEX: &[CodeEntry] = &[
          identity. `@render(client)` sends the browser the state rather than the page, which \
          would hand every actor what the filter was removing (docs/94 §94.2).",
     ),
+    e(
+        "B0515",
+        Stage::Signals,
+        "the chokepoint reads `presence`, which is not in the log",
+        "Who was connected when an event was recorded is written down nowhere, so a `validate` \
+         that decided from the roster would decide one thing now and another on replay. Record the \
+         fact instead: propose a command when a client arrives, and decide from the state that \
+         fold produces.",
+    ),
+    e(
+        "B0516",
+        Stage::Signals,
+        "reads `presence`, so it cannot render on the client",
+        "`@render(client)` sends the browser the accumulator, and who is connected is in neither \
+         the accumulator nor the log — it is a fact the server holds about its own sockets \
+         (docs/96 §96.4).",
+    ),
     // --------------------------------------------------------- B06xx: modules and interfaces
     e(
         "B0600",

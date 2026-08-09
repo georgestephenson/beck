@@ -247,6 +247,12 @@ model Envelope[T]:
     body: T
 ```
 
+*There is one other source, and it is a `Signal` rather than a `Stream`.* `presence()` is who is
+connected now ([`10`](10-decisions.md) D6, built in [`96`](96-presence-report.md)) — the only input
+to a view that **moves without an event**. It performs `cap.presence`, which is what places it on
+the server; the chokepoint may not read it, because an event whose existence depended on who
+happened to be connected would not survive a replay.
+
 Two rules the review pass made explicit ([`14`](14-review-findings.md) F5, F3): the envelope
 records a durable *identity*, never the `Session` capability itself — tokens and live capabilities
 must not be persisted into an immutable log; and **only validated events are durably logged** — raw
