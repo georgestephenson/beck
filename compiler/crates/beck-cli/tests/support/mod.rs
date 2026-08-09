@@ -1,5 +1,8 @@
 //! Shared fixtures for the harnesses.
 
+pub mod browser;
+pub mod socket;
+
 use std::sync::Arc;
 
 use beck_core::{Placed, Value};

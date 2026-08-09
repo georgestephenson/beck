@@ -36,11 +36,11 @@
 //! No **session of Beck's own**: the cookie the flow sets *is* the ID token, so a session lasts as
 //! long as the issuer said it should and no longer. That makes token refresh unnecessary rather
 //! than missing — there is no local session to keep alive — and it makes logout the deletion of one
-//! cookie. §94.6 of the report says what it costs: a user is sent back to the issuer when the token
+//! cookie. §95.6 of the report says what it costs: a user is sent back to the issuer when the token
 //! expires, and an issuer that mints five-minute tokens will do that every five minutes.
 //!
 //! No **UserInfo request**: the claims are the ID token's. `identity = managed()` is built and is
-//! `beck-infra`'s (§94.10) — what reaches here from it is one thing, [`Config::in_cluster`], and its
+//! `beck-infra`'s (§95.10) — what reaches here from it is one thing, [`Config::in_cluster`], and its
 //! field says what it costs.
 
 use std::collections::BTreeMap;
@@ -121,10 +121,10 @@ pub struct Config {
     /// is a `Service` §6.5 emitted, in the application's own namespace, reachable only through a
     /// NetworkPolicy §6.5 wrote — so what protects the key set there is the policy, and §6.5's
     /// gateway is where TLS is terminated for everything that crosses a network anybody else is on
-    /// ([`docs/94`](../../../../../docs/94-oidc-relying-party-report.md) §94.10).
+    /// ([`docs/95`](../../../../../docs/95-oidc-relying-party-report.md) §95.10).
     ///
     /// Private, and set by [`Config::in_cluster`] rather than assignable: a `pub` bool here would
-    /// be the flag §94.2 says does not exist.
+    /// be the flag §95.2 says does not exist.
     in_cluster: bool,
 }
 
@@ -327,7 +327,7 @@ impl RelyingParty {
         // Every endpoint on the issuer's own host, which narrows the egress rule to one name and
         // stops a discovery document moving the token exchange — and the client secret with it —
         // somewhere else. An issuer that splits its endpoints across hosts is not usable here, and
-        // that is a limit rather than an oversight (§94.6).
+        // that is a limit rather than an oversight (§95.6).
         let host = url_host(&self.config.issuer, self.config.in_cluster)?;
         for (name, endpoint) in [
             ("authorization_endpoint", &provider.authorization_endpoint),

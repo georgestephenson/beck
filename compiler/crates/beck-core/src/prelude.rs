@@ -1174,7 +1174,7 @@ pub fn types() -> BTreeMap<Arc<str>, TyDecl> {
     //
     // It does not reach the log: an `Envelope` carries `actor` and nothing else, because a fold
     // whose replay depended on what the issuer was saying at the time would not be a fold
-    // (`docs/94` §94.4).
+    // (`docs/95` §95.4).
     add(TyDecl::Model {
         name: Arc::from("Session"),
         params: Vec::new(),

@@ -303,6 +303,9 @@ pub mod sym {
     pub const SPLICE: &str = "unquote-splicing";
     pub const DECORATE: &str = "decorate";
     pub const ON: &str = "on";
+    /// `@render(client)` — where a component's `view` runs, which is a different question from
+    /// `@on`: placement says a tier *may* run it, rendering says which one does.
+    pub const RENDER: &str = "render";
     pub const UI: &str = "ui";
     /// `raise e` — fail with a value. Performs `raises(T)`, where `T` is the value's type.
     pub const RAISE: &str = "raise";

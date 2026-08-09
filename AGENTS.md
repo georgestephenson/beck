@@ -99,7 +99,7 @@ If you write a number, it must be reproducible, and the report that quotes it mu
 that produces it. The measurement suites are release-only by convention:
 `cargo test --release --test <suite> -- --nocapture`, where `<suite>` is one of `measure_phase2`,
 `measure_incremental`, `measure_awfy`, `measure_compile`, `measure_clbg`, `measure_native`,
-`measure_xlang`.
+`measure_xlang`, `measure_mode_b`.
 Everything else comes from `cargo test --workspace` or from `beck` invocations the report quotes in
 full.
 
@@ -114,8 +114,8 @@ corpus, placement-property, patterns, general-slicer, incremental-analysis, incr
 fusion,
 shared-arrangement, subscription, view-metrics, read-model, SICP, Are We Fast Yet, Benchmarks Game,
 tests-in-Beck, UI, workflow-cross-check, documentation, getting-started, outbound, compile-speed,
-concurrency, round-trip, runtime-edge, grammar-fuzz, supply-chain, native-backend, identity, OIDC
-and diagnostic-snapshot suites, plus the seven
+concurrency, round-trip, runtime-edge, grammar-fuzz, supply-chain, native-backend, mode-B, browser,
+identity, OIDC and diagnostic-snapshot suites, plus the eight
 release-only measurement suites. **Keep them green.**
 
 Four gates in this project's history could not have failed
@@ -150,7 +150,7 @@ the thing you are guarding against would make it so.
 - **Building needs a C compiler *and* CMake.** SQLite and mimalloc are vendored C
   ([`adr/0017`](docs/adr/0017-sqlite-is-a-substrate-for-its-transaction-not-its-speed.md),
   [`adr/0019`](docs/adr/0019-a-modern-allocator-for-the-evaluator.md)) and aws-lc-rs builds with
-  CMake ([`adr/0022`](docs/adr/0022-tls-and-the-signature-it-brings.md)). GitHub's `ubuntu-latest`
+  CMake ([`adr/0023`](docs/adr/0023-tls-and-the-signature-it-brings.md)). GitHub's `ubuntu-latest`
   has both; a bare container does not, and the failure reads as a linker error rather than as a
   missing tool.
 - **Verification, cheapest first** (from `compiler/`): `cargo test -p <crate>`, then
@@ -173,6 +173,12 @@ the thing you are guarding against would make it so.
     `clang` on the path; `BECK_REQUIRE_LLVM=1` forbids the skip, and `BECK_CLANG` names one
     explicitly on a machine with several. A skipped run means the differential *between backends*
     did not happen.
-  - Compose parity needs Docker; the thin-client budget needs `brotli` (apt-installable).
+  - Mode B's kernel (`beck-cli/tests/mode_b.rs`) needs the `wasm32-unknown-unknown` target; it
+    skips without one, and `BECK_REQUIRE_WASM=1` forbids the skip.
+  - The browser suite (`beck-cli/tests/browser.rs`) needs a Chromium; it looks under
+    `PLAYWRIGHT_BROWSERS_PATH` and on the path, `BECK_CHROME` names one, and
+    `BECK_REQUIRE_BROWSER=1` forbids the skip. Without it, nothing in this workspace executes the
+    JavaScript.
+  - Compose parity needs Docker; the thin-client and Mode B budgets need `brotli` (apt-installable).
 - **The network is proxied and partial.** crates.io and the toolchain host work; docs hosts may
   not. Read a dependency's API from its vendored source under `~/.cargo/registry/src/`.

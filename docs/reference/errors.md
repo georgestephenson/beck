@@ -4,7 +4,7 @@
 
 Every diagnostic the compiler can raise carries a stable code. `beck explain error B0341` prints one of these entries at the terminal.
 
-The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans every non-test source file for a `"Bnnnn"` literal and fails if the set differs from this table in either direction. **124 codes.**
+The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans every non-test source file for a `"Bnnnn"` literal and fails if the set differs from this table in either direction. **127 codes.**
 
 
 ## Reading the source — `B0100–B0122`
@@ -52,6 +52,7 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0303` | error | **a top-level parameter needs a type annotation** — Inference is intra-module and boundaries are declared (§3.6): a top-level definition's parameters are part of its published signature, so they are written rather than guessed. |
 | `B0304` | error | **needs a return type** — Same reason as B0303: a top-level definition's result type is part of its contract. |
 | `B0305` | error | **neither an effect nor a row** — A `uses` clause names effect atoms and row aliases, and this is neither. `beck doc reference` lists the atom set; a `row Name = …` declaration in the module is what makes a name for a bundle of them. |
+| `B0306` | error | **is not a rendering mode** — `@render` takes `server` (Mode A: the server renders and the wire carries DOM patches) or `client` (Mode B: the browser renders and the wire carries the state). |
 | `B0307` | error | **unsupported top-level item** — This form is not something a module may contain at top level. |
 | `B0308` | error | **expected a type** — A type position holds something that is not a type expression. |
 | `B0310` | error | **cannot find type** — No declaration, import or builtin of that name is in scope. |
@@ -88,7 +89,7 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0356` | error | **the alternatives of an or-pattern bind different names** — Every alternative of `a | b` has to bind the same names at the same types, because the body reads them without knowing which one matched. |
 | `B0357` | error | **`|` and `@` are only meaningful in a `case` pattern** — Beck has no bitwise operators. `|` separates the alternatives of an or-pattern, `@` names the value a pattern takes apart, and neither means anything anywhere else. |
 | `B0358` | error | **the left of `@` is a name** — `whole @ Circle(r)` binds `whole` to the value the pattern matched. What stands to the left of `@` is the name being bound. |
-| `B0359` | error | **an identity declaration this compiler cannot derive a deployment from** — `identity = external(issuer="https://login.acme.com")` is the one form. The issuer is an `https` URL — the key set's only integrity protection is the transport it arrives over — and its host has to be one an egress rule could name, because §6.5 derives the cluster's rule from it. `managed()` is D6's other half, which provisions an identity provider into the object graph, and is not built. |
+| `B0359` | error | **an identity declaration this compiler cannot derive a deployment from** — `identity = external(issuer="https://login.acme.com")` and `identity = managed()` are the two forms, and a program declares at most one. An external issuer is an `https` URL — the key set's only integrity protection is the transport it arrives over — and its host has to be one an egress rule could name, because §6.5 derives the cluster's rule from it. `managed()` takes no arguments: it provisions a provider into the object graph, and the issuer is a Service the deployment names rather than the program. |
 | `B0360` | error | **cannot be called inside a fold** — A fold must be replay-pure, and this would make replay non-deterministic. Time is data on the envelope (`env.at`) and entity ids are minted at the edge: mint the id in the client's command and read it from the event. |
 | `B0370` | error | **performs more than its signature declares** — The undeclared atoms are listed. A `uses` clause is the published bound, and widening it is a breaking API change — so the compiler will not widen it for you. |
 | `B0380` | error | **a trait cannot be declared here** — The name already belongs to a type, the trait is declared twice, or the file is a `.becki` — a trait does not cross a module boundary, so an interface may not hold one. |
@@ -111,7 +112,7 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0398` | error | **a child of a parallel scope names another child** — The children of a `parallel:` scope run together, so none of them can see another's result — a child that could would have to run second, and then it is not a child but a next line. Move the reader into the scope's tail, which runs after the join with every child's result in scope, or out into a second scope below this one. |
 | `B0399` | error | **a child of a parallel scope performs an effect another child could observe** — The claim a `parallel:` scope makes is that its answer does not depend on the order its children ran in, and an effect on state the program holds — the log, the document, the merge point, a file, an external store — breaks it: two children appending to the log in the other order is a different log. `net.out(host)` is not on that list and is the case the form exists for. Do the shared-state part in the tail, which runs once, after the join. |
 
-## Placement — `B0400–B0404`
+## Placement — `B0400–B0405`
 
 | Code | | Meaning |
 |---|---|---|
@@ -120,6 +121,7 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0402` | error | **a fold function must be replay-pure** — The function reached by a `fold` performs effects that replay would not reproduce. Both the fold and the definition are reported. |
 | `B0403` | error | **a program has exactly one merge point** — A second `merge_clients()`. The merge point is where time and nondeterminism enter; two of them would mean two total orders, and replay would no longer be a function of the log. |
 | `B0404` | error | **cannot be unplaced** — `@on(any)` means every tier, and an atom in the row is not discharged on every tier. The fix-it names the tiers that can. |
+| `B0405` | error | **only a component can say where it renders** — `@render` was written on something that is not a `Signal[Html]`. A definition is unplaced code compiled to every tier that needs it (§3.3); rendering is decided per component. |
 
 ## Placement and security — `B0410–B0412`
 
@@ -129,7 +131,7 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0411` | error | **durable, so its state must be storable** — The log is the only description of this program's history; a value it cannot read back is a state replay would not reproduce. |
 | `B0412` | error | **requires a capability nothing can discharge** — A `Session` reaches exactly one place in a Beck program: the validator `decide` is given, which is the only function handed a `Proposal`. Authority is one chokepoint (§3.5), so a capability required outside it has no holder. |
 
-## The signal graph and the slicer — `B0500–B0513`
+## The signal graph and the slicer — `B0500–B0514`
 
 | Code | | Meaning |
 |---|---|---|
@@ -146,6 +148,7 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0511` | error | **a program has one authority chokepoint** — A second `decide`. §3.5 rests on validation being one place: two of them are two answers to "may this actor do this", and the log would record whichever ran. |
 | `B0512` | error | **the chokepoint does not read a durable fold** — `decide` threads the accumulator through validation, so what it reads has to be one — that is what makes first-writer-wins and ownership decidable (§3.7). |
 | `B0513` | error | **a fold that is not durable** — Its accumulator has nowhere to live across a restart. The log is what survives, and `durable` is what says an accumulator is folded from it. |
+| `B0514` | error | **renders differently for each session, so it cannot render on the client** — The page reads the session as well as the state, so it filters, scopes or hides by identity. `@render(client)` sends the browser the state rather than the page, which would hand every actor what the filter was removing (docs/94 §94.2). |
 
 ## Modules and interfaces — `B0600–B0605`
 

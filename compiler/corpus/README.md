@@ -43,7 +43,7 @@ of one shape would prove that the shape works, which Phase 1 already did. What v
   writing either down;
 - **who is asking**: a program that declares `identity = external(issuer=…)` and whose `validate`
   refuses a command unless the *issuer* said which tenant is asking (program 31,
-  [`docs/94`](../../docs/94-oidc-relying-party-report.md)). It is the only file here with a
+  [`docs/95`](../../docs/95-oidc-relying-party-report.md)). It is the only file here with a
   top-level form that is neither a definition nor a signal, so it is what holds the printer, the
   round-trip property and the placement property to it.
 

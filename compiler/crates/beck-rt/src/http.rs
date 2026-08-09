@@ -54,6 +54,10 @@ pub async fn serve_with_dashboard(
             _ = shutdown.changed() => {
                 if *shutdown.borrow() {
                     tracing::info!("draining: no longer accepting connections");
+                    // And the ones already accepted: a subscription is a task of its own, and a
+                    // server that only stops *accepting* leaves every open socket up for as long
+                    // as the process lives (§5.2's third clause, `App::drain`).
+                    app.drain();
                     return Ok(());
                 }
                 continue;
@@ -97,7 +101,24 @@ async fn route(
     }
     match (req.method(), path.as_str()) {
         (&Method::GET, "/healthz") | (&Method::GET, "/readyz") => Ok(text("ok")),
+        (&Method::GET, "/beck-patch.js") => Ok(asset(crate::PATCH_CLIENT, "text/javascript")),
         (&Method::GET, "/beck-thin.js") => Ok(asset(crate::THIN_CLIENT, "text/javascript")),
+        (&Method::GET, "/beck-mode-b.js") => Ok(asset(crate::MODE_B_CLIENT, "text/javascript")),
+        // The worker's cache is keyed by the program it is caching, so the id is substituted here
+        // rather than fetched by the worker: a worker that had to ask the server which program it
+        // was would be asking the one thing it exists to survive the absence of.
+        (&Method::GET, "/beck-sw.js") => Ok(asset(
+            &crate::SERVICE_WORKER.replace("%WIRE%", app.runtime().wire_id()),
+            "text/javascript",
+        )),
+        // The component's slice, for a browser that renders it (§5.1's Mode B). Derived from the
+        // running program rather than read from disk, so a tab can never load a bundle the server
+        // is not itself executing.
+        (&Method::GET, "/beck-bundle.bpk") => Ok(bytes(
+            beck_core::Bundle::of(app.runtime().placed()).to_bytes(),
+            "application/octet-stream",
+        )),
+        (&Method::GET, "/beck-kernel.wasm") => Ok(kernel()),
         (&Method::GET, "/beck.css") => Ok(asset(&crate::css::stylesheet(), "text/css")),
         (&Method::GET, LOGIN_PATH) => login(app, &req).await,
         (&Method::GET, CALLBACK_PATH) => callback(app, &req).await,
@@ -177,7 +198,7 @@ fn cookie(headers: &hyper::HeaderMap, name: &str) -> Option<String> {
 /// `/auth/callback` and `Strict` would withhold the transaction cookie on exactly that navigation.
 /// `Secure` is **not** set: §6.5's gateway terminates TLS in front of a plaintext hop, so setting
 /// it would make the cookie unusable in the deployment this project generates — the same reason
-/// `same_origin` does not compare schemes, and it is recorded in `docs/94` §94.6 rather than left
+/// `same_origin` does not compare schemes, and it is recorded in `docs/95` §95.6 rather than left
 /// to be discovered.
 fn set_cookie(name: &str, value: &str, max_age: i64) -> String {
     format!("{name}={value}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age}")
@@ -283,7 +304,7 @@ async fn callback(app: Arc<App>, req: &Request<Incoming>) -> Result<Response<Ful
 ///
 /// Local only: it clears this app's cookie and does not call the issuer's end-session endpoint, so
 /// the browser is still signed in to the identity provider and `/auth/login` will complete without
-/// another password. That is the ordinary meaning of "log out of this app" and `docs/94` §94.6 says
+/// another password. That is the ordinary meaning of "log out of this app" and `docs/95` §95.6 says
 /// so rather than leaving somebody to find out.
 fn logout() -> Response<Full<Bytes>> {
     redirect(
@@ -341,17 +362,37 @@ async fn document(app: Arc<App>, req: Request<Incoming>) -> Result<Response<Full
     };
     let seq = app.head();
     let body = app.render(&actor).await?.render();
-    let actor = actor.name().to_string();
+    // The claims go into the document because Mode B's client renders the same view against the
+    // same `Session`, and it has no provider to ask: a client left to fill in a blank map would
+    // show a different page than the one it is hydrating. They are what the server already
+    // verified and already rendered against, so the document is not telling the browser anything
+    // the page it carries does not — and the browser's copy is advice, exactly as its `validate`
+    // is: the server verifies the token again on the socket and every command goes through the
+    // chokepoint there (§3.5).
+    let claims = serde_json::to_string(
+        &actor
+            .claims()
+            .iter()
+            .map(|(k, v)| (k.as_ref(), v.as_ref()))
+            .collect::<std::collections::BTreeMap<&str, &str>>(),
+    )
+    .unwrap_or_else(|_| "{}".into());
+    let actor = beck_core::html::escape_attr(actor.name());
+    let claims = beck_core::html::escape_attr(&claims);
 
-    // The document carries the position it reflects, so the first socket message either finds
-    // nothing to do or is exactly the gap. That is what made hydration free in Phase 0.
-    let html = format!(
-        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
-         <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
-         <title>{title}</title><link rel=\"stylesheet\" href=\"/beck.css\">\
-         </head><body data-b-seq=\"{seq}\" data-b-actor=\"{actor}\">{body}\
-         <script src=\"/beck-thin.js\" defer></script></body></html>",
-        title = app.runtime().placed().program.name,
+    let html = shell(
+        &app.runtime().placed().program.name,
+        seq,
+        &actor,
+        &claims,
+        &body,
+        // Which residue this page needs is the component's rendering mode, and the server is the
+        // one that knows it: a Mode B document that loaded the thin client would sit waiting for
+        // DOM patches the server is never going to send.
+        match app.runtime().placed().render.mode {
+            beck_core::render::Mode::Server => "/beck-thin.js",
+            beck_core::render::Mode::Client => "/beck-mode-b.js",
+        },
     );
     Ok(Response::builder()
         .header(
@@ -360,6 +401,35 @@ async fn document(app: Arc<App>, req: Request<Incoming>) -> Result<Response<Full
         )
         .header(CACHE_CONTROL, HeaderValue::from_static("no-store"))
         .body(Full::new(Bytes::from(html)))?)
+}
+
+/// The document around a rendered page: what the browser needs in order to become a client of it.
+///
+/// A function rather than a `format!` inside [`document`] so that the attributes it writes can be
+/// held against the attributes the served JavaScript reads, in both directions
+/// (`the_document_carries_every_attribute_the_residue_reads_off_it`). An attribute a client reads
+/// and this does not write is a page that never connects, and nothing else in this workspace would
+/// say so.
+///
+/// `seq` is the position the page reflects, so the first socket message either finds nothing to do
+/// or is exactly the gap — that is what made hydration free in Phase 0. `actor` and `claims` are
+/// already escaped: they are the identity provider's strings, and the caller is where the value to
+/// escape exists.
+///
+/// `#b-root` is the subscription's frame: a patch path is child indices *from it*, so it has to be
+/// an element of its own rather than the body — whose other children are the two script tags below,
+/// which an insertion at the frame's root would otherwise be counted against.
+fn shell(title: &str, seq: u64, actor: &str, claims: &str, body: &str, client: &str) -> String {
+    format!(
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
+         <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
+         <title>{title}</title><link rel=\"stylesheet\" href=\"/beck.css\">\
+         </head><body>\
+         <div id=\"b-root\" data-b-seq=\"{seq}\" data-b-actor=\"{actor}\" \
+         data-b-claims=\"{claims}\">{body}</div>\
+         <script src=\"/beck-patch.js\" defer></script>\
+         <script src=\"{client}\" defer></script></body></html>"
+    )
 }
 
 /// Is this upgrade coming from a page the server itself served?
@@ -519,8 +589,115 @@ fn asset(body: &str, mime: &'static str) -> Response<Full<Bytes>> {
         .expect("static response builds")
 }
 
+fn bytes(body: Vec<u8>, mime: &'static str) -> Response<Full<Bytes>> {
+    Response::builder()
+        .header(CONTENT_TYPE, HeaderValue::from_static(mime))
+        .header(
+            CACHE_CONTROL,
+            HeaderValue::from_static("public, max-age=60"),
+        )
+        .body(Full::new(Bytes::from(body)))
+        .expect("static response builds")
+}
+
+/// Where the Mode B kernel is looked for.
+///
+/// `BECK_KERNEL` names the module; without it, the path `cargo build -p beck-wasm --release
+/// --target wasm32-unknown-unknown` writes to, relative to the working directory. The kernel is a
+/// *build artefact of this workspace* rather than something compiled into the binary, because
+/// building it needs a target the compiler's own build does not: making `beck` depend on a wasm
+/// toolchain to serve a Mode A page would be the wrong trade.
+pub fn kernel_path() -> std::path::PathBuf {
+    std::env::var_os("BECK_KERNEL").map_or_else(
+        || std::path::PathBuf::from("target/wasm32-unknown-unknown/release/beck_wasm.wasm"),
+        std::path::PathBuf::from,
+    )
+}
+
+/// The kernel, or a refusal that says what to do about it.
+fn kernel() -> Response<Full<Bytes>> {
+    let path = kernel_path();
+    match std::fs::read(&path) {
+        Ok(module) => bytes(module, "application/wasm"),
+        Err(e) => {
+            tracing::error!(path = %path.display(), error = %e, "no Mode B kernel to serve");
+            Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .body(Full::new(Bytes::from(format!(
+                    "no kernel at {}: build it with `cargo build -p beck-wasm --release \
+                     --target wasm32-unknown-unknown`, or set BECK_KERNEL",
+                    path.display()
+                ))))
+                .expect("static response builds")
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    /// The frame root the served JavaScript looks for, and the attributes it reads off it.
+    ///
+    /// Both clients open with `document.getElementById("b-root")` and give up if it is missing, so
+    /// a document without it is a page that never connects — and nothing would have said so,
+    /// because no test in this workspace runs JavaScript (`docs/94` §94.8).
+    #[test]
+    fn the_document_carries_the_frame_root_the_residue_looks_for() {
+        for client in [crate::THIN_CLIENT, crate::MODE_B_CLIENT] {
+            assert!(
+                client.contains(r#"getElementById("b-root")"#),
+                "a client that does not look for the frame root"
+            );
+        }
+        for read in ["dataset.bActor", "dataset.bSeq"] {
+            assert!(
+                crate::THIN_CLIENT.contains(read) || crate::MODE_B_CLIENT.contains(read),
+                "nothing reads {read}"
+            );
+        }
+    }
+
+    /// The other direction, which is the one that bites: **every attribute a client reads is one
+    /// the document writes.**
+    ///
+    /// The test above says something reads each attribute somebody thought to list; it cannot fail
+    /// when a client starts reading an attribute the server never writes. That failure is silent —
+    /// `dataset.bClaims` on a document without it is `undefined`, so the Mode B kernel would build
+    /// a `Session` with no claims and refuse commands the server accepts — and it is exactly the
+    /// shape of the defect Mode B's own `#b-root` finding was (`docs/94` §94.8).
+    ///
+    /// So the list is derived from the residue rather than written down: whatever `dataset.bFoo`
+    /// the shipped JavaScript reads, `data-b-foo` has to be in the shell.
+    #[test]
+    fn the_document_carries_every_attribute_the_residue_reads_off_it() {
+        let page = super::shell("t", 7, "ana", "{}", "<p>hi</p>", "/beck-thin.js");
+        let mut checked = 0;
+        for client in [crate::THIN_CLIENT, crate::MODE_B_CLIENT] {
+            for (i, _) in client.match_indices("dataset.b") {
+                let name: String = client[i + "dataset.".len()..]
+                    .chars()
+                    .take_while(|c| c.is_ascii_alphanumeric())
+                    .collect();
+                // `bActor` is `data-b-actor`; a second capital would be a second dash.
+                let mut attr = String::from("data-");
+                for c in name.chars() {
+                    if c.is_ascii_uppercase() {
+                        attr.push('-');
+                        attr.push(c.to_ascii_lowercase());
+                    } else {
+                        attr.push(c);
+                    }
+                }
+                assert!(
+                    page.contains(&format!("{attr}=")),
+                    "the residue reads `dataset.{name}` and the document has no `{attr}`"
+                );
+                checked += 1;
+            }
+        }
+        // A rename that made the loop match nothing would otherwise pass in silence.
+        assert!(checked >= 3, "only {checked} attribute reads were found");
+    }
+
     use super::*;
     use hyper::HeaderMap;
 

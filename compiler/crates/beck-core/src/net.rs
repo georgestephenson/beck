@@ -18,7 +18,7 @@
 //! than a property of the client, because a program that calls two peers may reach one of them
 //! over a plaintext hop inside a cluster and the other across the internet. What a *name* is
 //! verified against is the implementation's business; that the caller asked for TLS is the
-//! program's ([`docs/adr/0021`](../../../../../docs/adr/0022-tls-and-the-signature-it-brings.md)).
+//! program's ([`docs/adr/0023`](../../../../../docs/adr/0023-tls-and-the-signature-it-brings.md)).
 
 use std::fmt;
 use std::sync::Arc;

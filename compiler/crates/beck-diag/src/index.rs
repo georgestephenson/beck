@@ -348,6 +348,13 @@ pub const INDEX: &[CodeEntry] = &[
          name for a bundle of them.",
     ),
     e(
+        "B0306",
+        Stage::Types,
+        "is not a rendering mode",
+        "`@render` takes `server` (Mode A: the server renders and the wire carries DOM patches) \
+         or `client` (Mode B: the browser renders and the wire carries the state).",
+    ),
+    e(
         "B0307",
         Stage::Types,
         "unsupported top-level item",
@@ -599,11 +606,12 @@ pub const INDEX: &[CodeEntry] = &[
         "B0359",
         Stage::Types,
         "an identity declaration this compiler cannot derive a deployment from",
-        "`identity = external(issuer=\"https://login.acme.com\")` is the one form. The issuer is an \
-         `https` URL — the key set's only integrity protection is the transport it arrives over — \
-         and its host has to be one an egress rule could name, because §6.5 derives the cluster's \
-         rule from it. `managed()` is D6's other half, which provisions an identity provider into \
-         the object graph, and is not built.",
+        "`identity = external(issuer=\"https://login.acme.com\")` and `identity = managed()` are \
+         the two forms, and a program declares at most one. An external issuer is an `https` URL — \
+         the key set's only integrity protection is the transport it arrives over — and its host \
+         has to be one an egress rule could name, because §6.5 derives the cluster's rule from it. \
+         `managed()` takes no arguments: it provisions a provider into the object graph, and the \
+         issuer is a Service the deployment names rather than the program.",
     ),
     e(
         "B0360",
@@ -818,6 +826,13 @@ pub const INDEX: &[CodeEntry] = &[
          fix-it names the tiers that can.",
     ),
     e(
+        "B0405",
+        Stage::Placement,
+        "only a component can say where it renders",
+        "`@render` was written on something that is not a `Signal[Html]`. A definition is unplaced \
+         code compiled to every tier that needs it (§3.3); rendering is decided per component.",
+    ),
+    e(
         "B0410",
         Stage::Security,
         "runs on the client, so its value must be Sendable",
@@ -930,6 +945,14 @@ pub const INDEX: &[CodeEntry] = &[
         "a fold that is not durable",
         "Its accumulator has nowhere to live across a restart. The log is what survives, and \
          `durable` is what says an accumulator is folded from it.",
+    ),
+    e(
+        "B0514",
+        Stage::Signals,
+        "renders differently for each session, so it cannot render on the client",
+        "The page reads the session as well as the state, so it filters, scopes or hides by \
+         identity. `@render(client)` sends the browser the state rather than the page, which \
+         would hand every actor what the filter was removing (docs/94 §94.2).",
     ),
     // --------------------------------------------------------- B06xx: modules and interfaces
     e(

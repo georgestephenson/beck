@@ -2075,7 +2075,15 @@ impl<'h> Interp<'h> {
             Prim::HtmlText => {
                 want(1)?;
                 let v = args.pop().expect("arity checked");
-                Ok(Value::Html(Arc::new(Html::text(v.display()))))
+                match v {
+                    // A child that is *already* a tree is spliced, not stringified. `ui:` lowers
+                    // every non-element child through here — "a call with positional arguments is
+                    // an ordinary function call producing text or Html" (`beck_macro::ui`) — so
+                    // rendering `render_comment(r)` as its own markup, escaped, is the one reading
+                    // of "or Html" that makes a view uncomposable out of functions.
+                    Value::Html(h) => Ok(Value::Html(h)),
+                    other => Ok(Value::Html(Arc::new(Html::text(other.display())))),
+                }
             }
             Prim::HtmlAttr => {
                 want(2)?;

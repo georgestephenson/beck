@@ -20,13 +20,20 @@ use crate::log::Seq;
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(tag = "t")]
 pub enum ClientMsg {
-    /// Subscribe, or resume: `seq` is the last frame this client applied. `seq = 0` means "I have
-    /// nothing; send me the world".
+    /// Subscribe, or resume.
+    ///
+    /// `seq` is **what this client holds**, and its absence is meaningful: `None` is "I have
+    /// nothing, send me the world" and `Some(n)` is "I hold the frame as of `n`" — including
+    /// `Some(0)`, which is what a browser says when the document it is running in was rendered
+    /// from an empty log. Those were the same message until a browser ran the thin client and the
+    /// first paint rebuilt the page it had just been served (`docs/94` §94.7): position zero and
+    /// nothing-at-all are different facts, and a protocol that spells them the same way cannot
+    /// keep §5.1's "first paint is free" promise.
     #[serde(rename = "hello")]
     Hello {
         sub: String,
         #[serde(default)]
-        seq: Seq,
+        seq: Option<Seq>,
         /// What the client says it is. **A claim, not an actor**: `beck_rt::identity` is what
         /// turns it into one, and under `DevIdentity` the two are the same value — which is a
         /// choice an operator makes rather than a property of the protocol (`docs/48`).
@@ -106,6 +113,16 @@ impl ServerMsg {
 mod tests {
     use super::*;
 
+    /// Absence and zero are different messages, and the server reads them differently.
+    #[test]
+    fn a_hello_without_a_position_holds_nothing_and_one_with_zero_holds_the_first_page() {
+        let nothing = ClientMsg::parse(r#"{"t":"hello","sub":"s1","actor":"ana"}"#).unwrap();
+        assert!(matches!(nothing, ClientMsg::Hello { seq: None, .. }));
+        let painted =
+            ClientMsg::parse(r#"{"t":"hello","sub":"s1","seq":0,"actor":"ana"}"#).unwrap();
+        assert!(matches!(painted, ClientMsg::Hello { seq: Some(0), .. }));
+    }
+
     #[test]
     fn parses_a_resume_hello() {
         let msg = ClientMsg::parse(r#"{"t":"hello","sub":"s1","seq":41,"actor":"alice"}"#).unwrap();
@@ -113,7 +130,7 @@ mod tests {
             msg,
             ClientMsg::Hello {
                 sub: "s1".into(),
-                seq: 41,
+                seq: Some(41),
                 actor: "alice".into()
             }
         );

@@ -384,6 +384,13 @@ enum Explain {
     },
     /// The command channel's content-derived operation id (§4.3).
     Wire { file: PathBuf },
+    /// Where a component renders, why, and what that puts on the wire (§5.1).
+    ///
+    /// Mode A sends the browser a rendering of the state; Mode B sends it the state and renders
+    /// locally. This prints which one, what decided it, what crosses, whether the client may apply
+    /// a command optimistically — and, for a Mode B component, the size of the bundle it would
+    /// have to download.
+    Render { file: PathBuf },
     /// The signal graph, and what the splitter made of it — or, given a type, everywhere that
     /// type reaches and everywhere it is refused (§4.7).
     Flow {
@@ -581,6 +588,19 @@ fn dispatch(cli: Cli) -> Result<()> {
                 println!("{}", w.display());
             }
             println!("{} files, wire id {}", written.len(), placed.wire_id);
+            // A Mode B component needs one artefact these manifests do not describe. The bundle
+            // itself is *not* written: the server derives it from the program it is running, so a
+            // deployment cannot serve a slice of a different program than the one it is executing.
+            if placed.render.mode == beck_core::render::Mode::Client {
+                let bundle = beck_core::Bundle::of(&placed);
+                println!(
+                    "`{}` renders on the client: this deployment also needs the Mode B kernel \n\
+                     (`cargo build -p beck-wasm --release --target wasm32-unknown-unknown`, served \n\
+                     from BECK_KERNEL). Its bundle is {} bytes and is derived at request time.",
+                    bundle.component,
+                    bundle.to_bytes().len()
+                );
+            }
             Ok(())
         }
         Cmd::Native {
@@ -1283,6 +1303,12 @@ fn explain(what: Explain) -> Result<()> {
             );
             Ok(())
         }
+        Explain::Render { file } => {
+            let placed = compiled(&file)?;
+            let bundle = beck_core::Bundle::of(&placed);
+            print!("{}", placed.render.explain(&bundle));
+            Ok(())
+        }
         Explain::Flow { file, ty: Some(ty) } => {
             let placed = compiled(&file)?;
             let program = &placed.program;
@@ -1449,7 +1475,7 @@ fn identity(
 
     // Two constructors, and which one is chosen is decided by the *declaration* rather than by the
     // URL's scheme: a provider this deployment provisioned is reached inside one namespace, and one
-    // it did not must be reached over TLS (`docs/94` §94.10).
+    // it did not must be reached over TLS (`docs/95` §95.10).
     let mut config = match declared {
         beck_core::check::IdentityDecl::Managed { .. } => {
             beck_rt::oidc::Config::in_cluster(&issuer, client_id, &redirect)
@@ -1497,6 +1523,20 @@ async fn serve(
     // The one place the process chooses how the program executes. A native backend is a different
     // expression here and nothing else (docs/19 §19.8).
     let backend = beck_eval::backend(&placed);
+    // A Mode B page is rendered by a kernel this process serves but does not contain, so the miss
+    // is worth reporting when the server starts rather than when somebody's tab comes up blank.
+    if placed.render.mode == beck_core::render::Mode::Client {
+        let kernel = beck_rt::http::kernel_path();
+        if !kernel.is_file() {
+            tracing::warn!(
+                path = %kernel.display(),
+                "`{}` renders on the client and there is no kernel to serve it: \
+                 `cargo build -p beck-wasm --release --target wasm32-unknown-unknown`, \
+                 or set BECK_KERNEL",
+                placed.render.component,
+            );
+        }
+    }
     let log = open_store(store, path, url).await?;
     // Read before the program is moved into the runtime: who authenticates this program's clients
     // is a property of the program (D6), and this is the one place it is turned into a provider.
@@ -1513,7 +1553,7 @@ async fn serve(
 
     // The key set is fetched again on a timer and whenever a token named a key it does not carry.
     // A task rather than a fetch on the connection path: verifying an ID token must not be a way
-    // for an anonymous client to make this process call its identity provider (§94.3).
+    // for an anonymous client to make this process call its identity provider (§95.3).
     if let Some(party) = relying_party.clone() {
         tokio::spawn(async move {
             loop {

@@ -117,7 +117,7 @@ struct Proposal {
     at: Instant,
     /// The whole viewer rather than its name: `validate` is handed a `Session`, and D6's claims →
     /// capability mapping is the chokepoint's to use. Only the **name** goes on the envelope
-    /// (`docs/94` §94.4), so what is durable is unchanged.
+    /// (`docs/95` §95.4), so what is durable is unchanged.
     actor: crate::identity::Actor,
     command: Value,
     reply: oneshot::Sender<Result<Seq, String>>,
@@ -141,6 +141,15 @@ pub struct App {
     /// F3's per-actor write quota. Held here rather than in the sequencer because it refuses
     /// *before* the queue: a proposal that will not be admitted should not occupy a slot in it.
     limit: crate::quota::RateLimit,
+    /// Set once, when this process is going away. Every subscription watches it.
+    ///
+    /// §5.2 lists "graceful drain (finish folds, snapshot, hand off subscriptions)" among the
+    /// things the runtime must ship, and the last of those three needs a subscription to *end*:
+    /// `http::serve` stops accepting on shutdown, but a websocket that was already accepted is a
+    /// task of its own and went on living for as long as the process did. A client whose server
+    /// has drained should find out and reconnect — which, for a Mode B client, is also the moment
+    /// its offline queue matters (`docs/94` §94.13).
+    draining: watch::Sender<bool>,
 }
 
 impl App {
@@ -182,6 +191,7 @@ impl App {
             config: config.clone(),
             shared,
             limit: crate::quota::RateLimit::new(config.quota),
+            draining: watch::channel(false).0,
         });
         tokio::spawn(sequencer(app.clone(), rx, config));
         Ok(app)
@@ -201,6 +211,19 @@ impl App {
 
     pub fn subscribe(&self) -> watch::Receiver<Seq> {
         self.version.subscribe()
+    }
+
+    /// Tell every subscription this process is going away.
+    ///
+    /// Idempotent, and one-way: an application that has drained does not come back, because the
+    /// thing that would bring it back is a new process.
+    pub fn drain(&self) {
+        let _ = self.draining.send(true);
+    }
+
+    /// Watch for the drain. `true` already means it has happened.
+    pub fn draining(&self) -> watch::Receiver<bool> {
+        self.draining.subscribe()
     }
 
     pub async fn state(&self) -> Value {
@@ -366,7 +389,13 @@ impl App {
 
 /// The single writer. Everything about the total order lives in this one task.
 async fn sequencer(app: Arc<App>, mut rx: mpsc::Receiver<Proposal>, config: AppConfig) {
-    let mut seen: VecDeque<String> = VecDeque::with_capacity(config.dedup_capacity);
+    // The commands already appended, with the position each got. **The position is the point**:
+    // §4.3 makes the id an idempotency key so "a retry after a reconnect is safe", and a retry is
+    // only safe if the answer to the second attempt is the answer to the first. Remembering the id
+    // alone let this reply "duplicate" — a *rejection* — to a command that had been accepted, so a
+    // client replaying its offline queue was told its work had been refused and took it back off
+    // the page (`docs/94` §94.13).
+    let mut seen: VecDeque<(String, Seq)> = VecDeque::with_capacity(config.dedup_capacity);
     let mut since_snapshot = 0u64;
     let mut batch: Vec<Proposal> = Vec::with_capacity(config.max_batch);
 
@@ -394,10 +423,13 @@ async fn sequencer(app: Arc<App>, mut rx: mpsc::Receiver<Proposal>, config: AppC
         let base = app.head.load(Ordering::Relaxed);
 
         for p in batch.drain(..) {
-            if seen.contains(&p.id) {
-                // Idempotency by envelope identity: a retry after a reconnect is safe (§4.3).
+            if let Some((_, at)) = seen.iter().find(|(id, _)| *id == p.id) {
+                // Idempotency by envelope identity: a retry after a reconnect is safe (§4.3), and
+                // it is safe because this is an **ack** carrying the position the first attempt
+                // got, not a refusal. The command is in the log; saying so twice is the whole of
+                // what idempotent means.
                 telemetry().deduplicated.incr();
-                rejected.push((p.reply, "duplicate".into()));
+                let _ = p.reply.send(Ok(*at));
                 continue;
             }
             let proposal = app.runtime.proposal(&p.actor, p.command.clone());
@@ -448,7 +480,9 @@ async fn sequencer(app: Arc<App>, mut rx: mpsc::Receiver<Proposal>, config: AppC
                             if seen.len() >= config.dedup_capacity {
                                 seen.pop_front();
                             }
-                            seen.push_back(p.id);
+                            // The position is `base + pending.len()`: the last event this command
+                            // produced, which is the seq its reply carries below.
+                            seen.push_back((p.id, base + pending.len() as u64));
                             replies.push((p.reply, pending.len()));
                         }
                     }

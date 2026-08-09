@@ -15,7 +15,7 @@
 //! no SNI override, no `danger_accept_invalid_certs`, no pinning.
 //!
 //! The trust anchors are Mozilla's, compiled in as data
-//! ([`adr/0021`](../../../../../docs/adr/0022-tls-and-the-signature-it-brings.md)) rather than read
+//! ([`adr/0023`](../../../../../docs/adr/0023-tls-and-the-signature-it-brings.md)) rather than read
 //! from the container's filesystem — §6.2's images execute nothing at build time, so a
 //! `ca-certificates` package would be one more thing whose version the SBOM cannot state.
 //!

@@ -213,16 +213,20 @@ impl Html {
                 children,
                 ..
             } => {
-                let mut obj = serde_json::Map::with_capacity(attrs.len() + 1);
-                for (k, v) in attrs {
-                    obj.insert(k.clone(), Value::String(v.clone()));
-                }
+                // Pairs rather than an object, because a JSON object is not ordered and this one
+                // has to be: the client sets attributes in the order it reads them, so an object
+                // — which `serde_json` sorts — makes a rebuilt element carry its attributes in a
+                // different order than the same element the server rendered into the document. It
+                // is invisible until something compares the two, and then it is the difference
+                // between "the DOM is the page" and "the DOM is nearly the page"
+                // (`docs/94` §94.7).
+                let mut pairs: Vec<Value> = attrs.iter().map(|(k, v)| json!([k, v])).collect();
                 if let Some(k) = key {
-                    obj.insert(KEY_ATTR.to_string(), Value::String(k.clone()));
+                    pairs.push(json!([KEY_ATTR, k]));
                 }
                 json!([
                     tag,
-                    Value::Object(obj),
+                    Value::Array(pairs),
                     children.iter().map(Html::to_wire).collect::<Vec<_>>()
                 ])
             }
@@ -291,6 +295,18 @@ fn escape_text_into(s: &str, out: &mut String) {
             _ => out.push(c),
         }
     }
+}
+
+/// Escape a string for an attribute value the *shell* writes rather than a view.
+///
+/// The runtime builds the surrounding document with `format!` and puts two values from outside the
+/// program into it — the actor's name and its claims — and those are the identity provider's
+/// strings, not the program's. Exported so that they go through the same escaping the view's own
+/// attributes do rather than a second one written beside it.
+pub fn escape_attr(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    escape_attr_into(s, &mut out);
+    out
 }
 
 fn escape_attr_into(s: &str, out: &mut String) {
@@ -382,7 +398,31 @@ mod tests {
             .child(Html::text("x"));
         assert_eq!(
             tree.to_wire(),
-            json!(["li", {"class": "done", "data-b-k": "k1"}, ["x"]])
+            json!(["li", [["class", "done"], ["data-b-k", "k1"]], ["x"]])
+        );
+    }
+
+    /// Attributes cross in the order the program wrote them, not in the order a map would sort
+    /// them into.
+    ///
+    /// A JSON object is unordered, and `serde_json`'s is a `BTreeMap`, so this used to emit
+    /// `autofocus` before `placeholder` whatever the source said — which meant an element the
+    /// client rebuilt from a patch carried its attributes in a different order than the same
+    /// element the server rendered into the document. Nothing was wrong with the page; it simply
+    /// was not the same page, and only a browser comparing the two could see it
+    /// (`docs/94` §94.12).
+    #[test]
+    fn attributes_cross_in_the_order_they_were_written() {
+        let tree = Html::el("input")
+            .attr("placeholder", "what needs doing?")
+            .attr("autofocus", "on");
+        assert_eq!(
+            tree.to_wire(),
+            json!([
+                "input",
+                [["placeholder", "what needs doing?"], ["autofocus", "on"]],
+                []
+            ])
         );
     }
 }

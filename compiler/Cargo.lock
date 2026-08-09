@@ -192,6 +192,7 @@ dependencies = [
  "beck-macro",
  "beck-rt",
  "beck-syntax",
+ "beck-wasm",
  "blake3",
  "clap",
  "futures-util",
@@ -310,6 +311,16 @@ version = "0.1.0"
 dependencies = [
  "beck-diag",
  "logos",
+]
+
+[[package]]
+name = "beck-wasm"
+version = "0.1.0"
+dependencies = [
+ "beck-core",
+ "beck-eval",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

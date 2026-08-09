@@ -7,6 +7,7 @@ members = [
     "crates/beck-core",
     "crates/beck-eval",
     "crates/beck-llvm",
+    "crates/beck-wasm",
     "crates/beck-rt",
     "crates/beck-infra",
     "crates/beck-db",
@@ -28,6 +29,7 @@ beck-macro = { path = "crates/beck-macro", version = "0.1.0" }
 beck-core = { path = "crates/beck-core", version = "0.1.0" }
 beck-eval = { path = "crates/beck-eval", version = "0.1.0" }
 beck-llvm = { path = "crates/beck-llvm", version = "0.1.0" }
+beck-wasm = { path = "crates/beck-wasm", version = "0.1.0" }
 beck-rt = { path = "crates/beck-rt", version = "0.1.0" }
 beck-infra = { path = "crates/beck-infra", version = "0.1.0" }
 beck-db = { path = "crates/beck-db", version = "0.1.0" }
@@ -36,7 +38,7 @@ anyhow = "1"
 async-trait = "0.1"
 # One dependency, two capabilities: rustls's default cryptography provider is also the library the
 # OIDC relying party verifies an RSA or ECDSA signature with, so the asymmetric half of `beck-rt`'s
-# identity work costs no second crate (docs/adr/0022).
+# identity work costs no second crate (docs/adr/0023).
 aws-lc-rs = "1"
 blake3 = "1"
 clap = { version = "4", features = ["derive", "env"] }
@@ -56,7 +58,7 @@ postcard = { version = "1", default-features = false, features = ["alloc"] }
 redb = "2"
 # §7's TLS row, taken. The default cryptography provider is `aws-lc-rs`, which is the row as
 # written; `webpki-roots` is the Mozilla trust store as data, so a container built by apko needs no
-# `ca-certificates` package for an outbound call to verify a name (docs/adr/0022).
+# `ca-certificates` package for an outbound call to verify a name (docs/adr/0023).
 rustls = "0.23"
 # Bundled: SQLite is compiled from the vendored amalgamation rather than linked against
 # whatever the host has, so a log written on a laptop and a log written in CI are written by the

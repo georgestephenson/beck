@@ -39,6 +39,7 @@ use beck_syntax::{sym, Lit, Node, ScopeSet, Symbol};
 use crate::core::{Arm, Const, Core, CoreKind, Pattern, Prim, VarId};
 use crate::iface::Interface;
 use crate::prelude;
+use crate::render;
 use crate::ty::{self, Effect, Mismatch, Row, RowVarId, Scheme, Subst, Tier, Ty, TyDecl, Variant};
 
 /// A checked module: everything the placement checker, the splitter and the runtime need.
@@ -187,8 +188,24 @@ pub struct SignalDecl {
     pub effects: Vec<Effect>,
     pub row: Row,
     pub tier_is_annotated: bool,
+    /// `@render(client|server)` — where this component's `view` runs, when it said so
+    /// ([`crate::render`]). Only a `Signal[Html]` can carry one, and nothing else reads it.
+    pub render: Option<(render::Mode, Span)>,
     pub span: Span,
     pub tier_span: Span,
+}
+
+/// Every decorator a top-level declaration may carry.
+///
+/// A struct rather than a tuple because it has grown twice: the tuple that returned a tier and a
+/// `@signal` flag had already stopped saying which was which.
+#[derive(Clone, Copy, Debug, Default)]
+struct Decorations {
+    tier: Option<(Tier, Span)>,
+    /// `@signal` — §3.6's marker for a published signal, which is a declaration of a *value*
+    /// rather than of a function.
+    declares_signal: bool,
+    render: Option<(render::Mode, Span)>,
 }
 
 /// The four types a test's clauses are checked against — see
@@ -528,42 +545,54 @@ impl<'a> Checker<'a> {
 
     /// Strip `@on(...)` decorators, returning the inner item and the tier it names.
     fn undecorate<'n>(&mut self, item: &'n Node) -> (&'n Node, Option<(Tier, Span)>) {
-        self.undecorate_full(item).0
+        let (inner, decos) = self.undecorate_full(item);
+        (inner, decos.tier)
     }
 
-    /// The same, also reporting whether `@signal` was present — §3.6's marker for a published
-    /// signal, which is a declaration of a *value* rather than of a function.
-    #[allow(clippy::type_complexity)]
-    fn undecorate_full<'n>(&mut self, item: &'n Node) -> ((&'n Node, Option<(Tier, Span)>), bool) {
+    /// The same, reporting every decorator a declaration may carry.
+    fn undecorate_full<'n>(&mut self, item: &'n Node) -> (&'n Node, Decorations) {
         let mut inner = item;
-        let mut tier = None;
-        let mut is_signal = false;
+        let mut decos = Decorations::default();
         while inner.is_form(sym::DECORATE) && inner.args.len() == 2 {
             let deco = &inner.args[0];
+            let named = |d: &Node| d.args[0].as_var().map(|s| s.name.clone());
             if deco.head_name() == Some("signal") && deco.args.is_empty() {
-                is_signal = true;
+                decos.declares_signal = true;
             } else if deco.has_head(sym::ON) && deco.args.len() == 1 {
                 let span = deco.span();
-                match deco.args[0].as_var().and_then(|s| Tier::parse(s.as_str())) {
-                    Some(t) => tier = Some((t, span)),
+                match named(deco).and_then(|s| Tier::parse(&s)) {
+                    Some(t) => decos.tier = Some((t, span)),
                     None => self.error(
                         "B0300",
-                        format!(
-                            "`{}` is not a tier",
-                            deco.args[0].as_var().map(|s| s.as_str()).unwrap_or("?")
-                        ),
+                        format!("`{}` is not a tier", named(deco).unwrap_or(Arc::from("?"))),
                         span,
+                    ),
+                }
+            } else if deco.has_head(sym::RENDER) && deco.args.len() == 1 {
+                let span = deco.span();
+                match named(deco).and_then(|s| render::Mode::parse(&s)) {
+                    Some(m) => decos.render = Some((m, span)),
+                    None => self.diags.push(
+                        Diagnostic::error(
+                            "B0306",
+                            format!(
+                                "`{}` is not a rendering mode",
+                                named(deco).unwrap_or(Arc::from("?"))
+                            ),
+                            span,
+                        )
+                        .with_fix("`@render(server)` for Mode A, `@render(client)` for Mode B"),
                     ),
                 }
             } else {
                 self.diags.push(
                     Diagnostic::warning("B0301", "unsupported decorator", deco.span())
-                        .with_note("Phase 1 understands `@on(client|server|data|any)`"),
+                        .with_note("`@on(client|server|data|any)` and `@render(client|server)`"),
                 );
             }
             inner = &inner.args[1];
         }
-        ((inner, tier), is_signal)
+        (inner, decos)
     }
 
     /// Register every declared type's *name* before resolving any declaration's field types.
@@ -1336,9 +1365,31 @@ impl<'a> Checker<'a> {
         let mut test_items: Vec<&Node> = Vec::new();
 
         for item in items {
-            let ((inner, annotated), declares_signal) = self.undecorate_full(item);
-            let tier_is_annotated = annotated.is_some();
-            let (tier, tier_span) = annotated.unwrap_or((Tier::Any, inner.span()));
+            let (inner, decos) = self.undecorate_full(item);
+            let declares_signal = decos.declares_signal;
+            let tier_is_annotated = decos.tier.is_some();
+            let (tier, tier_span) = decos.tier.unwrap_or((Tier::Any, inner.span()));
+
+            // Where a component renders is a question about a component, and a component is a
+            // signal. On anything else the decorator would be read by nobody, which is worse than
+            // being refused.
+            if let Some((_, span)) = decos.render {
+                if !(inner.is_form(sym::LET) || inner.is_form(sym::VAR)) {
+                    self.diags.push(
+                        Diagnostic::error(
+                            "B0405",
+                            "only a component can say where it renders",
+                            span,
+                        )
+                        .with_primary_label("`@render` belongs on a `Signal[Html]` declaration")
+                        .with_note(
+                            "A definition is unplaced code, compiled to every tier that needs it \
+                             (§3.3). What renders where is decided per component, which is what a \
+                             page signal is.",
+                        ),
+                    );
+                }
+            }
 
             if inner.is_form(sym::DEF) {
                 if let Some(def) =
@@ -1348,7 +1399,8 @@ impl<'a> Checker<'a> {
                     defs.insert(def.name.clone(), def);
                 }
             } else if inner.is_form(sym::LET) || inner.is_form(sym::VAR) {
-                if let Some(s) = self.check_signal(inner, tier, tier_span, tier_is_annotated) {
+                if let Some(mut s) = self.check_signal(inner, tier, tier_span, tier_is_annotated) {
+                    s.render = decos.render;
                     signals.push(s);
                 }
             } else if inner.is_form(sym::TEST) || inner.is_form(sym::PROPERTY) {
@@ -1707,6 +1759,7 @@ impl<'a> Checker<'a> {
             effects: Vec::new(),
             row,
             tier_is_annotated,
+            render: None,
             span: item.span(),
             tier_span,
         })

@@ -76,6 +76,17 @@ The command channel's content-derived operation id (§4.3)
 | `<FILE>` | FILE |  |
 
 
+## `beck explain render`
+
+Where a component renders, why, and what that puts on the wire (§5.1).
+
+Mode A sends the browser a rendering of the state; Mode B sends it the state and renders locally. This prints which one, what decided it, what crosses, whether the client may apply a command optimistically — and, for a Mode B component, the size of the bundle it would have to download.
+
+| Argument | | |
+|---|---|---|
+| `<FILE>` | FILE |  |
+
+
 ## `beck explain flow`
 
 The signal graph, and what the splitter made of it — or, given a type, everywhere that type reaches and everywhere it is refused (§4.7)

@@ -251,7 +251,14 @@ dependencies whose signatures didn't change.
   shared while its consumer is per session, which makes this **bullet complete**.*
 - **Mode B client**: per-component WASM (view + fold + signal kernel), optimistic application with
   `seq` reconciliation, freshness-typed pending state; size budget CI gate (< 150 KB brotli per
-  component bundle).
+  component bundle). — ***Built*** ([`94`](94-mode-b-report.md)): `@render(client)`, a bundle that
+  is the component's slice, a `wasm32` kernel, data patches instead of DOM patches, and
+  reconciliation by `seq`. Chromium runs all of it (§94.12), and a tab survives a cold start with
+  the server switched off (§94.13). An interaction is measured rather than asserted (§94.14):
+  13 ms on a thousand-card board, 97% of it `view`, and growing with the board rather than with the
+  change. **Not** codegen ([`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md)) — which
+  §94.14 finds is not what the 13 ms is — not freshness-typed, and no size-budget gate; §94.8 is
+  the list.
 - Client polish for both modes: router, forms, lazy routes, focus/scroll preservation, devtools
   extension showing signal graph, patch traffic and pending state.
 - **`test` blocks and inferred mocks** ([`21`](21-tests-in-beck-and-proof.md) §21.2–§21.3) —
@@ -345,11 +352,11 @@ dependencies whose signatures didn't change.
   dev-mode identity is named rather than implied, a verifying provider exists, and both edges
   refuse before rendering — so an ownership check compares against something the caller did not
   choose. The **relying party** and the **claims mapping** are built too
-  ([`94`](94-oidc-relying-party-report.md)): discovery, a cached JWKS, RS/PS/ES signatures, every
+  ([`95`](95-oidc-relying-party-report.md)): discovery, a cached JWKS, RS/PS/ES signatures, every
   claim check, the authorization-code flow with PKCE, and `Session.claims`. What is left of this
   bullet is presence. D6's language surface is built as written, both forms —
   `identity = external(issuer=…)` is a declaration, so §6.5's egress rule covers the issuer like any
-  other peer (§94.7).*
+  other peer (§95.7).*
 - LSP: completion, hover with *inferred placement*, go-to-def, rename, inline diagnostics.
 - **The playground** ([`17`](17-playground.md)) — highest-leverage adoption artefact: rung A
   (compile-time, static) and rung B (the whole app in the tab — the worker-server is the rung-0
@@ -375,11 +382,13 @@ to Phase 5), and incremental views, whose last part is
 `parallel:` and pattern matching with nesting, guards and alternatives
 ([`90`](90-nested-patterns-report.md), [`91`](91-guards-and-alternatives-report.md)); what
 `parallel:` lacks is a backend that runs two children at once, which is
-[`80`](80-a-scope-owns-its-children-report.md) §80.5's item rather than this bullet's. **Two half-built**: identity has
-its seam, its relying party, its claims mapping and both halves of its declaration
-([`48`](48-identity-report.md), [`94`](94-oidc-relying-party-report.md)) and not presence, and the
-codegen bullet has LLVM over the scalar subset and no
-Cranelift ([`93`](93-llvm-backend-report.md) §93.6). **Three untouched**: Mode B, client polish and the
+[`80`](80-a-scope-owns-its-children-report.md) §80.5's item rather than this bullet's. **Three
+half-built**: identity has its seam, its relying party, its claims mapping and both halves of its
+declaration ([`48`](48-identity-report.md), [`95`](95-oidc-relying-party-report.md)) and not
+presence; the codegen bullet has LLVM over the scalar subset and no Cranelift
+([`93`](93-llvm-backend-report.md) §93.6); and Mode B has the mode, the bundle, the data patch, the
+reconciliation, a browser that runs it and an offline queue, without codegen
+([`94`](94-mode-b-report.md) §94.8). **Two untouched**: client polish and the
 playground; the supply-chain bullet has one of its four pieces
 ([`92`](92-sbom-report.md)). The criterion is not a count of those, though — it is a
 claim about a *person*, and the honest way to say how close it is is by the questions such a
@@ -392,7 +401,7 @@ developer would ask in order:
 | "Can I write my own abstractions, or only the ones the todo sketch needed?" | Ten walls down and an empty `sicp/refusals/` |
 | "How do I say something failed?" | `raise` and `try:`, and the signature says so whether or not I wrote it down ([`45`](45-error-rows-report.md)) |
 | "Is there a string library? A JSON parser?" | Yes, and `compiler/lib/` shows how to write the next one ([`46`](46-standard-library-report.md)) |
-| "Can I trust the actor in my ownership check?" | With a verifying provider, yes ([`48`](48-identity-report.md)); against a real identity provider, yes ([`94`](94-oidc-relying-party-report.md)) — and `session.claims` says what they may do. The default still believes the client, and says so |
+| "Can I trust the actor in my ownership check?" | With a verifying provider, yes ([`48`](48-identity-report.md)); against a real identity provider, yes ([`95`](95-oidc-relying-party-report.md)) — and `session.claims` says what they may do. The default still believes the client, and says so |
 | "Can my DBA see the data?" | `psql` against the read models ([`88`](88-read-models-and-pgwire-report.md)) — one table per collection, derived, no annotation |
 | "Where's the tutorial?" | [`86`](86-getting-started.md), published on the site since [`88`](88-read-models-and-pgwire-report.md) §88.8, and every program in it compiled and run by a test |
 
@@ -738,22 +747,22 @@ and it catches the failure its signature names while the others travel, instead 
 that can fail two ways.*
 
 **Wave 3 — months. ✅ Built, except for provisioning and presence**
-([`48`](48-identity-report.md), [`94`](94-oidc-relying-party-report.md)). Identity is a **seam**:
+([`48`](48-identity-report.md), [`95`](95-oidc-relying-party-report.md)). Identity is a **seam**:
 an `Actor` only a provider can mint, `DevIdentity` as the named default, and a `SignedIdentity`
 that verifies a keyed-BLAKE3 credential — so an ownership check compares against something the
 caller did not choose. And there is a third provider: an **OIDC relying party**, with discovery, a
 cached JWKS, RS/PS/ES signatures, issuer, audience, authorized-party, expiry, not-before and nonce
 checks, and the authorization-code flow with PKCE, so a browser can obtain a token rather than being
-handed one. The **claims → `Session` mapping** is built with it, and §94.4 draws the line it stops
+handed one. The **claims → `Session` mapping** is built with it, and §95.4 draws the line it stops
 at: `validate` may read a claim, and a fold has nothing to read, because an envelope carries the
 actor's name and nothing else.
 
 D6's **language surface** is built as written: `identity = external(issuer="https://…")` is a
 declaration, not a flag, so the compiler knows the issuer and §6.5's egress rule covers it like any
-other peer (§94.7). That was the one thing this work found that was *worse* than unbuilt — a runtime
+other peer (§95.7). That was the one thing this work found that was *worse* than unbuilt — a runtime
 with a peer the compiler had never heard of — and it is closed rather than recorded.
 
-`identity = managed()` is built too (§94.10): the object graph gains a provider, its Service, its
+`identity = managed()` is built too (§95.10): the object graph gains a provider, its Service, its
 volume, its credentials and a **realm wired to this application's own route**, and the application's
 egress to it is a `Peer` — a rule Kubernetes enforces, which the DNS-name rule an external issuer
 gets is not. It is the one place in the project where a plaintext issuer is admissible, and the
@@ -765,7 +774,7 @@ last row of this bullet.
 *Both of that row's predecessors are gone.* §48.5 said the relying party "needs an HTTP client and a
 signature library, so it is an ADR rather than a line in a module". The HTTP client was built
 ([`49`](49-http-client-report.md)); the signature library and TLS were **one decision**, taken in
-[`adr/0022`](adr/0022-tls-and-the-signature-it-brings.md) — because rustls's cryptography provider
+[`adr/0023`](adr/0023-tls-and-the-signature-it-brings.md) — because rustls's cryptography provider
 *is* a signature library, so [`07`](07-dependencies.md) §7.2's TLS row buys the asymmetric half for
 nothing. This row's forecast that the two were one ADR was right; the reason turned out to be
 better than the one it gave.
@@ -850,7 +859,7 @@ Recommended pairings, in order:
 | ~~**Then**~~ | ~~Lane A: the rest of Wave 2 — `Set`, dates~~ | ~~Lane B: the shared dataflow's three loose ends~~ | **Half done.** `Set` and dates landed ([`50`](50-collections-and-dates-report.md)) and were not Lane A at all: two files in `compiler/lib/`, no primitive, and the only Rust touched was one diagnostic's label. Lane B is untouched, so the pairing was never tested — the prediction it made cannot be claimed to have held |
 | ~~**Then**~~ | ~~Lane A: bignums, coercion, `@derive`~~ | ~~Lane B: the shared dataflow's three loose ends~~ | **Half done, and the other half.** Lane B was taken at last, after being the recommended Branch 2 for three consecutive rewrites: two of the three loose ends are closed ([`51`](51-arrangement-lifecycle-report.md)) and the third — the render lock — is deliberately left. The prediction held exactly: `engine.rs`, `beck-rt/` and one test suite, and nothing in `check/`, `ty.rs` or `core.rs`. Lane A is untouched, so this pairing was again never actually run as a pair |
 | ~~**Then**~~ | ~~Lane A: bignums, coercion, `@derive`~~ | ~~Lane B: SQL read models and pgwire~~ | **Half done, and the other half again.** Lane B was taken ([`88`](88-read-models-and-pgwire-report.md)) and the prediction held: `beck-core/src/read.rs`, `beck-rt/src/pgwire.rs`, one reader type on `engine.rs`, and nothing in `check/`, `ty.rs` or `core.rs`. Lane A is untouched, so this pairing was never run as a pair either — the fourth consecutive rewrite in which it was not |
-| **Now** | Lane A: ~~the pattern-matching completion the error-rows bullet still names~~ — **built**, with nesting, guards and alternatives ([`90`](90-nested-patterns-report.md), [`91`](91-guards-and-alternatives-report.md)); what is left in this lane is `Ord` as a trait, which [`54`](54-ordering.md) writes out and explicitly does *not* recommend | Lane B: ~~query fusion on symbolic plans~~ — **built** ([`89`](89-query-fusion-report.md)); what is left in this lane is Mode B's server half and the render lock ([`51`](51-arrangement-lifecycle-report.md) §51.7) | `beck-rt` and `engine.rs` are untouched by anything in `check/` |
+| **Now** | Lane A: ~~the pattern-matching completion the error-rows bullet still names~~ — **built**, with nesting, guards and alternatives ([`90`](90-nested-patterns-report.md), [`91`](91-guards-and-alternatives-report.md)); what is left in this lane is `Ord` as a trait, which [`54`](54-ordering.md) writes out and explicitly does *not* recommend | Lane B: ~~query fusion on symbolic plans~~ — **built** ([`89`](89-query-fusion-report.md)); ~~Mode B's server half~~ — **built** ([`94`](94-mode-b-report.md)), and it is one branch in `session.rs`; what is left in this lane is the render lock ([`51`](51-arrangement-lifecycle-report.md) §51.7) | `beck-rt` and `engine.rs` are untouched by anything in `check/` |
 | ~~**Then**~~ | ~~Lane A, continued~~ | ~~Lane E: the LLVM backend~~ | **Half done, and the other half.** Lane E was taken ([`93`](93-llvm-backend-report.md)) and the prediction held to the letter: a new crate, one new CLI command, and one defect fixed in `beck-eval` — and nothing in `beck-rt`, `engine.rs`, `check/`, `ty.rs` or `core.rs`. Lane A is untouched, so the pairing was again not run as a pair |
 | **Then** | Lane A, continued | Lane E: a heap for the native backend, then Cranelift ([`93`](93-llvm-backend-report.md) §93.6) | The backend seam exists so these do not interact, and it has now been tested |
 | **Any time** | — | Lane F; Lane C's LSP; more of SICP | No predecessors, no collisions |

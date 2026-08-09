@@ -15,7 +15,7 @@
 //! We do not write a storage engine (`docs/01-vision-and-premise.md` §1.5). This is a small log
 //! engine on top of proven storage: redb for rung 0, PostgreSQL for everything above it.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
@@ -54,16 +54,7 @@ pub struct Envelope {
 impl Envelope {
     /// The envelope as the `Envelope[Event]` record a fold sees.
     pub fn to_value(&self, event: Value) -> Value {
-        Value::data(
-            Arc::from("Envelope"),
-            None,
-            beck_core::core::Fields::from_iter([
-                (Arc::from("seq"), Value::Int(self.seq as i64)),
-                (Arc::from("at"), Value::Int(self.at.0)),
-                (Arc::from("actor"), Value::str_(&self.actor)),
-                (Arc::from("body"), event),
-            ]),
-        )
+        beck_core::edge::envelope(self.seq, self.at.0, &self.actor, event)
     }
 
     /// The event. Kept as a method because every caller had one and the type changed underneath

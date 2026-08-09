@@ -797,7 +797,7 @@ fn managed_identity_provisions_a_provider_and_wires_it_to_this_application() {
     );
 
     // The application's egress to it is a **peer**, which Kubernetes enforces — an external issuer
-    // can only be an `allow_egress_hosts` entry, which it does not (§94.10).
+    // can only be an `allow_egress_hosts` entry, which it does not (§95.10).
     let policy = graph
         .nodes
         .iter()
@@ -1036,6 +1036,45 @@ async fn the_edge_sends_a_visitor_to_the_issuer_and_refuses_a_bad_credential() {
     .await;
     assert!(good.starts_with("HTTP/1.1 200"), "{good}");
     assert!(good.contains("data-b-actor=\"ana\""), "{good}");
+
+    // And the claims the token carried, because a Mode B client runs the program's own `validate`
+    // against them: a document with the actor but not the claims is a browser that would refuse
+    // what the server accepts (`mode_b.rs`). Escaped for the attribute it sits in, so the assertion
+    // is written the way the browser will read it.
+    assert!(
+        good.contains("data-b-claims=\"{&quot;email&quot;:&quot;ana@acme.test&quot;"),
+        "the document did not carry the claims the token was verified to hold: {good}"
+    );
+    // The protocol's own fields are not claims about the person and do not travel (`PROTOCOL_CLAIMS`).
+    assert!(
+        !good.contains("&quot;iss&quot;") && !good.contains("&quot;exp&quot;"),
+        "a protocol field reached the browser as a claim: {good}"
+    );
+}
+
+/// A claim is the issuer's string, and an issuer that puts a quote in one must not be able to
+/// write an attribute of its own into the document it lands in.
+#[tokio::test]
+async fn a_claim_cannot_break_out_of_the_attribute_it_is_written_into() {
+    let issuer = Issuer::new();
+    let party = Arc::new(relying_party(&issuer, at(NOW)));
+    let addr = serve_with(party).await;
+
+    let token = issuer.id_token_with(serde_json::json!({
+        "iss": ISSUER,
+        "aud": CLIENT,
+        "sub": "ana",
+        "exp": (NOW / 1_000) + 3_600,
+        "iat": NOW / 1_000,
+        "tenant": "\"><script>alert(1)</script>",
+    }));
+    let page = request(addr, "GET /", &format!("Cookie: beck_id={token}\r\n")).await;
+    assert!(page.starts_with("HTTP/1.1 200"), "{page}");
+    assert!(
+        !page.contains("<script>alert(1)</script>"),
+        "a claim closed its attribute and wrote markup: {page}"
+    );
+    assert!(page.contains("&lt;script&gt;"), "{page}");
 }
 
 /// The socket is where the property that matters lives: the credential is in a **cookie**, so the

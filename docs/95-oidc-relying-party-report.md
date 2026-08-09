@@ -1,4 +1,4 @@
-# 94 — Phase 3 report, part 62: the relying party, and the two links that hold it up
+# 95 — Phase 3 report, part 63: the relying party, and the two links that hold it up
 
 > **What this is**: [`08`](08-roadmap.md) §8.5.4's Wave 3, finished except for its provisioning
 > half. [`48`](48-identity-report.md) built identity as a **seam** and said, in a table, exactly
@@ -7,7 +7,7 @@
 > with the row above it — claims that reach the program — and the dependency decision both were
 > waiting behind.
 
-## 94.1 What was in the way, and it was one decision rather than three
+## 95.1 What was in the way, and it was one decision rather than three
 
 [`48`](48-identity-report.md) §48.5 gave the reason nothing had been built: "It needs an HTTP
 client and a signature library, and taking either is an ADR rather than a line in a module."
@@ -24,14 +24,14 @@ it verifies a certificate chain, so taking [`07`](07-dependencies.md) §7.2's TL
 capabilities and the second costs nothing. That is
 [`adr/0015`](adr/0015-blake3-for-the-standard-librarys-digests.md)'s argument about BLAKE3 — the
 cheapest cryptographic dependency is the one already in the graph — arriving one layer up.
-[`adr/0021`](adr/0022-tls-and-the-signature-it-brings.md) is the record, including the alternatives
+[`adr/0023`](adr/0023-tls-and-the-signature-it-brings.md) is the record, including the alternatives
 refused: `openidconnect` (brings a second HTTP client and would not go through
 [`49`](49-http-client-report.md)'s bounded, stubbable seam), `ring` (identical here; not chosen
 because §7.2 says aws-lc-rs and a dependency table nobody follows is fiction), and the `rsa` crate
 (RUSTSEC-2023-0071 is open against it, and
 [`adr/0004`](adr/0004-full-cargo-deny-gate.md)'s ignore list is empty on purpose).
 
-## 94.2 TLS is a field of the request, not a mode of the client
+## 95.2 TLS is a field of the request, not a mode of the client
 
 `beck_core::net::Request` gains `tls`, `lib/http.beck`'s `HttpRequest` gains `tls: Bool`, and the
 call that sets it is `over_tls(req)` — which also moves the port to 443, because a request that
@@ -59,7 +59,7 @@ verification that cannot fail is not one — and then points a TLS request at a 
 requires that too. The `HttpOutbound::trusting` constructor those tests use is `#[cfg(test)]`, so
 the knob does not exist in a deployment.
 
-## 94.3 The relying party
+## 95.3 The relying party
 
 `beck_rt::oidc` is 1,211 lines and does five things.
 
@@ -68,7 +68,7 @@ than four. Two checks on the document that are not decoration: its `issuer` must
 asked for, and every endpoint must be on the issuer's **own host**. The second narrows the egress
 rule to one name and stops a discovery document moving the token exchange — and the client secret
 with it — somewhere else. An issuer that splits its endpoints across hosts is not usable here, which
-§94.6 records as a limit rather than leaving somebody to find out.
+§95.6 records as a limit rather than leaving somebody to find out.
 
 **A key set.** Fetched over TLS, cached, and refetched on two triggers: a five-minute interval, and
 a token naming a `kid` the set does not carry. The second one is the interesting half, and it is not
@@ -99,7 +99,7 @@ The seal is a keyed BLAKE3 under a key generated at startup, which is
 [`48`](48-identity-report.md)'s `SignedIdentity` format doing a job it *is* suited for — the process
 verifies what the same process minted ten seconds ago.
 
-## 94.4 The claims reach the program, and stop at the log
+## 95.4 The claims reach the program, and stop at the log
 
 `Session` gains `claims: Map[Str, Str]`, which is the row [`48`](48-identity-report.md) §48.5 called
 "half built". A `map[Str, Str]` rather than a type per issuer, because what an issuer emits is that
@@ -129,7 +129,43 @@ providers. What a caller outside the crate can convert into is a `Proposer` — 
 *proposal* — and not an `Actor`, because a public `From<String> for Actor` would be a public way to
 mint the thing [`48`](48-identity-report.md) §48.2 built a private field to prevent.
 
-## 94.5 What it costs, measured
+### The claims have to travel to Mode B, and the reason is `validate` rather than the view
+
+[`94`](94-mode-b-report.md) landed while this was being written, and the two meet at a place neither
+of them is: a browser that runs the program's own `validate`.
+
+Mode B's own rule looks as if it settles the question. B0514 refuses `@render(client)` for a page
+that reads the session, so a Mode B *view* is a function of the state alone and the claims are
+nothing to it. But `view_is_per_session` is a fact about the view, and `validate` is in the bundle
+too — it runs in the browser, speculatively, and it is handed a `Proposal` carrying a `Session`.
+`validate` reading a claim is the case §95.4 above says is the *correct* one.
+
+So a client whose claims map was left empty would refuse a command the server accepts. The page
+flashes a rejection the log never saw, which is precisely the divergence optimism exists to be free
+of — and it would be invisible to Mode B's differential gate, because that gate compares *renders*
+and this is a difference in a decision.
+
+The document therefore carries `data-b-claims` beside `data-b-actor`, the kernel's load header
+became a `Viewer` (`{actor, claims}`) rather than a bare name, and `beck_wasm::kernel` builds its
+`Session` from both. Three things are worth saying about what that is and is not:
+
+- **It tells the browser nothing the page did not already.** The server verified the token,
+  rendered against those claims, and sent the result. The claims are the input to a page the
+  browser is already holding.
+- **It is advice, exactly as the client's `validate` is.** The socket re-verifies the cookie and
+  every command goes through the server's chokepoint (§3.5). A browser that edited its own claims
+  would get a different guess and the same answer.
+- **A claim is the issuer's string**, so it is escaped for the attribute it sits in.
+  `beck_core::html::escape_attr` — the view's own escaper, exported rather than rewritten — and
+  `oidc.rs::a_claim_cannot_break_out_of_the_attribute_it_is_written_into` is the gate, which fires
+  on a `tenant` claim containing `"><script>`. The actor's name went in unescaped before this and
+  is escaped now; it is the issuer's string too.
+
+`mode_b.rs::a_mode_b_client_decides_against_the_claims_the_server_verified` gates the shape of the
+gap rather than the shape of the fix: one bundle, one command, two viewers, and the only difference
+between them is a claim. Reverting the plumbing makes both clients refuse and the test go red.
+
+## 95.5 What it costs, measured
 
     cargo test --release -p beck-cli --test oidc -- --nocapture the_cost_of_a_verification
 
@@ -150,13 +186,13 @@ be caching the cheap half.
 
 24 µs is a per-**connection** cost, not a per-event one: `verify` runs at the document request and
 at the websocket upgrade, and an event proposed on an open socket does not touch it. That is worth
-stating because §94.6's third row makes the opposite trade look attractive and it is not needed.
+stating because §95.6's third row makes the opposite trade look attractive and it is not needed.
 
 Nothing else moved. `beck explain incremental` and the plan are untouched by the extra `Session`
 field, the corpus, differential, fusion and incremental-engine harnesses are unchanged, and the
 empty claim map allocates nothing — `PMap::new()` is a `None` root.
 
-## 94.6 What is **not** built
+## 95.6 What is **not** built
 
 Against [`48`](48-identity-report.md) §48.5's table:
 
@@ -165,9 +201,9 @@ Against [`48`](48-identity-report.md) §48.5's table:
 | Dev-mode identity for rung 0 | **built** ([`48`](48-identity-report.md)), and still the default |
 | A verifying provider, symmetric | **built** ([`48`](48-identity-report.md)) |
 | OIDC relying party | **built** — discovery, JWKS, RS/PS/ES, issuer, audience, azp, expiry, nbf, nonce, and the code flow with PKCE |
-| Claims → `Session` | **built** — §94.4 |
-| `identity = external(issuer=…)` as a declaration | **built** — §94.7, and it is what makes the egress rule derivable |
-| `identity = managed()` provisioning | **built** — §94.10 |
+| Claims → `Session` | **built** — §95.4 |
+| `identity = external(issuer=…)` as a declaration | **built** — §95.7, and it is what makes the egress rule derivable |
+| `identity = managed()` provisioning | **built** — §95.10 |
 | Presence as a first-class signal | **not built**, and untouched by this. It is the last unbuilt row of [`08`](08-roadmap.md)'s identity bullet |
 
 And the things a reader would reasonably assume and should not:
@@ -183,7 +219,7 @@ And the things a reader would reasonably assume and should not:
   than taken quietly.
 - **Logout is local.** It clears this app's cookie and does not call the issuer's end-session
   endpoint, so the browser is still signed in to the identity provider.
-- **One host per issuer**, as §94.3 says: every discovered endpoint must be on the issuer's host.
+- **One host per issuer**, as §95.3 says: every discovered endpoint must be on the issuer's host.
 - **No UserInfo request, no `at_hash` check** (there is no access token here to bind), no dynamic
   client registration, no back-channel logout, and no certificate pinning.
 - **`beck run` still serves plaintext.** TLS arrived on the way *out*, not on the way in.
@@ -198,7 +234,7 @@ And the things a reader would reasonably assume and should not:
   authenticates a person to *this* application. Calling somebody else's API on their behalf is a
   different feature and none of it is here.
 
-## 94.7 The issuer is a declaration, because an egress rule is derived from what a program names
+## 95.7 The issuer is a declaration, because an egress rule is derived from what a program names
 
 [`10`](10-decisions.md) D6 has always written the language surface as one block:
 
@@ -241,10 +277,10 @@ Three decisions inside it:
 the thirty-first corpus program, so the round-trip property, the placement property and the
 formatter all run over the new form, and it is the first program in the tree whose `validate` reads
 `session.claims` — a note is refused unless the *issuer* said which tenant is asking. Its test
-block is the honest half of §94.4's limit: a test names an actor and cannot forge a session, so the
+block is the honest half of §95.4's limit: a test names an actor and cannot forge a session, so the
 tests it can write are the **refusals**.
 
-## 94.8 What this corrects
+## 95.8 What this corrects
 
 - **[`43`](43-threat-model.md) §43.4's first two bullets** are rewritten in the same change, which
   is what that section's own mechanism requires. Identity: the default is still `DevIdentity` and
@@ -255,24 +291,24 @@ tests it can write are the **refusals**.
   where it says the inbound half is unauthenticated.
 - **[`10`](10-decisions.md) D6** says Beck's runtime does the OIDC code flow with "the audited
   `openidconnect` Rust crate". It does the code flow, and not with that crate;
-  [`adr/0021`](adr/0022-tls-and-the-signature-it-brings.md) is the argument, and the short version
+  [`adr/0023`](adr/0023-tls-and-the-signature-it-brings.md) is the argument, and the short version
   is that a relying party built on somebody else's HTTP client would not go through
   [`49`](49-http-client-report.md)'s bounded, stubbable, egress-derivable seam. Everything else D6
   asks for is here except `managed()`.
 - **[`adr/0015`](adr/0015-blake3-for-the-standard-librarys-digests.md)'s closing section** says the
   asymmetric decision is "still one ADR, still unwritten". It is written:
-  [`adr/0021`](adr/0022-tls-and-the-signature-it-brings.md). ADRs are immutable, so this is the
+  [`adr/0023`](adr/0023-tls-and-the-signature-it-brings.md). ADRs are immutable, so this is the
   correction rather than an edit there.
 - **[`48`](48-identity-report.md) §48.5's last two bullets** — "no credential is issued by anything"
   and "there is no login, no session store, no refresh, and no cookie" — are false now for the first
   clause and still true for the others: there is a login and a cookie, and still no session store
-  and no refresh. §94.6 says why the last two are absent by design rather than by omission.
+  and no refresh. §95.6 says why the last two are absent by design rather than by omission.
 - **`beck-cli/tests/pending_security.rs`** loses three tests and gains one. The three are
   `nothing_here_speaks_oidc`, `a_verified_identitys_claims_do_not_reach_the_program` and
-  `an_outbound_call_has_no_transport_security`; the one is the egress gap above. §94.8 is about the
+  `an_outbound_call_has_no_transport_security`; the one is the egress gap above. §95.8 is about the
   first of them.
 
-## 94.9 The uncomfortable half: a grep that would have fired, and still proves nothing
+## 95.9 The uncomfortable half: a grep that would have fired, and still proves nothing
 
 `nothing_here_speaks_oidc` searched every `.rs` file in the workspace for `jwks`, `id_token`,
 `issuer` and `RS256`. It *would* have gone red on this change — all four appear — so it is not a
@@ -303,7 +339,7 @@ cookie turned `the_websocket_upgrade_is_where_a_cookie_is_checked` red — and t
 that last mutation left the refusal in place and the suite stayed green, which is a small reminder
 that a mutation you did not verify is a mutation you did not perform.
 
-## 94.10 `managed()`, and the one place `http` is not a defect
+## 95.10 `managed()`, and the one place `http` is not a defect
 
 D6's other form asks Beck to *provision* the provider: "the InfraGraph provisions **Keycloak**
 (Apache-2.0, CNCF) … wired via OIDC automatically." `identity = managed()` does that now —
@@ -318,7 +354,7 @@ produce a *realm*, and the realm has to agree with objects the same graph produc
 both read the same two facts: `realm` is the application's name, and the redirect URI is
 `route_host(app)` — the same function the `Route` uses, extracted for this so the host is written
 once rather than twice. The client is **public**, because that is what a browser-facing application
-with PKCE is (§94.3) and because a confidential client would need a secret that this file invented
+with PKCE is (§95.3) and because a confidential client would need a secret that this file invented
 and wrote into a manifest in a git repository.
 
 The interesting result is the **egress rule**, and it is better than `external`'s. §6.5's derivation
@@ -330,7 +366,7 @@ is a `Peer`, and the rule is one the cluster actually applies. Asking for a prov
 therefore buys a guarantee that naming somebody else's cannot.
 
 That is also the answer to the question this section exists for. The issuer of a managed provider is
-`http://todo-identity:8080/realms/todo` — **plaintext**, in a project that has just spent §94.2
+`http://todo-identity:8080/realms/todo` — **plaintext**, in a project that has just spent §95.2
 arguing there is no flag to relax `https`. There is still no flag. There are two constructors:
 `Config::new` requires `https`, `Config::in_cluster` does not, and *which one is used is decided by
 the declaration* rather than by the URL's scheme — `managed()` in the program, read by `beck run`.

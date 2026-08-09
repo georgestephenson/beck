@@ -1,0 +1,170 @@
+# A shared board, rendered in the browser — the Mode B example (docs/05 §5.1, docs/93).
+#
+# Everything about this program is ordinary except one line: `@render(client)` on the page. That
+# line changes what crosses the wire. In Mode A the server renders and sends DOM patches; in Mode B
+# the browser is given the *state* and renders locally, which is what makes dragging a card feel
+# like a native application instead of like a round trip.
+#
+# It is also why the page below never reads the session. A Mode B client holds the accumulator, so
+# a page that filtered by identity would be filtering in the browser, after the browser had already
+# been given everything the filter removes. The compiler refuses that (B0514); this program is
+# written the way Mode B requires — one board everybody can see, which is what a board is.
+
+type Id = newtype[Str]
+
+model Card:
+    id: Id
+    text: Str
+    column: Int
+
+model Board:
+    cards: Map[Id, Card]
+
+union Command:
+    Add(id: Id, text: Str)
+    Move(id: Id, column: Int)
+    Drop(id: Id)
+
+union Event:
+    Added(id: Id, text: Str)
+    Moved(id: Id, column: Int)
+    Dropped(id: Id)
+
+union Rejection:
+    BlankText
+    IdTaken
+    NoSuchCard
+    NoSuchColumn
+
+# ---------- The database is a fold ----------
+
+def apply_event(b: Board, env: Envelope[Event]) -> Board:
+    match env.body:
+        case Added(id, text):
+            return b.with(cards=map_insert(b.cards, id, Card(id=id, text=text, column=0)))
+        case Moved(id, column):
+            return moved(b, id, column)
+        case Dropped(id):
+            return b.with(cards=map_remove(b.cards, id))
+
+def moved(b: Board, id: Id, column: Int) -> Board:
+    match map_get(b.cards, id):
+        case Some(value):
+            return b.with(cards=map_insert(b.cards, id, value.with(column=column)))
+        case None:
+            return b
+
+# ---------- Authority is one chokepoint ----------
+#
+# The client runs this too. It is the same `validate` — not a copy of it — so a card the server
+# would refuse is a card the browser never shows as pending.
+
+def validate(b: Board, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Add(id, text):
+            if str_is_empty(str_trim(text)):
+                return Err(error=BlankText)
+            if map_contains(b.cards, id):
+                return Err(error=IdTaken)
+            return Ok(value=[Added(id=id, text=text)])
+        case Move(id, column):
+            if column < 0 or column > 2:
+                return Err(error=NoSuchColumn)
+            return if_present(b, id, [Moved(id=id, column=column)])
+        case Drop(id):
+            return if_present(b, id, [Dropped(id=id)])
+
+def if_present(b: Board, id: Id, evs: list[Event]) -> Result[list[Event], Rejection]:
+    if map_contains(b.cards, id):
+        return Ok(value=evs)
+    return Err(error=NoSuchCard)
+
+# ---------- The page is a pure function of the state, and of nothing else ----------
+
+def view(b: Board) -> Html:
+    return ui:
+        main:
+            h1: "board"
+            input(placeholder="a card", autofocus="on",
+                  on_enter=Add(id=Id(value="$id"), text="$value"))
+            div(class="columns"):
+                for c in columns():
+                    column(b, c)
+
+def columns() -> list[Int]:
+    return [0, 1, 2]
+
+def column(b: Board, n: Int) -> Html:
+    return ui:
+        section(key=str(n), class="column"):
+            h2: heading(n)
+            ul:
+                for c in cards_in(b, n):
+                    li(key=c.id):
+                        span(on_click=Move(id=c.id, column=next_column(c))): c.text
+                        button(on_click=Drop(id=c.id)): "x"
+
+def heading(n: Int) -> Str:
+    if n == 0:
+        return "todo"
+    if n == 1:
+        return "doing"
+    return "done"
+
+def next_column(c: Card) -> Int:
+    return (c.column + 1) % 3
+
+def cards_in(b: Board, n: Int) -> list[Card]:
+    return sort_by(filter_list(map_values(b.cards), lambda c: c.column == n), lambda c: c.text)
+
+# ---------- The wiring ----------
+
+@on(server)
+proposals: Stream[Proposal] = merge_clients()
+
+@on(server)
+events: Stream[Event] = decide(proposals, board, validate)
+
+@on(data)
+board: Signal[Board] = durable(fold(apply_event, Board(cards={}), events))
+
+# The one line. `beck explain render examples/board.beck` prints what it changes.
+@on(client)
+@render(client)
+page: Signal[Html] = signal_map(board, view)
+
+# ---------- Tests ----------
+
+test "a blank card is refused":
+    given []
+    when Add(id=Id("1"), text="   ")
+    expect Err(error=BlankText)
+
+test "a card starts in the first column":
+    given [Added(id=Id("1"), text="write it down")]
+    expect page contains "write it down"
+
+## The page is assembled out of three calls to `column`, so this asserts that a function returning
+## `Html` is *spliced* into its parent rather than rendered into it as text.
+test "the page a visitor sees":
+    given [Added(id=Id("1"), text="write it down"), Moved(id=Id("1"), column=1)]
+    expect page matches snapshot
+
+test "moving a card is a fold over one event":
+    given [Added(id=Id("1"), text="write it down")]
+    when Move(id=Id("1"), column=1)
+    expect state == fold_of [Added(id=Id("1"), text="write it down"), Moved(id=Id("1"), column=1)]
+
+test "a column the board does not have is refused":
+    given [Added(id=Id("1"), text="write it down")]
+    when Move(id=Id("1"), column=7)
+    expect Err(error=NoSuchColumn)
+
+test "the page is the browser's job and the fold is the data tier's":
+    expect place(page) == client
+    expect place(board) == data
+    expect place(apply_event) == any
+
+property "no log this program can produce makes the page unrenderable"(log: list[Event]):
+    given log
+    expect page contains "board"

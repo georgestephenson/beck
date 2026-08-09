@@ -63,7 +63,7 @@ impl Actor {
     /// the program sees. They do **not** reach the log — an envelope carries the actor's name and
     /// nothing else, because a fold that read a claim would be a fold whose replay depended on
     /// what the issuer was saying at the time
-    /// ([`docs/94`](../../../../../docs/94-oidc-relying-party-report.md) §94.4).
+    /// ([`docs/95`](../../../../../docs/95-oidc-relying-party-report.md) §95.4).
     pub fn claims(&self) -> &BTreeMap<Arc<str>, Arc<str>> {
         &self.claims
     }

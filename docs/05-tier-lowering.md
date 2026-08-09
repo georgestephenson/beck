@@ -33,6 +33,16 @@ subtree. **v0.1 ships Mode A only** — it makes the walking skeleton drasticall
 WASM, no size crisis, trivially good Lighthouse scores) — with Mode B in Phase 3
 ([`08`](08-roadmap.md)).
 
+> **Built** ([`94`](94-mode-b-report.md)), and three lines above are now corrections rather than
+> plans. `@render(client)` is the whole surface: **the mode is declared, never inferred**, because a
+> wrong inference ships a state to a browser. A page mixes modes freely is still unbuilt, because a
+> program has one `page`. And the promotion carries a **refusal this section did not anticipate** —
+> a component whose view reads the session cannot render on the client, since Mode B hands the
+> browser the state a per-session view was filtering (§94.2). The kernel interprets rather than
+> compiles ([`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md)), which is what the size
+> budget below has to be read against: 179,195 bytes brotli once per application, 1,753 per
+> component.
+
 **Runtime we must write:**
 
 - **The patch protocol**: a compact DOM-diff format (keyed children, text/attr ops, component
@@ -48,7 +58,11 @@ WASM, no size crisis, trivially good Lighthouse scores) — with Mode B in Phase
   available; Perceus-style refcounting fallback — the Roc/Koka route, given our immutable data),
   fine-grained signal graph, local speculative fold + `seq`-based reconciliation
   ([`03`](03-type-and-effect-system.md) §3.7). Size budgets enforced in CI: < 150 KB brotli for a
-  typical Mode-B component bundle; `wasm-opt -Oz` (Binaryen) in the release path.
+  typical Mode-B component bundle; `wasm-opt -Oz` (Binaryen) in the release path. — **Built, with
+  the first clause deferred** ([`94`](94-mode-b-report.md)): the local fold and the reconciliation
+  are here, and the WASM is the *evaluator* rather than the component compiled. The budget is
+  answered in two parts, because a shared kernel and a per-component payload are different
+  questions; `wasm-opt` is not run, so the kernel's number is a ceiling.
 - **Connection layer**: one websocket (WebTransport later) multiplexing patch-streams down and
   commands up; resumable by `(subscription id, last seq)` so a dropped connection or a deploy
   replays the gap instead of re-rendering the world; sticky-session friendly but not dependent
@@ -60,6 +74,11 @@ WASM, no size crisis, trivially good Lighthouse scores) — with Mode B in Phase
 
 **Debugging**: source maps from patch frames back to `view` expressions; a devtools extension
 showing the signal graph, patch traffic, and pending (optimistic) state; DWARF for Mode B WASM.
+
+> None of that is built. What a page *can* be asked today is whether its client is live —
+> `data-b-ready` carries the mode's letter and `beck:ready`, `beck:rejected` and `beck:error` are
+> bubbling events on the frame root ([`94`](94-mode-b-report.md) §94.12). That is the smallest
+> version of the same idea: a devtools panel needs somewhere to attach, and so does a spinner.
 
 ## 5.2 Service tier → native code (dual backend)
 

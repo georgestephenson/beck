@@ -92,7 +92,7 @@ fn identity_defaults_to_believing_the_client() {
 }
 
 // `nothing_here_speaks_oidc` and `a_verified_identitys_claims_do_not_reach_the_program` were here,
-// and both are **built** (`docs/94`): `beck_rt::oidc` is an asymmetric relying party, and `Session`
+// and both are **built** (`docs/95`): `beck_rt::oidc` is an asymmetric relying party, and `Session`
 // carries the claims it verified. Both are gone, which is what this file's own rule asks for, and
 // what replaces them is `beck-cli/tests/oidc.rs` — where the tokens are signed by a key pair
 // generated for the test and the relying party is given nothing but the public half.
@@ -110,7 +110,7 @@ fn identity_defaults_to_believing_the_client() {
 // `lib/http.beck`'s own tests, where a reader of the library meets it.
 
 // `no_identity_provider_is_provisioned_into_the_object_graph` was here, and it is **built**
-// (`docs/94` §94.10): `identity = managed()` derives a provider, its Service, its volume, its
+// (`docs/95` §95.10): `identity = managed()` derives a provider, its Service, its volume, its
 // credentials and a realm wired to this application's own route, and the application's egress to it
 // is a `Peer` rather than a DNS name. What replaces it is `oidc.rs`, in both directions — the
 // declaration with it and the same program without.
