@@ -1406,6 +1406,20 @@ async fn serve(
     // The one place the process chooses how the program executes. A native backend is a different
     // expression here and nothing else (docs/19 §19.8).
     let backend = beck_eval::backend(&placed);
+    // A Mode B page is rendered by a kernel this process serves but does not contain, so the miss
+    // is worth reporting when the server starts rather than when somebody's tab comes up blank.
+    if placed.render.mode == beck_core::render::Mode::Client {
+        let kernel = beck_rt::http::kernel_path();
+        if !kernel.is_file() {
+            tracing::warn!(
+                path = %kernel.display(),
+                "`{}` renders on the client and there is no kernel to serve it: \
+                 `cargo build -p beck-wasm --release --target wasm32-unknown-unknown`, \
+                 or set BECK_KERNEL",
+                placed.render.component,
+            );
+        }
+    }
     let log = open_store(store, path, url).await?;
     let runtime = beck_rt::Runtime::new(placed, backend)?;
     let app = beck_rt::App::start(runtime, log, beck_rt::AppConfig::default()).await?;

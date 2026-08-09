@@ -135,6 +135,12 @@ server streams *data* changes instead of DOM changes; the browser renders locall
 
 ### How the choice is made
 
+**Built** ([`94`](94-mode-b-report.md)), with the promotion narrower than this paragraph and a
+condition it did not foresee: a component whose view reads the session is **refused** Mode B,
+because Mode B sends the browser the state and a page that filters by identity is a page whose
+state is not that browser's to hold. Optimism turns out to be the same condition rather than a
+separate feature — a client can only guess the next state if it holds the state the fold is of.
+
 Mode A is the default. A component is promoted to Mode B when it declares `optimistic`, `offline`,
 or a latency budget the round trip can't meet — or when the placement solver's cost model says the
 crossing is cheaper as data than as patches ([`03`](03-type-and-effect-system.md) §3.4). One page

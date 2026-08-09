@@ -12,7 +12,13 @@
 
   const actor = root.dataset.bActor || "dev";
   const sub = beck.uuid7();
-  const seq = Number(root.dataset.bSeq) || 0;
+  // The position the server-rendered document reflects. It is *not* what this client resumes
+  // from: a Mode A client resuming at `seq` is claiming to hold the page as of `seq`, and the
+  // document is that page — but a Mode B client holds the *state*, and it starts holding nothing
+  // but `init`. So the first connection asks for everything (`seq: 0`) and `state.seq` moves only
+  // as frames arrive.
+  const painted = Number(root.dataset.bSeq) || 0;
+  const state = { sub, seq: 0, actor };
 
   let wasm = null;
   const memory = () => new Uint8Array(wasm.memory.buffer);
@@ -65,11 +71,23 @@
       return;
     }
 
-    const send = beck.connect({ sub, seq, actor }, (msg) => {
+    let hydrated = false;
+    const send = beck.connect(state, (msg) => {
       // `s` is the whole accumulator (a fresh subscription); `d` is the difference. Everything
       // else is the protocol both modes share.
-      if (msg.t === "s") apply(call({ op: "reset", seq: msg.q, state: msg.v }));
-      else if (msg.t === "d") apply(call({ op: "data", seq: msg.q, ops: msg.o }));
+      if (msg.t === "s") {
+        state.seq = msg.q;
+        // The document was rendered from this state by the same `view`, so this client's first
+        // render *is* what the DOM shows: adopt it, no DOM work, nothing can differ (docs/93
+        // §93.5). Otherwise an event landed between the render and this socket opening, and the
+        // page on screen is not this state's page — one rebuild, once.
+        const adopt = !hydrated && msg.q === painted;
+        hydrated = true;
+        apply(call({ op: "reset", seq: msg.q, state: msg.v, adopt }));
+      } else if (msg.t === "d") {
+        state.seq = msg.q;
+        apply(call({ op: "data", seq: msg.q, ops: msg.o }));
+      } else if (msg.t === "u" || msg.t === "w") state.seq = msg.q;
       else if (msg.t === "a") call({ op: "settle", id: msg.id, seq: msg.q });
       else if (msg.t === "n") {
         // The server refused a command this client accepted — a race rather than a bug, and the

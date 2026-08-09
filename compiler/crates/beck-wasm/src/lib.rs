@@ -212,6 +212,12 @@ pub fn dispatch(
             let repr: beck_core::repr::Repr =
                 serde_json::from_value(request.get("state").cloned().unwrap_or_default())
                     .map_err(|e| format!("a state that will not decode: {e}"))?;
+            // `adopt` is the browser saying "the document already shows this state's page", which
+            // it knows from `data-b-seq` and the server cannot.
+            if request.get("adopt").and_then(|a| a.as_bool()) == Some(true) {
+                client.adopt(seq(), repr.to_value())?;
+                return Ok(serde_json::json!({ "dom": [], "seq": client.seq() }));
+            }
             client
                 .reset(seq(), repr.to_value())
                 .map(|ops| dom(ops, client.seq()))

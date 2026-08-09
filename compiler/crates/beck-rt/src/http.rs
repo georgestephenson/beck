@@ -161,11 +161,16 @@ async fn document(app: Arc<App>, req: Request<Incoming>) -> Result<Response<Full
 
     // The document carries the position it reflects, so the first socket message either finds
     // nothing to do or is exactly the gap. That is what made hydration free in Phase 0.
+    //
+    // `#b-root` is the subscription's frame: a patch path is child indices *from it*, so it has to
+    // be an element of its own rather than the body — whose other children are the two script tags
+    // below, which an insertion at the frame's root would otherwise be counted against.
     let html = format!(
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
          <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
          <title>{title}</title><link rel=\"stylesheet\" href=\"/beck.css\">\
-         </head><body data-b-seq=\"{seq}\" data-b-actor=\"{actor}\">{body}\
+         </head><body>\
+         <div id=\"b-root\" data-b-seq=\"{seq}\" data-b-actor=\"{actor}\">{body}</div>\
          <script src=\"/beck-patch.js\" defer></script>\
          <script src=\"{client}\" defer></script></body></html>",
         title = app.runtime().placed().program.name,
@@ -366,6 +371,27 @@ fn kernel() -> Response<Full<Bytes>> {
 
 #[cfg(test)]
 mod tests {
+    /// The frame root the served JavaScript looks for, and the attributes it reads off it.
+    ///
+    /// Both clients open with `document.getElementById("b-root")` and give up if it is missing, so
+    /// a document without it is a page that never connects — and nothing would have said so,
+    /// because no test in this workspace runs JavaScript (`docs/94` §94.8).
+    #[test]
+    fn the_document_carries_the_frame_root_the_residue_looks_for() {
+        for client in [crate::THIN_CLIENT, crate::MODE_B_CLIENT] {
+            assert!(
+                client.contains(r#"getElementById("b-root")"#),
+                "a client that does not look for the frame root"
+            );
+        }
+        for read in ["dataset.bActor", "dataset.bSeq"] {
+            assert!(
+                crate::THIN_CLIENT.contains(read) || crate::MODE_B_CLIENT.contains(read),
+                "nothing reads {read}"
+            );
+        }
+    }
+
     use super::*;
     use hyper::HeaderMap;
 

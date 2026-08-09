@@ -941,7 +941,7 @@ pub const INDEX: &[CodeEntry] = &[
         "renders differently for each session, so it cannot render on the client",
         "The page reads the session as well as the state, so it filters, scopes or hides by \
          identity. `@render(client)` sends the browser the state rather than the page, which \
-         would hand every actor what the filter was removing (docs/93 §93.2).",
+         would hand every actor what the filter was removing (docs/94 §94.2).",
     ),
     // --------------------------------------------------------- B06xx: modules and interfaces
     e(

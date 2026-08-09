@@ -1,4 +1,4 @@
-//! Mode B: the component that renders in the browser (§5.1, `docs/93`).
+//! Mode B: the component that renders in the browser (§5.1, `docs/94`).
 //!
 //! Five things are gated here, and the first is the one everything else rests on.
 //!
@@ -346,6 +346,38 @@ fn a_data_patch_against_a_state_the_client_does_not_have_fails_loudly() {
     assert!(client.data(2, &beck_core::delta::diff(&one, &two)).is_err());
 }
 
+/// Hydration: a client handed the state the document was rendered from adopts the page instead of
+/// rebuilding it — and one handed a *later* state does rebuild.
+///
+/// The first half is the free-hydration claim (§93.5); the second is what makes it safe, because a
+/// client that adopted a page the DOM is not showing would be silently wrong from then on.
+#[test]
+fn a_client_adopts_the_page_it_was_rendered_and_rebuilds_any_other() {
+    let placed = board();
+    let rt = runtime(&placed);
+    let init = rt.initial_state().expect("init");
+    let one = apply(
+        &rt,
+        &init,
+        &json_command("Add", &[("id", "c1"), ("text", "landed first")]),
+        1,
+    );
+
+    // Rendered at 0, given the state at 0: nothing to do.
+    let mut client = client_of(&placed, "ana");
+    client.adopt(0, init.clone()).expect("adopts");
+    assert!(
+        client.repaint().expect("renders").is_empty(),
+        "adopting emitted a patch"
+    );
+
+    // Rendered at 0, given the state at 1 — an event landed in between. The page has to be built.
+    let mut client = client_of(&placed, "ana");
+    let ops = client.reset(1, one).expect("takes the state");
+    assert!(!ops.is_empty(), "a later state produced no patch");
+    assert!(shown(&mut client).contains("landed first"));
+}
+
 // --------------------------------------------------------------- 4. the bundle is a slice
 
 #[test]
@@ -533,7 +565,7 @@ fn the_kernel_builds_for_the_browser() {
     );
     // A ceiling, not a budget: what this asserts is that the kernel has not grown by an order of
     // magnitude, which is the change that would make Mode B a different proposition. The measured
-    // number and what it means for §5.1's 150 KB are in `docs/93` §93.6.
+    // number and what it means for §5.1's 150 KB are in `docs/94` §94.6.
     assert!(
         bytes < 8 * 1024 * 1024,
         "the kernel is {bytes} bytes, which is not a kernel any more"

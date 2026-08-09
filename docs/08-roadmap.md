@@ -251,7 +251,10 @@ dependencies whose signatures didn't change.
   shared while its consumer is per session, which makes this **bullet complete**.*
 - **Mode B client**: per-component WASM (view + fold + signal kernel), optimistic application with
   `seq` reconciliation, freshness-typed pending state; size budget CI gate (< 150 KB brotli per
-  component bundle).
+  component bundle). — ***Built*** ([`94`](94-mode-b-report.md)): `@render(client)`, a bundle that
+  is the component's slice, a `wasm32` kernel, data patches instead of DOM patches, and
+  reconciliation by `seq`. **Not** codegen ([`adr/0021`](adr/0021-mode-b-ships-the-backend-it-has.md)),
+  not freshness-typed, not offline, and no browser has run it — §94.8 is the list.
 - Client polish for both modes: router, forms, lazy routes, focus/scroll preservation, devtools
   extension showing signal graph, patch traffic and pending state.
 - **`test` blocks and inferred mocks** ([`21`](21-tests-in-beck-and-proof.md) §21.2–§21.3) —

@@ -180,10 +180,25 @@ impl Client {
 
     /// Replace the whole state — a fresh subscription, or a reset because the gap was unreachable.
     pub fn reset(&mut self, seq: u64, state: Value) -> Result<Vec<diff::Op>, String> {
+        self.take(seq, state);
+        self.repaint()
+    }
+
+    /// The same, for a state the DOM is already showing the page of.
+    ///
+    /// The caller is a browser whose document was server-rendered at this `seq`. Rendering and
+    /// *not* patching is the whole of hydration here, and it is sound for [`Client::hydrate`]'s
+    /// reason: same view, same state, same page. Returning no ops rather than ops the caller is
+    /// expected to drop keeps that decision in one place.
+    pub fn adopt(&mut self, seq: u64, state: Value) -> Result<(), String> {
+        self.take(seq, state);
+        self.hydrate()
+    }
+
+    fn take(&mut self, seq: u64, state: Value) {
         self.confirmed = state;
         self.seq = seq;
         self.pending.retain(|p| p.acked.is_none_or(|s| s > seq));
-        self.repaint()
     }
 
     /// Apply a command speculatively.
