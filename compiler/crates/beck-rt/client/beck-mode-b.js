@@ -95,6 +95,16 @@
     }, 200);
   };
 
+  // The shell, cached, so that a reload with no network is a page rather than an error
+  // (`docs/94` §94.13). Registered before the kernel is fetched so a first visit primes the cache
+  // while the network is there; a browser without service workers simply skips this and keeps
+  // every other property of the mode.
+  if (navigator.serviceWorker) {
+    navigator.serviceWorker
+      .register("/beck-sw.js")
+      .catch((e) => beck.announce(root, "beck:error", { error: "no shell cache: " + e }));
+  }
+
   const start = async () => {
     const [module, bundle] = await Promise.all([
       WebAssembly.instantiateStreaming(fetch("/beck-kernel.wasm"), {}),

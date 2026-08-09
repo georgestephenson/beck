@@ -48,3 +48,9 @@ pub const THIN_CLIENT: &str = include_str!("../client/beck-thin.js");
 
 /// Mode B: load the kernel, hold the state, render locally ([`beck_core::render`]).
 pub const MODE_B_CLIENT: &str = include_str!("../client/beck-mode-b.js");
+
+/// Mode B's service worker: the shell, cached, so a cold start with no network is a page.
+///
+/// Served with the program's wire id substituted for `%WIRE%`, which is what keys the cache to the
+/// program and what deletes the previous one on a deploy.
+pub const SERVICE_WORKER: &str = include_str!("../client/beck-sw.js");

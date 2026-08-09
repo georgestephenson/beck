@@ -596,3 +596,81 @@ async fn wait_for_server(serving: &Serving, text: &str) {
         tokio::time::sleep(std::time::Duration::from_millis(25)).await;
     }
 }
+
+/// A cold start with the server gone: the tab is closed, reopened, and the application is there.
+///
+/// This is the half of D7 rung 2 the queue alone cannot reach. The state was already in the
+/// browser; what was not was the *document*, the scripts and the kernel, all of which come from the
+/// server — so a reload with nothing listening never got as far as consulting the local copy. The
+/// service worker caches that shell, network-first, keyed by the program's wire id.
+#[tokio::test]
+async fn mode_b_cold_starts_with_the_server_gone() {
+    let Some(binary) = browser::available() else {
+        return;
+    };
+    if !point_at_the_kernel() {
+        eprintln!("skipped: no kernel to serve.");
+        return;
+    }
+
+    let mut serving = Serving::start(example("board.beck")).await;
+    let mut browser = Browser::launch(&binary).await;
+    let mut page = browser.open(&serving.url()).await;
+    page.wait_for(
+        &mut browser,
+        "document.getElementById('b-root').dataset.bReady === 'b'",
+    )
+    .await;
+    add_card(&page, &mut browser, "cached before the outage").await;
+    wait_for_server(&serving, "cached before the outage").await;
+
+    // The worker has to have taken control before it can answer a navigation.
+    page.wait_for(&mut browser, "!!navigator.serviceWorker.controller")
+        .await;
+    // And the local copy has to have been written, since that is what the reloaded page renders.
+    page.wait_for(
+        &mut browser,
+        "Object.keys(localStorage).some(k => k.startsWith('beck:'))",
+    )
+    .await;
+
+    let connected = serving.app.head();
+    serving.stop().await;
+
+    // A reload with nothing listening. Everything comes out of the browser: the document from the
+    // worker's cache, the state from `localStorage`.
+    let url = serving.url();
+    page.navigate(&mut browser, &url).await;
+    page.wait_for(
+        &mut browser,
+        "document.getElementById('b-root').dataset.bReady === 'b'",
+    )
+    .await;
+    page.wait_for(
+        &mut browser,
+        "document.getElementById('b-root').innerHTML.includes('cached before the outage')",
+    )
+    .await;
+
+    // And it is an application, not a photograph: the fold is here, so it still takes a command.
+    add_card(&page, &mut browser, "added while it was down").await;
+    page.wait_for(
+        &mut browser,
+        "document.getElementById('b-root').innerHTML.includes('added while it was down')",
+    )
+    .await;
+    assert_eq!(
+        serving.app.head(),
+        connected,
+        "a command reached the log with the server stopped"
+    );
+
+    // The server returns, and the queue that survived a page load goes up.
+    serving.listen().await;
+    wait_for_server(&serving, "added while it was down").await;
+    assert_eq!(
+        serving.app.head(),
+        connected + 1,
+        "the queued command was appended more than once"
+    );
+}

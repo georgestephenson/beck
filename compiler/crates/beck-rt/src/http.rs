@@ -104,6 +104,13 @@ async fn route(
         (&Method::GET, "/beck-patch.js") => Ok(asset(crate::PATCH_CLIENT, "text/javascript")),
         (&Method::GET, "/beck-thin.js") => Ok(asset(crate::THIN_CLIENT, "text/javascript")),
         (&Method::GET, "/beck-mode-b.js") => Ok(asset(crate::MODE_B_CLIENT, "text/javascript")),
+        // The worker's cache is keyed by the program it is caching, so the id is substituted here
+        // rather than fetched by the worker: a worker that had to ask the server which program it
+        // was would be asking the one thing it exists to survive the absence of.
+        (&Method::GET, "/beck-sw.js") => Ok(asset(
+            &crate::SERVICE_WORKER.replace("%WIRE%", app.runtime().wire_id()),
+            "text/javascript",
+        )),
         // The component's slice, for a browser that renders it (§5.1's Mode B). Derived from the
         // running program rather than read from disk, so a tab can never load a bundle the server
         // is not itself executing.

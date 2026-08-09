@@ -133,8 +133,16 @@ jobs:
           # SSR is the data, rendered — not a shell that fetches it.
           grep -q '<footer>0 remaining</footer>' /tmp/page.html
           grep -q 'data-b-enter=' /tmp/page.html
-          # No user JavaScript in Mode A: the only script is the patch interpreter.
-          test "$(grep -o '<script' /tmp/page.html | wc -l)" = 1
+          # No user JavaScript in Mode A. The property is not "one script tag" — the residue is
+          # several files now that Mode B shares its patch interpreter (docs/94) — it is that every
+          # script the document loads is *compiler residue served by this server*, and that none of
+          # it is inline. That is also the CSP story §5.1 claims: `script-src 'self'`, no
+          # `unsafe-inline`.
+          test "$(grep -o '<script' /tmp/page.html | wc -l)" \
+             = "$(grep -o '<script src="/beck-[a-z0-9-]*\.js" defer></script>' /tmp/page.html | wc -l)"
+          # …and in Mode A that residue is the thin client, not the kernel.
+          grep -q '<script src="/beck-thin.js" defer></script>' /tmp/page.html
+          ! grep -q 'beck-mode-b.js' /tmp/page.html
           kill %1
 
       - name: replay is exact
@@ -438,6 +446,35 @@ jobs:
           # pointed at that directory see manifests and nothing else.
           ls /tmp/objects/k8s | grep -qv apko
           test -f /tmp/objects/image.apko.yaml
+
+  the-browser-runs-the-residue:
+    # The one job that executes the JavaScript. Everything else in this workflow tests Beck against
+    # Beck; `browser.rs` loads both rendering modes in headless Chromium and asserts that the DOM is
+    # the page the server would have rendered (docs/94 §94.12).
+    #
+    # The two `BECK_REQUIRE_*` variables are the point of the job, for the reason `conformance`
+    # states about its own: both suites *skip* when the thing they need is absent, which is right on
+    # a laptop and would be a silently-absent gate here. `ubuntu-latest` ships a Chromium the suite
+    # finds on the path.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: compiler
+
+      - name: the kernel builds for the browser
+        run: cargo build -p beck-wasm --release --target wasm32-unknown-unknown
+
+      - name: both modes, in Chromium
+        env:
+          BECK_REQUIRE_WASM: "1"
+          BECK_REQUIRE_BROWSER: "1"
+        run: cargo test --test browser --test mode_b -- --nocapture
 
   conformance:
     # Rung 5 of the ladder in docs/21 §21.4: the API server is the only authority on whether an

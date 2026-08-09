@@ -293,9 +293,10 @@ browser in CI that §94.8 still owes.
   report and which is where three more defects are. What is still not built is a browser *other*
   than Chromium, and a page more complicated than the board.
 - ~~**No offline.**~~ **D7's rung 2 is built** — see §94.13, which is where two more defects are.
-  What is still missing is a *service worker*: the document comes from the server, so a reload with
-  nothing listening gets a browser error page and the local copy is never consulted. The copy
-  survives a reconnect and a reload-while-connected, and not a cold start with no network.
+  A Mode B tab now survives a cold start with the server switched off. What it is *not* is a
+  local-first application: there is one writer, the queue is a queue rather than a log, and a
+  second device is a second replica of the same server's history. D7's later rungs (CRDT-valued
+  types, peer-to-peer) are unchanged and unbuilt.
 - **One component per program**, because a program has one `page`. The bundle format is
   per-component and carries the component's name; what does not exist is a *second* `Signal[Html]`
   for it to be about, so "a page mixes modes freely; the boundary is per component subtree" (§5.1)
@@ -340,6 +341,7 @@ And `crates/beck-cli/tests/browser.rs`, in Chromium (§94.12):
 | A reloaded tab cannot rebuild its state | `mode_b_survives_a_reload` |
 | An interaction stops working with the server gone, or a queued command is appended twice, or never | `mode_b_works_with_the_server_gone_and_catches_up_when_it_returns` (§94.13) |
 | A local copy of another program is restored into this one | `a_local_copy_of_another_program_is_dropped` |
+| A tab cannot come back at all with the server stopped | `mode_b_cold_starts_with_the_server_gone` |
 
 Plus `beck_core::delta`'s own round-trip tests — every patch this module produces, applied, has to
 reproduce the value it was derived from — and `examples/board.beck`'s seven tests in Beck, one of
@@ -367,6 +369,14 @@ which is the snapshot §94.7 ends on.
   against a document Phase 1's runtime never produced, so "the thin client applies patches in the
   browser" has been an untested claim rather than a false one — but it was not true of anything
   this repository serves, and now it is.
+- **CI runs the residue** (§94.12): `.github/workflows/compiler.yml` gains a job that installs the
+  wasm target, builds the kernel and runs `browser.rs` and `mode_b.rs` with `BECK_REQUIRE_WASM=1`
+  and `BECK_REQUIRE_BROWSER=1`, so neither can skip there. Its "no user JavaScript in Mode A" step
+  asserted *one* script tag; the residue is several files now, so it asserts the property instead —
+  every script the document loads is a `/beck-*.js` this server serves, and none of it is inline.
+- **`docs.rs` checks markdown links** — the failure that found this was a moved file breaking a link
+  in a report, with `cargo test --workspace` green and CI the first to say so. The workflow's job
+  stays; a rule enforced only after a push is a rule with slow feedback.
 - **The patch wire format changed** (§94.12): an element's attributes cross as ordered pairs rather
   than as a JSON object, because a JSON object is not ordered. §4.4's binary mirror already carried
   them as pairs, so this is the JSON form catching up with it.
@@ -498,7 +508,20 @@ write. That is honest but not good: a thousand-card board is ~100 KB of JSON per
 make the cost a function of the *change* is an append-only local log — which is the shape of D7's
 own later rungs, and is not built.
 
-### The gate
+### The service worker, and the cold start
+
+A queue survives a *reconnect*. It does not survive a **reload** with nothing listening, because
+the document, the scripts and the kernel all come from the server: the local copy is fine and
+unreachable, and the browser shows its own error page. So `beck-sw.js` caches the shell —
+network-first, so a live server always wins and a deploy is never hostage to a cache — under a name
+carrying the program's wire id, which is what deletes the previous program's cache on activate.
+
+`browser.rs::mode_b_cold_starts_with_the_server_gone` is what that buys: the tab is reloaded with
+the server stopped, the page comes back from the cache and the state from `localStorage`, **an
+interaction still lands**, and when the server returns the command that was made while it was down
+goes up exactly once. An application, with its server switched off.
+
+### The gates
 
 `browser.rs::mode_b_works_with_the_server_gone_and_catches_up_when_it_returns`, in Chromium: a card
 added with the server stopped reaches the page and not the log; the server comes back; the card

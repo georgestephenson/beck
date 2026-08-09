@@ -429,6 +429,113 @@ fn explain_error_answers_for_every_indexed_code() {
     assert!(!out.status.success(), "an unknown code should be an error");
 }
 
+/// Every relative link in every checked-in markdown file lands on a file that exists.
+///
+/// `.github/workflows/docs.yml` has a job that does this, and that was the whole problem: moving
+/// `beck-rt/src/diff.rs` into `beck-core` broke a link in a report, `cargo test --workspace` was
+/// green, and CI was the first thing to say so. A gate that only exists in CI is a gate whose
+/// feedback arrives after a push — and this one is a `git ls-files` and a regular expression, so
+/// there is no reason for it to live there and not here.
+///
+/// The workflow keeps its copy. Two implementations of a rule this small is cheaper than a rule
+/// that is only enforced in one place, and `docs.rs` already asserts that every shell command in
+/// the instructions runs.
+#[test]
+fn every_relative_link_in_the_markdown_lands_on_a_file_that_exists() {
+    let root = repo_root();
+    let listed = std::process::Command::new("git")
+        .current_dir(&root)
+        .args(["ls-files", "*.md"])
+        .output()
+        .expect("git lists the tracked markdown");
+    let files: Vec<String> = String::from_utf8_lossy(&listed.stdout)
+        .split_whitespace()
+        .map(str::to_string)
+        .collect();
+    assert!(
+        !files.is_empty(),
+        "no markdown files found — the listing is wrong, not the repository"
+    );
+
+    let mut bad = Vec::new();
+    for file in &files {
+        let path = root.join(file);
+        let text = std::fs::read_to_string(&path).expect("a tracked file is readable");
+        let text = strip_code(&text);
+        let base = path.parent().expect("a file has a directory").to_path_buf();
+        for target in markdown_links(&text) {
+            if target.starts_with("http://")
+                || target.starts_with("https://")
+                || target.starts_with("mailto:")
+                || target.starts_with('#')
+            {
+                continue;
+            }
+            let named = target.split('#').next().unwrap_or(&target);
+            if !base.join(named).exists() {
+                bad.push(format!("{file}: {target}"));
+            }
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "{} link(s) name a file that does not exist:\n{}",
+        bad.len(),
+        bad.join("\n")
+    );
+}
+
+/// Fenced blocks and inline spans are prose about code, not links to follow.
+fn strip_code(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut in_fence = false;
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            continue;
+        }
+        let mut ticks = false;
+        for c in line.chars() {
+            if c == '`' {
+                ticks = !ticks;
+            } else if !ticks {
+                out.push(c);
+            }
+        }
+        out.push('\n');
+    }
+    out
+}
+
+/// `[text](target)` — the target of every inline link.
+fn markdown_links(text: &str) -> Vec<String> {
+    let bytes: Vec<char> = text.chars().collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == '[' {
+            if let Some(close) = (i..bytes.len()).find(|&j| bytes[j] == ']') {
+                if close + 1 < bytes.len() && bytes[close + 1] == '(' {
+                    if let Some(end) = (close + 2..bytes.len()).find(|&j| bytes[j] == ')') {
+                        let target: String = bytes[close + 2..end].iter().collect();
+                        if !target.contains(char::is_whitespace) {
+                            out.push(target);
+                        }
+                        i = end + 1;
+                        continue;
+                    }
+                }
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
 /// A relative link out of a rustdoc page resolves to the file it names.
 ///
 /// The four properties above are about the *generated Beck reference*. This one is about the other
