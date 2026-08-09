@@ -21,6 +21,10 @@
   const state = { sub, seq: null, actor };
 
   let wasm = null;
+  // Commands proposed and not yet acknowledged, in order. Restored from the local copy on load,
+  // and sent whenever a socket opens.
+  let queued = [];
+  let flush = () => {};
   const memory = () => new Uint8Array(wasm.memory.buffer);
 
   // A response is `<u32 len><bytes>` at the returned pointer, and the module holds it until freed.
@@ -49,6 +53,46 @@
       return;
     }
     if (response.dom && response.dom.length) beck.apply(root, response.dom);
+    save();
+  };
+
+  // ---- the local copy (D7 rung 2) ------------------------------------------
+  //
+  // "A Mode B component holds a local copy of its state and queues commands while offline." The
+  // copy is the kernel's confirmed state and its unsent commands; this is somewhere to put it.
+  //
+  // The key carries the program's wire id and the actor, so a deployment that changes the command
+  // channel's types cannot restore a snapshot of the old one, and one person's queue is not
+  // another's. The kernel refuses a mismatch as well — twice, because a key is a convention and a
+  // check is a rule.
+  let store = null;
+  const key = () => "beck:" + store.wire + ":" + actor;
+
+  // Writing costs the size of the *state*, not of the change, so it is coalesced: a burst of
+  // events persists once. What would remove the cost rather than spreading it is an append-only
+  // local log — which is what D7's later rungs are about, and is not this.
+  let pendingSave = null;
+  const save = () => {
+    if (!store || pendingSave) return;
+    pendingSave = setTimeout(() => {
+      pendingSave = null;
+      try {
+        const out = call({ op: "snapshot" });
+        // A kernel that cannot produce one is a kernel that does not match this shim, and a client
+        // that silently stops keeping a local copy is the failure mode worth being loud about.
+        if (out.error || !out.snapshot) {
+          beck.announce(root, "beck:error", out.error ? out : { error: "no local copy" });
+          store = null;
+          return;
+        }
+        localStorage.setItem(key(), JSON.stringify(out.snapshot));
+      } catch (e) {
+        // A full quota, a private window, a disabled store: the component still works, it just
+        // will not survive a reload. Saying so once is better than failing an interaction.
+        beck.announce(root, "beck:error", { error: "cannot store locally: " + e });
+        store = null;
+      }
+    }, 200);
   };
 
   const start = async () => {
@@ -71,6 +115,26 @@
       return;
     }
 
+    store = { wire: loaded.wire };
+
+    // Restore before connecting, so a browser with no network shows the state it had rather than
+    // the empty one the fold starts from.
+    let restored = false;
+    const saved = localStorage.getItem(key());
+    if (saved) {
+      const out = call({ op: "restore", snapshot: JSON.parse(saved) });
+      if (out.error) {
+        // A snapshot of another program, or of another actor. Dropping it is the whole recovery:
+        // the subscription is about to send this client a state anyway.
+        localStorage.removeItem(key());
+      } else {
+        restored = true;
+        state.seq = out.seq;
+        if (out.dom && out.dom.length) beck.apply(root, out.dom);
+        queued = out.queued || [];
+      }
+    }
+
     let hydrated = false;
     const send = beck.connect(state, (msg) => {
       // `s` is the whole accumulator (a fresh subscription); `d` is the difference. Everything
@@ -88,14 +152,18 @@
         state.seq = msg.q;
         apply(call({ op: "data", seq: msg.q, ops: msg.o }));
       } else if (msg.t === "u" || msg.t === "w") state.seq = msg.q;
-      else if (msg.t === "a") call({ op: "settle", id: msg.id, seq: msg.q });
+      else if (msg.t === "a") {
+        call({ op: "settle", id: msg.id, seq: msg.q });
+        queued = queued.filter((q) => q.id !== msg.id);
+        save();
+      }
       else if (msg.t === "n") {
         // The server refused a command this client accepted — a race rather than a bug, and the
         // correction is to drop the guess and re-render.
         apply(call({ op: "refused", id: msg.id }));
         beck.announce(root, "beck:rejected", msg);
       }
-    });
+    }, () => flush());
 
     beck.capture((command) => {
       const id = beck.uuid7();
@@ -107,8 +175,15 @@
         return;
       }
       apply(out);
+      queued.push({ id, command });
       send({ t: "c", id, command });
     });
+
+    // Whatever this client owes the server — from this session or from the last one — goes up as
+    // soon as there is a socket. Each carries the id it was proposed with, and the server
+    // de-duplicates by it (§4.3), so a command sent twice is appended once. That is the whole of
+    // why an offline queue needs no agreement between the two sides.
+    flush = () => queued.forEach((q) => send({ t: "c", id: q.id, command: q.command }));
 
     // The component is live: the kernel holds the bundle, the socket is open and interactions are
     // being captured. Before this, a click reaches nothing — the handlers are installed at the end

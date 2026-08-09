@@ -109,7 +109,7 @@
   // A null `state.seq` is sent as an *absent* field, which is the protocol's "I hold nothing".
   // Zero would mean "I hold the frame as of zero", which is true of a server-rendered document
   // and false of a client that has only just started.
-  const connect = (state, on) => {
+  const connect = (state, on, opened) => {
     let backoff = 250;
     const outbox = [];
     let socket = null;
@@ -124,6 +124,9 @@
         // Commands sent while disconnected are safe to repeat: each carries an id, and the server
         // de-duplicates by it.
         while (outbox.length) socket.send(outbox.shift());
+        // Every open, not only the first: a client that has been away has a queue that predates
+        // this socket, and possibly this page load (`beck-mode-b.js`).
+        if (opened) opened();
       };
       socket.onmessage = (event) => on(JSON.parse(event.data));
       socket.onclose = () => {

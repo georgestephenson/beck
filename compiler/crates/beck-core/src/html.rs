@@ -386,7 +386,31 @@ mod tests {
             .child(Html::text("x"));
         assert_eq!(
             tree.to_wire(),
-            json!(["li", {"class": "done", "data-b-k": "k1"}, ["x"]])
+            json!(["li", [["class", "done"], ["data-b-k", "k1"]], ["x"]])
+        );
+    }
+
+    /// Attributes cross in the order the program wrote them, not in the order a map would sort
+    /// them into.
+    ///
+    /// A JSON object is unordered, and `serde_json`'s is a `BTreeMap`, so this used to emit
+    /// `autofocus` before `placeholder` whatever the source said — which meant an element the
+    /// client rebuilt from a patch carried its attributes in a different order than the same
+    /// element the server rendered into the document. Nothing was wrong with the page; it simply
+    /// was not the same page, and only a browser comparing the two could see it
+    /// (`docs/94` §94.12).
+    #[test]
+    fn attributes_cross_in_the_order_they_were_written() {
+        let tree = Html::el("input")
+            .attr("placeholder", "what needs doing?")
+            .attr("autofocus", "on");
+        assert_eq!(
+            tree.to_wire(),
+            json!([
+                "input",
+                [["placeholder", "what needs doing?"], ["autofocus", "on"]],
+                []
+            ])
         );
     }
 }

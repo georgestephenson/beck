@@ -284,8 +284,17 @@ async fn drive<S: Socket>(
     // a client waiting on its own command is sent an "up to date" notice.
     let mut awaiting: Option<u64> = None;
 
+    let mut draining = app.draining();
     loop {
         tokio::select! {
+            // A drained server hands its subscriptions back rather than holding them open: the
+            // client reconnects, to this process or to the one that replaced it (§5.2).
+            _ = draining.changed() => {
+                if *draining.borrow() {
+                    tracing::info!(sub = %sub, "draining: ending the subscription");
+                    break;
+                }
+            }
             changed = version.changed() => {
                 if changed.is_err() {
                     break; // the application is gone

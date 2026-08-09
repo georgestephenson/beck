@@ -238,6 +238,28 @@ pub fn dispatch(
                 }
             })
         }
+        // What a browser stores so that a reload is not a fresh start (D7 rung 2).
+        "snapshot" => Ok(serde_json::json!({
+            "snapshot": client.snapshot(),
+            "queued": client
+                .queued()
+                .into_iter()
+                .map(|(id, command)| serde_json::json!({"id": id, "command": command}))
+                .collect::<Vec<_>>(),
+        })),
+        "restore" => {
+            let snapshot: crate::kernel::Snapshot =
+                serde_json::from_value(request.get("snapshot").cloned().unwrap_or_default())
+                    .map_err(|e| format!("a snapshot that will not decode: {e}"))?;
+            let ops = client.restore(snapshot)?;
+            let mut out = dom(ops, client.seq());
+            out["queued"] = serde_json::json!(client
+                .queued()
+                .into_iter()
+                .map(|(id, command)| serde_json::json!({"id": id, "command": command}))
+                .collect::<Vec<_>>());
+            Ok(out)
+        }
         "settle" => {
             client.settle(&id(), seq());
             Ok(serde_json::json!({ "dom": [], "seq": client.seq() }))

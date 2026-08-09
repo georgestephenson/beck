@@ -45,7 +45,12 @@ fn free_port() -> SocketAddr {
     addr
 }
 
-/// Point the server at the kernel this workspace builds, once.
+/// Build the kernel this suite is about, and point the server at it. Once.
+///
+/// **Built, not found.** Reading whatever `.wasm` happens to be on disk is how this suite spent an
+/// afternoon testing a kernel three commits old: the shim asked it for an operation it did not
+/// have, the reply was an error nobody looked at, and the page quietly did nothing. A browser
+/// suite that can be stale about the thing it is testing is worse than no browser suite.
 ///
 /// `BECK_KERNEL` is the operator's interface (`beck_rt::http::kernel_path`) and it is process-wide,
 /// so it is set here rather than per test: every test in this binary wants the same value, and the
@@ -54,8 +59,19 @@ fn free_port() -> SocketAddr {
 fn point_at_the_kernel() -> bool {
     static ONCE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ONCE.get_or_init(|| {
+        let built = std::process::Command::new(env!("CARGO"))
+            .current_dir(root())
+            .args([
+                "build",
+                "-p",
+                "beck-wasm",
+                "--release",
+                "--target",
+                "wasm32-unknown-unknown",
+            ])
+            .output();
         let module = root().join("target/wasm32-unknown-unknown/release/beck_wasm.wasm");
-        if !module.is_file() {
+        if !built.is_ok_and(|o| o.status.success()) || !module.is_file() {
             return false;
         }
         std::env::set_var("BECK_KERNEL", &module);
@@ -63,7 +79,7 @@ fn point_at_the_kernel() -> bool {
     })
 }
 
-/// A running application, on a port of its own.
+/// A running application, on a port of its own — and able to go away and come back.
 struct Serving {
     app: Arc<beck_rt::App>,
     addr: SocketAddr,
@@ -82,16 +98,40 @@ impl Serving {
         .expect("the app starts");
 
         let addr = free_port();
-        let (shutdown, rx) = tokio::sync::watch::channel(false);
-        let serving = app.clone();
-        tokio::spawn(async move {
-            let _ = beck_rt::http::serve(serving, addr, rx).await;
-        });
-        Serving {
+        let (shutdown, _) = tokio::sync::watch::channel(false);
+        let mut serving = Serving {
             app,
             addr,
             shutdown,
-        }
+        };
+        serving.listen().await;
+        serving
+    }
+
+    /// Start accepting. The application outlives the server, which is what makes stopping and
+    /// starting a *reconnect* rather than a different program.
+    async fn listen(&mut self) {
+        let (shutdown, rx) = tokio::sync::watch::channel(false);
+        self.shutdown = shutdown;
+        let app = self.app.clone();
+        let addr = self.addr;
+        tokio::spawn(async move {
+            let _ = beck_rt::http::serve(app, addr, rx).await;
+        });
+        // The listener binds inside `serve`, so give it the moment that takes before a browser is
+        // told the server is back.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+
+    /// Stop accepting, and drop every connection.
+    ///
+    /// This is how a browser is taken offline here rather than Chromium's network emulation, which
+    /// does not close an already-open websocket: a socket that stays up is not offline, and a test
+    /// that believes it is proves nothing. A server that goes away is also the more realistic
+    /// event — it is what a deploy looks like.
+    async fn stop(&mut self) {
+        let _ = self.shutdown.send(true);
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
     }
 
     fn url(&self) -> String {
@@ -382,3 +422,177 @@ async fn mode_b_survives_a_reload() {
 /// Keeps `Value` referenced: the harness builds commands through the runtime's own decoder.
 #[allow(dead_code)]
 fn _value(_: Value) {}
+
+// --------------------------------------------------------------- offline (D7 rung 2)
+
+/// The claim [`docs/10-decisions.md`](../../../../docs/10-decisions.md) D7 makes for Mode B, with
+/// the server gone.
+///
+/// > Offline-tolerant v1: a Mode B component holds a local copy of its state and queues commands
+/// > while offline, replaying them on reconnect.
+///
+/// Three things in one test, because they are one property: with the server gone the page still
+/// takes an interaction; reconnecting sends what was queued; and the log gets **exactly one** of
+/// each command, because the idempotency key the queue kept is the one `App::propose` already
+/// de-duplicates by. Offline tolerance is the fold plus that key — no new agreement between the
+/// two sides, which is what D7 predicted and is worth checking rather than assuming.
+#[tokio::test]
+async fn mode_b_works_with_the_server_gone_and_catches_up_when_it_returns() {
+    let Some(binary) = browser::available() else {
+        return;
+    };
+    if !point_at_the_kernel() {
+        eprintln!("skipped: no kernel to serve.");
+        return;
+    }
+
+    let mut serving = Serving::start(example("board.beck")).await;
+    let mut browser = Browser::launch(&binary).await;
+    let page = browser.open(&serving.url()).await;
+    page.wait_for(
+        &mut browser,
+        "document.getElementById('b-root').dataset.bReady === 'b'",
+    )
+    .await;
+
+    // A card while connected, so the local copy holds something the server holds too.
+    add_card(&page, &mut browser, "before the tunnel").await;
+    wait_for_server(&serving, "before the tunnel").await;
+    let connected = serving.app.head();
+
+    // Into the tunnel.
+    serving.stop().await;
+
+    // The interaction still lands: the fold is here, so the page moves with no server at all.
+    add_card(&page, &mut browser, "written in the tunnel").await;
+    page.wait_for(
+        &mut browser,
+        "document.getElementById('b-root').innerHTML.includes('written in the tunnel')",
+    )
+    .await;
+    assert_eq!(
+        serving.app.head(),
+        connected,
+        "a command reached the log with the server stopped"
+    );
+
+    // What is *not* tested here, because it does not work: reloading while the server is gone. The
+    // document comes from the server, so a reload with nothing listening gets a browser error page
+    // and the local copy is never consulted — the shell would have to be cached by a service
+    // worker, and there is none (`docs/94` §94.13).
+
+    // Out of the tunnel. The queue goes up as soon as a socket opens.
+    serving.listen().await;
+    wait_for_server(&serving, "written in the tunnel").await;
+
+    // Exactly once, however many times the client retried: the command carried the same id each
+    // time, and the server de-duplicates by it.
+    assert_eq!(
+        serving.app.head(),
+        connected + 1,
+        "the queued command was appended more than once"
+    );
+
+    // And the two sides agree again.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        let (there, here) = (
+            dom(&page, &mut browser).await,
+            serving.rendered("ana").await,
+        );
+        if there == here {
+            break;
+        }
+        assert!(
+            deadline > std::time::Instant::now(),
+            "the reconnected browser and the server disagree\nbrowser: {there}\n server: {here}"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+}
+
+/// A snapshot of another program is refused rather than folded into this one.
+///
+/// A deployment that changes the command channel's types changes the wire id (§4.3), and a tab that
+/// comes back to it is holding a copy of something else. Restoring it would be a state no log ever
+/// produced.
+#[tokio::test]
+async fn a_local_copy_of_another_program_is_dropped() {
+    let Some(binary) = browser::available() else {
+        return;
+    };
+    if !point_at_the_kernel() {
+        eprintln!("skipped: no kernel to serve.");
+        return;
+    }
+
+    let serving = Serving::start(example("board.beck")).await;
+    let mut browser = Browser::launch(&binary).await;
+    let mut page = browser.open(&serving.url()).await;
+    page.wait_for(
+        &mut browser,
+        "document.getElementById('b-root').dataset.bReady === 'b'",
+    )
+    .await;
+    add_card(&page, &mut browser, "mine").await;
+    wait_for_server(&serving, "mine").await;
+    // The copy is written on a trailing timer, so wait for it rather than for a duration.
+    page.wait_for(
+        &mut browser,
+        "Object.keys(localStorage).some(k => k.startsWith('beck:'))",
+    )
+    .await;
+
+    // Forge a copy of a different program under this one's key.
+    page.eval(
+        &mut browser,
+        "(() => { const k = Object.keys(localStorage).find(k => k.startsWith('beck:')); \
+          const v = JSON.parse(localStorage.getItem(k)); v.wire = '0000000000000000'; \
+          localStorage.setItem(k, JSON.stringify(v)); return k; })()",
+    )
+    .await;
+
+    let url = serving.url();
+    page.navigate(&mut browser, &url).await;
+    page.wait_for(
+        &mut browser,
+        "document.getElementById('b-root').dataset.bReady === 'b'",
+    )
+    .await;
+    // The page is still right — it came from the server rather than from the forged copy.
+    page.wait_for(
+        &mut browser,
+        "document.getElementById('b-root').innerHTML.includes('mine')",
+    )
+    .await;
+    assert_eq!(
+        dom(&page, &mut browser).await,
+        serving.rendered("ana").await
+    );
+}
+
+async fn add_card(page: &Page, browser: &mut Browser, text: &str) {
+    page.eval(
+        browser,
+        &format!(
+            "(() => {{ const i = document.querySelector('input[data-b-enter]'); \
+              i.value = {text:?}; \
+              i.dispatchEvent(new KeyboardEvent('keydown', {{key: 'Enter', bubbles: true}})); }})()"
+        ),
+    )
+    .await;
+}
+
+async fn wait_for_server(serving: &Serving, text: &str) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        if serving.rendered("ana").await.contains(text) {
+            return;
+        }
+        assert!(
+            deadline > std::time::Instant::now(),
+            "the server never saw `{text}`"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+}

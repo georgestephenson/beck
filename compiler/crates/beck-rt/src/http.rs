@@ -54,6 +54,10 @@ pub async fn serve_with_dashboard(
             _ = shutdown.changed() => {
                 if *shutdown.borrow() {
                     tracing::info!("draining: no longer accepting connections");
+                    // And the ones already accepted: a subscription is a task of its own, and a
+                    // server that only stops *accepting* leaves every open socket up for as long
+                    // as the process lives (§5.2's third clause, `App::drain`).
+                    app.drain();
                     return Ok(());
                 }
                 continue;

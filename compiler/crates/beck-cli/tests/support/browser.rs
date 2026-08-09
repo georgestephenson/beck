@@ -291,6 +291,28 @@ impl Page {
             .to_string()
     }
 
+    /// Cut the page off from the network, or reconnect it.
+    ///
+    /// Chromium's own emulation rather than a proxy or a firewall rule: what is under test is what
+    /// the client does when `fetch` and `WebSocket` fail, and this is the switch that makes them.
+    pub async fn offline(&self, browser: &mut Browser, cut: bool) {
+        browser
+            .call("Network.enable", json!({}), Some(&self.session))
+            .await;
+        browser
+            .call(
+                "Network.emulateNetworkConditions",
+                json!({
+                    "offline": cut,
+                    "latency": 0,
+                    "downloadThroughput": if cut { 0 } else { -1 },
+                    "uploadThroughput": if cut { 0 } else { -1 },
+                }),
+                Some(&self.session),
+            )
+            .await;
+    }
+
     /// Poll until the expression is truthy, or fail saying what it was.
     ///
     /// A browser is asynchronous in ways nothing here controls — a socket opening, a module

@@ -42,7 +42,9 @@ use beck_core::delta;
 use beck_core::diff;
 use beck_core::edge;
 use beck_core::html::Html;
+use beck_core::repr::Repr;
 use beck_core::Value;
+use serde::{Deserialize, Serialize};
 
 /// A command this client has sent and the server has not yet reflected in the state it holds.
 #[derive(Clone, Debug)]
@@ -58,6 +60,29 @@ struct Pending {
     /// The log position the server gave it, once it says so. Until then the command is in flight;
     /// after `seq` reaches this, the confirmed state already includes it.
     acked: Option<u64>,
+}
+
+/// A client's whole local copy, in a form a browser can put somewhere and read back.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Snapshot {
+    /// The program this is a copy *of*. A deployment that changes the command channel's types
+    /// changes this, and a snapshot of the old one is refused rather than folded into the new
+    /// program (§4.3).
+    pub wire: String,
+    /// Whose copy it is. The state is the same for everybody in Mode B (§94.2), but the queue is
+    /// not: it is this actor's unsent commands.
+    pub actor: String,
+    pub seq: u64,
+    pub state: Repr,
+    pub pending: Vec<Queued>,
+}
+
+/// A command proposed and not yet confirmed.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Queued {
+    pub id: String,
+    pub command: Repr,
+    pub at: i64,
 }
 
 /// What a proposal did.
@@ -199,6 +224,81 @@ impl Client {
         self.confirmed = state;
         self.seq = seq;
         self.pending.retain(|p| p.acked.is_none_or(|s| s > seq));
+    }
+
+    /// Everything this client would need to be itself again after a reload.
+    ///
+    /// [`docs/10-decisions.md`](../../../../../docs/10-decisions.md) D7's rung 2 — "a Mode B
+    /// component holds a local copy of its state" — is this plus somewhere to put it. What comes
+    /// back is the *confirmed* state and the commands still in flight, never the optimistic state:
+    /// a guess is derived, and a guess that were restored as a fact could not be corrected.
+    ///
+    /// `None` when the state holds something unstorable, which the checker makes unreachable
+    /// (`B0411`) and which is refused here rather than half-written.
+    pub fn snapshot(&self) -> Option<Snapshot> {
+        Some(Snapshot {
+            wire: self.bundle.wire_id.clone(),
+            actor: self.actor.clone(),
+            seq: self.seq,
+            state: Repr::of(&self.confirmed).ok()?,
+            pending: self
+                .pending
+                .iter()
+                .map(|p| {
+                    Some(Queued {
+                        id: p.id.clone(),
+                        command: Repr::of(&p.command).ok()?,
+                        at: p.at,
+                    })
+                })
+                .collect::<Option<Vec<_>>>()?,
+        })
+    }
+
+    /// Come back as that client.
+    ///
+    /// The queue is what makes this more than a cache: a command proposed with no network is still
+    /// pending here, and sending it again after a reconnect is safe because it carries the same
+    /// idempotency key the server de-duplicates by (§4.3). Offline tolerance is the fold plus that
+    /// key; it needed no new agreement between the two sides.
+    pub fn restore(&mut self, snapshot: Snapshot) -> Result<Vec<diff::Op>, String> {
+        if snapshot.wire != self.bundle.wire_id {
+            return Err(format!(
+                "this snapshot is of another program ({} rather than {})",
+                snapshot.wire, self.bundle.wire_id
+            ));
+        }
+        if snapshot.actor != self.actor {
+            return Err(format!(
+                "this snapshot is another actor's ({} rather than {})",
+                snapshot.actor, self.actor
+            ));
+        }
+        self.confirmed = snapshot.state.to_value();
+        self.seq = snapshot.seq;
+        self.pending = snapshot
+            .pending
+            .into_iter()
+            .map(|q| Pending {
+                id: q.id,
+                command: q.command.to_value(),
+                at: q.at,
+                // Nothing this client was told survives a reload, so every restored command is in
+                // flight again. An ack it already had would be re-sent and de-duplicated, which is
+                // the cheap end of the trade.
+                acked: None,
+            })
+            .collect();
+        self.repaint()
+    }
+
+    /// The commands a restored client still owes the server, in order.
+    pub fn queued(&self) -> Vec<(String, Repr)> {
+        self.pending
+            .iter()
+            .filter(|p| p.acked.is_none())
+            .filter_map(|p| Some((p.id.clone(), Repr::of(&p.command).ok()?)))
+            .collect()
     }
 
     /// Apply a command speculatively.

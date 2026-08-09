@@ -292,10 +292,10 @@ browser in CI that §94.8 still owes.
 - ~~**No browser has run it.**~~ **One has** — see §94.12, which was written after the rest of this
   report and which is where three more defects are. What is still not built is a browser *other*
   than Chromium, and a page more complicated than the board.
-- **No offline.** D7's rung 2 "falls out of Mode B + determinism" and it does not fall out yet:
-  there is no local log, no queued command surviving a reload, no service worker. The kernel carries
-  `init` so a client with no server has a state to render, which is the first brick and not the
-  wall.
+- ~~**No offline.**~~ **D7's rung 2 is built** — see §94.13, which is where two more defects are.
+  What is still missing is a *service worker*: the document comes from the server, so a reload with
+  nothing listening gets a browser error page and the local copy is never consulted. The copy
+  survives a reconnect and a reload-while-connected, and not a cold start with no network.
 - **One component per program**, because a program has one `page`. The bundle format is
   per-component and carries the component's name; what does not exist is a *second* `Signal[Html]`
   for it to be about, so "a page mixes modes freely; the boundary is per component subtree" (§5.1)
@@ -338,6 +338,8 @@ And `crates/beck-cli/tests/browser.rs`, in Chromium (§94.12):
 | The kernel, the bundle or the shim stops loading over HTTP | `mode_b_renders_in_the_browser_and_guesses_ahead_of_the_server` |
 | A local guess stops reaching the DOM, or the server stops agreeing with it | the same test's two halves |
 | A reloaded tab cannot rebuild its state | `mode_b_survives_a_reload` |
+| An interaction stops working with the server gone, or a queued command is appended twice, or never | `mode_b_works_with_the_server_gone_and_catches_up_when_it_returns` (§94.13) |
+| A local copy of another program is restored into this one | `a_local_copy_of_another_program_is_dropped` |
 
 Plus `beck_core::delta`'s own round-trip tests — every patch this module produces, applied, has to
 reproduce the value it was derived from — and `examples/board.beck`'s seven tests in Beck, one of
@@ -368,6 +370,10 @@ which is the snapshot §94.7 ends on.
 - **The patch wire format changed** (§94.12): an element's attributes cross as ordered pairs rather
   than as a JSON object, because a JSON object is not ordered. §4.4's binary mirror already carried
   them as pairs, so this is the JSON form catching up with it.
+- **A duplicate command is acknowledged rather than refused** (§94.13). §4.3's "a retry after a
+  reconnect is safe" is now true of the reply as well as of the log.
+- [`05`](05-tier-lowering.md) §5.2's "graceful drain (finish folds, snapshot, **hand off
+  subscriptions**)" has its third clause (§94.13): `App::drain`, and `http::serve` calling it.
 - **`Hello.seq` is optional** (§94.12), and its absence means "I hold nothing". [`18`](18-phase-0-report.md)
   §18.5's resumption rule is unchanged; what changed is that position zero can now be *claimed*,
   which is what makes §5.1's "first paint is free" true of a document rendered from an empty log.
@@ -430,3 +436,72 @@ made that impossible.
 The pattern across all three is the one [`84`](84-a-quota-is-only-as-good-as-its-actor-report.md)
 §84.5 names: none of them could have been caught by a test that does not execute the residue, and
 all three had been shipped for as long as the residue has existed.
+
+## 94.13 Offline, and the two defects that were between here and it
+
+[`10`](10-decisions.md) D7 rung 2 is "what Beck v1 ships": *a Mode B component holds a local copy of
+its state and queues commands while offline, replaying them on reconnect*. D7 also predicts how much
+work it should be — "falls out of Mode B + determinism" — and that prediction is the interesting
+thing to check, because it is a claim that **no new agreement between the two sides is needed**.
+
+It very nearly held. The client half is three things:
+
+* `Client::snapshot` and `Client::restore` — the *confirmed* state, its `seq`, and the commands
+  still in flight. Never the optimistic state: a guess is derived, and a guess restored as a fact
+  could not be corrected.
+* `localStorage`, under a key carrying the program's **wire id** and the actor. A deployment that
+  changes the command channel's types changes that id (§4.3), so a tab coming back to a new program
+  cannot restore a copy of the old one — and the kernel refuses a mismatch as well, because a key
+  is a convention and a check is a rule.
+* A queue flushed on **every** socket open, not the first. Each command carries the id it was
+  proposed with.
+
+The server half is nothing at all, which is the part D7 got right: `App::propose` has
+de-duplicated by that id since Phase 0.
+
+### The reply to a retry was "rejected"
+
+Except that it had never been asked to. The sequencer remembered the ids it had seen and answered a
+repeat with
+
+```rust
+rejected.push((p.reply, "duplicate".into()));
+```
+
+under a comment reading "Idempotency by envelope identity: a retry after a reconnect is safe
+(§4.3)". The comment describes the intent exactly; the code beneath it tells the client its command
+was **refused**. A Mode B client replaying an offline queue would therefore take every already-landed
+command back off the page — the user watches their work vanish, one card at a time, on reconnect.
+
+An idempotent operation has to be idempotent in its *answer*, so the sequencer now remembers
+`(id, seq)` and replies with the position the first attempt got. The retry is an ack. That is what
+"safe" was always supposed to mean, and nothing had ever retried before — the thin client's outbox
+only survives a disconnection, not a reload, so no client had ever sent the same id twice.
+
+### A drained server never let go
+
+The second was found trying to *test* the first. Taking the browser offline with Chromium's network
+emulation does not close an already-open websocket, so the "offline" client cheerfully kept talking.
+Stopping the server did not work either: `http::serve` stopped accepting on shutdown and left every
+connection it had already accepted running for the life of the process. §5.2 lists "graceful drain
+(finish folds, snapshot, **hand off subscriptions**)" and the third clause had no implementation.
+
+`App::drain` is a watch every subscription selects on, and `serve` sets it when it stops accepting.
+A drained server now ends its subscriptions, the client reconnects with its queue, and the test can
+be about Beck rather than about Chromium. It is also what a *deploy* looks like, which is the reason
+the clause is in §5.2 in the first place.
+
+### What it costs
+
+Persisting is `O(state)` per write, coalesced onto a trailing 200 ms timer so a burst costs one
+write. That is honest but not good: a thousand-card board is ~100 KB of JSON per save. What would
+make the cost a function of the *change* is an append-only local log — which is the shape of D7's
+own later rungs, and is not built.
+
+### The gate
+
+`browser.rs::mode_b_works_with_the_server_gone_and_catches_up_when_it_returns`, in Chromium: a card
+added with the server stopped reaches the page and not the log; the server comes back; the card
+reaches the log **exactly once**; and the two sides converge on the same markup. Plus
+`a_local_copy_of_another_program_is_dropped`, which forges a snapshot under this program's key and
+asserts the page still comes from the server.

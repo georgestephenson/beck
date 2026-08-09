@@ -191,6 +191,13 @@ Three rungs of "works without the network", in plain terms:
    type system absolves you, as the original conversation put it. Adopting it wholesale would
    dissolve Beck's central construct, the single merge point.
 
+**Built** for rung 2 ([`94`](94-mode-b-report.md) §94.13), and "falls out of Mode B + determinism"
+held with one correction: the server had de-duplicated a retried command since Phase 0 but *replied
+that it was rejected*, so replaying a queue took the work back off the page. An idempotent operation
+has to be idempotent in its answer. What is still missing is a service worker — the document comes
+from the server, so a cold start with no network gets a browser error page rather than the local
+copy.
+
 **The plan**: rung 2 in v1 (falls out of Mode B + determinism). Then **CRDT-valued types** in v1.x:
 a field declared `notes: Text` (automerge/loro-backed, MIT) merges concurrent edits *within the
 value*, while the log still totally orders the update events around it — collaborative text without
