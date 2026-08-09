@@ -306,7 +306,7 @@ browser in CI that §94.8 still owes.
 
 ## 94.9 The gates, and what makes each go red
 
-`crates/beck-cli/tests/mode_b.rs`, 18 tests:
+`crates/beck-cli/tests/mode_b.rs`, 19 tests:
 
 | What would break it | The test |
 |---|---|
@@ -317,6 +317,7 @@ browser in CI that §94.8 still owes.
 | The client stops running the program's own `validate` | `a_command_the_program_refuses_never_reaches_the_page_or_the_wire` |
 | A data patch becomes a function of the collection | `a_data_patch_costs_the_change_and_not_the_state` |
 | A patch is applied to a state it was not derived from | `a_data_patch_against_a_state_the_client_does_not_have_fails_loudly` |
+| A client adopts a page the DOM is not showing, or rebuilds one it is | `a_client_adopts_the_page_it_was_rendered_and_rebuilds_any_other` |
 | A Mode B subscription sends DOM patches, or a Mode A one sends state | `a_mode_b_subscription_carries_the_state_and_the_browser_renders_it` |
 | The `unsafe` exception grows past four export attributes | `the_wasm_boundary_is_the_only_exception_to_forbid_unsafe` |
 | The kernel stops building for the browser | `the_kernel_builds_for_the_browser` (skips, loudly, without the target; `BECK_REQUIRE_WASM=1` forbids the skip) |
