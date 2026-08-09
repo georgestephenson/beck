@@ -532,8 +532,8 @@ impl Py {
             Some(sym::WHEN) if n.args.len() >= 2 => {
                 let cmds: Vec<String> = n.args[1..].iter().map(|a| self.expr(a)).collect();
                 let cmds = cmds.join(", ");
-                match n.args[0].as_str_lit() {
-                    Some(actor) => self.line(&format!("when session(\"{actor}\") sends {cmds}")),
+                match session_of(&n.args[0]) {
+                    Some(session) => self.line(&format!("when {session} sends {cmds}")),
                     None => self.line(&format!("when {cmds}")),
                 }
             }
@@ -545,16 +545,16 @@ impl Py {
             }
             Some(sym::EXPECT_CONTAINS) if !n.args.is_empty() => {
                 let needle = self.expr(&n.args[0]);
-                match n.args.get(1).and_then(|a| a.as_str_lit()) {
-                    Some(actor) => self.line(&format!(
-                        "expect page(session(\"{actor}\")) contains {needle}"
-                    )),
+                match n.args.get(1).and_then(session_of) {
+                    Some(session) => {
+                        self.line(&format!("expect page({session}) contains {needle}"))
+                    }
                     None => self.line(&format!("expect page contains {needle}")),
                 }
             }
             Some(sym::EXPECT_SNAPSHOT) if n.args.len() == 2 => {
-                let subject = match n.args[1].as_str_lit() {
-                    Some(actor) => format!("page(session(\"{actor}\"))"),
+                let subject = match session_of(&n.args[1]) {
+                    Some(session) => format!("page({session})"),
                     None => "page".to_string(),
                 };
                 match n.args[0].as_str_lit() {
@@ -818,6 +818,29 @@ impl Py {
 }
 
 /// Recognise `f(args, do=quote(block))` so it can print back as `f(args):` + block.
+/// A test's session slot, printed back as it was written.
+///
+/// One node with two shapes — a bare actor, or `(at "ana" "/done")` — so this is where the two
+/// meet and every clause that has a session slot prints through it rather than spelling
+/// `session("…")` a fourth time.
+fn session_of(n: &Node) -> Option<String> {
+    if let Some(actor) = n.as_str_lit() {
+        return Some(format!("session({})", quoted(actor)));
+    }
+    if n.is_form(sym::AT) && n.args.len() == 2 {
+        let actor = n.args[0].as_str_lit()?;
+        let route = n.args[1].as_str_lit()?;
+        return Some(format!("session({}, {})", quoted(actor), quoted(route)));
+    }
+    None
+}
+
+fn quoted(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    write_string(&mut out, s);
+    out
+}
+
 fn split_block_call(n: &Node) -> Option<(&str, Vec<Node>, Node)> {
     let head = n.head_name()?;
     let last = n.args.last()?;

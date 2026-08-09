@@ -949,10 +949,12 @@ pub const INDEX: &[CodeEntry] = &[
     e(
         "B0514",
         Stage::Signals,
-        "renders differently for each session, so it cannot render on the client",
-        "The page reads the session as well as the state, so it filters, scopes or hides by \
-         identity. `@render(client)` sends the browser the state rather than the page, which \
-         would hand every actor what the filter was removing (docs/94 §94.2).",
+        "renders differently for each actor, so it cannot render on the client",
+        "The page reads who is asking — `session.actor` or `session.claims` — so it filters, \
+         scopes or hides by identity. `@render(client)` sends the browser the state rather than \
+         the page, which would hand every actor what the filter was removing (docs/94 §94.2). \
+         Reading `session.path` is not this: the browser chose the route and already holds the \
+         state, so a page that varies by route is eligible (docs/96 §96.2).",
     ),
     // --------------------------------------------------------- B06xx: modules and interfaces
     e(

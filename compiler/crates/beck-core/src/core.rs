@@ -1340,6 +1340,33 @@ impl Env {
     }
 }
 
+/// Every subexpression of this one.
+///
+/// The read-only twin of `children_mut`, and it exists for the same reason: a pass that walks
+/// the whole tree should not restate the shape of `CoreKind`, because the day a variant gains a
+/// child every hand-written walk is silently incomplete ([`docs/91`](../../../../../docs/91-guards-and-alternatives-report.md)
+/// §91.3 is that failure, at fourteen sites).
+pub fn children(c: &Core) -> Vec<&Core> {
+    match &c.kind {
+        CoreKind::Const(_) | CoreKind::Var(_) | CoreKind::Global(_) => Vec::new(),
+        CoreKind::Lam { body, .. } => vec![body],
+        CoreKind::App { func, args } => std::iter::once(&**func).chain(args).collect(),
+        CoreKind::Let { value, body, .. } => vec![value, body],
+        CoreKind::If { cond, then, alt } => vec![cond, then, alt],
+        CoreKind::Match { scrutinee, arms } => std::iter::once(&**scrutinee)
+            .chain(arms.iter().flat_map(|a| a.exprs()))
+            .collect(),
+        CoreKind::Prim { args, .. } => args.iter().collect(),
+        CoreKind::Make { fields, .. } => fields.iter().map(|(_, f)| f).collect(),
+        CoreKind::Field { base, .. } => vec![base],
+        CoreKind::With { base, fields } => std::iter::once(&**base)
+            .chain(fields.iter().map(|(_, f)| f))
+            .collect(),
+        CoreKind::ListLit(items) => items.iter().collect(),
+        CoreKind::MapLit(kvs) => kvs.iter().flat_map(|(k, v)| [k, v]).collect(),
+    }
+}
+
 /// Every subexpression of this one, to be rewritten in place.
 ///
 /// The walk two passes over the finished program share — [`crate::frames`] and [`crate::fields`].

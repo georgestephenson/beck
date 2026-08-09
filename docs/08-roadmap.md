@@ -260,7 +260,19 @@ dependencies whose signatures didn't change.
   §94.14 finds is not what the 13 ms is — not freshness-typed, and no size-budget gate; §94.8 is
   the list.
 - Client polish for both modes: router, forms, lazy routes, focus/scroll preservation, devtools
-  extension showing signal graph, patch traffic and pending state.
+  extension showing signal graph, patch traffic and pending state. — ***Built, except lazy routes***
+  ([`96`](96-client-polish-report.md)). **A route is a field of `Session`**: `view(state, session)`
+  reads `session.path`, so there is no route table, no matcher and no route form — every route is a
+  real URL the server renders directly, and a link is an ordinary `<a href>`. Forms are `on_submit`
+  with a `$field:name` hole; the caret and the scroll survive a patch that rebuilds the page, at a
+  cost proportional to the patch; and the panel shows all three of the things this line names,
+  served as a page rather than shipped as an extension (§96.6 says why). What putting the route on
+  the session found is the report's subject: `Session` had been one word for **who** is asking and
+  **where** they are, and `B0514` was refusing every routed page in Mode B for a reason that is
+  about identity — so eligibility now asks which fields the view can observe, and stopped being the
+  same answer as §5.3's fanout. **Lazy routes are not built**, and §96.7 is the ordering rather than
+  the excuse: a program has one component, so there is nothing to be lazy about until §5.1's
+  per-component boundary exists in the language.
 - **`test` blocks and inferred mocks** ([`21`](21-tests-in-beck-and-proof.md) §21.2–§21.3) —
   **BUILT** ([`22`](22-phase-3-report.md)): a test is a log, a command and an expectation, so
   cross-boundary tests need no network and no fixtures; stubs attach to *effect atoms* rather than

@@ -203,8 +203,10 @@ impl Checker<'_> {
                                 core
                             })
                             .collect();
+                        let (actor, route) = session_slot(&stmt.args[0]);
                         Clause::When {
-                            actor: stmt.args[0].as_str_lit().map(Arc::from),
+                            actor,
+                            route,
                             commands,
                             span: cspan,
                         }
@@ -221,10 +223,12 @@ impl Checker<'_> {
                     Some(sym::EXPECT_CONTAINS) if !stmt.args.is_empty() => {
                         let needle = ck.expr(&stmt.args[0], Some(&Ty::str_()));
                         ck.unify(&needle.ty, &Ty::str_(), needle.span, "`contains`");
+                        let (actor, route) = stmt.args.get(1).map_or((None, None), session_slot);
                         Clause::Expect {
                             what: Expectation::PageContains {
                                 needle,
-                                actor: stmt.args.get(1).and_then(|a| a.as_str_lit()).map(Arc::from),
+                                actor,
+                                route,
                             },
                             span: cspan,
                         }
@@ -234,10 +238,12 @@ impl Checker<'_> {
                         // and the page is the runtime's to render. What the checker owes this
                         // clause is the same thing it owes `expect page contains` — that it is in
                         // a `test` block at all, which the surrounding walk has already decided.
+                        let (actor, route) = session_slot(&stmt.args[1]);
                         Clause::Expect {
                             what: Expectation::PageMatchesSnapshot {
                                 name: stmt.args[0].as_str_lit().map(Arc::from),
-                                actor: stmt.args[1].as_str_lit().map(Arc::from),
+                                actor,
+                                route,
                             },
                             span: cspan,
                         }
@@ -630,4 +636,19 @@ fn require_subject(
         );
     }
     ty
+}
+
+/// A test's session slot: who, and where.
+///
+/// One node with two shapes — a bare actor, or `(at "ana" "/done")` — and both ends of it are
+/// optional, because `expect page contains` names neither. Reading it in one place is what keeps
+/// the three clauses that have a session slot from disagreeing about what one is.
+fn session_slot(n: &Node) -> (Option<Arc<str>>, Option<Arc<str>>) {
+    if n.is_form(sym::AT) && n.args.len() == 2 {
+        return (
+            n.args[0].as_str_lit().map(Arc::from),
+            n.args[1].as_str_lit().map(Arc::from),
+        );
+    }
+    (n.as_str_lit().map(Arc::from), None)
 }

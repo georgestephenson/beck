@@ -56,7 +56,7 @@ pub async fn run_as<S: Socket>(
     // A guard, not a pair of calls: a session ends by returning, by erroring, or by the socket
     // dying, and a gauge that only decrements on the happy path drifts upward forever.
     let _connected = SessionGuard::new();
-    let Some((sub, from, claimed)) = wait_for_hello(&mut socket).await? else {
+    let Some((sub, from, claimed, path)) = wait_for_hello(&mut socket).await? else {
         return Ok(());
     };
 
@@ -97,10 +97,41 @@ pub async fn run_as<S: Socket>(
         },
     };
 
+    let who = Subscriber { actor, path };
+
     // The one branch a rendering mode makes to a subscription.
     match app.runtime().placed().render.mode {
-        Mode::Server => mode_a(app, socket, sub, actor, how).await,
-        Mode::Client => mode_b(app, socket, sub, actor, how).await,
+        Mode::Server => mode_a(app, socket, sub, who, how).await,
+        Mode::Client => mode_b(app, socket, sub, who, how).await,
+    }
+}
+
+/// Who this subscription is, and where.
+///
+/// The identity half is an [`crate::identity::Actor`], which only a provider can mint. The route
+/// half is a `String` the client sent, which nothing verifies and nothing should — a route is not
+/// evidence of anything, and [`beck_core::render`] is where that difference stops being a comment
+/// and becomes a rule about which pages may render in a browser.
+///
+/// It is one value rather than two arguments because everything downstream takes a
+/// [`crate::program::Viewer`], and a route threaded separately would be a second parameter that
+/// every render path could forget.
+pub(crate) struct Subscriber {
+    actor: crate::identity::Actor,
+    path: String,
+}
+
+impl crate::program::Viewer for Subscriber {
+    fn actor(&self) -> &str {
+        self.actor.name()
+    }
+
+    fn claims(&self) -> &std::collections::BTreeMap<std::sync::Arc<str>, std::sync::Arc<str>> {
+        self.actor.claims()
+    }
+
+    fn path(&self) -> &str {
+        &self.path
     }
 }
 
@@ -109,7 +140,7 @@ async fn mode_a<S: Socket>(
     app: Arc<App>,
     mut socket: S,
     sub: String,
-    actor: crate::identity::Actor,
+    who: Subscriber,
     how: Resumption,
 ) -> Result<()> {
     // Subscribe *before* reading the current view, so an event that lands in between wakes us
@@ -131,7 +162,7 @@ async fn mode_a<S: Socket>(
     // `seq` comes back from the render rather than from `app.head()` afterwards: it is the version
     // the page reflects, and this frame will be the one a resuming client asks for the difference
     // from.
-    let (view_now, seq) = app.maintain(&mut engine, &actor).await?;
+    let (view_now, seq) = app.maintain(&mut engine, &who).await?;
     arranged.update(engine.arranged());
     report_shared(&app);
 
@@ -145,7 +176,7 @@ async fn mode_a<S: Socket>(
         // The client has the view as of `from`: send it exactly the difference.
         Resumption::Resumed { from, .. } => {
             let then = app.state_at(from).await?;
-            let view_then = app.runtime().view(&then, &actor)?;
+            let view_then = app.runtime().view(&then, &who)?;
             diff(&view_then, &view_now)
         }
     };
@@ -155,7 +186,7 @@ async fn mode_a<S: Socket>(
         &app,
         &mut socket,
         sub,
-        actor,
+        who,
         seq,
         how,
         initial,
@@ -178,7 +209,7 @@ async fn mode_b<S: Socket>(
     app: Arc<App>,
     mut socket: S,
     sub: String,
-    actor: crate::identity::Actor,
+    who: Subscriber,
     how: Resumption,
 ) -> Result<()> {
     // Subscribe *before* reading the state, for the same reason Mode A does: an event that lands
@@ -205,7 +236,7 @@ async fn mode_b<S: Socket>(
         &app,
         &mut socket,
         sub,
-        actor,
+        who,
         seq,
         how,
         initial,
@@ -241,7 +272,7 @@ impl Feed {
     async fn advance(
         &mut self,
         app: &Arc<App>,
-        actor: &crate::identity::Actor,
+        who: &Subscriber,
     ) -> Result<(Option<serde_json::Value>, u64)> {
         match self {
             Feed::Dom {
@@ -249,7 +280,7 @@ impl Feed {
                 arranged,
                 last,
             } => {
-                let (view, at) = app.maintain(engine, actor).await?;
+                let (view, at) = app.maintain(engine, who).await?;
                 arranged.update(engine.arranged());
                 report_shared(app);
                 let started = std::time::Instant::now();
@@ -281,7 +312,7 @@ async fn drive<S: Socket>(
     app: &Arc<App>,
     socket: &mut S,
     sub: String,
-    actor: crate::identity::Actor,
+    mut who: Subscriber,
     mut seq: u64,
     how: Resumption,
     initial: Option<serde_json::Value>,
@@ -315,7 +346,7 @@ async fn drive<S: Socket>(
                 if changed.is_err() {
                     break; // the application is gone
                 }
-                let (frame, at) = feed.advance(app, &actor).await?;
+                let (frame, at) = feed.advance(app, &who).await?;
                 seq = at;
                 if let Some(frame) = frame {
                     send_json(socket, &frame).await?;
@@ -349,7 +380,7 @@ async fn drive<S: Socket>(
                                 continue;
                             }
                         };
-                        match app.propose(id.clone(), actor.clone(), decoded).await {
+                        match app.propose(id.clone(), who.actor.clone(), decoded).await {
                             Ok(at) => {
                                 send_json(socket, &ServerMsg::ack(&id, at)).await?;
                                 if at > seq {
@@ -358,6 +389,24 @@ async fn drive<S: Socket>(
                             }
                             Err(why) => {
                                 send_json(socket, &ServerMsg::nack(&id, &why)).await?;
+                            }
+                        }
+                    }
+                    Ok(ClientMsg::Nav { path }) => {
+                        // The route is a field of the `Session` the view is rendered against, so a
+                        // navigation is a re-render and nothing else — no route table, no second
+                        // rendering path, and no code in the runtime that knows what a route is.
+                        //
+                        // In Mode B this produces no frame at all, which is right rather than a
+                        // gap: the browser holds the state and renders its own page, and what the
+                        // server needs the route for is the `Session` it hands `validate`.
+                        if who.path != path {
+                            who.path = path;
+                            telemetry().navigations.incr();
+                            let (frame, at) = feed.advance(app, &who).await?;
+                            seq = at;
+                            if let Some(frame) = frame {
+                                send_json(socket, &frame).await?;
                             }
                         }
                     }
@@ -376,11 +425,16 @@ async fn drive<S: Socket>(
 
 async fn wait_for_hello<S: Socket>(
     socket: &mut S,
-) -> Result<Option<(String, Option<u64>, String)>> {
+) -> Result<Option<(String, Option<u64>, String, String)>> {
     while let Some(message) = socket.next().await {
         match message? {
             Message::Text(t) => match ClientMsg::parse(&t) {
-                Ok(ClientMsg::Hello { sub, seq, actor }) => return Ok(Some((sub, seq, actor))),
+                Ok(ClientMsg::Hello {
+                    sub,
+                    seq,
+                    actor,
+                    path,
+                }) => return Ok(Some((sub, seq, actor, path))),
                 Ok(_) => continue,
                 Err(e) => {
                     telemetry().bad_messages.incr();

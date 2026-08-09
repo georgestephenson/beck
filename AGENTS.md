@@ -115,7 +115,7 @@ fusion,
 shared-arrangement, subscription, view-metrics, read-model, SICP, Are We Fast Yet, Benchmarks Game,
 tests-in-Beck, UI, workflow-cross-check, documentation, getting-started, outbound, compile-speed,
 concurrency, round-trip, runtime-edge, grammar-fuzz, supply-chain, native-backend, mode-B, browser,
-identity, OIDC and diagnostic-snapshot suites, plus the eight
+client, identity, OIDC and diagnostic-snapshot suites, plus the eight
 release-only measurement suites. **Keep them green.**
 
 Four gates in this project's history could not have failed

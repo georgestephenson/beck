@@ -782,15 +782,17 @@ fn execute(
             }
             Clause::When {
                 actor: who,
+                route,
                 commands,
                 ..
             } => {
                 if let Some(w) = who {
                     actor = w.clone();
                 }
+                let from = at(&actor, route);
                 for cmd in commands {
                     let c = eval(runtime, t, cmd, &state, &events, &result, inputs)?;
-                    let proposal = runtime.proposal(&actor, c);
+                    let proposal = runtime.proposal(&from, c);
                     let out = runtime
                         .decide(&state, &proposal)
                         .map_err(|e| format!("`validate` failed: {e}"))?;
@@ -838,12 +840,17 @@ fn execute(
                         return Err(format!("expected true, got {}", v.display()));
                     }
                 }
-                Expectation::PageContains { needle, actor: who } => {
+                Expectation::PageContains {
+                    needle,
+                    actor: who,
+                    route,
+                } => {
                     let n = eval(runtime, t, needle, &state, &events, &result, inputs)?;
                     let n = n.as_str().unwrap_or_default().to_string();
                     let who = who.clone().unwrap_or_else(|| actor.clone());
+                    let seen = at(&who, route);
                     let page = runtime
-                        .view(&state, &who)
+                        .view(&state, &seen)
                         .map_err(|e| format!("rendering the page for `{who}`: {e}"))?;
                     let rendered = page.render();
                     if !rendered.contains(&n) {
@@ -853,10 +860,15 @@ fn execute(
                         ));
                     }
                 }
-                Expectation::PageMatchesSnapshot { name, actor: who } => {
+                Expectation::PageMatchesSnapshot {
+                    name,
+                    actor: who,
+                    route,
+                } => {
                     let who = who.clone().unwrap_or_else(|| actor.clone());
+                    let seen = at(&who, route);
                     let page = runtime
-                        .view(&state, &who)
+                        .view(&state, &seen)
                         .map_err(|e| format!("rendering the page for `{who}`: {e}"))?;
                     snapshot(opts, &t.name, name.as_deref(), &who, &page.render())?;
                 }
@@ -1139,4 +1151,18 @@ pub fn render(report: &Report, verbose: bool) -> String {
         report.skipped()
     ));
     out
+}
+
+/// A test's viewer: the actor it named, at the route it named.
+///
+/// `None` is the application's root rather than an empty string, for the reason
+/// [`beck_core::edge::ROOT`] exists — a program matching on `session.path` should not have to
+/// spell "the test did not say" and "the test said the root" as two different pages.
+fn at(actor: &Arc<str>, route: &Option<Arc<str>>) -> crate::program::At<Arc<str>> {
+    crate::program::At {
+        who: actor.clone(),
+        path: route
+            .clone()
+            .unwrap_or_else(|| Arc::from(beck_core::edge::ROOT)),
+    }
 }

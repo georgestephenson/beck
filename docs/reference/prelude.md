@@ -26,7 +26,7 @@ What a user's type may implement to join something the language already has. `Nu
 | `Option` | `union Option[T] = Some(value: T) \| None` |
 | `Proposal` | `model Proposal {session: Session, command: Command}` |
 | `Result` | `union Result[T, E] = Ok(value: T) \| Err(error: E)` |
-| `Session` | `model Session {actor: Str, claims: Map[Str, Str]}` |
+| `Session` | `model Session {actor: Str, claims: Map[Str, Str], path: Str}` |
 | `TimeError` | `union TimeError = BadTime(why: Str)` |
 | `UuidError` | `union UuidError = BadUuid(why: Str)` |
 

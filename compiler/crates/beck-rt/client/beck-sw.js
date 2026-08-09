@@ -16,8 +16,12 @@
 // reason: two programs must not share one browser's idea of either.
 const CACHE = "beck-shell-%WIRE%";
 
-// Everything a Mode B tab needs before it can render anything at all. The document is `/` because
-// that is what a reload asks for; the bundle and the kernel are the component and its backend.
+// Everything a Mode B tab needs before it can render anything at all. The document is `/` — and it
+// is the document for **every** route, not only that one: a Mode B client renders from the state it
+// holds and reads its route off `location`, so the shell it hydrates into is the same shell
+// whatever the address bar says (`docs/96` §96.1). Caching one document per route would be caching
+// the same file under different names, and would still miss the route nobody had visited.
+// The bundle and the kernel are the component and its backend.
 const SHELL = [
   "/",
   "/beck.css",
@@ -67,18 +71,25 @@ self.addEventListener("fetch", (event) => {
         }
         return response;
       })
-      .catch(() =>
-        caches.match(event.request).then(
-          (hit) =>
-            hit ||
-            // A document request with nothing cached: say so as a page rather than as a browser
-            // error, because "the server is unreachable and this tab has never been here before"
-            // is a different thing from "this site is broken".
-            new Response("this application has not been loaded on this device before", {
-              status: 503,
-              headers: { "content-type": "text/plain" },
-            }),
-        ),
-      ),
+      .catch(async () => {
+        const hit = await caches.match(event.request);
+        if (hit) return hit;
+        // A route this tab has never asked for while offline. The shell answers for it, because in
+        // Mode B the route is the *client's* to render — it reads `location` and renders from the
+        // state it holds — so one cached document serves every route. Without this, a tab that had
+        // navigated and then reloaded with no network got an error page for a route it could have
+        // rendered (`docs/96` §96.1).
+        if (event.request.mode === "navigate") {
+          const shell = await caches.match("/", { ignoreSearch: true });
+          if (shell) return shell;
+        }
+        // Nothing cached at all: say so as a page rather than as a browser error, because "the
+        // server is unreachable and this tab has never been here before" is a different thing from
+        // "this site is broken".
+        return new Response("this application has not been loaded on this device before", {
+          status: 503,
+          headers: { "content-type": "text/plain" },
+        });
+      }),
   );
 });

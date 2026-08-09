@@ -203,12 +203,23 @@ pub fn dispatch(
             "optimistic": client.optimistic(),
             "seq": client.seq(),
             "pending": client.in_flight(),
+            "path": client.path(),
         })),
         "hydrate" => {
             client.hydrate()?;
             Ok(serde_json::json!({ "dom": [], "seq": client.seq() }))
         }
         "render" => client.repaint().map(|ops| dom(ops, client.seq())),
+        // The route the browser is on now. Not carried in a snapshot: after a reload the URL is
+        // the browser's own answer to "where am I", and a restored one could disagree with it.
+        "nav" => {
+            let path = request
+                .get("path")
+                .and_then(|p| p.as_str())
+                .ok_or("a nav needs a `path`")?
+                .to_string();
+            client.navigate(&path).map(|ops| dom(ops, client.seq()))
+        }
         "data" => {
             let ops: Vec<beck_core::delta::Op> =
                 serde_json::from_value(request.get("ops").cloned().unwrap_or_default())

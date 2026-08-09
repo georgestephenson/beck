@@ -257,6 +257,14 @@ so an attacker's rejected traffic never becomes permanent storage.
 our own auth code — with verified claims mapped to typed capabilities
 ([`10`](10-decisions.md) D6).
 
+> It carries a third field that **nothing verifies and nothing should**: `path`, the route the
+> client says it is on ([`96`](96-client-polish-report.md)). `actor` and `claims` say *who* is
+> asking and are a provider's answer; `path` says *where* they are and is the browser's own
+> statement about itself. The two halves are told apart structurally where it matters — a Mode B
+> page may read the second and not the first (§96.2) — and the route cannot reach a **fold**,
+> because an `Envelope` carries the actor's name and nothing else, so no replay depends on where
+> anybody was browsing.
+
 v1 semantics: **one totally-ordered log per application**. That is a real throughput/geography
 ceiling, chosen consciously — the honest options at scale (per-entity sharding, logical timestamps,
 CRDTs) are [`09`](09-risks-and-open-questions.md) §9.6's first question.

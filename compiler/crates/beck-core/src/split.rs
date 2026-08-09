@@ -137,6 +137,7 @@ impl Placed {
             states: Vec::new(),
             view_is_per_session: false,
         };
+        let render = crate::render::Decision::of(&roles, &program.defs, false, None, span);
         Placed {
             program,
             wire_id,
@@ -148,7 +149,7 @@ impl Placed {
                 churn: Vec::new(),
                 ties: Vec::new(),
             },
-            render: crate::render::Decision::of(&roles, false, None, span),
+            render,
             roles,
             graph,
             kind: Kind::Library,
@@ -561,7 +562,8 @@ pub fn split(mut program: Program, diags: &mut Diagnostics) -> Option<Placed> {
         .iter()
         .find(|s| s.name == graph.node(page).label)
         .and_then(|s| s.render);
-    let render = crate::render::Decision::of(&roles, true, declared, graph.node(page).span);
+    let render =
+        crate::render::Decision::of(&roles, &program.defs, true, declared, graph.node(page).span);
     render.refuse(diags);
     if diags.has_errors() {
         return None;

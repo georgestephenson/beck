@@ -262,6 +262,12 @@ pub struct Telemetry {
     pub snapshot_failures: Counter,
     /// Client messages that did not parse.
     pub bad_messages: Counter,
+    /// Routes taken on a live subscription — a `nav` frame that moved the client somewhere new.
+    ///
+    /// Counted because it is the one interaction whose cost differs between the two modes by
+    /// construction: in Mode A it is a render and a patch on the server, and in Mode B it is a
+    /// message the server answers with nothing at all.
+    pub navigations: Counter,
     /// Connections refused because the identity did not verify.
     ///
     /// Counted separately from `rejected`, which is `validate` refusing a *command*: one is "who
@@ -365,6 +371,7 @@ impl Telemetry {
                 "append_failures": self.append_failures.get(),
                 "snapshot_failures": self.snapshot_failures.get(),
                 "bad_messages": self.bad_messages.get(),
+                "navigations": self.navigations.get(),
                 "patch_frames": self.patch_frames.get(),
                 "patch_bytes": self.patch_bytes.get(),
                 "shared_releases": self.shared_releases.get(),
@@ -455,6 +462,7 @@ impl Telemetry {
                         sum("beck.log.append.failures", self.append_failures.get(), true),
                         sum("beck.snapshot.failures", self.snapshot_failures.get(), true),
                         sum("beck.messages.malformed", self.bad_messages.get(), true),
+                        sum("beck.navigations", self.navigations.get(), true),
                         sum("beck.patch.frames", self.patch_frames.get(), true),
                         sum("beck.patch.bytes", self.patch_bytes.get(), true),
                         gauge("beck.sessions.active", self.sessions.get()),

@@ -109,6 +109,15 @@ pub struct Viewer {
     pub actor: String,
     #[serde(default)]
     pub claims: BTreeMap<String, String>,
+    /// Where this tab is. The one field of the three that changes while the tab is open, because a
+    /// route is the browser's own — which is what makes Mode B navigation a local render rather
+    /// than a round trip.
+    #[serde(default = "root")]
+    pub path: String,
+}
+
+fn root() -> String {
+    beck_core::edge::ROOT.to_string()
 }
 
 impl Viewer {
@@ -119,6 +128,7 @@ impl Viewer {
         Viewer {
             actor: actor.to_string(),
             claims: BTreeMap::new(),
+            path: root(),
         }
     }
 
@@ -132,7 +142,14 @@ impl Viewer {
                 .into_iter()
                 .map(|(k, v)| (k.to_string(), v.to_string()))
                 .collect(),
+            path: root(),
         }
+    }
+
+    /// The same viewer, somewhere else.
+    pub fn at(mut self, path: &str) -> Viewer {
+        self.path = path.to_string();
+        self
     }
 }
 
@@ -267,6 +284,27 @@ impl Client {
         self.renders += 1;
         self.shown = Some(Shown { html, from });
         Ok(())
+    }
+
+    /// Where this client is now.
+    ///
+    /// The whole of Mode B navigation: the route is a field of the `Session` the view is rendered
+    /// against, so moving it and re-rendering *is* the page change — no round trip, no fetch, and
+    /// no second rendering path. Navigating to where this client already is renders nothing.
+    pub fn navigate(&mut self, path: &str) -> Result<Vec<diff::Op>, String> {
+        if self.viewer.path == path {
+            return Ok(Vec::new());
+        }
+        self.viewer.path = path.to_string();
+        // Forced, because the short-circuit [`Client::repaint`] takes is about the *state* and the
+        // state has not changed here — the session has. It is still a diff against what is on
+        // screen, so a route whose page differs in one attribute costs one attribute.
+        self.paint(true)
+    }
+
+    /// Where this client says it is, which is what its `Session` carries.
+    pub fn path(&self) -> &str {
+        &self.viewer.path
     }
 
     /// A data patch: the server's account of what changed in the accumulator, up to `seq`.
@@ -475,8 +513,18 @@ impl Client {
     /// derived from — that equality is what makes the optimism correct — so without this an
     /// interaction pays for two renders and the second is guaranteed to produce no patch (§94.14).
     pub fn repaint(&mut self) -> Result<Vec<diff::Op>, String> {
+        self.paint(false)
+    }
+
+    /// The render behind [`Client::repaint`], with the short-circuit made a decision of the caller.
+    ///
+    /// `force` exists for exactly one caller — [`Client::navigate`] — and the reason is that the
+    /// guard below asks whether the *state* moved. Everything else that repaints moves the state;
+    /// a navigation moves the session instead, and a guard that cannot tell the two apart would
+    /// make a route change the one interaction Mode B renders nothing for.
+    fn paint(&mut self, force: bool) -> Result<Vec<diff::Op>, String> {
         let from = self.state()?;
-        if self.shown.as_ref().is_some_and(|s| s.from == from) {
+        if !force && self.shown.as_ref().is_some_and(|s| s.from == from) {
             return Ok(Vec::new());
         }
         let html = self.render(&from)?;
@@ -502,7 +550,7 @@ impl Client {
     pub fn render(&self, state: &Value) -> Result<Html, String> {
         match (self.view)(vec![
             state.clone(),
-            edge::session(&self.viewer.actor, self.claims()),
+            edge::session(&self.viewer.actor, self.claims(), &self.viewer.path),
         ]) {
             Ok(Value::Html(h)) => Ok((*h).clone()),
             Ok(other) => Err(format!(
@@ -515,7 +563,12 @@ impl Client {
 
     /// The program's own chokepoint, run locally: the events a command becomes, or why not.
     fn decide(&self, state: &Value, command: &Value) -> Result<Vec<Value>, String> {
-        let proposal = edge::proposal(&self.viewer.actor, self.claims(), command.clone());
+        let proposal = edge::proposal(
+            &self.viewer.actor,
+            self.claims(),
+            &self.viewer.path,
+            command.clone(),
+        );
         let out = (self.validate)(vec![state.clone(), proposal]).map_err(|e| e.to_string())?;
         match out.variant() {
             Some("Ok") => out
