@@ -74,7 +74,9 @@ fn locals(c: &Core) -> u32 {
             locals(scrutinee)
                 + arms
                     .iter()
-                    .map(|a| a.pattern.binders().len() as u32 + locals(&a.body))
+                    // A guard runs before the body and both are inside this arm, so their slots
+                    // are summed rather than maximised — two things in sequence, not two branches.
+                    .map(|a| a.pattern.binders().len() as u32 + a.exprs().map(locals).sum::<u32>())
                     .max()
                     .unwrap_or(0)
         }
@@ -90,7 +92,7 @@ fn children(c: &Core) -> Vec<&Core> {
         CoreKind::Let { value, body, .. } => vec![value, body],
         CoreKind::If { cond, then, alt } => vec![&**cond, &**then, &**alt],
         CoreKind::Match { scrutinee, arms } => std::iter::once(&**scrutinee)
-            .chain(arms.iter().map(|a: &Arm| &a.body))
+            .chain(arms.iter().flat_map(|a: &Arm| a.exprs()))
             .collect(),
         CoreKind::Prim { args, .. } => args.iter().collect(),
         CoreKind::Make { fields, .. } => fields.iter().map(|(_, f)| f).collect(),
@@ -154,14 +156,19 @@ mod tests {
     fn the_arms_of_a_match_share_the_widest_reservation() {
         let arms = vec![
             Arm {
+                guard: None,
                 pattern: Pattern::Bind(1),
                 body: let_(2, var(2)),
                 span: Span::NONE,
             },
             Arm {
+                guard: None,
                 pattern: Pattern::Ctor {
                     variant: "Node".into(),
-                    binds: vec![("l".into(), 3), ("r".into(), 4)],
+                    binds: vec![
+                        ("l".into(), Pattern::Bind(3)),
+                        ("r".into(), Pattern::Bind(4)),
+                    ],
                 },
                 body: var(3),
                 span: Span::NONE,

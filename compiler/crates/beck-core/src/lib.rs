@@ -23,6 +23,7 @@ pub mod docgen;
 pub mod engine;
 pub mod fields;
 pub mod frames;
+pub mod fuse;
 pub mod gen;
 pub mod graph;
 pub mod html;

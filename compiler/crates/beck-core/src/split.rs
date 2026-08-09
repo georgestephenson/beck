@@ -884,7 +884,9 @@ fn max_var(program: &Program) -> VarId {
                     for v in a.pattern.binders() {
                         *max = (*max).max(v);
                     }
-                    go(&a.body, max);
+                    for e in a.exprs() {
+                        go(e, max);
+                    }
                 }
             }
             CoreKind::Make { fields, .. } => fields.iter().for_each(|(_, f)| go(f, max)),

@@ -930,7 +930,7 @@ pub fn apko(graph: &InfraGraph) -> String {
          contents:\n  repositories:\n    - https://packages.wolfi.dev/os\n    \
          - '@local ./packages'\n  keyring:\n    \
          - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub\n    - ./local.rsa.pub\n  \
-         packages:\n    - ca-certificates-bundle\n    - tzdata\n    - {app}@local\n\n\
+         packages:\n{packages}\n\
          entrypoint:\n  command: /usr/bin/beck\n\n\
          cmd: run {APP_SOURCE} --store {store} --addr 0.0.0.0:{APP_PORT}\n\n\
          # Non-root, matching the generated pod's securityContext exactly. A mismatch here is the\n\
@@ -942,6 +942,13 @@ pub fn apko(graph: &InfraGraph) -> String {
          The {app} application, compiled by Beck.\n",
         app = graph.app,
         store = SUBSTRATE.store,
+        // One list, shared with the SBOM: an inventory assembled beside the image is an inventory
+        // that can be wrong about it (`sbom`).
+        packages = crate::sbom::packages(graph)
+            .iter()
+            .map(|p| format!("    - {}", p.apko_name()))
+            .collect::<Vec<_>>()
+            .join("\n"),
     )
 }
 

@@ -272,8 +272,10 @@ fn the_sketch_decomposes_into_the_operators_section_3_8_names() {
     // decomposition silently gave up and made the whole view one opaque recompute, because that is
     // the fallback and the fallback is correct. This is the test that says it did not.
     let placed = support::todo_program();
-    let plan = Plan::compile(&placed);
-    let ops: Vec<&str> = plan.nodes.iter().map(|n| n.op.name()).collect();
+    // What the decomposition produces: `for t in mine:` is a `map_list` inside a `flatten`, one
+    // operator per construct the source names.
+    let built = Plan::unfused(&placed);
+    let names = |p: &Plan| -> Vec<&'static str> { p.nodes.iter().map(|n| n.op.name()).collect() };
     for wanted in [
         "map_values",
         "filter_list",
@@ -283,8 +285,26 @@ fn the_sketch_decomposes_into_the_operators_section_3_8_names() {
         "list_len",
     ] {
         assert!(
+            names(&built).contains(&wanted),
+            "the sketch's view has no `{wanted}` operator; the plan is {:?}",
+            names(&built)
+        );
+    }
+    // What the engine runs is the *fused* plan, where that pair is one operator and the
+    // arrangement between them is never built (docs/89). `fusion.rs` is the gate on the rewrite;
+    // this is the gate on the sketch still decomposing.
+    let plan = Plan::compile(&placed);
+    let ops = names(&plan);
+    for wanted in [
+        "map_values",
+        "filter_list",
+        "sort_by",
+        "flat_map",
+        "list_len",
+    ] {
+        assert!(
             ops.contains(&wanted),
-            "the sketch's view has no `{wanted}` operator; the plan is {ops:?}"
+            "the sketch's fused view has no `{wanted}` operator; the plan is {ops:?}"
         );
     }
     let (maintained, recomputed) = plan.counts();

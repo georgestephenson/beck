@@ -369,8 +369,30 @@ pub enum Const {
 #[derive(Clone, Debug)]
 pub struct Arm {
     pub pattern: Pattern,
+    /// `case Circle(r) if r > 0:` — a condition on the arm, in the scope of what the pattern bound.
+    ///
+    /// A guard that fails falls through to the next arm, which is what makes it a guard rather
+    /// than an `if` in the body.
+    pub guard: Option<Core>,
     pub body: Core,
     pub span: Span,
+}
+
+impl Arm {
+    /// Every expression this arm holds, in the order they run.
+    ///
+    /// One method rather than `&a.body` at each of fourteen call sites, for
+    /// [`Pattern::binders`]'s reason and with its history: a guard added as a field those sites
+    /// did not know about would be a `Core` that liveness never marks, that `frames` never counts
+    /// a slot for, and that the plan's free-variable analysis never sees — none of which is a
+    /// compile error, and all of which are wrong on a program that uses one.
+    pub fn exprs(&self) -> impl Iterator<Item = &Core> {
+        self.guard.iter().chain(std::iter::once(&self.body))
+    }
+
+    pub fn exprs_mut(&mut self) -> impl Iterator<Item = &mut Core> {
+        self.guard.iter_mut().chain(std::iter::once(&mut self.body))
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -378,38 +400,98 @@ pub enum Pattern {
     Wildcard,
     Bind(VarId),
     Const(Const),
-    /// `Added(id, text)` — `variant` names the constructor, `binds` the fields it captures.
+    /// `Added(id, text)` — `variant` names the constructor, and each field carries the pattern
+    /// matched against it.
+    ///
+    /// A field's pattern is usually a [`Pattern::Bind`] or a [`Pattern::Wildcard`], which is what
+    /// `Added(id, text)` and `Added(_)` mean. It may be any pattern: `Some(Added(id, text))` is a
+    /// `Ctor` whose one field is a `Ctor`.
     Ctor {
         variant: Arc<str>,
-        binds: Vec<(Arc<str>, VarId)>,
+        binds: Vec<(Arc<str>, Pattern)>,
     },
+    /// `whole @ Circle(r)` — a name for the value, and a pattern that takes it apart.
+    ///
+    /// The binder is irrefutable, so whether this matches is entirely `inner`'s question.
+    At {
+        var: VarId,
+        inner: Box<Pattern>,
+    },
+    /// `Circle(r) | Square(r)` — one of several, and every alternative binds the same names.
+    ///
+    /// The checker unifies the alternatives' binders onto one set of variables, so the body reads
+    /// `r` without knowing which alternative matched. That is the rule that makes an or-pattern a
+    /// pattern rather than two arms sharing a body.
+    Or(Vec<Pattern>),
     /// `[]`, `[x]`, `[a, b]`, `[first, *rest]` — a list, taken apart.
     ///
-    /// Shallow, like every other pattern here: `binds` is one binder (or a wildcard) per fixed
-    /// element, and `rest` is the optional tail binder. A pattern with no `rest` matches a list of
-    /// exactly `binds.len()` elements; one with a `rest` matches any list at least that long.
-    /// `docs/33` §33.5 says why this shape and not nested patterns.
+    /// `items` is one pattern per fixed element and `rest` is the optional tail binder. A pattern
+    /// with no `rest` matches a list of exactly `items.len()` elements; one with a `rest` matches
+    /// any list at least that long.
+    ///
+    /// The tail is a binder rather than a pattern, and deliberately: `[a, *[b, c]]` is `[a, b, c]`
+    /// written twice over, so what it would add is a second spelling rather than a shape.
     List {
-        binds: Vec<Option<VarId>>,
+        items: Vec<Pattern>,
         rest: Option<Option<VarId>>,
     },
 }
 
 impl Pattern {
-    /// Every variable this pattern binds.
+    /// Every variable this pattern binds, at any depth.
     ///
     /// One method rather than a `match` at each of the three call sites, because those three were
     /// `Bind`/`Ctor`/`_ => {}` — and a new pattern kind falling into the `_` would have been a
     /// silent miscount in the splitter's variable supply and a false *free* variable in the plan's
     /// analysis. Neither would have failed a test until a program used one (`docs/33` §33.5).
     pub fn binders(&self) -> Vec<VarId> {
+        let mut out = Vec::new();
+        self.collect_binders(&mut out);
+        out
+    }
+
+    fn collect_binders(&self, out: &mut Vec<VarId>) {
         match self {
-            Pattern::Wildcard | Pattern::Const(_) => Vec::new(),
-            Pattern::Bind(v) => vec![*v],
-            Pattern::Ctor { binds, .. } => binds.iter().map(|(_, v)| *v).collect(),
-            Pattern::List { binds, rest } => {
-                binds.iter().chain(rest.iter()).filter_map(|b| *b).collect()
+            Pattern::Wildcard | Pattern::Const(_) => {}
+            Pattern::Bind(v) => out.push(*v),
+            Pattern::At { var, inner } => {
+                out.push(*var);
+                inner.collect_binders(out);
             }
+            Pattern::Ctor { binds, .. } => {
+                for (_, p) in binds {
+                    p.collect_binders(out);
+                }
+            }
+            Pattern::List { items, rest } => {
+                for p in items {
+                    p.collect_binders(out);
+                }
+                out.extend(rest.iter().filter_map(|b| *b));
+            }
+            // Every alternative binds the same variables, so one would do; all of them, deduped,
+            // is what stays right if the checker's unification is ever wrong about that.
+            Pattern::Or(alts) => {
+                for p in alts {
+                    p.collect_binders(out);
+                }
+                out.sort_unstable();
+                out.dedup();
+            }
+        }
+    }
+
+    /// Whether this pattern matches every value of its type, so that no arm after it can run.
+    ///
+    /// Only a binder and a wildcard do — and a list pattern of nothing but a tail, `[*rest]`,
+    /// which is the one refutable-looking shape that refuses nothing.
+    pub fn irrefutable(&self) -> bool {
+        match self {
+            Pattern::Wildcard | Pattern::Bind(_) => true,
+            Pattern::List { items, rest } => items.is_empty() && rest.is_some(),
+            Pattern::Or(alts) => alts.iter().any(Pattern::irrefutable),
+            Pattern::At { inner, .. } => inner.irrefutable(),
+            Pattern::Const(_) | Pattern::Ctor { .. } => false,
         }
     }
 }
@@ -578,8 +660,8 @@ impl Core {
             }
             CoreKind::Match { scrutinee, arms } => {
                 scrutinee.effects(globals, out);
-                for a in arms {
-                    a.body.effects(globals, out);
+                for e in arms.iter().flat_map(|a| a.exprs()) {
+                    e.effects(globals, out);
                 }
             }
             CoreKind::Make { fields, .. } => {
@@ -635,8 +717,8 @@ impl Core {
             }
             CoreKind::Match { scrutinee, arms } => {
                 scrutinee.place(tier);
-                for a in arms {
-                    a.body.place(tier);
+                for e in arms.iter_mut().flat_map(|a| a.exprs_mut()) {
+                    e.place(tier);
                 }
             }
             CoreKind::Make { fields, .. } => {
@@ -1272,7 +1354,7 @@ pub(crate) fn children_mut(c: &mut Core) -> Vec<&mut Core> {
         CoreKind::Let { value, body, .. } => vec![&mut **value, &mut **body],
         CoreKind::If { cond, then, alt } => vec![&mut **cond, &mut **then, &mut **alt],
         CoreKind::Match { scrutinee, arms } => std::iter::once(&mut **scrutinee)
-            .chain(arms.iter_mut().map(|a| &mut a.body))
+            .chain(arms.iter_mut().flat_map(|a| a.exprs_mut()))
             .collect(),
         CoreKind::Prim { args, .. } => args.iter_mut().collect(),
         CoreKind::Make { fields, .. } => fields.iter_mut().map(|(_, f)| f).collect(),

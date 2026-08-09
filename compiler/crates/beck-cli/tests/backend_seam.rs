@@ -86,6 +86,7 @@ async fn the_runtime_drives_a_backend_it_has_never_heard_of() {
                     | beck_core::plan::Op::MapList { .. }
                     | beck_core::plan::Op::FilterList { .. }
                     | beck_core::plan::Op::SortBy { .. }
+                    | beck_core::plan::Op::FlatMap { .. }
             )
         })
         .count();

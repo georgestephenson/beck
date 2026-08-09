@@ -506,9 +506,9 @@ pub const INDEX: &[CodeEntry] = &[
     e(
         "B0345",
         Stage::Types,
-        "nested patterns are not available in Phase 1",
-        "A pattern binds field names to fresh locals; matching inside one of those fields is not \
-         built.",
+        "the tail of a list pattern is a name, not a pattern",
+        "The tail of a list pattern binds the rest of the list, so it takes a name or `_`. \
+         `[a, *[b, c]]` is `[a, b, c]` written twice over.",
     ),
     e(
         "B0346",
@@ -565,6 +565,35 @@ pub const INDEX: &[CodeEntry] = &[
         Stage::Types,
         "cannot construct this type",
         "The name is a type, but not one with a constructor — an alias or a builtin.",
+    ),
+    e(
+        "B0355",
+        Stage::Types,
+        "this case can never match",
+        "Every value the arm matches is already matched by an arm above it, so it cannot run. A \
+         warning rather than an error: `case _` written after every variant of a union is a habit \
+         rather than a mistake.",
+    ),
+    e(
+        "B0356",
+        Stage::Types,
+        "the alternatives of an or-pattern bind different names",
+        "Every alternative of `a | b` has to bind the same names at the same types, because the \
+         body reads them without knowing which one matched.",
+    ),
+    e(
+        "B0357",
+        Stage::Types,
+        "`|` and `@` are only meaningful in a `case` pattern",
+        "Beck has no bitwise operators. `|` separates the alternatives of an or-pattern, `@` names \
+         the value a pattern takes apart, and neither means anything anywhere else.",
+    ),
+    e(
+        "B0358",
+        Stage::Types,
+        "the left of `@` is a name",
+        "`whole @ Circle(r)` binds `whole` to the value the pattern matched. What stands to the \
+         left of `@` is the name being bound.",
     ),
     e(
         "B0360",

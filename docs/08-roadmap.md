@@ -128,7 +128,8 @@ dependencies whose signatures didn't change.
 > are untouched.
 >
 > *That paragraph is the count as those three reports were written. The incremental-views bullet is
-> now all but its query fusion ([`88`](88-read-models-and-pgwire-report.md)), and the reports since
+> now complete ([`88`](88-read-models-and-pgwire-report.md),
+> [`89`](89-query-fusion-report.md)), and the reports since
 > have moved several others; the bullet list below carries the current status of each and this
 > paragraph carries the arithmetic of the day it was written, which is what a report does.*
 >
@@ -199,9 +200,11 @@ dependencies whose signatures didn't change.
 > half paid once and the half paid per connection. The SQL read models, pgwire and query fusion in
 > the bullet below are still untouched.
 >
-> *The first two of those three are built ([`88`](88-read-models-and-pgwire-report.md)), on the same
-> cut this paragraph is about: a table is a view that does not depend on who is asking. Query fusion
-> is not.*
+> *All three are built: the read models and pgwire in
+> [`88`](88-read-models-and-pgwire-report.md), on the same cut this paragraph is about — a table is
+> a view that does not depend on who is asking — and query fusion in
+> [`89`](89-query-fusion-report.md), where that same cut turned out to be what **refuses** a
+> rewrite rather than what enables one.*
 >
 > The nine other bullets are **untouched**, and [`26`](26-arrangement-sharing-report.md) §26.9 names
 > them one at a time rather than by omission. Of the two added since (§8.4), the
@@ -240,8 +243,10 @@ dependencies whose signatures didn't change.
   arrangement projected as relations rather than a second copy written into Postgres
   ([`10`](10-decisions.md) D26), because a durable projection puts view maintenance back on the
   write path §26.2 argued it off. What decides which signals are tables is the same `per_session`
-  cut the fanout uses. **Query fusion is the only part of this bullet still untouched**, and
-  `beck explain query` and `beck explain cost` behind it.*
+  cut the fanout uses. **Query fusion is built too** ([`89`](89-query-fusion-report.md)), with
+  `beck explain query` and `beck explain cost` behind it — five local rewrites on the dataflow
+  plan, refused where the operator they would absorb is read twice, is named by a signal, or is
+  shared while its consumer is per session, which makes this **bullet complete**.*
 - **Mode B client**: per-component WASM (view + fold + signal kernel), optimistic application with
   `seq` reconciliation, freshness-typed pending state; size budget CI gate (< 150 KB brotli per
   component bundle).
@@ -258,10 +263,20 @@ dependencies whose signatures didn't change.
   *`Result`/error rows are **built** ([`45`](45-error-rows-report.md)): failure is the effect atom
   `raises(E)`, `try:` is the handler that reifies it, and row aliases arrived with them. Nothing was
   added to the effect system to make that work, which is the point — inference, the `uses` bound,
-  `.becki` and `--wire-compat` all applied to failure unchanged. Structured concurrency is **not**:
-  §38.4 treats it as the same piece of work, and it is the half that gates nothing yet. `match`
-  exhaustiveness is built for unions ([`33`](33-effect-polymorphism-and-list-patterns-report.md)
-  added lists); the rest of pattern matching is untouched.*
+  `.becki` and `--wire-compat` all applied to failure unchanged. Structured concurrency is
+  **built** ([`80`](80-a-scope-owns-its-children-report.md)): `parallel:` is a scope whose
+  bindings are its children, and what it lacks is a backend that runs two of them at once
+  (§80.5). `match` exhaustiveness is built for unions ([`33`](33-effect-polymorphism-and-list-patterns-report.md)
+  added lists). **Pattern matching nests** ([`90`](90-nested-patterns-report.md)):
+  `case Some(Circle(r))`, a literal or a constructor wherever a binder goes, through a type
+  parameter and inside a list — and the exhaustiveness check was rebuilt for it, because a set of
+  variant names cannot answer a pattern that names a variant and covers part of it. Unreachable
+  arms come with it, as a warning. **Guards and or-patterns are built too**
+  ([`91`](91-guards-and-alternatives-report.md)) — `case Circle(r) | Square(r):` and
+  `case x if x < 0:`, neither of which needed a new algorithm, because an or-pattern is several
+  rows of the same matrix and a guarded arm is no row — and `@` bindings with them. Pattern
+  matching is **done**; what is left of this bullet is **structured concurrency's missing backend**
+  ([`80`](80-a-scope-owns-its-children-report.md) §80.5), and §91.5 lists what is not there.*
 - **SQLite as a durable substrate** ([`07`](07-dependencies.md) §7.8.1): a `LogStore`
   implementation beside redb and Postgres. The reason is not speed — the measurements say the
   durable substrates are within ~16% of each other — it is that SQLite is *also* the read-model
@@ -333,18 +348,31 @@ dependencies whose signatures didn't change.
 - **The playground** ([`17`](17-playground.md)) — highest-leverage adoption artefact: rung A
   (compile-time, static) and rung B (the whole app in the tab — the worker-server is the rung-0
   platform compiled to WASM, riding Mode B's kernel work; `seq` scrubber and two-client demos).
-- `beck init ci`, apko image build in-process, cosign signing, SBOM.
+- `beck init ci`, apko image build in-process, cosign signing, SBOM. *The **SBOM** is built
+  ([`92`](92-sbom-report.md)): `beck sbom` emits CycloneDX 1.6 and `beck build` writes one beside
+  the manifests, derived from the same object graph the image config is — so the package list and
+  the apko `packages:` block cannot disagree, and a test parses the rendered YAML back to say so.
+  It can exist before a release pipeline because §6.2's "no arbitrary execution" means the image's
+  contents are already a list rather than something to scan for. What it does **not** carry is
+  package **versions** (§92.5), which apko resolves at build time and this resolves at compile
+  time — so CISA's minimum elements are partly met rather than met. The other three are
+  untouched.*
 
 **Exit**: an outside developer builds a non-trivial app from documentation alone, without asking the
 team a question. Track this literally as the acceptance test.
-**Not met.** Of the fourteen bullets: **six built outright** — `test` blocks, the SQLite substrate,
-the standard library, the language's own means of abstraction, the LSP, and the expressiveness suite
-(three chapters of SICP and the Felleisen table, with chapters 4–5 belonging to Phase 5).
-**Two built but for a named remainder**: incremental views want only their query fusion
-([`88`](88-read-models-and-pgwire-report.md)), and the concurrency-and-errors bullet has `Result`,
-error rows and `parallel:` but not the rest of pattern matching. **One half-built**: identity has
-its seam and not its relying party. **Five untouched**: the LLVM backend, Mode B, client polish, the
-playground, and the supply-chain tooling. The criterion is not a count of those, though — it is a
+**Not met.** Of the fourteen bullets: **seven built outright** — `test` blocks, the SQLite
+substrate, the standard library, the language's own means of abstraction, the LSP, the
+expressiveness suite (three chapters of SICP and the Felleisen table, with chapters 4–5 belonging
+to Phase 5), and incremental views, whose last part is
+[`89`](89-query-fusion-report.md)'s fusion.
+**No bullet has a named remainder**: the concurrency-and-errors bullet has `Result`, error rows,
+`parallel:` and pattern matching with nesting, guards and alternatives
+([`90`](90-nested-patterns-report.md), [`91`](91-guards-and-alternatives-report.md)); what
+`parallel:` lacks is a backend that runs two children at once, which is
+[`80`](80-a-scope-owns-its-children-report.md) §80.5's item rather than this bullet's. **One half-built**: identity has
+its seam and not its relying party. **Four untouched**: the LLVM backend, Mode B, client polish and the
+playground; the supply-chain bullet has one of its four pieces
+([`92`](92-sbom-report.md)). The criterion is not a count of those, though — it is a
 claim about a *person*, and the honest way to say how close it is is by the questions such a
 developer would ask in order:
 
@@ -723,8 +751,9 @@ needs an outside developer, and none has read it.
 client polish; the LSP; ~~SQL read models, pgwire~~ — **built**
 ([`88`](88-read-models-and-pgwire-report.md)), and they were not a Lane B item in the shape this
 list assumed: the schema derivation is a pass over the plan, the wire is `beck-rt`, and neither
-touched `engine.rs` beyond one reader type — query fusion; `test --update`; the SQLite
-substrate; ~~the shared dataflow's three unfinished properties
+touched `engine.rs` beyond one reader type; ~~query fusion~~ — **built**
+([`89`](89-query-fusion-report.md)), and it is a pass over the plan that added one operator to the
+engine and no scheduling to it; `test --update`; the SQLite substrate; ~~the shared dataflow's three unfinished properties
 ([`26`](26-arrangement-sharing-report.md) §26.9)~~ — **two of the three built**
 ([`51`](51-arrangement-lifecycle-report.md)): the arrangements are released when the last subscriber
 goes and the change history is compacted to the oldest reader's frontier, both as one reader-set
@@ -787,7 +816,7 @@ Recommended pairings, in order:
 | ~~**Then**~~ | ~~Lane A: the rest of Wave 2 — `Set`, dates~~ | ~~Lane B: the shared dataflow's three loose ends~~ | **Half done.** `Set` and dates landed ([`50`](50-collections-and-dates-report.md)) and were not Lane A at all: two files in `compiler/lib/`, no primitive, and the only Rust touched was one diagnostic's label. Lane B is untouched, so the pairing was never tested — the prediction it made cannot be claimed to have held |
 | ~~**Then**~~ | ~~Lane A: bignums, coercion, `@derive`~~ | ~~Lane B: the shared dataflow's three loose ends~~ | **Half done, and the other half.** Lane B was taken at last, after being the recommended Branch 2 for three consecutive rewrites: two of the three loose ends are closed ([`51`](51-arrangement-lifecycle-report.md)) and the third — the render lock — is deliberately left. The prediction held exactly: `engine.rs`, `beck-rt/` and one test suite, and nothing in `check/`, `ty.rs` or `core.rs`. Lane A is untouched, so this pairing was again never actually run as a pair |
 | ~~**Then**~~ | ~~Lane A: bignums, coercion, `@derive`~~ | ~~Lane B: SQL read models and pgwire~~ | **Half done, and the other half again.** Lane B was taken ([`88`](88-read-models-and-pgwire-report.md)) and the prediction held: `beck-core/src/read.rs`, `beck-rt/src/pgwire.rs`, one reader type on `engine.rs`, and nothing in `check/`, `ty.rs` or `core.rs`. Lane A is untouched, so this pairing was never run as a pair either — the fourth consecutive rewrite in which it was not |
-| **Now** | Lane A: `Ord` as a trait, which [`54`](54-ordering.md) writes out and explicitly does *not* recommend, or the pattern-matching completion the error-rows bullet still names | Lane B: query fusion on symbolic plans — the last of the incremental-views bullet | `beck-rt` and `engine.rs` are untouched by anything in `check/` |
+| **Now** | Lane A: ~~the pattern-matching completion the error-rows bullet still names~~ — **built**, with nesting, guards and alternatives ([`90`](90-nested-patterns-report.md), [`91`](91-guards-and-alternatives-report.md)); what is left in this lane is `Ord` as a trait, which [`54`](54-ordering.md) writes out and explicitly does *not* recommend | Lane B: ~~query fusion on symbolic plans~~ — **built** ([`89`](89-query-fusion-report.md)); what is left in this lane is Mode B's server half and the render lock ([`51`](51-arrangement-lifecycle-report.md) §51.7) | `beck-rt` and `engine.rs` are untouched by anything in `check/` |
 | **Then** | Lane A, continued | Lane E: the LLVM backend — and per §8.4 the AWFY/CLBG harness lands with whichever arrives second | The backend seam exists so these do not interact |
 | **Any time** | — | Lane F; Lane C's LSP; more of SICP | No predecessors, no collisions |
 

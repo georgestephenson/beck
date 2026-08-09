@@ -197,7 +197,7 @@ impl Prepared {
                 _ => None,
             });
             funs.push(match &node.op {
-                Op::MapList { f } | Op::FilterList { f } | Op::SortBy { f } => {
+                Op::MapList { f } | Op::FilterList { f } | Op::SortBy { f } | Op::FlatMap { f } => {
                     Some(backend.function(&f.code)?)
                 }
                 _ => None,
@@ -467,7 +467,8 @@ impl Engine {
                 Op::FilterList { f } => self.filter_list(up, id, f, cold)?,
                 Op::SortBy { f } => self.sort_by(up, id, f, cold)?,
                 Op::Concat => self.concat(up, id, cold)?,
-                Op::Flatten => self.flatten(up, id, cold)?,
+                Op::Flatten => self.flatten(up, id, None, cold)?,
+                Op::FlatMap { f } => self.flatten(up, id, Some(f), cold)?,
                 Op::Count => self.aggregate(up, id, cold, false)?,
                 Op::IsEmpty => self.aggregate(up, id, cold, true)?,
             }
@@ -793,16 +794,37 @@ impl Engine {
     /// The output key is the input's key followed by the position inside that element's list, so
     /// one row's children move without disturbing anybody else's, and the order is the order the
     /// recompute would have produced.
-    fn flatten(&mut self, up: Option<Upstream<'_>>, id: OpId, cold: bool) -> Result<(), ExecError> {
+    fn flatten(
+        &mut self,
+        up: Option<Upstream<'_>>,
+        id: OpId,
+        f: Option<&Fun>,
+        cold: bool,
+    ) -> Result<(), ExecError> {
         let input = self.prepared.plan.nodes[id].inputs[0];
-        let rebuild = cold || self.rebuilt_of(up, input);
-        let incoming = self.feed(up, id, 0, input, rebuild)?;
+        // With a function, the rebuild rule is `map_list`'s rather than `flatten`'s: a captured
+        // node that moved makes `f` a different function, so every element has to be reapplied.
+        let (incoming, rebuild) = match f {
+            Some(f) => self.incoming(up, id, 0, f, cold)?,
+            None => {
+                let rebuild = cold || self.rebuilt_of(up, input);
+                (self.feed(up, id, 0, input, rebuild)?, rebuild)
+            }
+        };
         if incoming.is_empty() && !rebuild {
             self.cells[id].changed = false;
             self.cells[id].changes.clear();
             self.cells[id].rebuilt = false;
             return Ok(());
         }
+        let call = match f {
+            Some(_) => Some(self.fun_of(id)?),
+            None => None,
+        };
+        let captured = match f {
+            Some(f) => self.captures(up, f)?,
+            None => Vec::new(),
+        };
         let mut arr = self.take_arrangement(id, rebuild);
         if rebuild {
             self.cells[id].counts.clear();
@@ -823,6 +845,16 @@ impl Engine {
                 }
             }
             let Some(v) = c.new else { continue };
+            let v = match &call {
+                Some(call) => {
+                    let mut args = captured.clone();
+                    args.push(v);
+                    let out = call(args)?;
+                    self.work.applications += 1;
+                    out
+                }
+                None => v,
+            };
             let items = v.as_list().cloned().unwrap_or_default();
             for (i, item) in items.iter().enumerate() {
                 let key = inner_key(&c.key, i);

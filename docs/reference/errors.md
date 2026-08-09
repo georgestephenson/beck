@@ -4,7 +4,7 @@
 
 Every diagnostic the compiler can raise carries a stable code. `beck explain error B0341` prints one of these entries at the terminal.
 
-The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans every non-test source file for a `"Bnnnn"` literal and fails if the set differs from this table in either direction. **119 codes.**
+The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans every non-test source file for a `"Bnnnn"` literal and fails if the set differs from this table in either direction. **123 codes.**
 
 
 ## Reading the source — `B0100–B0122`
@@ -74,7 +74,7 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0342` | error | **unsupported pattern** — A `case` arm's pattern is a variant applied to field bindings, or `_`. This form is neither. |
 | `B0343` | error | **not a constructor** — The head of a pattern must be a variant of the union being matched. |
 | `B0344` | error | **cannot tell which field this binds or sets** — A pattern or record update names a field the compiler cannot resolve to the type in hand. |
-| `B0345` | error | **nested patterns are not available in Phase 1** — A pattern binds field names to fresh locals; matching inside one of those fields is not built. |
+| `B0345` | error | **the tail of a list pattern is a name, not a pattern** — The tail of a list pattern binds the rest of the list, so it takes a name or `_`. `[a, *[b, c]]` is `[a, b, c]` written twice over. |
 | `B0346` | error | **cannot tell which model this record builds** — A record literal's type comes from what is expected of it, and nothing here says which model it is. |
 | `B0347` | error | **expected a field or method name** — The right-hand side of a `.` must be a name. |
 | `B0348` | error | **`with` takes named fields** — Functional record update is written `t.with(done=…)`. |
@@ -84,6 +84,10 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0352` | error | **not callable** — The callee's type is not a function type. |
 | `B0353` | error | **no such variant** — The union being constructed or matched has no variant of that name. The type is named in the message. |
 | `B0354` | error | **cannot construct this type** — The name is a type, but not one with a constructor — an alias or a builtin. |
+| `B0355` | error | **this case can never match** — Every value the arm matches is already matched by an arm above it, so it cannot run. A warning rather than an error: `case _` written after every variant of a union is a habit rather than a mistake. |
+| `B0356` | error | **the alternatives of an or-pattern bind different names** — Every alternative of `a | b` has to bind the same names at the same types, because the body reads them without knowing which one matched. |
+| `B0357` | error | **`|` and `@` are only meaningful in a `case` pattern** — Beck has no bitwise operators. `|` separates the alternatives of an or-pattern, `@` names the value a pattern takes apart, and neither means anything anywhere else. |
+| `B0358` | error | **the left of `@` is a name** — `whole @ Circle(r)` binds `whole` to the value the pattern matched. What stands to the left of `@` is the name being bound. |
 | `B0360` | error | **cannot be called inside a fold** — A fold must be replay-pure, and this would make replay non-deterministic. Time is data on the envelope (`env.at`) and entity ids are minted at the edge: mint the id in the client's command and read it from the event. |
 | `B0370` | error | **performs more than its signature declares** — The undeclared atoms are listed. A `uses` clause is the published bound, and widening it is a breaking API change — so the compiler will not widen it for you. |
 | `B0380` | error | **a trait cannot be declared here** — The name already belongs to a type, the trait is declared twice, or the file is a `.becki` — a trait does not cross a module boundary, so an interface may not hold one. |

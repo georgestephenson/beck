@@ -994,9 +994,24 @@ impl<'h> Interp<'h> {
                 }
                 CoreKind::Match { scrutinee, arms } => {
                     let v = self.operand(scrutinee, env)?;
-                    let hit = arms
-                        .iter()
-                        .find_map(|arm| match_pattern(&arm.pattern, &v).map(|b| (b, &arm.body)));
+                    let mut hit = None;
+                    for arm in arms {
+                        let Some(bindings) = match_pattern(&arm.pattern, &v) else {
+                            continue;
+                        };
+                        if let Some(guard) = &arm.guard {
+                            // A guard reads what the pattern bound, so it needs a scope — and a
+                            // scope of its own, because an arm whose guard is false has to leave
+                            // the frame as it found it for the next arm to match into.
+                            let mut scope = env.extend(bindings.clone());
+                            let ok = self.operand(guard, &mut scope)?;
+                            if ok.as_bool() != Some(true) {
+                                continue;
+                            }
+                        }
+                        hit = Some((bindings, &arm.body));
+                        break;
+                    }
                     let Some((bindings, body)) = hit else {
                         return Err(EvalError::new(
                             format!("no match arm applies to {}", v.display()),
@@ -2230,35 +2245,45 @@ fn match_pattern(p: &Pattern, v: &Value) -> Option<Vec<(u32, Value)>> {
             };
             matches.then(Vec::new)
         }
+        // The name binds the whole value, and only if the pattern under it matched.
+        Pattern::At { var, inner } => match_pattern(inner, v).map(|mut b| {
+            b.push((*var, v.clone()));
+            b
+        }),
+        // First alternative that matches wins, and the checker has made every alternative bind the
+        // same variables — so the body reads one set of bindings whichever one it was.
+        Pattern::Or(alts) => alts.iter().find_map(|a| match_pattern(a, v)),
+        // Recursive since nested patterns arrived, and the whole of what the evaluator had to
+        // learn: a field's pattern is matched the same way the scrutinee's was, and a failure
+        // anywhere under it fails the arm. Depth is bounded by the checker's own counter, which
+        // refuses a pattern that nests past the front end's ceiling before this ever sees it.
         Pattern::Ctor { variant, binds } => {
             if v.variant() != Some(variant.as_ref()) {
                 return None;
             }
             let mut out = Vec::with_capacity(binds.len());
-            for (field, id) in binds {
-                out.push((*id, v.field(field)?.clone()));
+            for (field, sub) in binds {
+                out.extend(match_pattern(sub, v.field(field)?)?);
             }
             Some(out)
         }
-        Pattern::List { binds, rest } => {
+        Pattern::List { items, rest } => {
             let xs = v.as_list()?;
             // No tail binder means an exact length; a tail binder means "at least this many".
             match rest {
-                None if xs.len() != binds.len() => return None,
-                Some(_) if xs.len() < binds.len() => return None,
+                None if xs.len() != items.len() => return None,
+                Some(_) if xs.len() < items.len() => return None,
                 _ => {}
             }
-            let mut out = Vec::with_capacity(binds.len() + 1);
-            for (b, x) in binds.iter().zip(xs.iter()) {
-                if let Some(id) = b {
-                    out.push((*id, x.clone()));
-                }
+            let mut out = Vec::with_capacity(items.len() + 1);
+            for (sub, x) in items.iter().zip(xs.iter()) {
+                out.extend(match_pattern(sub, x)?);
             }
             if let Some(Some(id)) = rest {
                 // The tail is a fresh list. `Arc<Vec<_>>` cannot share a suffix, so this is `O(n)`
                 // per step and a fold written over it is `O(n²)` — stated in `docs/33` §33.6
                 // rather than discovered on a long list.
-                out.push((*id, Value::List(Arc::new(xs[binds.len()..].to_vec()))));
+                out.push((*id, Value::List(Arc::new(xs[items.len()..].to_vec()))));
             }
             Some(out)
         }

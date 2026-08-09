@@ -20,7 +20,8 @@
 //! Two kinds, and the distinction is the whole design:
 //!
 //! * A **delta operator** ([`Op::MapValues`], [`Op::MapList`], [`Op::FilterList`], [`Op::SortBy`],
-//!   [`Op::Concat`], [`Op::Count`], [`Op::IsEmpty`]) holds an ordered *arrangement* — its output as
+//!   [`Op::Concat`], [`Op::Flatten`], [`Op::FlatMap`], [`Op::Count`], [`Op::IsEmpty`]) holds an
+//!   ordered *arrangement* — its output as
 //!   a keyed collection — and updates it from the changes at its input. Work is proportional to the
 //!   change, not to the collection.
 //! * A **pointwise operator** ([`Op::Pointwise`]) holds a value and recomputes it when an input
@@ -46,12 +47,13 @@
 //! | `map_list`, `filter_list` | the input's key, unchanged: neither moves an element |
 //! | `sort_by(xs, k)` | `k(x)` followed by the input's key — a stable sort, expressed as an order |
 //! | `concat_lists([a, b])` | the input's position, followed by that input's key |
+//! | `flatten`, `flat_map` | the input's key, followed by the position inside that element's list |
 //!
 //! # What this is not
 //!
-//! It is not a *query* plan. §4.2 keeps the `Query` sub-language symbolic and `docs/20` §20.5 says
-//! `beck explain query` waits for an engine to compile one; this compiles the signal graph, which
-//! is a different thing that happens to share the word.
+//! It is not a *query* plan. §4.2 keeps the `Query` sub-language symbolic and nothing compiles one;
+//! this compiles the signal graph, which is a different thing that happens to share the word.
+//! `beck explain query` prints *this*, and [`crate::fuse`] rewrites it.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -105,17 +107,45 @@ pub enum Op {
     },
     /// `concat_lists([a, b, …])` — a union of delta streams, one per named part.
     Concat,
+    /// `concat_lists(map_list(xs, f))` as one operator — what [`crate::fuse`] makes of the pair,
+    /// and the shape every `for` loop in a `ui:` block has. Applies `f` and takes the resulting
+    /// list apart in one step, so the list of lists in between is never arranged.
+    FlatMap {
+        f: Fun,
+    },
     /// `concat_lists(xs)` where `xs` is itself a collection of lists: a flatten.
     ///
-    /// This is the shape every `for` loop in a `ui:` block takes — the macro lowers
-    /// `for t in todos:` to `concat_lists(map_list(todos, …))` — so it is the operator that decides
-    /// whether rendering a list is incremental at all.
+    /// A `for` loop in a `ui:` block lowers to `concat_lists(map_list(todos, …))` and
+    /// [`crate::fuse`] turns that pair into [`Op::FlatMap`], so this is what remains when the
+    /// collection of lists came from somewhere else — a `map_values` whose values are lists, a
+    /// `sort_by`, or a `map_list` the fusion refused.
     Flatten,
     /// `list_len` — §3.8's `remaining`. The arrangement's size, so ±1 per delta and never a
     /// recount; and it does not force its input to be materialised.
     Count,
     IsEmpty,
 }
+
+/// Every operator the engine implements, by name.
+///
+/// Published for the same reason [`crate::fuse::RULES`] is: `fusion.rs` holds this set to the
+/// operators the programs in the tree actually compile to, so an operator with a delta rule and no
+/// program is a hole in the differential rather than a line in a match.
+pub const OPERATORS: &[&str] = &[
+    "state",
+    "session",
+    "const",
+    "recompute",
+    "map_values",
+    "map_list",
+    "filter_list",
+    "sort_by",
+    "concat_lists",
+    "flatten",
+    "flat_map",
+    "list_len",
+    "list_is_empty",
+];
 
 impl Op {
     pub fn name(&self) -> &'static str {
@@ -130,6 +160,7 @@ impl Op {
             Op::SortBy { .. } => "sort_by",
             Op::Concat => "concat_lists",
             Op::Flatten => "flatten",
+            Op::FlatMap { .. } => "flat_map",
             Op::Count => "list_len",
             Op::IsEmpty => "list_is_empty",
         }
@@ -145,6 +176,7 @@ impl Op {
                 | Op::SortBy { .. }
                 | Op::Concat
                 | Op::Flatten
+                | Op::FlatMap { .. }
                 | Op::Count
                 | Op::IsEmpty
         )
@@ -153,6 +185,23 @@ impl Op {
     /// Whether this is an input to the dataflow rather than a step in it.
     pub fn is_source(&self) -> bool {
         matches!(self, Op::State | Op::Session | Op::Const)
+    }
+
+    /// What orders this operator's arrangement — the table in this module's own documentation, as
+    /// a sentence, so `beck explain query` states the thing that makes the output *order* a
+    /// consequence of the plan rather than of a sort at the end.
+    pub fn key(&self) -> &'static str {
+        match self {
+            Op::State | Op::Session | Op::Const => "a source",
+            Op::Pointwise { .. } | Op::Count | Op::IsEmpty => "a value, not an arrangement",
+            Op::MapValues => "the map's key",
+            Op::MapList { .. } | Op::FilterList { .. } => "the input's key, unchanged",
+            Op::SortBy { .. } => "the sort key, then the input's key — a stable sort as an order",
+            Op::Concat => "which input, then that input's key",
+            Op::Flatten | Op::FlatMap { .. } => {
+                "the input's key, then the position inside its list"
+            }
+        }
     }
 
     /// Whether this operator's output is an arrangement rather than a value.
@@ -165,6 +214,7 @@ impl Op {
                 | Op::SortBy { .. }
                 | Op::Concat
                 | Op::Flatten
+                | Op::FlatMap { .. }
         )
     }
 }
@@ -218,13 +268,22 @@ impl Plan {
             .collect()
     }
 
-    /// Compile the view of a sliced program.
+    /// Compile the view of a sliced program, and fuse it.
+    ///
+    /// Everything downstream — the engine, the read models, both reports — reads the *fused* plan,
+    /// so there is one plan a program has rather than two that could disagree.
+    /// [`Plan::unfused`] is what the differential gate compares against.
+    pub fn compile(placed: &Placed) -> Plan {
+        crate::fuse::fuse(Plan::unfused(placed)).0
+    }
+
+    /// The plan as the decomposition produced it, before [`crate::fuse`] rewrites it.
     ///
     /// Works from the *graph* rather than from [`crate::split::Roles::view`], for the reason
     /// [`23`](../../../../../docs/23-general-slicer-report.md) built the graph in the first place: the
     /// sliced expression has already lost which signal each part came from, and a plan whose nodes
     /// cannot be named is a plan no report can explain.
-    pub fn compile(placed: &Placed) -> Plan {
+    pub fn unfused(placed: &Placed) -> Plan {
         let graph = &placed.graph;
         let mut b = Builder {
             program: &placed.program,
@@ -280,11 +339,16 @@ impl Plan {
             signals,
         };
         plan.finish();
+        plan.prune();
         plan
     }
 
     /// Propagate `per_session` forward and count consumers.
-    fn finish(&mut self) {
+    pub(crate) fn finish(&mut self) {
+        for node in &mut self.nodes {
+            node.per_session = false;
+            node.consumers = 0;
+        }
         for i in 0..self.nodes.len() {
             let per = matches!(self.nodes[i].op, Op::Session)
                 || self.nodes[i]
@@ -292,7 +356,9 @@ impl Plan {
                     .iter()
                     .any(|&j| self.nodes[j].per_session);
             self.nodes[i].per_session = per;
-            if let Op::MapList { f } | Op::FilterList { f } | Op::SortBy { f } = &self.nodes[i].op {
+            if let Op::MapList { f } | Op::FilterList { f } | Op::SortBy { f } | Op::FlatMap { f } =
+                &self.nodes[i].op
+            {
                 let captured: Vec<OpId> = f.captures.clone();
                 if captured.iter().any(|&j| self.nodes[j].per_session) {
                     self.nodes[i].per_session = true;
@@ -306,14 +372,274 @@ impl Plan {
         }
     }
 
+    /// Drop every operator the plan's roots cannot reach, renumber, and recompute what
+    /// [`Plan::finish`] computes. Returns the old-to-new map.
+    ///
+    /// The decomposition builds an operator for every argument of a call it inlines and for every
+    /// `let`'s value, before it knows whether the body reads them — and a bounded call's arguments
+    /// include one dictionary per method of each bound ([`39`](../../../../../docs/39-bounds-report.md)),
+    /// of which the body may use none. Deciding that lazily would mean a scope of thunks rather
+    /// than of operators, which changes the order operators are created in and therefore what
+    /// hash-consing shares; pruning afterwards costs one pass and changes nothing else.
+    ///
+    /// The roots are the page, the two sources, and every **named** signal — a name is projected as
+    /// a read-model table ([`88`](../../../../../docs/88-read-models-and-pgwire-report.md)), so it
+    /// keeps its operator alive whether or not the page reads it.
+    pub(crate) fn prune(&mut self) -> BTreeMap<OpId, OpId> {
+        let mut live = vec![false; self.nodes.len()];
+        let mut stack = vec![self.root, self.state, self.session];
+        stack.extend(self.signals.iter().map(|(_, id)| *id));
+        while let Some(id) = stack.pop() {
+            if std::mem::replace(&mut live[id], true) {
+                continue;
+            }
+            stack.extend(self.dependencies(id));
+        }
+
+        let mut map = BTreeMap::new();
+        let mut next = 0;
+        for (i, &keep) in live.iter().enumerate() {
+            if keep {
+                map.insert(i, next);
+                next += 1;
+            }
+        }
+        // Dependency order survives renumbering because it is monotone: an input's index was below
+        // its consumer's, and a monotone map keeps it there.
+        let mut nodes = Vec::with_capacity(next);
+        for (i, node) in std::mem::take(&mut self.nodes).into_iter().enumerate() {
+            if !live[i] {
+                continue;
+            }
+            let mut node = node;
+            node.inputs.iter_mut().for_each(|id| *id = map[id]);
+            if let Op::MapList { f } | Op::FilterList { f } | Op::SortBy { f } | Op::FlatMap { f } =
+                &mut node.op
+            {
+                f.captures.iter_mut().for_each(|id| *id = map[id]);
+            }
+            nodes.push(node);
+        }
+        self.nodes = nodes;
+        self.constants = std::mem::take(&mut self.constants)
+            .into_iter()
+            .filter_map(|(id, c)| map.get(&id).map(|&n| (n, c)))
+            .collect();
+        self.signals.iter_mut().for_each(|(_, id)| *id = map[&*id]);
+        self.root = map[&self.root];
+        self.state = map[&self.state];
+        self.session = map[&self.session];
+        self.finish();
+        map
+    }
+
     /// Every node an operator reads, including the ones its per-element function captured.
     pub fn dependencies(&self, i: OpId) -> Vec<OpId> {
         let mut out = self.nodes[i].inputs.clone();
-        if let Op::MapList { f } | Op::FilterList { f } | Op::SortBy { f } = &self.nodes[i].op {
+        if let Op::MapList { f } | Op::FilterList { f } | Op::SortBy { f } | Op::FlatMap { f } =
+            &self.nodes[i].op
+        {
             out.extend(f.captures.iter().copied());
         }
         out
     }
+
+    /// The names this plan gives one operator, if any — a declared signal is a name a developer
+    /// wrote, and a report that can use it should.
+    pub fn names_of(&self, i: OpId) -> Vec<&str> {
+        self.signals
+            .iter()
+            .filter(|(_, id)| *id == i)
+            .map(|(n, _)| n.as_ref())
+            .collect()
+    }
+}
+
+/// `beck explain query` — the view as a dataflow plan, operator by operator.
+///
+/// [`04`](../../../../../docs/04-compiler-architecture.md) §4.7 asks for this command and
+/// [`20`](../../../../../docs/20-phase-2-report.md) §20.5 says why it could not exist: "the `Query`
+/// sub-language is deliberately symbolic and there is no plan to explain". There is one now, and
+/// this prints it — including the two things a developer cannot see any other way: which operator
+/// **orders** the output, and which side of §5.3's session cut each one is on.
+pub fn query_report(plan: &Plan) -> String {
+    use std::fmt::Write;
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "the view as a dataflow plan (§5.3). Operators are in dependency order, so every input\n\
+         is above its consumer and the engine is one forward pass.\n"
+    );
+    for (i, node) in plan.nodes.iter().enumerate() {
+        let deps = plan.dependencies(i);
+        let reads = if deps.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "← {}",
+                deps.iter()
+                    .map(|d| format!("#{d}"))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            )
+        };
+        let names = plan.names_of(i);
+        let _ = writeln!(
+            out,
+            "  #{:<3} {:<14} {:<12} {:<12} {}",
+            i,
+            node.op.name(),
+            reads,
+            if node.per_session {
+                "per session"
+            } else {
+                "shared"
+            },
+            match (node.consumers, names.is_empty()) {
+                (_, false) => format!("`{}`", names.join("`, `")),
+                (0, true) => String::new(),
+                (1, true) => String::new(),
+                (n, true) => format!("read by {n}"),
+            }
+        );
+        if node.op.is_arrangement() {
+            let _ = writeln!(out, "       {:<14} ordered by {}", "", node.op.key());
+        }
+        if let Some(why) = &node.because {
+            let _ = writeln!(out, "       {:<14} recomputed: {why}", "");
+        }
+    }
+    let (maintained, recomputed) = plan.counts();
+    let arrangements = plan.nodes.iter().filter(|n| n.op.is_arrangement()).count();
+    let _ = writeln!(
+        out,
+        "\n  #{} is the root — the page.\n\
+         \x20 {maintained} maintained, {recomputed} recomputed, {arrangements} of them holding an \
+         arrangement.",
+        plan.root
+    );
+    out
+}
+
+/// What one operator costs per event, in the units [`crate::engine::Work`] counts.
+///
+/// `δ` is how many entries moved at its input and `n` how many its input holds. The distinction is
+/// the whole point of the engine, so a cost that mentions `n` is a cost worth reading.
+fn op_cost(plan: &Plan, i: OpId) -> String {
+    let node = &plan.nodes[i];
+    // A pointwise operator forces every arrangement it reads into a `Value::List`, which copies
+    // that arrangement's entries: docs/24 §24.6's "the page's children are still assembled in
+    // full", located at the operator that does it.
+    let forced: Vec<OpId> = node
+        .inputs
+        .iter()
+        .copied()
+        .filter(|&j| plan.nodes[j].op.is_arrangement())
+        .collect();
+    match &node.op {
+        Op::State | Op::Session => "—  a source, read by reference".to_string(),
+        Op::Const => "—  evaluated once, when the plan is prepared".to_string(),
+        Op::Pointwise { .. } if forced.is_empty() => {
+            "1 recompute, and only when an input moved".to_string()
+        }
+        Op::Pointwise { .. } => format!(
+            "1 recompute + n entries copied, forcing {}",
+            forced
+                .iter()
+                .map(|j| format!("#{j}"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        ),
+        Op::MapValues => "δ touched  —  O(δ log n), the persistent map's own diff".to_string(),
+        Op::MapList { .. } => "δ applications, δ touched".to_string(),
+        Op::FilterList { .. } => "δ applications, at most δ touched".to_string(),
+        Op::SortBy { .. } => {
+            "δ applications, at most 2δ touched — a move is a remove and an insert".to_string()
+        }
+        Op::Concat => "δ touched".to_string(),
+        Op::Flatten => "the entries of each changed element's list".to_string(),
+        Op::FlatMap { .. } => {
+            "δ applications, then the entries of each changed element's list".to_string()
+        }
+        Op::Count | Op::IsEmpty => "O(1)  —  the arrangement's size, never a recount".to_string(),
+    }
+}
+
+/// `beck explain cost` — what one event costs this view.
+///
+/// [`20`](../../../../../docs/20-phase-2-report.md) §20.5 left this command unbuilt with a reason
+/// rather than a shrug: `beck explain place` already prints every candidate's cost, and "whether a
+/// separate `cost` view earns its place is a question for when there is a second cost dimension to
+/// show". The plan is that second dimension. Placement costs are about *where* a definition runs,
+/// once, at compile time; these are about what the program does *per event*, for as long as it is
+/// running, and no placement decision can see them.
+pub fn cost_report(plan: &Plan) -> String {
+    use std::fmt::Write;
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "what one event costs this view, in the units the engine counts (§3.8).\n\
+         \x20 δ is how many entries moved; n is how many the collection holds.\n"
+    );
+    let mut linear: Vec<OpId> = Vec::new();
+    for i in 0..plan.nodes.len() {
+        let cost = op_cost(plan, i);
+        if cost.contains("n entries copied") {
+            linear.push(i);
+        }
+        let _ = writeln!(out, "  #{:<3} {:<14} {}", i, plan.nodes[i].op.name(), cost);
+        // An operator whose per-element function reads another operator is a different function
+        // when that one moves, so the whole collection is reconsidered. It is not per event — a
+        // session is constant for a subscription — but it is the one place δ stops bounding the
+        // work, and a reader who does not know that will misread every line above.
+        let captures = match &plan.nodes[i].op {
+            Op::MapList { f } | Op::FilterList { f } | Op::SortBy { f } | Op::FlatMap { f } => {
+                f.captures.clone()
+            }
+            _ => Vec::new(),
+        };
+        if !captures.is_empty() {
+            let _ = writeln!(
+                out,
+                "       {:<14} n applications whenever {} moves — its function captured it",
+                "",
+                captures
+                    .iter()
+                    .map(|j| format!("#{j}"))
+                    .collect::<Vec<_>>()
+                    .join(" or ")
+            );
+        }
+    }
+    let _ = writeln!(out);
+    if linear.is_empty() {
+        let _ = writeln!(
+            out,
+            "  Nothing here is proportional to the collection: no operator forces an arrangement\n\
+             \x20 into a list, so one event costs what the event changed."
+        );
+    } else {
+        let _ = writeln!(
+            out,
+            "  {} of {} operators cost O(n) per event, and all of them for the same reason: a\n\
+             \x20 recompute needs a `list`, and an arrangement is a keyed collection. That is\n\
+             \x20 docs/24 §24.6's remaining constant factor, at {}.",
+            linear.len(),
+            plan.nodes.len(),
+            linear
+                .iter()
+                .map(|j| format!("#{j}"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+    }
+    let _ = writeln!(
+        out,
+        "\n  These are the plan's arithmetic rather than a measurement: `Work` is what\n\
+         \x20 `Engine::render` counts, so `measure_incremental` checks this arithmetic against the\n\
+         \x20 count rather than against a clock."
+    );
+    out
 }
 
 struct Builder<'a> {
@@ -965,7 +1291,9 @@ fn free_vars(c: &Core, bound: &mut BTreeSet<VarId>, out: &mut BTreeSet<VarId>) {
                     .into_iter()
                     .filter(|p| bound.insert(*p))
                     .collect();
-                free_vars(&a.body, bound, out);
+                for e in a.exprs() {
+                    free_vars(e, bound, out);
+                }
                 for p in added {
                     bound.remove(&p);
                 }

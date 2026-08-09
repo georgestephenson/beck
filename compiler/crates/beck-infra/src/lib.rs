@@ -20,6 +20,11 @@ use beck_core::{Effect, Placed, Tier};
 pub mod compose;
 pub mod k8s;
 pub mod platform;
+pub mod sbom;
+
+/// What `beck build` calls the bill of materials it writes. The `.cdx.json` suffix is CycloneDX's
+/// own convention, which is what tools look for.
+pub const SBOM_FILE: &str = "sbom.cdx.json";
 pub mod substrate;
 pub mod yaml;
 
@@ -611,6 +616,13 @@ pub fn emit_with(
         write(out.join(&name), body, &mut written)?;
     }
     write(out.join("app.beck"), source.to_string(), &mut written)?;
+    // Beside the manifests rather than instead of them: a bill of materials is an artefact of the
+    // build, and one that has to be asked for separately is one that goes stale.
+    write(
+        out.join(SBOM_FILE),
+        sbom::render(&graph, source, &placed.wire_id),
+        &mut written,
+    )?;
     write(
         out.join("explain.txt"),
         graph.explain_for(platform),

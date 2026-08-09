@@ -629,7 +629,7 @@ fn walk(core: &Core, f: &mut impl FnMut(&Core)) {
         }
         CoreKind::Match { scrutinee, arms } => {
             walk(scrutinee, f);
-            arms.iter().for_each(|a| walk(&a.body, f));
+            arms.iter().flat_map(|a| a.exprs()).for_each(|e| walk(e, f));
         }
         CoreKind::Make { fields, .. } => {
             fields.iter().for_each(|(_, v)| walk(v, f));
