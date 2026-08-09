@@ -8,7 +8,12 @@ publish.workspace = true
 [dependencies]
 beck-core.workspace = true
 anyhow.workspace = true
+# The in-process image build needs SHA-256 (OCI names every blob by one) and ECDSA P-256 (the
+# signature cosign expects). Already the workspace's cryptography, for TLS and for the OIDC
+# relying party's signature checks (docs/adr/0023) — this adds a caller, not a library.
+aws-lc-rs.workspace = true
 beck-diag.workspace = true
+flate2.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 k8s-openapi.workspace = true

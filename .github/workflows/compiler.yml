@@ -78,6 +78,11 @@ jobs:
       # runner has one, so a skip here would mean the differential between backends silently did
       # not run — which is the failure mode §19.4 item 10 is about.
       BECK_REQUIRE_LLVM: "1"
+      # `image.rs` reads its layer back with somebody else's tar and its signature with somebody
+      # else's verifier. Both are on this runner, so a skip would mean the image build was checked
+      # only by the code that wrote it (docs/96 §96.3).
+      BECK_REQUIRE_TAR: "1"
+      BECK_REQUIRE_OPENSSL: "1"
     steps:
       - uses: actions/checkout@v4
       # rust-toolchain.toml's pin (1.94.1, with components) wins over the default this action
@@ -569,6 +574,68 @@ jobs:
           sed '/^platform: /,$d' /tmp/k8s/explain.txt     > /tmp/a.txt
           sed '/^platform: /,$d' /tmp/compose/explain.txt > /tmp/b.txt
           diff /tmp/a.txt /tmp/b.txt
+
+  the-image-builds:
+    # §6.2's image, built in one process against the real repository — docs/96. `cargo test` holds
+    # the build against fixtures; this is the rung above, and it is the only place the *fetch* runs
+    # at all: an index resolved from packages.wolfi.dev, real APKs unpacked, and the digest
+    # compared across two builds. §19.4 item 10 — an artefact nobody has executed is a design
+    # document — is why this is a job rather than a paragraph.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: compiler
+
+      - name: build
+        run: cargo build --release
+
+      - name: the image builds, from the repository, with no external tool
+        run: |
+          ./target/release/beck image examples/todo.beck --out /tmp/image --cache /tmp/apks
+          test -f /tmp/image/oci-layout
+          test -f /tmp/image/index.json
+          # Nothing in this step is apko, melange, docker or a registry client.
+
+      - name: the same inputs produce the same digest
+        # §6.2's reproducibility claim, mechanised per build — docs/28 §28.2 item 3. The cache is
+        # warm, so the second build resolves the same package versions the first did; a digest
+        # that moved here would mean something in the build read a clock.
+        run: |
+          ./target/release/beck image examples/todo.beck --out /tmp/image-again --cache /tmp/apks
+          diff /tmp/image/index.json /tmp/image-again/index.json
+
+      - name: the signature verifies, and refuses a different image
+        run: |
+          ./target/release/beck key generate --out /tmp/cosign
+          ./target/release/beck sign /tmp/image --key /tmp/cosign.key
+          ./target/release/beck verify /tmp/image --key /tmp/cosign.pub
+          # The negative control: the signature must not verify against a key that did not make it.
+          ./target/release/beck key generate --out /tmp/other
+          if ./target/release/beck verify /tmp/image --key /tmp/other.pub; then
+            echo "a signature verified against the wrong key"; exit 1
+          fi
+
+      - name: a real package reads, and not only a fixture
+        # `image.rs` builds its fixtures with `tar czf`, which is not the three-gzip-member
+        # concatenation a real APK is. This is where that shape is exercised, against the packages
+        # the step above already fetched.
+        env:
+          BECK_APK_CACHE: /tmp/apks/packages.wolfi.dev/os/x86_64
+          BECK_REQUIRE_APK: "1"
+          BECK_REQUIRE_TAR: "1"
+          BECK_REQUIRE_OPENSSL: "1"
+        run: cargo test --test image -- --nocapture
+
+      - name: the workflow `beck init ci` writes is the one it claims to write
+        run: |
+          mkdir -p /tmp/app && cp examples/todo.beck /tmp/app/app.beck
+          cd /tmp/app && "$GITHUB_WORKSPACE/compiler/target/release/beck" init ci app.beck
+          test -f /tmp/app/.github/workflows/beck.yml
+          python3 -c "import yaml,sys; yaml.safe_load(open('/tmp/app/.github/workflows/beck.yml'))"
 
   budgets:
     # Deterministic budgets only — the ones §8.3 calls gates.

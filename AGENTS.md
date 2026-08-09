@@ -114,7 +114,7 @@ corpus, placement-property, patterns, general-slicer, incremental-analysis, incr
 fusion,
 shared-arrangement, subscription, view-metrics, read-model, SICP, Are We Fast Yet, Benchmarks Game,
 tests-in-Beck, UI, workflow-cross-check, documentation, getting-started, outbound, compile-speed,
-concurrency, round-trip, runtime-edge, grammar-fuzz, supply-chain, native-backend, mode-B, browser,
+concurrency, round-trip, runtime-edge, grammar-fuzz, supply-chain, image, init-ci, native-backend, mode-B, browser,
 identity, OIDC and diagnostic-snapshot suites, plus the eight
 release-only measurement suites. **Keep them green.**
 
@@ -179,6 +179,11 @@ the thing you are guarding against would make it so.
     `PLAYWRIGHT_BROWSERS_PATH` and on the path, `BECK_CHROME` names one, and
     `BECK_REQUIRE_BROWSER=1` forbids the skip. Without it, nothing in this workspace executes the
     JavaScript.
+  - The image suite (`beck-cli/tests/image.rs`) reads its layer back with the system `tar` and its
+    signature with `openssl`, because a writer checked by its own reader agrees with itself. Each
+    skips without the tool; `BECK_REQUIRE_TAR=1` and `BECK_REQUIRE_OPENSSL=1` forbid the skip, and
+    `BECK_APK_CACHE` pointed at a directory of `.apk` files (plus `BECK_REQUIRE_APK=1`) is what
+    exercises the reader against a real package rather than a fixture.
   - Compose parity needs Docker; the thin-client and Mode B budgets need `brotli` (apt-installable).
 - **The network is proxied and partial.** crates.io and the toolchain host work; docs hosts may
   not. Read a dependency's API from its vendored source under `~/.cargo/registry/src/`.

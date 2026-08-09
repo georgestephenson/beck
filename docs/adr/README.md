@@ -39,3 +39,4 @@ The split this directory creates:
 | [0021](0021-the-native-backend-writes-ir-and-runs-a-process.md) | The native backend writes LLVM IR as text and runs the result as a process, so `forbid(unsafe)` survives it |
 | [0022](0022-mode-b-ships-the-backend-it-has.md) | Mode B's kernel is the evaluator compiled to WebAssembly, not a WebAssembly code generator — the mode's questions are not the backend's |
 | [0023](0023-tls-and-the-signature-it-brings.md) | rustls with aws-lc-rs — one dependency for transport security *and* the asymmetric signature an OIDC relying party verifies |
+| [0024](0024-deflate-so-the-image-build-needs-no-tools.md) | DEFLATE is taken and tar is written — the image build needs an inflater it cannot write and a byte-deterministic tar no library offers |

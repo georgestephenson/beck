@@ -18,6 +18,8 @@ static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 use anyhow::{anyhow, bail, Context, Result};
 
 mod bench;
+mod fetch;
+mod image;
 use beck_core::Placed;
 use beck_diag::{Diagnostics, SourceMap};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -287,6 +289,62 @@ enum Cmd {
     /// diagnostic — §4.6's "there is no separate language server implementation to drift". Not
     /// meant to be run by hand: an editor starts it and speaks JSON-RPC to it.
     Lsp,
+    /// Build the container image, in this process — no apko, no melange, no daemon (§6.2).
+    ///
+    /// Resolves the packages `beck build`'s apko config names, fetches them from the Wolfi
+    /// repository, unpacks them, adds the toolchain and the program, and writes an OCI image
+    /// layout. The result is reproducible: the same inputs produce the same digest, which is the
+    /// property §6.2 chose this image format for and which `beck image` run twice will show.
+    Image {
+        file: PathBuf,
+        #[arg(long, default_value = "target/beck/image")]
+        out: PathBuf,
+        /// What to tag the image in the layout's index.
+        #[arg(long, default_value = "dev")]
+        tag: String,
+        /// The architecture to build for, as the package repository names it.
+        #[arg(long, default_value = "x86_64")]
+        arch: String,
+        /// Where the packages come from.
+        #[arg(long, default_value = beck_infra::sbom::REPOSITORY)]
+        repository: String,
+        /// Where fetched packages are kept. A second build reads them from here.
+        #[arg(long, default_value = "target/beck/packages")]
+        cache: PathBuf,
+        /// Build from the cache alone, and fail rather than reach the network.
+        #[arg(long)]
+        offline: bool,
+        /// The toolchain binary the image ships. Defaults to the running one.
+        #[arg(long, value_name = "PATH")]
+        binary: Option<PathBuf>,
+        /// Sign the image as it is built, with this key.
+        #[arg(long, value_name = "KEY.pem")]
+        sign: Option<PathBuf>,
+    },
+    /// Sign the image in an OCI layout, in the form `cosign verify` reads (§6.2).
+    Sign {
+        /// The layout `beck image` wrote.
+        layout: PathBuf,
+        /// The private key. Read from `BECK_SIGNING_KEY` when this is not given.
+        #[arg(long, value_name = "KEY.pem")]
+        key: Option<PathBuf>,
+    },
+    /// Check a layout's signature against a public key — and that it is over *this* image.
+    Verify {
+        layout: PathBuf,
+        #[arg(long, value_name = "COSIGN.pub")]
+        key: PathBuf,
+    },
+    /// A signing key, and the public half a consumer verifies with.
+    Key {
+        #[command(subcommand)]
+        what: Key,
+    },
+    /// Write the files a repository needs around a Beck program.
+    Init {
+        #[command(subcommand)]
+        what: Init,
+    },
     /// Bring the program up on a local cluster or host — rung 2 or 3 (§6.6).
     Up {
         file: PathBuf,
@@ -297,6 +355,33 @@ enum Cmd {
         dry_run: bool,
         #[arg(long, default_value = "kubernetes")]
         platform: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum Key {
+    /// Write a new P-256 key pair: `<name>.key` and `<name>.pub`.
+    Generate {
+        /// The name to write, without an extension.
+        #[arg(long, short, default_value = "cosign")]
+        out: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+enum Init {
+    /// The continuous-integration workflow for this program (§28.3).
+    ///
+    /// Check, test, wire-compat, build — then, from the default branch, an image and a signature.
+    /// Written to `.github/workflows/beck.yml`, reviewed and committed like any other file.
+    Ci {
+        file: PathBuf,
+        /// The repository root to write into.
+        #[arg(long, short, default_value = ".")]
+        out: PathBuf,
+        /// Print it instead of writing it.
+        #[arg(long)]
+        stdout: bool,
     },
 }
 
@@ -622,6 +707,66 @@ fn dispatch(cli: Cli) -> Result<()> {
                 }
                 None => print!("{body}"),
             }
+            Ok(())
+        }
+        Cmd::Image {
+            file,
+            out,
+            tag,
+            arch,
+            repository,
+            cache,
+            offline,
+            binary,
+            sign,
+        } => {
+            let placed = compiled(&file)?;
+            let source = read(&file)?;
+            image::build(
+                &placed,
+                &source,
+                &image::Options {
+                    out: &out,
+                    tag: &tag,
+                    arch: &arch,
+                    repository: &repository,
+                    cache: &cache,
+                    offline,
+                    binary: binary.as_deref(),
+                    sign_with: sign.as_deref(),
+                },
+            )
+        }
+        Cmd::Sign { layout, key } => image::attach_signature(&layout, key.as_deref()),
+        Cmd::Verify { layout, key } => image::verify(&layout, &key),
+        Cmd::Key {
+            what: Key::Generate { out },
+        } => image::generate_key(&out),
+        Cmd::Init {
+            what: Init::Ci { file, out, stdout },
+        } => {
+            let placed = compiled(&file)?;
+            let graph = beck_infra::graph(&placed);
+            // The path as the repository sees it, which is what every step in the workflow passes:
+            // a workflow that named an absolute path from the machine that generated it would run
+            // nowhere else.
+            let app = file
+                .strip_prefix(&out)
+                .unwrap_or(&file)
+                .to_string_lossy()
+                .to_string();
+            let body = beck_infra::ci::workflow(&graph, &app);
+            if stdout {
+                print!("{body}");
+                return Ok(());
+            }
+            let path = out.join(beck_infra::ci::WORKFLOW_PATH);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("creating {}", parent.display()))?;
+            }
+            std::fs::write(&path, body).with_context(|| format!("writing {}", path.display()))?;
+            println!("{}", path.display());
             Ok(())
         }
         Cmd::Up {

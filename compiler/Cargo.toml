@@ -42,6 +42,11 @@ async-trait = "0.1"
 aws-lc-rs = "1"
 blake3 = "1"
 clap = { version = "4", features = ["derive", "env"] }
+# DEFLATE, in both directions: an APK is a concatenation of gzip members and an OCI layer is a
+# gzipped tar, so the in-process image build cannot read its inputs or write its output without an
+# implementation of it. The default backend is `miniz_oxide`, which is Rust rather than a vendored
+# zlib — the only reason this is one line and not a build-tooling decision (docs/adr/0024).
+flate2 = "1"
 futures-util = "0.3"
 insta = "1"
 # The `beck` binary's global allocator. A tree-walker allocates a frame per call and a scope per

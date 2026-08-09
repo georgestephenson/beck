@@ -361,23 +361,33 @@ dependencies whose signatures didn't change.
 - **The playground** ([`17`](17-playground.md)) — highest-leverage adoption artefact: rung A
   (compile-time, static) and rung B (the whole app in the tab — the worker-server is the rung-0
   platform compiled to WASM, riding Mode B's kernel work; `seq` scrubber and two-client demos).
-- `beck init ci`, apko image build in-process, cosign signing, SBOM. *The **SBOM** is built
-  ([`92`](92-sbom-report.md)): `beck sbom` emits CycloneDX 1.6 and `beck build` writes one beside
-  the manifests, derived from the same object graph the image config is — so the package list and
-  the apko `packages:` block cannot disagree, and a test parses the rendered YAML back to say so.
-  It can exist before a release pipeline because §6.2's "no arbitrary execution" means the image's
-  contents are already a list rather than something to scan for. What it does **not** carry is
-  package **versions** (§92.5), which apko resolves at build time and this resolves at compile
-  time — so CISA's minimum elements are partly met rather than met. The other three are
-  untouched.*
+- `beck init ci`, apko image build in-process, cosign signing, SBOM. *All four are built. The
+  **SBOM** ([`92`](92-sbom-report.md)): `beck sbom` emits CycloneDX 1.6 and `beck build` writes one
+  beside the manifests, derived from the same object graph the image config is — so the package list
+  and the apko `packages:` block cannot disagree, and a test parses the rendered YAML back to say
+  so. It can exist before a release pipeline because §6.2's "no arbitrary execution" means the
+  image's contents are already a list rather than something to scan for. The other three
+  ([`96`](96-supply-chain-report.md)): **`beck image`** assembles an OCI image in one process —
+  resolve against the Wolfi index, fetch, unpack, add the toolchain and the program, write a layout
+  — with no apko, no melange and no daemon, because §92.1's argument spends a second time (a build
+  that executes nothing has nothing in it a compiler cannot do). **`beck sign`/`beck verify`**
+  produce and check a Sigstore signature over the manifest digest, in the shape
+  `cosign verify --key` reads, and `openssl` verifies it rather than only this project's own code.
+  **`beck init ci`** writes §28.3's workflow. What is left is not a piece of this bullet but the
+  pipeline around it: **no registry push**, **no provenance attestation** — SLSA's build track still
+  wants a builder identity and a transparency log — and **no pinned package versions** (§96.7),
+  which is why an image is reproducible twice over and not across weeks. **Package signatures are
+  not verified** (§96.7), and that is named as the largest security gap rather than as a detail.*
 
 **Exit**: an outside developer builds a non-trivial app from documentation alone, without asking the
 team a question. Track this literally as the acceptance test.
-**Not met.** Of the fourteen bullets: **seven built outright** — `test` blocks, the SQLite
+**Not met.** Of the fourteen bullets: **eight built outright** — `test` blocks, the SQLite
 substrate, the standard library, the language's own means of abstraction, the LSP, the
 expressiveness suite (three chapters of SICP and the Felleisen table, with chapters 4–5 belonging
-to Phase 5), and incremental views, whose last part is
-[`89`](89-query-fusion-report.md)'s fusion.
+to Phase 5), incremental views, whose last part is
+[`89`](89-query-fusion-report.md)'s fusion, and the supply-chain tooling
+([`92`](92-sbom-report.md), [`96`](96-supply-chain-report.md)) — whose remainder is a release
+pipeline rather than a piece of the bullet.
 **No bullet has a named remainder**: the concurrency-and-errors bullet has `Result`, error rows,
 `parallel:` and pattern matching with nesting, guards and alternatives
 ([`90`](90-nested-patterns-report.md), [`91`](91-guards-and-alternatives-report.md)); what
@@ -389,8 +399,7 @@ presence; the codegen bullet has LLVM over the scalar subset and no Cranelift
 ([`93`](93-llvm-backend-report.md) §93.6); and Mode B has the mode, the bundle, the data patch, the
 reconciliation, a browser that runs it and an offline queue, without codegen
 ([`94`](94-mode-b-report.md) §94.8). **Two untouched**: client polish and the
-playground; the supply-chain bullet has one of its four pieces
-([`92`](92-sbom-report.md)). The criterion is not a count of those, though — it is a
+playground. The criterion is not a count of those, though — it is a
 claim about a *person*, and the honest way to say how close it is is by the questions such a
 developer would ask in order:
 
@@ -818,8 +827,10 @@ chapter cannot express, measured at ×5.2 per term (§87.7). Chapters 4 and 5 ar
 No predecessors, and they never acquire any.
 
 **Wave 5 — the Phase 4 gates, arranged before Phase 4 rather than during it.** Supply-chain tooling
-(SLSA v1.2 provenance, 2026-element SBOMs, signing, trusted publishing configured *before* the first
-publish); DST proper, on the seam Wave 0 created; then the operator, the replay tooling and the
+(SLSA v1.2 provenance, 2026-element SBOMs, ~~signing~~ — **the signing machinery is built**
+([`96`](96-supply-chain-report.md)) and what is left of that row is the transparency log and a
+registry to push to — trusted publishing configured *before* the first publish); DST proper, on the
+seam Wave 0 created; then the operator, the replay tooling and the
 choreography. **Grammar-aware fuzzing is now due rather than pending**: [`42`](42-security-assurance.md)
 §42.9 pinned it with the trigger "the bound lands", and the bound has landed. Kani proofs of the
 solver's security invariants belong here too — that one still wants a solver that has stopped
