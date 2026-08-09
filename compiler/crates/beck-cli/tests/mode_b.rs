@@ -275,6 +275,59 @@ fn a_guess_is_retired_by_the_state_that_confirms_it_and_not_before() {
     assert!(shown(&mut client).contains("guessed"));
 }
 
+/// A guess that was right costs **one** render, not two.
+///
+/// The test above asserts the confirmation produces no DOM ops; this asserts it does no work to
+/// find that out. They are different claims and the second is the expensive one: `view` is 97% of
+/// what an interaction costs and it grows with the state (§94.14), so a render whose patch is
+/// empty by construction is the largest avoidable cost in the client.
+///
+/// Asserted as a count rather than as a duration, because a gate on a clock flakes ([`13`] §13.7)
+/// and the property here is exact: the state derived after the confirmation *equals* the state the
+/// guess was derived from, and equal states cannot produce different pages.
+///
+/// This goes red if `repaint` renders unconditionally again — which is what it did until §94.14.
+///
+/// [`13`]: ../../../../docs/13-testing.md
+#[test]
+fn a_guess_that_was_right_is_confirmed_without_rendering_again() {
+    let placed = board();
+    let rt = runtime(&placed);
+    let mut client = client_of(&placed, "ana");
+    client.hydrate().expect("hydrates");
+
+    let command = json_command("Add", &[("id", "c1"), ("text", "guessed")]);
+    assert!(matches!(
+        client.propose("k1", &command, 0),
+        Proposed::Accepted { .. }
+    ));
+    let after_the_guess = client.renders();
+
+    // The server's data patch for the very command this client guessed at.
+    let state = apply(&rt, &rt.initial_state().expect("init"), &command, 1);
+    let ops = client.reset(1, state).expect("takes the state");
+
+    assert!(ops.is_empty(), "a correct guess cost DOM ops: {ops:?}");
+    assert_eq!(
+        client.renders(),
+        after_the_guess,
+        "the confirmation re-rendered a page it could not have changed"
+    );
+
+    // And the shortcut is a shortcut, not a way of never rendering again: a state that *did* move
+    // still renders. Without this the test would pass just as well against a client that had
+    // stopped working.
+    let second = json_command("Add", &[("id", "c2"), ("text", "another")]);
+    let moved = apply(&rt, &client.state().expect("a state"), &second, 2);
+    let ops = client.reset(2, moved).expect("takes the state");
+    assert!(!ops.is_empty(), "a state that moved produced no patch");
+    assert_eq!(
+        client.renders(),
+        after_the_guess + 1,
+        "a state that moved should cost exactly one render"
+    );
+}
+
 #[test]
 fn a_guess_the_server_refuses_is_taken_off_the_page() {
     let placed = board();

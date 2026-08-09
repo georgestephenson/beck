@@ -220,9 +220,10 @@ card is one `Set` at a path, where the DOM patch is a removal and an insertion c
 but that is one program's shape and not a law, and a page that renders very little of a large state
 would invert it.
 
-What is **not** measured: interaction latency, because that needs a browser (§94.7); memory in the
-browser; the kernel's throughput against the server's, which is the same evaluator on a different
-target and would mostly measure WebAssembly.
+What is **not** measured: ~~interaction latency, because that needs a browser (§94.7)~~ — **§94.14
+measures it, and the reason given here was wrong: it does not need a browser**, because the kernel
+is an `rlib` as well as a `cdylib`; memory in the browser; the kernel's throughput against the
+server's, which is the same evaluator on a different target and would mostly measure WebAssembly.
 
 ## 94.7 What building it found, and it had nothing to do with Mode B
 
@@ -288,7 +289,9 @@ browser in CI that §94.8 still owes.
   ([`93`](93-llvm-backend-report.md)) and **neither of them can render a page**: `beck-llvm` refuses
   anything needing a heap, which a view is made of. The heap is the shared prerequisite, and it is
   Phase 4's rather than this bullet's — [`08`](08-roadmap.md) §8.19's Lane E is where it is
-  scheduled.
+  scheduled. **§94.14 measures what this bullet costs and finds it is not the leading cost**: a
+  code generator divides the constant and leaves the growth, because what grows is `view` being a
+  pure function of the whole state, which both existing backends share.
 - ~~**No browser has run it.**~~ **One has** — see §94.12, which was written after the rest of this
   report and which is where three more defects are. What is still not built is a browser *other*
   than Chromium, and a page more complicated than the board.
@@ -534,3 +537,84 @@ added with the server stopped reaches the page and not the log; the server comes
 reaches the log **exactly once**; and the two sides converge on the same markup. Plus
 `a_local_copy_of_another_program_is_dropped`, which forges a snapshot under this program's key and
 asserts the page still comes from the server.
+
+## 94.14 What an interaction costs, and the render that was paid for twice
+
+Everything §94.6 measured is a **size**. Mode B's claim is not a size — §5.1 promotes a component to
+the client so that an interaction does not wait for the network — and that claim went unmeasured,
+with §94.6 saying so and giving a reason that turns out to be wrong: *"interaction latency, because
+that needs a browser"*. It does not. `beck-wasm` is an `rlib` as well as a `cdylib`, so the kernel
+the browser runs can be driven from a test and timed directly.
+
+`cargo test --release --test measure_mode_b -- --nocapture`, one card moved on a board of *n*:
+
+| cards | derive | render | diff | the guess | its confirmation |
+|---:|---:|---:|---:|---:|---:|
+| 100 | 11.2 µs | **1,267.2 µs** | 45.1 µs | 1,324.7 µs | 15.6 µs |
+| 1,000 | 30.6 µs | **13,667.0 µs** | 435.0 µs | 13,155.3 µs | 82.2 µs |
+
+Ten times the board costs 9.9× the interaction. **`view` is 97% of it**, and it is what grows —
+`derive` is a function of the pending queue rather than of the board, and `diff` is a twentieth of
+the render it follows. So Mode B's wire is a function of the change (§94.6's flat 177 bytes) and its
+**CPU is a function of the collection**. Moving one card on a thousand-card board is 13 ms of
+browser CPU, which is a dropped frame on this machine and several on a phone.
+
+### The interpreter is not why, and neither is the missing code generator
+
+The obvious reading is that this is what §94.8's "no codegen" bullet costs, and that a compiled
+`view` would fix it. That is not what the numbers say, and two checks say so.
+
+The first is the compiler's own account of the program. `beck explain incremental
+examples/board.beck` prints:
+
+> 1 of this view's 18 operators update from the change itself, 17 are recomputed when an input
+> moves, and the page's children are still assembled in full every time (docs/24 §24.6).
+
+The second is measuring the incremental engine against the same interaction. §5.3's `Engine` — the
+thing the *server* renders Mode A through — takes 15.0 ms cold and **22.2 ms warm** on the
+thousand-card board, against the kernel's 13.7 ms recompute. Maintaining one operator of eighteen
+does not pay for the delta machinery around the other seventeen. The server pays this too; Mode B is
+not discarding an advantage the server has.
+
+So the shape is `view` being a pure function of the whole state, and both backends have it. A code
+generator would divide the constant — perhaps by a lot, 13.7 µs per card is not a tight number — and
+leave the growth exactly where it is. That does not make it worthless; it makes it the wrong thing
+to reach for first, and it makes docs/24 §24.6's open problem — children assembled in full — the
+thing Mode B most needs and the thing it cannot fix from inside Mode B.
+
+### One thing here *was* Mode B's, and it was half the cost
+
+An interaction was paying for **two** full renders. The client proposes, renders its guess, and
+shows it. Then the server's data patch confirms that command, `repaint` runs again — and by the
+argument that makes optimism correct in the first place, the state it derives is *equal* to the one
+the guess was derived from. Same state, same `view`, same page. The second render was 13 ms of work
+with a known answer, and it ended in `diff` returning nothing.
+
+`repaint` now keeps the state it last rendered from beside the page it rendered, and returns early
+when they agree. The confirmation costs 82 µs instead of 13,155 — **~150× cheaper at a thousand
+cards**, and an interaction end to end is halved. (Wall-clock here moves a few percent between
+runs; the table above is one run and the ratio is the part that holds.)
+
+The two fields are one struct (`Shown { html, from }`) rather than two fields on `Client`, because
+the shortcut's whole safety is that they agree; kept apart they could be updated apart, and that
+failure is a stale page rather than a compile error.
+
+`mode_b.rs::a_guess_that_was_right_is_confirmed_without_rendering_again` is the gate, and it counts
+renders rather than timing them — "it did not re-render" is a property, "it was fast" is a
+measurement, and only the first belongs in `cargo test` ([`13`](13-testing.md) §13.7). It asserts
+both directions: a confirmed guess costs no render, and a state that *did* move still costs exactly
+one, so it cannot be satisfied by a client that has stopped rendering. Replacing the early return
+with `if false` makes it red, which is the check a new gate is owed.
+
+### What this does not claim
+
+- **Measured natively, not in WebAssembly.** These are the kernel's costs compiled for this
+  machine. WASM will be slower by some factor this does not establish. The *ratios* and the *shape*
+  carry across; the absolute microseconds do not.
+- **One program, one interaction.** A moved card on `board.beck`. A view that renders little of a
+  large state would show different proportions, as §94.6 already says about the wire.
+- **The confirmation still grows** — 5.3× for ten times the board, because establishing that two
+  states are equal walks the map. It is 0.6% of an interaction, so it was left alone rather than
+  made `O(change)` with the shared-subtree walk `PMap::diff` already has. That is a known cost with
+  a known fix, not an unexamined one.
+- **Nothing here makes `view` incremental**, which is the finding above and is not Mode B's to fix.

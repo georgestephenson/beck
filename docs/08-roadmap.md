@@ -253,8 +253,12 @@ dependencies whose signatures didn't change.
   `seq` reconciliation, freshness-typed pending state; size budget CI gate (< 150 KB brotli per
   component bundle). — ***Built*** ([`94`](94-mode-b-report.md)): `@render(client)`, a bundle that
   is the component's slice, a `wasm32` kernel, data patches instead of DOM patches, and
-  reconciliation by `seq`. **Not** codegen ([`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md)),
-  not freshness-typed, not offline, and no browser has run it — §94.8 is the list.
+  reconciliation by `seq`. Chromium runs all of it (§94.12), and a tab survives a cold start with
+  the server switched off (§94.13). An interaction is measured rather than asserted (§94.14):
+  13 ms on a thousand-card board, 97% of it `view`, and growing with the board rather than with the
+  change. **Not** codegen ([`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md)) — which
+  §94.14 finds is not what the 13 ms is — not freshness-typed, and no size-budget gate; §94.8 is
+  the list.
 - Client polish for both modes: router, forms, lazy routes, focus/scroll preservation, devtools
   extension showing signal graph, patch traffic and pending state.
 - **`test` blocks and inferred mocks** ([`21`](21-tests-in-beck-and-proof.md) §21.2–§21.3) —
@@ -377,8 +381,8 @@ to Phase 5), and incremental views, whose last part is
 [`80`](80-a-scope-owns-its-children-report.md) §80.5's item rather than this bullet's. **Three
 half-built**: identity has its seam and not its relying party; the codegen bullet has LLVM over the
 scalar subset and no Cranelift ([`93`](93-llvm-backend-report.md) §93.6); and Mode B has the mode,
-the bundle, the data patch and the reconciliation, without codegen, a browser or an offline queue
-([`94`](94-mode-b-report.md) §94.8). **Two untouched**: client polish and the
+the bundle, the data patch, the reconciliation, a browser that runs it and an offline queue,
+without codegen ([`94`](94-mode-b-report.md) §94.8). **Two untouched**: client polish and the
 playground; the supply-chain bullet has one of its four pieces
 ([`92`](92-sbom-report.md)). The criterion is not a count of those, though — it is a
 claim about a *person*, and the honest way to say how close it is is by the questions such a

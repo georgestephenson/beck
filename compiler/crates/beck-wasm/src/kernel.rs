@@ -108,7 +108,26 @@ pub struct Client {
     pending: Vec<Pending>,
     /// What the DOM shows, so a re-render is a patch rather than a rebuild. `None` before the
     /// first render.
-    shown: Option<Html>,
+    shown: Option<Shown>,
+    /// How many times `view` has been evaluated. A gate asserts on this rather than on a clock,
+    /// because "it did not re-render" is a property and "it was fast" is a measurement
+    /// (`docs/13` §13.7).
+    renders: u64,
+}
+
+/// A page, and the state it is the page *of*.
+///
+/// One field rather than two, because the whole of [`Client::repaint`]'s shortcut is that these
+/// two agree: a state equal to `from` cannot produce a page different from `html`. Kept apart they
+/// could be updated apart, and the failure would be a stale page rather than a compile error.
+///
+/// `from` holds one extra version of the state alive, which costs the nodes that version does not
+/// share with the current one rather than a copy of it — [`Value`] is a pointer and a discriminant,
+/// and a fold shares every subtree it did not pass through. The server's `Feed::Data` keeps exactly
+/// the same thing for the same reason.
+struct Shown {
+    html: Html,
+    from: Value,
 }
 
 impl Client {
@@ -146,6 +165,7 @@ impl Client {
             seq: 0,
             pending: Vec::new(),
             shown: None,
+            renders: 0,
         })
     }
 
@@ -175,7 +195,12 @@ impl Client {
     /// What the DOM is showing, as the `Html` value it was patched to. `None` before the first
     /// render. The gate that compares the two modes reads this.
     pub fn showing(&self) -> Option<&Html> {
-        self.shown.as_ref()
+        self.shown.as_ref().map(|s| &s.html)
+    }
+
+    /// How many times this client has evaluated `view`.
+    pub fn renders(&self) -> u64 {
+        self.renders
     }
 
     /// Adopt the current render as what the DOM already shows, without emitting a patch.
@@ -189,7 +214,10 @@ impl Client {
     /// by this server at this `seq` (`data-b-seq` on the body). If it was not, it renders normally
     /// and patches.
     pub fn hydrate(&mut self) -> Result<(), String> {
-        self.shown = Some(self.render(&self.state()?)?);
+        let from = self.state()?;
+        let html = self.render(&from)?;
+        self.renders += 1;
+        self.shown = Some(Shown { html, from });
         Ok(())
     }
 
@@ -388,10 +416,25 @@ impl Client {
     }
 
     /// Render the current state and return the DOM ops that get from what is shown to it.
+    ///
+    /// A state that has not moved is not rendered again. `view` is a pure function of the state
+    /// and the session, and a client's session is fixed for its lifetime — so the same state is
+    /// the same page, and rendering it to diff it against itself is work with a known answer.
+    ///
+    /// That is the *common* case rather than a corner, and it is what optimism costs when it is
+    /// right: a client proposes, renders its guess, and the server's data patch then confirms
+    /// exactly that guess. The state derived after the confirmation equals the state the guess was
+    /// derived from — that equality is what makes the optimism correct — so without this an
+    /// interaction pays for two renders and the second is guaranteed to produce no patch (§94.14).
     pub fn repaint(&mut self) -> Result<Vec<diff::Op>, String> {
-        let html = self.render(&self.state()?)?;
+        let from = self.state()?;
+        if self.shown.as_ref().is_some_and(|s| s.from == from) {
+            return Ok(Vec::new());
+        }
+        let html = self.render(&from)?;
+        self.renders += 1;
         let ops = match &self.shown {
-            Some(shown) => diff::diff(shown, &html),
+            Some(shown) => diff::diff(&shown.html, &html),
             // Nothing is shown yet, so the whole frame is the patch. `Path` is empty because the
             // subscription's root *is* the frame (`beck_core::diff`).
             None => vec![diff::Op::Replace {
@@ -399,11 +442,16 @@ impl Client {
                 html: html.clone(),
             }],
         };
-        self.shown = Some(html);
+        self.shown = Some(Shown { html, from });
         Ok(ops)
     }
 
-    fn render(&self, state: &Value) -> Result<Html, String> {
+    /// The component's `view`, over a state — the page this client would show for it.
+    ///
+    /// Public because it is half of what an interaction costs and the half that grows with the
+    /// state, so a measurement that cannot call it separately cannot say which half is which
+    /// (`measure_mode_b.rs`).
+    pub fn render(&self, state: &Value) -> Result<Html, String> {
         match (self.view)(vec![state.clone(), edge::session(&self.actor)]) {
             Ok(Value::Html(h)) => Ok((*h).clone()),
             Ok(other) => Err(format!(
