@@ -294,7 +294,15 @@ no behaviour to look at — which is why the file keeps the grep for F15's conne
 absence is the absence of a mechanism, and why the one test replacing these three **emits an object
 graph and reads it**.
 
-The same standard applied to this work's own gates, so each of them was checked by breaking the
+The gate that replaced those three made the mistake in miniature, and it is worth recording because
+it is the same one at a smaller scale. "No identity provider is provisioned" was first written as a
+search of the rendered YAML for `keycloak`, `ory` and `Kratos` — and it went red on
+**`revisionHistoryLimit`**. A substring match over generated text is worth exactly that, so it
+counts the object graph's `Workload` nodes instead and asserts there is one. The failure was
+harmless and the lesson is not: the first version would have gone green again the moment somebody
+renamed a field, and nobody would have looked.
+
+The same standard applied to this work's other gates, so each of them was checked by breaking the
 thing it guards. Deleting the audience comparison, the `azp` requirement, the issuer comparison and
 the expiry comparison each turned exactly one test red; making the websocket upgrade ignore the
 cookie turned `the_websocket_upgrade_is_where_a_cookie_is_checked` red — and the *first* attempt at

@@ -103,7 +103,7 @@ fn identity_defaults_to_believing_the_client() {
 // on a comment. A grep proves a subject was touched; it cannot prove a control works, and it is
 // used here only where there is no behaviour to look at.
 //
-// `an_outbound_call_has_no_transport_security` is gone too (`docs/adr/0021`). It grepped for
+// `an_outbound_call_has_no_transport_security` is gone too (`docs/adr/0022`). It grepped for
 // `rustls`, `TlsConnector`, `tokio_rustls` and `webpki`, and it also asserted that `lib/http.beck`
 // defaults to `port=80` — which is *still true*, and is now a statement about a default rather than
 // about a missing capability, since `over_tls` is the call that changes it. That half moved into
@@ -163,15 +163,25 @@ page: Signal[Html] = per_session(book, view)
         rendered.contains("login.acme.com"),
         "the declared issuer is not in the object graph at all; this test is testing nothing"
     );
-    // What is absent is a *workload*: `managed()` would put an identity provider in the cluster,
-    // and `external(…)` names one that is already somewhere else.
-    for provisioned in ["keycloak", "Keycloak", "ory", "Kratos"] {
-        assert!(
-            !rendered.contains(provisioned),
-            "an identity provider is being provisioned. If `identity = managed()` is built, delete \
-             this test and correct docs/94 §94.6 and docs/48 §48.5"
-        );
-    }
+
+    // What is absent is a **workload**, and the honest way to say that is to count them rather than
+    // to search the YAML for a product's name. The first version of this test did search, for
+    // `keycloak`, `ory` and `Kratos` — and went red on `revisionHistoryLimit`, which is what a
+    // substring match over generated text is worth.
+    let workloads: Vec<&str> = graph
+        .nodes
+        .iter()
+        .filter_map(|d| match &d.node {
+            beck_infra::Node::Workload { name, .. } => Some(name.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        workloads,
+        vec!["provisioning"],
+        "something other than the program itself is being deployed. If `identity = managed()` is \
+         built, delete this test and correct docs/94 §94.6 and docs/48 §48.5"
+    );
     assert!(
         beck_core::compile_str(
             "managed.beck",
