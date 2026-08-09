@@ -581,6 +581,10 @@ jobs:
           # ratio must not fall as the problem grows — and it runs here rather than under
           # `cargo test` because it is a release measurement.
           cargo test --release --test measure_native -- --nocapture
+          # docs/93 §93.5's second table: the same four benchmarks in six languages. The *gate* is
+          # that every implementation computes the same four answers, and it runs under `cargo test`
+          # above; what runs here is the timing. A language this runner lacks prints a skip.
+          cargo test --release --test measure_xlang -- --nocapture
           # The evaluator's host stack per level of non-tail recursion, in both profiles — the
           # number `beck_eval::STACK_BYTES` is chosen from, and the equality that says a tail call
           # costs nothing (docs/31 §31.3, §31.5). It prints in release and gates in either.

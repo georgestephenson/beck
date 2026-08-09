@@ -45,71 +45,12 @@ fn compile(name: &str, src: &str) -> Arc<Program> {
     Arc::new(placed.expect("slices").program)
 }
 
-/// The benchmark programs.
+/// The benchmark programs, read from the file every other language's port is a port of.
 ///
-/// Two of the four are lifted out of files somebody else wrote: `escapes` is
-/// `awfy/mandelbrot.beck`'s inner loop verbatim and `xor_from` is its hand-written exclusive-or,
-/// both of which the Are We Fast Yet port needs and neither of which was written for this. The
-/// other two are the classics a compiler is expected to be good at.
-const SRC: &str = r#"
-## Are We Fast Yet's mandelbrot, escape-time for one point — the file's inner loop, unchanged.
-def escapes(zrzr: Float, zi: Float, zizi: Float, cr: Float, ci: Float, z: Int) -> Int:
-    if z >= 50:
-        return 0
-    zr = zrzr - zizi + cr
-    next_zi = 2.0 * zr * zi + ci
-    next_zrzr = zr * zr
-    next_zizi = next_zi * next_zi
-    if next_zrzr + next_zizi > 4.0:
-        return 1
-    return escapes(next_zrzr, next_zi, next_zizi, cr, ci, z + 1)
-
-## …driven over a square of the plane, so one call is a whole image rather than one pixel. The
-## driver is scalar because the original's is not: `awfy/mandelbrot.beck` packs its bits into a
-## record, and a record does not compile here.
-def image(size: Int) -> Int:
-    return rows(0, size, 0)
-
-def rows(y: Int, size: Int, acc: Int) -> Int:
-    if y >= size:
-        return acc
-    ci = 2.0 * float(y) / float(size) - 1.0
-    return rows(y + 1, size, columns(0, size, ci, acc))
-
-def columns(x: Int, size: Int, ci: Float, acc: Int) -> Int:
-    if x >= size:
-        return acc
-    cr = 2.0 * float(x) / float(size) - 1.5
-    return columns(x + 1, size, ci, acc + escapes(0.0, 0.0, 0.0, cr, ci, 0))
-
-## Are We Fast Yet's exclusive-or, written as arithmetic because Beck has no bitwise operators
-## (`docs/53` §53.5) — so it is eight recursive steps where another language has one instruction.
-def xor_from(a: Int, b: Int, weight: Int, acc: Int) -> Int:
-    if a == 0 and b == 0:
-        return acc
-    return xor_from(a / 2, b / 2, weight * 2, acc + weight * ((a % 2 + b % 2) % 2))
-
-def xor_sweep(n: Int, acc: Int) -> Int:
-    if n <= 0:
-        return acc
-    return xor_sweep(n - 1, xor_from(n % 256, (n * 7) % 256, 1, 0) + acc)
-
-## Tree recursion: no accumulator, no tail call, one frame per node.
-def fib(n: Int) -> Int:
-    if n < 2:
-        return n
-    return fib(n - 1) + fib(n - 2)
-
-## A tail-recursive loop, which is the shape a `while` has in this language.
-def sum_to(n: Int, acc: Int) -> Int:
-    if n <= 0:
-        return acc
-    return sum_to(n - 1, acc + n)
-
-## Nothing at all, so a call to it is the round trip and none of the computation.
-def nothing(n: Int) -> Int:
-    return n
-"#;
+/// `xlang/bench.beck` rather than a string here, because `measure_xlang.rs` times the same four
+/// definitions against C, Rust, Node, Python and Ruby: two harnesses over one program, so a change
+/// to the benchmark cannot make them disagree about what was measured.
+const SRC: &str = include_str!("../../../xlang/bench.beck");
 
 /// The median of `runs` timings of `f`, because one wall-clock reading of anything is mostly noise.
 fn median(runs: usize, mut f: impl FnMut()) -> Duration {

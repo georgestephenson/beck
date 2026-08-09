@@ -25,6 +25,7 @@ holds the *rules*; that file holds the *state*, and it is the one that stays cur
 | [`compiler/corpus/`](compiler/corpus/) | 31 programs carrying **no placement annotations** — Phase 2's exit measurement |
 | [`compiler/sicp/`](compiler/sicp/) | The expressiveness benchmark ([`docs/25`](docs/25-benchmarks-and-expressiveness.md) §25.5) |
 | [`compiler/awfy/`](compiler/awfy/README.md), [`compiler/clbg/`](compiler/clbg/README.md) | The performance benchmarks — somebody else's programs, verified against somebody else's constants |
+| [`compiler/xlang/`](compiler/xlang/README.md) | One program in six languages — the only place a Beck number sits beside another language's ([`docs/93`](docs/93-llvm-backend-report.md) §93.5) |
 | [`phase0/`](phase0/) | **History.** The output the compiler now generates, hand-written in Rust once so the architecture could be measured. Do not edit it to track the compiler |
 
 ### Reports are history
@@ -51,6 +52,9 @@ the work changed.
 - **`compiler/corpus/`**: a program added there has to place itself — no annotations.
 - **`compiler/sicp/`**: the book's own printed answers are the oracle. `sicp/refusals/` holds one
   file per wall still standing and is currently **empty**; its README says what puts a file back.
+- **`compiler/xlang/`**: a port is held to the *answers*, not to looking alike —
+  `measure_xlang.rs` asserts that every implementation computes the same four results and only
+  prints the times. Adding a language means adding a port that agrees.
 - **`compiler/awfy/` and `compiler/clbg/`**: every verification constant is the original suite's,
   read from its source. `clbg/` goes further — `clbg.rs` rebuilds each asserted literal from the
   Game's published output files under `clbg/expected/`, so a wrong constant fails even with a
@@ -94,7 +98,8 @@ is part of a change's correctness rather than a follow-up to it.
 If you write a number, it must be reproducible, and the report that quotes it must name the command
 that produces it. The measurement suites are release-only by convention:
 `cargo test --release --test <suite> -- --nocapture`, where `<suite>` is one of `measure_phase2`,
-`measure_incremental`, `measure_awfy`, `measure_compile`, `measure_clbg`, `measure_native`.
+`measure_incremental`, `measure_awfy`, `measure_compile`, `measure_clbg`, `measure_native`,
+`measure_xlang`.
 Everything else comes from `cargo test --workspace` or from `beck` invocations the report quotes in
 full.
 
@@ -110,7 +115,7 @@ fusion,
 shared-arrangement, subscription, view-metrics, read-model, SICP, Are We Fast Yet, Benchmarks Game,
 tests-in-Beck, UI, workflow-cross-check, documentation, getting-started, outbound, compile-speed,
 concurrency, round-trip, runtime-edge, grammar-fuzz, supply-chain, native-backend and
-diagnostic-snapshot suites, plus the six
+diagnostic-snapshot suites, plus the seven
 release-only measurement suites. **Keep them green.**
 
 Four gates in this project's history could not have failed

@@ -361,6 +361,27 @@ def widened(a: Int) -> Float:
 def reciprocal_of_product(a: Float, b: Float) -> Float:
     return 1.0 / (a * b)
 
+## …and the same zero reaching a *comparison* rather than a division. `0.0 * -1.0` is a negative
+## zero, and the language says the two zeros are one value — so these must answer `true` and `0`.
+def product_is_zero(a: Float, b: Float) -> Bool:
+    return (a * b) == 0.0
+
+def product_order(a: Float, b: Float) -> Int:
+    p = a * b
+    if p < 0.0:
+        return -1
+    if p > 0.0:
+        return 1
+    return 0
+
+## A negative zero carried through three more operations before anything looks at it.
+def zero_through_sqrt(a: Float, b: Float) -> Bool:
+    return sqrt(negate(abs(a * b))) == 0.0
+
+## And one returned across the boundary, where the host is what normalises it.
+def signed_zero(a: Float, b: Float) -> Float:
+    return a * b
+
 def rless(a: Float, b: Float) -> Bool:
     return a < b
 
@@ -556,6 +577,10 @@ fn the_two_backends_agree_on_reals() {
         "rtimes",
         "rover",
         "reciprocal_of_product",
+        "product_is_zero",
+        "product_order",
+        "zero_through_sqrt",
+        "signed_zero",
         "rless",
         "requal",
         "rorder",

@@ -34,16 +34,21 @@
 //!   under it `-0.0 < 0.0` and NaN is the maximum. `fcmp` says something else for both, so a
 //!   comparison here bitcasts and compares the keys — four integer instructions, and the same
 //!   answer as the tree-walker.
-//! * **Every real is normalised where the evaluator normalises it.** `Value::float` maps `-0.0` to
-//!   `0.0`, so every operation that can produce a negative zero is followed by a two-instruction
-//!   `select`. Without it `1.0 / (0.0 * -1.0)` is `-inf` here and `+inf` there.
+//! * **A real is normalised where a signed zero is *observable*.** `Value::float` maps `-0.0` to
+//!   `0.0` on every real it makes; doing the same after every operation here costs 3× on
+//!   float-heavy code and is not needed, because every float operation maps zeros to zeros. The
+//!   three places it is needed — a comparison, a division's divisor, and a trap's payload — and
+//!   the invariant that says the rest is safe are documented on `Function::normalise` in this
+//!   module's source. Without the divisor
+//!   case, `1.0 / (0.0 * -1.0)` is `-inf` here and `+inf` there.
 //! * **`trunc` saturates.** The evaluator's `f as i64` is Rust's saturating cast, which is
 //!   `llvm.fptosi.sat.i64.f64` and not `fptosi` — plain `fptosi` is poison out of range.
 //!
-//! The one thing not reproduced is NaN *payloads*: `Value::float` canonicalises every NaN to one,
-//! and this emits none of that, because on every target the toolchain builds for the operations
-//! here produce the same default quiet NaN the canonicalisation picks. `nan_is_the_same_nan_on_both
-//! _sides` is the test that says so out loud rather than leaving it assumed.
+//! **A NaN is canonicalised at those same three places**, and for the same reason: `Value::float`
+//! maps every NaN to `f64::NAN`. The tempting argument that the platform's default NaN already *is*
+//! that one is false on x86-64, where `0.0 * inf` yields the indefinite QNaN with its sign bit set
+//! — which sorts below every number under the order key where `f64::NAN` sorts above every one.
+//! `Function::normalise` has the whole story, and `docs/93` §93.2 is where it is written down.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -929,7 +934,10 @@ impl<'a> Function<'a> {
                             "{r} = {opcode} double {}, {}",
                             vals[0].text, vals[1].text
                         ));
-                        Ok(self.normalise(&r))
+                        Ok(Val {
+                            text: r,
+                            ty: Scalar::Float,
+                        })
                     }
                     Scalar::Bool => Err(format!("`{}` on two Bools", op.name())),
                 }
@@ -947,13 +955,21 @@ impl<'a> Function<'a> {
                     }
                     // `%` on reals is not in the language: `Prim::Rem`'s evaluator arm answers
                     // only for two Ints, so a Float here would be a type error there.
+                    // The one arithmetic operation that turns a signed zero into something a
+                    // signed zero is not: `1.0 / -0.0` is `-inf` and `1.0 / 0.0` is `+inf`. So the
+                    // *divisor* is normalised — see `Function::normalise` for why nothing else
+                    // needs to be.
                     Scalar::Float if op == Prim::Div => {
+                        let divisor = self.normalise(&vals[1].text);
                         let r = self.fresh();
                         self.line(format!(
                             "{r} = fdiv double {}, {}",
-                            vals[0].text, vals[1].text
+                            vals[0].text, divisor.text
                         ));
-                        Ok(self.normalise(&r))
+                        Ok(Val {
+                            text: r,
+                            ty: Scalar::Float,
+                        })
                     }
                     _ => Err(format!("`{}` on this type", op.name())),
                 }
@@ -981,7 +997,10 @@ impl<'a> Function<'a> {
                     Scalar::Float => {
                         let r = self.fresh();
                         self.line(format!("{r} = fneg double {}", vals[0].text));
-                        Ok(self.normalise(&r))
+                        Ok(Val {
+                            text: r,
+                            ty: Scalar::Float,
+                        })
                     }
                     Scalar::Bool => Err("`negate` on a Bool".into()),
                 }
@@ -1009,7 +1028,10 @@ impl<'a> Function<'a> {
                     }
                     Scalar::Float => {
                         let r = self.intrinsic_f64("llvm.fabs.f64", &vals[0])?;
-                        Ok(self.normalise(&r))
+                        Ok(Val {
+                            text: r,
+                            ty: Scalar::Float,
+                        })
                     }
                     Scalar::Bool => Err("`abs` on a Bool".into()),
                 }
@@ -1022,7 +1044,10 @@ impl<'a> Function<'a> {
                     _ => "llvm.cos.f64",
                 };
                 let r = self.intrinsic_f64(name, &vals[0])?;
-                Ok(self.normalise(&r))
+                Ok(Val {
+                    text: r,
+                    ty: Scalar::Float,
+                })
             }
             Prim::Trunc => {
                 arity(1)?;
@@ -1142,14 +1167,58 @@ impl<'a> Function<'a> {
     }
 
     /// `-0.0` becomes `0.0`, because [`beck_core::Value::float`] does it on every real it makes.
+    ///
+    /// # Where this is called, and the invariant that says the rest is safe
+    ///
+    /// It was once applied to the result of *every* float operation, which is the obvious way to
+    /// match a host that normalises on every construction — and it cost **3×** on float-heavy code
+    /// (`docs/93` §93.5). It is now applied in three places, on this invariant:
+    ///
+    /// > A value in a register here differs from the one the evaluator holds **at most in the sign
+    /// > of a zero, or in which NaN it is**.
+    ///
+    /// Every float operation preserves that. `fadd`, `fsub`, `fmul`, `fdiv`, `fneg`, `fabs`,
+    /// `sqrt`, `sin` and `cos` map zeros to zeros and NaNs to NaNs, and everything else to the same
+    /// thing either way; `trunc` of either zero is `0` and of any NaN is `0`. So normalising is
+    /// needed only where the difference becomes observable:
+    ///
+    /// * **a comparison** — `-0.0` and `0.0` have different order keys, and so do two NaNs; the
+    ///   language says each pair is one value;
+    /// * **a division's divisor** — `1.0 / -0.0` is `-inf` where `1.0 / 0.0` is `+inf`, which is a
+    ///   difference a zero's sign has escaped into;
+    /// * **a trap's payload**, which is rendered into a message a person reads.
+    ///
+    /// Returning is not on the list because it is already handled: the host narrows through
+    /// `Value::float`, which normalises.
+    ///
+    /// The NaN half is not theoretical and was not free. It was originally argued away — "the
+    /// operations here produce the platform's default quiet NaN, which is the one the
+    /// canonicalisation picks" — and that is **false on x86-64**: `0.0 * inf` yields the
+    /// *indefinite* QNaN `0xFFF8…`, whose sign bit is set, where `f64::NAN` is `0x7FF8…`. Under the
+    /// order key one sorts below every number and the other above every number, so
+    /// `(0.0 * inf) > 0.0` answered `true` in the evaluator and `false` here (`docs/93` §93.2).
+    ///
+    /// `product_order` in the differential is what found it, and it found it only because that test
+    /// compares a NaN a *computation produced* rather than one the host handed in already
+    /// canonicalised. `product_is_zero` and `reciprocal_of_product` are the same shape for the two
+    /// zero cases — each is a gate that goes red if its line here is removed, which is the property
+    /// `AGENTS.md` asks for and the reason these three exist rather than one.
     fn normalise(&mut self, raw: &str) -> Val {
         let is_zero = self.fresh();
         self.line(format!(
             "{is_zero} = fcmp oeq double {raw}, 0x0000000000000000"
         ));
+        let zeroed = self.fresh();
+        self.line(format!(
+            "{zeroed} = select i1 {is_zero}, double 0x0000000000000000, double {raw}"
+        ));
+        // …and every NaN becomes one NaN, for the same reason and with the same rule: `Value::float`
+        // maps them all to `f64::NAN`. `fcmp uno x, x` is the NaN test.
+        let is_nan = self.fresh();
+        self.line(format!("{is_nan} = fcmp uno double {raw}, {raw}"));
         let r = self.fresh();
         self.line(format!(
-            "{r} = select i1 {is_zero}, double 0x0000000000000000, double {raw}"
+            "{r} = select i1 {is_nan}, double 0x7FF8000000000000, double {zeroed}"
         ));
         Val {
             text: r,
@@ -1159,7 +1228,10 @@ impl<'a> Function<'a> {
 
     /// `beck_core`'s order key: the transform that makes the derived `Ord` on the bits the numeric
     /// order. `bits ^ ((bits >> 63) | sign)` — arithmetic shift, so a negative becomes `!bits`.
+    ///
+    /// Normalises first, because the two zeros have different keys and the language has one zero.
     fn order_key(&mut self, v: &Val) -> String {
+        let v = self.normalise(&v.text);
         let bits = self.fresh();
         self.line(format!("{bits} = bitcast double {} to i64", v.text));
         let sign = self.fresh();
@@ -1210,7 +1282,11 @@ impl<'a> Function<'a> {
     fn widen(&mut self, v: &Val) -> String {
         match v.ty {
             Scalar::Int => v.text.clone(),
+            // Normalised, because the one thing that reads this is a message: `Trap::message`
+            // renders it, and a scrutinee printed as `-0` where the evaluator prints `0` is a
+            // divergence in the differential.
             Scalar::Float => {
+                let v = self.normalise(&v.text);
                 let r = self.fresh();
                 self.line(format!("{r} = bitcast double {} to i64", v.text));
                 r
