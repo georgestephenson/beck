@@ -1,0 +1,103 @@
+# The smallest whole application: a counter several people share.
+#
+# This is what the playground opens with, and it is chosen for what it makes visible rather than
+# for what it does. Two client panes in one tab hold two subscriptions to one log; a click in
+# either is a command through the one merge point, and both pages move because both are pure
+# functions of the same fold. Nothing here is playground-specific — `beck run counter.beck` serves
+# exactly this program.
+#
+# The page does not read the session, so both panes render the same page. That is what makes the
+# second pane worth having: what you are watching is a fanout, not a mirror.
+
+model State:
+    count: Int
+    steps: Int
+
+union Command:
+    Bump(by: Int)
+    Reset
+
+union Event:
+    Bumped(by: Int)
+    WasReset
+
+union Rejection:
+    TooBig
+    AlreadyZero
+
+# ---------- The database is a fold ----------
+
+def apply_event(s: State, env: Envelope[Event]) -> State:
+    match env.body:
+        case Bumped(by):
+            return State(count=s.count + by, steps=s.steps + 1)
+        case WasReset:
+            return State(count=0, steps=s.steps + 1)
+
+# ---------- Authority is one chokepoint ----------
+#
+# The client may ask for anything; what it gets is decided here, against the accumulator. A
+# refusal is a value the program named, so the browser can show it without a string to parse.
+
+def validate(s: State, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Bump(by):
+            if s.count + by > 100:
+                return Err(error=TooBig)
+            return Ok(value=[Bumped(by=by)])
+        case Reset:
+            if s.count == 0:
+                return Err(error=AlreadyZero)
+            return Ok(value=[WasReset])
+
+# ---------- The page is a pure function of state ----------
+
+def view(s: State) -> Html:
+    return ui:
+        main:
+            h1: "counter"
+            p(class="count"): str(s.count)
+            button(class="up", on_click=Bump(by=1)): "+1"
+            button(class="down", on_click=Bump(by=-1)): "-1"
+            button(class="reset", on_click=Reset): "reset"
+            footer: (str(s.steps) + " events")
+
+# ---------- The wiring ----------
+
+@on(server)
+proposals: Stream[Proposal] = merge_clients()
+
+@on(server)
+events: Stream[Event] = decide(proposals, counter, validate)
+
+@on(data)
+counter: Signal[State] = durable(fold(apply_event, State(count=0, steps=0), events))
+
+@on(client)
+page: Signal[Html] = signal_map(counter, view)
+
+# ---------- Tests ----------
+
+test "a bump lands on the page":
+    given []
+    when Bump(by=1)
+    expect page contains ">1<"
+
+test "the ceiling is the chokepoint's, not the client's":
+    given [Bumped(by=100)]
+    when Bump(by=1)
+    expect Err(error=TooBig)
+
+test "resetting a counter that is already zero is refused":
+    given []
+    when Reset
+    expect Err(error=AlreadyZero)
+
+test "two clients' commands land in one order":
+    given []
+    when session("ana") sends Bump(by=1), Bump(by=1)
+    expect page contains "2 events"
+
+property "no log this program can produce makes the page unrenderable"(log: list[Event]):
+    given log
+    expect page contains "counter"

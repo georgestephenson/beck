@@ -97,10 +97,20 @@ artefact is already a single static binary with a declared effect surface; nothi
 change to allow it. Likewise the WASI server target ([`05`](05-tier-lowering.md) §5.2) is the
 zero-OS limit of the same idea.
 
-Implementation: shell out to `apko` initially; move to writing the OCI layout directly from Rust
-(`oci-client`/`oci-spec` crates) once the format is settled, so `beck build` is one process with no
-external tools. Push with the registry API; **sign with Sigstore/cosign** and attach the SBOM and a
-provenance attestation. `beck deploy` then pins by digest, never by tag.
+Implementation: ~~shell out to `apko` initially;~~ **the OCI layout is written directly from Rust**
+([`99`](99-supply-chain-report.md)) — `beck image` resolves the packages this config names, fetches
+them, unpacks them and writes a layout, so the build is one process with no external tools and
+apko was never shelled out to. Neither `oci-client` nor `oci-spec` was needed: the format is four
+JSON documents and a tar. **Signing with Sigstore/cosign is built** in its keyed form, over the
+manifest digest and in the artefact shape `cosign verify --key` reads (§99.5). Still to do:
+**push with the registry API**, **attach the SBOM** as a referring artefact, and the **provenance
+attestation**, which wants a builder identity and a transparency log this project does not have.
+`beck deploy` then pins by digest, never by tag.
+
+The melange half is unchanged for the apko route and **drops out of the in-process one**, and the
+reason is worth keeping straight: apko copies nothing from the host because it executes nothing, and
+a build that *is* the compiler has the binary in hand. The reproducibility argument above is about
+execution, not about copying — §99.1.
 
 **Rejected alternatives**: BuildKit (excellent, and the right answer *if* users need arbitrary build
 steps — keep it as `builder = buildkit` for escape-hatch cases, e.g. FFI to a C library needing a

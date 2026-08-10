@@ -67,7 +67,7 @@
     mode: "A",
     seq: state.seq,
     actor: state.actor,
-    path: location.pathname,
+    path: beck.here(),
     pending: Array.from(pending.keys()),
   });
 

@@ -1,6 +1,6 @@
-# Phase 3 report, part 66 — the route is a field of the session
+# Phase 3 report, part 68 — the route is a field of the session
 
-**Built**, except for the one item that has nothing to be about yet, which §98.7 says so about.
+**Built**, except for the one item that has nothing to be about yet, which §100.7 says so about.
 
 [`08-roadmap.md`](08-roadmap.md) §8.6 has carried one line since Phase 3 began that nothing had
 touched:
@@ -13,7 +13,7 @@ touched:
 what the first one found: **`Session` had been one word for two facts**, and the rule that decides
 where a component may render was about only one of them.
 
-## 98.1 A route is not a router
+## 100.1 A route is not a router
 
 The obvious way to add routing to a language is to add routing to the language: a route table, a
 matcher, a `route` form, a path-parameter syntax. None of that is here, and the reason is that a
@@ -66,7 +66,16 @@ that knows a router exists; a browser executing no JavaScript at all follows it 
 renders. That is the property worth having, and it is a consequence of routes being real URLs rather
 than a decision anybody made about progressive enhancement.
 
-One thing the router **narrowed without anybody noticing**, which is why it is here rather than in a
+Two things about the browser's own address are worth writing down, because both are places a wrong
+answer would have been invisible. The first: **a document with no URL of its own has no route.** The
+playground's clients are `srcdoc` iframes ([`98`](98-playground-report.md)), and `about:srcdoc`'s
+`location.pathname` is the string `srcdoc` — so a residue that read the route straight off
+`location` would put that on the `hello` frame, no program would ever match it, and every test in
+this workspace would still pass. One predicate decides it (`beck.here`), both modes ask it rather
+than reading the location themselves, and the router installs no listeners at all where there is no
+address bar to move.
+
+The second **narrowed something without anybody noticing**, which is why it is here rather than in a
 list of extras. [`94`](94-mode-b-report.md) §94.13's cold start caches the shell so that a Mode B tab
 reloading with no network gets a page: the worker caches `/`, because "that is what a reload asks
 for". With routes it is not. A tab that had navigated to `/active` and then reloaded offline asked
@@ -76,7 +85,7 @@ it is the same observation the mode rests on: in Mode B the route is the *client
 cached document answers for every route. Caching a document per route would have been caching one
 file under several names and would still have missed the route nobody had visited.
 
-## 98.2 `Session` was one word for two facts
+## 100.2 `Session` was one word for two facts
 
 Here is the wall. [`94`](94-mode-b-report.md) §94.2's rule is that **a Mode B page may not be a
 function of who is asking**, because Mode B sends the browser the state rather than the page, so a
@@ -132,7 +141,7 @@ below the session are theirs and §5.3's cut is unchanged — *and* it renders i
 this, one fact answered both questions, and it answered the second one wrongly for a whole class of
 page.
 
-## 98.3 What a navigation costs, in each mode
+## 100.3 What a navigation costs, in each mode
 
 The same program, both ways. `examples/routed.beck` has no `@render(client)`; adding that one line
 is the whole of the difference, which is what makes "the router is the same in both modes" a test
@@ -156,7 +165,7 @@ worth half an interaction. A navigation changes nothing but the session, so unde
 change was the one interaction Mode B rendered nothing for. `paint(force)` is the fix and the
 `force` has exactly one caller.
 
-## 98.4 Forms
+## 100.4 Forms
 
 `on_submit` on a `form:`, and one new hole in a handler's template:
 
@@ -179,7 +188,7 @@ command in the tree happens to flatten — `Id(value="$id")` is a newtype and cr
 a hole one level down had never been written, and a command whose field is a record would have put
 the literal `"$id"` in the log. The filler recurses now, through objects and arrays alike.
 
-## 98.5 The caret, and the list somebody had scrolled
+## 100.5 The caret, and the list somebody had scrolled
 
 A patch that replaces an ancestor of the focused element destroys it, and the browser's answer to
 "what is focused now" is `body`. A whole-frame replace is what a `Reset` frame carries — a
@@ -204,7 +213,7 @@ a replace destroys, and the caret is one lookup. A version that scanned the docu
 elements would have made every patch cost the size of the page, which is the shape this project
 spends its gates refusing.
 
-## 98.6 The panel, and why it is not an extension
+## 100.6 The panel, and why it is not an extension
 
 §8.6 asks for "a devtools **extension** showing signal graph, patch traffic and pending state". What
 is here is the three things and not the extension, and the difference is deliberate rather than a
@@ -244,7 +253,7 @@ unless it is asked for. These files carry more comment than code and there is no
 in this project, so the gzip figure is an upper bound on what a build step would ship and the raw
 one is not a measurement of anything.
 
-## 98.7 Lazy routes, and why there is nothing to be lazy about
+## 100.7 Lazy routes, and why there is nothing to be lazy about
 
 Not built, and the reason is not effort.
 
@@ -260,7 +269,7 @@ The honest ordering is therefore: per-component rendering first, in the language
 consequence of it and not a feature that can precede it. This is written here rather than left to be
 rediscovered, and it is the one item of §8.6's client bullet that this report does not close.
 
-## 98.8 The gates, and what makes each go red
+## 100.8 The gates, and what makes each go red
 
 `crates/beck-cli/tests/client.rs`, 12 tests, and `browser.rs` gained 5 — the split is that focus and
 scroll are facts about a DOM, so they are gated where there is one.
@@ -297,13 +306,13 @@ program cannot test would be half a feature; the slot is one node with two shape
 second positional argument, because a form whose arity varies with which optional part was written
 cannot be read back without guessing.
 
-## 98.9 What this corrects, elsewhere
+## 100.9 What this corrects, elsewhere
 
 * [`94`](94-mode-b-report.md) §94.2 says a Mode B page "may not be a function of who is asking" and
   §94.8's last-but-one bullet says "no router, no lazy routes, no focus/scroll polish, no devtools".
   The first sentence is still exactly right and is now enforced as written; what changed is that
   `per_session` had been standing in for it, and a page that varies by route is not what it meant.
-  Of the second, all but lazy routes are here (§98.7).
+  Of the second, all but lazy routes are here (§100.7).
 * [`94`](94-mode-b-report.md) §94.11 lists "client polish" as untouched. It is not.
 * `Op::Session`'s doc comment in `plan.rs` said the session is "constant for the life of one
   subscription". It is not, and the engine was already right about it.
@@ -313,13 +322,17 @@ cannot be read back without guessing.
   §8.19's "two untouched" is one — the playground.
 * [`96`](96-presence-report.md) landed between this work starting and finishing, and its `B0516` is
   `B0514`'s sibling rather than a second version of it: two refusals, for the two things a browser
-  handed the accumulator would not have (§98.2).
+  handed the accumulator would not have (§100.2).
+* [`98`](98-playground-report.md) §98.10 and [`99`](99-supply-chain-report.md) §99.10 both name client
+  polish as the one bullet left untouched — the last two reports to be able to say so. With this,
+  **no bullet on [`08`](08-roadmap.md) §8.6's list is untouched**; what each has left is named in
+  its own report, and this one's is lazy routes (§100.7).
 * [`05`](05-tier-lowering.md) §5.1 says the router is "derived from route declarations" and that
   "navigation is just another command". There are no route declarations, and a navigation is not a
   command: a command is a proposal that becomes an event and reaches the log, and where a browser is
   is neither. The section carries the correction.
 * [`94`](94-mode-b-report.md) §94.13's service worker caches `/` "because that is what a reload asks
-  for". With routes it is not (§98.1), and the worker now answers a navigation it has no document
+  for". With routes it is not (§100.1), and the worker now answers a navigation it has no document
   for with the shell.
 * [`03`](03-type-and-effect-system.md) §3.7 describes `Session` as what an identity subsystem mints.
   Two thirds of it still is; the third field is the client's own statement about itself, and the
@@ -328,15 +341,15 @@ cannot be read back without guessing.
 Nothing in an earlier report is edited; this section is where the corrections are, per the rule in
 [`AGENTS.md`](../AGENTS.md).
 
-## 98.10 What is not built, and one thing that is deliberately absent
+## 100.10 What is not built, and one thing that is deliberately absent
 
-* **Lazy routes** (§98.7), waiting on per-component rendering in the language.
-* **A devtools extension** (§98.6). A page panel instead, for a reason rather than a shortcut.
+* **Lazy routes** (§100.7), waiting on per-component rendering in the language.
+* **A devtools extension** (§100.6). A page panel instead, for a reason rather than a shortcut.
 * **Query strings and fragments.** `session.path` is `location.pathname` and nothing else. A
   fragment never reaches a server, so carrying one would be a field whose value differs between the
   two rendering modes; a query string is a second vocabulary with its own parsing, and path segments
   are available today. Both are additive if a program ever needs them.
-* **A scroll restoration that is exact.** §98.5 says what it is: exact for the caret, by position
+* **A scroll restoration that is exact.** §100.5 says what it is: exact for the caret, by position
   for the scroll.
 * **Nothing verifies a route**, and nothing should. `session.path` is the client's own statement
   about itself and it reaches `validate` on the `Proposal`'s session exactly as the actor does — but

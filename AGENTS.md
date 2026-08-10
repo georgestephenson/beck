@@ -99,7 +99,7 @@ If you write a number, it must be reproducible, and the report that quotes it mu
 that produces it. The measurement suites are release-only by convention:
 `cargo test --release --test <suite> -- --nocapture`, where `<suite>` is one of `measure_phase2`,
 `measure_incremental`, `measure_awfy`, `measure_compile`, `measure_clbg`, `measure_native`,
-`measure_xlang`, `measure_mode_b`.
+`measure_xlang`, `measure_mode_b`, `measure_play`.
 Everything else comes from `cargo test --workspace` or from `beck` invocations the report quotes in
 full.
 
@@ -114,8 +114,9 @@ corpus, placement-property, patterns, general-slicer, incremental-analysis, incr
 fusion,
 shared-arrangement, subscription, view-metrics, read-model, SICP, Are We Fast Yet, Benchmarks Game,
 tests-in-Beck, UI, workflow-cross-check, documentation, getting-started, outbound, compile-speed,
-concurrency, round-trip, runtime-edge, grammar-fuzz, supply-chain, native-backend, mode-B, browser,
-client, identity, OIDC, presence, cranelift and diagnostic-snapshot suites, plus the eight
+concurrency, round-trip, runtime-edge, grammar-fuzz, supply-chain, image, init-ci, native-backend,
+mode-B, browser, client, playground, identity, OIDC, presence, cranelift and diagnostic-snapshot
+suites, plus the nine
 release-only measurement suites. **Keep them green.**
 
 Four gates in this project's history could not have failed
@@ -174,12 +175,18 @@ the thing you are guarding against would make it so.
     half without a linker; `BECK_REQUIRE_LLVM=1` forbids both skips, `BECK_CLANG` names a `clang`
     and `BECK_LINKER` a linker on a machine with several. A skipped run means the differential
     *between backends* did not happen.
-  - Mode B's kernel (`beck-cli/tests/mode_b.rs`) needs the `wasm32-unknown-unknown` target; it
-    skips without one, and `BECK_REQUIRE_WASM=1` forbids the skip.
+  - Mode B's kernel (`beck-cli/tests/mode_b.rs`) and the playground's module
+    (`beck-cli/tests/playground.rs`) need the `wasm32-unknown-unknown` target; both skip without
+    one, and `BECK_REQUIRE_WASM=1` forbids the skip.
   - The browser suite (`beck-cli/tests/browser.rs`) needs a Chromium; it looks under
     `PLAYWRIGHT_BROWSERS_PATH` and on the path, `BECK_CHROME` names one, and
     `BECK_REQUIRE_BROWSER=1` forbids the skip. Without it, nothing in this workspace executes the
     JavaScript.
+  - The image suite (`beck-cli/tests/image.rs`) reads its layer back with the system `tar` and its
+    signature with `openssl`, because a writer checked by its own reader agrees with itself. Each
+    skips without the tool; `BECK_REQUIRE_TAR=1` and `BECK_REQUIRE_OPENSSL=1` forbid the skip, and
+    `BECK_APK_CACHE` pointed at a directory of `.apk` files (plus `BECK_REQUIRE_APK=1`) is what
+    exercises the reader against a real package rather than a fixture.
   - Compose parity needs Docker; the thin-client and Mode B budgets need `brotli` (apt-installable).
 - **The network is proxied and partial.** crates.io and the toolchain host work; docs hosts may
   not. Read a dependency's API from its vendored source under `~/.cargo/registry/src/`.

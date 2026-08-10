@@ -8,10 +8,23 @@ publish.workspace = true
 [dependencies]
 beck-core.workspace = true
 anyhow.workspace = true
+# The in-process image build needs SHA-256 (OCI names every blob by one) and ECDSA P-256 (the
+# signature cosign expects). Already the workspace's cryptography, for TLS and for the OIDC
+# relying party's signature checks (docs/adr/0023) — this adds a caller, not a library.
+aws-lc-rs = { workspace = true, optional = true }
 beck-diag.workspace = true
+flate2 = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 k8s-openapi.workspace = true
+
+[features]
+default = ["image"]
+# The in-process image build, its packages and its signature — `apk`, `oci` and `sign`. Optional
+# because `aws-lc-sys` is C and has no wasm32 target: a consumer that compiles to the browser
+# (`beck-play`) takes this crate for the infrastructure graph and the manifests, and building an
+# image is not something a browser tab does.
+image = ["dep:aws-lc-rs", "dep:flate2"]
 
 [dev-dependencies]
 insta.workspace = true

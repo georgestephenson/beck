@@ -277,7 +277,21 @@
   // An ordinary `<a href>` — no `data-b-` attribute, no `onclick`, nothing in the program that
   // knows a router exists. Which is the point: a link that this file did not intercept is still a
   // link, and the page it lands on is server-rendered at that path.
+
+  // Does this document have a URL of its own?
+  //
+  // A `srcdoc` iframe does not — which is what the playground's clients are (docs/98) — and neither
+  // does a blob. Their `location.pathname` is `srcdoc` or a UUID, so a client that read a route off
+  // it would report one no program could ever match, and nothing would say so.
+  const addressed = () => location.protocol === "http:" || location.protocol === "https:";
+
+  // Where this document is, as a route. The application's root when there is no address bar.
+  const here = () => (addressed() ? location.pathname : "/");
+
   const route = (go) => {
+    // A document with no URL cannot navigate: `pushState` has no address bar to move, and the
+    // links inside it are not this page's to intercept.
+    if (!addressed()) return;
     document.addEventListener("click", (event) => {
       if (event.defaultPrevented || event.button !== 0) return;
       if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
@@ -301,7 +315,41 @@
     window.addEventListener("popstate", () => go(location.pathname));
   };
 
-  // One websocket, resumable by `(subscription, seq)`. `on` is the frame handler the mode supplies.
+  // The transport, as a seam. A deployment opens a websocket to the origin it was served from;
+  // the playground hands the identical protocol a `MessageChannel` port to a worker in the same
+  // tab (docs/17 §17.2). Everything above and below this function — the frames, the resumption
+  // rule, the outbox — is the same code either way, which is what makes a tab a *host* rather
+  // than a simulation.
+  //
+  // The contract, for whoever writes the third one: `dial(handlers)` returns `{send, ready}`, and
+  // calls `handlers.open` *after* returning — a transport that is ready the moment it is dialled
+  // has to defer, because `open` is where the `hello` frame is sent and it sends it through the
+  // object `dial` has not handed back yet.
+  const websocket = (handlers) => {
+    const url = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/socket";
+    const socket = new WebSocket(url);
+    socket.onopen = handlers.open;
+    // The bytes are counted here rather than in `connect`, because they are a fact about *this*
+    // transport: a port transport hands over objects and never encodes one. A devtools panel
+    // reading a zero is therefore reading the truth about a playground tab rather than a bug.
+    socket.onmessage = (event) => {
+      stats.bytes_in += event.data.length;
+      handlers.message(JSON.parse(event.data));
+    };
+    socket.onclose = handlers.close;
+    socket.onerror = () => socket.close();
+    return {
+      send: (frame) => {
+        const text = JSON.stringify(frame);
+        stats.bytes_out += text.length;
+        socket.send(text);
+      },
+      ready: () => socket.readyState === 1,
+    };
+  };
+
+  // One connection, resumable by `(subscription, seq)`. `on` is the frame handler the mode
+  // supplies.
   //
   // `state` is read at every open rather than at the first one, so a caller that keeps
   // `state.seq` current resumes from where it actually is. A snapshot would make every reconnect
@@ -316,42 +364,46 @@
   const connect = (state, on, opened) => {
     let backoff = 250;
     const outbox = [];
-    let socket = null;
+    let link = null;
     const open = () => {
-      const url = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/socket";
-      socket = new WebSocket(url);
-      socket.onopen = () => {
-        backoff = 250;
-        stats.connected = true;
-        const hello = { t: "hello", sub: state.sub, actor: state.actor, path: location.pathname };
-        if (state.seq !== null && state.seq !== undefined) hello.seq = state.seq;
-        socket.send(JSON.stringify(hello));
-        // Commands sent while disconnected are safe to repeat: each carries an id, and the server
-        // de-duplicates by it.
-        while (outbox.length) socket.send(outbox.shift());
-        // Every open, not only the first: a client that has been away has a queue that predates
-        // this socket, and possibly this page load (`beck-mode-b.js`).
-        if (opened) opened();
-      };
-      socket.onmessage = (event) => {
-        stats.bytes_in += event.data.length;
-        on(JSON.parse(event.data));
-      };
-      socket.onclose = () => {
-        socket = null;
-        stats.connected = false;
-        setTimeout(open, backoff);
-        backoff = Math.min(backoff * 2, 5000);
-      };
-      socket.onerror = () => socket && socket.close();
+      link = (beck.dial || websocket)({
+        open: () => {
+          backoff = 250;
+          stats.connected = true;
+          // The route rides on the `hello` for the reason above: a route established by a second
+          // frame would leave every reconnection rendering the root's page until it arrived.
+          const hello = {
+            t: "hello",
+            sub: state.sub,
+            actor: state.actor,
+            path: here(),
+          };
+          if (state.seq !== null && state.seq !== undefined) hello.seq = state.seq;
+          link.send(hello);
+          // Commands sent while disconnected are safe to repeat: each carries an id, and the
+          // server de-duplicates by it.
+          while (outbox.length) link.send(outbox.shift());
+          // Every open, not only the first: a client that has been away has a queue that predates
+          // this connection, and possibly this page load (`beck-mode-b.js`).
+          if (opened) opened();
+        },
+        message: on,
+        close: () => {
+          link = null;
+          stats.connected = false;
+          setTimeout(open, backoff);
+          backoff = Math.min(backoff * 2, 5000);
+        },
+      });
     };
     open();
     return (frame) => {
-      const text = JSON.stringify(frame);
-      stats.bytes_out += text.length;
+      // Counted here rather than in the transport, because a frame is a frame whichever one is
+      // under it. The *bytes* are not: they are counted in `websocket` below, since a port
+      // transport moves objects and has none.
       stats.sent += 1;
-      if (socket && socket.readyState === 1) socket.send(text);
-      else outbox.push(text);
+      if (link && link.ready()) link.send(frame);
+      else outbox.push(frame);
     };
   };
 
@@ -395,7 +447,10 @@
     document.body.appendChild(script);
   };
 
+  // `dial` is deliberately absent rather than null: a page that wants a different transport sets
+  // it on this object before the mode's script runs, and one that does not gets a websocket.
   window.beck = {
-    build, apply, uuid7, fill, capture, connect, announce, ready, route, stats, inspect, devtools,
+    build, apply, uuid7, fill, capture, connect, announce, ready, route, here, stats, inspect,
+    devtools,
   };
 })();

@@ -1,4 +1,4 @@
-# A page with routes and a form — the client-polish example (docs/98).
+# A page with routes and a form — the client-polish example (docs/100).
 #
 # Two things here are not in the other examples, and neither of them is a framework.
 #
@@ -15,7 +15,7 @@
 #
 # The page reads `session.path` and nothing else about the session, which is exactly what makes it
 # eligible for Mode B: a page may be a function of *where* the browser is and not of *who* is
-# holding it (docs/98 §98.2, B0514). Adding `@render(client)` to the page below is the whole of the
+# holding it (docs/100 §100.2, B0514). Adding `@render(client)` to the page below is the whole of the
 # difference between a navigation that costs a round trip and one that costs a local render.
 
 type Id = newtype[Str]

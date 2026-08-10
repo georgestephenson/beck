@@ -2,7 +2,7 @@
 //!
 //! [`docs/08-roadmap.md`](../../../../docs/08-roadmap.md) §8.6's client bullet — "router, forms,
 //! lazy routes, focus/scroll preservation, devtools" — and
-//! [`docs/98`](../../../../docs/98-client-polish-report.md) is what was built of it. This gates the
+//! [`docs/100`](../../../../docs/100-client-polish-report.md) is what was built of it. This gates the
 //! half that does not need a browser; `browser.rs` gates the half that does, because focus and
 //! scroll are facts about a DOM and nothing here has one.
 //!
@@ -243,7 +243,7 @@ async fn a_navigation_on_an_open_socket_produces_the_new_routes_page() {
         patch.to_string().contains("done"),
         "the route's heading is not in the patch: {patch}"
     );
-    // What a navigation costs on the wire, in the two directions. `docs/98` §98.3 quotes both, and
+    // What a navigation costs on the wire, in the two directions. `docs/100` §100.3 quotes both, and
     // they are asserted rather than printed so the report's numbers cannot drift past them: a nav
     // frame is a couple of dozen bytes, and Mode A's answer is the *difference between two pages*
     // rather than a page.
@@ -469,6 +469,35 @@ fn the_panel_shows_the_three_things_and_is_not_shipped_by_default() {
         assert!(
             client.contains("beck.devtools()"),
             "a mode that cannot open the panel"
+        );
+    }
+}
+
+/// A document with no URL of its own reports the application's root, and follows no links.
+///
+/// The playground's clients are `srcdoc` iframes ([`docs/98`](../../../../docs/98-playground-report.md)),
+/// and `about:srcdoc`'s `location.pathname` is the string `srcdoc`. A residue that read a route off
+/// it would put that on the `hello` frame, no program would ever match it, and every test in this
+/// workspace would still pass — which is the shape of defect this suite exists for.
+#[test]
+fn a_document_with_no_url_has_no_route_and_no_links_to_follow() {
+    // What the `hello` frame carries is `here()`, not `location.pathname` — one predicate rather
+    // than a read at each site, so there is one place for this to be right.
+    assert!(
+        beck_rt::PATCH_CLIENT.contains("path: here(),"),
+        "the hello frame does not carry the route through `here()`"
+    );
+    assert!(
+        beck_rt::PATCH_CLIENT.contains("const addressed = ()"),
+        "nothing decides whether this document has a URL"
+    );
+    // And the router installs nothing when there is no address bar to move.
+    assert!(beck_rt::PATCH_CLIENT.contains("if (!addressed()) return;"));
+    // Neither mode reads the location itself; both go through the router.
+    for client in [beck_rt::THIN_CLIENT, beck_rt::MODE_B_CLIENT] {
+        assert!(
+            !client.contains("location.pathname"),
+            "a mode that reads the location instead of asking the router"
         );
     }
 }

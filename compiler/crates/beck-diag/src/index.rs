@@ -954,7 +954,7 @@ pub const INDEX: &[CodeEntry] = &[
          scopes or hides by identity. `@render(client)` sends the browser the state rather than \
          the page, which would hand every actor what the filter was removing (docs/94 §94.2). \
          Reading `session.path` is not this: the browser chose the route and already holds the \
-         state, so a page that varies by route is eligible (docs/98 §98.2).",
+         state, so a page that varies by route is eligible (docs/100 §100.2).",
     ),
     e(
         "B0515",

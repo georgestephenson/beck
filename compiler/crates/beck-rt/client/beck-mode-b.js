@@ -123,11 +123,12 @@
 
     // `<u32 len><viewer json><bundle>` — the viewer first because the kernel needs it to build the
     // `Session` the view is rendered against.
-    // The route is part of the viewer, and it is read off `location` rather than restored from the
-    // local copy: after a reload the address bar is the browser's own answer to "where am I", and a
-    // snapshot that disagreed with it would render a page the URL does not name.
+    // The route is part of the viewer, and it is read off the address bar rather than restored
+    // from the local copy: after a reload the URL is the browser's own answer to "where am I", and
+    // a snapshot that disagreed with it would render a page the URL does not name. A document with
+    // no URL of its own is at the root, which is `beck.here`'s job to know.
     const name = new TextEncoder().encode(
-      JSON.stringify({ actor, claims, path: location.pathname }),
+      JSON.stringify({ actor, claims, path: beck.here() }),
     );
     const payload = new Uint8Array(4 + name.length + bundle.byteLength);
     new DataView(payload.buffer).setUint32(0, name.length, true);

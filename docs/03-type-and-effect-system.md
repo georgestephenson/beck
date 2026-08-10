@@ -264,10 +264,10 @@ our own auth code — with verified claims mapped to typed capabilities
 ([`10`](10-decisions.md) D6).
 
 > It carries a third field that **nothing verifies and nothing should**: `path`, the route the
-> client says it is on ([`98`](98-client-polish-report.md)). `actor` and `claims` say *who* is
+> client says it is on ([`100`](100-client-polish-report.md)). `actor` and `claims` say *who* is
 > asking and are a provider's answer; `path` says *where* they are and is the browser's own
 > statement about itself. The two halves are told apart structurally where it matters — a Mode B
-> page may read the second and not the first (§98.2) — and the route cannot reach a **fold**,
+> page may read the second and not the first (§100.2) — and the route cannot reach a **fold**,
 > because an `Envelope` carries the actor's name and nothing else, so no replay depends on where
 > anybody was browsing.
 

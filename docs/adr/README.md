@@ -40,3 +40,4 @@ The split this directory creates:
 | [0022](0022-mode-b-ships-the-backend-it-has.md) | Mode B's kernel is the evaluator compiled to WebAssembly, not a WebAssembly code generator — the mode's questions are not the backend's |
 | [0023](0023-tls-and-the-signature-it-brings.md) | rustls with aws-lc-rs — one dependency for transport security *and* the asymmetric signature an OIDC relying party verifies |
 | [0024](0024-cranelift-emits-an-object-and-a-linker-makes-it-a-program.md) | Cranelift as a crate, emitting an object a linker turns into a program — the `unsafe` ADR 0021 refused was in *running* code, not in generating it |
+| [0025](0025-deflate-so-the-image-build-needs-no-tools.md) | DEFLATE is taken and tar is written — the image build needs an inflater it cannot write and a byte-deterministic tar no library offers |
