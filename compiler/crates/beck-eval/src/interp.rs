@@ -2197,6 +2197,7 @@ impl<'h> Interp<'h> {
             // signal expression ended up somewhere the splitter did not claim, which is a
             // compiler bug rather than a program error — so it says so.
             Prim::MergeClients
+            | Prim::Presence
             | Prim::StreamFilterMap
             | Prim::Fold
             | Prim::Durable

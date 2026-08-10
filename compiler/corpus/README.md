@@ -1,6 +1,6 @@
 # The corpus
 
-Thirty-one programs, and the Phase 2 exit criterion measured against them:
+Thirty-two programs, and the Phase 2 exit criterion measured against them:
 
 > On a corpus of 20+ programs, placement is inferred with no annotations for the common cases.
 
@@ -45,7 +45,11 @@ of one shape would prove that the shape works, which Phase 1 already did. What v
   refuses a command unless the *issuer* said which tenant is asking (program 31,
   [`docs/95`](../../docs/95-oidc-relying-party-report.md)). It is the only file here with a
   top-level form that is neither a definition nor a signal, so it is what holds the printer, the
-  round-trip property and the placement property to it.
+  round-trip property and the placement property to it;
+- **what is not in the log**: a program whose page reads `presence()` — who is connected now —
+  beside the accumulator (program 32, [`docs/96`](../../docs/96-presence-report.md)). It is the only
+  file here with an input that a replay does not reproduce, so it is where the rule that keeps that
+  input away from the chokepoint has something to be about.
 
 Every file is a program someone could plausibly write. Where one exists to exercise a corner, its
 first comment says which corner and why.

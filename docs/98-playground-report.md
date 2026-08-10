@@ -1,11 +1,11 @@
-# 96 — Phase 3 report, part 64: the playground, and what a tab turns out to be
+# 98 — Phase 3 report, part 66: the playground, and what a tab turns out to be
 
 **Built.** [`17`](17-playground.md)'s rungs A and B: the compiler, compiled to WebAssembly and
 answering in the browser, with source on the left and what it derives on the right; and the whole
 *application* in the same tab — a log, a fold, and two client iframes speaking the patch protocol
 over a `MessageChannel` — with a `seq` scrubber that folds the log again from genesis. It is one of
-the two bullets [`08`](08-roadmap.md) §8.6 has listed as untouched since Phase 3 began, and the
-last one that is a *product* rather than a backend.
+the two bullets [`08`](08-roadmap.md) §8.6 listed as untouched when this was started, and the last
+one that is a *product* rather than a backend.
 
 The interesting half is not the WebAssembly, and it is not the page. It is what §17.2 claims and how
 much of it survives contact: **"by the differential harness's own guarantee, rung-B behaviour *is*
@@ -13,9 +13,9 @@ the deployed behaviour."** That sentence is only true if the tab runs the deploy
 `beck-rt` does not cross to `wasm32-unknown-unknown` — it holds Postgres, redb, SQLite, TLS and a
 multi-threaded reactor. So the work was mostly not in `crates/beck-play/`: it was in deciding which
 half of the runtime is *about the machine* and moving the other half somewhere both hosts can reach
-it. That is §96.2, and it is the only structural change here.
+it. That is §98.2, and it is the only structural change here.
 
-## 96.1 Rung A, and the drift it found on the way in
+## 98.1 Rung A, and the drift it found on the way in
 
 §17.1 lists what a visitor gets with zero servers: "type checking with real diagnostics, macro
 expansion … **inferred placement per definition**, generated dataflow/SQL plans, generated
@@ -59,7 +59,7 @@ would do.
 [`beck_core::split::wire_report`]: ../compiler/crates/beck-core/src/split.rs
 [`beck_core::secure::flow_report`]: ../compiler/crates/beck-core/src/secure.rs
 
-## 96.2 The tab is a host, and `beck-host` is what made that a true sentence
+## 98.2 The tab is a host, and `beck-host` is what made that a true sentence
 
 §17.2's table is three implementations of the runtime's interfaces, and the third is a browser:
 
@@ -118,7 +118,7 @@ checker accepted. The fix is a correctness fix to a path no test can currently r
 recorded here so that the next person to make one of those paths reachable knows the behaviour was
 chosen rather than inherited.
 
-## 96.3 The client in the iframe is the client, and that cost one seam
+## 98.3 The client in the iframe is the client, and that cost one seam
 
 §17.2 says the tab holds "the thin patch client in an iframe, speaking the identical patch/command
 protocol over a `MessageChannel` instead of a websocket". The word doing the work is *identical*, and
@@ -142,7 +142,7 @@ rendered, inside `#b-root`, with `data-b-seq` on it — first paint is SSR, and 
 afterwards resumes from the position that render reflects. It is the same document because it is the
 same claim.
 
-## 96.4 The two demos §17.2 says nobody else can build
+## 98.4 The two demos §17.2 says nobody else can build
 
 **Multiplayer in one tab.** Two iframes, two subscriptions, one log. ana clicks; the command goes up
 her port to the worker, through the one merge point, into the array that is the log; every
@@ -156,6 +156,16 @@ subscription design exists for and is gated separately on `todo.beck`, whose vie
 session: ana adds a todo, and bo — who cannot see it and is not waiting on anything — is owed no
 frame at all.
 
+**And who else is here.** [`96`](96-presence-report.md) landed D6's presence signal while this was
+being written, and it is the one input to a view that moves without an event — so it is also the one
+place a tab could quietly answer a different question than a server. `beck_host::Runtime::view`
+renders against the viewer's *own* roster, which is right for `beck test` and wrong for an
+application; the tab therefore keeps a roster, built from the thing it already knows — its own
+subscriptions — exactly as `beck_rt::App` keeps a registry. A second client arriving moves the first
+client's page, and `playground.rs::presence_in_the_tab_is_who_is_connected_to_the_tab` is what says
+so. The bound `beck_rt::presence` needs is not here and does not need to be: a server's roster is
+keyed by a name the client chose, and a tab has as many connections as the page opened.
+
 **Time travel.** The scrubber under the application asks the tab for the page at a position, and the
 tab computes it by folding the log **from genesis** with the program's own `apply_event`. Not a
 recording and not an undo stack: D3's genesis-replay discipline, as something a visitor drags.
@@ -164,9 +174,9 @@ oracle that is the *other host* — the same commands through a `beck_rt::App`, 
 after each one — and the browser test drags the scrubber to 1 and to 0 and then checks that the live
 clients did not move, because a scrubber that moved the application would be an undo.
 
-## 96.5 What is actually in the tab
+## 98.5 What is actually in the tab
 
-Two artefacts, and keeping them apart is the whole of §96.6's honesty.
+Two artefacts, and keeping them apart is the whole of §98.6's honesty.
 
 **The module** — `crates/beck-play`, a `wasm32-unknown-unknown` build of the front end, the
 evaluator, the infrastructure derivation and the tab server, with three exports (`beck_alloc`,
@@ -181,7 +191,7 @@ deployment: §17.1's "costs a CDN" is not a figure of speech, and `beck play` wi
 the same bytes on a port so that a browser can instantiate WebAssembly at all, which it cannot over
 `file://`.
 
-## 96.6 What it costs
+## 98.6 What it costs
 
 `cargo test --release --test measure_play -- --nocapture`, on the container this was written in.
 
@@ -230,7 +240,7 @@ Measured natively rather than in WebAssembly, exactly as [`94`](94-mode-b-report
 numbers were: the crate is an `rlib` as well as a `cdylib`. The ratios and the shapes carry across;
 the absolute microseconds do not.
 
-## 96.7 What is not built
+## 98.7 What is not built
 
 - **Rung C.** Untouched, and Phase 4's ([`08`](08-roadmap.md) §8.7): an ephemeral cluster per
   session, with the compiler as the first sandbox. Nothing here is that, and nothing here compiles
@@ -256,9 +266,9 @@ the absolute microseconds do not.
 - **One log, one program.** Loading a program replaces the running one. No forking a session, no two
   programs side by side, and no way to seed a log from a `given` block.
 
-## 96.8 The gates, and what makes each go red
+## 98.8 The gates, and what makes each go red
 
-`crates/beck-cli/tests/playground.rs`, 14 tests:
+`crates/beck-cli/tests/playground.rs`, 15 tests:
 
 | What would break it | The test |
 |---|---|
@@ -268,6 +278,7 @@ the absolute microseconds do not.
 | The tab stops being the deployed runtime on any state a log can reach | `the_tab_and_the_server_agree_on_every_state_a_log_can_reach` |
 | The tab starts sending a different frame than a subscription would | `the_tab_and_the_server_send_the_same_frames` |
 | An idle subscriber starts costing bytes, or a fanout stops reaching the other client | `a_command_moves_every_page_it_changes_and_no_others` |
+| The tab starts answering "who is here" with the viewer alone | `presence_in_the_tab_is_who_is_connected_to_the_tab` |
 | A retry is refused rather than acknowledged, or appended twice | `a_retried_command_is_acknowledged_and_appended_once` |
 | The scrubber becomes a recording rather than a fold | `the_scrubber_renders_the_state_the_log_produces_at_every_position` |
 | The page asks a browser for a file the bundle does not carry | `the_bundle_carries_everything_the_page_asks_for` |
@@ -288,28 +299,28 @@ And in Chromium, in `crates/beck-cli/tests/browser.rs`:
 CI runs both with `BECK_REQUIRE_WASM=1` and `BECK_REQUIRE_BROWSER=1`, in the job that already
 existed for Mode B, so neither can skip there.
 
-## 96.9 What this corrects, elsewhere
+## 98.9 What this corrects, elsewhere
 
-- [`17`](17-playground.md) §17.1 and §17.2 are **built**; §17.3, §17.4 and §17.5 are not, and §96.7
+- [`17`](17-playground.md) §17.1 and §17.2 are **built**; §17.3, §17.4 and §17.5 are not, and §98.7
   says which parts of each.
 - [`17`](17-playground.md) §17.6's "Rung B lands with Mode B's WASM kernel in the same phase — the
   worker-server is the rung-0 platform compiled to WASM" is **half right, and the half it got wrong
   is the interesting one**. The worker-server is indeed the rung-0 platform, and the reason it could
-  be is not that Mode B's kernel existed — it is that `beck-rt` could be divided (§96.2). Mode B's
+  be is not that Mode B's kernel existed — it is that `beck-rt` could be divided (§98.2). Mode B's
   kernel is a *bundle interpreter*; a tab server is a sequencer, a log and a differ, and none of
   those are in `beck-wasm`. The rung rode a division of the runtime, not the kernel work.
 - [`08`](08-roadmap.md) §8.6's playground bullet is built for rungs A and B; the "untouched" list
   loses it and keeps client polish.
-- **`beck-rt` gained a crate below it** and lost none of its public paths (§96.2). `beck-host` depends on `beck-core` and nothing else that matters, and the rule
+- **`beck-rt` gained a crate below it** and lost none of its public paths (§98.2). `beck-host` depends on `beck-core` and nothing else that matters, and the rule
   `beck-rt` has carried since Phase 1 — no dependency on a backend crate — is inherited by it.
 - **`Runtime::new_uuid` is gone.** It had no callers: the evaluator mints its own ids
   (`beck_eval::uuid_v7`), and the field on `Runtime` was a second source nothing read. Removing it
   is what let `beck-host` carry no `uuid` dependency, which matters because `uuid`'s
   `wasm32-unknown-unknown` support is `wasm-bindgen`, and [`94`](94-mode-b-report.md) §94.4's "no
   `wasm-bindgen`, no generated glue" is a property worth keeping.
-- **`beck-patch.js` has a transport seam** (§96.3). A deployment is unchanged — no `beck.dial`, so a
+- **`beck-patch.js` has a transport seam** (§98.3). A deployment is unchanged — no `beck.dial`, so a
   websocket — and `browser.rs`'s five Mode A and Mode B tests are what says so.
-- **A command's events are all-or-nothing** (§96.2), which the log's contract already required and
+- **A command's events are all-or-nothing** (§98.2), which the log's contract already required and
   the sequencer did not do.
 - **A measurement suite could deadlock on a large artefact**, and one that has been in the tree
   since [`94`](94-mode-b-report.md) did. `compressed()` wrote its input into a compressor's stdin
@@ -320,12 +331,13 @@ existed for Mode B, so neither can skip there.
   `measure_mode_b.rs`.
 - `docs/reference/cli.md` gains `beck play`, regenerated rather than written.
 
-## 96.10 What Phase 3 is still not
+## 98.10 What Phase 3 is still not
 
 Unchanged except for this bullet: **the playground exists**, for the two rungs that need no cloud.
-What is still missing is identity's presence signal ([`48`](48-identity-report.md) §48.5), three of
-the supply-chain bullet's four pieces ([`92`](92-sbom-report.md) §92.5), client polish, and Mode B's
-codegen ([`94`](94-mode-b-report.md) §94.8).
+What is still missing is three of the supply-chain bullet's four pieces
+([`92`](92-sbom-report.md) §92.5), client polish, and the heap both code generators and Mode B's
+kernel wait on ([`94`](94-mode-b-report.md) §94.8, [`97`](97-cranelift-report.md) §97.7). Identity's
+last row closed while this was being written ([`96`](96-presence-report.md)).
 
 The exit criterion is a claim about a person — an outside developer building a non-trivial app
 without asking the authors a question — and no outside developer has read [`86`](86-getting-started.md).

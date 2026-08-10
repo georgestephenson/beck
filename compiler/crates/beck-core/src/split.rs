@@ -124,7 +124,7 @@ impl Placed {
             validate: lam(2, unit()),
             fold: lam(2, Core::new(CoreKind::Var(0), Ty::unit(), span)),
             init: unit(),
-            view: lam(2, unit()),
+            view: lam(3, unit()),
             state_ty: Ty::unit(),
             event_ty: Ty::unit(),
             command_ty: Ty::unit(),
@@ -136,6 +136,7 @@ impl Placed {
             shared: Vec::new(),
             states: Vec::new(),
             view_is_per_session: false,
+            view_reads_presence: false,
         };
         Placed {
             program,
@@ -181,8 +182,12 @@ pub struct Roles {
     pub fold: Core,
     /// The fold's initial accumulator.
     pub init: Core,
-    /// `(state, session) -> Html` — the client-placed view, with intermediate signals inlined or
-    /// shared.
+    /// `(state, session, presence) -> Html` — the client-placed view, with intermediate signals
+    /// inlined or shared.
+    ///
+    /// Three parameters whether or not the program reads the third: a role the runtime calls has
+    /// one arity, and a view that ignores its presence argument is cheaper than two code paths
+    /// that could disagree about which one it has.
     pub view: Core,
     pub state_ty: Ty,
     pub event_ty: Ty,
@@ -201,6 +206,8 @@ pub struct Roles {
     /// the accumulator is fused.
     pub states: Vec<StateRole>,
     pub view_is_per_session: bool,
+    /// Whether the page reads `presence()`, and therefore has an input the log does not contain.
+    pub view_reads_presence: bool,
 }
 
 impl Roles {
@@ -292,6 +299,40 @@ pub fn split(mut program: Program, diags: &mut Diagnostics) -> Option<Placed> {
         return None;
     }
 
+    // §3.7's replay rule, at the granularity of the graph: what the log records must be a function
+    // of the log. `presence()` is the one signal that is not, so the chokepoint may not read it —
+    // directly or through any number of maps.
+    if let Some(&here) = graph
+        .presences()
+        .iter()
+        .find(|&&p| reaches(&graph, decide, p))
+    {
+        diags.push(
+            Diagnostic::error(
+                "B0515",
+                "the chokepoint reads `presence`, which is not in the log",
+                graph.node(decide).span,
+            )
+            .with_primary_label(format!(
+                "`{}` decides from `{}`",
+                graph.label(decide),
+                graph.label(here)
+            ))
+            .with_label(graph.node(here).span, "who is connected is decided here")
+            .with_note(
+                "an event is what a replay reproduces, and who was connected when it was recorded \
+                 is not written down anywhere. A `validate` that read the roster would decide one \
+                 thing today and another on replay, and the log would no longer be the whole \
+                 history",
+            )
+            .with_fix(
+                "record the fact instead: propose a command when a client arrives, and decide from \
+                 the state that fold produces",
+            ),
+        );
+        return None;
+    }
+
     // Each fold's stream, after any `filter_map`, must be the chokepoint's output. Anything else
     // is an event stream the log does not contain.
     let mut fold_filters: Vec<Option<Core>> = Vec::new();
@@ -366,6 +407,7 @@ pub fn split(mut program: Program, diags: &mut Diagnostics) -> Option<Placed> {
     let mut vars = Vars(max_var(&program));
     let state_var = vars.fresh();
     let session_var = vars.fresh();
+    let presence_var = vars.fresh();
 
     let state_roles: Vec<StateRole> = folds
         .iter()
@@ -385,11 +427,13 @@ pub fn split(mut program: Program, diags: &mut Diagnostics) -> Option<Placed> {
         states: &state_roles,
         state_var,
         session_var,
+        presence_var,
         bound: BTreeMap::new(),
         lets: Vec::new(),
         inlined: Vec::new(),
         shared: Vec::new(),
         per_session: false,
+        reads_presence: false,
         vars: &mut vars,
         diags,
     };
@@ -398,6 +442,7 @@ pub fn split(mut program: Program, diags: &mut Diagnostics) -> Option<Placed> {
     let inlined = slicer.inlined.clone();
     let shared = slicer.shared.clone();
     let per_session = slicer.per_session;
+    let reads_presence = slicer.reads_presence;
 
     let state_ty = if fused {
         Ty::con(FUSED_STATE)
@@ -407,10 +452,17 @@ pub fn split(mut program: Program, diags: &mut Diagnostics) -> Option<Placed> {
 
     let view = Core {
         kind: CoreKind::Lam {
-            params: vec![state_var, session_var].into(),
+            params: vec![state_var, session_var, presence_var].into(),
             body: Arc::new(view_body),
         },
-        ty: Ty::fun(vec![state_ty.clone(), Ty::con("Session")], Ty::html()),
+        ty: Ty::fun(
+            vec![
+                state_ty.clone(),
+                Ty::con("Session"),
+                Ty::map(Ty::str_(), Ty::int()),
+            ],
+            Ty::html(),
+        ),
         tier: Tier::Client,
         span: graph.node(page).span,
         last_use: false,
@@ -550,6 +602,7 @@ pub fn split(mut program: Program, diags: &mut Diagnostics) -> Option<Placed> {
         shared,
         states: state_roles,
         view_is_per_session: per_session,
+        view_reads_presence: reads_presence,
     };
 
     // Where the page renders, and whether it may. `@render(client)` turns the crossing from a
@@ -587,6 +640,25 @@ pub fn split(mut program: Program, diags: &mut Diagnostics) -> Option<Placed> {
 
 fn is_html(t: &Ty) -> bool {
     signal_elem(t).con_name() == Some(Ty::HTML)
+}
+
+/// Whether `from` reads `target`, at any depth.
+///
+/// The graph is legitimately cyclic (§3.7's `decide → durable → fold → decide`), so this is a
+/// visited-set walk rather than a recursion that would follow the cycle forever.
+fn reaches(graph: &Graph, from: SigId, target: SigId) -> bool {
+    let mut seen = BTreeSet::new();
+    let mut stack = vec![from];
+    while let Some(id) = stack.pop() {
+        if id == target {
+            return true;
+        }
+        if !seen.insert(id) {
+            continue;
+        }
+        stack.extend(graph.node(id).inputs.iter().copied());
+    }
+    false
 }
 
 /// Step past `mirror: Signal[T] = todos` declarations, which name a vertex without adding one.
@@ -959,6 +1031,7 @@ struct Slicer<'a, 'd> {
     states: &'a [StateRole],
     state_var: VarId,
     session_var: VarId,
+    presence_var: VarId,
     vars: &'d mut Vars,
     /// Vertices already bound in this slice.
     bound: BTreeMap<SigId, VarId>,
@@ -967,6 +1040,7 @@ struct Slicer<'a, 'd> {
     inlined: Vec<Arc<str>>,
     shared: Vec<Arc<str>>,
     per_session: bool,
+    reads_presence: bool,
     diags: &'d mut Diagnostics,
 }
 
@@ -993,6 +1067,12 @@ impl Slicer<'_, '_> {
                 role,
                 node.span,
             ));
+        }
+        // Presence is the other input a view has that is not a computation: a parameter, like the
+        // accumulator, and unlike the accumulator not a function of the log.
+        if matches!(node.op, Op::Presence) {
+            self.reads_presence = true;
+            return Some(var(self.presence_var, signal_elem(&node.ty), node.span));
         }
         if let Some(&v) = self.bound.get(&id) {
             return Some(var(v, signal_elem(&node.ty), node.span));
@@ -1055,7 +1135,7 @@ impl Slicer<'_, '_> {
                 );
                 return None;
             }
-            Op::Durable | Op::Alias => unreachable!("handled above"),
+            Op::Durable | Op::Alias | Op::Presence => unreachable!("handled above"),
         };
 
         if let Some(name) = &node.name {

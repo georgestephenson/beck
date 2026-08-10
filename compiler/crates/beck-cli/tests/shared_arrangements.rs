@@ -135,9 +135,16 @@ impl Subject {
     /// moved past the one asked for.
     fn render(&self, engine: &mut Engine, version: u64, actor: &str, at: &str) -> u64 {
         let session = self.runtime.session(actor);
+        let here = beck_core::edge::presence_of(actor);
         let (page, served) = self
             .shared
-            .render(engine, &self.history[version as usize], version, &session)
+            .render(
+                engine,
+                &self.history[version as usize],
+                version,
+                &session,
+                &here,
+            )
             .unwrap_or_else(|e| panic!("{}: shared render: {e}", self.name));
         let Value::Html(page) = page else {
             panic!("{}: the engine produced {}", self.name, page.display())
@@ -374,6 +381,7 @@ fn what_a_subscriber_holds_is_only_what_reads_the_session() {
             .render(
                 &subject.history[head as usize],
                 &subject.runtime.session(ACTORS[0]),
+                &beck_core::edge::presence_of(ACTORS[0]),
             )
             .expect("a standalone render");
 
@@ -420,7 +428,11 @@ fn a_fanout_costs_the_shared_prefix_once_rather_than_once_each() {
         .collect();
     for (i, engine) in alone.iter_mut().enumerate() {
         engine
-            .render(state, &subject.runtime.session(ACTORS[i % ACTORS.len()]))
+            .render(
+                state,
+                &subject.runtime.session(ACTORS[i % ACTORS.len()]),
+                &beck_core::edge::presence_of(ACTORS[i % ACTORS.len()]),
+            )
             .expect("a standalone render");
     }
     let unshared =

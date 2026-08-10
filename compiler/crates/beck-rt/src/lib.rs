@@ -19,6 +19,7 @@ pub mod oidc;
 pub mod outbound;
 pub mod patch;
 pub mod pgwire;
+pub mod presence;
 pub mod quota;
 pub mod session;
 pub mod telemetry;

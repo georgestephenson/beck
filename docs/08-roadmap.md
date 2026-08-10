@@ -354,20 +354,23 @@ dependencies whose signatures didn't change.
   choose. The **relying party** and the **claims mapping** are built too
   ([`95`](95-oidc-relying-party-report.md)): discovery, a cached JWKS, RS/PS/ES signatures, every
   claim check, the authorization-code flow with PKCE, and `Session.claims`. What is left of this
-  bullet is presence. D6's language surface is built as written, both forms —
+  bullet was presence, and it is **built** too ([`96`](96-presence-report.md)): a source in the
+  signal graph performing `cap.presence`, refused to the chokepoint and to a Mode B page, and
+  bounded because it is keyed by a name the client chooses. D6's
+  language surface is built as written, both forms —
   `identity = external(issuer=…)` is a declaration, so §6.5's egress rule covers the issuer like any
   other peer (§95.7).*
 - LSP: completion, hover with *inferred placement*, go-to-def, rename, inline diagnostics.
 - **The playground** ([`17`](17-playground.md)) — highest-leverage adoption artefact: rung A
   (compile-time, static) and rung B (the whole app in the tab — the worker-server is the rung-0
   platform compiled to WASM, riding Mode B's kernel work; `seq` scrubber and two-client demos).
-  *Both **built** ([`96`](96-playground-report.md)): `beck play` serves a page whose right-hand side
+  *Both **built** ([`98`](98-playground-report.md)): `beck play` serves a page whose right-hand side
   is eleven `beck explain` answers derived in the browser, and whose lower half is the program
   running — one log, one fold, two client iframes and the scrubber. This row's forecast that rung B
-  would ride Mode B's kernel work is the one thing it got wrong (§96.9): a tab server is a
+  would ride Mode B's kernel work is the one thing it got wrong (§98.9): a tab server is a
   sequencer, a log and a differ, and none of those are in `beck-wasm`. What it rode was a division
   of the runtime — `beck-host`, the half of `beck-rt` that is program-shaped rather than
-  machine-shaped. Rung C is Phase 4's, and §96.7 lists what rungs A and B still lack: no IndexedDB,
+  machine-shaped. Rung C is Phase 4's, and §98.7 lists what rungs A and B still lack: no IndexedDB,
   no content-addressed sharing, no Mode B in the tab, and a `<textarea>` where the LSP already
   exists.*
 - `beck init ci`, apko image build in-process, cosign signing, SBOM. *The **SBOM** is built
@@ -386,21 +389,23 @@ team a question. Track this literally as the acceptance test.
 substrate, the standard library, the language's own means of abstraction, the LSP, the
 expressiveness suite (three chapters of SICP and the Felleisen table, with chapters 4–5 belonging
 to Phase 5), incremental views, whose last part is
-[`89`](89-query-fusion-report.md)'s fusion, and the playground's two anonymous rungs
-([`96`](96-playground-report.md)).
+[`89`](89-query-fusion-report.md)'s fusion, **identity**, whose last part is
+[`96`](96-presence-report.md)'s presence, and the playground's two anonymous rungs
+([`98`](98-playground-report.md)).
 **No bullet has a named remainder**: the concurrency-and-errors bullet has `Result`, error rows,
 `parallel:` and pattern matching with nesting, guards and alternatives
 ([`90`](90-nested-patterns-report.md), [`91`](91-guards-and-alternatives-report.md)); what
 `parallel:` lacks is a backend that runs two children at once, which is
 [`80`](80-a-scope-owns-its-children-report.md) §80.5's item rather than this bullet's. **Three
-half-built**: identity has its seam, its relying party, its claims mapping and both halves of its
-declaration ([`48`](48-identity-report.md), [`95`](95-oidc-relying-party-report.md)) and not
-presence; the codegen bullet has LLVM over the scalar subset and no Cranelift
-([`93`](93-llvm-backend-report.md) §93.6); and Mode B has the mode, the bundle, the data patch, the
-reconciliation, a browser that runs it and an offline queue, without codegen
-([`94`](94-mode-b-report.md) §94.8); and the playground has rungs A and B and not rung C, which is
-Phase 4's ([`96`](96-playground-report.md) §96.7). **One untouched**: client polish; the
-supply-chain bullet has one of its four pieces ([`92`](92-sbom-report.md)). The criterion is not a count of those, though — it is a
+half-built**: the codegen bullet has **both** of §5.2's code generators over the scalar subset
+([`93`](93-llvm-backend-report.md), [`97`](97-cranelift-report.md)) and no heap, so what it does not
+compile is everything the language stores; Mode B has the mode, the bundle, the data patch, the
+reconciliation, a browser that runs it and an offline queue, without codegen — which is the *same*
+missing heap ([`94`](94-mode-b-report.md) §94.8, [`97`](97-cranelift-report.md) §97.7); and the
+playground has rungs A and B and not rung C, which is Phase 4's
+([`98`](98-playground-report.md) §98.7). **One untouched**: client polish; the
+supply-chain bullet has one of its four pieces
+([`92`](92-sbom-report.md)). The criterion is not a count of those, though — it is a
 claim about a *person*, and the honest way to say how close it is is by the questions such a
 developer would ask in order:
 
@@ -756,8 +761,8 @@ that could only read atoms was wrong about exactly the forward references a prog
 and it catches the failure its signature names while the others travel, instead of refusing a block
 that can fail two ways.*
 
-**Wave 3 — months. ✅ Built, except for provisioning and presence**
-([`48`](48-identity-report.md), [`95`](95-oidc-relying-party-report.md)). Identity is a **seam**:
+**Wave 3 — months. ✅ Built** ([`48`](48-identity-report.md),
+[`95`](95-oidc-relying-party-report.md), [`96`](96-presence-report.md)). Identity is a **seam**:
 an `Actor` only a provider can mint, `DevIdentity` as the named default, and a `SignedIdentity`
 that verifies a keyed-BLAKE3 credential — so an ownership check compares against something the
 caller did not choose. And there is a third provider: an **OIDC relying party**, with discovery, a
@@ -778,8 +783,17 @@ egress to it is a `Peer` — a rule Kubernetes enforces, which the DNS-name rule
 gets is not. It is the one place in the project where a plaintext issuer is admissible, and the
 argument is written out rather than left in a URL.
 
-**Unbuilt**: presence — "who is connected now, as a first-class non-durable `Signal`" — which is the
-last row of this bullet.
+~~**Unbuilt**: presence — "who is connected now, as a first-class non-durable `Signal`" — which is
+the last row of this bullet.~~ **Built** ([`96`](96-presence-report.md)): `presence()` is a source
+in the signal graph performing `cap.presence`, which is [`14`](14-review-findings.md) F16's "gate
+behind a capability" taken literally — and is what places it on the server, keeps it out of a fold
+and publishes it in the row. The chokepoint may not read it (`B0515`, checked by reachability
+rather than by an argument's shape) and a Mode B page may not either (`B0516`). It is **per
+subscriber** rather than shared, and the reason is a clock: §5.3's shared dataflow is versioned by
+the log's `seq` and this is the one input that moves when `seq` does not — §98.8's first unbuilt
+item. The roster is **bounded**, because it is keyed by a name the client chooses
+([`84`](84-a-quota-is-only-as-good-as-its-actor-report.md) §84.4 one subsystem over), and a page
+that never asks who is connected is not re-rendered when somebody connects.
 
 *Both of that row's predecessors are gone.* §48.5 said the relying party "needs an HTTP client and a
 signature library, so it is an ADR rather than a line in a module". The HTTP client was built
@@ -790,7 +804,7 @@ nothing. This row's forecast that the two were one ADR was right; the reason tur
 better than the one it gave.
 
 ~~Then the playground rungs A and B (whose safety predecessor landed in Wave 0)~~ — **built**
-([`96`](96-playground-report.md)), and the predecessor was the right one: the front end counts its
+([`98`](98-playground-report.md)), and the predecessor was the right one: the front end counts its
 own recursion, so the page compiles a stranger's source without a stack that can be exhausted from
 the outside. Then Phase 3's exit criterion. ~~What it measures is documentation an outside developer could build from, and there is
 none.~~ There is now: [`86`](86-getting-started.md), gated so that every program in it compiles and
@@ -800,9 +814,13 @@ anything this repository does to itself. §86.8 lists what the guide does not co
 needs an outside developer, and none has read it.
 
 **Wave 4 — free-standing, in parallel with Waves 2–3.** ~~LLVM backend and native codegen~~ —
-**half built** ([`93`](93-llvm-backend-report.md)): the scalar subset compiles and the differential
-exists; there is no heap, so no record, list, string or effect compiles, and Cranelift is untouched;
-Mode B and
+**both code generators built** ([`93`](93-llvm-backend-report.md),
+[`97`](97-cranelift-report.md)): §5.2's dual codegen exists over the scalar subset, `beck native
+--backend cranelift|llvm` chooses, and §4.8's differential is **three-way** — the tree-walker, LLVM
+and Cranelift on every call, with the two emitters held to accepting and refusing the same
+definitions. What still bounds *both* is the **heap**: no record, list, string or effect compiles,
+which is Phase 4's Lane E and the same prerequisite Mode B codegen is behind
+([`94`](94-mode-b-report.md) §94.8). Mode B and
 client polish; the LSP; ~~SQL read models, pgwire~~ — **built**
 ([`88`](88-read-models-and-pgwire-report.md)), and they were not a Lane B item in the shape this
 list assumed: the schema derivation is a pass over the plan, the wire is `beck-rt`, and neither

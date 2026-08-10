@@ -15,7 +15,7 @@
 //!
 //! The playground is here too, for the same reason and then one more: rung A and rung B are a
 //! page, a worker and two iframes passing ports to each other, and *none* of that exists in any
-//! other suite. `docs/96` is the report; `playground.rs` gates what the module answers, and these
+//! other suite. `docs/98` is the report; `playground.rs` gates what the module answers, and these
 //! gate that a browser can get the answers out of it.
 
 use std::net::{SocketAddr, TcpListener};
@@ -680,7 +680,7 @@ async fn mode_b_cold_starts_with_the_server_gone() {
 }
 }
 
-// --------------------------------------------------------------- the playground (docs/17, docs/96)
+// --------------------------------------------------------------- the playground (docs/17, docs/98)
 
 /// Build the playground module and point the server at it. Once, for the same reason
 /// [`point_at_the_kernel`] is once — a browser suite that can be stale about the thing it is

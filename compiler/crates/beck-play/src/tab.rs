@@ -22,7 +22,7 @@
 //! optimisation for a queue, and a tab has no queue.
 //!
 //! Not durable: a reload starts from `init`. §17.2's IndexedDB row is the honest version of
-//! "storage" and is not built — [`docs/96`](../../../../../docs/96-playground-report.md) §96.7 says
+//! "storage" and is not built — [`docs/98`](../../../../../docs/98-playground-report.md) §98.7 says
 //! so rather than implying otherwise.
 
 use std::collections::BTreeMap;
@@ -104,7 +104,7 @@ impl Tab {
     }
 
     /// Which rendering mode this program's page is in. The tab serves Mode A only, and says so
-    /// rather than rendering the wrong thing (§96.7).
+    /// rather than rendering the wrong thing (§98.7).
     pub fn mode(&self) -> Mode {
         self.runtime.placed().render.mode
     }
@@ -125,9 +125,21 @@ impl Tab {
             },
         };
 
-        let now = match self.runtime.view(&self.state, actor) {
+        // In the roster *before* the first render, so a page that reads `presence()` counts the
+        // client it is being rendered for. `beck_rt::session` joins on the same line, for the same
+        // reason.
+        self.subs.retain(|(id, _)| id != sub);
+        self.subs.push((
+            sub.to_string(),
+            Subscriber {
+                actor: actor.to_string(),
+                shown: Html::text(""),
+            },
+        ));
+
+        let now = match self.render(actor) {
             Ok(page) => page,
-            Err(why) => return vec![self.error(sub, &why.to_string())],
+            Err(why) => return vec![self.error(sub, &why)],
         };
         let ops = match how {
             Resumption::Fresh | Resumption::Reset { .. } => vec![Op::Replace {
@@ -139,15 +151,9 @@ impl Tab {
                 Err(why) => return vec![self.error(sub, &why)],
             },
         };
-
-        self.subs.retain(|(id, _)| id != sub);
-        self.subs.push((
-            sub.to_string(),
-            Subscriber {
-                actor: actor.to_string(),
-                shown: now,
-            },
-        ));
+        if let Some((_, s)) = self.subs.iter_mut().find(|(id, _)| id == sub) {
+            s.shown = now;
+        }
 
         let mut out = vec![Outgoing {
             sub: sub.to_string(),
@@ -159,6 +165,14 @@ impl Tab {
                 msg: patch(head, &ops),
             });
         }
+        // Somebody arriving moves every page that reads `presence()`, and nobody else's. The
+        // server learns this from a watch its subscriptions select on; a tab learns it because it
+        // is the thing that just changed the roster.
+        out.extend(
+            self.advance("")
+                .into_iter()
+                .filter(|frame| frame.sub != sub),
+        );
         out
     }
 
@@ -257,10 +271,11 @@ impl Tab {
             let Some((_, s)) = self.subs.iter().find(|(id, _)| *id == sub) else {
                 continue;
             };
-            let page = match self.runtime.view(&self.state, &s.actor) {
+            let actor = s.actor.clone();
+            let page = match self.render(&actor) {
                 Ok(page) => page,
                 Err(why) => {
-                    out.push(self.error(&sub, &why.to_string()));
+                    out.push(self.error(&sub, &why));
                     continue;
                 }
             };
@@ -306,9 +321,7 @@ impl Tab {
     /// demonstration of determinism rather than an undo stack.
     pub fn page_at(&self, seq: Seq, actor: &str) -> Result<Html, String> {
         let state = self.state_at(seq)?;
-        self.runtime
-            .view(&state, actor)
-            .map_err(|why| why.to_string())
+        self.view(&state, actor)
     }
 
     /// The accumulator as of a position. D3's genesis replay: snapshots are an optimisation and a
@@ -327,10 +340,34 @@ impl Tab {
 
     /// What the tab currently shows one actor, as markup — what a test compares against.
     pub fn rendered(&self, actor: &str) -> Result<String, String> {
+        self.render(actor).map(|page| page.render())
+    }
+
+    /// One page, against the current state and the current roster.
+    fn render(&self, actor: &str) -> Result<Html, String> {
+        self.view(&self.state, actor)
+    }
+
+    /// The view, against a state and whoever is connected to this tab.
+    ///
+    /// The roster is `presence()`'s value (`beck_core::edge::presence`) and the tab builds it from
+    /// the thing it already knows: its own subscriptions. A server keeps a bounded registry because
+    /// the actor is a name the client chose and an unbounded table is a way to kill the process
+    /// (`beck_rt::presence`); a tab has as many connections as the page opened, so the bound is the
+    /// page.
+    fn view(&self, state: &Value, actor: &str) -> Result<Html, String> {
+        let mut here: BTreeMap<&str, i64> = BTreeMap::new();
+        for (_, s) in &self.subs {
+            *here.entry(s.actor.as_str()).or_default() += 1;
+        }
+        // A caller who is not connected — `beck rendered` before anyone has said hello, or the
+        // scrubber — is still looking at the page, so they are in the roster they are shown.
+        // `beck_core::edge::presence_of` is the same decision for the same reason.
+        here.entry(actor).or_insert(1);
+        let here = beck_core::edge::presence(here);
         self.runtime
-            .view(&self.state, actor)
-            .map(|h| h.render())
-            .map_err(|e| e.to_string())
+            .view_with(state, actor, &here)
+            .map_err(|why| why.to_string())
     }
 
     fn error(&self, sub: &str, why: &str) -> Outgoing {

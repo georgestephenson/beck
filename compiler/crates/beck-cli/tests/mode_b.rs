@@ -700,7 +700,7 @@ fn the_kernel_builds_for_the_browser() {
 ///
 /// Two crates deny rather than forbid, and both for the same reason: rustc classifies
 /// `#[no_mangle]` as unsafe code, and a WebAssembly module that exports nothing cannot be called.
-/// `beck-wasm` is Mode B's kernel and `beck-play` is the playground (`docs/96` §96.5). That is a
+/// `beck-wasm` is Mode B's kernel and `beck-play` is the playground (`docs/98` §98.5). That is a
 /// narrow exception and this is what keeps it narrow: no `unsafe` block, no `unsafe fn`, and every
 /// `allow` attached to an export. Every other crate still inherits the workspace lint.
 ///

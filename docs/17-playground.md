@@ -7,8 +7,8 @@ Deeper than it first appears, because of a convergence already latent in the pla
 Beck stack can run in the browser tab — database included — for free.** Rungs, from zero-cost to
 cloud:
 
-> **Status**: rungs A and B are **built** — [`96`](96-playground-report.md), which also says what
-> each of the five sections below still lacks (§96.7). Rung C is Phase 4's and untouched.
+> **Status**: rungs A and B are **built** — [`98`](98-playground-report.md), which also says what
+> each of the five sections below still lacks (§98.7). Rung C is Phase 4's and untouched.
 
 ## 17.1 Rung A — compile-time playground (static, costs a CDN)
 
@@ -99,7 +99,7 @@ two-client demo are small UI on top. *(Both landed in Phase 3 as forecast, and t
 one thing wrong: rung B did not ride Mode B's kernel. A kernel interprets a component's bundle; a
 worker-server is a sequencer, a log and a differ, and what rung B rode was a division of the
 runtime into the half that is program-shaped and the half that needs a machine —
-[`96`](96-playground-report.md) §96.2, §96.9.)* Rung C follows in Phase 4 alongside the operator (it *is* an
+[`98`](98-playground-report.md) §98.2, §98.9.)* Rung C follows in Phase 4 alongside the operator (it *is* an
 operator workload). The playground app itself grows across those phases and, with beck.dev and the
 registry, completes the D15 dogfood triad: **playground proves the language, the site proves the
 web tier, the registry proves the backend and data tier** — all three in Beck, all three public.

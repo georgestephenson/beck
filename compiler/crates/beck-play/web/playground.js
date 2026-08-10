@@ -142,7 +142,7 @@
       $("run-panel").hidden = false;
       if (loaded.mode === "b") {
         // Honest rather than blank: this program renders in the browser, and the tab serves the
-        // mode the thin client speaks (docs/96 §96.7).
+        // mode the thin client speaks (docs/98 §98.7).
         say("this page renders on the client (@render(client)); the tab serves Mode A", true);
         $("run-panel").hidden = true;
         return;

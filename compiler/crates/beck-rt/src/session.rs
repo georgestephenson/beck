@@ -77,6 +77,11 @@ pub async fn run_as<S: Socket>(
         },
     };
 
+    // In the roster from here until this function returns, whichever way it returns. Joining
+    // *before* the first render is what makes a connecting client see itself: the page it is sent
+    // is the page of a world it is already in.
+    let _here = app.presence().join(crate::program::Viewer::actor(&actor));
+
     let floor = app.floor().await?;
     let head = app.head();
     let how = match from {
@@ -288,6 +293,15 @@ async fn drive<S: Socket>(
     version: &mut tokio::sync::watch::Receiver<u64>,
     mut feed: Feed,
 ) -> Result<()> {
+    // A second thing this subscription may have to wake on, and only when the program asked: a
+    // page that never mentions `presence` must not re-render because somebody else connected.
+    // Which is a compile-time fact, so this is a property of the program rather than a heuristic.
+    let mut here = app
+        .runtime()
+        .placed()
+        .roles
+        .view_reads_presence
+        .then(|| app.presence().watch());
     // How a subscriber was brought up to date is exactly the distinction Phase 0 got wrong twice
     // (§18.5 item 1): an ack means committed, a frame means your view has caught up.
     tracing::info!(seq, sub = %sub, how = how.label(), "subscribed");
@@ -309,6 +323,17 @@ async fn drive<S: Socket>(
                 if *draining.borrow() {
                     tracing::info!(sub = %sub, "draining: ending the subscription");
                     break;
+                }
+            }
+            // The roster moved: somebody arrived or left. Nothing in the log moved, so `seq` does
+            // not, and what this sends is a patch labelled with the position it already had.
+            changed = wait(&mut here), if here.is_some() => {
+                if changed.is_err() {
+                    break; // the application is gone
+                }
+                let (frame, _) = feed.advance(app, &actor).await?;
+                if let Some(frame) = frame {
+                    send_json(socket, &frame).await?;
                 }
             }
             changed = version.changed() => {
@@ -372,6 +397,19 @@ async fn drive<S: Socket>(
         }
     }
     Ok(())
+}
+
+/// Wait on an optional watch, so `select!` can have an arm that is only sometimes armed.
+///
+/// The `if here.is_some()` guard is what disables the arm, and a disabled arm's expression is still
+/// *evaluated* — only its future is never polled — so the call has to be legal with no receiver.
+async fn wait(
+    here: &mut Option<tokio::sync::watch::Receiver<beck_core::Value>>,
+) -> Result<(), tokio::sync::watch::error::RecvError> {
+    match here {
+        Some(rx) => rx.changed().await,
+        None => std::future::pending().await,
+    }
 }
 
 async fn wait_for_hello<S: Socket>(

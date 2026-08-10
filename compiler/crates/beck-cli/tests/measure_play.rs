@@ -206,6 +206,6 @@ fn what_an_interaction_costs_and_whether_history_makes_it_worse() {
         "\n  a command is a fold and a render of the *state*: this program's state is two integers, so\n  \
          what is measured here is the constant. A scrub is a fold *of* the log, so it grows with\n  \
          the history — linearly, which is what the last column is for. Both are what those two operations are, and the\n  \
-         second is what makes the scrubber a replay rather than an undo stack (docs/96 §96.6)."
+         second is what makes the scrubber a replay rather than an undo stack (docs/98 §98.6)."
     );
 }

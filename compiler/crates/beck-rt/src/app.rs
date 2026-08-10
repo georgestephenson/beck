@@ -92,6 +92,11 @@ pub struct AppConfig {
     /// ask for is a quota most programs do not have. [`crate::quota`] is the mechanism, the numbers
     /// and what the bound is actually worth.
     pub quota: crate::quota::Quota,
+    /// How large a connection roster this process will hold — D6's presence signal.
+    ///
+    /// A tunable rather than a dependency, and bounded rather than optional, for the reason
+    /// [`crate::presence`] gives: the roster is keyed by a name the client may choose.
+    pub presence: crate::presence::Config,
 }
 
 impl Default for AppConfig {
@@ -106,6 +111,7 @@ impl Default for AppConfig {
             clock: Arc::new(beck_core::clock::SystemClock),
             identity: Arc::new(crate::identity::DevIdentity),
             quota: crate::quota::Quota::default(),
+            presence: crate::presence::Config::default(),
         }
     }
 }
@@ -141,6 +147,10 @@ pub struct App {
     /// F3's per-actor write quota. Held here rather than in the sequencer because it refuses
     /// *before* the queue: a proposal that will not be admitted should not occupy a slot in it.
     limit: crate::quota::RateLimit,
+    /// Who is connected — D6's non-durable signal, and the one input to a view that **moves
+    /// without an event**. Held by the application because a connection is the application's, and
+    /// read on every render of a program whose page asks for it.
+    here: Arc<crate::presence::Registry>,
     /// Set once, when this process is going away. Every subscription watches it.
     ///
     /// §5.2 lists "graceful drain (finish folds, snapshot, hand off subscriptions)" among the
@@ -191,6 +201,7 @@ impl App {
             config: config.clone(),
             shared,
             limit: crate::quota::RateLimit::new(config.quota),
+            here: crate::presence::Registry::new(config.presence),
             draining: watch::channel(false).0,
         });
         tokio::spawn(sequencer(app.clone(), rx, config));
@@ -240,7 +251,21 @@ impl App {
         actor: &(impl crate::program::Viewer + ?Sized),
     ) -> Result<beck_core::Html> {
         let state = self.state.read().await.clone();
-        timed(&telemetry().view, || self.runtime.view(&state, actor))
+        let here = self.here.value();
+        timed(&telemetry().view, || {
+            self.runtime.view_with(&state, actor, &here)
+        })
+    }
+
+    /// Who is connected, as the value `presence()` produces.
+    pub fn here(&self) -> beck_core::Value {
+        self.here.value()
+    }
+
+    /// The roster itself, for a connection that wants to join it and for a gauge that wants to
+    /// read it.
+    pub fn presence(&self) -> &Arc<crate::presence::Registry> {
+        &self.here
     }
 
     /// An engine for one new subscription, of whichever kind this application is configured for.
@@ -278,15 +303,20 @@ impl App {
             let guard = self.state.read().await;
             (guard.clone(), self.head.load(Ordering::Relaxed))
         };
+        // Read *outside* the state lock, and that is the honest half of this design rather than an
+        // oversight: the roster is not a function of the log, so there is no version at which the
+        // two agree. A page renders the state at `version` and the connections as they were a
+        // moment ago, which is what "who is connected now" can mean at all.
+        let here = self.here.value();
         timed(&telemetry().view, || {
             if !self.config.maintain_views {
-                return Ok((self.runtime.view(&state, actor)?, version));
+                return Ok((self.runtime.view_with(&state, actor, &here)?, version));
             }
             if self.config.share_arrangements {
                 self.runtime
-                    .render_shared(&self.shared, engine, &state, version, actor)
+                    .render_shared(&self.shared, engine, &state, version, actor, &here)
             } else {
-                Ok((self.runtime.render(engine, &state, actor)?, version))
+                Ok((self.runtime.render(engine, &state, actor, &here)?, version))
             }
         })
     }

@@ -4,7 +4,7 @@
 
 Every diagnostic the compiler can raise carries a stable code. `beck explain error B0341` prints one of these entries at the terminal.
 
-The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans every non-test source file for a `"Bnnnn"` literal and fails if the set differs from this table in either direction. **127 codes.**
+The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans every non-test source file for a `"Bnnnn"` literal and fails if the set differs from this table in either direction. **129 codes.**
 
 
 ## Reading the source — `B0100–B0122`
@@ -131,7 +131,7 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0411` | error | **durable, so its state must be storable** — The log is the only description of this program's history; a value it cannot read back is a state replay would not reproduce. |
 | `B0412` | error | **requires a capability nothing can discharge** — A `Session` reaches exactly one place in a Beck program: the validator `decide` is given, which is the only function handed a `Proposal`. Authority is one chokepoint (§3.5), so a capability required outside it has no holder. |
 
-## The signal graph and the slicer — `B0500–B0514`
+## The signal graph and the slicer — `B0500–B0516`
 
 | Code | | Meaning |
 |---|---|---|
@@ -149,6 +149,8 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0512` | error | **the chokepoint does not read a durable fold** — `decide` threads the accumulator through validation, so what it reads has to be one — that is what makes first-writer-wins and ownership decidable (§3.7). |
 | `B0513` | error | **a fold that is not durable** — Its accumulator has nowhere to live across a restart. The log is what survives, and `durable` is what says an accumulator is folded from it. |
 | `B0514` | error | **renders differently for each session, so it cannot render on the client** — The page reads the session as well as the state, so it filters, scopes or hides by identity. `@render(client)` sends the browser the state rather than the page, which would hand every actor what the filter was removing (docs/94 §94.2). |
+| `B0515` | error | **the chokepoint reads `presence`, which is not in the log** — Who was connected when an event was recorded is written down nowhere, so a `validate` that decided from the roster would decide one thing now and another on replay. Record the fact instead: propose a command when a client arrives, and decide from the state that fold produces. |
+| `B0516` | error | **reads `presence`, so it cannot render on the client** — `@render(client)` sends the browser the accumulator, and who is connected is in neither the accumulator nor the log — it is a fact the server holds about its own sockets (docs/96 §96.4). |
 
 ## Modules and interfaces — `B0600–B0605`
 

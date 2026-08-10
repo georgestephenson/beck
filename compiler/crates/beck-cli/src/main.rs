@@ -235,15 +235,19 @@ enum Cmd {
     },
     /// Compile what can be compiled to native code, and say what could not (§5.2).
     ///
-    /// The LLVM half of §5.2's dual codegen, over the scalar subset of the language: a definition
-    /// whose parameters and result are `Int`, `Float` or `Bool` and whose body is arithmetic,
-    /// comparison, `if`, `match` and direct calls. Everything else — anything that needs a heap,
-    /// and every effect — stays with the evaluator, and this prints which went which way.
+    /// §5.2's dual codegen, over the scalar subset of the language: a definition whose parameters
+    /// and result are `Int`, `Float` or `Bool` and whose body is arithmetic, comparison, `if`,
+    /// `match` and direct calls. Everything else — anything that needs a heap, and every effect —
+    /// stays with the evaluator, and this prints which went which way.
     ///
-    /// Needs `clang` on the path, or `BECK_CLANG` pointing at one.
+    /// `--backend llvm` (the default) needs `clang` on the path, or `BECK_CLANG` pointing at one.
+    /// `--backend cranelift` needs only a linker, because Cranelift is a crate.
     Native {
         file: PathBuf,
-        /// Keep the generated `.ll` and the executable here instead of in a temporary directory.
+        /// Which code generator: `llvm` for release code, `cranelift` for a fast build (§7.3).
+        #[arg(long, default_value = "llvm")]
+        backend: String,
+        /// Keep the generated IR and the executable here instead of in a temporary directory.
         #[arg(long)]
         out: Option<PathBuf>,
         /// Call a compiled definition and print what it answered.
@@ -624,10 +628,11 @@ fn dispatch(cli: Cli) -> Result<()> {
         }
         Cmd::Native {
             file,
+            backend,
             out,
             call,
             args,
-        } => native(&file, out.as_deref(), call.as_deref(), &args),
+        } => native(&file, &backend, out.as_deref(), call.as_deref(), &args),
         Cmd::Sbom { file, out } => {
             let placed = compiled(&file)?;
             let source = read(&file)?;
@@ -982,12 +987,65 @@ fn check(
     Ok(())
 }
 
+/// One of the two code generators, with the four questions `beck native` asks of either.
+///
+/// An enum rather than a trait: the two crates are deliberately independent — neither depends on
+/// the other's `Artifact` — and a trait here would be a third place where "what a native backend
+/// offers" is written down.
+enum Compiled {
+    Llvm(beck_llvm::Artifact),
+    Clif(beck_clif::Artifact),
+}
+
+impl Compiled {
+    fn report(&self) -> String {
+        match self {
+            Compiled::Llvm(a) => a.report().to_string(),
+            Compiled::Clif(a) => a.report().to_string(),
+        }
+    }
+
+    fn ir(&self) -> &Path {
+        match self {
+            Compiled::Llvm(a) => a.ir_path(),
+            Compiled::Clif(a) => a.ir_path(),
+        }
+    }
+
+    fn exe(&self) -> &Path {
+        match self {
+            Compiled::Llvm(a) => a.executable(),
+            Compiled::Clif(a) => a.executable(),
+        }
+    }
+
+    fn signature(&self, name: &str) -> Option<&beck_llvm::Signature> {
+        match self {
+            Compiled::Llvm(a) => a.module().signature(name),
+            Compiled::Clif(a) => a.module().signature(name),
+        }
+    }
+
+    fn call(&self, name: &str, args: &[beck_core::Value]) -> Result<beck_core::Value, String> {
+        match self {
+            Compiled::Llvm(a) => a.call(name, args).map_err(|e| e.message),
+            Compiled::Clif(a) => a.call(name, args).map_err(|e| e.message),
+        }
+    }
+}
+
 /// `beck native` — compile to machine code, and account for every definition.
 ///
 /// The report is the command's main output rather than a footnote, because a native backend that
 /// covers part of a language is only honest if it says which part. A definition is either in the
 /// first list, compiled, or in the second with the reason it is not.
-fn native(file: &Path, out: Option<&Path>, call: Option<&str>, args: &[String]) -> Result<()> {
+fn native(
+    file: &Path,
+    backend: &str,
+    out: Option<&Path>,
+    call: Option<&str>,
+    args: &[String],
+) -> Result<()> {
     // Not `compiled`: a module with no merge point is a **library**, and a library of arithmetic
     // is exactly what this backend compiles best — `awfy/mandelbrot.beck` is one. `test_cmd` takes
     // the same route for the same reason.
@@ -997,28 +1055,49 @@ fn native(file: &Path, out: Option<&Path>, call: Option<&str>, args: &[String]) 
     let placed = placed.ok_or_else(|| anyhow::anyhow!("{} does not compile", file.display()))?;
     let program = placed.program;
 
-    let Some(toolchain) = beck_llvm::Toolchain::find() else {
-        bail!(
-            "no LLVM toolchain: no `clang` on the path, and BECK_CLANG does not name a working \
-             one. Everything else `beck` does works without one"
-        );
+    // One command, two code generators, and the report says which produced the artefact. The two
+    // are held to answering the same thing by `cranelift.rs`, so choosing between them is a choice
+    // about *build* time rather than about what the program means.
+    let compiled: Compiled = match backend {
+        "llvm" => {
+            let Some(toolchain) = beck_llvm::Toolchain::find() else {
+                bail!(
+                    "no LLVM toolchain: no `clang` on the path, and BECK_CLANG does not name a \
+                     working one. `--backend cranelift` needs only a linker"
+                );
+            };
+            Compiled::Llvm(
+                beck_llvm::Artifact::build_with(&program, toolchain, out)
+                    .map_err(|e| anyhow::anyhow!(e))?,
+            )
+        }
+        "cranelift" | "clif" => {
+            let Some(linker) = beck_clif::Linker::find() else {
+                bail!(
+                    "no linker: no `cc`, `clang` or `gcc` on the path, and BECK_LINKER does not \
+                     name a working one. An object file is not a program"
+                );
+            };
+            Compiled::Clif(
+                beck_clif::Artifact::build_with(&program, linker, out)
+                    .map_err(|e| anyhow::anyhow!(e))?,
+            )
+        }
+        other => bail!("`{other}` is not a code generator: `llvm` or `cranelift`"),
     };
-    let artifact = beck_llvm::Artifact::build_with(&program, toolchain, out)
-        .map_err(|e| anyhow::anyhow!(e))?;
-    print!("{}", artifact.report());
+    print!("{}", compiled.report());
     if out.is_some() {
         println!(
             "\n{}\n{}",
-            artifact.ir_path().display(),
-            artifact.executable().display()
+            compiled.ir().display(),
+            compiled.exe().display()
         );
     }
 
     let Some(name) = call else {
         return Ok(());
     };
-    let sig = artifact
-        .module()
+    let sig = compiled
         .signature(name)
         .ok_or_else(|| anyhow::anyhow!("`{name}` is not one of the definitions that compiled"))?;
     if args.len() != sig.params.len() {
@@ -1045,14 +1124,14 @@ fn native(file: &Path, out: Option<&Path>, call: Option<&str>, args: &[String]) 
             ),
         });
     }
-    match artifact.call(name, &values) {
+    match compiled.call(name, &values) {
         Ok(v) => {
             println!("\n{name} = {}", v.display());
             Ok(())
         }
         // A trap carries the span of the operation that could not answer, so this is a diagnostic
         // and not a status code — the same message the evaluator would have printed.
-        Err(e) => bail!("{name}: {}", e.message),
+        Err(e) => bail!("{name}: {e}"),
     }
 }
 

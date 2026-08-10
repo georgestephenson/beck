@@ -74,9 +74,10 @@ jobs:
       # failure rather than a silent skip.
       BECK_PG: postgres://postgres:postgres@localhost/beck_ci
       BECK_REQUIRE_PG: "1"
-      # `native.rs` and `measure_native.rs` skip when there is no `clang`, and print why. This
-      # runner has one, so a skip here would mean the differential between backends silently did
-      # not run — which is the failure mode §19.4 item 10 is about.
+      # `native.rs`, `cranelift.rs` and `measure_native.rs` skip when there is no `clang` and no
+      # linker, and print why. This runner has both, so a skip here would mean the differential
+      # between backends silently did not run — which is the failure mode §19.4 item 10 is about.
+      # One switch for both halves: a machine with `clang` has a linker.
       BECK_REQUIRE_LLVM: "1"
     steps:
       - uses: actions/checkout@v4
@@ -626,7 +627,9 @@ jobs:
           # docs/93 §93.5. The native backend against the tree-walker, at two sizes each, plus the
           # pipe round trip on its own and what `clang -O2` costs. The *gate* is a shape — the
           # ratio must not fall as the problem grows — and it runs here rather than under
-          # `cargo test` because it is a release measurement.
+          # `cargo test` because it is a release measurement. docs/97 §97.5's comparison of the two
+          # code generators is in the same file and release-only for a stronger reason: a debug
+          # build measures our unoptimised Cranelift against a distribution's optimised `clang`.
           cargo test --release --test measure_native -- --nocapture
           # docs/93 §93.5's second table: the same four benchmarks in six languages. The *gate* is
           # that every implementation computes the same four answers, and it runs under `cargo test`

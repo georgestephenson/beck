@@ -1,4 +1,4 @@
-//! The playground, held to the two things it claims (`docs/17`, `docs/96`).
+//! The playground, held to the two things it claims (`docs/17`, `docs/98`).
 //!
 //! Rung A claims to show **what the compiler derives**, which is only worth anything if it is the
 //! same compiler: `the_playground_shows_what_the_command_line_shows` runs `beck explain` and
@@ -375,6 +375,36 @@ fn a_command_moves_every_page_it_changes_and_no_others() {
     assert!(!tab.rendered("bo").expect("renders").contains("milk"));
 }
 
+/// Who is connected is who is connected *to the tab*, and somebody arriving moves the other pages.
+///
+/// D6's presence signal is the one input to a view that moves without an event
+/// (`docs/96`), so it is also the one place a tab could quietly answer a
+/// different question than a server: `beck_host::Runtime::view` renders against the viewer's own
+/// roster, which is right for `beck test` and wrong for an application. The tab keeps a roster —
+/// its own subscriptions — exactly as `beck_rt::App` keeps a registry.
+#[test]
+fn presence_in_the_tab_is_who_is_connected_to_the_tab() {
+    let mut tab = Tab::load(compiled(&root().join("corpus/32-here.beck"))).expect("the tab loads");
+
+    tab.hello("s-ana", "ana", None);
+    assert!(
+        tab.rendered("ana").expect("renders").contains("1 here"),
+        "one client, one in the roster"
+    );
+
+    // The second client arrives. Its own page counts both — and so does the first one's, which is
+    // the frame this returns and the reason presence is a *signal* rather than a page's guess.
+    let out = tab.hello("s-bo", "bo", None);
+    assert!(
+        tab.rendered("ana").expect("renders").contains("2 here"),
+        "a second connection did not reach the first client's page"
+    );
+    assert!(
+        out.iter().any(|o| o.sub == "s-ana" && o.msg["t"] == "p"),
+        "the client already connected was not sent the change"
+    );
+}
+
 /// A retry is acknowledged with the position the first attempt got, and appends nothing.
 ///
 /// The rule is `beck_host::sequence`'s rather than the tab's, which is the point: the tab inherits
@@ -466,7 +496,7 @@ fn the_scrubber_renders_the_state_the_log_produces_at_every_position() {
 ///
 /// The tab holds a Mode A subscription: the server renders and sends DOM patches. A Mode B
 /// component would need the *kernel* in the client iframe and its bundle over the port, which is
-/// §96.7's item rather than a thing to half-do.
+/// §98.7's item rather than a thing to half-do.
 #[test]
 fn a_mode_b_program_is_named_rather_than_served_as_mode_a() {
     let placed = compiled(&root().join("examples/board.beck"));
@@ -549,7 +579,7 @@ fn the_playground_serves_the_runtimes_own_residue() {
 // gated in `mode_b.rs::the_wasm_boundary_is_the_only_exception_to_forbid_unsafe`, which counts it
 // per crate and asserts that every *other* crate still inherits the workspace lint. One gate rather
 // than one per module: the property is about the workspace, and two copies of it would be two
-// things to keep in step (`docs/96` §96.5).
+// things to keep in step (`docs/98` §98.5).
 
 /// The module builds for the browser.
 ///

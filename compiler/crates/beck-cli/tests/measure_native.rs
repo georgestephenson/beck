@@ -185,7 +185,7 @@ fn what_native_code_costs_against_the_tree_walker() {
 ///
 /// §5.2 buys Cranelift for `beck dev` because LLVM's codegen step is slow, and that claim is about
 /// a number nobody here has measured. This measures ours: emitting the module, and handing it to
-/// `clang -O2`.
+/// `clang -O2`. [`the_two_code_generators_against_each_other`] is the comparison.
 #[test]
 fn what_compiling_costs() {
     let Some(toolchain) = beck_llvm::Toolchain::find() else {
@@ -209,5 +209,66 @@ fn what_compiling_costs() {
          and assembling it with `clang -O2`, linking, and starting the worker: {whole:?}",
         module.functions.len(),
         module.ir.lines().count()
+    );
+}
+
+/// §7.3's reason for having two code generators, measured.
+///
+/// > **Cranelift** … ~40% faster whole-compile and ~10× faster codegen step than LLVM; makes
+/// > `beck dev` hot reload feel instant.
+///
+/// What is compared is **program to executable** on both paths, because that is what a developer
+/// waits for: Cranelift emits an object and a linker turns it into a program; LLVM writes text and
+/// `clang -O2` does the rest. Neither number is asserted — `docs/13` §13.7 — and both are printed
+/// with the size of the program they are about, because a ratio without one is not a measurement.
+///
+/// It is in a release-only file for a reason this project has been caught by before: Cranelift is
+/// a **crate**, so a debug build of this workspace measures our unoptimised build of it against a
+/// distribution's optimised `clang`, and that comparison runs the *other* way. `cranelift.rs` says
+/// so and asserts nothing about time.
+#[test]
+fn the_two_code_generators_against_each_other() {
+    let Some(linker) = beck_clif::Linker::find() else {
+        assert!(!require_llvm(), "BECK_REQUIRE_LLVM=1 and no linker");
+        println!("skipped: no linker. Set BECK_REQUIRE_LLVM=1 to make this a failure.");
+        return;
+    };
+    let Some(toolchain) = beck_llvm::Toolchain::find() else {
+        assert!(!require_llvm(), "BECK_REQUIRE_LLVM=1 and no `clang`");
+        println!("skipped: no LLVM toolchain. Set BECK_REQUIRE_LLVM=1 to make this a failure.");
+        return;
+    };
+
+    println!(
+        "\nProgram to executable, by code generator\n{:>12}  {:>14} {:>14} {:>8}",
+        "definitions", "cranelift", "llvm + clang", "×"
+    );
+    // Two sizes, per `AGENTS.md`: one number cannot tell a fixed cost from a per-definition one.
+    for count in [50usize, 400] {
+        let mut src = String::new();
+        for i in 0..count {
+            src.push_str(&format!(
+                "def f{i}(a: Int, b: Int) -> Int:\n    return (a * b) + (a - b) + {i}\n\n"
+            ));
+        }
+        let program = compile("wide.beck", &src);
+        let clif = median(5, || {
+            beck_clif::Artifact::build_bounded(&program, linker.clone(), None, None)
+                .expect("cranelift builds");
+        });
+        let llvm = median(5, || {
+            beck_llvm::Artifact::build_bounded(&program, toolchain.clone(), None, None)
+                .expect("llvm builds");
+        });
+        println!(
+            "{count:>12}  {:>13.1?} {:>13.1?} {:>8.1}",
+            clif,
+            llvm,
+            llvm.as_secs_f64() / clif.as_secs_f64().max(f64::MIN_POSITIVE)
+        );
+    }
+    println!(
+        "  Both numbers include starting the worker process, because that is what a caller waits\n  \
+         for. Neither is asserted (docs/13 §13.7)."
     );
 }
