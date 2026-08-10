@@ -19,7 +19,7 @@ use beck_core::engine::{Engine, Prepared, Retention, SharedDataflow};
 use beck_core::plan::Plan;
 use beck_core::{Core, Html, Placed, Value};
 
-use crate::log::Envelope;
+use crate::record::Envelope;
 
 /// The compiled program plus the capabilities the host holds on its behalf.
 ///
@@ -42,8 +42,6 @@ pub struct Runtime {
     /// The program's `Command` union, resolved to a decoder. Shared with a Mode B client through
     /// its bundle, so both tiers decode a command the same way.
     command: beck_core::command::Schema,
-    /// The one impure capability the program may reach: minting ids outside a fold.
-    uuid: Box<dyn Fn() -> Arc<str> + Send + Sync>,
 }
 
 impl Runtime {
@@ -79,7 +77,6 @@ impl Runtime {
             plan,
             init,
             command,
-            uuid: Box::new(|| Arc::from(uuid::Uuid::now_v7().to_string())),
         })
     }
 
@@ -174,12 +171,12 @@ impl Runtime {
 
     /// The shared half of the plan — §5.3's "one shared dataflow" — for a process to hold one of.
     ///
-    /// It is created per [`crate::App`] rather than per `Runtime` because what it holds is derived
+    /// It is created per application rather than per `Runtime` because what it holds is derived
     /// from the accumulator, and the accumulator belongs to the application. A `Runtime` with no
     /// application driving it (`beck test`, the differential harness) never makes one.
     ///
     /// `retention` says how long it keeps what a subscriber might still ask for, and comes from the
-    /// application's configuration for the reason [`crate::AppConfig::retention`] gives.
+    /// application's configuration for the reason `beck_rt::AppConfig::retention` gives.
     pub fn shared_dataflow(&self, retention: Retention) -> Arc<SharedDataflow> {
         Arc::new(SharedDataflow::with_retention(self.plan.clone(), retention))
     }
@@ -259,11 +256,6 @@ impl Runtime {
         session(actor.actor(), claims_of(actor))
     }
 
-    /// Mint an id at the edge. Never called inside a fold — the checker guarantees that.
-    pub fn new_uuid(&self) -> Arc<str> {
-        (self.uuid)()
-    }
-
     /// Decode a command from the wire, against the program's own `Command` union.
     ///
     /// The union is resolved to a [`beck_core::command::Schema`] once, at compile time, and both
@@ -285,10 +277,11 @@ use beck_core::edge::session;
 /// Who a view is rendered for, or a command proposed by.
 ///
 /// A trait rather than a type because the two sources of one are genuinely different and both are
-/// legitimate. A **connection** supplies an [`crate::identity::Actor`], which only
-/// [`crate::identity::Identity::verify`] can make and which carries the claims the provider
-/// verified. A **name** supplies itself: `beck test`'s `when session("ana") sends …`, the
-/// differential harness, a benchmark — none of them is a connection, so none of them has a
+/// legitimate. A **connection** supplies a `beck_rt::identity::Actor`, which only that module's
+/// `Identity::verify` can make and which carries the claims the provider verified — the impl for it
+/// is there rather than here, because the credential is the host's to check. A **name** supplies
+/// itself: `beck test`'s `when session("ana") sends …`, the differential harness, a benchmark, a
+/// client of the playground's tab server — none of them is a connection, so none of them has a
 /// credential to check, and each of them has no claims because there was nobody to make any.
 ///
 /// One code path either way, which is the point: a `&str` and an `Actor` reach the same `Session`
@@ -329,16 +322,6 @@ impl Viewer for String {
 impl Viewer for Arc<str> {
     fn actor(&self) -> &str {
         self
-    }
-}
-
-impl Viewer for crate::identity::Actor {
-    fn actor(&self) -> &str {
-        self.name()
-    }
-
-    fn claims(&self) -> &BTreeMap<Arc<str>, Arc<str>> {
-        crate::identity::Actor::claims(self)
     }
 }
 

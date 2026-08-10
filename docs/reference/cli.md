@@ -343,6 +343,20 @@ Serve the Language Server Protocol on stdin and stdout (§4.6).
 The same front end `beck check` runs, so an editor's squiggle and a CI failure are the same diagnostic — §4.6's "there is no separate language server implementation to drift". Not meant to be run by hand: an editor starts it and speaks JSON-RPC to it.
 
 
+## `beck play`
+
+Serve the playground: the compiler and a running application, in a browser tab (§17).
+
+Rung A is the compiler compiled to WebAssembly — diagnostics, the two surfaces, inferred placement, the dataflow plan, the read model, the generated Kubernetes objects — with no server involved at all. Rung B runs the program *in the tab*: a log, a fold and two client subscriptions in one page, speaking the patch protocol over a `MessageChannel`.
+
+Needs the module: `cargo build -p beck-play --release --target wasm32-unknown-unknown`, or `BECK_PLAYGROUND` pointing at one.
+
+| Argument | | |
+|---|---|---|
+| `--addr` | ADDR |  |
+| `-o, --out` | OUT | Write the playground to a directory instead of serving it.  The result is the whole deployment — §17.1's "costs a CDN" is not a figure of speech, and this is what makes it checkable: a directory, on any static host. |
+
+
 ## `beck up`
 
 Bring the program up on a local cluster or host — rung 2 or 3 (§6.6)

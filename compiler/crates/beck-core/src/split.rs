@@ -1096,6 +1096,25 @@ impl Slicer<'_, '_> {
     }
 }
 
+/// What `beck explain wire` prints: the command channel's content-derived operation id (§4.3).
+///
+/// A `String` for the reason [`crate::place::report`] is one — the playground asks the same
+/// question the command line does, and out of the same compiler.
+pub fn wire_report(placed: &Placed) -> String {
+    use std::fmt::Write;
+    let mut out = String::new();
+    let _ = writeln!(out, "operation id  {}", placed.wire_id);
+    let _ = writeln!(out, "command       {}", placed.roles.command_ty);
+    let _ = writeln!(out, "event         {}", placed.roles.event_ty);
+    let _ = writeln!(out, "state         {}", placed.roles.state_ty);
+    let _ = writeln!(
+        out,
+        "\nthe id is content-derived from the module and those three types, so a body \
+         edit does not move it and a signature change does."
+    );
+    out
+}
+
 /// What `beck explain flow` prints: the graph as a graph, rather than the four names the one
 /// recognised topology had.
 ///

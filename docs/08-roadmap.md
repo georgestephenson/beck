@@ -361,6 +361,15 @@ dependencies whose signatures didn't change.
 - **The playground** ([`17`](17-playground.md)) — highest-leverage adoption artefact: rung A
   (compile-time, static) and rung B (the whole app in the tab — the worker-server is the rung-0
   platform compiled to WASM, riding Mode B's kernel work; `seq` scrubber and two-client demos).
+  *Both **built** ([`96`](96-playground-report.md)): `beck play` serves a page whose right-hand side
+  is eleven `beck explain` answers derived in the browser, and whose lower half is the program
+  running — one log, one fold, two client iframes and the scrubber. This row's forecast that rung B
+  would ride Mode B's kernel work is the one thing it got wrong (§96.9): a tab server is a
+  sequencer, a log and a differ, and none of those are in `beck-wasm`. What it rode was a division
+  of the runtime — `beck-host`, the half of `beck-rt` that is program-shaped rather than
+  machine-shaped. Rung C is Phase 4's, and §96.7 lists what rungs A and B still lack: no IndexedDB,
+  no content-addressed sharing, no Mode B in the tab, and a `<textarea>` where the LSP already
+  exists.*
 - `beck init ci`, apko image build in-process, cosign signing, SBOM. *The **SBOM** is built
   ([`92`](92-sbom-report.md)): `beck sbom` emits CycloneDX 1.6 and `beck build` writes one beside
   the manifests, derived from the same object graph the image config is — so the package list and
@@ -373,11 +382,12 @@ dependencies whose signatures didn't change.
 
 **Exit**: an outside developer builds a non-trivial app from documentation alone, without asking the
 team a question. Track this literally as the acceptance test.
-**Not met.** Of the fourteen bullets: **seven built outright** — `test` blocks, the SQLite
+**Not met.** Of the fourteen bullets: **eight built outright** — `test` blocks, the SQLite
 substrate, the standard library, the language's own means of abstraction, the LSP, the
 expressiveness suite (three chapters of SICP and the Felleisen table, with chapters 4–5 belonging
-to Phase 5), and incremental views, whose last part is
-[`89`](89-query-fusion-report.md)'s fusion.
+to Phase 5), incremental views, whose last part is
+[`89`](89-query-fusion-report.md)'s fusion, and the playground's two anonymous rungs
+([`96`](96-playground-report.md)).
 **No bullet has a named remainder**: the concurrency-and-errors bullet has `Result`, error rows,
 `parallel:` and pattern matching with nesting, guards and alternatives
 ([`90`](90-nested-patterns-report.md), [`91`](91-guards-and-alternatives-report.md)); what
@@ -388,9 +398,9 @@ declaration ([`48`](48-identity-report.md), [`95`](95-oidc-relying-party-report.
 presence; the codegen bullet has LLVM over the scalar subset and no Cranelift
 ([`93`](93-llvm-backend-report.md) §93.6); and Mode B has the mode, the bundle, the data patch, the
 reconciliation, a browser that runs it and an offline queue, without codegen
-([`94`](94-mode-b-report.md) §94.8). **Two untouched**: client polish and the
-playground; the supply-chain bullet has one of its four pieces
-([`92`](92-sbom-report.md)). The criterion is not a count of those, though — it is a
+([`94`](94-mode-b-report.md) §94.8); and the playground has rungs A and B and not rung C, which is
+Phase 4's ([`96`](96-playground-report.md) §96.7). **One untouched**: client polish; the
+supply-chain bullet has one of its four pieces ([`92`](92-sbom-report.md)). The criterion is not a count of those, though — it is a
 claim about a *person*, and the honest way to say how close it is is by the questions such a
 developer would ask in order:
 
@@ -779,8 +789,10 @@ signature library, so it is an ADR rather than a line in a module". The HTTP cli
 nothing. This row's forecast that the two were one ADR was right; the reason turned out to be
 better than the one it gave.
 
-Then the playground rungs A and B (whose safety predecessor landed in Wave 0), then Phase 3's exit
-criterion. ~~What it measures is documentation an outside developer could build from, and there is
+~~Then the playground rungs A and B (whose safety predecessor landed in Wave 0)~~ — **built**
+([`96`](96-playground-report.md)), and the predecessor was the right one: the front end counts its
+own recursion, so the page compiles a stranger's source without a stack that can be exhausted from
+the outside. Then Phase 3's exit criterion. ~~What it measures is documentation an outside developer could build from, and there is
 none.~~ There is now: [`86`](86-getting-started.md), gated so that every program in it compiles and
 passes its own tests. That removes the *blocker* and not the criterion — which is a claim about a
 person building a non-trivial app without asking the authors questions, and cannot be met by

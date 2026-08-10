@@ -12,6 +12,11 @@
 //! all.
 //!
 //! It skips loudly without Chromium; `BECK_REQUIRE_BROWSER=1` forbids the skip.
+//!
+//! The playground is here too, for the same reason and then one more: rung A and rung B are a
+//! page, a worker and two iframes passing ports to each other, and *none* of that exists in any
+//! other suite. `docs/96` is the report; `playground.rs` gates what the module answers, and these
+//! gate that a browser can get the answers out of it.
 
 use std::net::{SocketAddr, TcpListener};
 use std::path::{Path, PathBuf};
@@ -671,6 +676,252 @@ async fn mode_b_cold_starts_with_the_server_gone() {
         serving.app.head(),
         connected + 1,
         "the queued command was appended more than once"
+    );
+}
+}
+
+// --------------------------------------------------------------- the playground (docs/17, docs/96)
+
+/// Build the playground module and point the server at it. Once, for the same reason
+/// [`point_at_the_kernel`] is once — a browser suite that can be stale about the thing it is
+/// testing is worse than no browser suite.
+fn point_at_the_playground() -> bool {
+    static ONCE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ONCE.get_or_init(|| {
+        let built = std::process::Command::new(env!("CARGO"))
+            .current_dir(root())
+            .args([
+                "build",
+                "-p",
+                "beck-play",
+                "--release",
+                "--target",
+                "wasm32-unknown-unknown",
+            ])
+            .output();
+        let module = root().join("target/wasm32-unknown-unknown/release/beck_play.wasm");
+        if !built.is_ok_and(|o| o.status.success()) || !module.is_file() {
+            return false;
+        }
+        std::env::set_var("BECK_PLAYGROUND", &module);
+        true
+    })
+}
+
+/// The playground, served on a port of its own — which is what makes each test's page a different
+/// origin, and therefore isolated for free.
+struct Playing {
+    addr: SocketAddr,
+    shutdown: tokio::sync::watch::Sender<bool>,
+}
+
+impl Playing {
+    async fn start() -> Option<Playing> {
+        if !point_at_the_playground() {
+            eprintln!(
+                "skipped: no playground module to serve. Build it with \
+                 `cargo build -p beck-play --release --target wasm32-unknown-unknown`."
+            );
+            assert!(
+                std::env::var("BECK_REQUIRE_WASM").as_deref() != Ok("1"),
+                "BECK_REQUIRE_WASM=1 but there is no playground module to serve"
+            );
+            return None;
+        }
+        let addr = free_port();
+        let (shutdown, rx) = tokio::sync::watch::channel(false);
+        tokio::spawn(async move {
+            let _ = beck_play::serve::serve(addr, rx).await;
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        Some(Playing { addr, shutdown })
+    }
+
+    fn url(&self) -> String {
+        format!("http://{}/", self.addr)
+    }
+}
+
+impl Drop for Playing {
+    fn drop(&mut self) {
+        let _ = self.shutdown.send(true);
+    }
+}
+
+browser_test! {
+/// Rung A: the compiler, in the tab, with no server deciding anything.
+///
+/// The page is static files and a WebAssembly module. What this asserts is that a *browser* gets
+/// the compiler's answers out of it — the placement table for the program in the editor, and a
+/// real diagnostic, with its code and its span, for one that does not compile.
+async fn the_playground_compiles_in_the_browser() {
+    let Some(mut browser) = browser::shared().await else {
+        return;
+    };
+    let Some(playing) = Playing::start().await else {
+        return;
+    };
+    let page = browser.open(&playing.url()).await;
+
+    // The page says when it is live, for the same reason the Mode B client does: everything here
+    // is behind an asynchronous load, and a test that types before it is ready types into nothing.
+    page.wait_for(&mut browser, "document.body.dataset.ready === '1'")
+        .await;
+    page.wait_for(
+        &mut browser,
+        "document.getElementById('status').textContent === 'compiles'",
+    )
+    .await;
+
+    // The placement of the program in the editor, derived in the browser.
+    page.eval(
+        &mut browser,
+        "[...document.querySelectorAll('#tabs button')].find(b => b.textContent === 'Placement').click()",
+    )
+    .await;
+    let placement = page.text(&mut browser, "document.getElementById('out').textContent").await;
+    assert!(
+        placement.contains("page") && placement.contains("client"),
+        "the browser did not derive a placement:\n{placement}"
+    );
+
+    // And a program that does not compile gets the compiler's own diagnostic, not a message the
+    // page wrote.
+    page.eval(
+        &mut browser,
+        "(() => { const s = document.getElementById('source'); \
+          s.value = 'def broken(x: Int) -> Int:\\n    return x + \"nope\"\\n'; \
+          s.dispatchEvent(new Event('input')); })()",
+    )
+    .await;
+    page.wait_for(
+        &mut browser,
+        "document.getElementById('status').classList.contains('bad')",
+    )
+    .await;
+    let diagnostics = page.text(&mut browser, "document.getElementById('out').textContent").await;
+    assert!(
+        diagnostics.contains("error[B0") && diagnostics.contains("playground.beck"),
+        "the browser did not show a compiler diagnostic:\n{diagnostics}"
+    );
+}
+}
+
+browser_test! {
+/// Rung B: the whole application in one tab, and two clients of it.
+///
+/// docs/17 §17.2's two demos, in a browser: **multiplayer in one tab** — a click in ana's iframe
+/// reaches bo's page through the worker's log and the same patch protocol a deployed application
+/// speaks — and **time travel**, where dragging the scrubber folds the log again from genesis.
+///
+/// Nothing in this test talks to a server: the module was fetched once, and every answer after
+/// that came out of the worker.
+async fn the_playground_runs_the_application_and_two_clients_of_it() {
+    let Some(mut browser) = browser::shared().await else {
+        return;
+    };
+    let Some(playing) = Playing::start().await else {
+        return;
+    };
+    let page = browser.open(&playing.url()).await;
+    page.wait_for(&mut browser, "document.body.dataset.ready === '1'")
+        .await;
+    page.wait_for(
+        &mut browser,
+        "document.getElementById('run').disabled === false",
+    )
+    .await;
+    page.eval(&mut browser, "document.getElementById('run').click()")
+        .await;
+
+    // Both clients are live when the residue says so — `data-b-ready` is set by `beck-thin.js` on
+    // its welcome frame, which is the same signal a deployed page gives.
+    for frame in ["client-ana", "client-bo"] {
+        page.wait_for(
+            &mut browser,
+            &format!(
+                "document.getElementById('{frame}').contentDocument \
+                 ?.getElementById('b-root')?.dataset.bReady === 'a'"
+            ),
+        )
+        .await;
+    }
+
+    // ana clicks. The command goes up her port, through the one merge point, into the log — and
+    // the frame that comes back to *bo* is what makes this a fanout rather than a mirror.
+    page.eval(
+        &mut browser,
+        "document.getElementById('client-ana').contentDocument \
+         .querySelector('button.up').click()",
+    )
+    .await;
+    for frame in ["client-ana", "client-bo"] {
+        page.wait_for(
+            &mut browser,
+            &format!(
+                "document.getElementById('{frame}').contentDocument \
+                 .querySelector('.count').textContent === '1'"
+            ),
+        )
+        .await;
+    }
+
+    // bo clicks too, and ana sees it. Two subscriptions, one log, one order.
+    page.eval(
+        &mut browser,
+        "document.getElementById('client-bo').contentDocument \
+         .querySelector('button.up').click()",
+    )
+    .await;
+    page.wait_for(
+        &mut browser,
+        "document.getElementById('client-ana').contentDocument \
+         .querySelector('.count').textContent === '2'",
+    )
+    .await;
+
+    // The log holds two events, and the page shows them.
+    page.wait_for(
+        &mut browser,
+        "document.querySelectorAll('#log tbody tr').length === 2",
+    )
+    .await;
+
+    // Time travel: fold the same log to position 1 and to position 0. Both are computed by the
+    // program's own fold, in the tab, from genesis.
+    page.eval(
+        &mut browser,
+        "(() => { const s = document.getElementById('scrub'); s.value = '1'; \
+          s.dispatchEvent(new Event('input')); })()",
+    )
+    .await;
+    page.wait_for(
+        &mut browser,
+        "document.querySelector('#preview .count')?.textContent === '1'",
+    )
+    .await;
+    page.eval(
+        &mut browser,
+        "(() => { const s = document.getElementById('scrub'); s.value = '0'; \
+          s.dispatchEvent(new Event('input')); })()",
+    )
+    .await;
+    page.wait_for(
+        &mut browser,
+        "document.querySelector('#preview .count')?.textContent === '0'",
+    )
+    .await;
+
+    // And the live clients did not move while history was being dragged: a scrubber that moved the
+    // application would be an undo, not a replay.
+    assert_eq!(
+        page.text(
+            &mut browser,
+            "document.getElementById('client-ana').contentDocument \
+             .querySelector('.count').textContent"
+        )
+        .await,
+        "2"
     );
 }
 }

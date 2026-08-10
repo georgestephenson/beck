@@ -19,8 +19,6 @@ pub mod oidc;
 pub mod outbound;
 pub mod patch;
 pub mod pgwire;
-pub mod program;
-pub mod protocol;
 pub mod quota;
 pub mod session;
 pub mod telemetry;
@@ -28,12 +26,17 @@ pub mod testing;
 
 pub use app::{replay_from_genesis, replay_to, App, AppConfig};
 pub use beck_core::diff::{self, diff, Op, Path};
+pub use beck_host::Runtime;
+/// The compiled program and the wire it speaks on, from [`beck_host`] — the half of this platform
+/// that is program-shaped rather than machine-shaped, and that a browser tab therefore also runs
+/// ([`docs/17-playground.md`](../../../../docs/17-playground.md) §17.2). Re-exported at the paths
+/// they have always had: `beck_rt::program::Runtime` is `beck_host::program::Runtime`.
+pub use beck_host::{program, protocol};
 pub use dash::{Dashboard, ResourceRow};
 pub use log::{
     Durability, Envelope, Instant, LogStore, MemoryLog, PgLog, RedbLog, Seq, Snapshot, SqliteLog,
 };
 pub use patch::{Codec, PatchFrame};
-pub use program::Runtime;
 pub use telemetry::{telemetry, timed, Telemetry};
 pub use testing::{run as run_tests, Case, Options as TestOptions, Outcome, Report as TestReport};
 

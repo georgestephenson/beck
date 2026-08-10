@@ -17,7 +17,6 @@
 //! batching, the ordering, the ack-versus-frame protocol rule Phase 0 learned the hard way — is
 //! unchanged, because it was never domain-specific.
 
-use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -25,9 +24,10 @@ use anyhow::{bail, Result};
 use beck_core::Value;
 use tokio::sync::{mpsc, oneshot, watch, RwLock};
 
-use crate::log::{Instant, LogStore, Pending, Seq, Snapshot};
+use crate::log::{Instant, LogStore, Seq, Snapshot};
 use crate::program::Runtime;
 use crate::telemetry::{telemetry, timed};
+use beck_host::sequence::Seen;
 
 #[derive(Clone, Debug)]
 pub struct AppConfig {
@@ -387,7 +387,25 @@ impl App {
     }
 }
 
+/// This host's stopwatch over the one step the merge point spends real time in.
+///
+/// `beck_host::sequence` reads no clock, because one of its two hosts is a browser tab where
+/// `std::time::Instant::now()` is a panic. A process that has a clock says so by passing this.
+struct FoldTimer;
+
+impl beck_host::sequence::Meter for FoldTimer {
+    fn fold(&self, f: &mut dyn FnMut() -> Result<Value>) -> Result<Value> {
+        timed(&telemetry().fold, f)
+    }
+}
+
 /// The single writer. Everything about the total order lives in this one task.
+///
+/// What it decides lives in [`mod@beck_host::sequence`] instead: which proposals become events, and
+/// what each proposer is told. This task is the part that is about *this* host — a queue, a
+/// durable append, a version to publish, a snapshot on a counter — and a browser tab running the
+/// same application has none of those and all of the rules
+/// ([`docs/17`](../../../../../docs/17-playground.md) §17.2).
 async fn sequencer(app: Arc<App>, mut rx: mpsc::Receiver<Proposal>, config: AppConfig) {
     // The commands already appended, with the position each got. **The position is the point**:
     // §4.3 makes the id an idempotency key so "a retry after a reconnect is safe", and a retry is
@@ -395,7 +413,7 @@ async fn sequencer(app: Arc<App>, mut rx: mpsc::Receiver<Proposal>, config: AppC
     // alone let this reply "duplicate" — a *rejection* — to a command that had been accepted, so a
     // client replaying its offline queue was told its work had been refused and took it back off
     // the page (`docs/94` §94.13).
-    let mut seen: VecDeque<(String, Seq)> = VecDeque::with_capacity(config.dedup_capacity);
+    let mut seen = Seen::new(config.dedup_capacity);
     let mut since_snapshot = 0u64;
     let mut batch: Vec<Proposal> = Vec::with_capacity(config.max_batch);
 
@@ -416,85 +434,52 @@ async fn sequencer(app: Arc<App>, mut rx: mpsc::Receiver<Proposal>, config: AppC
         // the batch it is inside: `Add(x)` followed by `Toggle(x)` in one batch must work
         // (§18.5 item 5).
         let mut state = app.state.write().await;
-        let mut pending: Vec<Pending> = Vec::new();
-        let mut replies: Vec<(oneshot::Sender<Result<Seq, String>>, usize)> = Vec::new();
-        let mut rejected: Vec<(oneshot::Sender<Result<Seq, String>>, String)> = Vec::new();
-        let mut speculative = state.clone();
         let base = app.head.load(Ordering::Relaxed);
 
+        // The proposals, minus their reply channels — which is the whole of what the rules do not
+        // need. The channels stay here, in the order the decisions come back in.
+        let mut senders = Vec::with_capacity(batch.len());
+        let mut proposals = Vec::with_capacity(batch.len());
         for p in batch.drain(..) {
-            if let Some((_, at)) = seen.iter().find(|(id, _)| *id == p.id) {
+            senders.push(p.reply);
+            proposals.push((p.id, p.at, p.actor, p.command));
+        }
+        let decided = beck_host::sequence(
+            &app.runtime,
+            &state,
+            base,
+            &mut seen,
+            proposals
+                .iter()
+                .map(|(id, at, actor, command)| beck_host::sequence::Proposal {
+                    id: id.clone(),
+                    at: *at,
+                    actor,
+                    command: command.clone(),
+                })
+                .collect(),
+            &FoldTimer,
+        );
+
+        let mut replies: Vec<(oneshot::Sender<Result<Seq, String>>, usize)> = Vec::new();
+        for (reply, decision) in senders.into_iter().zip(decided.decisions) {
+            match decision {
                 // Idempotency by envelope identity: a retry after a reconnect is safe (§4.3), and
                 // it is safe because this is an **ack** carrying the position the first attempt
                 // got, not a refusal. The command is in the log; saying so twice is the whole of
                 // what idempotent means.
-                telemetry().deduplicated.incr();
-                let _ = p.reply.send(Ok(*at));
-                continue;
-            }
-            let proposal = app.runtime.proposal(&p.actor, p.command.clone());
-            match app.runtime.validate(&speculative, &proposal) {
-                Ok(events) => {
-                    if events.is_empty() {
-                        rejected.push((p.reply, "no events".into()));
-                        continue;
-                    }
-                    let mut failure: Option<String> = None;
-                    for e in events {
-                        let seq = base + pending.len() as u64 + 1;
-                        // Checked storable *before* the fold advances, so an event that cannot be
-                        // written durably is refused rather than folded into a state the log
-                        // cannot reproduce. A rejection here is a program that should not have
-                        // compiled — `secure::storable` proves it cannot — but the boundary
-                        // refuses rather than writing something lossy.
-                        if let Err(why) = beck_core::repr::Repr::of(&e) {
-                            failure = Some(why.to_string());
-                            break;
-                        }
-                        let env = crate::log::Envelope {
-                            seq,
-                            at: p.at,
-                            actor: p.actor.name().to_string(),
-                            body: e.clone(),
-                        };
-                        // Apply as we validate, so the next command in the batch sees it:
-                        // `Add(x)` followed by `Toggle(x)` in one batch must work.
-                        match timed(&telemetry().fold, || {
-                            app.runtime.fold(&speculative, &env, e.clone())
-                        }) {
-                            Ok(next) => speculative = next,
-                            Err(err) => {
-                                failure = Some(err.to_string());
-                                break;
-                            }
-                        }
-                        pending.push(Pending {
-                            at: p.at,
-                            actor: p.actor.name().to_string(),
-                            body: e,
-                        });
-                    }
-                    match failure {
-                        Some(why) => rejected.push((p.reply, why)),
-                        None => {
-                            if seen.len() >= config.dedup_capacity {
-                                seen.pop_front();
-                            }
-                            // The position is `base + pending.len()`: the last event this command
-                            // produced, which is the seq its reply carries below.
-                            seen.push_back((p.id, base + pending.len() as u64));
-                            replies.push((p.reply, pending.len()));
-                        }
-                    }
+                beck_host::Decision::Duplicate(at) => {
+                    telemetry().deduplicated.incr();
+                    let _ = reply.send(Ok(at));
                 }
-                Err(why) => rejected.push((p.reply, why)),
+                beck_host::Decision::Refused { why } => {
+                    telemetry().rejected.incr();
+                    let _ = reply.send(Err(why));
+                }
+                beck_host::Decision::Accepted { offset } => replies.push((reply, offset)),
             }
         }
-
-        for (reply, why) in rejected {
-            telemetry().rejected.incr();
-            let _ = reply.send(Err(why));
-        }
+        let (speculative, pending) = (decided.state, decided.pending);
         if pending.is_empty() {
             continue;
         }

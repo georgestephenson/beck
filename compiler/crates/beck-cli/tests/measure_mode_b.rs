@@ -54,14 +54,18 @@ fn compressed(bytes: &[u8]) -> (usize, &'static str) {
             Ok(c) => c,
             Err(_) => continue,
         };
+        // The write happens on its own thread, and it has to: a compressor emits as it reads, so
+        // writing megabytes into its stdin while nothing drains its stdout fills the output pipe,
+        // the child blocks on the write it cannot finish, and this blocks on the write *it* cannot
+        // finish. `gzip -9` on a 2.6 MB module deadlocks that way every time; `brotli -q 11` does
+        // not, because it buffers a whole window before emitting anything — which is why this went
+        // unnoticed on a machine that had brotli.
         use std::io::Write;
-        child
-            .stdin
-            .take()
-            .expect("stdin")
-            .write_all(bytes)
-            .expect("writes");
+        let mut stdin = child.stdin.take().expect("stdin");
+        let input = bytes.to_vec();
+        let writer = std::thread::spawn(move || stdin.write_all(&input));
         let out = child.wait_with_output().expect("compresses");
+        let _ = writer.join();
         if out.status.success() {
             return (
                 out.stdout.len(),

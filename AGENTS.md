@@ -115,7 +115,7 @@ fusion,
 shared-arrangement, subscription, view-metrics, read-model, SICP, Are We Fast Yet, Benchmarks Game,
 tests-in-Beck, UI, workflow-cross-check, documentation, getting-started, outbound, compile-speed,
 concurrency, round-trip, runtime-edge, grammar-fuzz, supply-chain, native-backend, mode-B, browser,
-identity, OIDC and diagnostic-snapshot suites, plus the eight
+playground, identity, OIDC and diagnostic-snapshot suites, plus the nine
 release-only measurement suites. **Keep them green.**
 
 Four gates in this project's history could not have failed
@@ -173,8 +173,9 @@ the thing you are guarding against would make it so.
     `clang` on the path; `BECK_REQUIRE_LLVM=1` forbids the skip, and `BECK_CLANG` names one
     explicitly on a machine with several. A skipped run means the differential *between backends*
     did not happen.
-  - Mode B's kernel (`beck-cli/tests/mode_b.rs`) needs the `wasm32-unknown-unknown` target; it
-    skips without one, and `BECK_REQUIRE_WASM=1` forbids the skip.
+  - Mode B's kernel (`beck-cli/tests/mode_b.rs`) and the playground's module
+    (`beck-cli/tests/playground.rs`) need the `wasm32-unknown-unknown` target; both skip without
+    one, and `BECK_REQUIRE_WASM=1` forbids the skip.
   - The browser suite (`beck-cli/tests/browser.rs`) needs a Chromium; it looks under
     `PLAYWRIGHT_BROWSERS_PATH` and on the path, `BECK_CHROME` names one, and
     `BECK_REQUIRE_BROWSER=1` forbids the skip. Without it, nothing in this workspace executes the

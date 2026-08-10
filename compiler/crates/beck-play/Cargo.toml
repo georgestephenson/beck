@@ -1,0 +1,42 @@
+[package]
+name = "beck-play"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "The playground: the compiler and the application, in a browser tab"
+
+[lib]
+# `cdylib` is the module the page loads; `rlib` is the same playground linked into a native test,
+# which is how its behaviour is gated without a browser (`beck-cli/tests/playground.rs`).
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+beck-core.workspace = true
+beck-diag.workspace = true
+beck-eval.workspace = true
+beck-host.workspace = true
+beck-infra.workspace = true
+beck-macro.workspace = true
+beck-syntax.workspace = true
+serde_json.workspace = true
+
+# The other half of this crate: `beck play` serves the page over HTTP so a browser can load a
+# module at all — a `file://` document cannot instantiate WebAssembly it fetches. None of it
+# crosses to `wasm32-unknown-unknown`, and none of it is in the module.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+anyhow.workspace = true
+beck-rt.workspace = true
+http-body-util = "0.1"
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+tokio.workspace = true
+tracing.workspace = true
+
+# The workspace forbids `unsafe_code`, and this crate cannot inherit that for the reason
+# `beck-wasm` cannot: rustc counts `#[no_mangle]` as unsafe code, because two libraries exporting
+# one symbol is undefined at link time. A WebAssembly module has to export something or the host
+# cannot call it. The exception is `deny` plus one `#[allow]` per export, and its extent is a test
+# rather than a promise — `playground.rs::the_wasm_boundary_is_the_only_exception_to_forbid_unsafe`.
+[lints.rust]
+unsafe_code = "deny"
