@@ -12,13 +12,15 @@
 //!
 //! # What is compiled, and what is refused
 //!
-//! The **scalar subset**: a definition whose parameters and result are all `Int`, `Float` or
-//! `Bool`, and whose body is built from constants, variables, `let`, `if`, `match` on scalar
-//! constants, direct calls to other compiled definitions, and the arithmetic, comparison and
-//! logical primitives. There is no heap here, so a list, a string, a map, a record, a closure or
-//! an effect is refused — by name, with the reason, in [`crate::Report`]. Nothing is silently
-//! approximated: a definition either compiles to machine code that agrees with the evaluator on
-//! every input, or it does not compile.
+//! A definition whose parameters and result each have a [`crate::heap::Repr`] — `Int`, `Float`,
+//! `Bool`, or a `model`, `union` or `newtype` that [`crate::heap`] can lay out — and whose body is
+//! built from constants, variables, `let`, `if`, `match`, direct calls to other compiled
+//! definitions, record and variant construction, field reads, `with`, and the arithmetic,
+//! comparison and logical primitives.
+//!
+//! A list, a string, a map, a closure and every effect are **refused** — by name, with the reason,
+//! in [`crate::Report`]. Nothing is silently approximated: a definition either compiles to machine
+//! code that agrees with the evaluator on every input, or it does not compile.
 //!
 //! # Agreeing with the evaluator exactly
 //!
@@ -59,6 +61,8 @@ use beck_core::core::{Arm, Const, Core, CoreKind, Pattern, Prim, VarId};
 use beck_core::ty::Ty;
 use beck_diag::Span;
 
+use crate::heap::{self, Heap, Repr};
+
 /// The most parameters a compiled function may have.
 ///
 /// The worker's argument buffer is a fixed-size `alloca`, so this is the buffer rather than a
@@ -94,32 +98,23 @@ impl Scalar {
             Scalar::Bool => "false",
         }
     }
-
-    /// The scalar a Beck type denotes, if it denotes one.
-    ///
-    /// By name and exactly: a `newtype` over `Int` is a `Value::Data` at run time, so it is not an
-    /// `i64` here however zero-cost it is in the type system.
-    pub fn of(ty: &Ty) -> Option<Scalar> {
-        match ty {
-            Ty::Con(name, args) if args.is_empty() => match &**name {
-                Ty::INT => Some(Scalar::Int),
-                Ty::FLOAT => Some(Scalar::Float),
-                Ty::BOOL => Some(Scalar::Bool),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
 }
 
 /// What a compiled function looks like from the outside.
 #[derive(Clone, Debug)]
 pub struct Signature {
     pub name: Arc<str>,
-    pub params: Vec<Scalar>,
-    pub ret: Scalar,
+    pub params: Vec<Repr>,
+    pub ret: Repr,
     /// Which entry of the worker's dispatch table calls it.
     pub index: u32,
+}
+
+impl Signature {
+    /// Whether calling this needs the heap on the wire in either direction.
+    pub fn touches_heap(&self) -> bool {
+        self.ret.is_obj() || self.params.iter().any(|p| p.is_obj())
+    }
 }
 
 /// A definition that did not compile, and why.
@@ -145,6 +140,14 @@ pub enum Trap {
     NoMatchInt,
     NoMatchFloat,
     NoMatchBool,
+    /// A `match` on a record or a union matched nothing. Unreachable for the same reason the three
+    /// above it are — the checker proves a `match` exhaustive — and here for the same reason: an
+    /// LLVM `unreachable` would let the optimiser do anything at all with the path a wrong
+    /// exhaustiveness check reached.
+    NoMatchData,
+    /// The arena is full. [`crate::heap::ARENA_BYTES`] is how much there is, and this is the one
+    /// failure a compiled program has that the evaluator does not.
+    HeapExhausted,
 }
 
 impl Trap {
@@ -165,11 +168,13 @@ impl Trap {
             Trap::NoMatchInt => 8,
             Trap::NoMatchFloat => 9,
             Trap::NoMatchBool => 10,
+            Trap::NoMatchData => 11,
+            Trap::HeapExhausted => 12,
         }
     }
 
     pub fn from_code(code: u32) -> Option<Trap> {
-        const ALL: [Trap; 10] = [
+        const ALL: [Trap; 12] = [
             Trap::AddOverflow,
             Trap::SubOverflow,
             Trap::MulOverflow,
@@ -180,6 +185,8 @@ impl Trap {
             Trap::NoMatchInt,
             Trap::NoMatchFloat,
             Trap::NoMatchBool,
+            Trap::NoMatchData,
+            Trap::HeapExhausted,
         ];
         ALL.into_iter().find(|t| t.code() == code)
     }
@@ -208,6 +215,14 @@ impl Trap {
             Trap::NoMatchBool => {
                 format!("no match arm applies to {}", payload != 0)
             }
+            // Without the value, because what is in the payload is an offset into a heap this
+            // process cannot see. It is the one trap message that is not the evaluator's word for
+            // word, and it is on the path the checker proves unreachable.
+            Trap::NoMatchData => "no match arm applies to this value".into(),
+            Trap::HeapExhausted => format!(
+                "the compiled program used all {} MiB of its heap",
+                crate::heap::ARENA_BYTES >> 20
+            ),
         }
     }
 }
@@ -222,6 +237,9 @@ pub struct Module {
     pub spans: Vec<Span>,
     /// Definitions this backend declined, and why.
     pub refusals: Vec<Refusal>,
+    /// What every object in this module looks like — and therefore how the host writes one and
+    /// reads one back. [`crate::heap`] is why this is one table rather than three.
+    pub heap: Heap,
 }
 
 impl Module {
@@ -238,14 +256,16 @@ impl Module {
 pub fn module(program: &Program) -> Module {
     let mut refusals: Vec<Refusal> = Vec::new();
     let mut sigs: BTreeMap<Arc<str>, Signature> = BTreeMap::new();
+    let mut heap = Heap::new();
+    heap::survey(program, &mut heap);
 
-    // Round one: the signature alone. A definition whose parameters or result are not scalars
-    // cannot be called through the worker's protocol however simple its body is.
+    // Round one: the signature alone. A definition whose parameters or result have no machine
+    // representation cannot be called through the worker's protocol however simple its body is.
     for name in &program.def_order {
         let Some(def) = program.defs.get(name) else {
             continue;
         };
-        match signature_of(def) {
+        match signature_of(def, &mut heap, program) {
             Ok(sig) => {
                 sigs.insert(name.clone(), sig);
             }
@@ -264,7 +284,7 @@ pub fn module(program: &Program) -> Module {
         let mut removed = false;
         for name in eligible.clone() {
             let def = &program.defs[&name];
-            let mut fun = Function::new(&sigs, &eligible);
+            let mut fun = Function::new(&sigs, &eligible, program, &mut heap);
             if let Err(reason) = fun.emit(def) {
                 eligible.remove(&name);
                 refusals.push(Refusal { name, reason });
@@ -295,31 +315,56 @@ pub fn module(program: &Program) -> Module {
 
     let mut spans: Vec<Span> = Vec::new();
     let mut bodies = String::new();
+    let mut compared: BTreeSet<u32> = BTreeSet::new();
     for name in &order {
         let def = &program.defs[name];
-        let mut fun = Function::new(&indexed, &eligible);
+        let mut fun = Function::new(&indexed, &eligible, program, &mut heap);
         fun.spans = std::mem::take(&mut spans);
         let text = fun
             .emit(def)
             .expect("the fixed point already proved this emits");
         spans = std::mem::take(&mut fun.spans);
+        compared.append(&mut fun.compared);
         bodies.push_str(&text);
         bodies.push('\n');
     }
 
     let functions: Vec<Signature> = order.iter().map(|n| indexed[n].clone()).collect();
-    let ir = assemble(&bodies, &functions);
+    let ir = assemble(&bodies, &functions, &heap, &closure_of(&compared, &heap));
     refusals.sort_by(|a, b| a.name.cmp(&b.name));
     Module {
         ir,
         functions,
         spans,
         refusals,
+        heap,
     }
 }
 
+/// Every layout that needs a comparison function, given the ones a body asked to compare.
+///
+/// Transitive, because comparing a record compares its fields: asking for `Line` asks for `Point`
+/// whether or not any body compares two points.
+fn closure_of(asked: &BTreeSet<u32>, heap: &Heap) -> BTreeSet<u32> {
+    let mut out: BTreeSet<u32> = BTreeSet::new();
+    let mut todo: Vec<u32> = asked.iter().copied().collect();
+    while let Some(at) = todo.pop() {
+        if !out.insert(at) {
+            continue;
+        }
+        for v in &heap.layout(at).variants {
+            for (_, r) in &v.fields {
+                if let Repr::Obj(inner) = r {
+                    todo.push(*inner);
+                }
+            }
+        }
+    }
+    out
+}
+
 /// The signature, or the reason there is not one.
-fn signature_of(def: &Def) -> Result<Signature, String> {
+fn signature_of(def: &Def, heap: &mut Heap, program: &Program) -> Result<Signature, String> {
     if !def.typarams.is_empty() {
         return Err(format!(
             "generic over {} — a type parameter has no machine representation here",
@@ -337,23 +382,14 @@ fn signature_of(def: &Def) -> Result<Signature, String> {
     }
     let mut params = Vec::with_capacity(def.params.len());
     for (_, name, ty) in &def.params {
-        match Scalar::of(ty) {
-            Some(s) => params.push(s),
-            None => {
-                return Err(format!(
-                    "parameter `{name}` is `{}`, and only Int, Float and Bool have a machine \
-                     representation here",
-                    ty
-                ))
-            }
+        match heap.repr(ty, program) {
+            Ok(r) => params.push(r),
+            Err(why) => return Err(format!("parameter `{name}` is {why}")),
         }
     }
-    let ret = Scalar::of(&def.ret).ok_or_else(|| {
-        format!(
-            "returns `{}`, and only Int, Float and Bool have a machine representation here",
-            def.ret
-        )
-    })?;
+    let ret = heap
+        .repr(&def.ret, program)
+        .map_err(|why| format!("returns {why}"))?;
     Ok(Signature {
         name: def.name.clone(),
         params,
@@ -365,10 +401,13 @@ fn signature_of(def: &Def) -> Result<Signature, String> {
 }
 
 /// An SSA value: the LLVM operand, and what it is.
+///
+/// An object is an `i64` holding its offset into the arena, so `ty` is what the *language* says it
+/// is and [`Repr::machine`] is what LLVM sees.
 #[derive(Clone, Debug)]
 struct Val {
     text: String,
-    ty: Scalar,
+    ty: Repr,
 }
 
 /// Where the value an expression produces has to go.
@@ -388,6 +427,8 @@ enum Dest {
 struct Function<'a> {
     sigs: &'a BTreeMap<Arc<str>, Signature>,
     eligible: &'a BTreeSet<Arc<str>>,
+    program: &'a Program,
+    heap: &'a mut Heap,
     /// Emitted blocks, complete with their terminators.
     out: String,
     /// The block being written.
@@ -397,28 +438,43 @@ struct Function<'a> {
     env: BTreeMap<VarId, Val>,
     spans: Vec<Span>,
     /// What this function returns, which is what its trap exit has to return too.
-    ret: Scalar,
+    ret: Repr,
     /// Whether anything branched to the trap exit, so an unused block is not emitted.
     trapped: bool,
+    /// The layouts this body compares two of, so the module emits a comparison for them.
+    compared: BTreeSet<u32>,
+    /// Whether this body reaches the arena, and therefore needs its base in a register.
+    uses_heap: bool,
 }
 
 impl<'a> Function<'a> {
     fn new(
         sigs: &'a BTreeMap<Arc<str>, Signature>,
         eligible: &'a BTreeSet<Arc<str>>,
+        program: &'a Program,
+        heap: &'a mut Heap,
     ) -> Function<'a> {
         Function {
             sigs,
             eligible,
+            program,
+            heap,
             out: String::new(),
             body: String::new(),
             label: String::new(),
             next: 0,
             env: BTreeMap::new(),
             spans: Vec::new(),
-            ret: Scalar::Int,
+            ret: Repr::Int,
             trapped: false,
+            compared: BTreeSet::new(),
+            uses_heap: false,
         }
+    }
+
+    /// What `ty` looks like at the machine, or the reason this body cannot be compiled.
+    fn repr(&mut self, ty: &Ty) -> Result<Repr, String> {
+        self.heap.repr(ty, self.program)
     }
 
     fn emit(&mut self, def: &Def) -> Result<String, String> {
@@ -459,9 +515,22 @@ impl<'a> Function<'a> {
         self.expr(body, Dest::Return)?;
 
         let mut text = head;
+        // The arena's base, hoisted to the top of the entry block: it is written once before any
+        // compiled code runs, so one load dominates every use and none of the loads in between
+        // have to be proved redundant.
+        if self.uses_heap {
+            let at = self.out.find('\n').map_or(0, |i| i + 1);
+            self.out
+                .insert_str(at, "  %hp = load ptr, ptr @\"beck.heap\"\n");
+        }
         text.push_str(&self.out);
         if self.trapped {
-            let _ = write!(text, "trap:\n  ret {} {}\n", sig.ret.llvm(), sig.ret.zero());
+            let _ = write!(
+                text,
+                "trap:\n  ret {} {}\n",
+                sig.ret.llvm(),
+                sig.ret.machine().zero()
+            );
         }
         text.push_str("}\n");
         Ok(text)
@@ -581,7 +650,9 @@ impl<'a> Function<'a> {
             CoreKind::App { func, args } => return self.call(func, args, dest),
             CoreKind::Prim { op, args } => self.prim(*op, args, c.span)?,
             CoreKind::Lam { .. } => {
-                return Err("a nested function is a closure, and there is no heap here".into())
+                return Err(
+                    "a nested function is a closure, and a closure is not on this heap".into(),
+                )
             }
             CoreKind::Global(name) => {
                 return Err(format!(
@@ -589,15 +660,17 @@ impl<'a> Function<'a> {
                      closure"
                 ))
             }
-            CoreKind::Make { ty, .. } => {
-                return Err(format!("builds a `{ty}`, and there is no heap here"))
+            CoreKind::Make {
+                variant, fields, ..
+            } => self.make(&c.ty, variant.as_deref(), fields, c.span)?,
+            CoreKind::Field { base, name } => self.field(base, name)?,
+            CoreKind::With { base, fields } => self.with(base, fields, c.span)?,
+            CoreKind::ListLit(_) => {
+                return Err("builds a list, and a collection is not on this heap yet".into())
             }
-            CoreKind::Field { name, .. } => {
-                return Err(format!("reads the field `{name}` of a record"))
+            CoreKind::MapLit(_) => {
+                return Err("builds a map, and a collection is not on this heap yet".into())
             }
-            CoreKind::With { .. } => return Err("updates a record".into()),
-            CoreKind::ListLit(_) => return Err("builds a list, and there is no heap here".into()),
-            CoreKind::MapLit(_) => return Err("builds a map, and there is no heap here".into()),
         };
         self.finish(value, dest)
     }
@@ -627,7 +700,7 @@ impl<'a> Function<'a> {
         dest: Dest,
     ) -> Result<Option<Val>, String> {
         let c = self.value(cond)?;
-        if c.ty != Scalar::Bool {
+        if c.ty != Repr::Bool {
             return Err("the condition of an `if` is not a Bool".into());
         }
         let lt = self.label("if.then");
@@ -667,10 +740,16 @@ impl<'a> Function<'a> {
         Ok(Some(Val { text: r, ty: tv.ty }))
     }
 
-    /// A `match` over a scalar: a chain of tests, each falling through to the next.
+    /// A `match`: a chain of tests, each falling through to the next.
     ///
     /// Falling through is what makes a guard a guard — an arm whose pattern matched but whose
     /// guard was false has to reach the arm after it, which is the evaluator's `continue`.
+    ///
+    /// An arm whose pattern takes a value apart is emitted **once per alternative**
+    /// ([`alternatives`]), because two alternatives of one or-pattern bind the same names to
+    /// different words — `Circle(r) | Square(r)` reads `r` out of two different objects — and a
+    /// single block reached from both would need a `phi` per binder. Duplicating the arm is the
+    /// same behaviour with no join to get wrong, and the count is bounded.
     fn match_(
         &mut self,
         scrutinee: &Core,
@@ -681,36 +760,40 @@ impl<'a> Function<'a> {
         let v = self.value(scrutinee)?;
         let join = self.label("match.join");
         let mut incoming: Vec<(String, String)> = Vec::new();
-        let mut ty: Option<Scalar> = None;
+        let mut ty: Option<Repr> = None;
 
         for arm in arms {
-            let next = self.label("match.next");
-            let taken = self.label("match.arm");
-            let cond = self.test(&arm.pattern, &v)?;
-            self.terminate(format!("br i1 {cond}, label %{taken}, label %{next}"));
-
-            self.start(taken);
-            let bound = self.bind(&arm.pattern, &v);
-            if let Some(guard) = &arm.guard {
-                let g = self.value(guard)?;
-                if g.ty != Scalar::Bool {
-                    return Err("a match guard is not a Bool".into());
+            for pattern in alternatives(&arm.pattern)? {
+                let next = self.label("match.next");
+                let mut undo: Vec<(VarId, Option<Val>)> = Vec::new();
+                let probed = self.probe(&pattern, &v, &next, &mut undo);
+                if let Err(e) = probed {
+                    self.unbind(undo);
+                    return Err(e);
                 }
-                let run = self.label("match.guarded");
-                self.terminate(format!("br i1 {}, label %{run}, label %{next}", g.text));
-                self.start(run);
-            }
-            if let Some(av) = self.expr(&arm.body, dest)? {
-                match ty {
-                    Some(t) if t != av.ty => return Err("match arms have different types".into()),
-                    _ => ty = Some(av.ty),
+                if let Some(guard) = &arm.guard {
+                    let g = self.value(guard)?;
+                    if g.ty != Repr::Bool {
+                        return Err("a match guard is not a Bool".into());
+                    }
+                    let run = self.label("match.guarded");
+                    self.terminate(format!("br i1 {}, label %{run}, label %{next}", g.text));
+                    self.start(run);
                 }
-                incoming.push((av.text.clone(), self.label.clone()));
-                self.terminate(format!("br label %{join}"));
-            }
-            self.unbind(bound);
+                if let Some(av) = self.expr(&arm.body, dest)? {
+                    match ty {
+                        Some(t) if t != av.ty => {
+                            return Err("match arms have different types".into())
+                        }
+                        _ => ty = Some(av.ty),
+                    }
+                    incoming.push((av.text.clone(), self.label.clone()));
+                    self.terminate(format!("br label %{join}"));
+                }
+                self.unbind(undo);
 
-            self.start(next);
+                self.start(next);
+            }
         }
 
         // Nothing matched. The checker proves a `match` exhaustive, so this is unreachable for a
@@ -718,9 +801,10 @@ impl<'a> Function<'a> {
         // all with the path that reaches it, and a wrong exhaustiveness check would then be
         // undefined behaviour rather than a message. It traps instead.
         let trap = match v.ty {
-            Scalar::Int => Trap::NoMatchInt,
-            Scalar::Float => Trap::NoMatchFloat,
-            Scalar::Bool => Trap::NoMatchBool,
+            Repr::Int => Trap::NoMatchInt,
+            Repr::Float => Trap::NoMatchFloat,
+            Repr::Bool => Trap::NoMatchBool,
+            Repr::Obj(_) => Trap::NoMatchData,
         };
         let payload = self.widen(&v);
         self.trap(trap, span, &payload, "true");
@@ -743,22 +827,54 @@ impl<'a> Function<'a> {
         Ok(Some(Val { text: r, ty }))
     }
 
-    /// Whether `pat` matches `v`, as an `i1`.
-    fn test(&mut self, pat: &Pattern, v: &Val) -> Result<String, String> {
+    /// Test `pat` against `v`, binding what it names: fall through on a match, branch to `fail`
+    /// otherwise.
+    ///
+    /// Control flow rather than one `i1`, and that is a memory-safety requirement rather than a
+    /// tidiness one: `Some(Circle(r))` cannot read the field it matches on until the tag says
+    /// there is one there, and a conjunction that evaluated both sides would read a word of a
+    /// variant that is not present and follow it as an offset.
+    fn probe(
+        &mut self,
+        pat: &Pattern,
+        v: &Val,
+        fail: &str,
+        undo: &mut Vec<(VarId, Option<Val>)>,
+    ) -> Result<(), String> {
         match pat {
-            Pattern::Wildcard | Pattern::Bind(_) => Ok("true".into()),
-            Pattern::At { inner, .. } => self.test(inner, v),
+            Pattern::Wildcard => Ok(()),
+            Pattern::Bind(var) => {
+                undo.push((*var, self.env.insert(*var, v.clone())));
+                Ok(())
+            }
+            Pattern::At { var, inner } => {
+                undo.push((*var, self.env.insert(*var, v.clone())));
+                self.probe(inner, v, fail, undo)
+            }
             Pattern::Const(k) => {
                 let want = constant(k)?;
                 if want.ty != v.ty {
                     return Err("a match arm compares against a constant of another type".into());
                 }
-                Ok(self.equals(v, &want))
+                let cond = self.equals(v, &want);
+                self.branch(&cond, fail);
+                Ok(())
             }
+            // Only the alternatives `alternatives` leaves whole reach here: every one is a test
+            // and none of them binds, so the disjunction is one `i1` and one branch.
             Pattern::Or(alts) => {
                 let mut acc: Option<String> = None;
                 for alt in alts {
-                    let t = self.test(alt, v)?;
+                    let Pattern::Const(k) = alt else {
+                        return Err("an or-pattern that was not split".into());
+                    };
+                    let want = constant(k)?;
+                    if want.ty != v.ty {
+                        return Err(
+                            "a match arm compares against a constant of another type".into()
+                        );
+                    }
+                    let t = self.equals(v, &want);
                     acc = Some(match acc {
                         None => t,
                         Some(prev) => {
@@ -768,40 +884,51 @@ impl<'a> Function<'a> {
                         }
                     });
                 }
-                acc.ok_or_else(|| "an or-pattern with no alternatives".into())
+                let cond = acc.ok_or_else(|| "an or-pattern with no alternatives".to_string())?;
+                self.branch(&cond, fail);
+                Ok(())
             }
-            Pattern::Ctor { variant, .. } => Err(format!(
-                "matches the constructor `{variant}`, and a union value lives on the heap"
-            )),
-            Pattern::List { .. } => Err("matches a list pattern".into()),
-        }
-    }
-
-    /// Bind what an irrefutable part of `pat` names, and answer what to undo afterwards.
-    fn bind(&mut self, pat: &Pattern, v: &Val) -> Vec<(VarId, Option<Val>)> {
-        let mut undo = Vec::new();
-        self.bind_into(pat, v, &mut undo);
-        undo
-    }
-
-    fn bind_into(&mut self, pat: &Pattern, v: &Val, undo: &mut Vec<(VarId, Option<Val>)>) {
-        match pat {
-            Pattern::Bind(var) => undo.push((*var, self.env.insert(*var, v.clone()))),
-            Pattern::At { var, inner } => {
-                undo.push((*var, self.env.insert(*var, v.clone())));
-                self.bind_into(inner, v, undo);
-            }
-            // Every alternative of an or-pattern binds the same names to the same scrutinee here,
-            // because a scalar pattern takes nothing apart: binding through the first is binding
-            // through all of them.
-            Pattern::Or(alts) => {
-                if let Some(first) = alts.first() {
-                    self.bind_into(first, v, undo);
+            Pattern::Ctor { variant, binds } => {
+                let Repr::Obj(at) = v.ty else {
+                    return Err(format!(
+                        "matches the constructor `{variant}` against something that is not a record"
+                    ));
+                };
+                let (tag, fields) = {
+                    let layout = self.heap.layout(at);
+                    let tag = layout.tag_of(Some(variant)).ok_or_else(|| {
+                        format!("`{variant}` is not a variant of `{}`", layout.shown)
+                    })?;
+                    (tag, layout.variants[tag as usize].clone())
+                };
+                // A record has one variant, so its tag is known and there is nothing to test. A
+                // union's is a word to load and compare.
+                if self.heap.layout(at).tagged {
+                    let got = self.load_word(&v.text, 0);
+                    let ok = self.fresh();
+                    self.line(format!("{ok} = icmp eq i64 {got}, {tag}"));
+                    self.branch(&ok, fail);
                 }
+                for (name, sub) in binds {
+                    let (slot, repr) = fields.slot(name).ok_or_else(|| {
+                        format!("`{variant}` has no field `{name}` in this layout")
+                    })?;
+                    let field = self.load_field(&v.text, slot, repr);
+                    self.probe(sub, &field, fail, undo)?;
+                }
+                Ok(())
             }
-            Pattern::Wildcard | Pattern::Const(_) | Pattern::Ctor { .. } | Pattern::List { .. } => {
+            Pattern::List { .. } => {
+                Err("matches a list pattern, and a collection is not on this heap yet".into())
             }
         }
+    }
+
+    /// Carry on if `cond`, and go to `fail` if not.
+    fn branch(&mut self, cond: &str, fail: &str) {
+        let cont = self.label("pat.ok");
+        self.terminate(format!("br i1 {cond}, label %{cont}, label %{fail}"));
+        self.start(cont);
     }
 
     fn unbind(&mut self, undo: Vec<(VarId, Option<Val>)>) {
@@ -811,6 +938,235 @@ impl<'a> Function<'a> {
                 None => self.env.remove(&var),
             };
         }
+    }
+
+    // -- the heap ---------------------------------------------------------------------------
+
+    /// The arena's base, loaded once at the top of this function.
+    ///
+    /// Once, and not per access: the pointer is written by `main` before any compiled code runs and
+    /// never again, so one load dominates every use of it. [`Function::emit`] is what puts the load
+    /// in the entry block, and this is what tells it to.
+    fn base(&mut self) -> &'static str {
+        self.uses_heap = true;
+        "%hp"
+    }
+
+    /// The address of word `slot` of the object at offset `off`.
+    fn word_addr(&mut self, off: &str, slot: usize) -> String {
+        let base = self.base();
+        let p = self.fresh();
+        self.line(format!(
+            "{p} = getelementptr inbounds i8, ptr {base}, i64 {off}"
+        ));
+        if slot == 0 {
+            return p;
+        }
+        let q = self.fresh();
+        let bytes = slot as u64 * heap::WORD;
+        self.line(format!(
+            "{q} = getelementptr inbounds i8, ptr {p}, i64 {bytes}"
+        ));
+        q
+    }
+
+    /// One raw word of an object — the tag, or a field read for copying rather than for using.
+    fn load_word(&mut self, off: &str, slot: usize) -> String {
+        let p = self.word_addr(off, slot);
+        let r = self.fresh();
+        self.line(format!("{r} = load i64, ptr {p}"));
+        r
+    }
+
+    fn store_word(&mut self, off: &str, slot: usize, word: &str) {
+        let p = self.word_addr(off, slot);
+        self.line(format!("store i64 {word}, ptr {p}"));
+    }
+
+    /// A field, as the value its [`Repr`] says it is.
+    fn load_field(&mut self, off: &str, slot: usize, repr: Repr) -> Val {
+        let p = self.word_addr(off, slot);
+        let r = self.fresh();
+        match repr {
+            Repr::Float => self.line(format!("{r} = load double, ptr {p}")),
+            Repr::Bool => {
+                let raw = self.fresh();
+                self.line(format!("{raw} = load i64, ptr {p}"));
+                self.line(format!("{r} = icmp ne i64 {raw}, 0"));
+            }
+            Repr::Int | Repr::Obj(_) => self.line(format!("{r} = load i64, ptr {p}")),
+        }
+        Val { text: r, ty: repr }
+    }
+
+    /// Put a value in a field.
+    ///
+    /// A real is **normalised** on the way in, which is the one place this backend's invariant
+    /// about zeros and NaNs is paid for rather than argued away: a stored real is compared with
+    /// another stored real by [`compare_functions`], is read back by the host's
+    /// [`heap::Heap::decode`], and is part of what a record's `==` answers. Normalising here means
+    /// every real on the heap is the one the evaluator would have built, so nothing downstream has
+    /// to remember.
+    fn store_field(&mut self, off: &str, slot: usize, v: &Val) {
+        let p = self.word_addr(off, slot);
+        match v.ty {
+            Repr::Float => {
+                let n = self.normalise(&v.text);
+                self.line(format!("store double {}, ptr {p}", n.text));
+            }
+            Repr::Bool => {
+                let w = self.fresh();
+                self.line(format!("{w} = zext i1 {} to i64", v.text));
+                self.line(format!("store i64 {w}, ptr {p}"));
+            }
+            Repr::Int | Repr::Obj(_) => self.line(format!("store i64 {}, ptr {p}", v.text)),
+        }
+    }
+
+    /// Reserve `bytes` in the arena and answer the offset, or trap if there is no room.
+    fn alloc(&mut self, bytes: u64, span: Span) -> String {
+        self.uses_heap = true;
+        let idx = self.span(span);
+        let off = self.fresh();
+        self.line(format!(
+            "{off} = call i64 @\"beck.alloc\"(ptr %err, i64 {bytes}, i32 {idx})"
+        ));
+        self.check_call();
+        off
+    }
+
+    /// `Point(x=1, y=2)`, `Some(v)`, `Id(3)` — one object, filled in.
+    fn make(
+        &mut self,
+        ty: &Ty,
+        variant: Option<&str>,
+        fields: &[(Arc<str>, Core)],
+        span: Span,
+    ) -> Result<Val, String> {
+        let repr = self
+            .repr(ty)
+            .map_err(|why| format!("builds a value that is {why}"))?;
+        let Repr::Obj(at) = repr else {
+            return Err(format!("builds a `{ty}`, which is not an object"));
+        };
+        let (tag, layout) = {
+            let l = self.heap.layout(at);
+            let tag = l
+                .tag_of(variant)
+                .ok_or_else(|| format!("builds a `{}` with no such variant", l.shown))?;
+            (tag, l.variants[tag as usize].clone())
+        };
+        if fields.len() != layout.fields.len() {
+            return Err(format!(
+                "builds a `{ty}` with {} fields where the layout has {}",
+                fields.len(),
+                layout.fields.len()
+            ));
+        }
+
+        // Evaluated in the order they are written, because a field expression can trap and which
+        // trap the caller sees is part of what the evaluator answers.
+        let mut placed = Vec::with_capacity(fields.len());
+        for (name, expr) in fields {
+            let v = self.value(expr)?;
+            let (slot, want) = layout
+                .slot(name)
+                .ok_or_else(|| format!("`{ty}` has no field `{name}`"))?;
+            if v.ty != want {
+                return Err(format!(
+                    "the field `{name}` of `{ty}` is the wrong type here"
+                ));
+            }
+            placed.push((slot, v));
+        }
+
+        let off = self.alloc(layout.bytes(), span);
+        self.store_word(&off, 0, &tag.to_string());
+        for (slot, v) in &placed {
+            self.store_field(&off, *slot, v);
+        }
+        Ok(Val {
+            text: off,
+            ty: repr,
+        })
+    }
+
+    /// `p.x`.
+    fn field(&mut self, base: &Core, name: &str) -> Result<Val, String> {
+        let b = self.value(base)?;
+        let Repr::Obj(at) = b.ty else {
+            return Err(format!(
+                "reads the field `{name}` of something that is not a record"
+            ));
+        };
+        let (slot, repr) = {
+            let layout = self.heap.layout(at);
+            // A union's fields are read by matching it, never by naming one: which fields there
+            // are is a question about the variant.
+            if layout.tagged {
+                return Err(format!(
+                    "reads the field `{name}` of `{}`, which is a union",
+                    layout.shown
+                ));
+            }
+            layout.variants[0]
+                .slot(name)
+                .ok_or_else(|| format!("no field `{name}` on `{}`", layout.shown))?
+        };
+        Ok(self.load_field(&b.text, slot, repr))
+    }
+
+    /// `p.with(x = 3)` — a new object with the old one's other fields.
+    ///
+    /// Always a fresh object. The evaluator rebuilds in place when the base is held by nobody else
+    /// ([`docs/70`](../../../../../docs/70-last-use-moves-report.md)), and this cannot: an arena
+    /// with no ownership in it cannot prove nobody else holds an offset. What that costs is
+    /// [`docs/101`] §101.6's first row, and it is a cost rather than a difference — the answer is
+    /// the same one.
+    fn with(
+        &mut self,
+        base: &Core,
+        fields: &[(Arc<str>, Core)],
+        span: Span,
+    ) -> Result<Val, String> {
+        let b = self.value(base)?;
+        let Repr::Obj(at) = b.ty else {
+            return Err("updates something that is not a record".into());
+        };
+        let layout = {
+            let l = self.heap.layout(at);
+            if l.tagged {
+                return Err(format!("updates `{}`, which is a union", l.shown));
+            }
+            l.variants[0].clone()
+        };
+
+        let mut placed = Vec::with_capacity(fields.len());
+        for (name, expr) in fields {
+            let v = self.value(expr)?;
+            let (slot, want) = layout
+                .slot(name)
+                .ok_or_else(|| format!("no field `{name}` to update"))?;
+            if v.ty != want {
+                return Err(format!("the field `{name}` is the wrong type here"));
+            }
+            placed.push((slot, v));
+        }
+
+        let off = self.alloc(layout.bytes(), span);
+        // Word for word, because a copy does not care what a field means — and then the named ones
+        // are written over.
+        for slot in 0..=layout.fields.len() {
+            let w = self.load_word(&b.text, slot);
+            self.store_word(&off, slot, &w);
+        }
+        for (slot, v) in &placed {
+            self.store_field(&off, *slot, v);
+        }
+        Ok(Val {
+            text: off,
+            ty: b.ty,
+        })
     }
 
     /// A direct call of a named definition — and in tail position, a jump.
@@ -907,7 +1263,7 @@ impl<'a> Function<'a> {
                 ))
             }
         };
-        let same = |vals: &[Val]| -> Result<Scalar, String> {
+        let same = |vals: &[Val]| -> Result<Repr, String> {
             if vals[0].ty == vals[1].ty {
                 Ok(vals[0].ty)
             } else {
@@ -920,7 +1276,7 @@ impl<'a> Function<'a> {
                 arity(2)?;
                 let ty = same(&vals)?;
                 match ty {
-                    Scalar::Int => {
+                    Repr::Int => {
                         let (intrinsic, trap) = match op {
                             Prim::Add => ("sadd", Trap::AddOverflow),
                             Prim::Sub => ("ssub", Trap::SubOverflow),
@@ -928,7 +1284,7 @@ impl<'a> Function<'a> {
                         };
                         Ok(self.checked_int(intrinsic, trap, &vals[0], &vals[1], span))
                     }
-                    Scalar::Float => {
+                    Repr::Float => {
                         let opcode = match op {
                             Prim::Add => "fadd",
                             Prim::Sub => "fsub",
@@ -941,17 +1297,19 @@ impl<'a> Function<'a> {
                         ));
                         Ok(Val {
                             text: r,
-                            ty: Scalar::Float,
+                            ty: Repr::Float,
                         })
                     }
-                    Scalar::Bool => Err(format!("`{}` on two Bools", op.name())),
+                    Repr::Bool | Repr::Obj(_) => {
+                        Err(format!("`{}` on a value that is not a number", op.name()))
+                    }
                 }
             }
             Prim::Div | Prim::Rem => {
                 arity(2)?;
                 let ty = same(&vals)?;
                 match ty {
-                    Scalar::Int => {
+                    Repr::Int => {
                         let (opcode, trap) = match op {
                             Prim::Div => ("sdiv", Trap::DivOverflow),
                             _ => ("srem", Trap::RemOverflow),
@@ -964,7 +1322,7 @@ impl<'a> Function<'a> {
                     // signed zero is not: `1.0 / -0.0` is `-inf` and `1.0 / 0.0` is `+inf`. So the
                     // *divisor* is normalised — see `Function::normalise` for why nothing else
                     // needs to be.
-                    Scalar::Float if op == Prim::Div => {
+                    Repr::Float if op == Prim::Div => {
                         let divisor = self.normalise(&vals[1].text);
                         let r = self.fresh();
                         self.line(format!(
@@ -973,7 +1331,7 @@ impl<'a> Function<'a> {
                         ));
                         Ok(Val {
                             text: r,
-                            ty: Scalar::Float,
+                            ty: Repr::Float,
                         })
                     }
                     _ => Err(format!("`{}` on this type", op.name())),
@@ -982,7 +1340,7 @@ impl<'a> Function<'a> {
             Prim::Neg => {
                 arity(1)?;
                 match vals[0].ty {
-                    Scalar::Int => {
+                    Repr::Int => {
                         // `i64::checked_neg`, which is what the evaluator does: the one input
                         // without an answer is `i64::MIN`.
                         let bad = self.fresh();
@@ -996,24 +1354,26 @@ impl<'a> Function<'a> {
                         self.line(format!("{r} = sub i64 0, {}", vals[0].text));
                         Ok(Val {
                             text: r,
-                            ty: Scalar::Int,
+                            ty: Repr::Int,
                         })
                     }
-                    Scalar::Float => {
+                    Repr::Float => {
                         let r = self.fresh();
                         self.line(format!("{r} = fneg double {}", vals[0].text));
                         Ok(Val {
                             text: r,
-                            ty: Scalar::Float,
+                            ty: Repr::Float,
                         })
                     }
-                    Scalar::Bool => Err("`negate` on a Bool".into()),
+                    Repr::Bool | Repr::Obj(_) => {
+                        Err("`negate` on a value that is not a number".into())
+                    }
                 }
             }
             Prim::Abs => {
                 arity(1)?;
                 match vals[0].ty {
-                    Scalar::Int => {
+                    Repr::Int => {
                         let bad = self.fresh();
                         self.line(format!(
                             "{bad} = icmp eq i64 {}, -9223372036854775808",
@@ -1028,17 +1388,19 @@ impl<'a> Function<'a> {
                         ));
                         Ok(Val {
                             text: r,
-                            ty: Scalar::Int,
+                            ty: Repr::Int,
                         })
                     }
-                    Scalar::Float => {
+                    Repr::Float => {
                         let r = self.intrinsic_f64("llvm.fabs.f64", &vals[0])?;
                         Ok(Val {
                             text: r,
-                            ty: Scalar::Float,
+                            ty: Repr::Float,
                         })
                     }
-                    Scalar::Bool => Err("`abs` on a Bool".into()),
+                    Repr::Bool | Repr::Obj(_) => {
+                        Err("`abs` on a value that is not a number".into())
+                    }
                 }
             }
             Prim::Sqrt | Prim::Sin | Prim::Cos => {
@@ -1051,12 +1413,12 @@ impl<'a> Function<'a> {
                 let r = self.intrinsic_f64(name, &vals[0])?;
                 Ok(Val {
                     text: r,
-                    ty: Scalar::Float,
+                    ty: Repr::Float,
                 })
             }
             Prim::Trunc => {
                 arity(1)?;
-                if vals[0].ty != Scalar::Float {
+                if vals[0].ty != Repr::Float {
                     return Err("`trunc` of something that is not a Float".into());
                 }
                 // Saturating, because the evaluator's `f as i64` is: plain `fptosi` is poison out
@@ -1068,12 +1430,12 @@ impl<'a> Function<'a> {
                 ));
                 Ok(Val {
                     text: r,
-                    ty: Scalar::Int,
+                    ty: Repr::Int,
                 })
             }
             Prim::ToFloat => {
                 arity(1)?;
-                if vals[0].ty != Scalar::Int {
+                if vals[0].ty != Repr::Int {
                     return Err("`float` of something that is not an Int".into());
                 }
                 let r = self.fresh();
@@ -1081,7 +1443,7 @@ impl<'a> Function<'a> {
                 // No normalisation: an integer converts to neither a negative zero nor a NaN.
                 Ok(Val {
                     text: r,
-                    ty: Scalar::Float,
+                    ty: Repr::Float,
                 })
             }
             Prim::Eq | Prim::Ne | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge => {
@@ -1092,7 +1454,7 @@ impl<'a> Function<'a> {
             Prim::And | Prim::Or | Prim::Not => {
                 let want = if op == Prim::Not { 1 } else { 2 };
                 arity(want)?;
-                if vals.iter().any(|v| v.ty != Scalar::Bool) {
+                if vals.iter().any(|v| v.ty != Repr::Bool) {
                     return Err(format!("`{}` on something that is not a Bool", op.name()));
                 }
                 let r = self.fresh();
@@ -1105,7 +1467,7 @@ impl<'a> Function<'a> {
                 }
                 Ok(Val {
                     text: r,
-                    ty: Scalar::Bool,
+                    ty: Repr::Bool,
                 })
             }
             other => Err(format!(
@@ -1116,7 +1478,7 @@ impl<'a> Function<'a> {
     }
 
     fn intrinsic_f64(&mut self, name: &str, v: &Val) -> Result<String, String> {
-        if v.ty != Scalar::Float {
+        if v.ty != Repr::Float {
             return Err(format!("`{name}` of something that is not a Float"));
         }
         let r = self.fresh();
@@ -1138,7 +1500,7 @@ impl<'a> Function<'a> {
         self.line(format!("{r} = extractvalue {{ i64, i1 }} {pair}, 0"));
         Val {
             text: r,
-            ty: Scalar::Int,
+            ty: Repr::Int,
         }
     }
 
@@ -1167,7 +1529,7 @@ impl<'a> Function<'a> {
         self.line(format!("{r} = {opcode} i64 {}, {}", a.text, b.text));
         Val {
             text: r,
-            ty: Scalar::Int,
+            ty: Repr::Int,
         }
     }
 
@@ -1227,7 +1589,7 @@ impl<'a> Function<'a> {
         ));
         Val {
             text: r,
-            ty: Scalar::Float,
+            ty: Repr::Float,
         }
     }
 
@@ -1256,12 +1618,23 @@ impl<'a> Function<'a> {
     fn compare(&mut self, op: Prim, a: &Val, b: &Val) -> Val {
         // Reals compare through the order key and Bools compare unsigned, so `false < true`. Both
         // are the ordering `Value`'s derived `Ord` gives, which is the one the evaluator uses.
+        // An object compares through the function `compare_functions` emitted for its layout,
+        // which answers -1, 0 or 1 — so the six operators are one call and one integer test.
         let (lhs, rhs, signed) = match a.ty {
-            Scalar::Float => (self.order_key(a), self.order_key(b), false),
-            Scalar::Int => (a.text.clone(), b.text.clone(), true),
-            Scalar::Bool => (a.text.clone(), b.text.clone(), false),
+            Repr::Float => (self.order_key(a), self.order_key(b), false),
+            Repr::Int => (a.text.clone(), b.text.clone(), true),
+            Repr::Bool => (a.text.clone(), b.text.clone(), false),
+            Repr::Obj(at) => {
+                self.compared.insert(at);
+                let r = self.fresh();
+                self.line(format!(
+                    "{r} = call i64 @\"beck.cmp.{at}\"(i64 {}, i64 {})",
+                    a.text, b.text
+                ));
+                (r, "0".to_string(), true)
+            }
         };
-        let width = if a.ty == Scalar::Bool { "i1" } else { "i64" };
+        let width = if a.ty == Repr::Bool { "i1" } else { "i64" };
         let pred = match op {
             Prim::Eq => "eq",
             Prim::Ne => "ne",
@@ -1278,7 +1651,7 @@ impl<'a> Function<'a> {
         self.line(format!("{r} = icmp {pred} {width} {lhs}, {rhs}"));
         Val {
             text: r,
-            ty: Scalar::Bool,
+            ty: Repr::Bool,
         }
     }
 
@@ -1286,21 +1659,25 @@ impl<'a> Function<'a> {
     /// the scrutinee that matched nothing.
     fn widen(&mut self, v: &Val) -> String {
         match v.ty {
-            Scalar::Int => v.text.clone(),
+            Repr::Int => v.text.clone(),
             // Normalised, because the one thing that reads this is a message: `Trap::message`
             // renders it, and a scrutinee printed as `-0` where the evaluator prints `0` is a
             // divergence in the differential.
-            Scalar::Float => {
+            Repr::Float => {
                 let v = self.normalise(&v.text);
                 let r = self.fresh();
                 self.line(format!("{r} = bitcast double {} to i64", v.text));
                 r
             }
-            Scalar::Bool => {
+            Repr::Bool => {
                 let r = self.fresh();
                 self.line(format!("{r} = zext i1 {} to i64", v.text));
                 r
             }
+            // Its offset, which is what an object *is* here. Only a trap payload reads this, and
+            // the one trap that can carry an object says nothing about the value it carries —
+            // `Trap::NoMatchData` is the message, and this is what makes it honest.
+            Repr::Obj(_) => v.text.clone(),
         }
     }
 }
@@ -1309,19 +1686,19 @@ fn constant(k: &Const) -> Result<Val, String> {
     match k {
         Const::Int(i) => Ok(Val {
             text: i.to_string(),
-            ty: Scalar::Int,
+            ty: Repr::Int,
         }),
         Const::Bool(b) => Ok(Val {
             text: b.to_string(),
-            ty: Scalar::Bool,
+            ty: Repr::Bool,
         }),
         // Written as the bit pattern, so what the assembler reads back is the double the compiler
         // held rather than whatever a decimal rendering happened to round to.
         Const::Float(f) => Ok(Val {
             text: format!("0x{:016X}", f.to_bits()),
-            ty: Scalar::Float,
+            ty: Repr::Float,
         }),
-        Const::Str(_) => Err("a string constant, and there is no heap here".into()),
+        Const::Str(_) => Err("a string constant, and text is not on this heap yet".into()),
         Const::Unit => Err("the unit value, which has no machine representation here".into()),
     }
 }
@@ -1346,25 +1723,129 @@ fn mangle(name: &str) -> String {
     out.push('"');
     out
 }
+/// The most patterns one arm may be split into.
+///
+/// A bound rather than a judgement: splitting an or-pattern copies the arm, and a pattern of
+/// nested ors multiplies. Nothing in this tree needs three.
+const MAX_ALTERNATIVES: usize = 16;
+
+/// One arm's pattern as the patterns that have to be tried in turn.
+///
+/// An or-pattern of plain constants is left whole, because [`Function::probe`] can test it with one
+/// `or` and it binds nothing. Anything else is **split**: two alternatives that take a value apart
+/// bind the same names to different words, so one block reached from both would need a `phi` per
+/// binder, and copying the arm is the same behaviour with no join to get wrong. `docs/91`
+/// §91.1 is the bug that is not available to make here — an alternative that reaches the body
+/// unexpanded is a wildcard — because there is no matrix and no lazy split: every alternative is
+/// its own test.
+fn alternatives(pat: &Pattern) -> Result<Vec<Pattern>, String> {
+    let mut out = Vec::new();
+    expand(pat, &mut out)?;
+    Ok(out)
+}
+
+/// Whether every alternative here is a constant, and therefore testable without control flow.
+fn testable(pat: &Pattern) -> bool {
+    match pat {
+        Pattern::Const(_) => true,
+        Pattern::Or(alts) => alts.iter().all(testable),
+        _ => false,
+    }
+}
+
+fn expand(pat: &Pattern, out: &mut Vec<Pattern>) -> Result<(), String> {
+    match pat {
+        Pattern::Or(alts) if !testable(pat) => {
+            for alt in alts {
+                expand(alt, out)?;
+            }
+        }
+        Pattern::At { var, inner } => {
+            let mut inners = Vec::new();
+            expand(inner, &mut inners)?;
+            for i in inners {
+                out.push(Pattern::At {
+                    var: *var,
+                    inner: Box::new(i),
+                });
+            }
+        }
+        Pattern::Ctor { variant, binds } => {
+            let mut rows: Vec<Vec<(Arc<str>, Pattern)>> = vec![Vec::new()];
+            for (name, sub) in binds {
+                let mut subs = Vec::new();
+                expand(sub, &mut subs)?;
+                let mut next = Vec::with_capacity(rows.len() * subs.len());
+                for row in &rows {
+                    for s in &subs {
+                        let mut row = row.clone();
+                        row.push((name.clone(), s.clone()));
+                        next.push(row);
+                    }
+                }
+                rows = next;
+                if rows.len() > MAX_ALTERNATIVES {
+                    return Err(format!(
+                        "a pattern with more than {MAX_ALTERNATIVES} alternatives in it"
+                    ));
+                }
+            }
+            for row in rows {
+                out.push(Pattern::Ctor {
+                    variant: variant.clone(),
+                    binds: row,
+                });
+            }
+        }
+        other => out.push(other.clone()),
+    }
+    if out.len() > MAX_ALTERNATIVES {
+        return Err(format!(
+            "a pattern with more than {MAX_ALTERNATIVES} alternatives in it"
+        ));
+    }
+    Ok(())
+}
 
 // -------------------------------------------------------------------------------------------
 // The module around the functions
 // -------------------------------------------------------------------------------------------
 
-/// The declarations, the compiled bodies, the dispatch table and the worker loop.
-fn assemble(bodies: &str, functions: &[Signature]) -> String {
+/// The declarations, the arena, the compiled bodies, the dispatch table and the worker loop.
+fn assemble(
+    bodies: &str,
+    functions: &[Signature],
+    heap: &Heap,
+    compared: &BTreeSet<u32>,
+) -> String {
+    let arena = !heap.is_empty();
     let mut m = String::new();
     m.push_str(HEADER);
+    if arena {
+        let _ = write!(m, "{}", arena_prelude());
+    }
     m.push_str(bodies);
+    for at in compared {
+        m.push_str(&compare_function(*at, heap));
+    }
 
     // One thunk per function: the protocol carries every argument as eight bytes, so this is where
-    // an `i64` becomes a `double` or an `i1` and the result becomes eight bytes again.
+    // an `i64` becomes a `double` or an `i1` and the result becomes eight bytes again. It is also
+    // where the worker learns whether this call's answer is on the heap, since only the thunk knows
+    // what the function returns.
     for sig in functions {
         let _ = writeln!(
             m,
             "define internal i64 @\"beck.thunk.{}\"(ptr noalias %err, ptr %args) {{\nentry:",
             sig.index
         );
+        if arena {
+            let _ = writeln!(
+                m,
+                "  store i64 {}, ptr @\"beck.reply\"",
+                u32::from(sig.ret.is_obj())
+            );
+        }
         let mut operands = String::from("ptr %err");
         for (i, ty) in sig.params.iter().enumerate() {
             let slot = if i == 0 {
@@ -1378,7 +1859,7 @@ fn assemble(bodies: &str, functions: &[Signature]) -> String {
                 format!("%g{i}")
             };
             let _ = writeln!(m, "  %r{i} = load i64, ptr {slot}");
-            match ty {
+            match ty.machine() {
                 Scalar::Int => {
                     let _ = writeln!(m, "  %p{i} = add i64 %r{i}, 0");
                 }
@@ -1397,7 +1878,7 @@ fn assemble(bodies: &str, functions: &[Signature]) -> String {
             sig.ret.llvm(),
             mangle(&sig.name)
         );
-        match sig.ret {
+        match sig.ret.machine() {
             Scalar::Int => {
                 let _ = writeln!(m, "  %wide = add i64 %out, 0");
             }
@@ -1434,7 +1915,334 @@ fn assemble(bodies: &str, functions: &[Signature]) -> String {
         m.push_str("unknown:\n  store i32 255, ptr %err\n  ret i64 0\n}\n\n");
     }
 
-    m.push_str(WORKER);
+    m.push_str(PIPE);
+    m.push_str(&main_loop(arena));
+    m
+}
+
+/// The arena: two globals, a pointer, and the only allocator this backend has.
+///
+/// A bump pointer and no free. The whole of the reasoning is in
+/// [`adr/0026`](../../../../../docs/adr/0026-the-native-heap-is-an-arena-of-offsets.md): a call is
+/// bounded, the arena is reset before every one, and a collector is a design with a cost that this
+/// backend has not measured a need for. What it means for a program that allocates without bound
+/// *within* one call is [`Trap::HeapExhausted`], which is a message rather than a crash.
+fn arena_prelude() -> String {
+    format!(
+        r#"declare ptr @malloc(i64)
+
+@"beck.heap" = internal global ptr null
+@"beck.next" = internal global i64 {first}
+@"beck.limit" = internal global i64 0
+@"beck.reply" = internal global i64 0
+
+define internal i64 @"beck.alloc"(ptr noalias %err, i64 %bytes, i32 %span) {{
+entry:
+  %n = load i64, ptr @"beck.next"
+  %lim = load i64, ptr @"beck.limit"
+  %new = add i64 %n, %bytes
+  ; Unsigned, and against the sum rather than against the room left: a null arena has a limit of
+  ; zero, and `limit - next` would underflow into "plenty".
+  %over = icmp ugt i64 %new, %lim
+  br i1 %over, label %full, label %ok
+full:
+  store i32 {code}, ptr %err
+  %sp = getelementptr inbounds i8, ptr %err, i64 4
+  store i32 %span, ptr %sp
+  %pl = getelementptr inbounds i8, ptr %err, i64 8
+  store i64 0, ptr %pl
+  ret i64 0
+ok:
+  store i64 %new, ptr @"beck.next"
+  ret i64 %n
+}}
+
+"#,
+        first = heap::FIRST,
+        code = Trap::HeapExhausted.code(),
+    )
+}
+
+/// A three-way comparison over one layout: `-1`, `0` or `1`, and the same answer `Value`'s derived
+/// `Ord` gives.
+///
+/// Tag first, then fields in the order they are laid out — which is name order, which is the order
+/// `Fields` iterates and therefore the order `Ord` reads a record in. A field that is itself an
+/// object is a call to *its* layout's comparison, so the recursion in the type is the recursion in
+/// the code.
+fn compare_function(at: u32, heap: &Heap) -> String {
+    let layout = heap.layout(at);
+    let mut b = Text::new();
+    let _ = writeln!(
+        b.out,
+        "; {}\ndefine internal i64 @\"beck.cmp.{at}\"(i64 %a, i64 %b) {{\nentry:",
+        layout.shown
+    );
+    b.line("%hp = load ptr, ptr @\"beck.heap\"".into());
+    b.line("%pa = getelementptr inbounds i8, ptr %hp, i64 %a".into());
+    b.line("%pb = getelementptr inbounds i8, ptr %hp, i64 %b".into());
+
+    if layout.tagged {
+        b.line("%ta = load i64, ptr %pa".into());
+        b.line("%tb = load i64, ptr %pb".into());
+        let lt = b.fresh();
+        b.line(format!("{lt} = icmp ult i64 %ta, %tb"));
+        b.line(format!("br i1 {lt}, label %less, label %tagged"));
+        b.block("tagged");
+        let gt = b.fresh();
+        b.line(format!("{gt} = icmp ugt i64 %ta, %tb"));
+        b.line(format!("br i1 {gt}, label %greater, label %same"));
+        b.block("less");
+        b.line("ret i64 -1".into());
+        b.block("greater");
+        b.line("ret i64 1".into());
+        b.block("same");
+        b.line("switch i64 %ta, label %equal [".into());
+        for (i, _) in layout.variants.iter().enumerate() {
+            b.line(format!("  i64 {i}, label %v{i}"));
+        }
+        b.line("]".into());
+    }
+
+    for (i, variant) in layout.variants.iter().enumerate() {
+        if layout.tagged {
+            b.block(&format!("v{i}"));
+        }
+        for (slot, (_, repr)) in variant.fields.iter().enumerate() {
+            let bytes = (slot as u64 + 1) * heap::WORD;
+            let (fa, fb) = (b.fresh(), b.fresh());
+            b.line(format!(
+                "{fa} = getelementptr inbounds i8, ptr %pa, i64 {bytes}"
+            ));
+            b.line(format!(
+                "{fb} = getelementptr inbounds i8, ptr %pb, i64 {bytes}"
+            ));
+            let (xa, xb) = (b.fresh(), b.fresh());
+            b.line(format!("{xa} = load i64, ptr {fa}"));
+            b.line(format!("{xb} = load i64, ptr {fb}"));
+            match repr {
+                Repr::Obj(inner) => {
+                    let r = b.fresh();
+                    b.line(format!(
+                        "{r} = call i64 @\"beck.cmp.{inner}\"(i64 {xa}, i64 {xb})"
+                    ));
+                    let done = b.fresh();
+                    let (decided, next) = (b.label("cmp.decided"), b.label("cmp.next"));
+                    b.line(format!("{done} = icmp ne i64 {r}, 0"));
+                    b.line(format!("br i1 {done}, label %{decided}, label %{next}"));
+                    b.block(&decided);
+                    b.line(format!("ret i64 {r}"));
+                    b.block(&next);
+                }
+                _ => {
+                    // A real compares through its order key, and both are already normalised —
+                    // `Function::store_field` is where that is paid for. An `Int` is signed, and a
+                    // `Bool` is a 0 or a 1 and therefore either way round.
+                    let (ka, kb) = match repr {
+                        Repr::Float => (b.order_key(&xa), b.order_key(&xb)),
+                        _ => (xa.clone(), xb.clone()),
+                    };
+                    let pred = if matches!(repr, Repr::Int) { "s" } else { "u" };
+                    let below = b.label("cmp.below");
+                    let above = b.label("cmp.above");
+                    let test = b.label("cmp.test");
+                    let next = b.label("cmp.next");
+                    let lt = b.fresh();
+                    b.line(format!("{lt} = icmp {pred}lt i64 {ka}, {kb}"));
+                    b.line(format!("br i1 {lt}, label %{below}, label %{test}"));
+                    b.block(&test);
+                    let gt = b.fresh();
+                    b.line(format!("{gt} = icmp {pred}gt i64 {ka}, {kb}"));
+                    b.line(format!("br i1 {gt}, label %{above}, label %{next}"));
+                    b.block(&below);
+                    b.line("ret i64 -1".into());
+                    b.block(&above);
+                    b.line("ret i64 1".into());
+                    b.block(&next);
+                }
+            }
+        }
+        b.line("ret i64 0".into());
+    }
+    if layout.tagged {
+        // A tag the switch does not name cannot happen — the host writes one this table produced —
+        // and answering "equal" is the one answer that cannot make a comparison asymmetric.
+        b.block("equal");
+        b.line("ret i64 0".into());
+    }
+    b.out.push_str("}\n\n");
+    b.out
+}
+
+/// A tiny SSA name supply, for the functions that are written without a [`Function`] around them.
+struct Text {
+    out: String,
+    next: u32,
+}
+
+impl Text {
+    fn new() -> Text {
+        Text {
+            out: String::new(),
+            next: 0,
+        }
+    }
+
+    fn fresh(&mut self) -> String {
+        self.next += 1;
+        format!("%w{}", self.next)
+    }
+
+    fn label(&mut self, hint: &str) -> String {
+        self.next += 1;
+        format!("{hint}{}", self.next)
+    }
+
+    fn line(&mut self, text: String) {
+        let _ = writeln!(self.out, "  {text}");
+    }
+
+    /// Start a block. Written flush left, because that is where a label goes.
+    fn block(&mut self, label: &str) {
+        let _ = writeln!(self.out, "{label}:");
+    }
+
+    /// `beck_core`'s order key over raw bits already in an `i64`.
+    fn order_key(&mut self, bits: &str) -> String {
+        let sign = self.fresh();
+        self.line(format!("{sign} = ashr i64 {bits}, 63"));
+        let mask = self.fresh();
+        self.line(format!("{mask} = or i64 {sign}, -9223372036854775808"));
+        let key = self.fresh();
+        self.line(format!("{key} = xor i64 {bits}, {mask}"));
+        key
+    }
+}
+
+/// `main`: read a call, answer it, repeat until the host closes the pipe.
+///
+/// `arena` is what a module with a layout in it adds: one `malloc` at startup, the argument graph
+/// copied in before the call and the whole used part copied back out after one that answers with an
+/// object. A module of pure arithmetic gets neither, which is what keeps `docs/93` §93.5's round
+/// trip the same round trip.
+fn main_loop(arena: bool) -> String {
+    let mut m = String::from(
+        r#"define i32 @main() {
+entry:
+  %req = alloca [2 x i64]
+  %args = alloca [16 x i64]
+  %err = alloca [3 x i64]
+  %resp = alloca [4 x i64]
+"#,
+    );
+    if arena {
+        let _ = write!(
+            m,
+            r#"  %arena = call ptr @malloc(i64 {bytes})
+  store ptr %arena, ptr @"beck.heap"
+  %failed = icmp eq ptr %arena, null
+  %cap = select i1 %failed, i64 0, i64 {bytes}
+  store i64 %cap, ptr @"beck.limit"
+"#,
+            bytes = heap::ARENA_BYTES
+        );
+    }
+    m.push_str(
+        r#"  br label %loop
+loop:
+  %head = call i64 @"beck.read_exact"(ptr %req, i64 16)
+  %closed = icmp ne i64 %head, 16
+  br i1 %closed, label %done, label %sized
+sized:
+  %idx = load i32, ptr %req
+  %cntp = getelementptr inbounds i8, ptr %req, i64 4
+  %cnt32 = load i32, ptr %cntp
+  %cnt = zext i32 %cnt32 to i64
+  %blenp = getelementptr inbounds i8, ptr %req, i64 8
+  %blen = load i64, ptr %blenp
+  %bytes = mul i64 %cnt, 8
+  %read = call i64 @"beck.read_exact"(ptr %args, i64 %bytes)
+  %short = icmp ne i64 %read, %bytes
+"#,
+    );
+    if arena {
+        m.push_str(
+            r#"  br i1 %short, label %done, label %accept
+accept:
+  ; A blob bigger than the arena is a host that disagrees with this module about the protocol,
+  ; which is a bug rather than an input: it closes rather than writing past the end.
+  %limit = load i64, ptr @"beck.limit"
+  %huge = icmp ugt i64 %blen, %limit
+  br i1 %huge, label %done, label %copy
+copy:
+  %into = load ptr, ptr @"beck.heap"
+  %got = call i64 @"beck.read_exact"(ptr %into, i64 %blen)
+  %truncated = icmp ne i64 %got, %blen
+  br i1 %truncated, label %done, label %run
+run:
+  ; The arena is reset to just past whatever the arguments brought with them.
+  %small = icmp ult i64 %blen, 8
+  %start = select i1 %small, i64 8, i64 %blen
+  store i64 %start, ptr @"beck.next"
+  store i64 0, ptr @"beck.reply"
+"#,
+        );
+    } else {
+        m.push_str(
+            r#"  br i1 %short, label %done, label %run
+run:
+"#,
+        );
+    }
+    m.push_str(
+        r#"  store i64 0, ptr %err
+  %plz = getelementptr inbounds i8, ptr %err, i64 8
+  store i64 0, ptr %plz
+  %res = call i64 @"beck.dispatch"(i32 %idx, ptr %err, ptr %args)
+  %cell = load i64, ptr %err
+  store i64 %cell, ptr %resp
+  %pl = load i64, ptr %plz
+  %rpl = getelementptr inbounds i8, ptr %resp, i64 8
+  store i64 %pl, ptr %rpl
+  %rv = getelementptr inbounds i8, ptr %resp, i64 16
+  store i64 %res, ptr %rv
+  %rb = getelementptr inbounds i8, ptr %resp, i64 24
+"#,
+    );
+    if arena {
+        m.push_str(
+            r#"  %ok = icmp eq i64 %cell, 0
+  %wants = load i64, ptr @"beck.reply"
+  %onheap = icmp ne i64 %wants, 0
+  %both = and i1 %ok, %onheap
+  %used = load i64, ptr @"beck.next"
+  %send = select i1 %both, i64 %used, i64 0
+  store i64 %send, ptr %rb
+  %wrote = call i64 @"beck.write_all"(ptr %resp, i64 32)
+  %gone = icmp ne i64 %wrote, 32
+  br i1 %gone, label %done, label %blob
+blob:
+  %from = load ptr, ptr @"beck.heap"
+  %pushed = call i64 @"beck.write_all"(ptr %from, i64 %send)
+  %stalled = icmp ne i64 %pushed, %send
+  br i1 %stalled, label %done, label %loop
+"#,
+        );
+    } else {
+        m.push_str(
+            r#"  store i64 0, ptr %rb
+  %wrote = call i64 @"beck.write_all"(ptr %resp, i64 32)
+  %gone = icmp ne i64 %wrote, 32
+  br i1 %gone, label %done, label %loop
+"#,
+        );
+    }
+    m.push_str(
+        r#"done:
+  ret i32 0
+}
+"#,
+    );
     m
 }
 
@@ -1461,12 +2269,10 @@ declare i64 @write(i32, ptr, i64)
 
 "#;
 
-/// The worker: read a call, answer it, repeat until the host closes the pipe.
+/// Moving bytes to and from the host, in whatever pieces the pipe hands over.
 ///
-/// A request is eight bytes of header — a function index and an argument count — followed by eight
-/// bytes per argument. A reply is always 24 bytes: the trap cell, then the result. Fixed widths,
-/// so neither side has to parse anything.
-const WORKER: &str = r#"define internal i64 @"beck.read_exact"(ptr %p, i64 %n) {
+/// A short count means the pipe is closed, which is how the worker learns the host has gone.
+const PIPE: &str = r#"define internal i64 @"beck.read_exact"(ptr %p, i64 %n) {
 entry:
   br label %loop
 loop:
@@ -1508,42 +2314,4 @@ out:
   ret i64 %total
 }
 
-define i32 @main() {
-entry:
-  %req = alloca [1 x i64]
-  %args = alloca [16 x i64]
-  %err = alloca [3 x i64]
-  %resp = alloca [3 x i64]
-  br label %loop
-loop:
-  %head = call i64 @"beck.read_exact"(ptr %req, i64 8)
-  %closed = icmp ne i64 %head, 8
-  br i1 %closed, label %done, label %sized
-sized:
-  %idx = load i32, ptr %req
-  %cntp = getelementptr inbounds i8, ptr %req, i64 4
-  %cnt32 = load i32, ptr %cntp
-  %cnt = zext i32 %cnt32 to i64
-  %bytes = mul i64 %cnt, 8
-  %read = call i64 @"beck.read_exact"(ptr %args, i64 %bytes)
-  %short = icmp ne i64 %read, %bytes
-  br i1 %short, label %done, label %run
-run:
-  store i64 0, ptr %err
-  %plz = getelementptr inbounds i8, ptr %err, i64 8
-  store i64 0, ptr %plz
-  %res = call i64 @"beck.dispatch"(i32 %idx, ptr %err, ptr %args)
-  %cell = load i64, ptr %err
-  store i64 %cell, ptr %resp
-  %pl = load i64, ptr %plz
-  %rpl = getelementptr inbounds i8, ptr %resp, i64 8
-  store i64 %pl, ptr %rpl
-  %rv = getelementptr inbounds i8, ptr %resp, i64 16
-  store i64 %res, ptr %rv
-  %wrote = call i64 @"beck.write_all"(ptr %resp, i64 24)
-  %gone = icmp ne i64 %wrote, 24
-  br i1 %gone, label %done, label %loop
-done:
-  ret i32 0
-}
 "#;

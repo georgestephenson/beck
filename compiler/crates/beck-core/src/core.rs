@@ -1421,6 +1421,16 @@ fn same_name(a: &str, b: &str) -> bool {
     x.len() == y.len() && (x.is_empty() || x[0] == y[0]) && x == y
 }
 
+/// The order a record keeps its fields in.
+///
+/// [`Fields`] is sorted by name and that order is load-bearing far outside this module — it is a
+/// `Map`'s iteration, the state digest, the patch stream and the order `Ord` compares two records
+/// in. A backend that lays a record out in memory has to lay it out in *this* order or its `<`
+/// disagrees with the evaluator's, so the order is published rather than reimplemented.
+pub fn field_order(a: &str, b: &str) -> std::cmp::Ordering {
+    cmp_name(a, b)
+}
+
 /// Order two field names, deciding on the first byte where it can.
 ///
 /// `<[u8]>::cmp` calls `memcmp` over the common prefix before it looks at the lengths, so it pays

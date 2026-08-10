@@ -31,11 +31,20 @@
 //! |---|---|---|
 //! | to the worker | 0..4 | function index |
 //! | | 4..8 | argument count |
-//! | | 8.. | one 8-byte cell per argument |
+//! | | 8..16 | how many bytes of heap follow the arguments |
+//! | | 16.. | one 8-byte cell per argument, then the heap |
 //! | from the worker | 0..4 | trap code, `0` for a value |
 //! | | 4..8 | which span trapped |
 //! | | 8..16 | the trap's payload |
 //! | | 16..24 | the result |
+//! | | 24..32 | how many bytes of heap follow |
+//! | | 32.. | the heap |
+//!
+//! The heap is a flat byte string in which an object refers to another by **offset**, so neither
+//! end has to walk it to move it: the worker `memcpy`s the request's into its arena, and the reply
+//! carries back however much of the arena the call used. [`crate::heap`] is the shape of what is
+//! in there, and both directions are empty for a call whose arguments and answer are all scalars —
+//! which is every call a program of arithmetic makes.
 
 use std::io::{Read, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
@@ -48,12 +57,15 @@ use std::time::{Duration, Instant};
 const TICK: Duration = Duration::from_millis(100);
 
 /// What one call answered.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct Reply {
     pub code: u32,
     pub span: u32,
     pub payload: i64,
     pub value: u64,
+    /// The arena as it stood when the call answered, when the answer is on it. Empty otherwise —
+    /// including for a call that trapped, since a trap's answer is its message.
+    pub heap: Vec<u8>,
 }
 
 /// A running compiled program.
@@ -163,8 +175,9 @@ impl Worker {
         self
     }
 
-    /// Call function `index` with `args`, already widened to eight bytes each.
-    pub fn call(&self, index: u32, args: &[u64]) -> Result<Reply, String> {
+    /// Call function `index` with `args`, already widened to eight bytes each, and `heap` — the
+    /// object graph those cells point into, or empty when none of them do.
+    pub fn call(&self, index: u32, args: &[u64], heap: &[u8]) -> Result<Reply, String> {
         let mut pipe = self
             .pipe
             .lock()
@@ -175,7 +188,7 @@ impl Worker {
                 .deadline
                 .store(at.as_millis() as u64, Ordering::Relaxed);
         }
-        let answer = self.exchange(&mut pipe, index, args);
+        let answer = self.exchange(&mut pipe, index, args, heap);
         if let Some(guard) = &self.guard {
             guard.deadline.store(0, Ordering::Relaxed);
             if guard.fired.load(Ordering::SeqCst) {
@@ -215,13 +228,21 @@ impl Worker {
         }
     }
 
-    fn exchange(&self, pipe: &mut Pipe, index: u32, args: &[u64]) -> Result<Reply, String> {
-        let mut request = Vec::with_capacity(8 + args.len() * 8);
+    fn exchange(
+        &self,
+        pipe: &mut Pipe,
+        index: u32,
+        args: &[u64],
+        heap: &[u8],
+    ) -> Result<Reply, String> {
+        let mut request = Vec::with_capacity(16 + args.len() * 8 + heap.len());
         request.extend_from_slice(&index.to_ne_bytes());
         request.extend_from_slice(&(args.len() as u32).to_ne_bytes());
+        request.extend_from_slice(&(heap.len() as u64).to_ne_bytes());
         for a in args {
             request.extend_from_slice(&a.to_ne_bytes());
         }
+        request.extend_from_slice(heap);
         pipe.stdin
             .write_all(&request)
             .map_err(|e| format!("the worker stopped reading: {e}"))?;
@@ -229,15 +250,29 @@ impl Worker {
             .flush()
             .map_err(|e| format!("the worker stopped reading: {e}"))?;
 
-        let mut reply = [0u8; 24];
+        let mut reply = [0u8; 32];
         pipe.stdout
             .read_exact(&mut reply)
+            .map_err(|e| format!("the worker stopped answering: {e}"))?;
+        let carried = u64::from_ne_bytes(reply[24..32].try_into().expect("eight bytes"));
+        // A length the worker could not have meant is the pipe out of step rather than a big
+        // answer, and reading it would be this process allocating whatever the bytes said.
+        if carried > crate::heap::ARENA_BYTES {
+            return Err(format!(
+                "the compiled program said its answer carries {carried} bytes of heap, and its                  arena is {} bytes",
+                crate::heap::ARENA_BYTES
+            ));
+        }
+        let mut carried_heap = vec![0u8; carried as usize];
+        pipe.stdout
+            .read_exact(&mut carried_heap)
             .map_err(|e| format!("the worker stopped answering: {e}"))?;
         Ok(Reply {
             code: u32::from_ne_bytes(reply[0..4].try_into().expect("four bytes")),
             span: u32::from_ne_bytes(reply[4..8].try_into().expect("four bytes")),
             payload: i64::from_ne_bytes(reply[8..16].try_into().expect("eight bytes")),
             value: u64::from_ne_bytes(reply[16..24].try_into().expect("eight bytes")),
+            heap: carried_heap,
         })
     }
 }

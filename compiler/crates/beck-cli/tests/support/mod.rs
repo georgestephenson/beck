@@ -1,6 +1,7 @@
 //! Shared fixtures for the harnesses.
 
 pub mod browser;
+pub mod heapfix;
 pub mod scalar;
 pub mod socket;
 

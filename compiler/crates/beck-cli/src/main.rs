@@ -1255,17 +1255,23 @@ fn native(
     let mut values = Vec::with_capacity(args.len());
     for (text, want) in args.iter().zip(&sig.params) {
         values.push(match want {
-            beck_llvm::Scalar::Int => beck_core::Value::Int(
+            beck_llvm::Repr::Int => beck_core::Value::Int(
                 text.parse()
                     .with_context(|| format!("`{text}` is not an Int"))?,
             ),
-            beck_llvm::Scalar::Float => beck_core::Value::float(
+            beck_llvm::Repr::Float => beck_core::Value::float(
                 text.parse()
                     .with_context(|| format!("`{text}` is not a Float"))?,
             ),
-            beck_llvm::Scalar::Bool => beck_core::Value::Bool(
+            beck_llvm::Repr::Bool => beck_core::Value::Bool(
                 text.parse()
                     .with_context(|| format!("`{text}` is not a Bool"))?,
+            ),
+            // A record has no notation on a command line — `Point(x=1, y=2)` would be a parser for
+            // the language's own literals, written a second time and in a worse place. The
+            // definition still compiled, and `--out` writes the artefact that can be called.
+            beck_llvm::Repr::Obj(_) => bail!(
+                "`{name}` takes a record or a union, and `--call` can only pass Int, Float and Bool"
             ),
         });
     }

@@ -3975,8 +3975,12 @@ fn resolve_types(c: &mut Core, s: &Subst) {
         }
         CoreKind::Match { scrutinee, arms } => {
             resolve_types(scrutinee, s);
-            for a in arms {
-                resolve_types(&mut a.body, s);
+            // `exprs_mut` and not `body`: an arm's guard is an expression of this program too, and
+            // a walk that skipped it left every node in a guard carrying whatever type variable it
+            // had when it was lowered. `docs/91` §91.3 found fourteen walks that a guard was new
+            // to; this is the fifteenth, and it was invisible until a backend read a node's type.
+            for e in arms.iter_mut().flat_map(|a| a.exprs_mut()) {
+                resolve_types(e, s);
             }
         }
         CoreKind::Make { fields, .. } | CoreKind::With { fields, .. } => {
