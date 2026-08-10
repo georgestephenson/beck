@@ -769,6 +769,35 @@ impl Builder<'_> {
                 )
             }
             SigOp::Presence => self.presence,
+            // Not a source: a **constant**, and that is the whole statement this plan makes about
+            // freshness. A plan is what the *server* renders through, and a server renders the
+            // state it has recorded — so `freshness()` here is `Confirmed` and never moves. The
+            // engine therefore treats it as it treats a string literal: evaluated once when the
+            // plan is prepared, and never a reason to recompute anything below it.
+            //
+            // A page that branched on it would be refused Mode A before reaching here
+            // (`crate::render`, `B0518`); what does reach here is the SSR of a Mode B page, whose
+            // first paint is by construction the confirmed one.
+            SigOp::Freshness => {
+                let id = self.push(Op::Const, Vec::new(), None);
+                self.constants.insert(
+                    id,
+                    Core {
+                        kind: CoreKind::Make {
+                            ty: Arc::from("Freshness"),
+                            variant: Some(Arc::from("Confirmed")),
+                            fields: Vec::new(),
+                        },
+                        ty: Ty::con("Freshness"),
+                        tier: Tier::Any,
+                        span: node.span,
+                        last_use: false,
+                        order: crate::fields::UNORDERED,
+                        locals: 0,
+                    },
+                );
+                id
+            }
             SigOp::PerSession { f } => {
                 let input = self.vertex(graph, node.inputs[0]);
                 let session = self.session;

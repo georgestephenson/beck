@@ -258,7 +258,16 @@ dependencies whose signatures didn't change.
   13 ms on a thousand-card board, 97% of it `view`, and growing with the board rather than with the
   change. **Not** codegen ([`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md)) — which
   §94.14 finds is not what the 13 ms is — not freshness-typed, and no size-budget gate; §94.8 is
-  the list.
+  the list. ***The last two of those are built***
+  ([`101`](101-freshness-and-the-budget-report.md)): `freshness()` is §3.7's dimension as a signal
+  source, so a page renders "saving…" from `Confirmed | Pending(n)` and stops when the state that
+  confirms it arrives — carrying the refusal that points the other way from every rule Mode B has
+  had so far, since a **server** cannot answer it (`B0518`). And the budget is a gate: `beck bundle`
+  writes the artefact, CI weighs every Mode B example against 150 KB brotli, and a shape gate says
+  what a threshold with eighty times its headroom cannot — that a bundle is a function of the
+  component's slice rather than of the program around it. What is left of this bullet is **codegen
+  alone**, which [`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md) defers and §8.19's Lane E
+  schedules behind a heap.
 - Client polish for both modes: router, forms, lazy routes, focus/scroll preservation, devtools
   extension showing signal graph, patch traffic and pending state. — ***Built, except lazy routes***
   ([`100`](100-client-polish-report.md)). **A route is a field of `Session`**: `view(state, session)`

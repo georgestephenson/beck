@@ -973,6 +973,25 @@ pub const INDEX: &[CodeEntry] = &[
          the accumulator nor the log — it is a fact the server holds about its own sockets \
          (docs/96 §96.4).",
     ),
+    e(
+        "B0517",
+        Stage::Signals,
+        "the chokepoint reads `freshness`, which is not in the log",
+        "How many of a client's commands were in flight when an event was recorded is written \
+         down nowhere, and on replay nothing is in flight at all — so a `validate` that decided \
+         from it would accept a command today and refuse it on the way back. Decide from the \
+         accumulator, which says the same thing now and on replay.",
+    ),
+    e(
+        "B0518",
+        Stage::Signals,
+        "reads `freshness`, so it cannot render on the server",
+        "§3.7's freshness dimension is a client's account of the commands it has proposed and not \
+         yet had confirmed. A server renders what it has recorded, so its answer is `Confirmed` at \
+         every position of every log and the page's other branch would be unreachable. This is \
+         `B0516` from the other side: `@render(client)` is what makes a guess possible, and \
+         therefore what makes saying so possible (docs/101 §101.2).",
+    ),
     // --------------------------------------------------------- B06xx: modules and interfaces
     e(
         "B0600",

@@ -4,7 +4,7 @@
 
 Every diagnostic the compiler can raise carries a stable code. `beck explain error B0341` prints one of these entries at the terminal.
 
-The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans every non-test source file for a `"Bnnnn"` literal and fails if the set differs from this table in either direction. **129 codes.**
+The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans every non-test source file for a `"Bnnnn"` literal and fails if the set differs from this table in either direction. **131 codes.**
 
 
 ## Reading the source — `B0100–B0122`
@@ -131,7 +131,7 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0411` | error | **durable, so its state must be storable** — The log is the only description of this program's history; a value it cannot read back is a state replay would not reproduce. |
 | `B0412` | error | **requires a capability nothing can discharge** — A `Session` reaches exactly one place in a Beck program: the validator `decide` is given, which is the only function handed a `Proposal`. Authority is one chokepoint (§3.5), so a capability required outside it has no holder. |
 
-## The signal graph and the slicer — `B0500–B0516`
+## The signal graph and the slicer — `B0500–B0518`
 
 | Code | | Meaning |
 |---|---|---|
@@ -151,6 +151,8 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0514` | error | **renders differently for each actor, so it cannot render on the client** — The page reads who is asking — `session.actor` or `session.claims` — so it filters, scopes or hides by identity. `@render(client)` sends the browser the state rather than the page, which would hand every actor what the filter was removing (docs/94 §94.2). Reading `session.path` is not this: the browser chose the route and already holds the state, so a page that varies by route is eligible (docs/100 §100.2). |
 | `B0515` | error | **the chokepoint reads `presence`, which is not in the log** — Who was connected when an event was recorded is written down nowhere, so a `validate` that decided from the roster would decide one thing now and another on replay. Record the fact instead: propose a command when a client arrives, and decide from the state that fold produces. |
 | `B0516` | error | **reads `presence`, so it cannot render on the client** — `@render(client)` sends the browser the accumulator, and who is connected is in neither the accumulator nor the log — it is a fact the server holds about its own sockets (docs/96 §96.4). |
+| `B0517` | error | **the chokepoint reads `freshness`, which is not in the log** — How many of a client's commands were in flight when an event was recorded is written down nowhere, and on replay nothing is in flight at all — so a `validate` that decided from it would accept a command today and refuse it on the way back. Decide from the accumulator, which says the same thing now and on replay. |
+| `B0518` | error | **reads `freshness`, so it cannot render on the server** — §3.7's freshness dimension is a client's account of the commands it has proposed and not yet had confirmed. A server renders what it has recorded, so its answer is `Confirmed` at every position of every log and the page's other branch would be unreachable. This is `B0516` from the other side: `@render(client)` is what makes a guess possible, and therefore what makes saying so possible (docs/101 §101.2). |
 
 ## Modules and interfaces — `B0600–B0605`
 

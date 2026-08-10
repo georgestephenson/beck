@@ -93,6 +93,44 @@ pub fn presence_of(actor: &str) -> Value {
     presence([(actor, 1)])
 }
 
+/// `Freshness` — whether the page about to be rendered is of the confirmed state or of a guess.
+///
+/// §3.7: "`Signal[T]` carries a freshness dimension (`confirmed | pending(n)`) that UI code can
+/// render (\"saving…\") — staleness is typed, not pretended away."
+///
+/// `n` is how many of this client's own commands are folded into the state being rendered and not
+/// yet reflected in what the server has confirmed. Zero is `Confirmed` rather than `Pending(0)`,
+/// which is the one decision in this function: a page asking "is this a guess" would otherwise
+/// have to know that one of the two variants sometimes means the other.
+///
+/// Built here, beside the other four, because a Mode B client is the only thing that ever produces
+/// a non-`Confirmed` value and the server produces the confirmed one — two constructors would be
+/// two spellings of a union the same `view` matches on.
+pub fn freshness(pending: usize) -> Value {
+    match pending {
+        0 => Value::data(
+            Arc::from("Freshness"),
+            Some(Arc::from("Confirmed")),
+            Fields::new(),
+        ),
+        n => Value::data(
+            Arc::from("Freshness"),
+            Some(Arc::from("Pending")),
+            Fields::from_iter([(Arc::from("n"), Value::Int(n as i64))]),
+        ),
+    }
+}
+
+/// The freshness of a page nothing is in flight for.
+///
+/// Every renderer that is not a Mode B client passes through here: the server (which holds the
+/// confirmed state by definition — a guess is the client's, and the log is the server's), `beck
+/// test`, a read model, a benchmark. It is a function rather than a constant so that the *reason*
+/// has one place to be written down.
+pub fn confirmed() -> Value {
+    freshness(0)
+}
+
 /// `Proposal` — a command and who proposed it, which is what `validate` is given and the only
 /// place a `Session` reaches (§3.5).
 pub fn proposal<'a>(

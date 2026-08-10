@@ -76,6 +76,14 @@ pub enum Op {
     /// nor derived from it, which is the one fact everything else about it follows from — see
     /// [`crate::split`] for what that forbids and [`crate::plan`] for what it costs.
     Presence,
+    /// `freshness()` — whether what is about to be rendered is confirmed or a guess.
+    ///
+    /// A source like [`Op::Presence`], and the other one that is not the log. The difference is
+    /// which side holds it: presence is the server's fact about its sockets, freshness is the
+    /// client's fact about its own unacknowledged commands — so this one is refused to a page
+    /// that renders on the *server* ([`crate::render`]) where presence is refused to a page that
+    /// renders on the client.
+    Freshness,
     /// `decide(proposals, state, validate)` — §3.5's authority chokepoint, as a node.
     Decide { validate: Core },
     /// `fold(step, init, stream)`. The accumulator, and the point at which a cycle bottoms out.
@@ -101,6 +109,7 @@ impl Op {
         match self {
             Op::Ingress => "merge_clients",
             Op::Presence => "presence",
+            Op::Freshness => "freshness",
             Op::Decide { .. } => "decide",
             Op::Fold { .. } => "fold",
             Op::Durable => "durable",
@@ -211,6 +220,12 @@ impl Graph {
     /// The connection sets — what is *not* in the log.
     pub fn presences(&self) -> Vec<SigId> {
         self.find(|o| matches!(o, Op::Presence))
+    }
+
+    /// The freshness sources — the other thing that is not in the log, and for the same reason:
+    /// nothing about which commands a browser had not heard back about is written down anywhere.
+    pub fn freshnesses(&self) -> Vec<SigId> {
+        self.find(|o| matches!(o, Op::Freshness))
     }
 
     pub fn decides(&self) -> Vec<SigId> {
@@ -449,6 +464,7 @@ impl Builder<'_, '_> {
             CoreKind::Prim { op, args } => match (op, args.len()) {
                 (Prim::MergeClients, 0) => Some((Op::Ingress, Vec::new())),
                 (Prim::Presence, 0) => Some((Op::Presence, Vec::new())),
+                (Prim::Freshness, 0) => Some((Op::Freshness, Vec::new())),
                 (Prim::Decide, 3) => {
                     let proposals = self.input(&args[0], owner, tier)?;
                     let state = self.input(&args[1], owner, tier)?;
@@ -500,9 +516,9 @@ impl Builder<'_, '_> {
                         .with_primary_label(format!("applied to {n} arguments here"))
                         .with_note(
                             "§3.7's signal vocabulary is `merge_clients`, `presence`, \
-                             `filter_map`, `fold`, `durable`, `signal_map`, `map2`, `per_session` \
-                             and `decide`; a signal's expression is built from those and nothing \
-                             else",
+                             `freshness`, `filter_map`, `fold`, `durable`, `signal_map`, `map2`, \
+                             `per_session` and `decide`; a signal's expression is built from those \
+                             and nothing else",
                         ),
                     );
                     None
