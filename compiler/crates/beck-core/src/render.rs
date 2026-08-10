@@ -12,23 +12,34 @@
 //! The row that decides everything is the second one. Mode A sends the browser a *rendering* of
 //! the state; Mode B sends it the **state**. Everything below follows from taking that literally.
 //!
-//! # The rule: a Mode B page may not be a function of who is asking
+//! # The rule: a Mode B page may not be a function of **who** is asking
 //!
-//! A view has the shape `(state, session) -> Html`. If it reads the session, it renders a
+//! A view has the shape `(state, session) -> Html`. If it reads *who* the session is, it renders a
 //! different page for different actors *from the same state* — which is to say it is filtering,
 //! scoping or hiding by identity. Running that view on the client requires giving the client the
 //! state it filters, so every actor receives what the filter was removing. The page would still
 //! look right. That is the worst kind of wrong.
 //!
-//! So a component whose view is per-session is refused Mode B, and the refusal names the reason
-//! rather than a rule. What is left is exactly the class §5.1 and
+//! So a component whose view reads the session's identity is refused Mode B, and the refusal names
+//! the reason rather than a rule. What is left is exactly the class §5.1 and
 //! [`docs/10-decisions.md`](../../../../../docs/10-decisions.md) D5 describe as Mode B's: pages
 //! that are the same function of the same state for everybody — editors, typeaheads, drag-and-drop,
 //! anything single-user or public.
 //!
-//! This is a *placement* rule and not a lint: it is decided from the slicer's own account of the
-//! view ([`crate::split::Roles::view_is_per_session`]), which is the same fact §3.8's fanout
-//! analysis reads, so a program cannot be per-session for one of them and not the other.
+//! ## Which half of the session, and why the distinction is structural
+//!
+//! `Session` carries three fields and they are not one kind of thing. `actor` and `claims` say
+//! **who** is asking and are what an identity provider verified; `path` says **where** they are and
+//! is the client's own statement about itself. The argument above is entirely about the first pair:
+//! a page that renders by route is not hiding anything from the browser it is running in, because
+//! that browser chose the route and already holds the state.
+//!
+//! So the refusal is decided by [`SessionUse`], which reads the view's own code and asks which
+//! fields of a `Session` it can observe. The coarser fact — whether the page is `per_session` at
+//! all — is still what §3.8's fanout analysis and §5.3's shared cut use, and it is still true of a
+//! page that reads only the route: two people on two routes see two pages, so the operators below
+//! the session are theirs. Eligibility and fanout are different questions, and this is where they
+//! stopped being the same answer.
 //!
 //! # Optimism is a property of what crosses, not of a component
 //!
@@ -39,11 +50,153 @@
 //! optimism is not an extra feature layered on Mode B; it is the same fact stated twice, and this
 //! module reports it as one decision with two consequences.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use beck_diag::{Diagnostic, Diagnostics, Span};
 
+use crate::core::{Core, CoreKind};
 use crate::ty::Ty;
+
+/// The field of a [`Session`](crate::edge::session) that says *where* rather than *who*.
+pub const ROUTE_FIELD: &str = "path";
+
+/// What a view can observe about the `Session` it is handed.
+///
+/// Three verdicts rather than a boolean, because "reads the session" was one word for two facts
+/// and Mode B's refusal only ever meant one of them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SessionUse {
+    /// The view never touches its `Session`. §5.1's Mode B class, and what `signal_map` produces.
+    None,
+    /// The view reads the route and nothing else. Eligible for Mode B: the browser chose the route
+    /// and already holds the state, so a page that varies by it discloses nothing.
+    Route,
+    /// The view can observe who is asking — `actor`, `claims`, or the whole record. Refused Mode B.
+    Identity {
+        /// What was read, in the order a message should name it. `"the session itself"` when a
+        /// `Session` reached somewhere this analysis cannot follow it into.
+        what: Vec<Arc<str>>,
+    },
+}
+
+impl SessionUse {
+    pub fn reads_identity(&self) -> bool {
+        matches!(self, SessionUse::Identity { .. })
+    }
+
+    /// What the view reads, for a message and for `beck explain render`.
+    pub fn describe(&self) -> String {
+        match self {
+            SessionUse::None => "nothing".to_string(),
+            SessionUse::Route => format!("`session.{ROUTE_FIELD}`"),
+            SessionUse::Identity { what } => what
+                .iter()
+                .map(|w| w.to_string())
+                .collect::<Vec<_>>()
+                .join(", "),
+        }
+    }
+
+    /// Read the view's code, and every definition it reaches, for what it does with a `Session`.
+    ///
+    /// The rule is one sentence: **a `Session` can only be observed by having a field read off it,
+    /// so collect every field read whose base is `Session`-typed anywhere the view can reach.**
+    /// That is sound without tracking where the value flows, because flow does not create an
+    /// observation — wherever the record ends up, reading it is still a `Field` over a
+    /// `Session`-typed base, and every definition it could end up in is in this closure. What flow
+    /// *could* hide is an observation that is not a field read: an equality, a digest, a session
+    /// stored inside a value that crosses. Those are the `escapes` below, and they are the
+    /// conservative answer rather than an ignored case.
+    ///
+    /// Types make it cheap. A field read needs a concrete record type, so a `Session` passed
+    /// through a generic definition cannot have anything read off it there — the parameter is a
+    /// rigid variable and `x.actor` does not check. There is nowhere for a read to hide.
+    pub fn of(view: &Core, defs: &BTreeMap<Arc<str>, crate::check::Def>) -> SessionUse {
+        let mut found = Found::default();
+        let mut seen: BTreeSet<Arc<str>> = BTreeSet::new();
+        walk(view, defs, &mut seen, &mut found);
+
+        if found.escapes {
+            return SessionUse::Identity {
+                what: vec![Arc::from("the session itself")],
+            };
+        }
+        let identity: Vec<Arc<str>> = found
+            .fields
+            .iter()
+            .filter(|f| f.as_ref() != ROUTE_FIELD)
+            .map(|f| Arc::from(format!("`session.{f}`").as_str()))
+            .collect();
+        if !identity.is_empty() {
+            return SessionUse::Identity { what: identity };
+        }
+        if found.fields.is_empty() {
+            SessionUse::None
+        } else {
+            SessionUse::Route
+        }
+    }
+}
+
+#[derive(Default)]
+struct Found {
+    fields: BTreeSet<Arc<str>>,
+    /// A `Session` reached somewhere a field read is not what happens to it — a primitive, or the
+    /// inside of a constructed value. Neither can be followed, so both are identity.
+    escapes: bool,
+}
+
+fn is_session(ty: &Ty) -> bool {
+    ty.con_name() == Some("Session")
+}
+
+fn walk(
+    code: &Core,
+    defs: &BTreeMap<Arc<str>, crate::check::Def>,
+    seen: &mut BTreeSet<Arc<str>>,
+    found: &mut Found,
+) {
+    match &code.kind {
+        CoreKind::Field { base, name } if is_session(&base.ty) => {
+            found.fields.insert(name.clone());
+            walk(base, defs, seen, found);
+            return;
+        }
+        CoreKind::Global(name) => {
+            if seen.insert(name.clone()) {
+                if let Some(def) = defs.get(name) {
+                    walk(&def.body, defs, seen, found);
+                }
+            }
+            return;
+        }
+        // A primitive is opaque: `==`, a digest, anything that consumes the record whole.
+        CoreKind::Prim { args, .. } if args.iter().any(|a| is_session(&a.ty)) => {
+            found.escapes = true;
+        }
+        // A session put *inside* a value goes wherever that value goes, including across the wire.
+        CoreKind::Make { fields, .. } | CoreKind::With { fields, .. }
+            if fields.iter().any(|(_, v)| is_session(&v.ty)) =>
+        {
+            found.escapes = true;
+        }
+        CoreKind::ListLit(items) if items.iter().any(|i| is_session(&i.ty)) => {
+            found.escapes = true;
+        }
+        CoreKind::MapLit(pairs)
+            if pairs
+                .iter()
+                .any(|(k, v)| is_session(&k.ty) || is_session(&v.ty)) =>
+        {
+            found.escapes = true;
+        }
+        _ => {}
+    }
+    for child in crate::core::children(code) {
+        walk(child, defs, seen, found);
+    }
+}
 
 /// Where a component's `view` runs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -109,8 +262,11 @@ pub struct Decision {
     /// Whether the client may apply a command speculatively before the server answers.
     pub optimistic: bool,
     pub no_optimism: Option<NoOptimism>,
-    /// True when the view reads the session — the fact that decides eligibility.
+    /// True when the view reads the session at all — §3.8's fanout fact, and §5.3's shared cut.
     pub per_session: bool,
+    /// What the view can observe about the session. **This** is what decides Mode B eligibility:
+    /// a page may vary by where the browser is and may not vary by who is holding it.
+    pub uses: SessionUse,
     /// True when the view reads `presence()`, which is the second fact that decides it.
     pub reads_presence: bool,
     /// Where the component is declared, for a diagnostic.
@@ -126,6 +282,7 @@ impl Decision {
     /// from.
     pub fn of(
         roles: &crate::split::Roles,
+        defs: &BTreeMap<Arc<str>, crate::check::Def>,
         is_application: bool,
         declared: Option<(Mode, Span)>,
         span: Span,
@@ -152,6 +309,7 @@ impl Decision {
             optimistic,
             no_optimism,
             per_session: roles.view_is_per_session,
+            uses: SessionUse::of(&roles.view, defs),
             reads_presence: roles.view_reads_presence,
             // A declared mode is refused where it was written; a defaulted one, at the component.
             span: declared.map_or(span, |(_, s)| s),
@@ -223,6 +381,7 @@ impl Decision {
                 ),
             );
         }
+        line(&mut out, "reads of session", self.uses.describe());
         out.push('\n');
         // The counterfactual is the useful half, so the *reason* a page cannot move has to be the
         // one that applies. A page reading the roster is refused whatever it does with the session.
@@ -234,15 +393,23 @@ impl Decision {
             );
             return out;
         }
-        match (self.mode, self.per_session) {
-            (Mode::Server, false) => out.push_str(
+        match (self.mode, &self.uses) {
+            (Mode::Server, SessionUse::None) => out.push_str(
                 "This page is a function of the state alone, so `@render(client)` would move it \
                  to the browser.\n",
             ),
-            (Mode::Server, true) => out.push_str(
-                "This page reads the session, so it cannot move to the browser: `@render(client)` \
-                 would be refused (B0514). Mode B sends the state rather than the page, and a page \
-                 that filters by identity is a page whose state is not the client's to hold.\n",
+            (Mode::Server, SessionUse::Route) => out.push_str(
+                &format!(
+                    "This page is a function of the state and of `session.{ROUTE_FIELD}`, which the \
+                     browser chose. `@render(client)` would move it to the browser, where the route \
+                     changes without a round trip.\n"
+                ),
+            ),
+            (Mode::Server, SessionUse::Identity { .. }) => out.push_str(
+                "This page reads who is asking, so it cannot move to the browser: \
+                 `@render(client)` would be refused (B0514). Mode B sends the state rather than \
+                 the page, and a page that filters by identity is a page whose state is not the \
+                 client's to hold.\n",
             ),
             (Mode::Client, _) => out.push_str(
                 "The browser holds the accumulator and renders from it, so an interaction costs \
@@ -254,8 +421,12 @@ impl Decision {
 
     /// Refuse a component that may not render where it says it does.
     ///
-    /// One condition, and the reason there is only one is worth writing down. Mode B puts the
-    /// **accumulator** on the wire, so the obvious second check is §3.5's `Sendable` — and it is
+    /// Two conditions, and they are the two kinds of thing a page can read that a browser handed
+    /// the accumulator would not have: **who** is asking ([`SessionUse`]) and **who is connected**
+    /// (`presence`). Where the browser *is* is not one of them — it chose the route.
+    ///
+    /// What is deliberately not a third condition is worth writing down. Mode B puts the
+    /// **accumulator** on the wire, so the obvious check is §3.5's `Sendable` — and it is
     /// already discharged: a durable fold's state must be *storable* (`B0411`), storable is
     /// strictly stronger than sendable ([`crate::secure`]), and the accumulator is what crosses.
     /// A `secret[T]` therefore cannot reach a Mode B client because it cannot reach the log, and
@@ -265,26 +436,28 @@ impl Decision {
         if self.mode != Mode::Client {
             return;
         }
-        if self.per_session {
+        if self.uses.reads_identity() {
             diags.push(
                 Diagnostic::error(
                     "B0514",
                     format!(
-                        "`{}` renders differently for each session, so it cannot render on the client",
+                        "`{}` renders differently for each *actor*, so it cannot render on the client",
                         self.component
                     ),
                     self.span,
                 )
                 .with_primary_label("`@render(client)` sends the browser the state, not the page")
-                .with_note(
-                    "This page is a function of the session as well as of the state: it filters, \
-                     scopes or hides by identity. A client that rendered it locally would first \
-                     have to be given the state it filters — including everything the filter \
-                     removes.",
-                )
+                .with_note(format!(
+                    "This page reads {}: it filters, scopes or hides by identity. A client that \
+                     rendered it locally would first have to be given the state it filters — \
+                     including everything the filter removes. Reading `session.{ROUTE_FIELD}` is \
+                     allowed and is not this: the browser chose the route and already holds the \
+                     state.",
+                    self.uses.describe()
+                ))
                 .with_fix(
                     "render this component on the server (the default), or make the page a \
-                     function of the state alone",
+                     function of the state and the route alone",
                 ),
             );
         }

@@ -1192,12 +1192,25 @@ pub fn types() -> BTreeMap<Arc<str>, TyDecl> {
     // It does not reach the log: an `Envelope` carries `actor` and nothing else, because a fold
     // whose replay depended on what the issuer was saying at the time would not be a fold
     // (`docs/95` §95.4).
+    //
+    // `path` is the third thing a page may be a function of, and it is a different *kind* of thing
+    // from the other two: `actor` and `claims` say who is asking and are what a provider verified,
+    // `path` says where they are and is the client's own statement about itself. Nothing verifies
+    // it and nothing should — a route is not evidence. It is here rather than on a type of its own
+    // because a view is handed one record at the edge and the route arrives on the same connection
+    // as the identity does; [`crate::render`] is where the difference between the two halves is
+    // made structural, since a Mode B page may read where it is and may not read who is asking.
+    //
+    // The URL's *path* and nothing else. A fragment never reaches a server, so carrying one would
+    // be a field whose value differs between the two rendering modes; a query string is a second
+    // vocabulary with its own parsing, and path segments are available today.
     add(TyDecl::Model {
         name: Arc::from("Session"),
         params: Vec::new(),
         fields: vec![
             (Arc::from("actor"), Ty::str_()),
             (Arc::from("claims"), Ty::map(Ty::str_(), Ty::str_())),
+            (Arc::from("path"), Ty::str_()),
         ],
     });
     add(TyDecl::Model {

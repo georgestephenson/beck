@@ -22,6 +22,7 @@ pub mod pgwire;
 pub mod presence;
 pub mod quota;
 pub mod session;
+pub mod signals;
 pub mod telemetry;
 pub mod testing;
 
@@ -53,6 +54,14 @@ pub const THIN_CLIENT: &str = include_str!("../client/beck-thin.js");
 
 /// Mode B: load the kernel, hold the state, render locally ([`beck_core::render`]).
 pub const MODE_B_CLIENT: &str = include_str!("../client/beck-mode-b.js");
+
+/// The devtools panel: the signal graph, the patch traffic and the pending commands.
+///
+/// Loaded only when it is asked for (`?devtools`, or the switch it leaves in `localStorage`), which
+/// is what keeps it out of the residue every page pays for. It reads the same three things the
+/// runtime already publishes and computes nothing of its own — a panel that derived a second
+/// account of the client's state could be the only wrong one on the screen.
+pub const DEVTOOLS_CLIENT: &str = include_str!("../client/beck-devtools.js");
 
 /// Mode B's service worker: the shell, cached, so a cold start with no network is a page.
 ///

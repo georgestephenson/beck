@@ -7,8 +7,9 @@
 //!    `Html` value*, asserted against the server's own render of the same state. That is what
 //!    "modes share one source" has to mean, and it is checkable because both sides execute the
 //!    same `Core`.
-//! 2. **A page that reads the session is refused Mode B**, because Mode B hands the browser the
-//!    state a per-session view was filtering (`beck_core::render`).
+//! 2. **A page that reads the session's *identity* is refused Mode B**, because Mode B hands the
+//!    browser the state a per-session view was filtering (`beck_core::render`). A page that reads
+//!    only `session.path` is not that and is eligible — `client.rs` is where that half is gated.
 //! 3. **Optimism is right and reconciliation is right**: a guess appears before the server answers,
 //!    a guess the program's own `validate` refuses never appears at all, and a guess is retired
 //!    when — and only when — the confirmed state passes the position the server gave it.
@@ -110,6 +111,64 @@ fn the_browser_renders_what_the_server_would_have_sent() {
         server, client_html,
         "the two modes rendered different pages from the same state"
     );
+}
+
+/// A route change in Mode B is a **local render**: the state does not move, the session does.
+///
+/// This is the whole of what the mode buys a router, and it is also where the render's own
+/// short-circuit had to learn a second question. `repaint` skips a render when the state a page was
+/// derived from has not changed — which is right for every other interaction and wrong for exactly
+/// this one, since a navigation changes nothing but the session.
+#[test]
+fn a_route_change_is_a_local_render_and_agrees_with_the_server() {
+    let src = std::fs::read_to_string(root().join("examples/routed.beck")).expect("routed.beck");
+    let placed = compile(&src.replace("@on(client)\npage:", "@on(client)\n@render(client)\npage:"));
+    let rt = runtime(&placed);
+    let mut client = client_of(&placed, "ana");
+
+    let mut state = rt.initial_state().expect("an initial state");
+    state = apply(
+        &rt,
+        &state,
+        &json_command("Add", &[("id", "t1"), ("text", "milk")]),
+        1,
+    );
+    state = apply(
+        &rt,
+        &state,
+        &serde_json::json!({"c": "Toggle", "id": "t1"}),
+        2,
+    );
+    client.reset(2, state.clone()).expect("the client takes it");
+    let renders = client.renders();
+
+    // The client is at the root, and so is the server's own render.
+    assert_eq!(
+        client.showing().cloned().expect("a page"),
+        rt.view(&state, "ana").expect("the server renders")
+    );
+
+    // Somewhere else. The ops are non-empty — the page really changed — and the result is what the
+    // server would have sent for that route, which is the claim the whole mode rests on.
+    let ops = client.navigate("/active").expect("navigates");
+    assert!(!ops.is_empty(), "a route change that patched nothing");
+    assert!(
+        client.renders() > renders,
+        "a route change that rendered nothing"
+    );
+    let at_active = beck_rt::program::At {
+        who: std::sync::Arc::<str>::from("ana"),
+        path: std::sync::Arc::from("/active"),
+    };
+    assert_eq!(
+        client.showing().cloned().expect("a page"),
+        rt.view(&state, &at_active).expect("the server renders")
+    );
+
+    // And going nowhere costs nothing.
+    let steady = client.renders();
+    assert!(client.navigate("/active").expect("navigates").is_empty());
+    assert_eq!(client.renders(), steady);
 }
 
 /// The same claim over a hundred different states, because one state is an anecdote.
@@ -216,13 +275,13 @@ fn the_viewer_survives_the_boundary_the_browser_writes_it_across() {
 // --------------------------------------------------------------- 2. what Mode B refuses
 
 #[test]
-fn a_page_that_reads_the_session_cannot_render_on_the_client() {
+fn a_page_that_reads_who_is_asking_cannot_render_on_the_client() {
     let out = refusal(&program(
         "@on(client)\n@render(client)\npage: Signal[Html] = per_session(items, view_for)",
     ));
     assert!(out.contains("B0514"), "{out}");
     assert!(
-        out.contains("renders differently for each session"),
+        out.contains("renders differently for each *actor*"),
         "{out}"
     );
     // The refusal has to say *why* rather than name a rule, because the author's next question is

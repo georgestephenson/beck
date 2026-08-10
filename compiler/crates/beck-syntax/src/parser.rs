@@ -658,12 +658,12 @@ impl<'a> Parser<'a> {
                      // `session("ana") sends c` — look ahead for `sends` rather than committing, so that a
                      // command called `session` is still a command.
         let session = if self.at_kw("session") && self.line_has_ident("sends") {
-            let (actor, span) = self.session_actor()?;
+            let (who, _) = self.session_actor()?;
             if !self.eat_kw("sends") {
                 self.error("expected `sends` after the session");
                 return None;
             }
-            Node::lit(Lit::Str(actor.into()), span)
+            who
         } else {
             Node::sym(sym::WILDCARD, start)
         };
@@ -848,13 +848,13 @@ impl<'a> Parser<'a> {
             let mut args = Vec::new();
             if self.at(&Raw::LParen) {
                 self.bump();
-                if !self.eat_kw("session") {
+                if !self.at_kw("session") {
                     self.error("expected `session(\"actor\")`");
                     return None;
                 }
-                let (actor, aspan) = self.parenthesised_string("an actor name")?;
+                let (who, _) = self.session_actor()?;
                 self.expect(&Raw::RParen, "`)`");
-                args.push(Node::lit(Lit::Str(actor.into()), aspan));
+                args.push(who);
             }
             // `expect page matches snapshot` / `… matches snapshot "after checkout"` — §21.2's
             // golden assertion. The name is optional and defaults to the test's own, which is what
@@ -999,18 +999,32 @@ impl<'a> Parser<'a> {
         matches!(self.toks.get(i + 1).and_then(|t| t.raw()), Some(Raw::Ident(s)) if s == kw)
     }
 
-    /// `session("ana")`, already known to be there.
-    fn session_actor(&mut self) -> Option<(String, Span)> {
+    /// `session("ana")` or `session("ana", "/done")`, already known to be there.
+    ///
+    /// The route is optional and is a string like the actor is, for the same reason: a session is
+    /// minted by the identity subsystem (§3.7) and a test that could build one out of an
+    /// expression would be a way to forge one. A route is not authority, but it is still the edge's
+    /// to supply rather than the program's to construct.
+    fn session_actor(&mut self) -> Option<(Node, Span)> {
         self.bump(); // session
-        self.parenthesised_string("an actor name")
-    }
-
-    /// `("ana")` — the parentheses and the string inside them.
-    fn parenthesised_string(&mut self, what: &str) -> Option<(String, Span)> {
         self.expect(&Raw::LParen, "`(`");
-        let out = self.quoted_name(what)?;
+        let (actor, aspan) = self.quoted_name("an actor name")?;
+        let node = if self.eat(&Raw::Comma) {
+            let (route, rspan) = self.quoted_name("a route")?;
+            Node::form(
+                sym::AT,
+                vec![
+                    Node::lit(Lit::Str(actor.into()), aspan),
+                    Node::lit(Lit::Str(route.into()), rspan),
+                ],
+                aspan.to(rspan),
+            )
+        } else {
+            Node::lit(Lit::Str(actor.into()), aspan)
+        };
+        let span = aspan.to(node.span());
         self.expect(&Raw::RParen, "`)`");
-        Some(out)
+        Some((node, span))
     }
 
     /// Is `name` an identifier on the rest of this logical line, outside brackets?

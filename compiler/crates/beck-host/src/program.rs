@@ -100,7 +100,7 @@ impl Runtime {
 
     /// Build the `Proposal` record the program's `validate` expects.
     pub fn proposal(&self, actor: &(impl Viewer + ?Sized), command: Value) -> Value {
-        beck_core::edge::proposal(actor.actor(), claims_of(actor), command)
+        beck_core::edge::proposal(actor.actor(), claims_of(actor), actor.path(), command)
     }
 
     /// The authority chokepoint, as the program wrote it: the whole
@@ -155,7 +155,7 @@ impl Runtime {
     ) -> Result<Html> {
         let out = (self.view_fn)(vec![
             state.clone(),
-            session(actor.actor(), claims_of(actor)),
+            session(actor.actor(), claims_of(actor), actor.path()),
             here.clone(),
         ])
         .map_err(|e| anyhow!("{e}"))
@@ -208,7 +208,11 @@ impl Runtime {
         here: &Value,
     ) -> Result<Html> {
         let out = engine
-            .render(state, &session(actor.actor(), claims_of(actor)), here)
+            .render(
+                state,
+                &session(actor.actor(), claims_of(actor), actor.path()),
+                here,
+            )
             .map_err(|e| anyhow!("{e}"))
             .context("maintaining the view")?;
         match out {
@@ -240,7 +244,7 @@ impl Runtime {
                 engine,
                 state,
                 version,
-                &session(actor.actor(), claims_of(actor)),
+                &session(actor.actor(), claims_of(actor), actor.path()),
                 here,
             )
             .map_err(|e| anyhow!("{e}"))
@@ -271,7 +275,7 @@ impl Runtime {
     /// through [`Runtime::view`]: a plan's session is a *node*, and everything not downstream of it
     /// is what §5.3 shares between subscribers.
     pub fn session(&self, actor: &(impl Viewer + ?Sized)) -> Value {
-        session(actor.actor(), claims_of(actor))
+        session(actor.actor(), claims_of(actor), actor.path())
     }
 
     /// Decode a command from the wire, against the program's own `Command` union.
@@ -312,6 +316,16 @@ pub trait Viewer {
         static NONE: std::sync::OnceLock<BTreeMap<Arc<str>, Arc<str>>> = std::sync::OnceLock::new();
         NONE.get_or_init(BTreeMap::new)
     }
+
+    /// Where this viewer is — the route, as the browser last stated it.
+    ///
+    /// Defaulted rather than required, and the default is the application's root: a viewer that is
+    /// not a browser has no route, and `beck test`, the differential harness and every benchmark
+    /// are exactly that. The one implementation that overrides it is the subscription's, because a
+    /// socket is the only thing that can be told the route changed.
+    fn path(&self) -> &str {
+        beck_core::edge::ROOT
+    }
 }
 
 impl Viewer for str {
@@ -329,6 +343,10 @@ impl<T: Viewer + ?Sized> Viewer for &T {
     fn claims(&self) -> &BTreeMap<Arc<str>, Arc<str>> {
         (**self).claims()
     }
+
+    fn path(&self) -> &str {
+        (**self).path()
+    }
 }
 
 impl Viewer for String {
@@ -340,6 +358,33 @@ impl Viewer for String {
 impl Viewer for Arc<str> {
     fn actor(&self) -> &str {
         self
+    }
+}
+
+/// A viewer, somewhere.
+///
+/// Who is asking and where they are are separate facts, and this is the pair. It is generic over
+/// the identity half because both sources of one need a route: the document handler wraps the
+/// actor a provider verified with the path of the request that rendered it, and `beck test` wraps
+/// the name a test wrote with the route it wrote beside it. The socket's equivalent is
+/// `session::Subscriber`, which is this pair with a route that can move — an HTTP request is one
+/// route by construction and a subscription is not.
+pub struct At<W> {
+    pub who: W,
+    pub path: Arc<str>,
+}
+
+impl<W: Viewer> Viewer for At<W> {
+    fn actor(&self) -> &str {
+        self.who.actor()
+    }
+
+    fn claims(&self) -> &BTreeMap<Arc<str>, Arc<str>> {
+        self.who.claims()
+    }
+
+    fn path(&self) -> &str {
+        &self.path
     }
 }
 

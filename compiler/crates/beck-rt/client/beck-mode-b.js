@@ -123,7 +123,13 @@
 
     // `<u32 len><viewer json><bundle>` — the viewer first because the kernel needs it to build the
     // `Session` the view is rendered against.
-    const name = new TextEncoder().encode(JSON.stringify({ actor, claims }));
+    // The route is part of the viewer, and it is read off the address bar rather than restored
+    // from the local copy: after a reload the URL is the browser's own answer to "where am I", and
+    // a snapshot that disagreed with it would render a page the URL does not name. A document with
+    // no URL of its own is at the root, which is `beck.here`'s job to know.
+    const name = new TextEncoder().encode(
+      JSON.stringify({ actor, claims, path: beck.here() }),
+    );
     const payload = new Uint8Array(4 + name.length + bundle.byteLength);
     new DataView(payload.buffer).setUint32(0, name.length, true);
     payload.set(name, 4);
@@ -151,6 +157,7 @@
         state.seq = out.seq;
         if (out.dom && out.dom.length) beck.apply(root, out.dom);
         queued = out.queued || [];
+        beck.stats.pending = queued.length;
       }
     }
 
@@ -174,6 +181,7 @@
       else if (msg.t === "a") {
         call({ op: "settle", id: msg.id, seq: msg.q });
         queued = queued.filter((q) => q.id !== msg.id);
+        beck.stats.pending = queued.length;
         save();
       }
       else if (msg.t === "n") {
@@ -183,6 +191,17 @@
         beck.announce(root, "beck:rejected", msg);
       }
     }, () => flush());
+
+    // A route change is a local render: the kernel moves `session.path` and re-renders from the
+    // state it already holds, so the page changes with no round trip at all. The server is told
+    // anyway — not for the page, which it is not rendering, but so that the `Session` it hands
+    // `validate` is the one this client's own `validate` saw. Both travel on the one socket, so
+    // the navigation precedes the commands proposed from the page it produced.
+    beck.route((path) => {
+      beck.stats.navigations += 1;
+      apply(call({ op: "nav", path }));
+      send({ t: "g", path });
+    });
 
     beck.capture((command) => {
       const id = beck.uuid7();
@@ -195,8 +214,27 @@
       }
       apply(out);
       queued.push({ id, command });
+      beck.stats.pending = queued.length;
       send({ t: "c", id, command });
     });
+
+    // What Mode B can say about itself that Mode A cannot: the commands it is holding are *applied*
+    // rather than merely sent, so "pending" here is the difference between what this browser shows
+    // and what the server has agreed to.
+    beck.inspect.describe = () => {
+      const info = call({ op: "info" });
+      return {
+        mode: "B",
+        seq: info.seq,
+        actor,
+        path: info.path,
+        component: info.component,
+        optimistic: info.optimistic,
+        pending: queued.map((q) => q.id),
+        in_flight: info.pending,
+      };
+    };
+    beck.devtools();
 
     // Whatever this client owes the server — from this session or from the last one — goes up as
     // soon as there is a socket. Each carries the id it was proposed with, and the server

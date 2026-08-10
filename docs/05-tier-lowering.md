@@ -38,7 +38,9 @@ WASM, no size crisis, trivially good Lighthouse scores) — with Mode B in Phase
 > wrong inference ships a state to a browser. A page mixes modes freely is still unbuilt, because a
 > program has one `page`. And the promotion carries a **refusal this section did not anticipate** —
 > a component whose view reads the session cannot render on the client, since Mode B hands the
-> browser the state a per-session view was filtering (§94.2). The kernel interprets rather than
+> browser the state a per-session view was filtering (§94.2). *That refusal is narrower than it was
+> written: it is about **who** is asking, and reading `session.path` — where the browser is, which
+> the browser chose — is allowed ([`100`](100-client-polish-report.md) §100.2).* The kernel interprets rather than
 > compiles ([`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md)), which is what the size
 > budget below has to be read against: 179,195 bytes brotli once per application, 1,753 per
 > component.
@@ -72,13 +74,26 @@ WASM, no size crisis, trivially good Lighthouse scores) — with Mode B in Phase
 - **Progressive enhancement**: Mode A degrades to plain forms + full-page responses under
   `noscript` — generated from the same `view`, since the server can always render.
 
+> **The router is built** ([`100`](100-client-polish-report.md)), and this line is a correction rather
+> than a plan in two places. There are **no route declarations**: a route is a field of `Session`,
+> so the page is a pure function of it and "which page is this" is written in the program. And
+> navigation is **not** a command — a command is a proposal that becomes an event and reaches the
+> log, and where a browser is is neither. It is a `Session` that moved, which is why Mode A answers
+> a navigation with the difference between two pages and Mode B answers it with nothing at all.
+> Focus and scroll are kept by the patch interpreter rather than by frame identity (§100.5), at a
+> cost proportional to the patch. **Lazy routes are not built** and §100.7 says what they wait on.
+> Progressive enhancement is not built either — but a route *is* a URL the server renders, which is
+> the half of it that mattered most.
+
 **Debugging**: source maps from patch frames back to `view` expressions; a devtools extension
 showing the signal graph, patch traffic, and pending (optimistic) state; DWARF for Mode B WASM.
 
-> None of that is built. What a page *can* be asked today is whether its client is live —
-> `data-b-ready` carries the mode's letter and `beck:ready`, `beck:rejected` and `beck:error` are
-> bubbling events on the frame root ([`94`](94-mode-b-report.md) §94.12). That is the smallest
-> version of the same idea: a devtools panel needs somewhere to attach, and so does a spinner.
+> The **panel** is built ([`100`](100-client-polish-report.md) §100.6) — all three of the things this
+> line names — and it is a page the server serves rather than an extension, for a reason written out
+> there. Source maps and DWARF are not. What a page could already be asked is whether its client is
+> live — `data-b-ready` carries the mode's letter and `beck:ready`, `beck:rejected` and `beck:error`
+> are bubbling events on the frame root ([`94`](94-mode-b-report.md) §94.12) — and the panel is
+> attached to exactly that.
 
 ## 5.2 Service tier → native code (dual backend)
 

@@ -352,6 +352,14 @@ pub mod sym {
     pub const GIVEN: &str = "given";
     /// `(when <session|_> <command> …)` — proposals through the real `validate`.
     pub const WHEN: &str = "when";
+    /// `(at "ana" "/done")` — a session slot that names a **route** as well as an actor.
+    ///
+    /// The slot is one node with two shapes rather than two slots, because every form that has one
+    /// already treats it as optional: a bare string is `session("ana")` and this is
+    /// `session("ana", "/done")`. A second positional slot would have made "no actor, a route" and
+    /// "an actor, no route" the same arity and told them apart by which one happened to be a
+    /// string.
+    pub const AT: &str = "at";
     /// `(expect <Bool>)`.
     pub const EXPECT: &str = "expect";
     /// `(expect-contains <Str> <actor?>)` — `expect page contains "milk"`. The subject is always

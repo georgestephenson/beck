@@ -35,8 +35,27 @@ fn root() -> PathBuf {
 }
 
 fn example(name: &str) -> Placed {
+    compiled(name, |src| src.to_string())
+}
+
+/// The same example with the one line that moves the render to the browser.
+///
+/// One file, both modes. `examples/routed.beck` reads `session.path` and nothing else about the
+/// session, so it is eligible for Mode B — and running the *same source* both ways is what makes
+/// "the router is the same in both modes; only where the render happens differs" a test rather
+/// than a sentence.
+fn example_in_mode_b(name: &str) -> Placed {
+    compiled(name, |src| {
+        let out = src.replace("@on(client)\npage:", "@on(client)\n@render(client)\npage:");
+        assert_ne!(out, src, "examples/{name} has no page to move");
+        out
+    })
+}
+
+fn compiled(name: &str, edit: impl Fn(&str) -> String) -> Placed {
     let path = root().join("examples").join(name);
     let src = std::fs::read_to_string(&path).unwrap_or_else(|_| panic!("examples/{name}"));
+    let src = edit(&src);
     let (placed, diags, map) = beck_core::compile_str(path.to_str().expect("utf-8"), &src);
     assert!(!diags.has_errors(), "{}", diags.render(&map));
     placed.expect("an application")
@@ -143,9 +162,25 @@ impl Serving {
         format!("http://{}/?actor=ana", self.addr)
     }
 
+    fn url_at(&self, path: &str) -> String {
+        format!("http://{}{path}?actor=ana", self.addr)
+    }
+
     /// What the server itself would render for this actor, as markup.
     async fn rendered(&self, actor: &str) -> String {
         self.app.render(actor).await.expect("renders").render()
+    }
+
+    /// The same, for an actor **on a route** — which is what a browser that has navigated is.
+    async fn rendered_at(&self, actor: &str, path: &str) -> String {
+        self.app
+            .render(&beck_rt::program::At {
+                who: Arc::<str>::from(actor),
+                path: Arc::from(path),
+            })
+            .await
+            .expect("renders")
+            .render()
     }
 }
 
@@ -847,6 +882,21 @@ async fn the_playground_runs_the_application_and_two_clients_of_it() {
         .await;
     }
 
+    // A client with no URL of its own is at the application's root, not at `srcdoc`.
+    //
+    // These iframes are `srcdoc` documents, so `location.pathname` inside one is the string
+    // `srcdoc` — and a residue that read a route off it would put that on the `hello` frame, where
+    // no program could ever match it and every test in this workspace would still pass
+    // (`docs/100` §100.1).
+    assert_eq!(
+        page.text(
+            &mut browser,
+            "document.getElementById('client-ana').contentWindow.beck.here()"
+        )
+        .await,
+        "/",
+    );
+
     // ana clicks. The command goes up her port, through the one merge point, into the log — and
     // the frame that comes back to *bo* is what makes this a fanout rather than a mirror.
     page.eval(
@@ -923,5 +973,421 @@ async fn the_playground_runs_the_application_and_two_clients_of_it() {
         .await,
         "2"
     );
+}
+}
+
+// --------------------------------------------------------------- client polish (docs/100)
+
+browser_test! {
+/// A link, in Mode A: the address bar moves, the server re-renders for the new session, and what
+/// is on the screen is that route's page.
+///
+/// The link in `examples/routed.beck` is an ordinary `<a href>` with nothing in it that knows a
+/// router exists, which is the property this is really about. What follows it is one `click`
+/// listener in the residue, and what answers it is the same diff any other change produces.
+///
+/// The form is here too, because it is the other half of the same page: `on_submit` with
+/// `$field:text`, fired by the browser's own submit rather than by a key this file listens for.
+async fn mode_a_follows_a_link_and_submits_a_form() {
+    let Some(mut browser) = browser::shared().await else {
+        return;
+    };
+    let serving = Serving::start(example("routed.beck")).await;
+    let page = browser.open(&serving.url()).await;
+    page.wait_for(
+        &mut browser,
+        "document.getElementById('b-root').dataset.bReady === 'a'",
+    )
+    .await;
+
+    // A form, submitted the way a person submits one: fill the named control, press the button.
+    page.eval(
+        &mut browser,
+        "(() => { const f = document.querySelector('form[data-b-submit]'); \
+          f.elements.text.value = 'milk'; f.querySelector('button').click(); })()",
+    )
+    .await;
+    page.wait_for(
+        &mut browser,
+        "document.getElementById('b-root').innerHTML.includes('milk')",
+    )
+    .await;
+    // `$field:text` was filled from the control's own value rather than from a string the residue
+    // invented, and the form was reset afterwards.
+    assert_eq!(
+        page.eval(&mut browser, "document.querySelector('form').elements.text.value")
+            .await,
+        "",
+        "the form was not reset after it was submitted"
+    );
+
+    // Now the link. Clicked, not navigated to: this is the client-side path, and the assertion
+    // that the address bar moved is what says `pushState` happened rather than a page load.
+    page.eval(&mut browser, "document.querySelector('nav a[href=\"/done\"]').click()")
+        .await;
+    page.wait_for(&mut browser, "location.pathname === '/done'")
+        .await;
+    page.wait_for(
+        &mut browser,
+        "document.getElementById('b-root').innerHTML.includes('<h1>done</h1>')",
+    )
+    .await;
+
+    // The whole page, not a substring: the DOM is what the server would render for that route.
+    assert_eq!(
+        dom(&page, &mut browser).await,
+        serving.rendered_at("ana", "/done").await,
+        "the browser's DOM is not the page the server would render for `/done`"
+    );
+
+    // Back. The route is read off `location` rather than out of the history entry, so this is the
+    // same path a forward navigation takes.
+    page.eval(&mut browser, "history.back()").await;
+    page.wait_for(&mut browser, "location.pathname === '/'")
+        .await;
+    page.wait_for(
+        &mut browser,
+        "document.getElementById('b-root').innerHTML.includes('milk')",
+    )
+    .await;
+    assert_eq!(
+        dom(&page, &mut browser).await,
+        serving.rendered_at("ana", "/").await
+    );
+}
+}
+
+browser_test! {
+/// A deep link is a page, not a redirect.
+///
+/// Every GET that is not one of the runtime's own paths renders the program at that route, so the
+/// URL somebody pasted is server-rendered before any JavaScript runs — which is the difference
+/// between a router and a single-page application that corrects itself after first paint.
+async fn a_route_is_server_rendered_before_any_script_runs() {
+    let Some(mut browser) = browser::shared().await else {
+        return;
+    };
+    let serving = Serving::start(example("routed.beck")).await;
+    let command = serving
+        .app
+        .runtime()
+        .decode_command(&serde_json::json!({"c":"Add","id":"t1","text":"milk"}))
+        .expect("decodes");
+    serving
+        .app
+        .propose("k1".into(), "ana", command)
+        .await
+        .expect("accepted");
+    let toggle = serving
+        .app
+        .runtime()
+        .decode_command(&serde_json::json!({"c":"Toggle","id":"t1"}))
+        .expect("decodes");
+    serving
+        .app
+        .propose("k2".into(), "ana", toggle)
+        .await
+        .expect("accepted");
+
+    let page = browser.open(&serving.url_at("/active")).await;
+    // Before the socket is even live, the document is the route's page.
+    assert!(
+        page.text(&mut browser, "document.getElementById('b-root').innerHTML")
+            .await
+            .contains("<h1>active</h1>"),
+        "the served document is not the route's page"
+    );
+    page.wait_for(
+        &mut browser,
+        "document.getElementById('b-root').dataset.bReady === 'a'",
+    )
+    .await;
+    // …and the subscription agrees with it, rather than correcting it: the `hello` carried the
+    // route, so the first frame is the same page.
+    assert_eq!(
+        dom(&page, &mut browser).await,
+        serving.rendered_at("ana", "/active").await
+    );
+}
+}
+
+browser_test! {
+/// The same program, the same link — and in Mode B the page changes with no server in it.
+///
+/// The kernel moves `session.path` and re-renders from the state it already holds. What is
+/// asserted is the claim the mode rests on, at a route: what the browser rendered locally is what
+/// the server would have sent.
+async fn mode_b_navigates_without_a_round_trip() {
+    let Some(mut browser) = browser::shared().await else {
+        return;
+    };
+    if !point_at_the_kernel() {
+        eprintln!("skipped: no kernel to serve.");
+        return;
+    }
+
+    let serving = Serving::start(example_in_mode_b("routed.beck")).await;
+    let command = serving
+        .app
+        .runtime()
+        .decode_command(&serde_json::json!({"c":"Add","id":"t1","text":"milk"}))
+        .expect("decodes");
+    serving
+        .app
+        .propose("k1".into(), "ana", command)
+        .await
+        .expect("accepted");
+
+    let page = browser.open(&serving.url()).await;
+    page.wait_for(
+        &mut browser,
+        "document.getElementById('b-root').dataset.bReady === 'b'",
+    )
+    .await;
+    page.wait_for(
+        &mut browser,
+        "document.getElementById('b-root').innerHTML.includes('milk')",
+    )
+    .await;
+
+    page.eval(&mut browser, "document.querySelector('nav a[href=\"/done\"]').click()")
+        .await;
+    page.wait_for(&mut browser, "location.pathname === '/done'")
+        .await;
+    page.wait_for(
+        &mut browser,
+        "document.getElementById('b-root').innerHTML.includes('<h1>done</h1>')",
+    )
+    .await;
+    // The task is not done, so the route that shows done tasks shows none of it.
+    assert!(
+        !dom(&page, &mut browser).await.contains("milk"),
+        "the local render did not filter by the route"
+    );
+    assert_eq!(
+        dom(&page, &mut browser).await,
+        serving.rendered_at("ana", "/done").await,
+        "the browser rendered a different page than the server would have"
+    );
+    // And the kernel is where the route lives, so it can say where it is.
+    assert_eq!(
+        page.text(&mut browser, "beck.inspect.describe().path").await,
+        "/done"
+    );
+}
+}
+
+browser_test! {
+/// The caret survives a patch that destroys the element it is in.
+///
+/// A whole-frame `replace` is what a `Reset` frame carries — a reconnection whose gap the log
+/// could not answer — and it rebuilds every element on the page, including the one somebody is
+/// typing into. Before the interpreter kept the caret, that lost the focus to `body` and the
+/// selection with it, in the middle of a sentence.
+///
+/// The patch is applied directly rather than arranged over a socket, because *that op* is the
+/// thing under test and a reset is not something a test can reliably provoke. The tree it installs
+/// is the page's own, read back out of the DOM, so the element the caret returns to is genuinely
+/// the same element rebuilt rather than a different one that took its place.
+async fn a_patch_that_rebuilds_the_page_keeps_the_caret_and_the_scroll() {
+    let Some(mut browser) = browser::shared().await else {
+        return;
+    };
+    let serving = Serving::start(example("routed.beck")).await;
+    let page = browser.open(&serving.url()).await;
+    page.wait_for(
+        &mut browser,
+        "document.getElementById('b-root').dataset.bReady === 'a'",
+    )
+    .await;
+
+    // Somebody is typing, with the caret in the middle of what they have written — and they have
+    // scrolled a list on the same page.
+    page.eval(
+        &mut browser,
+        "(() => { const i = document.querySelector('input[name=text]'); i.focus(); \
+          i.value = 'half typed'; i.setSelectionRange(4, 4); \
+          const ul = document.querySelector('ul'); \
+          ul.setAttribute('style', 'height:40px;overflow:auto'); \
+          for (let n = 0; n < 40; n++) { \
+            const li = document.createElement('li'); li.textContent = 'row ' + n; ul.append(li); \
+          } \
+          ul.scrollTop = 200; })()",
+    )
+    .await;
+
+    // The whole frame, replaced — the op a reset sends. `value` is written as an attribute so the
+    // rebuilt control holds the same text a state-driven page would have put there.
+    page.eval(
+        &mut browser,
+        "(() => { \
+           const wire = (n) => { \
+             if (n.nodeType === 3) return n.data; \
+             const attrs = Array.from(n.attributes).map((a) => [a.name, a.value]); \
+             if (n.tagName === 'INPUT') attrs.push(['value', n.value]); \
+             return [n.tagName.toLowerCase(), attrs, Array.from(n.childNodes).map(wire)]; \
+           }; \
+           const root = document.getElementById('b-root'); \
+           beck.apply(root, [[0, [], wire(root.firstElementChild)]]); \
+         })()",
+    )
+    .await;
+
+    assert_eq!(
+        page.text(&mut browser, "document.activeElement.getAttribute('name') || ''")
+            .await,
+        "text",
+        "the caret was lost when the page was rebuilt"
+    );
+    assert_eq!(
+        page.text(&mut browser, "String(document.activeElement.selectionStart)")
+            .await,
+        "4",
+        "the caret came back at the wrong place"
+    );
+    assert_eq!(
+        page.text(&mut browser, "document.activeElement.value").await,
+        "half typed"
+    );
+    // And the scroll of a list the replace rebuilt. Best effort by position, which is what a
+    // replaced subtree admits of — the shape it comes back as is the shape the new page has.
+    assert_eq!(
+        page.text(&mut browser, "String(document.querySelector('ul').scrollTop)")
+            .await,
+        "200",
+        "the list somebody had scrolled came back at the top"
+    );
+}
+}
+
+browser_test! {
+/// The devtools panel: the three things §8.6 asks for, in the page it is about.
+///
+/// It is loaded on request rather than shipped, so this asks for it — and then reads the numbers
+/// off the panel's own DOM rather than off the counters, because a panel that renders nothing
+/// while the counters are right is the failure worth catching.
+async fn the_devtools_panel_shows_the_signal_graph_the_traffic_and_the_pending_state() {
+    let Some(mut browser) = browser::shared().await else {
+        return;
+    };
+    let serving = Serving::start(example("routed.beck")).await;
+    let page = browser.open(&format!("{}&devtools", serving.url())).await;
+    page.wait_for(
+        &mut browser,
+        "document.getElementById('b-root').dataset.bReady === 'a'",
+    )
+    .await;
+    page.wait_for(&mut browser, "!!document.getElementById('beck-devtools')")
+        .await;
+
+    // The graph comes over the wire, so wait for it rather than for a duration.
+    page.wait_for(
+        &mut browser,
+        "document.getElementById('beck-devtools').textContent.includes('board')",
+    )
+    .await;
+    let text = page
+        .text(&mut browser, "document.getElementById('beck-devtools').textContent")
+        .await;
+    for what in ["patch traffic", "signal graph", "pending", "session.path"] {
+        assert!(text.contains(what), "the panel does not show `{what}`: {text}");
+    }
+
+    // It is outside the frame the patches address, which is not a detail: a panel inside `#b-root`
+    // would be counted by every child index in every path.
+    assert_eq!(
+        page.text(
+            &mut browser,
+            "String(document.getElementById('b-root').contains(document.getElementById('beck-devtools')))"
+        )
+        .await,
+        "false",
+        "the panel is inside the frame the patch paths are relative to"
+    );
+
+    // And the numbers are the client's own. A frame has been applied by now — the subscription's
+    // first one — so this is a count of something that happened rather than a zero.
+    page.eval(
+        &mut browser,
+        "(() => { const f = document.querySelector('form[data-b-submit]'); \
+          f.elements.text.value = 'counted'; f.querySelector('button').click(); })()",
+    )
+    .await;
+    page.wait_for(
+        &mut browser,
+        "document.getElementById('b-root').innerHTML.includes('counted')",
+    )
+    .await;
+    page.wait_for(&mut browser, "beck.stats.frames > 0 && beck.stats.bytes_out > 0")
+        .await;
+    page.wait_for(
+        &mut browser,
+        "document.getElementById('beck-devtools').textContent.includes('frames applied')",
+    )
+    .await;
+}
+}
+
+browser_test! {
+/// A cold start **at a route**, with the server gone.
+///
+/// The router made [`94`](../../../../docs/94-mode-b-report.md) §94.13's cold start narrower without
+/// anybody noticing: the worker caches `/`, a reload asks for `/done`, and the tab that had
+/// navigated got an error page for a route it was perfectly able to render. In Mode B the route is
+/// the *client's* to render — it reads `location` and renders from the state it holds — so one
+/// cached document answers for every route, and the worker says so.
+async fn mode_b_cold_starts_at_a_route_it_has_never_asked_for() {
+    let Some(mut browser) = browser::shared().await else {
+        return;
+    };
+    if !point_at_the_kernel() {
+        eprintln!("skipped: no kernel to serve.");
+        return;
+    }
+
+    let mut serving = Serving::start(example_in_mode_b("routed.beck")).await;
+    let mut page = browser.open(&serving.url()).await;
+    page.wait_for(
+        &mut browser,
+        "document.getElementById('b-root').dataset.bReady === 'b'",
+    )
+    .await;
+    page.eval(
+        &mut browser,
+        "(() => { const f = document.querySelector('form[data-b-submit]'); \
+          f.elements.text.value = 'before the outage'; f.querySelector('button').click(); })()",
+    )
+    .await;
+    wait_for_server(&serving, "before the outage").await;
+    page.wait_for(&mut browser, "!!navigator.serviceWorker.controller")
+        .await;
+    page.wait_for(
+        &mut browser,
+        "Object.keys(localStorage).some(k => k.startsWith('beck:'))",
+    )
+    .await;
+
+    serving.stop().await;
+
+    // A reload onto a route the cache has never held a document for.
+    let deep = serving.url_at("/active");
+    page.navigate(&mut browser, &deep).await;
+    page.wait_for(
+        &mut browser,
+        "document.getElementById('b-root').dataset.bReady === 'b'",
+    )
+    .await;
+    // The route is the client's, so the page is the route's page — rendered from the local copy,
+    // with nothing listening.
+    page.wait_for(
+        &mut browser,
+        "document.getElementById('b-root').innerHTML.includes('<h1>active</h1>')",
+    )
+    .await;
+    page.wait_for(
+        &mut browser,
+        "document.getElementById('b-root').innerHTML.includes('before the outage')",
+    )
+    .await;
 }
 }

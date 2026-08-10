@@ -116,6 +116,9 @@ pub enum Clause {
     /// `when session("ana") sends Add(…), Toggle(…)` — proposals through the real `validate`.
     When {
         actor: Option<Arc<str>>,
+        /// `when session("ana", "/done") sends …` — the route the proposal was made from, which is
+        /// what a `Proposal`'s own session carries. `None` is the application's root.
+        route: Option<Arc<str>>,
         commands: Vec<Core>,
         span: Span,
     },
@@ -138,10 +141,11 @@ pub enum Clause {
 pub enum Expectation {
     /// `expect <Bool>`, with `state`, `events` and `result` in scope.
     Holds(Core),
-    /// `expect page(session("bo")) contains "milk"`.
+    /// `expect page(session("bo")) contains "milk"`, and `session("bo", "/done")` for a route.
     PageContains {
         needle: Core,
         actor: Option<Arc<str>>,
+        route: Option<Arc<str>>,
     },
     /// `expect page matches snapshot` / `… matches snapshot "after checkout"`.
     ///
@@ -152,6 +156,7 @@ pub enum Expectation {
     PageMatchesSnapshot {
         name: Option<Arc<str>>,
         actor: Option<Arc<str>>,
+        route: Option<Arc<str>>,
     },
     /// `expect state == fold_of [ … ]`.
     FoldEquals {

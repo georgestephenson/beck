@@ -2,12 +2,13 @@
 //
 // This file is compiler residue. Nothing here is application-specific — no todo, no command
 // names, no view logic — which is the point: "the JavaScript never appears in the source at all"
-// (docs/00-original-idea.md). It applies patches, captures declarative handlers, and resumes a
-// subscription by (subscription, seq). That is the whole of Mode A on the browser side.
+// (docs/00-original-idea.md). It applies patches, captures declarative handlers, follows links,
+// and resumes a subscription by (subscription, seq). That is the whole of Mode A on the browser
+// side.
 //
-// The patch interpreter, the socket and the id source are in `beck-patch.js`, because Mode B needs
-// the same three and produces the same patch ops — it just produces them in the browser instead of
-// receiving them (docs/93).
+// The patch interpreter, the socket, the router and the id source are in `beck-patch.js`, because
+// Mode B needs the same four and produces the same patch ops — it just produces them in the
+// browser instead of receiving them (docs/93).
 (() => {
   const root = document.getElementById("b-root");
   if (!root) return;
@@ -23,6 +24,12 @@
     seq: Number(root.dataset.bSeq) || 0,
   };
 
+  // Commands proposed and not yet answered. In Mode A this is the whole of "pending": the server
+  // holds the state, so a client has nothing to show for a command until the patch comes back, and
+  // what it can say is *how many it is waiting on* — which is what a devtools panel means by
+  // pending and what a page could show as a spinner.
+  const pending = new Map();
+
   const send = beck.connect(state, (msg) => {
     if (msg.t === "p") {
       beck.apply(root, msg.o);
@@ -34,10 +41,35 @@
       // A welcome means the subscription exists, which is the whole of readiness in Mode A: the
       // handlers were installed synchronously and the page was rendered by the server.
       if (msg.t === "w") beck.ready(root, "a");
-    } else if (msg.t === "n") {
-      beck.announce(root, "beck:rejected", msg);
+    } else if (msg.t === "a" || msg.t === "n") {
+      pending.delete(msg.id);
+      beck.stats.pending = pending.size;
+      if (msg.t === "n") beck.announce(root, "beck:rejected", msg);
     }
   });
 
-  beck.capture((command) => send({ t: "c", id: beck.uuid7(), command }));
+  beck.capture((command) => {
+    const id = beck.uuid7();
+    pending.set(id, command);
+    beck.stats.pending = pending.size;
+    send({ t: "c", id, command });
+  });
+
+  // A link is a route, and a route is `session.path`. In Mode A the server re-renders for the new
+  // session and answers with a patch, so a navigation costs exactly what any other change costs:
+  // the difference between two pages.
+  beck.route((path) => {
+    beck.stats.navigations += 1;
+    send({ t: "g", path });
+  });
+
+  beck.inspect.describe = () => ({
+    mode: "A",
+    seq: state.seq,
+    actor: state.actor,
+    path: beck.here(),
+    pending: Array.from(pending.keys()),
+  });
+
+  beck.devtools();
 })();

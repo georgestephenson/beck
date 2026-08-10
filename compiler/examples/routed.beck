@@ -1,0 +1,193 @@
+# A page with routes and a form — the client-polish example (docs/100).
+#
+# Two things here are not in the other examples, and neither of them is a framework.
+#
+# **A route is `session.path`.** There is no route table, no matcher and no router construct: the
+# page is a pure function of the state and of the session, and the session says where the browser
+# is. So "which page is this" is an ordinary `if` over an ordinary `Str`, written in the program
+# rather than configured beside it — and every route is a real URL, because the server renders that
+# path directly (a deep link and a reload land on the page they name).
+#
+# **A form is a `form:`.** `on_submit` carries the command, and `$field:name` names a control
+# inside the form. The browser's own submit — a button, or Enter in a single-line field — is what
+# fires it, so the page a keyboard and a screen reader already know how to drive is the page the
+# program wrote.
+#
+# The page reads `session.path` and nothing else about the session, which is exactly what makes it
+# eligible for Mode B: a page may be a function of *where* the browser is and not of *who* is
+# holding it (docs/100 §100.2, B0514). Adding `@render(client)` to the page below is the whole of the
+# difference between a navigation that costs a round trip and one that costs a local render.
+
+type Id = newtype[Str]
+
+model Task:
+    id: Id
+    text: Str
+    done: Bool
+
+model Board:
+    tasks: Map[Id, Task]
+
+union Command:
+    Add(id: Id, text: Str)
+    Toggle(id: Id)
+
+union Event:
+    Added(id: Id, text: Str)
+    Toggled(id: Id)
+
+union Rejection:
+    BlankText
+    IdTaken
+    NoSuchTask
+
+# ---------- The database is a fold ----------
+
+def apply_event(b: Board, env: Envelope[Event]) -> Board:
+    match env.body:
+        case Added(id, text):
+            return b.with(tasks=map_insert(b.tasks, id, Task(id=id, text=text, done=False)))
+        case Toggled(id):
+            return toggled(b, id)
+
+def toggled(b: Board, id: Id) -> Board:
+    match map_get(b.tasks, id):
+        case Some(value):
+            return b.with(tasks=map_insert(b.tasks, id, value.with(done=not value.done)))
+        case None:
+            return b
+
+# ---------- Authority is one chokepoint ----------
+
+def validate(b: Board, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Add(id, text):
+            if str_is_empty(str_trim(text)):
+                return Err(error=BlankText)
+            if map_contains(b.tasks, id):
+                return Err(error=IdTaken)
+            return Ok(value=[Added(id=id, text=text)])
+        case Toggle(id):
+            if map_contains(b.tasks, id):
+                return Ok(value=[Toggled(id=id)])
+            return Err(error=NoSuchTask)
+
+# ---------- The route decides what the page is of ----------
+
+def visible(b: Board, path: Str) -> list[Task]:
+    return filter_list(everything(b), lambda t: shown(t, path))
+
+def everything(b: Board) -> list[Task]:
+    return sort_by(map_values(b.tasks), lambda t: t.text)
+
+def shown(t: Task, path: Str) -> Bool:
+    if path == "/done":
+        return t.done
+    if path == "/active":
+        return not t.done
+    return True
+
+def title_for(path: Str) -> Str:
+    if path == "/done":
+        return "done"
+    if path == "/active":
+        return "active"
+    return "everything"
+
+# ---------- The page ----------
+
+def view(b: Board, session: Session) -> Html:
+    return render(visible(b, session.path), session.path)
+
+def render(tasks: list[Task], path: Str) -> Html:
+    return ui:
+        main:
+            h1: title_for(path)
+            nav:
+                link("/", "all", path)
+                link("/active", "active", path)
+                link("/done", "done", path)
+            form(on_submit=Add(id=Id(value="$id"), text="$field:text")):
+                input(name="text", placeholder="what needs doing?", autofocus="on")
+                button: "add"
+            ul:
+                for t in tasks:
+                    li(key=t.id, class=done_class(t)):
+                        span(on_click=Toggle(id=t.id)): t.text
+            footer: (str(list_len(tasks)) + " shown")
+
+## An ordinary link. Nothing in it knows a router exists — the residue follows a same-origin
+## `href`, and a browser with no JavaScript at all follows it too, to a page the server renders at
+## that path.
+def link(to: Str, label: Str, path: Str) -> Html:
+    return ui:
+        a(href=to, class=here(to, path)): label
+
+def here(to: Str, path: Str) -> Str:
+    return "here" if to == path else ""
+
+def done_class(t: Task) -> Str:
+    return "done" if t.done else ""
+
+# ---------- The wiring ----------
+
+@on(server)
+proposals: Stream[Proposal] = merge_clients()
+
+@on(server)
+events: Stream[Event] = decide(proposals, board, validate)
+
+@on(data)
+board: Signal[Board] = durable(fold(apply_event, Board(tasks={}), events))
+
+@on(client)
+page: Signal[Html] = per_session(board, view)
+
+# ---------- Tests ----------
+
+test "a blank task is refused":
+    given []
+    when Add(id=Id("1"), text="   ")
+    expect Err(error=BlankText)
+
+test "every route shows the tasks it names":
+    given [
+        Added(id=Id("1"), text="milk"),
+        Added(id=Id("2"), text="bread"),
+        Toggled(id=Id("1")),
+    ]
+    expect page(session("ana")) contains "milk"
+    expect page(session("ana")) contains "bread"
+    expect page(session("ana", "/done")) contains "milk"
+    expect page(session("ana", "/active")) contains "bread"
+    expect page(session("ana", "/done")) contains "1 shown"
+    expect page(session("ana", "/active")) contains "1 shown"
+
+test "the route is the page's, and the heading says so":
+    given []
+    expect page(session("ana", "/done")) contains "done"
+    expect page(session("ana", "/active")) contains "active"
+    expect page(session("ana")) contains "everything"
+
+## The whole page at one route, not the part somebody remembered to name: every attribute, the
+## `href` of each link, the form's `data-b-submit` and the order of the list.
+test "the page at a route":
+    given [
+        Added(id=Id("1"), text="milk"),
+        Added(id=Id("2"), text="bread"),
+        Toggled(id=Id("1")),
+    ]
+    expect page(session("ana", "/active")) matches snapshot
+
+test "an unknown route is the whole list rather than a refusal":
+    given [Added(id=Id("1"), text="milk")]
+    expect page(session("ana", "/nothing-here")) contains "milk"
+
+test "the page is the browser's job and the fold is the data tier's":
+    expect place(page) == client
+    expect place(board) == data
+    expect place(apply_event) == any
+
+property "no log this program can produce makes any route unrenderable"(log: list[Event]):
+    given log
+    expect page(session("ana", "/done")) contains "shown"

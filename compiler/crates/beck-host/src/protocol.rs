@@ -39,12 +39,33 @@ pub enum ClientMsg {
         /// choice an operator makes rather than a property of the protocol (`docs/48`).
         #[serde(default)]
         actor: String,
+        /// Where this client is, as a route. Absent means the application's root.
+        ///
+        /// On the `hello` rather than only in a [`ClientMsg::Nav`] because a subscription is
+        /// re-established after every disconnection, and a client whose route were established by
+        /// a separate frame would render one page for as long as the two frames were in flight —
+        /// and would render the wrong page for as long as it took the second one to be *re*sent
+        /// after a reload with the network down.
+        #[serde(default = "root")]
+        path: String,
     },
     /// A proposal. `id` is the idempotency key that makes a retry after a reconnect safe (§4.3).
     #[serde(rename = "c")]
     Cmd { id: String, command: Value },
+    /// The client is somewhere else now.
+    ///
+    /// It travels on the same socket as the commands, which is the whole of the ordering argument:
+    /// a command proposed from a page is preceded by the navigation that produced that page, so
+    /// the `Session` the server hands `validate` is the one the client's own copy of `validate`
+    /// saw. Nothing had to be added to the command frame to make that true.
+    #[serde(rename = "g")]
+    Nav { path: String },
     #[serde(rename = "ping")]
     Ping,
+}
+
+fn root() -> String {
+    beck_core::edge::ROOT.to_string()
 }
 
 impl ClientMsg {
@@ -131,7 +152,35 @@ mod tests {
             ClientMsg::Hello {
                 sub: "s1".into(),
                 seq: Some(41),
-                actor: "alice".into()
+                actor: "alice".into(),
+                path: "/".into(),
+            }
+        );
+    }
+
+    /// A client that says where it is, and one that does not.
+    ///
+    /// The default is the application's root rather than an empty string, because a program
+    /// matching on `session.path` should not have to spell "the client did not say" and "the client
+    /// is at the root" as two different pages — and every client that predates the router sends no
+    /// `path` at all.
+    #[test]
+    fn a_hello_carries_the_route_and_defaults_to_the_root() {
+        let deep =
+            ClientMsg::parse(r#"{"t":"hello","sub":"s1","actor":"ana","path":"/done"}"#).unwrap();
+        assert!(matches!(deep, ClientMsg::Hello { ref path, .. } if path == "/done"));
+        let silent = ClientMsg::parse(r#"{"t":"hello","sub":"s1","actor":"ana"}"#).unwrap();
+        assert!(matches!(silent, ClientMsg::Hello { ref path, .. } if path == "/"));
+    }
+
+    /// A navigation is its own frame, on the same socket as the commands — which is what makes the
+    /// `Session` the server hands `validate` the one the client's own `validate` saw.
+    #[test]
+    fn parses_a_navigation() {
+        assert_eq!(
+            ClientMsg::parse(r#"{"t":"g","path":"/done"}"#).unwrap(),
+            ClientMsg::Nav {
+                path: "/done".into()
             }
         );
     }

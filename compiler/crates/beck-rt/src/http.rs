@@ -120,15 +120,51 @@ async fn route(
         )),
         (&Method::GET, "/beck-kernel.wasm") => Ok(kernel()),
         (&Method::GET, "/beck.css") => Ok(asset(&crate::css::stylesheet(), "text/css")),
+        (&Method::GET, "/beck-devtools.js") => Ok(asset(crate::DEVTOOLS_CLIENT, "text/javascript")),
+        // What the panel draws: the program's own signal graph and the dataflow the compiler made
+        // of its view. Derived from the running program, so a panel cannot describe a version of
+        // the program this process is not executing.
+        (&Method::GET, "/beck-signals.json") => Ok(asset(
+            crate::signals::document(app.runtime().placed(), app.runtime().plan()),
+            "application/json",
+        )),
         (&Method::GET, LOGIN_PATH) => login(app, &req).await,
         (&Method::GET, CALLBACK_PATH) => callback(app, &req).await,
         (&Method::GET, LOGOUT_PATH) => Ok(logout()),
         (&Method::GET, "/socket") => upgrade(app, req),
-        (&Method::GET, "/") => document(app, req).await,
-        _ => Ok(Response::builder()
-            .status(StatusCode::NOT_FOUND)
-            .body(Full::new(Bytes::from_static(b"not found")))?),
+        // Every other GET is the application, at that route. A Beck program has one page and that
+        // page is a function of `session.path`, so there is nothing here to match a route against:
+        // the *program* decides what `/done` means, and this decides only that `/done` is a page
+        // rather than a missing file. Which is what makes a deep link and a reload work — the
+        // route is established by the request that renders, and not by a script afterwards.
+        (&Method::GET, _) => document(app, req).await,
+        _ => Ok(not_found()),
     }
+}
+
+/// A path this process answers itself, so a program's routes cannot be shadowed by one.
+///
+/// The list is derived from the `match` above rather than written twice — `route_is_reserved` is
+/// what the gate holds it to. It exists as a function because a program's author needs to know
+/// which routes are not theirs, and "read the router" is not an answer.
+pub fn reserved_routes() -> &'static [&'static str] {
+    &[
+        "/healthz",
+        "/readyz",
+        "/socket",
+        "/beck.css",
+        "/beck-patch.js",
+        "/beck-thin.js",
+        "/beck-mode-b.js",
+        "/beck-devtools.js",
+        "/beck-sw.js",
+        "/beck-bundle.bpk",
+        "/beck-kernel.wasm",
+        "/beck-signals.json",
+        LOGIN_PATH,
+        CALLBACK_PATH,
+        LOGOUT_PATH,
+    ]
 }
 
 /// Where the login flow lives. Fixed paths rather than configurable ones: they are registered with
@@ -361,7 +397,16 @@ async fn document(app: Arc<App>, req: Request<Incoming>) -> Result<Response<Full
         }
     };
     let seq = app.head();
-    let body = app.render(&actor).await?.render();
+    // The route this document is *of*. First paint is a render of the page at this path, so a deep
+    // link and a reload produce the page the client would have navigated to rather than the root's
+    // page followed by a correction — which is the whole difference between a router and a
+    // redirect.
+    let who = crate::program::At {
+        who: actor,
+        path: std::sync::Arc::from(req.uri().path()),
+    };
+    let body = app.render(&who).await?.render();
+    let actor = &who.who;
     // The claims go into the document because Mode B's client renders the same view against the
     // same `Session`, and it has no provider to ask: a client left to fill in a blank map would
     // show a different page than the one it is hydrating. They are what the server already

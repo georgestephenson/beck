@@ -84,8 +84,10 @@ pub struct Fun {
 pub enum Op {
     /// The durable accumulator, supplied by the caller. The plan's one source.
     State,
-    /// The subscriber's `Session`. Constant for the life of one subscription, which is what makes
-    /// everything not downstream of it shareable (§5.3).
+    /// The subscriber's `Session`. Everything not downstream of it is shareable between
+    /// subscribers (§5.3), and everything downstream of it is that subscriber's — including when
+    /// what moved is the *route* rather than the actor, which is the one field of a session that
+    /// changes while a subscription is open ([`crate::render::SessionUse`]).
     Session,
     /// Who is connected — `presence()`, supplied by the caller like the other two sources.
     ///

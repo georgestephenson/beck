@@ -115,8 +115,8 @@ fusion,
 shared-arrangement, subscription, view-metrics, read-model, SICP, Are We Fast Yet, Benchmarks Game,
 tests-in-Beck, UI, workflow-cross-check, documentation, getting-started, outbound, compile-speed,
 concurrency, round-trip, runtime-edge, grammar-fuzz, supply-chain, image, init-ci, native-backend,
-mode-B, browser, playground, identity, OIDC, presence, cranelift and diagnostic-snapshot suites,
-plus the nine
+mode-B, browser, client, playground, identity, OIDC, presence, cranelift and diagnostic-snapshot
+suites, plus the nine
 release-only measurement suites. **Keep them green.**
 
 Four gates in this project's history could not have failed
