@@ -76,6 +76,14 @@ pub fn bundle() -> Vec<Asset> {
             content_type: "text/javascript",
             body: beck_rt::THIN_CLIENT,
         },
+        // Mode B's half of the same rule: a `@render(client)` program's iframe loads the kernel
+        // shim a deployment serves, unmodified, and gets its kernel and its bundle through
+        // `beck.asset` (docs/101).
+        Asset {
+            path: "beck-mode-b.js",
+            content_type: "text/javascript",
+            body: beck_rt::MODE_B_CLIENT,
+        },
     ]
 }
 
@@ -91,10 +99,36 @@ pub fn module_path() -> PathBuf {
     )
 }
 
+/// The WebAssembly modules the playground is, beside the files it is.
+///
+/// Two, and the second one is why this is a list rather than a constant: the compiler runs in the
+/// worker and Mode B's kernel runs in the client iframe, so a `@render(client)` program in the tab
+/// needs both. Neither is compiled into the `beck` binary, because building either needs a target
+/// the compiler's own build does not.
+pub const MODULES: [(&str, &str); 2] = [
+    ("beck-play.wasm", "beck-play"),
+    ("beck-kernel.wasm", "beck-wasm"),
+];
+
+/// Where each module is looked for on this machine.
+fn module_paths() -> [(&'static str, PathBuf, &'static str); 2] {
+    [
+        (MODULES[0].0, module_path(), "BECK_PLAYGROUND"),
+        (MODULES[1].0, beck_rt::http::kernel_path(), "BECK_KERNEL"),
+    ]
+}
+
+/// The module names [`write()`] writes, for a gate that asserts the page can ask for them.
+pub fn written_modules() -> Vec<&'static str> {
+    MODULES.iter().map(|(name, _)| *name).collect()
+}
+
 /// Write the playground to a directory: the static site §17.1 describes.
 ///
-/// The module is copied in beside the rest, so what is written is the whole deployment and not a
-/// deployment plus an instruction.
+/// Both modules are copied in beside the rest, so what is written is the whole deployment and not a
+/// deployment plus an instruction. The kernel is the *second* one: a `@render(client)` program runs
+/// in the client iframe, and it runs there in Mode B's kernel — the same module `beck run` serves
+/// on `/beck-kernel.wasm`.
 pub fn write(out: &Path) -> Result<Vec<PathBuf>> {
     std::fs::create_dir_all(out)?;
     let mut written = Vec::new();
@@ -103,16 +137,22 @@ pub fn write(out: &Path) -> Result<Vec<PathBuf>> {
         std::fs::write(&path, asset.body)?;
         written.push(path);
     }
-    let module = module_path();
-    let into = out.join("beck-play.wasm");
-    std::fs::copy(&module, &into).map_err(|e| {
-        anyhow::anyhow!(
-            "no playground module at {}: build it with `cargo build -p beck-play --release \
-             --target wasm32-unknown-unknown`, or set BECK_PLAYGROUND ({e})",
-            module.display()
-        )
-    })?;
-    written.push(into);
+    for (name, from, env) in module_paths() {
+        let crate_name = MODULES
+            .iter()
+            .find(|(m, _)| *m == name)
+            .map(|(_, c)| *c)
+            .unwrap_or_default();
+        let into = out.join(name);
+        std::fs::copy(&from, &into).map_err(|e| {
+            anyhow::anyhow!(
+                "no module at {}: build it with `cargo build -p {crate_name} --release --target \
+                 wasm32-unknown-unknown`, or set {env} ({e})",
+                from.display()
+            )
+        })?;
+        written.push(into);
+    }
     Ok(written)
 }
 
@@ -155,17 +195,18 @@ fn route(req: Request<Incoming>) -> Result<Response<Full<Bytes>>> {
     let path = if path == "/" { "/index.html" } else { path };
     let name = path.trim_start_matches('/');
 
-    if name == "beck-play.wasm" {
-        let at = module_path();
+    // The two modules, read from disk rather than compiled in: building either needs a target the
+    // compiler's own build does not.
+    if let Some((_, at, env)) = module_paths().into_iter().find(|(m, _, _)| *m == name) {
         return Ok(match std::fs::read(&at) {
             Ok(module) => body(Bytes::from(module), "application/wasm"),
             Err(e) => {
-                tracing::error!(path = %at.display(), error = %e, "no playground module to serve");
+                tracing::error!(path = %at.display(), error = %e, "no module to serve");
                 refuse(
                     StatusCode::NOT_FOUND,
                     &format!(
-                        "no module at {}: build it with `cargo build -p beck-play --release \
-                         --target wasm32-unknown-unknown`, or set BECK_PLAYGROUND",
+                        "no module at {}: build it with `cargo build --release --target \
+                         wasm32-unknown-unknown`, or set {env}",
                         at.display()
                     ),
                 )

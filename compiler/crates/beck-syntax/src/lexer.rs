@@ -234,6 +234,77 @@ fn punct(r: &Raw) -> &'static str {
     }
 }
 
+/// The words the Python surface reads as syntax rather than as names.
+///
+/// The lexer does not distinguish them — `def` is an [`Raw::Ident`] like any other, and the parser
+/// is what decides that this one starts a definition. So this is a *list*, and a list is a second
+/// place for the truth to live unless something holds it to the first: `the_keyword_table_is_the_one_the_parser_matches`
+/// reads every `at_kw("…")` and `eat_kw("…")` out of the parser's own source and asserts the two
+/// sets are equal. A keyword the parser gains and this does not is a red test rather than a word
+/// an editor quietly stops colouring.
+///
+/// It is here rather than in the parser because its consumers are editors — highlighting and
+/// completion ([`beck_core::editor`]) — and an editor should not have to depend on a parser to
+/// know which words are keywords.
+///
+/// [`beck_core::editor`]: ../../beck_core/editor/index.html
+pub const KEYWORDS: &[&str] = &[
+    "and",
+    "by",
+    "case",
+    "contains",
+    "def",
+    "elif",
+    "else",
+    "expect",
+    "flow",
+    "for",
+    "given",
+    "identity",
+    "if",
+    "impl",
+    "import",
+    "in",
+    "lambda",
+    "macro",
+    "match",
+    "matches",
+    "model",
+    "newtype",
+    "no",
+    "not",
+    "nothing",
+    "on",
+    "once",
+    "or",
+    "page",
+    "parallel",
+    "place",
+    "property",
+    "quote",
+    "raise",
+    "reaches",
+    "return",
+    "row",
+    "sends",
+    "session",
+    "snapshot",
+    "state",
+    "stub",
+    "test",
+    "times",
+    "trait",
+    "try",
+    "type",
+    "union",
+    "uses",
+    "var",
+    "when",
+    "while",
+    "wire_compatible_with",
+    "with",
+];
+
 /// Lex and lay out one file.
 ///
 /// Errors are reported rather than thrown: a file with an unlexable character still produces a
@@ -380,6 +451,33 @@ mod tests {
         let out = lex(f, src, &mut d).into_iter().map(|t| t.tok).collect();
         assert!(!d.has_errors(), "{}", d.render(&map));
         out
+    }
+
+    /// [`KEYWORDS`] is a list, and this is what stops it being a *second* list.
+    ///
+    /// The parser asks "is the current token this word?" in exactly two places — `at_kw` and
+    /// `eat_kw` — so the words it treats as syntax are recoverable from its source, and a keyword
+    /// added there without being added here fails here rather than in an editor nobody is running.
+    #[test]
+    fn the_keyword_table_is_the_one_the_parser_matches() {
+        let parser = include_str!("parser.rs");
+        let mut matched: Vec<&str> = Vec::new();
+        for (at, _) in parser.match_indices("_kw(\"") {
+            let rest = &parser[at + "_kw(\"".len()..];
+            let Some(end) = rest.find('"') else { continue };
+            matched.push(&rest[..end]);
+        }
+        matched.sort_unstable();
+        matched.dedup();
+        assert!(
+            !matched.is_empty(),
+            "no `at_kw(\"…\")` calls found — this test has stopped reading the parser"
+        );
+        let listed: Vec<&str> = KEYWORDS.to_vec();
+        assert_eq!(
+            listed, matched,
+            "`KEYWORDS` and the words the parser matches have diverged"
+        );
     }
 
     #[test]

@@ -172,7 +172,7 @@ fn what_an_interaction_costs_and_whether_history_makes_it_worse() {
     );
     for events in [100u64, 1000] {
         let mut tab = Tab::load(compiled("crates/beck-play/examples/counter.beck")).expect("loads");
-        tab.hello("s1", "ana", None);
+        tab.hello("s1", "ana", "/", None);
         for i in 0..events {
             tab.command("s1", &format!("k{i}"), &json!({"c": "Bump", "by": 0}));
         }
@@ -207,5 +207,143 @@ fn what_an_interaction_costs_and_whether_history_makes_it_worse() {
          what is measured here is the constant. A scrub is a fold *of* the log, so it grows with\n  \
          the history — linearly, which is what the last column is for. Both are what those two operations are, and the\n  \
          second is what makes the scrubber a replay rather than an undo stack (docs/98 §98.6)."
+    );
+}
+
+/// What the editor costs per keystroke, and what it does *not* cost.
+///
+/// Two operations with deliberately different prices, at two program sizes so the shape of each is
+/// visible rather than asserted: highlighting is a lex and is what runs on **every** keystroke;
+/// completion is a check and runs when somebody asks for one. If highlighting were as expensive as
+/// completion, the page would have to debounce it, and a colour that arrives a quarter of a second
+/// after the character is a colour that flickers.
+#[test]
+fn what_the_editor_costs_per_keystroke() {
+    println!("\n-- the editor: two answers, two prices --");
+    println!(
+        "  {:<32} {:>7}  {:>12}  {:>14}  {:>8}",
+        "program", "lines", "highlight µs", "completion µs", "tokens"
+    );
+    for path in [
+        "crates/beck-play/examples/counter.beck",
+        "examples/todo.beck",
+        "corpus/25-thread.beck",
+    ] {
+        let src = source(path);
+        let _ = beck_core::editor::Editor::of("playground.beck", &src);
+
+        const RUNS: u32 = 50;
+        let started = Instant::now();
+        let mut tokens = 0;
+        for _ in 0..RUNS {
+            tokens = beck_core::editor::tokens(&src).len();
+        }
+        let highlight = started.elapsed() / RUNS;
+
+        let caret = src.len() as u32;
+        let started = Instant::now();
+        const ASKS: u32 = 10;
+        for _ in 0..ASKS {
+            let editor = beck_core::editor::Editor::of("playground.beck", &src);
+            let _ = editor.completions(caret);
+        }
+        let completion = started.elapsed() / ASKS;
+
+        println!(
+            "  {:<32} {:>7}  {:>12}  {:>14}  {:>8}",
+            path.rsplit('/').next().unwrap_or(path),
+            src.lines().count(),
+            highlight.as_micros(),
+            completion.as_micros(),
+            tokens
+        );
+    }
+    println!(
+        "\n  highlighting is a lex and needs no program, which is why it is not debounced and why it\n  \
+         still works while the file is broken. Completion is a check — the same one the analysis\n  \
+         pays for — and is asked for rather than continuous (docs/101)."
+    );
+}
+
+/// What a log costs to keep, and a link to carry.
+///
+/// The two artefacts this phase added that leave the tab: the records a page stores in IndexedDB,
+/// and the fragment a share link is. Both are per-thing costs rather than per-program ones, so both
+/// are measured against a growing log and a real program.
+#[test]
+fn what_a_kept_log_and_a_share_link_weigh() {
+    println!("\n-- the log a page keeps --");
+    println!(
+        "  {:>8}  {:>12}  {:>16}  {:>16}  {:>12}",
+        "events", "record bytes", "bytes per event", "restore µs", "of which load"
+    );
+    for events in [100u64, 1000] {
+        let placed = compiled("crates/beck-play/examples/counter.beck");
+        let mut tab = Tab::load(placed.clone()).expect("loads");
+        tab.hello("s1", "ana", "/", None);
+        // `by: 0`, because this program refuses a count over 100 and what is being measured is
+        // the record rather than the arithmetic.
+        for i in 0..events {
+            tab.command("s1", &format!("k{i}"), &json!({"c": "Bump", "by": 0}));
+        }
+        let records = tab.records(0).expect("the records");
+        assert_eq!(records.len() as u64, events);
+        let bytes: usize = records.iter().map(|r| r.len()).sum();
+
+        const RUNS: u32 = 5;
+        let started = Instant::now();
+        for _ in 0..RUNS {
+            let mut back = Tab::load(placed.clone()).expect("loads");
+            assert_eq!(back.restore(&records).expect("restores"), events);
+        }
+        let restore = started.elapsed() / RUNS;
+
+        // Preparing the program is in that number and is not part of the fold, so it is measured
+        // rather than left to be assumed away: without it the two rows would look sublinear in a
+        // way a fold cannot be.
+        let started = Instant::now();
+        for _ in 0..RUNS {
+            let _ = Tab::load(placed.clone()).expect("loads");
+        }
+        let load = started.elapsed() / RUNS;
+
+        println!(
+            "  {:>8}  {:>12}  {:>16.1}  {:>16}  {:>12}",
+            events,
+            bytes,
+            bytes as f64 / events as f64,
+            restore.as_micros(),
+            load.as_micros()
+        );
+    }
+    println!(
+        "\n  a record is what a durable store writes (`beck_host::Envelope::encode`), so this is the\n  \
+         same encoding Postgres and redb hold — and a restore is preparing the program once and then\n  \
+         folding the whole log, which is the same shape as a scrub and grows the same way."
+    );
+
+    println!("\n-- a share link --");
+    println!(
+        "  {:<32} {:>8}  {:>12}  {:>8}",
+        "program", "source", "link chars", "ratio"
+    );
+    for path in [
+        "crates/beck-play/examples/counter.beck",
+        "examples/todo.beck",
+        "examples/board.beck",
+    ] {
+        let src = source(path);
+        let fragment = beck_play::share::pack(&src);
+        println!(
+            "  {:<32} {:>8}  {:>12}  {:>7.2}×",
+            path.rsplit('/').next().unwrap_or(path),
+            src.len(),
+            fragment.len(),
+            fragment.len() as f64 / src.len() as f64
+        );
+    }
+    println!(
+        "\n  a link carries the program, so it is proportional to it: §17.4's short, resolvable link\n  \
+         needs a registry, and this is the half that works with no server at all (docs/101)."
     );
 }

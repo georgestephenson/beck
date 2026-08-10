@@ -47,7 +47,14 @@ const fromClient = (port, msg) => {
     if (msg.t === "hello") {
       ports.set(msg.sub, port);
       subscriptions.set(port, msg.sub);
-      route(call({ op: "hello", sub: msg.sub, actor: msg.actor, seq: msg.seq, now: Date.now() }));
+      route(call({
+        op: "hello",
+        sub: msg.sub,
+        actor: msg.actor,
+        path: msg.path,
+        seq: msg.seq,
+        now: Date.now(),
+      }));
       postMessage({ k: "moved" });
       return;
     }
@@ -55,6 +62,14 @@ const fromClient = (port, msg) => {
       const sub = subscriptions.get(port);
       route(call({ op: "command", sub, id: msg.id, command: msg.command, now: Date.now() }));
       postMessage({ k: "moved" });
+      return;
+    }
+    // A route change. The page is a function of `session.path`, so in Mode A this comes back as a
+    // patch and in Mode B as nothing at all — the kernel rendered it locally and this is the tab
+    // being told, so that the session its `validate` sees is the one the client's own saw.
+    if (msg.t === "g") {
+      const sub = subscriptions.get(port);
+      route(call({ op: "nav", sub, path: msg.path, now: Date.now() }));
       return;
     }
     if (msg.t === "ping") port.postMessage({ t: "pong" });

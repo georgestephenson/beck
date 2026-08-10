@@ -210,7 +210,7 @@ async fn the_tab_and_the_server_agree_on_every_state_a_log_can_reach() {
 
     let mut tab = Tab::load(placed).expect("the tab loads the same program");
     for (sub, actor) in [("s-ana", "ana"), ("s-bo", "bo")] {
-        tab.hello(sub, actor, None);
+        tab.hello(sub, actor, "/", None);
     }
 
     for (actor, id, command) in script() {
@@ -299,7 +299,7 @@ async fn the_tab_and_the_server_send_the_same_frames() {
     let opening = drain(&mut from_server).await;
 
     let mut tab = Tab::load(placed).expect("the tab loads");
-    let here = tab.hello("s1", "ana", None);
+    let here = tab.hello("s1", "ana", "/", None);
 
     assert_eq!(
         frames(&opening, "p"),
@@ -353,8 +353,8 @@ fn frames(msgs: &[serde_json::Value], kind: &str) -> Vec<serde_json::Value> {
 #[test]
 fn a_command_moves_every_page_it_changes_and_no_others() {
     let mut tab = Tab::load(compiled(&root().join("examples/todo.beck"))).expect("the tab loads");
-    tab.hello("s-ana", "ana", None);
-    tab.hello("s-bo", "bo", None);
+    tab.hello("s-ana", "ana", "/", None);
+    tab.hello("s-bo", "bo", "/", None);
 
     let out = tab.command(
         "s-ana",
@@ -386,7 +386,7 @@ fn a_command_moves_every_page_it_changes_and_no_others() {
 fn presence_in_the_tab_is_who_is_connected_to_the_tab() {
     let mut tab = Tab::load(compiled(&root().join("corpus/32-here.beck"))).expect("the tab loads");
 
-    tab.hello("s-ana", "ana", None);
+    tab.hello("s-ana", "ana", "/", None);
     assert!(
         tab.rendered("ana").expect("renders").contains("1 here"),
         "one client, one in the roster"
@@ -394,7 +394,7 @@ fn presence_in_the_tab_is_who_is_connected_to_the_tab() {
 
     // The second client arrives. Its own page counts both — and so does the first one's, which is
     // the frame this returns and the reason presence is a *signal* rather than a page's guess.
-    let out = tab.hello("s-bo", "bo", None);
+    let out = tab.hello("s-bo", "bo", "/", None);
     assert!(
         tab.rendered("ana").expect("renders").contains("2 here"),
         "a second connection did not reach the first client's page"
@@ -416,7 +416,7 @@ fn a_retried_command_is_acknowledged_and_appended_once() {
         &root().join("crates/beck-play/examples/counter.beck"),
     ))
     .expect("loads");
-    tab.hello("s1", "ana", None);
+    tab.hello("s1", "ana", "/", None);
 
     let first = tab.command("s1", "k1", &json!({"c": "Bump", "by": 1}));
     let at = first
@@ -450,7 +450,7 @@ fn a_retried_command_is_acknowledged_and_appended_once() {
 fn the_scrubber_renders_the_state_the_log_produces_at_every_position() {
     let placed = compiled(&root().join("crates/beck-play/examples/counter.beck"));
     let mut tab = Tab::load(placed.clone()).expect("loads");
-    tab.hello("s1", "ana", None);
+    tab.hello("s1", "ana", "/", None);
     for (i, by) in [1, 2, 3, 4].into_iter().enumerate() {
         tab.command("s1", &format!("k{i}"), &json!({"c": "Bump", "by": by}));
     }
@@ -492,16 +492,537 @@ fn the_scrubber_renders_the_state_the_log_produces_at_every_position() {
     }
 }
 
-/// A program whose page renders on the client is refused by the tab, rather than served wrongly.
+// ------------------------------------------------------------------ Mode B, in the tab
+
+/// A `@render(client)` program's subscription carries the **state**, not the page.
 ///
-/// The tab holds a Mode A subscription: the server renders and sends DOM patches. A Mode B
-/// component would need the *kernel* in the client iframe and its bundle over the port, which is
-/// §98.7's item rather than a thing to half-do.
+/// The mode is one branch in a subscription and this is it, on the host that is a browser tab:
+/// `board.beck` renders in the client, so what a `hello` gets back is `{"t":"s"}` with the whole
+/// accumulator and what a command gets back is `{"t":"d"}` with the difference. A tab that sent DOM
+/// patches to a kernel would be sending frames nothing on the other end applies.
 #[test]
-fn a_mode_b_program_is_named_rather_than_served_as_mode_a() {
+fn a_mode_b_subscription_carries_the_state_rather_than_the_page() {
     let placed = compiled(&root().join("examples/board.beck"));
-    let tab = Tab::load(placed).expect("loads");
+    let mut tab = Tab::load(placed).expect("loads");
     assert_eq!(tab.mode(), beck_core::render::Mode::Client);
+
+    let opening = tab.hello("s1", "ana", "/", None);
+    assert_eq!(opening[0].msg["t"], "w", "a welcome first, in either mode");
+    assert_eq!(
+        opening[1].msg["t"], "s",
+        "a fresh Mode B subscription is sent the whole accumulator"
+    );
+    assert!(opening[1].msg["v"].is_object() || opening[1].msg["v"].is_array());
+
+    let after = tab.command("s1", "k1", &json!({"c": "Add", "id": "1", "text": "milk"}));
+    assert_eq!(after[0].msg["t"], "a", "the proposer is acknowledged");
+    let data: Vec<&beck_play::tab::Outgoing> = after.iter().filter(|o| o.msg["t"] == "d").collect();
+    assert_eq!(data.len(), 1, "one data frame, to the one subscriber");
+    assert!(
+        !data[0].msg["o"].as_array().expect("ops").is_empty(),
+        "the state moved and the frame says how"
+    );
+    assert!(
+        after.iter().all(|o| o.msg["t"] != "p"),
+        "no DOM patch reaches a client that is rendering for itself"
+    );
+}
+
+/// And they are the *server's* frames: the same subscription, the same ops.
+///
+/// The Mode A half of this claim is `the_tab_and_the_server_send_the_same_frames`; this is the half
+/// §98.7 could not make, because the tab did not serve the mode. Compared against a real
+/// subscription over the socket harness, so what is on the left is what `session::mode_b` wrote.
+#[tokio::test]
+async fn the_tab_and_the_server_send_the_same_data_frames() {
+    let placed = compiled(&root().join("examples/board.beck"));
+    let app = beck_rt::App::start(
+        beck_rt::Runtime::new(placed.clone(), beck_eval::backend(&placed)).expect("prepares"),
+        Arc::new(beck_rt::MemoryLog::new()),
+        beck_rt::AppConfig::default(),
+    )
+    .await
+    .expect("the app starts");
+
+    let (to_server, from_client) = tokio::sync::mpsc::unbounded_channel();
+    let (to_client, mut from_server) = tokio::sync::mpsc::unbounded_channel();
+    let socket = Duplex {
+        out: to_client,
+        inbox: from_client,
+    };
+    let session = tokio::spawn(beck_rt::session::run(app.clone(), socket));
+    to_server
+        .send(tokio_tungstenite::tungstenite::Message::Text(
+            json!({"t": "hello", "sub": "s1", "actor": "ana"})
+                .to_string()
+                .into(),
+        ))
+        .expect("the hello goes up");
+    let opening = drain(&mut from_server).await;
+
+    let mut tab = Tab::load(placed).expect("the tab loads");
+    let here = tab.hello("s1", "ana", "/", None);
+
+    // The whole accumulator, as each host encoded it. This is the frame a kernel calls `reset` on,
+    // so a difference here is a client that renders a different first page than the server does.
+    let state_of = |msgs: &[serde_json::Value]| {
+        msgs.iter()
+            .find(|m| m["t"] == "s")
+            .map(|m| m["v"].clone())
+            .expect("a state frame")
+    };
+    assert_eq!(
+        state_of(&opening),
+        state_of(&here.iter().map(|o| o.msg.clone()).collect::<Vec<_>>()),
+        "the two hosts encoded the same accumulator differently"
+    );
+
+    for (id, command) in [
+        ("k1", json!({"c": "Add", "id": "1", "text": "milk"})),
+        ("k2", json!({"c": "Move", "id": "1", "column": 1})),
+    ] {
+        to_server
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                json!({"t": "c", "id": id, "command": command})
+                    .to_string()
+                    .into(),
+            ))
+            .expect("the command goes up");
+        let there = drain(&mut from_server).await;
+        let here = tab.command("s1", id, &command);
+        assert_eq!(
+            frames(&there, "d"),
+            here.iter()
+                .filter(|o| o.msg["t"] == "d")
+                .map(|o| o.msg["o"].clone())
+                .collect::<Vec<_>>(),
+            "after `{id}` the two hosts sent different data ops"
+        );
+    }
+
+    drop(to_server);
+    let _ = session.await;
+}
+
+/// The bundle a Mode B client renders from is the running program's own slice.
+///
+/// Not a file and not a build artefact: it is derived from the `Placed` the tab is executing, which
+/// is what makes "the tab cannot hand a client a bundle it is not itself executing" true here for
+/// the same reason it is true of `beck run`.
+#[test]
+fn the_bundle_the_tab_hands_over_is_the_program_it_is_running() {
+    let placed = compiled(&root().join("examples/board.beck"));
+    let tab = Tab::load(placed.clone()).expect("loads");
+    assert_eq!(tab.bundle(), beck_core::Bundle::of(&placed).to_bytes());
+    assert!(!tab.bundle().is_empty());
+}
+
+/// A route is part of the session in the tab, in both modes.
+///
+/// `docs/100` made the route a field of the session, and a host that ignored the `g` frame would be
+/// running the program against a session no deployment builds — silently, because a page that does
+/// not read `session.path` cannot tell.
+#[test]
+fn a_client_that_navigates_is_a_client_somewhere_else() {
+    let source = std::fs::read_to_string(root().join("examples/routed.beck")).expect("the example");
+    let (placed, diags, map) = beck_core::compile_str("routed.beck", &source);
+    assert!(!diags.has_errors(), "{}", diags.render(&map));
+    let mut tab = Tab::load(placed.expect("an application")).expect("loads");
+
+    tab.hello("s1", "ana", "/", None);
+    let at_root = tab
+        .rendered(&beck_rt::program::At {
+            who: "ana".to_string(),
+            path: "/".into(),
+        })
+        .expect("renders");
+
+    let out = tab.nav("s1", "/done");
+    let moved = tab
+        .rendered(&beck_rt::program::At {
+            who: "ana".to_string(),
+            path: "/done".into(),
+        })
+        .expect("renders");
+    assert_ne!(
+        at_root, moved,
+        "this example's page is a function of the route"
+    );
+    assert!(
+        out.iter().any(|o| o.msg["t"] == "p"),
+        "a Mode A client that navigated is sent the page it navigated to"
+    );
+}
+
+// ------------------------------------------------------------------ the log a reload survives
+
+/// A log handed out as records and read back is the same log.
+///
+/// The oracle is the tab that produced them: every page at every position must be the page the
+/// restored tab produces, which is the same comparison the scrubber test makes and for the same
+/// reason — a store that lost an event, reordered two, or dropped an actor would still *have* a
+/// log, and only a fold would say so.
+#[test]
+fn a_log_kept_by_the_page_is_the_log_the_tab_had() {
+    let placed = compiled(&root().join("examples/todo.beck"));
+    let mut first = Tab::load(placed.clone()).expect("loads");
+    first.hello("s-ana", "ana", "/", None);
+    for (id, command) in [
+        ("k1", json!({"c": "Add", "id": "1", "text": "milk"})),
+        ("k2", json!({"c": "Add", "id": "2", "text": "bread"})),
+    ] {
+        first.command("s-ana", id, &command);
+    }
+    assert_eq!(first.head(), 2);
+
+    let records = first.records(0).expect("the records");
+    assert_eq!(records.len(), 2);
+
+    let mut back = Tab::load(placed).expect("loads");
+    assert_eq!(back.restore(&records).expect("it restores"), 2);
+    for seq in 0..=2 {
+        assert_eq!(
+            back.page_at(seq, "ana")
+                .expect("the restored page")
+                .render(),
+            first.page_at(seq, "ana").expect("the page").render(),
+            "the restored log renders a different page at {seq}"
+        );
+    }
+    // And the incremental half: a page that has stored up to 1 asks for the rest, and gets it.
+    assert_eq!(first.records(1).expect("the rest").len(), 1);
+}
+
+/// The two ways a restore is wrong, refused rather than folded.
+#[test]
+fn a_restore_into_a_running_tab_or_of_a_gapped_log_is_refused() {
+    let placed = compiled(&root().join("examples/todo.beck"));
+    let mut tab = Tab::load(placed.clone()).expect("loads");
+    tab.hello("s-ana", "ana", "/", None);
+    tab.command(
+        "s-ana",
+        "k1",
+        &json!({"c": "Add", "id": "1", "text": "milk"}),
+    );
+    let records = tab.records(0).expect("the records");
+
+    // Into a tab that has already rendered: a restore afterwards is history rewritten under a
+    // client that has seen it.
+    let why = tab.restore(&records).expect_err("it is refused");
+    assert!(why.contains("has not run yet"), "{why}");
+
+    // And a log with a hole in it. Dense `seq`s from 1 is the contract every fold in this
+    // repository depends on, so a store that dropped a record has to be caught here rather than
+    // produce a state no history could have reached.
+    tab.command(
+        "s-ana",
+        "k2",
+        &json!({"c": "Add", "id": "2", "text": "bread"}),
+    );
+    let mut gapped = tab.records(0).expect("the records");
+    gapped.remove(0);
+    let mut fresh = Tab::load(placed).expect("loads");
+    let why = fresh.restore(&gapped).expect_err("it is refused");
+    assert!(why.contains("contiguous"), "{why}");
+}
+
+// ------------------------------------------------------------------ sharing (§17.4)
+
+/// A share link is the program, and it is named by its digest.
+///
+/// The digest is `beck_core::digest::of` — the same BLAKE3 a Beck program's own `digest()` computes
+/// — so "content-addressed" is the compiler's addressing rather than the playground's. What is
+/// gated here is the round trip through the module's boundary, because that is what the page uses:
+/// a link that opened as a *different program* than the digest names would be the failure worth
+/// preventing, and `share.rs` has the unit tests for the refusals.
+#[test]
+fn a_share_link_carries_the_program_and_is_named_by_its_digest() {
+    let mut state = Playground::new();
+    let source = std::fs::read_to_string(root().join("crates/beck-play/examples/counter.beck"))
+        .expect("the example");
+
+    let link = dispatch(&mut state, &json!({"op": "share", "source": source})).expect("a link");
+    assert_eq!(link["digest"], beck_core::digest::of(&source));
+    let fragment = link["fragment"].as_str().expect("a fragment");
+    assert!(
+        fragment.starts_with(&beck_core::digest::of(&source)[..16]),
+        "a link names the program it carries"
+    );
+
+    let opened = dispatch(&mut state, &json!({"op": "open", "fragment": fragment})).expect("opens");
+    assert_eq!(opened["source"], source);
+    assert_eq!(opened["digest"], link["digest"]);
+
+    // A link nobody can open is an error with a reason, not a blank editor.
+    let why = dispatch(&mut state, &json!({"op": "open", "fragment": "not-a-link"}))
+        .expect_err("it is refused");
+    assert!(why.contains("share link"), "{why}");
+}
+
+// ------------------------------------------------------------------ the editor (docs/65, §98.7)
+
+/// The playground's editor is the language server's, on a different host.
+///
+/// §98.7's last-but-one item was "a `<textarea>`, with no highlighting, no completion and no inline
+/// diagnostics — which is odd given `docs/65` built an LSP over this same front end". The answer is
+/// not a second implementation in JavaScript: both ask `beck_core::editor`, and this drives the
+/// **`beck lsp` binary** over stdio and the playground module over its own boundary, on the same
+/// source, and compares the answers.
+///
+/// It goes red the day somebody highlights a keyword in the page's own JavaScript.
+#[test]
+fn the_playground_and_the_language_server_answer_the_same_questions() {
+    let source = std::fs::read_to_string(root().join("crates/beck-play/examples/counter.beck"))
+        .expect("the example");
+    let mut state = Playground::new();
+
+    // Highlighting. The server's encoding is deltas of lines and UTF-16 columns; the playground's
+    // is flat UTF-16 offsets. Both are converted to (line, column, length, type) here, which is
+    // the only shape in which two encodings of one answer can be compared at all.
+    let legend = lsp_legend();
+    let theirs = lsp_semantic_tokens(&source, &legend);
+    let ours = dispatch(&mut state, &json!({"op": "tokens", "source": source})).expect("tokens")
+        ["tokens"]
+        .as_array()
+        .expect("a list")
+        .iter()
+        .map(|t| {
+            let (line, column) = utf16_line_col(&source, t["s"].as_u64().expect("an offset"));
+            let length = t["e"].as_u64().expect("an offset") - t["s"].as_u64().expect("an offset");
+            (
+                line,
+                column,
+                length,
+                lsp_type_of(t["k"].as_str().expect("a kind")),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert!(!ours.is_empty(), "the playground highlighted nothing");
+    assert_eq!(
+        ours, theirs,
+        "the page and the editor colour different things"
+    );
+
+    // Completion, at the end of a name the program declares — in UTF-16 units, which is what both
+    // hosts count in and what this file has to convert to in order to ask the same question twice.
+    let caret = utf16_of(
+        &source,
+        source.find("def view").expect("counter has a view") + 8,
+    );
+    let theirs = lsp_completion(&source, caret);
+    let ours = dispatch(
+        &mut state,
+        &json!({"op": "complete", "source": source, "offset": caret}),
+    )
+    .expect("completions")["items"]
+        .as_array()
+        .expect("a list")
+        .iter()
+        .map(|c| {
+            (
+                c["label"].as_str().unwrap_or_default().to_string(),
+                c["detail"].as_str().unwrap_or_default().to_string(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        ours.iter().any(|(label, _)| label == "view"),
+        "the name under the caret is not offered: {ours:?}"
+    );
+    assert_eq!(
+        ours, theirs,
+        "the page and the editor offer different names"
+    );
+}
+
+/// Highlighting, completion and squiggles on a file that does not compile — which is the state a
+/// file being typed into is in, and the state in which an editor is worth having.
+#[test]
+fn the_editor_answers_while_the_file_is_half_written() {
+    let mut state = Playground::new();
+    let good = std::fs::read_to_string(root().join("crates/beck-play/examples/counter.beck"))
+        .expect("the example");
+    // One good analysis first, exactly as a page has after the debounce.
+    dispatch(
+        &mut state,
+        &json!({"op": "complete", "source": good, "offset": 0}),
+    )
+    .expect("names");
+
+    let broken = format!("{good}\ndef half() -> Int:\n    return pag\n");
+    let caret = utf16_of(&broken, broken.rfind("pag").expect("it is there") + 3);
+
+    // Colours: still a lex, so `def` is still a keyword.
+    let tokens = dispatch(&mut state, &json!({"op": "tokens", "source": broken})).expect("tokens");
+    assert!(
+        tokens["tokens"]
+            .as_array()
+            .expect("a list")
+            .iter()
+            .any(|t| t["k"] == "keyword"),
+        "highlighting stopped when the program did"
+    );
+
+    // Names: the last analysis's, and the module says they are.
+    let offered = dispatch(
+        &mut state,
+        &json!({"op": "complete", "source": broken, "offset": caret}),
+    )
+    .expect("completions");
+    assert_eq!(offered["prefix"], "pag");
+    assert_eq!(offered["stale"], true, "a borrowed name table says so");
+    assert!(
+        offered["items"]
+            .as_array()
+            .expect("a list")
+            .iter()
+            .any(|c| c["label"] == "page"),
+        "a half-typed name completes from the last text that checked"
+    );
+
+    // And the squiggle is under the word that is wrong, in the units the editor counts in.
+    let analysis =
+        dispatch(&mut state, &json!({"op": "analyse", "source": broken})).expect("an analysis");
+    let marks = analysis["marks"].as_array().expect("a list");
+    assert!(
+        !marks.is_empty(),
+        "an error with no span is an error nobody can see"
+    );
+    let first = &marks[0];
+    let (start, end) = (
+        first["s"].as_u64().expect("a start") as usize,
+        first["e"].as_u64().expect("an end") as usize,
+    );
+    let utf16: Vec<u16> = broken.encode_utf16().collect();
+    let under = String::from_utf16(&utf16[start..end]).expect("a span");
+    assert!(under.contains("pag"), "the squiggle is under `{under}`");
+    assert_eq!(first["error"], true);
+    assert!(first["message"]
+        .as_str()
+        .expect("a message")
+        .contains("pag"));
+}
+
+/// The one URI these two tests open, and the one name both hosts compile under.
+const EDITED: &str = "file:///playground.beck";
+
+fn lsp_legend() -> Vec<String> {
+    let mut server = support::lsp::Server::start();
+    let reply = server.request(
+        "initialize",
+        json!({ "processId": null, "rootUri": null, "capabilities": {} }),
+    );
+    let legend = reply
+        .pointer("/result/capabilities/semanticTokensProvider/legend/tokenTypes")
+        .and_then(|t| t.as_array())
+        .expect("the server publishes a semantic-token legend")
+        .iter()
+        .map(|t| t.as_str().unwrap_or_default().to_string())
+        .collect();
+    server.notify("initialized", json!({}));
+    server.shutdown();
+    legend
+}
+
+/// The server's highlighting, decoded out of the protocol's delta encoding.
+fn lsp_semantic_tokens(source: &str, legend: &[String]) -> Vec<(u64, u64, u64, String)> {
+    let mut server = support::lsp::handshake();
+    server.open(EDITED, source);
+    let reply = server.request(
+        "textDocument/semanticTokens/full",
+        json!({ "textDocument": { "uri": EDITED } }),
+    );
+    let data: Vec<u64> = reply
+        .pointer("/result/data")
+        .and_then(|d| d.as_array())
+        .expect("five integers per token")
+        .iter()
+        .map(|v| v.as_u64().expect("an integer"))
+        .collect();
+    server.shutdown();
+
+    let (mut line, mut column) = (0u64, 0u64);
+    data.chunks(5)
+        .map(|t| {
+            line += t[0];
+            column = if t[0] == 0 { column + t[1] } else { t[1] };
+            (line, column, t[2], legend[t[3] as usize].clone())
+        })
+        .collect()
+}
+
+/// The server's completions, as label and detail.
+fn lsp_completion(source: &str, caret: u64) -> Vec<(String, String)> {
+    let (line, character) = utf16_line_col(source, caret);
+    let mut server = support::lsp::handshake();
+    server.open(EDITED, source);
+    let reply = server.request(
+        "textDocument/completion",
+        json!({
+            "textDocument": { "uri": EDITED },
+            "position": { "line": line, "character": character },
+        }),
+    );
+    let items = reply
+        .pointer("/result/items")
+        .and_then(|i| i.as_array())
+        .expect("a completion list")
+        .iter()
+        .map(|c| {
+            (
+                c["label"].as_str().unwrap_or_default().to_string(),
+                c["detail"].as_str().unwrap_or_default().to_string(),
+            )
+        })
+        .collect();
+    server.shutdown();
+    items
+}
+
+/// A byte offset as a UTF-16 offset — the units every editor answer crosses a boundary in, because
+/// a `<textarea>` and the protocol both count in them and only the compiler counts in bytes.
+fn utf16_of(source: &str, byte: usize) -> u64 {
+    source[..byte].encode_utf16().count() as u64
+}
+
+/// A UTF-16 offset as the protocol's line and character. The playground counts in flat offsets and
+/// the protocol counts in lines, so one of them has to be converted to compare them at all.
+fn utf16_line_col(source: &str, offset: u64) -> (u64, u64) {
+    let (mut line, mut column, mut at) = (0u64, 0u64, 0u64);
+    for c in source.chars() {
+        if at >= offset {
+            break;
+        }
+        at += c.len_utf16() as u64;
+        if c == '\n' {
+            line += 1;
+            column = 0;
+        } else {
+            column += c.len_utf16() as u64;
+        }
+    }
+    (line, column)
+}
+
+/// The playground's category name, as the protocol's token type — the mapping the compiler
+/// publishes, so this test cannot silently agree with itself.
+fn lsp_type_of(kind: &str) -> String {
+    use beck_core::editor::TokenKind;
+    for k in [
+        TokenKind::Keyword,
+        TokenKind::Name,
+        TokenKind::Atom,
+        TokenKind::Number,
+        TokenKind::Str,
+        TokenKind::Comment,
+        TokenKind::Doc,
+        TokenKind::Punct,
+    ] {
+        if k.name() == kind {
+            return k.lsp_type().to_string();
+        }
+    }
+    panic!("the playground used a token kind the compiler does not define: `{kind}`");
 }
 
 // ------------------------------------------------------------------ the artefact
@@ -519,28 +1040,50 @@ fn the_bundle_carries_everything_the_page_asks_for() {
         .flat_map(|a| references(a.body))
         .collect::<Vec<_>>();
     assert!(!referenced.is_empty(), "the page references nothing at all");
+    // The three names that are asked for and are deliberately not in the list: two WebAssembly
+    // modules, which are build artefacts copied in by `serve::write` because building them needs a
+    // target the compiler's own build does not — and the bundle, which is not a file at all. It is
+    // derived from the running program and handed to the iframe over the port, so a client can
+    // never load a slice of a program the tab is not executing (docs/101).
+    let elsewhere = ["beck-play.wasm", "beck-kernel.wasm", "beck-bundle.bpk"];
     for name in referenced {
         assert!(
-            shipped.contains(&name.as_str()) || name == "beck-play.wasm",
+            shipped.contains(&name.as_str()) || elsewhere.contains(&name.as_str()),
             "the page asks for `{name}` and the bundle does not carry it: {shipped:?}"
+        );
+    }
+    // And the two modules are what the writer writes, so "copied in elsewhere" is a fact rather
+    // than an excuse.
+    for name in ["beck-play.wasm", "beck-kernel.wasm"] {
+        assert!(
+            beck_play::serve::written_modules().contains(&name),
+            "`{name}` is asked for and `serve::write` does not write it"
         );
     }
 }
 
-/// Every `src="…"`, `href="…"` and `new Worker("…")` in a shipped file, as a bare name.
+/// Every name a shipped file asks a browser for.
+///
+/// **Every quoted string that looks like a file**, rather than the arguments of the three or four
+/// syntactic forms that happened to be in the page when this was written. The page asks in markup
+/// (`src=`), in JavaScript (`new Worker`), through `beck.asset` — which is how Mode B's residue
+/// asks for the kernel and its bundle — and through a ternary that names two files and is the
+/// argument of nothing at all. A scanner keyed on forms would have missed the last two; a scanner
+/// keyed on what a filename looks like cannot.
 fn references(body: &str) -> Vec<String> {
+    let extensions = [".js", ".css", ".wasm", ".bpk", ".html"];
     let mut out = Vec::new();
-    for (marker, open) in [("src=\"", '"'), ("href=\"", '"'), ("Worker(\"", '"')] {
-        let mut rest = body;
-        while let Some(at) = rest.find(marker) {
-            rest = &rest[at + marker.len()..];
-            let Some(end) = rest.find(open) else { break };
-            let name = &rest[..end];
-            if !name.starts_with("http") && !name.is_empty() {
-                out.push(name.to_string());
-            }
+    for piece in body.split(['"', '\'', '`']) {
+        let name = piece.trim();
+        if name.starts_with("http") || name.contains(['$', ' ', '/', '<']) {
+            continue;
+        }
+        if extensions.iter().any(|e| name.ends_with(e)) {
+            out.push(name.to_string());
         }
     }
+    out.sort();
+    out.dedup();
     out
 }
 

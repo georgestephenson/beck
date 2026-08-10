@@ -11,159 +11,10 @@
 //! protocol: framing, flushing and not writing anything else to stdout are properties of the
 //! process, and a test that called the function directly would assert none of them.
 
-use std::io::{BufRead, BufReader, Read, Write};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-
 use serde_json::{json, Value};
 
-/// A running server, and the pipes to talk to it.
-struct Server {
-    child: Child,
-    stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
-    next_id: i64,
-}
-
-impl Server {
-    fn start() -> Server {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_beck"))
-            .arg("lsp")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("the compiler is built");
-        let stdin = child.stdin.take().expect("piped");
-        let stdout = BufReader::new(child.stdout.take().expect("piped"));
-        Server {
-            child,
-            stdin,
-            stdout,
-            next_id: 1,
-        }
-    }
-
-    fn send(&mut self, value: &Value) {
-        let body = serde_json::to_vec(value).expect("serialisable");
-        write!(self.stdin, "Content-Length: {}\r\n\r\n", body.len()).expect("the server is alive");
-        self.stdin.write_all(&body).expect("the server is alive");
-        self.stdin.flush().expect("the server is alive");
-    }
-
-    fn request(&mut self, method: &str, params: Value) -> Value {
-        let id = self.next_id;
-        self.next_id += 1;
-        self.send(&json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }));
-        // Notifications may arrive before the response — `publishDiagnostics` routinely does — so
-        // read until the id comes back rather than assuming the next message is the answer.
-        loop {
-            let message = self.read();
-            if message.get("id").and_then(Value::as_i64) == Some(id) {
-                return message;
-            }
-        }
-    }
-
-    fn notify(&mut self, method: &str, params: Value) {
-        self.send(&json!({ "jsonrpc": "2.0", "method": method, "params": params }));
-    }
-
-    /// The next message the server sends, framed.
-    fn read(&mut self) -> Value {
-        let mut length = None;
-        loop {
-            let mut line = String::new();
-            let read = self
-                .stdout
-                .read_line(&mut line)
-                .expect("the server is alive");
-            assert!(read > 0, "the server closed its output mid-message");
-            let trimmed = line.trim_end_matches(['\r', '\n']);
-            if trimmed.is_empty() {
-                break;
-            }
-            if let Some((name, value)) = trimmed.split_once(':') {
-                assert!(
-                    name.trim().eq_ignore_ascii_case("content-length")
-                        || name.trim().eq_ignore_ascii_case("content-type"),
-                    "the server sent a header the protocol does not define: {trimmed}"
-                );
-                if name.trim().eq_ignore_ascii_case("content-length") {
-                    length = value.trim().parse::<usize>().ok();
-                }
-            }
-        }
-        let length = length.expect("every message is framed with a Content-Length");
-        let mut body = vec![0u8; length];
-        self.stdout
-            .read_exact(&mut body)
-            .expect("the body is as long as the header said");
-        serde_json::from_slice(&body).expect("the body is JSON")
-    }
-
-    /// The next `publishDiagnostics` for this URI.
-    fn diagnostics(&mut self, uri: &str) -> Vec<Value> {
-        loop {
-            let message = self.read();
-            if message.get("method").and_then(Value::as_str)
-                == Some("textDocument/publishDiagnostics")
-            {
-                let params = message.get("params").expect("a notification has params");
-                if params.get("uri").and_then(Value::as_str) == Some(uri) {
-                    return params
-                        .get("diagnostics")
-                        .and_then(Value::as_array)
-                        .cloned()
-                        .unwrap_or_default();
-                }
-            }
-        }
-    }
-
-    fn open(&mut self, uri: &str, text: &str) {
-        self.notify(
-            "textDocument/didOpen",
-            json!({ "textDocument": { "uri": uri, "languageId": "beck", "version": 1, "text": text } }),
-        );
-    }
-
-    fn change(&mut self, uri: &str, text: &str) {
-        self.notify(
-            "textDocument/didChange",
-            json!({
-                "textDocument": { "uri": uri, "version": 2 },
-                "contentChanges": [{ "text": text }],
-            }),
-        );
-    }
-
-    fn shutdown(mut self) {
-        let reply = self.request("shutdown", Value::Null);
-        assert!(reply.get("result").is_some(), "shutdown is answered");
-        self.notify("exit", Value::Null);
-        let status = self.child.wait().expect("the child is ours");
-        assert!(
-            status.success(),
-            "`exit` after `shutdown` is a clean exit: {status}"
-        );
-    }
-}
-
-fn handshake() -> Server {
-    let mut server = Server::start();
-    let reply = server.request(
-        "initialize",
-        json!({ "processId": Value::Null, "rootUri": Value::Null, "capabilities": {} }),
-    );
-    let caps = reply
-        .pointer("/result/capabilities")
-        .expect("initialize answers with capabilities");
-    assert_eq!(caps["hoverProvider"], json!(true));
-    assert_eq!(caps["definitionProvider"], json!(true));
-    assert_eq!(caps["documentSymbolProvider"], json!(true));
-    server.notify("initialized", json!({}));
-    server
-}
+mod support;
+use support::lsp::handshake;
 
 const GOOD: &str = "\
 def double(x: Int) -> Int:
@@ -432,4 +283,80 @@ fn a_library_is_analysed_rather_than_refused() {
         !placed.expect("it compiles").is_application(),
         "the fixture these tests are built on has to be a library, or they prove the easy case"
     );
+}
+
+/// The two capabilities `docs/101` added, over the protocol rather than through the module.
+///
+/// The answers themselves are `beck_core::editor`'s and are gated against the playground's in
+/// `playground.rs`; what is asserted here is that a real editor can *get* them — the capability is
+/// advertised, the legend is published, and the encodings are the protocol's.
+#[test]
+fn it_offers_completions_and_semantic_tokens() {
+    let mut server = handshake();
+    let uri = "file:///tmp/complete.beck";
+    server.open(uri, GOOD);
+
+    // The legend has to be published, because a client decodes every token against it: an index
+    // into a list nobody sent is a colour chosen at random.
+    let reply = server.request("initialize", json!({ "capabilities": {} }));
+    let legend = reply
+        .pointer("/result/capabilities/semanticTokensProvider/legend/tokenTypes")
+        .and_then(Value::as_array)
+        .expect("a legend");
+    assert!(legend.iter().any(|t| t == "keyword"));
+    assert_eq!(
+        reply.pointer("/result/capabilities/completionProvider/resolveProvider"),
+        Some(&json!(false))
+    );
+
+    // `def double` — the caret at the end of `doub`, which is where somebody asking for a
+    // completion has their caret.
+    let line = GOOD
+        .lines()
+        .position(|l| l.contains("return str(double"))
+        .expect("it is there");
+    let column = GOOD
+        .lines()
+        .nth(line)
+        .expect("the line")
+        .find("double")
+        .expect("it is there")
+        + 4;
+    let items = server.request(
+        "textDocument/completion",
+        json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": line, "character": column },
+        }),
+    );
+    let items = items
+        .pointer("/result/items")
+        .and_then(Value::as_array)
+        .expect("a completion list");
+    let offered = items
+        .iter()
+        .find(|c| c["label"] == "double")
+        .expect("the name being typed is offered");
+    assert_eq!(offered["detail"], json!("def double(x: Int) -> Int"));
+    // 3 is `Function` in the protocol's `CompletionItemKind`.
+    assert_eq!(offered["kind"], json!(3));
+
+    let data = server.request(
+        "textDocument/semanticTokens/full",
+        json!({ "textDocument": { "uri": uri } }),
+    );
+    let data = data
+        .pointer("/result/data")
+        .and_then(Value::as_array)
+        .expect("the token data");
+    assert!(!data.is_empty());
+    assert_eq!(data.len() % 5, 0, "five integers per token");
+    // The first token of the file is `def`, at line 0, column 0, three units long, and a keyword.
+    assert_eq!(data[..3], [json!(0), json!(0), json!(3)]);
+    assert_eq!(
+        legend[data[3].as_u64().expect("an index") as usize],
+        json!("keyword")
+    );
+
+    server.shutdown();
 }

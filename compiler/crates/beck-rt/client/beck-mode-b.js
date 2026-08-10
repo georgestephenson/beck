@@ -108,16 +108,19 @@
   // (`docs/94` §94.13). Registered before the kernel is fetched so a first visit primes the cache
   // while the network is there; a browser without service workers simply skips this and keeps
   // every other property of the mode.
-  if (navigator.serviceWorker) {
+  if (navigator.serviceWorker && beck.shell) {
     navigator.serviceWorker
       .register("/beck-sw.js")
       .catch((e) => beck.announce(root, "beck:error", { error: "no shell cache: " + e }));
   }
 
   const start = async () => {
+    // Through `beck.asset`, not `fetch`, for the same reason the socket goes through `beck.dial`:
+    // in a playground tab the bundle comes from the worker that derived it and there is no origin
+    // to fetch either of them from (docs/101).
     const [module, bundle] = await Promise.all([
-      WebAssembly.instantiateStreaming(fetch("/beck-kernel.wasm"), {}),
-      fetch("/beck-bundle.bpk").then((r) => r.arrayBuffer()),
+      WebAssembly.instantiateStreaming(beck.asset("beck-kernel.wasm"), {}),
+      beck.asset("beck-bundle.bpk").then((r) => r.arrayBuffer()),
     ]);
     wasm = module.instance.exports;
 

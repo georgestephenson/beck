@@ -25,6 +25,7 @@ pub mod diff;
 pub mod digest;
 pub mod docgen;
 pub mod edge;
+pub mod editor;
 pub mod engine;
 pub mod fields;
 pub mod frames;

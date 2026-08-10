@@ -21,18 +21,28 @@
 //! before the next one is read, so there is nothing to group-commit. Group commit is a *latency*
 //! optimisation for a queue, and a tab has no queue.
 //!
-//! Not durable: a reload starts from `init`. §17.2's IndexedDB row is the honest version of
-//! "storage" and is not built — [`docs/98`](../../../../../docs/98-playground-report.md) §98.7 says
-//! so rather than implying otherwise.
+//! Not a store: [`Tab::records`] hands the log out as the bytes a store writes and [`Tab::restore`]
+//! reads them back, and where those bytes are kept is the page's business — IndexedDB, in the
+//! playground ([`docs/101`](../../../../../docs/101-playground-phase-3-report.md)). The log is still
+//! a `Vec`; what changed is that it can be handed over.
+//!
+//! # Both modes
+//!
+//! A subscription carries DOM patches or data patches, and which one is the program's rendering
+//! mode — the same single branch `beck_rt::session` makes. Mode A diffs two *pages* and sends
+//! [`mod@beck_core::diff`] ops; Mode B diffs two *states* and sends [`beck_core::delta`] ops, and the
+//! rendering happens in the iframe, in Mode B's kernel, from the bundle [`Tab::bundle`] hands over.
 
 use std::collections::BTreeMap;
 
+use beck_core::delta;
 use beck_core::diff::{diff, Op};
 use beck_core::render::Mode;
+use beck_core::repr::Repr;
 use beck_core::{Html, Placed, Value};
 use beck_host::protocol::{Resumption, ServerMsg};
 use beck_host::sequence::{Proposal, Seen, Untimed};
-use beck_host::{Decision, Envelope, Instant, Runtime, Seq};
+use beck_host::{At, Decision, Envelope, Instant, Runtime, Seq};
 
 /// One subscription, as the tab holds it.
 ///
@@ -41,13 +51,39 @@ use beck_host::{Decision, Envelope, Instant, Runtime, Seq};
 /// order they subscribed, because a `postMessage` is the only thing that ever happens.
 struct Subscriber {
     actor: String,
-    /// The page this client's DOM is showing. The next frame is the difference from it — which is
-    /// the whole of Mode A, and the reason an idle subscriber costs no bytes.
+    /// Where this client is. A route is not evidence of anything and nothing verifies it — it is a
+    /// string the browser sent — but it is part of the `Session` the program's own `validate` and
+    /// `view` see, so a tab that ignored it would be running the program against a session no
+    /// deployment would build ([`docs/100`](../../../../../docs/100-client-polish-report.md)).
+    path: String,
+    /// What this client is holding, and therefore what the next frame is the difference from —
+    /// which is the whole of a subscription, and the reason an idle subscriber costs no bytes.
     ///
     /// The position it reflects is deliberately *not* here: it is always this tab's head, because a
     /// tab advances every subscription before it answers anything else. A server holds one per
     /// subscription because its subscriptions render concurrently.
-    shown: Html,
+    shown: Shown,
+}
+
+impl Subscriber {
+    /// Who is asking and where they are, in the shape every render path takes.
+    fn at(&self) -> At<String> {
+        At {
+            who: self.actor.clone(),
+            path: self.path.as_str().into(),
+        }
+    }
+}
+
+/// The last thing sent to a subscriber, in whichever currency its mode trades.
+///
+/// The variants are deliberately different sizes, exactly as `beck_rt::session`'s `Feed` is: a Mode
+/// A subscription holds a page and a Mode B one holds the accumulator. Evening them out would hide
+/// the asymmetry that is the mode's whole point.
+#[allow(clippy::large_enum_variant)]
+enum Shown {
+    Dom(Html),
+    Data(Value),
 }
 
 /// A frame on its way out of the tab, addressed the way the worker will route it.
@@ -103,8 +139,8 @@ impl Tab {
         self.runtime.wire_id()
     }
 
-    /// Which rendering mode this program's page is in. The tab serves Mode A only, and says so
-    /// rather than rendering the wrong thing (§98.7).
+    /// Which rendering mode this program's page is in — and therefore which residue the client
+    /// iframe loads and which currency its subscription trades in.
     pub fn mode(&self) -> Mode {
         self.runtime.placed().render.mode
     }
@@ -114,7 +150,13 @@ impl Tab {
     /// The resumption rule is [`beck_host::protocol`]'s, not a second one: absent means "I hold
     /// nothing", `Some(n)` means "I hold the frame as of n", and a position this log cannot reach
     /// is a reset that says so.
-    pub fn hello(&mut self, sub: &str, actor: &str, from: Option<Seq>) -> Vec<Outgoing> {
+    pub fn hello(
+        &mut self,
+        sub: &str,
+        actor: &str,
+        path: &str,
+        from: Option<Seq>,
+    ) -> Vec<Outgoing> {
         let head = self.head();
         let how = match from {
             None => Resumption::Fresh,
@@ -129,40 +171,36 @@ impl Tab {
         // client it is being rendered for. `beck_rt::session` joins on the same line, for the same
         // reason.
         self.subs.retain(|(id, _)| id != sub);
+        let path = if path.is_empty() {
+            beck_core::edge::ROOT.to_string()
+        } else {
+            path.to_string()
+        };
         self.subs.push((
             sub.to_string(),
             Subscriber {
                 actor: actor.to_string(),
-                shown: Html::text(""),
+                path,
+                shown: match self.mode() {
+                    Mode::Server => Shown::Dom(Html::text("")),
+                    Mode::Client => Shown::Data(Value::Unit),
+                },
             },
         ));
 
-        let now = match self.render(actor) {
-            Ok(page) => page,
+        let first = match self.first_frame(sub, how) {
+            Ok(frame) => frame,
             Err(why) => return vec![self.error(sub, &why)],
         };
-        let ops = match how {
-            Resumption::Fresh | Resumption::Reset { .. } => vec![Op::Replace {
-                path: vec![],
-                html: now.clone(),
-            }],
-            Resumption::Resumed { from, .. } => match self.page_at(from, actor) {
-                Ok(then) => diff(&then, &now),
-                Err(why) => return vec![self.error(sub, &why)],
-            },
-        };
-        if let Some((_, s)) = self.subs.iter_mut().find(|(id, _)| id == sub) {
-            s.shown = now;
-        }
 
         let mut out = vec![Outgoing {
             sub: sub.to_string(),
             msg: ServerMsg::welcome(sub, head, how),
         }];
-        if !ops.is_empty() {
+        if let Some(msg) = first {
             out.push(Outgoing {
                 sub: sub.to_string(),
-                msg: patch(head, &ops),
+                msg,
             });
         }
         // Somebody arriving moves every page that reads `presence()`, and nobody else's. The
@@ -188,7 +226,7 @@ impl Tab {
                 msg: ServerMsg::nack(id, "no such subscription"),
             }];
         };
-        let actor = subscriber.actor.clone();
+        let at = subscriber.at();
 
         let decoded = match self.runtime.decode_command(command) {
             Ok(v) => v,
@@ -209,7 +247,7 @@ impl Tab {
             vec![Proposal {
                 id: id.to_string(),
                 at: Instant(self.now),
-                actor: &actor,
+                actor: &at,
                 command: decoded,
             }],
             &Untimed,
@@ -258,6 +296,73 @@ impl Tab {
         out
     }
 
+    /// A client that navigated: `{"t":"g","path":"/done"}`, answered.
+    ///
+    /// In Mode A the page is a function of the route, so this is a re-render and a patch — the same
+    /// diff any other change produces, which is what makes a link in the playground behave the way
+    /// a link in a deployment does. In Mode B the kernel renders the new route locally and this is
+    /// told anyway, so that the `Session` the tab hands `validate` is the one the client's own
+    /// `validate` saw.
+    pub fn nav(&mut self, sub: &str, path: &str) -> Vec<Outgoing> {
+        let Some((_, s)) = self.subs.iter_mut().find(|(id, _)| id == sub) else {
+            return Vec::new();
+        };
+        s.path = if path.is_empty() {
+            beck_core::edge::ROOT.to_string()
+        } else {
+            path.to_string()
+        };
+        match self.mode() {
+            Mode::Server => self.advance(sub),
+            // Nothing to send: the client is rendering, and the state did not move.
+            Mode::Client => Vec::new(),
+        }
+    }
+
+    /// The frame a subscription starts with — the whole thing, or the gap it asked for.
+    fn first_frame(
+        &mut self,
+        sub: &str,
+        how: Resumption,
+    ) -> Result<Option<serde_json::Value>, String> {
+        let head = self.head();
+        let Some((_, s)) = self.subs.iter().find(|(id, _)| id == sub) else {
+            return Ok(None);
+        };
+        let at = s.at();
+        let (shown, frame) = match self.mode() {
+            Mode::Server => {
+                let now = self.view(&self.state, &at)?;
+                let ops = match how {
+                    Resumption::Fresh | Resumption::Reset { .. } => vec![Op::Replace {
+                        path: vec![],
+                        html: now.clone(),
+                    }],
+                    Resumption::Resumed { from, .. } => diff(&self.page_at(from, &at)?, &now),
+                };
+                (
+                    Shown::Dom(now),
+                    (!ops.is_empty()).then(|| patch(head, &ops)),
+                )
+            }
+            Mode::Client => {
+                let state = self.state.clone();
+                let frame = match how {
+                    Resumption::Fresh | Resumption::Reset { .. } => Some(whole(head, &state)?),
+                    Resumption::Resumed { from, .. } => {
+                        let ops = delta::diff(&self.state_at(from)?, &state);
+                        (!ops.is_empty()).then(|| data(head, &ops))
+                    }
+                };
+                (Shown::Data(state), frame)
+            }
+        };
+        if let Some((_, s)) = self.subs.iter_mut().find(|(id, _)| id == sub) {
+            s.shown = shown;
+        }
+        Ok(frame)
+    }
+
     /// Every subscription's frame after the state moved.
     ///
     /// `waiting` is the client that just proposed: it is the only one told "up to date" when its
@@ -271,29 +376,46 @@ impl Tab {
             let Some((_, s)) = self.subs.iter().find(|(id, _)| *id == sub) else {
                 continue;
             };
-            let actor = s.actor.clone();
-            let page = match self.render(&actor) {
-                Ok(page) => page,
+            // What this subscriber is owed, in its mode's currency. A Mode A page is rendered per
+            // subscriber because it is a function of *their* session; a Mode B state is the one
+            // accumulator, and what differs between subscribers is only where each one is up to.
+            let next = match &s.shown {
+                Shown::Dom(last) => match self.view(&self.state, &s.at()) {
+                    Ok(page) => {
+                        let ops = diff(last, &page);
+                        Ok((
+                            Shown::Dom(page),
+                            (!ops.is_empty()).then(|| patch(head, &ops)),
+                        ))
+                    }
+                    Err(why) => Err(why),
+                },
+                Shown::Data(last) => {
+                    let ops = delta::diff(last, &self.state);
+                    Ok((
+                        Shown::Data(self.state.clone()),
+                        (!ops.is_empty()).then(|| data(head, &ops)),
+                    ))
+                }
+            };
+            let (shown, frame) = match next {
+                Ok(next) => next,
                 Err(why) => {
                     out.push(self.error(&sub, &why));
                     continue;
                 }
             };
-            let ops = diff(&s.shown, &page);
             let Some((_, s)) = self.subs.iter_mut().find(|(id, _)| *id == sub) else {
                 continue;
             };
-            s.shown = page;
-            if !ops.is_empty() {
-                out.push(Outgoing {
-                    sub,
-                    msg: patch(head, &ops),
-                });
-            } else if sub == waiting {
-                out.push(Outgoing {
+            s.shown = shown;
+            match frame {
+                Some(msg) => out.push(Outgoing { sub, msg }),
+                None if sub == waiting => out.push(Outgoing {
                     sub,
                     msg: ServerMsg::up_to_date(head),
-                });
+                }),
+                None => {}
             }
         }
         out
@@ -319,9 +441,72 @@ impl Tab {
     /// A real fold over a real log rather than a recording of what the page looked like: the state
     /// at `seq` is computed from genesis every time, which is what makes the scrubber a
     /// demonstration of determinism rather than an undo stack.
-    pub fn page_at(&self, seq: Seq, actor: &str) -> Result<Html, String> {
+    pub fn page_at(
+        &self,
+        seq: Seq,
+        viewer: &(impl beck_host::Viewer + ?Sized),
+    ) -> Result<Html, String> {
         let state = self.state_at(seq)?;
-        self.view(&state, actor)
+        self.view(&state, viewer)
+    }
+
+    /// The log, as the bytes a store writes — everything after `after`.
+    ///
+    /// [`beck_host::Envelope::encode`] is what redb, SQLite and Postgres write, so a tab keeping
+    /// its log in IndexedDB is keeping *records*, not a rendering of them. The `after` argument is
+    /// what makes persisting a command cost the command rather than the history: a page that has
+    /// stored up to `n` asks for the rest.
+    pub fn records(&self, after: Seq) -> Result<Vec<Vec<u8>>, String> {
+        self.log
+            .iter()
+            .filter(|e| e.seq > after)
+            .map(|e| e.encode().map_err(|why| why.to_string()))
+            .collect()
+    }
+
+    /// Read a stored log back, and fold it.
+    ///
+    /// Only into a tab that has not been used: a restore is what happens *instead* of starting from
+    /// `init`, and one that arrived after a subscription had rendered would be rewriting history
+    /// under a client that had already seen it.
+    ///
+    /// The contract the fold depends on is checked rather than assumed — dense `seq`s from 1, in
+    /// order. Records belonging to another program are refused by the decoder or by the fold, and
+    /// the page keeps them under the wire id anyway (§4.3): what a stored log is *for* is a program
+    /// whose event types have not changed.
+    pub fn restore(&mut self, records: &[Vec<u8>]) -> Result<Seq, String> {
+        if !self.log.is_empty() || !self.subs.is_empty() {
+            return Err("a log can only be restored into a tab that has not run yet".into());
+        }
+        let mut state = self.runtime.initial_state().map_err(|e| e.to_string())?;
+        let mut log = Vec::with_capacity(records.len());
+        for (i, bytes) in records.iter().enumerate() {
+            let env = Envelope::decode(bytes).map_err(|why| why.to_string())?;
+            let expected = i as Seq + 1;
+            if env.seq != expected {
+                return Err(format!(
+                    "the stored log is not contiguous: expected seq {expected}, found {}",
+                    env.seq
+                ));
+            }
+            let event = env.body.clone();
+            state = self
+                .runtime
+                .fold(&state, &env, event)
+                .map_err(|e| e.to_string())?;
+            log.push(env);
+        }
+        self.log = log;
+        self.state = state;
+        Ok(self.head())
+    }
+
+    /// The component's slice, for a browser that renders it — Mode B's bundle.
+    ///
+    /// Derived from the running program exactly as `beck run` derives it, so a tab can never hand a
+    /// client a bundle it is not itself executing.
+    pub fn bundle(&self) -> Vec<u8> {
+        beck_core::Bundle::of(self.runtime.placed()).to_bytes()
     }
 
     /// The accumulator as of a position. D3's genesis replay: snapshots are an optimisation and a
@@ -338,14 +523,10 @@ impl Tab {
         Ok(state)
     }
 
-    /// What the tab currently shows one actor, as markup — what a test compares against.
-    pub fn rendered(&self, actor: &str) -> Result<String, String> {
-        self.render(actor).map(|page| page.render())
-    }
-
-    /// One page, against the current state and the current roster.
-    fn render(&self, actor: &str) -> Result<Html, String> {
-        self.view(&self.state, actor)
+    /// What the tab currently shows one viewer, as markup — what a test compares against, and the
+    /// document a client iframe is opened with.
+    pub fn rendered(&self, viewer: &(impl beck_host::Viewer + ?Sized)) -> Result<String, String> {
+        self.view(&self.state, viewer).map(|page| page.render())
     }
 
     /// The view, against a state and whoever is connected to this tab.
@@ -355,7 +536,11 @@ impl Tab {
     /// the actor is a name the client chose and an unbounded table is a way to kill the process
     /// (`beck_rt::presence`); a tab has as many connections as the page opened, so the bound is the
     /// page.
-    fn view(&self, state: &Value, actor: &str) -> Result<Html, String> {
+    fn view(
+        &self,
+        state: &Value,
+        viewer: &(impl beck_host::Viewer + ?Sized),
+    ) -> Result<Html, String> {
         let mut here: BTreeMap<&str, i64> = BTreeMap::new();
         for (_, s) in &self.subs {
             *here.entry(s.actor.as_str()).or_default() += 1;
@@ -363,10 +548,10 @@ impl Tab {
         // A caller who is not connected — `beck rendered` before anyone has said hello, or the
         // scrubber — is still looking at the page, so they are in the roster they are shown.
         // `beck_core::edge::presence_of` is the same decision for the same reason.
-        here.entry(actor).or_insert(1);
+        here.entry(viewer.actor()).or_insert(1);
         let here = beck_core::edge::presence(here);
         self.runtime
-            .view_with(state, actor, &here)
+            .view_with(state, viewer, &here)
             .map_err(|why| why.to_string())
     }
 
@@ -390,6 +575,21 @@ fn patch(seq: Seq, ops: &[Op]) -> serde_json::Value {
         "q": seq,
         "o": ops.iter().map(Op::to_wire).collect::<Vec<_>>(),
     })
+}
+
+/// Mode B's first frame: the whole accumulator, in the shape `beck-mode-b.js` already applies.
+///
+/// `beck_rt::patch::DataFrame::Whole` produces this same JSON for a deployed application, and is
+/// rebuilt here for the reason [`patch`] is. A state that cannot be represented is what
+/// `secure::storable` proves cannot exist (`B0411`), so this refuses rather than fabricates.
+fn whole(seq: Seq, state: &Value) -> Result<serde_json::Value, String> {
+    let repr = Repr::of(state).map_err(|why| why.to_string())?;
+    Ok(serde_json::json!({ "t": "s", "q": seq, "v": repr }))
+}
+
+/// Mode B's every other frame: the difference between two accumulators.
+fn data(seq: Seq, ops: &[delta::Op]) -> serde_json::Value {
+    serde_json::json!({ "t": "d", "q": seq, "o": ops })
 }
 
 /// The programs the page opens with, so the first thing a visitor sees is a running application.
