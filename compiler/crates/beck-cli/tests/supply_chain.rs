@@ -72,6 +72,94 @@ fn the_bill_of_materials_lists_what_the_image_config_installs() {
 }
 
 #[test]
+fn the_melange_package_installs_the_files_the_in_process_build_writes() {
+    // §92.2's rule, applied to paths rather than to package names. There are two routes to an
+    // image — apko over a melange package, and `beck image` (docs/98) — and both have to put the
+    // toolchain and the program in the same places. This reads the *rendered* melange YAML back,
+    // so a route that started installing somewhere else fails here rather than in a container.
+    let (placed, _) = sketch();
+    let graph = beck_infra::graph(&placed);
+    let melange = beck_infra::k8s::melange(&graph);
+
+    let installed: BTreeSet<String> = melange
+        .lines()
+        .filter_map(|l| l.trim().strip_prefix("install -m"))
+        .filter_map(|rest| rest.split('"').nth(1).map(str::to_string))
+        .map(|dest| dest.replace("${{targets.destdir}}", ""))
+        .collect();
+    assert!(
+        !installed.is_empty(),
+        "the melange pipeline installs nothing; the parser above is reading the wrong block"
+    );
+    assert_eq!(
+        installed,
+        beck_infra::INSTALLS
+            .iter()
+            .map(|i| i.path.to_string())
+            .collect::<BTreeSet<String>>(),
+    );
+    // …and with the modes, which is the half a path comparison would miss: a toolchain installed
+    // 0644 is an image that cannot start.
+    for i in beck_infra::INSTALLS {
+        assert!(
+            melange.contains(&format!("install -m{:o} {} ", i.mode, i.from)),
+            "{} is not installed with mode {:o}:\n{melange}",
+            i.path,
+            i.mode
+        );
+    }
+}
+
+#[test]
+fn the_image_config_and_the_pod_run_as_the_same_account() {
+    // The mismatch this guards against is the classic "works locally, CrashLoopBackOff in the
+    // cluster", and it is invisible in review because each file is right on its own. Both numbers
+    // are read out of rendered output — the apko config's `accounts:` block and the Deployment's
+    // `securityContext` — rather than out of the constant they are both rendered from.
+    let (placed, _) = sketch();
+    let graph = beck_infra::graph(&placed);
+    let account = beck_infra::NONROOT;
+
+    let apko = beck_infra::k8s::apko(&graph);
+    assert!(
+        apko.contains(&format!("run-as: {}", account.uid))
+            && apko.contains(&format!("username: {}", account.user)),
+        "{apko}"
+    );
+
+    let workload = beck_infra::k8s::objects(&graph, &placed.wire_id)
+        .into_iter()
+        .find(|(_, v)| v["kind"] == "Deployment")
+        .map(|(_, v)| v)
+        .expect("the sketch derives a Deployment");
+    assert_eq!(
+        workload["spec"]["template"]["spec"]["securityContext"]["runAsUser"], account.uid,
+        "the pod and the image disagree about which user the program runs as"
+    );
+}
+
+#[test]
+fn the_config_names_only_architectures_the_builder_can_build() {
+    // An apko config listing an architecture `beck image` cannot resolve a repository path for is
+    // a config that describes an image nothing here can produce.
+    let (placed, _) = sketch();
+    let graph = beck_infra::graph(&placed);
+    let apko = beck_infra::k8s::apko(&graph);
+    let listed: Vec<String> = apko
+        .lines()
+        .skip_while(|l| !l.starts_with("archs:"))
+        .skip(1)
+        .take_while(|l| l.starts_with("  - "))
+        .map(|l| l.trim_start_matches("  - ").to_string())
+        .collect();
+    assert!(!listed.is_empty(), "no archs block in:\n{apko}");
+    for arch in &listed {
+        beck_infra::oci::oci_arch(arch)
+            .unwrap_or_else(|e| panic!("the config lists {arch}, and the builder says: {e}"));
+    }
+}
+
+#[test]
 fn every_dependency_names_a_component_that_is_there() {
     // A `dependsOn` pointing at a `bom-ref` no component declares is the way an SBOM is most often
     // wrong while still parsing, and every consumer of one resolves those refs.

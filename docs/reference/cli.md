@@ -344,6 +344,77 @@ Serve the Language Server Protocol on stdin and stdout (§4.6).
 The same front end `beck check` runs, so an editor's squiggle and a CI failure are the same diagnostic — §4.6's "there is no separate language server implementation to drift". Not meant to be run by hand: an editor starts it and speaks JSON-RPC to it.
 
 
+## `beck image`
+
+Build the container image, in this process — no apko, no melange, no daemon (§6.2).
+
+Resolves the packages `beck build`'s apko config names, fetches them from the Wolfi repository, unpacks them, adds the toolchain and the program, and writes an OCI image layout. The result is reproducible: the same inputs produce the same digest, which is the property §6.2 chose this image format for and which `beck image` run twice will show.
+
+| Argument | | |
+|---|---|---|
+| `<FILE>` | FILE |  |
+| `--out` | OUT |  |
+| `--tag` | TAG | What to tag the image in the layout's index |
+| `--arch` | ARCH | The architecture to build for, as the package repository names it |
+| `--repository` | REPOSITORY | Where the packages come from |
+| `--cache` | CACHE | Where fetched packages are kept. A second build reads them from here |
+| `--offline` | true \| false | Build from the cache alone, and fail rather than reach the network |
+| `--binary` | PATH | The toolchain binary the image ships. Defaults to the running one |
+| `--sign` | KEY.pem | Sign the image as it is built, with this key |
+
+
+## `beck sign`
+
+Sign the image in an OCI layout, in the form `cosign verify` reads (§6.2)
+
+| Argument | | |
+|---|---|---|
+| `<LAYOUT>` | LAYOUT | The layout `beck image` wrote |
+| `--key` | KEY.pem | The private key. Read from `BECK_SIGNING_KEY` when this is not given |
+
+
+## `beck verify`
+
+Check a layout's signature against a public key — and that it is over *this* image
+
+| Argument | | |
+|---|---|---|
+| `<LAYOUT>` | LAYOUT |  |
+| `--key` | COSIGN.pub |  |
+
+
+## `beck key`
+
+A signing key, and the public half a consumer verifies with
+
+
+## `beck key generate`
+
+Write a new P-256 key pair: `<name>.key` and `<name>.pub`
+
+| Argument | | |
+|---|---|---|
+| `-o, --out` | OUT | The name to write, without an extension |
+
+
+## `beck init`
+
+Write the files a repository needs around a Beck program
+
+
+## `beck init ci`
+
+The continuous-integration workflow for this program (§28.3).
+
+Check, test, wire-compat, build — then, from the default branch, an image and a signature. Written to `.github/workflows/beck.yml`, reviewed and committed like any other file.
+
+| Argument | | |
+|---|---|---|
+| `<FILE>` | FILE |  |
+| `-o, --out` | OUT | The repository root to write into |
+| `--stdout` | true \| false | Print it instead of writing it |
+
+
 ## `beck play`
 
 Serve the playground: the compiler and a running application, in a browser tab (§17).

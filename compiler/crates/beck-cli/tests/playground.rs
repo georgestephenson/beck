@@ -586,6 +586,10 @@ fn the_playground_serves_the_runtimes_own_residue() {
 /// Skips loudly without the target, as every environment-dependent suite here does;
 /// `BECK_REQUIRE_WASM=1` forbids the skip, which is what CI sets. A playground that only ever
 /// builds for this machine is not a playground.
+///
+/// The absent target and a failed build are two different findings, and only the first is a skip:
+/// a dependency that cannot compile for wasm32 is a defect in the dependency graph, and reporting
+/// it as "no target installed" is how it would reach CI unnoticed.
 #[test]
 fn the_playground_builds_for_the_browser() {
     let built = std::process::Command::new(env!("CARGO"))
@@ -600,18 +604,27 @@ fn the_playground_builds_for_the_browser() {
         ])
         .output();
     let module = root().join("target/wasm32-unknown-unknown/release/beck_play.wasm");
-    let ok = built.is_ok_and(|o| o.status.success()) && module.is_file();
-    if !ok {
+    let installed = std::process::Command::new("rustup")
+        .args(["target", "list", "--installed"])
+        .output()
+        .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).contains("wasm32-unknown-unknown"));
+    if !installed {
         eprintln!(
             "skipped: no `wasm32-unknown-unknown` target. \
              `rustup target add wasm32-unknown-unknown` installs it."
         );
         assert!(
             std::env::var("BECK_REQUIRE_WASM").as_deref() != Ok("1"),
-            "BECK_REQUIRE_WASM=1 but the playground did not build for the browser"
+            "BECK_REQUIRE_WASM=1 but the wasm32-unknown-unknown target is not installed"
         );
         return;
     }
+    let out = built.expect("cargo runs");
+    assert!(
+        out.status.success() && module.is_file(),
+        "the target is installed and the playground still did not build for the browser:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     // A ceiling rather than a budget: enough to catch the module becoming a different kind of
     // object, and deliberately not a size gate, which would flake on a machine without `brotli`
     // (`docs/13` §13.7).
