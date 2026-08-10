@@ -100,7 +100,31 @@
     });
   };
 
-  // One websocket, resumable by `(subscription, seq)`. `on` is the frame handler the mode supplies.
+  // The transport, as a seam. A deployment opens a websocket to the origin it was served from;
+  // the playground hands the identical protocol a `MessageChannel` port to a worker in the same
+  // tab (docs/17 §17.2). Everything above and below this function — the frames, the resumption
+  // rule, the outbox — is the same code either way, which is what makes a tab a *host* rather
+  // than a simulation.
+  //
+  // The contract, for whoever writes the third one: `dial(handlers)` returns `{send, ready}`, and
+  // calls `handlers.open` *after* returning — a transport that is ready the moment it is dialled
+  // has to defer, because `open` is where the `hello` frame is sent and it sends it through the
+  // object `dial` has not handed back yet.
+  const websocket = (handlers) => {
+    const url = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/socket";
+    const socket = new WebSocket(url);
+    socket.onopen = handlers.open;
+    socket.onmessage = (event) => handlers.message(JSON.parse(event.data));
+    socket.onclose = handlers.close;
+    socket.onerror = () => socket.close();
+    return {
+      send: (frame) => socket.send(JSON.stringify(frame)),
+      ready: () => socket.readyState === 1,
+    };
+  };
+
+  // One connection, resumable by `(subscription, seq)`. `on` is the frame handler the mode
+  // supplies.
   //
   // `state` is read at every open rather than at the first one, so a caller that keeps
   // `state.seq` current resumes from where it actually is. A snapshot would make every reconnect
@@ -112,35 +136,33 @@
   const connect = (state, on, opened) => {
     let backoff = 250;
     const outbox = [];
-    let socket = null;
+    let link = null;
     const open = () => {
-      const url = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/socket";
-      socket = new WebSocket(url);
-      socket.onopen = () => {
-        backoff = 250;
-        const hello = { t: "hello", sub: state.sub, actor: state.actor };
-        if (state.seq !== null && state.seq !== undefined) hello.seq = state.seq;
-        socket.send(JSON.stringify(hello));
-        // Commands sent while disconnected are safe to repeat: each carries an id, and the server
-        // de-duplicates by it.
-        while (outbox.length) socket.send(outbox.shift());
-        // Every open, not only the first: a client that has been away has a queue that predates
-        // this socket, and possibly this page load (`beck-mode-b.js`).
-        if (opened) opened();
-      };
-      socket.onmessage = (event) => on(JSON.parse(event.data));
-      socket.onclose = () => {
-        socket = null;
-        setTimeout(open, backoff);
-        backoff = Math.min(backoff * 2, 5000);
-      };
-      socket.onerror = () => socket && socket.close();
+      link = (beck.dial || websocket)({
+        open: () => {
+          backoff = 250;
+          const hello = { t: "hello", sub: state.sub, actor: state.actor };
+          if (state.seq !== null && state.seq !== undefined) hello.seq = state.seq;
+          link.send(hello);
+          // Commands sent while disconnected are safe to repeat: each carries an id, and the
+          // server de-duplicates by it.
+          while (outbox.length) link.send(outbox.shift());
+          // Every open, not only the first: a client that has been away has a queue that predates
+          // this connection, and possibly this page load (`beck-mode-b.js`).
+          if (opened) opened();
+        },
+        message: on,
+        close: () => {
+          link = null;
+          setTimeout(open, backoff);
+          backoff = Math.min(backoff * 2, 5000);
+        },
+      });
     };
     open();
     return (frame) => {
-      const text = JSON.stringify(frame);
-      if (socket && socket.readyState === 1) socket.send(text);
-      else outbox.push(text);
+      if (link && link.ready()) link.send(frame);
+      else outbox.push(frame);
     };
   };
 
@@ -158,5 +180,7 @@
     announce(root, "beck:ready", { mode });
   };
 
+  // `dial` is deliberately absent rather than null: a page that wants a different transport sets
+  // it on this object before the mode's script runs, and one that does not gets a websocket.
   window.beck = { build, apply, uuid7, fill, capture, connect, announce, ready };
 })();

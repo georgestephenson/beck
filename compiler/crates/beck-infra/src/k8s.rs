@@ -1116,7 +1116,7 @@ pub fn apko(graph: &InfraGraph) -> String {
         group = account.group,
         uid = account.uid,
         gid = account.gid,
-        archs = crate::oci::ARCHITECTURES
+        archs = crate::ARCHITECTURES
             .iter()
             .map(|(apk, _)| format!("  - {apk}"))
             .collect::<Vec<_>>()

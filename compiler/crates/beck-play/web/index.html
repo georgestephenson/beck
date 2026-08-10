@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Beck playground</title>
+<link rel="stylesheet" href="playground.css">
+</head>
+<body>
+<header>
+  <h1>beck<span class="dot">.</span>playground</h1>
+  <label>example
+    <select id="example"></select>
+  </label>
+  <button id="run" type="button">Run it ▸</button>
+  <span id="status" class="status">compiling…</span>
+</header>
+
+<main id="split">
+  <section class="pane source">
+    <!-- Left: what the person wrote. Right: what the compiler derived from it (docs/17 §17.1). -->
+    <textarea id="source" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+  </section>
+
+  <section class="pane derived">
+    <nav id="tabs"></nav>
+    <pre id="out"></pre>
+  </section>
+</main>
+
+<section id="run-panel" hidden>
+  <h2>The application, in this tab
+    <small>one log, one fold, two subscriptions — no server, no signup, no cloud</small>
+  </h2>
+  <div id="clients">
+    <figure>
+      <figcaption>ana</figcaption>
+      <iframe id="client-ana" title="ana's client"></iframe>
+    </figure>
+    <figure>
+      <figcaption>bo</figcaption>
+      <iframe id="client-bo" title="bo's client"></iframe>
+    </figure>
+  </div>
+
+  <div id="history">
+    <h3>The log
+      <small>drag to fold it again from genesis — <code>beck replay</code>, as something you can hold</small>
+    </h3>
+    <input id="scrub" type="range" min="0" max="0" value="0" step="1">
+    <div id="at">at <output id="at-seq">0</output> of <output id="at-head">0</output></div>
+    <div id="preview" class="preview"></div>
+    <table id="log"><tbody></tbody></table>
+  </div>
+</section>
+
+<script src="playground.js"></script>
+</body>
+</html>

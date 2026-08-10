@@ -946,6 +946,82 @@ fn verify(
     }
 }
 
+/// `beck explain place` — §4.7's derivation, not its conclusion.
+///
+/// A `String` rather than a print, because there are two front doors onto this answer: the command
+/// line, and the playground, where "source on the left, *what the compiler derives* on the right"
+/// is the whole of rung A ([`docs/17`](../../../../../docs/17-playground.md) §17.1). Two renderers
+/// would be two things to keep true.
+///
+/// With a name, one decision and its candidates; without one, the whole table.
+pub fn report(solution: &Solution, only: Option<&str>) -> Result<String, String> {
+    use std::fmt::Write;
+    let mut out = String::new();
+
+    let Some(name) = only else {
+        let _ = writeln!(out, "{:<20} {:<8} {:<10} effects", "name", "tier", "kind");
+        for e in &solution.explanations {
+            let kind = match &e.key {
+                Key::Def(_) => "definition",
+                Key::Signal(_) => "signal",
+            };
+            let _ = writeln!(
+                out,
+                "{:<20} {:<8} {:<10} {}",
+                e.key.name(),
+                e.chosen.name(),
+                kind,
+                e.row
+            );
+        }
+        let _ = writeln!(
+            out,
+            "\nunplaced (`any`) means pure, so it compiles to every tier that needs it — that\n\
+             duplication is the payoff, not waste. Solved {}; total cost {:.1}.\n\
+             `beck explain place <file> <name>` shows one decision's candidates and their costs.",
+            solution.method.name(),
+            solution.total as f64 / 100.0
+        );
+        return Ok(out);
+    };
+
+    let Some(e) = solution.explanation(name) else {
+        return Err(format!("no `{name}` in this program"));
+    };
+    let _ = writeln!(out, "{}  →  {} tier\n", e.key.name(), e.chosen.name());
+    let _ = writeln!(
+        out,
+        "  effects    : {}",
+        if e.row.visible().is_empty() {
+            "{}  (pure; placeable anywhere)".to_string()
+        } else {
+            format!("{}", e.row)
+        }
+    );
+    let costs: Vec<String> = e
+        .candidates
+        .iter()
+        .map(|(t, c)| {
+            if *c >= FORBIDDEN {
+                format!("{} (cannot discharge this row)", t.name())
+            } else {
+                format!("{} (cost {:.1})", t.name(), *c as f64 / 100.0)
+            }
+        })
+        .collect();
+    let _ = writeln!(out, "  candidates : {}", costs.join(", "));
+    let _ = writeln!(out, "  chosen     : {}", e.chosen.name());
+    let _ = writeln!(out, "  because    : {}", e.because);
+    let _ = writeln!(
+        out,
+        "\ncosts are whole-program: what this program would cost with `{}` on that tier and \n\
+         everything else where it is. Solved {}.",
+        e.key.name(),
+        solution.method.name()
+    );
+    Ok(out)
+}
+
 /// Every function argument of a `fold` anywhere in an expression.
 fn fold_functions(c: &crate::core::Core) -> Vec<&crate::core::Core> {
     use crate::core::{CoreKind, Prim};

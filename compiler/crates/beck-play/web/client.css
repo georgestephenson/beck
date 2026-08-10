@@ -1,0 +1,24 @@
+/* The client iframes' stylesheet.
+ *
+ * A Beck program's page carries the classes its `view` wrote and no styling — `beck run` serves a
+ * default sheet for the same reason (`beck_rt::css`). This one is deliberately plain: what a
+ * visitor should be looking at is the markup the program produced and how it moves, not how well
+ * the playground dresses it. */
+
+body {
+  margin: 0;
+  padding: 0.8rem 1rem;
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: #10141c;
+}
+
+h1 { font-size: 1rem; margin: 0 0 0.6rem; }
+ul { list-style: none; margin: 0.4rem 0; padding: 0; }
+li { display: flex; align-items: center; gap: 0.4rem; padding: 0.15rem 0; }
+li.done span { text-decoration: line-through; opacity: 0.5; }
+input { font: inherit; padding: 0.25rem 0.4rem; border: 1px solid #d8d4cb; border-radius: 4px; }
+button { font: inherit; cursor: pointer; border: 1px solid #d8d4cb; border-radius: 4px; background: #fff; padding: 0.1rem 0.5rem; }
+span[data-b-click] { cursor: pointer; }
+footer { margin-top: 0.6rem; font-size: 0.8rem; color: #6a6558; }
+.count { font-size: 2rem; margin: 0.2rem 0; font-variant-numeric: tabular-nums; }
+section { border: 1px solid #d8d4cb; border-radius: 6px; padding: 0.4rem; margin: 0.3rem 0; }

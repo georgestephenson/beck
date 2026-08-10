@@ -54,12 +54,7 @@ pub const MANIFEST_MEDIA_TYPE: &str = "application/vnd.oci.image.manifest.v1+jso
 /// The media type of an image index.
 pub const INDEX_MEDIA_TYPE: &str = "application/vnd.oci.image.index.v1+json";
 
-/// The architectures an image can be built for, as apk names them and as OCI names them.
-///
-/// Two vocabularies for one thing, and the mapping is the only place either name is spelled: the
-/// repository path is `x86_64`, the image config field is `amd64`, and a build that mixed them
-/// produces an image no runtime will select.
-pub const ARCHITECTURES: [(&str, &str); 2] = [("x86_64", "amd64"), ("aarch64", "arm64")];
+pub use crate::ARCHITECTURES;
 
 /// The OCI name for an apk architecture.
 pub fn oci_arch(apk_arch: &str) -> Result<&'static str> {

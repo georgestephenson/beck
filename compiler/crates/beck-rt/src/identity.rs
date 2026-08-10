@@ -69,6 +69,21 @@ impl Actor {
     }
 }
 
+/// An actor is who a view is rendered for and who a command is proposed by.
+///
+/// The trait is [`beck_host::program::Viewer`] and this impl is here rather than beside it, because
+/// what distinguishes an `Actor` from the other things that can be a viewer is precisely that a
+/// *credential* was checked — and checking credentials is the host's job, not the program's.
+impl beck_host::program::Viewer for Actor {
+    fn actor(&self) -> &str {
+        self.name()
+    }
+
+    fn claims(&self) -> &BTreeMap<Arc<str>, Arc<str>> {
+        Actor::claims(self)
+    }
+}
+
 /// Whoever a proposal is charged to, on the way into [`crate::App::propose`].
 ///
 /// A wrapper rather than an `impl From<String> for Actor`, and the difference is the whole point:

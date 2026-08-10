@@ -231,6 +231,59 @@ pub fn flow(program: &Program, ty_name: &str) -> Vec<Reach> {
     out
 }
 
+/// `beck explain flow <T>` — everywhere a type reaches, and everywhere it is refused.
+///
+/// A `String` for the reason [`crate::place::report`] is one: the command line and the playground
+/// ask this question, and a second renderer is a second thing to keep true.
+pub fn flow_report(program: &Program, ty_name: &str) -> Result<String, String> {
+    use std::fmt::Write;
+    let Some(decl) = program.types.get(ty_name) else {
+        return Err(format!("no type `{ty_name}` in this program"));
+    };
+    let is_secret = sendable(&Ty::con(ty_name), &program.types).err();
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "{ty_name} ({}) — {}",
+        match decl {
+            TyDecl::Model { .. } => "model",
+            TyDecl::Union { .. } => "union",
+            TyDecl::Newtype { .. } => "newtype",
+            TyDecl::Alias { .. } => "alias",
+        },
+        match &is_secret {
+            Some(bad) => format!("not Sendable: {} at {}", bad.offender, bad.flow()),
+            None => "Sendable".to_string(),
+        }
+    );
+
+    let reached = flow(program, ty_name);
+    if reached.is_empty() {
+        let _ = writeln!(out, "\n  reaches nothing — no signature mentions it");
+        return Ok(out);
+    }
+    let _ = writeln!(out);
+    for r in &reached {
+        match (&r.blocked, &is_secret) {
+            (Some(why), Some(_)) => {
+                let _ = writeln!(out, "  BLOCKED: {:<18} {:<8} {why}", r.what, r.tier.name());
+            }
+            _ => {
+                let _ = writeln!(out, "  reaches: {:<18} {:<8} ok", r.what, r.tier.name());
+            }
+        }
+    }
+    if is_secret.is_some() {
+        let _ = writeln!(
+            out,
+            "\na crossing requires Sendable, and `secret[T]` is deliberately not \
+             (docs/03 §3.5).\nWhat blocks the leak is the placement, so moving one of \
+             these to the client is the compile error."
+        );
+    }
+    Ok(out)
+}
+
 fn mentions_type(ty: &Ty, name: &str, types: &BTreeMap<Arc<str>, TyDecl>) -> bool {
     fn go(
         ty: &Ty,

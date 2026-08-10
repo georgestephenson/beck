@@ -15,7 +15,7 @@
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::log::Seq;
+use crate::record::Seq;
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(tag = "t")]

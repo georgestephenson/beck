@@ -20,7 +20,7 @@ Continuous integration, and nothing downstream of it. Three workflows:
   annotation-free placement, wire-compat, the object graph, a k3d admission job, a compose
   parity job, the thin-client size budget, the full `cargo-deny` check ([ADR-0004](adr/0004-full-cargo-deny-gate.md)), a Postgres
   service behind the log-contract test, an image built from the real package repository and signed
-  and verified ([`98`](98-supply-chain-report.md)), and a release-profile measurements lane ([ADR-0006](adr/0006-ci-measurements-lane.md)).
+  and verified ([`99`](99-supply-chain-report.md)), and a release-profile measurements lane ([ADR-0006](adr/0006-ci-measurements-lane.md)).
 - **`phase0.yml`** — the same discipline over the frozen baseline.
 - **`docs.yml`** — every relative link in tracked markdown resolves.
 
@@ -37,7 +37,7 @@ every merge is this document's subject, not its claim.
 
 The Phase 3 bullet that owned this — "`beck init ci`, apko image build in-process, cosign signing,
 SBOM" ([`08`](08-roadmap.md)) — **is built** ([`92`](92-sbom-report.md),
-[`98`](98-supply-chain-report.md)): there is a command that builds the image, a command that signs
+[`99`](99-supply-chain-report.md)): there is a command that builds the image, a command that signs
 it and a command that verifies the signature. What is left of this section is the *pipeline*, and
 that is the harder half. Plus Phase 4's multi-arch and air-gapped items. In landing order:
 
@@ -46,13 +46,13 @@ that is the harder half. Plus Phase 4's multi-arch and air-gapped items. In land
    workflow builds `beck` for `x86_64/aarch64-linux-musl` and `aarch64-darwin`, re-runs the
    suite on the tagged commit, and refuses to publish on any red.
 2. **The artefact set**: the static binary per target; ~~an apko-built~~ **a `beck`-built** OCI
-   image ([`06`](06-kubernetes-and-packaging.md) §6.2, [`98`](98-supply-chain-report.md)); the SBOM
+   image ([`06`](06-kubernetes-and-packaging.md) §6.2, [`99`](99-supply-chain-report.md)); the SBOM
    — which `beck build` writes and which nothing yet **attaches** to the image; a cosign signature
-   per artefact, **built** (§98.5), and a provenance attestation, **not**; checksums in the release
+   per artefact, **built** (§99.5), and a provenance attestation, **not**; checksums in the release
    notes. GitHub Releases first; §6.7's OCI/ORAS route in Phase 4. The Mere serves packages, not the
    compiler.
 3. ~~**Reproducibility as a gate**: build the image twice, `diff` the digests~~ — **built, and per
-   commit rather than per release** ([`98`](98-supply-chain-report.md) §98.4). Its limit is now
+   commit rather than per release** ([`99`](99-supply-chain-report.md) §99.4). Its limit is now
    written down too: the digest is stable for one package set, and the resolver takes the highest
    version the repository serves today, so it is not stable across weeks.
 4. **Versioning before 1.0**: `0.x` minor per phase-sized increment; no stability promise until
@@ -62,7 +62,7 @@ that is the harder half. Plus Phase 4's multi-arch and air-gapped items. In land
 
 **The commands exist; the pipeline does not.** No tag has been cut, nothing is published, and the
 one thing that would make a signature reachable by a consumer — a push, so cosign can find
-`sha256-<digest>.sig` in a registry — is [`98`](98-supply-chain-report.md) §98.7's first row. The
+`sha256-<digest>.sig` in a registry — is [`99`](99-supply-chain-report.md) §99.7's first row. The
 first slice is still tag-triggered signed binaries for one target, and it is now a smaller job than
 it was: the signing is a command.
 
@@ -72,7 +72,7 @@ it was: the signing is a command.
 (`kubectl apply --dry-run=server` is a CI gate), grants derive from effects, images are
 digest-pinned. Missing is the pipeline around it:
 
-1. **`beck init ci`** — **built** ([`98`](98-supply-chain-report.md)) — emits a workflow mirroring
+1. **`beck init ci`** — **built** ([`99`](99-supply-chain-report.md)) — emits a workflow mirroring
    our discipline:
    `beck check`, `beck test`, `beck check --wire-compat` against the deployed interface, then
    `beck build` and an image push on merge. Wire-compat is the load-bearing step — the §3.6/§4.3
@@ -101,7 +101,7 @@ Gates deliberately not added yet, and when each becomes due — so absence stays
 |---|---|---|
 | Compile-speed budgets (§13.7, rustc-perf model) | Phase 3, per §8.4 | Needs the harness; timings stay reported-only on shared runners, so any gate is on counts (the firewall number `beck-db` already asserts) |
 | A browser job driving the compiled sketch | Phase 3, with client polish | phase0 holds this gate; add for the compiler when client work makes it more than a re-test of phase0's DOM |
-| Image size / cold start (§8.3 item 4) | ~~With §28.2's release workflow~~ — **due now**: CI builds an image ([`98`](98-supply-chain-report.md)) | The reason for the deferral is gone — "nothing builds an image in CI" is no longer true. What the budget still waits on is the *right* binary: the image ships whichever `beck` built it, and until that is the static musl build §28.2 item 1 describes, a size number would be about the wrong artefact (§98.8) |
+| Image size / cold start (§8.3 item 4) | ~~With §28.2's release workflow~~ — **due now**: CI builds an image ([`99`](99-supply-chain-report.md)) | The reason for the deferral is gone — "nothing builds an image in CI" is no longer true. What the budget still waits on is the *right* binary: the image ships whichever `beck` built it, and until that is the static musl build §28.2 item 1 describes, a size number would be about the wrong artefact (§99.8) |
 | Mutation testing ≥85% on checker/solver/splitter (§13.8) | Phase 3 tail, nightly lane | Too slow for PRs |
 | Docs-as-tests: Beck blocks in docs checked (§13.6) | With the tutorial | Today's doc snippets are design sketches, deliberately ahead of the language |
 | Per-session memory / arrangement-entry gates | Needs an owner | [`26`](26-arrangement-sharing-report.md) §26.10: exported, ungated, deferred by four reports; the value that should fail a build has to be defended, not guessed |

@@ -14,10 +14,14 @@ beck-core.workspace = true
 beck-db.workspace = true
 beck-diag.workspace = true
 beck-eval.workspace = true
-beck-infra.workspace = true
+beck-infra = { workspace = true, features = ["image"] }
 beck-clif.workspace = true
 beck-llvm.workspace = true
 beck-macro.workspace = true
+# `beck play` serves it, and `tests/playground.rs` drives it: the crate is a `cdylib` for the
+# browser and an `rlib` here, which is what makes its behaviour gateable without one — and what
+# lets the differential put a `Tab` beside a `beck_rt::App`.
+beck-play.workspace = true
 beck-rt.workspace = true
 beck-syntax.workspace = true
 anyhow.workspace = true

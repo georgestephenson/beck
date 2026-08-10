@@ -349,6 +349,25 @@ enum Cmd {
         #[command(subcommand)]
         what: Init,
     },
+    /// Serve the playground: the compiler and a running application, in a browser tab (§17).
+    ///
+    /// Rung A is the compiler compiled to WebAssembly — diagnostics, the two surfaces, inferred
+    /// placement, the dataflow plan, the read model, the generated Kubernetes objects — with no
+    /// server involved at all. Rung B runs the program *in the tab*: a log, a fold and two client
+    /// subscriptions in one page, speaking the patch protocol over a `MessageChannel`.
+    ///
+    /// Needs the module: `cargo build -p beck-play --release --target wasm32-unknown-unknown`, or
+    /// `BECK_PLAYGROUND` pointing at one.
+    Play {
+        #[arg(long, default_value = "127.0.0.1:8081")]
+        addr: String,
+        /// Write the playground to a directory instead of serving it.
+        ///
+        /// The result is the whole deployment — §17.1's "costs a CDN" is not a figure of speech,
+        /// and this is what makes it checkable: a directory, on any static host.
+        #[arg(long, short)]
+        out: Option<PathBuf>,
+    },
     /// Bring the program up on a local cluster or host — rung 2 or 3 (§6.6).
     Up {
         file: PathBuf,
@@ -780,7 +799,43 @@ fn dispatch(cli: Cli) -> Result<()> {
             dry_run,
             platform,
         } => up(&file, &out, dry_run, &platform),
+        Cmd::Play { addr, out } => play(&addr, out.as_deref()),
     }
+}
+
+/// `beck play` — the playground, served or written out (§17.1, §17.2).
+fn play(addr: &str, out: Option<&Path>) -> Result<()> {
+    if let Some(dir) = out {
+        let written = beck_play::serve::write(dir)?;
+        for path in &written {
+            println!("{}", path.display());
+        }
+        eprintln!(
+            "\n{} files. Serve the directory with anything that serves files — the playground \n\
+             needs no server of its own, which is the whole of rung A (docs/17 §17.1).",
+            written.len()
+        );
+        return Ok(());
+    }
+
+    let addr: std::net::SocketAddr = addr.parse().context("--addr")?;
+    let module = beck_play::serve::module_path();
+    if !module.is_file() {
+        bail!(
+            "no playground module at {}: build it with `cargo build -p beck-play --release \
+             --target wasm32-unknown-unknown`, or set BECK_PLAYGROUND",
+            module.display()
+        );
+    }
+    eprintln!("the playground is at http://{addr}");
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(beck_eval::STACK_BYTES)
+        .build()?
+        .block_on(async move {
+            let (_tx, rx) = tokio::sync::watch::channel(false);
+            beck_play::serve::serve(addr, rx).await
+        })
 }
 
 fn read(file: &Path) -> Result<String> {
@@ -1074,73 +1129,6 @@ fn check(
         std::fs::write(&path, beck_core::Lock::of(&placement).to_json())?;
         eprintln!("wrote {}", path.display());
     }
-    Ok(())
-}
-
-/// `beck explain place` — §4.7's derivation, not its conclusion.
-fn explain_place(file: &Path, only: Option<&str>) -> Result<()> {
-    use beck_core::cost::FORBIDDEN;
-
-    let placed = compiled(file)?;
-    let solution = &placed.placement;
-
-    if let Some(name) = only {
-        let Some(e) = solution.explanation(name) else {
-            bail!("no `{name}` in this program");
-        };
-        println!("{}  →  {} tier\n", e.key.name(), e.chosen.name());
-        println!(
-            "  effects    : {}",
-            if e.row.visible().is_empty() {
-                "{}  (pure; placeable anywhere)".to_string()
-            } else {
-                format!("{}", e.row)
-            }
-        );
-        let costs: Vec<String> = e
-            .candidates
-            .iter()
-            .map(|(t, c)| {
-                if *c >= FORBIDDEN {
-                    format!("{} (cannot discharge this row)", t.name())
-                } else {
-                    format!("{} (cost {:.1})", t.name(), *c as f64 / 100.0)
-                }
-            })
-            .collect();
-        println!("  candidates : {}", costs.join(", "));
-        println!("  chosen     : {}", e.chosen.name());
-        println!("  because    : {}", e.because);
-        println!(
-            "\ncosts are whole-program: what this program would cost with `{}` on that tier and \n\
-             everything else where it is. Solved {}.",
-            e.key.name(),
-            solution.method.name()
-        );
-        return Ok(());
-    }
-
-    println!("{:<20} {:<8} {:<10} effects", "name", "tier", "kind");
-    for e in &solution.explanations {
-        let kind = match &e.key {
-            beck_core::Key::Def(_) => "definition",
-            beck_core::Key::Signal(_) => "signal",
-        };
-        println!(
-            "{:<20} {:<8} {:<10} {}",
-            e.key.name(),
-            e.chosen.name(),
-            kind,
-            e.row
-        );
-    }
-    println!(
-        "\nunplaced (`any`) means pure, so it compiles to every tier that needs it — that\n\
-         duplication is the payoff, not waste. Solved {}; total cost {:.1}.\n\
-         `beck explain place <file> <name>` shows one decision's candidates and their costs.",
-        solution.method.name(),
-        solution.total as f64 / 100.0
-    );
     Ok(())
 }
 
@@ -1514,17 +1502,17 @@ fn impact_cmd(file: &Path, name: &str, json: bool) -> Result<()> {
 
 fn explain(what: Explain) -> Result<()> {
     match what {
-        Explain::Place { file, name } => explain_place(&file, name.as_deref()),
-        Explain::Wire { file } => {
+        Explain::Place { file, name } => {
             let placed = compiled(&file)?;
-            println!("operation id  {}", placed.wire_id);
-            println!("command       {}", placed.roles.command_ty);
-            println!("event         {}", placed.roles.event_ty);
-            println!("state         {}", placed.roles.state_ty);
-            println!(
-                "\nthe id is content-derived from the module and those three types, so a body \
-                 edit does not move it and a signature change does."
+            print!(
+                "{}",
+                beck_core::place::report(&placed.placement, name.as_deref())
+                    .map_err(|e| anyhow!(e))?
             );
+            Ok(())
+        }
+        Explain::Wire { file } => {
+            print!("{}", beck_core::split::wire_report(&compiled(&file)?));
             Ok(())
         }
         Explain::Render { file } => {
@@ -1535,46 +1523,10 @@ fn explain(what: Explain) -> Result<()> {
         }
         Explain::Flow { file, ty: Some(ty) } => {
             let placed = compiled(&file)?;
-            let program = &placed.program;
-            let Some(decl) = program.types.get(ty.as_str()) else {
-                bail!("no type `{ty}` in this program");
-            };
-            let is_secret =
-                beck_core::secure::sendable(&beck_core::Ty::con(&ty), &program.types).err();
-            println!(
-                "{ty} ({}) — {}",
-                match decl {
-                    beck_core::TyDecl::Model { .. } => "model",
-                    beck_core::TyDecl::Union { .. } => "union",
-                    beck_core::TyDecl::Newtype { .. } => "newtype",
-                    beck_core::TyDecl::Alias { .. } => "alias",
-                },
-                match &is_secret {
-                    Some(bad) => format!("not Sendable: {} at {}", bad.offender, bad.flow()),
-                    None => "Sendable".to_string(),
-                }
+            print!(
+                "{}",
+                beck_core::secure::flow_report(&placed.program, &ty).map_err(|e| anyhow!(e))?
             );
-            let reached = beck_core::secure::flow(program, &ty);
-            if reached.is_empty() {
-                println!("\n  reaches nothing — no signature mentions it");
-                return Ok(());
-            }
-            println!();
-            for r in &reached {
-                match (&r.blocked, &is_secret) {
-                    (Some(why), Some(_)) => {
-                        println!("  BLOCKED: {:<18} {:<8} {why}", r.what, r.tier.name())
-                    }
-                    _ => println!("  reaches: {:<18} {:<8} ok", r.what, r.tier.name()),
-                }
-            }
-            if is_secret.is_some() {
-                println!(
-                    "\na crossing requires Sendable, and `secret[T]` is deliberately not \
-                     (docs/03 §3.5).\nWhat blocks the leak is the placement, so moving one of \
-                     these to the client is the compile error."
-                );
-            }
             Ok(())
         }
         Explain::Flow { file, ty: None } => {

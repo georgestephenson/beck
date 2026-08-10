@@ -17,14 +17,24 @@ use anyhow::{Context, Result};
 use beck_core::graph::{DepGraph, EdgeKind, GraphBuilder, GraphNode, NodeKind};
 use beck_core::{Effect, Placed, Tier};
 
+/// The architectures an image can be built for, as apk names them and as OCI names them.
+///
+/// Two vocabularies for one thing, and the mapping is the only place either name is spelled: the
+/// repository path is `x86_64`, the image config field is `amd64`, and a build that mixed them
+/// produces an image no runtime will select.
+pub const ARCHITECTURES: [(&str, &str); 2] = [("x86_64", "amd64"), ("aarch64", "arm64")];
+
+#[cfg(feature = "image")]
 pub mod apk;
 pub mod ci;
 pub mod compose;
 pub mod k8s;
+#[cfg(feature = "image")]
 pub mod oci;
 pub mod platform;
 pub mod provider;
 pub mod sbom;
+#[cfg(feature = "image")]
 pub mod sign;
 
 /// What `beck build` calls the bill of materials it writes. The `.cdx.json` suffix is CycloneDX's

@@ -364,13 +364,22 @@ dependencies whose signatures didn't change.
 - **The playground** ([`17`](17-playground.md)) — highest-leverage adoption artefact: rung A
   (compile-time, static) and rung B (the whole app in the tab — the worker-server is the rung-0
   platform compiled to WASM, riding Mode B's kernel work; `seq` scrubber and two-client demos).
+  *Both **built** ([`98`](98-playground-report.md)): `beck play` serves a page whose right-hand side
+  is eleven `beck explain` answers derived in the browser, and whose lower half is the program
+  running — one log, one fold, two client iframes and the scrubber. This row's forecast that rung B
+  would ride Mode B's kernel work is the one thing it got wrong (§98.9): a tab server is a
+  sequencer, a log and a differ, and none of those are in `beck-wasm`. What it rode was a division
+  of the runtime — `beck-host`, the half of `beck-rt` that is program-shaped rather than
+  machine-shaped. Rung C is Phase 4's, and §98.7 lists what rungs A and B still lack: no IndexedDB,
+  no content-addressed sharing, no Mode B in the tab, and a `<textarea>` where the LSP already
+  exists.*
 - `beck init ci`, apko image build in-process, cosign signing, SBOM. *All four are built. The
   **SBOM** ([`92`](92-sbom-report.md)): `beck sbom` emits CycloneDX 1.6 and `beck build` writes one
   beside the manifests, derived from the same object graph the image config is — so the package list
   and the apko `packages:` block cannot disagree, and a test parses the rendered YAML back to say
   so. It can exist before a release pipeline because §6.2's "no arbitrary execution" means the
   image's contents are already a list rather than something to scan for. The other three
-  ([`98`](98-supply-chain-report.md)): **`beck image`** assembles an OCI image in one process —
+  ([`99`](99-supply-chain-report.md)): **`beck image`** assembles an OCI image in one process —
   resolve against the Wolfi index, fetch, unpack, add the toolchain and the program, write a layout
   — with no apko, no melange and no daemon, because §92.1's argument spends a second time (a build
   that executes nothing has nothing in it a compiler cannot do). **`beck sign`/`beck verify`**
@@ -378,9 +387,9 @@ dependencies whose signatures didn't change.
   `cosign verify --key` reads, and `openssl` verifies it rather than only this project's own code.
   **`beck init ci`** writes §28.3's workflow. What is left is not a piece of this bullet but the
   pipeline around it: **no registry push**, **no provenance attestation** — SLSA's build track still
-  wants a builder identity and a transparency log — and **no pinned package versions** (§98.7),
+  wants a builder identity and a transparency log — and **no pinned package versions** (§99.7),
   which is why an image is reproducible twice over and not across weeks. **Package signatures are
-  not verified** (§98.7), and that is named as the largest security gap rather than as a detail.*
+  not verified** (§99.7), and that is named as the largest security gap rather than as a detail.*
 
 **Exit**: an outside developer builds a non-trivial app from documentation alone, without asking the
 team a question. Track this literally as the acceptance test.
@@ -390,20 +399,21 @@ expressiveness suite (three chapters of SICP and the Felleisen table, with chapt
 to Phase 5), incremental views, whose last part is
 [`89`](89-query-fusion-report.md)'s fusion, **identity**, whose last part is
 [`96`](96-presence-report.md)'s presence, and the supply-chain tooling
-([`92`](92-sbom-report.md), [`98`](98-supply-chain-report.md)) — whose remainder is a release
+([`92`](92-sbom-report.md), [`99`](99-supply-chain-report.md)) — whose remainder is a release
 pipeline rather than a piece of the bullet.
 **No bullet has a named remainder**: the concurrency-and-errors bullet has `Result`, error rows,
 `parallel:` and pattern matching with nesting, guards and alternatives
 ([`90`](90-nested-patterns-report.md), [`91`](91-guards-and-alternatives-report.md)); what
 `parallel:` lacks is a backend that runs two children at once, which is
-[`80`](80-a-scope-owns-its-children-report.md) §80.5's item rather than this bullet's. **Two
+[`80`](80-a-scope-owns-its-children-report.md) §80.5's item rather than this bullet's. **Three
 half-built**: the codegen bullet has **both** of §5.2's code generators over the scalar subset
 ([`93`](93-llvm-backend-report.md), [`97`](97-cranelift-report.md)) and no heap, so what it does not
-compile is everything the language stores; and Mode B has the mode, the bundle, the data patch, the
+compile is everything the language stores; Mode B has the mode, the bundle, the data patch, the
 reconciliation, a browser that runs it and an offline queue, without codegen — which is the *same*
-missing heap ([`94`](94-mode-b-report.md) §94.8, [`97`](97-cranelift-report.md) §97.7). **Two
-untouched**: client polish and the playground. The criterion is not a count of those, though — it
-is a
+missing heap ([`94`](94-mode-b-report.md) §94.8, [`97`](97-cranelift-report.md) §97.7); and the
+playground has rungs A and B and not rung C, which is Phase 4's
+([`98`](98-playground-report.md) §98.7). **One untouched**: client polish. The criterion is not a
+count of those, though — it is a
 claim about a *person*, and the honest way to say how close it is is by the questions such a
 developer would ask in order:
 
@@ -801,8 +811,10 @@ signature library, so it is an ADR rather than a line in a module". The HTTP cli
 nothing. This row's forecast that the two were one ADR was right; the reason turned out to be
 better than the one it gave.
 
-Then the playground rungs A and B (whose safety predecessor landed in Wave 0), then Phase 3's exit
-criterion. ~~What it measures is documentation an outside developer could build from, and there is
+~~Then the playground rungs A and B (whose safety predecessor landed in Wave 0)~~ — **built**
+([`98`](98-playground-report.md)), and the predecessor was the right one: the front end counts its
+own recursion, so the page compiles a stranger's source without a stack that can be exhausted from
+the outside. Then Phase 3's exit criterion. ~~What it measures is documentation an outside developer could build from, and there is
 none.~~ There is now: [`86`](86-getting-started.md), gated so that every program in it compiles and
 passes its own tests. That removes the *blocker* and not the criterion — which is a claim about a
 person building a non-trivial app without asking the authors questions, and cannot be met by
@@ -845,7 +857,7 @@ No predecessors, and they never acquire any.
 
 **Wave 5 — the Phase 4 gates, arranged before Phase 4 rather than during it.** Supply-chain tooling
 (SLSA v1.2 provenance, 2026-element SBOMs, ~~signing~~ — **the signing machinery is built**
-([`98`](98-supply-chain-report.md)) and what is left of that row is the transparency log and a
+([`99`](99-supply-chain-report.md)) and what is left of that row is the transparency log and a
 registry to push to — trusted publishing configured *before* the first publish); DST proper, on the
 seam Wave 0 created; then the operator, the replay tooling and the
 choreography. **Grammar-aware fuzzing is now due rather than pending**: [`42`](42-security-assurance.md)
