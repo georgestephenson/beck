@@ -7,6 +7,7 @@ members = [
     "crates/beck-core",
     "crates/beck-eval",
     "crates/beck-llvm",
+    "crates/beck-clif",
     "crates/beck-wasm",
     "crates/beck-rt",
     "crates/beck-infra",
@@ -29,6 +30,7 @@ beck-macro = { path = "crates/beck-macro", version = "0.1.0" }
 beck-core = { path = "crates/beck-core", version = "0.1.0" }
 beck-eval = { path = "crates/beck-eval", version = "0.1.0" }
 beck-llvm = { path = "crates/beck-llvm", version = "0.1.0" }
+beck-clif = { path = "crates/beck-clif", version = "0.1.0" }
 beck-wasm = { path = "crates/beck-wasm", version = "0.1.0" }
 beck-rt = { path = "crates/beck-rt", version = "0.1.0" }
 beck-infra = { path = "crates/beck-infra", version = "0.1.0" }
@@ -42,10 +44,17 @@ async-trait = "0.1"
 aws-lc-rs = "1"
 blake3 = "1"
 clap = { version = "4", features = ["derive", "env"] }
+# §7.3's *dev* codegen, taken as a crate where §7.3's release codegen is taken as a run-time
+# requirement. Cranelift is pure Rust and emits an object file, so `beck-clif` needs no `unsafe`
+# and no LLVM on the machine — see `docs/adr/0024`.
+cranelift-codegen = { version = "0.134", default-features = false, features = ["std", "host-arch"] }
+cranelift-frontend = { version = "0.134", default-features = false, features = ["std"] }
+cranelift-module = { version = "0.134", default-features = false, features = ["std"] }
+cranelift-object = "0.134"
 # DEFLATE, in both directions: an APK is a concatenation of gzip members and an OCI layer is a
 # gzipped tar, so the in-process image build cannot read its inputs or write its output without an
 # implementation of it. The default backend is `miniz_oxide`, which is Rust rather than a vendored
-# zlib — the only reason this is one line and not a build-tooling decision (docs/adr/0024).
+# zlib — the only reason this is one line and not a build-tooling decision (docs/adr/0025).
 flate2 = "1"
 futures-util = "0.3"
 insta = "1"
@@ -80,6 +89,7 @@ tokio = { version = "1", features = ["full"] }
 tokio-postgres = "0.7"
 tokio-rustls = "0.26"
 tokio-tungstenite = "0.30"
+target-lexicon = "0.13"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4", "v7", "serde"] }

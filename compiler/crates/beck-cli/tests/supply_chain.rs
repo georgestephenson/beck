@@ -74,7 +74,7 @@ fn the_bill_of_materials_lists_what_the_image_config_installs() {
 #[test]
 fn the_melange_package_installs_the_files_the_in_process_build_writes() {
     // §92.2's rule, applied to paths rather than to package names. There are two routes to an
-    // image — apko over a melange package, and `beck image` (docs/96) — and both have to put the
+    // image — apko over a melange package, and `beck image` (docs/98) — and both have to put the
     // toolchain and the program in the same places. This reads the *rendered* melange YAML back,
     // so a route that started installing somewhere else fails here rather than in a container.
     let (placed, _) = sketch();

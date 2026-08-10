@@ -22,7 +22,7 @@ holds the *rules*; that file holds the *state*, and it is the one that stays cur
 | [`docs/adr/`](docs/adr/) | Engineering decisions — a dependency taken or refused, a gate's shape, an upgrade path |
 | [`compiler/`](compiler/) | The compiler, the runtime, and the standard library. Where new work goes |
 | [`compiler/lib/`](compiler/lib/README.md) | The standard library's Beck half |
-| [`compiler/corpus/`](compiler/corpus/) | 31 programs carrying **no placement annotations** — Phase 2's exit measurement |
+| [`compiler/corpus/`](compiler/corpus/) | 32 programs carrying **no placement annotations** — Phase 2's exit measurement |
 | [`compiler/sicp/`](compiler/sicp/) | The expressiveness benchmark ([`docs/25`](docs/25-benchmarks-and-expressiveness.md) §25.5) |
 | [`compiler/awfy/`](compiler/awfy/README.md), [`compiler/clbg/`](compiler/clbg/README.md) | The performance benchmarks — somebody else's programs, verified against somebody else's constants |
 | [`compiler/xlang/`](compiler/xlang/README.md) | One program in six languages — the only place a Beck number sits beside another language's ([`docs/93`](docs/93-llvm-backend-report.md) §93.5) |
@@ -114,8 +114,8 @@ corpus, placement-property, patterns, general-slicer, incremental-analysis, incr
 fusion,
 shared-arrangement, subscription, view-metrics, read-model, SICP, Are We Fast Yet, Benchmarks Game,
 tests-in-Beck, UI, workflow-cross-check, documentation, getting-started, outbound, compile-speed,
-concurrency, round-trip, runtime-edge, grammar-fuzz, supply-chain, image, init-ci, native-backend, mode-B, browser,
-identity, OIDC and diagnostic-snapshot suites, plus the eight
+concurrency, round-trip, runtime-edge, grammar-fuzz, supply-chain, image, init-ci, native-backend,
+mode-B, browser, identity, OIDC, presence, cranelift and diagnostic-snapshot suites, plus the eight
 release-only measurement suites. **Keep them green.**
 
 Four gates in this project's history could not have failed
@@ -169,10 +169,11 @@ the thing you are guarding against would make it so.
     `BECK_REQUIRE_CLUSTER=1` forbids the skip. Do not claim this rung ran without one.
   - Postgres log contract (`beck-rt/src/log.rs`): runs only with `BECK_PG=<url>`
     (`BECK_REQUIRE_PG=1` forbids the skip).
-  - The native backend (`beck-cli/tests/native.rs`, `tests/measure_native.rs`): skips without a
-    `clang` on the path; `BECK_REQUIRE_LLVM=1` forbids the skip, and `BECK_CLANG` names one
-    explicitly on a machine with several. A skipped run means the differential *between backends*
-    did not happen.
+  - The native backends (`beck-cli/tests/native.rs`, `tests/cranelift.rs`,
+    `tests/measure_native.rs`): the LLVM half skips without a `clang` on the path and the Cranelift
+    half without a linker; `BECK_REQUIRE_LLVM=1` forbids both skips, `BECK_CLANG` names a `clang`
+    and `BECK_LINKER` a linker on a machine with several. A skipped run means the differential
+    *between backends* did not happen.
   - Mode B's kernel (`beck-cli/tests/mode_b.rs`) needs the `wasm32-unknown-unknown` target; it
     skips without one, and `BECK_REQUIRE_WASM=1` forbids the skip.
   - The browser suite (`beck-cli/tests/browser.rs`) needs a Chromium; it looks under

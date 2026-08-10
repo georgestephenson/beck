@@ -74,13 +74,14 @@ jobs:
       # failure rather than a silent skip.
       BECK_PG: postgres://postgres:postgres@localhost/beck_ci
       BECK_REQUIRE_PG: "1"
-      # `native.rs` and `measure_native.rs` skip when there is no `clang`, and print why. This
-      # runner has one, so a skip here would mean the differential between backends silently did
-      # not run — which is the failure mode §19.4 item 10 is about.
+      # `native.rs`, `cranelift.rs` and `measure_native.rs` skip when there is no `clang` and no
+      # linker, and print why. This runner has both, so a skip here would mean the differential
+      # between backends silently did not run — which is the failure mode §19.4 item 10 is about.
+      # One switch for both halves: a machine with `clang` has a linker.
       BECK_REQUIRE_LLVM: "1"
       # `image.rs` reads its layer back with somebody else's tar and its signature with somebody
       # else's verifier. Both are on this runner, so a skip would mean the image build was checked
-      # only by the code that wrote it (docs/96 §96.3).
+      # only by the code that wrote it (docs/98 §98.3).
       BECK_REQUIRE_TAR: "1"
       BECK_REQUIRE_OPENSSL: "1"
     steps:
@@ -576,7 +577,7 @@ jobs:
           diff /tmp/a.txt /tmp/b.txt
 
   the-image-builds:
-    # §6.2's image, built in one process against the real repository — docs/96. `cargo test` holds
+    # §6.2's image, built in one process against the real repository — docs/98. `cargo test` holds
     # the build against fixtures; this is the rung above, and it is the only place the *fetch* runs
     # at all: an index resolved from packages.wolfi.dev, real APKs unpacked, and the digest
     # compared across two builds. §19.4 item 10 — an artefact nobody has executed is a design
@@ -689,7 +690,9 @@ jobs:
           # docs/93 §93.5. The native backend against the tree-walker, at two sizes each, plus the
           # pipe round trip on its own and what `clang -O2` costs. The *gate* is a shape — the
           # ratio must not fall as the problem grows — and it runs here rather than under
-          # `cargo test` because it is a release measurement.
+          # `cargo test` because it is a release measurement. docs/97 §97.5's comparison of the two
+          # code generators is in the same file and release-only for a stronger reason: a debug
+          # build measures our unoptimised Cranelift against a distribution's optimised `clang`.
           cargo test --release --test measure_native -- --nocapture
           # docs/93 §93.5's second table: the same four benchmarks in six languages. The *gate* is
           # that every implementation computes the same four answers, and it runs under `cargo test`

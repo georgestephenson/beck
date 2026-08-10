@@ -15,6 +15,7 @@ beck-db.workspace = true
 beck-diag.workspace = true
 beck-eval.workspace = true
 beck-infra.workspace = true
+beck-clif.workspace = true
 beck-llvm.workspace = true
 beck-macro.workspace = true
 beck-rt.workspace = true

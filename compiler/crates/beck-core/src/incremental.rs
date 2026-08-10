@@ -129,6 +129,15 @@ fn rule(op: Prim) -> Option<&'static str> {
 pub enum Verdict {
     /// Every operation has a delta rule: this vertex could be maintained rather than recomputed.
     Incremental,
+    /// Pure, and it applies no collection operation at all — a vertex that rebuilds a value from
+    /// its inputs, as `map2(combine, board, here)` does when `combine` is a record constructor.
+    ///
+    /// Neither of the two interesting answers: there is nothing to maintain by delta and nothing
+    /// that would cost a recount. It is its own verdict because saying "incremental" about it
+    /// produced a row with an empty explanation, which is what
+    /// `incremental.rs`'s "none of them is a mystery" gate exists to catch — and did, the first
+    /// time a program in the corpus applied nothing (`docs/96` §96.5).
+    Trivial,
     /// Pure, but something in it has no delta rule. The reason names the first blocker found, in
     /// source order, because the first is the one to fix.
     Recompute { because: String },
@@ -140,6 +149,7 @@ impl Verdict {
     pub fn name(&self) -> &'static str {
         match self {
             Verdict::Incremental => "incremental",
+            Verdict::Trivial => "no collection work",
             Verdict::Recompute { .. } => "recompute",
             Verdict::Effectful { .. } => "not a candidate",
         }
@@ -203,7 +213,11 @@ fn per_session_closure(placed: &Placed) -> BTreeSet<SigId> {
     // The order is dependencies-first, so a vertex's inputs are decided before it is.
     for id in g.order() {
         let node = g.node(id);
-        if matches!(node.op, Op::PerSession { .. }) || node.inputs.iter().any(|i| below.contains(i))
+        // `presence` joins the session on this side of the cut, for the reason
+        // [`crate::plan::Op::Presence`] gives: what it produces is not a function of the
+        // accumulator, and the shared dataflow is versioned by the accumulator.
+        if matches!(node.op, Op::PerSession { .. } | Op::Presence)
+            || node.inputs.iter().any(|i| below.contains(i))
         {
             below.insert(id);
         }
@@ -269,6 +283,7 @@ fn judge(f: &Core, program: &Program) -> (Verdict, Vec<(Prim, &'static str)>) {
 
     match blocker {
         Some(because) => (Verdict::Recompute { because }, found),
+        None if found.is_empty() => (Verdict::Trivial, found),
         None => (Verdict::Incremental, found),
     }
 }
@@ -418,6 +433,14 @@ pub fn report(placed: &Placed, only: Option<&str>) -> String {
                     let _ = writeln!(out, "  {:w$}    {:<14} {r}", "", op.name());
                 }
             }
+            Verdict::Trivial => {
+                let _ = writeln!(
+                    out,
+                    "  {:w$}    applies no collection operation: the value is rebuilt from its \
+                     inputs",
+                    ""
+                );
+            }
             Verdict::Recompute { because } => {
                 let _ = writeln!(out, "  {:w$}    {because}", "");
                 if !a.ops.is_empty() {
@@ -486,10 +509,11 @@ pub fn report(placed: &Placed, only: Option<&str>) -> String {
         let shared_ops = plan.shared().len();
         let _ = writeln!(
             out,
-            "  in the plan:        {shared_ops} of {} operators do not read the session, and the \n\
-             \x20                     runtime holds those once for every subscriber — one shared \n\
-             \x20                     dataflow, advanced per event rather than per connection \n\
-             \x20                     (docs/26). The other {} run per subscriber.",
+            "  in the plan:        {shared_ops} of {} operators read neither the session nor who \n\
+             \x20                     is connected, and the runtime holds those once for every \n\
+             \x20                     subscriber — one shared dataflow, advanced per event rather \n\
+             \x20                     than per connection (docs/26). The other {} run per \n\
+             \x20                     subscriber.",
             plan.nodes.len(),
             plan.nodes.len() - shared_ops,
         );

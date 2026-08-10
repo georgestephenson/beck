@@ -1,8 +1,8 @@
-# ADR 0024 — DEFLATE, so the image build needs no tools
+# ADR 0025 — DEFLATE, so the image build needs no tools
 
 **Status:** accepted
 **Date:** 2026-08-09
-**Context:** [`06`](../06-kubernetes-and-packaging.md) §6.2, [`96`](../96-supply-chain-report.md),
+**Context:** [`06`](../06-kubernetes-and-packaging.md) §6.2, [`98`](../98-supply-chain-report.md),
 [`07`](../07-dependencies.md), [`0004`](0004-full-cargo-deny-gate.md)
 
 ## The decision
@@ -53,13 +53,13 @@ gzip *header* is the part that carries a clock and a hostname, and that is writt
   output between versions, so the *compressed* layer digest — and therefore the image digest — is
   reproducible for a fixed toolchain rather than for all time. The **`diff_id`**, the digest of the
   uncompressed tar, is not: it is a property of this repository's own tar writer. Both are in the
-  image config, and [`96`](../96-supply-chain-report.md) §96.4 states which claim rests on which.
+  image config, and [`98`](../98-supply-chain-report.md) §98.4 states which claim rests on which.
 - **Licences.** `flate2` MIT/Apache-2.0, `miniz_oxide` MIT/Apache-2.0/Zlib, `crc32fast`
   MIT/Apache-2.0 — all inside [`0004`](0004-full-cargo-deny-gate.md)'s allowlist, and the gate is
   what enforces that rather than this sentence.
 - **A decompression bomb is a reachable input.** `Contents::read` inflates a package into memory,
   and a hostile repository could serve one that expands without bound. What limits it today is the
-  fetcher's reply cap and nothing else; [`96`](../96-supply-chain-report.md) §96.7 records this as
+  fetcher's reply cap and nothing else; [`98`](../98-supply-chain-report.md) §98.7 records this as
   open rather than solved.
 
 ## What would reverse it
