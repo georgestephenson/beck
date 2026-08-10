@@ -53,6 +53,29 @@ pub fn session<'a>(actor: &str, claims: impl IntoIterator<Item = (&'a str, &'a s
     )
 }
 
+/// The roster `presence()` produces: actor to how many connections that actor holds.
+///
+/// Built here beside the other three because it is the same kind of value — something the host
+/// hands a pure program — and because the *shape* has to be one definition. A page reads it with
+/// `map_len`, `map_keys` and `map_contains`, and a second constructor spelling the pairs
+/// differently would be a page that renders one way under `beck test` and another under `beck run`.
+pub fn presence<'a>(here: impl IntoIterator<Item = (&'a str, i64)>) -> Value {
+    Value::Map(
+        here.into_iter()
+            .map(|(actor, n)| (Value::str_(actor), Value::Int(n)))
+            .collect(),
+    )
+}
+
+/// The roster of a world with one connection: the viewer's own.
+///
+/// What `beck test` renders a page in, and what a caller with no connection registry gets. A test
+/// asserting on the page one actor sees is asking what that actor sees while looking at it, so a
+/// roster that did not contain them would be describing a page nobody is reading.
+pub fn presence_of(actor: &str) -> Value {
+    presence([(actor, 1)])
+}
+
 /// `Proposal` — a command and who proposed it, which is what `validate` is given and the only
 /// place a `Session` reaches (§3.5).
 pub fn proposal<'a>(

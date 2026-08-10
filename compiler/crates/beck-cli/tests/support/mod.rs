@@ -1,6 +1,7 @@
 //! Shared fixtures for the harnesses.
 
 pub mod browser;
+pub mod scalar;
 pub mod socket;
 
 use std::sync::Arc;

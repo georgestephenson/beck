@@ -377,8 +377,13 @@ impl Engine {
     /// derive a delta rebuilds. That matters because a reconnecting subscriber is rendered against
     /// an older state (`beck-rt`'s resumption path), and an engine that assumed monotonic progress
     /// would quietly serve it the wrong page.
-    pub fn render(&mut self, state: &Value, session: &Value) -> Result<Value, ExecError> {
-        self.render_from(None, state, session)
+    pub fn render(
+        &mut self,
+        state: &Value,
+        session: &Value,
+        presence: &Value,
+    ) -> Result<Value, ExecError> {
+        self.render_from(None, state, session, presence)
     }
 
     /// The same render, with the operators this engine does not own arriving from upstream.
@@ -387,10 +392,11 @@ impl Engine {
         up: Option<Upstream<'_>>,
         state: &Value,
         session: &Value,
+        presence: &Value,
     ) -> Result<Value, ExecError> {
         self.work = Work::default();
         match self
-            .tick(up, state, session)
+            .tick(up, state, session, presence)
             .and_then(|()| self.materialise(up, self.prepared.plan.root))
         {
             Ok(v) => {
@@ -412,7 +418,9 @@ impl Engine {
     /// engine does not own it, so there is nothing at the top to materialise.
     fn advance(&mut self, state: &Value) -> Result<(), ExecError> {
         self.work = Work::default();
-        match self.tick(None, state, &Value::Unit) {
+        // The shared half owns no `Op::Presence` — everything downstream of one is per-subscriber
+        // — so the value it would be given is never read.
+        match self.tick(None, state, &Value::Unit, &Value::Unit) {
             Ok(()) => {
                 self.warm = true;
                 Ok(())
@@ -429,6 +437,7 @@ impl Engine {
         up: Option<Upstream<'_>>,
         state: &Value,
         session: &Value,
+        presence: &Value,
     ) -> Result<(), ExecError> {
         let cold = !self.warm;
         // The plan is behind an `Arc`, so this is one refcount rather than a clone of every
@@ -455,6 +464,17 @@ impl Engine {
                     let changed =
                         cold || !matches!(&self.cells[id].out, Out::Val(v) if same(v, session));
                     self.cells[id].out = Out::Val(session.clone());
+                    self.cells[id].changed = changed;
+                }
+                // Compared rather than assumed changed, like the session and unlike the
+                // accumulator: most renders are provoked by an event rather than by a connection,
+                // so the common case is one comparison of two identical rosters and nothing below
+                // this operator re-runs.
+                Op::Presence => {
+                    self.cells[id].rebuilt = false;
+                    let changed =
+                        cold || !matches!(&self.cells[id].out, Out::Val(v) if same(v, presence));
+                    self.cells[id].out = Out::Val(presence.clone());
                     self.cells[id].changed = changed;
                 }
                 Op::Const => {
@@ -1264,6 +1284,12 @@ impl Default for Retention {
 
 /// The operators of a plan that do not read the session, arranged **once** for every subscriber.
 ///
+/// "Do not read the session" is the sentence §5.3 uses and it is one atom short: what this holds is
+/// the operators that are a function of the accumulator alone, so everything downstream of
+/// [`crate::plan::Op::Presence`] is excluded too. The reason is this type's `version` — it is the
+/// log's `seq`, and a roster moves when `seq` does not
+/// ([`docs/96`](../../../../../docs/96-presence-report.md) §96.5).
+///
 /// [`docs/05-tier-lowering.md`](../../../../../docs/05-tier-lowering.md) §5.3:
 ///
 /// > a thousand connected users of `todos.map(filter_by(session.user))` must compile to *one*
@@ -1442,11 +1468,12 @@ impl SharedDataflow {
         state: &Value,
         version: u64,
         session: &Value,
+        presence: &Value,
     ) -> Result<(Value, u64), ExecError> {
         self.advance(state, version)?;
         let inner = self.read();
         let up = Upstream::new(&inner, engine.seen);
-        let page = engine.render_from(Some(up), state, session)?;
+        let page = engine.render_from(Some(up), state, session, presence)?;
         engine.seen = inner.version;
         // Published outside this dataflow's write lock, and this is the whole reason a frontier is
         // an atomic: a render must not serialise against the other renders it is concurrent with.

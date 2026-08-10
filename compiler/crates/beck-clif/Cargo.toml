@@ -1,0 +1,22 @@
+[package]
+name = "beck-clif"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Beck's development code generator: Core to Cranelift IR, assembled into an object and linked"
+
+[dependencies]
+beck-core.workspace = true
+beck-diag.workspace = true
+# The trap codes, the subset's vocabulary and the worker protocol are one definition, not two.
+# `beck-clif` is a second *emitter*, not a second backend design — see this crate's own docs.
+beck-llvm.workspace = true
+cranelift-codegen.workspace = true
+cranelift-frontend.workspace = true
+cranelift-module.workspace = true
+cranelift-object.workspace = true
+target-lexicon.workspace = true
+
+[lints]
+workspace = true

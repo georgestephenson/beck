@@ -87,6 +87,14 @@ pub enum Op {
     /// The subscriber's `Session`. Constant for the life of one subscription, which is what makes
     /// everything not downstream of it shareable (§5.3).
     Session,
+    /// Who is connected — `presence()`, supplied by the caller like the other two sources.
+    ///
+    /// Everything downstream of it is **per subscriber** even though the value is the same for
+    /// everybody, and the reason is a clock rather than a privacy rule: the shared dataflow is
+    /// versioned by the log's `seq` ([`crate::engine::SharedDataflow`]), and presence moves when
+    /// the log does not. Sharing it would need a second version, which is
+    /// [`docs/96`](../../../../../docs/96-presence-report.md) §96.8's first unbuilt item.
+    Presence,
     /// A closed expression, evaluated once when the plan is prepared.
     Const,
     /// Recomputed when an input changed. Carries a `Lam` over its inputs.
@@ -134,6 +142,7 @@ pub enum Op {
 pub const OPERATORS: &[&str] = &[
     "state",
     "session",
+    "presence",
     "const",
     "recompute",
     "map_values",
@@ -152,6 +161,7 @@ impl Op {
         match self {
             Op::State => "state",
             Op::Session => "session",
+            Op::Presence => "presence",
             Op::Const => "const",
             Op::Pointwise { .. } => "recompute",
             Op::MapValues => "map_values",
@@ -184,7 +194,7 @@ impl Op {
 
     /// Whether this is an input to the dataflow rather than a step in it.
     pub fn is_source(&self) -> bool {
-        matches!(self, Op::State | Op::Session | Op::Const)
+        matches!(self, Op::State | Op::Session | Op::Presence | Op::Const)
     }
 
     /// What orders this operator's arrangement — the table in this module's own documentation, as
@@ -192,7 +202,7 @@ impl Op {
     /// consequence of the plan rather than of a sort at the end.
     pub fn key(&self) -> &'static str {
         match self {
-            Op::State | Op::Session | Op::Const => "a source",
+            Op::State | Op::Session | Op::Presence | Op::Const => "a source",
             Op::Pointwise { .. } | Op::Count | Op::IsEmpty => "a value, not an arrangement",
             Op::MapValues => "the map's key",
             Op::MapList { .. } | Op::FilterList { .. } => "the input's key, unchanged",
@@ -245,6 +255,7 @@ pub struct Plan {
     pub root: OpId,
     pub state: OpId,
     pub session: OpId,
+    pub presence: OpId,
     /// The declared signals that survived as nodes, so a report can use the program's own names.
     pub signals: Vec<(Arc<str>, OpId)>,
 }
@@ -294,10 +305,12 @@ impl Plan {
             states: &placed.roles.states,
             state: 0,
             session: 0,
+            presence: 0,
             vertices: BTreeMap::new(),
         };
         b.state = b.push(Op::State, Vec::new(), None);
         b.session = b.push(Op::Session, Vec::new(), None);
+        b.presence = b.push(Op::Presence, Vec::new(), None);
 
         let root = match graph.by_name.get(&placed.roles.page_name).copied() {
             Some(page) if page < graph.nodes.len() => b.vertex(graph, page),
@@ -336,6 +349,7 @@ impl Plan {
             root,
             state: b.state,
             session: b.session,
+            presence: b.presence,
             signals,
         };
         plan.finish();
@@ -350,7 +364,7 @@ impl Plan {
             node.consumers = 0;
         }
         for i in 0..self.nodes.len() {
-            let per = matches!(self.nodes[i].op, Op::Session)
+            let per = matches!(self.nodes[i].op, Op::Session | Op::Presence)
                 || self.nodes[i]
                     .inputs
                     .iter()
@@ -387,7 +401,7 @@ impl Plan {
     /// keeps its operator alive whether or not the page reads it.
     pub(crate) fn prune(&mut self) -> BTreeMap<OpId, OpId> {
         let mut live = vec![false; self.nodes.len()];
-        let mut stack = vec![self.root, self.state, self.session];
+        let mut stack = vec![self.root, self.state, self.session, self.presence];
         stack.extend(self.signals.iter().map(|(_, id)| *id));
         while let Some(id) = stack.pop() {
             if std::mem::replace(&mut live[id], true) {
@@ -429,6 +443,7 @@ impl Plan {
         self.root = map[&self.root];
         self.state = map[&self.state];
         self.session = map[&self.session];
+        self.presence = map[&self.presence];
         self.finish();
         map
     }
@@ -537,7 +552,7 @@ fn op_cost(plan: &Plan, i: OpId) -> String {
         .filter(|&j| plan.nodes[j].op.is_arrangement())
         .collect();
     match &node.op {
-        Op::State | Op::Session => "—  a source, read by reference".to_string(),
+        Op::State | Op::Session | Op::Presence => "—  a source, read by reference".to_string(),
         Op::Const => "—  evaluated once, when the plan is prepared".to_string(),
         Op::Pointwise { .. } if forced.is_empty() => {
             "1 recompute, and only when an input moved".to_string()
@@ -655,6 +670,7 @@ struct Builder<'a> {
     states: &'a [StateRole],
     state: OpId,
     session: OpId,
+    presence: OpId,
     vertices: BTreeMap<SigId, OpId>,
 }
 
@@ -750,6 +766,7 @@ impl Builder<'_> {
                     node.span,
                 )
             }
+            SigOp::Presence => self.presence,
             SigOp::PerSession { f } => {
                 let input = self.vertex(graph, node.inputs[0]);
                 let session = self.session;

@@ -111,6 +111,8 @@ pub struct Decision {
     pub no_optimism: Option<NoOptimism>,
     /// True when the view reads the session — the fact that decides eligibility.
     pub per_session: bool,
+    /// True when the view reads `presence()`, which is the second fact that decides it.
+    pub reads_presence: bool,
     /// Where the component is declared, for a diagnostic.
     pub span: Span,
 }
@@ -150,6 +152,7 @@ impl Decision {
             optimistic,
             no_optimism,
             per_session: roles.view_is_per_session,
+            reads_presence: roles.view_reads_presence,
             // A declared mode is refused where it was written; a defaulted one, at the component.
             span: declared.map_or(span, |(_, s)| s),
         }
@@ -221,6 +224,16 @@ impl Decision {
             );
         }
         out.push('\n');
+        // The counterfactual is the useful half, so the *reason* a page cannot move has to be the
+        // one that applies. A page reading the roster is refused whatever it does with the session.
+        if self.mode == Mode::Server && self.reads_presence {
+            out.push_str(
+                "This page reads `presence`, so it cannot move to the browser: `@render(client)` \
+                 would be refused (B0516). Who is connected is in neither the accumulator nor the \
+                 log — it is a fact the server holds about its own sockets.\n",
+            );
+            return out;
+        }
         match (self.mode, self.per_session) {
             (Mode::Server, false) => out.push_str(
                 "This page is a function of the state alone, so `@render(client)` would move it \
@@ -272,6 +285,29 @@ impl Decision {
                 .with_fix(
                     "render this component on the server (the default), or make the page a \
                      function of the state alone",
+                ),
+            );
+        }
+        if self.reads_presence {
+            diags.push(
+                Diagnostic::error(
+                    "B0516",
+                    format!(
+                        "`{}` reads `presence`, so it cannot render on the client",
+                        self.component
+                    ),
+                    self.span,
+                )
+                .with_primary_label("`@render(client)` sends the browser the accumulator")
+                .with_note(
+                    "Who is connected is not in the accumulator and is not in the log: it is a \
+                     fact the server holds about its own sockets. A browser handed the state \
+                     would have nothing to render this part of the page from, and shipping the \
+                     roster alongside would be a second wire nothing reconciles by `seq`.",
+                )
+                .with_fix(
+                    "render this component on the server (the default), or take `presence` out of \
+                     its page",
                 ),
             );
         }

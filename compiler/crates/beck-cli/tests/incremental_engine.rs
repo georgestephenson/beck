@@ -114,8 +114,9 @@ impl Subject {
                 .render();
             let state = self.state.clone();
             let session = self.runtime.session(actor);
+            let here = beck_core::edge::presence_of(actor);
             let got = self.engines[i]
-                .render(&state, &session)
+                .render(&state, &session, &here)
                 .unwrap_or_else(|e| panic!("{}: engine: {e}", self.name));
             assert_eq!(
                 page(&self.name, got),
@@ -125,7 +126,7 @@ impl Subject {
             );
             let (got, version) = self
                 .shared
-                .render(&mut self.subscribers[i], &state, self.seq, &session)
+                .render(&mut self.subscribers[i], &state, self.seq, &session, &here)
                 .unwrap_or_else(|e| panic!("{}: shared engine: {e}", self.name));
             assert_eq!(
                 page(&self.name, got),
@@ -224,12 +225,13 @@ fn a_cold_engine_and_a_warm_one_produce_the_same_page() {
         }
         for actor in ACTORS {
             let session = subject.runtime.session(actor);
+            let here = beck_core::edge::presence_of(actor);
             let mut cold = Engine::new(subject.prepared.clone());
             let fresh = cold
-                .render(&subject.state, &session)
+                .render(&subject.state, &session, &here)
                 .expect("a cold render");
             let warm = subject.engines[0]
-                .render(&subject.state, &subject.runtime.session(actor))
+                .render(&subject.state, &subject.runtime.session(actor), &here)
                 .expect("a warm render");
             assert_eq!(
                 fresh, warm,
@@ -253,11 +255,12 @@ fn an_engine_rendered_against_an_older_state_is_still_right() {
         history.push(subject.state.clone());
     }
     let session = subject.runtime.session(ACTORS[0]);
+    let here = beck_core::edge::presence_of(ACTORS[0]);
     // Backwards, then forwards again, on the engine that has already seen the whole log.
     for state in history.iter().rev().chain(history.iter()) {
         let expected = subject.runtime.view(state, ACTORS[0]).expect("recompute");
         let got = subject.engines[0]
-            .render(state, &session)
+            .render(state, &session, &here)
             .expect("a render against an arbitrary state");
         let Value::Html(got) = got else {
             panic!("the engine produced a non-Html value")
@@ -339,14 +342,15 @@ fn a_count_over_a_maintained_collection_does_not_visit_the_collection() {
     let count_of = |n: usize| -> u64 {
         let mut engine = Engine::new(prepared.clone());
         let session = runtime.session("ana");
+        let here = beck_core::edge::presence_of("ana");
         let mut state = runtime.initial_state().expect("initial");
         for i in 0..n {
             state = fold_added(&runtime, &state, i as u64 + 1, "ana");
         }
         // Warm the engine at `n` rows, then add one more and measure only that step.
-        engine.render(&state, &session).expect("warm");
+        engine.render(&state, &session, &here).expect("warm");
         let next = fold_added(&runtime, &state, n as u64 + 1, "ana");
-        engine.render(&next, &session).expect("step");
+        engine.render(&next, &session, &here).expect("step");
         engine.work().applications + engine.work().touched
     };
 

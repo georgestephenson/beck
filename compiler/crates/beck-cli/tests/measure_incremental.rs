@@ -124,6 +124,7 @@ fn what_one_event_costs_against_the_size_of_the_collection() {
     // that does not grow, and the assembly of the page's children, which still does.
     let bench = Bench::new(support::todo_program());
     let session = bench.runtime.session("ana");
+    let here = beck_core::edge::presence_of("ana");
 
     println!(
         "\n{:>7}  {:>10} {:>10} {:>8}  {:>12} {:>12} {:>6}",
@@ -134,16 +135,16 @@ fn what_one_event_costs_against_the_size_of_the_collection() {
         let next = bench.add(&state, n as u64 + 1);
 
         let mut engine = bench.engine();
-        engine.render(&state, &session).expect("warm");
+        engine.render(&state, &session, &here).expect("warm");
 
         // One event, measured on its own.
         let mut maintain = u128::MAX;
         let mut work = engine.work();
         for _ in 0..5 {
             let mut e = bench.engine();
-            e.render(&state, &session).expect("warm");
+            e.render(&state, &session, &here).expect("warm");
             let t = Instant::now();
-            e.render(&next, &session).expect("step");
+            e.render(&next, &session, &here).expect("step");
             maintain = maintain.min(t.elapsed().as_micros());
             work = e.work();
         }
@@ -189,6 +190,7 @@ fn what_a_subscriber_holds() {
     // per-allocation overhead, so it is a floor.
     let bench = Bench::new(support::todo_program());
     let session = bench.runtime.session("ana");
+    let here = beck_core::edge::presence_of("ana");
     println!(
         "\n{:>7}  {:>9} {:>12} {:>12} {:>12} {:>7}",
         "rows", "arranged", "engine KB", "of it shared", "page KB", "×"
@@ -196,7 +198,7 @@ fn what_a_subscriber_holds() {
     for n in [10usize, 100, 1_000, 5_000] {
         let state = bench.state_with(n);
         let mut engine = bench.engine();
-        engine.render(&state, &session).expect("render");
+        engine.render(&state, &session, &here).expect("render");
         let f = engine.footprint(&state);
         // What a subscription already held before any of this: the last rendered page, kept so the
         // next one can be diffed against it.
@@ -322,6 +324,7 @@ fn what_query_fusion_is_worth() {
     let runtime = Runtime::new(placed, backend).expect("prepares");
     let bench = Bench::new(support::todo_program());
     let session = runtime.session("ana");
+    let here = beck_core::edge::presence_of("ana");
 
     println!("\n{:>7}  {:^38}  {:^38}  {:>6}", "", "unfused", "fused", "");
     println!(
@@ -345,9 +348,9 @@ fn what_query_fusion_is_worth() {
         for _ in 0..5 {
             for k in 0..2 {
                 let mut e = Engine::new(prepared[k].clone());
-                e.render(&state, &session).expect("warm");
+                e.render(&state, &session, &here).expect("warm");
                 let t = Instant::now();
-                e.render(&next, &session).expect("step");
+                e.render(&next, &session, &here).expect("step");
                 micros[k] = micros[k].min(t.elapsed().as_micros());
                 held[k] = e.arranged();
                 work[k] = e.work().total();
@@ -416,11 +419,12 @@ fn what_a_fanout_costs_with_and_without_a_shared_dataflow() {
             let sessions: Vec<Value> = (0..n)
                 .map(|i| bench.runtime.session(&format!("u{}", i % OWNERS)))
                 .collect();
+            let here = beck_core::edge::presence([]);
 
             let mut alone: Vec<Engine> = (0..n).map(|_| bench.engine()).collect();
             let started = Instant::now();
             for (e, s) in alone.iter_mut().zip(&sessions) {
-                e.render(&state, s).expect("a standalone render");
+                e.render(&state, s, &here).expect("a standalone render");
             }
             let alone_us = started.elapsed().as_micros();
             let unshared = fanout_footprint(&state, None, &alone.iter().collect::<Vec<_>>()).bytes;
@@ -429,7 +433,9 @@ fn what_a_fanout_costs_with_and_without_a_shared_dataflow() {
             let mut engines: Vec<Engine> = (0..n).map(|_| dataflow.subscriber()).collect();
             let started = Instant::now();
             for (e, s) in engines.iter_mut().zip(&sessions) {
-                dataflow.render(e, &state, 1, s).expect("a shared render");
+                dataflow
+                    .render(e, &state, 1, s, &here)
+                    .expect("a shared render");
             }
             let shared_us = started.elapsed().as_micros();
             let shared =
@@ -492,14 +498,15 @@ fn what_one_event_costs_a_connected_fanout() {
             let sessions: Vec<Value> = (0..n)
                 .map(|i| bench.runtime.session(&format!("u{}", i % OWNERS)))
                 .collect();
+            let here = beck_core::edge::presence([]);
 
             let mut alone: Vec<Engine> = (0..n).map(|_| bench.engine()).collect();
             for (e, s) in alone.iter_mut().zip(&sessions) {
-                e.render(&state, s).expect("warm");
+                e.render(&state, s, &here).expect("warm");
             }
             let started = Instant::now();
             for (e, s) in alone.iter_mut().zip(&sessions) {
-                e.render(&next, s).expect("step");
+                e.render(&next, s, &here).expect("step");
             }
             let alone_us = started.elapsed().as_micros();
             let alone_work: u64 = alone.iter().map(|e| e.work().total()).sum();
@@ -507,11 +514,11 @@ fn what_one_event_costs_a_connected_fanout() {
             let dataflow = Arc::new(SharedDataflow::new(bench.prepared.clone()));
             let mut engines: Vec<Engine> = (0..n).map(|_| dataflow.subscriber()).collect();
             for (e, s) in engines.iter_mut().zip(&sessions) {
-                dataflow.render(e, &state, 1, s).expect("warm");
+                dataflow.render(e, &state, 1, s, &here).expect("warm");
             }
             let started = Instant::now();
             for (e, s) in engines.iter_mut().zip(&sessions) {
-                dataflow.render(e, &next, 2, s).expect("step");
+                dataflow.render(e, &next, 2, s, &here).expect("step");
             }
             let shared_us = started.elapsed().as_micros();
             let shared_work: u64 =
@@ -567,11 +574,14 @@ fn what_the_arrangement_lifecycle_gives_back() {
         let sessions: Vec<Value> = (0..FANOUT)
             .map(|i| bench.runtime.session(&format!("u{}", i % OWNERS)))
             .collect();
+        let here = beck_core::edge::presence([]);
 
         let dataflow = Arc::new(SharedDataflow::new(bench.prepared.clone()));
         let mut engines: Vec<Engine> = (0..FANOUT).map(|_| dataflow.subscriber()).collect();
         for (e, s) in engines.iter_mut().zip(&sessions) {
-            dataflow.render(e, &state, 1, s).expect("a shared render");
+            dataflow
+                .render(e, &state, 1, s, &here)
+                .expect("a shared render");
         }
         let connected =
             fanout_footprint(&state, Some(&dataflow), &engines.iter().collect::<Vec<_>>()).bytes;
@@ -613,16 +623,17 @@ fn what_the_arrangement_lifecycle_gives_back() {
     for lag in [0u64, 1, 4, 16, 70] {
         let dataflow = Arc::new(SharedDataflow::new(bench.prepared.clone()));
         let session = bench.runtime.session("u0");
+        let here = beck_core::edge::presence_of("u0");
         let mut keen = dataflow.subscriber();
         let mut slow = (lag > 0).then(|| dataflow.subscriber());
         for v in 0..=VERSIONS {
             dataflow
-                .render(&mut keen, &states[v as usize], v, &session)
+                .render(&mut keen, &states[v as usize], v, &session, &here)
                 .expect("the keen subscriber renders");
             // The laggard's last render, after which it stops looking and falls `lag` behind.
             if let (Some(slow), true) = (slow.as_mut(), v + lag == VERSIONS) {
                 dataflow
-                    .render(slow, &states[v as usize], v, &session)
+                    .render(slow, &states[v as usize], v, &session, &here)
                     .expect("the laggard renders");
             }
         }

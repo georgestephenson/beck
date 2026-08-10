@@ -168,7 +168,10 @@ identity = external(issuer="https://login.acme.com")  # Beck is a relying party 
   per-session signals ([`03`](03-type-and-effect-system.md) §3.8) hang off verified claims.
 - Rung 0 (`beck run`) uses a dev-mode identity: auto-login as declared test users, zero setup.
 - **Presence** (who is connected now) ships v1 as a first-class non-durable `Signal` — it is both
-  the natural demo of per-session fanout and its permanent stress test.
+  the natural demo of per-session fanout and its permanent stress test. **Built**
+  ([`96`](96-presence-report.md)): `presence() : Signal[Map[Str, Int]] ! {cap.presence}`, refused to
+  the chokepoint (`B0515`) and to a Mode B page (`B0516`), and per subscriber rather than shared
+  because the shared dataflow is versioned by the log and this is the one input that is not.
 
 ## D7 — Offline and local-first: the explanation — **DECIDED** (offline-tolerant v1; CRDT-valued types v1.x; peer-to-peer out of scope)
 

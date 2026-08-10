@@ -293,6 +293,10 @@ fn every_corpus_program_is_assessable_and_none_of_them_is_a_mystery() {
                     "{name}: `{}` is incremental and applies nothing",
                     a.label
                 ),
+                // A vertex that applies nothing at all is its own verdict rather than an
+                // `Incremental` with an empty explanation — which is what this gate caught the
+                // first time a corpus program had one (`docs/96` §96.5).
+                Verdict::Trivial => {}
                 Verdict::Recompute { because } => assert!(!because.is_empty()),
                 Verdict::Effectful { effects } => assert!(!effects.is_empty()),
             }
