@@ -148,7 +148,12 @@ pub enum Trap {
 }
 
 impl Trap {
-    fn code(self) -> u32 {
+    /// The number the compiled program stores in the error cell.
+    ///
+    /// Public because it is a **protocol** rather than an implementation detail: a second emitter
+    /// stores these (`beck-clif`), the host decodes them through [`Trap::from_code`], and two
+    /// spellings of one wire would be the drift this workspace spends its gates on.
+    pub fn code(self) -> u32 {
         match self {
             Trap::AddOverflow => 1,
             Trap::SubOverflow => 2,

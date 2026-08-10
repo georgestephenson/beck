@@ -551,6 +551,10 @@ impl Client {
         match (self.view)(vec![
             state.clone(),
             edge::session(&self.viewer.actor, self.claims(), &self.viewer.path),
+            // Empty, and the compiler is what makes that unobservable: a component that reads
+            // `presence` is refused Mode B (`B0516`), because who is connected is a fact the
+            // server holds about its own sockets and is in neither the accumulator nor the log.
+            edge::presence([]),
         ]) {
             Ok(Value::Html(h)) => Ok((*h).clone()),
             Ok(other) => Err(format!(

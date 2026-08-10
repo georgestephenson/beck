@@ -710,7 +710,7 @@ async fn mode_b_cold_starts_with_the_server_gone() {
 }
 }
 
-// --------------------------------------------------------------- client polish (docs/96)
+// --------------------------------------------------------------- client polish (docs/98)
 
 browser_test! {
 /// A link, in Mode A: the address bar moves, the server re-renders for the new session, and what

@@ -247,6 +247,12 @@ model Envelope[T]:
     body: T
 ```
 
+*There is one other source, and it is a `Signal` rather than a `Stream`.* `presence()` is who is
+connected now ([`10`](10-decisions.md) D6, built in [`96`](96-presence-report.md)) — the only input
+to a view that **moves without an event**. It performs `cap.presence`, which is what places it on
+the server; the chokepoint may not read it, because an event whose existence depended on who
+happened to be connected would not survive a replay.
+
 Two rules the review pass made explicit ([`14`](14-review-findings.md) F5, F3): the envelope
 records a durable *identity*, never the `Session` capability itself — tokens and live capabilities
 must not be persisted into an immutable log; and **only validated events are durably logged** — raw
@@ -258,10 +264,10 @@ our own auth code — with verified claims mapped to typed capabilities
 ([`10`](10-decisions.md) D6).
 
 > It carries a third field that **nothing verifies and nothing should**: `path`, the route the
-> client says it is on ([`96`](96-client-polish-report.md)). `actor` and `claims` say *who* is
+> client says it is on ([`98`](98-client-polish-report.md)). `actor` and `claims` say *who* is
 > asking and are a provider's answer; `path` says *where* they are and is the browser's own
 > statement about itself. The two halves are told apart structurally where it matters — a Mode B
-> page may read the second and not the first (§96.2) — and the route cannot reach a **fold**,
+> page may read the second and not the first (§98.2) — and the route cannot reach a **fold**,
 > because an `Envelope` carries the actor's name and nothing else, so no replay depends on where
 > anybody was browsing.
 

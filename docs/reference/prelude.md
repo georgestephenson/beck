@@ -32,7 +32,7 @@ What a user's type may implement to join something the language already has. `Nu
 
 ## Names
 
-99 of them.
+100 of them.
 
 | Name | Type |
 |---|---|
@@ -105,6 +105,7 @@ What a user's type may implement to join something the language already has. `Nu
 | `now` | `() -> Int ! {nondet}` |
 | `or` | `(Bool, Bool) -> Bool` |
 | `per_session` | `(Signal[a], (a, Session) -> b ! {e}) -> Signal[b] ! {e}` |
+| `presence` | `() -> Signal[Map[Str, Int]] ! {cap.presence}` |
 | `reveal` | `(internal[a]) -> a ! {cap.internal}` |
 | `secret_env` | `(Str) -> secret[Str] ! {env}` |
 | `signal_map` | `(Signal[a], (a) -> b ! {e}) -> Signal[b] ! {e}` |

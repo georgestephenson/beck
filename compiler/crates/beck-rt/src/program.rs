@@ -141,10 +141,25 @@ impl Runtime {
     }
 
     /// The per-session view. In Mode A this runs server-side and its output is diffed (§5.1).
+    ///
+    /// The roster it renders against is the viewer's own — `edge::presence_of` — because a caller
+    /// with no connection registry is rendering the page one actor sees while looking at it.
+    /// [`Runtime::view_with`] is what an application uses, and it is the same function.
     pub fn view(&self, state: &Value, actor: &(impl Viewer + ?Sized)) -> Result<Html> {
+        self.view_with(state, actor, &beck_core::edge::presence_of(actor.actor()))
+    }
+
+    /// The same view, against a roster somebody else is keeping (`crate::presence`).
+    pub fn view_with(
+        &self,
+        state: &Value,
+        actor: &(impl Viewer + ?Sized),
+        here: &Value,
+    ) -> Result<Html> {
         let out = (self.view_fn)(vec![
             state.clone(),
             session(actor.actor(), claims_of(actor), actor.path()),
+            here.clone(),
         ])
         .map_err(|e| anyhow!("{e}"))
         .context("rendering the view")?;
@@ -193,11 +208,13 @@ impl Runtime {
         engine: &mut Engine,
         state: &Value,
         actor: &(impl Viewer + ?Sized),
+        here: &Value,
     ) -> Result<Html> {
         let out = engine
             .render(
                 state,
                 &session(actor.actor(), claims_of(actor), actor.path()),
+                here,
             )
             .map_err(|e| anyhow!("{e}"))
             .context("maintaining the view")?;
@@ -223,6 +240,7 @@ impl Runtime {
         state: &Value,
         version: u64,
         actor: &(impl Viewer + ?Sized),
+        here: &Value,
     ) -> Result<(Html, u64)> {
         let (out, at) = shared
             .render(
@@ -230,6 +248,7 @@ impl Runtime {
                 state,
                 version,
                 &session(actor.actor(), claims_of(actor), actor.path()),
+                here,
             )
             .map_err(|e| anyhow!("{e}"))
             .context("maintaining the view")?;

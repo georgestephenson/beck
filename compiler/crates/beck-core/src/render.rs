@@ -267,6 +267,8 @@ pub struct Decision {
     /// What the view can observe about the session. **This** is what decides Mode B eligibility:
     /// a page may vary by where the browser is and may not vary by who is holding it.
     pub uses: SessionUse,
+    /// True when the view reads `presence()`, which is the second fact that decides it.
+    pub reads_presence: bool,
     /// Where the component is declared, for a diagnostic.
     pub span: Span,
 }
@@ -308,6 +310,7 @@ impl Decision {
             no_optimism,
             per_session: roles.view_is_per_session,
             uses: SessionUse::of(&roles.view, defs),
+            reads_presence: roles.view_reads_presence,
             // A declared mode is refused where it was written; a defaulted one, at the component.
             span: declared.map_or(span, |(_, s)| s),
         }
@@ -380,6 +383,16 @@ impl Decision {
         }
         line(&mut out, "reads of session", self.uses.describe());
         out.push('\n');
+        // The counterfactual is the useful half, so the *reason* a page cannot move has to be the
+        // one that applies. A page reading the roster is refused whatever it does with the session.
+        if self.mode == Mode::Server && self.reads_presence {
+            out.push_str(
+                "This page reads `presence`, so it cannot move to the browser: `@render(client)` \
+                 would be refused (B0516). Who is connected is in neither the accumulator nor the \
+                 log — it is a fact the server holds about its own sockets.\n",
+            );
+            return out;
+        }
         match (self.mode, &self.uses) {
             (Mode::Server, SessionUse::None) => out.push_str(
                 "This page is a function of the state alone, so `@render(client)` would move it \
@@ -408,8 +421,12 @@ impl Decision {
 
     /// Refuse a component that may not render where it says it does.
     ///
-    /// One condition, and the reason there is only one is worth writing down. Mode B puts the
-    /// **accumulator** on the wire, so the obvious second check is §3.5's `Sendable` — and it is
+    /// Two conditions, and they are the two kinds of thing a page can read that a browser handed
+    /// the accumulator would not have: **who** is asking ([`SessionUse`]) and **who is connected**
+    /// (`presence`). Where the browser *is* is not one of them — it chose the route.
+    ///
+    /// What is deliberately not a third condition is worth writing down. Mode B puts the
+    /// **accumulator** on the wire, so the obvious check is §3.5's `Sendable` — and it is
     /// already discharged: a durable fold's state must be *storable* (`B0411`), storable is
     /// strictly stronger than sendable ([`crate::secure`]), and the accumulator is what crosses.
     /// A `secret[T]` therefore cannot reach a Mode B client because it cannot reach the log, and
@@ -441,6 +458,29 @@ impl Decision {
                 .with_fix(
                     "render this component on the server (the default), or make the page a \
                      function of the state and the route alone",
+                ),
+            );
+        }
+        if self.reads_presence {
+            diags.push(
+                Diagnostic::error(
+                    "B0516",
+                    format!(
+                        "`{}` reads `presence`, so it cannot render on the client",
+                        self.component
+                    ),
+                    self.span,
+                )
+                .with_primary_label("`@render(client)` sends the browser the accumulator")
+                .with_note(
+                    "Who is connected is not in the accumulator and is not in the log: it is a \
+                     fact the server holds about its own sockets. A browser handed the state \
+                     would have nothing to render this part of the page from, and shipping the \
+                     roster alongside would be a second wire nothing reconciles by `seq`.",
+                )
+                .with_fix(
+                    "render this component on the server (the default), or take `presence` out of \
+                     its page",
                 ),
             );
         }

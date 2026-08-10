@@ -282,7 +282,7 @@ where it is held to it.
 |---|---|
 | The language, construct by construct | [`11`](11-language-tour.md) |
 | Every error code, the prelude, the effect and tier matrix | [`docs/reference/`](reference/README.md), generated from the compiler |
-| Thirty-one worked programs, none with a placement annotation | [`compiler/corpus/`](../compiler/corpus/) |
+| Thirty-two worked programs, none with a placement annotation | [`compiler/corpus/`](../compiler/corpus/) |
 | The todo sketch this project grew from | [`compiler/examples/todo.beck`](../compiler/examples/todo.beck) |
 | Why any of it is shaped this way | [`01`](01-vision-and-premise.md), then [`03`](03-type-and-effect-system.md) |
 | What is *not* built | every report's "what is not built" section, and [`43`](43-threat-model.md) §43.4 |

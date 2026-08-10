@@ -39,3 +39,4 @@ The split this directory creates:
 | [0021](0021-the-native-backend-writes-ir-and-runs-a-process.md) | The native backend writes LLVM IR as text and runs the result as a process, so `forbid(unsafe)` survives it |
 | [0022](0022-mode-b-ships-the-backend-it-has.md) | Mode B's kernel is the evaluator compiled to WebAssembly, not a WebAssembly code generator — the mode's questions are not the backend's |
 | [0023](0023-tls-and-the-signature-it-brings.md) | rustls with aws-lc-rs — one dependency for transport security *and* the asymmetric signature an OIDC relying party verifies |
+| [0024](0024-cranelift-emits-an-object-and-a-linker-makes-it-a-program.md) | Cranelift as a crate, emitting an object a linker turns into a program — the `unsafe` ADR 0021 refused was in *running* code, not in generating it |

@@ -189,6 +189,14 @@ pub enum Prim {
     Reveal,
     // ---- the symbolic signal vocabulary (§3.7) ----
     MergeClients,
+    /// `presence()` — who is connected now, as a signal that is not a function of the log.
+    ///
+    /// D6's last row. It performs `cap.presence` rather than an atom of its own, which is F16
+    /// ([`docs/14`](../../../../../docs/14-review-findings.md)) taken literally: "presence signals
+    /// leak who-is-online; gate behind a capability like any other view". The capability is also
+    /// what places it — no tier below the server discharges a `cap.*` — so a fold cannot read the
+    /// roster and a view reaches it across a declared edge.
+    Presence,
     StreamFilterMap,
     Fold,
     Durable,
@@ -301,6 +309,7 @@ impl Prim {
             InternalOf => "internal_of",
             Reveal => "reveal",
             MergeClients => "merge_clients",
+            Presence => "presence",
             StreamFilterMap => "filter_map",
             Fold => "fold",
             Durable => "durable",
@@ -321,6 +330,11 @@ impl Prim {
             // "Every connected client's send!s, interleaved. Arbitrary order — this is the
             // nondeterminism; there is exactly one of these."
             Prim::MergeClients => vec![Effect::Ingress],
+            // Who is connected is not a function of the log, so this is the second source of
+            // nondeterminism in a Beck program — and the only one a *view* may read. The atom is a
+            // capability rather than a new label: F16 asks for exactly that, and `cap.*` is what
+            // keeps it off the tiers that would make it unreplayable (§3.3).
+            Prim::Presence => vec![Effect::Cap(std::sync::Arc::from("presence"))],
             Prim::Durable => vec![Effect::Durable],
             Prim::NewUuid | Prim::Now => vec![Effect::Nondet],
             // The scope performs `spawn` itself; what its children perform is charged by the

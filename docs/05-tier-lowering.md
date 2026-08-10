@@ -40,7 +40,7 @@ WASM, no size crisis, trivially good Lighthouse scores) — with Mode B in Phase
 > a component whose view reads the session cannot render on the client, since Mode B hands the
 > browser the state a per-session view was filtering (§94.2). *That refusal is narrower than it was
 > written: it is about **who** is asking, and reading `session.path` — where the browser is, which
-> the browser chose — is allowed ([`96`](96-client-polish-report.md) §96.2).* The kernel interprets rather than
+> the browser chose — is allowed ([`98`](98-client-polish-report.md) §98.2).* The kernel interprets rather than
 > compiles ([`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md)), which is what the size
 > budget below has to be read against: 179,195 bytes brotli once per application, 1,753 per
 > component.
@@ -74,21 +74,21 @@ WASM, no size crisis, trivially good Lighthouse scores) — with Mode B in Phase
 - **Progressive enhancement**: Mode A degrades to plain forms + full-page responses under
   `noscript` — generated from the same `view`, since the server can always render.
 
-> **The router is built** ([`96`](96-client-polish-report.md)), and this line is a correction rather
+> **The router is built** ([`98`](98-client-polish-report.md)), and this line is a correction rather
 > than a plan in two places. There are **no route declarations**: a route is a field of `Session`,
 > so the page is a pure function of it and "which page is this" is written in the program. And
 > navigation is **not** a command — a command is a proposal that becomes an event and reaches the
 > log, and where a browser is is neither. It is a `Session` that moved, which is why Mode A answers
 > a navigation with the difference between two pages and Mode B answers it with nothing at all.
-> Focus and scroll are kept by the patch interpreter rather than by frame identity (§96.5), at a
-> cost proportional to the patch. **Lazy routes are not built** and §96.7 says what they wait on.
+> Focus and scroll are kept by the patch interpreter rather than by frame identity (§98.5), at a
+> cost proportional to the patch. **Lazy routes are not built** and §98.7 says what they wait on.
 > Progressive enhancement is not built either — but a route *is* a URL the server renders, which is
 > the half of it that mattered most.
 
 **Debugging**: source maps from patch frames back to `view` expressions; a devtools extension
 showing the signal graph, patch traffic, and pending (optimistic) state; DWARF for Mode B WASM.
 
-> The **panel** is built ([`96`](96-client-polish-report.md) §96.6) — all three of the things this
+> The **panel** is built ([`98`](98-client-polish-report.md) §98.6) — all three of the things this
 > line names — and it is a page the server serves rather than an extension, for a reason written out
 > there. Source maps and DWARF are not. What a page could already be asked is whether its client is
 > live — `data-b-ready` carries the mode's letter and `beck:ready`, `beck:rejected` and `beck:error`
@@ -104,7 +104,7 @@ endpoints — compiles to native binaries, statically linked, one per `service`.
 
 | Mode | Backend | Evidence |
 |---|---|---|
-| `beck dev`, hot reload | **Cranelift** | ~40% faster whole-compiles; codegen step ~an order of magnitude faster than LLVM |
+| `beck dev`, hot reload | **Cranelift**, as a crate, emitting an object a linker turns into a program — **built** for the scalar subset ([`97`](97-cranelift-report.md), [`adr/0024`](adr/0024-cranelift-emits-an-object-and-a-linker-makes-it-a-program.md)) | ~40% faster whole-compiles; codegen step ~an order of magnitude faster than LLVM |
 | `beck build --release` | **LLVM**, as textual IR through the host's `clang` — **built** for the scalar subset ([`93`](93-llvm-backend-report.md)), not via `inkwell` ([`adr/0021`](adr/0021-the-native-backend-writes-ir-and-runs-a-process.md)) | Cranelift output ~14% slower; Perry's 2026 Cranelift→LLVM move turned a deficit into 1.7–24.6× wins over Node.js |
 
 The two must agree observably — enforced by differential tests ([`04`](04-compiler-architecture.md)
@@ -116,6 +116,13 @@ The two must agree observably — enforced by differential tests ([`04`](04-comp
 > view that builds `Html` and every effect in this section still run on the tree-walker, and this
 > section's "compiles to native binaries, statically linked, one per `service`" remains a design.
 > The seam held: not one line of `beck-rt` changed.
+>
+> *Both rows exist now* ([`97`](97-cranelift-report.md)), over the same scalar subset and held to
+> the same programs: `beck native --backend cranelift|llvm`, and "the two must agree observably" is
+> a **three-way** differential — the tree-walker, LLVM and Cranelift on every call. The heap is
+> what still bounds them, and it bounds both equally, so the sentence above about records, `Html`
+> and effects is unchanged. What *is* new is that the second implementation exists to disagree:
+> §97.4 is what holding two emitters to one subset found.
 
 **Runtime we must ship** (the "Roc platform" of Beck — an effectful Rust host owning I/O, scheduling
 and memory, executing the pure program):
@@ -182,6 +189,12 @@ functions. The lowering question is substrates. **We do not write a storage engi
   ([`89`](89-query-fusion-report.md)), and the condition that turned out to matter is this
   paragraph's: a rewrite may not fuse a shared operator into a per-session one, because the smaller
   plan is the slower program.
+
+  *The cut has a second thing on the per-subscriber side of it, and it is not the session.*
+  `presence()` ([`96`](96-presence-report.md)) is the same value for everybody and still runs per
+  subscriber, because the shared dataflow is versioned by the log's `seq` and the roster moves when
+  `seq` does not: two subscribers at one version must be handed one input, and there is no version
+  at which they can be. Sharing it needs a second clock, which is §96.8's first unbuilt item.
 - v0.1 does **not** need the dataflow engine: full recompute per event on in-memory folds is
   semantically identical and fine at todo-app scale; the incremental plan is an optimisation with
   an exact correctness oracle (recompute) to test against — a luxurious position for CI
