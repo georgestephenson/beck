@@ -451,7 +451,8 @@ jobs:
   the-browser-runs-the-residue:
     # The one job that executes the JavaScript. Everything else in this workflow tests Beck against
     # Beck; `browser.rs` loads both rendering modes in headless Chromium and asserts that the DOM is
-    # the page the server would have rendered (docs/94 §94.12).
+    # the page the server would have rendered (docs/94 §94.12) — and loads the playground, where the
+    # compiler itself is the WebAssembly and the application runs in the tab (docs/96).
     #
     # The two `BECK_REQUIRE_*` variables are the point of the job, for the reason `conformance`
     # states about its own: both suites *skip* when the thing they need is absent, which is right on
@@ -477,11 +478,14 @@ jobs:
       - name: the kernel builds for the browser
         run: cargo build -p beck-wasm --release --target wasm32-unknown-unknown
 
-      - name: both modes, in Chromium
+      - name: the playground builds for the browser
+        run: cargo build -p beck-play --release --target wasm32-unknown-unknown
+
+      - name: both modes and the playground, in Chromium
         env:
           BECK_REQUIRE_WASM: "1"
           BECK_REQUIRE_BROWSER: "1"
-        run: cargo test --test browser --test mode_b -- --nocapture
+        run: cargo test --test browser --test mode_b --test playground -- --nocapture
 
   conformance:
     # Rung 5 of the ladder in docs/21 §21.4: the API server is the only authority on whether an

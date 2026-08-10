@@ -197,6 +197,7 @@ dependencies = [
  "beck-infra",
  "beck-llvm",
  "beck-macro",
+ "beck-play",
  "beck-rt",
  "beck-syntax",
  "beck-wasm",
@@ -266,6 +267,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "beck-host"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "beck-core",
+ "postcard",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "beck-infra"
 version = "0.1.0"
 dependencies = [
@@ -297,6 +309,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "beck-play"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "beck-core",
+ "beck-diag",
+ "beck-eval",
+ "beck-host",
+ "beck-infra",
+ "beck-macro",
+ "beck-rt",
+ "beck-syntax",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "beck-rt"
 version = "0.1.0"
 dependencies = [
@@ -305,6 +338,7 @@ dependencies = [
  "aws-lc-rs",
  "beck-core",
  "beck-diag",
+ "beck-host",
  "blake3",
  "futures-util",
  "http-body-util",

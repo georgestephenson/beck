@@ -1,0 +1,109 @@
+/* The playground's own presentation. Nothing here is generated and nothing here is a Beck
+   program's page — the application's own markup arrives inside the client iframes, styled by
+   `client.css`, so that what a visitor sees the program render is the program's own page. */
+
+:root {
+  --ink: #10141c;
+  --paper: #fbfaf7;
+  --line: #d8d4cb;
+  --quiet: #6a6558;
+  --accent: #6c3ce9;
+  --bad: #b3261e;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: var(--ink);
+  background: var(--paper);
+}
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.6rem 1rem;
+  border-bottom: 1px solid var(--line);
+}
+
+header h1 { font-size: 1rem; margin: 0; letter-spacing: 0.02em; font-weight: 600; }
+header h1 .dot { color: var(--accent); }
+header label { font-size: 0.85rem; color: var(--quiet); }
+
+button {
+  font: inherit;
+  padding: 0.25rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+}
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+#run { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+
+.status { margin-left: auto; font-size: 0.85rem; color: var(--quiet); }
+.status.bad { color: var(--bad); }
+
+#split { display: grid; grid-template-columns: 1fr 1fr; height: 62vh; }
+.pane { min-width: 0; display: flex; flex-direction: column; }
+.pane.source { border-right: 1px solid var(--line); }
+
+#source {
+  flex: 1;
+  border: 0;
+  resize: none;
+  padding: 1rem;
+  font: 13px/1.55 var(--mono);
+  background: transparent;
+  color: inherit;
+  outline: none;
+  tab-size: 4;
+}
+
+#tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  padding: 0.4rem 0.6rem;
+  border-bottom: 1px solid var(--line);
+}
+#tabs button { font-size: 0.78rem; padding: 0.1rem 0.5rem; }
+#tabs button.on { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+
+#out {
+  flex: 1;
+  margin: 0;
+  padding: 1rem;
+  overflow: auto;
+  font: 12.5px/1.5 var(--mono);
+  white-space: pre;
+}
+
+#run-panel { border-top: 1px solid var(--line); padding: 1rem; }
+#run-panel h2 { font-size: 0.95rem; margin: 0 0 0.8rem; }
+#run-panel h2 small, #history h3 small { display: block; font-weight: 400; color: var(--quiet); font-size: 0.8rem; }
+
+#clients { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+#clients figure { margin: 0; }
+#clients figcaption { font-size: 0.8rem; color: var(--quiet); margin-bottom: 0.3rem; }
+#clients iframe { width: 100%; height: 15rem; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+
+#history { margin-top: 1.2rem; }
+#history h3 { font-size: 0.9rem; margin: 0 0 0.5rem; }
+#scrub { width: 100%; }
+#at { font: 12px var(--mono); color: var(--quiet); }
+.preview {
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+  padding: 0.5rem;
+  margin: 0.5rem 0;
+  background: #fff;
+  opacity: 0.85;
+}
+#log { width: 100%; border-collapse: collapse; font: 12px var(--mono); }
+#log td { border-top: 1px solid var(--line); padding: 0.15rem 0.4rem; vertical-align: top; }
+#log td:first-child { color: var(--quiet); width: 3rem; }

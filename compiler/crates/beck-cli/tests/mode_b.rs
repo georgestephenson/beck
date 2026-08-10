@@ -696,52 +696,58 @@ fn the_kernel_builds_for_the_browser() {
     );
 }
 
-/// The extent of the one exception to the workspace's `forbid(unsafe_code)`.
+/// The extent of the exception to the workspace's `forbid(unsafe_code)`.
 ///
-/// `beck-wasm` denies rather than forbids, because rustc classifies `#[no_mangle]` as unsafe code
-/// and a WebAssembly module that exports nothing cannot be called. That is a narrow exception and
-/// this is what keeps it narrow: no `unsafe` block, no `unsafe fn`, no `unsafe impl`, and every
+/// Two crates deny rather than forbid, and both for the same reason: rustc classifies
+/// `#[no_mangle]` as unsafe code, and a WebAssembly module that exports nothing cannot be called.
+/// `beck-wasm` is Mode B's kernel and `beck-play` is the playground (`docs/98` §98.5). That is a
+/// narrow exception and this is what keeps it narrow: no `unsafe` block, no `unsafe fn`, and every
 /// `allow` attached to an export. Every other crate still inherits the workspace lint.
+///
+/// The count is per crate and exact, so a fifth export in the kernel or a fourth in the playground
+/// is a decision somebody has to come here and make.
 #[test]
 fn the_wasm_boundary_is_the_only_exception_to_forbid_unsafe() {
-    let crate_dir = root().join("crates/beck-wasm");
-    let mut allows = 0;
-    for entry in std::fs::read_dir(crate_dir.join("src")).expect("the kernel's sources") {
-        let path = entry.expect("an entry").path();
-        let src = std::fs::read_to_string(&path).expect("readable");
-        for (n, line) in src.lines().enumerate() {
-            let code = line.split("//").next().unwrap_or("");
-            for forbidden in ["unsafe {", "unsafe fn", "unsafe impl", "unsafe trait"] {
-                assert!(
-                    !code.contains(forbidden),
-                    "{}:{}: `{forbidden}` in a crate that is supposed to have none",
-                    path.display(),
-                    n + 1
-                );
-            }
-            if code.contains("allow(unsafe_code)") {
-                allows += 1;
-                assert!(
-                    src.lines()
-                        .nth(n + 1)
-                        .is_some_and(|l| l.contains("no_mangle")),
-                    "{}:{}: an allow that is not on an export",
-                    path.display(),
-                    n + 1
-                );
+    for (crate_name, exports) in [("beck-wasm", 4), ("beck-play", 3)] {
+        let crate_dir = root().join("crates").join(crate_name);
+        let mut allows = 0;
+        for entry in std::fs::read_dir(crate_dir.join("src")).expect("the crate's sources") {
+            let path = entry.expect("an entry").path();
+            let src = std::fs::read_to_string(&path).expect("readable");
+            for (n, line) in src.lines().enumerate() {
+                let code = line.split("//").next().unwrap_or("");
+                for forbidden in ["unsafe {", "unsafe fn", "unsafe impl", "unsafe trait"] {
+                    assert!(
+                        !code.contains(forbidden),
+                        "{}:{}: `{forbidden}` in a crate that is supposed to have none",
+                        path.display(),
+                        n + 1
+                    );
+                }
+                if code.contains("allow(unsafe_code)") {
+                    allows += 1;
+                    assert!(
+                        src.lines()
+                            .nth(n + 1)
+                            .is_some_and(|l| l.contains("no_mangle")),
+                        "{}:{}: an allow that is not on an export",
+                        path.display(),
+                        n + 1
+                    );
+                }
             }
         }
+        assert_eq!(
+            allows, exports,
+            "{crate_name}'s exception is {exports} export attributes, no more"
+        );
     }
-    assert_eq!(
-        allows, 4,
-        "the exception is four export attributes, no more"
-    );
 
     // And nothing else in the workspace has taken the same liberty.
     for entry in std::fs::read_dir(root().join("crates")).expect("the crates") {
         let path = entry.expect("an entry").path();
         let manifest = path.join("Cargo.toml");
-        if !manifest.is_file() || path.ends_with("beck-wasm") {
+        if !manifest.is_file() || path.ends_with("beck-wasm") || path.ends_with("beck-play") {
             continue;
         }
         let toml = std::fs::read_to_string(&manifest).expect("readable");
