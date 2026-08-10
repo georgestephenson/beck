@@ -1,0 +1,203 @@
+name: release
+
+# The pipeline `docs/28-releases-and-deployment.md` §28.2 describes, which until now was the
+# section's own subject rather than its claim: "the commands exist; the pipeline does not".
+#
+# A release is a **tag on a commit that passed the whole matrix**. That is enforced here by calling
+# `compiler.yml` rather than by restating any of its gates — the tagged commit runs the same jobs a
+# pull request runs, and `publish` needs them, so a red suite cannot produce a release.
+#
+# Everything a binary needs is in `release/build.sh` and `install.sh`, which are shell scripts and
+# not YAML, because §8.3 item 1 and `docs/19-phase-1-report.md` §19.4 item 10 say an artefact nobody
+# has executed is a design document. A person can run either one; this file is the schedule.
+#
+#   git tag v0.3.0 && git push origin v0.3.0
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build, without the leading v (a dry run: nothing is published)"
+        required: true
+        type: string
+
+# The default for every job. `publish` raises its own, and it is the only one that writes.
+permissions:
+  contents: read
+
+# No `concurrency` here on purpose. A reusable workflow inherits `github.workflow` from its caller,
+# so a group naming it would be the same string in `suite` as in this file — and a job waiting on a
+# workflow that is waiting on its group is a release that never finishes. Tags are unique; there is
+# nothing to serialise.
+
+jobs:
+  the-workflows-are-yaml:
+    # A tag push does not run `compiler.yml`'s copy of this check (it triggers on branches and pull
+    # requests), so the release carries its own — docs/adr/0005's rule applied to the one workflow
+    # that cannot rely on another to report it.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: every workflow file parses
+        run: |
+          python3 - <<'PY'
+          import glob, sys, yaml
+          files = sorted(glob.glob(".github/workflows/*.yml") + glob.glob(".github/workflows/*.yaml"))
+          assert files, "no workflow files found — the glob is wrong, not the repo"
+          for f in files:
+              yaml.safe_load(open(f))
+              print(f, "parses")
+          PY
+
+  the-tag-is-the-version:
+    # `release/build.sh --expect-tag` compares the tag against `compiler/Cargo.toml`, so this job
+    # is the same check the binaries job would fail on, run first and cheaply. What it prevents is
+    # a published `beck` whose `--version` contradicts the release it was downloaded from.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        name: the workspace version and the tag agree
+        run: |
+          version="$(release/version.sh)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          want="${{ inputs.version || github.ref_name }}"
+          release/build.sh --expect-tag "$want" --check-only
+          echo "releasing $version"
+
+  suite:
+    # The whole matrix, on the tagged commit. Not a subset, and not a copy.
+    needs: [the-tag-is-the-version]
+    uses: ./.github/workflows/compiler.yml
+
+  binaries:
+    needs: [the-tag-is-the-version]
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Every build is native — no cross toolchain, no `cross`, no emulator — so each artefact
+          # is `cargo build --release` on the platform it is for. The Linux runners are 22.04 and
+          # not `-latest` on purpose: a glibc-linked binary runs on that release and newer, and
+          # building on the newest image would publish a binary that refuses to start on a
+          # two-year-old distribution. It is the one place the release deviates from CI's runner,
+          # and it deviates in the image rather than in the steps.
+          - target: x86_64-unknown-linux-gnu
+            runs-on: ubuntu-22.04
+          - target: aarch64-unknown-linux-gnu
+            runs-on: ubuntu-22.04-arm
+          - target: x86_64-apple-darwin
+            runs-on: macos-13
+          - target: aarch64-apple-darwin
+            runs-on: macos-14
+    runs-on: ${{ matrix.runs-on }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: compiler
+      - name: cmake and a C compiler
+        # SQLite and mimalloc are vendored C and aws-lc-rs builds with CMake (docs/adr/0017,
+        # docs/adr/0019, docs/adr/0023). The GitHub images have both; this fails loudly if one ever
+        # stops shipping them, rather than surfacing as a linker error half an hour in.
+        run: cmake --version && cc --version
+      - name: build
+        run: |
+          release/build.sh \
+            --target "${{ matrix.target }}" \
+            --expect-version "${{ needs.the-tag-is-the-version.outputs.version }}" \
+            --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: beck-${{ matrix.target }}
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    # `needs: [suite, binaries]` is the whole of §28.2 item 1's "refuses to publish on any red":
+    # every gate in `compiler.yml` is a predecessor of this job, so there is no path to a release
+    # that skips one.
+    needs: [the-tag-is-the-version, suite, binaries]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.the-tag-is-the-version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: staging
+          merge-multiple: true
+
+      - name: one SHA256SUMS for the release
+        working-directory: staging
+        run: |
+          cat ./*.tar.gz.sha256 > SHA256SUMS
+          rm -f ./*.tar.gz.sha256
+          # Re-checked here rather than trusted from the job that wrote it: this is the file
+          # `install.sh` verifies against, so it is worth one `sha256sum -c` on the assembled form.
+          sha256sum -c SHA256SUMS
+          cat SHA256SUMS
+
+      - name: every platform the installer offers is a platform this release has
+        # The set equality `release.rs` asserts against the workflow, asserted again against the
+        # artefacts that actually arrived — `fail-fast: false` means one target can fail and the
+        # others still upload, so the missing thing would be a tarball rather than a line of YAML.
+        run: |
+          for target in $(grep '^SUPPORTED=' install.sh | cut -d'"' -f2); do
+            test -f "staging/beck-$VERSION-$target.tar.gz" \
+              || { echo "install.sh offers $target and the release has no tarball for it"; exit 1; }
+          done
+
+      - name: the installer installs what this release built
+        # The pipeline runs its own installer against its own artefacts, over `file://`. A release
+        # whose install script cannot install it is the failure this is here to make impossible.
+        env:
+          BECK_VERSION: ${{ needs.the-tag-is-the-version.outputs.version }}
+          BECK_BASE_URL: file://${{ github.workspace }}/staging
+          BECK_INSTALL_DIR: ${{ github.workspace }}/installed
+        run: |
+          ./install.sh
+          "$BECK_INSTALL_DIR/beck" --version
+          "$BECK_INSTALL_DIR/beck" check compiler/examples/todo.beck
+
+      - name: publish
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp install.sh staging/install.sh
+          gh release create "${{ github.ref_name }}" \
+            --title "beck ${{ github.ref_name }}" \
+            --notes "$(cat <<'NOTES'
+          Built from this tag by `.github/workflows/release.yml`, after the whole of
+          `compiler.yml` passed on the tagged commit.
+
+          ## Install
+
+          ```
+          curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sh
+          ```
+
+          It downloads the tarball for your platform, checks it against `SHA256SUMS`, and puts
+          `beck` in `~/.beck/bin`. `SHA256SUMS` is a checksum and not a signature: it proves the
+          download was not corrupted, and nothing about the release page. A signature and a
+          transparency log are `docs/99-supply-chain-report.md` §99.7's unbuilt items.
+
+          ## What this is
+
+          `docs/README.md` indexes the design documents and the build reports. `beck --version`
+          prints the commit and the target triple, so a bug report can name the artefact.
+          NOTES
+          )" \
+            staging/*

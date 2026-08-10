@@ -26,8 +26,20 @@ use clap::{Parser, Subcommand, ValueEnum};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
+/// The number identifies the release; the commit and the triple identify which of its artefacts
+/// this is (`docs/28-releases-and-deployment.md` §28.2). `build.rs` supplies the last two, and both
+/// read `unknown` when built from a source tree with no git.
+const VERSION: &str = concat!(
+    env!("CARGO_PKG_VERSION"),
+    " (",
+    env!("BECK_COMMIT"),
+    " ",
+    env!("BECK_TARGET"),
+    ")"
+);
+
 #[derive(Parser)]
-#[command(name = "beck", version, about = "The Beck compiler and runtime")]
+#[command(name = "beck", version = VERSION, about = "The Beck compiler and runtime")]
 struct Cli {
     #[command(subcommand)]
     command: Cmd,

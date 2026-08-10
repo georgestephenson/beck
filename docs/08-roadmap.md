@@ -411,8 +411,11 @@ expressiveness suite (three chapters of SICP and the Felleisen table, with chapt
 to Phase 5), incremental views, whose last part is
 [`89`](89-query-fusion-report.md)'s fusion, **identity**, whose last part is
 [`96`](96-presence-report.md)'s presence, and the supply-chain tooling
-([`92`](92-sbom-report.md), [`99`](99-supply-chain-report.md)) — whose remainder is a release
-pipeline rather than a piece of the bullet.
+([`92`](92-sbom-report.md), [`99`](99-supply-chain-report.md)) — whose remainder was a release
+pipeline rather than a piece of the bullet, and **that pipeline is now built**
+([`101`](101-the-release-and-the-installer-report.md)), with an installer in front of it and no tag
+pushed through it. What is still missing there is a signature a consumer can check: `beck sign`'s
+subject is an image manifest, and a release publishes tarballs (§101.6).
 **No bullet has a named remainder**: the concurrency-and-errors bullet has `Result`, error rows,
 `parallel:` and pattern matching with nesting, guards and alternatives
 ([`90`](90-nested-patterns-report.md), [`91`](91-guards-and-alternatives-report.md)); what
@@ -441,6 +444,7 @@ developer would ask in order:
 | "Can I trust the actor in my ownership check?" | With a verifying provider, yes ([`48`](48-identity-report.md)); against a real identity provider, yes ([`95`](95-oidc-relying-party-report.md)) — and `session.claims` says what they may do. The default still believes the client, and says so |
 | "Can my DBA see the data?" | `psql` against the read models ([`88`](88-read-models-and-pgwire-report.md)) — one table per collection, derived, no annotation |
 | "Where's the tutorial?" | [`86`](86-getting-started.md), published on the site since [`88`](88-read-models-and-pgwire-report.md) §88.8, and every program in it compiled and run by a test |
+| "How do I get the compiler?" | One command, since [`101`](101-the-release-and-the-installer-report.md) — and it has nothing to download until a tag is pushed, so today the answer is still "build it", which §86.1 now says in that order |
 
 **That last row has moved, and the criterion has not.** It measures a *person* — an outside
 developer building a non-trivial app without asking a question — and what the guide changes is that
@@ -448,8 +452,14 @@ the answer to "from what?" is no longer "there is nothing"; §86.8 is the list o
 cover. Every other row above is a prerequisite for a tutorial being worth writing, and §8.3 item 6
 — "write the tutorial as you build, and treat any sentence that requires an apology as a bug report
 against the design" — is the practice this phase has least honoured. The apologies it would
-currently need are shorter than they were and still enumerable: no OIDC, no Mode B, no installation
-story, no released binary.
+currently need are shorter than they were and still enumerable — and the list this paragraph carried
+has been overtaken twice. ~~No OIDC~~ ([`95`](95-oidc-relying-party-report.md)), ~~no Mode B~~
+([`94`](94-mode-b-report.md)), ~~no installation story~~
+([`101`](101-the-release-and-the-installer-report.md)), **no released binary** — which is now one
+`git tag` rather than a piece of missing work, because the pipeline that would build it exists and
+has never run ([`101`](101-the-release-and-the-installer-report.md) §101.7). What is left to
+apologise for is the one an outside developer meets in week two rather than minute one: everything
+the language stores still walks, because neither code generator has a heap.
 
 ## Phase 4 — Production readiness (4–5 months)
 
@@ -873,8 +883,13 @@ No predecessors, and they never acquire any.
 
 **Wave 5 — the Phase 4 gates, arranged before Phase 4 rather than during it.** Supply-chain tooling
 (SLSA v1.2 provenance, 2026-element SBOMs, ~~signing~~ — **the signing machinery is built**
-([`99`](99-supply-chain-report.md)) and what is left of that row is the transparency log and a
-registry to push to — trusted publishing configured *before* the first publish); DST proper, on the
+([`99`](99-supply-chain-report.md)) and what is left of that row is the transparency log, a registry
+to push to, and a **subject the signer can take**: [`101`](101-the-release-and-the-installer-report.md)
+§101.6 found that `beck sign` signs an image manifest digest and a compiler release is a tarball, so
+the binaries carry a checksum and nothing more. ~~The pipeline a provenance attestation would attach
+to~~ exists now ([`101`](101-the-release-and-the-installer-report.md)), which was
+[`92`](92-sbom-report.md)'s stated reason for that row being empty, and the row is still empty —
+trusted publishing configured *before* the first publish); DST proper, on the
 seam Wave 0 created; then the operator, the replay tooling and the
 choreography. **Grammar-aware fuzzing is now due rather than pending**: [`42`](42-security-assurance.md)
 §42.9 pinned it with the trigger "the bound lands", and the bound has landed. Kani proofs of the
@@ -893,7 +908,7 @@ boundaries are real directories.
 | **A — type system** | `beck-core/src/check/`, `ty.rs`, `core.rs`, `prelude.rs`, `iface.rs` | Error rows and handlers; `@derive`; bignums and coercion | **Itself, completely** — see below |
 | **B — runtime and views** | `beck-rt/`, `beck-core/src/{engine,plan,incremental,pmap,signal}.rs` | Clock injection; the shared dataflow's release policy, history constant and render lock; SQL read models, pgwire, query fusion; Mode B's server half | Nothing in A, C, E or F |
 | **C — front end and tooling** | `beck-syntax/`, `beck-cli/`, `beck-diag/` | The recursion bound; the two syntax decisions; Unicode and UTS #39; LSP; `test --update`; fuzzing | A, if a syntax decision changes what the checker sees |
-| **D — process and supply chain** | `docs/`, `.github/`, `deny.toml`, `SECURITY.md` | Threat model, disclosure policy, memory-safety roadmap, `pending_security`, the four retargeted §12 rows, SLSA/SBOM/trusted publishing | Nothing in code |
+| **D — process and supply chain** | `docs/`, `.github/`, `deny.toml`, `SECURITY.md`, `release/`, `install.sh` | Threat model, disclosure policy, memory-safety roadmap, `pending_security`, the four retargeted §12 rows, SLSA/SBOM/trusted publishing, ~~the release pipeline and the installer~~ ([`101`](101-the-release-and-the-installer-report.md)) | Nothing in code — **except that the release lands in `Cargo.toml`, a `build.rs` and `--version`**, which §101.4 is about and which this cell had assumed away |
 | **E — backends** | `beck-eval/`, `beck-llvm/`, `beck-core/src/backend.rs`, any new codegen crate | ~~LLVM backend, native codegen, the differential suite~~ — **built for the scalar subset** ([`93`](93-llvm-backend-report.md)); what is left is a heap, the effects, and Cranelift | Nothing — the seam is why ([`19`](19-phase-1-report.md) §19.9), and [`93`](93-llvm-backend-report.md) is the first thing to test that claim: not one line of `beck-rt` changed |
 | **F — infrastructure** | `beck-infra/` | Effect-derived NetworkPolicy/RBAC/grants; Crossplane emitter; conformance rungs | Nothing |
 
@@ -917,10 +932,18 @@ Recommended pairings, in order:
 | ~~**Then**~~ | ~~Lane A: bignums, coercion, `@derive`~~ | ~~Lane B: SQL read models and pgwire~~ | **Half done, and the other half again.** Lane B was taken ([`88`](88-read-models-and-pgwire-report.md)) and the prediction held: `beck-core/src/read.rs`, `beck-rt/src/pgwire.rs`, one reader type on `engine.rs`, and nothing in `check/`, `ty.rs` or `core.rs`. Lane A is untouched, so this pairing was never run as a pair either — the fourth consecutive rewrite in which it was not |
 | **Now** | Lane A: ~~the pattern-matching completion the error-rows bullet still names~~ — **built**, with nesting, guards and alternatives ([`90`](90-nested-patterns-report.md), [`91`](91-guards-and-alternatives-report.md)); what is left in this lane is `Ord` as a trait, which [`54`](54-ordering.md) writes out and explicitly does *not* recommend | Lane B: ~~query fusion on symbolic plans~~ — **built** ([`89`](89-query-fusion-report.md)); ~~Mode B's server half~~ — **built** ([`94`](94-mode-b-report.md)), and it is one branch in `session.rs`; what is left in this lane is the render lock ([`51`](51-arrangement-lifecycle-report.md) §51.7) | `beck-rt` and `engine.rs` are untouched by anything in `check/` |
 | ~~**Then**~~ | ~~Lane A, continued~~ | ~~Lane E: the LLVM backend~~ | **Half done, and the other half.** Lane E was taken ([`93`](93-llvm-backend-report.md)) and the prediction held to the letter: a new crate, one new CLI command, and one defect fixed in `beck-eval` — and nothing in `beck-rt`, `engine.rs`, `check/`, `ty.rs` or `core.rs`. Lane A is untouched, so the pairing was again not run as a pair |
-| **Then** | Lane A, continued | Lane E: a heap for the native backend, then Cranelift ([`93`](93-llvm-backend-report.md) §93.6) | The backend seam exists so these do not interact, and it has now been tested |
+| ~~**Then**~~ | ~~Lane A, continued~~ | ~~Lane D: the release pipeline and the installer~~ | **Half done, and the other half — for the sixth consecutive rewrite.** Lane D was taken ([`101`](101-the-release-and-the-installer-report.md)) and its "collides with nothing in code" held for the pipeline and failed for the *release*: a version number that means something is `compiler/Cargo.toml`, a `build.rs` and one line of `main.rs`. Lane A is untouched, so this pairing was not run as a pair |
+| **Then** | Lane A, continued | Lane E: **a heap** for the native backends — ~~then Cranelift~~, which is built ([`97`](97-cranelift-report.md)) and did not need one to be, because the scalar subset is where both emitters stop | The backend seam exists so these do not interact, and it has now been tested twice |
 | **Any time** | — | Lane F; Lane C's LSP; more of SICP | No predecessors, no collisions |
 
 A third branch is viable whenever E or F is staffed. The ceiling is four, because of these:
+
+**The heap is this phase's remaining F.** §8.5.1's classification says to take the fan-out item
+first, and it paid for itself once already with bounds. Three of the four things Phase 3 has left
+queue behind one item: native codegen compiles the scalar subset and nothing the language *stores*
+([`93`](93-llvm-backend-report.md) §93.6, [`97`](97-cranelift-report.md) §97.7), Mode B's codegen is
+the same prerequisite plus a wasm emitter, and the release ships a binary whose compute story is
+still "it walks". It sits in Lane E, which collides with nothing.
 
 **The four shared artefacts that serialise otherwise-independent branches.** Each has a cheap
 discipline that avoids the collision.

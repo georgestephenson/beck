@@ -191,7 +191,7 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
 name = "beck-cli"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "aws-lc-rs",
@@ -230,7 +230,7 @@ dependencies = [
 
 [[package]]
 name = "beck-clif"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "beck-core",
  "beck-diag",
@@ -244,7 +244,7 @@ dependencies = [
 
 [[package]]
 name = "beck-core"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "beck-diag",
  "beck-macro",
@@ -257,7 +257,7 @@ dependencies = [
 
 [[package]]
 name = "beck-db"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "beck-core",
  "beck-diag",
@@ -268,11 +268,11 @@ dependencies = [
 
 [[package]]
 name = "beck-diag"
-version = "0.1.0"
+version = "0.3.0"
 
 [[package]]
 name = "beck-eval"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "beck-core",
  "beck-diag",
@@ -281,7 +281,7 @@ dependencies = [
 
 [[package]]
 name = "beck-host"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "beck-core",
@@ -292,7 +292,7 @@ dependencies = [
 
 [[package]]
 name = "beck-infra"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "aws-lc-rs",
@@ -309,7 +309,7 @@ dependencies = [
 
 [[package]]
 name = "beck-llvm"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "beck-core",
  "beck-diag",
@@ -317,7 +317,7 @@ dependencies = [
 
 [[package]]
 name = "beck-macro"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "beck-diag",
  "beck-syntax",
@@ -325,7 +325,7 @@ dependencies = [
 
 [[package]]
 name = "beck-play"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "beck-core",
@@ -346,7 +346,7 @@ dependencies = [
 
 [[package]]
 name = "beck-rt"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -377,7 +377,7 @@ dependencies = [
 
 [[package]]
 name = "beck-syntax"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "beck-diag",
  "logos",
@@ -385,7 +385,7 @@ dependencies = [
 
 [[package]]
 name = "beck-wasm"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "beck-core",
  "beck-eval",

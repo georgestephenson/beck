@@ -276,3 +276,55 @@ async fn the_read_model_port_authenticates_nobody_and_answers_only_to_localhost(
          docs/adr/0020 is the record that would have to change first"
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// The release artefacts — a checksum, and no signature
+// ---------------------------------------------------------------------------------------------
+
+/// A reader who downloads a compiler binary reasonably assumes it is signed. It is not.
+///
+/// `docs/101-the-release-and-the-installer-report.md` §101.6 is the argument: `beck sign`'s subject
+/// is an OCI manifest digest, so the signing machinery `docs/99` built does not reach a tarball,
+/// and what a release publishes is a `SHA256SUMS` — which proves a download was not corrupted and
+/// nothing whatever about the page it came from.
+///
+/// This asserts the gap from both ends, because either one could close first: the pipeline signs
+/// nothing, and the installer checks no signature.
+#[test]
+fn a_release_artefact_carries_a_checksum_and_no_signature() {
+    let repo = crates_dir()
+        .ancestors()
+        .nth(2)
+        .expect("the repository is two levels above crates/")
+        .to_path_buf();
+
+    for (file, needles) in [
+        (
+            ".github/workflows/release.yml",
+            ["cosign", "beck sign", "attest", "--certificate"],
+        ),
+        (
+            "install.sh",
+            ["cosign", "beck verify", "gpg", "--certificate"],
+        ),
+    ] {
+        let text = std::fs::read_to_string(repo.join(file)).expect("checked in");
+        // Comments are where this absence is *explained*, so they are not evidence that it closed.
+        let code: String = text
+            .lines()
+            .filter(|l| !l.trim_start().starts_with('#'))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let found: Vec<&str> = needles
+            .iter()
+            .copied()
+            .filter(|n| code.contains(n))
+            .collect();
+        assert!(
+            found.is_empty(),
+            "{file} appears to sign or verify a release artefact now ({found:?}). Good — delete \
+             this test, correct docs/43 §43.4 and docs/101 §101.6, and say in the same change what \
+             the signature's subject is and who can check it"
+        );
+    }
+}

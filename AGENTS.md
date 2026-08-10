@@ -27,6 +27,7 @@ holds the *rules*; that file holds the *state*, and it is the one that stays cur
 | [`compiler/awfy/`](compiler/awfy/README.md), [`compiler/clbg/`](compiler/clbg/README.md) | The performance benchmarks — somebody else's programs, verified against somebody else's constants |
 | [`compiler/xlang/`](compiler/xlang/README.md) | One program in six languages — the only place a Beck number sits beside another language's ([`docs/93`](docs/93-llvm-backend-report.md) §93.5) |
 | [`phase0/`](phase0/) | **History.** The output the compiler now generates, hand-written in Rust once so the architecture could be measured. Do not edit it to track the compiler |
+| [`release/`](release/README.md), [`install.sh`](install.sh) | The parts of a release a person can execute, kept out of `.github/workflows/release.yml` on purpose — a tag-triggered workflow is the one artefact that cannot be run before it is used ([`docs/101`](docs/101-the-release-and-the-installer-report.md) §101.2) |
 
 ### Reports are history
 
@@ -115,7 +116,8 @@ fusion,
 shared-arrangement, subscription, view-metrics, read-model, SICP, Are We Fast Yet, Benchmarks Game,
 tests-in-Beck, UI, workflow-cross-check, documentation, getting-started, outbound, compile-speed,
 concurrency, round-trip, runtime-edge, grammar-fuzz, supply-chain, image, init-ci, native-backend,
-mode-B, browser, client, playground, identity, OIDC, presence, cranelift and diagnostic-snapshot
+mode-B, browser, client, playground, identity, OIDC, presence, cranelift, release and
+diagnostic-snapshot
 suites, plus the nine
 release-only measurement suites. **Keep them green.**
 
@@ -187,6 +189,9 @@ the thing you are guarding against would make it so.
     skips without the tool; `BECK_REQUIRE_TAR=1` and `BECK_REQUIRE_OPENSSL=1` forbid the skip, and
     `BECK_APK_CACHE` pointed at a directory of `.apk` files (plus `BECK_REQUIRE_APK=1`) is what
     exercises the reader against a real package rather than a fixture.
+  - The release suite (`beck-cli/tests/release.rs`) runs `release/build.sh` and `install.sh`, so it
+    needs `sh`, `tar`, a SHA-256 tool and either `curl` or `wget`; `BECK_REQUIRE_INSTALL=1` forbids
+    the skip. A skip means nothing checked that a bad checksum stops an install.
   - Compose parity needs Docker; the thin-client and Mode B budgets need `brotli` (apt-installable).
 - **The network is proxied and partial.** crates.io and the toolchain host work; docs hosts may
   not. Read a dependency's API from its vendored source under `~/.cargo/registry/src/`.
