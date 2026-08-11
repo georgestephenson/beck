@@ -142,9 +142,21 @@ impl Serving {
         tokio::spawn(async move {
             let _ = beck_rt::http::serve(app, addr, rx).await;
         });
-        // The listener binds inside `serve`, so give it the moment that takes before a browser is
-        // told the server is back.
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        // The listener binds inside `serve`, so the port answering is the signal that the server
+        // is back — not an interval chosen to be longer than a bind usually takes. A browser sent
+        // to a port that has not opened yet fails its reconnect, and reports it as whatever it
+        // could not render half a suite later.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        loop {
+            if tokio::net::TcpStream::connect(addr).await.is_ok() {
+                break;
+            }
+            assert!(
+                deadline > std::time::Instant::now(),
+                "the server never bound {addr}"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
     }
 
     /// Stop accepting, and drop every connection.
@@ -155,7 +167,21 @@ impl Serving {
     /// event — it is what a deploy looks like.
     async fn stop(&mut self) {
         let _ = self.shutdown.send(true);
-        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        // `serve` drains the accepted sockets and drops the listener on its way out, so a port
+        // that refuses a connection is evidence both have happened. An interval is only ever the
+        // assumption that they have, and a browser still holding a live websocket is not offline.
+        let addr = self.addr;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        loop {
+            if tokio::net::TcpStream::connect(addr).await.is_err() {
+                break;
+            }
+            assert!(
+                deadline > std::time::Instant::now(),
+                "the server never stopped accepting on {addr}"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
     }
 
     fn url(&self) -> String {
