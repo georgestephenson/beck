@@ -9,7 +9,7 @@
 # `serde` and prove nothing about Beck, which is exactly the substitution Are We Fast Yet's
 # methodology exists to forbid. So this is a recursive-descent parser written out.
 #
-# **The port is a transcription except for one thing**, and it is the finding `docs/57` §57.5
+# **The port is a transcription except for one thing**, and it is the finding `docs/53` §53.2
 # forecast: the original indexes its input with `input.substring(index, index + 1)`, and Beck's
 # `str_slice` counts in characters from the start, so a reader that indexed the `Str` directly would
 # be quadratic in the length of the input. The input is turned into a `list[Str]` once by
@@ -18,7 +18,7 @@
 #
 # The other difference is that the reader is a **value**: `Reader` is the input and a position, and
 # every function that consumed a character returns the reader it left behind. Java mutates `index`
-# and `current` on a field. `docs/57` §57.2's third rule, applied to a parser rather than to a
+# and `current` on a field. `docs/53` §53.4's third rule, applied to a parser rather than to a
 # scheduler.
 
 ## A JSON value.
@@ -39,7 +39,7 @@ union JsonValue:
     NumberValue(literal: Str)
     ArrayValue(items: list[JsonValue])
     ## Names and values in parallel, which is what `JsonObject` holds. The original also keeps a
-    ## `HashIndexTable` for lookup; this is a scan, and §58.4 says what that changes.
+    ## `HashIndexTable` for lookup; this is a scan, and §53.4 says what that changes.
     ObjectValue(names: list[Str], values: list[JsonValue])
 
 union ParseException:
@@ -311,7 +311,7 @@ def size_of(value: JsonValue) -> Int:
 ## `JsonObject.get`, as a scan.
 ##
 ## The original keeps a `HashIndexTable` alongside the two vectors and consults it here. This is a
-## linear walk of the names, which is the same answer and less work per `add` — §58.4 records it as
+## linear walk of the names, which is the same answer and less work per `add` — §53.4 records it as
 ## the one place the port does less than the original rather than the same.
 def field(value: JsonValue, name: Str) -> JsonValue:
     match value:

@@ -565,7 +565,7 @@ pub struct Interp<'h> {
     /// A definition *is* a lambda, and a lambda evaluates to a closure over the empty environment —
     /// so every reference to `f` produces a value equal to every other, and building it again meant
     /// a name lookup in the host, a copy of the parameter list, an `Arc` for the closure and a
-    /// clone of the environment, **per call**. `docs/73` §73.7 named this as what remained once the
+    /// clone of the environment, **per call**. `docs/70` §70.9 named this as what remained once the
     /// body stopped being copied; it is a third of what a call cost.
     ///
     /// Only a `Closure` is cached. Nothing else a global can evaluate to is guaranteed to be the
@@ -620,7 +620,7 @@ impl std::hash::Hasher for NameHasher {
 ///
 /// A runaway-program backstop, not a performance knob — but a backstop nothing can raise is a
 /// ceiling, and three of Are We Fast Yet's fourteen benchmarks live above it at the size the suite
-/// measures at ([`docs/61`](../../../../../docs/61-deltablue-report.md) §61.3). `beck test --fuel`
+/// measures at ([`docs/53`](../../../../../docs/53-are-we-fast-yet-report.md) §53.3). `beck test --fuel`
 /// is how a program that means it says so.
 pub const DEFAULT_FUEL: u64 = 50_000_000;
 
@@ -658,7 +658,7 @@ fn read_var(c: &Core, v: VarId, env: &mut Env) -> EvalResult {
 /// How much a primitive will touch, in elements, from the arguments it was given.
 ///
 /// The budget used to count **nodes**, so `sort_by` over a million values and `list_len` over the
-/// same list were both one step. `docs/70` §70.7 is the proof that this is not a bound on work at
+/// same list were both one step. `docs/70` §70.6 is the proof that this is not a bound on work at
 /// all: over a loop whose wall clock quadrupled per doubling, the step count exactly doubled.
 ///
 /// Only primitives whose cost is **proportional to a length the caller chose** appear here. A
@@ -717,7 +717,7 @@ fn work_of(op: Prim, args: &[Value]) -> usize {
         },
         // Walks or rebuilds a map. `map_insert` and `map_remove` rebuild one path, not the tree.
         Prim::MapKeys | Prim::MapValues | Prim::MapMerge => map_len(0),
-        // Walks a string. `str_len` is absent deliberately: it is O(1) since `docs/71`.
+        // Walks a string. `str_len` is absent deliberately: it is O(1) since `docs/70`.
         // Joining costs the text it produces, which is the parts and not their number.
         Prim::StrJoin => match args.first() {
             Some(Value::List(xs)) => xs
@@ -823,10 +823,10 @@ impl<'h> Interp<'h> {
 
     /// Charge for work a primitive does over `n` elements, on top of the one step the node cost.
     ///
-    /// The budget counted **nodes** until `docs/72`, which meant it could not see a primitive that
+    /// The budget counted **nodes** until `docs/70`, which meant it could not see a primitive that
     /// touched a million values: `list_slice` over a long list, a sort, a digest and a concatenation
     /// were each one step, so a program could do unbounded work inside a bounded number of them.
-    /// `docs/70` §70.7 is the measurement that proves it — over a loop whose wall clock quadrupled
+    /// `docs/70` §70.6 is the measurement that proves it — over a loop whose wall clock quadrupled
     /// per doubling, the step count exactly doubled.
     ///
     /// It is charged where the work is *proportional to a length the caller chose*, not for every
@@ -1071,7 +1071,7 @@ impl<'h> Interp<'h> {
                     // This arm is reached once per call of a named function, and the value it
                     // produces is the same closure every time: a definition is a lambda over the
                     // empty environment. Cached, because building it again is a name lookup, a copy
-                    // of the parameter list and two allocations — `docs/73` §73.7.
+                    // of the parameter list and two allocations — `docs/70` §70.9.
                     if let Some(v) = self.globals.borrow().get(name.as_ref()) {
                         return Ok(Step::Done(v.clone()));
                     }
@@ -1120,7 +1120,7 @@ impl<'h> Interp<'h> {
             CoreKind::Global(name) => self.global(name, c.span),
             // A refcount bump, not a copy of the code. This used to be `(**body).clone()` — a deep
             // copy of the whole function body, taken every time a `lam` node was evaluated, which
-            // is once per call of a named function. `docs/73` §73.1 has what that cost.
+            // is once per call of a named function. `docs/70` §70.3 has what that cost.
             CoreKind::Lam { params, body } => Ok(Value::Closure(Arc::new(Closure {
                 params: Arc::clone(params),
                 body: Arc::clone(body),
@@ -1219,7 +1219,7 @@ impl<'h> Interp<'h> {
             // `x.with(f = g(x.f))` reads `x` twice — once as the base and once inside `g` — so a
             // straight clone leaves this copy holding `x.f` at the moment `g` reads it. That
             // second reference is what makes `list_append` copy instead of push, and it left the
-            // accumulator idiom written with `with` at the `O(n²)` `docs/70` and `docs/79` removed
+            // accumulator idiom written with `with` at the `O(n²)` `docs/70` and `docs/70` removed
             // from every other spelling of it. The fields about to be replaced arrive empty
             // instead, which is one pass rather than the one the clone was already making
             // (`docs/87` §87.5).
@@ -1382,7 +1382,7 @@ impl<'h> Interp<'h> {
                 // Strings first, and by *value*: `+` on two of them **pushes** into the left one
                 // rather than copying both sides, when that one arrived from a last read and
                 // nobody else holds it. It is what makes `done + piece` in a loop linear instead
-                // of quadratic — `docs/70` §70.6 measured the quadratic, and `beck_core::liveness`
+                // of quadratic — `docs/70` §70.2 measured the quadratic, and `beck_core::liveness`
                 // is what proves the ownership this consumes.
                 if matches!(a, Value::Str(_)) && matches!(b, Value::Str(_)) {
                     let (Value::Str(x), Value::Str(y)) = (a, b) else {
@@ -1537,7 +1537,7 @@ impl<'h> Interp<'h> {
                 let v = args.pop().expect("arity checked");
                 // Constant time: the count was taken when the string was built (`core::Text`).
                 // It used to be `chars().count()`, which made `while i < str_len(s)` walk the
-                // whole string once per iteration — half of `docs/70` §70.6's quadratic.
+                // whole string once per iteration — half of `docs/70` §70.2's quadratic.
                 match &v {
                     Value::Str(t) => Ok(Value::Int(t.chars_len() as i64)),
                     _ => {
@@ -1562,7 +1562,7 @@ impl<'h> Interp<'h> {
                     // string's own chunked index finds the byte in at most a stride's worth of
                     // steps (`core::Text::byte_offset`). Either way this is `O(len)` in what is
                     // *taken* rather than `O(start)` in what is skipped over — which is what made
-                    // walking a string by index quadratic (`docs/71`).
+                    // walking a string by index quadratic (`docs/70`).
                     let from = t.byte_offset(start);
                     let to = t.byte_offset(start.saturating_add(len));
                     return Ok(Value::str_(&t.as_str()[from..to]));
@@ -2233,9 +2233,9 @@ fn bind(
         ));
     }
     // One allocation for the frame — sized for the parameters *and* for every binding the body
-    // will make, so that a `let` writes into a slot rather than allocating a scope (`docs/77`) —
+    // will make, so that a `let` writes into a slot rather than allocating a scope (`docs/70`) —
     // and a refcount bump for the parent, which is already behind an `Arc` because a closure holds
-    // it that way (`docs/74`).
+    // it that way (`docs/70`).
     Ok(Env::call_frame(&c.env, &c.params, args, c.locals))
 }
 

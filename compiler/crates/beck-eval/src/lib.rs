@@ -154,7 +154,7 @@ impl Evaluator {
     /// The default is a backstop against a program that will not stop, and it is right for
     /// everything a person writes by hand. What it is not right for is a *benchmark*: three of Are
     /// We Fast Yet's fourteen need more at the size the suite measures at
-    /// (`docs/61` §61.3), and before this there was no way to say so.
+    /// (`docs/53` §53.3), and before this there was no way to say so.
     pub fn with_fuel(mut self, fuel: u64) -> Evaluator {
         self.fuel = fuel;
         self
@@ -263,7 +263,7 @@ pub fn backend_for(program: Arc<Program>) -> Arc<dyn Backend> {
 
 /// The tree-walking backend with a per-call step budget of the caller's choosing.
 ///
-/// `beck test --fuel` is the only caller, and `docs/61` §61.3 is why it exists.
+/// `beck test --fuel` is the only caller, and `docs/53` §53.3 is why it exists.
 pub fn backend_with_fuel(placed: &beck_core::Placed, fuel: u64) -> Arc<dyn Backend> {
     Arc::new(Evaluator::new(Arc::new(placed.program.clone())).with_fuel(fuel))
 }

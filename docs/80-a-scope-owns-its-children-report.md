@@ -240,7 +240,7 @@ re-parses, and it re-parses to a structurally equal tree. Ten programs failed it
   its result and a function taking none has *one* argument. The printer counted the same wrong way
   and leaked its internal head into a file it had just written. `sicp/felleisen.beck`.
 
-The lesson is [`78`](78-a-record-is-a-permutation-report.md) §78.6's, arrived at from the other
+The lesson is [`70`](70-the-evaluator-gets-fast-report.md) §70.7's, arrived at from the other
 direction: that report found three things wrong with a gate that could not fail. This one found a
 gate that was *cited by name* in the code it was supposed to guard and had never been written. A
 property stated in a doc comment is a property nothing checks.

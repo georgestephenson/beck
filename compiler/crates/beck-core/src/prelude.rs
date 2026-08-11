@@ -117,7 +117,7 @@ pub fn prims() -> Vec<(&'static str, Prim, Scheme)> {
         // `docs/32` built the reals with `sqrt` and nothing else, and three phases of programs
         // never asked for more — until a benchmark did. `Math.sin`, `Math.cos` and a `(int)` cast
         // are what Are We Fast Yet's collision detector is written in, and a numeric tower with a
-        // square root and no sine is a gap rather than a decision (`docs/60` §60.2).
+        // square root and no sine is a gap rather than a decision (`docs/53` §53.5).
         //
         // All three are the host's, in `lib/README.md`'s sense: `sin` is somebody else's polynomial
         // and truncation is the format's own rule about which way a real falls. Composition would

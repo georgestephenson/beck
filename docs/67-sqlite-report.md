@@ -81,8 +81,8 @@ the relaxed store reports `sqlite-relaxed`, so no measurement can label the two 
 decision.
 
 The general lesson is one this project keeps re-learning from a different direction, after
-[`59`](59-havlak-report.md) §59.5's workload with no oracle and [`61`](61-deltablue-report.md)
-§61.2's oracle with no workload: **a benchmark comparing two systems is comparing their
+[`53`](53-are-we-fast-yet-report.md) §53.6's workload with no oracle and [`53`](53-are-we-fast-yet-report.md)
+§53.1's oracle with no workload: **a benchmark comparing two systems is comparing their
 configurations, and a flattering result is a reason to check which.**
 
 ## 67.4 What it costs to depend on

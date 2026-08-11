@@ -28,13 +28,35 @@ holds the *rules*; that file holds the *state*, and it is the one that stays cur
 | [`compiler/xlang/`](compiler/xlang/README.md) | One program in six languages — the only place a Beck number sits beside another language's ([`docs/93`](docs/93-llvm-backend-report.md) §93.5) |
 | [`phase0/`](phase0/) | **History.** The output the compiler now generates, hand-written in Rust once so the architecture could be measured. Do not edit it to track the compiler |
 
+### Most work is a changelog entry; a report is for a phase or a subsystem
+
+**Default to [`CHANGELOG.md`](CHANGELOG.md)**: a few lines saying what changed, what it measured, and
+what gate holds it. A faster binding, one benchmark ported, a primitive added, a bug fixed — these
+are changelog entries, however interesting the number.
+
+**A report is for a phase or a subsystem**: work a reader would need a chapter to understand, that
+established a property somebody will later depend on, or that changed a claim a design document
+makes. If you cannot name the design document your work changes, or the reader who would go looking
+for it, write the changelog entry instead.
+
+This rule exists because the alternative was tried. One report per change produced **75 of them,
+199,566 words — 2.7× the design documents and half the size of the compiler** — and an index nobody
+could read. Ten reports on the evaluator's constants are one chapter
+([`docs/70`](docs/70-the-evaluator-gets-fast-report.md)); six on porting one benchmark suite are one
+chapter ([`docs/53`](docs/53-are-we-fast-yet-report.md)). Both were consolidated after the fact,
+which is more work than writing the entry would have been.
+
+A report that is written gets a row in [`docs/README.md`](docs/README.md)'s index — **three
+sentences, not three hundred words** — and a mention wherever a design document made a claim the work
+changed. Number it after the highest number in `docs/`, and expect to renumber on merge: the counter
+collides whenever two branches write one, which is a second reason to prefer the changelog.
+
 ### Reports are history
 
-A report records what one piece of work built, measured and refused to claim, on the day it was
-written. **Do not edit an earlier report to reflect a later change** — a later report's "what this
-corrects" section is where a correction goes. New work gets a new numbered report, a row in
-[`docs/README.md`](docs/README.md)'s index, and a mention wherever a design document made a claim
-the work changed.
+**Do not edit an earlier report to reflect a later change** — a later report's "what this corrects"
+section is where a correction goes. The exception is consolidation: folding a series of reports into
+one chapter is editing history on purpose, and the chapter says which reports it replaced and where
+each one's content went.
 
 ### The conventions each directory carries
 
@@ -90,7 +112,7 @@ is part of a change's correctness rather than a follow-up to it.
   of. `beck-cli/tests/scaling.rs` is the gate that says so, and it is where a new shape gate goes.
 - **An instruction profile ranks candidates; the wall clock decides between them.** `callgrind`
   over-promised by a factor of three the one time both were measured
-  ([`docs/78`](docs/78-a-record-is-a-permutation-report.md) §78.4). A candidate you have only
+  ([`docs/70`](docs/70-the-evaluator-gets-fast-report.md) §70.1). A candidate you have only
   counted has not been measured.
 
 ### Claims in docs are stated from evidence

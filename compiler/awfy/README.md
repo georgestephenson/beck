@@ -8,7 +8,7 @@ schedules the number for later. This directory is the harness.
 
 [`docs/53`](../../docs/53-are-we-fast-yet-report.md) is the report for the nine micro-benchmarks:
 what it establishes, what it refuses to claim, and the three findings porting it produced.
-[`docs/57`](../../docs/57-richards-report.md) is the report for `richards`, the first macro-benchmark
+[`docs/53`](../../docs/53-are-we-fast-yet-report.md) is the report for `richards`, the first macro-benchmark
 — a mutable object graph in a language with no mutation — and it assesses the remaining four.
 
 ## What is here
@@ -33,7 +33,7 @@ it.
 | [`json.beck`](json.beck) | **Macro.** A JSON parser over 25,820 characters of RAP protocol traffic | an object whose `operations` array has 156 entries |
 | [`havlak.beck`](havlak.beck) | **Macro.** Loop recognition — DFS, edge classification and union-find over a control-flow graph | 1,605 loops over 5,213 nodes |
 | [`cd.beck`](cd.beck) | **Macro.** Aircraft collision detection over a red-black tree of voxels | 42 collisions between two aircraft |
-| [`deltablue.beck`](deltablue.beck) | **Macro.** An incremental constraint solver over a cyclic object graph | **nothing** — the assertions inside its own planner ([`61`](../../docs/61-deltablue-report.md)) |
+| [`deltablue.beck`](deltablue.beck) | **Macro.** An incremental constraint solver over a cyclic object graph | **nothing** — the assertions inside its own planner ([`53`](../../docs/53-are-we-fast-yet-report.md)) |
 
 `beck-cli/tests/awfy.rs` gates the directory: a file added here is run by being here, and all fourteen
 names are enumerated in one place — micro and macro apart, because that is the suite's own division
@@ -70,8 +70,8 @@ follows four rules:
 4. **A number is the suite's.** Where a size had to change, the number changes with it and the file
    says which of the suite's published sizes it is at. No file invents a verification value.
 
-`richards` and `json` need a fifth rule that none of the nine did, and [`57`](../../docs/57-richards-report.md)
-§57.2 is why: **a closure over mutable state is a function of the state**. Java's `ProcessFunction`
+`richards` and `json` need a fifth rule that none of the nine did, and [`53`](../../docs/53-are-we-fast-yet-report.md)
+§53.4 is why: **a closure over mutable state is a function of the state**. Java's `ProcessFunction`
 returns the next task and changes the scheduler on the way out; here every one of them takes the
 scheduler and returns both.
 
@@ -90,19 +90,19 @@ Two differences are worth naming separately because they are not mechanical:
 
 **Nothing of Are We Fast Yet is unported.** The reports are
 [`53`](../../docs/53-are-we-fast-yet-report.md) for the nine micro-benchmarks and
-[`57`](../../docs/57-richards-report.md), [`58`](../../docs/58-json-report.md),
-[`59`](../../docs/59-havlak-report.md), [`60`](../../docs/60-collision-detection-report.md) and
-[`61`](../../docs/61-deltablue-report.md) for the five macro-benchmarks.
+[`53`](../../docs/53-are-we-fast-yet-report.md), [`53`](../../docs/53-are-we-fast-yet-report.md),
+[`53`](../../docs/53-are-we-fast-yet-report.md), [`53`](../../docs/53-are-we-fast-yet-report.md) and
+[`53`](../../docs/53-are-we-fast-yet-report.md) for the five macro-benchmarks.
 
 **Three of them run a smaller configuration than the suite measures at, and each says so.**
 `mandelbrot` and `nbody` verify at sizes the suite publishes values for but does not measure at
 ([`53`](../../docs/53-are-we-fast-yet-report.md) §53.3); `havlak` and `deltablue` are limited by the
 evaluator's 50,000,000-step fuel budget rather than by the clock
-([`59`](../../docs/59-havlak-report.md) §59.3, [`61`](../../docs/61-deltablue-report.md) §61.3). A
+([`53`](../../docs/53-are-we-fast-yet-report.md) §53.3, [`53`](../../docs/53-are-we-fast-yet-report.md) §53.3). A
 `--fuel` on `beck test` is owed by three benchmarks now.
 
 **`havlak` runs a cheaper configuration than the suite publishes, and says so.**
-[`59`](../../docs/59-havlak-report.md) §59.3 measured why: the published 50 discarded runs exhaust
+[`53`](../../docs/53-are-we-fast-yet-report.md) §53.3 measured why: the published 50 discarded runs exhaust
 the evaluator's 50,000,000-step fuel budget after 13.7 s in a release build, and six of them fit
 where eight do not. Two of its three tests exist to make the reduction honest rather than
 convenient — one asserts the verified numbers do not depend on that parameter, and the other

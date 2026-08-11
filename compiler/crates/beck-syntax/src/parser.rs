@@ -1564,7 +1564,7 @@ impl<'a> Parser<'a> {
             // expression grammar rather than in a pattern grammar of its own for §2.6's reason —
             // patterns *are* expressions, "nothing new to represent" — and the checker is what
             // refuses it where a pattern is not wanted, exactly as it does for `*rest`. Beck has
-            // no bitwise operators (`docs/53` §53.6), so the token was free.
+            // no bitwise operators (`docs/53` §53.7), so the token was free.
             Raw::Pipe => ("|", 1, 2),
             // `case whole @ Circle(r):` — a name for the value a pattern is taking apart. Binds
             // tighter than `|`, so `A | b @ B` is `A | (b @ B)`. `@` is only special at the start

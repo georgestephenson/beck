@@ -1238,7 +1238,14 @@ async fn the_playground_keeps_its_log_across_a_reload() {
                 "document.getElementById('kept').textContent.startsWith('2 events')",
             )
             .await;
+            // A marker only *this* document has, so the waits below cannot be satisfied by it: an
+            // evaluation can still land in the pre-navigation context for a moment, and a test that
+            // read `dataset.ready` from the old page would go on to click a button in a document
+            // that is being torn down.
+            page.eval(&mut browser, "window.__before_reload = true").await;
             page.navigate(&mut browser, &playing.url()).await;
+            page.wait_for(&mut browser, "window.__before_reload === undefined")
+                .await;
         }
     }
 
@@ -1271,8 +1278,16 @@ async fn the_playground_keeps_its_log_across_a_reload() {
         "document.getElementById('kept').textContent.startsWith('forgotten')",
     )
     .await;
+    page.eval(&mut browser, "window.__before_reload = true").await;
     page.navigate(&mut browser, &playing.url()).await;
+    page.wait_for(&mut browser, "window.__before_reload === undefined")
+        .await;
     page.wait_for(&mut browser, "document.body.dataset.ready === '1'")
+        .await;
+    // `#run` is enabled by the *debounced* analysis, not by the page being ready — so waiting for
+    // `ready` and clicking is a race this suite loses under load, and a click on a disabled button
+    // is silently nothing.
+    page.wait_for(&mut browser, "document.getElementById('run').disabled === false")
         .await;
     page.eval(&mut browser, "document.getElementById('run').click()")
         .await;

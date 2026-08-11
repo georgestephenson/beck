@@ -344,7 +344,7 @@
     },
   };
 
-  let running = null; // { wire, mode, kept: [records] }
+  let running = null; // { wire, mode, kept: [records], keeping: bool }
 
   // One at a time, and the position asked for is the *length of what is held* rather than a number
   // kept beside it. Both halves matter: a `hello` and a command each say "moved", so two of these
@@ -355,7 +355,7 @@
   const keep = () => {
     keeping = keeping
       .then(async () => {
-        if (!running) return;
+        if (!running || !running.keeping) return;
         const answer = await call({ op: "records", after: running.kept.length });
         if (!answer.records.length) return;
         running.kept = running.kept.concat(answer.records);
@@ -419,7 +419,7 @@
     say("loading the program…");
     try {
       const loaded = await call({ op: "load", source: $("source").value, now: Date.now() });
-      running = { wire: loaded.wire, mode: loaded.mode, kept: [] };
+      running = { wire: loaded.wire, mode: loaded.mode, kept: [], keeping: true };
       $("run-panel").hidden = false;
 
       // The log this browser kept for this wire id, folded back in before anybody subscribes.
@@ -527,11 +527,25 @@
   $("run").addEventListener("click", run);
   $("share").addEventListener("click", () => share().catch((why) => say(String(why.message || why), true)));
   $("scrub").addEventListener("input", (e) => show_at(Number(e.target.value)));
-  $("forget").addEventListener("click", async () => {
-    if (!running) return;
-    await stored.forget(running.wire);
-    running.kept = [];
-    $("kept").textContent = "forgotten — reload to start this program from `init`";
+  // Through the same chain a `keep` goes through, and it has to be: a command still being stored
+  // when the button is pressed would otherwise finish *after* the clear, put its records back and
+  // overwrite the label — a log that says it was forgotten and was not.
+  $("forget").addEventListener("click", () => {
+    keeping = keeping
+      .then(async () => {
+        if (!running) return;
+        // Forgetting stops this session keeping anything *more*, and that is the whole of why it is
+        // a flag rather than an empty array. A store that resumed at the next command would write a
+        // log starting at seq 3, and a restore of one is refused — dense from 1 is the contract
+        // every fold depends on. It also settles the race: a `keep` still in flight when the button
+        // is pressed finds the flag down and writes nothing back.
+        running.keeping = false;
+        await stored.forget(running.wire);
+        running.kept = [];
+        $("kept").textContent =
+          "forgotten — this tab will keep no more; reload to start from `init`";
+      })
+      .catch((why) => say(String(why.message || why), true));
   });
 
   (async () => {

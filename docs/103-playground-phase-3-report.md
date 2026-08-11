@@ -130,7 +130,11 @@ The oracle for the round trip is the tab that produced the records:
 same comparison the scrubber gate makes and for the same reason. In a browser,
 `the_playground_keeps_its_log_across_a_reload` clicks twice, reloads, and asserts the application
 comes back **at 2** — and then clears it with the button, because a log that cannot be forgotten is a
-playground that cannot be started over.
+playground that cannot be started over. *Forgetting stops the session keeping anything more*, rather
+than emptying the store and carrying on: a store that resumed at the next command would write a log
+beginning at seq 3, and §103.2's own restore refuses one. That test failed one run in three under
+parallel load and passed every time on its own, which is how three defects in the page's store were
+found at once — they are in [`CHANGELOG.md`](../CHANGELOG.md).
 
 What is not here: no snapshots and no compaction, so a restore is a fold of the whole log (§103.5
 measures it), and the page stores the whole log on every command rather than appending one record —

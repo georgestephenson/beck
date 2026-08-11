@@ -179,7 +179,7 @@ file. On this evidence it can re-check the file.
 | The `check`-phase residual on a call chain | **not fixed**, per §64.3 |
 | The flat-block abort | **not fixed**, per §64.4 — and it is the profile-dependence rather than the size that makes it worth a line here |
 | `criterion`/`divan`, fixed hardware runners | **not adopted.** §13.7 names them; a shape gate needs neither, and adopting a benchmarking framework to assert an exponent would be equipment without a question |
-| The CLBG harness | **not stood up**, unchanged from [`61`](61-deltablue-report.md) §61.5. It is now the *only* thing left on [`25`](25-benchmarks-and-expressiveness.md) §25.9's Phase 3 row, and §64.7.1 is why it was not attempted here |
+| The CLBG harness | **not stood up**, unchanged from [`53`](53-are-we-fast-yet-report.md) §53.7. It is now the *only* thing left on [`25`](25-benchmarks-and-expressiveness.md) §25.9's Phase 3 row, and §64.7.1 is why it was not attempted here |
 
 ### 64.7.1 Why CLBG was not attempted alongside this
 
@@ -201,7 +201,7 @@ curl: (56) CONNECT tunnel failed, response 403
 
 So the ten benchmarks could be *written* here and not one of them could be *verified*, which would
 produce a suite that measures Beck against numbers this repository made up. That is worse than an
-absent harness, and it is the exact failure [`59`](59-havlak-report.md) §59.5 found by accident: a
+absent harness, and it is the exact failure [`53`](53-are-we-fast-yet-report.md) §53.6 found by accident: a
 benchmark with no oracle passes while doing nothing.
 
 The harness is therefore owed **with its sources to hand** rather than owed generally. Nothing else

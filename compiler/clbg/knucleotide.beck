@@ -145,7 +145,7 @@ test "knucleotide: the suite's own published output for the input it publishes":
 ##
 ## Every number above is a fact about 5,000 bases of sequence THREE. If the reader took ONE and
 ## TWO as well, or stopped at the wrong `>`, the output would still be a well-formed frequency
-## table of the wrong thing — which is `docs/59` §59.5's failure mode exactly.
+## table of the wrong thing — which is `docs/53` §53.6's failure mode exactly.
 test "knucleotide: the sequence read is THREE, and only THREE":
     expect list_len(three_sequence(1000)) == 5000
     expect str_join(list_slice(three_sequence(1000), 0, 20), "") == "AACACTTCACCAGGTATCGT"

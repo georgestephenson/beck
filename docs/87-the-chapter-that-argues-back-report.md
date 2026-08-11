@@ -38,7 +38,7 @@ The registers are [`sicp/README.md`](../compiler/sicp/README.md)'s, and this is 
 where most of them are **re-expressed** rather than **translated**. That is the point rather than an
 apology: §3.1's objects are closures over mutable state, and the reorganisation is always the same
 one — a closure over mutable state is a function of the state, which is
-[`57`](57-richards-report.md) §57.3's rule arrived at there by porting a benchmark and here by
+[`53`](53-are-we-fast-yet-report.md) §53.3's rule arrived at there by porting a benchmark and here by
 reading the book that benchmark's language came from.
 
 Two oracles are worth naming because they are hard to pass by accident.
@@ -166,7 +166,7 @@ A record **constructor** is linear and the `with` form is quadratic, for the sam
 `[first, *rest]` destructuring, measured at 21.1 steps per element either side — the pattern every
 list recursion in the tree uses, and the first thing suspected.
 
-The reason is one line of the evaluator and it is [`70`](70-last-use-moves-report.md)'s rule meeting a
+The reason is one line of the evaluator and it is [`70`](70-the-evaluator-gets-fast-report.md)'s rule meeting a
 second reference. `x.with(f = g(x.f))` reads `x` **twice**: once as the base and once inside `g`. The
 base is read first, so it is not `x`'s last use and arrives as a clone; `eval_with` then held that
 clone — and therefore a second reference to `x.f` — while it evaluated `g(x.f)`. The read inside `g`
@@ -187,7 +187,7 @@ Measured after, at the same two sizes: **20.0 steps per element at 1,000 and 20.
 4,000, and `the_functional_queue_costs_the_same_per_operation_however_long_it_gets` is the gate.
 
 What it costs elsewhere, rotated with a control per
-[`78`](78-a-record-is-a-permutation-report.md) §78.6, best of four, release:
+[`70`](70-the-evaluator-gets-fast-report.md) §70.7, best of four, release:
 
 | 2,000,000 `with` on an `Int` field | 300,000 `with` on a `Map` field | 40,000 `with` on a `Str` field |
 |---|---|---|
@@ -201,10 +201,10 @@ why there is a second version: doing it inside the clone is free and doing it af
 
 [`19`](19-phase-1-report.md) §19.4 found a fold that copied its accumulator,
 [`69`](69-standard-library-imports-report.md) §69.7 found `list_append` copying,
-[`70`](70-last-use-moves-report.md) fixed the recursive spelling and
-[`79`](79-a-lambda-is-a-frame-report.md) fixed the fold spelling three reports later. This is the same
+[`70`](70-the-evaluator-gets-fast-report.md) fixed the recursive spelling and
+[`70`](70-the-evaluator-gets-fast-report.md) fixed the fold spelling three reports later. This is the same
 defect in a fourth spelling, and the reason it survived is
-[`79`](79-a-lambda-is-a-frame-report.md) §79.5's, exactly:
+[`70`](70-the-evaluator-gets-fast-report.md) §70.2's, exactly:
 
 **nothing in this repository accumulates into a `list` or a `Str` field through `with`.** Every
 `with` in `corpus/` and `examples/` updates an `Int` or a persistent `Map` — `s.with(n=s.n + 1)`,
@@ -263,7 +263,7 @@ Whether Beck should have a memoised promise is a question this report raises and
 two shapes it could take are a language-level `delay` that is a form rather than a macro (so the
 compiler owns the cell), and a value-level memo that would need interior mutability inside a value the
 `Map` order, the state digest and the patch stream all read — which is
-[`72`](72-space-and-constants-report.md) §72's reason for building the character index eagerly, one
+[`70`](70-the-evaluator-gets-fast-report.md) §72's reason for building the character index eagerly, one
 level up. Neither is a line in a chapter file.
 
 ## 87.8 What this establishes

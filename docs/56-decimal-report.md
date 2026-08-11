@@ -153,7 +153,7 @@ iface` were right; `beck doc` was wrong three ways, and one Beck file in `lib/` 
 |---|---|
 | An exact quotient needing more than 40 places | **refused**, and wrongly. `1 / 2^41` terminates and this raises. The fix is a `gcd` and a count of twos and fives in the reduced divisor, which is a `gcd` this library does not have — §56.3 is the trade, stated |
 | `gcd`, and a rational over `Big` | **not built**, unchanged from [`55`](55-bignums-report.md) §55.6 |
-| An exponent in the reader | **not built.** `decimal_of_str("1e6")` is `NotADecimal`. The lexer takes one for a *float literal* ([`53`](53-are-we-fast-yet-report.md) §53.4) and this reader does not, which is an inconsistency named rather than defended |
+| An exponent in the reader | **not built.** `decimal_of_str("1e6")` is `NotADecimal`. The lexer takes one for a *float literal* ([`53`](53-are-we-fast-yet-report.md) §53.5) and this reader does not, which is an inconsistency named rather than defended |
 | Square root, powers, logarithms | **not built.** None has an exact decimal answer in general, so each needs the scale-and-rule shape `divide_to` has, and none is written |
 | A scale that carries significance | **not built**, deliberately — §56.1. `render_at` is the presentation, `money.beck` is the fixed-scale type |
 | `Decimal` in `money.beck` | **not done.** `Money` is still `Int` minor units. Rewriting it over `Decimal` is now expressible and is a change to a type other files use, so it is not being done in passing |

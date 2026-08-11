@@ -531,7 +531,7 @@ pub enum CoreKind {
         /// and a refcount bump is cheaper than copying it once per call.
         params: Arc<[VarId]>,
         /// Shared, not owned: a closure is built every time a `lam` node is *evaluated*, and a
-        /// `Box` meant deep-copying the whole function body each time. `docs/73` §73.1 measured
+        /// `Box` meant deep-copying the whole function body each time. `docs/70` §70.3 measured
         /// 20,000 calls to a function whose executed path never changed costing 42 ms, 227 ms and
         /// 606 ms as the *unexecuted* part of its body grew.
         body: Arc<Core>,
@@ -946,7 +946,7 @@ impl<'a> IntoIterator for &'a Fields {
 /// bytes — so `str_len` used to be `chars().count()` and `str_slice` used to `skip()` its way to
 /// the start. Both are `O(n)` in the *string* rather than in the answer, which makes the ordinary
 /// way to walk one — `while i < str_len(s)` reading `str_slice(s, i, 1)` — quadratic. Measured at
-/// ×2.7 per doubling in [`70`](../../../../../docs/70-last-use-moves-report.md) §70.6.
+/// ×2.7 per doubling in [`70`](../../../../../docs/70-the-evaluator-gets-fast-report.md) §70.2.
 ///
 /// Both facts are computed once, when the string is built, which is work the construction was
 /// already doing: it had to copy the bytes, and `is_ascii` is a scan of the same bytes that answers
@@ -1395,7 +1395,7 @@ pub fn children(c: &Core) -> Vec<&Core> {
 ///
 /// The walk two passes over the finished program share — [`crate::frames`] and [`crate::fields`].
 /// A lambda's body is behind an `Arc` because a closure shares it rather than copying it
-/// (`docs/73`), so reaching into one is a `make_mut`: it runs once, on a program nothing else
+/// (`docs/70`), so reaching into one is a `make_mut`: it runs once, on a program nothing else
 /// holds yet, so nothing is actually cloned.
 pub(crate) fn children_mut(c: &mut Core) -> Vec<&mut Core> {
     match &mut c.kind {

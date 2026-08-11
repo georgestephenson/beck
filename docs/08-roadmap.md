@@ -759,9 +759,9 @@ compiler and importable by name from anywhere, which nothing outside that direct
 three waves it took to write. §46.6 has the item-by-item list, §49.6 the client's own, §50.6 the two newest
 files' and §52.6 the crypto half's — including what a digest deliberately is not: no asymmetric
 signature, no TLS, no encryption of any kind. The **Are We Fast Yet harness is complete — all fourteen
-benchmarks** ([`53`](53-are-we-fast-yet-report.md), [`57`](57-richards-report.md),
-[`58`](58-json-report.md), [`59`](59-havlak-report.md), [`60`](60-collision-detection-report.md),
-[`61`](61-deltablue-report.md)), each verified against the constant
+benchmarks** ([`53`](53-are-we-fast-yet-report.md), [`53`](53-are-we-fast-yet-report.md),
+[`53`](53-are-we-fast-yet-report.md), [`53`](53-are-we-fast-yet-report.md), [`53`](53-are-we-fast-yet-report.md),
+[`53`](53-are-we-fast-yet-report.md)), each verified against the constant
 the original suite's own `verifyResult` checks, with wall-clock printed and nothing compared to
 anything — §8.4's ask, half discharged. The **CLBG** harness is stood up too
 ([`68`](68-clbg-report.md)) — eight of the Game's ten, verified against the Game's own published

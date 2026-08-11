@@ -11,7 +11,7 @@
 # this is the first program in the tree that would notice if that stopped being true.
 #
 # The constants are transcribed in the notation they are published in. They could not be, when this
-# file was written — Beck's float literal had no exponent — and `docs/53` §53.4 is that change.
+# file was written — Beck's float literal had no exponent — and `docs/53` §53.5 is that change.
 #
 # Are We Fast Yet's `verifyResult` publishes two values: `-0.1690859889909308` after 250,000
 # advances and `-0.16907495402506745` after one. The second is the one this file asserts, and

@@ -510,8 +510,8 @@ no regression-detecting power, which is the only thing a benchmark is for.
 > **Phase 3, in progress.** SICP chapters 1 and 2 run ([`27`](27-walls-report.md),
 > [`41`](41-generic-arithmetic-report.md)), and the Are We Fast Yet harness is stood up for **all
 > fourteen** of its benchmarks ([`53`](53-are-we-fast-yet-report.md),
-> [`57`](57-richards-report.md), [`58`](58-json-report.md), [`59`](59-havlak-report.md),
-> [`60`](60-collision-detection-report.md), [`61`](61-deltablue-report.md)) — verified against the
+> [`53`](53-are-we-fast-yet-report.md), [`53`](53-are-we-fast-yet-report.md), [`53`](53-are-we-fast-yet-report.md),
+> [`53`](53-are-we-fast-yet-report.md), [`53`](53-are-we-fast-yet-report.md)) — verified against the
 > original suite's own constants, with wall-clock printed and no comparative claim, which is this
 > table's "Published" column kept and §25.3 item 1's "adopt now, publish now, make them
 > unflattering" kept at the same time. **The Felleisen table below is built**

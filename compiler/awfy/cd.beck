@@ -6,15 +6,15 @@
 #
 # It is in the suite because of what it is built on: a **red-black tree with parent pointers**,
 # rebalanced on insert and on delete. That is the most mutation-shaped data structure in the whole
-# suite, and `docs/58` §58.5 named it as what made this benchmark large.
+# suite, and `docs/53` §53.2 named it as what made this benchmark large.
 #
-# **It also found two gaps in the prelude**, which is `docs/60` §60.2 and is the more interesting
+# **It also found two gaps in the prelude**, which is `docs/53` §53.5 and is the more interesting
 # half of this port: `Simulator` needs `Math.cos` and `Math.sin`, and `voxelHash` needs a `(int)`
 # cast on a real. Beck's reals arrived in `docs/32` with `sqrt` and nothing else, and three phases
 # of programs never asked for more. `sin`, `cos` and `trunc` are primitives now.
 #
 # The tree is an **arena**: `Map[Int, RbNode]` with integer handles and `-1` for null, which is
-# `docs/57` §57.2's answer to a mutable object graph applied to the one structure in the suite that
+# `docs/53` §53.4's answer to a mutable object graph applied to the one structure in the suite that
 # is nothing but pointers. Every rotation and every fixup is the original's, line for line, with
 # `x.parent.left = y` becoming a rebuilt node in the map.
 #

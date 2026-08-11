@@ -6,7 +6,7 @@
 //! backend for one to be about. This file is the harness half of that, and it is **complete**: all
 //! fourteen benchmarks run, and each one agrees with the number the original suite verifies
 //! against — except DeltaBlue, which publishes no number and whose oracle is the assertions inside
-//! its own planner ([`61`](../../../../docs/61-deltablue-report.md)).
+//! its own planner ([`53`](../../../../docs/53-are-we-fast-yet-report.md)).
 //!
 //! Three things are asserted, in order of what they are worth:
 //!
@@ -194,7 +194,7 @@ fn the_directory_documents_what_the_port_changes() {
 /// The evaluator stops a call after 50,000,000 steps, which is a runaway-program backstop and is
 /// right for everything written by hand. It is not right for a benchmark: three of the fourteen in
 /// this directory need more at the size their suite measures at, and before this there was no way
-/// to say so ([`61`](../../../../docs/61-deltablue-report.md) §61.3).
+/// to say so ([`53`](../../../../docs/53-are-we-fast-yet-report.md) §53.3).
 ///
 /// Asserted in **both** directions, for [`20`](../../../../docs/20-phase-2-report.md)'s reason —
 /// a flag that raises a ceiling has to be shown raising it *and* shown that the ceiling is still

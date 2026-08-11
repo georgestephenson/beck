@@ -1119,7 +1119,7 @@ impl<'a> Function<'a> {
     /// `p.with(x = 3)` — a new object with the old one's other fields.
     ///
     /// Always a fresh object. The evaluator rebuilds in place when the base is held by nobody else
-    /// ([`docs/70`](../../../../../docs/70-last-use-moves-report.md)), and this cannot: an arena
+    /// ([`docs/70`](../../../../../docs/70-the-evaluator-gets-fast-report.md)), and this cannot: an arena
     /// with no ownership in it cannot prove nobody else holds an offset. What that costs is
     /// [`docs/101`] §101.6's first row, and it is a cost rather than a difference — the answer is
     /// the same one.

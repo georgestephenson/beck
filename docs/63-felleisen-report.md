@@ -162,7 +162,7 @@ recovered, and the code is longer.
   block came down in [`27`](27-walls-report.md); the verdict is recovered.
 - **[`08`](08-roadmap.md) §8.4's Phase 3 row loses an item.** "SICP stage 1; the Felleisen table;
   compile-speed budgets; Are We Fast Yet and CLBG harnesses" — the first is done, the second is this
-  report, Are We Fast Yet is complete ([`61`](61-deltablue-report.md)), and two remain.
+  report, Are We Fast Yet is complete ([`53`](53-are-we-fast-yet-report.md)), and two remain.
 - **The checker gains a function type it did not have**, per §63.3, and a test that keeps it.
 
 ## 63.9 What Phase 3 is still not

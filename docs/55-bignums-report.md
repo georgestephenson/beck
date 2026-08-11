@@ -181,7 +181,7 @@ signature cannot.
 
 ## 55.8 What Phase 3 is still not
 
-Unchanged from [`53`](53-are-we-fast-yet-report.md) §53.8 except where this touches it. The
+Unchanged from [`53`](53-are-we-fast-yet-report.md) §53.7 except where this touches it. The
 standard-library bullet is now everything *except* arbitrary-precision decimal, plus a benchmark
 harness that is nine-fourteenths of one suite. The exit criterion — an outside developer building a
 non-trivial app from documentation alone — is not met and is not closer.

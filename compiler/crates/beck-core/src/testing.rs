@@ -51,7 +51,7 @@ impl TestDef {
     ///
     /// A `test` block's expressions are *code*, and the three passes that annotate a finished
     /// program — [`crate::liveness`], [`crate::frames`] and [`crate::fields`] — reach them through
-    /// here. They did not until [`79`](../../../../../docs/79-a-lambda-is-a-frame-report.md): all three
+    /// here. They did not until [`70`](../../../../../docs/70-the-evaluator-gets-fast-report.md): all three
     /// walked `Program::defs`, a test's clauses are not in it, and so every expression inside a
     /// `test` block ran on the paths those passes exist to replace.
     ///

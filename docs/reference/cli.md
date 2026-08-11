@@ -197,7 +197,7 @@ A test is a log, a command and an expectation, so this needs no network, no data
 | `-f, --filter` | FILTER | Only run tests whose name contains this |
 | `-v, --verbose` | true \| false | Say what was stubbed even when the test passed — §21.3 rule 1's hidden default, declaring itself |
 | `--runs` | RUNS | Inputs per `property` block |
-| `--fuel` | FUEL | Evaluation steps one expectation may take before it is stopped.  The default is a runaway-program backstop and is right for everything written by hand. A *benchmark* is the exception — three of the fourteen in `awfy/` need more at the size their suite measures at (`docs/61` §61.3), and a backstop nothing can raise is a ceiling. |
+| `--fuel` | FUEL | Evaluation steps one expectation may take before it is stopped.  The default is a runaway-program backstop and is right for everything written by hand. A *benchmark* is the exception — three of the fourteen in `awfy/` need more at the size their suite measures at (`docs/53` §53.3), and a backstop nothing can raise is a ceiling. |
 | `--update` | true \| false | Write what `expect page matches snapshot` renders, instead of comparing against it.  The written file is reviewed like any other diff (§21.2). Nothing writes a snapshot without this flag: one that rewrote itself on disagreement would assert nothing. |
 
 

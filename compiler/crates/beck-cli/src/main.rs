@@ -154,7 +154,7 @@ enum Cmd {
         ///
         /// The default is a runaway-program backstop and is right for everything written by hand.
         /// A *benchmark* is the exception — three of the fourteen in `awfy/` need more at the size
-        /// their suite measures at (`docs/61` §61.3), and a backstop nothing can raise is a ceiling.
+        /// their suite measures at (`docs/53` §53.3), and a backstop nothing can raise is a ceiling.
         #[arg(long, default_value_t = beck_eval::DEFAULT_FUEL)]
         fuel: u64,
         /// Write what `expect page matches snapshot` renders, instead of comparing against it.
