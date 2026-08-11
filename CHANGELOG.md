@@ -28,6 +28,32 @@ Newest first.
   Rust doc comment was remapped to the section that now carries the claim, rather than to the
   chapter's front door.
 
+### Releases
+
+- **The release pipeline and the installer**
+  ([`docs/104`](docs/104-the-release-and-the-installer-report.md)) — the two items on
+  [`docs/08`](docs/08-roadmap.md) §8.5.4's apology list that were on nobody's bullet.
+  `.github/workflows/release.yml` turns a tag into four native builds, one `SHA256SUMS` and a
+  GitHub Release; it *calls* `compiler.yml` rather than restating a gate, so §28.2's "a release is
+  a tag on a commit that passed the whole matrix" is a `needs:` edge. `install.sh` verifies what it
+  downloaded and refuses to install on a mismatch. Everything executable is outside the YAML —
+  a tag-triggered workflow is the one artefact that cannot be run before it is used — and
+  §104.7 splits what was executed from what was only written: no tag has been pushed.
+  Gated by `release.rs` (nine tests; the one that matters corrupts an archive and asserts the
+  installer exits non-zero *and* installs nothing, checked by breaking the comparison).
+- **The version means something.** `0.1.0` on fourteen unpublished crates became **0.3.0**, read
+  from one place by `release/version.sh`; a tag that disagrees fails the build, and
+  `beck --version` carries the commit and the target triple, because four tarballs share a release.
+- **A release publishes a checksum and no signature**
+  ([`adr/0027`](docs/adr/0027-a-release-publishes-a-checksum-and-not-a-signature.md)): `beck sign`'s
+  subject is an OCI manifest digest and a compiler release is a tarball.
+  `pending_security.rs::a_release_artefact_carries_a_checksum_and_no_signature` asserts the absence
+  from both ends, and [`docs/43`](docs/43-threat-model.md) §43.4 names it.
+- **Documentation brought back in line with the code** on the way through: `docs/13`'s "Cranelift is
+  not built", `docs/06`'s "the `Platform` trait does not exist yet", and "all ten crates inherit
+  `forbid(unsafe)`" in `SECURITY.md` and `docs/42` — which is twelve of fourteen, with `beck-wasm`
+  and `beck-play` at `deny` plus an export-only exception each test asserts the extent of.
+
 ### The playground
 
 - **Four refusals closed** ([`docs/103`](docs/103-playground-phase-3-report.md)): the editor's

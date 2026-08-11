@@ -15,8 +15,8 @@ name: docs
 # deleting this job.
 #
 # `publish` builds the site: the reference, the written guide, two module pages, and rustdoc for
-# the nine crates. Only from `main` — a pull request builds it and throws it away, which is enough
-# to know it builds.
+# every crate in the workspace. Only from `main` — a pull request builds it and throws it
+# away, which is enough to know it builds.
 #
 # The site has two kinds of page and they are honest in different ways. A reference page is
 # *derived* from the compiler and the `generated` job above holds it there. A guide is *written*,

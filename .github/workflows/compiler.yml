@@ -20,6 +20,10 @@ on:
   pull_request:
     paths: ["compiler/**", ".github/workflows/**"]
   workflow_dispatch:
+  # `release.yml` calls this workflow rather than restating its gates, which is what makes §28.2
+  # item 1's "no release-only build steps" a fact about the pipeline instead of a promise about it:
+  # a tag re-runs *these* jobs on the tagged commit, and the release refuses on any red.
+  workflow_call:
 
 # None of these jobs writes to the repository.
 permissions:
@@ -84,6 +88,9 @@ jobs:
       # only by the code that wrote it (docs/99 §99.3).
       BECK_REQUIRE_TAR: "1"
       BECK_REQUIRE_OPENSSL: "1"
+      # `release.rs` runs the installer against a corrupted archive. A skip here would mean nothing
+      # checked that a bad checksum stops an install (docs/104 §104.8).
+      BECK_REQUIRE_INSTALL: "1"
     steps:
       - uses: actions/checkout@v4
       # rust-toolchain.toml's pin (1.94.1, with components) wins over the default this action

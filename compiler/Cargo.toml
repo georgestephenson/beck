@@ -18,7 +18,11 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+# `docs/28-releases-and-deployment.md` §28.2 item 4: `0.x` minor per phase-sized increment, and no
+# stability promise before Phase 5's specification. The minor counts *phases*, not releases — this
+# is the third — and `release/version.sh` reads it, so a tag that disagrees fails the build rather
+# than publishing a binary whose `--version` contradicts the page it came from.
+version = "0.3.0"
 edition = "2021"
 license = "MIT"
 publish = false
@@ -26,21 +30,21 @@ publish = false
 [workspace.dependencies]
 # Path *and* version: a path dependency with no version requirement is a wildcard, and §7.9's
 # "pinning — everything, always" does not carve out our own crates.
-beck-diag = { path = "crates/beck-diag", version = "0.1.0" }
-beck-syntax = { path = "crates/beck-syntax", version = "0.1.0" }
-beck-macro = { path = "crates/beck-macro", version = "0.1.0" }
-beck-core = { path = "crates/beck-core", version = "0.1.0" }
-beck-eval = { path = "crates/beck-eval", version = "0.1.0" }
-beck-host = { path = "crates/beck-host", version = "0.1.0" }
-beck-llvm = { path = "crates/beck-llvm", version = "0.1.0" }
-beck-clif = { path = "crates/beck-clif", version = "0.1.0" }
-beck-wasm = { path = "crates/beck-wasm", version = "0.1.0" }
-beck-play = { path = "crates/beck-play", version = "0.1.0" }
-beck-rt = { path = "crates/beck-rt", version = "0.1.0" }
+beck-diag = { path = "crates/beck-diag", version = "0.3.0" }
+beck-syntax = { path = "crates/beck-syntax", version = "0.3.0" }
+beck-macro = { path = "crates/beck-macro", version = "0.3.0" }
+beck-core = { path = "crates/beck-core", version = "0.3.0" }
+beck-eval = { path = "crates/beck-eval", version = "0.3.0" }
+beck-host = { path = "crates/beck-host", version = "0.3.0" }
+beck-llvm = { path = "crates/beck-llvm", version = "0.3.0" }
+beck-clif = { path = "crates/beck-clif", version = "0.3.0" }
+beck-wasm = { path = "crates/beck-wasm", version = "0.3.0" }
+beck-play = { path = "crates/beck-play", version = "0.3.0" }
+beck-rt = { path = "crates/beck-rt", version = "0.3.0" }
 # `default-features = false` here so a member can decline the image half; a member cannot turn
 # off a default the workspace entry enables. `beck-cli` asks for `image` explicitly.
-beck-infra = { path = "crates/beck-infra", version = "0.1.0", default-features = false }
-beck-db = { path = "crates/beck-db", version = "0.1.0" }
+beck-infra = { path = "crates/beck-infra", version = "0.3.0", default-features = false }
+beck-db = { path = "crates/beck-db", version = "0.3.0" }
 
 anyhow = "1"
 async-trait = "0.1"

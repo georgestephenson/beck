@@ -15,11 +15,35 @@
 > than no guide, and this project's answer to that is the same one it uses for the language
 > reference: gate it.
 
-## 86.1 Build the compiler
+## 86.1 Install the compiler
 
-There is no released binary yet ([`28`](28-releases-and-deployment.md) is the plan and says so), so
-the compiler is built from this repository. The toolchain is pinned in `rust-toolchain.toml` and the
-first build downloads it:
+> **No release has been cut yet.** The installer and the pipeline that feeds it are built and
+> [`104`](104-the-release-and-the-installer-report.md) §104.7 says which parts of them have been
+> executed — but until a tag is pushed there is nothing on the releases page, and the command below
+> will tell you it could not resolve a version. **Build from source** until then; it is the second
+> half of this section and it is the same binary.
+
+One binary is the whole toolchain ([`04`](04-compiler-architecture.md) §4.6), so installing it is
+downloading one file:
+
+```text
+$ curl -fsSL https://raw.githubusercontent.com/georgestephenson/beck/main/install.sh | sh
+$ beck --version
+beck 0.3.0 (3f3316bdc1d9 x86_64-unknown-linux-gnu)
+```
+
+[`install.sh`](../install.sh) works out your platform, downloads that platform's tarball and the
+release's `SHA256SUMS`, **refuses to go on unless the two agree**, and puts `beck` in `~/.beck/bin`
+— it tells you if that is not on your `PATH`. `BECK_INSTALL_DIR` puts it somewhere else, and
+`BECK_VERSION` installs a version other than the latest. There are builds for x86-64 and 64-bit ARM
+on Linux and macOS; there is no Windows build.
+
+A checksum is not a signature: it says the download was not corrupted, and nothing about the page it
+came from. [`104`](104-the-release-and-the-installer-report.md) §104.6 is exact about that, and
+[`99`](99-supply-chain-report.md) §99.7 is where the signature and the transparency log sit unbuilt.
+
+**Or build it from source**, which is the same binary and needs a C compiler and CMake. The
+toolchain is pinned in `rust-toolchain.toml` and the first build downloads it:
 
 ```text
 $ cd compiler
@@ -298,8 +322,12 @@ and this document cannot make it true on its own.
 * **It covers one shape of program.** One fold, one view, one command union. Nothing here shows two
   folds, a module boundary, a trait, an outbound call, a macro or a `parallel:` scope, all of which
   exist and are documented in the reports rather than here.
-* **There is no installation story.** §86.1 builds from source because there is no release; that is
-  [`28`](28-releases-and-deployment.md)'s work and not a documentation gap.
+* ~~**There is no installation story.**~~ There is one — §86.1 — and it is
+  [`104`](104-the-release-and-the-installer-report.md)'s work: an installer that verifies what it
+  downloaded, and a tag-triggered pipeline that builds what it installs. §104.7 is careful about
+  which half of that has been executed: the installer has, against a real artefact; the workflow has
+  not, because no tag has been cut. **So the command above will not work until one is**, and
+  building from source is what this guide can promise today.
 * **The deployment stops at `beck build`.** `beck up` and `beck deploy` exist;
   [`82`](82-the-defaults-that-should-be-unavoidable-report.md) §82.4 is honest that nothing in this
   repository has applied a generated manifest to a real cluster, so this guide does not tell anybody

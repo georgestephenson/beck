@@ -56,8 +56,11 @@ partition, and any way to make a build produce an artefact that does not corresp
 - vulnerabilities in dependencies, which belong upstream — though a report telling us we are
   pinning a vulnerable version is welcome and is handled as an ordinary issue;
 - anything requiring a compromised host, a privileged local attacker, or a malicious operator;
-- **the absent controls the project already documents**: identity is dev-mode (an actor is
-  self-asserted), there are no per-actor quotas, no connection limits and no origin checks.
+- **the absent controls the project already documents**, which are fewer than they were and are
+  listed in [`docs/43`](docs/43-threat-model.md) §43.4 rather than here: the **default** identity
+  provider is dev-mode, so an actor is self-asserted unless a deployment chooses OIDC or the signed
+  provider; there are no subscription or connection limits; and a release artefact carries a
+  checksum and **no signature**.
   [`docs/42`](docs/42-security-assurance.md) §42.6 records these and
   `compiler/crates/beck-cli/tests/pending_security.rs` asserts each one as an executable statement
   of what is missing. A report that one of them is missing is welcome as an issue and is not a
@@ -75,11 +78,18 @@ written in memory-unsafe languages to publish a memory-safety roadmap), Beck's r
 because the work was done at the start rather than scheduled:
 
 **Every line of first-party code in this repository is Rust with `unsafe` forbidden at the
-workspace root**, and all ten crates inherit that lint — inheritance is what makes a workspace lint
-real, and it is present in every member. There is no `unsafe impl Send`/`Sync` anywhere; every
-cross-thread type is auto-derived, so the compiler is the reviewer. The network-facing tier — the
-parser, the protocol decoder, the patch encoder — therefore has no unsafe code to prioritise, which
-is what a roadmap of this kind is for.
+workspace root**, and inheritance is what makes a workspace lint real: **twelve of the fourteen
+crates carry `[lints] workspace = true`**. The two that do not are the WebAssembly modules,
+`beck-wasm` and `beck-play`, and they are the exception rather than a gap — rustc classifies
+`#[no_mangle]` as unsafe code (two libraries exporting one symbol is undefined at link time) and a
+WebAssembly module must export something or the host cannot call it. Both set `unsafe_code = "deny"`
+and carry one `#[allow]` per export attribute, and the extent of that is a **test** rather than a
+promise: `mode_b.rs` and `playground.rs` each assert that their crate contains no `unsafe` block, no
+`unsafe fn`, and no allow site that is not on an export. There is no `unsafe` *code* in either.
+
+There is no `unsafe impl Send`/`Sync` anywhere; every cross-thread type is auto-derived, so the
+compiler is the reviewer. The network-facing tier — the parser, the protocol decoder, the patch
+encoder — therefore has no unsafe code to prioritise, which is what a roadmap of this kind is for.
 
 The limit of that claim, stated in the same breath: `forbid(unsafe)` covers first-party code only.
 The dependencies underneath the network edge — tokio, hyper, tungstenite, redb — are not
