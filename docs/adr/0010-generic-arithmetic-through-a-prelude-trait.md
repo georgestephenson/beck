@@ -6,8 +6,8 @@
 temporary: it rejected a built-in `Num` constraint because "it would have to be special-cased in
 unification, in `.becki` publication and in `--wire-compat`, and every one of those is a place a
 real trait system will have to go." Those places now have one — traits
-([`37`](../37-traits-report.md)), bounds ([`39`](../39-bounds-report.md)) and a module boundary
-([`40`](../40-traits-across-modules-report.md)) — so the reason for the refusal has expired. The
+([`27`](../27-the-walls-come-down-report.md)), bounds ([`27`](../27-the-walls-come-down-report.md)) and a module boundary
+([`27`](../27-the-walls-come-down-report.md)) — so the reason for the refusal has expired. The
 consequence 0008 named is what forced the issue: "a user's own numeric type cannot join the
 resolution at all", which is `sicp/refusals/rational.beck` and SICP §2.1.1.
 
@@ -16,7 +16,7 @@ resolution at all", which is `sicp/refusals/rational.beck` and SICP §2.1.1.
 argument for the shape is the book's: §2.5.1 builds generic arithmetic by hand as operations each
 type installs an implementation for, and that is a trait.
 
-Three options were written out in [`39`](../39-bounds-report.md) §39.7 and this is the first.
+Three options were written out in [`27`](../27-the-walls-come-down-report.md) §27.10 and this is the first.
 Rejected: **a name the compiler knows and the program declares** — cheaper by a day, and it makes a
 program that declares an unrelated `Num` behave strangely for reasons nothing explains. Rejected:
 **operators stay closed**, with §2.1.1 written as `add_rat(x, y)` — which is the reading the refusal
@@ -24,7 +24,7 @@ file argued against, because a language whose third numeric floor reads differen
 two has not abstracted anything.
 
 `Num` is built as a `TraitSig` in `prelude.rs` and enters through `import_traits`, the path
-[`40`](../40-traits-across-modules-report.md) built for imported traits. There is no prelude source
+[`27`](../27-the-walls-come-down-report.md) built for imported traits. There is no prelude source
 to parse and no span belonging to a file that does not exist.
 
 **Consequences.** Dispatch happens only where there is an implementation to dispatch to, so the rule
@@ -41,7 +41,7 @@ carries `square` and `square_real`. `Num` is one trait and not a tower with coer
 raising an `Int` to a `Rational` is not built, for the same reason 0008 refused promotion.
 
 The prelude now contains a trait, which is a new kind of thing to argue about. What earns a place
-there is not written down, and [`41`](../41-generic-arithmetic-report.md) §41.8 item 2 says the next
+there is not written down, and [`27`](../27-the-walls-come-down-report.md) §27.1 item 2 says the next
 addition should have to answer for it.
 
-Full argument: [`docs/41-generic-arithmetic-report.md`](../41-generic-arithmetic-report.md).
+Full argument: [`docs/27-the-walls-come-down-report.md`](../27-the-walls-come-down-report.md).

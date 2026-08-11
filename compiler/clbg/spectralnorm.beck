@@ -21,7 +21,7 @@ import format
 ## `A`'s element at `i`, `j`.
 ##
 ## The index arithmetic is exact and the division is not: `(i+j)(i+j+1)/2 + i + 1` is an integer in
-## the Java too, and `1.0/` is the only place a real enters. `docs/41` refuses `1.0 / n` for an
+## the Java too, and `1.0/` is the only place a real enters. `docs/27` refuses `1.0 / n` for an
 ## `Int` `n`, so the widening is written down — which is the whole of the difference between this
 ## line and the original's.
 def a_at(i: Int, j: Int) -> Float:

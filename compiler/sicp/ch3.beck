@@ -1,7 +1,7 @@
 # SICP chapter 3 — "Modularity, Objects, and State".
 #
 # `docs/08` §8.5.4 lists "more of SICP, chapter 3 being the part closest to what Beck is for" as a
-# free-standing item with no predecessors, and `sicp/README.md` has said since docs/41 that
+# free-standing item with no predecessors, and `sicp/README.md` has said since docs/27 that
 # "chapters 3, 4 and 5 are unattempted, and finding the next wall needs somebody to write more of
 # the book". This is chapter 3 attempted.
 #
@@ -41,8 +41,8 @@
 #
 # `withdraw` is not a function of `amount`. It is a function of `(balance, amount)` that returns
 # both a new balance and an answer, and `set!` is what hides the first half of each. Writing both
-# halves down is the whole reorganisation, and it is the same one docs/57 needed for Richards —
-# "a closure over mutable state is a function of the state" (§57.3), arrived at there by porting a
+# halves down is the whole reorganisation, and it is the same one docs/53 needed for Richards —
+# "a closure over mutable state is a function of the state" (§53.3), arrived at there by porting a
 # benchmark and here by reading the book that benchmark's language came from.
 #
 # Nothing is lost and one thing is gained: the transcript below is a *value*, so the book's four

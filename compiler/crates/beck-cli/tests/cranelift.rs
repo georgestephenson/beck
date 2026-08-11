@@ -312,7 +312,7 @@ fn the_three_backends_agree_on_recursion() {
 
 /// A tail call is a jump here too, and Cranelift's verifier is what says so: `return_call` is
 /// refused outright if the frame cannot be discarded, which is the same guarantee `musttail` gives
-/// the other backend and what `docs/31`'s property rests on.
+/// the other backend and what `docs/27`'s property rests on.
 #[test]
 fn a_tail_call_costs_nothing_and_has_no_ceiling() {
     linker!();

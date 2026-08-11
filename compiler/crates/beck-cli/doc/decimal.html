@@ -81,7 +81,7 @@ addition in this file fallible on paper. `docs/55` §55.7 is where that helper c
 <p>The divisor is non-zero at every call below, so the `Err` arm is unreachable — and writing it is
 what keeps this file's row a single error type. A library whose callers have to handle two
 unrelated error unions because of what it happens to be built on is a library leaking its
-implementation, and `try:` is the tool for not doing that (`docs/45`).</p>
+implementation, and `try:` is the tool for not doing that (`docs/27`).</p>
 <h3 id="divide_to">divide_to</h3>
 <pre><code>divide_to(a: Decimal, b: Decimal, scale: Int, rule: Rounding) -&gt; Decimal</code></pre>
 <p><span class="tag">def</span><span class="tag">on any</span><span class="tag">raises(DecimalError)</span></p>

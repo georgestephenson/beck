@@ -36,9 +36,9 @@ $ ./target/release/beck test sicp/ch3.beck
 
 §25.7 put the six in dependency order and all six are built: running a module with no merge point,
 recursive and forward-referencing types and the `B0320` defect
-([`docs/27`](../../docs/27-walls-report.md)); proper tail calls
-([`docs/31`](../../docs/31-tail-calls-report.md)); reals and user-written polymorphism
-([`docs/32`](../../docs/32-numeric-tower-and-polymorphism-report.md)).
+([`docs/27`](../../docs/27-the-walls-come-down-report.md)); proper tail calls
+([`docs/27`](../../docs/27-the-walls-come-down-report.md)); reals and user-written polymorphism
+([`docs/27`](../../docs/27-the-walls-come-down-report.md)).
 
 Each wall that came down left a test pointing the other way rather than no test at all. The clearest
 example is `refusals/tail.beck`, which asserted that a tail call eight thousand deep aborts the
@@ -46,10 +46,10 @@ process and is now `ch1.beck`'s §1.2.1 exercise asserting that one a quarter of
 not.
 
 Removing the six wrote three more, and those came down too: a `list[T]` that could not be taken
-apart ([`docs/33`](../../docs/33-effect-polymorphism-and-list-patterns-report.md)), a type that
-could not take a parameter ([`docs/36`](../../docs/36-parameterised-types-report.md)), and exact
+apart ([`docs/27`](../../docs/27-the-walls-come-down-report.md)), a type that
+could not take a parameter ([`docs/27`](../../docs/27-the-walls-come-down-report.md)), and exact
 rationals — which needed `+` to reach a type the compiler does not know about, and got it when
-`Num` joined the prelude ([`docs/41`](../../docs/41-generic-arithmetic-report.md)).
+`Num` joined the prelude ([`docs/27`](../../docs/27-the-walls-come-down-report.md)).
 
 So [`refusals/`](refusals/) is **empty**, and its own README says what that does and does not claim:
 every wall this project has *found* has been removed, which is not the same as expressing all of

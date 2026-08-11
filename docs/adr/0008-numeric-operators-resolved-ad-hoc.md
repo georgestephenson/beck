@@ -24,5 +24,5 @@ which is what `sicp/refusals/rational.beck` records: SICP §2.1.1's exact ration
 traits rather than on arithmetic. `abs` referenced *as a value* rather than applied gets the `Int`
 form, because there is no operand to resolve from, and nothing diagnoses that.
 
-Full argument: [`docs/32-numeric-tower-and-polymorphism-report.md`](../32-numeric-tower-and-polymorphism-report.md)
-§32.3 and §32.9.
+Full argument: [`docs/27-the-walls-come-down-report.md`](../27-the-walls-come-down-report.md)
+§27.2 and §27.10.

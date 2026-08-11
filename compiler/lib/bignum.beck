@@ -2,7 +2,7 @@
 #
 # `docs/08` §8.5.4's Wave 2 has carried "bignums and numeric coercion" as untouched since
 # `docs/46`, and `docs/25` §25.7 item 5 put them at the end of the numeric tower: "reals first, then
-# rationals and bignums". The reals landed in `docs/32` and the rationals in `docs/41`. This is the
+# rationals and bignums". The reals landed in `docs/27` and the rationals in `docs/27`. This is the
 # floor underneath both of them, and it is the last one.
 #
 # It is a **file rather than a primitive**, and that is `lib/README.md`'s division applied to the
@@ -273,7 +273,7 @@ def less_than(a: Big, b: Big) -> Bool:
 def greater_than(a: Big, b: Big) -> Bool:
     return compare_big(a, b) > 0
 
-# `+`, `-`, `*` and `/` on `Big`, through the prelude trait `Num` (`docs/41`), whose four method
+# `+`, `-`, `*` and `/` on `Big`, through the prelude trait `Num` (`docs/27`), whose four method
 # names are SICP §2.5.1's own. This is the third floor of the tower to be added from outside the
 # compiler, after `sicp/ch2.beck`'s rationals and `money.beck`'s amounts — and the first where the
 # type is a *number* in the ordinary sense, which is the point: a tower whose new floors can only
@@ -281,7 +281,7 @@ def greater_than(a: Big, b: Big) -> Bool:
 #
 # `div` truncates toward zero, which is what `Int`'s `/` does, so `big(-7) / big(2)` is `-3` and
 # agrees with `-7 / 2`. It is the only one of the four that can fail, and `raises(BigError)` is
-# inferred from it and travels to whoever writes `a / b` (`docs/45`, `docs/47`).
+# inferred from it and travels to whoever writes `a / b` (`docs/27`, `docs/27`).
 impl Num for Big:
     def add(self, other):
         if self.negative == other.negative:
@@ -337,7 +337,7 @@ def divide_small(a: Big, m: Int) -> Division:
 
 ## `b ** exponent`, by repeated squaring.
 ##
-## `docs/31`'s tail calls are what make this a loop rather than a stack: the accumulator is carried,
+## `docs/27`'s tail calls are what make this a loop rather than a stack: the accumulator is carried,
 ## so `big(2) ** 4096` costs no host frames at all.
 def big_pow(b: Big, exponent: Int) -> Big uses raises(BigError):
     if exponent < 0:
@@ -354,11 +354,11 @@ def power_from(b: Big, exponent: Int, acc: Big) -> Big:
 # ---------------------------------------------------------------------------------------------
 # Coercion — the other half of §8.5.4's Wave 2 item
 #
-# Every conversion is a *named function*, and none of them is implicit. `docs/41` refuses `1 + 1.0`
+# Every conversion is a *named function*, and none of them is implicit. `docs/27` refuses `1 + 1.0`
 # on purpose, and adding a bignum to the tower is exactly the moment that decision would come under
 # pressure: an `Int` that silently became a `Big` on overflow would make the cost of arbitrary
 # precision invisible, and `Int` arithmetic is checked precisely so that overflow is a message
-# rather than a wrong answer (`docs/32` §32.3).
+# rather than a wrong answer (`docs/27` §27.2).
 # ---------------------------------------------------------------------------------------------
 
 ## An `Int` as a `Big`. Total — including the most negative `Int`.
@@ -408,7 +408,7 @@ def to_int_from(b: Big, i: Int, acc: Int) -> Int:
 ## A `Big` as a `Float`. **Lossy**, and named so a reader has to mean it.
 ##
 ## A real has 53 bits of significand, so any `Big` above 2⁵³ is rounded — and one above about 1.8 ×
-## 10³⁰⁸ becomes an infinity, because that is what IEEE 754 does and `docs/32` §32.3 declines to lay
+## 10³⁰⁸ becomes an infinity, because that is what IEEE 754 does and `docs/27` §27.2 declines to lay
 ## a rule of Beck's on top of the format's own.
 def big_to_real(b: Big) -> Float:
     return real_from(b, list_len(b.limbs) - 1, 0.0)
@@ -506,7 +506,7 @@ test "and text that is not a number says so":
     expect (try: big_of_str("1_000")) == Err(error=NotANumber(text="1_000"))
 
 ## `+`, `-` and `*` are **pure** — only division, the exponent and the reader can fail — so no `try:`
-## appears on a line that only adds. That is `docs/47`'s per-impl row doing exactly what it is for,
+## appears on a line that only adds. That is `docs/27`'s per-impl row doing exactly what it is for,
 ## and the checker refuses a `try:` over an expression that cannot fail, so this is not a style
 ## choice: it is checked.
 test "zero has one representation, whichever way it is reached":

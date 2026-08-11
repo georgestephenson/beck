@@ -17,7 +17,7 @@ for free: **which arms can never match** (§90.4).
 
 ## 90.1 What was refused, and what it cost
 
-[`33`](33-effect-polymorphism-and-list-patterns-report.md) §33.5, which built list patterns:
+[`27`](27-the-walls-come-down-report.md) §27.3, which built list patterns:
 
 > **Nested patterns are still refused**, as they are for a constructor: patterns in Beck are one
 > level deep, which is what §3.1's exhaustiveness check needs and no more.
@@ -25,8 +25,8 @@ for free: **which arms can never match** (§90.4).
 That sentence is exactly right about *why*, and it is the thing this report inverts: what the old
 exhaustiveness check needed is what kept patterns shallow, so the pattern language could not grow
 until the check did. Four reports since have carried "patterns are still one level deep" in their
-closing lists ([`36`](36-parameterised-types-report.md), [`37`](37-traits-report.md),
-[`39`](39-bounds-report.md), [`41`](41-generic-arithmetic-report.md)).
+closing lists ([`27`](27-the-walls-come-down-report.md), [`27`](27-the-walls-come-down-report.md),
+[`27`](27-the-walls-come-down-report.md), [`27`](27-the-walls-come-down-report.md)).
 
 What it cost a program is a name for a value that already had one:
 
@@ -198,15 +198,15 @@ a recursive pattern checker and losing forty lines of exhaustiveness bookkeeping
 [`exhaust.rs`](../compiler/crates/beck-core/src/check/exhaust.rs)'s 541. That file has grown in
 almost every report since Phase 1, and [`22`](22-phase-3-report.md) §22.6 spent eight reports asking
 for something to be lifted out of it rather than added to it. This is the second time it has
-happened, after [`36`](36-parameterised-types-report.md) lifted the test-checking pass.
+happened, after [`27`](27-the-walls-come-down-report.md) lifted the test-checking pass.
 
 ## 90.8 What this corrects, elsewhere
 
 | Document | Correction |
 |---|---|
-| [`33`](33-effect-polymorphism-and-list-patterns-report.md) §33.5 | "Nested patterns are still refused … patterns in Beck are one level deep, which is what §3.1's exhaustiveness check needs and no more." Built, and the second clause was the reason: the check is what had to change |
+| [`27`](27-the-walls-come-down-report.md) §27.3 | "Nested patterns are still refused … patterns in Beck are one level deep, which is what §3.1's exhaustiveness check needs and no more." Built, and the second clause was the reason: the check is what had to change |
 | [`08`](08-roadmap.md) | The concurrency-and-errors bullet's "the rest of pattern matching is untouched", and the exit-criterion paragraph's "not the rest of pattern matching". Guards, or-patterns and `@` bindings are what remain, and §90.6 lists them |
-| [`36`](36-parameterised-types-report.md) §36.8, [`37`](37-traits-report.md) §37.8, [`39`](39-bounds-report.md) §39.8, [`41`](41-generic-arithmetic-report.md) §41.8 | Four closing lists carry "patterns are still one level deep". They are history and keep their sentences; this is where the change is recorded |
+| [`27`](27-the-walls-come-down-report.md) §27.9, [`27`](27-the-walls-come-down-report.md) §27.1, [`27`](27-the-walls-come-down-report.md) §27.1, [`27`](27-the-walls-come-down-report.md) §27.1 | Four closing lists carry "patterns are still one level deep". They are history and keep their sentences; this is where the change is recorded |
 | `B0345` | Its message was "nested patterns are not available in Phase 1" and it now refuses one thing rather than a feature: a pattern in a list's tail |
 | The error index | `B0355` is new — the first **warning** in the `B03xx` range |
 

@@ -62,7 +62,7 @@ is not representable and which `sdiv` treats as immediate undefined behaviour. A
 there would not have been a wrong answer; it would have been the optimiser deleting the code
 around it.
 
-**Reals do not compare with `fcmp`.** [`32`](32-numeric-tower-and-polymorphism-report.md) §32.2
+**Reals do not compare with `fcmp`.** [`27`](27-the-walls-come-down-report.md) §27.8
 made Beck's `==` on reals *structural*, because a fold's accumulator needs a total order and IEEE
 754 supplies none: `Value::Float` stores a monotone transform of the bits, under which `NaN` is the
 maximum and equals itself. `fcmp` says `false` to both. A comparison here bitcasts and compares the
@@ -127,7 +127,7 @@ test "negating the smallest integer" … FAILED
 Neither is the language's answer, and the pair is worse than either alone: **which programs ran
 depended on how the compiler was built**, which is [`64`](64-compile-speed-report.md) §64.4's
 defect on the evaluator's axis and the same shape as the one
-[`31`](31-tail-calls-report.md)'s `STACK_BYTES` comment records. It is now `checked_neg`, and
+[`27`](27-the-walls-come-down-report.md)'s `STACK_BYTES` comment records. It is now `checked_neg`, and
 `overflow_and_division_by_zero_are_errors_not_panics` covers every integer operation that has an
 input without an answer — `i64::MIN / -1` and `i64::MIN % -1` were untested too.
 
@@ -177,7 +177,7 @@ spent two phases being honest about being exactly that.
 
 ## 93.4 A tail call is a jump, and that is a guarantee rather than a hope
 
-[`31`](31-tail-calls-report.md) §31.2 makes "a call in tail position is free" a property of the
+[`27`](27-the-walls-come-down-report.md) §27.2 makes "a call in tail position is free" a property of the
 **language**. Until now it was a property of one backend's trampoline, and a native backend that
 spent a frame per iteration would have made every Beck loop a stack overflow waiting for a big
 enough input.
@@ -301,7 +301,7 @@ which is the shape of a semantic cost rather than a codegen one, and
 
 So the code generation was never the problem: Beck's 2.45 ms is within 13% of C doing the same work
 — 12% once the round trip is taken out — and
-[`32`](32-numeric-tower-and-polymorphism-report.md) §32.2's order key costs about 3%. The whole
+[`27`](27-the-walls-come-down-report.md) §27.8's order key costs about 3%. The whole
 3× was normalising after every operation, which §93.2 now does not do. `AGENTS.md` says a bad number
 is a design question rather than a fact to write down; this is what that looked like in practice —
 the first version of this section reported 6.17 ms and 58×, and the fix was to ask what the
@@ -386,11 +386,11 @@ report.
 | [`05`](05-tier-lowering.md) §5.2 | "compiles to native binaries" was a design. Half of it is built: LLVM, over the scalar subset, out of process. Cranelift is not, and the `beck dev` argument for it is now backed by a measured 195 ms compile |
 | [`08`](08-roadmap.md) §8.4 | "The interpreter-vs-Cranelift-vs-LLVM differential and the first honest compute number arrive together, and not before." They have arrived, without the Cranelift term |
 | [`25`](25-benchmarks-and-expressiveness.md) §25.9 rule 2 | "Publish no comparative claim until the second backend exists." There is one, and §93.5 is the claim — for the **scalar subset only**, which is narrower than the rule assumed, and the rule was right about the sequencing |
-| [`25`](25-benchmarks-and-expressiveness.md) §25.3 | "roughly 33× CPython on `fib(30)`" for the evaluator **does not reproduce**: §93.5's run puts it at 7.9×. Different machine and different Python, and the evaluator has had mimalloc ([`adr/0019`](adr/0019-a-modern-allocator-for-the-evaluator.md)) and the [`70`](70-last-use-moves-report.md)–[`82`](82-the-defaults-that-should-be-unavoidable-report.md) optimisation reports since. **Not corrected here** — a number measured elsewhere is not refuted by a number measured here, and re-measuring §25.3's own harness is the work that would settle it |
+| [`25`](25-benchmarks-and-expressiveness.md) §25.3 | "roughly 33× CPython on `fib(30)`" for the evaluator **does not reproduce**: §93.5's run puts it at 7.9×. Different machine and different Python, and the evaluator has had mimalloc ([`adr/0019`](adr/0019-a-modern-allocator-for-the-evaluator.md)) and the [`70`](70-the-evaluator-gets-fast-report.md)–[`82`](82-the-defaults-that-should-be-unavoidable-report.md) optimisation reports since. **Not corrected here** — a number measured elsewhere is not refuted by a number measured here, and re-measuring §25.3's own harness is the work that would settle it |
 | [`08`](08-roadmap.md) §8.5.4, §8.7 | Wave 4's "LLVM backend and native codegen" and Lane E are no longer untouched |
 | [`04`](04-compiler-architecture.md) §4.8 | The differential between backends exists and is `beck-cli/tests/native.rs`. `backend_seam.rs`'s `two_backends_over_one_program_agree` still runs the evaluator against itself and still says so — it is asserting the *runtime* seam, which is a different claim |
 | [`19`](19-phase-1-report.md) §19.6 | "native codegen is not done" — half done, and the half is named |
-| [`31`](31-tail-calls-report.md) §31.2 | The tail-call guarantee is now a property of two backends, and on the compiled one it is enforced by the assembler refusing the module rather than by a trampoline |
+| [`27`](27-the-walls-come-down-report.md) §27.2 | The tail-call guarantee is now a property of two backends, and on the compiled one it is enforced by the assembler refusing the module rather than by a trampoline |
 | [`42`](42-security-assurance.md), [`43`](43-threat-model.md) §43.2, `SECURITY.md` | "all nine crates" is ten. The claim is unchanged and `beck-llvm` inherits the lint like every other member |
 | [`62`](62-fuel-report.md) | Fuel bounds the evaluator and nothing else. §93.7 |
 | [`adr/0007`](adr/0007-evaluator-stack-is-declared-not-discovered.md) | The counted ceiling is the evaluator's. Compiled code has none, and `Backend::stack_bytes` answering zero for a compiling backend — the default that ADR set up — is correct about the compiled half and says nothing about the fallback behind it, which is why `Native` forwards the fallback's number |

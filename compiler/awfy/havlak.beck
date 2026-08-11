@@ -4,9 +4,9 @@
 # 5,213-node control-flow graph: a depth-first numbering, a classification of every edge as a back
 # edge or not, and then union-find with path compression collapsing each loop body into its header.
 #
-# `docs/58` §58.5 recommended attempting this one first of the three that were left, for a reason
+# `docs/53` §53.2 recommended attempting this one first of the three that were left, for a reason
 # that was about *learning* rather than about size: it is the only one whose published configuration
-# might not run at all, because `findLoops` is called **52 times** over that graph. §59.3 is what
+# might not run at all, because `findLoops` is called **52 times** over that graph. §53.3 is what
 # that turned out to cost, and it is the first benchmark in this directory to need a `--fuel` bigger
 # than the default.
 #
@@ -43,7 +43,7 @@ model Cfg:
     ## The first node created, which the original captures the moment the map's size reaches one.
     start: Int
     ## The original appends every edge to a `Vector` that nothing ever reads. A count stands in for
-    ## it — §59.4 records that as the one place this does less work than the original.
+    ## it — §53.4 records that as the one place this does less work than the original.
     edge_count: Int
 
 def no_block() -> Int:
@@ -806,11 +806,11 @@ def dummy_loops(cfg: Cfg, lsg: Lsg, i: Int, n: Int) -> Lsg:
     return dummy_loops(cfg, find_loops(new_finder(cfg, lsg)).lsg, i + 1, n)
 
 ## The 50 runs whose loop structure is thrown away. They change no number this benchmark verifies —
-## `lsg` is not one of their arguments — and they are the bulk of the work, which §59.3 measures.
+## `lsg` is not one of their arguments — and they are the bulk of the work, which §53.3 measures.
 ##
 ## The count is **summed** rather than dropped, and that is not decoration. The first version of this
 ## passed the run's own loop count back as the loop counter, so it ran once and stopped; every
-## verified number was still right, because none of them depends on this loop. §59.5 is the finding:
+## verified number was still right, because none of them depends on this loop. §53.6 is the finding:
 ## a benchmark whose workload is discarded has no oracle for its workload, and the only defence is
 ## to carry the result somewhere a test can see it.
 def repeated(cfg: Cfg, i: Int, n: Int, seen: Int) -> Int:
@@ -819,13 +819,13 @@ def repeated(cfg: Cfg, i: Int, n: Int, seen: Int) -> Int:
     return repeated(cfg, i + 1, n, seen + find_loops(new_finder(cfg, empty_lsg())).lsg.count)
 
 ## The benchmark, at Are We Fast Yet's own configuration for one inner iteration — except for
-## `find_loop_iterations`, which the caller chooses. §59.3 is why that is a parameter.
+## `find_loop_iterations`, which the caller chooses. §53.3 is why that is a parameter.
 def benchmark(find_loop_iterations: Int) -> LoopCount:
     return main(1, find_loop_iterations, 10, 10, 5)
 
 ## The benchmark's verified numbers, at Are We Fast Yet's own graph.
 ##
-## `find_loop_iterations` is **0** here where the suite's configuration says 50, and §59.3 is the
+## `find_loop_iterations` is **0** here where the suite's configuration says 50, and §53.3 is the
 ## measurement behind that: the published configuration exhausts the evaluator's 50,000,000-step
 ## fuel budget after 13.7 s in a release build, and six discarded runs fit where eight do not. The
 ## two tests below are what make gating on a cheaper number honest rather than convenient — the
@@ -844,7 +844,7 @@ test "and the discarded runs change nothing but the clock":
 ## the counted structure before `constructCFG` grows it — which is the arithmetic that says these
 ## two numbers are the same algorithm rather than two coincidences.
 ##
-## It is here because §59.5's bug was invisible to every other assertion in this file.
+## It is here because §53.6's bug was invisible to every other assertion in this file.
 test "each discarded run does the whole job":
     expect discarded_total(0) == 0
     expect discarded_total(1) == 1602

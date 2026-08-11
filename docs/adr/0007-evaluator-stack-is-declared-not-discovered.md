@@ -29,6 +29,6 @@ and may not name a backend crate (`docs/19` §19.9). It has to ask.
 the unoptimised per-level cost — which a harness measures rather than assumes, and which fails the
 build if the ceiling ever outgrows the declaration. An embedder that drives the runtime on its own
 threads has to call `thread_stack_size(backend.stack_bytes())`; nothing enforces that, and
-`docs/31` §31.7 records it. Raising the ceiling means raising `STACK_BYTES` with it.
+`docs/27` §27.10 records it. Raising the ceiling means raising `STACK_BYTES` with it.
 
-Full argument and measurements: [`docs/31-tail-calls-report.md`](../31-tail-calls-report.md) §31.3.
+Full argument and measurements: [`docs/27-the-walls-come-down-report.md`](../27-the-walls-come-down-report.md) §27.2.

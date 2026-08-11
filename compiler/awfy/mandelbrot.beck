@@ -12,7 +12,7 @@
 # that yours does not.
 #
 # It is also the file that needs `float(…)`. The original writes `2.0 * y / size`, mixing an `int`
-# with a `double` and letting the promotion happen; Beck refuses that by design (`docs/41`), so the
+# with a `double` and letting the promotion happen; Beck refuses that by design (`docs/27`), so the
 # conversion is written.
 #
 # Are We Fast Yet's `verifyResult` publishes three values: 191 at size 500, 50 at 750 and 128 at 1.

@@ -1050,7 +1050,7 @@ fn fold(
 /// The wrapper is built here rather than by the compiler, which is why it has to ask for its own
 /// `locals`: the pass that sizes a frame runs over the program and this lambda does not exist
 /// until now. Without it every `let` inside a `test` block allocated a scope of its own, which is
-/// the cost `docs/77` removed everywhere else.
+/// the cost `docs/70` removed everywhere else.
 fn eval(
     runtime: &Runtime,
     t: &TestDef,

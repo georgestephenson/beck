@@ -7,12 +7,12 @@
 //! variable the lambda *itself* binds lives in the frame its own call makes, and that frame is as
 //! private as a definition's.
 //!
-//! `docs/79` draws that line. The rule it adds is one word:
+//! `docs/70` draws that line. The rule it adds is one word:
 //!
 //! > A read may be handed over only by **the frame that binds it**.
 //!
 //! These are the programs that would notice if it were drawn wrong. They are about answers, not
-//! speed — `beck-cli/tests/scaling.rs` holds the shape, and `docs/79` §79.5 the numbers.
+//! speed — `beck-cli/tests/scaling.rs` holds the shape, and `docs/70` §70.2 the numbers.
 //!
 //! A wrong analysis cannot corrupt a value silently: `Env::read` empties a frame only when
 //! `Arc::get_mut` proves nothing else holds it, so the failure mode is a *missing* binding rather
@@ -134,7 +134,7 @@ test \"an accumulator read twice in one body is intact for the second read\":
     );
 }
 
-/// The same analysis inside a `test` block, which is where it did not run at all until `docs/79`.
+/// The same analysis inside a `test` block, which is where it did not run at all until `docs/70`.
 ///
 /// The three passes walk `Program::defs`; a test's clauses are in `Program::tests`, so a lambda
 /// written inside a `test` block was annotated by none of them. Now it is, and this is a program

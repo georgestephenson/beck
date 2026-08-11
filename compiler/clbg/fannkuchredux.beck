@@ -151,7 +151,7 @@ test "fannkuchredux: N = 7 is the suite's own published output":
 ## `Pfannkuchen(n)` is OEIS [A000375](https://oeis.org/A000375), "Topswops" — `0, 1, 2, 4, 7, 10,
 ## 16, …` from `n = 1`, whose seventh term is the `16` above. Asserting the four sizes below it is
 ## what stops a walk that is wrong in a way `n = 7` happens not to notice; the Game publishes an
-## expected output at one size only, and `docs/59` §59.5 is the report on a benchmark whose single
+## expected output at one size only, and `docs/53` §53.6 is the report on a benchmark whose single
 ## oracle let it do nothing at all.
 ##
 ## The checksum is not asserted at these sizes, because the Game publishes one only for `N = 7` and

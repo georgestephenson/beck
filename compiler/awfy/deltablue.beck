@@ -4,22 +4,22 @@
 # constraints of differing strengths, and when one is added, removed or edited the planner works out
 # which constraints can be satisfied and in what order, then executes that plan.
 #
-# It is the hardest of the five to port and the reason is one line of `docs/58` §58.5:
+# It is the hardest of the five to port and the reason is one line of `docs/53` §53.2:
 #
 # > variables point at constraints and constraints back at variables, both mutated during planning
 #
 # That is a **cyclic** object graph, and it is the data structure rather than an artefact of it.
-# `docs/57` §57.2's answer applies — two arenas, `Map[Int, Variable]` and `Map[Int, Constraint]`,
+# `docs/53` §53.4's answer applies — two arenas, `Map[Int, Variable]` and `Map[Int, Constraint]`,
 # with integer handles — and the cycle becomes two maps that refer to each other by name, which is
 # what a cycle is once you stop being able to follow a pointer.
 #
 # **It is also the only benchmark in the suite that verifies against nothing.** `DeltaBlue.java`'s
 # `innerBenchmarkLoop` runs `chainTest` and `projectionTest` and returns `true`; the oracle is the
 # `throw new RuntimeException` inside the planner. So a port that dropped an assertion would pass
-# while solving nothing, and every one of the six is kept — as a `raise`, which is `docs/45`'s row
+# while solving nothing, and every one of the six is kept — as a `raise`, which is `docs/27`'s row
 # label and makes "this did not throw" a thing a `test` block can say.
 #
-# The size is the caller's, and §61.3 says why: the suite publishes no verification value, and its
+# The size is the caller's, and §53.3 says why: the suite publishes no verification value, and its
 # *measurement* configuration is 12,000, which is out of reach.
 
 # ---------------------------------------------------------------------------------------------

@@ -4,8 +4,15 @@
 //! *"One binary serves `beck build`, `beck check`, `beck lsp` and `beck explain`; there is no
 //! separate language server implementation to drift."* So nothing here parses, checks or infers
 //! anything. It calls [`beck_core::compile_or_library_str`] — the same entry point `beck test`
-//! uses, and for the same reason ([`docs/27`](../../../../../docs/27-walls-report.md) §27.4: a module
+//! uses, and for the same reason ([`docs/27`](../../../../../docs/27-the-walls-come-down-report.md) §27.2: a module
 //! being edited is usually a library) — and translates.
+//!
+//! # Where the answers come from
+//!
+//! Not from here. [`beck_core::editor`] holds the indexing, the positions, the word-under-the-caret
+//! rule, the token classification and the completion list, because a browser tab wants every one of
+//! them too ([`docs/103`](../../../../../docs/103-playground-phase-3-report.md)) and a second copy
+//! is a second thing to be wrong. What this file does is translate: JSON-RPC in, LSP shapes out.
 //!
 //! # Why the whole file, every time
 //!
@@ -25,36 +32,41 @@ use std::collections::BTreeMap;
 use std::io::{BufRead, Write};
 
 use anyhow::{Context, Result};
-use beck_core::iface::{Interface, Kind};
-use beck_diag::{Diagnostics, Severity, SourceMap};
+use beck_core::editor::{byte_offset, utf16_position, Editor, Index, TokenKind};
 use serde_json::{json, Value};
 
 /// The protocol version this server implements enough of to be useful.
 const LSP_VERSION: &str = "3.17";
 
 /// Every open document, by URI. The client owns the text; this is the server's copy of it.
+///
+/// `last` is the most recent analysis that produced a *program* — what completion falls back to
+/// while a name is half-typed, which is most of the time somebody is asking for one
+/// ([`Editor::completing_from`]).
 #[derive(Default)]
-struct Documents(BTreeMap<String, String>);
-
-/// One analysed document: what the front end made of the text the client last sent.
-struct Analysis {
-    diagnostics: Diagnostics,
-    map: SourceMap,
-    /// Every top-level name, with the byte span of its declaration and the line to show on hover.
-    ///
-    /// A `BTreeMap` so that document symbols come out in a stable order whatever order the checker
-    /// resolved them in — the same reason [`Interface`] keeps its types in declaration order.
-    names: BTreeMap<String, Symbol>,
+struct Documents {
+    text: BTreeMap<String, String>,
+    last: BTreeMap<String, Index>,
 }
 
-struct Symbol {
-    /// The whole declaration, for `documentSymbol` and `definition`.
-    span: (u32, u32),
-    /// The signature as `beck iface` would publish it — `render_item`, not a second renderer.
-    signature: String,
-    /// `12` (Function) or `13` (Variable) in LSP's `SymbolKind`.
-    lsp_kind: u32,
-    tier: String,
+impl Documents {
+    /// Analyse a document, remembering the names if it checked.
+    ///
+    /// Every request that needs an index goes through here rather than calling the front end
+    /// directly, so "the names are from the last text that compiled" is one rule in one place.
+    fn analyse(&mut self, uri: &str) -> Option<Editor> {
+        let text = self.text.get(uri)?;
+        let name = path_of(uri).unwrap_or_else(|| uri.to_string());
+        let editor = Editor::of(&name, text);
+        if editor.placed().is_some() {
+            self.last.insert(uri.to_string(), editor.index());
+            return Some(editor);
+        }
+        Some(match self.last.get(uri) {
+            Some(previous) => editor.completing_from(previous),
+            None => editor,
+        })
+    }
 }
 
 /// Run the server until the client says `exit`.
@@ -87,24 +99,25 @@ pub fn serve() -> Result<()> {
             "initialized" => {}
             "textDocument/didOpen" => {
                 if let Some((uri, text)) = opened(&params) {
-                    docs.0.insert(uri.clone(), text);
-                    publish(&mut writer, &docs, &uri)?;
+                    docs.text.insert(uri.clone(), text);
+                    publish(&mut writer, &mut docs, &uri)?;
                 }
             }
             "textDocument/didChange" => {
                 if let Some((uri, text)) = changed(&params) {
-                    docs.0.insert(uri.clone(), text);
-                    publish(&mut writer, &docs, &uri)?;
+                    docs.text.insert(uri.clone(), text);
+                    publish(&mut writer, &mut docs, &uri)?;
                 }
             }
             "textDocument/didSave" => {
                 if let Some(uri) = uri_of(&params) {
-                    publish(&mut writer, &docs, &uri)?;
+                    publish(&mut writer, &mut docs, &uri)?;
                 }
             }
             "textDocument/didClose" => {
                 if let Some(uri) = uri_of(&params) {
-                    docs.0.remove(&uri);
+                    docs.text.remove(&uri);
+                    docs.last.remove(&uri);
                     // An empty list is how a client is told to clear the squiggles it is holding.
                     notify(
                         &mut writer,
@@ -114,13 +127,19 @@ pub fn serve() -> Result<()> {
                 }
             }
             "textDocument/hover" => {
-                respond(&mut writer, id, hover(&docs, &params))?;
+                respond(&mut writer, id, hover(&mut docs, &params))?;
             }
             "textDocument/definition" => {
-                respond(&mut writer, id, definition(&docs, &params))?;
+                respond(&mut writer, id, definition(&mut docs, &params))?;
             }
             "textDocument/documentSymbol" => {
-                respond(&mut writer, id, document_symbols(&docs, &params))?;
+                respond(&mut writer, id, document_symbols(&mut docs, &params))?;
+            }
+            "textDocument/completion" => {
+                respond(&mut writer, id, completion(&mut docs, &params))?;
+            }
+            "textDocument/semanticTokens/full" => {
+                respond(&mut writer, id, semantic_tokens(&docs, &params))?;
             }
             "shutdown" => {
                 shutdown_requested = true;
@@ -158,6 +177,16 @@ fn capabilities() -> Value {
             "hoverProvider": true,
             "definitionProvider": true,
             "documentSymbolProvider": true,
+            // No trigger characters: Beck has no `.` completion to offer — a field access resolves
+            // through a type this server does not track positions in — so completion is asked for
+            // explicitly and answers on the word being typed.
+            "completionProvider": { "resolveProvider": false },
+            // The legend is `beck_core::editor`'s, so the categories an editor colours are the
+            // categories the playground colours (docs/103).
+            "semanticTokensProvider": {
+                "legend": { "tokenTypes": TokenKind::legend(), "tokenModifiers": [] },
+                "full": true,
+            },
         },
         "serverInfo": { "name": "beck", "version": env!("CARGO_PKG_VERSION") },
         "lspVersion": LSP_VERSION,
@@ -165,84 +194,28 @@ fn capabilities() -> Value {
 }
 
 // ---------------------------------------------------------------------------------------------
-// The front end, called once per change
-// ---------------------------------------------------------------------------------------------
-
-/// Parse, expand, check, place and secure one document, and index what a client can ask about.
-///
-/// `compile_or_library_str` rather than `compile_str`: a file being edited is a module, and most
-/// modules are libraries. Refusing to analyse one because it has no merge point would make the
-/// server useless for exactly the files people spend their time in.
-fn analyse(uri: &str, text: &str) -> Analysis {
-    let name = path_of(uri).unwrap_or_else(|| uri.to_string());
-    let (placed, diagnostics, map) = beck_core::compile_or_library_str(&name, text);
-
-    // The interface is the signature renderer `beck iface` publishes, and hover shows what it
-    // publishes. A second renderer here is the drift §4.6 forbids.
-    let mut names = BTreeMap::new();
-    if let Some(placed) = placed.as_ref() {
-        let interface = Interface::of(&placed.program);
-        for item in &interface.items {
-            let (span, lsp_kind) = match &item.kind {
-                Kind::Function { .. } => (
-                    placed
-                        .program
-                        .defs
-                        .get(&item.name)
-                        .map(|d| (d.span.start, d.span.end)),
-                    12,
-                ),
-                Kind::Signal { .. } => (
-                    placed
-                        .program
-                        .signals
-                        .iter()
-                        .find(|s| s.name == item.name)
-                        .map(|s| (s.span.start, s.span.end)),
-                    13,
-                ),
-            };
-            let Some(span) = span else { continue };
-            names.insert(
-                item.name.to_string(),
-                Symbol {
-                    span,
-                    signature: beck_core::iface::render_item(item).trim_end().to_string(),
-                    lsp_kind,
-                    tier: item.tier.name().to_string(),
-                },
-            );
-        }
-    }
-
-    Analysis {
-        diagnostics,
-        map,
-        names,
-    }
-}
-
-// ---------------------------------------------------------------------------------------------
 // Requests
 // ---------------------------------------------------------------------------------------------
 
-fn publish(writer: &mut impl Write, docs: &Documents, uri: &str) -> Result<()> {
-    let Some(text) = docs.0.get(uri) else {
+fn publish(writer: &mut impl Write, docs: &mut Documents, uri: &str) -> Result<()> {
+    let Some(editor) = docs.analyse(uri) else {
         return Ok(());
     };
-    let analysis = analyse(uri, text);
-    let items: Vec<Value> = analysis
-        .diagnostics
+    let Some(text) = docs.text.get(uri) else {
+        return Ok(());
+    };
+    let items: Vec<Value> = editor
+        .marks()
         .iter()
-        .map(|d| {
+        .map(|m| {
             json!({
-                "range": range(&analysis.map, text, d.primary.start, d.primary.end),
+                "range": range(text, m.start, m.end),
                 // 1 = Error, 2 = Warning. Beck has no `Note` severity at the top level of a
                 // diagnostic; its notes ride on the diagnostic they belong to.
-                "severity": match d.severity { Severity::Error => 1, _ => 2 },
-                "code": d.code,
+                "severity": if m.error { 1 } else { 2 },
+                "code": m.code,
                 "source": "beck",
-                "message": message_of(d),
+                "message": m.message,
             })
         })
         .collect();
@@ -253,92 +226,144 @@ fn publish(writer: &mut impl Write, docs: &Documents, uri: &str) -> Result<()> {
     )
 }
 
-/// The message a client shows, with the notes the terminal renderer would have printed.
-///
-/// A `B0350` that says only "cannot find `foo`" is a worse diagnostic in an editor than in a
-/// terminal, because the editor drops everything the terminal put underneath it. The notes carry
-/// the fix suggestion §3.4 insists on, so they travel.
-fn message_of(d: &beck_diag::Diagnostic) -> String {
-    let mut out = d.message.clone();
-    for note in &d.notes {
-        out.push_str("\n\nnote: ");
-        out.push_str(note);
-    }
-    if let Some(fix) = &d.fix {
-        out.push_str("\n\nhelp: ");
-        out.push_str(fix);
-    }
-    out
-}
-
-fn hover(docs: &Documents, params: &Value) -> Value {
+fn hover(docs: &mut Documents, params: &Value) -> Value {
     let Some((uri, offset)) = position(docs, params) else {
         return Value::Null;
     };
-    let Some(text) = docs.0.get(&uri) else {
+    let Some(editor) = docs.analyse(&uri) else {
         return Value::Null;
     };
-    let Some(word) = word_at(text, offset) else {
+    let Some(symbol) = editor.hover(offset) else {
         return Value::Null;
     };
-    let analysis = analyse(&uri, text);
-    let Some(symbol) = analysis.names.get(&word) else {
-        return Value::Null;
-    };
+    // The documentation the declaration carries, under the signature — `##` is metadata rather
+    // than a form (`docs/34`), so an editor is exactly where it is supposed to end up.
+    let doc = symbol
+        .doc
+        .as_ref()
+        .map(|d| format!("\n\n{d}"))
+        .unwrap_or_default();
     json!({
         "contents": {
             "kind": "markdown",
             "value": format!(
-                "```beck\n@on({})\n{}\n```",
+                "```beck\n@on({})\n{}\n```{doc}",
                 symbol.tier, symbol.signature
             ),
         }
     })
 }
 
-fn definition(docs: &Documents, params: &Value) -> Value {
+fn definition(docs: &mut Documents, params: &Value) -> Value {
     let Some((uri, offset)) = position(docs, params) else {
         return Value::Null;
     };
-    let Some(text) = docs.0.get(&uri) else {
+    let Some(editor) = docs.analyse(&uri) else {
         return Value::Null;
     };
-    let Some(word) = word_at(text, offset) else {
+    // An imported name has no declaration in this document, and the front end says so by having no
+    // span for it rather than by pointing somewhere plausible.
+    let Some(span) = editor.definition(offset) else {
         return Value::Null;
     };
-    let analysis = analyse(&uri, text);
-    let Some(symbol) = analysis.names.get(&word) else {
+    let Some(text) = docs.text.get(&uri) else {
         return Value::Null;
     };
-    json!({
-        "uri": uri,
-        "range": range(&analysis.map, text, symbol.span.0, symbol.span.1),
-    })
+    json!({ "uri": uri, "range": range(text, span.0, span.1) })
 }
 
-fn document_symbols(docs: &Documents, params: &Value) -> Value {
+fn document_symbols(docs: &mut Documents, params: &Value) -> Value {
     let Some(uri) = uri_of(params) else {
         return json!([]);
     };
-    let Some(text) = docs.0.get(&uri) else {
+    let Some(editor) = docs.analyse(&uri) else {
         return json!([]);
     };
-    let analysis = analyse(&uri, text);
-    let out: Vec<Value> = analysis
-        .names
-        .iter()
-        .map(|(name, s)| {
-            let r = range(&analysis.map, text, s.span.0, s.span.1);
-            json!({
+    let Some(text) = docs.text.get(&uri) else {
+        return json!([]);
+    };
+    let out: Vec<Value> = editor
+        .symbols()
+        .filter_map(|(name, s)| {
+            let span = s.span?;
+            let r = range(text, span.0, span.1);
+            Some(json!({
                 "name": name,
-                "kind": s.lsp_kind,
+                "kind": s.kind.lsp_symbol(),
                 "detail": s.signature,
                 "range": r,
                 "selectionRange": r,
-            })
+            }))
         })
         .collect();
     json!(out)
+}
+
+/// What could finish the word being typed.
+///
+/// `isIncomplete` is false: the list is everything that matches, so a client may filter it further
+/// itself rather than asking again on the next keystroke.
+fn completion(docs: &mut Documents, params: &Value) -> Value {
+    let Some((uri, offset)) = position(docs, params) else {
+        return json!({ "isIncomplete": false, "items": [] });
+    };
+    let Some(editor) = docs.analyse(&uri) else {
+        return json!({ "isIncomplete": false, "items": [] });
+    };
+    let items: Vec<Value> = editor
+        .completions(offset)
+        .into_iter()
+        .map(|c| {
+            json!({
+                "label": c.label,
+                "kind": c.kind.lsp(),
+                "detail": c.detail,
+                "documentation": c.doc,
+            })
+        })
+        .collect();
+    json!({ "isIncomplete": false, "items": items })
+}
+
+/// Highlighting, in the protocol's five-integers-per-token encoding.
+///
+/// Each token is `deltaLine, deltaStart, length, type, modifiers`, relative to the previous one —
+/// and the lengths and columns are UTF-16 units, like every other position in this protocol.
+///
+/// It does not go through [`Documents::analyse`]: highlighting is a function of the *text*, and a
+/// file being typed into is a file that does not check. A highlighter that waited for a clean parse
+/// would go out exactly when it was most wanted.
+fn semantic_tokens(docs: &Documents, params: &Value) -> Value {
+    let Some(uri) = uri_of(params) else {
+        return json!({ "data": [] });
+    };
+    let Some(text) = docs.text.get(&uri) else {
+        return json!({ "data": [] });
+    };
+    let mut data: Vec<u32> = Vec::new();
+    let (mut last_line, mut last_start) = (0u32, 0u32);
+    for token in beck_core::editor::tokens(text) {
+        let (line, start) = utf16_position(text, token.start);
+        let (end_line, end) = utf16_position(text, token.end);
+        // A token that spans a line has no length in this encoding. Beck has none — a string
+        // literal cannot contain a newline and a comment ends at one — and a client shown a
+        // negative length paints the rest of the file, so this refuses rather than guesses.
+        if end_line != line {
+            continue;
+        }
+        data.push(line - last_line);
+        data.push(if line == last_line {
+            start - last_start
+        } else {
+            start
+        });
+        data.push(end - start);
+        data.push(token.kind.lsp_index());
+        data.push(0);
+        last_line = line;
+        last_start = start;
+    }
+    json!({ "data": data })
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -347,93 +372,23 @@ fn document_symbols(docs: &Documents, params: &Value) -> Value {
 
 /// A byte span, as LSP's zero-based line and **UTF-16** character offsets.
 ///
-/// UTF-16 because that is what the protocol specifies by default, and getting it wrong is invisible
-/// until somebody writes an emoji in a string literal — which `beck-syntax`'s own security tests
-/// say they will. `SourceMap::line_col` counts *characters* and is one-based, so it is the wrong
-/// unit twice over and is deliberately not used here.
-fn range(_map: &SourceMap, text: &str, start: u32, end: u32) -> Value {
-    json!({ "start": utf16_position(text, start), "end": utf16_position(text, end) })
-}
-
-fn utf16_position(text: &str, offset: u32) -> Value {
-    let offset = (offset as usize).min(text.len());
-    let mut line = 0u32;
-    let mut character = 0u32;
-    for (i, c) in text.char_indices() {
-        if i >= offset {
-            break;
-        }
-        if c == '\n' {
-            line += 1;
-            character = 0;
-        } else {
-            character += c.len_utf16() as u32;
-        }
-    }
-    json!({ "line": line, "character": character })
-}
-
-/// The inverse: LSP's line and UTF-16 character back to a byte offset.
-fn byte_offset(text: &str, line: u32, character: u32) -> Option<u32> {
-    let mut at_line = 0u32;
-    let mut utf16 = 0u32;
-    for (i, c) in text.char_indices() {
-        if at_line == line && utf16 == character {
-            return Some(i as u32);
-        }
-        if c == '\n' {
-            if at_line == line {
-                // The position is past the end of its line, which a client may legitimately send
-                // when the cursor sits after the last character.
-                return Some(i as u32);
-            }
-            at_line += 1;
-            utf16 = 0;
-        } else if at_line == line {
-            utf16 += c.len_utf16() as u32;
-        }
-    }
-    (at_line == line).then_some(text.len() as u32)
+/// The conversion is [`beck_core::editor`]'s, because the playground needs the same one and a
+/// second implementation of UTF-16 counting is a second place to be wrong about an emoji.
+fn range(text: &str, start: u32, end: u32) -> Value {
+    let at = |offset: u32| {
+        let (line, character) = utf16_position(text, offset);
+        json!({ "line": line, "character": character })
+    };
+    json!({ "start": at(start), "end": at(end) })
 }
 
 fn position(docs: &Documents, params: &Value) -> Option<(String, u32)> {
     let uri = uri_of(params)?;
-    let text = docs.0.get(&uri)?;
+    let text = docs.text.get(&uri)?;
     let p = params.get("position")?;
     let line = p.get("line")?.as_u64()? as u32;
     let character = p.get("character")?.as_u64()? as u32;
     Some((uri.clone(), byte_offset(text, line, character)?))
-}
-
-/// The identifier the cursor is inside or immediately after.
-///
-/// "Immediately after" matters: an editor sends the position of the caret, and a caret at the end
-/// of `total` is one byte past the `l`. A server that only looked at the byte under the caret would
-/// answer nothing for the most common way of asking.
-fn word_at(text: &str, offset: u32) -> Option<String> {
-    let is_word = |c: char| c.is_alphanumeric() || c == '_';
-    let bytes = text.as_bytes();
-    let mut at = (offset as usize).min(bytes.len());
-    if at > 0 && (at == bytes.len() || !is_word(text[at..].chars().next()?)) {
-        at -= 1;
-    }
-    if !text.is_char_boundary(at) || !is_word(text[at..].chars().next()?) {
-        return None;
-    }
-    let mut start = at;
-    while start > 0 {
-        let prev = text[..start].char_indices().next_back()?;
-        if !is_word(prev.1) {
-            break;
-        }
-        start = prev.0;
-    }
-    let end = text[at..]
-        .char_indices()
-        .find(|(_, c)| !is_word(*c))
-        .map(|(i, _)| at + i)
-        .unwrap_or(text.len());
-    Some(text[start..end].to_string())
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -557,46 +512,39 @@ fn path_of(uri: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    /// The positions, the word rule and the message text are `beck_core::editor`'s and are tested
+    /// there. What is left here is the translation, and this is the part of it that has an
+    /// arithmetic bug waiting in it: the deltas.
     #[test]
-    fn positions_are_utf16_and_round_trip() {
-        // The byte, character and UTF-16 counts all differ on this line, which is the only way to
-        // tell a correct implementation from one that happens to agree on ASCII.
-        let text = "def f() -> Str:\n    return \"🎈 x\"\n";
-        let balloon = text.find('🎈').expect("the emoji is there") as u32;
-        let p = utf16_position(text, balloon);
-        assert_eq!(p["line"], 1);
-        // `    return "` is 12 UTF-16 units, and the emoji has not been counted yet.
-        assert_eq!(p["character"], 12);
-        // And back again.
-        assert_eq!(byte_offset(text, 1, 12), Some(balloon));
-        // One position past the emoji is *two* UTF-16 units later, not one.
-        assert_eq!(byte_offset(text, 1, 14), Some(balloon + 4));
-    }
-
-    #[test]
-    fn a_caret_at_either_end_of_a_name_finds_it() {
-        let text = "def total(x: Int) -> Int:\n    return x\n";
-        let at = text.find("total").expect("it is there") as u32;
-        assert_eq!(word_at(text, at).as_deref(), Some("total"));
-        assert_eq!(word_at(text, at + 2).as_deref(), Some("total"));
-        // The caret sits *after* the last character, which is where an editor puts it when you
-        // finish typing a name.
-        assert_eq!(word_at(text, at + 5).as_deref(), Some("total"));
-        // The same rule read from the other side: a caret in the space before `total` is a caret
-        // just past `def`, and answering `def` is what "immediately after" means. It is asserted
-        // rather than left implicit because it is the one case where the rule looks like a bug.
-        assert_eq!(word_at(text, at - 1).as_deref(), Some("def"));
-        // Somewhere no identifier touches on either side finds nothing rather than guessing.
-        let arrow = text.find("-> Int").expect("it is there") as u32;
-        assert_eq!(word_at(text, arrow + 1), None);
-    }
-
-    #[test]
-    fn a_message_carries_the_notes_the_terminal_would_have_printed() {
-        let (_, diags, _) =
-            beck_core::compile_or_library_str("x.beck", "def f(x: Int) -> Str:\n    return x\n");
-        let d = diags.iter().next().expect("it does not compile");
-        let message = message_of(d);
-        assert!(message.contains("expected"), "{message}");
+    fn semantic_tokens_are_deltas_from_the_previous_token() {
+        let text = "def f() -> Int:\n    return 1\n";
+        let mut docs = Documents::default();
+        docs.text.insert("file:///t.beck".into(), text.to_string());
+        let out = semantic_tokens(
+            &docs,
+            &json!({ "textDocument": { "uri": "file:///t.beck" } }),
+        );
+        let data: Vec<u64> = out["data"]
+            .as_array()
+            .expect("five integers per token")
+            .iter()
+            .map(|v| v.as_u64().expect("an integer"))
+            .collect();
+        assert_eq!(data.len() % 5, 0);
+        // `def` is the first token: line 0, column 0, three units long, and a keyword.
+        assert_eq!(&data[..3], &[0, 0, 3]);
+        assert_eq!(
+            TokenKind::legend()[data[3] as usize],
+            TokenKind::Keyword.lsp_type()
+        );
+        // `f` follows on the same line, so its start is a *delta*: one column past `def `.
+        assert_eq!(&data[5..8], &[0, 4, 1]);
+        // The first token of the second line is a delta of one line, and its column is absolute
+        // again — `    return` starts at 4.
+        let second_line = data
+            .chunks(5)
+            .position(|t| t[0] == 1)
+            .expect("a token on the next line");
+        assert_eq!(data.chunks(5).nth(second_line).expect("it is there")[1], 4);
     }
 }

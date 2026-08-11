@@ -394,7 +394,7 @@ impl Backend for Native {
     ///
     /// Compiled code needs no host stack of its own — it recurses on the thread's stack and LLVM
     /// turns a tail call into a jump — but a backend that answered `0` here would under-provision
-    /// the tree-walker sitting behind it, which is `docs/31` §31.3's abort with an extra step.
+    /// the tree-walker sitting behind it, which is `docs/27` §27.2's abort with an extra step.
     fn stack_bytes(&self) -> usize {
         self.fallback.stack_bytes()
     }

@@ -425,7 +425,7 @@ impl Py {
             }
             // `x = try:` and `x = parallel:` — a block form bound to a name. Neither is a call, so
             // `split_block_call` above cannot see it, and printing `x = try((do …))` would not
-            // re-parse. Both are expressions (`docs/45` §45.2), so both can appear here.
+            // re-parse. Both are expressions (`docs/27` §27.7), so both can appear here.
             Some(sym::LET) | Some(sym::VAR)
                 if n.args.len() == 2
                     && (n.args[1].is_form(sym::TRY) || n.args[1].is_form(sym::PARALLEL))
@@ -704,7 +704,7 @@ impl Py {
         match head {
             "not" if n.args.len() == 1 => format!("not {}", self.expr(&n.args[0])),
             sym::RAISE if n.args.len() == 1 => format!("raise {}", self.expr(&n.args[0])),
-            // `try:` and `parallel:` are **expressions** (`docs/45` §45.2), so they turn up as
+            // `try:` and `parallel:` are **expressions** (`docs/27` §27.7), so they turn up as
             // operands — `expect (try: benchmark()) == Ok(True)` is how seven files in this tree
             // assert a fallible answer. §2.3's single-line block form is the notation for one here,
             // and the parentheses are what let it be an operand at all. Without this they printed

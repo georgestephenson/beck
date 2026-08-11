@@ -134,7 +134,7 @@ identifiers: fifty proposals, a limit of five, forty-five refusals, and a head t
 second.
 
 This is the fourth gate-that-could-not-fail this project has found, after
-[`78`](78-a-record-is-a-permutation-report.md) §78.6's three and
+[`70`](70-the-evaluator-gets-fast-report.md) §70.7's three and
 [`80`](80-a-scope-owns-its-children-report.md) §80.6's harness that was cited by name and never
 written. The pattern across all four: **the gate was written by the person who knew the gap, and
 tested the shape of the gap rather than the shape of the fix.**

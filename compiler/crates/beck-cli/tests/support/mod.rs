@@ -2,6 +2,7 @@
 
 pub mod browser;
 pub mod heapfix;
+pub mod lsp;
 pub mod scalar;
 pub mod socket;
 

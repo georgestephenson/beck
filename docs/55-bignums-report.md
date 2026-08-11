@@ -5,8 +5,8 @@
 [`08`](08-roadmap.md) §8.5.4 pairs them with, and no new primitive and no new dependency.
 
 [`25`](25-benchmarks-and-expressiveness.md) §25.7 item 5 ordered the numeric tower: "reals first,
-then rationals and bignums". The reals landed in [`32`](32-numeric-tower-and-polymorphism-report.md),
-the rationals in [`41`](41-generic-arithmetic-report.md), and this is the floor underneath both. It
+then rationals and bignums". The reals landed in [`27`](27-the-walls-come-down-report.md),
+the rationals in [`27`](27-the-walls-come-down-report.md), and this is the floor underneath both. It
 is the last untouched item of Wave 2 that is a *number*.
 
 ## 55.1 Why it is a file and not a primitive
@@ -45,13 +45,13 @@ applied halfway through a borrow is the classic way to get subtraction wrong, an
 to have nowhere to apply it.
 
 `impl Num for Big` puts it in the tower: `+`, `-`, `*` and `/` are SICP §2.5.1's four method names,
-resolved through the prelude trait ([`41`](41-generic-arithmetic-report.md)). It is the **third**
+resolved through the prelude trait ([`27`](27-the-walls-come-down-report.md)). It is the **third**
 floor added from outside the compiler after the rationals and money, and the first where the type is
 a number in the ordinary sense — which matters, because a tower whose new floors can only ever be
 domain types is not a tower.
 
 Only `div` can fail, so `raises(BigError)` is inferred from it alone and `a + b` stays pure. That is
-[`47`](47-effect-polymorphic-traits-report.md)'s per-impl row doing precisely the job it was built
+[`27`](27-the-walls-come-down-report.md)'s per-impl row doing precisely the job it was built
 for, and the checker enforces it in the direction that is easy to get wrong: a `try:` over an
 expression that cannot fail is `B0392`, so the absence of `try:` on the addition lines is checked
 rather than tidy.
@@ -68,10 +68,10 @@ is code. Every conversion is a named function and none of them is implicit:
 | `big_to_real(b)` | lossy, and a different function so a reader has to mean it |
 | `big_of_str` / `render_big` | text, with the reader raising per [`46`](46-standard-library-report.md) §46.2 |
 
-[`41`](41-generic-arithmetic-report.md) refuses `1 + 1.0` on purpose, and adding a bignum is exactly
+[`27`](27-the-walls-come-down-report.md) refuses `1 + 1.0` on purpose, and adding a bignum is exactly
 the moment that decision comes under pressure — an `Int` that silently widened on overflow would be
 convenient. It would also make the cost of arbitrary precision invisible, and `Int` arithmetic is
-checked (`docs/32` §32.3) *precisely* so that overflow is a message rather than a wrong answer.
+checked (`docs/27` §27.2) *precisely* so that overflow is a message rather than a wrong answer.
 Silent widening would trade a loud, cheap failure for a quiet, expensive success. So: no.
 
 The one detail worth reading the code for is **the most negative `Int`**, which is where a
@@ -171,8 +171,8 @@ signature cannot.
 - **[`46`](46-standard-library-report.md) §46.6's last "untouched" row moves.** "Bignums and numeric
   coercion — untouched, and §8.5.4 puts them here" is now built.
 - **[`25`](25-benchmarks-and-expressiveness.md) §25.7 item 5 is discharged.** "The numeric tower —
-  reals first, then rationals and bignums" is complete: [`32`](32-numeric-tower-and-polymorphism-report.md),
-  [`41`](41-generic-arithmetic-report.md), and this.
+  reals first, then rationals and bignums" is complete: [`27`](27-the-walls-come-down-report.md),
+  [`27`](27-the-walls-come-down-report.md), and this.
 - **[`54`](54-ordering.md) gains its first concrete instance.** `Big` is a type whose derived order
   is wrong — the sign flag sorts before the magnitude — and the answer taken here is §54's
   recommendation rather than the trait: expose an ordering function, and say why in the code.
@@ -181,7 +181,7 @@ signature cannot.
 
 ## 55.8 What Phase 3 is still not
 
-Unchanged from [`53`](53-are-we-fast-yet-report.md) §53.8 except where this touches it. The
+Unchanged from [`53`](53-are-we-fast-yet-report.md) §53.7 except where this touches it. The
 standard-library bullet is now everything *except* arbitrary-precision decimal, plus a benchmark
 harness that is nine-fourteenths of one suite. The exit criterion — an outside developer building a
 non-trivial app from documentation alone — is not met and is not closer.

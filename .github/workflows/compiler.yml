@@ -185,7 +185,7 @@ jobs:
           done
           # docs/25 §25.6: SICP chapters 1 and 2, asserted against the answers the book states. Both
           # are *libraries* — no merge point, no application — which `beck test` could not run
-          # before docs/27 §27.4, and running them the way a person does is the claim. The walls
+          # before docs/27 §27.2, and running them the way a person does is the claim. The walls
           # beyond them are held by tests/sicp.rs, which `cargo test` above already runs.
           ./target/release/beck test sicp/ch1.beck
           ./target/release/beck test sicp/ch2.beck
@@ -208,7 +208,7 @@ jobs:
           for f in clbg/*.beck; do
             ./target/release/beck test "$f"
           done
-          # docs/31: a recursion the user cannot bound must end in a diagnostic and a live process.
+          # docs/27: a recursion the user cannot bound must end in a diagnostic and a live process.
           # An exit status of 134 (SIGABRT) or 139 (SIGSEGV) is the failure this replaced, and it is
           # exactly the thing a `! cmd` gate would have accepted, so the status is checked rather
           # than only the failure.
@@ -243,7 +243,7 @@ jobs:
               '    expect up(0, 1000000) == 1000000\n')
           PY
           ./target/release/beck test /tmp/iterative.beck
-          # docs/32: the last two walls. Reals reproduce the doubles SICP prints, and a user-written
+          # docs/27: the last two walls. Reals reproduce the doubles SICP prints, and a user-written
           # polymorphic definition is instantiated afresh at every call — asserted here through the
           # binary because `cargo test` above asserts it through the library, and the claim is that
           # a person gets it too.
@@ -267,7 +267,7 @@ jobs:
           PY
           ! ./target/release/beck check /tmp/rigid.beck
           ./target/release/beck check /tmp/rigid.beck 2>&1 | grep -q 'found `T`'
-          # docs/33: a list can be taken apart, and a `match` on one has to cover both shapes.
+          # docs/27: a list can be taken apart, and a `match` on one has to cover both shapes.
           python3 - <<'PY'
           open("/tmp/fold.beck", "w").write(
               'def accumulate[T, U](xs: list[T], seed: U, combine: (T, U) -> U) -> U:\n'
@@ -289,7 +289,7 @@ jobs:
           ./target/release/beck test /tmp/fold.beck
           ! ./target/release/beck check /tmp/partial.beck
           ./target/release/beck check /tmp/partial.beck 2>&1 | grep -q 'B0341'
-          # docs/33: and a pure caller of a generic higher-order definition stays pure, however
+          # docs/27: and a pure caller of a generic higher-order definition stays pure, however
           # another caller uses it. Read off the *published contract*, which is where it was wrong.
           python3 - <<'PY'
           open("/tmp/rows.beck", "w").write(
@@ -729,7 +729,7 @@ jobs:
           cargo test --release --test measure_xlang -- --nocapture
           # The evaluator's host stack per level of non-tail recursion, in both profiles — the
           # number `beck_eval::STACK_BYTES` is chosen from, and the equality that says a tail call
-          # costs nothing (docs/31 §31.3, §31.5). It prints in release and gates in either.
+          # costs nothing (docs/27 §27.2, §27.2). It prints in release and gates in either.
           cargo test -p beck-eval -- --nocapture
           cargo test --release -p beck-eval -- --nocapture
 

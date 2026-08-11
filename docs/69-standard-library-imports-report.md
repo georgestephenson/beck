@@ -365,7 +365,7 @@ entirely ahead, and the one decision taken here that touches it — the preceden
 down as the thing a namespaced import would supersede.
 
 **And it is the first time a benchmark in this repository has made the language faster rather than
-just measured it.** [`53`](53-are-we-fast-yet-report.md), [`60`](60-collision-detection-report.md)
+just measured it.** [`53`](53-are-we-fast-yet-report.md), [`53`](53-are-we-fast-yet-report.md)
 and [`63`](63-felleisen-report.md) each found something *missing* — short-circuiting `and`, `sin`
 and `cos`, a function type with no arguments. §69.6 is a different kind of finding: nothing was
 missing, and a cost nobody could see was being paid by every program that divided a big number. The

@@ -157,8 +157,8 @@ with a test attached cannot ([`83`](83-the-runtime-edge-report.md) §83.7):
 
 | Not built | Why it is not a layout problem |
 |---|---|
-| `Str` | The layout is easy — a length and the bytes. What is hard is that `beck_core::Text` carries a **character** count, an ASCII flag and a chunked character index ([`71`](71-strings-report.md), [`72`](72-space-and-constants-report.md)), and `str_len` and `str_slice` have to answer exactly what they answer |
-| `list[T]` | The layout is a count and the elements. What is hard is `list_append`, which is [`70`](70-last-use-moves-report.md)'s **in-place push when nobody else holds it** — and an arena with no ownership in it cannot prove that. Building a list in a loop would be `O(n²)` here where the evaluator is `O(n)`, which is [`69`](69-standard-library-imports-report.md) §69.7 reintroduced in a new place |
+| `Str` | The layout is easy — a length and the bytes. What is hard is that `beck_core::Text` carries a **character** count, an ASCII flag and a chunked character index ([`70`](70-the-evaluator-gets-fast-report.md), [`70`](70-the-evaluator-gets-fast-report.md)), and `str_len` and `str_slice` have to answer exactly what they answer |
+| `list[T]` | The layout is a count and the elements. What is hard is `list_append`, which is [`70`](70-the-evaluator-gets-fast-report.md)'s **in-place push when nobody else holds it** — and an arena with no ownership in it cannot prove that. Building a list in a loop would be `O(n²)` here where the evaluator is `O(n)`, which is [`69`](69-standard-library-imports-report.md) §69.7 reintroduced in a new place |
 | `Map[K, V]` | A `PMap` is a weight-balanced tree with structural sharing ([`pmap`](../compiler/crates/beck-core/src/pmap.rs)); the same ownership question, one level up |
 | a closure | Needs a code pointer and a captured environment, and therefore an indirect call — which is the first thing in this backend that is not a direct call to a name |
 | `Html`, `Attr`, `Unit` | Follow text and collections |
@@ -182,7 +182,7 @@ objects holds a million objects whether or not the program can still reach them,
 reaches without a walk it has no code for, so a call answering with an object sends back everything
 it allocated. A call answering with a scalar sends nothing at all.
 
-**`with` always builds a fresh object.** [`70`](70-last-use-moves-report.md)'s analysis lets the
+**`with` always builds a fresh object.** [`70`](70-the-evaluator-gets-fast-report.md)'s analysis lets the
 tree-walker rebuild a record in place when the base is a last use and nobody else holds it, and
 [`87`](87-the-chapter-that-argues-back-report.md) §87.5 made that hold for `x.with(f = g(x.f))` too.
 Neither is available here, and the answers are identical — it is a cost, not a divergence.
@@ -291,7 +291,7 @@ for it is to stop it containing pointers.
 What it does **not** establish is the sentence [`05`](05-tier-lowering.md) §5.2 wants. A record is
 the first heap value and not the interesting one; a Beck program's state is a `Map` and its output
 is `Html`, and both of those are text and collections, and text and collections are where
-[`70`](70-last-use-moves-report.md)'s ownership question comes back. §101.5's second row is the next
+[`70`](70-the-evaluator-gets-fast-report.md)'s ownership question comes back. §101.5's second row is the next
 piece of work and it is a *design* question rather than a layout: an arena that cannot prove
 uniqueness makes `list_append` quadratic, and shipping that would be
 [`69`](69-standard-library-imports-report.md) §69.7 rebuilt on purpose. Reference counting, a

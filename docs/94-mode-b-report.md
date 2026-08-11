@@ -248,7 +248,7 @@ functions' output into its parent as markup-shaped text: `&lt;section class="col
 The fix is one arm — a child that is already a tree is spliced, not stringified — and the effect on
 the number is the table in §94.6: **242 bytes, flat**. The effect on the language is larger than
 that: before it, a `view` could not be factored into functions at all. `corpus/25-thread.beck` has
-been composing `render_comment(r)` that way since [`27`](27-walls-report.md), and its page was
+been composing `render_comment(r)` that way since [`27`](27-the-walls-come-down-report.md), and its page was
 wrong in the same way with nothing asserting otherwise.
 
 Two things about this are worth keeping. The defect was **older than everything in this report** and

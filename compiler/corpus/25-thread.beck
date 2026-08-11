@@ -1,6 +1,6 @@
 # The program that would embarrass recursive types (docs/23 §23.10 item 4).
 #
-# Until docs/27 §27.3 a Beck type could not mention itself, so no program in this corpus described a
+# Until docs/27 §27.2 a Beck type could not mention itself, so no program in this corpus described a
 # tree, a comment thread, or an expression — SICP §2.2's closure property, which is the ability of a
 # combining means to produce something the same means can combine again. Compiling one is the easy
 # half; the reason this file is in the *corpus* rather than in `sicp/` is the other half.

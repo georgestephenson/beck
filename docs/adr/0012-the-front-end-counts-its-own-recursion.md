@@ -47,7 +47,7 @@ parser accepted arbitrary depth, because nothing reached the expander with a dee
 reader who saw the message had usually written a runaway macro.
 
 An embedder that drives the front end from its own thread has to supply the stack, exactly as
-`docs/31` §31.7 records for the evaluator; `beck_diag::depth::on_the_front_end_stack` is how, and
+`docs/27` §27.10 records for the evaluator; `beck_diag::depth::on_the_front_end_stack` is how, and
 `beck-cli` needs neither call because its dispatch already runs inside the evaluator's.
 
 Nothing here bounds *breadth*. A file with a million top-level items is still a file with a million

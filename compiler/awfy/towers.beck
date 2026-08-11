@@ -6,7 +6,7 @@
 #
 # The two `throw new RuntimeException` in the original are kept rather than dropped, and they are
 # the reason this file has an effect row: an invariant that is only checked in the language that
-# had exceptions is an invariant the port stopped testing. `raise` is `docs/45`'s row label, so
+# had exceptions is an invariant the port stopped testing. `raise` is `docs/27`'s row label, so
 # `benchmark` publishes `raises(TowersError)` by inference and the test faces it with `try:`.
 #
 # 8,191 is the harness's own number: `Towers.java` builds at 13 and `verifyResult` is

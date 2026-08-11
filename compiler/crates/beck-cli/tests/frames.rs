@@ -1,6 +1,6 @@
 //! The environment — what a call's frame promises, now that a `let` writes into it.
 //!
-//! `docs/77` replaced the scope a `let` used to allocate with a slot reserved by the call that
+//! `docs/70` replaced the scope a `let` used to allocate with a slot reserved by the call that
 //! contains it, which is worth about four fifths of what a binding cost. The correctness of that
 //! rests on one invariant, and it is the kind of invariant a program only violates in the
 //! circumstance nobody wrote a test for:
@@ -14,7 +14,7 @@
 //! the frame. Its unit tests cover the counting. These cover what a *program* would see if either
 //! half were wrong, which is a closure quietly answering with somebody else's value.
 //!
-//! Nothing here is about speed. `docs/77` §77.5 has the numbers.
+//! Nothing here is about speed. `docs/70` §70.3 has the numbers.
 
 use beck_rt::testing::{Options, Outcome};
 

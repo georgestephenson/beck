@@ -19,11 +19,11 @@ source, conform to nothing), **watch** (a dated pin, revisited on a named trigge
 
 Surveying outward forced a look inward, and the charter's first row is the one that needs it. The
 ground moved while the survey was being written: the reals landed in
-[`32`](32-numeric-tower-and-polymorphism-report.md), so the row is now *partially* backed, and the
+[`27`](27-the-walls-come-down-report.md), so the row is now *partially* backed, and the
 unbacked parts are nameable.
 
 **What the row now has.** SICP's printed doubles are asserted as digit-for-digit equalities
-([`32`](32-numeric-tower-and-polymorphism-report.md) §32.5): `sqrt(9.0)` prints
+([`27`](27-the-walls-come-down-report.md) §27.2): `sqrt(9.0)` prints
 `3.00009155413138` on both sides because both are IEEE 754 binary64 running the same operation
 sequence, and a fused multiply-add or a reassociation anywhere in the compiler would change the
 last digit and fail the suite. That is precisely the cross-implementation oracle the charter row
@@ -32,21 +32,21 @@ the property §12.10 prizes.
 
 **What it still lacks.** The row claims `f32`/`f64` "across tiers — WASM and native must agree
 bit-for-bit". There is one float (binary64) and one tier computing it — the evaluator; no WASM or
-native backend exists ([`31`](31-tail-calls-report.md) §31.7). The cross-tier half of the claim is
+native backend exists ([`27`](27-the-walls-come-down-report.md) §27.10). The cross-tier half of the claim is
 still design, and [`14`](14-review-findings.md) F9's price — a correctly-rounded deterministic
 libm, FMA and fast-math off in fold-reachable code — comes due with the second backend or the
 first transcendental, whichever arrives first: today the prelude's only root is `sqrt`, which
 IEEE 754 requires correctly rounded and is therefore portable, and `sin`/`cos`/`pow` — where
 libms actually diverge — do not exist yet. Exact rationals and bignums remain refused
 (`rational.beck`); the tower has one floor of three,
-said plainly in §32.9.
+said plainly in §27.10.
 
 **The deviation from IEEE comparison is now stated — but in a report, and reports are history.**
 The first draft of this survey observed that float equality deviated from IEEE 754 §5.11 with no
-decision recording it. §32.2 then found the stored order was worse than undocumented — raw
+decision recording it. §27.8 then found the stored order was worse than undocumented — raw
 `f64::to_bits` answered `-1.0 < 1.0 → false` — fixed it with the monotone transform (the shape of
 IEEE 754 §5.10's `totalOrder`), and canonicalises `-0.0` to `0.0` and every NaN to one NaN on the
-way into a `Value`. So Beck's `==` on reals is structural and `NaN == NaN`, stated in §32.2 as a
+way into a `Value`. So Beck's `==` on reals is structural and `NaN == NaN`, stated in §27.8 as a
 deviation a porter must know about. What survives of the survey's recommendation: a report is
 history by charter, so when the Phase 5 spec exists the comparison semantics belong in it as
 current state — arithmetic per IEEE 754-2019 clause 5, `Value` identity and ordering per the
@@ -177,12 +177,12 @@ its artefact exists, not before.
 | **POSIX.1-2024** ([IEEE 1003.1-2024](https://standards.ieee.org/ieee/1003.1/7700/), SUS Issue 8) | Published June 2024 — first revision since 2017 | Beck's containers must die well: Kubernetes termination is SIGTERM → grace → SIGKILL, and drain/resume ([`06`](06-kubernetes-and-packaging.md)) rides it; CLI exit statuses and utility argument syntax are POSIX conventions | Signal-handling contract test in `beck-rt` (SIGTERM begins drain, exit codes documented); CLI exit-status table in the diagnostic snapshots | **adopt the clauses we touch** — the runtime and CLI surface, not the 4,000 pages |
 | **RFC 9457** (Problem Details for HTTP APIs) | Current (obsoleted RFC 7807, 2023) | Every `@public(rest)` surface needs an error body; the schema-derived OpenAPI 3.1 story is incomplete without a standard error shape | Generated REST errors emit `application/problem+json`; round-trip tests beside the RFC 8259 ones | **adopt** with the REST emitter |
 | **RFC 9557** (IXDTF — RFC 3339 with time zone/calendar suffix) | Published 2024 | The envelope `at` stays RFC 3339 UTC — replay wants an instant, not a zone — but UI-edge formatting will meet zoned timestamps | None for the wire format (deliberately); adopt only if a zoned type ever enters the standard library | **watch** |
-| **WebAssembly 3.0** ([completed September 2025](https://webassembly.org/news/2025-09-17-wasm-3.0/)) | The live W3C standard; GC, 64-bit memories, exception handling, and **guaranteed tail calls** | The charter's "W3C WebAssembly core" now has a version worth naming. Proper tail calls became a language guarantee in [`31`](31-tail-calls-report.md) and are already load-bearing (`fixed_point` iterates to convergence, [`32`](32-numeric-tower-and-polymorphism-report.md) §32.5) — so every future backend inherits the obligation, and 3.0's guaranteed `return_call` is what lets a WASM tier honour it without a trampoline. A compiling backend also recovers the 13% the evaluator paid for it. WASI: pin the 0.2.x line; 0.3's native async is in progress, not shipped | Pin the charter row to 3.0; when the WASM backend exists, its tail-call lowering tests cite the 3.0 spec suite | **adopt the pin** |
+| **WebAssembly 3.0** ([completed September 2025](https://webassembly.org/news/2025-09-17-wasm-3.0/)) | The live W3C standard; GC, 64-bit memories, exception handling, and **guaranteed tail calls** | The charter's "W3C WebAssembly core" now has a version worth naming. Proper tail calls became a language guarantee in [`27`](27-the-walls-come-down-report.md) and are already load-bearing (`fixed_point` iterates to convergence, [`27`](27-the-walls-come-down-report.md) §27.2) — so every future backend inherits the obligation, and 3.0's guaranteed `return_call` is what lets a WASM tier honour it without a trampoline. A compiling backend also recovers the 13% the evaluator paid for it. WASI: pin the 0.2.x line; 0.3's native async is in progress, not shipped | Pin the charter row to 3.0; when the WASM backend exists, its tail-call lowering tests cite the 3.0 spec suite | **adopt the pin** |
 | **Unicode 17.0 + UTS #39** | 17.0 current (2025); UAX #31 script classifications moved under it | §35.1 — identifier security for a macro language | Pinned Unicode version per release; confusables/mixed-script vectors in the conformance suite | **adopt** with the identifier rules |
 | **SPDX 3.0** (SPDX 2.2.1 is [ISO/IEC 5962:2021](https://www.iso.org/standard/81870.html)) | 3.0 published 2024; 2.x remains the ISO-anchored, tooling-dominant line | The charter pins SPDX 2.3 — correctly, today: apko and `cargo-about` emit it | Keep 2.3; the 3.0 switch is an ADR when the toolchain moves | **watch** |
 | **SLSA v1.1** | Clarifying revision of v1.0 (2025) | The charter targets "v1.0 Build L3"; same levels, tightened wording | Update the reference when the supply-chain bullets are built — they are untouched ([`22`](22-phase-3-report.md) §22.9) | **watch** |
 | **EU Cyber Resilience Act** (Regulation 2024/2847) | In force; vulnerability-reporting obligations began phasing in from September 2026, full obligations December 2027; CEN/CENELEC harmonised standards in drafting | Not a standard — the *reason* standards will be demanded of anything Beck-built sold in the EU. Beck's chartered posture (SBOM, signing, reproducibility, coordinated disclosure) is the evidence shape the CRA asks manufacturers for | None yet; revisit when harmonised standards publish | **watch** |
-| **ISO/IEC 10967** (Language-Independent Arithmetic, parts 1–3) | Dormant but not withdrawn | The only ISO vocabulary for specifying how a numeric tower's integers, floats and conversions relate. The reals floor is built ([`32`](32-numeric-tower-and-polymorphism-report.md)); read this once when the rationals/bignums floors are attempted (`rational.beck` is that wall), then set down | None — read at spec-writing time | **borrow** |
+| **ISO/IEC 10967** (Language-Independent Arithmetic, parts 1–3) | Dormant but not withdrawn | The only ISO vocabulary for specifying how a numeric tower's integers, floats and conversions relate. The reals floor is built ([`27`](27-the-walls-come-down-report.md)); read this once when the rationals/bignums floors are attempted (`rational.beck` is that wall), then set down | None — read at spec-writing time | **borrow** |
 
 Considered and declined, one line each, so the survey is falsifiably complete rather than
 selectively flattering: **ISO/IEC/IEEE 12207 / 15288** (lifecycle process standards — Beck's
@@ -262,8 +262,8 @@ taken seriously.
 
 Each item enters [`12`](12-standards-and-conformance.md) only with its artefact, per §12.1.
 
-1. **Numeric follow-ons, now that the reals are built** ([`32`](32-numeric-tower-and-polymorphism-report.md)):
-   the `NaN == NaN` / `-0.0` canonicalisation deviation moves from §32.2 — a report, which is
+1. **Numeric follow-ons, now that the reals are built** ([`27`](27-the-walls-come-down-report.md)):
+   the `NaN == NaN` / `-0.0` canonicalisation deviation moves from §27.8 — a report, which is
    history — into the Phase 5 spec as current state, with a D-number; F9's deterministic libm
    gates the first transcendental or the second backend, whichever lands first; ISO/IEC 10967
    read once when the rationals/bignums floors are attempted (§35.1, §35.3).
@@ -278,7 +278,7 @@ Each item enters [`12`](12-standards-and-conformance.md) only with its artefact,
 3. **New charter candidates with small artefacts**: RFC 9457 problem details for `@public(rest)`
    errors; POSIX.1-2024 signal/exit contract for `beck-rt` and the CLI; the WebAssembly row
    pinned to 3.0, whose guaranteed `return_call` is how a future WASM tier honours the
-   proper-tail-call guarantee [`31`](31-tail-calls-report.md) made language-level (§35.3).
+   proper-tail-call guarantee [`27`](27-the-walls-come-down-report.md) made language-level (§35.3).
 4. **The 24772-1 mapping** as a maintained matrix with negative tests, in the §12.7 style
    (§35.2).
 5. **Implementation conformance statements** formalised from `Platform::unsupported` — declared

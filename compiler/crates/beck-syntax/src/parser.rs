@@ -331,7 +331,7 @@ impl<'a> Parser<'a> {
         let (name, name_span) = self.ident("a function name")?;
         // `def map[T, U](…)` — §3.1's "full inference inside bodies; mandatory annotations on
         // public signatures", which means a *user's* abstraction says what it is polymorphic in
-        // rather than having it guessed (`docs/32` §32.7).
+        // rather than having it guessed (`docs/27` §27.2).
         let typarams = self.typarams(name_span);
         let params = self.params()?;
         let returns = if self.eat(&Raw::Arrow) {
@@ -1564,7 +1564,7 @@ impl<'a> Parser<'a> {
             // expression grammar rather than in a pattern grammar of its own for §2.6's reason —
             // patterns *are* expressions, "nothing new to represent" — and the checker is what
             // refuses it where a pattern is not wanted, exactly as it does for `*rest`. Beck has
-            // no bitwise operators (`docs/53` §53.6), so the token was free.
+            // no bitwise operators (`docs/53` §53.7), so the token was free.
             Raw::Pipe => ("|", 1, 2),
             // `case whole @ Circle(r):` — a name for the value a pattern is taking apart. Binds
             // tighter than `|`, so `A | b @ B` is `A | (b @ B)`. `@` is only special at the start
@@ -1861,7 +1861,7 @@ impl<'a> Parser<'a> {
                     // a separate pattern grammar because §2.6's patterns *are* expressions:
                     // "`Added(id, text)` is the form `(Added id text)` … Nothing new to
                     // represent". The checker is what refuses it outside a pattern
-                    // (`docs/33` §33.5).
+                    // (`docs/27` §27.3).
                     if self.at(&Raw::Star) {
                         let star = self.span();
                         self.bump();

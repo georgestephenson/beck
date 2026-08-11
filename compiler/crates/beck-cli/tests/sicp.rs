@@ -20,9 +20,9 @@
 //! `docs/63` is the verdict table; the file is the evidence for it.
 //!
 //! All six §25.6 measured are down, and each left a test pointing the other way rather than no test
-//! at all: docs/27 for the first three, docs/31 for tail calls, docs/32 for the reals and for
-//! user-written polymorphism. Removing them wrote three more and those came down too — docs/33 for
-//! taking a `list[T]` apart, docs/36 for a type that takes a parameter, docs/41 for exact
+//! at all: docs/27 for the first three, docs/27 for tail calls, docs/27 for the reals and for
+//! user-written polymorphism. Removing them wrote three more and those came down too — docs/27 for
+//! taking a `list[T]` apart, docs/27 for a type that takes a parameter, docs/27 for exact
 //! rationals. `refusals/` is **empty**, which is a claim this file asserts rather than a directory
 //! it stopped using.
 
@@ -36,7 +36,7 @@ fn compile(name: &str, src: &str) -> (Option<Placed>, String) {
     (placed, diags.render(&map))
 }
 
-/// The same, admitting a library — which is what every SICP exercise is (docs/27 §27.4).
+/// The same, admitting a library — which is what every SICP exercise is (docs/27 §27.2).
 fn compile_module(name: &str, src: &str) -> (Option<Placed>, String) {
     let (placed, diags, map) = beck_core::compile_or_library_str(name, src);
     (placed, diags.render(&map))
@@ -64,7 +64,7 @@ const CH2: &str = include_str!("../../../sicp/ch2.beck");
 /// It needs no thread of its own: `beck_rt::testing::run` asks the backend how much host stack it
 /// requires and provides it. A tree-walker spends a frame on recursion that is not in tail
 /// position, so the requirement is real — it is declared on the seam rather than left to the
-/// caller, and exceeding it is a diagnostic. `docs/31` §31.3–§31.4.
+/// caller, and exceeding it is a diagnostic. `docs/27` §27.2–§27.2.
 #[test]
 fn chapter_one_passes_against_the_books_own_answers() {
     let (placed, rendered) = compile_module("sicp/ch1.beck", CH1);
@@ -98,7 +98,7 @@ fn chapter_one_passes_against_the_books_own_answers() {
 fn chapter_two_reaches_the_closure_property() {
     // §2.2 is "Hierarchical Data and the Closure Property", and it is the section §25.6 item 2 said
     // chapter 2 stopped at. It does not stop there now, and this file is a library — so it is
-    // evidence for §27.3 and §27.4 at once, and could not have been written for either alone.
+    // evidence for §27.2 and §27.2 at once, and could not have been written for either alone.
     let (placed, rendered) = compile_module("sicp/ch2.beck", CH2);
     let placed = placed.unwrap_or_else(|| panic!("chapter 2 compiles:\n{rendered}"));
     assert!(!placed.is_application(), "chapter 2 is a library");
@@ -129,7 +129,7 @@ fn chapter_two_reaches_the_closure_property() {
 #[test]
 fn a_library_runs_its_own_tests_with_no_application_anywhere_near_it() {
     // Was §25.6 item 1's wall and §25.7's first item: "stage 1 cannot honestly start until the
-    // wrapper in `ch1.beck` can be deleted". docs/27 §27.4 deleted it.
+    // wrapper in `ch1.beck` can be deleted". docs/27 §27.2 deleted it.
     //
     // Asserted two ways, because the interesting half is the *second*. The first says a library's
     // tests run; the second says chapter 1 no longer contains an application at all — which is the
@@ -222,7 +222,7 @@ test \"this one needs a page\":
 fn a_type_may_mention_itself_and_anything_declared_later() {
     // Was §25.6 item 2's wall — "§2.2 *is* Hierarchical Data and the Closure Property, so this ends
     // chapter 2 at §2.2 and takes chapters 4 and 5 with it" — and §25.7 called it the highest-value
-    // item on the list for reasons that have nothing to do with SICP. docs/27 §27.3 is the fix.
+    // item on the list for reasons that have nothing to do with SICP. docs/27 §27.2 is the fix.
     //
     // Three shapes, because "recursive" is three different problems for a checker that resolved
     // declarations in source order.
@@ -264,7 +264,7 @@ model Inner:
 
 #[test]
 fn the_three_passes_are_stages_and_not_a_depth_limit() {
-    // §27.3 resolves declarations in three passes where there was one, and "three" is a count of
+    // §27.2 resolves declarations in three passes where there was one, and "three" is a count of
     // *stages* rather than of how far a chain or a cycle may reach. Nothing in the design bounds
     // depth, and the pass that could plausibly have bounded it — `collect_aliases`, which resolves
     // each alias by resolving the aliases it names first — is exactly the one that recurses.
@@ -315,10 +315,10 @@ union R4:
 
 #[test]
 fn what_bounds_a_recursive_types_depth_is_the_evaluator_and_not_the_checker() {
-    // The honest limit, so that §27.3's "nothing bounds depth" is not read as "nothing at all".
+    // The honest limit, so that §27.2's "nothing bounds depth" is not read as "nothing at all".
     // A recursive *type* is unbounded; a recursive *value* built by recursion that is not in tail
     // position is bounded by `beck-eval`'s depth ceiling, and that bound is a *diagnostic*
-    // (`docs/31` §31.3).
+    // (`docs/27` §27.2).
     //
     // Through the binary, because the thing being checked is that the process survives.
     let program = |depth: u32| {
@@ -392,7 +392,7 @@ fn an_alias_that_is_defined_in_terms_of_itself_is_still_refused() {
     // The one cycle that is not a feature. A `union` may be recursive because a variant is a finite
     // tag plus fields; an alias is *transparent*, so `type A = list[A]` describes an infinitely
     // large type and `type A = B; type B = A` describes none at all. Refusing them is what stops
-    // the fix of §27.3 turning a source-order limitation into a hang.
+    // the fix of §27.2 turning a source-order limitation into a hang.
     for src in ["type Chain = list[Chain]\n", "type A = B\ntype B = A\n"] {
         let out = errors("alias-cycle.beck", src);
         assert!(out.contains("B0312"), "{out}");
@@ -437,7 +437,7 @@ fn a_recursive_type_survives_every_pass_a_corpus_program_is_carried_through() {
     );
 }
 
-/// Wall 6 down (docs/32) — the last of §25.6's six, and the one §25.7 called "the largest".
+/// Wall 6 down (docs/27) — the last of §25.6's six, and the one §25.7 called "the largest".
 ///
 /// `sicp/refusals/generic.beck` held `def map[T, U]` and asserted `B0120: expected \`(\`, found
 /// \`[\``. The definition is now in `ch2.beck` and used at four element types. What this asserts is
@@ -502,7 +502,7 @@ test \"instantiated afresh\":
     assert!(errors("dup.beck", "def f[T, T](x: T) -> T:\n    return x\n").contains("B0315"));
 }
 
-/// The wall docs/32 §32.10 named, down the report after it named it.
+/// The wall docs/27 §27.3 named, down the report after it named it.
 ///
 /// `sicp/refusals/list-destructuring.beck` held `accumulate` and asserted `B0343: \`list\` is not a
 /// constructor`. `accumulate` is now in `ch2.beck`, and §2.2.3 — "Sequences as Conventional
@@ -577,9 +577,9 @@ test \"one fold, two element types\":
 /// The refusals directory is empty, and the harness says so out loud.
 ///
 /// It held one file per wall still standing, and the last of them — `rational.beck`, which needed
-/// `+` to reach a type the compiler does not know about — came down in `docs/41`. An empty
+/// `+` to reach a type the compiler does not know about — came down in `docs/27`. An empty
 /// directory is a claim, so it is asserted rather than left to be noticed: every wall this project
-/// has *found* has been removed. It is not the claim that Beck expresses all of SICP, and §41.7
+/// has *found* has been removed. It is not the claim that Beck expresses all of SICP, and §27.10
 /// says which chapters are simply unattempted.
 ///
 /// A `.beck` file appearing here again should make this test fail, because the file would have a
@@ -603,7 +603,7 @@ fn every_wall_this_suite_measured_has_come_down() {
     );
 }
 
-/// Wall 5 down (docs/32), and the strongest oracle in the suite.
+/// Wall 5 down (docs/27), and the strongest oracle in the suite.
 ///
 /// `sicp/refusals/real.beck` asserted that Newton's method did not typecheck. What replaced it is
 /// not "it typechecks" — it is that `sqrt(9.0)` prints **3.00009155413138**, which is the number on
@@ -645,7 +645,7 @@ test \"the tiers coexist\":
     );
 
     // Ad-hoc resolution is not coercion. `1 + 1.0` has no answer, and inventing one — promoting the
-    // `Int`, the way C does — is the decision this deliberately does not take (docs/32 §32.3).
+    // `Int`, the way C does — is the decision this deliberately does not take (docs/27 §27.2).
     let out = errors(
         "mixed.beck",
         "def f(n: Int, x: Float) -> Float:\n    return n + x\n",
@@ -661,7 +661,7 @@ test \"the tiers coexist\":
 ///
 /// `Value::Float` is a `u64` because a fold's accumulator needs a total order. It used to hold
 /// `f64::to_bits`, which orders `-1.0` *above* `1.0` — so `<` answered backwards for every negative
-/// real and `sort_by` reversed them. docs/32 §32.2. The fix is an order-preserving key, and this is
+/// real and `sort_by` reversed them. docs/27 §27.8. The fix is an order-preserving key, and this is
 /// what says it stayed fixed.
 #[test]
 fn comparing_and_sorting_reals_agrees_with_arithmetic() {
@@ -755,7 +755,7 @@ def pick(b: Bool) -> Int:
 
 #[test]
 fn a_tail_call_costs_nothing_so_an_iterative_process_is_iterative() {
-    // §1.2.1's distinction, which `docs/31` built and `ch1.beck`'s `count_to` exercise asserts
+    // §1.2.1's distinction, which `docs/27` built and `ch1.beck`'s `count_to` exercise asserts
     // from the language's side.
     //
     // Run through the binary rather than in-process: if the trampoline regresses the failure is a
@@ -859,7 +859,7 @@ fn peak_rss_kib(source: &str, scratch: &str) -> Option<u64> {
 ///
 /// A tail call that extended the *caller's* environment rather than the closure's would spend no
 /// host stack and a linear amount of heap instead — the same unbounded growth wearing a different
-/// hat (`docs/31` §31.2). `bind` extends the closure's, so the environment chain is as short on the
+/// hat (`docs/27` §27.2). `bind` extends the closure's, so the environment chain is as short on the
 /// millionth iteration as on the first, and resident memory does not move. Nothing else asserts
 /// that; the stack test above would pass with the chain growing under it.
 #[test]

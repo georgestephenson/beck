@@ -52,7 +52,7 @@ is an option type at every call site to distinguish two cases almost nothing dis
 <p><span class="tag">def</span><span class="tag">on any</span><span class="tag">raises(HttpError)</span><span class="tag">raises(JsonError)</span></p>
 <p>The body read as JSON. Fallible twice, and the two failures stay apart.</p>
 <p>`raises(JsonError)` is inferred from `json_parse` and `raises(HttpError)` from `require_ok`, so
-the row of this function names both and a handler catches the one it can say (`docs/47` §47.4).</p>
+the row of this function names both and a handler catches the one it can say (`docs/27` §27.7).</p>
 <h3 id="listing">listing</h3>
 <pre><code>listing() -&gt; HttpRequest</code></pre>
 <p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
@@ -73,7 +73,7 @@ means. `on_port` afterwards is how a peer on 8443 is reached.</p>
 <p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
 <p>Both of `json_body`'s failures, caught one handler each.</p>
 <p>The nesting is the point rather than a nuisance: a `try:` catches the failure its type names and
-lets every other one travel (`docs/47` §47.4), so &quot;the peer said 503&quot; and &quot;the peer said
+lets every other one travel (`docs/27` §27.7), so &quot;the peer said 503&quot; and &quot;the peer said
 something that is not JSON&quot; cannot be confused for one another by a caller that wanted to tell
 them apart. A caller that does not want to tell them apart writes one `try:` further out.</p>
 <h3 id="patched">patched</h3>

@@ -13,7 +13,7 @@
 # report put removing it first on its list of six.
 #
 # It is gone. `beck test sicp/ch1.beck` runs the exercises below with no application anywhere near
-# them (docs/27 §27.4). What is left is the chapter.
+# them (docs/27 §27.2). What is left is the chapter.
 # ---------------------------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------------------------
@@ -27,7 +27,7 @@ def factorial(n: Int) -> Int:
 
 # The same function as a linear *iterative* process. SICP's whole point here is that this one runs
 # in constant space and the one above does not — "an implementation with this property is said to
-# be tail-recursive", and until docs/31 Beck was not one. `sicp/refusals/tail.beck` used to sit
+# be tail-recursive", and until docs/27 Beck was not one. `sicp/refusals/tail.beck` used to sit
 # here asserting that the distinction was unobservable; `count_to` below is what it turned into.
 def fact_iter(product: Int, counter: Int, max_count: Int) -> Int:
     if counter > max_count:
@@ -157,15 +157,15 @@ def is_prime(n: Int) -> Bool:
 # 1.1.7 Example: Square Roots by Newton's Method
 #
 # The first substantial program in the book, and the one the whole of §1.3 is built out of. It
-# needed reals, which `sicp/refusals/real.beck` recorded as wall 5 until docs/32.
+# needed reals, which `sicp/refusals/real.beck` recorded as wall 5 until docs/27.
 #
 # `square_real` is here because `square` above is `Int -> Int` and Beck has no numeric type class:
 # one name cannot cover both tiers. That is a real cost of resolving `*` from its operands instead
-# of from a trait, it is the honest one to pay before traits exist, and docs/32 §32.3 argues it
+# of from a trait, it is the honest one to pay before traits exist, and docs/27 §27.2 argues it
 # rather than hiding it. User-written polymorphism — wall 6 — would not fix it either.
 #
 # `sqrt` shadows the prelude primitive of the same name, deliberately: the chapter's point is that
-# you can *build* it, and a definition may shadow a primitive (docs/32 §32.4).
+# you can *build* it, and a definition may shadow a primitive (docs/27 §27.2).
 # ---------------------------------------------------------------------------------------------
 
 def square_real(x: Float) -> Float:
@@ -317,7 +317,7 @@ test "1.2.1 — factorial, recursive and iterative, agree":
 # The one test in this chapter that is not about a number the book states. SICP §1.2.1 states a
 # *property* instead — that an iterative process runs in constant space — and a quarter of a
 # million levels is the smallest honest way to assert it, because any depth a recursive process
-# could also reach would prove nothing. Before docs/31 this program did not fail; it aborted.
+# could also reach would prove nothing. Before docs/27 this program did not fail; it aborted.
 test "1.2.1 — an iterative process is iterative, a quarter of a million levels deep":
     expect count_to(0, 250000) == 250000
     expect count_up(500) == 500
@@ -367,7 +367,7 @@ test "1.3.2 — the same, with an anonymous procedure":
 
 # The book prints these four, to the last digit, and they are IEEE 754 doubles on both sides — so
 # the assertion is equality and not a tolerance. That it holds is a statement about `Float` being
-# the same `Float` (docs/32 §32.5).
+# the same `Float` (docs/27 §27.2).
 test "1.1.7 — square roots by Newton's method, to the digit SICP prints":
     expect str(sqrt(9.0)) == "3.00009155413138"
     expect str(sqrt(100.0 + 37.0)) == "11.704699917758145"

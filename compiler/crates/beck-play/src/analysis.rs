@@ -36,6 +36,10 @@ pub struct Analysis {
     /// Whether this program is an application — a merge point, a page, a fold — and can therefore
     /// be run in the tab (rung B).
     pub runnable: bool,
+    /// The same diagnostics as spans, for the squiggle under the text. Byte offsets, like every
+    /// span in the compiler; the boundary in [`crate::dispatch`] is where they become the UTF-16
+    /// offsets a `<textarea>` counts in.
+    pub marks: Vec<beck_core::editor::Mark>,
 }
 
 const FILE: &str = "playground.beck";
@@ -83,6 +87,12 @@ pub fn analyse(source: &str) -> Analysis {
             errors: 0,
             warnings: 0,
             runnable: false,
+            // The three "this is not an application" codes are not defects in the text, so they do
+            // not get a squiggle any more than they get counted.
+            marks: beck_core::editor::marks(&diags)
+                .into_iter()
+                .filter(|m| !beck_core::project::NOT_AN_APPLICATION.contains(&m.code.as_str()))
+                .collect(),
             sections,
         };
     }
@@ -103,6 +113,7 @@ pub fn analyse(source: &str) -> Analysis {
         errors,
         warnings,
         runnable: placed.is_some(),
+        marks: beck_core::editor::marks(&diags),
         sections,
     }
 }
