@@ -321,10 +321,12 @@
   // rule, the outbox — is the same code either way, which is what makes a tab a *host* rather
   // than a simulation.
   //
-  // The contract, for whoever writes the third one: `dial(handlers)` returns `{send, ready}`, and
-  // calls `handlers.open` *after* returning — a transport that is ready the moment it is dialled
-  // has to defer, because `open` is where the `hello` frame is sent and it sends it through the
-  // object `dial` has not handed back yet.
+  // The contract, for whoever writes the third one: `dial(handlers)` returns `{send, ready}` and
+  // optionally `close`, and calls `handlers.open` *after* returning — a transport that is ready
+  // the moment it is dialled has to defer, because `open` is where the `hello` frame is sent and
+  // it sends it through the object `dial` has not handed back yet. A transport without `close`
+  // is dropped rather than closed, so its connection lives until whatever owns it goes away.
+  //
   // Where the mode's own artefacts come from, as a seam — the kernel module and the component's
   // bundle in Mode B. A deployment fetches them from the origin it was served from, on the two
   // reserved routes `beck_rt::http` answers; the playground has no server behind the frame, so it
@@ -355,6 +357,7 @@
         socket.send(text);
       },
       ready: () => socket.readyState === 1,
+      close: () => socket.close(),
     };
   };
 
@@ -371,11 +374,17 @@
   //
   // `state.path` rides on the `hello` for a related reason: a route established by a second frame
   // would leave every reconnection rendering the root's page until that frame arrived.
+  //
+  // The returned sender carries a `close`, because the reconnect below has to be stoppable by
+  // something other than the frame being destroyed. Nothing else holds the retry timer.
   const connect = (state, on, opened) => {
     let backoff = 250;
     const outbox = [];
     let link = null;
+    let retry = null;
+    let stopped = false;
     const open = () => {
+      retry = null;
       link = (beck.dial || websocket)({
         open: () => {
           backoff = 250;
@@ -401,13 +410,14 @@
         close: () => {
           link = null;
           stats.connected = false;
-          setTimeout(open, backoff);
+          if (stopped) return;
+          retry = setTimeout(open, backoff);
           backoff = Math.min(backoff * 2, 5000);
         },
       });
     };
     open();
-    return (frame) => {
+    const send = (frame) => {
       // Counted here rather than in the transport, because a frame is a frame whichever one is
       // under it. The *bytes* are not: they are counted in `websocket` below, since a port
       // transport moves objects and has none.
@@ -415,6 +425,20 @@
       if (link && link.ready()) link.send(frame);
       else outbox.push(frame);
     };
+    // Stop dialling. Both lines are load-bearing, for the two ways a client is closed: after the
+    // connection dropped there is a retry already armed, which is the `clearTimeout`; while it is
+    // still up the close travels through the transport and the handler above runs on the way out,
+    // which is the flag. A socket reports its own closing and cannot say whether it was asked for.
+    send.close = () => {
+      stopped = true;
+      clearTimeout(retry);
+      retry = null;
+      const closing = link;
+      link = null;
+      stats.connected = false;
+      if (closing && closing.close) closing.close();
+    };
+    return send;
   };
 
   // An event anybody can listen for, on any ancestor. `bubbles` because the natural place to
