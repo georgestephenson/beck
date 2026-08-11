@@ -5,8 +5,8 @@ special form SICP introduces, each carrying the code that recovers it or the reo
 concedes it, and [`25`](25-benchmarks-and-expressiveness.md) §25.9's forecast answered row by row.
 
 This is the *formal* half of the SICP work rather than the running half. Chapters 1 and 2 ask
-whether Beck can express what the book computes ([`27`](27-walls-report.md),
-[`41`](41-generic-arithmetic-report.md)); this asks the narrower and older question Felleisen posed
+whether Beck can express what the book computes ([`27`](27-the-walls-come-down-report.md),
+[`27`](27-the-walls-come-down-report.md)); this asks the narrower and older question Felleisen posed
 in 1991 — whether a language that lacks a form has lost anything by lacking it.
 
 ## 63.1 The criterion, and why it is not the obvious one
@@ -30,7 +30,7 @@ and closer to right than a forecast usually is:
 | `cond`, `and`, `or`, `not` (§1.1, §4.1.2) | Recovered | **Recovered** | ✓ |
 | `let`, `let*` (§1.3.2, §4.1.6) | Recovered | **Recovered — by the language, not by a macro** | ✓, with §63.4's qualification |
 | `delay` / `force`, `cons-stream` (§3.5.1) | "The interesting one" | **Recovered**, after a one-line compiler fix | ✓ |
-| `quote`, quasiquote (§2.3.1) | "Blocked, not global" | **Recovered** — the block was the recursive types, and they came down in [`27`](27-walls-report.md) | ✓, and better |
+| `quote`, quasiquote (§2.3.1) | "Blocked, not global" | **Recovered** — the block was the recursive types, and they came down in [`27`](27-the-walls-come-down-report.md) | ✓, and better |
 | `set!`, `begin` (§3.1) | "Refused by design — D1" | **Refused by design**, cited rather than measured | ✓ |
 | `amb` (§4.3) | "Expected `global`" | **GLOBAL** | ✓ |
 | `define-syntax`, derived expressions (§4.1.2) | "Recovered, and stronger" | **Recovered, and stronger** | ✓ |
@@ -133,7 +133,7 @@ argued away.
 ## 63.6 `quote` came out better than forecast, and the reason is worth separating
 
 §25.9 forecast "blocked, not global", on the grounds that a program's symbolic data needs a symbol
-type and recursive types. Both exist now — [`27`](27-walls-report.md) §27.3 removed the recursive
+type and recursive types. Both exist now — [`27`](27-the-walls-come-down-report.md) §27.2 removed the recursive
 type wall, and a symbol type is a `union` a program declares — so `union Datum: Atom | Number |
 Sequence` carries §2.3.1's `memq` and structural equality with nothing missing.
 
@@ -159,10 +159,10 @@ recovered, and the code is longer.
   in-progress note needs updating: the Felleisen table is no longer among the things "not built".
   The compile-speed budgets and the CLBG harness still are.
 - **§25.9's `quote` forecast is superseded.** "Blocked, not global" was true when written and the
-  block came down in [`27`](27-walls-report.md); the verdict is recovered.
+  block came down in [`27`](27-the-walls-come-down-report.md); the verdict is recovered.
 - **[`08`](08-roadmap.md) §8.4's Phase 3 row loses an item.** "SICP stage 1; the Felleisen table;
   compile-speed budgets; Are We Fast Yet and CLBG harnesses" — the first is done, the second is this
-  report, Are We Fast Yet is complete ([`61`](61-deltablue-report.md)), and two remain.
+  report, Are We Fast Yet is complete ([`53`](53-are-we-fast-yet-report.md)), and two remain.
 - **The checker gains a function type it did not have**, per §63.3, and a test that keeps it.
 
 ## 63.9 What Phase 3 is still not

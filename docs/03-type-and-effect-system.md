@@ -58,7 +58,7 @@ that starts being able to fail a breaking change, in the same sentence it alread
 library that starts phoning home. Several labels in one row get a name —
 `row Fallible = raises(Refusal), log` — because rows of five and six labels are ordinary and a
 signature nobody reads is not a contract.
-[`45`](45-error-rows-report.md) is what was built and what was not.
+[`27`](27-the-walls-come-down-report.md) is what was built and what was not.
 
 > **Correction, Phase 2** ([`20`](20-phase-2-report.md) §20.4 item 3). This paragraph originally put
 > `time` and `rand` in the ambient set as well, "implicitly available *outside folds* … except where
@@ -341,7 +341,12 @@ authoritative patch arrives, speculative state is confirmed or discarded. This i
 mint entity ids (`uuid7()` in the sketch): they must refer to a todo before the server confirms it
 exists. Browsers here are **replicas, not terminals**. `Signal[T]` carries a freshness dimension
 (`confirmed | pending(n)`) that UI code can render ("saving…") — staleness is typed, not pretended
-away. The concession the original makes explicitly and we inherit: for *concurrent edits to the
+away. *Built ([`102`](102-freshness-and-the-budget-report.md)), and as a **source** rather than as a
+dimension on every signal's type: `freshness()` joins `presence()` in this section's vocabulary and
+answers `Confirmed | Pending(n)` for the render it is part of. What that gives a page is "is any of
+this a guess", which is what "saving…" means; what it does not give is **which part** — a per-signal
+dimension would let a page say that one list is speculative while the header is not, and §102.7 says
+plainly that this is a coarser thing than the sentence above describes.* The concession the original makes explicitly and we inherit: for *concurrent edits to the
 same value* (two users in one text field), speculative-then-reconcile is not enough — you need
 CRDTs or OT, "and no type system absolves you"
 ([`09`](09-risks-and-open-questions.md) §9.5).
@@ -410,15 +415,18 @@ State schema evolution is a *language* concern, not an ops concern (Lamdera's pr
 
 1. HM + ADTs + traits; `Stream`/`Signal`/`fold`/`durable` typed but **placement fully manual**
    (`@on`), matching the original sketch exactly. — **Phase 1**, except traits, which parsed and
-   warned until Phase 3 checked them: declarations and impls ([`37`](37-traits-report.md)), bounds
-   on a type parameter ([`39`](39-bounds-report.md)), the `.becki` boundary
-   ([`40`](40-traits-across-modules-report.md)) and the arithmetic operators
-   ([`41`](41-generic-arithmetic-report.md)). Dispatch is static and an impl desugars to ordinary
+   warned until Phase 3 checked them: declarations and impls ([`27`](27-the-walls-come-down-report.md)), bounds
+   on a type parameter ([`27`](27-the-walls-come-down-report.md)), the `.becki` boundary
+   ([`27`](27-the-walls-come-down-report.md)) and the arithmetic operators
+   ([`27`](27-the-walls-come-down-report.md)). Dispatch is static and an impl desugars to ordinary
    definitions, so the IR and the evaluator are unchanged.
 2. Effect rows inferred; placement manual but **verified** (reject `@on(client)` + `durable`;
    reject impure folds). Already novel, already shippable. — **Phase 2**.
 3. Placement inference for the unannotated middle; `beck explain place`; freshness-typed optimism.
-   — **Phase 2**, except freshness-typed optimism, which needs Mode B and is Phase 3's.
+   — **Phase 2**, except freshness-typed optimism, which needed Mode B and is now built
+   ([`102`](102-freshness-and-the-budget-report.md)): `freshness()` is a signal source, `Freshness`
+   is `Confirmed | Pending(n)`, and a page that reads it may only render on the client — because a
+   server holds the log and its answer would be `Confirmed` at every position of it.
 4. The cost model: rendering placement (DOM-patch vs data-patch, [`05`](05-tier-lowering.md) §5.1)
    chosen per component. — **the cost model is Phase 2; the rendering choice is not.** Mode B does
    not exist, so there is one way to render and a model with one option is not choosing. What Phase 2

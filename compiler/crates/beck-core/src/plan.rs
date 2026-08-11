@@ -318,7 +318,7 @@ impl Plan {
             Some(page) if page < graph.nodes.len() => b.vertex(graph, page),
             // A **library** has no page, and an empty graph to look it up in. Its plan is its two
             // sources and a unit — nothing renders it, and the `unwrap_or(0)` this replaced indexed
-            // vertex zero of a graph with no vertices (docs/27 §27.4).
+            // vertex zero of a graph with no vertices (docs/27 §27.2).
             _ => {
                 let id = b.push(Op::Const, Vec::new(), None);
                 b.constants.insert(
@@ -393,7 +393,7 @@ impl Plan {
     ///
     /// The decomposition builds an operator for every argument of a call it inlines and for every
     /// `let`'s value, before it knows whether the body reads them — and a bounded call's arguments
-    /// include one dictionary per method of each bound ([`39`](../../../../../docs/39-bounds-report.md)),
+    /// include one dictionary per method of each bound ([`27`](../../../../../docs/27-the-walls-come-down-report.md)),
     /// of which the body may use none. Deciding that lazily would mean a scope of thunks rather
     /// than of operators, which changes the order operators are created in and therefore what
     /// hash-consing shares; pruning afterwards costs one pass and changes nothing else.
@@ -769,6 +769,35 @@ impl Builder<'_> {
                 )
             }
             SigOp::Presence => self.presence,
+            // Not a source: a **constant**, and that is the whole statement this plan makes about
+            // freshness. A plan is what the *server* renders through, and a server renders the
+            // state it has recorded — so `freshness()` here is `Confirmed` and never moves. The
+            // engine therefore treats it as it treats a string literal: evaluated once when the
+            // plan is prepared, and never a reason to recompute anything below it.
+            //
+            // A page that branched on it would be refused Mode A before reaching here
+            // (`crate::render`, `B0518`); what does reach here is the SSR of a Mode B page, whose
+            // first paint is by construction the confirmed one.
+            SigOp::Freshness => {
+                let id = self.push(Op::Const, Vec::new(), None);
+                self.constants.insert(
+                    id,
+                    Core {
+                        kind: CoreKind::Make {
+                            ty: Arc::from("Freshness"),
+                            variant: Some(Arc::from("Confirmed")),
+                            fields: Vec::new(),
+                        },
+                        ty: Ty::con("Freshness"),
+                        tier: Tier::Any,
+                        span: node.span,
+                        last_use: false,
+                        order: crate::fields::UNORDERED,
+                        locals: 0,
+                    },
+                );
+                id
+            }
             SigOp::PerSession { f } => {
                 let input = self.vertex(graph, node.inputs[0]);
                 let session = self.session;

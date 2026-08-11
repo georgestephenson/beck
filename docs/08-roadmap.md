@@ -122,7 +122,7 @@ dependencies whose signatures didn't change.
 > slicer — Phase 2's debt, delivered here rather than listed below — the language's own means of
 > abstraction, and now **`Result` and error rows**, which is the first half of the
 > structured-concurrency-and-errors bullet and the piece §8.5.3 trap 2 says the standard library
-> may not be written before ([`45`](45-error-rows-report.md)). A fifth, incremental views, has its
+> may not be written before ([`27`](27-the-walls-come-down-report.md)). A fifth, incremental views, has its
 > engine and its shared dataflow but not its read models, its pgwire exposure or its fusion. A
 > sixth, the expressiveness suite, has started and runs two chapters. Of the fourteen below, eight
 > are untouched.
@@ -209,23 +209,23 @@ dependencies whose signatures didn't change.
 > The nine other bullets are **untouched**, and [`26`](26-arrangement-sharing-report.md) §26.9 names
 > them one at a time rather than by omission. Of the two added since (§8.4), the
 > means-of-abstraction bullet is **done** — all six walls
-> ([`27`](27-walls-report.md), [`31`](31-tail-calls-report.md),
-> [`32`](32-numeric-tower-and-polymorphism-report.md)), and the three that removing them wrote
-> ([`33`](33-effect-polymorphism-and-list-patterns-report.md),
-> [`36`](36-parameterised-types-report.md), [`41`](41-generic-arithmetic-report.md)), with traits
-> across [`37`](37-traits-report.md), [`39`](39-bounds-report.md) and
-> [`40`](40-traits-across-modules-report.md) — and the expressiveness suite runs two chapters of
+> ([`27`](27-the-walls-come-down-report.md), [`27`](27-the-walls-come-down-report.md),
+> [`27`](27-the-walls-come-down-report.md)), and the three that removing them wrote
+> ([`27`](27-the-walls-come-down-report.md),
+> [`27`](27-the-walls-come-down-report.md), [`27`](27-the-walls-come-down-report.md)), with traits
+> across [`27`](27-the-walls-come-down-report.md), [`27`](27-the-walls-come-down-report.md) and
+> [`27`](27-the-walls-come-down-report.md) — and the expressiveness suite runs two chapters of
 > SICP against the book's own answers.
 >
 > Removing the six walls wrote three more, and all three came down too: a `list[T]` may be taken
-> apart ([`33`](33-effect-polymorphism-and-list-patterns-report.md)), a `model`, a `union`, a
-> `newtype` and a `type` may take a type parameter ([`36`](36-parameterised-types-report.md)), and
+> apart ([`27`](27-the-walls-come-down-report.md)), a `model`, a `union`, a
+> `newtype` and a `type` may take a type parameter ([`27`](27-the-walls-come-down-report.md)), and
 > `+` reaches a type the compiler does not know about
-> ([`41`](41-generic-arithmetic-report.md)). The last refusal file said **traits**, and four reports
+> ([`27`](27-the-walls-come-down-report.md)). The last refusal file said **traits**, and four reports
 > answered it: declarations, impls, coherence and static dispatch in
-> [`37`](37-traits-report.md), bounds and dictionary passing in [`39`](39-bounds-report.md), the
-> module boundary in [`40`](40-traits-across-modules-report.md), and the operators in
-> [`41`](41-generic-arithmetic-report.md) — which gives §2.1.1 its exact rationals and leaves
+> [`27`](27-the-walls-come-down-report.md), bounds and dictionary passing in [`27`](27-the-walls-come-down-report.md), the
+> module boundary in [`27`](27-the-walls-come-down-report.md), and the operators in
+> [`27`](27-the-walls-come-down-report.md) — which gives §2.1.1 its exact rationals and leaves
 > `sicp/refusals/` **empty**. That is the narrow claim that every wall this project has *found* has
 > been removed, not that Beck expresses SICP, and `sicp/refusals/README.md` is where the difference
 > is written down. The standard-library bullet has no remaining blocker and is work rather than
@@ -258,7 +258,16 @@ dependencies whose signatures didn't change.
   13 ms on a thousand-card board, 97% of it `view`, and growing with the board rather than with the
   change. **Not** codegen ([`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md)) — which
   §94.14 finds is not what the 13 ms is — not freshness-typed, and no size-budget gate; §94.8 is
-  the list.
+  the list. ***The last two of those are built***
+  ([`102`](102-freshness-and-the-budget-report.md)): `freshness()` is §3.7's dimension as a signal
+  source, so a page renders "saving…" from `Confirmed | Pending(n)` and stops when the state that
+  confirms it arrives — carrying the refusal that points the other way from every rule Mode B has
+  had so far, since a **server** cannot answer it (`B0518`). And the budget is a gate: `beck bundle`
+  writes the artefact, CI weighs every Mode B example against 150 KB brotli, and a shape gate says
+  what a threshold with eighty times its headroom cannot — that a bundle is a function of the
+  component's slice rather than of the program around it. What is left of this bullet is **codegen
+  alone**, which [`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md) defers and §8.19's Lane E
+  schedules behind a heap.
 - Client polish for both modes: router, forms, lazy routes, focus/scroll preservation, devtools
   extension showing signal graph, patch traffic and pending state. — ***Built, except lazy routes***
   ([`100`](100-client-polish-report.md)). **A route is a field of `Session`**: `view(state, session)`
@@ -281,13 +290,13 @@ dependencies whose signatures didn't change.
   for, and Phase 2 shipped with no way for them to write a single test about their own program.
   `beck test --update` for page snapshots is the part that did not ship.
 - Structured concurrency, `Result`/error rows, `match` exhaustiveness, pattern matching completion.
-  *`Result`/error rows are **built** ([`45`](45-error-rows-report.md)): failure is the effect atom
+  *`Result`/error rows are **built** ([`27`](27-the-walls-come-down-report.md)): failure is the effect atom
   `raises(E)`, `try:` is the handler that reifies it, and row aliases arrived with them. Nothing was
   added to the effect system to make that work, which is the point — inference, the `uses` bound,
   `.becki` and `--wire-compat` all applied to failure unchanged. Structured concurrency is
   **built** ([`80`](80-a-scope-owns-its-children-report.md)): `parallel:` is a scope whose
   bindings are its children, and what it lacks is a backend that runs two of them at once
-  (§80.5). `match` exhaustiveness is built for unions ([`33`](33-effect-polymorphism-and-list-patterns-report.md)
+  (§80.5). `match` exhaustiveness is built for unions ([`27`](27-the-walls-come-down-report.md)
   added lists). **Pattern matching nests** ([`90`](90-nested-patterns-report.md)):
   `case Some(Circle(r))`, a literal or a constructor wherever a binder goes, through a type
   parameter and inside a list — and the exhaustiveness check was rebuilt for it, because a set of
@@ -313,48 +322,48 @@ dependencies whose signatures didn't change.
 - Standard library v1: collections, strings, time, money/decimal, HTTP client, JSON, UUID, crypto
   primitives (delegated to `ring`/`aws-lc-rs`, not hand-rolled). **Reals first**, because §25.6
   measures that §1.1.7 of SICP — the first substantial program in the book — does not typecheck
-  without them. *Reals are **built** ([`32`](32-numeric-tower-and-polymorphism-report.md)): §1.1.7
+  without them. *Reals are **built** ([`27`](27-the-walls-come-down-report.md)): §1.1.7
   runs and reproduces the doubles the book prints. Exact rationals and bignums are not, and §2.1.1
   of SICP is about the first of those rather than about reals. Collections, strings, time,
   money/decimal, HTTP, JSON, UUID and crypto are untouched. A fold over a list *can* now be written
-  ([`33`](33-effect-polymorphism-and-list-patterns-report.md)) — and so can a library whose callers
-  do not inherit each other's effects, which §33.8 records as the precondition nobody had listed.
+  ([`27`](27-the-walls-come-down-report.md)) — and so can a library whose callers
+  do not inherit each other's effects, which §27.1 records as the precondition nobody had listed.
   Exact rationals are now expressible as a user's type rather than a compiler's, because `+`
-  resolves through the prelude trait `Num` ([`41`](41-generic-arithmetic-report.md)) — which is a
+  resolves through the prelude trait `Num` ([`27`](27-the-walls-come-down-report.md)) — which is a
   mechanism the standard library can be built on and not a standard library. Bignums are still not
   built, and neither is coercion between numeric types.*
   ***The first half is now built** ([`46`](46-standard-library-report.md)): strings, list and map
   collections, JSON and time as thirty-one primitives, plus `compiler/lib/` — the half written in
   Beck, three libraries with their own tests. HTTP, crypto, decimal, bignums and numeric coercion
   are untouched, and §46.6 is the item-by-item list. The `Num` mechanism turned out not to be
-  enough for money — §46.5 is the wall — and [`47`](47-effect-polymorphic-traits-report.md) took it
+  enough for money — §46.5 is the wall — and [`27`](27-the-walls-come-down-report.md) took it
   down: an impl may now be more effectful than its trait, so `Money` has its operator.*
 - **The language's own means of abstraction, which four phases had never been pointed at**
   ([`25`](25-benchmarks-and-expressiveness.md) §25.6, measured; §25.7 orders them). Every corpus
   program is shaped like the todo sketch, which is why none of these had surfaced. ***All six are
   built.** Running a module with no merge point, recursive and forward-referencing types, and the
   `B0320` row-unification defect that refused an `if` over two function values
-  ([`27`](27-walls-report.md)); proper tail calls, with the bounded-depth diagnostic **as well as**
+  ([`27`](27-the-walls-come-down-report.md)); proper tail calls, with the bounded-depth diagnostic **as well as**
   rather than instead of them, so no Beck program aborts its own process any more
-  ([`31`](31-tail-calls-report.md)); and reals plus user-written polymorphic definitions
-  ([`32`](32-numeric-tower-and-polymorphism-report.md)). Everything that stood in their place is
+  ([`27`](27-the-walls-come-down-report.md)); and reals plus user-written polymorphic definitions
+  ([`27`](27-the-walls-come-down-report.md)). Everything that stood in their place is
   built too: effect polymorphism for a user's higher-order definition and a way to take a `list[T]`
-  apart ([`33`](33-effect-polymorphism-and-list-patterns-report.md)), type parameters on a `model`,
-  a `union`, a `newtype` and a `type` ([`36`](36-parameterised-types-report.md)), and traits —
-  declarations and impls ([`37`](37-traits-report.md)), bounds
-  ([`39`](39-bounds-report.md)), the `.becki` boundary
-  ([`40`](40-traits-across-modules-report.md)) and the operators
-  ([`41`](41-generic-arithmetic-report.md)). This bullet is **done**; what the suite below needs
+  apart ([`27`](27-the-walls-come-down-report.md)), type parameters on a `model`,
+  a `union`, a `newtype` and a `type` ([`27`](27-the-walls-come-down-report.md)), and traits —
+  declarations and impls ([`27`](27-the-walls-come-down-report.md)), bounds
+  ([`27`](27-the-walls-come-down-report.md)), the `.becki` boundary
+  ([`27`](27-the-walls-come-down-report.md)) and the operators
+  ([`27`](27-the-walls-come-down-report.md)). This bullet is **done**; what the suite below needs
   next is more of the book rather than more of the language.*
 - **The expressiveness suite** ([`25`](25-benchmarks-and-expressiveness.md) §25.5, D18): SICP
   stage 1, and Felleisen's criterion answered for the special forms the book introduces. It needs
   macros and nothing else, so it starts now and does not wait on the bullet above. *Chapter 1 is
-  complete and chapter 2 reaches §2.2's closure property ([`27`](27-walls-report.md)); both run as
+  complete and chapter 2 reaches §2.2's closure property ([`27`](27-the-walls-come-down-report.md)); both run as
   **libraries**, with no application wrapped around them. Chapter 1 also carries §1.2.1's *property*
   — an iterative process running a quarter of a million levels deep — now that there is one to carry
-  ([`31`](31-tail-calls-report.md)), and §1.1.7/§1.3.3/§1.3.4's reals asserted against the doubles
+  ([`27`](27-the-walls-come-down-report.md)), and §1.1.7/§1.3.3/§1.3.4's reals asserted against the doubles
   the book prints, while chapter 2 carries §2.2.1's `map` written by the reader rather than borrowed
-  from the prelude ([`32`](32-numeric-tower-and-polymorphism-report.md)). **Felleisen's table is
+  from the prelude ([`27`](27-the-walls-come-down-report.md)). **Felleisen's table is
   written** ([`63`](63-felleisen-report.md)): six of the seven forms recovered and `amb` conceded,
   which is the shape §25.9's forecast predicted, with the CPS reorganisation the concession costs
   written out beside it rather than asserted.*
@@ -373,6 +382,11 @@ dependencies whose signatures didn't change.
   `identity = external(issuer=…)` is a declaration, so §6.5's egress rule covers the issuer like any
   other peer (§95.7).*
 - LSP: completion, hover with *inferred placement*, go-to-def, rename, inline diagnostics.
+  *All but **rename** are built: hover, go-to-def and inline diagnostics by
+  [`65`](65-lsp-report.md), completion and semantic-token highlighting by
+  [`103`](103-playground-phase-3-report.md) §103.1 — which also moved every one of those answers
+  into `beck_core::editor`, so the playground's editor and an editor's are the same answers rather
+  than two implementations of them.*
 - **The playground** ([`17`](17-playground.md)) — highest-leverage adoption artefact: rung A
   (compile-time, static) and rung B (the whole app in the tab — the worker-server is the rung-0
   platform compiled to WASM, riding Mode B's kernel work; `seq` scrubber and two-client demos).
@@ -382,9 +396,14 @@ dependencies whose signatures didn't change.
   would ride Mode B's kernel work is the one thing it got wrong (§98.9): a tab server is a
   sequencer, a log and a differ, and none of those are in `beck-wasm`. What it rode was a division
   of the runtime — `beck-host`, the half of `beck-rt` that is program-shaped rather than
-  machine-shaped. Rung C is Phase 4's, and §98.7 lists what rungs A and B still lack: no IndexedDB,
-  no content-addressed sharing, no Mode B in the tab, and a `<textarea>` where the LSP already
-  exists.*
+  machine-shaped. Rung C is Phase 4's, and §98.7's four remaining lacks — no IndexedDB, no
+  content-addressed sharing, no Mode B in the tab, and a `<textarea>` where the LSP already exists —
+  are **built** by [`103`](103-playground-phase-3-report.md): the log survives a reload as the
+  records a durable store writes, a share link is a fragment that carries the program and names its
+  digest, a `@render(client)` program runs in the client iframe in Mode B's kernel, and the editor
+  highlights, completes and squiggles from the same module `beck lsp` answers from. What §103.6
+  still says is not built is rung C, the playground being written in Beck, and a link short enough
+  to need a registry.*
 - `beck init ci`, apko image build in-process, cosign signing, SBOM. *All four are built. The
   **SBOM** ([`92`](92-sbom-report.md)): `beck sbom` emits CycloneDX 1.6 and `beck build` writes one
   beside the manifests, derived from the same object graph the image config is — so the package list
@@ -413,19 +432,21 @@ to Phase 5), incremental views, whose last part is
 [`96`](96-presence-report.md)'s presence, and the supply-chain tooling
 ([`92`](92-sbom-report.md), [`99`](99-supply-chain-report.md)) — whose remainder was a release
 pipeline rather than a piece of the bullet, and **that pipeline is now built**
-([`101`](101-the-release-and-the-installer-report.md)), with an installer in front of it and no tag
+([`104`](104-the-release-and-the-installer-report.md)), with an installer in front of it and no tag
 pushed through it. What is still missing there is a signature a consumer can check: `beck sign`'s
-subject is an image manifest, and a release publishes tarballs (§101.6).
+subject is an image manifest, and a release publishes tarballs (§104.6).
 **No bullet has a named remainder**: the concurrency-and-errors bullet has `Result`, error rows,
 `parallel:` and pattern matching with nesting, guards and alternatives
 ([`90`](90-nested-patterns-report.md), [`91`](91-guards-and-alternatives-report.md)); what
 `parallel:` lacks is a backend that runs two children at once, which is
 [`80`](80-a-scope-owns-its-children-report.md) §80.5's item rather than this bullet's. **Three
-half-built**: the codegen bullet has **both** of §5.2's code generators over the scalar subset
-([`93`](93-llvm-backend-report.md), [`97`](97-cranelift-report.md)) and no heap, so what it does not
-compile is everything the language stores; Mode B has the mode, the bundle, the data patch, the
-reconciliation, a browser that runs it and an offline queue, without codegen — which is the *same*
-missing heap ([`94`](94-mode-b-report.md) §94.8, [`97`](97-cranelift-report.md) §97.7); and the
+half-built**: the codegen bullet has **both** of §5.2's code generators
+([`93`](93-llvm-backend-report.md), [`97`](97-cranelift-report.md)) and a heap for the *algebraic*
+half of what the language stores ([`101`](101-the-heap-report.md)) — a record, a union and a newtype
+compile, and text, collections, closures and every effect do not; Mode B has the mode, the bundle,
+the data patch, the reconciliation, a browser that runs it and an offline queue, without codegen —
+which waits on the half of that heap that is not built, since a page is `Html` and `Str` all the way
+down ([`94`](94-mode-b-report.md) §94.8, [`101`](101-the-heap-report.md) §101.10); and the
 playground has rungs A and B and not rung C, which is Phase 4's
 ([`98`](98-playground-report.md) §98.7). **Client polish is built too**
 ([`100`](100-client-polish-report.md)) except for lazy routes, which wait on the same
@@ -439,12 +460,12 @@ developer would ask in order:
 | "How do I test this?" | A command, since [`22`](22-phase-3-report.md) |
 | "Will this recount a million rows every time somebody clicks?" | A command *and* a number ([`24`](24-incremental-views-report.md), [`26`](26-arrangement-sharing-report.md)) |
 | "Can I write my own abstractions, or only the ones the todo sketch needed?" | Ten walls down and an empty `sicp/refusals/` |
-| "How do I say something failed?" | `raise` and `try:`, and the signature says so whether or not I wrote it down ([`45`](45-error-rows-report.md)) |
+| "How do I say something failed?" | `raise` and `try:`, and the signature says so whether or not I wrote it down ([`27`](27-the-walls-come-down-report.md)) |
 | "Is there a string library? A JSON parser?" | Yes, and `compiler/lib/` shows how to write the next one ([`46`](46-standard-library-report.md)) |
 | "Can I trust the actor in my ownership check?" | With a verifying provider, yes ([`48`](48-identity-report.md)); against a real identity provider, yes ([`95`](95-oidc-relying-party-report.md)) — and `session.claims` says what they may do. The default still believes the client, and says so |
 | "Can my DBA see the data?" | `psql` against the read models ([`88`](88-read-models-and-pgwire-report.md)) — one table per collection, derived, no annotation |
 | "Where's the tutorial?" | [`86`](86-getting-started.md), published on the site since [`88`](88-read-models-and-pgwire-report.md) §88.8, and every program in it compiled and run by a test |
-| "How do I get the compiler?" | One command, since [`101`](101-the-release-and-the-installer-report.md) — and it has nothing to download until a tag is pushed, so today the answer is still "build it", which §86.1 now says in that order |
+| "How do I get the compiler?" | One command, since [`104`](104-the-release-and-the-installer-report.md) — and it has nothing to download until a tag is pushed, so today the answer is still "build it", which §86.1 now says in that order |
 
 **That last row has moved, and the criterion has not.** It measures a *person* — an outside
 developer building a non-trivial app without asking a question — and what the guide changes is that
@@ -455,11 +476,13 @@ against the design" — is the practice this phase has least honoured. The apolo
 currently need are shorter than they were and still enumerable — and the list this paragraph carried
 has been overtaken twice. ~~No OIDC~~ ([`95`](95-oidc-relying-party-report.md)), ~~no Mode B~~
 ([`94`](94-mode-b-report.md)), ~~no installation story~~
-([`101`](101-the-release-and-the-installer-report.md)), **no released binary** — which is now one
+([`104`](104-the-release-and-the-installer-report.md)), **no released binary** — which is now one
 `git tag` rather than a piece of missing work, because the pipeline that would build it exists and
-has never run ([`101`](101-the-release-and-the-installer-report.md) §101.7). What is left to
-apologise for is the one an outside developer meets in week two rather than minute one: everything
-the language stores still walks, because neither code generator has a heap.
+has never run ([`104`](104-the-release-and-the-installer-report.md) §104.7). What is left to
+apologise for is the one an outside developer meets in week two rather than minute one: a record, a
+union and a newtype compile ([`101`](101-the-heap-report.md)) and **text, collections, closures and
+every effect still walk**, so a program that does anything with a `Str` is running on the
+tree-walker.
 
 ## Phase 4 — Production readiness (4–5 months)
 
@@ -636,10 +659,10 @@ LSP, SQL read models, query fusion — and S is where attention naturally goes, 
 is. The items that are actually urgent are small, and several of them are prose.
 
 The classification has just paid for itself once. Bounds were the project's textbook **F**: one
-feature with six successors queued behind it ([`37`](37-traits-report.md) §37.8). Taking it first
+feature with six successors queued behind it ([`27`](27-the-walls-come-down-report.md) §27.1). Taking it first
 carried two of those successors in behind it — the module boundary
-([`40`](40-traits-across-modules-report.md)) and the operators
-([`41`](41-generic-arithmetic-report.md)) — and emptied `sicp/refusals/`. Three reports from one
+([`27`](27-the-walls-come-down-report.md)) and the operators
+([`27`](27-the-walls-come-down-report.md)) — and emptied `sicp/refusals/`. Three reports from one
 feature, because it was the right feature. That is what taking the fan-out item first buys, and it
 is the argument for reading the rest of this section.
 
@@ -650,7 +673,7 @@ is the argument for reading the rest of this section.
 | ~~Virtualized clock~~, ~~then network~~, then disk | F11; [`13`](13-testing.md) §13.4 | **Two of three.** The clock is supplied rather than ambient ([`44`](44-wave-0-report.md) §44.3), with a test that counts the readers; the network is a seam with three implementations ([`49`](49-http-client-report.md) §49.5), and it arrived *with* the first thing that needed it rather than after. The **disk** is not, and elapsed time is not |
 | ~~The two syntax decisions~~ | [`09`](09-risks-and-open-questions.md) §9.6 item 5 | **Taken** — [`10`](10-decisions.md) D21 and D22, inside the deadline |
 | ~~Unicode version pinned per release + UTS #39 security profile~~ | [`35`](35-standards-landscape.md) §35.5 item 2 | **Done** ([`44`](44-wave-0-report.md) §44.5), with the bidirectional half the profile does not reach closed alongside it |
-| ~~Errors as a row label, `Result` reified, lexical handlers~~ | [`38`](38-literature-survey.md) §38.4 | **Done** ([`45`](45-error-rows-report.md)), before the standard library's signatures rather than after — which is the one thing §8.5.3 trap 2 asked for |
+| ~~Errors as a row label, `Result` reified, lexical handlers~~ | [`38`](38-literature-survey.md) §38.4 | **Done** ([`27`](27-the-walls-come-down-report.md)), before the standard library's signatures rather than after — which is the one thing §8.5.3 trap 2 asked for |
 | Trusted publishing on crates.io | [`42`](42-security-assurance.md) §42.7 | The **first** `cargo publish` — a long-lived token used once is a risk already taken |
 | Diverse double-compiling / bootstrappability | [`42`](42-security-assurance.md) §42.7 | The first `beck` built by `beck` (Phase 5) |
 | Deterministic libm (F9) | [`35`](35-standards-landscape.md) §35.5 item 1 | First transcendental **or** second backend |
@@ -668,7 +691,7 @@ Where doing the right work in the wrong order costs the most.
 2. ~~**The standard library before error rows.**~~ **Discharged, and it was the right call.** The
    argument was that a standard library's signatures are exactly where the error decision shows up
    — every fallible function in it — so a library written before error rows land gets rewritten
-   when they do. Error rows landed first ([`45`](45-error-rows-report.md)), so the trap is closed
+   when they do. Error rows landed first ([`27`](27-the-walls-come-down-report.md)), so the trap is closed
    and Wave 2 may start. The disagreement this bullet recorded with the prose above it is resolved
    in that prose's favour, and the note is kept rather than deleted because the *shape* of the trap
    recurs: a bullet list makes every item look independent, and the one that has a predecessor is
@@ -704,7 +727,7 @@ list:
 7. ~~Retarget [`12`](12-standards-and-conformance.md)'s four moved rows~~ *(S)*
 
 **Wave 1 — weeks. `Result` and error rows. ✅ Built, in two halves**
-([`45`](45-error-rows-report.md), [`80`](80-a-scope-owns-its-children-report.md)).
+([`27`](27-the-walls-come-down-report.md), [`80`](80-a-scope-owns-its-children-report.md)).
 Errors as a row label with `Result` reified, and row aliases: **built**. Lexical handlers: built in
 the narrow sense that `try:` is a form and therefore lexical by construction, and unbuilt in the
 general sense — there is no `handle … with`, no resumption, no user-defined effect. **Structured
@@ -748,9 +771,9 @@ compiler and importable by name from anywhere, which nothing outside that direct
 three waves it took to write. §46.6 has the item-by-item list, §49.6 the client's own, §50.6 the two newest
 files' and §52.6 the crypto half's — including what a digest deliberately is not: no asymmetric
 signature, no TLS, no encryption of any kind. The **Are We Fast Yet harness is complete — all fourteen
-benchmarks** ([`53`](53-are-we-fast-yet-report.md), [`57`](57-richards-report.md),
-[`58`](58-json-report.md), [`59`](59-havlak-report.md), [`60`](60-collision-detection-report.md),
-[`61`](61-deltablue-report.md)), each verified against the constant
+benchmarks** ([`53`](53-are-we-fast-yet-report.md), [`53`](53-are-we-fast-yet-report.md),
+[`53`](53-are-we-fast-yet-report.md), [`53`](53-are-we-fast-yet-report.md), [`53`](53-are-we-fast-yet-report.md),
+[`53`](53-are-we-fast-yet-report.md)), each verified against the constant
 the original suite's own `verifyResult` checks, with wall-clock printed and nothing compared to
 anything — §8.4's ask, half discharged. The **CLBG** harness is stood up too
 ([`68`](68-clbg-report.md)) — eight of the Game's ten, verified against the Game's own published
@@ -774,16 +797,16 @@ rather than by weakening the property, so `"Bearer " + reveal(token)` is still a
 *Writing it found a wall, which is what writing a library is for: **a trait's declared row is a
 bound, so a fallible operation cannot be a trait method** — `Money` cannot have `+` because `Num`
 is pure and mixing currencies has to fail (§46.5). The fix is one feature, a row variable in a
-trait's method signatures, which [`33`](33-effect-polymorphism-and-list-patterns-report.md) built
+trait's method signatures, which [`27`](27-the-walls-come-down-report.md) built
 for a user's higher-order definitions and nothing has built for traits. It is asserted as a
 refusal, so it is a test that goes red rather than a paragraph.*
 
-**Wave 2b — the wall Wave 2 wrote. ✅ Built** ([`47`](47-effect-polymorphic-traits-report.md)). A
+**Wave 2b — the wall Wave 2 wrote. ✅ Built** ([`27`](27-the-walls-come-down-report.md)). A
 trait's declared row is a floor rather than a ceiling: an impl's row is inferred, published with
 the impl so it crosses a module, and inherited by whoever calls it — so `Money` has its `+` and
 every numeric or fallible type can have one. It cost one line of the checker plus the module
 boundary, because bounded generics had been effect-polymorphic since
-[`39`](39-bounds-report.md) and nothing had noticed. This wave existed for a day: Wave 2 wrote it
+[`27`](27-the-walls-come-down-report.md) and nothing had noticed. This wave existed for a day: Wave 2 wrote it
 and Wave 2b closed it, which is the shortest a wave has been and the argument for recording a wall
 the moment it is found rather than at the end of the work that found it.
 
@@ -850,9 +873,12 @@ needs an outside developer, and none has read it.
 [`97`](97-cranelift-report.md)): §5.2's dual codegen exists over the scalar subset, `beck native
 --backend cranelift|llvm` chooses, and §4.8's differential is **three-way** — the tree-walker, LLVM
 and Cranelift on every call, with the two emitters held to accepting and refusing the same
-definitions. What still bounds *both* is the **heap**: no record, list, string or effect compiles,
-which is Phase 4's Lane E and the same prerequisite Mode B codegen is behind
-([`94`](94-mode-b-report.md) §94.8). Mode B and
+definitions. ~~What still bounds *both* is the **heap**: no record, list, string or effect compiles~~ — the
+**algebraic half is built** ([`101`](101-the-heap-report.md)): a `model`, a `union` and a `newtype`
+have a layout, an arena and a place on the wire, and 283 definitions across the tree compile where
+187 did. What is left of that bullet is text, collections, closures and the effects
+([`101`](101-the-heap-report.md) §101.5), which is still Phase 4's Lane E and still the prerequisite
+Mode B codegen is behind ([`94`](94-mode-b-report.md) §94.8). Mode B and
 ~~client polish~~ — **built** ([`100`](100-client-polish-report.md)), and it was not a Lane B item
 either: a route is a field of `Session`, so the engine, the splitter and the plan are untouched and
 the work is at the edges; the LSP; ~~SQL read models, pgwire~~ — **built**
@@ -884,10 +910,10 @@ No predecessors, and they never acquire any.
 **Wave 5 — the Phase 4 gates, arranged before Phase 4 rather than during it.** Supply-chain tooling
 (SLSA v1.2 provenance, 2026-element SBOMs, ~~signing~~ — **the signing machinery is built**
 ([`99`](99-supply-chain-report.md)) and what is left of that row is the transparency log, a registry
-to push to, and a **subject the signer can take**: [`101`](101-the-release-and-the-installer-report.md)
-§101.6 found that `beck sign` signs an image manifest digest and a compiler release is a tarball, so
+to push to, and a **subject the signer can take**: [`104`](104-the-release-and-the-installer-report.md)
+§104.6 found that `beck sign` signs an image manifest digest and a compiler release is a tarball, so
 the binaries carry a checksum and nothing more. ~~The pipeline a provenance attestation would attach
-to~~ exists now ([`101`](101-the-release-and-the-installer-report.md)), which was
+to~~ exists now ([`104`](104-the-release-and-the-installer-report.md)), which was
 [`92`](92-sbom-report.md)'s stated reason for that row being empty, and the row is still empty —
 trusted publishing configured *before* the first publish); DST proper, on the
 seam Wave 0 created; then the operator, the replay tooling and the
@@ -908,17 +934,17 @@ boundaries are real directories.
 | **A — type system** | `beck-core/src/check/`, `ty.rs`, `core.rs`, `prelude.rs`, `iface.rs` | Error rows and handlers; `@derive`; bignums and coercion | **Itself, completely** — see below |
 | **B — runtime and views** | `beck-rt/`, `beck-core/src/{engine,plan,incremental,pmap,signal}.rs` | Clock injection; the shared dataflow's release policy, history constant and render lock; SQL read models, pgwire, query fusion; Mode B's server half | Nothing in A, C, E or F |
 | **C — front end and tooling** | `beck-syntax/`, `beck-cli/`, `beck-diag/` | The recursion bound; the two syntax decisions; Unicode and UTS #39; LSP; `test --update`; fuzzing | A, if a syntax decision changes what the checker sees |
-| **D — process and supply chain** | `docs/`, `.github/`, `deny.toml`, `SECURITY.md`, `release/`, `install.sh` | Threat model, disclosure policy, memory-safety roadmap, `pending_security`, the four retargeted §12 rows, SLSA/SBOM/trusted publishing, ~~the release pipeline and the installer~~ ([`101`](101-the-release-and-the-installer-report.md)) | Nothing in code — **except that the release lands in `Cargo.toml`, a `build.rs` and `--version`**, which §101.4 is about and which this cell had assumed away |
-| **E — backends** | `beck-eval/`, `beck-llvm/`, `beck-core/src/backend.rs`, any new codegen crate | ~~LLVM backend, native codegen, the differential suite~~ — **built for the scalar subset** ([`93`](93-llvm-backend-report.md)); what is left is a heap, the effects, and Cranelift | Nothing — the seam is why ([`19`](19-phase-1-report.md) §19.9), and [`93`](93-llvm-backend-report.md) is the first thing to test that claim: not one line of `beck-rt` changed |
+| **D — process and supply chain** | `docs/`, `.github/`, `deny.toml`, `SECURITY.md`, `release/`, `install.sh` | Threat model, disclosure policy, memory-safety roadmap, `pending_security`, the four retargeted §12 rows, SLSA/SBOM/trusted publishing, ~~the release pipeline and the installer~~ ([`104`](104-the-release-and-the-installer-report.md)) | Nothing in code — **except that the release lands in `Cargo.toml`, a `build.rs` and `--version`**, which §104.4 is about and which this cell had assumed away |
+| **E — backends** | `beck-eval/`, `beck-llvm/`, `beck-clif/`, `beck-core/src/backend.rs`, any new codegen crate | ~~LLVM backend, native codegen, the differential suite~~ — **built** ([`93`](93-llvm-backend-report.md)), ~~and Cranelift~~ — **built** ([`97`](97-cranelift-report.md)), ~~and a heap~~ — **half built** ([`101`](101-the-heap-report.md)): records, unions and newtypes. What is left is text, collections, closures and the effects | Nothing — the seam is why ([`19`](19-phase-1-report.md) §19.9), and [`93`](93-llvm-backend-report.md) is the first thing to test that claim: not one line of `beck-rt` changed |
 | **F — infrastructure** | `beck-infra/` | Effect-derived NetworkPolicy/RBAC/grants; Crossplane emitter; conformance rungs | Nothing |
 
 **Lane A is strictly serial, and that is the real staffing constraint.** It is tempting to run two
 language features on two branches. Do not: they rewrite `check/mod.rs` (3,345 lines) and `ty.rs`
 together, and they change what `core.rs` carries. Lane A is the critical path and absorbs one pair
 of hands; everything else in this section exists to keep other hands off those files.
-[`37`](37-traits-report.md) §37.7 records the mitigation that works — traits went into
+[`27`](27-the-walls-come-down-report.md) §27.10 records the mitigation that works — traits went into
 `check/traits.rs` rather than into `check/mod.rs`, and bounds then grew that file rather than the
-one everybody complains about ([`39`](39-bounds-report.md)). Keep doing that, and a second Lane A
+one everybody complains about ([`27`](27-the-walls-come-down-report.md)). Keep doing that, and a second Lane A
 branch eventually becomes thinkable.
 
 Recommended pairings, in order:
@@ -926,24 +952,26 @@ Recommended pairings, in order:
 | When | Branch 1 (critical path) | Branch 2 | Why it is safe |
 |---|---|---|---|
 | ~~**Then**~~ | ~~Lane A: `Result` and error rows~~ | ~~Lane D, plus Lane C's half of Wave 0~~ | **Done.** Both branches landed together, and the prediction held: the error rows touched `check/`, `ty.rs`, `row.rs` and `core.rs`, and Wave 0 touched `beck-diag`, `beck-syntax`, `beck-rt` and `docs/`. The one collision was the one the table names below — `beck-diag/src/index.rs`, four new codes — and it was trivial because the numbers were far apart |
-| ~~**Then**~~ | ~~Lane A: the standard library, on the error shape Wave 1 settled~~ | ~~Lane B: the shared dataflow's three loose ends~~ | **Half done.** The library's first half landed ([`46`](46-standard-library-report.md)), then the wall it wrote ([`47`](47-effect-polymorphic-traits-report.md)), then the HTTP client ([`49`](49-http-client-report.md)) — which was Lane A *and* Lane B, because the seam is in `beck-core` and the implementation is in `beck-rt`. The prediction held anyway: nothing in `engine.rs` was touched |
+| ~~**Then**~~ | ~~Lane A: the standard library, on the error shape Wave 1 settled~~ | ~~Lane B: the shared dataflow's three loose ends~~ | **Half done.** The library's first half landed ([`46`](46-standard-library-report.md)), then the wall it wrote ([`27`](27-the-walls-come-down-report.md)), then the HTTP client ([`49`](49-http-client-report.md)) — which was Lane A *and* Lane B, because the seam is in `beck-core` and the implementation is in `beck-rt`. The prediction held anyway: nothing in `engine.rs` was touched |
 | ~~**Then**~~ | ~~Lane A: the rest of Wave 2 — `Set`, dates~~ | ~~Lane B: the shared dataflow's three loose ends~~ | **Half done.** `Set` and dates landed ([`50`](50-collections-and-dates-report.md)) and were not Lane A at all: two files in `compiler/lib/`, no primitive, and the only Rust touched was one diagnostic's label. Lane B is untouched, so the pairing was never tested — the prediction it made cannot be claimed to have held |
 | ~~**Then**~~ | ~~Lane A: bignums, coercion, `@derive`~~ | ~~Lane B: the shared dataflow's three loose ends~~ | **Half done, and the other half.** Lane B was taken at last, after being the recommended Branch 2 for three consecutive rewrites: two of the three loose ends are closed ([`51`](51-arrangement-lifecycle-report.md)) and the third — the render lock — is deliberately left. The prediction held exactly: `engine.rs`, `beck-rt/` and one test suite, and nothing in `check/`, `ty.rs` or `core.rs`. Lane A is untouched, so this pairing was again never actually run as a pair |
 | ~~**Then**~~ | ~~Lane A: bignums, coercion, `@derive`~~ | ~~Lane B: SQL read models and pgwire~~ | **Half done, and the other half again.** Lane B was taken ([`88`](88-read-models-and-pgwire-report.md)) and the prediction held: `beck-core/src/read.rs`, `beck-rt/src/pgwire.rs`, one reader type on `engine.rs`, and nothing in `check/`, `ty.rs` or `core.rs`. Lane A is untouched, so this pairing was never run as a pair either — the fourth consecutive rewrite in which it was not |
-| **Now** | Lane A: ~~the pattern-matching completion the error-rows bullet still names~~ — **built**, with nesting, guards and alternatives ([`90`](90-nested-patterns-report.md), [`91`](91-guards-and-alternatives-report.md)); what is left in this lane is `Ord` as a trait, which [`54`](54-ordering.md) writes out and explicitly does *not* recommend | Lane B: ~~query fusion on symbolic plans~~ — **built** ([`89`](89-query-fusion-report.md)); ~~Mode B's server half~~ — **built** ([`94`](94-mode-b-report.md)), and it is one branch in `session.rs`; what is left in this lane is the render lock ([`51`](51-arrangement-lifecycle-report.md) §51.7) | `beck-rt` and `engine.rs` are untouched by anything in `check/` |
+| ~~**Then**~~ | Lane A: ~~the pattern-matching completion the error-rows bullet still names~~ — **built**, with nesting, guards and alternatives ([`90`](90-nested-patterns-report.md), [`91`](91-guards-and-alternatives-report.md)); what is left in this lane is `Ord` as a trait, which [`54`](54-ordering.md) writes out and explicitly does *not* recommend | Lane B: ~~query fusion on symbolic plans~~ — **built** ([`89`](89-query-fusion-report.md)); ~~Mode B's server half~~ — **built** ([`94`](94-mode-b-report.md)), and it is one branch in `session.rs`; what is left in this lane is the render lock ([`51`](51-arrangement-lifecycle-report.md) §51.7), which survives into the row below still unowned | `beck-rt` and `engine.rs` are untouched by anything in `check/` |
 | ~~**Then**~~ | ~~Lane A, continued~~ | ~~Lane E: the LLVM backend~~ | **Half done, and the other half.** Lane E was taken ([`93`](93-llvm-backend-report.md)) and the prediction held to the letter: a new crate, one new CLI command, and one defect fixed in `beck-eval` — and nothing in `beck-rt`, `engine.rs`, `check/`, `ty.rs` or `core.rs`. Lane A is untouched, so the pairing was again not run as a pair |
-| ~~**Then**~~ | ~~Lane A, continued~~ | ~~Lane D: the release pipeline and the installer~~ | **Half done, and the other half — for the sixth consecutive rewrite.** Lane D was taken ([`101`](101-the-release-and-the-installer-report.md)) and its "collides with nothing in code" held for the pipeline and failed for the *release*: a version number that means something is `compiler/Cargo.toml`, a `build.rs` and one line of `main.rs`. Lane A is untouched, so this pairing was not run as a pair |
-| **Then** | Lane A, continued | Lane E: **a heap** for the native backends — ~~then Cranelift~~, which is built ([`97`](97-cranelift-report.md)) and did not need one to be, because the scalar subset is where both emitters stop | The backend seam exists so these do not interact, and it has now been tested twice |
+| ~~**Then**~~ | ~~Lane A, continued~~ | ~~Lane D: the release pipeline and the installer~~ | **Half done, and the other half — for the sixth consecutive rewrite.** Lane D was taken ([`104`](104-the-release-and-the-installer-report.md)) and its "collides with nothing in code" held for the pipeline and failed for the *release*: a version number that means something is `compiler/Cargo.toml`, a `build.rs` and one line of `main.rs`. Lane A is untouched, so this pairing was not run as a pair |
+| ~~**Then**~~ | ~~Lane A, continued~~ | ~~Lane E: a heap for the native backends~~ | **Half done, and the other half — again.** Lane E was taken ([`101`](101-the-heap-report.md)): the *algebraic* half of the heap is built, so a record, a union and a newtype compile. Lane A is untouched, which makes seven consecutive rewrites in which the recommended pair was not run as a pair — the prediction that Lane E collides with nothing keeps holding, and the one about Lane A keeps not being tested |
+| **Now** | Lane A: `Ord` as a trait, which [`54`](54-ordering.md) writes out and does *not* recommend — so realistically nothing | Lane E: **the rest of the heap** — text, collections, closures, the effects ([`101`](101-the-heap-report.md) §101.5) — which is what Mode B's codegen and every benchmark number wait on | The backend seam exists so these do not interact, and it has now been tested three times. Lane B's render lock is still open and still has no owner — it is a third branch rather than a reason to hold either of these |
 | **Any time** | — | Lane F; Lane C's LSP; more of SICP | No predecessors, no collisions |
 
 A third branch is viable whenever E or F is staffed. The ceiling is four, because of these:
 
-**The heap is this phase's remaining F.** §8.5.1's classification says to take the fan-out item
-first, and it paid for itself once already with bounds. Three of the four things Phase 3 has left
-queue behind one item: native codegen compiles the scalar subset and nothing the language *stores*
-([`93`](93-llvm-backend-report.md) §93.6, [`97`](97-cranelift-report.md) §97.7), Mode B's codegen is
-the same prerequisite plus a wasm emitter, and the release ships a binary whose compute story is
-still "it walks". It sits in Lane E, which collides with nothing.
+**The heap's second half is this phase's remaining F**, and the first half is the evidence for
+saying so. §8.5.1's classification says to take the fan-out item first; the algebraic half
+([`101`](101-the-heap-report.md)) was taken and it moved two rows of the exit paragraph at once.
+What is behind the rest of it — text, collections, closures, the effects — is the same set it
+always was: native codegen for anything a program actually manipulates, and Mode B's codegen, which
+is that plus a wasm emitter ([`94`](94-mode-b-report.md) §94.8). It sits in Lane E, which collides
+with nothing.
 
 **The four shared artefacts that serialise otherwise-independent branches.** Each has a cheap
 discipline that avoids the collision.
@@ -964,7 +992,7 @@ discipline that avoids the collision.
 
 - **Phase 3's bullets are a set presented as a list.** The standard library had a predecessor the
   list did not show — `Result`/error rows — which §8.5.3 trap 2 stated in full and
-  [`45`](45-error-rows-report.md) has now removed. The correction stands for the next one: the
+  [`27`](27-the-walls-come-down-report.md) has now removed. The correction stands for the next one: the
   concurrency half of the same bullet has *no* predecessor and should not be scheduled as though it
   shares one.
 - **F11 should be read as two-thirds met, not `FIXED`.** [`14`](14-review-findings.md) recorded the

@@ -24,7 +24,7 @@ call site. A computed host is `B0395`; a literal that is not a DNS name a `uses`
 write — a URL, a host with a port, `origin` — is `B0396`.
 
 This makes `http_fetch` the second primitive whose row is a function of an argument rather than a
-constant. `raise` is the first ([`docs/45`](../45-error-rows-report.md)), and the precedent is
+constant. `raise` is the first ([`docs/27`](../27-the-walls-come-down-report.md)), and the precedent is
 exact: the atom names the argument so that something downstream can read it — a handler there, a
 NetworkPolicy here.
 
@@ -38,7 +38,7 @@ would have to be edited on the day the policy became real.
 atom rides the value. This is the shape that would let a library write `get(client, path)`, and it
 is the one to revisit. It needs type-level strings, which the language does not have and which are
 a much larger decision than an HTTP client; taking them under this feature's time pressure is the
-mistake [`docs/39`](../39-bounds-report.md) §39.7 declined to make about operators. Nothing in this
+mistake [`docs/27`](../27-the-walls-come-down-report.md) §27.10 declined to make about operators. Nothing in this
 ADR forecloses it: a `Client` type would resolve to the same atom by the same rule, and the literal
 would move from the call to the mint.
 

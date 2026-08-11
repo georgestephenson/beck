@@ -32,7 +32,7 @@ literal. The checker reads it there and charges `net.out(that host)` at the call
 decision, the two alternatives and what it costs.
 
 That makes `http_fetch` the **second primitive whose row is a function of an argument** rather than
-a constant. `raise` was the first ([`45`](45-error-rows-report.md)), and the precedent is exact: in
+a constant. `raise` was the first ([`27`](27-the-walls-come-down-report.md)), and the precedent is exact: in
 both cases the atom names the argument so that something downstream can read it — a handler there,
 a NetworkPolicy here. `Prim::effects` states the constant half (`raises(HttpError)`); the checker
 and `Core::effects` supply the other half from the literal, the second because
@@ -81,7 +81,7 @@ client that turned it into an exception would have thrown away the sentence expl
 `require_ok` does. A caller who wants "give me the body or fail" gets it in one call; a caller who
 wants to read a 429's `retry-after` still can.
 
-`json_body` is the shape [`47`](47-effect-polymorphic-traits-report.md) §47.4 made precise, doing
+`json_body` is the shape [`27`](27-the-walls-come-down-report.md) §27.7 made precise, doing
 its job in a library rather than in a test:
 
 ```

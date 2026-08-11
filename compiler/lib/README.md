@@ -54,7 +54,7 @@ expressed.
 | [`dates.beck`](dates.beck) | The civil calendar as arithmetic — Hinnant's two functions in Beck, checked against the same two in Rust rather than against themselves — plus `Date`, a `Duration` with its own `impl Num`, clamped month arithmetic, and `YYYY-MM-DD` read and written |
 
 Each file carries its own `test` and `property` blocks and runs under `beck test`, which is what
-[`27`](../../docs/27-walls-report.md) made possible for a library with no application around it.
+[`27`](../../docs/27-the-walls-come-down-report.md) made possible for a library with no application around it.
 `beck-cli/tests/stdlib.rs` runs all of them, so a change to a primitive that breaks a caller is a
 failing build.
 
@@ -84,7 +84,7 @@ sit on top of it unwritten.
 `impl Num for Money` so that `+` would work on it, the way `sicp/ch2.beck`'s rationals do. It could
 not be: a trait's declared effect row was a *ceiling* every impl was held to, the prelude's `Num` is
 pure, and adding two amounts in different currencies has to fail. That refusal was asserted as a
-wall in `sicp/refusals/`'s pattern, and [`47`](../../docs/47-effect-polymorphic-traits-report.md)
+wall in `sicp/refusals/`'s pattern, and [`27`](../../docs/27-the-walls-come-down-report.md)
 took it down a day later — a trait's row is now a floor, an impl's row is inferred and published,
 and `money.beck` has its operator. `stdlib.rs` asserts the property from this side, so a regression
 reads as "money lost its operator" rather than as a type error three files away.

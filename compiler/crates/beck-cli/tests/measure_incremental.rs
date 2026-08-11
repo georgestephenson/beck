@@ -268,7 +268,7 @@ fn how_much_of_each_corpus_program_is_maintained() {
 /// work per event — are properties of the plan and of the engine's own counters, so they are the
 /// same on every machine. The wall clock is second because it is the one a shared runner argues
 /// with, and it is measured with the two plans **alternating** rather than one after the other:
-/// `docs/78` §78.6 found that a fixed A-then-B order biases a comparison by as much as the effects
+/// `docs/70` §70.7 found that a fixed A-then-B order biases a comparison by as much as the effects
 /// this project reports.
 #[test]
 fn what_query_fusion_is_worth() {

@@ -8,13 +8,13 @@ refused**, so a wall coming down is a test that starts failing rather than a fac
 
 [`docs/25-benchmarks-and-expressiveness.md`](../../../docs/25-benchmarks-and-expressiveness.md)
 §25.6 measured six walls and all six came down
-([`27`](../../../docs/27-walls-report.md), [`31`](../../../docs/31-tail-calls-report.md),
-[`32`](../../../docs/32-numeric-tower-and-polymorphism-report.md)). Removing them wrote three more,
+([`27`](../../../docs/27-the-walls-come-down-report.md), [`27`](../../../docs/27-the-walls-come-down-report.md),
+[`27`](../../../docs/27-the-walls-come-down-report.md)). Removing them wrote three more,
 and those came down too: a `list[T]` that could not be taken apart
-([`33`](../../../docs/33-effect-polymorphism-and-list-patterns-report.md)), a type that could not
-take a parameter ([`36`](../../../docs/36-parameterised-types-report.md)), and exact rationals,
+([`27`](../../../docs/27-the-walls-come-down-report.md)), a type that could not
+take a parameter ([`27`](../../../docs/27-the-walls-come-down-report.md)), and exact rationals,
 which needed `+` to reach a type the compiler does not know about
-([`41`](../../../docs/41-generic-arithmetic-report.md)).
+([`27`](../../../docs/27-the-walls-come-down-report.md)).
 
 So: **nothing measured is refused today.** That is not the same claim as "Beck can express SICP".
 It is the narrower and checkable one — that every wall this project has *found* has been removed,
@@ -26,7 +26,7 @@ section of it is expressible. Two of its refusals are *decisions* rather than wa
 cannot express, §3.5.1's **memoised** `delay`, is the rule at the bottom of this page working: it
 compiles and it is slow, so it is a cost rather than a refusal (§87.7). Chapters 4 and 5 are still
 unattempted, and §2.3.4's Huffman decoder wants a pattern more than one level deep
-([`33`](../../../docs/33-effect-polymorphism-and-list-patterns-report.md) §33.7), which is the
+([`27`](../../../docs/27-the-walls-come-down-report.md) §27.10), which is the
 nearest thing to a wall with a name on it.
 
 ## What puts a file back here

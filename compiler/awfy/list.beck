@@ -10,7 +10,7 @@
 # which means the port has no null and loses nothing.
 #
 # It deliberately does not use `list[Int]`. The benchmark is about walking a chain of allocated
-# nodes one link at a time, and `docs/33` §33.6 recorded that a `list[T]` cannot share a suffix —
+# nodes one link at a time, and `docs/27` §27.3 recorded that a `list[T]` cannot share a suffix —
 # so `list_drop` would copy where the original follows a pointer, and the port would measure the
 # copy.
 #

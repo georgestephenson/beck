@@ -140,7 +140,7 @@ pub struct Def {
     ///
     /// Carried on the `Def` rather than left in the scheme because `beck iface` publishes it: a
     /// `.becki` line that dropped the `[T, U]` would read back as a signature mentioning two types
-    /// nobody declared (`docs/32` §32.8).
+    /// nobody declared (`docs/27` §27.2).
     pub typarams: Vec<Arc<str>>,
     pub params: Vec<(VarId, Arc<str>, Ty)>,
     pub ret: Ty,
@@ -269,7 +269,7 @@ pub struct Checker<'a> {
     /// Set while checking a fold's function, so §3.7's determinism rule can be enforced.
     in_fold: bool,
     /// The type parameters of the `def` whose signature or body is being read. Empty everywhere
-    /// else, which is why a monomorphic program cannot accidentally see one (`docs/32` §32.7).
+    /// else, which is why a monomorphic program cannot accidentally see one (`docs/27` §27.2).
     typarams: BTreeSet<Arc<str>>,
     /// The type parameters of the `model`, `union`, `newtype` or `type` whose fields are being
     /// read, mapped to their position. Empty everywhere else, and never in scope at the same time
@@ -420,7 +420,7 @@ pub fn check_module_with(
 
     let items: Vec<&Node> = module.args.iter().skip(1).collect();
     // Three passes over the declarations, and the split is what lets a type mention itself or
-    // anything declared later (docs/27 §27.3): names, then aliases in dependency order, then every
+    // anything declared later (docs/27 §27.2): names, then aliases in dependency order, then every
     // declaration's field types against the complete set of names.
     ck.declare_type_names(&items);
     ck.collect_aliases(&items);
@@ -448,7 +448,7 @@ pub fn check_module_with(
     // been decided — and a trait method is the one thing every operator call in the module goes
     // through. Checking `Num::add@Money` before the definitions that write `a + b` is what lets a
     // handler discharge the failure that impl performs rather than carrying it as an unresolved
-    // tail (`docs/47` §47.4).
+    // tail (`docs/27` §27.7).
     let mut items: Vec<&Node> = expanded.iter().chain(items).collect();
     for (i, node) in &bounded {
         items[expanded.len() + *i] = node;
@@ -683,7 +683,7 @@ impl<'a> Checker<'a> {
     /// `Envelope`, `secret` and `internal` — are builtin constructors that no declaration
     /// registers, so a `model Int` was accepted and the name then meant the record in one
     /// definition and the builtin in the next. [`Checker::bind_decl_typarams`] has refused the same
-    /// shadowing for a *type parameter* since `docs/36`; this is that rule at the production it was
+    /// shadowing for a *type parameter* since `docs/27`; this is that rule at the production it was
     /// missing (`docs/87` §87.4).
     ///
     /// Returns whether the name was refused, so the caller can skip registering it: leaving the
@@ -729,7 +729,7 @@ impl<'a> Checker<'a> {
     ///
     /// This is the difference between a declaration and a definition. A `def`'s parameter is
     /// **rigid** — `Ty::con("T")`, which unifies with itself and nothing else, so the body is
-    /// forced to work for every `T` (`docs/32` §32.7). A declaration has no body to constrain, and
+    /// forced to work for every `T` (`docs/27` §27.2). A declaration has no body to constrain, and
     /// its parameter has to survive into the stored `TyDecl` so that every later mention of
     /// `Tree[Str]` can substitute for it. A positional variable does both: it cannot be unified
     /// with by accident, because the checker's own variables are numbered from zero, and it is an
@@ -1087,7 +1087,7 @@ impl<'a> Checker<'a> {
             // §3.2's `map : (list[a], (a -> b ! e)) -> list[b] ! e`, for a definition a *user*
             // wrote. The row variables the signature's function-typed parameters carry are
             // quantified, so each call site gets its own — without which one caller passing an
-            // effectful function makes every other caller effectful too (`docs/33` §33.2).
+            // effectful function makes every other caller effectful too (`docs/27` §27.3).
             let generic_rows = self.generalisable_rows(&params, &ret);
             let mut latent = Row::var(rv);
             latent.tails.extend(generic_rows.iter().copied());
@@ -1117,7 +1117,7 @@ impl<'a> Checker<'a> {
     /// The restriction is not conservatism for its own sake: a variable quantified in the scheme is
     /// renamed by `instantiate` wherever it appears **syntactically**, and a return type whose row
     /// is bound — through the substitution — to a parameter's would keep the generic variable on
-    /// one side of the call and the fresh one on the other. `docs/33` §33.3 says what that costs
+    /// one side of the call and the fresh one on the other. `docs/27` §27.3 says what that costs
     /// and what would lift it.
     fn generalisable_rows(&self, params: &[Ty], ret: &Ty) -> Vec<RowVarId> {
         let mut in_ret = Vec::new();
@@ -1223,7 +1223,7 @@ impl<'a> Checker<'a> {
     ///
     /// An alias may name an alias declared earlier in the file. It may not name one declared later,
     /// and that is the one place this differs from types — which may mention anything, in any order
-    /// (`docs/27` §27.3). The reason is that a row is a *set* being built here rather than a
+    /// (`docs/27` §27.2). The reason is that a row is a *set* being built here rather than a
     /// declaration being resolved later, and a forward reference would mean a fixpoint over
     /// something a reader cannot see the end of. A cycle is refused for the same reason.
     fn collect_row_aliases(&mut self, items: &[&Node]) {
@@ -1543,7 +1543,7 @@ impl<'a> Checker<'a> {
             .filter_map(|n| self.traits.get(n).map(|d| d.sig.clone()))
             .collect();
         // The header, plus what each of its methods turned out to perform. An impl's row is
-        // inferred rather than taken from the trait (`docs/47`), so a module that publishes an
+        // inferred rather than taken from the trait (`docs/27`), so a module that publishes an
         // impl has to publish the rows too — a caller in another module has nowhere else to get
         // them, and taking them off the trait is exactly the unsoundness this closes.
         let impls: Vec<ty::ImplSig> = self
@@ -1665,7 +1665,7 @@ impl<'a> Checker<'a> {
             // already in the scheme's latent row, and leaving them in `rv` as well would put the
             // *generic* variable into every instantiated call rather than the call's own copy of
             // it. Resolved first, because a tail reached through `map_list`'s own row variable is
-            // still that tail (`docs/33` §33.2).
+            // still that tail (`docs/27` §27.3).
             let generic: &[RowVarId] = self
                 .generic_rows
                 .get(&name)
@@ -1843,7 +1843,7 @@ impl<'a> Checker<'a> {
         // A type parameter of the definition being read. It is rigid — `Ty::Con(name, [])` unifies
         // with itself and nothing else — which is what makes the body of `def first[T](xs: list[T])
         // -> T` provably work for every `T` rather than for whichever one the body happened to
-        // force (`docs/32` §32.7).
+        // force (`docs/27` §27.2).
         if self.typarams.contains(name) {
             if !n.args.is_empty() {
                 self.error(
@@ -2164,7 +2164,7 @@ impl<'a> Checker<'a> {
 
         // `|` and `@` mean one thing each and both are patterns. They are in the expression
         // grammar because §2.6's patterns *are* expressions, so this is where they are refused —
-        // the same division `*rest` has had since `docs/33`.
+        // the same division `*rest` has had since `docs/27`.
         if n.args.len() == 2 && (n.has_head("|") || n.has_head("@")) {
             let op = if n.has_head("|") { "|" } else { "@" };
             self.error(
@@ -2305,7 +2305,7 @@ impl<'a> Checker<'a> {
             "abs" if n.args.len() == 1 && n.applied => {
                 // The one *named* member of the tower that is resolved rather than declared. SICP
                 // writes `abs` at both tiers, and a scheme cannot say "Int or Float" without a
-                // numeric class; `docs/32` §32.3 argues why the class is not worth it yet.
+                // numeric class; `docs/27` §27.2 argues why the class is not worth it yet.
                 let arg = self.expr(&n.args[0], expected);
                 let want = match self.numeric_of(&arg.ty, expected) {
                     Some(t) => t,
@@ -2341,7 +2341,7 @@ impl<'a> Checker<'a> {
     ///
     /// Phase 1 gave `+` this treatment already, for `Str` concatenation: "a `(a, a) -> a` scheme
     /// would let `Bool + Bool` typecheck". The numeric tower needs the same answer for the same
-    /// reason and one more tier — a real — and `docs/32` §32.3 sets out why an ad-hoc resolution is
+    /// reason and one more tier — a real — and `docs/27` §27.2 sets out why an ad-hoc resolution is
     /// the honest thing to build before traits exist rather than a stand-in for them.
     ///
     /// The rule is: whichever of the two operands and the expectation *first* resolves to a numeric
@@ -2372,7 +2372,7 @@ impl<'a> Checker<'a> {
                 .or_else(|| expected.and_then(|t| self.numeric_of(t, None)))
         };
         // Neither operand is a number and neither is a string: the third floor of the tower, which
-        // a user's type joins by implementing `Num` (`docs/41` §41.2). Only when there is an
+        // a user's type joins by implementing `Num` (`docs/27` §27.6). Only when there is an
         // implementation to dispatch to — otherwise the old rule runs and says what it always said,
         // so `1 + true` is still a mismatch rather than a lecture about traits.
         if numeric.is_none() {
@@ -2396,7 +2396,7 @@ impl<'a> Checker<'a> {
 
     /// `a + b` where `a` is neither a number nor a string, resolved through `Num`.
     ///
-    /// SICP §2.5.1's generic arithmetic, and `docs/32` §32.3's deferred decision taken: the four
+    /// SICP §2.5.1's generic arithmetic, and `docs/27` §27.2's deferred decision taken: the four
     /// operators are the four methods of one prelude trait, so a `Rational` joins the tower the way
     /// the book joins it — by implementing the operations, not by being added to a list inside the
     /// compiler.
@@ -3196,7 +3196,7 @@ impl<'a> Checker<'a> {
         }
 
         // `[]`, `[x]`, `[first, *rest]` — a list taken apart. The scrutinee decides the element
-        // type, so the binders need no annotation (`docs/33` §33.5).
+        // type, so the binders need no annotation (`docs/27` §27.3).
         if p.is_form(sym::LIST) {
             let elem = self.subst.fresh();
             self.unify(
@@ -3975,8 +3975,12 @@ fn resolve_types(c: &mut Core, s: &Subst) {
         }
         CoreKind::Match { scrutinee, arms } => {
             resolve_types(scrutinee, s);
-            for a in arms {
-                resolve_types(&mut a.body, s);
+            // `exprs_mut` and not `body`: an arm's guard is an expression of this program too, and
+            // a walk that skipped it left every node in a guard carrying whatever type variable it
+            // had when it was lowered. `docs/91` §91.3 found fourteen walks that a guard was new
+            // to; this is the fifteenth, and it was invisible until a backend read a node's type.
+            for e in arms.iter_mut().flat_map(|a| a.exprs_mut()) {
+                resolve_types(e, s);
             }
         }
         CoreKind::Make { fields, .. } | CoreKind::With { fields, .. } => {
@@ -4192,7 +4196,7 @@ def minted_labels(xs: list[Str]) -> list[Str]:
     ///
     /// A parameter's row is quantified in the definition's scheme, so each call site instantiates
     /// its own: a caller that passes a pure function is pure whatever another caller passes.
-    /// `docs/33` §33.2 has why a shared variable was both sound and wrong.
+    /// `docs/27` §27.3 has why a shared variable was both sound and wrong.
     #[test]
     fn a_user_higher_order_function_is_polymorphic_over_its_arguments_row() {
         let src = "\
@@ -4244,7 +4248,7 @@ def plain(n: Int) -> Int:
 
     #[test]
     fn a_quantified_row_is_charged_even_when_the_body_never_calls_the_argument() {
-        // The over-approximation docs/33 §33.3 names, asserted so that it is a decision rather than
+        // The over-approximation docs/27 §27.3 names, asserted so that it is a decision rather than
         // a surprise. `ignore` never calls `f`, and a caller passing an effectful one is charged
         // anyway — because the row is quantified from the *signature*, before any body is read.
         //
@@ -4264,7 +4268,7 @@ def caller(xs: list[Int]) -> Int:
 
     #[test]
     fn a_definition_that_returns_a_function_keeps_the_older_monomorphic_row() {
-        // The limit docs/33 §33.3 names, asserted rather than described. A row variable that also
+        // The limit docs/27 §27.3 names, asserted rather than described. A row variable that also
         // reaches the *return* type is not quantified, because `instantiate` renames syntactic
         // occurrences and the return's row is bound to the parameter's through the substitution —
         // so one side of the call would be renamed and the other would not.

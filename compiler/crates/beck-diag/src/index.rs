@@ -424,7 +424,7 @@ pub const INDEX: &[CodeEntry] = &[
         "`Int`, `Str`, `Bool`, `Float`, `Unit`, `Html`, `Attr`, `list`, `Map`, `Stream`, `Signal`, \
          `Envelope`, `secret` and `internal` are the language's own type names, and a `model`, \
          `union`, `newtype` or `type` may not take one. B0314 has refused the same shadowing for a \
-         type *parameter* since docs/36; a declaration was the production it did not cover, so the \
+         type *parameter* since docs/27; a declaration was the production it did not cover, so the \
          name meant the builtin in one signature and the declaration in the next (docs/87 §87.4).",
     ),
     e(
@@ -434,7 +434,7 @@ pub const INDEX: &[CodeEntry] = &[
         "Unification failed; the message names what was being unified — an argument, a field, a \
          result, or the two branches of an `if`. The branches of an `if` are reported as two \
          alternatives rather than as actual-and-expected: typing one as the other's expectation \
-         is what refused SICP exercise 1.43 (docs/27 §27.3).",
+         is what refused SICP exercise 1.43 (docs/27 §27.2).",
     ),
     w(
         "B0330",
@@ -972,6 +972,25 @@ pub const INDEX: &[CodeEntry] = &[
         "`@render(client)` sends the browser the accumulator, and who is connected is in neither \
          the accumulator nor the log — it is a fact the server holds about its own sockets \
          (docs/96 §96.4).",
+    ),
+    e(
+        "B0517",
+        Stage::Signals,
+        "the chokepoint reads `freshness`, which is not in the log",
+        "How many of a client's commands were in flight when an event was recorded is written \
+         down nowhere, and on replay nothing is in flight at all — so a `validate` that decided \
+         from it would accept a command today and refuse it on the way back. Decide from the \
+         accumulator, which says the same thing now and on replay.",
+    ),
+    e(
+        "B0518",
+        Stage::Signals,
+        "reads `freshness`, so it cannot render on the server",
+        "§3.7's freshness dimension is a client's account of the commands it has proposed and not \
+         yet had confirmed. A server renders what it has recorded, so its answer is `Confirmed` at \
+         every position of every log and the page's other branch would be unreachable. This is \
+         `B0516` from the other side: `@render(client)` is what makes a guess possible, and \
+         therefore what makes saying so possible (docs/102 §102.2).",
     ),
     // --------------------------------------------------------- B06xx: modules and interfaces
     e(

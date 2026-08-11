@@ -253,7 +253,7 @@ pub struct Scheme {
     /// the body each of these is a *rigid* `Ty::Con(name, [])` — an opaque type that unifies with
     /// itself and nothing else, which is exactly the property that makes the definition honest
     /// about being polymorphic. [`Subst::instantiate`] turns them back into fresh variables at
-    /// every call site. `docs/32` §32.7.
+    /// every call site. `docs/27` §27.2.
     pub params: Vec<Arc<str>>,
     pub ty: Ty,
 }
@@ -371,7 +371,7 @@ impl Subst {
     ///
     /// A bounded definition needs the map: `def sort[T: Ord](xs: list[T])` is lowered with a
     /// dictionary parameter per method of `Ord`, and the call site can only say which impl to pass
-    /// once it knows what this call's `T` turned out to be. `docs/39` §39.4.
+    /// once it knows what this call's `T` turned out to be. `docs/27` §27.5.
     pub fn instantiate_named(&self, s: &Scheme) -> (Ty, BTreeMap<Arc<str>, Ty>) {
         if s.vars.is_empty() && s.row_vars.is_empty() && s.params.is_empty() {
             return (s.ty.clone(), BTreeMap::new());
@@ -627,7 +627,7 @@ fn subst_vars(t: &Ty, m: &BTreeMap<TyVarId, Ty>, rows: &BTreeMap<RowVarId, RowVa
 ///
 /// A parameter is a nullary `Con`, so this is a leaf substitution: `list[T]` becomes `list[?7]` and
 /// a `T` that happens to be applied to arguments is left alone, because a type parameter cannot be
-/// a type *constructor* — §32.9 records that as a limit rather than working round it.
+/// a type *constructor* — §27.10 records that as a limit rather than working round it.
 fn subst_named(t: &Ty, m: &BTreeMap<Arc<str>, Ty>) -> Ty {
     match t {
         Ty::Var(v) => Ty::Var(*v),
@@ -828,7 +828,7 @@ pub struct MethodSig {
     /// Parameter names and types, with the abstract receiver as `Ty::con("Self")`.
     pub params: Vec<(Arc<str>, Ty)>,
     pub ret: Ty,
-    /// The declared row — the bound every implementation is held to (`docs/37` §37.5), and
+    /// The declared row — the bound every implementation is held to (`docs/27` §27.7), and
     /// therefore what a caller in another module may assume.
     pub effects: Vec<Effect>,
 }
@@ -848,7 +848,7 @@ pub struct ImplSig {
     /// What each method actually performs, by name, for the methods that perform anything.
     ///
     /// The trait declares an abstract signature; this impl's methods may be **more** effectful than
-    /// it (`docs/47`), so a caller in another module cannot take the row off the trait. It has to
+    /// it (`docs/27`), so a caller in another module cannot take the row off the trait. It has to
     /// be published with the impl, and this is where it crosses. Empty rows are omitted: most
     /// impls are pure and a `.becki` full of `uses` clauses saying nothing is a `.becki` nobody
     /// reviews.

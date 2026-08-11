@@ -31,12 +31,12 @@ of one shape would prove that the shape works, which Phase 1 already did. What v
 - **the shape of the types**: a type that mentions itself, two that mention each other, a
   declaration that takes a type parameter and is used at two different arguments, and a `trait`
   with three impls. Program 25 exists for recursive types
-  ([`docs/27`](../../docs/27-walls-report.md)), 27 for parameterised ones
-  ([`docs/36`](../../docs/36-parameterised-types-report.md)) and 28 for traits
-  ([`docs/37`](../../docs/37-traits-report.md)) — every pass here walks a type, and each is a place
+  ([`docs/27`](../../docs/27-the-walls-come-down-report.md)), 27 for parameterised ones
+  ([`docs/27`](../../docs/27-the-walls-come-down-report.md)) and 28 for traits
+  ([`docs/27`](../../docs/27-the-walls-come-down-report.md)) — every pass here walks a type, and each is a place
   one of those shapes can be silently dropped;
 - **the shape of the control flow**: a `try:` at the boundary rather than a `Result` threaded by
-  hand (program 29, [`docs/45`](../../docs/45-error-rows-report.md)), and two outbound calls in one
+  hand (program 29, [`docs/27`](../../docs/27-the-walls-come-down-report.md)), and two outbound calls in one
   `parallel:` scope that do not wait for each other (program 30,
   [`docs/80`](../../docs/80-a-scope-owns-its-children-report.md)) — where what is being checked is
   that the scope's `spawn` reaches the published signature and the placement without anybody

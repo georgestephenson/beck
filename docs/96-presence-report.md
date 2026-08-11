@@ -153,7 +153,7 @@ accumulator: connections are the one input that moves without an event, so a ros
 doing it.
 
 Gated on the shape rather than on a rate, with the evaluator's own step budget as the instrument —
-deterministic, and with no clock in it since [`72`](72-space-and-constants-report.md) made the
+deterministic, and with no clock in it since [`70`](70-the-evaluator-gets-fast-report.md) made the
 budget charge for work:
 
 | roster | 200 notes | 1,600 notes |

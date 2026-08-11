@@ -64,7 +64,11 @@ WASM, no size crisis, trivially good Lighthouse scores) — with Mode B in Phase
   the first clause deferred** ([`94`](94-mode-b-report.md)): the local fold and the reconciliation
   are here, and the WASM is the *evaluator* rather than the component compiled. The budget is
   answered in two parts, because a shared kernel and a per-component payload are different
-  questions; `wasm-opt` is not run, so the kernel's number is a ceiling.
+  questions; `wasm-opt` is not run, so the kernel's number is a ceiling. *The budget is **enforced**
+  now rather than reported ([`102`](102-freshness-and-the-budget-report.md) §102.4): `beck bundle`
+  writes the artefact, a `budgets` job weighs every Mode B example against 150 KB brotli, and a
+  shape gate under `cargo test` says the thing the threshold cannot — that a bundle is a function of
+  the component's slice and not of the program around it.*
 - **Connection layer**: one websocket (WebTransport later) multiplexing patch-streams down and
   commands up; resumable by `(subscription id, last seq)` so a dropped connection or a deploy
   replays the gap instead of re-rendering the world; sticky-session friendly but not dependent
@@ -104,8 +108,8 @@ endpoints — compiles to native binaries, statically linked, one per `service`.
 
 | Mode | Backend | Evidence |
 |---|---|---|
-| `beck dev`, hot reload | **Cranelift**, as a crate, emitting an object a linker turns into a program — **built** for the scalar subset ([`97`](97-cranelift-report.md), [`adr/0024`](adr/0024-cranelift-emits-an-object-and-a-linker-makes-it-a-program.md)) | ~40% faster whole-compiles; codegen step ~an order of magnitude faster than LLVM |
-| `beck build --release` | **LLVM**, as textual IR through the host's `clang` — **built** for the scalar subset ([`93`](93-llvm-backend-report.md)), not via `inkwell` ([`adr/0021`](adr/0021-the-native-backend-writes-ir-and-runs-a-process.md)) | Cranelift output ~14% slower; Perry's 2026 Cranelift→LLVM move turned a deficit into 1.7–24.6× wins over Node.js |
+| `beck dev`, hot reload | **Cranelift**, as a crate, emitting an object a linker turns into a program — **built** for the scalar subset and for records and unions ([`97`](97-cranelift-report.md), [`101`](101-the-heap-report.md), [`adr/0024`](adr/0024-cranelift-emits-an-object-and-a-linker-makes-it-a-program.md)) | ~40% faster whole-compiles; codegen step ~an order of magnitude faster than LLVM |
+| `beck build --release` | **LLVM**, as textual IR through the host's `clang` — **built** for the scalar subset and for records and unions ([`93`](93-llvm-backend-report.md), [`101`](101-the-heap-report.md)), not via `inkwell` ([`adr/0021`](adr/0021-the-native-backend-writes-ir-and-runs-a-process.md)) | Cranelift output ~14% slower; Perry's 2026 Cranelift→LLVM move turned a deficit into 1.7–24.6× wins over Node.js |
 
 The two must agree observably — enforced by differential tests ([`04`](04-compiler-architecture.md)
 §4.8). The `Core → Target` seam stays narrow so a third backend (or MLIR) can slot in later.
@@ -123,6 +127,14 @@ The two must agree observably — enforced by differential tests ([`04`](04-comp
 > what still bounds them, and it bounds both equally, so the sentence above about records, `Html`
 > and effects is unchanged. What *is* new is that the second implementation exists to disagree:
 > §97.4 is what holding two emitters to one subset found.
+>
+> *And the heap has its first floor* ([`101`](101-the-heap-report.md)): a `model`, a `union` and a
+> `newtype` compile on both, over one layout shared with the host, in an arena of offsets
+> ([`adr/0026`](adr/0026-the-native-heap-is-an-arena-of-offsets.md)). So "a fold over a record" is
+> half-true rather than false — the *record* compiles and the fold's `Map` does not. Text,
+> collections, closures and every effect are still the tree-walker's, and this section's "compiles
+> to native binaries, statically linked, one per `service`" remains a design for that reason.
+> §101.5 is the list, each row with a test that goes red the day it stops being true.
 
 **Runtime we must ship** (the "Roc platform" of Beck — an effectful Rust host owning I/O, scheduling
 and memory, executing the pure program):

@@ -1,8 +1,8 @@
-# ADR 0026 — A release publishes a checksum, and not a signature
+# ADR 0027 — A release publishes a checksum, and not a signature
 
 **Status:** accepted
 **Date:** 2026-08-10
-**Context:** [`101`](../101-the-release-and-the-installer-report.md),
+**Context:** [`104`](../104-the-release-and-the-installer-report.md),
 [`28`](../28-releases-and-deployment.md) §28.2, [`99`](../99-supply-chain-report.md) §99.5 and
 §99.7, [`43`](../43-threat-model.md) §43.4,
 [`0023`](0023-tls-and-the-signature-it-brings.md)

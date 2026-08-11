@@ -40,7 +40,7 @@ def pi() -> Float:
     return 3.141592653589793
 
 ## `4 * PI * PI` in the Java, where `4` is an `int` the multiplication promotes. Beck does not
-## promote — `docs/41` refuses `1 + 1.0` deliberately — so the literal is written as a real.
+## promote — `docs/27` refuses `1 + 1.0` deliberately — so the literal is written as a real.
 def solar_mass() -> Float:
     return 4.0 * pi() * pi()
 

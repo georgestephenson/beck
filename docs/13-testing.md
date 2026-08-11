@@ -11,7 +11,7 @@ oracles** — pairs of independent paths that must agree — and the strategy is
 | Oracle pair | Must agree on | Tests the premise that… |
 |---|---|---|
 | single-process run **vs** tier-split run | all observable behaviour | splitting is semantics-preserving (the language's core promise) |
-| Cranelift **vs** LLVM **vs** reference interpreter | program results | codegen is correct. *All three exist* ([`97`](97-cranelift-report.md)): `beck-cli/tests/native.rs` and `tests/cranelift.rs` compare both emitters against the tree-walker over the scalar subset, on the **value and the failure**, and hold the two to accepting and refusing the same definitions. What bounds the differential is the subset rather than the harness — neither emitter has a heap |
+| Cranelift **vs** LLVM **vs** reference interpreter | program results | codegen is correct. *All three exist* ([`97`](97-cranelift-report.md)): `beck-cli/tests/native.rs` and `tests/cranelift.rs` compare both emitters against the tree-walker over the scalar subset, on the **value and the failure**, and hold the two to accepting and refusing the same definitions. What bounds the differential is the subset rather than the harness: a record, a union and a newtype compile since [`101`](101-the-heap-report.md), and text, collections, closures and the effects do not |
 | native **vs** WASM builds of the same pure code | results, incl. float bits | one semantics across tiers (what makes optimism sound) |
 | incremental dataflow plan **vs** full recompute | every view's value at every `seq` | "keeping it incremental is the compiler's job" is *correct*, not just fast |
 | replaying a log twice / across versions | bit-identical states and patches | determinism, the foundation of replay/fork/optimism |

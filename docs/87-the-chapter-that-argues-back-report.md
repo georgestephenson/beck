@@ -5,7 +5,7 @@ Objects, and State", twenty-six `test` blocks and a `property` against the book'
 answers.
 [`08`](08-roadmap.md) §8.5.4's Wave 4 has listed "more of SICP, chapter 3 being the part closest to
 what Beck is for" as free-standing with no predecessors since the wave was written, and
-[`sicp/README.md`](../compiler/sicp/README.md) has said since [`41`](41-generic-arithmetic-report.md)
+[`sicp/README.md`](../compiler/sicp/README.md) has said since [`27`](27-the-walls-come-down-report.md)
 that "chapters 3, 4 and 5 are unattempted, and finding the next wall needs somebody to write more of
 the book". This is chapter 3 written out, and it found three things.
 
@@ -38,7 +38,7 @@ The registers are [`sicp/README.md`](../compiler/sicp/README.md)'s, and this is 
 where most of them are **re-expressed** rather than **translated**. That is the point rather than an
 apology: §3.1's objects are closures over mutable state, and the reorganisation is always the same
 one — a closure over mutable state is a function of the state, which is
-[`57`](57-richards-report.md) §57.3's rule arrived at there by porting a benchmark and here by
+[`53`](53-are-we-fast-yet-report.md) §53.3's rule arrived at there by porting a benchmark and here by
 reading the book that benchmark's language came from.
 
 Two oracles are worth naming because they are hard to pass by accident.
@@ -53,7 +53,7 @@ matched on the first run.
 
 **§3.5.3's three tables.** `1.4166666666666665`, `2.8952380952380956`, `3.1415926539752927` and the
 rest are IEEE 754 doubles on both sides, so the assertion is equality rather than a tolerance —
-[`32`](32-numeric-tower-and-polymorphism-report.md) §32.5's property, and the same standard
+[`27`](27-the-walls-come-down-report.md) §27.2's property, and the same standard
 `ch1.beck` holds §1.1.7's `3.00009155413138` to. Getting an operand order wrong moves the last digit.
 `(+ s0 (* -2 s1) s2)` is `(s0 + (-2 × s1)) + s2`, which is what Beck's left-associative `+` gives.
 
@@ -166,7 +166,7 @@ A record **constructor** is linear and the `with` form is quadratic, for the sam
 `[first, *rest]` destructuring, measured at 21.1 steps per element either side — the pattern every
 list recursion in the tree uses, and the first thing suspected.
 
-The reason is one line of the evaluator and it is [`70`](70-last-use-moves-report.md)'s rule meeting a
+The reason is one line of the evaluator and it is [`70`](70-the-evaluator-gets-fast-report.md)'s rule meeting a
 second reference. `x.with(f = g(x.f))` reads `x` **twice**: once as the base and once inside `g`. The
 base is read first, so it is not `x`'s last use and arrives as a clone; `eval_with` then held that
 clone — and therefore a second reference to `x.f` — while it evaluated `g(x.f)`. The read inside `g`
@@ -187,7 +187,7 @@ Measured after, at the same two sizes: **20.0 steps per element at 1,000 and 20.
 4,000, and `the_functional_queue_costs_the_same_per_operation_however_long_it_gets` is the gate.
 
 What it costs elsewhere, rotated with a control per
-[`78`](78-a-record-is-a-permutation-report.md) §78.6, best of four, release:
+[`70`](70-the-evaluator-gets-fast-report.md) §70.7, best of four, release:
 
 | 2,000,000 `with` on an `Int` field | 300,000 `with` on a `Map` field | 40,000 `with` on a `Str` field |
 |---|---|---|
@@ -201,10 +201,10 @@ why there is a second version: doing it inside the clone is free and doing it af
 
 [`19`](19-phase-1-report.md) §19.4 found a fold that copied its accumulator,
 [`69`](69-standard-library-imports-report.md) §69.7 found `list_append` copying,
-[`70`](70-last-use-moves-report.md) fixed the recursive spelling and
-[`79`](79-a-lambda-is-a-frame-report.md) fixed the fold spelling three reports later. This is the same
+[`70`](70-the-evaluator-gets-fast-report.md) fixed the recursive spelling and
+[`70`](70-the-evaluator-gets-fast-report.md) fixed the fold spelling three reports later. This is the same
 defect in a fourth spelling, and the reason it survived is
-[`79`](79-a-lambda-is-a-frame-report.md) §79.5's, exactly:
+[`70`](70-the-evaluator-gets-fast-report.md) §70.2's, exactly:
 
 **nothing in this repository accumulates into a `list` or a `Str` field through `with`.** Every
 `with` in `corpus/` and `examples/` updates an `Int` or a persistent `Map` — `s.with(n=s.n + 1)`,
@@ -223,7 +223,7 @@ that was written to check somebody else's argument for mutation and turned out t
 |---|---|
 | §3.2, the environment model | **not needed**, §87.2 — the section exists because assignment invalidates the substitution model |
 | §3.3.1, `set-car!` and `set-cdr!` | **refused, and it is the chapter's premise rather than a gap.** Exercises 3.12–3.20 are about what mutation does to shared structure; in Beck there is no shared structure to mutate, so `append!` and `append` cannot differ |
-| §3.3.5, the constraint propagator | **not attempted.** It is the one section left that would be *interesting* rather than mechanical — a constraint network is a dataflow, and Beck's view engine is one ([`24`](24-incremental-views-report.md)) — and the honest reason it is absent is time rather than a wall. Its "Contradiction" is a `raise` ([`45`](45-error-rows-report.md)), and its `forget-value!` is where the analogy would be tested |
+| §3.3.5, the constraint propagator | **not attempted.** It is the one section left that would be *interesting* rather than mechanical — a constraint network is a dataflow, and Beck's view engine is one ([`24`](24-incremental-views-report.md)) — and the honest reason it is absent is time rather than a wall. Its "Contradiction" is a `raise` ([`27`](27-the-walls-come-down-report.md)), and its `forget-value!` is where the analogy would be tested |
 | §3.5.4, streams and delayed evaluation | **not attempted.** `integral` with a delayed integrand is the one place §3.5 needs `delay` in an *argument* rather than in `cons-stream`, and it wants its own look |
 | §3.5.1's memoised `delay` | **refused, and it is a cost rather than an inexpressibility** — §87.7 |
 | A line-count comparison against the Scheme | **not made.** §25.5 asks for one on *translated* exercises, and most of this chapter is re-expressed, where the comparison would measure the reorganisation rather than the notation |
@@ -263,7 +263,7 @@ Whether Beck should have a memoised promise is a question this report raises and
 two shapes it could take are a language-level `delay` that is a form rather than a macro (so the
 compiler owns the cell), and a value-level memo that would need interior mutability inside a value the
 `Map` order, the state digest and the patch stream all read — which is
-[`72`](72-space-and-constants-report.md) §72's reason for building the character index eagerly, one
+[`70`](70-the-evaluator-gets-fast-report.md) §72's reason for building the character index eagerly, one
 level up. Neither is a line in a chapter file.
 
 ## 87.8 What this establishes

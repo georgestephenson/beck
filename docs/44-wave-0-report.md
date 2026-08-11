@@ -46,7 +46,7 @@ walks the `Core` the checker built and is bounded by construction.
 
 **Measured, not assumed.** The per-level cost is what decides whether a count is a bound or a
 wish, so each crate that recurses measures its own and fails if the declaration has stopped
-covering it — the pair `beck-eval` has had since [`31`](31-tail-calls-report.md) §31.3:
+covering it — the pair `beck-eval` has had since [`27`](27-the-walls-come-down-report.md) §27.2:
 
 ```
 $ cargo test -p beck-syntax nesting -- --nocapture
@@ -159,8 +159,8 @@ The first **splits**, and that is the finding. It was posed as one question — 
 decorators — and four phases of implementation had already answered it as two, without anybody
 noticing that the answer was a distinction rather than a winner. **An effect is a clause in the
 signature** because an effect row is part of the *type*: it unifies, it is inferred, it is
-generalised over ([`33`](33-effect-polymorphism-and-list-patterns-report.md)), it is a bound an
-impl is held to ([`37`](37-traits-report.md)), and §3.6 publishes it. **A placement is a decorator**
+generalised over ([`27`](27-the-walls-come-down-report.md)), it is a bound an
+impl is held to ([`27`](27-the-walls-come-down-report.md)), and §3.6 publishes it. **A placement is a decorator**
 because Phase 2 made placement *inferred*, so `@on(...)` is an override handed to the solver rather
 than a fact about the definition.
 

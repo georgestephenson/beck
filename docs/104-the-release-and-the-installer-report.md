@@ -17,7 +17,7 @@ Both are now built:
   version, downloads the tarball *and* the release's `SHA256SUMS`, refuses to continue unless they
   agree, and puts `beck` in `~/.beck/bin`.
 - **[`release/build.sh`](../release/build.sh)** and **[`release/version.sh`](../release/version.sh)**
-  — the parts of a release a person can run, factored out of the YAML for the reason §101.2 is
+  — the parts of a release a person can run, factored out of the YAML for the reason §104.2 is
   about.
 - **A version that means something.** The workspace was `0.1.0` on `publish = false` crates through
   four phases, which §28.1 already recorded as meaningless. It is **0.3.0** — §28.2 item 4's minor
@@ -26,17 +26,18 @@ Both are now built:
 
 ```text
 $ beck --version
-beck 0.3.0 (e5d42cc5dff5 x86_64-unknown-linux-gnu)
+beck 0.3.0 (3f3316bdc1d9 x86_64-unknown-linux-gnu)
 ```
 
 What is **not** built is a cut release: no tag has been pushed, so nothing is published yet, and
-§101.7 is careful about which parts of the above have been executed and which have only been
+§104.7 is careful about which parts of the above have been executed and which have only been
 written.
 
 ## 101.1 Why these two were not on the phase list
 
-Every other remaining item in Phase 3 is a piece of a bullet — the heap under both code generators,
-Mode B's codegen, lazy routes, the render lock. These two are not. The phase list is a list of
+Every other remaining item in Phase 3 is a piece of a bullet — the rest of the heap under both code
+generators ([`101`](101-the-heap-report.md) §101.5), Mode B's codegen, lazy routes, the render lock.
+These two are not. The phase list is a list of
 things to *build*, and a release is a thing to *do*; a list of capabilities has no row for the act of
 handing one to somebody.
 
@@ -47,7 +48,7 @@ outlived nine bullets that were harder.
 
 It also has a predecessor nothing had listed, and it is the reason this report exists at all rather
 than a paragraph in [`99`](99-supply-chain-report.md): the supply-chain work built a command that
-signs an *image*, and a compiler release is a **tarball**. §101.6 is what that costs.
+signs an *image*, and a compiler release is a **tarball**. §104.6 is what that costs.
 
 ## 101.2 A pipeline is the one artefact that cannot be run before it is used
 
@@ -71,7 +72,7 @@ So the executable parts are taken **out** of the workflow:
 
 What is left in the YAML is a **schedule**: what runs, in what order, and what must be green first.
 Every step that could be wrong about *how* a binary is built or installed is in a shell script that
-has been run, and §101.7 says which runs those were.
+has been run, and §104.7 says which runs those were.
 
 The same argument decided one absence. The publish job re-checks the assembled `SHA256SUMS` with
 `sha256sum -c` and then **runs `install.sh` against the artefacts it just built**, over a `file://`
@@ -134,6 +135,14 @@ A release makes it load-bearing in two directions at once, and both can be wrong
 The first of those is a gate that could not have existed before this work, because there was nothing
 for a tag to disagree with. It is the smallest thing here and the one most likely to fire.
 
+The stamp had a defect of its own, found by reading its output on a rebuilt binary: `build.rs`
+watched `.git/HEAD`, and **`HEAD` does not change when a commit is made**. On a branch it holds
+`ref: refs/heads/<branch>`; the ref file underneath it is what moves. So an incrementally-rebuilt
+binary kept printing whichever commit it was first built at — a *wrong* answer rather than a
+missing one, which is the worse of the two for a field whose whole purpose is identifying an
+artefact. It watches both now. A release build is a fresh checkout and was never affected, which is
+exactly why this would have survived: the pipeline is the one place the bug could not appear.
+
 ## 101.5 The installer, and the one thing it refuses
 
 `install.sh` is POSIX `sh`, about 150 lines, and configured entirely by environment variables:
@@ -184,7 +193,7 @@ pipeline signs nothing and the installer verifies no signature, so the day eithe
 goes red and the person who closed it has to correct these documents in the same change. What would close it is a
 signature over the sums file, a builder identity and a transparency log — §99.7's row, unchanged by
 this work except that the pipeline a provenance attestation would attach to now exists.
-[`adr/0026`](adr/0026-a-release-publishes-a-checksum-and-not-a-signature.md) is the decision, and it
+[`adr/0027`](adr/0027-a-release-publishes-a-checksum-and-not-a-signature.md) is the decision, and it
 records the three cheaper-looking routes and why none of them is cheap.
 [`92`](92-sbom-report.md) §92's table gave "this repository has no release pipeline to attach one
 to" as the reason that row was empty; that reason is gone, and the row is still empty.
@@ -240,7 +249,7 @@ read.
 | `the_binary_says_which_build_it_is` | `--version` stops naming the release, the commit or the triple |
 | `the_installer_refuses_an_archive_whose_checksum_is_wrong` | verification is skipped, or a refusal installs something anyway |
 | `the_guide_installs_before_it_builds_from_source` | [`86`](86-getting-started.md) goes back to opening with a Rust toolchain |
-| `a_release_artefact_carries_a_checksum_and_no_signature` (`pending_security.rs`) | the pipeline signs something, or the installer verifies a signature — a **red is good news** here, and the fix is to correct §101.6, [`43`](43-threat-model.md) §43.4 and [`adr/0026`](adr/0026-a-release-publishes-a-checksum-and-not-a-signature.md) in the same change |
+| `a_release_artefact_carries_a_checksum_and_no_signature` (`pending_security.rs`) | the pipeline signs something, or the installer verifies a signature — a **red is good news** here, and the fix is to correct §104.6, [`43`](43-threat-model.md) §43.4 and [`adr/0027`](adr/0027-a-release-publishes-a-checksum-and-not-a-signature.md) in the same change |
 
 The last of the run-a-script gates is the one written against **the gap rather than the fix**
 ([`84`](84-a-quota-is-only-as-good-as-its-actor-report.md) §84.5): it corrupts an archive, leaves the
@@ -263,11 +272,11 @@ the skip. CI sets it.
   fourth workflow.
 - **§28.2's "the commands exist; the pipeline does not"** is now the other way round for binaries and
   unchanged for images: there is a pipeline, and the command it would use to *sign* what it publishes
-  does not reach a tarball (§101.6).
+  does not reach a tarball (§104.6).
 - **[`08`](08-roadmap.md) §8.5.4's apology list** — "no OIDC, no Mode B, no installation story, no
   released binary" — was already two items out of date when this began
   ([`94`](94-mode-b-report.md), [`95`](95-oidc-relying-party-report.md)) and is now down to the
-  distinction §101.7 draws: the story is built and executed, the release is built and uncut.
+  distinction §104.7 draws: the story is built and executed, the release is built and uncut.
 - **[`86`](86-getting-started.md) §86.1** opened by telling a newcomer to build a compiler, and
   §86.8 listed "there is no installation story" as something belonging to
   [`28`](28-releases-and-deployment.md) rather than to the guide. Both are rewritten: the guide leads
@@ -275,7 +284,7 @@ the skip. CI sets it.
   arriving actually wants.
 - **[`99`](99-supply-chain-report.md) §99.6's** note that `beck init ci` generates a workflow using
   `cargo install --git` "because there is no released `beck` to install" is still accurate, and
-  deliberately so — §101.10.
+  deliberately so — §104.10.
 
 Reports are history, so none of them is edited; this section is where the correction lives.
 
@@ -292,7 +301,7 @@ Reports are history, so none of them is edited; this section is where the correc
   distribution it was built on and newer, which is why the Linux runners are `ubuntu-22.04` and not
   `-latest` — the one place the release deviates from CI's runner, and it deviates in the image
   rather than in the steps.
-- **No signature, no attestation, no transparency log.** §101.6.
+- **No signature, no attestation, no transparency log.** §104.6.
 - **No Windows.** No target, no line in the installer, and no test in this workspace has ever run
   on one.
 - **Nothing is signed for macOS.** The Darwin binaries are neither codesigned nor notarised. A
@@ -303,13 +312,15 @@ Reports are history, so none of them is edited; this section is where the correc
   repository with no releases fails on somebody else's first commit rather than on ours.
 - **No package managers and no self-update.** No Homebrew formula, no apt repository, no
   `beck upgrade`. `install.sh` run again is the upgrade path, and it overwrites in place.
-- **No size budget on the binary**, per §101.3.
+- **No size budget on the binary**, per §104.3.
 
 ## 101.11 What Phase 3 is still not
 
 Unchanged by this, and worth repeating so the two items above are not mistaken for the criterion:
 Phase 3 exits when **an outside developer builds a non-trivial app from documentation alone, without
 asking the team a question**. What this removes is the first two sentences of the apology that guide
-would have had to open with. What remains on the list is the heap under both code generators, Mode B's
-codegen, lazy routes and the render lock — and the criterion itself, which is a claim about a person
-and which nothing in this repository can make true about itself.
+would have had to open with. What remains on the list is the **rest of the heap** — a record, a union
+and a newtype compile since [`101`](101-the-heap-report.md), and text, collections, closures and every
+effect do not — plus Mode B's codegen, which waits on exactly that, lazy routes and the render lock.
+And the criterion itself, which is a claim about a person and which nothing in this repository can
+make true about itself.

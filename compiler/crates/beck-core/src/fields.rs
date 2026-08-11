@@ -41,7 +41,7 @@ pub const MAX_ORDERED: usize = 8;
 /// evaluated fields already exists, so this permutes it where it lies rather than selecting out of
 /// it into a second one. Building the answer into a fresh vector was tried and measured, and it
 /// cost more than the sort it replaced — an allocation is dearer than an insertion sort over four
-/// names ([`78`](../../../../../docs/78-a-record-is-a-permutation-report.md) §78.3).
+/// names ([`70`](../../../../../docs/70-the-evaluator-gets-fast-report.md) §70.4).
 ///
 /// The permutation is followed in its cycles, which needs somewhere to record what has already
 /// been placed; here that is the packed layout itself, copied into a local and rewritten as it

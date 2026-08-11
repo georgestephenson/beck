@@ -136,14 +136,14 @@ The controls a reader would reasonably assume exist, that do not:
   [`adr/0020`](adr/0020-the-read-model-speaks-pgwire-by-hand.md) is why, and it is the record that
   has to change before the bound does. The absence is asserted by connecting without a password and
   expecting it to work, which goes red the day one is required.
-- **A signature on the compiler you downloaded.** [`101`](101-the-release-and-the-installer-report.md)
+- **A signature on the compiler you downloaded.** [`104`](104-the-release-and-the-installer-report.md)
   built the release pipeline and [`install.sh`](../install.sh), which verifies the tarball against
   the release's `SHA256SUMS` and refuses to install on a mismatch. That is a **checksum, not a
   chain of trust**: it establishes that the download was not corrupted in transit and nothing at all
   about the page it came from, because whoever can rewrite the tarball can rewrite the line
   describing it. It would be reasonable to assume otherwise — this project *has* signing machinery
   ([`99`](99-supply-chain-report.md) §99.5) — but `beck sign`'s subject is an OCI manifest digest and
-  a compiler release is a tarball (§101.6). The absence is asserted from both ends in
+  a compiler release is a tarball (§104.6). The absence is asserted from both ends in
   `pending_security.rs`: the pipeline signs nothing, and the installer checks nothing. A provenance
   attestation and a transparency log are §99.7's rows and are also absent.
 - **Macro fuel** (F17). Expansion is bounded in *depth* — twice over, since

@@ -2,19 +2,22 @@
 //!
 //! # The same subset, a second time
 //!
-//! This compiles exactly what [`beck_llvm::emit`] compiles — the **scalar subset**: a definition
-//! whose parameters and result are all `Int`, `Float` or `Bool`, and whose body is built from
-//! constants, variables, `let`, `if`, `match` on scalar constants, direct calls to other compiled
-//! definitions, and the arithmetic, comparison and logical primitives. A heap value is refused by
-//! name, with a reason, exactly as it is there.
+//! This compiles exactly what [`beck_llvm::emit`] compiles: a definition whose parameters and
+//! result each have a [`beck_llvm::heap::Repr`] — `Int`, `Float`, `Bool`, or a `model`, `union` or
+//! `newtype` — and whose body is built from constants, variables, `let`, `if`, `match`, direct
+//! calls, record and variant construction, field reads, `with`, and the arithmetic, comparison and
+//! logical primitives. Text, a collection, a closure and every effect are refused by name, with a
+//! reason, exactly as they are there.
 //!
 //! Writing the selection a second time rather than importing it is deliberate. The two emitters
 //! are held to *agreeing* — `cranelift.rs` asserts that they accept and refuse the same
 //! definitions over every program in the tree — and a shared implementation would make that
 //! agreement true by construction and therefore worth nothing. What *is* shared is the vocabulary
 //! and the wire: [`beck_llvm::Scalar`], [`beck_llvm::Signature`], [`beck_llvm::Refusal`] and
-//! [`beck_llvm::Trap`] are types, and [`beck_llvm::Trap`]'s codes are a protocol the host decodes.
-//! A second copy of *those* would be two spellings of one contract.
+//! [`beck_llvm::Trap`] are types, [`beck_llvm::Trap`]'s codes are a protocol the host decodes, and
+//! [`beck_llvm::heap`] is the **layout** — which word a field is in, which rank a variant has —
+//! because that one is a contract with the host too, and a contract with three spellings drifts.
+//! A second copy of any of those would be two opinions about one thing.
 //!
 //! # Agreeing with the evaluator exactly
 //!
@@ -36,7 +39,7 @@
 //!
 //! * **A tail call is `return_call`** under [`CallConv::Tail`], which Cranelift *verifies* rather
 //!   than attempts — the same guarantee `musttail` gives and the reason
-//!   [`31`](../../../../../docs/31-tail-calls-report.md)'s property holds on this backend too.
+//!   [`27`](../../../../../docs/27-the-walls-come-down-report.md)'s property holds on this backend too.
 //! * **A block parameter replaces a `phi`.** The joins are the same joins; Cranelift's SSA is
 //!   built by [`cranelift_frontend`] rather than written out.
 //! * **A `Bool` is an `I8` holding 0 or 1**, because Cranelift has no `i1`. Every comparison here
@@ -51,6 +54,7 @@ use std::sync::Arc;
 use beck_core::check::{Def, Program};
 use beck_core::core::{Arm, Const, Core, CoreKind, Pattern, Prim, VarId};
 use beck_diag::Span;
+use beck_llvm::heap::{self, Heap, Repr};
 use beck_llvm::{Refusal, Scalar, Signature, Trap, MAX_PARAMS};
 
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
@@ -61,7 +65,7 @@ use cranelift_codegen::ir::{
 use cranelift_codegen::isa::{self, CallConv, TargetIsa};
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
-use cranelift_module::{FuncId, Linkage, Module as _};
+use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module as _};
 use cranelift_object::{ObjectBuilder, ObjectModule};
 
 /// The trap cell's layout, which is the host's [`beck_llvm::Worker`] protocol: a `u32` code, a
@@ -82,6 +86,9 @@ pub struct Module {
     pub spans: Vec<Span>,
     /// Definitions this backend declined, and why.
     pub refusals: Vec<Refusal>,
+    /// What every object in this module looks like. [`beck_llvm::heap`] decides the shape for both
+    /// backends, because the host marshals against it and three spellings of one contract drift.
+    pub heap: Heap,
 }
 
 impl Module {
@@ -99,14 +106,16 @@ pub fn module(program: &Program) -> Result<Module, String> {
     let isa = host_isa()?;
     let mut refusals: Vec<Refusal> = Vec::new();
     let mut sigs: BTreeMap<Arc<str>, Signature> = BTreeMap::new();
+    let mut heap = Heap::new();
+    heap::survey(program, &mut heap);
 
-    // Round one: the signature alone. A definition whose parameters or result are not scalars
-    // cannot be called through the worker's protocol however simple its body is.
+    // Round one: the signature alone. A definition whose parameters or result have no machine
+    // representation cannot be called through the worker's protocol however simple its body is.
     for name in &program.def_order {
         let Some(def) = program.defs.get(name) else {
             continue;
         };
-        match signature_of(def) {
+        match signature_of(def, &mut heap, program) {
             Ok(sig) => {
                 sigs.insert(name.clone(), sig);
             }
@@ -127,7 +136,7 @@ pub fn module(program: &Program) -> Result<Module, String> {
     // definitions and are one in every program in this tree.
     let mut eligible: BTreeSet<Arc<str>> = sigs.keys().cloned().collect();
     loop {
-        match build(program, &sigs, &eligible, isa.clone()) {
+        match build(program, &sigs, &eligible, isa.clone(), &mut heap) {
             Ok(built) => {
                 refusals.sort_by(|a, b| a.name.cmp(&b.name));
                 return Ok(Module {
@@ -136,6 +145,7 @@ pub fn module(program: &Program) -> Result<Module, String> {
                     functions: built.functions,
                     spans: built.spans,
                     refusals,
+                    heap,
                 });
             }
             Err(Failure::Refused(dropped)) => {
@@ -159,7 +169,7 @@ fn host_isa() -> Result<Arc<dyn TargetIsa>, String> {
         .map_err(|e| format!("cranelift setting: {e}"))?;
     // Not a preference. Cranelift's x86-64 `return_call` **asserts** on this, because its
     // implementation of a tail call restores the caller's frame through the frame pointer — so a
-    // backend that guarantees `docs/31`'s tail calls has to keep them.
+    // backend that guarantees `docs/27`'s tail calls has to keep them.
     flags
         .set("preserve_frame_pointers", "true")
         .map_err(|e| format!("cranelift setting: {e}"))?;
@@ -190,6 +200,7 @@ fn build(
     sigs: &BTreeMap<Arc<str>, Signature>,
     eligible: &BTreeSet<Arc<str>>,
     isa: Arc<dyn TargetIsa>,
+    heap: &mut Heap,
 ) -> Result<Built, Failure> {
     // Declaration order is the program's, so the dispatch index a definition gets is a property of
     // the source rather than of a hash map's iteration.
@@ -212,6 +223,15 @@ fn build(
     let mut object = ObjectModule::new(builder);
     let ptr = object.target_config().pointer_type();
 
+    // The arena, when this program has an object in it at all. A module of pure arithmetic gets
+    // neither the globals nor the `malloc`, which is what keeps `docs/93` §93.5's round trip the
+    // same round trip.
+    let arena = if heap.is_empty() {
+        None
+    } else {
+        Some(Arena::declare(&mut object, ptr).map_err(Failure::Fatal)?)
+    };
+
     // Every compiled definition, declared before any is defined: a body may call one declared
     // after it, and mutual recursion is two bodies that each call the other.
     let mut ids: BTreeMap<Arc<str>, FuncId> = BTreeMap::new();
@@ -228,13 +248,14 @@ fn build(
     let mut spans: Vec<Span> = Vec::new();
     let mut clif = String::new();
     let mut refused: Vec<Refusal> = Vec::new();
+    let mut compared: BTreeSet<u32> = BTreeSet::new();
 
     for (n, name) in order.iter().enumerate() {
         let def = &program.defs[name];
         let sig = beck_signature(&indexed[name], ptr);
         ctx.func = Function::with_name_signature(UserFuncName::user(0, n as u32), sig);
         let taken = std::mem::take(&mut spans);
-        let mut body = Body::new(&indexed, eligible, &ids, taken);
+        let mut body = Body::new(&indexed, eligible, &ids, taken, program, heap, arena);
         let emitted = {
             let mut b = FunctionBuilder::new(&mut ctx.func, &mut fctx);
             let outcome = body.emit(def, &mut b, &mut object);
@@ -250,6 +271,7 @@ fn build(
             fctx = FunctionBuilderContext::new();
         }
         spans = std::mem::take(&mut body.spans);
+        compared.append(&mut body.compared);
         match emitted {
             Ok(()) => {}
             Err(reason) => {
@@ -271,8 +293,27 @@ fn build(
         return Err(Failure::Refused(refused));
     }
 
+    if let Some(arena) = arena {
+        arena
+            .define(&mut object, &mut ctx, &mut fctx, ptr)
+            .map_err(Failure::Fatal)?;
+        for at in closure_of(&compared, heap) {
+            compare_function(at, heap, arena, &mut object, &mut ctx, &mut fctx)
+                .map_err(Failure::Fatal)?;
+        }
+    }
+
     let functions: Vec<Signature> = order.iter().map(|n| indexed[n].clone()).collect();
-    driver(&mut object, &mut ctx, &mut fctx, &functions, &ids, &order).map_err(Failure::Fatal)?;
+    driver(
+        &mut object,
+        &mut ctx,
+        &mut fctx,
+        &functions,
+        &ids,
+        &order,
+        arena,
+    )
+    .map_err(Failure::Fatal)?;
 
     let object = object
         .finish()
@@ -290,7 +331,7 @@ fn build(
 ///
 /// The same four rules [`beck_llvm`] applies, written again rather than imported — see this
 /// module's own documentation for why, and `cranelift.rs` for what holds them together.
-fn signature_of(def: &Def) -> Result<Signature, String> {
+fn signature_of(def: &Def, heap: &mut Heap, program: &Program) -> Result<Signature, String> {
     if !def.typarams.is_empty() {
         return Err(format!(
             "generic over {} — a type parameter has no machine representation here",
@@ -308,22 +349,14 @@ fn signature_of(def: &Def) -> Result<Signature, String> {
     }
     let mut params = Vec::with_capacity(def.params.len());
     for (_, name, ty) in &def.params {
-        match Scalar::of(ty) {
-            Some(s) => params.push(s),
-            None => {
-                return Err(format!(
-                    "parameter `{name}` is `{ty}`, and only Int, Float and Bool have a machine \
-                     representation here"
-                ))
-            }
+        match heap.repr(ty, program) {
+            Ok(r) => params.push(r),
+            Err(why) => return Err(format!("parameter `{name}` is {why}")),
         }
     }
-    let ret = Scalar::of(&def.ret).ok_or_else(|| {
-        format!(
-            "returns `{}`, and only Int, Float and Bool have a machine representation here",
-            def.ret
-        )
-    })?;
+    let ret = heap
+        .repr(&def.ret, program)
+        .map_err(|why| format!("returns {why}"))?;
     Ok(Signature {
         name: def.name.clone(),
         params,
@@ -337,8 +370,8 @@ fn signature_of(def: &Def) -> Result<Signature, String> {
 /// A `Bool` is an `I8` holding 0 or 1: Cranelift has no one-bit integer, and every comparison it
 /// emits produces exactly this. The invariant is what makes `band` and `bor` the right
 /// instructions for `and` and `or`, and it is why `not` is `bxor 1` rather than a complement.
-fn machine(s: Scalar) -> Type {
-    match s {
+fn machine(r: Repr) -> Type {
+    match r.machine() {
         Scalar::Int => types::I64,
         Scalar::Float => types::F64,
         Scalar::Bool => types::I8,
@@ -347,7 +380,7 @@ fn machine(s: Scalar) -> Type {
 
 /// A compiled definition's signature: the error cell, then its parameters.
 ///
-/// [`CallConv::Tail`] because a call in tail position must be a jump — `docs/31` makes that a
+/// [`CallConv::Tail`] because a call in tail position must be a jump — `docs/27` makes that a
 /// property of the language rather than an optimisation — and `return_call` is only available
 /// between functions that share it.
 fn beck_signature(sig: &Signature, ptr: Type) -> cranelift_codegen::ir::Signature {
@@ -375,11 +408,427 @@ fn symbol(name: &str) -> String {
     out
 }
 
+/// The arena: four globals and the only allocator this backend has.
+///
+/// A bump pointer and no free, exactly as [`beck_llvm::emit`] emits it — the shape is
+/// [`adr/0026`](../../../../../docs/adr/0026-the-native-heap-is-an-arena-of-offsets.md)'s and not
+/// either backend's. What is Cranelift's is that a global is a `DataId` rather than a name.
+#[derive(Clone, Copy, Debug)]
+struct Arena {
+    /// Where the arena is. Written once by `main`, read by everything.
+    heap: DataId,
+    /// The bump pointer, as an offset.
+    next: DataId,
+    /// How many bytes there are, or `0` when the `malloc` failed.
+    limit: DataId,
+    /// Whether the call in flight answers with something on the heap. The thunk knows; `main` asks.
+    reply: DataId,
+    alloc: FuncId,
+}
+
+impl Arena {
+    fn declare(m: &mut ObjectModule, ptr: Type) -> Result<Arena, String> {
+        let mut one = |name: &str, bytes: usize| -> Result<DataId, String> {
+            let id = m
+                .declare_data(name, Linkage::Local, true, false)
+                .map_err(|e| format!("declaring `{name}`: {e}"))?;
+            let mut desc = DataDescription::new();
+            desc.define_zeroinit(bytes);
+            m.define_data(id, &desc)
+                .map_err(|e| format!("defining `{name}`: {e}"))?;
+            Ok(id)
+        };
+        let heap = one("beck.heap", ptr.bytes() as usize)?;
+        let next = one("beck.next", 8)?;
+        let limit = one("beck.limit", 8)?;
+        let reply = one("beck.reply", 8)?;
+
+        let mut sig =
+            cranelift_codegen::ir::Signature::new(CallConv::triple_default(m.isa().triple()));
+        sig.params.push(AbiParam::new(ptr));
+        sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(types::I32));
+        sig.returns.push(AbiParam::new(types::I64));
+        let alloc = m
+            .declare_function("beck.alloc", Linkage::Local, &sig)
+            .map_err(|e| format!("declaring the allocator: {e}"))?;
+        Ok(Arena {
+            heap,
+            next,
+            limit,
+            reply,
+            alloc,
+        })
+    }
+
+    /// The address of one of the globals, in the function being built.
+    fn addr(self, which: DataId, b: &mut FunctionBuilder<'_>, m: &mut ObjectModule) -> IrValue {
+        let gv = m.declare_data_in_func(which, b.func);
+        let ptr = m.target_config().pointer_type();
+        b.ins().symbol_value(ptr, gv)
+    }
+
+    /// The arena's base.
+    ///
+    /// Loaded wherever it is used rather than hoisted to the entry block — the other backend
+    /// hoists because it writes text and can insert a line after the fact. The flags say
+    /// **readonly**, which is true and is what lets Cranelift's alias analysis fold the repeats:
+    /// `main` writes this word before any compiled code runs and nothing writes it again.
+    fn base(self, b: &mut FunctionBuilder<'_>, m: &mut ObjectModule) -> IrValue {
+        let at = self.addr(self.heap, b, m);
+        let ptr = m.target_config().pointer_type();
+        b.ins()
+            .load(ptr, MemFlagsData::trusted().with_readonly(), at, 0)
+    }
+
+    /// The allocator: a bump pointer and no free.
+    ///
+    /// [`adr/0026`](../../../../../docs/adr/0026-the-native-heap-is-an-arena-of-offsets.md) is the
+    /// whole of the reasoning: a call is bounded, the arena is reset before every one, and running
+    /// out is [`Trap::HeapExhausted`] rather than a crash.
+    fn define(
+        self,
+        m: &mut ObjectModule,
+        ctx: &mut cranelift_codegen::Context,
+        fctx: &mut FunctionBuilderContext,
+        ptr: Type,
+    ) -> Result<(), String> {
+        let mut sig =
+            cranelift_codegen::ir::Signature::new(CallConv::triple_default(m.isa().triple()));
+        sig.params.push(AbiParam::new(ptr));
+        sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(types::I32));
+        sig.returns.push(AbiParam::new(types::I64));
+        ctx.func = Function::with_name_signature(UserFuncName::user(6, 0), sig);
+        {
+            let mut b = FunctionBuilder::new(&mut ctx.func, fctx);
+            let entry = b.create_block();
+            b.append_block_params_for_function_params(entry);
+            b.switch_to_block(entry);
+            b.seal_block(entry);
+            let err = b.block_params(entry)[0];
+            let bytes = b.block_params(entry)[1];
+            let span = b.block_params(entry)[2];
+            let flags = MemFlagsData::trusted();
+
+            let next_at = self.addr(self.next, &mut b, m);
+            let limit_at = self.addr(self.limit, &mut b, m);
+            let n = b.ins().load(types::I64, flags, next_at, 0);
+            let limit = b.ins().load(types::I64, flags, limit_at, 0);
+            let new = b.ins().iadd(n, bytes);
+            // Unsigned, and against the sum rather than against the room left: a null arena has a
+            // limit of zero, and `limit - next` would underflow into "plenty".
+            let over = b.ins().icmp(IntCC::UnsignedGreaterThan, new, limit);
+            let full = b.create_block();
+            let ok = b.create_block();
+            b.ins().brif(over, full, &[], ok, &[]);
+
+            b.switch_to_block(full);
+            b.seal_block(full);
+            let code = b
+                .ins()
+                .iconst(types::I32, i64::from(Trap::HeapExhausted.code()));
+            b.ins().store(flags, code, err, 0);
+            b.ins().store(flags, span, err, CELL_SPAN);
+            let z = b.ins().iconst(types::I64, 0);
+            b.ins().store(flags, z, err, CELL_PAYLOAD);
+            b.ins().return_(&[z]);
+
+            b.switch_to_block(ok);
+            b.seal_block(ok);
+            b.ins().store(flags, new, next_at, 0);
+            b.ins().return_(&[n]);
+            b.finalize(m.target_config());
+        }
+        m.define_function(self.alloc, ctx)
+            .map_err(|e| format!("defining the allocator: {e}"))?;
+        m.clear_context(ctx);
+        Ok(())
+    }
+
+    fn alloc_in(
+        self,
+        b: &mut FunctionBuilder<'_>,
+        m: &mut ObjectModule,
+    ) -> cranelift_codegen::ir::FuncRef {
+        m.declare_func_in_func(self.alloc, b.func)
+    }
+}
+
+/// The most patterns one arm may be split into. [`beck_llvm::emit`]'s number, and it has to be:
+/// the two emitters are held to refusing the same definitions.
+const MAX_ALTERNATIVES: usize = 16;
+
+/// One arm's pattern as the patterns that have to be tried in turn.
+///
+/// An or-pattern of plain constants is left whole, because [`Body::probe`] can test it with one
+/// `bor` and it binds nothing. Anything else is **split**: two alternatives that take a value apart
+/// bind the same names to different words, so one block reached from both would need a block
+/// parameter per binder, and copying the arm is the same behaviour with no join to get wrong.
+fn alternatives(pat: &Pattern) -> Result<Vec<Pattern>, String> {
+    let mut out = Vec::new();
+    expand(pat, &mut out)?;
+    Ok(out)
+}
+
+/// Whether every alternative here is a constant, and therefore testable without control flow.
+fn testable(pat: &Pattern) -> bool {
+    match pat {
+        Pattern::Const(_) => true,
+        Pattern::Or(alts) => alts.iter().all(testable),
+        _ => false,
+    }
+}
+
+fn expand(pat: &Pattern, out: &mut Vec<Pattern>) -> Result<(), String> {
+    match pat {
+        Pattern::Or(alts) if !testable(pat) => {
+            for alt in alts {
+                expand(alt, out)?;
+            }
+        }
+        Pattern::At { var, inner } => {
+            let mut inners = Vec::new();
+            expand(inner, &mut inners)?;
+            for i in inners {
+                out.push(Pattern::At {
+                    var: *var,
+                    inner: Box::new(i),
+                });
+            }
+        }
+        Pattern::Ctor { variant, binds } => {
+            let mut rows: Vec<Vec<(Arc<str>, Pattern)>> = vec![Vec::new()];
+            for (name, sub) in binds {
+                let mut subs = Vec::new();
+                expand(sub, &mut subs)?;
+                let mut next = Vec::with_capacity(rows.len() * subs.len());
+                for row in &rows {
+                    for one in &subs {
+                        let mut row = row.clone();
+                        row.push((name.clone(), one.clone()));
+                        next.push(row);
+                    }
+                }
+                rows = next;
+                if rows.len() > MAX_ALTERNATIVES {
+                    return Err(format!(
+                        "a pattern with more than {MAX_ALTERNATIVES} alternatives in it"
+                    ));
+                }
+            }
+            for row in rows {
+                out.push(Pattern::Ctor {
+                    variant: variant.clone(),
+                    binds: row,
+                });
+            }
+        }
+        other => out.push(other.clone()),
+    }
+    if out.len() > MAX_ALTERNATIVES {
+        return Err(format!(
+            "a pattern with more than {MAX_ALTERNATIVES} alternatives in it"
+        ));
+    }
+    Ok(())
+}
+
+/// Every layout that needs a comparison, given the ones a body asked to compare.
+///
+/// Transitive, because comparing a record compares its fields.
+fn closure_of(asked: &BTreeSet<u32>, heap: &Heap) -> BTreeSet<u32> {
+    let mut out: BTreeSet<u32> = BTreeSet::new();
+    let mut todo: Vec<u32> = asked.iter().copied().collect();
+    while let Some(at) = todo.pop() {
+        if !out.insert(at) {
+            continue;
+        }
+        for v in &heap.layout(at).variants {
+            for (_, r) in &v.fields {
+                if let Repr::Obj(inner) = r {
+                    todo.push(*inner);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The signature every comparison has: two offsets in, `-1`, `0` or `1` out.
+fn compare_signature(m: &ObjectModule) -> cranelift_codegen::ir::Signature {
+    let mut sig = cranelift_codegen::ir::Signature::new(CallConv::triple_default(m.isa().triple()));
+    sig.params.push(AbiParam::new(types::I64));
+    sig.params.push(AbiParam::new(types::I64));
+    sig.returns.push(AbiParam::new(types::I64));
+    sig
+}
+
+/// A three-way comparison over one layout, and the same answer `Value`'s derived `Ord` gives.
+///
+/// Tag first, then fields in the order they are laid out — which is name order, which is the order
+/// `Fields` iterates and therefore the order `Ord` reads a record in. A field that is itself an
+/// object is a call to *its* layout's comparison, so the recursion in the type is the recursion in
+/// the code.
+fn compare_function(
+    at: u32,
+    heap: &Heap,
+    arena: Arena,
+    m: &mut ObjectModule,
+    ctx: &mut cranelift_codegen::Context,
+    fctx: &mut FunctionBuilderContext,
+) -> Result<(), String> {
+    let layout = heap.layout(at);
+    let sig = compare_signature(m);
+    let id = m
+        .declare_function(&format!("beck.cmp.{at}"), Linkage::Local, &sig)
+        .map_err(|e| format!("declaring a comparison: {e}"))?;
+    ctx.func = Function::with_name_signature(UserFuncName::user(5, at), sig);
+    {
+        let mut b = FunctionBuilder::new(&mut ctx.func, fctx);
+        let entry = b.create_block();
+        b.append_block_params_for_function_params(entry);
+        b.switch_to_block(entry);
+        b.seal_block(entry);
+        let (oa, ob) = (b.block_params(entry)[0], b.block_params(entry)[1]);
+        let base = arena.base(&mut b, m);
+        let pa = b.ins().iadd(base, oa);
+        let pb = b.ins().iadd(base, ob);
+        let flags = MemFlagsData::trusted();
+
+        // -1 and 1 have a block each, jumped to from wherever a comparison decides. One pair rather
+        // than a pair per field, because every field decides the same two ways.
+        let below = b.create_block();
+        let above = b.create_block();
+
+        let tail = if layout.tagged {
+            let ta = b.ins().load(types::I64, flags, pa, 0);
+            let tb = b.ins().load(types::I64, flags, pb, 0);
+            let lt = b.ins().icmp(IntCC::UnsignedLessThan, ta, tb);
+            let ordered = b.create_block();
+            b.ins().brif(lt, below, &[], ordered, &[]);
+            b.switch_to_block(ordered);
+            b.seal_block(ordered);
+            let gt = b.ins().icmp(IntCC::UnsignedGreaterThan, ta, tb);
+            let same = b.create_block();
+            b.ins().brif(gt, above, &[], same, &[]);
+            b.switch_to_block(same);
+            b.seal_block(same);
+            Some(ta)
+        } else {
+            None
+        };
+
+        // One block per variant, chosen by the tag. A chain of tests rather than a jump table, for
+        // the reason the dispatch is one: a union has a handful of variants.
+        let mut arms = Vec::new();
+        for _ in &layout.variants {
+            arms.push(b.create_block());
+        }
+        if let Some(ta) = tail {
+            for (i, arm) in arms.iter().enumerate() {
+                let miss = b.create_block();
+                let is = b.ins().icmp_imm_s(IntCC::Equal, ta, i as i64);
+                b.ins().brif(is, *arm, &[], miss, &[]);
+                b.switch_to_block(miss);
+                b.seal_block(miss);
+            }
+            // A tag the table does not name cannot happen — the host writes one this table
+            // produced — and "equal" is the one answer that cannot make a comparison asymmetric.
+            let z = b.ins().iconst(types::I64, 0);
+            b.ins().return_(&[z]);
+        } else {
+            b.ins().jump(arms[0], &[]);
+        }
+
+        for (i, variant) in layout.variants.iter().enumerate() {
+            b.switch_to_block(arms[i]);
+            b.seal_block(arms[i]);
+            for (slot, (_, repr)) in variant.fields.iter().enumerate() {
+                let off = ((slot as u64 + 1) * heap::WORD) as i32;
+                let xa = b.ins().load(types::I64, flags, pa, off);
+                let xb = b.ins().load(types::I64, flags, pb, off);
+                match repr {
+                    Repr::Obj(inner) => {
+                        let inner_sig = compare_signature(m);
+                        let inner_id = m
+                            .declare_function(
+                                &format!("beck.cmp.{inner}"),
+                                Linkage::Local,
+                                &inner_sig,
+                            )
+                            .map_err(|e| format!("declaring a comparison: {e}"))?;
+                        let f = m.declare_func_in_func(inner_id, b.func);
+                        let call = b.ins().call(f, &[xa, xb]);
+                        let r = b.inst_results(call)[0];
+                        let decided = b.create_block();
+                        let next = b.create_block();
+                        let any = b.ins().icmp_imm_s(IntCC::NotEqual, r, 0);
+                        b.ins().brif(any, decided, &[], next, &[]);
+                        b.switch_to_block(decided);
+                        b.seal_block(decided);
+                        b.ins().return_(&[r]);
+                        b.switch_to_block(next);
+                        b.seal_block(next);
+                    }
+                    _ => {
+                        // A real compares through its order key, and both are already normalised —
+                        // `Body::store_field` is where that is paid for. An `Int` is signed, and a
+                        // `Bool` is a 0 or a 1 and therefore either way round.
+                        let (ka, kb) = match repr {
+                            Repr::Float => (order_key_bits(xa, &mut b), order_key_bits(xb, &mut b)),
+                            _ => (xa, xb),
+                        };
+                        let (lt, gt) = if matches!(repr, Repr::Int) {
+                            (IntCC::SignedLessThan, IntCC::SignedGreaterThan)
+                        } else {
+                            (IntCC::UnsignedLessThan, IntCC::UnsignedGreaterThan)
+                        };
+                        let is_lt = b.ins().icmp(lt, ka, kb);
+                        let test = b.create_block();
+                        b.ins().brif(is_lt, below, &[], test, &[]);
+                        b.switch_to_block(test);
+                        b.seal_block(test);
+                        let is_gt = b.ins().icmp(gt, ka, kb);
+                        let next = b.create_block();
+                        b.ins().brif(is_gt, above, &[], next, &[]);
+                        b.switch_to_block(next);
+                        b.seal_block(next);
+                    }
+                }
+            }
+            let z = b.ins().iconst(types::I64, 0);
+            b.ins().return_(&[z]);
+        }
+
+        b.switch_to_block(below);
+        b.seal_block(below);
+        let minus = b.ins().iconst(types::I64, -1);
+        b.ins().return_(&[minus]);
+        b.switch_to_block(above);
+        b.seal_block(above);
+        let plus = b.ins().iconst(types::I64, 1);
+        b.ins().return_(&[plus]);
+        b.finalize(m.target_config());
+    }
+    m.define_function(id, ctx)
+        .map_err(|e| format!("defining a comparison: {e}"))?;
+    m.clear_context(ctx);
+    Ok(())
+}
+
+/// `beck_core`'s order key over raw bits already in an `I64`.
+fn order_key_bits(bits: IrValue, b: &mut FunctionBuilder<'_>) -> IrValue {
+    let sign = b.ins().sshr_imm_s(bits, 63);
+    let mask = b.ins().bor_imm_s(sign, i64::MIN);
+    b.ins().bxor(bits, mask)
+}
+
 /// An SSA value and what it is.
 #[derive(Clone, Copy, Debug)]
 struct Val {
     v: IrValue,
-    ty: Scalar,
+    ty: Repr,
 }
 
 /// Where the value an expression produces has to go.
@@ -399,12 +848,18 @@ struct Body<'a> {
     sigs: &'a BTreeMap<Arc<str>, Signature>,
     eligible: &'a BTreeSet<Arc<str>>,
     ids: &'a BTreeMap<Arc<str>, FuncId>,
+    program: &'a Program,
+    heap: &'a mut Heap,
+    /// The arena's globals, when this module has one.
+    arena: Option<Arena>,
     env: BTreeMap<VarId, Val>,
     spans: Vec<Span>,
     /// What this function returns, and therefore what a trapping exit has to return too.
-    ret: Scalar,
+    ret: Repr,
     /// The error cell, this function's first parameter.
     err: Option<IrValue>,
+    /// The layouts this body compares two of, so the module defines a comparison for them.
+    compared: BTreeSet<u32>,
 }
 
 impl<'a> Body<'a> {
@@ -413,16 +868,34 @@ impl<'a> Body<'a> {
         eligible: &'a BTreeSet<Arc<str>>,
         ids: &'a BTreeMap<Arc<str>, FuncId>,
         spans: Vec<Span>,
+        program: &'a Program,
+        heap: &'a mut Heap,
+        arena: Option<Arena>,
     ) -> Body<'a> {
         Body {
             sigs,
             eligible,
             ids,
+            program,
+            heap,
+            arena,
             env: BTreeMap::new(),
             spans,
-            ret: Scalar::Int,
+            ret: Repr::Int,
             err: None,
+            compared: BTreeSet::new(),
         }
+    }
+
+    /// What `ty` looks like at the machine, or the reason this body cannot be compiled.
+    fn repr(&mut self, ty: &beck_core::ty::Ty) -> Result<Repr, String> {
+        self.heap.repr(ty, self.program)
+    }
+
+    /// The arena, which a body only asks for once it has an object in its hands.
+    fn arena(&self) -> Arena {
+        self.arena
+            .expect("a body with an object in it is a module with an arena")
     }
 
     fn emit(
@@ -475,8 +948,8 @@ impl<'a> Body<'a> {
 
     /// The zero of a scalar — what a trapping path returns, and never read: the host looks at the
     /// trap code first.
-    fn zero(&self, ty: Scalar, b: &mut FunctionBuilder<'_>) -> IrValue {
-        match ty {
+    fn zero(&self, ty: Repr, b: &mut FunctionBuilder<'_>) -> IrValue {
+        match ty.machine() {
             Scalar::Int => b.ins().iconst(types::I64, 0),
             Scalar::Bool => b.ins().iconst(types::I8, 0),
             Scalar::Float => b.ins().f64const(0.0),
@@ -548,6 +1021,7 @@ impl<'a> Body<'a> {
             .expect("value mode always produces a value"))
     }
 
+    #[allow(clippy::too_many_lines)]
     fn expr(
         &mut self,
         c: &Core,
@@ -582,7 +1056,9 @@ impl<'a> Body<'a> {
             CoreKind::App { func, args } => return self.call(func, args, dest, b, m),
             CoreKind::Prim { op, args } => self.prim(*op, args, c.span, b, m)?,
             CoreKind::Lam { .. } => {
-                return Err("a nested function is a closure, and there is no heap here".into())
+                return Err(
+                    "a nested function is a closure, and a closure is not on this heap".into(),
+                )
             }
             CoreKind::Global(name) => {
                 return Err(format!(
@@ -590,15 +1066,17 @@ impl<'a> Body<'a> {
                      closure"
                 ))
             }
-            CoreKind::Make { ty, .. } => {
-                return Err(format!("builds a `{ty}`, and there is no heap here"))
+            CoreKind::Make {
+                variant, fields, ..
+            } => self.make(&c.ty, variant.as_deref(), fields, c.span, b, m)?,
+            CoreKind::Field { base, name } => self.field(base, name, b, m)?,
+            CoreKind::With { base, fields } => self.with(base, fields, c.span, b, m)?,
+            CoreKind::ListLit(_) => {
+                return Err("builds a list, and a collection is not on this heap yet".into())
             }
-            CoreKind::Field { name, .. } => {
-                return Err(format!("reads the field `{name}` of a record"))
+            CoreKind::MapLit(_) => {
+                return Err("builds a map, and a collection is not on this heap yet".into())
             }
-            CoreKind::With { .. } => return Err("updates a record".into()),
-            CoreKind::ListLit(_) => return Err("builds a list, and there is no heap here".into()),
-            CoreKind::MapLit(_) => return Err("builds a map, and there is no heap here".into()),
         };
         self.finish(value, dest, b)
     }
@@ -634,7 +1112,7 @@ impl<'a> Body<'a> {
         m: &mut ObjectModule,
     ) -> Result<Option<Val>, String> {
         let c = self.value(cond, b, m)?;
-        if c.ty != Scalar::Bool {
+        if c.ty != Repr::Bool {
             return Err("the condition of an `if` is not a Bool".into());
         }
         let lt = b.create_block();
@@ -646,7 +1124,7 @@ impl<'a> Body<'a> {
         // known until one of them has produced a value — so it is added lazily, which is legal
         // exactly while nothing has jumped to it yet.
         let join = b.create_block();
-        let mut ty: Option<Scalar> = None;
+        let mut ty: Option<Repr> = None;
         let mut arms = 0;
 
         b.switch_to_block(lt);
@@ -695,10 +1173,13 @@ impl<'a> Body<'a> {
         }))
     }
 
-    /// A `match` over a scalar: a chain of tests, each falling through to the next.
+    /// A `match`: a chain of tests, each falling through to the next.
     ///
     /// Falling through is what makes a guard a guard — an arm whose pattern matched but whose
     /// guard was false has to reach the arm after it, which is the evaluator's `continue`.
+    ///
+    /// An arm whose pattern takes a value apart is emitted once per alternative
+    /// ([`alternatives`]), for the reason written there.
     fn match_(
         &mut self,
         scrutinee: &Core,
@@ -710,53 +1191,58 @@ impl<'a> Body<'a> {
     ) -> Result<Option<Val>, String> {
         let v = self.value(scrutinee, b, m)?;
         let join = b.create_block();
-        let mut ty: Option<Scalar> = None;
+        let mut ty: Option<Repr> = None;
         let mut reached = 0;
 
         for arm in arms {
-            let taken = b.create_block();
-            let next = b.create_block();
-            let cond = self.test(&arm.pattern, &v, b)?;
-            b.ins().brif(cond, taken, &[], next, &[]);
-
-            b.switch_to_block(taken);
-            b.seal_block(taken);
-            let bound = self.bind(&arm.pattern, &v);
-            if let Some(guard) = &arm.guard {
-                let g = self.value(guard, b, m)?;
-                if g.ty != Scalar::Bool {
-                    return Err("a match guard is not a Bool".into());
+            for pattern in alternatives(&arm.pattern)? {
+                let next = b.create_block();
+                let mut undo: Vec<(VarId, Option<Val>)> = Vec::new();
+                let probed = self.probe(&pattern, &v, next, &mut undo, b, m);
+                if let Err(e) = probed {
+                    self.unbind(undo);
+                    return Err(e);
                 }
-                let run = b.create_block();
-                b.ins().brif(g.v, run, &[], next, &[]);
-                b.switch_to_block(run);
-                b.seal_block(run);
-            }
-            let av = self.expr(&arm.body, dest, b, m)?;
-            self.unbind(bound);
-            if let Some(av) = av {
-                match ty {
-                    Some(t) if t != av.ty => return Err("match arms have different types".into()),
-                    Some(_) => {}
-                    None => {
-                        b.append_block_param(join, machine(av.ty));
-                        ty = Some(av.ty);
+                if let Some(guard) = &arm.guard {
+                    let g = self.value(guard, b, m)?;
+                    if g.ty != Repr::Bool {
+                        self.unbind(undo);
+                        return Err("a match guard is not a Bool".into());
                     }
+                    let run = b.create_block();
+                    b.ins().brif(g.v, run, &[], next, &[]);
+                    b.switch_to_block(run);
+                    b.seal_block(run);
                 }
-                b.ins().jump(join, &[av.v.into()]);
-                reached += 1;
+                let av = self.expr(&arm.body, dest, b, m)?;
+                self.unbind(undo);
+                if let Some(av) = av {
+                    match ty {
+                        Some(t) if t != av.ty => {
+                            return Err("match arms have different types".into())
+                        }
+                        Some(_) => {}
+                        None => {
+                            b.append_block_param(join, machine(av.ty));
+                            ty = Some(av.ty);
+                        }
+                    }
+                    b.ins().jump(join, &[av.v.into()]);
+                    reached += 1;
+                }
+                b.switch_to_block(next);
+                b.seal_block(next);
             }
-            b.switch_to_block(next);
-            b.seal_block(next);
         }
 
         // Nothing matched. The checker proves a `match` exhaustive, so this is unreachable for a
         // program that compiled — and a wrong exhaustiveness check has to be a *message* rather
         // than whatever the machine does next, so it traps.
         let trap = match v.ty {
-            Scalar::Int => Trap::NoMatchInt,
-            Scalar::Float => Trap::NoMatchFloat,
-            Scalar::Bool => Trap::NoMatchBool,
+            Repr::Int => Trap::NoMatchInt,
+            Repr::Float => Trap::NoMatchFloat,
+            Repr::Bool => Trap::NoMatchBool,
+            Repr::Obj(_) => Trap::NoMatchData,
         };
         let payload = self.widen(&v, b);
         let always = b.ins().iconst(types::I8, 1);
@@ -780,64 +1266,110 @@ impl<'a> Body<'a> {
         }))
     }
 
-    /// Whether `pat` matches `v`, as an `I8` holding 0 or 1.
-    fn test(
+    /// Test `pat` against `v`, binding what it names: fall through on a match, branch to `fail`
+    /// otherwise.
+    ///
+    /// Control flow rather than one boolean, and that is a memory-safety requirement rather than a
+    /// tidiness one: `Some(Circle(r))` cannot read the field it matches on until the tag says
+    /// there is one there, and a conjunction that evaluated both sides would read a word of a
+    /// variant that is not present and follow it as an offset.
+    fn probe(
         &mut self,
         pat: &Pattern,
         v: &Val,
+        fail: cranelift_codegen::ir::Block,
+        undo: &mut Vec<(VarId, Option<Val>)>,
         b: &mut FunctionBuilder<'_>,
-    ) -> Result<IrValue, String> {
+        m: &mut ObjectModule,
+    ) -> Result<(), String> {
         match pat {
-            Pattern::Wildcard | Pattern::Bind(_) => Ok(b.ins().iconst(types::I8, 1)),
-            Pattern::At { inner, .. } => self.test(inner, v, b),
+            Pattern::Wildcard => Ok(()),
+            Pattern::Bind(var) => {
+                undo.push((*var, self.env.insert(*var, *v)));
+                Ok(())
+            }
+            Pattern::At { var, inner } => {
+                undo.push((*var, self.env.insert(*var, *v)));
+                self.probe(inner, v, fail, undo, b, m)
+            }
             Pattern::Const(k) => {
                 let want = constant(k, b)?;
                 if want.ty != v.ty {
                     return Err("a match arm compares against a constant of another type".into());
                 }
-                Ok(self.compare(Prim::Eq, v, &want, b).v)
+                let cond = self.compare(Prim::Eq, v, &want, b, m)?.v;
+                self.branch(cond, fail, b);
+                Ok(())
             }
+            // Only the alternatives `alternatives` leaves whole reach here: every one is a test
+            // and none of them binds, so the disjunction is one value and one branch.
             Pattern::Or(alts) => {
                 let mut acc: Option<IrValue> = None;
                 for alt in alts {
-                    let t = self.test(alt, v, b)?;
+                    let Pattern::Const(k) = alt else {
+                        return Err("an or-pattern that was not split".into());
+                    };
+                    let want = constant(k, b)?;
+                    if want.ty != v.ty {
+                        return Err(
+                            "a match arm compares against a constant of another type".into()
+                        );
+                    }
+                    let t = self.compare(Prim::Eq, v, &want, b, m)?.v;
                     acc = Some(match acc {
                         None => t,
                         Some(prev) => b.ins().bor(prev, t),
                     });
                 }
-                acc.ok_or_else(|| "an or-pattern with no alternatives".into())
+                let cond = acc.ok_or_else(|| "an or-pattern with no alternatives".to_string())?;
+                self.branch(cond, fail, b);
+                Ok(())
             }
-            Pattern::Ctor { variant, .. } => Err(format!(
-                "matches the constructor `{variant}`, and a union value lives on the heap"
-            )),
-            Pattern::List { .. } => Err("matches a list pattern".into()),
-        }
-    }
-
-    fn bind(&mut self, pat: &Pattern, v: &Val) -> Vec<(VarId, Option<Val>)> {
-        let mut undo = Vec::new();
-        self.bind_into(pat, v, &mut undo);
-        undo
-    }
-
-    fn bind_into(&mut self, pat: &Pattern, v: &Val, undo: &mut Vec<(VarId, Option<Val>)>) {
-        match pat {
-            Pattern::Bind(var) => undo.push((*var, self.env.insert(*var, *v))),
-            Pattern::At { var, inner } => {
-                undo.push((*var, self.env.insert(*var, *v)));
-                self.bind_into(inner, v, undo);
-            }
-            // Every alternative of an or-pattern binds the same names to the same scrutinee here,
-            // because a scalar pattern takes nothing apart.
-            Pattern::Or(alts) => {
-                if let Some(first) = alts.first() {
-                    self.bind_into(first, v, undo);
+            Pattern::Ctor { variant, binds } => {
+                let Repr::Obj(at) = v.ty else {
+                    return Err(format!(
+                        "matches the constructor `{variant}` against something that is not a record"
+                    ));
+                };
+                let (tag, fields, tagged) = {
+                    let layout = self.heap.layout(at);
+                    let tag = layout.tag_of(Some(variant)).ok_or_else(|| {
+                        format!("`{variant}` is not a variant of `{}`", layout.shown)
+                    })?;
+                    (tag, layout.variants[tag as usize].clone(), layout.tagged)
+                };
+                // A record has one variant, so its tag is known and there is nothing to test.
+                if tagged {
+                    let got = self.load_word(v.v, 0, b, m);
+                    let ok = b.ins().icmp_imm_s(IntCC::Equal, got, i64::from(tag));
+                    self.branch(ok, fail, b);
                 }
+                for (name, sub) in binds {
+                    let (slot, repr) = fields.slot(name).ok_or_else(|| {
+                        format!("`{variant}` has no field `{name}` in this layout")
+                    })?;
+                    let field = self.load_field(v.v, slot, repr, b, m);
+                    self.probe(sub, &field, fail, undo, b, m)?;
+                }
+                Ok(())
             }
-            Pattern::Wildcard | Pattern::Const(_) | Pattern::Ctor { .. } | Pattern::List { .. } => {
+            Pattern::List { .. } => {
+                Err("matches a list pattern, and a collection is not on this heap yet".into())
             }
         }
+    }
+
+    /// Carry on if `cond`, and go to `fail` if not.
+    fn branch(
+        &mut self,
+        cond: IrValue,
+        fail: cranelift_codegen::ir::Block,
+        b: &mut FunctionBuilder<'_>,
+    ) {
+        let cont = b.create_block();
+        b.ins().brif(cond, cont, &[], fail, &[]);
+        b.switch_to_block(cont);
+        b.seal_block(cont);
     }
 
     fn unbind(&mut self, undo: Vec<(VarId, Option<Val>)>) {
@@ -849,11 +1381,250 @@ impl<'a> Body<'a> {
         }
     }
 
+    // -- the heap ---------------------------------------------------------------------------
+
+    /// The address of word `slot` of the object at offset `off`.
+    fn word_addr(
+        &mut self,
+        off: IrValue,
+        slot: usize,
+        b: &mut FunctionBuilder<'_>,
+        m: &mut ObjectModule,
+    ) -> IrValue {
+        let base = self.arena().base(b, m);
+        let at = b.ins().iadd(base, off);
+        if slot == 0 {
+            return at;
+        }
+        b.ins().iadd_imm_s(at, (slot as u64 * heap::WORD) as i64)
+    }
+
+    /// One raw word of an object — the tag, or a field read for copying rather than for using.
+    fn load_word(
+        &mut self,
+        off: IrValue,
+        slot: usize,
+        b: &mut FunctionBuilder<'_>,
+        m: &mut ObjectModule,
+    ) -> IrValue {
+        let at = self.word_addr(off, slot, b, m);
+        b.ins().load(types::I64, MemFlagsData::trusted(), at, 0)
+    }
+
+    fn store_word(
+        &mut self,
+        off: IrValue,
+        slot: usize,
+        word: IrValue,
+        b: &mut FunctionBuilder<'_>,
+        m: &mut ObjectModule,
+    ) {
+        let at = self.word_addr(off, slot, b, m);
+        b.ins().store(MemFlagsData::trusted(), word, at, 0);
+    }
+
+    /// A field, as the value its [`Repr`] says it is.
+    fn load_field(
+        &mut self,
+        off: IrValue,
+        slot: usize,
+        repr: Repr,
+        b: &mut FunctionBuilder<'_>,
+        m: &mut ObjectModule,
+    ) -> Val {
+        let at = self.word_addr(off, slot, b, m);
+        let flags = MemFlagsData::trusted();
+        let v = match repr {
+            Repr::Float => b.ins().load(types::F64, flags, at, 0),
+            Repr::Bool => {
+                let raw = b.ins().load(types::I64, flags, at, 0);
+                b.ins().icmp_imm_s(IntCC::NotEqual, raw, 0)
+            }
+            Repr::Int | Repr::Obj(_) => b.ins().load(types::I64, flags, at, 0),
+        };
+        Val { v, ty: repr }
+    }
+
+    /// Put a value in a field.
+    ///
+    /// A real is **normalised** on the way in, for the reason `beck_llvm::emit`'s own
+    /// `store_field` gives: a stored real is compared with another stored real, read back by the
+    /// host, and part of what a record's `==` answers, so every real on the heap is the one the
+    /// evaluator would have built.
+    fn store_field(
+        &mut self,
+        off: IrValue,
+        slot: usize,
+        v: &Val,
+        b: &mut FunctionBuilder<'_>,
+        m: &mut ObjectModule,
+    ) {
+        let word = match v.ty {
+            Repr::Float => self.normalise(v.v, b),
+            Repr::Bool => b.ins().uextend(types::I64, v.v),
+            Repr::Int | Repr::Obj(_) => v.v,
+        };
+        let at = self.word_addr(off, slot, b, m);
+        b.ins().store(MemFlagsData::trusted(), word, at, 0);
+    }
+
+    /// Reserve `bytes` in the arena and answer the offset, or trap if there is no room.
+    fn alloc(
+        &mut self,
+        bytes: u64,
+        span: Span,
+        b: &mut FunctionBuilder<'_>,
+        m: &mut ObjectModule,
+    ) -> IrValue {
+        let arena = self.arena();
+        let idx = self.span(span);
+        let err = self.err();
+        let f = arena.alloc_in(b, m);
+        let n = b.ins().iconst(types::I64, bytes as i64);
+        let sp = b.ins().iconst(types::I32, i64::from(idx));
+        let call = b.ins().call(f, &[err, n, sp]);
+        let off = b.inst_results(call)[0];
+        self.check_call(b);
+        off
+    }
+
+    /// `Point(x=1, y=2)`, `Some(v)`, `Id(3)` — one object, filled in.
+    fn make(
+        &mut self,
+        ty: &beck_core::ty::Ty,
+        variant: Option<&str>,
+        fields: &[(Arc<str>, Core)],
+        span: Span,
+        b: &mut FunctionBuilder<'_>,
+        m: &mut ObjectModule,
+    ) -> Result<Val, String> {
+        let repr = self
+            .repr(ty)
+            .map_err(|why| format!("builds a value that is {why}"))?;
+        let Repr::Obj(at) = repr else {
+            return Err(format!("builds a `{ty}`, which is not an object"));
+        };
+        let (tag, layout) = {
+            let l = self.heap.layout(at);
+            let tag = l
+                .tag_of(variant)
+                .ok_or_else(|| format!("builds a `{}` with no such variant", l.shown))?;
+            (tag, l.variants[tag as usize].clone())
+        };
+        if fields.len() != layout.fields.len() {
+            return Err(format!(
+                "builds a `{ty}` with {} fields where the layout has {}",
+                fields.len(),
+                layout.fields.len()
+            ));
+        }
+
+        // Evaluated in the order they are written, because a field expression can trap and which
+        // trap the caller sees is part of what the evaluator answers.
+        let mut placed = Vec::with_capacity(fields.len());
+        for (name, expr) in fields {
+            let v = self.value(expr, b, m)?;
+            let (slot, want) = layout
+                .slot(name)
+                .ok_or_else(|| format!("`{ty}` has no field `{name}`"))?;
+            if v.ty != want {
+                return Err(format!(
+                    "the field `{name}` of `{ty}` is the wrong type here"
+                ));
+            }
+            placed.push((slot, v));
+        }
+
+        let off = self.alloc(layout.bytes(), span, b, m);
+        let tagv = b.ins().iconst(types::I64, i64::from(tag));
+        self.store_word(off, 0, tagv, b, m);
+        for (slot, v) in &placed {
+            self.store_field(off, *slot, v, b, m);
+        }
+        Ok(Val { v: off, ty: repr })
+    }
+
+    /// `p.x`.
+    fn field(
+        &mut self,
+        base: &Core,
+        name: &str,
+        b: &mut FunctionBuilder<'_>,
+        m: &mut ObjectModule,
+    ) -> Result<Val, String> {
+        let v = self.value(base, b, m)?;
+        let Repr::Obj(at) = v.ty else {
+            return Err(format!(
+                "reads the field `{name}` of something that is not a record"
+            ));
+        };
+        let (slot, repr) = {
+            let layout = self.heap.layout(at);
+            // A union's fields are read by matching it, never by naming one.
+            if layout.tagged {
+                return Err(format!(
+                    "reads the field `{name}` of `{}`, which is a union",
+                    layout.shown
+                ));
+            }
+            layout.variants[0]
+                .slot(name)
+                .ok_or_else(|| format!("no field `{name}` on `{}`", layout.shown))?
+        };
+        Ok(self.load_field(v.v, slot, repr, b, m))
+    }
+
+    /// `p.with(x = 3)` — a new object with the old one's other fields.
+    fn with(
+        &mut self,
+        base: &Core,
+        fields: &[(Arc<str>, Core)],
+        span: Span,
+        b: &mut FunctionBuilder<'_>,
+        m: &mut ObjectModule,
+    ) -> Result<Val, String> {
+        let v = self.value(base, b, m)?;
+        let Repr::Obj(at) = v.ty else {
+            return Err("updates something that is not a record".into());
+        };
+        let layout = {
+            let l = self.heap.layout(at);
+            if l.tagged {
+                return Err(format!("updates `{}`, which is a union", l.shown));
+            }
+            l.variants[0].clone()
+        };
+
+        let mut placed = Vec::with_capacity(fields.len());
+        for (name, expr) in fields {
+            let f = self.value(expr, b, m)?;
+            let (slot, want) = layout
+                .slot(name)
+                .ok_or_else(|| format!("no field `{name}` to update"))?;
+            if f.ty != want {
+                return Err(format!("the field `{name}` is the wrong type here"));
+            }
+            placed.push((slot, f));
+        }
+
+        let off = self.alloc(layout.bytes(), span, b, m);
+        // Word for word, because a copy does not care what a field means — and then the named ones
+        // are written over.
+        for slot in 0..=layout.fields.len() {
+            let w = self.load_word(v.v, slot, b, m);
+            self.store_word(off, slot, w, b, m);
+        }
+        for (slot, f) in &placed {
+            self.store_field(off, *slot, f, b, m);
+        }
+        Ok(Val { v: off, ty: v.ty })
+    }
+
     /// A direct call of a named definition — and in tail position, a jump.
     ///
     /// `return_call` rather than a call and a return: Cranelift's verifier *requires* the frame to
     /// be discardable and refuses the function otherwise, which is the same guarantee `musttail`
-    /// gives the other backend. `docs/31` §31.2 says 1,500 and 60,000 tail calls spend the same
+    /// gives the other backend. `docs/27` §27.2 says 1,500 and 60,000 tail calls spend the same
     /// host stack, and an optimisation that "usually" fires cannot be what a language guarantee
     /// rests on.
     fn call(
@@ -940,7 +1711,7 @@ impl<'a> Body<'a> {
                 ))
             }
         };
-        let same = |vals: &[Val]| -> Result<Scalar, String> {
+        let same = |vals: &[Val]| -> Result<Repr, String> {
             if vals[0].ty == vals[1].ty {
                 Ok(vals[0].ty)
             } else {
@@ -952,35 +1723,31 @@ impl<'a> Body<'a> {
             Prim::Add | Prim::Sub | Prim::Mul => {
                 arity(2, &vals)?;
                 match same(&vals)? {
-                    Scalar::Int => Ok(self.checked_int(op, &vals[0], &vals[1], span, b)),
-                    Scalar::Float => {
+                    Repr::Int => Ok(self.checked_int(op, &vals[0], &vals[1], span, b)),
+                    Repr::Float => {
                         let v = match op {
                             Prim::Add => b.ins().fadd(vals[0].v, vals[1].v),
                             Prim::Sub => b.ins().fsub(vals[0].v, vals[1].v),
                             _ => b.ins().fmul(vals[0].v, vals[1].v),
                         };
-                        Ok(Val {
-                            v,
-                            ty: Scalar::Float,
-                        })
+                        Ok(Val { v, ty: Repr::Float })
                     }
-                    Scalar::Bool => Err(format!("`{}` on two Bools", op.name())),
+                    Repr::Bool | Repr::Obj(_) => {
+                        Err(format!("`{}` on a value that is not a number", op.name()))
+                    }
                 }
             }
             Prim::Div | Prim::Rem => {
                 arity(2, &vals)?;
                 match same(&vals)? {
-                    Scalar::Int => Ok(self.checked_divide(op, &vals[0], &vals[1], span, b)),
+                    Repr::Int => Ok(self.checked_divide(op, &vals[0], &vals[1], span, b)),
                     // `%` on reals is not in the language: the evaluator's arm answers only for
                     // two Ints. Division normalises its *divisor* — `1.0 / -0.0` is `-inf` where
                     // `1.0 / 0.0` is `+inf`, which is a difference a zero's sign has escaped into.
-                    Scalar::Float if op == Prim::Div => {
+                    Repr::Float if op == Prim::Div => {
                         let d = self.normalise(vals[1].v, b);
                         let v = b.ins().fdiv(vals[0].v, d);
-                        Ok(Val {
-                            v,
-                            ty: Scalar::Float,
-                        })
+                        Ok(Val { v, ty: Repr::Float })
                     }
                     _ => Err(format!("`{}` on this type", op.name())),
                 }
@@ -988,48 +1755,52 @@ impl<'a> Body<'a> {
             Prim::Neg => {
                 arity(1, &vals)?;
                 match vals[0].ty {
-                    Scalar::Int => {
+                    Repr::Int => {
                         // `i64::checked_neg`: the one input without an answer is `i64::MIN`.
                         let bad = b.ins().icmp_imm_s(IntCC::Equal, vals[0].v, i64::MIN);
                         let payload = self.widen(&vals[0], b);
                         self.trap(Trap::NegOverflow, span, payload, bad, b);
                         let v = b.ins().ineg(vals[0].v);
-                        Ok(Val { v, ty: Scalar::Int })
+                        Ok(Val { v, ty: Repr::Int })
                     }
-                    Scalar::Float => Ok(Val {
+                    Repr::Float => Ok(Val {
                         v: b.ins().fneg(vals[0].v),
-                        ty: Scalar::Float,
+                        ty: Repr::Float,
                     }),
-                    Scalar::Bool => Err("`negate` on a Bool".into()),
+                    Repr::Bool | Repr::Obj(_) => {
+                        Err("`negate` on a value that is not a number".into())
+                    }
                 }
             }
             Prim::Abs => {
                 arity(1, &vals)?;
                 match vals[0].ty {
-                    Scalar::Int => {
+                    Repr::Int => {
                         let bad = b.ins().icmp_imm_s(IntCC::Equal, vals[0].v, i64::MIN);
                         let payload = self.widen(&vals[0], b);
                         self.trap(Trap::AbsOverflow, span, payload, bad, b);
                         Ok(Val {
                             v: b.ins().iabs(vals[0].v),
-                            ty: Scalar::Int,
+                            ty: Repr::Int,
                         })
                     }
-                    Scalar::Float => Ok(Val {
+                    Repr::Float => Ok(Val {
                         v: b.ins().fabs(vals[0].v),
-                        ty: Scalar::Float,
+                        ty: Repr::Float,
                     }),
-                    Scalar::Bool => Err("`abs` on a Bool".into()),
+                    Repr::Bool | Repr::Obj(_) => {
+                        Err("`abs` on a value that is not a number".into())
+                    }
                 }
             }
             Prim::Sqrt => {
                 arity(1, &vals)?;
-                if vals[0].ty != Scalar::Float {
+                if vals[0].ty != Repr::Float {
                     return Err("`sqrt` of something that is not a Float".into());
                 }
                 Ok(Val {
                     v: b.ins().sqrt(vals[0].v),
-                    ty: Scalar::Float,
+                    ty: Repr::Float,
                 })
             }
             // Cranelift has no transcendental instructions, so these are calls into the C library
@@ -1037,48 +1808,45 @@ impl<'a> Body<'a> {
             // `llvm.sin.f64` when it lowers one.
             Prim::Sin | Prim::Cos => {
                 arity(1, &vals)?;
-                if vals[0].ty != Scalar::Float {
+                if vals[0].ty != Repr::Float {
                     return Err(format!("`{}` of something that is not a Float", op.name()));
                 }
                 let name = if op == Prim::Sin { "sin" } else { "cos" };
                 let v = self.libm(name, vals[0].v, b, m)?;
-                Ok(Val {
-                    v,
-                    ty: Scalar::Float,
-                })
+                Ok(Val { v, ty: Repr::Float })
             }
             Prim::Trunc => {
                 arity(1, &vals)?;
-                if vals[0].ty != Scalar::Float {
+                if vals[0].ty != Repr::Float {
                     return Err("`trunc` of something that is not a Float".into());
                 }
                 // Saturating, because the evaluator's `f as i64` is: out of range is the nearest
                 // representable and NaN is zero, which is what Rust's cast does.
                 Ok(Val {
                     v: b.ins().fcvt_to_sint_sat(types::I64, vals[0].v),
-                    ty: Scalar::Int,
+                    ty: Repr::Int,
                 })
             }
             Prim::ToFloat => {
                 arity(1, &vals)?;
-                if vals[0].ty != Scalar::Int {
+                if vals[0].ty != Repr::Int {
                     return Err("`float` of something that is not an Int".into());
                 }
                 // No normalisation: an integer converts to neither a negative zero nor a NaN.
                 Ok(Val {
                     v: b.ins().fcvt_from_sint(types::F64, vals[0].v),
-                    ty: Scalar::Float,
+                    ty: Repr::Float,
                 })
             }
             Prim::Eq | Prim::Ne | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge => {
                 arity(2, &vals)?;
                 same(&vals)?;
-                Ok(self.compare(op, &vals[0], &vals[1], b))
+                self.compare(op, &vals[0], &vals[1], b, m)
             }
             Prim::And | Prim::Or | Prim::Not => {
                 let want = if op == Prim::Not { 1 } else { 2 };
                 arity(want, &vals)?;
-                if vals.iter().any(|v| v.ty != Scalar::Bool) {
+                if vals.iter().any(|v| v.ty != Repr::Bool) {
                     return Err(format!("`{}` on something that is not a Bool", op.name()));
                 }
                 // `bxor 1` and not a complement: a Bool here is an `I8` holding 0 or 1, and
@@ -1088,10 +1856,7 @@ impl<'a> Body<'a> {
                     Prim::And => b.ins().band(vals[0].v, vals[1].v),
                     _ => b.ins().bor(vals[0].v, vals[1].v),
                 };
-                Ok(Val {
-                    v,
-                    ty: Scalar::Bool,
-                })
+                Ok(Val { v, ty: Repr::Bool })
             }
             other => Err(format!(
                 "`{}` is not one of the scalar primitives",
@@ -1142,7 +1907,7 @@ impl<'a> Body<'a> {
         };
         let zero = b.ins().iconst(types::I64, 0);
         self.trap(trap, span, zero, of, b);
-        Val { v, ty: Scalar::Int }
+        Val { v, ty: Repr::Int }
     }
 
     /// `sdiv`/`srem`, guarded exactly where `i64::checked_div`/`checked_rem` answer `None`.
@@ -1176,7 +1941,7 @@ impl<'a> Body<'a> {
         } else {
             b.ins().srem(a.v, c.v)
         };
-        Val { v, ty: Scalar::Int }
+        Val { v, ty: Repr::Int }
     }
 
     /// `-0.0` becomes `0.0` and every NaN becomes one NaN, because [`beck_core::Value::float`]
@@ -1213,16 +1978,37 @@ impl<'a> Body<'a> {
         b.ins().bxor(bits, mask)
     }
 
-    fn compare(&mut self, op: Prim, a: &Val, c: &Val, b: &mut FunctionBuilder<'_>) -> Val {
+    fn compare(
+        &mut self,
+        op: Prim,
+        a: &Val,
+        c: &Val,
+        b: &mut FunctionBuilder<'_>,
+        m: &mut ObjectModule,
+    ) -> Result<Val, String> {
         // Reals compare through the order key and Bools compare unsigned, so `false < true`. Both
         // are the ordering `Value`'s derived `Ord` gives, which is the one the evaluator uses.
+        // An object compares through the function `compare_function` defines for its layout, which
+        // answers -1, 0 or 1 — so the six operators are one call and one integer test.
         let (lhs, rhs, signed) = match a.ty {
             // **Unsigned**, which is the whole point of the key: the transform maps every real
             // onto the unsigned order, so a signed comparison here answers `-1.0 < 0.0` with
             // `false`. That was this backend's first bug, and the differential is what said so.
-            Scalar::Float => (self.order_key(a, b), self.order_key(c, b), false),
-            Scalar::Int => (a.v, c.v, true),
-            Scalar::Bool => (a.v, c.v, false),
+            Repr::Float => (self.order_key(a, b), self.order_key(c, b), false),
+            Repr::Int => (a.v, c.v, true),
+            Repr::Bool => (a.v, c.v, false),
+            Repr::Obj(at) => {
+                self.compared.insert(at);
+                let sig = compare_signature(m);
+                let id = m
+                    .declare_function(&format!("beck.cmp.{at}"), Linkage::Local, &sig)
+                    .map_err(|e| format!("declaring a comparison: {e}"))?;
+                let f = m.declare_func_in_func(id, b.func);
+                let call = b.ins().call(f, &[a.v, c.v]);
+                let r = b.inst_results(call)[0];
+                let zero = b.ins().iconst(types::I64, 0);
+                (r, zero, true)
+            }
         };
         let cc = match op {
             Prim::Eq => IntCC::Equal,
@@ -1236,24 +2022,26 @@ impl<'a> Body<'a> {
             Prim::Gt => IntCC::UnsignedGreaterThan,
             _ => IntCC::UnsignedGreaterThanOrEqual,
         };
-        Val {
+        Ok(Val {
             v: b.ins().icmp(cc, lhs, rhs),
-            ty: Scalar::Bool,
-        }
+            ty: Repr::Bool,
+        })
     }
 
     /// The value as an `I64`, which is how it crosses the worker's protocol and how a trap carries
     /// the scrutinee that matched nothing.
     fn widen(&mut self, v: &Val, b: &mut FunctionBuilder<'_>) -> IrValue {
         match v.ty {
-            Scalar::Int => v.v,
+            Repr::Int => v.v,
             // Normalised, because the one thing that reads this is a message: a scrutinee printed
             // as `-0` where the evaluator prints `0` is a divergence in the differential.
-            Scalar::Float => {
+            Repr::Float => {
                 let n = self.normalise(v.v, b);
                 b.ins().bitcast(types::I64, MemFlagsData::new(), n)
             }
-            Scalar::Bool => b.ins().uextend(types::I64, v.v),
+            Repr::Bool => b.ins().uextend(types::I64, v.v),
+            // Its offset, which is what an object *is* here.
+            Repr::Obj(_) => v.v,
         }
     }
 }
@@ -1262,15 +2050,15 @@ fn constant(k: &Const, b: &mut FunctionBuilder<'_>) -> Result<Val, String> {
     match k {
         Const::Int(i) => Ok(Val {
             v: b.ins().iconst(types::I64, *i),
-            ty: Scalar::Int,
+            ty: Repr::Int,
         }),
         Const::Bool(x) => Ok(Val {
             v: b.ins().iconst(types::I8, i64::from(*x)),
-            ty: Scalar::Bool,
+            ty: Repr::Bool,
         }),
         Const::Float(f) => Ok(Val {
             v: b.ins().f64const(*f),
-            ty: Scalar::Float,
+            ty: Repr::Float,
         }),
         Const::Str(_) => Err("a string constant, and there is no heap here".into()),
         Const::Unit => Err("the unit value, which has no machine representation here".into()),
@@ -1293,6 +2081,7 @@ fn driver(
     functions: &[Signature],
     ids: &BTreeMap<Arc<str>, FuncId>,
     order: &[Arc<str>],
+    arena: Option<Arena>,
 ) -> Result<(), String> {
     let ptr = m.target_config().pointer_type();
     let conv = CallConv::triple_default(m.isa().triple());
@@ -1407,10 +2196,17 @@ fn driver(
             b.seal_block(entry);
             let err = b.block_params(entry)[0];
             let args = b.block_params(entry)[1];
+            // Only the thunk knows what the function returns, so this is where the worker learns
+            // whether this call's answer is on the heap.
+            if let Some(arena) = arena {
+                let at = arena.addr(arena.reply, &mut b, m);
+                let on = b.ins().iconst(types::I64, i64::from(sig.ret.is_obj()));
+                b.ins().store(flags, on, at, 0);
+            }
             let mut operands = vec![err];
             for (k, p) in sig.params.iter().enumerate() {
                 let raw = b.ins().load(types::I64, flags, args, (k * 8) as i32);
-                operands.push(match p {
+                operands.push(match p.machine() {
                     Scalar::Int => raw,
                     Scalar::Float => b.ins().bitcast(types::F64, MemFlagsData::new(), raw),
                     // Any non-zero is `true`, which is what the host writes and what a Bool in a
@@ -1423,7 +2219,7 @@ fn driver(
             let f = m.declare_func_in_func(ids[name], b.func);
             let call = b.ins().call(f, &operands);
             let out = b.inst_results(call)[0];
-            let bits = match sig.ret {
+            let bits = match sig.ret.machine() {
                 Scalar::Int => out,
                 Scalar::Float => b.ins().bitcast(types::I64, MemFlagsData::new(), out),
                 Scalar::Bool => b.ins().uextend(types::I64, out),
@@ -1489,6 +2285,20 @@ fn driver(
     let main = m
         .declare_function("main", Linkage::Export, &main_sig)
         .map_err(|e| format!("declaring `main`: {e}"))?;
+
+    // `malloc`, and only when there is an arena to reserve.
+    let malloc = if arena.is_some() {
+        let mut sig = cranelift_codegen::ir::Signature::new(conv);
+        sig.params.push(AbiParam::new(types::I64));
+        sig.returns.push(AbiParam::new(ptr));
+        Some(
+            m.declare_function("malloc", Linkage::Import, &sig)
+                .map_err(|e| format!("declaring `malloc`: {e}"))?,
+        )
+    } else {
+        None
+    };
+
     ctx.func = Function::with_name_signature(UserFuncName::user(4, 0), main_sig);
     {
         let mut b = FunctionBuilder::new(&mut ctx.func, fctx);
@@ -1497,14 +2307,32 @@ fn driver(
         let slot = |b: &mut FunctionBuilder<'_>, bytes: u32| {
             b.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, bytes, 3))
         };
-        let req = slot(&mut b, 8);
+        let req = slot(&mut b, 16);
         let argbuf = slot(&mut b, (MAX_PARAMS * 8) as u32);
         let cell = slot(&mut b, 24);
-        let resp = slot(&mut b, 24);
+        let resp = slot(&mut b, 32);
         let req = b.ins().stack_addr(ptr, req, 0);
         let argbuf = b.ins().stack_addr(ptr, argbuf, 0);
         let cell = b.ins().stack_addr(ptr, cell, 0);
         let resp = b.ins().stack_addr(ptr, resp, 0);
+
+        if let (Some(arena), Some(malloc)) = (arena, malloc) {
+            let f = m.declare_func_in_func(malloc, b.func);
+            let want = b.ins().iconst(types::I64, heap::ARENA_BYTES as i64);
+            let call = b.ins().call(f, &[want]);
+            let got = b.inst_results(call)[0];
+            let at = arena.addr(arena.heap, &mut b, m);
+            b.ins().store(flags, got, at, 0);
+            // A `malloc` that failed leaves the limit at zero, so the first allocation traps with
+            // a message instead of the first *store* faulting with a signal.
+            let null = b.ins().iconst(ptr, 0);
+            let failed = b.ins().icmp(IntCC::Equal, got, null);
+            let none = b.ins().iconst(types::I64, 0);
+            let all = b.ins().iconst(types::I64, heap::ARENA_BYTES as i64);
+            let cap = b.ins().select(failed, none, all);
+            let at = arena.addr(arena.limit, &mut b, m);
+            b.ins().store(flags, cap, at, 0);
+        }
 
         let loop_ = b.create_block();
         let done = b.create_block();
@@ -1513,10 +2341,10 @@ fn driver(
 
         b.switch_to_block(loop_);
         let rd = m.declare_func_in_func(read_exact, b.func);
-        let eight = b.ins().iconst(types::I64, 8);
-        let call = b.ins().call(rd, &[req, eight]);
+        let sixteen = b.ins().iconst(types::I64, 16);
+        let call = b.ins().call(rd, &[req, sixteen]);
         let head = b.inst_results(call)[0];
-        let closed = b.ins().icmp_imm_s(IntCC::NotEqual, head, 8);
+        let closed = b.ins().icmp_imm_s(IntCC::NotEqual, head, 16);
         let sized = b.create_block();
         b.ins().brif(closed, done, &[], sized, &[]);
 
@@ -1525,15 +2353,52 @@ fn driver(
         let idx = b.ins().load(types::I32, flags, req, 0);
         let count = b.ins().load(types::I32, flags, req, 4);
         let count = b.ins().uextend(types::I64, count);
+        let blob = b.ins().load(types::I64, flags, req, 8);
         let bytes = b.ins().imul_imm_s(count, 8);
         let call = b.ins().call(rd, &[argbuf, bytes]);
         let got = b.inst_results(call)[0];
         let short = b.ins().icmp(IntCC::NotEqual, got, bytes);
         let run = b.create_block();
-        b.ins().brif(short, done, &[], run, &[]);
 
-        b.switch_to_block(run);
-        b.seal_block(run);
+        if let Some(arena) = arena {
+            let accept = b.create_block();
+            b.ins().brif(short, done, &[], accept, &[]);
+            b.switch_to_block(accept);
+            b.seal_block(accept);
+            // A blob bigger than the arena is a host that disagrees with this module about the
+            // protocol, which is a bug rather than an input: it closes rather than writing past
+            // the end.
+            let at = arena.addr(arena.limit, &mut b, m);
+            let limit = b.ins().load(types::I64, flags, at, 0);
+            let huge = b.ins().icmp(IntCC::UnsignedGreaterThan, blob, limit);
+            let copy = b.create_block();
+            b.ins().brif(huge, done, &[], copy, &[]);
+
+            b.switch_to_block(copy);
+            b.seal_block(copy);
+            let base = arena.base(&mut b, m);
+            let call = b.ins().call(rd, &[base, blob]);
+            let read = b.inst_results(call)[0];
+            let truncated = b.ins().icmp(IntCC::NotEqual, read, blob);
+            b.ins().brif(truncated, done, &[], run, &[]);
+
+            b.switch_to_block(run);
+            b.seal_block(run);
+            // The arena is reset to just past whatever the arguments brought with them.
+            let first = b.ins().iconst(types::I64, heap::FIRST as i64);
+            let small = b.ins().icmp(IntCC::UnsignedLessThan, blob, first);
+            let start = b.ins().select(small, first, blob);
+            let at = arena.addr(arena.next, &mut b, m);
+            b.ins().store(flags, start, at, 0);
+            let at = arena.addr(arena.reply, &mut b, m);
+            let no = b.ins().iconst(types::I64, 0);
+            b.ins().store(flags, no, at, 0);
+        } else {
+            b.ins().brif(short, done, &[], run, &[]);
+            b.switch_to_block(run);
+            b.seal_block(run);
+        }
+
         // The cell is cleared before every call: a trap code left over from the last one would be
         // this one's answer.
         let z64 = b.ins().iconst(types::I64, 0);
@@ -1547,13 +2412,43 @@ fn driver(
         b.ins().store(flags, code, resp, 0);
         b.ins().store(flags, payload, resp, 8);
         b.ins().store(flags, result, resp, 16);
+
+        let send = match arena {
+            None => b.ins().iconst(types::I64, 0),
+            Some(arena) => {
+                let ok = b.ins().icmp_imm_s(IntCC::Equal, code, 0);
+                let at = arena.addr(arena.reply, &mut b, m);
+                let wants = b.ins().load(types::I64, flags, at, 0);
+                let on_heap = b.ins().icmp_imm_s(IntCC::NotEqual, wants, 0);
+                let both = b.ins().band(ok, on_heap);
+                let at = arena.addr(arena.next, &mut b, m);
+                let used = b.ins().load(types::I64, flags, at, 0);
+                let none = b.ins().iconst(types::I64, 0);
+                b.ins().select(both, used, none)
+            }
+        };
+        b.ins().store(flags, send, resp, 24);
+
         let wr = m.declare_func_in_func(write_all, b.func);
-        let twenty4 = b.ins().iconst(types::I64, 24);
-        let call = b.ins().call(wr, &[resp, twenty4]);
+        let thirty2 = b.ins().iconst(types::I64, 32);
+        let call = b.ins().call(wr, &[resp, thirty2]);
         let wrote = b.inst_results(call)[0];
-        let gone = b.ins().icmp_imm_s(IntCC::NotEqual, wrote, 24);
+        let gone = b.ins().icmp_imm_s(IntCC::NotEqual, wrote, 32);
         let round = b.create_block();
-        b.ins().brif(gone, done, &[], round, &[]);
+
+        if let Some(arena) = arena {
+            let carry = b.create_block();
+            b.ins().brif(gone, done, &[], carry, &[]);
+            b.switch_to_block(carry);
+            b.seal_block(carry);
+            let base = arena.base(&mut b, m);
+            let call = b.ins().call(wr, &[base, send]);
+            let pushed = b.inst_results(call)[0];
+            let stalled = b.ins().icmp(IntCC::NotEqual, pushed, send);
+            b.ins().brif(stalled, done, &[], round, &[]);
+        } else {
+            b.ins().brif(gone, done, &[], round, &[]);
+        }
 
         b.switch_to_block(round);
         b.seal_block(round);

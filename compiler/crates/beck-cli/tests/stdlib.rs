@@ -70,7 +70,7 @@ fn every_library_passes_its_own_tests() {
 /// And each one is a **library** — no merge point, nothing to run.
 ///
 /// Worth asserting separately, because "a library runs its own tests" and "a library is an
-/// application" are different claims and [`27`](../../../../docs/27-walls-report.md) removed the
+/// application" are different claims and [`27`](../../../../docs/27-the-walls-come-down-report.md) removed the
 /// wall between the first and the second without merging them.
 #[test]
 fn each_one_is_a_library_and_beck_check_says_so() {
@@ -381,7 +381,7 @@ fn a_time_with_an_offset_is_refused_rather_than_shifted() {
 
 /// An impl may be **more effectful than its trait**, and the caller inherits it.
 ///
-/// This is what `lib/money.beck` needed and could not have until `docs/47`: a trait's declared row
+/// This is what `lib/money.beck` needed and could not have until `docs/27`: a trait's declared row
 /// was a ceiling, `Num` is pure, and adding two amounts in different currencies has to fail — so an
 /// operator was unavailable to every type whose operation can fail. The row is now inferred per
 /// impl.

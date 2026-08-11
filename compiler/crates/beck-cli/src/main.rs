@@ -166,7 +166,7 @@ enum Cmd {
         ///
         /// The default is a runaway-program backstop and is right for everything written by hand.
         /// A *benchmark* is the exception — three of the fourteen in `awfy/` need more at the size
-        /// their suite measures at (`docs/61` §61.3), and a backstop nothing can raise is a ceiling.
+        /// their suite measures at (`docs/53` §53.3), and a backstop nothing can raise is a ceiling.
         #[arg(long, default_value_t = beck_eval::DEFAULT_FUEL)]
         fuel: u64,
         /// Write what `expect page matches snapshot` renders, instead of comparing against it.
@@ -272,6 +272,21 @@ enum Cmd {
         call: Option<String>,
         #[arg(long = "arg")]
         args: Vec<String>,
+    },
+    /// Write a Mode B component's bundle — the slice a browser downloads (§5.1, `docs/94` §94.4).
+    ///
+    /// This is not how a deployment gets one. `beck run` derives the bundle from the program it is
+    /// executing, so a served slice cannot be of a different program than the running one, and
+    /// `beck build` deliberately writes no bundle for the same reason. This is how a *measurement*
+    /// gets one: §5.1 budgets "< 150 KB brotli for a typical Mode-B component bundle", and a budget
+    /// nothing can weigh is not a budget.
+    ///
+    /// A Mode A component has no bundle, and asking for one is an error rather than an empty file.
+    Bundle {
+        file: PathBuf,
+        /// Where to write it.
+        #[arg(long, short)]
+        out: PathBuf,
     },
     /// The bill of materials for what `beck build` emits, as CycloneDX 1.6 JSON.
     ///
@@ -581,7 +596,7 @@ fn main() -> Result<()> {
     // Every command below may end up evaluating Beck code, and the evaluator spends host stack on
     // recursion that is not in tail position. It says how much it needs; this is where a `beck`
     // process supplies it, so that a deep program gets `beck-eval`'s diagnostic rather than the
-    // process getting a SIGSEGV (`docs/31` §31.3).
+    // process getting a SIGSEGV (`docs/27` §27.2).
     beck_eval::on_the_evaluator_stack(move || dispatch(cli))
 }
 
@@ -730,6 +745,29 @@ fn dispatch(cli: Cli) -> Result<()> {
             call,
             args,
         } => native(&file, &backend, out.as_deref(), call.as_deref(), &args),
+        Cmd::Bundle { file, out } => {
+            let placed = compiled(&file)?;
+            if placed.render.mode != beck_core::render::Mode::Client {
+                anyhow::bail!(
+                    "`{}` renders on the server, so there is no bundle: Mode A sends the browser a \
+                     rendering of the state and ships it no application code at all. \
+                     `beck explain render {}` prints what would move it.",
+                    placed.render.component,
+                    file.display()
+                );
+            }
+            let bundle = beck_core::Bundle::of(&placed);
+            let bytes = bundle.to_bytes();
+            std::fs::write(&out, &bytes).with_context(|| format!("writing {}", out.display()))?;
+            println!(
+                "{}: {} bytes, {} definitions, component `{}`",
+                out.display(),
+                bytes.len(),
+                bundle.defs.len(),
+                bundle.component
+            );
+            Ok(())
+        }
         Cmd::Sbom { file, out } => {
             let placed = compiled(&file)?;
             let source = read(&file)?;
@@ -1267,17 +1305,23 @@ fn native(
     let mut values = Vec::with_capacity(args.len());
     for (text, want) in args.iter().zip(&sig.params) {
         values.push(match want {
-            beck_llvm::Scalar::Int => beck_core::Value::Int(
+            beck_llvm::Repr::Int => beck_core::Value::Int(
                 text.parse()
                     .with_context(|| format!("`{text}` is not an Int"))?,
             ),
-            beck_llvm::Scalar::Float => beck_core::Value::float(
+            beck_llvm::Repr::Float => beck_core::Value::float(
                 text.parse()
                     .with_context(|| format!("`{text}` is not a Float"))?,
             ),
-            beck_llvm::Scalar::Bool => beck_core::Value::Bool(
+            beck_llvm::Repr::Bool => beck_core::Value::Bool(
                 text.parse()
                     .with_context(|| format!("`{text}` is not a Bool"))?,
+            ),
+            // A record has no notation on a command line — `Point(x=1, y=2)` would be a parser for
+            // the language's own literals, written a second time and in a worse place. The
+            // definition still compiled, and `--out` writes the artefact that can be called.
+            beck_llvm::Repr::Obj(_) => bail!(
+                "`{name}` takes a record or a union, and `--call` can only pass Int, Float and Bool"
             ),
         });
     }
@@ -1827,7 +1871,7 @@ fn test_cmd(
     update: bool,
 ) -> Result<()> {
     // Not `compiled`: a module with no merge point is a **library**, and a library's tests are the
-    // ones a developer most wants to run (docs/22 §22.6, docs/25 §25.6 item 1, docs/27 §27.4).
+    // ones a developer most wants to run (docs/22 §22.6, docs/25 §25.6 item 1, docs/27 §27.2).
     // `slice_or_library` gives one back instead of refusing it; every other diagnostic still does.
     let (project, map, mut diags) = checked_project(file)?;
     let placed = project.and_then(|p| beck_core::project::slice_or_library(p, &mut diags));

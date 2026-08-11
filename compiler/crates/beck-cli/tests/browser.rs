@@ -392,6 +392,98 @@ async fn mode_b_renders_in_the_browser_and_guesses_ahead_of_the_server() {
 }
 }
 
+/// §3.7's freshness dimension, in a real DOM: the page says "saving" the instant it guesses, and
+/// says "saved" when the server's state catches up.
+///
+/// The first half is read **synchronously**, in the same evaluation that dispatches the key: a Mode
+/// B interaction is a local fold and a local render, so the guess and the word for it are both on
+/// the page before the function that sent the command returns. Polling for it afterwards would be a
+/// race with the server's own answer, and would pass just as well against a page that never said it
+/// at all.
+///
+/// Goes red if `freshness()` stops reaching the browser's view, if the count stops following the
+/// queue, or if the confirmation stops repainting a page whose state did not move.
+#[tokio::test]
+async fn mode_b_says_it_is_saving_before_the_server_has_heard_of_it() {
+    let Some(mut browser) = browser::shared().await else {
+        return;
+    };
+    if !point_at_the_kernel() {
+        eprintln!(
+            "skipped: no kernel to serve. Build it with \
+             `cargo build -p beck-wasm --release --target wasm32-unknown-unknown`."
+        );
+        assert!(
+            std::env::var("BECK_REQUIRE_WASM").as_deref() != Ok("1"),
+            "BECK_REQUIRE_WASM=1 but there is no kernel to serve"
+        );
+        return;
+    }
+
+    let serving = Serving::start(example("editor.beck")).await;
+    let page = browser.open(&serving.url()).await;
+    page.wait_for(
+        &mut browser,
+        "document.getElementById('b-root').dataset.bReady === 'b'",
+    )
+    .await;
+    // Server-rendered, and a server holds the log: the first paint is confirmed by construction.
+    assert!(
+        page.eval(
+            &mut browser,
+            "document.querySelector('.status').textContent === 'saved'",
+        )
+        .await
+        .as_bool()
+            == Some(true),
+        "the first paint did not say it was saved"
+    );
+
+    let guessing = page
+        .eval(
+            &mut browser,
+            "(() => { const i = document.querySelector('input[data-b-enter]'); \
+              i.value = 'written in the browser'; \
+              i.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true})); \
+              return document.getElementById('b-root').innerHTML; })()",
+        )
+        .await;
+    let guessing = guessing.as_str().expect("the page");
+    assert!(
+        guessing.contains("written in the browser"),
+        "the guess never reached the page: {guessing}"
+    );
+    assert!(
+        guessing.contains("saving 1"),
+        "the page did not say it was guessing: {guessing}"
+    );
+
+    // And it stops saying so — which is the case the render shortcut had to learn, because the
+    // document does not move when a right guess is confirmed and the freshness does.
+    page.wait_for(
+        &mut browser,
+        "document.querySelector('.status').textContent === 'saved'",
+    )
+    .await;
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        let (there, here) = (
+            dom(&page, &mut browser).await,
+            serving.rendered("ana").await,
+        );
+        if there == here {
+            break;
+        }
+        assert!(
+            deadline > std::time::Instant::now(),
+            "the browser rendered a different page than the server would have\n\
+             browser: {there}\n server: {here}"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+}
+
 // A Mode B client refuses what the program would refuse, locally and without a round trip. That is
 // gated in `mode_b.rs` rather than here, and the reason is a property of the example rather than a
 // gap: no interaction `board.beck`'s page offers *can* be refused — the ids are freshly minted, the
@@ -752,6 +844,16 @@ struct Playing {
 
 impl Playing {
     async fn start() -> Option<Playing> {
+        // Both modules, because a `@render(client)` program in the tab runs in Mode B's kernel and
+        // the playground serves it on the same reserved name a deployment does (docs/103).
+        if !point_at_the_kernel() {
+            eprintln!("skipped: no Mode B kernel to serve beside the playground.");
+            assert!(
+                std::env::var("BECK_REQUIRE_WASM").as_deref() != Ok("1"),
+                "BECK_REQUIRE_WASM=1 but there is no kernel to serve"
+            );
+            return None;
+        }
         if !point_at_the_playground() {
             eprintln!(
                 "skipped: no playground module to serve. Build it with \
@@ -973,6 +1075,364 @@ async fn the_playground_runs_the_application_and_two_clients_of_it() {
         .await,
         "2"
     );
+}
+}
+
+browser_test! {
+/// The editor, in a browser: colours, a squiggle, and a completion accepted with the keyboard.
+///
+/// `docs/98` §98.7's last-but-one refusal was "a `<textarea>`, with no highlighting, no completion
+/// and no inline diagnostics". Nothing about that was made true in JavaScript: the spans below are
+/// painted from `beck_core::editor::tokens` and the squiggle from the diagnostics `beck check`
+/// reports, and `playground.rs` is what says those are the language server's answers. What this
+/// asserts is the half a browser is needed for — that a person typing gets them.
+async fn the_playground_highlights_and_completes_in_the_browser() {
+    let Some(mut browser) = browser::shared().await else {
+        return;
+    };
+    let Some(playing) = Playing::start().await else {
+        return;
+    };
+    let page = browser.open(&playing.url()).await;
+    page.wait_for(&mut browser, "document.body.dataset.ready === '1'")
+        .await;
+
+    // Colour. `def` is a keyword and the name after it is not, in the layer under the text.
+    page.wait_for(
+        &mut browser,
+        "document.querySelectorAll('#highlight .k-keyword').length > 0",
+    )
+    .await;
+    assert_eq!(
+        page.text(
+            &mut browser,
+            "[...document.querySelectorAll('#highlight .k-keyword')] \
+             .map(s => s.textContent).find(t => t === 'def') || ''"
+        )
+        .await,
+        "def",
+    );
+    assert!(
+        page.eval(
+            &mut browser,
+            "document.querySelectorAll('#highlight .k-comment').length > 0"
+        )
+        .await
+        .as_bool()
+        .unwrap_or(false),
+        "the example has comments and none of them was coloured as one",
+    );
+
+    // A squiggle, under the span the compiler pointed at, and the compiler's own words under the
+    // editor. Typed into the end of the file so the rest of it still compiles.
+    page.eval(
+        &mut browser,
+        "(() => { const s = document.getElementById('source'); \
+          s.value += '\\ndef half() -> Int:\\n    return nope\\n'; \
+          s.dispatchEvent(new Event('input')); })()",
+    )
+    .await;
+    page.wait_for(
+        &mut browser,
+        "document.querySelectorAll('#highlight .m-error').length > 0",
+    )
+    .await;
+    let underlined = page
+        .text(
+            &mut browser,
+            "document.querySelector('#highlight .m-error').textContent",
+        )
+        .await;
+    assert!(underlined.contains("nope"), "the squiggle is under `{underlined}`");
+    let said = page.text(&mut browser, "document.getElementById('under').textContent").await;
+    assert!(said.contains("B0") && said.contains("nope"), "the page said `{said}`");
+
+    // Completion: put the caret after `no` and ask. What comes back is a name from this program,
+    // offered while the program does not compile — which is the state a file being typed in is in.
+    page.eval(
+        &mut browser,
+        "(() => { const s = document.getElementById('source'); \
+          const at = s.value.lastIndexOf('nope') + 2; \
+          s.focus(); s.setSelectionRange(at, at); \
+          s.dispatchEvent(new KeyboardEvent('keydown', {key: ' ', ctrlKey: true, bubbles: true})); })()",
+    )
+    .await;
+    page.wait_for(
+        &mut browser,
+        "document.getElementById('complete').hidden === false \
+         && document.querySelectorAll('#complete li').length > 0",
+    )
+    .await;
+
+    // Accepting it replaces the word being typed, and the editor is a `<textarea>` afterwards —
+    // the value is what changed, not a rendering of it.
+    let offered = page
+        .text(&mut browser, "document.querySelector('#complete li').dataset.label")
+        .await;
+    page.eval(
+        &mut browser,
+        "document.getElementById('source').dispatchEvent( \
+           new KeyboardEvent('keydown', {key: 'Enter', bubbles: true}))",
+    )
+    .await;
+    page.wait_for(&mut browser, "document.getElementById('complete').hidden === true")
+        .await;
+    let text = page.text(&mut browser, "document.getElementById('source').value").await;
+    assert!(
+        text.contains(&format!("return {offered}")),
+        "accepting `{offered}` left `{}`",
+        text.lines().last().unwrap_or_default()
+    );
+}
+}
+
+browser_test! {
+/// The log survives a reload, because the tab kept it.
+///
+/// §17.2's log-storage row says IndexedDB and `docs/98` §98.7 said the tab's log was an array, so a
+/// reload started from `init`. What is asserted here is the whole of the difference: two clicks, a
+/// reload, and the application comes back **at 2** — folded from records the page stored and the
+/// tab read back, not from a number it remembered.
+async fn the_playground_keeps_its_log_across_a_reload() {
+    let Some(mut browser) = browser::shared().await else {
+        return;
+    };
+    let Some(playing) = Playing::start().await else {
+        return;
+    };
+    let mut page = browser.open(&playing.url()).await;
+
+    for round in 0..2 {
+        page.wait_for(&mut browser, "document.body.dataset.ready === '1'")
+            .await;
+        page.wait_for(&mut browser, "document.getElementById('run').disabled === false")
+            .await;
+        page.eval(&mut browser, "document.getElementById('run').click()")
+            .await;
+        page.wait_for(
+            &mut browser,
+            "document.getElementById('client-ana').contentDocument \
+             ?.getElementById('b-root')?.dataset.bReady === 'a'",
+        )
+        .await;
+
+        if round == 0 {
+            for _ in 0..2 {
+                page.eval(
+                    &mut browser,
+                    "document.getElementById('client-ana').contentDocument \
+                     .querySelector('button.up').click()",
+                )
+                .await;
+            }
+            page.wait_for(
+                &mut browser,
+                "document.getElementById('client-ana').contentDocument \
+                 .querySelector('.count').textContent === '2'",
+            )
+            .await;
+            // The page says what it kept, and it is what a store was asked for rather than what a
+            // counter in this file believes.
+            page.wait_for(
+                &mut browser,
+                "document.getElementById('kept').textContent.startsWith('2 events')",
+            )
+            .await;
+            // A marker only *this* document has, so the waits below cannot be satisfied by it: an
+            // evaluation can still land in the pre-navigation context for a moment, and a test that
+            // read `dataset.ready` from the old page would go on to click a button in a document
+            // that is being torn down.
+            page.eval(&mut browser, "window.__before_reload = true").await;
+            page.navigate(&mut browser, &playing.url()).await;
+            page.wait_for(&mut browser, "window.__before_reload === undefined")
+                .await;
+        }
+    }
+
+    // After the reload: the same two events, folded from the records the browser kept.
+    page.wait_for(
+        &mut browser,
+        "document.getElementById('client-ana').contentDocument \
+         .querySelector('.count').textContent === '2'",
+    )
+    .await;
+    page.wait_for(
+        &mut browser,
+        "document.querySelectorAll('#log tbody tr').length === 2",
+    )
+    .await;
+    // And a client that renders late is *at* 2 rather than told about two events: the position the
+    // document was rendered at is the position the subscription resumes from.
+    assert_eq!(
+        page.text(&mut browser, "document.getElementById('at-head').textContent")
+            .await,
+        "2"
+    );
+
+    // Forgetting it is a button, because a log that cannot be cleared is a playground that cannot
+    // be started over.
+    page.eval(&mut browser, "document.getElementById('forget').click()")
+        .await;
+    page.wait_for(
+        &mut browser,
+        "document.getElementById('kept').textContent.startsWith('forgotten')",
+    )
+    .await;
+    page.eval(&mut browser, "window.__before_reload = true").await;
+    page.navigate(&mut browser, &playing.url()).await;
+    page.wait_for(&mut browser, "window.__before_reload === undefined")
+        .await;
+    page.wait_for(&mut browser, "document.body.dataset.ready === '1'")
+        .await;
+    // `#run` is enabled by the *debounced* analysis, not by the page being ready — so waiting for
+    // `ready` and clicking is a race this suite loses under load, and a click on a disabled button
+    // is silently nothing.
+    page.wait_for(&mut browser, "document.getElementById('run').disabled === false")
+        .await;
+    page.eval(&mut browser, "document.getElementById('run').click()")
+        .await;
+    page.wait_for(
+        &mut browser,
+        "document.getElementById('client-ana').contentDocument \
+         ?.querySelector('.count')?.textContent === '0'",
+    )
+    .await;
+}
+}
+
+browser_test! {
+/// A share link opens the program it names.
+///
+/// §17.4's content addressing, in a browser: the fragment carries the program and the digest names
+/// it, so following one is opening *that* program rather than whatever a server decided to serve.
+/// The edit is what makes this a test rather than a tautology — a link that reloaded the default
+/// example would pass every assertion but the one about the marker.
+async fn a_share_link_opens_the_program_it_carries() {
+    let Some(mut browser) = browser::shared().await else {
+        return;
+    };
+    let Some(playing) = Playing::start().await else {
+        return;
+    };
+    let page = browser.open(&playing.url()).await;
+    page.wait_for(&mut browser, "document.body.dataset.ready === '1'")
+        .await;
+
+    page.eval(
+        &mut browser,
+        "(() => { const s = document.getElementById('source'); \
+          s.value = '# a marker nobody else would write\\n' + s.value; \
+          s.dispatchEvent(new Event('input')); })()",
+    )
+    .await;
+    page.wait_for(
+        &mut browser,
+        "document.getElementById('status').textContent === 'compiles'",
+    )
+    .await;
+    page.eval(&mut browser, "document.getElementById('share').click()")
+        .await;
+    page.wait_for(&mut browser, "location.hash.startsWith('#p=')").await;
+    let link = page.text(&mut browser, "location.href").await;
+    assert!(link.contains("#p="), "no link in the address bar: {link}");
+
+    // Opened cold: a fresh document, at that URL, with nothing but the fragment to go on.
+    let opened = browser.open(&link).await;
+    opened
+        .wait_for(&mut browser, "document.body.dataset.ready === '1'")
+        .await;
+    let source = opened
+        .text(&mut browser, "document.getElementById('source').value")
+        .await;
+    assert!(
+        source.starts_with("# a marker nobody else would write"),
+        "the link opened something else:\n{}",
+        source.lines().take(2).collect::<Vec<_>>().join("\n")
+    );
+    opened
+        .wait_for(
+            &mut browser,
+            "document.getElementById('status').textContent === 'compiles'",
+        )
+        .await;
+    // And the fragment is not a request: nothing about it reached the server, which is the reason
+    // it is a fragment rather than a query.
+    assert!(!link.contains("?p="), "the program travelled as a query: {link}");
+}
+}
+
+browser_test! {
+/// A `@render(client)` program runs in the tab — in Mode B's kernel, in the client iframe.
+///
+/// `docs/98` §98.7 called this "a second module in a second frame and is a piece of work rather
+/// than a flag", and that is what it was: the kernel beside the compiler, the bundle over the port,
+/// and a subscription that carries the state instead of the page. What says it worked is
+/// `data-b-ready === 'b'` — set by `beck-mode-b.js` once the kernel holds the bundle — and then a
+/// card added in one frame appearing in the other, which can only have happened through the log.
+async fn the_playground_runs_a_mode_b_program_in_the_tab() {
+    let Some(mut browser) = browser::shared().await else {
+        return;
+    };
+    let Some(playing) = Playing::start().await else {
+        return;
+    };
+    let page = browser.open(&playing.url()).await;
+    page.wait_for(&mut browser, "document.body.dataset.ready === '1'")
+        .await;
+
+    // `board.beck` is the example with `@render(client)` on its page.
+    page.eval(
+        &mut browser,
+        "(() => { const e = document.getElementById('example'); e.value = 'board'; \
+          e.dispatchEvent(new Event('change')); })()",
+    )
+    .await;
+    page.wait_for(&mut browser, "document.getElementById('run').disabled === false")
+        .await;
+    page.eval(&mut browser, "document.getElementById('run').click()")
+        .await;
+
+    // Both clients are live *in Mode B*: the letter is the mode's, so a tab that had quietly served
+    // Mode A would fail here rather than look fine.
+    for frame in ["client-ana", "client-bo"] {
+        page.wait_for(
+            &mut browser,
+            &format!(
+                "document.getElementById('{frame}').contentDocument \
+                 ?.getElementById('b-root')?.dataset.bReady === 'b'"
+            ),
+        )
+        .await;
+    }
+
+    // ana adds a card. The command goes up her port, through the one merge point, into the log —
+    // and what reaches bo is a *data* frame his kernel renders for itself.
+    page.eval(
+        &mut browser,
+        "(() => { const d = document.getElementById('client-ana').contentDocument; \
+          const input = d.querySelector('[data-b-enter]'); \
+          input.value = 'a card from ana'; \
+          input.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true})); })()",
+    )
+    .await;
+    for frame in ["client-ana", "client-bo"] {
+        page.wait_for(
+            &mut browser,
+            &format!(
+                "document.getElementById('{frame}').contentDocument \
+                 .body.textContent.includes('a card from ana')"
+            ),
+        )
+        .await;
+    }
+
+    // And the log holds one event, which is what says the card went through the merge point rather
+    // than only through ana's optimistic fold.
+    page.wait_for(
+        &mut browser,
+        "document.querySelectorAll('#log tbody tr').length === 1",
+    )
+    .await;
 }
 }
 

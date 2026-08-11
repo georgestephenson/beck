@@ -42,6 +42,7 @@
 pub mod analysis;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod serve;
+pub mod share;
 pub mod tab;
 
 pub use analysis::{analyse, Analysis, Section};
@@ -49,13 +50,17 @@ pub use tab::Tab;
 
 use serde_json::{json, Value};
 
-/// The page's whole state: a program, once one has been loaded.
+/// The page's whole state: a program, once one has been loaded, and the last analysis that checked.
 ///
-/// Rung A needs none of this — an analysis is a pure function of a string — so a visitor who never
+/// Rung A needs no program — an analysis is a pure function of a string — so a visitor who never
 /// presses *run* never builds one.
 #[derive(Default)]
 pub struct Playground {
     tab: Option<Tab>,
+    /// The names from the last text that checked, so a half-typed name still completes
+    /// ([`beck_core::editor::Editor::completing_from`]). It is the whole of what this holds on
+    /// behalf of the editor: the analysis itself is rebuilt per request.
+    index: beck_core::editor::Index,
 }
 
 impl Playground {
@@ -66,6 +71,45 @@ impl Playground {
     /// The loaded application, for a test that wants to ask it something directly.
     pub fn tab(&mut self) -> Option<&mut Tab> {
         self.tab.as_mut()
+    }
+
+    /// Analyse the editor's text, remembering the names if it checked.
+    ///
+    /// The module is called `playground.beck` here and everywhere else the playground compiles
+    /// something, because a tier crossing's id is content-derived from the module name (§4.3): two
+    /// names would be two programs.
+    fn editor(&mut self, source: &str) -> beck_core::editor::Editor {
+        let editor = beck_core::editor::Editor::of("playground.beck", source);
+        if editor.placed().is_some() {
+            self.index = editor.index();
+            return editor;
+        }
+        editor.completing_from(&self.index)
+    }
+}
+
+/// Who a request is asking as, and where they are.
+///
+/// The route matters even for the two answers that are not a subscription — the scrubber's page and
+/// the document a client iframe opens with — because a page is a function of `session.path`
+/// (`docs/100`), and rendering the root's page into a frame that is about to resume at `/done`
+/// would be a first paint the client immediately has to correct.
+fn viewer(request: &Value) -> beck_host::At<String> {
+    let field = |k: &str| {
+        request
+            .get(k)
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string()
+    };
+    let path = field("path");
+    beck_host::At {
+        who: field("actor"),
+        path: if path.is_empty() {
+            beck_core::edge::ROOT.into()
+        } else {
+            path.as_str().into()
+        },
     }
 }
 
@@ -92,12 +136,18 @@ pub fn dispatch(state: &mut Playground, request: &Value) -> Result<Value, String
         // compiling, not running, and the running application is not disturbed by an edit until
         // they say so.
         "analyse" => {
-            let a = analyse(&text("source"));
+            let source = text("source");
+            let a = analyse(&source);
+            let at = |byte: u32| beck_core::editor::utf16_offset(&source, byte);
             Ok(json!({
                 "diagnostics": a.diagnostics,
                 "errors": a.errors,
                 "warnings": a.warnings,
                 "runnable": a.runnable,
+                "marks": a.marks.iter().map(|m| json!({
+                    "s": at(m.start), "e": at(m.end),
+                    "error": m.error, "code": m.code, "message": m.message,
+                })).collect::<Vec<_>>(),
                 "sections": a.sections.iter().map(|s| json!({
                     "id": s.id, "title": s.title, "text": s.text,
                 })).collect::<Vec<_>>(),
@@ -107,6 +157,74 @@ pub fn dispatch(state: &mut Playground, request: &Value) -> Result<Value, String
             .into_iter()
             .map(|(name, source)| json!({"name": name, "source": source}))
             .collect::<Vec<_>>())),
+
+        // The editor's own answers, which are the language server's
+        // ([`beck_core::editor`]). Highlighting is separate from analysis and deliberately so: it
+        // is a function of the text rather than of a program, so it costs a lex rather than a
+        // check and it still works while the file is broken.
+        // Every offset that crosses this boundary is a **UTF-16** offset, because the other side of
+        // it is a `<textarea>` and a browser counts its value in UTF-16 code units. The compiler
+        // works in bytes; the conversion is `beck_core::editor`'s and happens here, where the text
+        // is, rather than in JavaScript where it would be a second implementation of it.
+        "tokens" => {
+            let source = text("source");
+            let at = |byte: u32| beck_core::editor::utf16_offset(&source, byte);
+            Ok(json!({
+                "tokens": beck_core::editor::tokens(&source)
+                    .into_iter()
+                    .map(|t| json!({"s": at(t.start), "e": at(t.end), "k": t.kind.name()}))
+                    .collect::<Vec<_>>(),
+            }))
+        }
+        "complete" => {
+            let source = text("source");
+            let editor = state.editor(&source);
+            let at = beck_core::editor::byte_of_utf16(&source, number("offset").max(0) as u32);
+            Ok(json!({
+                "prefix": editor.prefix(at),
+                "stale": editor.stale(),
+                "items": editor.completions(at).into_iter().map(|c| json!({
+                    "label": c.label,
+                    "detail": c.detail,
+                    "kind": match c.kind {
+                        beck_core::editor::CompletionKind::Keyword => "keyword",
+                        beck_core::editor::CompletionKind::Signal => "signal",
+                        beck_core::editor::CompletionKind::Function => "function",
+                    },
+                    "doc": c.doc,
+                })).collect::<Vec<_>>(),
+            }))
+        }
+        "describe" => {
+            let source = text("source");
+            let editor = state.editor(&source);
+            let at = beck_core::editor::byte_of_utf16(&source, number("offset").max(0) as u32);
+            Ok(match editor.hover(at) {
+                Some(s) => json!({
+                    "signature": s.signature,
+                    "tier": s.tier,
+                    "doc": s.doc,
+                    "own": s.own,
+                }),
+                None => json!(null),
+            })
+        }
+
+        // A share link. §17.4's "a playground is a program, and Beck programs are
+        // content-addressed artefacts", as far as a tab with no registry behind it can take it:
+        // the link *carries* the program and names its digest, so it needs nothing to resolve
+        // against and cannot resolve to something else.
+        "share" => {
+            let source = text("source");
+            Ok(json!({
+                "digest": beck_core::digest::of(&source),
+                "fragment": share::pack(&source),
+            }))
+        }
+        "open" => {
+            let (source, digest) = share::unpack(&text("fragment"))?;
+            Ok(json!({ "source": source, "digest": digest }))
+        }
 
         // Rung B.
         "load" => {
@@ -138,6 +256,7 @@ pub fn dispatch(state: &mut Playground, request: &Value) -> Result<Value, String
                 "hello" => Ok(outgoing(tab.hello(
                     &text("sub"),
                     &text("actor"),
+                    &text("path"),
                     request.get("seq").and_then(|s| s.as_u64()),
                 ))),
                 "command" => Ok(outgoing(tab.command(
@@ -145,12 +264,45 @@ pub fn dispatch(state: &mut Playground, request: &Value) -> Result<Value, String
                     &text("id"),
                     request.get("command").unwrap_or(&Value::Null),
                 ))),
+                "nav" => Ok(outgoing(tab.nav(&text("sub"), &text("path")))),
                 "history" => Ok(json!({"head": tab.head(), "events": tab.history()})),
+                // The records a page keeps, and the bundle a Mode B client renders from. Both are
+                // base64 because the boundary this crosses is JSON.
+                // The log a page kept from a previous visit, folded back in. Before any client
+                // subscribes, which is the only moment it can be: a restore afterwards would be
+                // rewriting history under a page that had already rendered it.
+                "restore" => {
+                    let records: Result<Vec<Vec<u8>>, String> = request
+                        .get("records")
+                        .and_then(|r| r.as_array())
+                        .map(|records| {
+                            records
+                                .iter()
+                                .map(|r| {
+                                    beck_core::digest::base64_decode_bytes(
+                                        r.as_str().unwrap_or_default(),
+                                    )
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_else(|| Ok(Vec::new()));
+                    Ok(json!({ "head": tab.restore(&records?)? }))
+                }
+                "records" => Ok(json!({
+                    "head": tab.head(),
+                    "records": tab.records(number("after").max(0) as u64)?
+                        .iter()
+                        .map(|r| beck_core::digest::base64_encode_bytes(r))
+                        .collect::<Vec<_>>(),
+                })),
+                "bundle" => Ok(json!({
+                    "bundle": beck_core::digest::base64_encode_bytes(&tab.bundle()),
+                })),
                 "at" => Ok(json!({
                     "seq": number("seq"),
-                    "html": tab.page_at(number("seq").max(0) as u64, &text("actor"))?.render(),
+                    "html": tab.page_at(number("seq").max(0) as u64, &viewer(request))?.render(),
                 })),
-                "rendered" => Ok(json!({"html": tab.rendered(&text("actor"))?})),
+                "rendered" => Ok(json!({"html": tab.rendered(&viewer(request))?})),
                 other => Err(format!(
                     "`{other}` is not a request this playground answers"
                 )),
@@ -184,7 +336,7 @@ mod exports {
         /// Buffers this module has handed the host, by the address of each one's allocation.
         static BUFFERS: RefCell<BTreeMap<i32, Vec<u8>>> = const { RefCell::new(BTreeMap::new()) };
         /// One playground per module instance, because one module instance is one tab.
-        static STATE: RefCell<Playground> = const { RefCell::new(Playground { tab: None }) };
+        static STATE: RefCell<Playground> = RefCell::new(Playground::new());
     }
 
     fn reserve(len: usize) -> i32 {

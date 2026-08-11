@@ -118,7 +118,7 @@ rather than 13,000.
 
 - **[`26`](26-arrangement-sharing-report.md) §26.9's "no LSP" is no longer true.** That sentence
   named nine untouched bullets in one breath; `Result`/error rows went in
-  [`45`](45-error-rows-report.md) and the standard library across
+  [`27`](27-the-walls-come-down-report.md) and the standard library across
   [`46`](46-standard-library-report.md)–[`56`](56-decimal-report.md), and this is the third of them
   to go.
 - **[`04`](04-compiler-architecture.md) §4.6's keystroke→diagnostics target has a measurement**, and

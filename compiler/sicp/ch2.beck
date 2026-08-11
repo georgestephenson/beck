@@ -1,14 +1,14 @@
 # SICP chapter 2 — "Building Abstractions with Data" — §2.2, as far as it goes today.
 #
-# Evidence for [`docs/27-walls-report.md`](../../docs/27-walls-report.md). This file could not have
+# Evidence for [`docs/27-the-walls-come-down-report.md`](../../docs/27-the-walls-come-down-report.md). This file could not have
 # existed a day before it was written, for two separate reasons that had to be removed in the same
 # change:
 #
 #   * §2.2 is "Hierarchical Data and the Closure Property", and the closure property is a *recursive
 #     type*. `docs/25` §25.6 item 2 measured that a Beck type could not mention itself, which ended
-#     chapter 2 at §2.2 and took chapters 4 and 5 with it. §27.3 is the fix;
+#     chapter 2 at §2.2 and took chapters 4 and 5 with it. §27.2 is the fix;
 #   * and every SICP exercise is a **library**, which `beck test` could not run at all. Chapter 1
-#     carried a five-declaration application nobody used, purely to be executable. §27.4 removed the
+#     carried a five-declaration application nobody used, purely to be executable. §27.2 removed the
 #     need, and this file has never had one.
 #
 # Every `test` is an exercise's own answer from the book, so `beck test sicp/ch2.beck` is the oracle.
@@ -17,23 +17,23 @@
 # the thing this suite exists to prevent:
 #
 #   * §2.3.4's Huffman trees need a `case` that is more than one level deep for their decoder
-#     (docs/33 §33.7).
+#     (docs/27 §27.10).
 #
 # The tree below is the book's — `Tree[T]`, at whatever element type a caller wants, which
-# `sicp/refusals/generic-type.beck` asserted was unwritable until docs/36.
+# `sicp/refusals/generic-type.beck` asserted was unwritable until docs/27.
 
 # ---------------------------------------------------------------------------------------------
 # 2.1.1 Arithmetic operations for rational numbers — the section the whole first half is built on
 #
 # `sicp/refusals/rational.beck` was the last file in that directory, and it said this section needs
 # *exact* arithmetic: 1/3 + 1/3 is 2/3, and a real gives 0.6666666666666666, which is a different
-# number. Reals landed in docs/32 and were never this wall.
+# number. Reals landed in docs/27 and were never this wall.
 #
 # What it needed was for `+` to reach a type the compiler does not know about, which is SICP §2.5.1's
 # generic arithmetic and is now a trait. `Num` is in the prelude with the book's own four operation
 # names; `Rational` joins the tower by implementing it, and every expression below reads `x + y`
 # rather than `add_rat(x, y)` — which is the difference between an exercise about data abstraction
-# and an exercise about function names (docs/41).
+# and an exercise about function names (docs/27).
 # ---------------------------------------------------------------------------------------------
 
 model Rational:
@@ -101,14 +101,14 @@ def two_thirds() -> Rational:
 #
 # `sicp/refusals/generic.beck` held exactly this `map` and asserted that it did not parse, because
 # "the parser has no type-parameter list on `def`, so every user-defined abstraction is
-# monomorphic". docs/32 gave `def` a type-parameter list, so the exercise is an exercise again:
+# monomorphic". docs/27 gave `def` a type-parameter list, so the exercise is an exercise again:
 # each of these is written once, and the tests below use each at more than one element type. That
 # is the whole content of §2.2.1 and the reason it is worth a section rather than a footnote.
 # ---------------------------------------------------------------------------------------------
 
 # `cons`, which SICP has as a primitive and Beck does not. Everything below is built from it and
 # from `match`, so each of these is the book's own definition rather than a rename of a builtin —
-# which is what the exercise is for. `docs/33` §33.6 records what it costs: a `list[T]` cannot share
+# which is what the exercise is for. `docs/27` §27.3 records what it costs: a `list[T]` cannot share
 # a suffix, so this copies, and a fold written over it is quadratic.
 def cons[T](x: T, xs: list[T]) -> list[T]:
     return concat_lists([[x], xs])
@@ -322,7 +322,7 @@ def deep() -> Tree[Int]:
     return Node(kids=[Node(kids=[Node(kids=[Leaf(value=7)])])])
 
 # The same shape at a different element type, which is what `union Tree[T]` is for. SICP's trees
-# hold whatever the reader puts in them; before docs/36 this needed a second `union` and a second
+# hold whatever the reader puts in them; before docs/27 this needed a second `union` and a second
 # `count_leaves`, and here it needs neither.
 def words() -> Tree[Str]:
     return Node(kids=[

@@ -7,7 +7,7 @@
 This is a survey, not a charter change, in the sense [`35`](35-standards-landscape.md) established:
 nothing below is adopted by being written here. Where [`35`](35-standards-landscape.md) surveyed
 standards bodies, this document surveys research — against the unbuilt list
-([`26`](26-arrangement-sharing-report.md) §26.9, [`37`](37-traits-report.md) §37.7), the open
+([`26`](26-arrangement-sharing-report.md) §26.9, [`27`](27-the-walls-come-down-report.md) §27.10), the open
 questions ([`09`](09-risks-and-open-questions.md) §9.6), and the design's own citations
 ([`00`](00-original-idea.md)'s provenance table), which date from 2022-era literature and had not
 been rechecked since. Every citation below was confirmed against the published record (publisher
@@ -21,13 +21,13 @@ nothing yet), **watch** (a dated pin with a named trigger), **decline** (with th
 
 ## 38.1 Bounds and dictionary passing — the next feature, checked first
 
-[`37`](37-traits-report.md) §37.8 says bounds are the single item everything else waits behind.
+[`27`](27-the-walls-come-down-report.md) §27.1 says bounds are the single item everything else waits behind.
 The literature turns out to have a near-complete instruction sheet for exactly that feature.
 
 **The core is settled and old.** A bound is a Wadler–Blott qualified type (Wadler & Blott, *How to
 make ad-hoc polymorphism less ad hoc*, POPL 1989): `def sort[T: Ord]` elaborates to an extra
 dictionary parameter, and the call site resolves the unique impl and passes it. That is the same
-"desugar into ordinary definitions" move [`37`](37-traits-report.md) §37.4 already made for
+"desugar into ordinary definitions" move [`27`](27-the-walls-come-down-report.md) §27.5 already made for
 non-generic impls, extended with one hidden argument. **Adopt.** The design-space checklist to
 refuse from is Peyton Jones, Jones & Meijer, *Type classes: an exploration of the design space*
 (Haskell Workshop 1997) — most extensions are individually easy and jointly treacherous, and
@@ -44,7 +44,7 @@ and Swift converged on near-unique instances plus a sanctioned escape hatch (new
 explicit witnesses); plan the desugaring so an escape hatch is possible later, and take
 Winant & Devriese (*Coherent explicit dictionary application*, Haskell Symposium 2018) as the
 proof that an explicit-dictionary form can coexist with coherence. That is also the answer to
-§37.7's "a trait method cannot be passed as a value": a bare `show` elaborates from the in-scope
+§27.10's "a trait method cannot be passed as a value": a bare `show` elaborates from the in-scope
 bound, and with no bound in scope it is an ambiguity error or an explicit application — the
 consensus across Haskell, OCaml and Coq lineages.
 
@@ -72,11 +72,11 @@ free to monomorphise. **Adopt** the framing; the evaluator needs only the dictio
 that demanded it — which bound, at which call, needed which instance — not the unification
 failure it decays into (Heeren & Hage, *Type class directives*, PADL 2005; Zhang, Myers,
 Vytiniotis & Peyton Jones, *Diagnosing type errors with class*, PLDI 2015). `B0386` already
-distinguishes "no bounds" from "no impl" ([`37`](37-traits-report.md) §37.7); the bounds feature
+distinguishes "no bounds" from "no impl" ([`27`](27-the-walls-come-down-report.md) §27.10); the bounds feature
 should keep that discipline and add provenance. **Adopt.**
 
 **Two Beck-specific flags before the syntax freezes.** First, the trait's effect row: Beck holds
-every impl to one row declared on the trait ([`37`](37-traits-report.md) §37.3). Lutze & Madsen
+every impl to one row declared on the trait ([`27`](27-the-walls-come-down-report.md) §27.5). Lutze & Madsen
 (*Associated effects*, PLDI 2024, in Flix) argue each impl should *instantiate* an effect
 component of its own — a partial-function impl adds an error effect, a stateful impl a heap
 effect — with the caller's row picking it up through the bound. Refactoring Flix's stdlib needed
@@ -99,10 +99,10 @@ Lean's tabled resolution (Selsam, Ullrich & de Moura, *Tabled typeclass resoluti
 known cure — **watch**, trigger: supertraits. `@derive` has two published shapes — a
 compiler-derived structural impl with libraries deriving the rest (Magalhães et al., *A generic
 deriving mechanism*, Haskell 2010) or deriving-via's named impl-patterns (Blöndal, Löh & Scott,
-Haskell 2018) — **borrow**, decision deferred to the macro work [`37`](37-traits-report.md) §37.7
+Haskell 2018) — **borrow**, decision deferred to the macro work [`27`](27-the-walls-come-down-report.md) §27.10
 already assigns it to. Zig-style comptime duck typing: **decline** — it surrenders
 definition-site checking, which is the entire point of bounds. Scala 3's scoped givens:
-**decline** for the same reason [`37`](37-traits-report.md) chose coherence — the 2025 survey
+**decline** for the same reason [`27`](27-the-walls-come-down-report.md) chose coherence — the 2025 survey
 places Scala alone on that branch.
 
 ## 38.2 The incremental view engine: fusion, lifecycle, and the page as deltas
@@ -247,7 +247,7 @@ scope. The effect-system literature says how Beck should express that: `spawn`/`
 operations, the scope as their handler (Leijen, *Structured asynchrony with algebraic effects*,
 TyDe 2017; schedulers-as-handlers in OCaml's Eio, 1.0 in 2024) — at which point derived mocks,
 slicing and placement apply to concurrency with no new machinery, the same "desugar, don't extend
-the IR" trick [`37`](37-traits-report.md) §37.8 item 3 names. Cancellation is the error row
+the IR" trick [`27`](27-the-walls-come-down-report.md) §27.1 item 3 names. Cancellation is the error row
 crossing the scope. **Adopt** the shape when the bullet is built.
 
 Three supporting results. Handlers must be **lexically scoped**: dynamically scoped handler search
@@ -368,9 +368,9 @@ cycles, so no tracing collector. Implement it as an IR pass so every backend inh
 standard library a *client* of this decision: write it in the functional-but-in-place style so
 reuse analysis fires. **Adopt** (it was already the plan; now it has its papers and its ordering).
 Tail-recursion-modulo-cons (Leijen & Lorenzen, POPL 2023; mechanised for OCaml, POPL 2025) is the
-principled answer to [`31`](31-tail-calls-report.md)'s depth-bounded non-tail recursion for the
+principled answer to [`27`](27-the-walls-come-down-report.md)'s depth-bounded non-tail recursion for the
 common list/tree builders — **adopt**, trigger: native codegen, where it is a real transformation
-rather than an evaluator contortion. The measured 13% (§31.6) is an interpreter artifact, not
+rather than an evaluator contortion. The measured 13% (§27.8) is an interpreter artifact, not
 destiny: in native code intra-SCC tail calls are jumps and cross-function ones are `musttail` /
 Cranelift's `tail` convention.
 
@@ -381,7 +381,7 @@ framing: Cranelift is not just the fast tier, it is the *audited* one. The valid
 two codegen tiers over one IR with the reference interpreter kept as oracle — exactly the
 `Backend` seam's shape, so the evaluator stays as tier zero and differential anchor, never
 deleted. CPython's copy-and-patch JIT saga (a claimed 15% shrinking to ~5% once the baseline was
-fixed) is the measurement-methodology cautionary tale that vindicates §31.6's
+fixed) is the measurement-methodology cautionary tale that vindicates §27.8's
 measured-and-not-recovered discipline. **Client tier**: Wasm 3.0 shipped (Sept 2025) with
 guaranteed tail calls and WasmGC baseline across all major browsers — [`35`](35-standards-landscape.md)'s
 dated pin has resolved in Beck's favour — so Mode B should target WasmGC + tail calls on the
@@ -393,12 +393,12 @@ plan of record; WasmFX stays **watch** (§38.4).
 Vinju, OOPSLA 2015) are the settled choices — CHAMP's canonical form makes structural equality
 cheap, which the view engine's diffing will feel — implemented FBIP-style so unique-owner updates
 go in place (the immer, ICFP 2017 / Roc synergy: RC host + persistent structures + transients).
-That also retires §37.7's standing "a `list[T]` is O(n) to take apart" the honest way: not by
+That also retires §27.10's standing "a `list[T]` is O(n) to take apart" the honest way: not by
 optimising cons, but by giving the library a vector. Gleam's discipline — stdlib semantics
 identical across both targets — is the portability constraint Beck's multitier stdlib inherits
 verbatim. **Adopt** when the stdlib bullet opens. Nested patterns: the canonical route is the
 Maranget pair — decision-tree compilation (ML 2008) and usefulness-based exhaustiveness (JFP
-2007) off one pattern matrix — replacing [`33`](33-effect-polymorphism-and-list-patterns-report.md)'s
+2007) off one pattern matrix — replacing [`27`](27-the-walls-come-down-report.md)'s
 one-level machinery with the standard one; Lower Your Guards (ICFP 2020) only if guards arrive.
 **Adopt**, trigger: the second level of nesting a program actually needs. Incremental
 compilation, when it comes, is Salsa-shaped query memoization with early cutoff (Build Systems à

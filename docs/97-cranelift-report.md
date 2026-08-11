@@ -39,7 +39,7 @@ Four things the second emitter does differently, and none of them is a semantic 
 
 * **A tail call is `return_call`** under the `tail` calling convention. Cranelift *verifies* that
   the frame can be discarded and refuses the function otherwise — the same guarantee `musttail`
-  gives, which is what [`31`](31-tail-calls-report.md)'s language property needs from a backend
+  gives, which is what [`27`](27-the-walls-come-down-report.md)'s language property needs from a backend
   rather than hopes for. Sixty million tail calls run in constant stack, and so does a tail call
   into a definition of a *different arity*, which is the case a C-convention `musttail` cannot
   express.
@@ -86,8 +86,8 @@ emitter, and the two would drift.
 `def negative(x: Float) -> Bool: return x < 0.0`. It answered `false`.
 
 `beck_core::Value` stores a real as an **order key** — a monotone transform of the bits, so the
-derived `Ord` is the numeric order with `-0.0 < 0.0` and NaN at the top ([`32`](32-numeric-tower-and-polymorphism-report.md)
-§32.2). Both backends compute the key the same way. What the new one got wrong was the comparison
+derived `Ord` is the numeric order with `-0.0 < 0.0` and NaN at the top ([`27`](27-the-walls-come-down-report.md)
+§27.8). Both backends compute the key the same way. What the new one got wrong was the comparison
 *of* the key: the transform maps every real onto the **unsigned** order, and this compared signed.
 `key(-1.0)` is `0x400F…` and `key(0.0)` is `0x8000…`, so signed says `-1.0` is the larger.
 

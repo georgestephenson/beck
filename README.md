@@ -52,7 +52,7 @@ $ beck --help
 
 [`install.sh`](install.sh) downloads the tarball for your platform, checks it against the release's
 `SHA256SUMS`, and puts `beck` in `~/.beck/bin`. **No release has been cut yet**
-([`101`](docs/101-the-release-and-the-installer-report.md) §101.7), so until a tag is pushed, build
+([`104`](docs/104-the-release-and-the-installer-report.md) §104.7), so until a tag is pushed, build
 it from source — the same binary, and it needs a C compiler and CMake:
 
 ```console
@@ -113,15 +113,15 @@ error rows, nested patterns with guards, and `parallel:` scopes; the standard li
 collections, JSON, time, HTTP, crypto, bignums and decimal. There is an LSP, a SQLite substrate, an
 OIDC relying party with presence, a client-side WASM mode, a playground that runs the whole
 application in a tab, two native code generators behind one seam, an OCI image builder that needs no
-daemon, and — since [`docs/101`](docs/101-the-release-and-the-installer-report.md) — a release
+daemon, and — since [`docs/104`](docs/104-the-release-and-the-installer-report.md) — a release
 pipeline and an installer.
 
-**What is not built is named rather than implied.** Both code generators are bounded by the same
-missing thing, a **heap**: no record, list, string or effect compiles, so what runs natively is the
-scalar subset and everything else walks. Mode B's codegen waits on that same heap, and lazy routes
-wait on a per-component boundary the language does not have. **No release has been cut**, so the
-installer has nothing to install yet, and the binaries it would install carry a checksum rather than
-a signature. Phase 3's exit criterion — *an outside developer builds a non-trivial app from
+**What is not built is named rather than implied.** Both code generators share one bound, and it is
+half lifted: a record, a union and a newtype compile natively, and **text, collections, closures and
+every effect do not**, so a program that touches a `Str` still walks. Mode B's codegen waits on that
+same half, and lazy routes wait on a per-component boundary the language does not have. **No release
+has been cut**, so the installer has nothing to install yet, and the binaries it would install carry
+a checksum rather than a signature. Phase 3's exit criterion — *an outside developer builds a non-trivial app from
 documentation alone* — is **not met**, and [`docs/08`](docs/08-roadmap.md) tracks that literally.
 
 Every report in [`docs/`](docs/README.md) ends with what it refuses to claim. That is the house

@@ -44,7 +44,7 @@ asks for four methods — so the two that have no meaning say so instead of inve
 <p>`[0, 1, …, n - 1]`, written here rather than asked of the prelude.</p>
 <p>A range is the one piece of this file that is *not* about money, and it is written in Beck for
 the same reason the rest is: it can be. It is a tail-recursive accumulation, which costs no host
-stack at all (`docs/31`), so `range_to(250_000)` is a list and not a crash.</p>
+stack at all (`docs/27`), so `range_to(250_000)` is a list and not a crash.</p>
 <h3 id="render">render</h3>
 <pre><code>render(m: Money) -&gt; Str</code></pre>
 <p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
@@ -57,7 +57,7 @@ currency is worse than one that says which.</p>
 <p>The two amounts' shared currency, or a raise.</p>
 <p>Every operation that combines two amounts goes through this, so &quot;you cannot add pounds to euros&quot;
 is one line rather than a rule four functions each remember. `raises(MoneyError)` is inferred
-from it and travels outwards by itself — which is `docs/45`'s property doing the work a library
+from it and travels outwards by itself — which is `docs/27`'s property doing the work a library
 is exactly where you want it doing.</p>
 <h3 id="split">split</h3>
 <pre><code>split(m: Money, parts: Int) -&gt; list[Money]</code></pre>

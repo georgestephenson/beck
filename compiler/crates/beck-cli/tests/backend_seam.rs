@@ -40,7 +40,7 @@ impl Backend for Counting {
 
     /// Forwarded, and that is the point of the test below: what a wrapper forgets to pass on, the
     /// runtime never learns. A backend that needs host stack and a wrapper that swallows the
-    /// number is an abort waiting for a deep program (`docs/31` §31.3).
+    /// number is an abort waiting for a deep program (`docs/27` §27.2).
     fn stack_bytes(&self) -> usize {
         self.inner.stack_bytes()
     }

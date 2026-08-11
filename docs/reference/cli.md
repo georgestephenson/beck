@@ -197,7 +197,7 @@ A test is a log, a command and an expectation, so this needs no network, no data
 | `-f, --filter` | FILTER | Only run tests whose name contains this |
 | `-v, --verbose` | true \| false | Say what was stubbed even when the test passed — §21.3 rule 1's hidden default, declaring itself |
 | `--runs` | RUNS | Inputs per `property` block |
-| `--fuel` | FUEL | Evaluation steps one expectation may take before it is stopped.  The default is a runaway-program backstop and is right for everything written by hand. A *benchmark* is the exception — three of the fourteen in `awfy/` need more at the size their suite measures at (`docs/61` §61.3), and a backstop nothing can raise is a ceiling. |
+| `--fuel` | FUEL | Evaluation steps one expectation may take before it is stopped.  The default is a runaway-program backstop and is right for everything written by hand. A *benchmark* is the exception — three of the fourteen in `awfy/` need more at the size their suite measures at (`docs/53` §53.3), and a backstop nothing can raise is a ceiling. |
 | `--update` | true \| false | Write what `expect page matches snapshot` renders, instead of comparing against it.  The written file is reviewed like any other diff (§21.2). Nothing writes a snapshot without this flag: one that rewrote itself on disagreement would assert nothing. |
 
 
@@ -259,6 +259,20 @@ Compile what can be compiled to native code, and say what could not (§5.2).
 | `--out` | OUT | Keep the generated IR and the executable here instead of in a temporary directory |
 | `--call` | CALL | Call a compiled definition and print what it answered.  `beck native fib.beck --call fib --arg 30`. An argument is read as an `Int` if it looks like one and a `Float` otherwise; `true` and `false` are `Bool`s. |
 | `--arg` | ARGS |  |
+
+
+## `beck bundle`
+
+Write a Mode B component's bundle — the slice a browser downloads (§5.1, `docs/94` §94.4).
+
+This is not how a deployment gets one. `beck run` derives the bundle from the program it is executing, so a served slice cannot be of a different program than the running one, and `beck build` deliberately writes no bundle for the same reason. This is how a *measurement* gets one: §5.1 budgets "< 150 KB brotli for a typical Mode-B component bundle", and a budget nothing can weigh is not a budget.
+
+A Mode A component has no bundle, and asking for one is an error rather than an empty file.
+
+| Argument | | |
+|---|---|---|
+| `<FILE>` | FILE |  |
+| `-o, --out` | OUT | Where to write it |
 
 
 ## `beck sbom`

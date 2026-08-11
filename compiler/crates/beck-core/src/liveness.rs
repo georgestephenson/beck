@@ -59,7 +59,7 @@ pub fn mark_program(program: &mut crate::check::Program) {
     }
     // A test's expressions are code, and the runner wraps each one in a lambda whose frame is
     // built and dropped by a single call — so a last read inside one is exactly as safe to move as
-    // a last read inside a definition. `docs/79`.
+    // a last read inside a definition. `docs/70`.
     for test in program.tests.iter_mut() {
         for c in test.cores_mut() {
             mark(c);
@@ -85,7 +85,7 @@ pub fn mark(body: &mut Core) {
         let params: Vec<VarId> = params.to_vec();
         // `make_mut` rather than a clone: this runs once, on a program nothing else holds yet, so
         // the copy-on-write never copies. The `Arc` is there for the *evaluator*, which shares one
-        // body across every closure built from it (`docs/73` §73.1).
+        // body across every closure built from it (`docs/70` §70.3).
         mark_frame(&params, Arc::make_mut(inner));
     } else {
         // An expression that is not a definition: a signal, or a clause of a `test` block, which
@@ -221,7 +221,7 @@ fn walk(
             let v = *v;
             // `own` is the third condition and the newest: a read may only be handed over by the
             // frame that binds it. Without it a lambda would mark a read of a variable it took
-            // from the scope around it, and that binding outlives the call (`docs/79` §79.3).
+            // from the scope around it, and that binding outlives the call (`docs/70` §70.2).
             c.last_use = own.contains(&v) && !captured.contains(&v) && !live.contains(&v);
             live.insert(v);
         }
@@ -453,7 +453,7 @@ mod tests {
     /// …but a variable the lambda **binds itself** is another matter: its frame is built by the
     /// call and dropped with it, exactly as a definition's is.
     ///
-    /// This is `docs/79`, and `list_fold`'s accumulator is the case that matters — `acc` is a
+    /// This is `docs/70`, and `list_fold`'s accumulator is the case that matters — `acc` is a
     /// lambda's parameter and nothing else, so before this the fold form of the accumulator idiom
     /// copied where the recursive form moved.
     #[test]
@@ -475,7 +475,7 @@ mod tests {
     ///
     /// The evaluator would refuse the second one anyway — a captured environment is shared, so
     /// `Env::read` cannot empty it — which is why this is asserted here, on the flag, rather than
-    /// by a program that could not tell the difference (`docs/79` §79.6).
+    /// by a program that could not tell the difference (`docs/70` §70.6).
     #[test]
     fn a_lambda_moves_its_parameter_and_lends_its_capture() {
         let mut c = Core::new(

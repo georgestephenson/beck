@@ -101,7 +101,7 @@ pub fn prims() -> Vec<(&'static str, Prim, Scheme)> {
         ),
         // The reals. `abs` is written for both tiers in SICP and is resolved from its operand in
         // `check`, exactly as `+` is; the scheme here is its `Int` form, which is what a reference
-        // to it *as a value* gets (`docs/32` §32.3).
+        // to it *as a value* gets (`docs/27` §27.2).
         (
             "abs",
             Prim::Abs,
@@ -114,10 +114,10 @@ pub fn prims() -> Vec<(&'static str, Prim, Scheme)> {
         ),
         // The two trigonometric functions, and the conversion back down from a real.
         //
-        // `docs/32` built the reals with `sqrt` and nothing else, and three phases of programs
+        // `docs/27` built the reals with `sqrt` and nothing else, and three phases of programs
         // never asked for more — until a benchmark did. `Math.sin`, `Math.cos` and a `(int)` cast
         // are what Are We Fast Yet's collision detector is written in, and a numeric tower with a
-        // square root and no sine is a gap rather than a decision (`docs/60` §60.2).
+        // square root and no sine is a gap rather than a decision (`docs/53` §53.5).
         //
         // All three are the host's, in `lib/README.md`'s sense: `sin` is somebody else's polynomial
         // and truncation is the format's own rule about which way a real falls. Composition would
@@ -237,7 +237,7 @@ pub fn prims() -> Vec<(&'static str, Prim, Scheme)> {
         // Both are clamped rather than refused: a slice past the end is the empty string, not a
         // failure. That is a decision and not an oversight — a slice is not a parse, and `raises`
         // is for a program's own vocabulary rather than for the standard library's arithmetic
-        // ([`45`](../../../../../docs/45-error-rows-report.md)).
+        // ([`27`](../../../../../docs/27-the-walls-come-down-report.md)).
         (
             "str_len",
             Prim::StrLen,
@@ -322,7 +322,7 @@ pub fn prims() -> Vec<(&'static str, Prim, Scheme)> {
         //
         // The higher-order ones are row-polymorphic in the argument's effects — §3.2's
         // `map : (list[a], (a -> b ! e)) -> list[b] ! e`, which
-        // [`33`](../../../../../docs/33-effect-polymorphism-and-list-patterns-report.md) made true of
+        // [`27`](../../../../../docs/27-the-walls-come-down-report.md) made true of
         // a *user's* definitions too. A pure caller of `list_fold` stays pure however another
         // caller uses it.
         (
@@ -482,7 +482,7 @@ pub fn prims() -> Vec<(&'static str, Prim, Scheme)> {
         //
         // `json_parse` and `time_parse` **raise** rather than returning a `Result`, and that is the
         // whole reason [`08`](../../../../../docs/08-roadmap.md) §8.5.3's trap 2 said the standard
-        // library had to wait for [`45`](../../../../../docs/45-error-rows-report.md). A caller who
+        // library had to wait for [`27`](../../../../../docs/27-the-walls-come-down-report.md). A caller who
         // wants a `Result` writes `try:`; a caller already inside something fallible writes
         // nothing. Had these been written first, every one of their signatures would have had to
         // change.
@@ -843,6 +843,19 @@ pub fn prims() -> Vec<(&'static str, Prim, Scheme)> {
                 Row::of([Effect::Cap(Arc::from("presence"))]),
             )),
         ),
+        // `freshness : () -> Signal[Freshness]` — §3.7's freshness dimension, as a source.
+        //
+        // The mirror of `presence` and deliberately not its shape: presence is a capability
+        // because a roster says something about other people, and a client's count of its own
+        // unacknowledged commands says something about nobody else. So the row is empty, and what
+        // constrains it is placement rather than authority — `crate::render` refuses a page that
+        // reads it and renders on the server, because a server holds no guesses and the answer
+        // there is `Confirmed` forever.
+        (
+            "freshness",
+            Prim::Freshness,
+            Scheme::mono(fun(vec![], Ty::signal(Ty::con("Freshness")))),
+        ),
         (
             "filter_map",
             Prim::StreamFilterMap,
@@ -1050,7 +1063,7 @@ pub fn types() -> BTreeMap<Arc<str>, TyDecl> {
         ],
     });
     // The error `json_parse` raises. A declared type rather than a `Str`, because
-    // `docs/45` §45.1's atom names the type and a `raises(Str)` would make every string failure in
+    // `docs/27` §27.7's atom names the type and a `raises(Str)` would make every string failure in
     // a program the same failure.
     add(TyDecl::Union {
         name: Arc::from("JsonError"),
@@ -1213,6 +1226,28 @@ pub fn types() -> BTreeMap<Arc<str>, TyDecl> {
             (Arc::from("path"), Ty::str_()),
         ],
     });
+    // §3.7's freshness dimension, written out: "`Signal[T]` carries a freshness dimension
+    // (`confirmed | pending(n)`) that UI code can render (\"saving…\") — staleness is typed, not
+    // pretended away."
+    //
+    // Two variants rather than a count, because `Pending(n=0)` and `Confirmed` would be one fact
+    // with two spellings and a page would have to know which one it was handed. `n` is on the
+    // pending variant for the same reason a `Some` carries its value: it only exists when there is
+    // something to count.
+    add(TyDecl::Union {
+        name: Arc::from("Freshness"),
+        params: Vec::new(),
+        variants: vec![
+            Variant {
+                name: Arc::from("Confirmed"),
+                fields: vec![],
+            },
+            Variant {
+                name: Arc::from("Pending"),
+                fields: vec![(Arc::from("n"), Ty::int())],
+            },
+        ],
+    });
     add(TyDecl::Model {
         name: Arc::from("Proposal"),
         params: Vec::new(),
@@ -1229,7 +1264,7 @@ pub fn types() -> BTreeMap<Arc<str>, TyDecl> {
 /// One, and it is the one SICP §2.5.1 builds by hand: **generic arithmetic**. The book's answer to
 /// "how do rationals join a tower that already has integers" is a set of generic operations —
 /// `add`, `sub`, `mul`, `div` — that each type installs an implementation for, and that is exactly
-/// a trait. `docs/32` §32.3 resolved `+` from its operands and said an ad-hoc resolution was "the
+/// a trait. `docs/27` §27.2 resolved `+` from its operands and said an ad-hoc resolution was "the
 /// honest thing to build before traits exist"; they exist, so `+` resolves through this when its
 /// operands are neither `Int` nor `Float` nor `Str`.
 ///

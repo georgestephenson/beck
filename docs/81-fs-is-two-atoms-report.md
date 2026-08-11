@@ -4,7 +4,7 @@
 children that read files and still refuses children that write them.
 
 This is [`80`](80-a-scope-owns-its-children-report.md) §80.7's first open item, taken the day after
-it was named. [`47`](47-effect-polymorphic-traits-report.md) is the precedent for the shape of this
+it was named. [`27`](27-the-walls-come-down-report.md) is the precedent for the shape of this
 report — a wall written by one change and closed by the next, recorded when it is found rather than
 at the end of whatever finds it.
 

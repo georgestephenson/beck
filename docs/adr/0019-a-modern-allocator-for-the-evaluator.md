@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Date:** 2026-08-05
-**Context:** [`75`](../75-what-the-profiler-said-report.md), [`07`](../07-dependencies.md),
+**Context:** [`70`](../70-the-evaluator-gets-fast-report.md), [`07`](../07-dependencies.md),
 [`0004`](0004-full-cargo-deny-gate.md)
 
 ## The decision
@@ -29,8 +29,8 @@ eight benchmarks, with `havlak` — the most allocation-heavy — at the top.
 ## Why not fewer allocations instead
 
 Both, in that order, and the order was decided by measurement rather than preference.
-[`74`](../74-the-cost-of-a-call-report.md) §74.6 and [`75`](../75-what-the-profiler-said-report.md)
-§75.4 record two attempts to remove allocations from the call path — an argument stack, and a
+[`70`](../70-the-evaluator-gets-fast-report.md) §70.4 and [`70`](../70-the-evaluator-gets-fast-report.md)
+§70.4 record two attempts to remove allocations from the call path — an argument stack, and a
 small-vector for arguments — and both made the evaluator **slower**. The bookkeeping that avoids a
 short-lived allocation costs more than a good allocator charges for it. That is the reason this ADR
 is not an admission of defeat about the design: the design's allocation *count* was examined first,
@@ -47,7 +47,7 @@ and what is left is work.
   than this sentence.
 - **A second allocator's failure modes.** mimalloc has its own fragmentation and page-reclaim
   behaviour, and a memory number measured here is now a number about mimalloc too. The peak
-  resident figures in [`72`](../72-space-and-constants-report.md) were measured under glibc and are
+  resident figures in [`70`](../70-the-evaluator-gets-fast-report.md) were measured under glibc and are
   historical for that reason as well as the others.
 
 ## What would reverse it

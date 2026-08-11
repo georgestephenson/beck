@@ -15,7 +15,7 @@ findings were.
 ## 56.1 What a `Decimal` is
 
 `units × 10^-scale`, with `units` a `Big` and `scale` at least zero. Exact, and therefore not a
-real: `docs/32`'s `Float` is IEEE 754 and `0.1` is not one of the numbers it holds, which is why
+real: `docs/27`'s `Float` is IEEE 754 and `0.1` is not one of the numbers it holds, which is why
 `0.1 + 0.2 != 0.3` there and is `0.3` here. Not a rational either — a third has no decimal
 expansion, and this type says so rather than rounding.
 
@@ -35,7 +35,7 @@ fixed by its currency.
 `sicp/ch2.beck`'s rationals, `money.beck`'s amounts and [`55`](55-bignums-report.md)'s integers —
 and the first built on another one. Addition and multiplication are exact and total: a sum's scale
 is the wider of the two, a product's is their sum, so nothing is dropped. `Big`'s `+` being pure is
-what lets this one's be pure too, which is [`47`](47-effect-polymorphic-traits-report.md)'s per-impl
+what lets this one's be pure too, which is [`27`](27-the-walls-come-down-report.md)'s per-impl
 row composing one library on top of another.
 
 ## 56.2 Rounding, as three rules rather than one
@@ -153,7 +153,7 @@ iface` were right; `beck doc` was wrong three ways, and one Beck file in `lib/` 
 |---|---|
 | An exact quotient needing more than 40 places | **refused**, and wrongly. `1 / 2^41` terminates and this raises. The fix is a `gcd` and a count of twos and fives in the reduced divisor, which is a `gcd` this library does not have — §56.3 is the trade, stated |
 | `gcd`, and a rational over `Big` | **not built**, unchanged from [`55`](55-bignums-report.md) §55.6 |
-| An exponent in the reader | **not built.** `decimal_of_str("1e6")` is `NotADecimal`. The lexer takes one for a *float literal* ([`53`](53-are-we-fast-yet-report.md) §53.4) and this reader does not, which is an inconsistency named rather than defended |
+| An exponent in the reader | **not built.** `decimal_of_str("1e6")` is `NotADecimal`. The lexer takes one for a *float literal* ([`53`](53-are-we-fast-yet-report.md) §53.5) and this reader does not, which is an inconsistency named rather than defended |
 | Square root, powers, logarithms | **not built.** None has an exact decimal answer in general, so each needs the scale-and-rule shape `divide_to` has, and none is written |
 | A scale that carries significance | **not built**, deliberately — §56.1. `render_at` is the presentation, `money.beck` is the fixed-scale type |
 | `Decimal` in `money.beck` | **not done.** `Money` is still `Int` minor units. Rewriting it over `Decimal` is now expressible and is a change to a type other files use, so it is not being done in passing |

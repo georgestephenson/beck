@@ -40,7 +40,7 @@ so that the change removing one turns a test red.
 
 §64.7.1's objection was not that a harness would be hard. It was that a harness verified against
 invented numbers is **worse than no harness**, and it named the precedent:
-[`59`](59-havlak-report.md) §59.5, where a benchmark whose workload was discarded had no oracle for
+[`53`](53-are-we-fast-yet-report.md) §53.6, where a benchmark whose workload was discarded had no oracle for
 its workload, so a loop that ran once instead of fifty times passed every verification the suite
 published.
 
@@ -238,7 +238,7 @@ rule, and would find out by failing.
   evaluator" — the last of the five. Its "Published" column is kept: chapter 1's line comparison
   and no compute number.
 - **[`08`](08-roadmap.md) §8.4's Phase 3 row is met.** "Are We Fast Yet and CLBG harnesses, run
-  against the evaluator" — [`61`](61-deltablue-report.md) §61.6 recorded the first half; this is
+  against the evaluator" — [`53`](53-are-we-fast-yet-report.md) §53.7 recorded the first half; this is
   the second.
 - **[`64`](64-compile-speed-report.md) §64.7.1's blocker is discharged rather than worked around.**
   Its condition was the harness be built "with its sources to hand", and every constant in the

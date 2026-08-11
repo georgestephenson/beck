@@ -26,10 +26,10 @@ fn main() {
         .unwrap_or_else(|| "unknown".to_string());
     println!("cargo:rustc-env=BECK_COMMIT={commit}");
 
-    // Only when there is one: `rerun-if-changed` on a path that does not exist asks cargo to
-    // rebuild this crate on every invocation.
-    if let Some(head) = git_head() {
-        println!("cargo:rerun-if-changed={}", head.display());
+    // Only paths that exist: `rerun-if-changed` on a missing one asks cargo to rebuild this crate
+    // on every invocation.
+    for path in git_watch() {
+        println!("cargo:rerun-if-changed={}", path.display());
     }
 }
 
@@ -41,9 +41,34 @@ fn repo_root() -> Option<std::path::PathBuf> {
         .map(Path::to_path_buf)
 }
 
-fn git_head() -> Option<std::path::PathBuf> {
-    let head = repo_root()?.join(".git/HEAD");
-    head.exists().then_some(head)
+/// What has to change for the stamped commit to be stale.
+///
+/// `.git/HEAD` is **not** enough on its own, and the difference is the whole point of the stamp:
+/// on a branch, `HEAD` holds `ref: refs/heads/<branch>` and does not change when a commit is made
+/// — the ref file does. Watching only `HEAD` gives a binary that keeps printing whichever commit
+/// it was first built at, which is a wrong answer rather than a missing one. Both are watched, so
+/// a commit, a checkout and a detached HEAD all invalidate it.
+fn git_watch() -> Vec<std::path::PathBuf> {
+    let Some(git) = repo_root().map(|r| r.join(".git")) else {
+        return Vec::new();
+    };
+    let head = git.join("HEAD");
+    if !head.exists() {
+        return Vec::new();
+    }
+    let mut out = vec![head.clone()];
+    // A symbolic ref names the file the commit actually lives in. A packed ref has no file, and
+    // then `HEAD` alone is all there is to watch.
+    if let Some(target) = std::fs::read_to_string(&head)
+        .ok()
+        .and_then(|t| t.strip_prefix("ref: ").map(|r| r.trim().to_string()))
+    {
+        let path = git.join(target);
+        if path.exists() {
+            out.push(path);
+        }
+    }
+    out
 }
 
 fn git_commit() -> Option<String> {

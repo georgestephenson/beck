@@ -50,8 +50,8 @@ Two properties hold across the file and are stated once in it rather than per fu
 
 - **Every function is total.** A collection has no failure of its own. The only way to get an error
   out of this file is to pass in a function that has one, and then the row is that function's and
-  travels by inference ([`33`](33-effect-polymorphism-and-list-patterns-report.md),
-  [`45`](45-error-rows-report.md)). Nothing here `raise`s — which is a different shape from
+  travels by inference ([`27`](27-the-walls-come-down-report.md),
+  [`27`](27-the-walls-come-down-report.md)). Nothing here `raise`s — which is a different shape from
   `money.beck` and `dates.beck`, and the difference is the subject matter rather than a
   disagreement about style.
 - **Every result is ordered, and the order is a function of the values.** `elements` is sorted
@@ -132,7 +132,7 @@ an hour is an hour-squared, and an hour divided by an hour is the number two. Bo
 `NotADuration`.
 
 What that made visible, and what the test now says out loud, is that
-[`47`](47-effect-polymorphic-traits-report.md)'s inference is **per method and not per impl**. The
+[`27`](27-the-walls-come-down-report.md)'s inference is **per method and not per impl**. The
 first version of the test wrapped all four in `try:` by symmetry with `money.beck`, and the checker
 refused two of them with B0392, "nothing here can fail". So:
 
@@ -174,14 +174,14 @@ error[B0310]: cannot find type `_`
 
 **There is no wildcard type in Beck.** The diagnostic had been telling readers to write a program
 that does not compile since parameterised types landed in
-[`36`](36-parameterised-types-report.md), and the label was generated from the arity — `(0..arity)`
+[`27`](27-the-walls-come-down-report.md), and the label was generated from the arity — `(0..arity)`
 mapped to `"_"` — so it had never had a name to offer.
 
 The feature was there the whole time. `impl[T] Sized for Set[T]` works, and worked before this
 change: an `impl` head binds its own type parameters, exactly as a `def` does. So this is not a
 wall in [`46`](46-standard-library-report.md) §46.5's sense — nothing was inexpressible. It is the
 sentence pointing at the feature being wrong, which is the failure mode
-[`40`](40-traits-across-modules-report.md) §40.5 hit from the other direction when a diagnostic
+[`27`](27-the-walls-come-down-report.md) §27.8 hit from the other direction when a diagnostic
 pointed confidently at the wrong file.
 
 The fix is that `check_arity` takes the declaration's **parameter names** rather than its arity, so
@@ -236,9 +236,9 @@ sort in every program quietly.
 
 The real answer is further away and worth naming: **`Ord` as a trait**, the way `Num` is one, so a
 type says what its own order is instead of inheriting the one its representation happens to have.
-[`39`](39-bounds-report.md)'s bounds and [`47`](47-effect-polymorphic-traits-report.md)'s per-impl
+[`27`](27-the-walls-come-down-report.md)'s bounds and [`27`](27-the-walls-come-down-report.md)'s per-impl
 rows are the machinery; what is missing is the decision, and it is the same decision
-[`41`](41-generic-arithmetic-report.md) took for arithmetic. It is not taken here, and this
+[`27`](27-the-walls-come-down-report.md) took for arithmetic. It is not taken here, and this
 paragraph is not a proposal — it is where the next person should start.
 
 ## 50.6 What is **not** built
@@ -247,14 +247,14 @@ paragraph is not a proposal — it is where the next person should start.
 |---|---|
 | A set's cost | **a map's.** `Set[T]` is `Map[T, Bool]`, so it is an ordered structure with a comparison at every step and a `Bool` per member that nobody reads. There is no hash set and no bitset, and nothing here is measured — [`46`](46-standard-library-report.md) §46.6's reason stands: the tree-walker is 33× CPython ([`25`](25-benchmarks-and-expressiveness.md) §25.3), so a number would measure the interpreter |
 | `intersection` and `difference` | **linear in the left side, via a list.** Both go out to `elements` and back through `set_of`. A map-to-map operation would be a primitive, and the division says a primitive has to be a host's table or grammar rather than a faster copy of something expressible |
-| Immutable-collection sharing | **not built and not expressible.** `list_append` copies ([`33`](33-effect-polymorphism-and-list-patterns-report.md) §33.6), so `unique` and `file_under` are quadratic in the same way `sicp/ch2.beck`'s folds are. The fix is a persistent list, and that is a runtime change rather than a library one |
+| Immutable-collection sharing | **not built and not expressible.** `list_append` copies ([`27`](27-the-walls-come-down-report.md) §27.3), so `unique` and `file_under` are quadratic in the same way `sicp/ch2.beck`'s folds are. The fix is a persistent list, and that is a runtime change rather than a library one |
 | Time zones and locale | **not built, deliberately.** `prelude.rs`'s reason for `time_format` covers the whole file: a time zone is a database with a release schedule, and a replay must not disagree with the run it is replaying about what a date is |
 | Weeks, ISO week dates, quarters | **not built.** `weekday` is there and ISO 8601's week-numbering rules are not |
 | Duration as a rational number of seconds | **not built.** A `Duration` is whole milliseconds. Anything finer is the bignum and arbitrary-precision item, still untouched |
 | Parsing a duration | **not built.** `render_duration` writes ISO 8601 and nothing reads it back — reading is where a grammar starts, and a grammar is the host's half of the division |
 | `time_parse` for a date alone | **not built.** `parse_date` reads `YYYY-MM-DD` in Beck; the host's parser still wants a whole RFC 3339 instant |
 | UUID, crypto, bignums, numeric coercion | **untouched**, unchanged from [`46`](46-standard-library-report.md) §46.6. Those are what is left of Wave 2 |
-| `Ord` as a trait | **not built**, and §50.5's second finding is the argument for it. Ordering is the runtime's structural one, so a type cannot say what its own order is — which is exactly the position `+` was in before [`41`](41-generic-arithmetic-report.md) |
+| `Ord` as a trait | **not built**, and §50.5's second finding is the argument for it. Ordering is the runtime's structural one, so a type cannot say what its own order is — which is exactly the position `+` was in before [`27`](27-the-walls-come-down-report.md) |
 | The AWFY and CLBG harnesses | **not stood up.** [`08`](08-roadmap.md) §8.4 asks for them alongside this bullet and §8.5.4 calls them the largest thing still owed here. They still are |
 
 ## 50.7 What this corrects
@@ -266,16 +266,16 @@ paragraph is not a proposal — it is where the next person should start.
 - **[`08`](08-roadmap.md) §8.5.4's Wave 2** loses two of its five untouched items. What is left is
   crypto, UUID parsing, arbitrary-precision decimal, bignums and numeric coercion — and the
   benchmark harnesses, which are the item that has been owed longest.
-- **[`47`](47-effect-polymorphic-traits-report.md) should be read as per-method.** It says an
+- **[`27`](27-the-walls-come-down-report.md) should be read as per-method.** It says an
   impl's row is inferred and published; §50.4 is the first program where that granularity is
   observable, because it is the first impl with both a pure method and a fallible one. Nothing in
-  [`47`](47-effect-polymorphic-traits-report.md) is wrong — the reading that a type "becomes
+  [`27`](27-the-walls-come-down-report.md) is wrong — the reading that a type "becomes
   fallible" when one of its methods can fail is, and no test refuted it until now.
-- **[`36`](36-parameterised-types-report.md) gains a footnote it should have had.** An `impl` head
+- **[`27`](27-the-walls-come-down-report.md) gains a footnote it should have had.** An `impl` head
   binds its own type parameters and always has; the report does not show one, and the diagnostic
   that would have told a reader so was pointing at a syntax that does not exist. §50.5 is the
   correction, and the test is what keeps it corrected.
-- **[`41`](41-generic-arithmetic-report.md) §41.7's "no `Eq`, `Ord`, `Show`, `Json` or `Hash` in
+- **[`27`](27-the-walls-come-down-report.md) §27.10's "no `Eq`, `Ord`, `Show`, `Json` or `Hash` in
   the prelude" now has a consequence attached.** That bullet records the absence and says of `==`
   that "nothing refuses that today; it is simply not expressible". The same is true of `<`, and
   §50.5 is what a program gets *instead*: a total, deterministic order over its representation,

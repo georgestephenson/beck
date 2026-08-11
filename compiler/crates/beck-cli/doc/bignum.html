@@ -76,7 +76,7 @@ is that a parser raises rather than guessing.</p>
 <pre><code>big_pow(b: Big, exponent: Int) -&gt; Big</code></pre>
 <p><span class="tag">def</span><span class="tag">on any</span><span class="tag">raises(BigError)</span></p>
 <p>`b ** exponent`, by repeated squaring.</p>
-<p>`docs/31`'s tail calls are what make this a loop rather than a stack: the accumulator is carried,
+<p>`docs/27`'s tail calls are what make this a loop rather than a stack: the accumulator is carried,
 so `big(2) ** 4096` costs no host frames at all.</p>
 <h3 id="big_rem">big_rem</h3>
 <pre><code>big_rem(a: Big, b: Big) -&gt; Big</code></pre>
@@ -92,7 +92,7 @@ so `big(2) ** 4096` costs no host frames at all.</p>
 <p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
 <p>A `Big` as a `Float`. **Lossy**, and named so a reader has to mean it.</p>
 <p>A real has 53 bits of significand, so any `Big` above 2⁵³ is rounded — and one above about 1.8 ×
-10³⁰⁸ becomes an infinity, because that is what IEEE 754 does and `docs/32` §32.3 declines to lay
+10³⁰⁸ becomes an infinity, because that is what IEEE 754 does and `docs/27` §27.2 declines to lay
 a rule of Beck's on top of the format's own.</p>
 <h3 id="capped_digit">capped_digit</h3>
 <pre><code>capped_digit(d: Int) -&gt; Int</code></pre>

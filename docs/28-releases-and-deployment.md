@@ -12,7 +12,7 @@ demonstrably able to fail ([`22`](22-phase-3-report.md) §22.8).
 
 ## 28.1 What exists today
 
-Continuous integration, and — since [`101`](101-the-release-and-the-installer-report.md) — the
+Continuous integration, and — since [`104`](104-the-release-and-the-installer-report.md) — the
 pipeline downstream of it, with no tag pushed through it yet. Four workflows:
 
 - **`compiler.yml`** — format, clippy, the full suite (differential and replay harnesses
@@ -26,7 +26,7 @@ pipeline downstream of it, with no tag pushed through it yet. Four workflows:
 - **`docs.yml`** — every relative link in tracked markdown resolves.
 - **`release.yml`** — tag-triggered: the version and the tag agree, the whole of `compiler.yml`
   re-runs on the tagged commit, four native builds produce four tarballs, and the job that publishes
-  them **needs** all of that. Built in [`101`](101-the-release-and-the-installer-report.md), and
+  them **needs** all of that. Built in [`104`](104-the-release-and-the-installer-report.md), and
   never run: no tag has been pushed.
 
 Each workflow parses every workflow file, so a broken one is reported by another ([ADR-0005](adr/0005-workflows-cross-check.md)).
@@ -36,7 +36,7 @@ the paths filters mean the compiler jobs do not start there.
 
 Not existing: **no release has been cut** and no artefact is published — everything below exists as
 a workflow that has never run and two shell scripts that have
-([`101`](101-the-release-and-the-installer-report.md) §101.7 splits them) — and nothing built here is
+([`104`](104-the-release-and-the-installer-report.md) §104.7 splits them) — and nothing built here is
 deployed. What is no longer true is the third clause this paragraph used to carry: the version
 number is `0.3.0`, `release/version.sh` is the one place it is read from, a tag that disagrees with
 it fails the build, and `beck --version` stamps the commit and the target triple beside it. Phase 1
@@ -52,20 +52,20 @@ it and a command that verifies the signature. What is left of this section is th
 that is the harder half. Plus Phase 4's multi-arch and air-gapped items. In landing order:
 
 1. ~~**A release is a tag on a commit that passed the whole matrix.**~~ — **built**
-   ([`101`](101-the-release-and-the-installer-report.md)), and literally: `release.yml` *calls*
+   ([`104`](104-the-release-and-the-installer-report.md)), and literally: `release.yml` *calls*
    `compiler.yml` rather than restating its gates, and the publishing job needs it, so there is no
    path to a release that skips one. "No release-only build steps" holds — the same
    `cargo build --release`, the pinned toolchain, and `--locked` — with one deviation that is in the
    *runner* rather than in the steps: the Linux builds are on `ubuntu-22.04`, because a glibc-linked
    binary runs on the release it was built on and newer. **The targets are not the ones this line
    asked for**: four native builds, `x86_64`/`aarch64` × `unknown-linux-gnu`/`apple-darwin`, and no
-   musl at all. §101.10 is why, and the portability floor that costs.
+   musl at all. §104.10 is why, and the portability floor that costs.
 2. **The artefact set**: ~~the static binary per target~~ — **a tarball per target**, plus one
-   `SHA256SUMS` and a copy of the installer (§101.3); ~~an apko-built~~ **a `beck`-built** OCI
+   `SHA256SUMS` and a copy of the installer (§104.3); ~~an apko-built~~ **a `beck`-built** OCI
    image ([`06`](06-kubernetes-and-packaging.md) §6.2, [`99`](99-supply-chain-report.md)); the SBOM
    — which `beck build` writes and which nothing yet **attaches** to the image; a cosign signature
    per artefact, **built for an image** (§99.5) and **not reaching a tarball**, because `beck sign`'s
-   subject is a manifest digest ([`101`](101-the-release-and-the-installer-report.md) §101.6); a
+   subject is a manifest digest ([`104`](104-the-release-and-the-installer-report.md) §104.6); a
    provenance attestation, **not**; checksums in the release notes. GitHub Releases first; §6.7's
    OCI/ORAS route in Phase 4. The Mere serves packages, not the compiler.
 3. ~~**Reproducibility as a gate**: build the image twice, `diff` the digests~~ — **built, and per
@@ -87,7 +87,7 @@ What is published is nothing, and the one thing that would make a signature reac
 — a push, so cosign can find `sha256-<digest>.sig` in a registry — is
 [`99`](99-supply-chain-report.md) §99.7's first row, unchanged. The next slice is not a smaller job
 than it was; it is a **different** one: a signature over `SHA256SUMS`, which the signing command
-cannot produce today because its subject is an image (§101.6).
+cannot produce today because its subject is an image (§104.6).
 
 ## 28.3 The pipeline a user's application gets
 
@@ -124,8 +124,8 @@ Gates deliberately not added yet, and when each becomes due — so absence stays
 |---|---|---|
 | Compile-speed budgets (§13.7, rustc-perf model) | Phase 3, per §8.4 | Needs the harness; timings stay reported-only on shared runners, so any gate is on counts (the firewall number `beck-db` already asserts) |
 | A browser job driving the compiled sketch | Phase 3, with client polish | phase0 holds this gate; add for the compiler when client work makes it more than a re-test of phase0's DOM |
-| Image size / cold start (§8.3 item 4) | ~~With §28.2's release workflow~~ — **due now**: CI builds an image ([`99`](99-supply-chain-report.md)), and §28.2's release workflow exists ([`101`](101-the-release-and-the-installer-report.md)) | Both deferrals are spent and the row still waits on the *right* binary: the image ships whichever `beck` built it, and the release builds glibc-linked binaries rather than the static musl one §28.2 item 1 describes (§101.10). A size number today would be about the wrong artefact (§99.8) |
-| A size budget on the release binary | With the musl build, or with a defended number | §101.3 measures it — 20.1 MiB, 8.14 MiB compressed — and declines to gate it, on [`26`](26-arrangement-sharing-report.md) §26.10's rule: the value that should fail a build has to be defended, not guessed |
+| Image size / cold start (§8.3 item 4) | ~~With §28.2's release workflow~~ — **due now**: CI builds an image ([`99`](99-supply-chain-report.md)), and §28.2's release workflow exists ([`104`](104-the-release-and-the-installer-report.md)) | Both deferrals are spent and the row still waits on the *right* binary: the image ships whichever `beck` built it, and the release builds glibc-linked binaries rather than the static musl one §28.2 item 1 describes (§104.10). A size number today would be about the wrong artefact (§99.8) |
+| A size budget on the release binary | With the musl build, or with a defended number | §104.3 measures it — 20.1 MiB, 8.14 MiB compressed — and declines to gate it, on [`26`](26-arrangement-sharing-report.md) §26.10's rule: the value that should fail a build has to be defended, not guessed |
 | Mutation testing ≥85% on checker/solver/splitter (§13.8) | Phase 3 tail, nightly lane | Too slow for PRs |
 | Docs-as-tests: Beck blocks in docs checked (§13.6) | With the tutorial | Today's doc snippets are design sketches, deliberately ahead of the language |
 | Per-session memory / arrangement-entry gates | Needs an owner | [`26`](26-arrangement-sharing-report.md) §26.10: exported, ungated, deferred by four reports; the value that should fail a build has to be defended, not guessed |
@@ -150,7 +150,7 @@ Debts found by the Phase 3 review (2026-08) that no report names, smallest first
   three near-identical compile-and-report helpers should be one.
 - redb 2→4: [ADR-0003](adr/0003-redb-held-at-2.md).
 - `check.rs` (3,012 lines) and the remaining walls are already on the record
-  ([`22`](22-phase-3-report.md) §22.6, [`27`](27-walls-report.md) §27.7,
+  ([`22`](22-phase-3-report.md) §22.6, [`27`](27-the-walls-come-down-report.md) §27.10,
   [`25`](25-benchmarks-and-expressiveness.md) §25.7) and are not repeated here.
 
 ## 28.7 What this document refuses

@@ -24,7 +24,7 @@ The two properties worth knowing:
 - **A checksum is not a signature.** `SHA256SUMS` proves a download was not corrupted in transit and
   says nothing about the release page. The signature, the transparency log and the provenance
   attestation are [`99`](../docs/99-supply-chain-report.md) §99.7's unbuilt items, and
-  [`101`](../docs/101-the-release-and-the-installer-report.md) §101.6 says what that leaves open.
+  [`104`](../docs/104-the-release-and-the-installer-report.md) §104.6 says what that leaves open.
 
 `compiler/crates/beck-cli/tests/release.rs` is the gate: it runs `build.sh` against a wrong version,
 runs `install.sh` against a corrupted archive, and asserts that the platforms `install.sh` offers are
