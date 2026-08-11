@@ -18,6 +18,7 @@ What a user's type may implement to join something the language already has. `Nu
 |---|---|
 | `EncodingError` | `union EncodingError = BadEncoding(encoding: Str, why: Str)` |
 | `Envelope` | `model Envelope[T] {seq: Int, at: Int, actor: Str, body: T}` |
+| `Freshness` | `union Freshness = Confirmed \| Pending(n: Int)` |
 | `HttpError` | `union HttpError = HttpUnreachable(host: Str, why: Str) \| HttpTimedOut(host: Str, millis: Int) \| HttpBadResponse(why: Str) \| HttpStatus(status: Int, body: Str)` |
 | `HttpRequest` | `model HttpRequest {method: Str, path: Str, headers: Map[Str, Str], body: Str, port: Int, tls: Bool, secrets: Map[Str, secret[Str]]}` |
 | `HttpResponse` | `model HttpResponse {status: Int, headers: Map[Str, Str], body: Str}` |
@@ -32,7 +33,7 @@ What a user's type may implement to join something the language already has. `Nu
 
 ## Names
 
-100 of them.
+101 of them.
 
 | Name | Type |
 |---|---|
@@ -62,6 +63,7 @@ What a user's type may implement to join something the language already has. `Nu
 | `filter_map` | `(Stream[a], (a) -> Option[b] ! {e}) -> Stream[b] ! {e}` |
 | `float` | `(Int) -> Float` |
 | `fold` | `((a, Envelope[b]) -> a ! {e}, a, Stream[b]) -> Signal[a]` |
+| `freshness` | `() -> Signal[Freshness]` |
 | `hex_decode` | `(Str) -> Str ! {raises(EncodingError)}` |
 | `hex_encode` | `(Str) -> Str` |
 | `html_attr` | `(Str, a) -> Attr` |

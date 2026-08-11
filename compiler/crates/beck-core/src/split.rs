@@ -124,7 +124,7 @@ impl Placed {
             validate: lam(2, unit()),
             fold: lam(2, Core::new(CoreKind::Var(0), Ty::unit(), span)),
             init: unit(),
-            view: lam(3, unit()),
+            view: lam(4, unit()),
             state_ty: Ty::unit(),
             event_ty: Ty::unit(),
             command_ty: Ty::unit(),
@@ -137,6 +137,7 @@ impl Placed {
             states: Vec::new(),
             view_is_per_session: false,
             view_reads_presence: false,
+            view_reads_freshness: false,
         };
         let render = crate::render::Decision::of(&roles, &program.defs, false, None, span);
         Placed {
@@ -183,12 +184,12 @@ pub struct Roles {
     pub fold: Core,
     /// The fold's initial accumulator.
     pub init: Core,
-    /// `(state, session, presence) -> Html` — the client-placed view, with intermediate signals
-    /// inlined or shared.
+    /// `(state, session, presence, freshness) -> Html` — the client-placed view, with intermediate
+    /// signals inlined or shared.
     ///
-    /// Three parameters whether or not the program reads the third: a role the runtime calls has
-    /// one arity, and a view that ignores its presence argument is cheaper than two code paths
-    /// that could disagree about which one it has.
+    /// Four parameters whether or not the program reads the last two: a role the runtime calls has
+    /// one arity, and a view that ignores an argument is cheaper than two code paths that could
+    /// disagree about which one it has.
     pub view: Core,
     pub state_ty: Ty,
     pub event_ty: Ty,
@@ -209,6 +210,9 @@ pub struct Roles {
     pub view_is_per_session: bool,
     /// Whether the page reads `presence()`, and therefore has an input the log does not contain.
     pub view_reads_presence: bool,
+    /// Whether the page reads `freshness()`, and therefore has an input only a Mode B client can
+    /// answer with anything but `Confirmed`.
+    pub view_reads_freshness: bool,
 }
 
 impl Roles {
@@ -334,6 +338,42 @@ pub fn split(mut program: Program, diags: &mut Diagnostics) -> Option<Placed> {
         return None;
     }
 
+    // The same rule, for the other source that is not the log. `freshness()` is a client's account
+    // of what it has not heard back about yet, so a `validate` deciding from it would decide from
+    // the network — and on replay there is no network and nothing is pending.
+    if let Some(&how) = graph
+        .freshnesses()
+        .iter()
+        .find(|&&f| reaches(&graph, decide, f))
+    {
+        diags.push(
+            Diagnostic::error(
+                "B0517",
+                "the chokepoint reads `freshness`, which is not in the log",
+                graph.node(decide).span,
+            )
+            .with_primary_label(format!(
+                "`{}` decides from `{}`",
+                graph.label(decide),
+                graph.label(how)
+            ))
+            .with_label(
+                graph.node(how).span,
+                "whether a guess is outstanding is decided here",
+            )
+            .with_note(
+                "how many of a client's commands were in flight when an event was recorded is \
+                 written down nowhere, and on replay nothing is in flight at all. A `validate` \
+                 that read it would accept a command today and refuse it on the way back",
+            )
+            .with_fix(
+                "decide from the accumulator: what has actually been recorded is the fold's job to \
+                 say, and it is the same answer now and on replay",
+            ),
+        );
+        return None;
+    }
+
     // Each fold's stream, after any `filter_map`, must be the chokepoint's output. Anything else
     // is an event stream the log does not contain.
     let mut fold_filters: Vec<Option<Core>> = Vec::new();
@@ -409,6 +449,7 @@ pub fn split(mut program: Program, diags: &mut Diagnostics) -> Option<Placed> {
     let state_var = vars.fresh();
     let session_var = vars.fresh();
     let presence_var = vars.fresh();
+    let freshness_var = vars.fresh();
 
     let state_roles: Vec<StateRole> = folds
         .iter()
@@ -429,12 +470,14 @@ pub fn split(mut program: Program, diags: &mut Diagnostics) -> Option<Placed> {
         state_var,
         session_var,
         presence_var,
+        freshness_var,
         bound: BTreeMap::new(),
         lets: Vec::new(),
         inlined: Vec::new(),
         shared: Vec::new(),
         per_session: false,
         reads_presence: false,
+        reads_freshness: false,
         vars: &mut vars,
         diags,
     };
@@ -444,6 +487,7 @@ pub fn split(mut program: Program, diags: &mut Diagnostics) -> Option<Placed> {
     let shared = slicer.shared.clone();
     let per_session = slicer.per_session;
     let reads_presence = slicer.reads_presence;
+    let reads_freshness = slicer.reads_freshness;
 
     let state_ty = if fused {
         Ty::con(FUSED_STATE)
@@ -453,7 +497,7 @@ pub fn split(mut program: Program, diags: &mut Diagnostics) -> Option<Placed> {
 
     let view = Core {
         kind: CoreKind::Lam {
-            params: vec![state_var, session_var, presence_var].into(),
+            params: vec![state_var, session_var, presence_var, freshness_var].into(),
             body: Arc::new(view_body),
         },
         ty: Ty::fun(
@@ -461,6 +505,7 @@ pub fn split(mut program: Program, diags: &mut Diagnostics) -> Option<Placed> {
                 state_ty.clone(),
                 Ty::con("Session"),
                 Ty::map(Ty::str_(), Ty::int()),
+                Ty::con("Freshness"),
             ],
             Ty::html(),
         ),
@@ -604,6 +649,7 @@ pub fn split(mut program: Program, diags: &mut Diagnostics) -> Option<Placed> {
         states: state_roles,
         view_is_per_session: per_session,
         view_reads_presence: reads_presence,
+        view_reads_freshness: reads_freshness,
     };
 
     // Where the page renders, and whether it may. `@render(client)` turns the crossing from a
@@ -1034,6 +1080,7 @@ struct Slicer<'a, 'd> {
     state_var: VarId,
     session_var: VarId,
     presence_var: VarId,
+    freshness_var: VarId,
     vars: &'d mut Vars,
     /// Vertices already bound in this slice.
     bound: BTreeMap<SigId, VarId>,
@@ -1043,6 +1090,7 @@ struct Slicer<'a, 'd> {
     shared: Vec<Arc<str>>,
     per_session: bool,
     reads_presence: bool,
+    reads_freshness: bool,
     diags: &'d mut Diagnostics,
 }
 
@@ -1075,6 +1123,12 @@ impl Slicer<'_, '_> {
         if matches!(node.op, Op::Presence) {
             self.reads_presence = true;
             return Some(var(self.presence_var, signal_elem(&node.ty), node.span));
+        }
+        // And so is freshness, for the same reason and from the other side: what the renderer
+        // knows about its own guesses is handed to the view, not computed by it.
+        if matches!(node.op, Op::Freshness) {
+            self.reads_freshness = true;
+            return Some(var(self.freshness_var, signal_elem(&node.ty), node.span));
         }
         if let Some(&v) = self.bound.get(&id) {
             return Some(var(v, signal_elem(&node.ty), node.span));
@@ -1137,7 +1191,9 @@ impl Slicer<'_, '_> {
                 );
                 return None;
             }
-            Op::Durable | Op::Alias | Op::Presence => unreachable!("handled above"),
+            Op::Durable | Op::Alias | Op::Presence | Op::Freshness => {
+                unreachable!("handled above")
+            }
         };
 
         if let Some(name) = &node.name {

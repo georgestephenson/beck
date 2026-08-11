@@ -49,6 +49,16 @@
 //! could not apply an event to it without a second, different fold that no program writes. So
 //! optimism is not an extra feature layered on Mode B; it is the same fact stated twice, and this
 //! module reports it as one decision with two consequences.
+//!
+//! # And the rule that points the other way
+//!
+//! §3.7 asks for one more thing of a guess: that the page can *say* it is one. "`Signal[T]` carries
+//! a freshness dimension (`confirmed | pending(n)`) that UI code can render (\"saving…\") —
+//! staleness is typed, not pretended away." `freshness()` is that dimension, and it is the only
+//! thing here a **server** cannot answer: what a server renders is what it has recorded, so its
+//! answer is `Confirmed` at every position of every log. So a page reading it is refused Mode A
+//! (`B0518`) exactly as a page reading `presence` is refused Mode B — the two rules are the same
+//! rule about two facts that live on opposite sides of the wire.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -269,6 +279,10 @@ pub struct Decision {
     pub uses: SessionUse,
     /// True when the view reads `presence()`, which is the second fact that decides it.
     pub reads_presence: bool,
+    /// True when the view reads `freshness()`. The only condition here that refuses **Mode A**:
+    /// a server renders the state it has recorded, so its answer is `Confirmed` and nothing else,
+    /// and a page that branches on it is a page with a dead branch.
+    pub reads_freshness: bool,
     /// Where the component is declared, for a diagnostic.
     pub span: Span,
 }
@@ -311,6 +325,7 @@ impl Decision {
             per_session: roles.view_is_per_session,
             uses: SessionUse::of(&roles.view, defs),
             reads_presence: roles.view_reads_presence,
+            reads_freshness: roles.view_reads_freshness,
             // A declared mode is refused where it was written; a defaulted one, at the component.
             span: declared.map_or(span, |(_, s)| s),
         }
@@ -382,6 +397,18 @@ impl Decision {
             );
         }
         line(&mut out, "reads of session", self.uses.describe());
+        // §3.7's freshness dimension, when the program asked for it. Printed beside optimism
+        // because it is the same fact seen from the page: optimism is what makes a guess, and this
+        // is the page being able to say so.
+        if self.reads_freshness {
+            line(
+                &mut out,
+                "freshness",
+                "read — this page renders `Pending(n)` while its own commands are in flight, and \
+                 `Confirmed` otherwise"
+                    .to_string(),
+            );
+        }
         out.push('\n');
         // The counterfactual is the useful half, so the *reason* a page cannot move has to be the
         // one that applies. A page reading the roster is refused whatever it does with the session.
@@ -421,9 +448,11 @@ impl Decision {
 
     /// Refuse a component that may not render where it says it does.
     ///
-    /// Two conditions, and they are the two kinds of thing a page can read that a browser handed
-    /// the accumulator would not have: **who** is asking ([`SessionUse`]) and **who is connected**
-    /// (`presence`). Where the browser *is* is not one of them — it chose the route.
+    /// Three conditions, and they do not all point the same way. Two are things a page can read
+    /// that a browser handed the accumulator would not have: **who** is asking ([`SessionUse`])
+    /// and **who is connected** (`presence`). Where the browser *is* is not one of them — it chose
+    /// the route. The third is the mirror: **whether a guess is outstanding** (`freshness`) is
+    /// something only a browser can have, so a page reading it may not render on the *server*.
     ///
     /// What is deliberately not a third condition is worth writing down. Mode B puts the
     /// **accumulator** on the wire, so the obvious check is §3.5's `Sendable` — and it is
@@ -433,7 +462,36 @@ impl Decision {
     /// a check here would be a second gate on a door that is shut. `mode_b.rs` asserts that
     /// composition rather than trusting it.
     pub fn refuse(&self, diags: &mut Diagnostics) {
-        if self.mode != Mode::Client {
+        if self.mode == Mode::Server {
+            // The one refusal that points the other way. Every rule above asks whether the browser
+            // may be given something; this asks whether the *server* can answer something, and the
+            // answer is no: a server renders what it has recorded, so `freshness()` there is
+            // `Confirmed` at every seq of every log. A page that renders "saving…" from it would
+            // have written a branch nothing can take.
+            if self.reads_freshness {
+                diags.push(
+                    Diagnostic::error(
+                        "B0518",
+                        format!(
+                            "`{}` reads `freshness`, so it cannot render on the server",
+                            self.component
+                        ),
+                        self.span,
+                    )
+                    .with_primary_label("a server has nothing in flight")
+                    .with_note(
+                        "freshness is a client's account of the commands it has proposed and not \
+                         yet had confirmed. The server holds the log: what it renders is confirmed \
+                         by definition, so this page would render `Confirmed` at every position of \
+                         every log and its other branch would be unreachable.",
+                    )
+                    .with_fix(
+                        "render this component in the browser — `@render(client)`, which is what \
+                         makes a guess possible in the first place — or take `freshness` out of \
+                         its page",
+                    ),
+                );
+            }
             return;
         }
         if self.uses.reads_identity() {

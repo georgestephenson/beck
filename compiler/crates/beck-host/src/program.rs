@@ -157,6 +157,12 @@ impl Runtime {
             state.clone(),
             session(actor.actor(), claims_of(actor), actor.path()),
             here.clone(),
+            // Confirmed, and not a parameter, because this is the server's render: what it holds
+            // is the fold over the log, and a guess is something only a Mode B client has. The
+            // checker makes the constant unobservable — a page that reads `freshness()` cannot
+            // render on the server at all (`B0518`) — so this is the value the SSR of a Mode B
+            // page is rendered with and nothing else ever sees it.
+            beck_core::edge::confirmed(),
         ])
         .map_err(|e| anyhow!("{e}"))
         .context("rendering the view")?;

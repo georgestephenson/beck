@@ -645,7 +645,7 @@ jobs:
   budgets:
     # Deterministic budgets only — the ones §8.3 calls gates.
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - name: thin-client payload (§5.1 target < 10 KB brotli)
@@ -659,6 +659,31 @@ jobs:
           br=$(brotli -c -q 11 "$f" | wc -c)
           echo "thin client: ${raw} B raw, ${br} B brotli (budget 10240)"
           test "$br" -lt 10240
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: compiler
+      - name: Mode B component bundles (§5.1 budget < 150 KB brotli)
+        # §8.6's Mode B bullet asks for this by name: "size budget CI gate (< 150 KB brotli per
+        # component bundle)". It is the *component* that is budgeted and not the kernel — the
+        # kernel is one program-independent download every component of every Beck application
+        # shares, and docs/94 §94.6 measures it separately for that reason.
+        #
+        # Every Mode B example in the tree, not one of them: a budget checked against a single
+        # program is a budget about that program.
+        shell: bash
+        working-directory: compiler
+        run: |
+          command -v brotli
+          cargo build --release -p beck-cli
+          for f in examples/board.beck examples/editor.beck; do
+            ./target/release/beck bundle "$f" --out /tmp/bundle.bpk
+            raw=$(wc -c < /tmp/bundle.bpk)
+            br=$(brotli -c -q 11 /tmp/bundle.bpk | wc -c)
+            echo "$f: ${raw} B raw, ${br} B brotli (budget 153600)"
+            test "$br" -lt 153600
+          done
 
   measurements:
     # Reported, never thresholded (§13.7): the release-profile runs the phase reports quote, so

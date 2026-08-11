@@ -1,6 +1,6 @@
 //! Mode B: the component that renders in the browser (§5.1, `docs/94`).
 //!
-//! Five things are gated here, and the first is the one everything else rests on.
+//! Seven things are gated here, and the first is the one everything else rests on.
 //!
 //! 1. **The two modes render the same page.** A Mode B client is only legitimate if running the
 //!    view locally produces what the server would have sent. Not "looks the same" — the *same
@@ -13,8 +13,16 @@
 //! 3. **Optimism is right and reconciliation is right**: a guess appears before the server answers,
 //!    a guess the program's own `validate` refuses never appears at all, and a guess is retired
 //!    when — and only when — the confirmed state passes the position the server gave it.
-//! 4. **The bundle is a slice**: what the component reaches and nothing else.
-//! 5. **The kernel builds for `wasm32-unknown-unknown`, and how big it is.** This one *skips* when
+//! 4. **The page can say it is guessing** — §3.7's freshness dimension (`docs/101`). `Confirmed`
+//!    while the client holds nothing of its own, `Pending(n)` while it does, and back again when
+//!    the state that confirms the guess arrives. Refused to a page that renders on the *server*,
+//!    which is the one rule here that points that way.
+//! 5. **The bundle is a slice**: what the component reaches and nothing else — asserted as a
+//!    *shape*, because §5.1's 150 KB budget has ninety times the headroom it needs and the
+//!    threshold itself belongs in CI, where `brotli` is installed.
+//! 6. **The whole slice runs over a socket**, through the subscription loop a websocket upgrade
+//!    lands in — nothing between the log and the browser's page is stubbed.
+//! 7. **The kernel builds for `wasm32-unknown-unknown`, and how big it is.** This one *skips* when
 //!    the target is not installed, and says so. `BECK_REQUIRE_WASM=1` forbids the skip.
 
 use std::path::{Path, PathBuf};
@@ -52,8 +60,17 @@ fn refusal(src: &str) -> String {
 }
 
 fn board() -> Placed {
-    let path = root().join("examples/board.beck");
-    let src = std::fs::read_to_string(&path).expect("examples/board.beck");
+    example("board.beck")
+}
+
+/// The other Mode B example: the one whose page reads §3.7's freshness dimension.
+fn editor() -> Placed {
+    example("editor.beck")
+}
+
+fn example(name: &str) -> Placed {
+    let path = root().join("examples").join(name);
+    let src = std::fs::read_to_string(&path).unwrap_or_else(|_| panic!("examples/{name}"));
     let (placed, diags, map) = beck_core::compile_str(path.to_str().expect("utf-8"), &src);
     assert!(!diags.has_errors(), "{}", diags.render(&map));
     placed.expect("an application")
@@ -561,7 +578,175 @@ fn a_client_adopts_the_page_it_was_rendered_and_rebuilds_any_other() {
     assert!(shown(&mut client).contains("landed first"));
 }
 
-// --------------------------------------------------------------- 4. the bundle is a slice
+// --------------------------------------------------------------- 4. freshness (§3.7, docs/101)
+
+/// The page says whether what it is showing is a fact, and stops saying it when it becomes one.
+///
+/// §3.7: "`Signal[T]` carries a freshness dimension (`confirmed | pending(n)`) that UI code can
+/// render (\"saving…\") — staleness is typed, not pretended away." This is the whole feature in one
+/// interaction: `Confirmed` before, `Pending(1)` while the guess is in flight, `Confirmed` again
+/// when the state that includes it arrives.
+///
+/// It goes red if `freshness()` stops reaching the view, if the count stops following the queue, or
+/// if the confirmation stops repainting a page whose freshness moved.
+#[test]
+fn a_page_that_is_showing_a_guess_says_so_and_stops_when_it_is_confirmed() {
+    let placed = editor();
+    let rt = runtime(&placed);
+    let mut client = client_of(&placed, "ana");
+    client.hydrate().expect("hydrates");
+    assert!(
+        shown(&mut client).contains("saved"),
+        "a fresh page is saved"
+    );
+
+    let command = json_command("Write", &[("id", "l1"), ("text", "the first line")]);
+    assert!(matches!(
+        client.propose("k1", &command, 0),
+        Proposed::Accepted { .. }
+    ));
+    let guessing = shown(&mut client);
+    assert!(guessing.contains("saving 1"), "{guessing}");
+    assert!(guessing.contains("the first line"), "{guessing}");
+
+    // The server's state for exactly that command. The document does not move — the guess was
+    // right — but the freshness does, and the page has to follow it.
+    client.settle("k1", 1);
+    let state = apply(&rt, &rt.initial_state().expect("init"), &command, 1);
+    let ops = client.reset(1, state.clone()).expect("takes the state");
+    assert!(
+        !ops.is_empty(),
+        "the confirmation left the page saying `saving`"
+    );
+    let settled = shown(&mut client);
+    assert!(settled.contains("saved"), "{settled}");
+
+    // And it is now the page the server would have sent, which is the claim every other one rests
+    // on — for a program whose page reads something the server answers as a constant.
+    assert_eq!(
+        rt.view(&state, "ana").expect("the server renders"),
+        rendered(&mut client, &placed, "ana"),
+        "the two modes disagreed once the guess was confirmed"
+    );
+}
+
+/// `Pending(n)` counts, so a page can say how much it owes.
+#[test]
+fn pending_counts_every_command_in_flight_and_not_just_that_there_is_one() {
+    let placed = editor();
+    let mut client = client_of(&placed, "ana");
+    client.hydrate().expect("hydrates");
+
+    for (i, text) in ["first", "second", "third"].iter().enumerate() {
+        assert!(matches!(
+            client.propose(
+                &format!("k{i}"),
+                &json_command("Write", &[("id", &format!("l{i}")), ("text", text)]),
+                0
+            ),
+            Proposed::Accepted { .. }
+        ));
+    }
+    assert_eq!(client.in_flight(), 3);
+    let page = shown(&mut client);
+    assert!(page.contains("saving 3"), "{page}");
+}
+
+/// The shortcut `docs/94` §94.14 added asks whether the *state* moved. A confirmation is exactly
+/// where the state does not and the freshness does, so the shortcut had to learn a second question
+/// — and it may only ask it of a component that reads the answer.
+///
+/// Both directions are asserted, because either alone is satisfiable by a broken client: a page
+/// that reads freshness re-renders on the confirmation, and a page that does not still costs
+/// nothing. Removing the `reads_freshness` guard reddens the second half; removing the freshness
+/// comparison entirely reddens the first.
+#[test]
+fn a_confirmation_repaints_a_page_that_reads_freshness_and_no_other() {
+    let cost = |placed: &Placed, command: serde_json::Value| {
+        let rt = runtime(placed);
+        let mut client = client_of(placed, "ana");
+        client.hydrate().expect("hydrates");
+        assert!(matches!(
+            client.propose("k1", &command, 0),
+            Proposed::Accepted { .. }
+        ));
+        let after_the_guess = client.renders();
+        client.settle("k1", 1);
+        let state = apply(&rt, &rt.initial_state().expect("init"), &command, 1);
+        client.reset(1, state).expect("takes the state");
+        client.renders() - after_the_guess
+    };
+
+    assert_eq!(
+        cost(
+            &editor(),
+            json_command("Write", &[("id", "l1"), ("text", "a line")])
+        ),
+        1,
+        "a page that renders `saving` was left rendering it"
+    );
+    assert_eq!(
+        cost(
+            &board(),
+            json_command("Add", &[("id", "c1"), ("text", "a card")])
+        ),
+        0,
+        "a page that cannot observe freshness paid for a render with a known answer"
+    );
+}
+
+/// A client that may not guess is `Confirmed` whatever it has sent, because what it is showing is
+/// the server's state and not its own.
+#[test]
+fn a_client_that_may_not_guess_is_never_pending() {
+    let placed = editor();
+    let mut bundle = Bundle::of(&placed);
+    bundle.optimistic = false;
+    let bytes = bundle.to_bytes();
+    let mut client = Client::load(&bytes, Viewer::named("ana")).expect("the bundle loads");
+    client.hydrate().expect("hydrates");
+
+    assert!(matches!(
+        client.propose(
+            "k1",
+            &json_command("Write", &[("id", "l1"), ("text", "written locally")]),
+            0
+        ),
+        Proposed::Accepted { .. }
+    ));
+    let page = shown(&mut client);
+    assert!(page.contains("saved"), "{page}");
+    assert!(
+        !page.contains("written locally"),
+        "a page that may not guess guessed"
+    );
+}
+
+/// The refusal that points the other way from `B0516`: a server has nothing in flight, so a page
+/// that reads freshness may not render there.
+///
+/// Goes red if `@render(client)` stops being required for `freshness()` — which would mean a page
+/// with a branch no log can take.
+#[test]
+fn a_page_that_reads_freshness_cannot_render_on_the_server() {
+    let src = std::fs::read_to_string(root().join("examples/editor.beck")).expect("the editor");
+    let why = refusal(&src.replace("@render(client)\n", ""));
+    assert!(why.contains("B0518"), "{why}");
+    assert!(why.contains("cannot render on the server"), "{why}");
+    // The reason, not just the rule: a reader who wanted this has to be told what to do instead.
+    assert!(why.contains("@render(client)"), "{why}");
+}
+
+/// And the chokepoint may not read it either, for `B0515`'s reason applied to the other source
+/// that is not the log: nothing records what was in flight, and a replay has nothing in flight.
+#[test]
+fn the_chokepoint_cannot_decide_from_what_is_in_flight() {
+    let why = refusal(&program_deciding_from_freshness());
+    assert!(why.contains("B0517"), "{why}");
+    assert!(why.contains("not in the log"), "{why}");
+}
+
+// --------------------------------------------------------------- 5. the bundle is a slice
 
 #[test]
 fn a_bundle_carries_the_components_slice_and_the_program_it_was_cut_from() {
@@ -582,6 +767,65 @@ fn a_bundle_carries_the_components_slice_and_the_program_it_was_cut_from() {
     }
 }
 
+/// §5.1's budget is "< 150 KB brotli **per component bundle**", and what makes that a property
+/// rather than an accident is this: a bundle is a function of the *component's slice*, not of the
+/// program the component is in.
+///
+/// So the gate is a shape rather than a threshold — the threshold is in CI, where `brotli` is
+/// installed and a budget cannot flake ([`13`] §13.7), and against the board it has eighty times
+/// the headroom it needs, which is a gate that could not go red. This one can: it measures at two
+/// sizes, because one measurement cannot tell "does not grow" from "grew a little"
+/// (`AGENTS.md`), and it asserts **equality of bytes** rather than a bound, because anything the
+/// component does not reach contributing anything at all is the defect.
+///
+/// It goes red the day the bundle starts carrying the program — a type table, a signal graph, a
+/// definition reached by nothing, the tests — which is exactly the change that would make the
+/// budget stop holding for a large application.
+///
+/// The bound is "under a byte each" rather than zero, and the byte is real: variables are numbered
+/// across the whole program, so a bigger program numbers the *slice's own* locals higher and
+/// postcard spends a second byte on a varint past 127. That is `O(log n)` in the program's size
+/// and it is why this asserts a rate instead of equality — a definition that were genuinely
+/// carried would cost hundreds of bytes, not a fraction of one.
+///
+/// [`13`]: ../../../../docs/13-testing.md
+#[test]
+fn a_bundle_is_a_function_of_the_slice_and_not_of_the_program_around_it() {
+    let src = std::fs::read_to_string(root().join("examples/board.beck")).expect("the board");
+    let bundle = |extra: usize| {
+        let mut program = src.clone();
+        for i in 0..extra {
+            // Reached by nothing: not the view, not `validate`, not the fold, not `init`. A
+            // definition like this is exactly what a growing application accumulates.
+            program.push_str(&format!(
+                "\ndef unreached_{i}(n: Int) -> Int:\n    return n * {} + 1\n",
+                i + 2
+            ));
+        }
+        Bundle::of(&compile(&program))
+    };
+
+    let slice = bundle(0);
+    let carried: Vec<_> = slice.defs.keys().cloned().collect();
+    let baseline = slice.to_bytes().len();
+
+    // Two sizes, because one cannot tell "does not grow" from "grows slowly".
+    for extra in [10, 100] {
+        let grown = bundle(extra);
+        assert_eq!(
+            grown.defs.keys().cloned().collect::<Vec<_>>(),
+            carried,
+            "{extra} unreached definitions changed what the bundle carries"
+        );
+        let per = (grown.to_bytes().len() - baseline) as f64 / extra as f64;
+        assert!(
+            per < 1.0,
+            "{extra} unreached definitions cost {per:.2} bytes each — the bundle is a function of \
+             the program rather than of the slice"
+        );
+    }
+}
+
 #[test]
 fn a_bundle_from_another_program_is_refused_rather_than_run() {
     let placed = board();
@@ -597,7 +841,7 @@ fn a_bundle_from_another_program_is_refused_rather_than_run() {
     }
 }
 
-// --------------------------------------------------------------- 5. end to end, over a socket
+// --------------------------------------------------------------- 6. end to end, over a socket
 
 /// The whole slice, driven through the loop a browser talks to.
 ///
@@ -700,7 +944,7 @@ async fn a_mode_b_subscription_carries_the_state_and_the_browser_renders_it() {
     );
 }
 
-// --------------------------------------------------------------- 6. the wasm build
+// --------------------------------------------------------------- 7. the wasm build
 
 /// The kernel builds for the browser's target, and this is how big it is.
 ///
@@ -927,6 +1171,67 @@ items: Signal[Items] = durable(fold(apply_event, Items(items=[]), events))
 {page}
 "#
     )
+}
+
+/// A program whose chokepoint decides from `freshness()` — the thing `B0517` refuses.
+///
+/// The freshness reaches `decide` through a `map2`, which is the only way it can: `validate` is a
+/// `def` and takes what the graph hands it, so the refusal has to be about the graph rather than
+/// about the function's body.
+fn program_deciding_from_freshness() -> String {
+    r#"
+model Items:
+    items: list[Str]
+
+model Guarded:
+    items: Items
+    saving: Freshness
+
+union Command:
+    Take(id: Str)
+
+union Event:
+    Taken(id: Str)
+
+union Rejection:
+    Busy
+
+def apply_event(s: Items, env: Envelope[Event]) -> Items:
+    return s
+
+def guard(s: Items, saving: Freshness) -> Guarded:
+    return Guarded(items=s, saving=saving)
+
+def validate(g: Guarded, p: Proposal) -> Result[list[Event], Rejection]:
+    match g.saving:
+        case Pending(n):
+            return Err(error=Busy)
+        case Confirmed:
+            return Ok(value=[Taken(id="x")])
+
+def view_of(s: Items) -> Html:
+    return ui:
+        ul:
+            for i in s.items:
+                li: i
+
+@on(server)
+proposals: Stream[Proposal] = merge_clients()
+
+@on(server)
+events: Stream[Event] = decide(proposals, guarded, validate)
+
+guarded: Signal[Guarded] = map2(guard, items, saving)
+
+saving: Signal[Freshness] = freshness()
+
+@on(data)
+items: Signal[Items] = durable(fold(apply_event, Items(items=[]), events))
+
+@on(client)
+page: Signal[Html] = signal_map(items, view_of)
+"#
+    .to_string()
 }
 
 /// A Mode B program whose *page* is a function of the state alone — so B0514 lets it render on the

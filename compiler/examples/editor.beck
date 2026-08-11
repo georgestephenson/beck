@@ -1,0 +1,145 @@
+# A shared document, edited in the browser — and a page that says whether what it shows is a fact.
+#
+# This is `board.beck`'s mode with the one thing `board.beck` cannot do. In Mode B the browser
+# holds the accumulator and applies its own commands speculatively, so between a keystroke and the
+# server's answer the page is showing a *guess*. §3.7 asks for that to be visible rather than
+# pretended away: "`Signal[T]` carries a freshness dimension (`confirmed | pending(n)`) that UI
+# code can render (\"saving…\") — staleness is typed, not pretended away."
+#
+# `freshness()` is that dimension. It is a signal source like `presence()` and the mirror image of
+# it: presence is what the *server* knows about its own sockets and cannot cross to a browser
+# (B0516), and freshness is what the *browser* knows about its own unacknowledged commands and
+# cannot be answered by a server (B0518) — a server renders what it has recorded, so its answer
+# would be `Confirmed` at every position of every log.
+#
+# So this program cannot compile without the `@render(client)` at the bottom, and that is the point:
+# a page that says "saving…" is a page that has something to save.
+
+type Id = newtype[Str]
+
+model Line:
+    id: Id
+    text: Str
+
+model Doc:
+    lines: Map[Id, Line]
+
+union Command:
+    Write(id: Id, text: Str)
+    Erase(id: Id)
+
+union Event:
+    Written(id: Id, text: Str)
+    Erased(id: Id)
+
+union Rejection:
+    Blank
+    NoSuchLine
+
+# ---------- The database is a fold ----------
+
+def apply_event(d: Doc, env: Envelope[Event]) -> Doc:
+    match env.body:
+        case Written(id, text):
+            return d.with(lines=map_insert(d.lines, id, Line(id=id, text=text)))
+        case Erased(id):
+            return d.with(lines=map_remove(d.lines, id))
+
+# ---------- Authority is one chokepoint ----------
+#
+# The client runs this too, so a blank line never becomes a guess in the first place. What it may
+# not do is read `freshness()`: what was in flight when an event was recorded is written down
+# nowhere, so a replay would decide differently (B0517).
+
+def validate(d: Doc, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Write(id, text):
+            if str_is_empty(str_trim(text)):
+                return Err(error=Blank)
+            return Ok(value=[Written(id=id, text=text)])
+        case Erase(id):
+            if map_contains(d.lines, id):
+                return Ok(value=[Erased(id=id)])
+            return Err(error=NoSuchLine)
+
+# ---------- The page is a function of the document and of how sure it is ----------
+
+def view(d: Doc, saving: Freshness) -> Html:
+    return ui:
+        main:
+            h1: "editor"
+            p(class="status"): status(saving)
+            input(placeholder="a line", autofocus="on",
+                  on_enter=Write(id=Id(value="$id"), text="$value"))
+            ul:
+                for l in lines(d):
+                    li(key=l.id):
+                        span: l.text
+                        button(on_click=Erase(id=l.id)): "x"
+
+# `Confirmed` and `Pending(n)` are the whole type, so this `match` is exhaustive and the page has
+# no third state to forget about.
+def status(saving: Freshness) -> Str:
+    match saving:
+        case Confirmed:
+            return "saved"
+        case Pending(n):
+            return "saving " + str(n)
+
+def lines(d: Doc) -> list[Line]:
+    return sort_by(map_values(d.lines), lambda l: l.text)
+
+# ---------- The wiring ----------
+
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, doc, validate)
+
+@on(data)
+doc: Signal[Doc] = durable(fold(apply_event, Doc(lines={}), events))
+
+# Not the log, and not the server either. This is the only source in §3.7's vocabulary whose value
+# depends on which side is rendering.
+@on(client)
+saving: Signal[Freshness] = freshness()
+
+@on(client)
+@render(client)
+page: Signal[Html] = map2(view, doc, saving)
+
+# ---------- Tests ----------
+#
+# `beck test` renders the page the way the *server* renders it, because the harness holds the log
+# and a log has nothing in flight. So the assertions below are all of the confirmed branch, and the
+# pending one is gated where a client exists to produce it: `beck-cli/tests/mode_b.rs`.
+
+test "a blank line is refused":
+    given []
+    when Write(id=Id("1"), text="   ")
+    expect Err(error=Blank)
+
+test "a line that was written is on the page":
+    given [Written(id=Id("1"), text="the first line")]
+    expect page contains "the first line"
+
+test "the server holds the log, so what it renders is saved":
+    given [Written(id=Id("1"), text="the first line")]
+    expect page contains "saved"
+    expect page matches snapshot
+
+test "erasing a line that is not there is refused":
+    given []
+    when Erase(id=Id("1"))
+    expect Err(error=NoSuchLine)
+
+test "writing is a fold over one event":
+    given []
+    when Write(id=Id("1"), text="the first line")
+    expect state == fold_of [Written(id=Id("1"), text="the first line")]
+
+test "the page is the browser's job":
+    expect place(page) == client
+    expect place(doc) == data
+
+property "no log this program can produce makes the page unrenderable"(log: list[Event]):
+    given log
+    expect page contains "editor"

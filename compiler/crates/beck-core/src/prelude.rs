@@ -843,6 +843,19 @@ pub fn prims() -> Vec<(&'static str, Prim, Scheme)> {
                 Row::of([Effect::Cap(Arc::from("presence"))]),
             )),
         ),
+        // `freshness : () -> Signal[Freshness]` — §3.7's freshness dimension, as a source.
+        //
+        // The mirror of `presence` and deliberately not its shape: presence is a capability
+        // because a roster says something about other people, and a client's count of its own
+        // unacknowledged commands says something about nobody else. So the row is empty, and what
+        // constrains it is placement rather than authority — `crate::render` refuses a page that
+        // reads it and renders on the server, because a server holds no guesses and the answer
+        // there is `Confirmed` forever.
+        (
+            "freshness",
+            Prim::Freshness,
+            Scheme::mono(fun(vec![], Ty::signal(Ty::con("Freshness")))),
+        ),
         (
             "filter_map",
             Prim::StreamFilterMap,
@@ -1211,6 +1224,28 @@ pub fn types() -> BTreeMap<Arc<str>, TyDecl> {
             (Arc::from("actor"), Ty::str_()),
             (Arc::from("claims"), Ty::map(Ty::str_(), Ty::str_())),
             (Arc::from("path"), Ty::str_()),
+        ],
+    });
+    // §3.7's freshness dimension, written out: "`Signal[T]` carries a freshness dimension
+    // (`confirmed | pending(n)`) that UI code can render (\"saving…\") — staleness is typed, not
+    // pretended away."
+    //
+    // Two variants rather than a count, because `Pending(n=0)` and `Confirmed` would be one fact
+    // with two spellings and a page would have to know which one it was handed. `n` is on the
+    // pending variant for the same reason a `Some` carries its value: it only exists when there is
+    // something to count.
+    add(TyDecl::Union {
+        name: Arc::from("Freshness"),
+        params: Vec::new(),
+        variants: vec![
+            Variant {
+                name: Arc::from("Confirmed"),
+                fields: vec![],
+            },
+            Variant {
+                name: Arc::from("Pending"),
+                fields: vec![(Arc::from("n"), Ty::int())],
+            },
         ],
     });
     add(TyDecl::Model {
