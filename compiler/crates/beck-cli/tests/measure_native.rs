@@ -333,6 +333,136 @@ def scan(n: Int, acc: Acc, sum: Int) -> Int:
     );
 }
 
+/// What text costs against the tree-walker, and where it costs *more*.
+///
+/// Two rows that are the same shape as the heap's, and a third that is the honest one. Walking a
+/// string by character index and searching one are what a compiled backend should win; **building
+/// one in a loop is what it should lose**, because `docs/70` §70.2 gave the evaluator an in-place
+/// `push_str` when the last-use analysis proves nobody else holds the accumulator, and an arena
+/// with no ownership in it cannot prove that. So `grown` allocates the whole accumulator every
+/// step where the evaluator appends to it — `O(n²)` bytes against `O(n)` — and this is where that
+/// shows.
+///
+/// Nothing here is asserted except the direction, and `grown`'s direction is asserted **the other
+/// way**: a run in which the compiled accumulator caught up would mean the evaluator had lost its
+/// in-place append, which is a finding rather than good news (§104.6).
+#[test]
+fn what_text_costs_against_the_tree_walker() {
+    const TEXT: &str = r#"
+## Walk a string by character index, which is the loop `docs/70` §70.2 made linear.
+def walk(s: Str, i: Int, acc: Int) -> Int:
+    if i >= str_len(s):
+        return acc
+    if str_slice(s, i, 1) == "x":
+        return walk(s, i + 1, acc + 1)
+    return walk(s, i + 1, acc)
+
+## Search a string, repeatedly: the naive scan against Rust's `str::find`.
+def hunt(s: Str, needle: Str, n: Int, acc: Int) -> Int:
+    if n <= 0:
+        return acc
+    if str_contains(s, needle):
+        return hunt(s, needle, n - 1, acc + 1)
+    return hunt(s, needle, n - 1, acc)
+
+## Build one in a loop, which is the row this backend loses.
+def grown(s: Str, n: Int, acc: Str) -> Int:
+    if n <= 0:
+        return str_len(acc)
+    return grown(s, n - 1, acc + s)
+"#;
+    let program = compile("text.beck", TEXT);
+    let Some(artifact) = Artifact::build_within(&program, Duration::from_secs(300))
+        .expect("clang accepts the module")
+    else {
+        assert!(
+            !require_llvm(),
+            "BECK_REQUIRE_LLVM=1 and there is no `clang` on the path"
+        );
+        println!("skipped: no LLVM toolchain. Set BECK_REQUIRE_LLVM=1 to make this a failure.");
+        return;
+    };
+    let evaluator = beck_eval::backend_for(program.clone());
+    println!("{}\n", artifact.toolchain().version);
+    println!(
+        "{:<14} {:>10} {:>14} {:>14} {:>9}",
+        "benchmark", "size", "evaluator", "native", "ratio"
+    );
+
+    let long = |n: usize| Value::str_(("abcxefgh").repeat(n / 8));
+    let benches: [(&str, [usize; 2]); 3] = [
+        ("walk", [2_000, 16_000]),
+        ("hunt", [2_000, 16_000]),
+        ("grown", [1_000, 4_000]),
+    ];
+    let mut ratios: Vec<(&str, f64, f64)> = Vec::new();
+    for (name, sizes) in benches {
+        let mut seen = [0.0f64; 2];
+        for (i, size) in sizes.iter().enumerate() {
+            let args = match name {
+                "walk" => vec![long(*size), Value::Int(0), Value::Int(0)],
+                "hunt" => vec![
+                    long(2_000),
+                    Value::str_("efghabc"),
+                    Value::Int(*size as i64),
+                    Value::Int(0),
+                ],
+                _ => vec![
+                    Value::str_("abcdefgh"),
+                    Value::Int(*size as i64),
+                    Value::str_(""),
+                ],
+            };
+            let runs = if i == 0 { 7 } else { 3 };
+            let walked = beck_eval::on_the_evaluator_stack(|| {
+                let f = evaluator
+                    .function(&program.defs[name].body)
+                    .expect("prepares");
+                median(runs, || {
+                    f(args.clone()).expect("the evaluator answers");
+                })
+            });
+            let compiled = median(runs, || {
+                artifact
+                    .call(name, &args)
+                    .expect("the native backend answers");
+            });
+            let ratio = walked.as_secs_f64() / compiled.as_secs_f64();
+            seen[i] = ratio;
+            println!(
+                "{:<14} {:>10} {:>14} {:>14} {:>8.2}×",
+                if i == 0 { name } else { "" },
+                size,
+                format!("{walked:?}"),
+                format!("{compiled:?}"),
+                ratio
+            );
+        }
+        ratios.push((name, seen[0], seen[1]));
+    }
+
+    for (name, small, large) in &ratios {
+        if *name == "grown" {
+            // The accumulator: asserted to be *slower*, because that is what the missing in-place
+            // append means and a run where it were not would mean the evaluator had lost one.
+            assert!(
+                *large < 1.0,
+                "`grown` was {large:.2}× at the large size — either this backend grew an ownership \
+                 analysis or the evaluator lost its in-place append"
+            );
+            continue;
+        }
+        assert!(
+            *small > 1.0 && *large > 1.0,
+            "`{name}` was {small:.2}× at the small size and {large:.2}× at the large one"
+        );
+    }
+    println!(
+        "\nRatios are evaluator ÷ native, wall clock, on this machine. `grown` is below 1 on \
+         purpose:\n`docs/104` §104.6 is the in-place append this backend does not have."
+    );
+}
+
 /// What compiling costs, which is the other half of a dual-backend argument.
 ///
 /// §5.2 buys Cranelift for `beck dev` because LLVM's codegen step is slow, and that claim is about

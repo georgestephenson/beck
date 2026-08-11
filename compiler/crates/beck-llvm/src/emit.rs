@@ -113,7 +113,7 @@ pub struct Signature {
 impl Signature {
     /// Whether calling this needs the heap on the wire in either direction.
     pub fn touches_heap(&self) -> bool {
-        self.ret.is_obj() || self.params.iter().any(|p| p.is_obj())
+        self.ret.is_ref() || self.params.iter().any(|p| p.is_ref())
     }
 }
 
@@ -623,7 +623,7 @@ impl<'a> Function<'a> {
     /// travels through all three: the interesting call is almost never the outermost node.
     fn expr(&mut self, c: &Core, dest: Dest) -> Result<Option<Val>, String> {
         let value = match &c.kind {
-            CoreKind::Const(k) => constant(k)?,
+            CoreKind::Const(k) => self.constant(k)?,
             CoreKind::Var(v) => self
                 .env
                 .get(v)
@@ -804,7 +804,7 @@ impl<'a> Function<'a> {
             Repr::Int => Trap::NoMatchInt,
             Repr::Float => Trap::NoMatchFloat,
             Repr::Bool => Trap::NoMatchBool,
-            Repr::Obj(_) => Trap::NoMatchData,
+            Repr::Str | Repr::Obj(_) => Trap::NoMatchData,
         };
         let payload = self.widen(&v);
         self.trap(trap, span, &payload, "true");
@@ -852,7 +852,7 @@ impl<'a> Function<'a> {
                 self.probe(inner, v, fail, undo)
             }
             Pattern::Const(k) => {
-                let want = constant(k)?;
+                let want = self.constant(k)?;
                 if want.ty != v.ty {
                     return Err("a match arm compares against a constant of another type".into());
                 }
@@ -868,7 +868,7 @@ impl<'a> Function<'a> {
                     let Pattern::Const(k) = alt else {
                         return Err("an or-pattern that was not split".into());
                     };
-                    let want = constant(k)?;
+                    let want = self.constant(k)?;
                     if want.ty != v.ty {
                         return Err(
                             "a match arm compares against a constant of another type".into()
@@ -994,7 +994,7 @@ impl<'a> Function<'a> {
                 self.line(format!("{raw} = load i64, ptr {p}"));
                 self.line(format!("{r} = icmp ne i64 {raw}, 0"));
             }
-            Repr::Int | Repr::Obj(_) => self.line(format!("{r} = load i64, ptr {p}")),
+            Repr::Int | Repr::Str | Repr::Obj(_) => self.line(format!("{r} = load i64, ptr {p}")),
         }
         Val { text: r, ty: repr }
     }
@@ -1019,7 +1019,9 @@ impl<'a> Function<'a> {
                 self.line(format!("{w} = zext i1 {} to i64", v.text));
                 self.line(format!("store i64 {w}, ptr {p}"));
             }
-            Repr::Int | Repr::Obj(_) => self.line(format!("store i64 {}, ptr {p}", v.text)),
+            Repr::Int | Repr::Str | Repr::Obj(_) => {
+                self.line(format!("store i64 {}, ptr {p}", v.text))
+            }
         }
     }
 
@@ -1276,6 +1278,11 @@ impl<'a> Function<'a> {
                 arity(2)?;
                 let ty = same(&vals)?;
                 match ty {
+                    // `+` on two strings is the one arithmetic operator text has, and it is the
+                    // only place this backend allocates for something that is not a constructor.
+                    Repr::Str if op == Prim::Add => {
+                        Ok(self.text_call("concat", &[&vals[0], &vals[1]], Repr::Str, span))
+                    }
                     Repr::Int => {
                         let (intrinsic, trap) = match op {
                             Prim::Add => ("sadd", Trap::AddOverflow),
@@ -1300,7 +1307,7 @@ impl<'a> Function<'a> {
                             ty: Repr::Float,
                         })
                     }
-                    Repr::Bool | Repr::Obj(_) => {
+                    Repr::Bool | Repr::Str | Repr::Obj(_) => {
                         Err(format!("`{}` on a value that is not a number", op.name()))
                     }
                 }
@@ -1365,7 +1372,7 @@ impl<'a> Function<'a> {
                             ty: Repr::Float,
                         })
                     }
-                    Repr::Bool | Repr::Obj(_) => {
+                    Repr::Bool | Repr::Str | Repr::Obj(_) => {
                         Err("`negate` on a value that is not a number".into())
                     }
                 }
@@ -1398,7 +1405,7 @@ impl<'a> Function<'a> {
                             ty: Repr::Float,
                         })
                     }
-                    Repr::Bool | Repr::Obj(_) => {
+                    Repr::Bool | Repr::Str | Repr::Obj(_) => {
                         Err("`abs` on a value that is not a number".into())
                     }
                 }
@@ -1470,10 +1477,183 @@ impl<'a> Function<'a> {
                     ty: Repr::Bool,
                 })
             }
-            other => Err(format!(
-                "`{}` is not one of the scalar primitives",
-                other.name()
-            )),
+            Prim::StrLen | Prim::StrIsEmpty => {
+                arity(1)?;
+                self.text_arg(&vals[0], op)?;
+                // Both counts are in the header, so both of these are a load: `str_len` is `O(1)`
+                // in the evaluator since `docs/70`, and a backend that counted here would make the
+                // loop that walks a string by index quadratic in one implementation and not the
+                // other.
+                let n = self.text_word(&vals[0], if op == Prim::StrLen { 8 } else { 0 });
+                if op == Prim::StrLen {
+                    return Ok(Val {
+                        text: n,
+                        ty: Repr::Int,
+                    });
+                }
+                let r = self.fresh();
+                self.line(format!("{r} = icmp eq i64 {n}, 0"));
+                Ok(Val {
+                    text: r,
+                    ty: Repr::Bool,
+                })
+            }
+            Prim::StrSlice => {
+                arity(3)?;
+                self.text_arg(&vals[0], op)?;
+                for v in &vals[1..] {
+                    if v.ty != Repr::Int {
+                        return Err("`str_slice` takes two Int positions".into());
+                    }
+                }
+                Ok(self.text_call("slice", &[&vals[0], &vals[1], &vals[2]], Repr::Str, span))
+            }
+            Prim::StrContains | Prim::StrStartsWith | Prim::StrEndsWith => {
+                arity(2)?;
+                self.text_arg(&vals[0], op)?;
+                self.text_arg(&vals[1], op)?;
+                Ok(self.text_search(op, &vals[0], &vals[1]))
+            }
+            other => Err(refusal(other)),
+        }
+    }
+
+    /// A literal, as the operand that carries it.
+    ///
+    /// A string literal is the one that is not written into the instruction: it is an offset into
+    /// the pool the host wrote at the front of the request's heap, decided when the module was
+    /// emitted. See [`crate::heap`] for why it cannot be allocated where it is written and cannot
+    /// be a global either.
+    fn constant(&mut self, k: &Const) -> Result<Val, String> {
+        match k {
+            Const::Int(i) => Ok(Val {
+                text: i.to_string(),
+                ty: Repr::Int,
+            }),
+            Const::Bool(b) => Ok(Val {
+                text: b.to_string(),
+                ty: Repr::Bool,
+            }),
+            // Written as the bit pattern, so what the assembler reads back is the double the
+            // compiler held rather than whatever a decimal rendering happened to round to.
+            Const::Float(f) => Ok(Val {
+                text: format!("0x{:016X}", f.to_bits()),
+                ty: Repr::Float,
+            }),
+            Const::Str(s) => {
+                self.uses_heap = true;
+                let at = self.heap.intern(s);
+                Ok(Val {
+                    text: self.heap.string_offset(at).to_string(),
+                    ty: Repr::Str,
+                })
+            }
+            Const::Unit => Err("the unit value, which has no machine representation here".into()),
+        }
+    }
+
+    /// Insist an argument is text, so a message names the primitive rather than the operand.
+    fn text_arg(&self, v: &Val, op: Prim) -> Result<(), String> {
+        if v.ty == Repr::Str {
+            Ok(())
+        } else {
+            Err(format!("`{}` on something that is not a Str", op.name()))
+        }
+    }
+
+    /// One word of a `Str`'s header: `0` is its bytes and `8` is its characters.
+    fn text_word(&mut self, s: &Val, at: u64) -> String {
+        self.uses_heap = true;
+        let base = self.fresh();
+        self.line(format!("{base} = load ptr, ptr @\"beck.heap\""));
+        let off = self.fresh();
+        self.line(format!("{off} = add i64 {}, {at}", s.text));
+        let p = self.fresh();
+        self.line(format!(
+            "{p} = getelementptr inbounds i8, ptr {base}, i64 {off}"
+        ));
+        let r = self.fresh();
+        self.line(format!("{r} = load i64, ptr {p}"));
+        r
+    }
+
+    /// One of [`TEXT`]'s allocating functions: the error cell, the arguments, the span.
+    fn text_call(&mut self, which: &str, args: &[&Val], ty: Repr, span: Span) -> Val {
+        self.uses_heap = true;
+        let idx = self.span(span);
+        let mut operands = String::from("ptr %err");
+        for a in args {
+            let _ = write!(operands, ", i64 {}", a.text);
+        }
+        let r = self.fresh();
+        self.line(format!(
+            "{r} = call i64 @\"beck.str.{which}\"({operands}, i32 {idx})"
+        ));
+        // Allocating means it can exhaust the arena, and a caller that ignored that would carry a
+        // `0` offset into the next load.
+        self.check_call();
+        Val { text: r, ty }
+    }
+
+    /// `contains`, `starts_with` and `ends_with`, which are one search and two length tests.
+    fn text_search(&mut self, op: Prim, hay: &Val, needle: &Val) -> Val {
+        self.uses_heap = true;
+        let r = self.fresh();
+        if op == Prim::StrContains {
+            self.line(format!(
+                "{r} = call i64 @\"beck.str.find\"(i64 {}, i64 {})",
+                hay.text, needle.text
+            ));
+            let out = self.fresh();
+            self.line(format!("{out} = icmp sge i64 {r}, 0"));
+            return Val {
+                text: out,
+                ty: Repr::Bool,
+            };
+        }
+        let lh = self.text_word(hay, 0);
+        let ln = self.text_word(needle, 0);
+        let fits = self.fresh();
+        self.line(format!("{fits} = icmp ule i64 {ln}, {lh}"));
+        // The comparison runs either way and its operands are clamped to a length that fits, so
+        // there is no branch: `memcmp` of zero bytes is zero, and a needle longer than the haystack
+        // is refused by `%fits` rather than by not being looked at.
+        let start = if op == Prim::StrStartsWith {
+            "0".to_string()
+        } else {
+            let d = self.fresh();
+            self.line(format!("{d} = sub i64 {lh}, {ln}"));
+            let ok = self.fresh();
+            self.line(format!("{ok} = select i1 {fits}, i64 {d}, i64 0"));
+            ok
+        };
+        let n = self.fresh();
+        self.line(format!("{n} = select i1 {fits}, i64 {ln}, i64 0"));
+        let ph = self.fresh();
+        self.line(format!(
+            "{ph} = call ptr @\"beck.str.data\"(i64 {})",
+            hay.text
+        ));
+        let at = self.fresh();
+        self.line(format!(
+            "{at} = getelementptr inbounds i8, ptr {ph}, i64 {start}"
+        ));
+        let pn = self.fresh();
+        self.line(format!(
+            "{pn} = call ptr @\"beck.str.data\"(i64 {})",
+            needle.text
+        ));
+        let c = self.fresh();
+        self.line(format!(
+            "{c} = call i32 @memcmp(ptr {at}, ptr {pn}, i64 {n})"
+        ));
+        let same = self.fresh();
+        self.line(format!("{same} = icmp eq i32 {c}, 0"));
+        let out = self.fresh();
+        self.line(format!("{out} = and i1 {fits}, {same}"));
+        Val {
+            text: out,
+            ty: Repr::Bool,
         }
     }
 
@@ -1624,6 +1804,17 @@ impl<'a> Function<'a> {
             Repr::Float => (self.order_key(a), self.order_key(b), false),
             Repr::Int => (a.text.clone(), b.text.clone(), true),
             Repr::Bool => (a.text.clone(), b.text.clone(), false),
+            // Text compares as its bytes, which is what `Text`'s `Ord` does and is the same order
+            // as its characters: UTF-8 sorts code points and bytes the same way.
+            Repr::Str => {
+                self.uses_heap = true;
+                let r = self.fresh();
+                self.line(format!(
+                    "{r} = call i64 @\"beck.str.cmp\"(i64 {}, i64 {})",
+                    a.text, b.text
+                ));
+                (r, "0".to_string(), true)
+            }
             Repr::Obj(at) => {
                 self.compared.insert(at);
                 let r = self.fresh();
@@ -1677,30 +1868,45 @@ impl<'a> Function<'a> {
             // Its offset, which is what an object *is* here. Only a trap payload reads this, and
             // the one trap that can carry an object says nothing about the value it carries —
             // `Trap::NoMatchData` is the message, and this is what makes it honest.
-            Repr::Obj(_) => v.text.clone(),
+            Repr::Str | Repr::Obj(_) => v.text.clone(),
         }
     }
 }
 
-fn constant(k: &Const) -> Result<Val, String> {
-    match k {
-        Const::Int(i) => Ok(Val {
-            text: i.to_string(),
-            ty: Repr::Int,
-        }),
-        Const::Bool(b) => Ok(Val {
-            text: b.to_string(),
-            ty: Repr::Bool,
-        }),
-        // Written as the bit pattern, so what the assembler reads back is the double the compiler
-        // held rather than whatever a decimal rendering happened to round to.
-        Const::Float(f) => Ok(Val {
-            text: format!("0x{:016X}", f.to_bits()),
-            ty: Repr::Float,
-        }),
-        Const::Str(_) => Err("a string constant, and text is not on this heap yet".into()),
-        Const::Unit => Err("the unit value, which has no machine representation here".into()),
-    }
+/// Why a primitive this backend does not compile is not compiled.
+///
+/// The string half is spelled out one at a time rather than swept into "not a scalar primitive",
+/// because since `docs/104` a `Str` *is* a value here and "text is not on this heap" would be
+/// false. Each reason names the thing that is missing rather than the primitive that wanted it —
+/// which is the difference between a refusal a reader can act on and one they can only observe.
+fn refusal(op: Prim) -> String {
+    let why = match op {
+        Prim::StrSplit | Prim::StrChars => {
+            "answers with a list, and a collection is not on this heap yet"
+        }
+        Prim::StrJoin => "reads a list, and a collection is not on this heap yet",
+        Prim::StrIndexOf => {
+            "answers with an `Option`, whose layout this backend resolves from a program's own \
+             types and not from the prelude's"
+        }
+        Prim::StrUpper | Prim::StrLower => {
+            "is Unicode case mapping, which is a table rather than an operation — and a compiled \
+             half-answer that folded ASCII only would disagree with the evaluator on the first \
+             letter that is not"
+        }
+        Prim::StrTrim => {
+            "trims Unicode whitespace, which is a table for the same reason case mapping is"
+        }
+        Prim::StrReplace | Prim::StrRepeat => {
+            "builds text whose size is not a function of its arguments' sizes, and this arena \
+             cannot grow an allocation it has already made"
+        }
+        Prim::ToStr | Prim::StrToInt => {
+            "converts between text and a number, and the rendering has to be Rust's to the digit"
+        }
+        _ => return format!("`{}` is not one of the scalar primitives", op.name()),
+    };
+    format!("`{}` {why}", op.name())
 }
 
 /// A Beck name as an LLVM symbol.
@@ -1824,6 +2030,9 @@ fn assemble(
     if arena {
         let _ = write!(m, "{}", arena_prelude());
     }
+    if heap.uses_text() {
+        m.push_str(TEXT);
+    }
     m.push_str(bodies);
     for at in compared {
         m.push_str(&compare_function(*at, heap));
@@ -1843,7 +2052,7 @@ fn assemble(
             let _ = writeln!(
                 m,
                 "  store i64 {}, ptr @\"beck.reply\"",
-                u32::from(sig.ret.is_obj())
+                u32::from(sig.ret.is_ref())
             );
         }
         let mut operands = String::from("ptr %err");
@@ -2021,11 +2230,15 @@ fn compare_function(at: u32, heap: &Heap) -> String {
             b.line(format!("{xa} = load i64, ptr {fa}"));
             b.line(format!("{xb} = load i64, ptr {fb}"));
             match repr {
-                Repr::Obj(inner) => {
+                // A field that is itself a reference decides through the three-way comparison for
+                // whatever it refers to: a layout's own, or text's one.
+                Repr::Obj(_) | Repr::Str => {
+                    let called = match repr {
+                        Repr::Obj(inner) => format!("beck.cmp.{inner}"),
+                        _ => "beck.str.cmp".to_string(),
+                    };
                     let r = b.fresh();
-                    b.line(format!(
-                        "{r} = call i64 @\"beck.cmp.{inner}\"(i64 {xa}, i64 {xb})"
-                    ));
+                    b.line(format!("{r} = call i64 @\"{called}\"(i64 {xa}, i64 {xb})"));
                     let done = b.fresh();
                     let (decided, next) = (b.label("cmp.decided"), b.label("cmp.next"));
                     b.line(format!("{done} = icmp ne i64 {r}, 0"));
@@ -2266,6 +2479,258 @@ declare double @llvm.cos.f64(double)
 declare double @llvm.fabs.f64(double)
 declare i64 @read(i32, ptr, i64)
 declare i64 @write(i32, ptr, i64)
+
+"#;
+
+/// Text: the six functions everything this backend does to a `Str` is built from.
+///
+/// The shape is [`crate::heap`]'s — two counts and the bytes — and every one of these is written
+/// against it rather than against a `Str` as C would think of one: there is no terminator, the
+/// length is a word, and a character index is a byte index exactly when the two counts agree.
+///
+/// `memcmp` and `memcpy` are the C library's. They are linked in anyway (`main` calls `read` and
+/// `write`), and hand-rolling either would be slower and no more honest.
+///
+/// | Function | Answers |
+/// |---|---|
+/// | `beck.str.alloc` | a fresh, uninitialised `Str` of the given two counts, or `0` on a full arena |
+/// | `beck.str.cmp` | `-1`, `0` or `1`, which is what `String`'s `Ord` gives — bytes first, then length |
+/// | `beck.str.concat` | `a + b` |
+/// | `beck.str.byteof` | which byte character `i` begins at, clamped to the end |
+/// | `beck.str.slice` | `str_slice`, in characters and clamped, exactly as the evaluator clamps |
+/// | `beck.str.find` | the byte offset of a substring, or `-1` |
+///
+/// `beck.str.byteof` is the one with a cost worth naming: it is constant time when the text is
+/// ASCII — every character one byte, which is what the two equal counts say — and a walk otherwise,
+/// where the evaluator has a chunked index and answers in at most a stride
+/// ([`beck_core::core::Text`]). `docs/104` §104.6 carries that as a difference rather than hiding
+/// it, and the fix, if a program ever needs it, is the same index in the same header.
+const TEXT: &str = r#"declare i32 @memcmp(ptr, ptr, i64)
+declare ptr @memcpy(ptr, ptr, i64)
+
+define internal i64 @"beck.str.alloc"(ptr noalias %err, i64 %bytes, i64 %chars, i32 %span) {
+entry:
+  %pad = add i64 %bytes, 7
+  %body = and i64 %pad, -8
+  %total = add i64 %body, 16
+  %off = call i64 @"beck.alloc"(ptr %err, i64 %total, i32 %span)
+  %failed = icmp eq i64 %off, 0
+  br i1 %failed, label %out, label %fill
+fill:
+  %hp = load ptr, ptr @"beck.heap"
+  %p = getelementptr inbounds i8, ptr %hp, i64 %off
+  store i64 %bytes, ptr %p
+  %pc = getelementptr inbounds i8, ptr %p, i64 8
+  store i64 %chars, ptr %pc
+  ; The padding is zeroed rather than left as whatever the arena held, so that two runs of one
+  ; program leave the same bytes behind and a heap read back byte for byte is a fair comparison.
+  %empty = icmp eq i64 %body, 0
+  br i1 %empty, label %out, label %tail
+tail:
+  %last = add i64 %body, 8
+  %pt = getelementptr inbounds i8, ptr %p, i64 %last
+  store i64 0, ptr %pt
+  br label %out
+out:
+  ret i64 %off
+}
+
+define internal ptr @"beck.str.data"(i64 %s) {
+entry:
+  %hp = load ptr, ptr @"beck.heap"
+  %at = add i64 %s, 16
+  %p = getelementptr inbounds i8, ptr %hp, i64 %at
+  ret ptr %p
+}
+
+define internal i64 @"beck.str.bytes"(i64 %s) {
+entry:
+  %hp = load ptr, ptr @"beck.heap"
+  %p = getelementptr inbounds i8, ptr %hp, i64 %s
+  %n = load i64, ptr %p
+  ret i64 %n
+}
+
+define internal i64 @"beck.str.chars"(i64 %s) {
+entry:
+  %hp = load ptr, ptr @"beck.heap"
+  %at = add i64 %s, 8
+  %p = getelementptr inbounds i8, ptr %hp, i64 %at
+  %n = load i64, ptr %p
+  ret i64 %n
+}
+
+define internal i64 @"beck.str.cmp"(i64 %a, i64 %b) {
+entry:
+  %la = call i64 @"beck.str.bytes"(i64 %a)
+  %lb = call i64 @"beck.str.bytes"(i64 %b)
+  %pa = call ptr @"beck.str.data"(i64 %a)
+  %pb = call ptr @"beck.str.data"(i64 %b)
+  %shorter = icmp ult i64 %la, %lb
+  %n = select i1 %shorter, i64 %la, i64 %lb
+  %c = call i32 @memcmp(ptr %pa, ptr %pb, i64 %n)
+  %decided = icmp ne i32 %c, 0
+  br i1 %decided, label %bytes, label %lengths
+bytes:
+  ; `memcmp` may answer any negative or any positive number; the language wants one of three.
+  %neg = icmp slt i32 %c, 0
+  %sign = select i1 %neg, i64 -1, i64 1
+  ret i64 %sign
+lengths:
+  %lt = icmp ult i64 %la, %lb
+  br i1 %lt, label %less, label %maybe
+maybe:
+  %gt = icmp ugt i64 %la, %lb
+  br i1 %gt, label %greater, label %equal
+less:
+  ret i64 -1
+greater:
+  ret i64 1
+equal:
+  ret i64 0
+}
+
+define internal i64 @"beck.str.concat"(ptr noalias %err, i64 %a, i64 %b, i32 %span) {
+entry:
+  %la = call i64 @"beck.str.bytes"(i64 %a)
+  %lb = call i64 @"beck.str.bytes"(i64 %b)
+  %ca = call i64 @"beck.str.chars"(i64 %a)
+  %cb = call i64 @"beck.str.chars"(i64 %b)
+  %lt = add i64 %la, %lb
+  %ct = add i64 %ca, %cb
+  %r = call i64 @"beck.str.alloc"(ptr %err, i64 %lt, i64 %ct, i32 %span)
+  %failed = icmp eq i64 %r, 0
+  br i1 %failed, label %out, label %copy
+copy:
+  ; The three data pointers are taken *after* the allocation, because the arena never moves but a
+  ; pointer taken before one is still only correct by that fact — this way nothing depends on it.
+  %pr = call ptr @"beck.str.data"(i64 %r)
+  %pa = call ptr @"beck.str.data"(i64 %a)
+  %pb = call ptr @"beck.str.data"(i64 %b)
+  %ignored = call ptr @memcpy(ptr %pr, ptr %pa, i64 %la)
+  %pr2 = getelementptr inbounds i8, ptr %pr, i64 %la
+  %ignored2 = call ptr @memcpy(ptr %pr2, ptr %pb, i64 %lb)
+  br label %out
+out:
+  ret i64 %r
+}
+
+define internal i64 @"beck.str.byteof"(i64 %s, i64 %i) {
+entry:
+  %len = call i64 @"beck.str.bytes"(i64 %s)
+  %chars = call i64 @"beck.str.chars"(i64 %s)
+  %past = icmp sge i64 %i, %chars
+  br i1 %past, label %end, label %inside
+inside:
+  %before = icmp sle i64 %i, 0
+  br i1 %before, label %start, label %known
+known:
+  ; Every character is one byte exactly when there are as many bytes as characters, so the two
+  ; counts the header already carries are the ASCII test and no flag is stored for it.
+  %ascii = icmp eq i64 %len, %chars
+  br i1 %ascii, label %direct, label %walk
+direct:
+  ret i64 %i
+walk:
+  %p = call ptr @"beck.str.data"(i64 %s)
+  br label %step
+step:
+  %at = phi i64 [ 0, %walk ], [ %next, %skipped ]
+  %seen = phi i64 [ 0, %walk ], [ %more, %skipped ]
+  %done = icmp eq i64 %seen, %i
+  br i1 %done, label %here, label %advance
+advance:
+  ; One character is its lead byte and every byte after it whose top two bits are `10`.
+  %one = add i64 %at, 1
+  br label %skip
+skip:
+  %k = phi i64 [ %one, %advance ], [ %k1, %again ]
+  %over = icmp uge i64 %k, %len
+  br i1 %over, label %skipped, label %look
+look:
+  %bp = getelementptr inbounds i8, ptr %p, i64 %k
+  %byte = load i8, ptr %bp
+  %top = and i8 %byte, -64
+  %cont = icmp eq i8 %top, -128
+  br i1 %cont, label %again, label %skipped
+again:
+  %k1 = add i64 %k, 1
+  br label %skip
+skipped:
+  %next = phi i64 [ %k, %skip ], [ %k, %look ]
+  %more = add i64 %seen, 1
+  br label %step
+here:
+  ret i64 %at
+start:
+  ret i64 0
+end:
+  ret i64 %len
+}
+
+define internal i64 @"beck.str.slice"(ptr noalias %err, i64 %s, i64 %start, i64 %len, i32 %span) {
+entry:
+  ; A negative index or a negative length is zero, which is what `i64::max(0)` does in the
+  ; evaluator; and `start + len` saturates rather than wrapping, which is its `saturating_add`.
+  %sneg = icmp slt i64 %start, 0
+  %from = select i1 %sneg, i64 0, i64 %start
+  %lneg = icmp slt i64 %len, 0
+  %take = select i1 %lneg, i64 0, i64 %len
+  %sum = add i64 %from, %take
+  %wrapped = icmp slt i64 %sum, 0
+  %upto = select i1 %wrapped, i64 9223372036854775807, i64 %sum
+  %chars = call i64 @"beck.str.chars"(i64 %s)
+  %fromover = icmp ugt i64 %from, %chars
+  %cstart = select i1 %fromover, i64 %chars, i64 %from
+  %uptoover = icmp ugt i64 %upto, %chars
+  %cend = select i1 %uptoover, i64 %chars, i64 %upto
+  %count = sub i64 %cend, %cstart
+  %a = call i64 @"beck.str.byteof"(i64 %s, i64 %cstart)
+  %b = call i64 @"beck.str.byteof"(i64 %s, i64 %cend)
+  %bytes = sub i64 %b, %a
+  %r = call i64 @"beck.str.alloc"(ptr %err, i64 %bytes, i64 %count, i32 %span)
+  %failed = icmp eq i64 %r, 0
+  br i1 %failed, label %out, label %copy
+copy:
+  %pr = call ptr @"beck.str.data"(i64 %r)
+  %ps = call ptr @"beck.str.data"(i64 %s)
+  %at = getelementptr inbounds i8, ptr %ps, i64 %a
+  %ignored = call ptr @memcpy(ptr %pr, ptr %at, i64 %bytes)
+  br label %out
+out:
+  ret i64 %r
+}
+
+define internal i64 @"beck.str.find"(i64 %h, i64 %n) {
+entry:
+  %lh = call i64 @"beck.str.bytes"(i64 %h)
+  %ln = call i64 @"beck.str.bytes"(i64 %n)
+  %too = icmp ugt i64 %ln, %lh
+  br i1 %too, label %missing, label %search
+search:
+  ; Naive, and correct on UTF-8 for the reason a byte search is: the encoding is
+  ; self-synchronising, so a well-formed needle cannot match starting inside a character.
+  %last = sub i64 %lh, %ln
+  %ph = call ptr @"beck.str.data"(i64 %h)
+  %pn = call ptr @"beck.str.data"(i64 %n)
+  br label %loop
+loop:
+  %i = phi i64 [ 0, %search ], [ %j, %next ]
+  %over = icmp ugt i64 %i, %last
+  br i1 %over, label %missing, label %try
+try:
+  %at = getelementptr inbounds i8, ptr %ph, i64 %i
+  %c = call i32 @memcmp(ptr %at, ptr %pn, i64 %ln)
+  %hit = icmp eq i32 %c, 0
+  br i1 %hit, label %found, label %next
+next:
+  %j = add i64 %i, 1
+  br label %loop
+found:
+  ret i64 %i
+missing:
+  ret i64 -1
+}
 
 "#;
 

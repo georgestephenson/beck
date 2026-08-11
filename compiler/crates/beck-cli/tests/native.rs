@@ -44,6 +44,7 @@ use support::scalar::{
     float_pairs, floats, ints, pairs, render, singles, ARITHMETIC, CONTROL, REALS, RECURSION,
     REFUSED,
 };
+use support::textfix::{self, TEXT};
 
 /// One call may not take longer than this. Nothing here should come close; it is the difference
 /// between a red test and a hung suite.
@@ -433,6 +434,72 @@ fn the_two_backends_agree_on_unions() {
     println!("{compared} union calls compared, and both backends agreed on every one");
 }
 
+/// Text, compared against the tree-walker over every string in [`textfix`] and every clamp.
+///
+/// The point of the sweep is the *pairs*: a three-way comparison can be right for `<` and wrong for
+/// `<=`, and a `memcmp` over the shorter length answers `0` for `"ab"` against `"abc"` — so every
+/// operator is asked about every ordered pair rather than about a sample.
+#[test]
+fn the_two_backends_agree_on_text() {
+    let _ = toolchain!();
+    let both = Both::over("text.beck", TEXT);
+    let ss = textfix::strings();
+    let mut compared = 0;
+    for name in [
+        "size", "empty", "first", "rest", "greeting", "is_yes", "echoed", "which", "tag",
+    ] {
+        compared += both.agree(name, &textfix::singles(&ss));
+    }
+    for name in [
+        "joined",
+        "below",
+        "above",
+        "same",
+        "differ",
+        "not_after",
+        "not_before",
+        "inside",
+        "opens",
+        "closes",
+    ] {
+        compared += both.agree(name, &textfix::pairs(&ss));
+    }
+    compared += both.agree("thrice", &textfix::singles(&ss));
+    compared += both.agree("cut", &textfix::slices(&ss));
+    compared += both.agree("count_of", &textfix::with_char(&ss));
+    compared += both.agree("repeat", &textfix::repeats(&ss));
+
+    // Text inside a record and inside a union, so a `Str` in a field is compared, rebuilt by
+    // `with`, read back out and ordered against another record's.
+    let named: Vec<Value> = ss
+        .iter()
+        .map(|s| heapfix::record("Named", &[("label", s.clone()), ("rank", Value::Int(1))]))
+        .collect();
+    compared += both.agree("label_of", &textfix::singles(&named));
+    for name in ["named_below", "named_same"] {
+        compared += both.agree(name, &textfix::pairs(&named));
+    }
+    compared += both.agree(
+        "relabel",
+        &named
+            .iter()
+            .flat_map(|n| ss.iter().map(move |s| vec![n.clone(), s.clone()]))
+            .collect::<Vec<_>>(),
+    );
+    let tagged: Vec<Value> = ss
+        .iter()
+        .map(|s| heapfix::variant("Tagged", "Word", &[("text", s.clone())]))
+        .chain([heapfix::variant(
+            "Tagged",
+            "Number",
+            &[("n", Value::Int(3))],
+        )])
+        .collect();
+    compared += both.agree("untag", &textfix::singles(&tagged));
+
+    println!("{compared} text calls compared, and both backends agreed on every one");
+}
+
 /// A tag is a variant's rank **by name**, and a field's slot is its rank by name.
 ///
 /// The differential above covers both, and it covers them by comparing against an oracle rather
@@ -489,6 +556,85 @@ fn a_program_with_no_object_has_no_arena() {
     );
 }
 
+/// The literal pool is a function of the program, and of nothing else.
+///
+/// Four things have to hold for a literal to be an offset a compiled instruction can *contain*
+/// rather than something built at run time.
+///
+/// **The survey decides it, before any body is emitted.** That is the discriminating assertion
+/// here, and it is what a `case "one":` nearly broke: a pattern's constant is not an expression,
+/// so the walk that collects these reaches it only because it was told to. Deleting that line
+/// leaves a pool that emission fills in as it goes — which happens to work, and makes the pool a
+/// function of the fixed point rather than of the program.
+///
+/// Then: it is the same twice, so the module is still the same bytes twice
+/// (`the_generated_module_is_a_function_of_the_program`); the offsets are consecutive and aligned;
+/// and a program with no literal in it has no pool, so nothing is added to the wire for a program
+/// that never asked for text.
+#[test]
+fn the_literal_pool_is_a_function_of_the_program() {
+    let program = compile("text.beck", TEXT);
+
+    // Surveyed and not emitted: this heap has never seen a body.
+    let mut surveyed = beck_llvm::Heap::new();
+    beck_llvm::heap::survey(&program, &mut surveyed);
+    let surveyed: Vec<String> = surveyed.strings().map(|(_, s, _)| s.to_string()).collect();
+    for literal in ["hello, ", "!", "yes", "«", "»", "one", "two"] {
+        assert!(
+            surveyed.iter().any(|s| s == literal),
+            "the survey should have found {literal:?}, and found {surveyed:?}"
+        );
+    }
+
+    let a = beck_llvm::module(&program);
+    let b = beck_llvm::module(&program);
+    assert_eq!(
+        a.heap.strings().count(),
+        surveyed.len(),
+        "emitting must not discover a literal the survey missed"
+    );
+
+    let pool = |m: &beck_llvm::Module| -> Vec<(String, u64)> {
+        m.heap
+            .strings()
+            .map(|(_, s, at)| (s.to_string(), at))
+            .collect()
+    };
+    assert_eq!(pool(&a), pool(&b), "the pool has to be the same twice");
+    assert_eq!(a.ir, b.ir, "and therefore so does the module");
+
+    // Consecutive, word-aligned and starting past the reserved first word — which is what makes an
+    // offset a constant the emitter can write into an instruction.
+    let mut expect = 8u64;
+    for (s, at) in pool(&a) {
+        assert_eq!(at, expect, "{s:?} should be at {expect}");
+        expect += 16 + (s.len() as u64).next_multiple_of(8);
+    }
+    assert_eq!(a.heap.pool_bytes(), expect - 8);
+
+    // The host writes it in front of every request, so a call whose arguments are all scalars still
+    // carries it — a definition taking two `Int`s may still compare one against a literal.
+    let (_, blob) = a
+        .heap
+        .encode_args(&[Value::Int(1)], &[Repr::Int])
+        .expect("encodes");
+    assert_eq!(blob.len() as u64, 8 + a.heap.pool_bytes());
+
+    // …and a program with no literal in it has none of this.
+    let scalar = beck_llvm::module(&compile("arithmetic.beck", ARITHMETIC));
+    assert_eq!(scalar.heap.strings().count(), 0);
+    assert_eq!(scalar.heap.pool_bytes(), 0);
+    assert!(
+        scalar
+            .heap
+            .encode_args(&[Value::Int(1)], &[Repr::Int])
+            .expect("encodes")
+            .1
+            .is_empty(),
+        "a program of pure arithmetic still puts nothing on the wire"
+    );
+}
+
 /// The arena is bounded, and running out is a **message** rather than whatever the machine does.
 ///
 /// The one failure a compiled program has that the evaluator does not, so there is nothing to
@@ -502,6 +648,27 @@ fn running_out_of_heap_is_a_diagnostic() {
         .native
         .call("chain", &[Value::Int(8_000_000), heapfix::leaf(0)])
         .expect_err("eight million nodes is more than the arena holds");
+    assert!(
+        err.message.contains("used all") && err.message.contains("MiB of its heap"),
+        "{err}"
+    );
+
+    // Text runs out the same way, and through a different allocation: `beck.str.alloc` sizes an
+    // object the program never named, so its failure has to reach the same cell the constructor's
+    // does. `repeat` builds `n` strings of growing length, which is `O(n²)` bytes — 30,000 copies
+    // of a 16-byte string is well past the arena (§104.6 is why that is quadratic and not a bug).
+    let text = Both::over("text.beck", TEXT);
+    let err = text
+        .native
+        .call(
+            "repeat",
+            &[
+                Value::str_("the seventeen ok"),
+                Value::Int(200_000),
+                Value::str_(""),
+            ],
+        )
+        .expect_err("two hundred thousand growing copies is more than the arena holds");
     assert!(
         err.message.contains("used all") && err.message.contains("MiB of its heap"),
         "{err}"
@@ -546,6 +713,85 @@ fn the_arena_costs_the_same_per_object_at_every_size() {
     );
 }
 
+/// What a slice costs does not grow with the string it is taken from.
+///
+/// A shape gate with **no clock in it** (`AGENTS.md`), and the one this backend most needed: text
+/// is where `docs/70` §70.2 found a quadratic, and the loop it found it in — walk a string by
+/// character index, take one character each step — is `walked`. One character is 24 bytes here (two
+/// header words and one padded byte), so `n` steps are `24n` bytes and a `str_slice` that copied
+/// what it was taken *from* would leave `O(n²)`.
+///
+/// The second assertion is the one the first cannot make: `first` takes one character out of
+/// strings of two very different lengths and has to leave the same arena behind, because the answer
+/// is the same size. That is `str_slice` costing its *answer* rather than its input.
+#[test]
+fn a_slice_costs_its_answer_and_not_the_string_it_came_from() {
+    let _ = toolchain!();
+    let both = Both::over("text.beck", TEXT);
+    // Two header words and the bytes padded to a word: one ASCII character is three words.
+    const PER_CHARACTER: usize = 24;
+    let mut sizes = Vec::new();
+    for n in [200usize, 1600] {
+        let s = Value::str_("x".repeat(n));
+        let (_, bytes) = both
+            .native
+            .call_sized("walked", &[s.clone(), Value::Int(0), Value::str_("")])
+            .expect("runs");
+        // The pool, the reserved word, the string itself and the empty accumulator are the
+        // arguments; everything past them is what the loop allocated.
+        let arguments = both
+            .native
+            .module()
+            .heap
+            .encode_args(
+                &[s, Value::Int(0), Value::str_("")],
+                &[Repr::Str, Repr::Int, Repr::Str],
+            )
+            .expect("encodes")
+            .1
+            .len();
+        let allocated = bytes - arguments;
+        assert_eq!(
+            allocated,
+            n * PER_CHARACTER,
+            "walked over {n} characters should allocate {} bytes and allocated {allocated}",
+            n * PER_CHARACTER
+        );
+        sizes.push((n, allocated));
+    }
+    let (small, big) = (sizes[0], sizes[1]);
+    println!(
+        "walked({}) allocated {} bytes and walked({}) allocated {} — {} bytes a character at both \
+         sizes",
+        small.0,
+        small.1,
+        big.0,
+        big.1,
+        (big.1 - small.1) / (big.0 - small.0)
+    );
+
+    // …and one character out of a long string costs what one character costs.
+    let mut one = Vec::new();
+    for n in [200usize, 1600] {
+        let s = Value::str_("y".repeat(n));
+        let arguments = both
+            .native
+            .module()
+            .heap
+            .encode_args(std::slice::from_ref(&s), &[Repr::Str])
+            .expect("encodes")
+            .1
+            .len();
+        let (_, bytes) = both.native.call_sized("first", &[s]).expect("runs");
+        one.push(bytes - arguments);
+    }
+    assert_eq!(
+        one[0], one[1],
+        "taking one character should cost the same out of a short string and a long one"
+    );
+    assert_eq!(one[0], PER_CHARACTER);
+}
+
 /// The reserved first word, plus one object of `words` words: what the host writes for an argument.
 fn heap_bytes(words: usize) -> usize {
     8 + words * 8
@@ -567,7 +813,10 @@ fn what_cannot_be_compiled_is_refused_by_name_and_with_a_reason() {
 
     for (name, expect) in [
         ("takes_a_list", "parameter `xs` is a `list`"),
-        ("builds_a_string", "returns a `Str`"),
+        (
+            "renders_a_number",
+            "`str` converts between text and a number",
+        ),
         ("is_generic", "generic over T"),
         (
             "reads_the_clock",
@@ -600,18 +849,25 @@ fn what_cannot_be_compiled_is_refused_by_name_and_with_a_reason() {
 
 /// What the heap does **not** reach, asserted as an absence.
 ///
-/// `docs/101` §101.5 lists what is not built — text, collections, closures and every effect — and a
+/// `docs/101` §101.5 lists what is not built — collections, closures and every effect — and a
 /// list in prose goes stale where a list with a test attached cannot (`docs/83` §83.7). Each of
 /// these goes red the day its row starts compiling, which is the day the row should be deleted.
+///
+/// The text row was deleted that way: `docs/104` gave a `Str` a layout, so what is left of text
+/// here is the primitives that answer with a collection or read a Unicode table, one row each.
 #[test]
 fn what_the_heap_does_not_reach_is_refused_by_name() {
     let program = compile("still-refused.beck", STILL_REFUSED);
     let module = beck_llvm::module(&program);
     for (name, expect) in [
         ("takes_a_list", "a `list`"),
-        ("builds_a_string", "a `Str`"),
+        (
+            "renders_a_number",
+            "`str` converts between text and a number",
+        ),
+        ("splits_a_string", "`str_split` answers with a list"),
+        ("upcases", "`str_upper` is Unicode case mapping"),
         ("takes_a_boxed", "whose field `items` is a `list`"),
-        ("builds_a_named", "whose field `label` is a `Str`"),
         ("matches_a_held", "whose field `values` is a `list`"),
         ("is_generic", "generic over T"),
         (
@@ -640,7 +896,7 @@ fn what_the_heap_does_not_reach_is_refused_by_name() {
             .iter()
             .map(|f| f.name.to_string())
             .collect::<Vec<_>>(),
-        vec!["scalar_and_fine".to_string()]
+        vec!["names_it".to_string(), "scalar_and_fine".to_string()]
     );
 }
 
@@ -653,13 +909,14 @@ fn what_the_heap_does_not_reach_is_refused_by_name() {
 fn a_refusal_travels_to_whoever_calls_it() {
     let _ = toolchain!();
     let src = r#"
-## A `Str` rather than a record: `docs/101` gave the record a layout, and what a refusal has to
-## travel *from* is something the heap still does not reach.
-def bottom(s: Str) -> Int:
-    return str_len(s)
+## A `list` rather than a record or a `Str`: `docs/101` gave the record a layout and `docs/104`
+## gave text one, and what a refusal has to travel *from* is something the heap still does not
+## reach.
+def bottom(xs: list[Int]) -> Int:
+    return list_len(xs)
 
 def middle(n: Int) -> Int:
-    return bottom(str(n))
+    return bottom([n])
 
 def top(n: Int) -> Int:
     return middle(n) + 1
@@ -668,7 +925,7 @@ def top(n: Int) -> Int:
 ## round, so a single pass in either direction keeps one of them.
 def ping(n: Int) -> Int:
     if n == 0:
-        return bottom("")
+        return bottom([])
     return pong(n - 1)
 
 def pong(n: Int) -> Int:

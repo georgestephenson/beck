@@ -12,6 +12,31 @@ Newest first.
 
 ## Unreleased
 
+### The native backends
+
+- **Text is on the heap** ([`docs/104`](docs/104-text-on-the-heap-report.md)): a `Str` is a value
+  both code generators compile — a layout of two counts and the bytes, a literal pool the host
+  writes in front of every request, `+`, the six comparisons, `str_len`, `str_is_empty`,
+  `str_slice`, `str_contains`, `str_starts_with` and `str_ends_with`. **283 → 344 definitions**
+  compile across the tree and the corpus goes 4 → 28. Gated by
+  `native.rs::the_two_backends_agree_on_text` and
+  `cranelift.rs::the_three_backends_agree_on_text` (2,893 calls each, over an alphabet with an
+  embedded NUL, four-byte characters and a prefix pair), by
+  `a_slice_costs_its_answer_and_not_the_string_it_came_from` on both backends, and by
+  `the_literal_pool_is_a_function_of_the_program`.
+- **The Cranelift record comparison compared a `Str` field by its offset**, so two equal strings
+  allocated at different places compared unequal. Found by the three-way differential's pairs one
+  minute after the second emitter existed (§104.5).
+
+### The evaluator
+
+- **`str_slice` was charged the length the caller wrote rather than the length it takes**, so
+  `str_slice(s, 0, 1_000_000)` on a five-character string cost a million steps and "from here to
+  the end" could exhaust the fuel budget on a program doing nothing. The arm one above it in
+  `work_of` has stated the rule since it was written. Gated by
+  `interp::tests::a_slice_is_charged_what_it_takes`, and found by the native differential answering
+  while the tree-walker ran out of fuel (§104.8).
+
 ### Docs
 
 - **Consolidated 27 reports into three chapters, and changed the rule that produced them.**

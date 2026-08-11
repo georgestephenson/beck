@@ -38,13 +38,45 @@
 //! evaluator about `<` on half the unions in the world. [`Layout::variants`] is therefore sorted by
 //! name, and the tag *is* that rank: comparing two tags is comparing two variant names.
 //!
+//! # Text
+//!
+//! A `Str` is an object too, and the only one whose shape is not a program's: two header words and
+//! the UTF-8 bytes, padded so the next object still starts on a word.
+//!
+//! | Word | What |
+//! |---|---|
+//! | 0 | how many **bytes** the text is |
+//! | 1 | how many **characters** it is |
+//! | 2.. | the bytes, then zero padding to a whole word |
+//!
+//! Both counts are stored because [`beck_core::core::Text`] caches both and `str_len` answers the
+//! second in constant time ([`docs/70`](../../../../../docs/70-the-evaluator-gets-fast-report.md)) —
+//! a compiled `str_len` that counted would be `O(n)` where the evaluator is `O(1)`, and the loop
+//! that walks a string by index would be quadratic here and linear there. The two counts are also
+//! what makes the ASCII test free: a UTF-8 string has as many bytes as characters exactly when
+//! every character is one byte, so `bytes == chars` *is* `is_ascii`, and a character index is then
+//! a byte index.
+//!
+//! ## String literals are the host's, at a fixed offset
+//!
+//! A literal cannot be allocated where it is written — the arena is reset before every call, so the
+//! first iteration of a loop would allocate it and the second would allocate it again. It is not a
+//! global either: an offset is an offset *into the arena*, and a constant somewhere else could not
+//! be one. So the literals of a module are a **pool** that the host writes as the first bytes of
+//! every request's heap, at offsets fixed when the module was emitted — compiled code refers to one
+//! by a constant, and neither emitter generates a byte to build it.
+//!
+//! What that costs is the pool copied down the pipe on every call, which is [`Heap::pool_bytes`]
+//! and is a property of the program's literals rather than of its arguments.
+//!
 //! # What has a layout, and what does not
 //!
 //! `Int`, `Float` and `Bool` are [`Repr`]'s scalars and live in registers as they always have. A
 //! `model`, a `union` and a `newtype` — including a recursive one, and including one that takes a
-//! type parameter — have a layout. Everything else does not, and [`Heap::repr`] says which by
-//! name: a `Str`, a `list`, a `Map`, a closure, `Html` and `Unit` are refused, and a definition
-//! that mentions one is left to the evaluator exactly as it was before there was a heap at all.
+//! type parameter — have a layout, and a `Str` has the one above. Everything else does not, and
+//! [`Heap::repr`] says which by name: a `list`, a `Map`, a closure, `Html` and `Unit` are refused,
+//! and a definition that mentions one is left to the evaluator exactly as it was before there was a
+//! heap at all.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -93,28 +125,48 @@ pub const MAX_LAYOUTS: usize = 512;
 /// several times over rather than the deepest one that would fit.
 const MAX_DEPTH: usize = 2048;
 
+/// The two header words of a `Str`: its length in bytes, then in characters.
+pub const STR_HEADER: u64 = 2 * WORD;
+
+/// How many bytes a `Str` of `n` UTF-8 bytes occupies, header and padding included.
+///
+/// Padded to a whole word so that the object allocated after one still starts where every other
+/// object starts: a field is read with an aligned load, and the arena has one alignment rather than
+/// one per kind of object.
+pub fn str_bytes(n: u64) -> u64 {
+    STR_HEADER + n.next_multiple_of(WORD)
+}
+
 /// What one value is, at the machine.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Repr {
     Int,
     Float,
     Bool,
+    /// Text, carried as its offset into the arena. One shape for every `Str`, so there is no index.
+    Str,
     /// An object, carried as its offset into the arena. The index is into [`Heap::layouts`].
     Obj(u32),
 }
 
 impl Repr {
-    /// The machine type this is carried in. An object is an offset, and an offset is an `i64`.
+    /// The machine type this is carried in. An offset is an `i64`, whatever it points at.
     pub fn machine(self) -> Scalar {
         match self {
             Repr::Float => Scalar::Float,
             Repr::Bool => Scalar::Bool,
-            Repr::Int | Repr::Obj(_) => Scalar::Int,
+            Repr::Int | Repr::Str | Repr::Obj(_) => Scalar::Int,
         }
     }
 
-    pub fn is_obj(self) -> bool {
-        matches!(self, Repr::Obj(_))
+    /// Whether this is carried as an offset rather than as the value itself.
+    ///
+    /// What reads it is the two places the arena becomes visible: the host reserves room for a
+    /// graph in the request, and the worker sends the used arena back with a reply. A `Str` is on
+    /// the heap for both purposes, and the name says *reference* rather than *object* because it is
+    /// the only one of them that has no [`Layout`].
+    pub fn is_ref(self) -> bool {
+        matches!(self, Repr::Obj(_) | Repr::Str)
     }
 
     /// The LLVM type, which is the machine type's.
@@ -188,11 +240,28 @@ enum Slot {
 pub struct Heap {
     slots: Vec<Slot>,
     by_key: BTreeMap<String, u32>,
+    /// Every distinct string literal in the module, in the order [`survey`] met them, with the
+    /// offset the host writes each one to. Interned before a byte is emitted, so the pool is a
+    /// function of the *program* rather than of which definitions turned out to compile — and
+    /// therefore the same table for both emitters.
+    strings: Vec<(Arc<str>, u64)>,
+    by_str: BTreeMap<Arc<str>, u32>,
+    /// Where the next literal would go, which is also where the arguments' graph begins.
+    pool_end: u64,
+    /// Whether any signature or body in this module mentions text.
+    ///
+    /// Separate from [`Heap::slots`] because a `Str` has no [`Layout`]: a definition taking one and
+    /// returning one needs an arena and would otherwise get the module a program of pure arithmetic
+    /// gets.
+    text: bool,
 }
 
 impl Heap {
     pub fn new() -> Heap {
-        Heap::default()
+        Heap {
+            pool_end: FIRST,
+            ..Heap::default()
+        }
     }
 
     /// Whether anything in this module needs an arena at all.
@@ -202,7 +271,55 @@ impl Heap {
     /// [`docs/93`](../../../../../docs/93-llvm-backend-report.md) §93.5's numbers about the same
     /// code they were measured on.
     pub fn is_empty(&self) -> bool {
-        !self.slots.iter().any(|s| matches!(s, Slot::Done(_)))
+        !self.text && !self.slots.iter().any(|s| matches!(s, Slot::Done(_)))
+    }
+
+    /// Whether text appears anywhere in this module, and therefore whether its runtime is worth
+    /// emitting. A `Str` has no [`Layout`], so [`Heap::layouts`] cannot answer this.
+    pub fn uses_text(&self) -> bool {
+        self.text
+    }
+
+    /// The literal `s`, interned: its index, which is what an emitter records.
+    pub fn intern(&mut self, s: &str) -> u32 {
+        if let Some(at) = self.by_str.get(s) {
+            return *at;
+        }
+        let key: Arc<str> = Arc::from(s);
+        let at = self.strings.len() as u32;
+        let offset = self.pool_end;
+        self.pool_end += str_bytes(s.len() as u64);
+        self.strings.push((key.clone(), offset));
+        self.by_str.insert(key, at);
+        self.text = true;
+        at
+    }
+
+    /// Where the host wrote literal `at`. A compile-time constant, which is the whole point.
+    pub fn string_offset(&self, at: u32) -> u64 {
+        self.strings[at as usize].1
+    }
+
+    /// How many bytes of every request are the literal pool.
+    pub fn pool_bytes(&self) -> u64 {
+        self.pool_end - FIRST
+    }
+
+    pub fn strings(&self) -> impl Iterator<Item = (u32, &str, u64)> {
+        self.strings
+            .iter()
+            .enumerate()
+            .map(|(i, (s, at))| (i as u32, &**s, *at))
+    }
+
+    /// The reserved word and then the literals, which is what every request's heap starts with.
+    fn write_pool(&self, blob: &mut Vec<u8>) {
+        blob.resize(FIRST as usize, 0);
+        for (s, at) in &self.strings {
+            debug_assert_eq!(blob.len() as u64, *at);
+            write_text(s, blob);
+        }
+        debug_assert_eq!(blob.len() as u64, self.pool_end);
     }
 
     pub fn layouts(&self) -> impl Iterator<Item = (u32, &Layout)> {
@@ -225,6 +342,7 @@ impl Heap {
             Repr::Int => "Int".into(),
             Repr::Float => "Float".into(),
             Repr::Bool => "Bool".into(),
+            Repr::Str => "Str".into(),
             Repr::Obj(i) => self.layout(i).shown.clone(),
         }
     }
@@ -244,7 +362,10 @@ impl Heap {
             Ty::INT => return Ok(Repr::Int),
             Ty::FLOAT => return Ok(Repr::Float),
             Ty::BOOL => return Ok(Repr::Bool),
-            Ty::STR => return Err("a `Str`, and text is not on this heap yet".into()),
+            Ty::STR => {
+                self.text = true;
+                return Ok(Repr::Str);
+            }
             Ty::LIST => return Err("a `list`, and a collection is not on this heap yet".into()),
             Ty::MAP => return Err("a `Map`, and a collection is not on this heap yet".into()),
             Ty::UNIT => return Err("the unit value, which has no machine representation".into()),
@@ -375,7 +496,11 @@ impl Heap {
         want: &[Repr],
     ) -> Result<(Vec<u64>, Vec<u8>), String> {
         let mut blob = Vec::new();
-        if want.iter().any(|r| r.is_obj()) {
+        // The pool goes in whether or not *this* call passes a reference: the literals belong to
+        // the module, and a definition taking two `Int`s may still compare one against `"x"`.
+        if !self.strings.is_empty() {
+            self.write_pool(&mut blob);
+        } else if want.iter().any(|r| r.is_ref()) {
             blob.resize(FIRST as usize, 0);
         }
         let mut cells = Vec::with_capacity(args.len());
@@ -396,6 +521,11 @@ impl Heap {
                 .as_f64()
                 .map(f64::to_bits)
                 .ok_or_else(|| "a real that is not a real".to_string()),
+            (Value::Str(t), Repr::Str) => {
+                let offset = blob.len() as u64;
+                write_text(t.as_str(), blob);
+                Ok(offset)
+            }
             (Value::Data(record), Repr::Obj(at)) => self.encode_object(record, at, blob),
             _ => Err(format!(
                 "a {} where the signature says {}",
@@ -469,6 +599,39 @@ impl Heap {
             // transform and the canonicalisation, which is what makes this equal to what the
             // evaluator built.
             Repr::Float => Ok(Value::float(f64::from_bits(cell))),
+            Repr::Str => {
+                let bytes = word(blob, cell)? as usize;
+                let start = (cell + STR_HEADER) as usize;
+                let end = start
+                    .checked_add(bytes)
+                    .ok_or("an offset past the end of the machine")?;
+                if end > blob.len() {
+                    return Err(format!(
+                        "the compiled program answered with {bytes} bytes of text at offset \
+                         {cell}, and its heap is {} bytes",
+                        blob.len()
+                    ));
+                }
+                // Checked rather than assumed: the bytes came from another process, and a `Text`
+                // built out of invalid UTF-8 would be a `Value` nothing else in the language can
+                // produce. Every operation this backend compiles preserves well-formedness — a
+                // slice cuts on a character boundary and a concatenation joins two whole strings —
+                // so this failing is a compiler bug reported as one.
+                let text = std::str::from_utf8(&blob[start..end]).map_err(|e| {
+                    format!("the compiled program answered with invalid UTF-8: {e}")
+                })?;
+                let value = Value::str_(text);
+                // The count the compiled code carried has to be the count the host would compute,
+                // because it is what `str_len` answered inside the call.
+                let claimed = word(blob, cell + WORD)?;
+                match &value {
+                    Value::Str(t) if t.chars_len() as u64 == claimed => Ok(value),
+                    _ => Err(format!(
+                        "the compiled program said its text is {claimed} characters and it is {}",
+                        text.chars().count()
+                    )),
+                }
+            }
             Repr::Obj(at) => {
                 let layout = self.layout(at);
                 let tag = word(blob, cell)?;
@@ -492,6 +655,18 @@ impl Heap {
             }
         }
     }
+}
+
+/// One `Str` appended to a blob: the two counts, the bytes, and the padding to a whole word.
+///
+/// The one place text is written into an arena, called by the literal pool and by an argument
+/// alike — because the compiled code reading them cannot tell the two apart and must not have to.
+fn write_text(s: &str, blob: &mut Vec<u8>) {
+    blob.extend_from_slice(&(s.len() as u64).to_ne_bytes());
+    blob.extend_from_slice(&(s.chars().count() as u64).to_ne_bytes());
+    blob.extend_from_slice(s.as_bytes());
+    let pad = s.len().next_multiple_of(WORD as usize) - s.len();
+    blob.extend(std::iter::repeat_n(0u8, pad));
 }
 
 /// One word out of the blob, or the reason there is not one there.
@@ -552,10 +727,45 @@ pub fn survey(program: &Program, heap: &mut Heap) {
     }
 }
 
+/// Every string constant a pattern tests against, interned along with the bodies'.
+fn pattern(p: &beck_core::core::Pattern, heap: &mut Heap) {
+    use beck_core::core::{Const, Pattern};
+    match p {
+        Pattern::Const(Const::Str(s)) => {
+            heap.intern(s);
+        }
+        Pattern::Wildcard | Pattern::Bind(_) | Pattern::Const(_) => {}
+        Pattern::At { inner, .. } => pattern(inner, heap),
+        Pattern::Or(alts) => {
+            for alt in alts {
+                pattern(alt, heap);
+            }
+        }
+        Pattern::Ctor { binds, .. } => {
+            for (_, sub) in binds {
+                pattern(sub, heap);
+            }
+        }
+        // A list pattern is refused by both emitters, and is walked anyway: what decides the pool
+        // is the program, not what turned out to compile.
+        Pattern::List { items, .. } => {
+            for sub in items {
+                pattern(sub, heap);
+            }
+        }
+    }
+}
+
 fn walk(c: &beck_core::Core, program: &Program, heap: &mut Heap) {
-    use beck_core::core::CoreKind;
+    use beck_core::core::{Const, CoreKind};
     let _ = heap.repr(&c.ty, program);
     match &c.kind {
+        // Interned here rather than where a body is emitted, so the pool is the same table in both
+        // emitters and in the host: a literal in a definition that turns out not to compile still
+        // takes its place, exactly as a layout's index does.
+        CoreKind::Const(Const::Str(s)) => {
+            heap.intern(s);
+        }
         CoreKind::Const(_) | CoreKind::Var(_) | CoreKind::Global(_) => {}
         CoreKind::Lam { body, .. } => walk(body, program, heap),
         CoreKind::App { func, args } => {
@@ -580,8 +790,14 @@ fn walk(c: &beck_core::Core, program: &Program, heap: &mut Heap) {
         }
         CoreKind::Match { scrutinee, arms } => {
             walk(scrutinee, program, heap);
-            for e in arms.iter().flat_map(|a| a.exprs()) {
-                walk(e, program, heap);
+            for arm in arms {
+                // A pattern's constants are not expressions and `Arm::exprs` does not reach them,
+                // so `case "one":` would otherwise be a literal the pool learned about while a
+                // body was being emitted rather than before one was.
+                pattern(&arm.pattern, heap);
+                for e in arm.exprs() {
+                    walk(e, program, heap);
+                }
             }
         }
         CoreKind::Make { fields, .. } => {

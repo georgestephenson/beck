@@ -231,6 +231,14 @@ fn build(
     } else {
         Some(Arena::declare(&mut object, ptr).map_err(Failure::Fatal)?)
     };
+    // Text's runtime, when the program has any: a `Str` has no layout, so `Heap::uses_text` is
+    // what answers this and `Heap::layouts` cannot.
+    let text = if heap.uses_text() {
+        Some(Text::declare(&mut object, ptr).map_err(Failure::Fatal)?)
+    } else {
+        None
+    };
+    let runtime = Runtime { arena, text };
 
     // Every compiled definition, declared before any is defined: a body may call one declared
     // after it, and mutual recursion is two bodies that each call the other.
@@ -255,7 +263,7 @@ fn build(
         let sig = beck_signature(&indexed[name], ptr);
         ctx.func = Function::with_name_signature(UserFuncName::user(0, n as u32), sig);
         let taken = std::mem::take(&mut spans);
-        let mut body = Body::new(&indexed, eligible, &ids, taken, program, heap, arena);
+        let mut body = Body::new(&indexed, eligible, &ids, taken, program, heap, runtime);
         let emitted = {
             let mut b = FunctionBuilder::new(&mut ctx.func, &mut fctx);
             let outcome = body.emit(def, &mut b, &mut object);
@@ -297,8 +305,12 @@ fn build(
         arena
             .define(&mut object, &mut ctx, &mut fctx, ptr)
             .map_err(Failure::Fatal)?;
+        if let Some(text) = text {
+            text.define(arena, &mut object, &mut ctx, &mut fctx, ptr)
+                .map_err(Failure::Fatal)?;
+        }
         for at in closure_of(&compared, heap) {
-            compare_function(at, heap, arena, &mut object, &mut ctx, &mut fctx)
+            compare_function(at, heap, arena, text, &mut object, &mut ctx, &mut fctx)
                 .map_err(Failure::Fatal)?;
         }
     }
@@ -406,6 +418,16 @@ fn symbol(name: &str) -> String {
         }
     }
     out
+}
+
+/// What a module carries besides its own definitions: the arena, and text's runtime.
+///
+/// One value rather than two parameters, because every body is handed both or neither and the two
+/// are decided together — a module with text in it is a module with an arena by construction.
+#[derive(Clone, Copy, Debug)]
+struct Runtime {
+    arena: Option<Arena>,
+    text: Option<Text>,
 }
 
 /// The arena: four globals and the only allocator this backend has.
@@ -555,6 +577,562 @@ impl Arena {
     }
 }
 
+// -------------------------------------------------------------------------------------------
+// Text
+// -------------------------------------------------------------------------------------------
+
+/// The six functions everything this backend does to a `Str` is built from.
+///
+/// The same six [`beck_llvm::emit`]'s `TEXT` writes as LLVM IR, and written again for this
+/// module's stated reason: the two emitters are held to *agreeing*, and one implementation shared
+/// between them would make the agreement true by construction. What is *not* written again is the
+/// shape they all read — [`beck_llvm::heap`]'s two counts and bytes — because that one is a
+/// contract with the host as well.
+///
+/// `memcmp` is imported; `memcpy` arrives through [`FunctionBuilder::call_memcpy`], which is a
+/// libcall the object module already names.
+#[derive(Clone, Copy, Debug)]
+struct Text {
+    /// A fresh, uninitialised `Str` of the given two counts, or `0` on a full arena.
+    alloc: FuncId,
+    /// `-1`, `0` or `1` — bytes first, then length, which is what `String`'s `Ord` gives.
+    cmp: FuncId,
+    concat: FuncId,
+    /// Which byte character `i` begins at, clamped to the end.
+    byteof: FuncId,
+    slice: FuncId,
+    /// The byte offset of a substring, or `-1`.
+    find: FuncId,
+    memcmp: FuncId,
+}
+
+/// Which of [`Text`]'s allocating functions a call site wants.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Which {
+    Concat,
+    Slice,
+}
+
+impl Text {
+    fn declare(m: &mut ObjectModule, ptr: Type) -> Result<Text, String> {
+        let conv = CallConv::triple_default(m.isa().triple());
+        let mut one = |name: &str, params: &[Type], ret: Type| -> Result<FuncId, String> {
+            let mut sig = cranelift_codegen::ir::Signature::new(conv);
+            for p in params {
+                sig.params.push(AbiParam::new(*p));
+            }
+            sig.returns.push(AbiParam::new(ret));
+            m.declare_function(name, Linkage::Local, &sig)
+                .map_err(|e| format!("declaring `{name}`: {e}"))
+        };
+        let alloc = one(
+            "beck.str.alloc",
+            &[ptr, types::I64, types::I64, types::I32],
+            types::I64,
+        )?;
+        let cmp = one("beck.str.cmp", &[types::I64, types::I64], types::I64)?;
+        let concat = one(
+            "beck.str.concat",
+            &[ptr, types::I64, types::I64, types::I32],
+            types::I64,
+        )?;
+        let byteof = one("beck.str.byteof", &[types::I64, types::I64], types::I64)?;
+        let slice = one(
+            "beck.str.slice",
+            &[ptr, types::I64, types::I64, types::I64, types::I32],
+            types::I64,
+        )?;
+        let find = one("beck.str.find", &[types::I64, types::I64], types::I64)?;
+
+        let mut sig = cranelift_codegen::ir::Signature::new(conv);
+        sig.params.push(AbiParam::new(ptr));
+        sig.params.push(AbiParam::new(ptr));
+        sig.params.push(AbiParam::new(types::I64));
+        sig.returns.push(AbiParam::new(types::I32));
+        let memcmp = m
+            .declare_function("memcmp", Linkage::Import, &sig)
+            .map_err(|e| format!("declaring `memcmp`: {e}"))?;
+
+        Ok(Text {
+            alloc,
+            cmp,
+            concat,
+            byteof,
+            slice,
+            find,
+            memcmp,
+        })
+    }
+
+    fn id(self, which: Which) -> FuncId {
+        match which {
+            Which::Concat => self.concat,
+            Which::Slice => self.slice,
+        }
+    }
+
+    /// Where a `Str`'s bytes start, as an address.
+    fn data(
+        self,
+        arena: Arena,
+        s: IrValue,
+        b: &mut FunctionBuilder<'_>,
+        m: &mut ObjectModule,
+    ) -> IrValue {
+        let base = arena.base(b, m);
+        let at = b.ins().iadd(base, s);
+        b.ins().iadd_imm_s(at, heap::STR_HEADER as i64)
+    }
+
+    /// One header word: `0` is the byte count and `8` is the character count.
+    fn header(
+        self,
+        arena: Arena,
+        s: IrValue,
+        at: i64,
+        b: &mut FunctionBuilder<'_>,
+        m: &mut ObjectModule,
+    ) -> IrValue {
+        let base = arena.base(b, m);
+        let p = b.ins().iadd(base, s);
+        b.ins()
+            .load(types::I64, MemFlagsData::trusted(), p, at as i32)
+    }
+
+    fn define(
+        self,
+        arena: Arena,
+        m: &mut ObjectModule,
+        ctx: &mut cranelift_codegen::Context,
+        fctx: &mut FunctionBuilderContext,
+        ptr: Type,
+    ) -> Result<(), String> {
+        self.define_alloc(arena, m, ctx, fctx, ptr)?;
+        self.define_cmp(arena, m, ctx, fctx)?;
+        self.define_concat(arena, m, ctx, fctx, ptr)?;
+        self.define_byteof(arena, m, ctx, fctx)?;
+        self.define_slice(arena, m, ctx, fctx, ptr)?;
+        self.define_find(arena, m, ctx, fctx)?;
+        Ok(())
+    }
+
+    /// The shape of every definition here: build the signature, run `body`, define the function.
+    fn wrote(
+        id: FuncId,
+        sig: cranelift_codegen::ir::Signature,
+        seq: u32,
+        m: &mut ObjectModule,
+        ctx: &mut cranelift_codegen::Context,
+        fctx: &mut FunctionBuilderContext,
+        body: impl FnOnce(&mut FunctionBuilder<'_>, &mut ObjectModule),
+    ) -> Result<(), String> {
+        ctx.func = Function::with_name_signature(UserFuncName::user(7, seq), sig);
+        {
+            let mut b = FunctionBuilder::new(&mut ctx.func, fctx);
+            let entry = b.create_block();
+            b.append_block_params_for_function_params(entry);
+            b.switch_to_block(entry);
+            b.seal_block(entry);
+            body(&mut b, m);
+            b.seal_all_blocks();
+            b.finalize(m.target_config());
+        }
+        m.define_function(id, ctx)
+            .map_err(|e| format!("defining a text function: {e}"))?;
+        m.clear_context(ctx);
+        Ok(())
+    }
+
+    fn signature(m: &ObjectModule, params: &[Type], ret: Type) -> cranelift_codegen::ir::Signature {
+        let mut sig =
+            cranelift_codegen::ir::Signature::new(CallConv::triple_default(m.isa().triple()));
+        for p in params {
+            sig.params.push(AbiParam::new(*p));
+        }
+        sig.returns.push(AbiParam::new(ret));
+        sig
+    }
+
+    fn define_alloc(
+        self,
+        arena: Arena,
+        m: &mut ObjectModule,
+        ctx: &mut cranelift_codegen::Context,
+        fctx: &mut FunctionBuilderContext,
+        ptr: Type,
+    ) -> Result<(), String> {
+        let sig = Text::signature(m, &[ptr, types::I64, types::I64, types::I32], types::I64);
+        Text::wrote(self.alloc, sig, 0, m, ctx, fctx, |b, m| {
+            let entry = b.current_block().expect("an entry block");
+            let err = b.block_params(entry)[0];
+            let bytes = b.block_params(entry)[1];
+            let chars = b.block_params(entry)[2];
+            let span = b.block_params(entry)[3];
+            let flags = MemFlagsData::trusted();
+
+            let padded = b.ins().iadd_imm_s(bytes, heap::WORD as i64 - 1);
+            let body = b.ins().band_imm_s(padded, -(heap::WORD as i64));
+            let total = b.ins().iadd_imm_s(body, heap::STR_HEADER as i64);
+            let f = arena.alloc_in(b, m);
+            let call = b.ins().call(f, &[err, total, span]);
+            let off = b.inst_results(call)[0];
+
+            let fill = b.create_block();
+            let out = b.create_block();
+            b.append_block_param(out, types::I64);
+            let failed = b.ins().icmp_imm_s(IntCC::Equal, off, 0);
+            b.ins().brif(failed, out, &[off.into()], fill, &[]);
+
+            b.switch_to_block(fill);
+            let base = arena.base(b, m);
+            let p = b.ins().iadd(base, off);
+            b.ins().store(flags, bytes, p, 0);
+            b.ins().store(flags, chars, p, heap::WORD as i32);
+            // The padding is zeroed rather than left as whatever the arena held, so two runs of
+            // one program leave the same bytes behind.
+            let tail = b.create_block();
+            let empty = b.ins().icmp_imm_s(IntCC::Equal, body, 0);
+            b.ins().brif(empty, out, &[off.into()], tail, &[]);
+
+            b.switch_to_block(tail);
+            let last = b.ins().iadd(p, body);
+            let z = b.ins().iconst(types::I64, 0);
+            b.ins().store(flags, z, last, heap::WORD as i32);
+            b.ins().jump(out, &[off.into()]);
+
+            b.switch_to_block(out);
+            let r = b.block_params(out)[0];
+            b.ins().return_(&[r]);
+        })
+    }
+
+    fn define_cmp(
+        self,
+        arena: Arena,
+        m: &mut ObjectModule,
+        ctx: &mut cranelift_codegen::Context,
+        fctx: &mut FunctionBuilderContext,
+    ) -> Result<(), String> {
+        let sig = Text::signature(m, &[types::I64, types::I64], types::I64);
+        Text::wrote(self.cmp, sig, 1, m, ctx, fctx, |b, m| {
+            let entry = b.current_block().expect("an entry block");
+            let (sa, sb) = (b.block_params(entry)[0], b.block_params(entry)[1]);
+            let la = self.header(arena, sa, 0, b, m);
+            let lb = self.header(arena, sb, 0, b, m);
+            let pa = self.data(arena, sa, b, m);
+            let pb = self.data(arena, sb, b, m);
+            let shorter = b.ins().icmp(IntCC::UnsignedLessThan, la, lb);
+            let n = b.ins().select(shorter, la, lb);
+            let f = m.declare_func_in_func(self.memcmp, b.func);
+            let call = b.ins().call(f, &[pa, pb, n]);
+            let c = b.inst_results(call)[0];
+
+            // The three answers are made once, in the entry block, because both blocks below
+            // choose between them and a value has to dominate the instruction that reads it.
+            let down = b.ins().iconst(types::I64, -1);
+            let up = b.ins().iconst(types::I64, 1);
+            let zero = b.ins().iconst(types::I64, 0);
+            let bytes = b.create_block();
+            let lengths = b.create_block();
+            let decided = b.ins().icmp_imm_s(IntCC::NotEqual, c, 0);
+            b.ins().brif(decided, bytes, &[], lengths, &[]);
+
+            b.switch_to_block(bytes);
+            // `memcmp` may answer any negative or any positive number; the language wants one of
+            // three, because this feeds `Value`'s three-way order and not a boolean.
+            let neg = b.ins().icmp_imm_s(IntCC::SignedLessThan, c, 0);
+            let sign = b.ins().select(neg, down, up);
+            b.ins().return_(&[sign]);
+
+            // Equal on their shared prefix, so the shorter one is the smaller: `"ab" < "abc"`.
+            b.switch_to_block(lengths);
+            let gt = b.ins().icmp(IntCC::UnsignedGreaterThan, la, lb);
+            let ordered = b.ins().select(gt, up, down);
+            let same = b.ins().icmp(IntCC::Equal, la, lb);
+            let r = b.ins().select(same, zero, ordered);
+            b.ins().return_(&[r]);
+        })
+    }
+
+    fn define_concat(
+        self,
+        arena: Arena,
+        m: &mut ObjectModule,
+        ctx: &mut cranelift_codegen::Context,
+        fctx: &mut FunctionBuilderContext,
+        ptr: Type,
+    ) -> Result<(), String> {
+        let sig = Text::signature(m, &[ptr, types::I64, types::I64, types::I32], types::I64);
+        Text::wrote(self.concat, sig, 2, m, ctx, fctx, |b, m| {
+            let entry = b.current_block().expect("an entry block");
+            let err = b.block_params(entry)[0];
+            let (sa, sb) = (b.block_params(entry)[1], b.block_params(entry)[2]);
+            let span = b.block_params(entry)[3];
+            let la = self.header(arena, sa, 0, b, m);
+            let lb = self.header(arena, sb, 0, b, m);
+            let ca = self.header(arena, sa, heap::WORD as i64, b, m);
+            let cb = self.header(arena, sb, heap::WORD as i64, b, m);
+            let lt = b.ins().iadd(la, lb);
+            let ct = b.ins().iadd(ca, cb);
+            let f = m.declare_func_in_func(self.alloc, b.func);
+            let call = b.ins().call(f, &[err, lt, ct, span]);
+            let r = b.inst_results(call)[0];
+
+            let copy = b.create_block();
+            let out = b.create_block();
+            let failed = b.ins().icmp_imm_s(IntCC::Equal, r, 0);
+            b.ins().brif(failed, out, &[], copy, &[]);
+
+            b.switch_to_block(copy);
+            // Taken after the allocation: the arena never moves, and this way nothing depends on
+            // that being true.
+            let pr = self.data(arena, r, b, m);
+            let pa = self.data(arena, sa, b, m);
+            let pb = self.data(arena, sb, b, m);
+            let config = m.target_config();
+            b.call_memcpy(config, pr, pa, la);
+            let second = b.ins().iadd(pr, la);
+            b.call_memcpy(config, second, pb, lb);
+            b.ins().jump(out, &[]);
+
+            b.switch_to_block(out);
+            b.ins().return_(&[r]);
+        })
+    }
+
+    fn define_byteof(
+        self,
+        arena: Arena,
+        m: &mut ObjectModule,
+        ctx: &mut cranelift_codegen::Context,
+        fctx: &mut FunctionBuilderContext,
+    ) -> Result<(), String> {
+        let sig = Text::signature(m, &[types::I64, types::I64], types::I64);
+        Text::wrote(self.byteof, sig, 3, m, ctx, fctx, |b, m| {
+            let entry = b.current_block().expect("an entry block");
+            let (s, i) = (b.block_params(entry)[0], b.block_params(entry)[1]);
+            let len = self.header(arena, s, 0, b, m);
+            let chars = self.header(arena, s, heap::WORD as i64, b, m);
+
+            let inside = b.create_block();
+            let past = b.ins().icmp(IntCC::SignedGreaterThanOrEqual, i, chars);
+            let end = b.create_block();
+            b.ins().brif(past, end, &[], inside, &[]);
+
+            b.switch_to_block(inside);
+            let known = b.create_block();
+            let start = b.create_block();
+            let before = b.ins().icmp_imm_s(IntCC::SignedLessThanOrEqual, i, 0);
+            b.ins().brif(before, start, &[], known, &[]);
+
+            b.switch_to_block(known);
+            // Every character is one byte exactly when there are as many bytes as characters, so
+            // the two counts the header already carries are the ASCII test and no flag is stored.
+            let walk = b.create_block();
+            let direct = b.create_block();
+            let ascii = b.ins().icmp(IntCC::Equal, len, chars);
+            b.ins().brif(ascii, direct, &[], walk, &[]);
+
+            b.switch_to_block(direct);
+            b.ins().return_(&[i]);
+            b.switch_to_block(start);
+            let z = b.ins().iconst(types::I64, 0);
+            b.ins().return_(&[z]);
+            b.switch_to_block(end);
+            b.ins().return_(&[len]);
+
+            b.switch_to_block(walk);
+            let p = self.data(arena, s, b, m);
+            let at = b.declare_var(types::I64);
+            let seen = b.declare_var(types::I64);
+            let zero = b.ins().iconst(types::I64, 0);
+            b.def_var(at, zero);
+            b.def_var(seen, zero);
+            let step = b.create_block();
+            b.ins().jump(step, &[]);
+
+            b.switch_to_block(step);
+            let here = b.create_block();
+            let advance = b.create_block();
+            let k = b.use_var(seen);
+            let done = b.ins().icmp(IntCC::Equal, k, i);
+            b.ins().brif(done, here, &[], advance, &[]);
+
+            b.switch_to_block(advance);
+            // One character is its lead byte and every byte after it whose top two bits are `10`.
+            let cur = b.use_var(at);
+            let one = b.ins().iadd_imm_s(cur, 1);
+            let cursor = b.declare_var(types::I64);
+            b.def_var(cursor, one);
+            let skip = b.create_block();
+            b.ins().jump(skip, &[]);
+
+            b.switch_to_block(skip);
+            let look = b.create_block();
+            let skipped = b.create_block();
+            let j = b.use_var(cursor);
+            let over = b.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, j, len);
+            b.ins().brif(over, skipped, &[], look, &[]);
+
+            b.switch_to_block(look);
+            let again = b.create_block();
+            let bp = b.ins().iadd(p, j);
+            let byte = b.ins().load(types::I8, MemFlagsData::trusted(), bp, 0);
+            let top = b.ins().band_imm_u(byte, 0xc0);
+            let cont = b.ins().icmp_imm_u(IntCC::Equal, top, 0x80);
+            b.ins().brif(cont, again, &[], skipped, &[]);
+
+            b.switch_to_block(again);
+            let next = b.ins().iadd_imm_s(j, 1);
+            b.def_var(cursor, next);
+            b.ins().jump(skip, &[]);
+
+            b.switch_to_block(skipped);
+            let stopped = b.use_var(cursor);
+            b.def_var(at, stopped);
+            let more = b.ins().iadd_imm_s(k, 1);
+            b.def_var(seen, more);
+            b.ins().jump(step, &[]);
+
+            b.switch_to_block(here);
+            let answer = b.use_var(at);
+            b.ins().return_(&[answer]);
+        })
+    }
+
+    fn define_slice(
+        self,
+        arena: Arena,
+        m: &mut ObjectModule,
+        ctx: &mut cranelift_codegen::Context,
+        fctx: &mut FunctionBuilderContext,
+        ptr: Type,
+    ) -> Result<(), String> {
+        let sig = Text::signature(
+            m,
+            &[ptr, types::I64, types::I64, types::I64, types::I32],
+            types::I64,
+        );
+        Text::wrote(self.slice, sig, 4, m, ctx, fctx, |b, m| {
+            let entry = b.current_block().expect("an entry block");
+            let err = b.block_params(entry)[0];
+            let s = b.block_params(entry)[1];
+            let start = b.block_params(entry)[2];
+            let len = b.block_params(entry)[3];
+            let span = b.block_params(entry)[4];
+
+            // A negative index or a negative length is zero, which is `i64::max(0)` in the
+            // evaluator, and `start + len` saturates rather than wrapping, which is its
+            // `saturating_add`.
+            let zero = b.ins().iconst(types::I64, 0);
+            let sneg = b.ins().icmp_imm_s(IntCC::SignedLessThan, start, 0);
+            let from = b.ins().select(sneg, zero, start);
+            let lneg = b.ins().icmp_imm_s(IntCC::SignedLessThan, len, 0);
+            let take = b.ins().select(lneg, zero, len);
+            let sum = b.ins().iadd(from, take);
+            let most = b.ins().iconst(types::I64, i64::MAX);
+            let wrapped = b.ins().icmp_imm_s(IntCC::SignedLessThan, sum, 0);
+            let upto = b.ins().select(wrapped, most, sum);
+
+            let chars = self.header(arena, s, heap::WORD as i64, b, m);
+            let over_from = b.ins().icmp(IntCC::UnsignedGreaterThan, from, chars);
+            let cstart = b.ins().select(over_from, chars, from);
+            let over_upto = b.ins().icmp(IntCC::UnsignedGreaterThan, upto, chars);
+            let cend = b.ins().select(over_upto, chars, upto);
+            let count = b.ins().isub(cend, cstart);
+
+            let byteof = m.declare_func_in_func(self.byteof, b.func);
+            let call = b.ins().call(byteof, &[s, cstart]);
+            let a = b.inst_results(call)[0];
+            let call = b.ins().call(byteof, &[s, cend]);
+            let e = b.inst_results(call)[0];
+            let bytes = b.ins().isub(e, a);
+
+            let f = m.declare_func_in_func(self.alloc, b.func);
+            let call = b.ins().call(f, &[err, bytes, count, span]);
+            let r = b.inst_results(call)[0];
+
+            let copy = b.create_block();
+            let out = b.create_block();
+            let failed = b.ins().icmp_imm_s(IntCC::Equal, r, 0);
+            b.ins().brif(failed, out, &[], copy, &[]);
+
+            b.switch_to_block(copy);
+            let pr = self.data(arena, r, b, m);
+            let ps = self.data(arena, s, b, m);
+            let at = b.ins().iadd(ps, a);
+            let config = m.target_config();
+            b.call_memcpy(config, pr, at, bytes);
+            b.ins().jump(out, &[]);
+
+            b.switch_to_block(out);
+            b.ins().return_(&[r]);
+        })
+    }
+
+    fn define_find(
+        self,
+        arena: Arena,
+        m: &mut ObjectModule,
+        ctx: &mut cranelift_codegen::Context,
+        fctx: &mut FunctionBuilderContext,
+    ) -> Result<(), String> {
+        let sig = Text::signature(m, &[types::I64, types::I64], types::I64);
+        Text::wrote(self.find, sig, 5, m, ctx, fctx, |b, m| {
+            let entry = b.current_block().expect("an entry block");
+            let (h, n) = (b.block_params(entry)[0], b.block_params(entry)[1]);
+            let lh = self.header(arena, h, 0, b, m);
+            let ln = self.header(arena, n, 0, b, m);
+
+            let search = b.create_block();
+            let missing = b.create_block();
+            let too = b.ins().icmp(IntCC::UnsignedGreaterThan, ln, lh);
+            b.ins().brif(too, missing, &[], search, &[]);
+
+            b.switch_to_block(search);
+            // Naive, and correct on UTF-8 for the reason a byte search is: the encoding is
+            // self-synchronising, so a well-formed needle cannot match starting inside a character.
+            let last = b.ins().isub(lh, ln);
+            let ph = self.data(arena, h, b, m);
+            let pn = self.data(arena, n, b, m);
+            let i = b.declare_var(types::I64);
+            let zero = b.ins().iconst(types::I64, 0);
+            b.def_var(i, zero);
+            let loop_ = b.create_block();
+            b.ins().jump(loop_, &[]);
+
+            b.switch_to_block(loop_);
+            let try_ = b.create_block();
+            let at = b.use_var(i);
+            let over = b.ins().icmp(IntCC::UnsignedGreaterThan, at, last);
+            b.ins().brif(over, missing, &[], try_, &[]);
+
+            b.switch_to_block(try_);
+            let found = b.create_block();
+            let next = b.create_block();
+            let p = b.ins().iadd(ph, at);
+            let f = m.declare_func_in_func(self.memcmp, b.func);
+            let call = b.ins().call(f, &[p, pn, ln]);
+            let c = b.inst_results(call)[0];
+            let hit = b.ins().icmp_imm_s(IntCC::Equal, c, 0);
+            b.ins().brif(hit, found, &[], next, &[]);
+
+            b.switch_to_block(next);
+            let j = b.ins().iadd_imm_s(at, 1);
+            b.def_var(i, j);
+            b.ins().jump(loop_, &[]);
+
+            b.switch_to_block(found);
+            let r = b.use_var(i);
+            b.ins().return_(&[r]);
+
+            b.switch_to_block(missing);
+            let none = b.ins().iconst(types::I64, -1);
+            b.ins().return_(&[none]);
+        })
+    }
+}
+
 /// The most patterns one arm may be split into. [`beck_llvm::emit`]'s number, and it has to be:
 /// the two emitters are held to refusing the same definitions.
 const MAX_ALTERNATIVES: usize = 16;
@@ -674,6 +1252,7 @@ fn compare_function(
     at: u32,
     heap: &Heap,
     arena: Arena,
+    text: Option<Text>,
     m: &mut ObjectModule,
     ctx: &mut cranelift_codegen::Context,
     fctx: &mut FunctionBuilderContext,
@@ -749,15 +1328,26 @@ fn compare_function(
                 let xa = b.ins().load(types::I64, flags, pa, off);
                 let xb = b.ins().load(types::I64, flags, pb, off);
                 match repr {
-                    Repr::Obj(inner) => {
-                        let inner_sig = compare_signature(m);
-                        let inner_id = m
-                            .declare_function(
-                                &format!("beck.cmp.{inner}"),
-                                Linkage::Local,
-                                &inner_sig,
-                            )
-                            .map_err(|e| format!("declaring a comparison: {e}"))?;
+                    // A field that is itself a reference decides through the three-way comparison
+                    // for whatever it refers to: a layout's own, or text's one. Comparing the
+                    // *offsets* would answer that two equal strings differ whenever they were
+                    // allocated at different places, which is almost always.
+                    Repr::Obj(_) | Repr::Str => {
+                        let inner_id = match repr {
+                            Repr::Obj(inner) => {
+                                let inner_sig = compare_signature(m);
+                                m.declare_function(
+                                    &format!("beck.cmp.{inner}"),
+                                    Linkage::Local,
+                                    &inner_sig,
+                                )
+                                .map_err(|e| format!("declaring a comparison: {e}"))?
+                            }
+                            _ => {
+                                text.ok_or("a layout with a `Str` field in a module with no text")?
+                                    .cmp
+                            }
+                        };
                         let f = m.declare_func_in_func(inner_id, b.func);
                         let call = b.ins().call(f, &[xa, xb]);
                         let r = b.inst_results(call)[0];
@@ -850,8 +1440,8 @@ struct Body<'a> {
     ids: &'a BTreeMap<Arc<str>, FuncId>,
     program: &'a Program,
     heap: &'a mut Heap,
-    /// The arena's globals, when this module has one.
-    arena: Option<Arena>,
+    /// The arena and text's runtime, whichever of them this module has.
+    runtime: Runtime,
     env: BTreeMap<VarId, Val>,
     spans: Vec<Span>,
     /// What this function returns, and therefore what a trapping exit has to return too.
@@ -870,7 +1460,7 @@ impl<'a> Body<'a> {
         spans: Vec<Span>,
         program: &'a Program,
         heap: &'a mut Heap,
-        arena: Option<Arena>,
+        runtime: Runtime,
     ) -> Body<'a> {
         Body {
             sigs,
@@ -878,7 +1468,7 @@ impl<'a> Body<'a> {
             ids,
             program,
             heap,
-            arena,
+            runtime,
             env: BTreeMap::new(),
             spans,
             ret: Repr::Int,
@@ -894,8 +1484,15 @@ impl<'a> Body<'a> {
 
     /// The arena, which a body only asks for once it has an object in its hands.
     fn arena(&self) -> Arena {
-        self.arena
+        self.runtime
+            .arena
             .expect("a body with an object in it is a module with an arena")
+    }
+
+    fn text(&self) -> Text {
+        self.runtime
+            .text
+            .expect("a body with text in it is a module with text's runtime")
     }
 
     fn emit(
@@ -1030,7 +1627,7 @@ impl<'a> Body<'a> {
         m: &mut ObjectModule,
     ) -> Result<Option<Val>, String> {
         let value = match &c.kind {
-            CoreKind::Const(k) => constant(k, b)?,
+            CoreKind::Const(k) => self.constant(k, b)?,
             CoreKind::Var(v) => *self
                 .env
                 .get(v)
@@ -1242,7 +1839,7 @@ impl<'a> Body<'a> {
             Repr::Int => Trap::NoMatchInt,
             Repr::Float => Trap::NoMatchFloat,
             Repr::Bool => Trap::NoMatchBool,
-            Repr::Obj(_) => Trap::NoMatchData,
+            Repr::Str | Repr::Obj(_) => Trap::NoMatchData,
         };
         let payload = self.widen(&v, b);
         let always = b.ins().iconst(types::I8, 1);
@@ -1293,7 +1890,7 @@ impl<'a> Body<'a> {
                 self.probe(inner, v, fail, undo, b, m)
             }
             Pattern::Const(k) => {
-                let want = constant(k, b)?;
+                let want = self.constant(k, b)?;
                 if want.ty != v.ty {
                     return Err("a match arm compares against a constant of another type".into());
                 }
@@ -1309,7 +1906,7 @@ impl<'a> Body<'a> {
                     let Pattern::Const(k) = alt else {
                         return Err("an or-pattern that was not split".into());
                     };
-                    let want = constant(k, b)?;
+                    let want = self.constant(k, b)?;
                     if want.ty != v.ty {
                         return Err(
                             "a match arm compares against a constant of another type".into()
@@ -1440,7 +2037,7 @@ impl<'a> Body<'a> {
                 let raw = b.ins().load(types::I64, flags, at, 0);
                 b.ins().icmp_imm_s(IntCC::NotEqual, raw, 0)
             }
-            Repr::Int | Repr::Obj(_) => b.ins().load(types::I64, flags, at, 0),
+            Repr::Int | Repr::Str | Repr::Obj(_) => b.ins().load(types::I64, flags, at, 0),
         };
         Val { v, ty: repr }
     }
@@ -1462,7 +2059,7 @@ impl<'a> Body<'a> {
         let word = match v.ty {
             Repr::Float => self.normalise(v.v, b),
             Repr::Bool => b.ins().uextend(types::I64, v.v),
-            Repr::Int | Repr::Obj(_) => v.v,
+            Repr::Int | Repr::Str | Repr::Obj(_) => v.v,
         };
         let at = self.word_addr(off, slot, b, m);
         b.ins().store(MemFlagsData::trusted(), word, at, 0);
@@ -1723,6 +2320,16 @@ impl<'a> Body<'a> {
             Prim::Add | Prim::Sub | Prim::Mul => {
                 arity(2, &vals)?;
                 match same(&vals)? {
+                    // `+` on two strings is the one arithmetic operator text has, and the only
+                    // place this backend allocates for something that is not a constructor.
+                    Repr::Str if op == Prim::Add => Ok(self.text_call(
+                        Which::Concat,
+                        &[vals[0].v, vals[1].v],
+                        Repr::Str,
+                        span,
+                        b,
+                        m,
+                    )),
                     Repr::Int => Ok(self.checked_int(op, &vals[0], &vals[1], span, b)),
                     Repr::Float => {
                         let v = match op {
@@ -1732,7 +2339,7 @@ impl<'a> Body<'a> {
                         };
                         Ok(Val { v, ty: Repr::Float })
                     }
-                    Repr::Bool | Repr::Obj(_) => {
+                    Repr::Bool | Repr::Str | Repr::Obj(_) => {
                         Err(format!("`{}` on a value that is not a number", op.name()))
                     }
                 }
@@ -1767,7 +2374,7 @@ impl<'a> Body<'a> {
                         v: b.ins().fneg(vals[0].v),
                         ty: Repr::Float,
                     }),
-                    Repr::Bool | Repr::Obj(_) => {
+                    Repr::Bool | Repr::Str | Repr::Obj(_) => {
                         Err("`negate` on a value that is not a number".into())
                     }
                 }
@@ -1788,7 +2395,7 @@ impl<'a> Body<'a> {
                         v: b.ins().fabs(vals[0].v),
                         ty: Repr::Float,
                     }),
-                    Repr::Bool | Repr::Obj(_) => {
+                    Repr::Bool | Repr::Str | Repr::Obj(_) => {
                         Err("`abs` on a value that is not a number".into())
                     }
                 }
@@ -1858,10 +2465,167 @@ impl<'a> Body<'a> {
                 };
                 Ok(Val { v, ty: Repr::Bool })
             }
-            other => Err(format!(
-                "`{}` is not one of the scalar primitives",
-                other.name()
-            )),
+            Prim::StrLen | Prim::StrIsEmpty => {
+                arity(1, &vals)?;
+                self.text_arg(&vals[0], op)?;
+                // Both counts are in the header, so both of these are a load — `str_len` is `O(1)`
+                // in the evaluator since `docs/70`, and a backend that counted here would make the
+                // loop that walks a string by index quadratic in one implementation and not the
+                // other.
+                let at = if op == Prim::StrLen {
+                    heap::WORD as i64
+                } else {
+                    0
+                };
+                let n = self.text().header(self.arena(), vals[0].v, at, b, m);
+                if op == Prim::StrLen {
+                    return Ok(Val {
+                        v: n,
+                        ty: Repr::Int,
+                    });
+                }
+                Ok(Val {
+                    v: b.ins().icmp_imm_s(IntCC::Equal, n, 0),
+                    ty: Repr::Bool,
+                })
+            }
+            Prim::StrSlice => {
+                arity(3, &vals)?;
+                self.text_arg(&vals[0], op)?;
+                for v in &vals[1..] {
+                    if v.ty != Repr::Int {
+                        return Err("`str_slice` takes two Int positions".into());
+                    }
+                }
+                Ok(self.text_call(
+                    Which::Slice,
+                    &[vals[0].v, vals[1].v, vals[2].v],
+                    Repr::Str,
+                    span,
+                    b,
+                    m,
+                ))
+            }
+            Prim::StrContains | Prim::StrStartsWith | Prim::StrEndsWith => {
+                arity(2, &vals)?;
+                self.text_arg(&vals[0], op)?;
+                self.text_arg(&vals[1], op)?;
+                Ok(self.text_search(op, vals[0].v, vals[1].v, b, m))
+            }
+            other => Err(refusal(other)),
+        }
+    }
+
+    /// A literal, as the value that carries it.
+    ///
+    /// A string literal is the one that is not an `iconst` of itself: it is an offset into the pool
+    /// the host wrote at the front of the request's heap, decided when the module was emitted. See
+    /// [`beck_llvm::heap`] for why it cannot be allocated where it is written and cannot be a
+    /// global either.
+    fn constant(&mut self, k: &Const, b: &mut FunctionBuilder<'_>) -> Result<Val, String> {
+        match k {
+            Const::Int(i) => Ok(Val {
+                v: b.ins().iconst(types::I64, *i),
+                ty: Repr::Int,
+            }),
+            Const::Bool(x) => Ok(Val {
+                v: b.ins().iconst(types::I8, i64::from(*x)),
+                ty: Repr::Bool,
+            }),
+            Const::Float(f) => Ok(Val {
+                v: b.ins().f64const(*f),
+                ty: Repr::Float,
+            }),
+            Const::Str(s) => {
+                let at = self.heap.intern(s);
+                let offset = self.heap.string_offset(at);
+                Ok(Val {
+                    v: b.ins().iconst(types::I64, offset as i64),
+                    ty: Repr::Str,
+                })
+            }
+            Const::Unit => Err("the unit value, which has no machine representation here".into()),
+        }
+    }
+
+    /// Insist an argument is text, so a message names the primitive rather than the operand.
+    fn text_arg(&self, v: &Val, op: Prim) -> Result<(), String> {
+        if v.ty == Repr::Str {
+            Ok(())
+        } else {
+            Err(format!("`{}` on something that is not a Str", op.name()))
+        }
+    }
+
+    /// One of [`Text`]'s allocating functions: the error cell, the arguments, the span.
+    fn text_call(
+        &mut self,
+        which: Which,
+        args: &[IrValue],
+        ty: Repr,
+        span: Span,
+        b: &mut FunctionBuilder<'_>,
+        m: &mut ObjectModule,
+    ) -> Val {
+        let text = self.text();
+        let idx = self.span(span);
+        let span = b.ins().iconst(types::I32, i64::from(idx));
+        let mut operands = vec![self.err()];
+        operands.extend_from_slice(args);
+        operands.push(span);
+        let f = m.declare_func_in_func(text.id(which), b.func);
+        let call = b.ins().call(f, &operands);
+        let v = b.inst_results(call)[0];
+        // Allocating means it can exhaust the arena, and a caller that ignored that would carry a
+        // `0` offset into the next load.
+        self.check_call(b);
+        Val { v, ty }
+    }
+
+    /// `contains`, `starts_with` and `ends_with`, which are one search and two length tests.
+    fn text_search(
+        &mut self,
+        op: Prim,
+        hay: IrValue,
+        needle: IrValue,
+        b: &mut FunctionBuilder<'_>,
+        m: &mut ObjectModule,
+    ) -> Val {
+        let text = self.text();
+        let arena = self.arena();
+        if op == Prim::StrContains {
+            let f = m.declare_func_in_func(text.find, b.func);
+            let call = b.ins().call(f, &[hay, needle]);
+            let at = b.inst_results(call)[0];
+            return Val {
+                v: b.ins().icmp_imm_s(IntCC::SignedGreaterThanOrEqual, at, 0),
+                ty: Repr::Bool,
+            };
+        }
+        let lh = text.header(arena, hay, 0, b, m);
+        let ln = text.header(arena, needle, 0, b, m);
+        let fits = b.ins().icmp(IntCC::UnsignedLessThanOrEqual, ln, lh);
+        // The comparison runs either way and its operands are clamped to a length that fits, so
+        // there is no branch: `memcmp` of zero bytes is zero, and a needle longer than the haystack
+        // is refused by `fits` rather than by not being looked at.
+        let zero = b.ins().iconst(types::I64, 0);
+        let start = if op == Prim::StrStartsWith {
+            zero
+        } else {
+            let d = b.ins().isub(lh, ln);
+            b.ins().select(fits, d, zero)
+        };
+        let n = b.ins().select(fits, ln, zero);
+        let ph = text.data(arena, hay, b, m);
+        let at = b.ins().iadd(ph, start);
+        let pn = text.data(arena, needle, b, m);
+        let f = m.declare_func_in_func(text.memcmp, b.func);
+        let call = b.ins().call(f, &[at, pn, n]);
+        let c = b.inst_results(call)[0];
+        let same = b.ins().icmp_imm_s(IntCC::Equal, c, 0);
+        Val {
+            v: b.ins().band(fits, same),
+            ty: Repr::Bool,
         }
     }
 
@@ -1997,6 +2761,15 @@ impl<'a> Body<'a> {
             Repr::Float => (self.order_key(a, b), self.order_key(c, b), false),
             Repr::Int => (a.v, c.v, true),
             Repr::Bool => (a.v, c.v, false),
+            // Text compares as its bytes, which is what `Text`'s `Ord` does and is the same
+            // order as its characters: UTF-8 sorts code points and bytes the same way.
+            Repr::Str => {
+                let f = m.declare_func_in_func(self.text().cmp, b.func);
+                let call = b.ins().call(f, &[a.v, c.v]);
+                let r = b.inst_results(call)[0];
+                let zero = b.ins().iconst(types::I64, 0);
+                (r, zero, true)
+            }
             Repr::Obj(at) => {
                 self.compared.insert(at);
                 let sig = compare_signature(m);
@@ -2040,29 +2813,46 @@ impl<'a> Body<'a> {
                 b.ins().bitcast(types::I64, MemFlagsData::new(), n)
             }
             Repr::Bool => b.ins().uextend(types::I64, v.v),
-            // Its offset, which is what an object *is* here.
-            Repr::Obj(_) => v.v,
+            // Its offset, which is what a reference *is* here.
+            Repr::Str | Repr::Obj(_) => v.v,
         }
     }
 }
 
-fn constant(k: &Const, b: &mut FunctionBuilder<'_>) -> Result<Val, String> {
-    match k {
-        Const::Int(i) => Ok(Val {
-            v: b.ins().iconst(types::I64, *i),
-            ty: Repr::Int,
-        }),
-        Const::Bool(x) => Ok(Val {
-            v: b.ins().iconst(types::I8, i64::from(*x)),
-            ty: Repr::Bool,
-        }),
-        Const::Float(f) => Ok(Val {
-            v: b.ins().f64const(*f),
-            ty: Repr::Float,
-        }),
-        Const::Str(_) => Err("a string constant, and there is no heap here".into()),
-        Const::Unit => Err("the unit value, which has no machine representation here".into()),
-    }
+/// Why a primitive this backend does not compile is not compiled.
+///
+/// The string half is spelled out one at a time rather than swept into "not a scalar primitive",
+/// because since `docs/104` a `Str` *is* a value here and "text is not on this heap" would be
+/// false. The wording is this emitter's own — `cranelift.rs` holds the two to refusing the same
+/// **set** of definitions and not to saying the same words about them.
+fn refusal(op: Prim) -> String {
+    let why = match op {
+        Prim::StrSplit | Prim::StrChars => {
+            "answers with a list, and a collection is not on this heap yet"
+        }
+        Prim::StrJoin => "reads a list, and a collection is not on this heap yet",
+        Prim::StrIndexOf => {
+            "answers with an `Option`, whose layout this backend resolves from a program's own \
+             types and not from the prelude's"
+        }
+        Prim::StrUpper | Prim::StrLower => {
+            "is Unicode case mapping, which is a table rather than an operation — and a compiled \
+             half-answer that folded ASCII only would disagree with the evaluator on the first \
+             letter that is not"
+        }
+        Prim::StrTrim => {
+            "trims Unicode whitespace, which is a table for the same reason case mapping is"
+        }
+        Prim::StrReplace | Prim::StrRepeat => {
+            "builds text whose size is not a function of its arguments' sizes, and this arena \
+             cannot grow an allocation it has already made"
+        }
+        Prim::ToStr | Prim::StrToInt => {
+            "converts between text and a number, and the rendering has to be Rust's to the digit"
+        }
+        _ => return format!("`{}` is not one of the scalar primitives", op.name()),
+    };
+    format!("`{}` {why}", op.name())
 }
 
 // -------------------------------------------------------------------------------------------
@@ -2200,7 +2990,7 @@ fn driver(
             // whether this call's answer is on the heap.
             if let Some(arena) = arena {
                 let at = arena.addr(arena.reply, &mut b, m);
-                let on = b.ins().iconst(types::I64, i64::from(sig.ret.is_obj()));
+                let on = b.ins().iconst(types::I64, i64::from(sig.ret.is_ref()));
                 b.ins().store(flags, on, at, 0);
             }
             let mut operands = vec![err];

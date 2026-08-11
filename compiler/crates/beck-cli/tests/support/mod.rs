@@ -5,6 +5,7 @@ pub mod heapfix;
 pub mod lsp;
 pub mod scalar;
 pub mod socket;
+pub mod textfix;
 
 use std::sync::Arc;
 

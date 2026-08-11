@@ -35,7 +35,7 @@ use std::time::Duration;
 use beck_clif::Artifact as ClifArtifact;
 use beck_core::backend::Backend;
 use beck_core::{Program, Value};
-use beck_llvm::Artifact as LlvmArtifact;
+use beck_llvm::{Artifact as LlvmArtifact, Repr};
 
 mod support;
 use support::heapfix::{self, RECORDS, STILL_REFUSED, UNIONS};
@@ -43,6 +43,7 @@ use support::scalar::{
     float_pairs, floats, ints, pairs, render, singles, ARITHMETIC, CONTROL, REALS, RECURSION,
     REFUSED,
 };
+use support::textfix::{self, TEXT};
 
 /// One call may not take longer than this. Nothing here should come close; it is the difference
 /// between a red test and a hung suite.
@@ -455,6 +456,69 @@ fn the_three_backends_agree_on_unions() {
     println!("{compared} union calls compared across every backend on this machine");
 }
 
+/// Text, over every backend this machine has.
+///
+/// `native.rs`'s sweep with Cranelift added, and it is the sweep that matters rather than the
+/// sample: the two emitters write the search, the clamp and the three-way comparison twice, so
+/// this is where writing them twice is worth something.
+#[test]
+fn the_three_backends_agree_on_text() {
+    linker!();
+    let all = All::over("text.beck", TEXT);
+    let ss = textfix::strings();
+    let mut compared = 0;
+    for name in [
+        "size", "empty", "first", "rest", "greeting", "is_yes", "echoed", "which", "tag", "thrice",
+    ] {
+        compared += all.agree(name, &textfix::singles(&ss));
+    }
+    for name in [
+        "joined",
+        "below",
+        "above",
+        "same",
+        "differ",
+        "not_after",
+        "not_before",
+        "inside",
+        "opens",
+        "closes",
+    ] {
+        compared += all.agree(name, &textfix::pairs(&ss));
+    }
+    compared += all.agree("cut", &textfix::slices(&ss));
+    compared += all.agree("count_of", &textfix::with_char(&ss));
+    compared += all.agree("repeat", &textfix::repeats(&ss));
+
+    let named: Vec<Value> = ss
+        .iter()
+        .map(|s| heapfix::record("Named", &[("label", s.clone()), ("rank", Value::Int(1))]))
+        .collect();
+    compared += all.agree("label_of", &textfix::singles(&named));
+    for name in ["named_below", "named_same"] {
+        compared += all.agree(name, &textfix::pairs(&named));
+    }
+    compared += all.agree(
+        "relabel",
+        &named
+            .iter()
+            .flat_map(|n| ss.iter().map(move |s| vec![n.clone(), s.clone()]))
+            .collect::<Vec<_>>(),
+    );
+    let tagged: Vec<Value> = ss
+        .iter()
+        .map(|s| heapfix::variant("Tagged", "Word", &[("text", s.clone())]))
+        .chain([heapfix::variant(
+            "Tagged",
+            "Number",
+            &[("n", Value::Int(3))],
+        )])
+        .collect();
+    compared += all.agree("untag", &textfix::singles(&tagged));
+
+    println!("{compared} text calls compared across every backend on this machine");
+}
+
 /// The same shape gate the other backend has, with the same two sizes and the same arithmetic.
 ///
 /// Written again rather than shared because the *allocator* is written again: this is where a
@@ -473,6 +537,36 @@ fn the_arena_costs_the_same_per_object_at_every_size() {
             bytes,
             8 + 2 * 8 + n * 5 * 8,
             "chain({n}) left {bytes} bytes of arena"
+        );
+    }
+}
+
+/// A slice costs its answer here too, and the allocator is written again so this is written again.
+///
+/// `native.rs`'s gate, at the same two sizes and with the same arithmetic. What it catches on
+/// *this* backend is a `beck.str.slice` that copied the string it was taken from — which the
+/// differential cannot see, because copying too much still answers correctly.
+#[test]
+fn a_slice_costs_its_answer_and_not_the_string_it_came_from() {
+    linker!();
+    let all = All::over("text.beck", TEXT);
+    const PER_CHARACTER: usize = 24;
+    for n in [200usize, 1600] {
+        let s = Value::str_("x".repeat(n));
+        let args = [s.clone(), Value::Int(0), Value::str_("")];
+        let arguments = all
+            .clif
+            .module()
+            .heap
+            .encode_args(&args, &[Repr::Str, Repr::Int, Repr::Str])
+            .expect("encodes")
+            .1
+            .len();
+        let (_, bytes) = all.clif.call_sized("walked", &args).expect("runs");
+        assert_eq!(
+            bytes - arguments,
+            n * PER_CHARACTER,
+            "walked over {n} characters left {bytes} bytes of arena"
         );
     }
 }
@@ -588,7 +682,7 @@ fn what_cannot_be_compiled_is_refused_by_name_and_with_a_reason() {
     let all = All::over("refused.beck", REFUSED);
     for name in [
         "takes_a_list",
-        "builds_a_string",
+        "renders_a_number",
         "is_generic",
         "reads_the_clock",
         "calls_something_refused",

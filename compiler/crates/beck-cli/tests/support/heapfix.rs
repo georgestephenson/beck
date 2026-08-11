@@ -389,9 +389,13 @@ def or_else(o: Option[Int], fallback: Int) -> Int:
 
 /// Definitions the heap does **not** reach, one per reason.
 ///
-/// The list is what `docs/101` §101.5 says is not built, in the form that goes red the day one of
-/// them starts compiling — which is the point: an absence asserted as a test is an absence that
-/// cannot go stale (`docs/83` §83.7).
+/// The list is what `docs/101` §101.5 said is not built, less the row `docs/104` removed, in the
+/// form that goes red the day one of them starts compiling — which is the point: an absence
+/// asserted as a test is an absence that cannot go stale (`docs/83` §83.7).
+///
+/// Text is no longer on it. `names_it` is here instead, on the *other* side of the list: a `Str`
+/// argument, a `Str` field and a `Str` answer all compile now, so this fixture asserts that too
+/// rather than leaving the removal to be inferred from a row that is missing.
 pub const STILL_REFUSED: &str = r#"
 model Boxed:
     items: list[Int]
@@ -406,14 +410,17 @@ union Held:
 def takes_a_list(xs: list[Int]) -> Int:
     return list_len(xs)
 
-def builds_a_string(n: Int) -> Str:
+def renders_a_number(n: Int) -> Str:
     return str(n)
+
+def splits_a_string(s: Str) -> Int:
+    return list_len(str_split(s, ","))
+
+def upcases(s: Str) -> Str:
+    return str_upper(s)
 
 def takes_a_boxed(b: Boxed) -> Int:
     return list_len(b.items)
-
-def builds_a_named(n: Int) -> Named:
-    return Named(label = str(n))
 
 def matches_a_held(h: Held) -> Int:
     match h:
@@ -430,6 +437,9 @@ def reads_the_clock() -> Int:
 
 def calls_something_refused(n: Int) -> Int:
     return takes_a_list([n])
+
+def names_it(label: Str) -> Named:
+    return Named(label = label)
 
 def scalar_and_fine(n: Int) -> Int:
     return n * 2
