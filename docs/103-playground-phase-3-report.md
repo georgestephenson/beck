@@ -1,4 +1,4 @@
-# 102 — Phase 3 report, part 70: the four things the playground would not do
+# 103 — Phase 3 report, part 71: the four things the playground would not do
 
 **Built.** [`98`](98-playground-report.md) §98.7 listed what the playground was not, and four of its
 items were one sentence each: no IndexedDB, so a reload started from `init`; no content-addressed
@@ -10,10 +10,10 @@ seam is there; nothing is plugged into it."
 All four are now built. Three of them are small; the fourth is the interesting one, and it is
 interesting for the reason §98.2 was: the work was not in the playground. An editor's answers were
 in `beck-cli`, where a browser cannot reach them, so plugging the playground into the LSP meant
-first making the LSP not be the place those answers live. That is §102.1, and it is the only
+first making the LSP not be the place those answers live. That is §103.1, and it is the only
 structural change here.
 
-## 102.1 The editor: one module, two consumers, and a keyword table that cannot drift
+## 103.1 The editor: one module, two consumers, and a keyword table that cannot drift
 
 [`04`](04-compiler-architecture.md) §4.6 has said since Phase 1 that "there is no separate language
 server implementation to drift". That was true of the *compiler* and false of the *editor*: `beck
@@ -102,10 +102,10 @@ at every boundary a token *or* a diagnostic introduces, so a squiggle that start
 still one span and the two never fight over a character.
 
 Highlighting is **not** debounced and the analysis still is: one costs a lex and needs no program,
-the other costs a check. §102.5 is the measurement that says that distinction is real rather than
+the other costs a check. §103.5 is the measurement that says that distinction is real rather than
 tidy.
 
-## 102.2 The log a reload survives
+## 103.2 The log a reload survives
 
 §17.2's storage row says IndexedDB. The tab's log is still a `Vec` — what changed is that it can be
 handed over: `Tab::records(after)` returns `beck_host::Envelope::encode` bytes, which is exactly what
@@ -132,14 +132,14 @@ same comparison the scrubber gate makes and for the same reason. In a browser,
 comes back **at 2** — and then clears it with the button, because a log that cannot be forgotten is a
 playground that cannot be started over.
 
-What is not here: no snapshots and no compaction, so a restore is a fold of the whole log (§102.5
+What is not here: no snapshots and no compaction, so a restore is a fold of the whole log (§103.5
 measures it), and the page stores the whole log on every command rather than appending one record —
 tens of events is what a playground session is, and a cursor and a row per event would be a store's
 worth of machinery for a saving nobody in a tab can measure. A browser's storage quota is the only
 bound. And a page that will not store — a private window, a disabled store — says so once and keeps
 working, which is the posture [`94`](94-mode-b-report.md) §94.13 took for the same problem.
 
-## 102.3 A share link is the program, and it names itself
+## 103.3 A share link is the program, and it names itself
 
 §17.4 says "a share link is a digest; forks are new digests", and that sentence describes a link
 *resolved* through a CDN. Resolving one needs something to resolve against — the registry
@@ -160,7 +160,7 @@ comparison, so a link truncated by a chat client is an error rather than a *diff
 opening under a name somebody trusted. And **nothing is sent anywhere**: it is a fragment, which is
 the one part of a URL a browser does not put in the request.
 
-What it is not is short — a link is proportional to the program (§102.5). §17.4's embeds, and its
+What it is not is short — a link is proportional to the program (§103.5). §17.4's embeds, and its
 "a bug report arrives as a digest", want the resolver; this is the half that works with no server.
 Nor is it private: a fragment is not sent to a server and is still in whatever it was pasted into.
 
@@ -171,7 +171,7 @@ is Rust rather than a vendored zlib, which is the only reason a compressor cross
 `wasm32-unknown-unknown` without a build-tooling decision. Decompression is bounded at 1 MiB: a
 fragment is attacker-controlled input.
 
-## 102.4 Mode B in the tab, which took one seam and one branch
+## 103.4 Mode B in the tab, which took one seam and one branch
 
 §98.7 called this "a second module in a second frame, and a piece of work rather than a flag". It was
 both of those, and the work divided into exactly two pieces.
@@ -205,7 +205,7 @@ Two things fell out that were not the point:
   way a link in a deployment does. [`100`](100-client-polish-report.md) made the route a field of the
   session; this is the tab catching up with it.
 
-## 102.5 What it costs
+## 103.5 What it costs
 
 `cargo test --release --test measure_play -- --nocapture`, on the container this was written in.
 
@@ -263,7 +263,7 @@ Half the source, and proportional to it — which is the honest shape of a link 
 instead of naming one. `todo.beck` is a 3.4 KB URL: fine in a browser, awkward in a chat client that
 truncates, and exactly the thing a resolver would fix.
 
-## 102.6 What is still not built
+## 103.6 What is still not built
 
 - **Rung C.** Untouched, and Phase 4's ([`08`](08-roadmap.md) §8.7). Nothing here compiles against a
   restricted effect budget.
@@ -271,7 +271,7 @@ truncates, and exactly the thing a resolver would fix.
   JavaScript with two Rust modules under it. What would make it one is the registry and the site
   tier.
 - **A resolvable share link.** §17.4's digest-that-resolves, its embeds and its docs-as-demos all
-  need something to resolve *against*, and that is the registry (§102.3).
+  need something to resolve *against*, and that is the registry (§103.3).
 - **One log, one program.** Loading a program replaces the running one. No forking a session, no two
   programs side by side, no way to seed a log from a `given` block. The stored log is per wire id, so
   two programs' logs coexist in the browser — but only one runs at a time.
@@ -280,10 +280,10 @@ truncates, and exactly the thing a resolver would fix.
   being).
 - **The editor is a `<textarea>` still**, and deliberately: what it gained is highlighting,
   completion and squiggles. No rename, no signature help, no folding, no multi-file anything.
-- **`beck lsp` still has no directory** (§102.1), so a module importing a file beside it on disk does
+- **`beck lsp` still has no directory** (§103.1), so a module importing a file beside it on disk does
   not check in an editor.
 
-## 102.7 The gates, and what makes each go red
+## 103.7 The gates, and what makes each go red
 
 | What would break it | The test |
 |---|---|
@@ -313,27 +313,27 @@ And in Chromium, in `browser.rs`:
 CI runs both with `BECK_REQUIRE_WASM=1` and `BECK_REQUIRE_BROWSER=1`, in the job that already existed
 for Mode B, so neither can skip there.
 
-## 102.8 What this corrects, elsewhere
+## 103.8 What this corrects, elsewhere
 
 - [`98`](98-playground-report.md) §98.7 loses four of its seven items: IndexedDB, sharing, Mode B in
   the tab, and the editor. The other three — rung C, the playground not being a Beck app, and one
-  log per tab — stand, and §102.6 says so.
-- [`17`](17-playground.md) §17.2's storage row and §17.4 are **built**, with §102.2 and §102.3 saying
+  log per tab — stand, and §103.6 says so.
+- [`17`](17-playground.md) §17.2's storage row and §17.4 are **built**, with §103.2 and §103.3 saying
   what each does and does not deliver; §17.3 and §17.5 are still not.
 - [`65`](65-lsp-report.md)'s server is now a **translator**: the answers it gives are
-  `beck_core::editor`'s (§102.1). It gained two capabilities and the ability to analyse a file that
+  `beck_core::editor`'s (§103.1). It gained two capabilities and the ability to analyse a file that
   imports the standard library, neither of which that report contemplated. Its "no Salsa, whole file
   every time" position is unchanged.
 - [`94`](94-mode-b-report.md)'s kernel now has a second host. Nothing in `beck-wasm` changed;
   `beck-mode-b.js` gained the `beck.asset` seam and a `beck.shell` flag, and `browser.rs`'s five Mode
   A and Mode B tests against a deployment are what says a deployment is unaffected.
-- [`100`](100-client-polish-report.md)'s route reaches the tab (§102.4).
+- [`100`](100-client-polish-report.md)'s route reaches the tab (§103.4).
 - **`beck play --out <dir>` now needs the kernel built**, not only the playground module. The failure
   names the command, as the playground module's already did.
 - `beck-play` takes one dependency it did not have — `flate2`, already in this workspace for the
-  image build (§102.3).
+  image build (§103.3).
 
-## 102.9 What Phase 3 is still not
+## 103.9 What Phase 3 is still not
 
 Unchanged except that the playground is now a place a person can be sent: a link opens the program,
 the editor colours it and completes it, the log survives the reload, and both rendering modes run.

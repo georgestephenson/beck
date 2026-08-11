@@ -258,7 +258,16 @@ dependencies whose signatures didn't change.
   13 ms on a thousand-card board, 97% of it `view`, and growing with the board rather than with the
   change. **Not** codegen ([`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md)) — which
   §94.14 finds is not what the 13 ms is — not freshness-typed, and no size-budget gate; §94.8 is
-  the list.
+  the list. ***The last two of those are built***
+  ([`102`](102-freshness-and-the-budget-report.md)): `freshness()` is §3.7's dimension as a signal
+  source, so a page renders "saving…" from `Confirmed | Pending(n)` and stops when the state that
+  confirms it arrives — carrying the refusal that points the other way from every rule Mode B has
+  had so far, since a **server** cannot answer it (`B0518`). And the budget is a gate: `beck bundle`
+  writes the artefact, CI weighs every Mode B example against 150 KB brotli, and a shape gate says
+  what a threshold with eighty times its headroom cannot — that a bundle is a function of the
+  component's slice rather than of the program around it. What is left of this bullet is **codegen
+  alone**, which [`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md) defers and §8.19's Lane E
+  schedules behind a heap.
 - Client polish for both modes: router, forms, lazy routes, focus/scroll preservation, devtools
   extension showing signal graph, patch traffic and pending state. — ***Built, except lazy routes***
   ([`100`](100-client-polish-report.md)). **A route is a field of `Session`**: `view(state, session)`
@@ -375,7 +384,7 @@ dependencies whose signatures didn't change.
 - LSP: completion, hover with *inferred placement*, go-to-def, rename, inline diagnostics.
   *All but **rename** are built: hover, go-to-def and inline diagnostics by
   [`65`](65-lsp-report.md), completion and semantic-token highlighting by
-  [`102`](102-playground-phase-3-report.md) §102.1 — which also moved every one of those answers
+  [`103`](103-playground-phase-3-report.md) §103.1 — which also moved every one of those answers
   into `beck_core::editor`, so the playground's editor and an editor's are the same answers rather
   than two implementations of them.*
 - **The playground** ([`17`](17-playground.md)) — highest-leverage adoption artefact: rung A
@@ -389,10 +398,10 @@ dependencies whose signatures didn't change.
   of the runtime — `beck-host`, the half of `beck-rt` that is program-shaped rather than
   machine-shaped. Rung C is Phase 4's, and §98.7's four remaining lacks — no IndexedDB, no
   content-addressed sharing, no Mode B in the tab, and a `<textarea>` where the LSP already exists —
-  are **built** by [`102`](102-playground-phase-3-report.md): the log survives a reload as the
+  are **built** by [`103`](103-playground-phase-3-report.md): the log survives a reload as the
   records a durable store writes, a share link is a fragment that carries the program and names its
   digest, a `@render(client)` program runs in the client iframe in Mode B's kernel, and the editor
-  highlights, completes and squiggles from the same module `beck lsp` answers from. What §102.6
+  highlights, completes and squiggles from the same module `beck lsp` answers from. What §103.6
   still says is not built is rung C, the playground being written in Beck, and a link short enough
   to need a registry.*
 - `beck init ci`, apko image build in-process, cosign signing, SBOM. *All four are built. The

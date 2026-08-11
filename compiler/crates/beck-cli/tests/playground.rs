@@ -1044,7 +1044,7 @@ fn the_bundle_carries_everything_the_page_asks_for() {
     // modules, which are build artefacts copied in by `serve::write` because building them needs a
     // target the compiler's own build does not — and the bundle, which is not a file at all. It is
     // derived from the running program and handed to the iframe over the port, so a client can
-    // never load a slice of a program the tab is not executing (docs/102).
+    // never load a slice of a program the tab is not executing (docs/103).
     let elsewhere = ["beck-play.wasm", "beck-kernel.wasm", "beck-bundle.bpk"];
     for name in referenced {
         assert!(

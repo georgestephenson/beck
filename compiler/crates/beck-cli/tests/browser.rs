@@ -392,6 +392,98 @@ async fn mode_b_renders_in_the_browser_and_guesses_ahead_of_the_server() {
 }
 }
 
+/// §3.7's freshness dimension, in a real DOM: the page says "saving" the instant it guesses, and
+/// says "saved" when the server's state catches up.
+///
+/// The first half is read **synchronously**, in the same evaluation that dispatches the key: a Mode
+/// B interaction is a local fold and a local render, so the guess and the word for it are both on
+/// the page before the function that sent the command returns. Polling for it afterwards would be a
+/// race with the server's own answer, and would pass just as well against a page that never said it
+/// at all.
+///
+/// Goes red if `freshness()` stops reaching the browser's view, if the count stops following the
+/// queue, or if the confirmation stops repainting a page whose state did not move.
+#[tokio::test]
+async fn mode_b_says_it_is_saving_before_the_server_has_heard_of_it() {
+    let Some(mut browser) = browser::shared().await else {
+        return;
+    };
+    if !point_at_the_kernel() {
+        eprintln!(
+            "skipped: no kernel to serve. Build it with \
+             `cargo build -p beck-wasm --release --target wasm32-unknown-unknown`."
+        );
+        assert!(
+            std::env::var("BECK_REQUIRE_WASM").as_deref() != Ok("1"),
+            "BECK_REQUIRE_WASM=1 but there is no kernel to serve"
+        );
+        return;
+    }
+
+    let serving = Serving::start(example("editor.beck")).await;
+    let page = browser.open(&serving.url()).await;
+    page.wait_for(
+        &mut browser,
+        "document.getElementById('b-root').dataset.bReady === 'b'",
+    )
+    .await;
+    // Server-rendered, and a server holds the log: the first paint is confirmed by construction.
+    assert!(
+        page.eval(
+            &mut browser,
+            "document.querySelector('.status').textContent === 'saved'",
+        )
+        .await
+        .as_bool()
+            == Some(true),
+        "the first paint did not say it was saved"
+    );
+
+    let guessing = page
+        .eval(
+            &mut browser,
+            "(() => { const i = document.querySelector('input[data-b-enter]'); \
+              i.value = 'written in the browser'; \
+              i.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true})); \
+              return document.getElementById('b-root').innerHTML; })()",
+        )
+        .await;
+    let guessing = guessing.as_str().expect("the page");
+    assert!(
+        guessing.contains("written in the browser"),
+        "the guess never reached the page: {guessing}"
+    );
+    assert!(
+        guessing.contains("saving 1"),
+        "the page did not say it was guessing: {guessing}"
+    );
+
+    // And it stops saying so — which is the case the render shortcut had to learn, because the
+    // document does not move when a right guess is confirmed and the freshness does.
+    page.wait_for(
+        &mut browser,
+        "document.querySelector('.status').textContent === 'saved'",
+    )
+    .await;
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        let (there, here) = (
+            dom(&page, &mut browser).await,
+            serving.rendered("ana").await,
+        );
+        if there == here {
+            break;
+        }
+        assert!(
+            deadline > std::time::Instant::now(),
+            "the browser rendered a different page than the server would have\n\
+             browser: {there}\n server: {here}"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+}
+
 // A Mode B client refuses what the program would refuse, locally and without a round trip. That is
 // gated in `mode_b.rs` rather than here, and the reason is a property of the example rather than a
 // gap: no interaction `board.beck`'s page offers *can* be refused — the ids are freshly minted, the
@@ -753,7 +845,7 @@ struct Playing {
 impl Playing {
     async fn start() -> Option<Playing> {
         // Both modules, because a `@render(client)` program in the tab runs in Mode B's kernel and
-        // the playground serves it on the same reserved name a deployment does (docs/102).
+        // the playground serves it on the same reserved name a deployment does (docs/103).
         if !point_at_the_kernel() {
             eprintln!("skipped: no Mode B kernel to serve beside the playground.");
             assert!(

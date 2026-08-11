@@ -172,11 +172,12 @@ pub struct Client {
     renders: u64,
 }
 
-/// A page, and the state it is the page *of*.
+/// A page, the state it is the page *of*, and the freshness it was rendered at.
 ///
-/// One field rather than two, because the whole of [`Client::repaint`]'s shortcut is that these
-/// two agree: a state equal to `from` cannot produce a page different from `html`. Kept apart they
-/// could be updated apart, and the failure would be a stale page rather than a compile error.
+/// One struct rather than three fields, because the whole of [`Client::repaint`]'s shortcut is
+/// that they agree: the same state at the same freshness cannot produce a page different from
+/// `html`. Kept apart they could be updated apart, and the failure would be a stale page rather
+/// than a compile error.
 ///
 /// `from` holds one extra version of the state alive, which costs the nodes that version does not
 /// share with the current one rather than a copy of it — [`Value`] is a pointer and a discriminant,
@@ -185,6 +186,10 @@ pub struct Client {
 struct Shown {
     html: Html,
     from: Value,
+    /// The `Freshness` the page was rendered against. Compared only when the component reads it —
+    /// see [`Client::paint`], where skipping the comparison is what keeps `docs/94` §94.14's
+    /// shortcut for every program that does not.
+    fresh: Value,
 }
 
 impl Client {
@@ -280,9 +285,10 @@ impl Client {
     /// and patches.
     pub fn hydrate(&mut self) -> Result<(), String> {
         let from = self.state()?;
+        let fresh = self.freshness();
         let html = self.render(&from)?;
         self.renders += 1;
-        self.shown = Some(Shown { html, from });
+        self.shown = Some(Shown { html, from, fresh });
         Ok(())
     }
 
@@ -524,7 +530,20 @@ impl Client {
     /// make a route change the one interaction Mode B renders nothing for.
     fn paint(&mut self, force: bool) -> Result<Vec<diff::Op>, String> {
         let from = self.state()?;
-        if !force && self.shown.as_ref().is_some_and(|s| s.from == from) {
+        let fresh = self.freshness();
+        // Two comparisons, and the second is asked only of a component that reads the answer.
+        //
+        // A confirmation is exactly the case where the state does not move and the freshness does:
+        // the guess was right, so the derived state before and after are equal, and `Pending(1)`
+        // becomes `Confirmed`. A page that renders "saving…" has to be repainted for that; a page
+        // that does not read `freshness()` renders the same bytes either way, and repainting it
+        // would hand back the second render `docs/94` §94.14 removed — 150× the cost of a
+        // confirmation, for every program in the tree, to show nobody anything.
+        let same = self
+            .shown
+            .as_ref()
+            .is_some_and(|s| s.from == from && (!self.bundle.reads_freshness || s.fresh == fresh));
+        if !force && same {
             return Ok(Vec::new());
         }
         let html = self.render(&from)?;
@@ -538,8 +557,32 @@ impl Client {
                 html: html.clone(),
             }],
         };
-        self.shown = Some(Shown { html, from });
+        self.shown = Some(Shown { html, from, fresh });
         Ok(ops)
+    }
+
+    /// §3.7's freshness dimension, for the state this client is about to render.
+    ///
+    /// `Pending(n)` counts the commands **in flight**: proposed here and not yet reflected in the
+    /// state the server has confirmed. That is deliberately the same set [`Client::in_flight`]
+    /// reports and not the narrower "guesses that survived re-validation" — a command whose events
+    /// [`Client::state`] now skips is one the server is about to refuse, and a person watching a
+    /// spinner is waiting on the answer either way. A client that may not guess (`optimistic`
+    /// false) shows the server's state and is therefore `Confirmed`, whatever it has sent.
+    ///
+    /// This is the only implementation in the project that can return anything but `Confirmed`.
+    /// Every other renderer — the server, `beck test`, a read model — goes through
+    /// [`beck_core::edge::confirmed`], because what they hold *is* the log.
+    fn freshness(&self) -> Value {
+        if !self.bundle.optimistic {
+            return edge::confirmed();
+        }
+        edge::freshness(
+            self.pending
+                .iter()
+                .filter(|p| p.acked.is_none_or(|s| s > self.seq))
+                .count(),
+        )
     }
 
     /// The component's `view`, over a state — the page this client would show for it.
@@ -555,6 +598,8 @@ impl Client {
             // `presence` is refused Mode B (`B0516`), because who is connected is a fact the
             // server holds about its own sockets and is in neither the accumulator nor the log.
             edge::presence([]),
+            // The one edge value this side answers and the server cannot (`B0518`).
+            self.freshness(),
         ]) {
             Ok(Value::Html(h)) => Ok((*h).clone()),
             Ok(other) => Err(format!(

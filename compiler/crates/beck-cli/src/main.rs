@@ -261,6 +261,21 @@ enum Cmd {
         #[arg(long = "arg")]
         args: Vec<String>,
     },
+    /// Write a Mode B component's bundle — the slice a browser downloads (§5.1, `docs/94` §94.4).
+    ///
+    /// This is not how a deployment gets one. `beck run` derives the bundle from the program it is
+    /// executing, so a served slice cannot be of a different program than the running one, and
+    /// `beck build` deliberately writes no bundle for the same reason. This is how a *measurement*
+    /// gets one: §5.1 budgets "< 150 KB brotli for a typical Mode-B component bundle", and a budget
+    /// nothing can weigh is not a budget.
+    ///
+    /// A Mode A component has no bundle, and asking for one is an error rather than an empty file.
+    Bundle {
+        file: PathBuf,
+        /// Where to write it.
+        #[arg(long, short)]
+        out: PathBuf,
+    },
     /// The bill of materials for what `beck build` emits, as CycloneDX 1.6 JSON.
     ///
     /// Derived from the same object graph the image config is, so the two cannot disagree about
@@ -718,6 +733,29 @@ fn dispatch(cli: Cli) -> Result<()> {
             call,
             args,
         } => native(&file, &backend, out.as_deref(), call.as_deref(), &args),
+        Cmd::Bundle { file, out } => {
+            let placed = compiled(&file)?;
+            if placed.render.mode != beck_core::render::Mode::Client {
+                anyhow::bail!(
+                    "`{}` renders on the server, so there is no bundle: Mode A sends the browser a \
+                     rendering of the state and ships it no application code at all. \
+                     `beck explain render {}` prints what would move it.",
+                    placed.render.component,
+                    file.display()
+                );
+            }
+            let bundle = beck_core::Bundle::of(&placed);
+            let bytes = bundle.to_bytes();
+            std::fs::write(&out, &bytes).with_context(|| format!("writing {}", out.display()))?;
+            println!(
+                "{}: {} bytes, {} definitions, component `{}`",
+                out.display(),
+                bytes.len(),
+                bundle.defs.len(),
+                bundle.component
+            );
+            Ok(())
+        }
         Cmd::Sbom { file, out } => {
             let placed = compiled(&file)?;
             let source = read(&file)?;

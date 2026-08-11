@@ -107,7 +107,7 @@ fn what_the_playground_costs_to_load() {
     );
 
     // Both modules, because a `@render(client)` program in the tab runs in Mode B's kernel and the
-    // playground serves it beside the compiler (docs/102 §102.4). Relative to the workspace root
+    // playground serves it beside the compiler (docs/103 §103.4). Relative to the workspace root
     // rather than to this crate: `cargo test` runs the binary from `crates/beck-cli`, and the
     // default paths are the ones `cargo build` writes to at the root.
     for (name, env, default, crate_name) in [
@@ -275,7 +275,7 @@ fn what_the_editor_costs_per_keystroke() {
     println!(
         "\n  highlighting is a lex and needs no program, which is why it is not debounced and why it\n  \
          still works while the file is broken. Completion is a check — the same one the analysis\n  \
-         pays for — and is asked for rather than continuous (docs/102)."
+         pays for — and is asked for rather than continuous (docs/103)."
     );
 }
 
@@ -358,6 +358,6 @@ fn what_a_kept_log_and_a_share_link_weigh() {
     }
     println!(
         "\n  a link carries the program, so it is proportional to it: §17.4's short, resolvable link\n  \
-         needs a registry, and this is the half that works with no server at all (docs/102)."
+         needs a registry, and this is the half that works with no server at all (docs/103)."
     );
 }

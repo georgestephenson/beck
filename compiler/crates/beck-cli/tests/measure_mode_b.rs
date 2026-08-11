@@ -85,21 +85,25 @@ fn compressed(bytes: &[u8]) -> (usize, &'static str) {
 
 #[test]
 fn what_a_component_costs() {
-    let placed = example("board.beck");
-    let bundle = Bundle::of(&placed);
-    let bytes = bundle.to_bytes();
-    let (packed, codec) = compressed(&bytes);
+    // Every Mode B example in the tree, because the budget is per component and a table with one
+    // row in it cannot say whether the number is the program's or the mode's.
+    for name in ["board.beck", "editor.beck"] {
+        let placed = example(name);
+        let bundle = Bundle::of(&placed);
+        let bytes = bundle.to_bytes();
+        let (packed, codec) = compressed(&bytes);
 
-    println!("\n-- the bundle: one component's slice --");
-    println!("  component        {}", bundle.component);
-    println!("  definitions      {}", bundle.defs.len());
-    println!("  Core nodes       {}", bundle.nodes());
-    println!("  bytes            {}", bytes.len());
-    println!("  {codec:<16} {packed}");
-    println!(
-        "  §5.1's budget is 150 KB brotli: this is {:.1}% of it",
-        packed as f64 / (150.0 * 1024.0) * 100.0
-    );
+        println!("\n-- the bundle: {name}'s slice --");
+        println!("  component        {}", bundle.component);
+        println!("  definitions      {}", bundle.defs.len());
+        println!("  Core nodes       {}", bundle.nodes());
+        println!("  bytes            {}", bytes.len());
+        println!("  {codec:<16} {packed}");
+        println!(
+            "  §5.1's budget is 150 KB brotli: this is {:.1}% of it",
+            packed as f64 / (150.0 * 1024.0) * 100.0
+        );
+    }
 }
 
 #[test]

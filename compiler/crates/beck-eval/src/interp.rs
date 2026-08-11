@@ -2198,6 +2198,7 @@ impl<'h> Interp<'h> {
             // compiler bug rather than a program error — so it says so.
             Prim::MergeClients
             | Prim::Presence
+            | Prim::Freshness
             | Prim::StreamFilterMap
             | Prim::Fold
             | Prim::Durable

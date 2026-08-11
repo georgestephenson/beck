@@ -23,7 +23,7 @@
 //!
 //! Not a store: [`Tab::records`] hands the log out as the bytes a store writes and [`Tab::restore`]
 //! reads them back, and where those bytes are kept is the page's business — IndexedDB, in the
-//! playground ([`docs/102`](../../../../../docs/102-playground-phase-3-report.md)). The log is still
+//! playground ([`docs/103`](../../../../../docs/103-playground-phase-3-report.md)). The log is still
 //! a `Vec`; what changed is that it can be handed over.
 //!
 //! # Both modes

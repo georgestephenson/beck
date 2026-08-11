@@ -197,6 +197,15 @@ pub enum Prim {
     /// what places it — no tier below the server discharges a `cap.*` — so a fold cannot read the
     /// roster and a view reaches it across a declared edge.
     Presence,
+    /// `freshness()` — whether the page being rendered is the confirmed state or a guess.
+    ///
+    /// §3.7's "`Signal[T]` carries a freshness dimension (`confirmed | pending(n)`) that UI code
+    /// can render (\"saving…\") — staleness is typed, not pretended away". It is the mirror image
+    /// of [`Prim::Presence`]: presence is a fact the *server* holds about its sockets and cannot
+    /// reach a Mode B client, and freshness is a fact the *client* holds about its own guesses and
+    /// is `Confirmed` everywhere else. No capability, because nothing is disclosed by it — a client
+    /// counting its own unacknowledged commands is reading itself.
+    Freshness,
     StreamFilterMap,
     Fold,
     Durable,
@@ -310,6 +319,7 @@ impl Prim {
             Reveal => "reveal",
             MergeClients => "merge_clients",
             Presence => "presence",
+            Freshness => "freshness",
             StreamFilterMap => "filter_map",
             Fold => "fold",
             Durable => "durable",

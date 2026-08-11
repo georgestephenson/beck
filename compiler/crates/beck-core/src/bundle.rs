@@ -65,7 +65,11 @@ use crate::ty::{Tier, Ty};
 /// The bundle format version, stamped into every bundle and checked on load.
 ///
 /// * `1` — postcard over a mirror of `Core`, with types erased.
-pub const FORMAT: u32 = 1;
+/// * `2` — plus `reads_freshness`: whether the view observes §3.7's freshness dimension. postcard
+///   is not self-describing, so a field added is a format changed; the alternative was a kernel
+///   deciding it by looking for a variable in the view's body, which is a guess about the
+///   splitter's output rather than a fact from it.
+pub const FORMAT: u32 = 2;
 
 /// A component's slice: the code, and nothing else.
 #[derive(Clone, Debug)]
@@ -77,7 +81,7 @@ pub struct Bundle {
     /// server running a different program finds out here rather than by sending it a command it
     /// cannot decode.
     pub wire_id: String,
-    /// `(state, session) -> Html`.
+    /// `(state, session, presence, freshness) -> Html`.
     pub view: Core,
     /// `(state, proposal) -> Result[list[Event], Rejection]`.
     pub validate: Core,
@@ -95,6 +99,15 @@ pub struct Bundle {
     /// holds — see [`crate::render`] for what decides it, and why holding the state is the whole
     /// question.
     pub optimistic: bool,
+    /// Whether this component's `view` reads `freshness()` — §3.7's freshness dimension.
+    ///
+    /// The client needs it for one reason and it is not rendering: a page that does *not* observe
+    /// freshness must keep [`docs/94`](../../../../../docs/94-mode-b-report.md) §94.14's
+    /// shortcut, where a confirmation that does not move the state costs no render. Comparing the
+    /// freshness unconditionally would make every confirmation move it — from `Pending(1)` to
+    /// `Confirmed` — and hand every program in the tree back the second render that report
+    /// removed.
+    pub reads_freshness: bool,
 }
 
 /// Why a bundle could not be read.
@@ -167,6 +180,7 @@ impl Bundle {
             // Read rather than taken as an argument: whether a client may guess is a question
             // about what crosses to it, answered once in `crate::render`.
             optimistic: placed.render.optimistic,
+            reads_freshness: placed.render.reads_freshness,
         }
     }
 
@@ -303,6 +317,7 @@ struct Wire {
     defs: Vec<(String, WCore)>,
     command: command::Schema,
     optimistic: bool,
+    reads_freshness: bool,
 }
 
 impl Wire {
@@ -323,6 +338,7 @@ impl Wire {
                 .collect(),
             command: b.command.clone(),
             optimistic: b.optimistic,
+            reads_freshness: b.reads_freshness,
         }
     }
 
@@ -341,6 +357,7 @@ impl Wire {
                 .collect(),
             command: self.command.clone(),
             optimistic: self.optimistic,
+            reads_freshness: self.reads_freshness,
         }
     }
 }

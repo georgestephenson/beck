@@ -64,7 +64,11 @@ WASM, no size crisis, trivially good Lighthouse scores) — with Mode B in Phase
   the first clause deferred** ([`94`](94-mode-b-report.md)): the local fold and the reconciliation
   are here, and the WASM is the *evaluator* rather than the component compiled. The budget is
   answered in two parts, because a shared kernel and a per-component payload are different
-  questions; `wasm-opt` is not run, so the kernel's number is a ceiling.
+  questions; `wasm-opt` is not run, so the kernel's number is a ceiling. *The budget is **enforced**
+  now rather than reported ([`102`](102-freshness-and-the-budget-report.md) §102.4): `beck bundle`
+  writes the artefact, a `budgets` job weighs every Mode B example against 150 KB brotli, and a
+  shape gate under `cargo test` says the thing the threshold cannot — that a bundle is a function of
+  the component's slice and not of the program around it.*
 - **Connection layer**: one websocket (WebTransport later) multiplexing patch-streams down and
   commands up; resumable by `(subscription id, last seq)` so a dropped connection or a deploy
   replays the gap instead of re-rendering the world; sticky-session friendly but not dependent

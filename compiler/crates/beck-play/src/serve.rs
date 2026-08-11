@@ -78,7 +78,7 @@ pub fn bundle() -> Vec<Asset> {
         },
         // Mode B's half of the same rule: a `@render(client)` program's iframe loads the kernel
         // shim a deployment serves, unmodified, and gets its kernel and its bundle through
-        // `beck.asset` (docs/102).
+        // `beck.asset` (docs/103).
         Asset {
             path: "beck-mode-b.js",
             content_type: "text/javascript",
