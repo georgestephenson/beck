@@ -36,9 +36,10 @@ use std::time::Duration;
 
 use beck_core::backend::Backend;
 use beck_core::{Program, Value};
-use beck_llvm::{Artifact, Native, Scalar};
+use beck_llvm::{Artifact, Native, Repr};
 
 mod support;
+use support::heapfix::{self, RECORDS, STILL_REFUSED, UNIONS};
 use support::scalar::{
     float_pairs, floats, ints, pairs, render, singles, ARITHMETIC, CONTROL, REALS, RECURSION,
     REFUSED,
@@ -349,6 +350,208 @@ fn the_two_backends_agree_on_recursion() {
 }
 
 // -------------------------------------------------------------------------------------------
+// The heap
+// -------------------------------------------------------------------------------------------
+
+#[test]
+fn the_two_backends_agree_on_records() {
+    let _ = toolchain!();
+    let both = Both::over("records.beck", RECORDS);
+    let ps = heapfix::records();
+    let mut compared = 0;
+    compared += both.agree("origin", &[vec![]]);
+    compared += both.agree("make", &pairs(&ints(0x5eed_0011, 12)));
+    compared += both.agree("sum_of", &heapfix::singles(&ps));
+    compared += both.agree("swapped", &heapfix::singles(&ps));
+    for name in ["same_point", "point_order"] {
+        compared += both.agree(name, &heapfix::pairs(&ps));
+    }
+    compared += both.agree("key_order", &heapfix::pairs(&heapfix::keys()));
+    for name in ["heavier", "same_weight"] {
+        compared += both.agree(name, &heapfix::pairs(&heapfix::weighted()));
+    }
+    for name in ["negated", "negated_is_zero"] {
+        compared += both.agree(name, &heapfix::singles(&heapfix::weighted()));
+    }
+    for name in ["span_of", "segment_order"] {
+        compared += both.agree(name, &heapfix::pairs(&ps));
+    }
+    let with_dx: Vec<Vec<Value>> = ps
+        .iter()
+        .flat_map(|p| [-1i64, 0, 1, i64::MAX].map(|d| vec![p.clone(), Value::Int(d)]))
+        .collect();
+    compared += both.agree("moved", &with_dx);
+    compared += both.agree("scaled", &with_dx);
+
+    // The set has to *contain* a failure, or this passed by never reaching one: a field
+    // expression that overflows means the record is never built, and the message is the
+    // evaluator's.
+    let (walked, compiled) = both.call("scaled", &[heapfix::point(i64::MAX, 0), Value::Int(2)]);
+    assert_eq!(walked, compiled);
+    assert!(walked.is_err(), "an overflow in a field has to fail");
+    println!("{compared} record calls compared, and both backends agreed on every one");
+}
+
+#[test]
+fn the_two_backends_agree_on_unions() {
+    let _ = toolchain!();
+    let both = Both::over("unions.beck", UNIONS);
+    let rs = heapfix::ranked();
+    let ts = heapfix::trees();
+    let mut compared = 0;
+    for name in ["rank", "guarded", "either", "whole", "n_or_zero"] {
+        compared += both.agree(name, &heapfix::singles(&rs));
+    }
+    for name in ["ranked_order", "same_ranked"] {
+        compared += both.agree(name, &heapfix::pairs(&rs));
+    }
+    compared += both.agree("bigger", &singles(&ints(0x5eed_0012, 10)));
+    for name in ["total", "left_leaf", "first_number"] {
+        compared += both.agree(name, &heapfix::singles(&ts));
+    }
+    compared += both.agree("tree_order", &heapfix::pairs(&ts));
+    compared += both.agree("spine", &singles(&(0..12).collect::<Vec<_>>()));
+    compared += both.agree(
+        "chain",
+        &(0..12)
+            .map(|n| vec![Value::Int(n), heapfix::leaf(0)])
+            .collect::<Vec<_>>(),
+    );
+    compared += both.agree("wrap", &singles(&ints(0x5eed_0013, 8)));
+    compared += both.agree(
+        "unwrap",
+        &heapfix::singles(&[heapfix::id(0), heapfix::id(7)]),
+    );
+    compared += both.agree("maybe", &singles(&ints(0x5eed_0014, 8)));
+    compared += both.agree(
+        "or_else",
+        &heapfix::options()
+            .iter()
+            .map(|o| vec![o.clone(), Value::Int(-1)])
+            .collect::<Vec<_>>(),
+    );
+    println!("{compared} union calls compared, and both backends agreed on every one");
+}
+
+/// A tag is a variant's rank **by name**, and a field's slot is its rank by name.
+///
+/// The differential above covers both, and it covers them by comparing against an oracle rather
+/// than against an expectation — so this pins the oracle. `Ranked` is declared `Small, Big,
+/// Nothing` and `Key` is declared `score, name`, and both answers below are the opposite of what a
+/// layout in declaration order gives. Without this, a day when `Value`'s own `Ord` changed would
+/// move both sides together and the differential would stay green.
+#[test]
+fn a_layout_is_ordered_by_name_and_not_by_declaration() {
+    let _ = toolchain!();
+    let unions = Both::over("unions.beck", UNIONS);
+    assert_eq!(
+        unions
+            .native
+            .call("ranked_order", &[heapfix::big(9), heapfix::small(0)])
+            .expect("runs"),
+        Value::Int(-1),
+        "`Big` sorts below `Small` because \"Big\" < \"Small\", whatever order they are declared in"
+    );
+    let records = Both::over("records.beck", RECORDS);
+    assert_eq!(
+        records
+            .native
+            .call("key_order", &[heapfix::key(1, 0), heapfix::key(0, 1)])
+            .expect("runs"),
+        Value::Int(-1),
+        "`name` decides before `score` because \"name\" < \"score\", and `score` is declared first"
+    );
+}
+
+/// A program with no object in it gets the module it got before there was a heap.
+///
+/// Not a preference: `docs/93` §93.5's numbers were measured against a module with no allocator, no
+/// globals and nothing on the wire but the arguments, and a heap that appeared in every module
+/// would have quietly changed what those numbers are about.
+#[test]
+fn a_program_with_no_object_has_no_arena() {
+    let scalar = beck_llvm::module(&compile("arithmetic.beck", ARITHMETIC));
+    assert!(
+        !scalar.ir.contains("@malloc") && !scalar.ir.contains("beck.alloc"),
+        "a program of pure arithmetic must not reserve a heap"
+    );
+    assert!(scalar.heap.is_empty(), "and must have no layout at all");
+
+    let heaped = beck_llvm::module(&compile("records.beck", RECORDS));
+    assert!(
+        heaped.ir.contains("call ptr @malloc") && heaped.ir.contains("@\"beck.alloc\""),
+        "a program with a record in it reserves one"
+    );
+    assert_eq!(
+        heaped.heap.layouts().count(),
+        4,
+        "Point, Key, Weighed and Segment"
+    );
+}
+
+/// The arena is bounded, and running out is a **message** rather than whatever the machine does.
+///
+/// The one failure a compiled program has that the evaluator does not, so there is nothing to
+/// compare it against: what is asserted is that it is a diagnostic.
+#[test]
+fn running_out_of_heap_is_a_diagnostic() {
+    let _ = toolchain!();
+    let both = Both::over("unions.beck", UNIONS);
+    // A `Leaf` and a `Node` per step, five words in all, so 256 MiB is gone before eight million.
+    let err = both
+        .native
+        .call("chain", &[Value::Int(8_000_000), heapfix::leaf(0)])
+        .expect_err("eight million nodes is more than the arena holds");
+    assert!(
+        err.message.contains("used all") && err.message.contains("MiB of its heap"),
+        "{err}"
+    );
+}
+
+/// What the heap costs per object does not grow with the number of objects.
+///
+/// A shape gate with **no clock in it** (`AGENTS.md`): `chain(n)` builds exactly `n` `Node`s and
+/// `n` `Leaf`s, so the arena it leaves behind is a known number of bytes at every `n`. A layout
+/// that grew, a `with` that copied the spine, or an allocator that rounded up by a fraction would
+/// all show here, and none of them needs the program to be timed.
+#[test]
+fn the_arena_costs_the_same_per_object_at_every_size() {
+    let _ = toolchain!();
+    let both = Both::over("unions.beck", UNIONS);
+    // A `Leaf` is a tag and a field; a `Node` is a tag and two. Five words a step, plus the
+    // reserved first word and the argument the chain started from.
+    let expect = |n: usize| heap_bytes(2) + n * 5 * 8;
+    let mut sizes = Vec::new();
+    for n in [100usize, 800] {
+        let (_, bytes) = both
+            .native
+            .call_sized("chain", &[Value::Int(n as i64), heapfix::leaf(0)])
+            .expect("runs");
+        sizes.push((n, bytes));
+        assert_eq!(
+            bytes,
+            expect(n),
+            "chain({n}) should leave {} bytes of arena and left {bytes}",
+            expect(n)
+        );
+    }
+    let (small, big) = (sizes[0], sizes[1]);
+    println!(
+        "chain({}) used {} bytes and chain({}) used {} — {} bytes an element at both sizes",
+        small.0,
+        small.1,
+        big.0,
+        big.1,
+        (big.1 - small.1) / (big.0 - small.0)
+    );
+}
+
+/// The reserved first word, plus one object of `words` words: what the host writes for an argument.
+fn heap_bytes(words: usize) -> usize {
+    8 + words * 8
+}
+
+// -------------------------------------------------------------------------------------------
 // Refusal, and the shape of it
 // -------------------------------------------------------------------------------------------
 
@@ -363,17 +566,14 @@ fn what_cannot_be_compiled_is_refused_by_name_and_with_a_reason() {
     let both = Both::over("refused.beck", REFUSED);
 
     for (name, expect) in [
-        ("takes_a_record", "parameter `p` is `Point`"),
-        ("builds_a_record", "returns `Point`"),
-        ("takes_a_list", "parameter `xs` is `list[Int]`"),
-        ("builds_a_string", "returns `Str`"),
-        ("matches_a_union", "parameter `s` is `Shape`"),
+        ("takes_a_list", "parameter `xs` is a `list`"),
+        ("builds_a_string", "returns a `Str`"),
         ("is_generic", "generic over T"),
         (
             "reads_the_clock",
             "`now` is not one of the scalar primitives",
         ),
-        ("calls_something_refused", "calls `takes_a_record`"),
+        ("calls_something_refused", "calls `takes_a_list`"),
     ] {
         let reason = both
             .refusal(name)
@@ -393,9 +593,55 @@ fn what_cannot_be_compiled_is_refused_by_name_and_with_a_reason() {
     // an error rather than an evaluator call wearing a native backend's name.
     let err = both
         .native
-        .call("takes_a_record", &[Value::Int(1)])
+        .call("takes_a_list", &[Value::Int(1)])
         .expect_err("a refused definition is not callable natively");
     assert!(err.message.contains("did not compile natively"), "{err}");
+}
+
+/// What the heap does **not** reach, asserted as an absence.
+///
+/// `docs/101` §101.5 lists what is not built — text, collections, closures and every effect — and a
+/// list in prose goes stale where a list with a test attached cannot (`docs/83` §83.7). Each of
+/// these goes red the day its row starts compiling, which is the day the row should be deleted.
+#[test]
+fn what_the_heap_does_not_reach_is_refused_by_name() {
+    let program = compile("still-refused.beck", STILL_REFUSED);
+    let module = beck_llvm::module(&program);
+    for (name, expect) in [
+        ("takes_a_list", "a `list`"),
+        ("builds_a_string", "a `Str`"),
+        ("takes_a_boxed", "whose field `items` is a `list`"),
+        ("builds_a_named", "whose field `label` is a `Str`"),
+        ("matches_a_held", "whose field `values` is a `list`"),
+        ("is_generic", "generic over T"),
+        (
+            "reads_the_clock",
+            "`now` is not one of the scalar primitives",
+        ),
+        ("calls_something_refused", "which does not compile"),
+    ] {
+        let reason = module
+            .refusals
+            .iter()
+            .find(|r| &*r.name == name)
+            .unwrap_or_else(|| panic!("`{name}` compiled, and this list says it cannot"))
+            .reason
+            .clone();
+        assert!(
+            reason.contains(expect),
+            "the reason for refusing `{name}` should mention {expect:?}, and is {reason:?}"
+        );
+    }
+    // …and the control, because a list of refusals with nothing on the other side of it would pass
+    // against a backend that refused everything.
+    assert_eq!(
+        module
+            .functions
+            .iter()
+            .map(|f| f.name.to_string())
+            .collect::<Vec<_>>(),
+        vec!["scalar_and_fine".to_string()]
+    );
 }
 
 /// The refusal a call *inherits*, and the fixed point that computes it.
@@ -407,14 +653,13 @@ fn what_cannot_be_compiled_is_refused_by_name_and_with_a_reason() {
 fn a_refusal_travels_to_whoever_calls_it() {
     let _ = toolchain!();
     let src = r#"
-model Box:
-    v: Int
-
-def bottom(b: Box) -> Int:
-    return b.v
+## A `Str` rather than a record: `docs/101` gave the record a layout, and what a refusal has to
+## travel *from* is something the heap still does not reach.
+def bottom(s: Str) -> Int:
+    return str_len(s)
 
 def middle(n: Int) -> Int:
-    return bottom(Box(v=n))
+    return bottom(str(n))
 
 def top(n: Int) -> Int:
     return middle(n) + 1
@@ -423,7 +668,7 @@ def top(n: Int) -> Int:
 ## round, so a single pass in either direction keeps one of them.
 def ping(n: Int) -> Int:
     if n == 0:
-        return bottom(Box(v=0))
+        return bottom("")
     return pong(n - 1)
 
 def pong(n: Int) -> Int:
@@ -619,20 +864,13 @@ fn what_is_not_compiled_falls_back_and_says_so() {
         .expect("builds")
         .expect("a toolchain, checked above");
 
-    let refused = &program.defs["takes_a_record"].body;
+    let refused = &program.defs["takes_a_list"].body;
     assert!(!native.compiled(refused));
 
     let f = beck_eval::on_the_evaluator_stack(|| native.function(refused).expect("prepares"));
-    let point = Value::data(
-        Arc::from("Point"),
-        None,
-        beck_core::core::Fields::from_pairs(vec![
-            (Arc::from("x"), Value::Int(2)),
-            (Arc::from("y"), Value::Int(3)),
-        ]),
-    );
-    let got = beck_eval::on_the_evaluator_stack(|| f(vec![point]).expect("the fallback answers"));
-    assert_eq!(got, Value::Int(5));
+    let xs = Value::List(Arc::new(vec![Value::Int(2), Value::Int(3)]));
+    let got = beck_eval::on_the_evaluator_stack(|| f(vec![xs]).expect("the fallback answers"));
+    assert_eq!(got, Value::Int(2));
 }
 
 // -------------------------------------------------------------------------------------------
@@ -816,10 +1054,10 @@ fn the_subset_is_decided_without_a_toolchain() {
     let module = beck_llvm::module(&program);
     assert_eq!(module.functions.len(), 1);
     assert_eq!(&*module.functions[0].name, "scalar_and_fine");
-    assert_eq!(module.functions[0].params, vec![Scalar::Int]);
-    assert_eq!(module.functions[0].ret, Scalar::Int);
+    assert_eq!(module.functions[0].params, vec![Repr::Int]);
+    assert_eq!(module.functions[0].ret, Repr::Int);
     assert_eq!(module.functions[0].index, 0);
-    assert!(module.refusals.len() >= 8, "{:?}", module.refusals);
+    assert!(module.refusals.len() >= 5, "{:?}", module.refusals);
     for refusal in &module.refusals {
         assert!(
             !refusal.reason.is_empty(),

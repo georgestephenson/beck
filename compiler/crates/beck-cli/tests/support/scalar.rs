@@ -341,33 +341,16 @@ def ackermann(m: Int, n: Int) -> Int:
 "#;
 
 /// Definitions this backend must refuse, one per reason.
+///
+/// The heap ([`super::heapfix`]) took the record and the union off this list. What is left is what
+/// `docs/101` §101.5 names as not built — and `scalar_and_fine` is the control: a list of refusals
+/// with nothing on the other side of it would pass against a backend that refused everything.
 pub const REFUSED: &str = r#"
-model Point:
-    x: Int
-    y: Int
-
-union Shape:
-    Circle(r: Int)
-    Square(s: Int)
-
-def takes_a_record(p: Point) -> Int:
-    return p.x + p.y
-
-def builds_a_record(x: Int) -> Point:
-    return Point(x=x, y=x)
-
 def takes_a_list(xs: list[Int]) -> Int:
     return list_len(xs)
 
 def builds_a_string(n: Int) -> Str:
     return str(n)
-
-def matches_a_union(s: Shape) -> Int:
-    match s:
-        case Circle(r):
-            return r
-        case Square(s):
-            return s
 
 def is_generic[T](x: T) -> T:
     return x
@@ -376,7 +359,7 @@ def reads_the_clock() -> Int:
     return now()
 
 def calls_something_refused(n: Int) -> Int:
-    return takes_a_record(Point(x=n, y=n))
+    return takes_a_list([n])
 
 def scalar_and_fine(n: Int) -> Int:
     return n * 2
