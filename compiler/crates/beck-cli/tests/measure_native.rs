@@ -181,6 +181,158 @@ fn what_native_code_costs_against_the_tree_walker() {
     );
 }
 
+/// What the **heap** costs against the tree-walker.
+///
+/// Apart from the benchmark above and not folded into it, because what is being measured is a
+/// different thing: `fib` and `sum_to` are arithmetic in registers, and these three allocate.
+/// Every one answers with an `Int`, so nothing here is measuring the reply's marshalling — that is
+/// `the_arena_costs_the_same_per_object_at_every_size` in `native.rs`, which counts bytes and has
+/// no clock in it.
+///
+/// Two sizes, and **nothing here is asserted about a rate** — which is a departure from the
+/// benchmark above and is deliberate. That one gates the ratio's *shape*: a ratio that falls as the
+/// problem grows is a backend whose per-unit overhead grows. This one cannot, because the ratio
+/// moves with the build profile — the native side is `clang -O2` in a debug run and a release one
+/// alike, and the evaluator is not, so the same code answers 2,460× under `cargo test` and 120×
+/// under `cargo test --release`. A gate on that number would be a gate on which profile ran it, and
+/// `docs/13` §13.7's rule is that a gate which flakes gets deleted.
+///
+/// The shape claim this work makes is gated where it needs no clock at all:
+/// `the_arena_costs_the_same_per_object_at_every_size` in `native.rs` counts the **bytes** the arena
+/// holds at two sizes, and a per-object cost that grew would have to show there.
+#[test]
+fn what_the_heap_costs_against_the_tree_walker() {
+    const HEAP: &str = r#"
+union Tree[T]:
+    Leaf(value: T)
+    Node(left: Tree[T], right: Tree[T])
+
+model Acc:
+    total: Int
+    count: Int
+
+def build(n: Int, acc: Tree[Int]) -> Tree[Int]:
+    if n <= 0:
+        return acc
+    return build(n - 1, Node(left=Leaf(value=n), right=acc))
+
+## Walked in **tail position**, because a spine of a hundred thousand is past the evaluator's
+## 4,000-frame ceiling and this is a measurement of allocation rather than of recursion.
+def sum_spine(t: Tree[Int], acc: Int) -> Int:
+    match t:
+        case Node(left=Leaf(value), right=rest):
+            return sum_spine(rest, acc + value)
+        case Node(left=_, right=rest):
+            return sum_spine(rest, acc)
+        case Leaf(value):
+            return acc + value
+
+## Allocate a spine and walk it: the whole life of an object, in one call that answers an `Int`.
+def build_and_sum(n: Int) -> Int:
+    return sum_spine(build(n, Leaf(value=0)), 0)
+
+## `with` in a loop, which is the shape a fold has and the one the evaluator rebuilds in place.
+def fold_with(n: Int, acc: Acc) -> Acc:
+    if n <= 0:
+        return acc
+    return fold_with(n - 1, acc.with(total = acc.total + n, count = acc.count + 1))
+
+def folded(n: Int) -> Int:
+    return fold_with(n, Acc(total=0, count=0)).total
+
+## The control: the same loop reading the same field, and allocating **nothing**. What separates
+## the two rows above from this one is the arena and not the loop.
+def scan(n: Int, acc: Acc, sum: Int) -> Int:
+    if n <= 0:
+        return sum
+    return scan(n - 1, acc, sum + acc.total)
+"#;
+    let program = compile("heap.beck", HEAP);
+    let Some(artifact) = Artifact::build_within(&program, Duration::from_secs(300))
+        .expect("clang accepts the module")
+    else {
+        assert!(
+            !require_llvm(),
+            "BECK_REQUIRE_LLVM=1 and there is no `clang` on the path"
+        );
+        println!("skipped: no LLVM toolchain. Set BECK_REQUIRE_LLVM=1 to make this a failure.");
+        return;
+    };
+    let evaluator = beck_eval::backend_for(program.clone());
+    println!("{}\n", artifact.toolchain().version);
+    println!(
+        "{:<14} {:>10} {:>14} {:>14} {:>9}",
+        "benchmark", "size", "evaluator", "native", "ratio"
+    );
+
+    let benches: [(&str, [i64; 2]); 3] = [
+        ("build_and_sum", [10_000, 100_000]),
+        ("folded", [10_000, 100_000]),
+        ("scan", [10_000, 100_000]),
+    ];
+    let mut ratios: Vec<(&str, f64, f64)> = Vec::new();
+    for (name, sizes) in benches {
+        let mut seen = [0.0f64; 2];
+        for (i, size) in sizes.iter().enumerate() {
+            let args = if name == "scan" {
+                vec![
+                    Value::Int(*size),
+                    beck_core::Value::data(
+                        std::sync::Arc::from("Acc"),
+                        None,
+                        beck_core::core::Fields::from_iter([
+                            (std::sync::Arc::from("count"), Value::Int(0)),
+                            (std::sync::Arc::from("total"), Value::Int(7)),
+                        ]),
+                    ),
+                    Value::Int(0),
+                ]
+            } else {
+                vec![Value::Int(*size)]
+            };
+            let runs = if i == 0 { 7 } else { 3 };
+            let walked = beck_eval::on_the_evaluator_stack(|| {
+                let f = evaluator
+                    .function(&program.defs[name].body)
+                    .expect("prepares");
+                median(runs, || {
+                    f(args.clone()).expect("the evaluator answers");
+                })
+            });
+            let compiled = median(runs, || {
+                artifact
+                    .call(name, &args)
+                    .expect("the native backend answers");
+            });
+            let ratio = walked.as_secs_f64() / compiled.as_secs_f64();
+            seen[i] = ratio;
+            println!(
+                "{:<14} {:>10} {:>14} {:>14} {:>8.1}×",
+                if i == 0 { name } else { "" },
+                size,
+                format!("{walked:?}"),
+                format!("{compiled:?}"),
+                ratio
+            );
+        }
+        ratios.push((name, seen[0], seen[1]));
+    }
+
+    // What *is* asserted is the direction, which no profile changes: a compiled backend that is
+    // slower than the tree-walker is a finding rather than a number.
+    for (name, small, large) in &ratios {
+        assert!(
+            *small > 1.0 && *large > 1.0,
+            "`{name}` was {small:.1}× at the small size and {large:.1}× at the large one"
+        );
+    }
+    println!(
+        "\nRatios are evaluator ÷ native, wall clock, on this machine, and every one of them \
+         includes\na pipe round trip — 35.6 µs in a release run, and `what_native_code_costs…` is \
+         where it is measured."
+    );
+}
+
 /// What compiling costs, which is the other half of a dual-backend argument.
 ///
 /// §5.2 buys Cranelift for `beck dev` because LLVM's codegen step is slow, and that claim is about

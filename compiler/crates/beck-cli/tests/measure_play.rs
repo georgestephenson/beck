@@ -106,30 +106,44 @@ fn what_the_playground_costs_to_load() {
         "the page, together"
     );
 
-    // Relative to the workspace root rather than to this crate: `cargo test` runs the binary from
-    // `crates/beck-cli`, and the default path is the one `cargo build` writes to at the root.
-    let module = match std::env::var_os("BECK_PLAYGROUND") {
-        Some(named) => PathBuf::from(named),
-        None => root().join("target/wasm32-unknown-unknown/release/beck_play.wasm"),
-    };
-    match std::fs::read(&module) {
-        Ok(bytes) => {
-            let (packed, codec) = compressed(&bytes);
-            println!(
-                "  {:<22} {:>8}  ({packed} {codec})",
-                "beck-play.wasm",
-                bytes.len()
-            );
-            println!(
-                "\n  the module is the whole front end, the evaluator and the infrastructure\n  \
-                 derivation. It is the same download for every program, and a static host caches it."
-            );
-        }
-        Err(_) => println!(
-            "  beck-play.wasm         — not built. \
-             `cargo build -p beck-play --release --target wasm32-unknown-unknown`"
+    // Both modules, because a `@render(client)` program in the tab runs in Mode B's kernel and the
+    // playground serves it beside the compiler (docs/102 §102.4). Relative to the workspace root
+    // rather than to this crate: `cargo test` runs the binary from `crates/beck-cli`, and the
+    // default paths are the ones `cargo build` writes to at the root.
+    for (name, env, default, crate_name) in [
+        (
+            "beck-play.wasm",
+            "BECK_PLAYGROUND",
+            "target/wasm32-unknown-unknown/release/beck_play.wasm",
+            "beck-play",
         ),
+        (
+            "beck-kernel.wasm",
+            "BECK_KERNEL",
+            "target/wasm32-unknown-unknown/release/beck_wasm.wasm",
+            "beck-wasm",
+        ),
+    ] {
+        let module = match std::env::var_os(env) {
+            Some(named) => PathBuf::from(named),
+            None => root().join(default),
+        };
+        match std::fs::read(&module) {
+            Ok(bytes) => {
+                let (packed, codec) = compressed(&bytes);
+                println!("  {name:<22} {:>8}  ({packed} {codec})", bytes.len());
+            }
+            Err(_) => println!(
+                "  {name:<22} — not built. \
+                 `cargo build -p {crate_name} --release --target wasm32-unknown-unknown`"
+            ),
+        }
     }
+    println!(
+        "\n  the first module is the whole front end, the evaluator and the infrastructure\n  \
+         derivation; the second is Mode B's kernel, which only a `@render(client)` program's\n  \
+         iframe fetches. Both are the same download for every program, and a static host caches them."
+    );
 }
 
 #[test]
@@ -261,7 +275,7 @@ fn what_the_editor_costs_per_keystroke() {
     println!(
         "\n  highlighting is a lex and needs no program, which is why it is not debounced and why it\n  \
          still works while the file is broken. Completion is a check — the same one the analysis\n  \
-         pays for — and is asked for rather than continuous (docs/101)."
+         pays for — and is asked for rather than continuous (docs/102)."
     );
 }
 
@@ -344,6 +358,6 @@ fn what_a_kept_log_and_a_share_link_weigh() {
     }
     println!(
         "\n  a link carries the program, so it is proportional to it: §17.4's short, resolvable link\n  \
-         needs a registry, and this is the half that works with no server at all (docs/101)."
+         needs a registry, and this is the half that works with no server at all (docs/102)."
     );
 }

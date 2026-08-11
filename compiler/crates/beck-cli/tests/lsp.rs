@@ -285,7 +285,7 @@ fn a_library_is_analysed_rather_than_refused() {
     );
 }
 
-/// The two capabilities `docs/101` added, over the protocol rather than through the module.
+/// The two capabilities `docs/102` added, over the protocol rather than through the module.
 ///
 /// The answers themselves are `beck_core::editor`'s and are gated against the playground's in
 /// `playground.rs`; what is asserted here is that a real editor can *get* them — the capability is

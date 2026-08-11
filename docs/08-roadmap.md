@@ -373,6 +373,11 @@ dependencies whose signatures didn't change.
   `identity = external(issuer=…)` is a declaration, so §6.5's egress rule covers the issuer like any
   other peer (§95.7).*
 - LSP: completion, hover with *inferred placement*, go-to-def, rename, inline diagnostics.
+  *All but **rename** are built: hover, go-to-def and inline diagnostics by
+  [`65`](65-lsp-report.md), completion and semantic-token highlighting by
+  [`102`](102-playground-phase-3-report.md) §102.1 — which also moved every one of those answers
+  into `beck_core::editor`, so the playground's editor and an editor's are the same answers rather
+  than two implementations of them.*
 - **The playground** ([`17`](17-playground.md)) — highest-leverage adoption artefact: rung A
   (compile-time, static) and rung B (the whole app in the tab — the worker-server is the rung-0
   platform compiled to WASM, riding Mode B's kernel work; `seq` scrubber and two-client demos).
@@ -382,9 +387,14 @@ dependencies whose signatures didn't change.
   would ride Mode B's kernel work is the one thing it got wrong (§98.9): a tab server is a
   sequencer, a log and a differ, and none of those are in `beck-wasm`. What it rode was a division
   of the runtime — `beck-host`, the half of `beck-rt` that is program-shaped rather than
-  machine-shaped. Rung C is Phase 4's, and §98.7 lists what rungs A and B still lack: no IndexedDB,
-  no content-addressed sharing, no Mode B in the tab, and a `<textarea>` where the LSP already
-  exists.*
+  machine-shaped. Rung C is Phase 4's, and §98.7's four remaining lacks — no IndexedDB, no
+  content-addressed sharing, no Mode B in the tab, and a `<textarea>` where the LSP already exists —
+  are **built** by [`102`](102-playground-phase-3-report.md): the log survives a reload as the
+  records a durable store writes, a share link is a fragment that carries the program and names its
+  digest, a `@render(client)` program runs in the client iframe in Mode B's kernel, and the editor
+  highlights, completes and squiggles from the same module `beck lsp` answers from. What §102.6
+  still says is not built is rung C, the playground being written in Beck, and a link short enough
+  to need a registry.*
 - `beck init ci`, apko image build in-process, cosign signing, SBOM. *All four are built. The
   **SBOM** ([`92`](92-sbom-report.md)): `beck sbom` emits CycloneDX 1.6 and `beck build` writes one
   beside the manifests, derived from the same object graph the image config is — so the package list
@@ -418,11 +428,13 @@ pipeline rather than a piece of the bullet.
 ([`90`](90-nested-patterns-report.md), [`91`](91-guards-and-alternatives-report.md)); what
 `parallel:` lacks is a backend that runs two children at once, which is
 [`80`](80-a-scope-owns-its-children-report.md) §80.5's item rather than this bullet's. **Three
-half-built**: the codegen bullet has **both** of §5.2's code generators over the scalar subset
-([`93`](93-llvm-backend-report.md), [`97`](97-cranelift-report.md)) and no heap, so what it does not
-compile is everything the language stores; Mode B has the mode, the bundle, the data patch, the
-reconciliation, a browser that runs it and an offline queue, without codegen — which is the *same*
-missing heap ([`94`](94-mode-b-report.md) §94.8, [`97`](97-cranelift-report.md) §97.7); and the
+half-built**: the codegen bullet has **both** of §5.2's code generators
+([`93`](93-llvm-backend-report.md), [`97`](97-cranelift-report.md)) and a heap for the *algebraic*
+half of what the language stores ([`101`](101-the-heap-report.md)) — a record, a union and a newtype
+compile, and text, collections, closures and every effect do not; Mode B has the mode, the bundle,
+the data patch, the reconciliation, a browser that runs it and an offline queue, without codegen —
+which waits on the half of that heap that is not built, since a page is `Html` and `Str` all the way
+down ([`94`](94-mode-b-report.md) §94.8, [`101`](101-the-heap-report.md) §101.10); and the
 playground has rungs A and B and not rung C, which is Phase 4's
 ([`98`](98-playground-report.md) §98.7). **Client polish is built too**
 ([`100`](100-client-polish-report.md)) except for lazy routes, which wait on the same
@@ -840,9 +852,12 @@ needs an outside developer, and none has read it.
 [`97`](97-cranelift-report.md)): §5.2's dual codegen exists over the scalar subset, `beck native
 --backend cranelift|llvm` chooses, and §4.8's differential is **three-way** — the tree-walker, LLVM
 and Cranelift on every call, with the two emitters held to accepting and refusing the same
-definitions. What still bounds *both* is the **heap**: no record, list, string or effect compiles,
-which is Phase 4's Lane E and the same prerequisite Mode B codegen is behind
-([`94`](94-mode-b-report.md) §94.8). Mode B and
+definitions. ~~What still bounds *both* is the **heap**: no record, list, string or effect compiles~~ — the
+**algebraic half is built** ([`101`](101-the-heap-report.md)): a `model`, a `union` and a `newtype`
+have a layout, an arena and a place on the wire, and 283 definitions across the tree compile where
+187 did. What is left of that bullet is text, collections, closures and the effects
+([`101`](101-the-heap-report.md) §101.5), which is still Phase 4's Lane E and still the prerequisite
+Mode B codegen is behind ([`94`](94-mode-b-report.md) §94.8). Mode B and
 ~~client polish~~ — **built** ([`100`](100-client-polish-report.md)), and it was not a Lane B item
 either: a route is a field of `Session`, so the engine, the splitter and the plan are untouched and
 the work is at the edges; the LSP; ~~SQL read models, pgwire~~ — **built**
@@ -894,7 +909,7 @@ boundaries are real directories.
 | **B — runtime and views** | `beck-rt/`, `beck-core/src/{engine,plan,incremental,pmap,signal}.rs` | Clock injection; the shared dataflow's release policy, history constant and render lock; SQL read models, pgwire, query fusion; Mode B's server half | Nothing in A, C, E or F |
 | **C — front end and tooling** | `beck-syntax/`, `beck-cli/`, `beck-diag/` | The recursion bound; the two syntax decisions; Unicode and UTS #39; LSP; `test --update`; fuzzing | A, if a syntax decision changes what the checker sees |
 | **D — process and supply chain** | `docs/`, `.github/`, `deny.toml`, `SECURITY.md` | Threat model, disclosure policy, memory-safety roadmap, `pending_security`, the four retargeted §12 rows, SLSA/SBOM/trusted publishing | Nothing in code |
-| **E — backends** | `beck-eval/`, `beck-llvm/`, `beck-core/src/backend.rs`, any new codegen crate | ~~LLVM backend, native codegen, the differential suite~~ — **built for the scalar subset** ([`93`](93-llvm-backend-report.md)); what is left is a heap, the effects, and Cranelift | Nothing — the seam is why ([`19`](19-phase-1-report.md) §19.9), and [`93`](93-llvm-backend-report.md) is the first thing to test that claim: not one line of `beck-rt` changed |
+| **E — backends** | `beck-eval/`, `beck-llvm/`, `beck-clif/`, `beck-core/src/backend.rs`, any new codegen crate | ~~LLVM backend, native codegen, the differential suite~~ — **built** ([`93`](93-llvm-backend-report.md)), ~~and Cranelift~~ — **built** ([`97`](97-cranelift-report.md)), ~~and a heap~~ — **half built** ([`101`](101-the-heap-report.md)): records, unions and newtypes. What is left is text, collections, closures and the effects | Nothing — the seam is why ([`19`](19-phase-1-report.md) §19.9), and [`93`](93-llvm-backend-report.md) is the first thing to test that claim: not one line of `beck-rt` changed |
 | **F — infrastructure** | `beck-infra/` | Effect-derived NetworkPolicy/RBAC/grants; Crossplane emitter; conformance rungs | Nothing |
 
 **Lane A is strictly serial, and that is the real staffing constraint.** It is tempting to run two

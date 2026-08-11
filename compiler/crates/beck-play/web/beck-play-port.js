@@ -6,7 +6,7 @@
 // or `beck-mode-b.js`, whichever the program's rendering mode calls for, and neither is modified
 // and neither knows it is in a playground: docs/17 §17.2's "the thin patch client in an iframe,
 // speaking the identical patch/command protocol over a `MessageChannel` instead of a websocket",
-// taken literally, and docs/101 for the Mode B half of it.
+// taken literally, and docs/102 for the Mode B half of it.
 (() => {
   let port = null;
   let handlers = null;

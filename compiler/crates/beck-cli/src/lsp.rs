@@ -11,7 +11,7 @@
 //!
 //! Not from here. [`beck_core::editor`] holds the indexing, the positions, the word-under-the-caret
 //! rule, the token classification and the completion list, because a browser tab wants every one of
-//! them too ([`docs/101`](../../../../../docs/101-playground-phase-3-report.md)) and a second copy
+//! them too ([`docs/102`](../../../../../docs/102-playground-phase-3-report.md)) and a second copy
 //! is a second thing to be wrong. What this file does is translate: JSON-RPC in, LSP shapes out.
 //!
 //! # Why the whole file, every time
@@ -182,7 +182,7 @@ fn capabilities() -> Value {
             // explicitly and answers on the word being typed.
             "completionProvider": { "resolveProvider": false },
             // The legend is `beck_core::editor`'s, so the categories an editor colours are the
-            // categories the playground colours (docs/101).
+            // categories the playground colours (docs/102).
             "semanticTokensProvider": {
                 "legend": { "tokenTypes": TokenKind::legend(), "tokenModifiers": [] },
                 "full": true,

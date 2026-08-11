@@ -9,10 +9,13 @@
 //! [`93`](../../../../docs/93-llvm-backend-report.md) built the first and listed the second as the
 //! half that did not exist. This is the second half.
 //!
-//! It compiles the same **scalar subset** [`beck_llvm`] compiles, to the same semantics, and it is
-//! held to that by a differential that runs *both* against the evaluator and against each other.
-//! What it does not share is the emitter: [`emit`] is a second implementation, and a second
-//! implementation that agrees is the only kind of evidence a backend seam can offer.
+//! It compiles the same subset [`beck_llvm`] compiles — scalars, and the records and unions
+//! [`beck_llvm::heap`] lays out — to the same semantics, and it is held to that by a differential
+//! that runs *both* against the evaluator and against each other. What it does not share is the
+//! emitter: [`emit`] is a second implementation, and a second implementation that agrees is the
+//! only kind of evidence a backend seam can offer. What it *does* share is the layout, because a
+//! layout is a contract with the host as well
+//! ([`adr/0026`](../../../../docs/adr/0026-the-native-heap-is-an-arena-of-offsets.md)).
 //!
 //! # What it costs, and what it saves
 //!
@@ -54,7 +57,7 @@ use beck_core::check::Program;
 use beck_core::core::CoreKind;
 use beck_core::{Core, Value};
 use beck_diag::Span;
-use beck_llvm::{Refusal, Scalar, Signature, Trap, Worker};
+use beck_llvm::{Refusal, Signature, Trap, Worker};
 
 pub use emit::{module, Module};
 pub use toolchain::Linker;
@@ -194,7 +197,24 @@ impl Artifact {
         self.invoke(sig, args)
     }
 
+    /// The same, and how many bytes of arena the call left behind.
+    ///
+    /// The second number is what a **shape** gate reads: a program that allocates `n` objects of a
+    /// known size has to use a known number of bytes, at every `n`, and a cost per object that
+    /// grew with the number of objects would show up here with no clock in the measurement
+    /// (`AGENTS.md`, and `docs/64` §64.1's pattern).
+    pub fn call_sized(&self, name: &str, args: &[Value]) -> Result<(Value, usize), ExecError> {
+        let sig = self.module.signature(name).ok_or_else(|| {
+            ExecError::new(format!("`{name}` did not compile natively"), Span::NONE)
+        })?;
+        self.exchange(sig, args)
+    }
+
     fn invoke(&self, sig: &Signature, args: &[Value]) -> Result<Value, ExecError> {
+        self.exchange(sig, args).map(|(v, _)| v)
+    }
+
+    fn exchange(&self, sig: &Signature, args: &[Value]) -> Result<(Value, usize), ExecError> {
         if args.len() != sig.params.len() {
             return Err(ExecError::new(
                 format!(
@@ -206,28 +226,18 @@ impl Artifact {
                 Span::NONE,
             ));
         }
-        let mut cells = Vec::with_capacity(args.len());
-        for (arg, want) in args.iter().zip(&sig.params) {
-            cells.push(widen(arg, *want).ok_or_else(|| {
-                ExecError::new(
-                    format!(
-                        "`{}` expects a {} where it was given `{}`",
-                        sig.name,
-                        match want {
-                            Scalar::Int => "Int",
-                            Scalar::Float => "Float",
-                            Scalar::Bool => "Bool",
-                        },
-                        arg.display()
-                    ),
-                    Span::NONE,
-                )
-            })?);
-        }
+        // The arguments become eight bytes each, plus — when any of them is an object — the flat
+        // byte string of the graph they point into. `beck_llvm::heap` is the one description of
+        // that shape, shared with the other backend and with the host.
+        let (cells, blob) = self
+            .module
+            .heap
+            .encode_args(args, &sig.params)
+            .map_err(|why| ExecError::new(format!("`{}` was given {why}", sig.name), Span::NONE))?;
 
         let reply = self
             .worker
-            .call(sig.index, &cells)
+            .call(sig.index, &cells, &blob)
             .map_err(|e| ExecError::new(e, Span::NONE))?;
         if reply.code != 0 {
             let span = self
@@ -242,29 +252,12 @@ impl Artifact {
             };
             return Err(ExecError::new(message, span));
         }
-        Ok(narrow(reply.value, sig.ret))
-    }
-}
-
-/// A `Value` as the eight bytes the protocol carries, if it is of the type the signature wants.
-fn widen(v: &Value, want: Scalar) -> Option<u64> {
-    match (v, want) {
-        (Value::Int(i), Scalar::Int) => Some(*i as u64),
-        (Value::Bool(b), Scalar::Bool) => Some(u64::from(*b)),
-        // Through `as_f64` rather than off the discriminant: `Value::Float` holds the *order key*,
-        // and the compiled code works in ordinary IEEE bits.
-        (Value::Float(_), Scalar::Float) => Some(v.as_f64()?.to_bits()),
-        _ => None,
-    }
-}
-
-fn narrow(bits: u64, ty: Scalar) -> Value {
-    match ty {
-        Scalar::Int => Value::Int(bits as i64),
-        Scalar::Bool => Value::Bool(bits != 0),
-        // `Value::float` and not `Value::Float`: the constructor applies the order-key transform
-        // and the canonicalisation, which is what makes this equal to what the evaluator built.
-        Scalar::Float => Value::float(f64::from_bits(bits)),
+        let value = self
+            .module
+            .heap
+            .decode(reply.value, sig.ret, &reply.heap)
+            .map_err(|why| ExecError::new(why, Span::NONE))?;
+        Ok((value, reply.heap.len()))
     }
 }
 
@@ -300,13 +293,17 @@ impl fmt::Display for Report<'_> {
             self.module.functions.len()
         )?;
         for sig in &self.module.functions {
-            let params: Vec<&str> = sig.params.iter().map(|p| p.llvm()).collect();
+            let params: Vec<String> = sig
+                .params
+                .iter()
+                .map(|p| self.module.heap.show(*p))
+                .collect();
             writeln!(
                 f,
                 "  {:<28} ({}) -> {}",
                 sig.name,
                 params.join(", "),
-                sig.ret.llvm()
+                self.module.heap.show(sig.ret)
             )?;
         }
         if !self.module.refusals.is_empty() {

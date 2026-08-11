@@ -3,7 +3,7 @@
 //! Shared, because two harnesses drive it. `lsp.rs` holds the server to its own protocol;
 //! `playground.rs` holds the *playground* to the server's answers, since both ask
 //! `beck_core::editor` and a playground that answered differently would have grown a second editor
-//! (`docs/101`).
+//! (`docs/102`).
 //!
 //! Through a subprocess rather than by calling `lsp::serve`, because the transport is half the
 //! protocol: framing, flushing and not writing anything else to stdout are properties of the

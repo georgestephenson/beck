@@ -8,17 +8,18 @@
 //! Neither could exist while `beck-eval` was the only implementation of
 //! [`beck_core::backend::Backend`]. This crate is the second one.
 //!
-//! It compiles the **scalar subset** of `Core` — see [`emit`] for exactly what that is and what it
-//! refuses — through textual LLVM IR and the host's `clang`, and runs the result as a separate
-//! process ([`worker`]). Everything outside the subset falls back to the evaluator, and
-//! [`Report`] says which definitions went which way, by name, with a reason for each refusal.
+//! It compiles the **scalar and object subset** of `Core` — see [`emit`] for exactly what that is
+//! and what it refuses — through textual LLVM IR and the host's `clang`, and runs the result as a
+//! separate process ([`worker`]). A `model`, a `union` and a `newtype` are laid out by [`heap`] and
+//! live in an arena; everything outside the subset falls back to the evaluator, and [`Report`] says
+//! which definitions went which way, by name, with a reason for each refusal.
 //!
 //! # What this is not
 //!
-//! Not a general backend. There is no heap here, so a fold over a record, a view that builds
-//! `Html` and every effect in the language still run on the tree-walker; `beck run` and `beck up`
-//! are unchanged. Not Cranelift either: §5.2's dual-codegen story has one half built, and the
-//! `beck dev` half is not this.
+//! Not a general backend. Text, collections, closures and every effect are still the tree-walker's,
+//! so a view that builds `Html` and a fold that keeps a `Map` do not compile; `beck run` and `beck
+//! up` are unchanged. There is no collector either — the arena is reset per call
+//! ([`adr/0026`](../../../../docs/adr/0026-the-native-heap-is-an-arena-of-offsets.md)).
 //!
 //! # Using it
 //!
@@ -38,6 +39,7 @@
 //! ```
 
 pub mod emit;
+pub mod heap;
 pub mod toolchain;
 pub mod worker;
 
@@ -53,6 +55,7 @@ use beck_core::{Core, Value};
 use beck_diag::Span;
 
 pub use emit::{module, Module, Refusal, Scalar, Signature, Trap, MAX_PARAMS};
+pub use heap::{Heap, Layout, Repr, Variant};
 pub use toolchain::Toolchain;
 pub use worker::Worker;
 
@@ -184,7 +187,24 @@ impl Artifact {
         self.invoke(sig, args)
     }
 
+    /// The same, and how many bytes of arena the call left behind.
+    ///
+    /// The second number is what a **shape** gate reads: a program that allocates `n` objects of a
+    /// known size has to use a known number of bytes, at every `n`, and a cost per object that
+    /// grew with the number of objects would show up here with no clock in the measurement
+    /// (`AGENTS.md`, and `docs/64` §64.1's pattern).
+    pub fn call_sized(&self, name: &str, args: &[Value]) -> Result<(Value, usize), ExecError> {
+        let sig = self.module.signature(name).ok_or_else(|| {
+            ExecError::new(format!("`{name}` did not compile natively"), Span::NONE)
+        })?;
+        self.exchange(sig, args)
+    }
+
     fn invoke(&self, sig: &Signature, args: &[Value]) -> Result<Value, ExecError> {
+        self.exchange(sig, args).map(|(v, _)| v)
+    }
+
+    fn exchange(&self, sig: &Signature, args: &[Value]) -> Result<(Value, usize), ExecError> {
         if args.len() != sig.params.len() {
             return Err(ExecError::new(
                 format!(
@@ -196,28 +216,18 @@ impl Artifact {
                 Span::NONE,
             ));
         }
-        let mut cells = Vec::with_capacity(args.len());
-        for (arg, want) in args.iter().zip(&sig.params) {
-            cells.push(widen(arg, *want).ok_or_else(|| {
-                ExecError::new(
-                    format!(
-                        "`{}` expects a {} where it was given `{}`",
-                        sig.name,
-                        match want {
-                            Scalar::Int => "Int",
-                            Scalar::Float => "Float",
-                            Scalar::Bool => "Bool",
-                        },
-                        arg.display()
-                    ),
-                    Span::NONE,
-                )
-            })?);
-        }
+        // The arguments become eight bytes each, plus — when any of them is an object — the flat
+        // byte string of the graph they point into. `beck_llvm::heap` is the one description of
+        // that shape, so the host writes what the compiled code reads by construction.
+        let (cells, blob) = self
+            .module
+            .heap
+            .encode_args(args, &sig.params)
+            .map_err(|why| ExecError::new(format!("`{}` was given {why}", sig.name), Span::NONE))?;
 
         let reply = self
             .worker
-            .call(sig.index, &cells)
+            .call(sig.index, &cells, &blob)
             .map_err(|e| ExecError::new(e, Span::NONE))?;
         if reply.code != 0 {
             let span = self
@@ -232,29 +242,12 @@ impl Artifact {
             };
             return Err(ExecError::new(message, span));
         }
-        Ok(narrow(reply.value, sig.ret))
-    }
-}
-
-/// A `Value` as the eight bytes the protocol carries, if it is of the type the signature wants.
-fn widen(v: &Value, want: Scalar) -> Option<u64> {
-    match (v, want) {
-        (Value::Int(i), Scalar::Int) => Some(*i as u64),
-        (Value::Bool(b), Scalar::Bool) => Some(u64::from(*b)),
-        // Through `as_f64` rather than off the discriminant: `Value::Float` holds the *order key*,
-        // and the compiled code works in ordinary IEEE bits.
-        (Value::Float(_), Scalar::Float) => Some(v.as_f64()?.to_bits()),
-        _ => None,
-    }
-}
-
-fn narrow(bits: u64, ty: Scalar) -> Value {
-    match ty {
-        Scalar::Int => Value::Int(bits as i64),
-        Scalar::Bool => Value::Bool(bits != 0),
-        // `Value::float` and not `Value::Float`: the constructor applies the order-key transform
-        // and the canonicalisation, which is what makes this equal to what the evaluator built.
-        Scalar::Float => Value::float(f64::from_bits(bits)),
+        let value = self
+            .module
+            .heap
+            .decode(reply.value, sig.ret, &reply.heap)
+            .map_err(|why| ExecError::new(why, Span::NONE))?;
+        Ok((value, reply.heap.len()))
     }
 }
 
@@ -283,13 +276,17 @@ impl fmt::Display for Report<'_> {
             self.module.functions.len()
         )?;
         for sig in &self.module.functions {
-            let params: Vec<&str> = sig.params.iter().map(|p| p.llvm()).collect();
+            let params: Vec<String> = sig
+                .params
+                .iter()
+                .map(|p| self.module.heap.show(*p))
+                .collect();
             writeln!(
                 f,
                 "  {:<28} ({}) -> {}",
                 sig.name,
                 params.join(", "),
-                sig.ret.llvm()
+                self.module.heap.show(sig.ret)
             )?;
         }
         if !self.module.refusals.is_empty() {
