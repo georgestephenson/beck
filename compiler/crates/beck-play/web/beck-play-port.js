@@ -27,6 +27,11 @@
     return {
       send: (frame) => port && port.postMessage(frame),
       ready: () => !!port,
+      close: () => {
+        if (port) port.close();
+        port = null;
+        handlers = null;
+      },
     };
   };
 })();

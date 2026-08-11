@@ -284,6 +284,105 @@ async fn mode_a_applies_the_servers_patches() {
 }
 }
 
+browser_test! {
+/// A closed client stops dialling, including the retry that was already armed.
+///
+/// `beck.connect` re-arms its reconnect from the transport's own `close` handler, and nothing but
+/// the sender's `close` holds that timer. There are two ways to leak one and this gates both,
+/// because each is guarded by a different line: closing after the connection dropped leaves a
+/// retry already armed, which is the `clearTimeout`; closing while it is still up runs the handler
+/// again on the way out, which is the stopped flag. A `clearTimeout` alone passes the first and
+/// fails the second.
+///
+/// Driven through `beck.dial` — the transport seam the playground already uses — so this is about
+/// the reconnect and not about a socket. The server stays up throughout, so the page's own client
+/// never re-dials and every dial the stub counts belongs to a probe.
+async fn a_closed_client_stops_dialling() {
+    let Some(mut browser) = browser::shared().await else {
+        return;
+    };
+    let serving = Serving::start(example("todo.beck")).await;
+    let page = browser.open(&serving.url()).await;
+    page.wait_for(
+        &mut browser,
+        "document.getElementById('b-root').dataset.bReady === 'a'",
+    )
+    .await;
+
+    // A transport that never opens and never becomes ready: a dial is all this counts. Closing it
+    // calls the handler back, as a websocket does — that is what makes the stopped flag part of
+    // what this gates, and not only the `clearTimeout`.
+    page.eval(
+        &mut browser,
+        "window.__t = { dials: 0, handlers: [] }; \
+         beck.dial = (h) => { \
+           window.__t.dials += 1; \
+           window.__t.handlers.push(h); \
+           return { send: () => {}, ready: () => false, close: () => h.close() }; \
+         };",
+    )
+    .await;
+
+    // The probe dials once, loses its transport — which arms a retry — and is then closed.
+    let dialled = page
+        .eval(
+            &mut browser,
+            "window.__t.probe = beck.connect({ sub: 'probe', actor: 'ana', seq: null }, () => {}); \
+             window.__t.handlers[0].close(); \
+             window.__t.probe.close(); \
+             window.__t.t0 = performance.now(); \
+             window.__t.dials",
+        )
+        .await;
+    assert_eq!(dialled, serde_json::json!(1), "the probe did not dial once");
+
+    // Long enough for the first backoff (250ms) to have come and gone several times over. A
+    // non-event needs a window; this one is measured on the page's clock rather than slept for
+    // here, and it is the *control* below that says the window is long enough to catch a re-dial.
+    page.wait_for(&mut browser, "performance.now() - window.__t.t0 > 1500")
+        .await;
+    assert_eq!(
+        page.eval(&mut browser, "window.__t.dials").await,
+        serde_json::json!(1),
+        "a closed client dialled again"
+    );
+
+    // The other half, and the one the flag is for: closing a client whose link is still up. The
+    // close travels *through* the transport, so the reconnect handler runs again on the way out
+    // and would re-arm what `close` has just cleared — a socket reports its own closing, and it
+    // cannot tell one asked for from one that failed.
+    page.eval(
+        &mut browser,
+        "window.__t.handlers = []; \
+         window.__t.live = beck.connect({ sub: 'live', actor: 'ana', seq: null }, () => {}); \
+         window.__t.dials = 0; \
+         window.__t.live.close(); \
+         window.__t.t1 = performance.now();",
+    )
+    .await;
+    page.wait_for(&mut browser, "performance.now() - window.__t.t1 > 1500")
+        .await;
+    assert_eq!(
+        page.eval(&mut browser, "window.__t.dials").await,
+        serde_json::json!(0),
+        "closing a live client re-armed the reconnect"
+    );
+
+    // The control, which is what stops the assertion above from passing for the wrong reason: the
+    // same sequence without the `close` must re-dial, and inside the same window.
+    page.eval(
+        &mut browser,
+        "window.__t.handlers = []; \
+         window.__t.open = beck.connect({ sub: 'open', actor: 'ana', seq: null }, () => {}); \
+         window.__t.dials = 0; \
+         window.__t.handlers[0].close();",
+    )
+    .await;
+    page.wait_for(&mut browser, "window.__t.dials === 1").await;
+    page.eval(&mut browser, "window.__t.open.close()").await;
+}
+}
+
 // --------------------------------------------------------------- Mode B
 
 browser_test! {
