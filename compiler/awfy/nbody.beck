@@ -7,7 +7,7 @@
 # That constant is what makes this file worth having, and it is not really a performance test here.
 # It is a **determinism test**: `-0.16907495402506745` is a specific `f64`, and a port reproduces it
 # only if every literal is read to the same bits, every multiplication happens in the same order and
-# `sqrt` is the host's. `docs/32` §32.3 made reals IEEE 754 with no rule of Beck's own laid on top;
+# `sqrt` is the host's. `docs/27` §27.2 made reals IEEE 754 with no rule of Beck's own laid on top;
 # this is the first program in the tree that would notice if that stopped being true.
 #
 # The constants are transcribed in the notation they are published in. They could not be, when this
@@ -38,7 +38,7 @@ def pi() -> Float:
     return 3.141592653589793
 
 ## `4 * PI * PI` in the original, where `4` is an `int` promoted by the multiplication. Beck does
-## not promote — `docs/41` refuses `1 + 1.0` deliberately — so the literal is written as a real.
+## not promote — `docs/27` refuses `1 + 1.0` deliberately — so the literal is written as a real.
 def solar_mass() -> Float:
     return 4.0 * pi() * pi()
 

@@ -318,7 +318,7 @@ impl Plan {
             Some(page) if page < graph.nodes.len() => b.vertex(graph, page),
             // A **library** has no page, and an empty graph to look it up in. Its plan is its two
             // sources and a unit — nothing renders it, and the `unwrap_or(0)` this replaced indexed
-            // vertex zero of a graph with no vertices (docs/27 §27.4).
+            // vertex zero of a graph with no vertices (docs/27 §27.2).
             _ => {
                 let id = b.push(Op::Const, Vec::new(), None);
                 b.constants.insert(
@@ -393,7 +393,7 @@ impl Plan {
     ///
     /// The decomposition builds an operator for every argument of a call it inlines and for every
     /// `let`'s value, before it knows whether the body reads them — and a bounded call's arguments
-    /// include one dictionary per method of each bound ([`39`](../../../../../docs/39-bounds-report.md)),
+    /// include one dictionary per method of each bound ([`27`](../../../../../docs/27-the-walls-come-down-report.md)),
     /// of which the body may use none. Deciding that lazily would mean a scope of thunks rather
     /// than of operators, which changes the order operators are created in and therefore what
     /// hash-consing shares; pruning afterwards costs one pass and changes nothing else.

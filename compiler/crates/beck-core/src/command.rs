@@ -145,7 +145,7 @@ impl FieldTy {
                 .ok_or_else(|| format!("expected a boolean, got {raw}")),
             // A real crosses the wire as a JSON number, and an integral one arrives as an integer
             // — `1` and `1.0` are the same JSON token — so this accepts either and canonicalises
-            // through `Value::float` (`docs/32` §32.6).
+            // through `Value::float` (`docs/27` §27.2).
             FieldTy::Float => raw
                 .as_f64()
                 .map(Value::float)

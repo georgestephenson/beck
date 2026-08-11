@@ -83,7 +83,7 @@ Two differences are worth naming separately because they are not mechanical:
   placement.
 - **`towers` keeps its exceptions.** The original throws if a disk lands on a smaller one, and a
   port that dropped the check would pass while moving nonsense. `raise` is
-  [`docs/45`](../../docs/45-error-rows-report.md)'s row label, so the benchmark publishes
+  [`docs/27`](../../docs/27-the-walls-come-down-report.md)'s row label, so the benchmark publishes
   `raises(TowersError)` and its test faces it with `try:`.
 
 ## What is not here

@@ -15,7 +15,7 @@ findings were.
 ## 56.1 What a `Decimal` is
 
 `units × 10^-scale`, with `units` a `Big` and `scale` at least zero. Exact, and therefore not a
-real: `docs/32`'s `Float` is IEEE 754 and `0.1` is not one of the numbers it holds, which is why
+real: `docs/27`'s `Float` is IEEE 754 and `0.1` is not one of the numbers it holds, which is why
 `0.1 + 0.2 != 0.3` there and is `0.3` here. Not a rational either — a third has no decimal
 expansion, and this type says so rather than rounding.
 
@@ -35,7 +35,7 @@ fixed by its currency.
 `sicp/ch2.beck`'s rationals, `money.beck`'s amounts and [`55`](55-bignums-report.md)'s integers —
 and the first built on another one. Addition and multiplication are exact and total: a sum's scale
 is the wider of the two, a product's is their sum, so nothing is dropped. `Big`'s `+` being pure is
-what lets this one's be pure too, which is [`47`](47-effect-polymorphic-traits-report.md)'s per-impl
+what lets this one's be pure too, which is [`27`](27-the-walls-come-down-report.md)'s per-impl
 row composing one library on top of another.
 
 ## 56.2 Rounding, as three rules rather than one

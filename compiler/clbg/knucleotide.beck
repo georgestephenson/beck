@@ -99,7 +99,7 @@ def ranked(counts: Map[Str, Int]) -> list[Entry]:
 ## The denominator is the number of *fragments* rather than of bases, which is why the caller
 ## passes it: there are `n` one-base fragments in `n` bases and only `n - 1` two-base ones. The
 ## Java computes the percentage in single precision (`100.0f`) and Beck's `Float` is IEEE 754
-## double (`docs/32` §32.3). No value in the published output is within `1e-6` of a rounding
+## double (`docs/27` §27.2). No value in the published output is within `1e-6` of a rounding
 ## boundary at three places, so the two agree here; a size where they did not would be a real
 ## difference and not a formatting one.
 def block(chars: list[Str], k: Int, denominator: Int) -> Str:

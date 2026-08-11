@@ -80,7 +80,7 @@ pub struct Item {
 pub enum Kind {
     Function {
         /// The names a generic definition quantifies over, in the order written. Empty for the
-        /// monomorphic case, which is every definition written before `docs/32`.
+        /// monomorphic case, which is every definition written before `docs/27`.
         typarams: Vec<Arc<str>>,
         params: Vec<(Arc<str>, Ty)>,
         ret: Ty,
@@ -631,7 +631,7 @@ fn render_impl(i: &ImplSig) -> String {
         return header;
     }
     // A method that performs something publishes what: a caller in another module resolves through
-    // this header and has nowhere else to learn it (`docs/47` §47.3). A pure method says nothing,
+    // this header and has nowhere else to learn it (`docs/27` §27.7). A pure method says nothing,
     // so an impl of a pure trait reads exactly as it did before this existed.
     let mut out = header;
     out.push_str(":\n");

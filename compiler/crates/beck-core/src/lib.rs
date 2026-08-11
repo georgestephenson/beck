@@ -134,7 +134,7 @@ pub fn check_str(name: &str, src: &str) -> (check::Program, Diagnostics, SourceM
 ///
 /// Separate from [`compile_str`] rather than replacing it, because "this compiled" and "this is an
 /// application" are different questions and every existing caller is asking the second. `beck test`
-/// asks the first (docs/27 §27.4); so does anything that only wants the module's definitions.
+/// asks the first (docs/27 §27.2); so does anything that only wants the module's definitions.
 pub fn compile_or_library_str(name: &str, src: &str) -> (Option<Placed>, Diagnostics, SourceMap) {
     let mut map = SourceMap::new();
     let file = map.add(name, src);

@@ -51,7 +51,7 @@ pub const MAX_BLOCK: u32 = 2048;
 ///
 /// Declared rather than discovered, and held to the ceiling by a test in each crate that recurses
 /// (`beck-syntax`, `beck-core`) which *measures* bytes per level and fails if the declaration has
-/// stopped covering it — the pair `beck-eval` has had since `docs/31` §31.3, for the same reason
+/// stopped covering it — the pair `beck-eval` has had since `docs/27` §27.2, for the same reason
 /// and against the same failure.
 ///
 /// It is deliberately the same 64 MiB `beck_eval::STACK_BYTES` declares, because the two are

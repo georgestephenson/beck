@@ -584,7 +584,7 @@ fn main() -> Result<()> {
     // Every command below may end up evaluating Beck code, and the evaluator spends host stack on
     // recursion that is not in tail position. It says how much it needs; this is where a `beck`
     // process supplies it, so that a deep program gets `beck-eval`'s diagnostic rather than the
-    // process getting a SIGSEGV (`docs/31` §31.3).
+    // process getting a SIGSEGV (`docs/27` §27.2).
     beck_eval::on_the_evaluator_stack(move || dispatch(cli))
 }
 
@@ -1859,7 +1859,7 @@ fn test_cmd(
     update: bool,
 ) -> Result<()> {
     // Not `compiled`: a module with no merge point is a **library**, and a library's tests are the
-    // ones a developer most wants to run (docs/22 §22.6, docs/25 §25.6 item 1, docs/27 §27.4).
+    // ones a developer most wants to run (docs/22 §22.6, docs/25 §25.6 item 1, docs/27 §27.2).
     // `slice_or_library` gives one back instead of refusing it; every other diagnostic still does.
     let (project, map, mut diags) = checked_project(file)?;
     let placed = project.and_then(|p| beck_core::project::slice_or_library(p, &mut diags));

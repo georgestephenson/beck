@@ -275,7 +275,7 @@ fn it_answers_about_the_text_it_was_last_sent_and_not_about_a_file_on_disk() {
 
 #[test]
 fn a_library_is_analysed_rather_than_refused() {
-    // docs/27 §27.4's point, arriving here: a module being edited usually has no merge point, and
+    // docs/27 §27.2's point, arriving here: a module being edited usually has no merge point, and
     // a server that only accepted applications would be useless for most files. `GOOD` is a library
     // — every test above depends on this and none of them says so, so one does.
     let (placed, _, _) = beck_core::compile_or_library_str("/tmp/good.beck", GOOD);

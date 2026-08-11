@@ -232,7 +232,7 @@ fn the_two_backends_agree_on_reals() {
 /// The two IEEE values `Value::float` refuses to distinguish, and the arithmetic that reaches them.
 ///
 /// This is the test that would have caught the backend emitting `fcmp` — which is the obvious
-/// lowering, is what every other language does, and is wrong here, because `docs/32` §32.2 made
+/// lowering, is what every other language does, and is wrong here, because `docs/27` §27.8 made
 /// Beck's `==` on reals *structural* so that a fold's accumulator could have a total order.
 #[test]
 fn a_negative_zero_and_a_nan_mean_here_what_they_mean_in_the_evaluator() {
@@ -703,7 +703,7 @@ def tock(n: Int) -> Int:
 
 /// A tail call is a jump, so a loop written as recursion has no depth at all.
 ///
-/// `docs/31` §31.2 makes this a property of the *language*, and until now it was a property of one
+/// `docs/27` §27.2 makes this a property of the *language*, and until now it was a property of one
 /// backend's trampoline. The numbers are the ones that report uses: a shallow recursion and one
 /// forty times deeper have to cost the same, and here they must also be *possible* — the
 /// tree-walker refuses past [`beck_eval::DEFAULT_MAX_DEPTH`], and compiled code has no such
@@ -849,7 +849,7 @@ fn the_seam_recognises_a_compiled_definition() {
         .expect("prepares");
     assert_eq!(f(vec![Value::Int(20)]).expect("answers"), Value::Int(6765));
 
-    // A backend that wraps a tree-walker inherits its stack requirement — the trap `docs/31` §31.3
+    // A backend that wraps a tree-walker inherits its stack requirement — the trap `docs/27` §27.2
     // records, one layer along. Compiled code needs none of it; the half behind it needs all of it.
     assert_eq!(native.stack_bytes(), beck_eval::STACK_BYTES);
 }

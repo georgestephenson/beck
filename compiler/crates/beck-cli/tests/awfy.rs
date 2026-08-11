@@ -98,7 +98,7 @@ fn every_benchmark_verifies_against_the_original_suites_own_number() {
 /// And each one is a **library** — no merge point, nothing to deploy.
 ///
 /// A benchmark that had grown an application around it would be measuring the application, which
-/// is the failure mode [`27`](../../../../docs/27-walls-report.md) removed for `sicp/` and this
+/// is the failure mode [`27`](../../../../docs/27-the-walls-come-down-report.md) removed for `sicp/` and this
 /// directory inherits.
 #[test]
 fn each_benchmark_is_a_library() {

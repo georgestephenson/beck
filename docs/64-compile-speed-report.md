@@ -114,7 +114,7 @@ What follows from that, and the second row is the sharper half:
 The abort is `thread 'beck-eval' has overflowed its stack`, SIGABRT, exit 134, no diagnostic. And
 **the limit depends on the build profile**, which is precisely the property
 [`adr/0007`](adr/0007-evaluator-stack-is-declared-not-discovered.md) and
-[`31`](31-tail-calls-report.md) §31.3 established the *evaluator* must not have: a recursion ceiling
+[`27`](27-the-walls-come-down-report.md) §27.2 established the *evaluator* must not have: a recursion ceiling
 should be a counted number with a diagnostic, so that "does this program compile" is a question
 about the program. Here it is a question about how the compiler was built — an eight-fold
 difference between a `cargo test` and a `cargo test --release`.

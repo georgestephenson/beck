@@ -4,7 +4,7 @@
 //! *"One binary serves `beck build`, `beck check`, `beck lsp` and `beck explain`; there is no
 //! separate language server implementation to drift."* So nothing here parses, checks or infers
 //! anything. It calls [`beck_core::compile_or_library_str`] — the same entry point `beck test`
-//! uses, and for the same reason ([`docs/27`](../../../../../docs/27-walls-report.md) §27.4: a module
+//! uses, and for the same reason ([`docs/27`](../../../../../docs/27-the-walls-come-down-report.md) §27.2: a module
 //! being edited is usually a library) — and translates.
 //!
 //! # Where the answers come from

@@ -1,4 +1,4 @@
-# The program that would embarrass traits (docs/37).
+# The program that would embarrass traits (docs/27).
 #
 # `25-thread.beck` and `27-review.beck` are the precedent: a construct that only `sicp/` exercises
 # is a construct the compiler's own passes never see. An `impl` here is *desugared* into ordinary
@@ -13,9 +13,9 @@
 #     a method;
 #   * an impl on a **union**, whose body matches on its own variants;
 #   * an impl on a **parameterised** type — `impl[T] Priced for Bundle[T]`, one impl covering every
-#     element type, which is docs/36's feature meeting this one.
+#     element type, which is docs/27's feature meeting this one.
 #
-# The trait's effect row is the bound its impls are held to (docs/37 §37.5), so `total` staying pure
+# The trait's effect row is the bound its impls are held to (docs/27 §27.7), so `total` staying pure
 # here is what lets `catalogue` be a `durable` fold at all: a `nondet` in any one impl would place
 # the whole thing.
 #

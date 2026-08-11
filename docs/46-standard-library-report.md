@@ -2,7 +2,7 @@
 
 > **What this is**: [`08`](08-roadmap.md) §8.5.4's Wave 2, begun — strings, collections, JSON, time,
 > and the directory that holds the half of the library written in Beck. It is the bullet
-> §8.5.3's trap 2 said must not be started before [`45`](45-error-rows-report.md), and the first
+> §8.5.3's trap 2 said must not be started before [`27`](27-the-walls-come-down-report.md), and the first
 > thing it added is the reason that was right.
 
 ## 46.1 The division, which is the only interesting decision here
@@ -47,7 +47,7 @@ effects, so a pure caller of `list_fold` stays pure however another caller uses 
 `beck-cli/tests/stdlib.rs` gates the directory rather than a list of names, so a library added and
 not registered is not a thing that can happen. It also asserts each file is still a *library* —
 `beck check` says "a library" — because "a library runs its own tests" and "a library is an
-application" are different claims and [`27`](27-walls-report.md) removed the wall between them
+application" are different claims and [`27`](27-the-walls-come-down-report.md) removed the wall between them
 without merging them.
 
 ## 46.3 The shape the wave was waiting for
@@ -92,9 +92,9 @@ formatter has.
 
 `lib/money.beck` was meant to be an `impl Num for Money`, so that `+` and `-` would work on an
 amount the way they work on SICP §2.5.1's rationals in `sicp/ch2.beck`
-([`41`](41-generic-arithmetic-report.md) built exactly that mechanism). **It cannot be.**
+([`27`](27-the-walls-come-down-report.md) built exactly that mechanism). **It cannot be.**
 
-A trait's declared effect row is a bound every impl is held to ([`37`](37-traits-report.md) §37.5 —
+A trait's declared effect row is a bound every impl is held to ([`27`](27-the-walls-come-down-report.md) §27.7 —
 and that check found a hole in what an *empty* declaration meant, which is why it is thorough). The
 prelude's `Num` declares a pure row. Adding two amounts in different currencies has to fail. So:
 
@@ -110,7 +110,7 @@ operation can fail** — which is most of the interesting ones. A `Decimal` that
 
 The fix is known and is one feature: a trait whose method signatures carry a row *variable*, so an
 impl may be as effectful as its own type requires and a caller inherits exactly that.
-[`33`](33-effect-polymorphism-and-list-patterns-report.md) did precisely this for a user's
+[`27`](27-the-walls-come-down-report.md) did precisely this for a user's
 higher-order definitions — `map`'s `e` — and nothing has done it for traits.
 
 It is recorded the way this project records walls: as a test that starts failing.

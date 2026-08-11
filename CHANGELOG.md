@@ -14,14 +14,19 @@ Newest first.
 
 ### Docs
 
-- **Consolidated 16 reports into two chapters, and changed the rule that produced them.** Reports 70–79
-  (the evaluator's quadratics and constants) became
+- **Consolidated 27 reports into three chapters, and changed the rule that produced them.**
+  Reports 70–79 (the evaluator's quadratics and constants) became
   [`docs/70`](docs/70-the-evaluator-gets-fast-report.md); reports 53 and 57–61 (the Are We Fast Yet
-  ports) became [`docs/53`](docs/53-are-we-fast-yet-report.md). Every measurement, gate and finding
-  is preserved; nine rounds of each report correcting the previous one's figures are not.
-  **199,566 words to 175,481** across 14 fewer files, 16 index rows to 2, and the index itself
-  129 KB to 108 KB. `docs.rs` is the gate: every relative link in every tracked markdown file, and
-  every one out of a rustdoc page, has to land on a file that exists.
+  ports) became [`docs/53`](docs/53-are-we-fast-yet-report.md); reports 27, 31–33, 36–41, 45 and 47
+  (the type and effect system's features, in the order SICP's walls forced) became
+  [`docs/27`](docs/27-the-walls-come-down-report.md). Every measurement, gate, finding and refusal
+  is preserved; what is not is each report's opening paragraph quoting the previous one's "what is
+  still not", and nine rounds of superseded wall-clock figures.
+  **199,566 words to 149,794** across 24 fewer files, 27 index rows to 3, and the index itself
+  129 KB to 101 KB. `docs.rs` is the gate: every relative link in every tracked markdown file, and
+  every one out of a rustdoc page, has to land on a file that exists — and every `§number` in a
+  Rust doc comment was remapped to the section that now carries the claim, rather than to the
+  chapter's front door.
 
 ### The playground
 

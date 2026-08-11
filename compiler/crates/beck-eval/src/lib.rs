@@ -24,7 +24,7 @@
 //!   same log render identically — Phase 0 §18.5 item 4 learned this the hard way.
 //! * **Errors are values, not panics.** A partial operation returns an error carrying its span,
 //!   because a language server has to survive evaluating half-written code.
-//! * **A call in tail position is free, and nothing aborts the process.** `docs/31` §31.2–§31.3.
+//! * **A call in tail position is free, and nothing aborts the process.** `docs/27` §27.2–§27.2.
 //!   Recursion that is not in tail position still costs host stack, so it is bounded by
 //!   [`interp::DEFAULT_MAX_DEPTH`] — and the stack that ceiling needs is [`STACK_BYTES`], which
 //!   whoever drives the evaluator has to supply. [`on_the_evaluator_stack`] is how.

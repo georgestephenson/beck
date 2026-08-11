@@ -535,7 +535,7 @@ impl Checker<'_> {
 
         // An interface publishes the header and not the bodies, exactly as it publishes a `def`'s
         // signature and not its body. What it *does* publish about a method is its **row**, since
-        // `docs/47` made that a property of the impl rather than of the trait: a caller in another
+        // `docs/27` made that a property of the impl rather than of the trait: a caller in another
         // module has nowhere else to learn it.
         if self.mode == super::Mode::Interface {
             let mut sig = sig;
@@ -784,7 +784,7 @@ impl Checker<'_> {
                     let span = item.args[1].span();
                     // The method's own signature with `Self` := the type parameter. Its row is left
                     // to `ty_from_node`, which mints a variable for a written function type — so a
-                    // caller that supplies a pure impl stays pure (`docs/33` §33.2).
+                    // caller that supplies a pure impl stays pure (`docs/27` §27.3).
                     let mut fn_ty: Vec<Node> = m
                         .params
                         .args
@@ -1054,7 +1054,7 @@ impl Checker<'_> {
             for m in &decl.sig.methods {
                 // The signature the importing module will call through: the trait's shape, with
                 // `Self` replaced by this impl's target, and **this impl's** row rather than the
-                // trait's. `docs/47` inverted that: a trait's row is a floor and an impl may be
+                // trait's. `docs/27` inverted that: a trait's row is a floor and an impl may be
                 // more effectful, so taking the row off the trait here would let a fallible method
                 // arrive in another module looking pure.
                 let name = mangle(&i.trait_name, &m.name, &head);
@@ -1111,7 +1111,7 @@ impl Checker<'_> {
                     // A **fresh row variable**, matching what `expand_bounds` mints locally: a
                     // bounded definition is effect-polymorphic in its bounds, so a caller that
                     // supplies a pure impl stays pure and one that supplies a fallible impl
-                    // inherits exactly its failure (`docs/33` §33.2, `docs/47` §47.2).
+                    // inherits exactly its failure (`docs/27` §27.3, `docs/27` §27.7).
                     let row = self.subst.fresh_row();
                     params.push(Ty::fun_eff(
                         m.params
@@ -1300,7 +1300,7 @@ def same(p: Point) -> Str:
 
     #[test]
     fn one_impl_covers_every_argument_of_a_parameterised_type() {
-        // The feature docs/36 built, meeting the feature this one does: `impl[T] Show for Tree[T]`
+        // The feature docs/27 built, meeting the feature this one does: `impl[T] Show for Tree[T]`
         // is one impl, and a call at `Tree[Int]` and a call at `Tree[Str]` both find it.
         let src = "\
 trait Show:
@@ -1436,7 +1436,7 @@ impl Show for Point:
 
     /// An impl may perform more than its trait declares, and the caller inherits it.
     ///
-    /// This **reverses** what `docs/37` §37.5 built, and `docs/47` says why: a trait's row as a
+    /// This **reverses** what `docs/27` §27.7 built, and `docs/27` says why: a trait's row as a
     /// ceiling meant a fallible operation could not be a trait method, so `Money` could not have
     /// `+`. The row is now inferred per impl. Nothing is lost, because what a caller sees is what
     /// the impl does rather than what the trait guessed.
@@ -1474,7 +1474,7 @@ def label(p: Point) -> Str:
     }
 
     /// And a bounded caller is polymorphic in it: the same generic definition is pure with a pure
-    /// impl and effectful with an effectful one, which is `docs/33`'s property applied to a bound.
+    /// impl and effectful with an effectful one, which is `docs/27`'s property applied to a bound.
     #[test]
     fn a_bounded_definition_inherits_the_row_of_whichever_impl_it_is_given() {
         let src = "\
@@ -1685,7 +1685,7 @@ def label[T: Show](x: T) -> Str:
     #[test]
     fn a_declaration_cannot_bound_its_type_parameter() {
         // A bound says what a body may call, and a `model` has no body. Refused rather than
-        // accepted and ignored, which is what it was before docs/39.
+        // accepted and ignored, which is what it was before docs/27.
         let src = "trait Show:\n    def show(self) -> Str\n\nmodel Box[T: Show]:\n    held: T\n";
         let text = errors(src);
         assert!(text.contains("B0316"), "{text}");
@@ -1822,7 +1822,7 @@ def sum(a: Money, b: Money) -> Money:
     fn the_numeric_rule_is_unchanged_where_it_already_had_an_answer() {
         // The whole point of dispatching only when there is something to dispatch to. `1 + true`
         // is a mismatch and not a lecture about traits, and `1 + 1.0` still has no answer —
-        // docs/32 §32.3's refusal to coerce is untouched.
+        // docs/27 §27.2's refusal to coerce is untouched.
         for (src, want) in [
             (
                 "def f(n: Int, b: Bool) -> Int:\n    return n + b\n",

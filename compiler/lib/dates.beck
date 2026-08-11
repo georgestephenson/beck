@@ -102,9 +102,9 @@ def after(ms: Int, d: Duration) -> Int:
 def before(ms: Int, d: Duration) -> Int:
     return ms - d.value
 
-# `+` and `-` on `Duration`, through the prelude trait `Num` (`docs/41`), and `mul`/`div` refusing
+# `+` and `-` on `Duration`, through the prelude trait `Num` (`docs/27`), and `mul`/`div` refusing
 # for the reason the union above gives. The two halves have different rows and that is the whole of
-# `docs/47`: `add` is pure and stays pure, so `of_hours(1) + of_hours(2)` needs no handler, while
+# `docs/27`: `add` is pure and stays pure, so `of_hours(1) + of_hours(2)` needs no handler, while
 # `*` on two durations is a failure the caller has to face.
 impl Num for Duration:
     def add(self, other):

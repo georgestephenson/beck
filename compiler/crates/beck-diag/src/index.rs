@@ -424,7 +424,7 @@ pub const INDEX: &[CodeEntry] = &[
         "`Int`, `Str`, `Bool`, `Float`, `Unit`, `Html`, `Attr`, `list`, `Map`, `Stream`, `Signal`, \
          `Envelope`, `secret` and `internal` are the language's own type names, and a `model`, \
          `union`, `newtype` or `type` may not take one. B0314 has refused the same shadowing for a \
-         type *parameter* since docs/36; a declaration was the production it did not cover, so the \
+         type *parameter* since docs/27; a declaration was the production it did not cover, so the \
          name meant the builtin in one signature and the declaration in the next (docs/87 §87.4).",
     ),
     e(
@@ -434,7 +434,7 @@ pub const INDEX: &[CodeEntry] = &[
         "Unification failed; the message names what was being unified — an argument, a field, a \
          result, or the two branches of an `if`. The branches of an `if` are reported as two \
          alternatives rather than as actual-and-expected: typing one as the other's expectation \
-         is what refused SICP exercise 1.43 (docs/27 §27.3).",
+         is what refused SICP exercise 1.43 (docs/27 §27.2).",
     ),
     w(
         "B0330",

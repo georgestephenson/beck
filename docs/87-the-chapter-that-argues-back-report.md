@@ -5,7 +5,7 @@ Objects, and State", twenty-six `test` blocks and a `property` against the book'
 answers.
 [`08`](08-roadmap.md) §8.5.4's Wave 4 has listed "more of SICP, chapter 3 being the part closest to
 what Beck is for" as free-standing with no predecessors since the wave was written, and
-[`sicp/README.md`](../compiler/sicp/README.md) has said since [`41`](41-generic-arithmetic-report.md)
+[`sicp/README.md`](../compiler/sicp/README.md) has said since [`27`](27-the-walls-come-down-report.md)
 that "chapters 3, 4 and 5 are unattempted, and finding the next wall needs somebody to write more of
 the book". This is chapter 3 written out, and it found three things.
 
@@ -53,7 +53,7 @@ matched on the first run.
 
 **§3.5.3's three tables.** `1.4166666666666665`, `2.8952380952380956`, `3.1415926539752927` and the
 rest are IEEE 754 doubles on both sides, so the assertion is equality rather than a tolerance —
-[`32`](32-numeric-tower-and-polymorphism-report.md) §32.5's property, and the same standard
+[`27`](27-the-walls-come-down-report.md) §27.2's property, and the same standard
 `ch1.beck` holds §1.1.7's `3.00009155413138` to. Getting an operand order wrong moves the last digit.
 `(+ s0 (* -2 s1) s2)` is `(s0 + (-2 × s1)) + s2`, which is what Beck's left-associative `+` gives.
 
@@ -223,7 +223,7 @@ that was written to check somebody else's argument for mutation and turned out t
 |---|---|
 | §3.2, the environment model | **not needed**, §87.2 — the section exists because assignment invalidates the substitution model |
 | §3.3.1, `set-car!` and `set-cdr!` | **refused, and it is the chapter's premise rather than a gap.** Exercises 3.12–3.20 are about what mutation does to shared structure; in Beck there is no shared structure to mutate, so `append!` and `append` cannot differ |
-| §3.3.5, the constraint propagator | **not attempted.** It is the one section left that would be *interesting* rather than mechanical — a constraint network is a dataflow, and Beck's view engine is one ([`24`](24-incremental-views-report.md)) — and the honest reason it is absent is time rather than a wall. Its "Contradiction" is a `raise` ([`45`](45-error-rows-report.md)), and its `forget-value!` is where the analogy would be tested |
+| §3.3.5, the constraint propagator | **not attempted.** It is the one section left that would be *interesting* rather than mechanical — a constraint network is a dataflow, and Beck's view engine is one ([`24`](24-incremental-views-report.md)) — and the honest reason it is absent is time rather than a wall. Its "Contradiction" is a `raise` ([`27`](27-the-walls-come-down-report.md)), and its `forget-value!` is where the analogy would be tested |
 | §3.5.4, streams and delayed evaluation | **not attempted.** `integral` with a delayed integrand is the one place §3.5 needs `delay` in an *argument* rather than in `cons-stream`, and it wants its own look |
 | §3.5.1's memoised `delay` | **refused, and it is a cost rather than an inexpressibility** — §87.7 |
 | A line-count comparison against the Scheme | **not made.** §25.5 asks for one on *translated* exercises, and most of this chapter is re-expressed, where the comparison would measure the reorganisation rather than the notation |

@@ -23,7 +23,7 @@ This is the first two.
 | a fingerprint, a digest of several values, a signed token, `is_uuid` | [`lib/crypto.beck`](../compiler/lib/crypto.beck) | Composition, per [`lib/README.md`](../compiler/lib/README.md)'s division |
 
 `EncodingError` and `UuidError` are declared in the prelude beside `JsonError` and `TimeError`, and
-the decoders **raise** rather than returning a `Result`, which is [`45`](45-error-rows-report.md)'s
+the decoders **raise** rather than returning a `Result`, which is [`27`](27-the-walls-come-down-report.md)'s
 shape and [`46`](46-standard-library-report.md) §46.2's rule applied without a new argument.
 
 **A digest is pure**, and that is the line this group is drawn on rather than a detail of it. The

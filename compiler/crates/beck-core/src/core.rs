@@ -46,7 +46,7 @@ pub enum Prim {
     Rem,
     Neg,
     /// `abs`, `sqrt` and `Int` → `Float`, which are the three the numeric tower needs before any
-    /// of SICP §1.1.7 will run (`docs/32` §32.1). `Abs` is resolved from its operand the way the
+    /// of SICP §1.1.7 will run (`docs/27` §27.2). `Abs` is resolved from its operand the way the
     /// arithmetic operators are; the other two are monomorphic.
     Abs,
     Sqrt,
@@ -66,7 +66,7 @@ pub enum Prim {
     ToStr,
     StrTrim,
     StrToInt,
-    // ---- strings (docs/45 §? — Wave 2's string half). One primitive each, because a string is
+    // ---- strings (docs/27 §? — Wave 2's string half). One primitive each, because a string is
     // where a language's host has to be asked and there is nothing to express in Beck itself.
     StrLen,
     StrSlice,
@@ -103,7 +103,7 @@ pub enum Prim {
     // ---- JSON, and the standard library's first fallible function.
     //
     // `json_parse` raises rather than returning a `Result`, which is the shape
-    // [`docs/45`](../../../../../docs/45-error-rows-report.md) settled and the reason §8.5.3's trap 2
+    // [`docs/27`](../../../../../docs/27-the-walls-come-down-report.md) settled and the reason §8.5.3's trap 2
     // said the library had to wait for it: a caller that wants a `Result` writes `try:`, and a
     // caller inside something already fallible writes nothing at all.
     JsonParse,
@@ -467,7 +467,7 @@ impl Pattern {
     /// One method rather than a `match` at each of the three call sites, because those three were
     /// `Bind`/`Ctor`/`_ => {}` — and a new pattern kind falling into the `_` would have been a
     /// silent miscount in the splitter's variable supply and a false *free* variable in the plan's
-    /// analysis. Neither would have failed a test until a program used one (`docs/33` §33.5).
+    /// analysis. Neither would have failed a test until a program used one (`docs/27` §27.3).
     pub fn binders(&self) -> Vec<VarId> {
         let mut out = Vec::new();
         self.collect_binders(&mut out);
@@ -798,7 +798,7 @@ pub enum Value {
     /// than `1.0`, so `<` answered backwards for every negative number and `sort_by` sorted the
     /// negatives in reverse. [`Value::float`] applies the standard monotone transform instead
     /// (flip the sign bit for a positive, invert every bit for a negative), which makes the two
-    /// orders the same order. `docs/32` §32.2.
+    /// orders the same order. `docs/27` §27.8.
     Float(u64),
     /// Text, with the two facts a character-indexed language needs about it: how many characters
     /// there are, and whether a character index is a byte index. [`Text`] is why.
@@ -1492,7 +1492,7 @@ impl Value {
     /// `-0.0` becomes `0.0` and every NaN becomes one NaN, because [`Value`] is `Eq` and `Ord` and
     /// a fold's accumulator is compared, hashed and used as a map key. IEEE 754 says `NaN != NaN`
     /// and `-0.0 == 0.0`; both are irreconcilable with a total order, and the total order is the
-    /// one §3.7 needs. So Beck's `==` on reals is *structural*, and `docs/32` §32.2 says so where
+    /// one §3.7 needs. So Beck's `==` on reals is *structural*, and `docs/27` §27.8 says so where
     /// somebody porting numeric code will read it.
     pub fn float(f: f64) -> Value {
         let f = if f.is_nan() {
@@ -1903,7 +1903,7 @@ mod tests {
     /// order arithmetic uses are one order.
     ///
     /// `f64::to_bits` does not have it — `(-1.0).to_bits()` is larger than `(1.0).to_bits()`
-    /// because the sign bit is the top one — and that is the defect docs/32 §32.2 records. This is
+    /// because the sign bit is the top one — and that is the defect docs/27 §27.8 records. This is
     /// the test that would have caught it, checked across the sign, the zeroes and the infinities
     /// rather than on one example.
     #[test]

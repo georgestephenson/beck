@@ -6,7 +6,7 @@
 # design question: **what `/` does when the quotient does not terminate.** §56.3 is that decision.
 #
 # A `Decimal` is an exact rational whose denominator is a power of ten: `units` scaled by
-# `10^-scale`. That is not the same thing as a real — `docs/32`'s `Float` is IEEE 754 and 0.1 is not
+# `10^-scale`. That is not the same thing as a real — `docs/27`'s `Float` is IEEE 754 and 0.1 is not
 # representable in it — and it is not the same thing as a rational either, because a third has no
 # decimal expansion and this type says so out loud rather than rounding.
 
@@ -152,7 +152,7 @@ def negate_decimal(d: Decimal) -> Decimal:
 def abs_decimal(d: Decimal) -> Decimal:
     return Decimal(units=abs_big(d.units), scale=d.scale)
 
-# `+`, `-`, `*` and `/` on `Decimal`, through the prelude trait `Num` (`docs/41`). The fourth floor
+# `+`, `-`, `*` and `/` on `Decimal`, through the prelude trait `Num` (`docs/27`). The fourth floor
 # of the tower added from outside the compiler, and the second built on another one — `Decimal`'s
 # arithmetic is `Big`'s, and `Big`'s `+` being pure is why this one's is.
 #
@@ -210,7 +210,7 @@ def expand(
 ## The divisor is non-zero at every call below, so the `Err` arm is unreachable — and writing it is
 ## what keeps this file's row a single error type. A library whose callers have to handle two
 ## unrelated error unions because of what it happens to be built on is a library leaking its
-## implementation, and `try:` is the tool for not doing that (`docs/45`).
+## implementation, and `try:` is the tool for not doing that (`docs/27`).
 def divide_bigs(x: Big, y: Big, a: Decimal, b: Decimal) -> Division uses raises(DecimalError):
     match (try: divide(x, y)):
         case Ok(value):

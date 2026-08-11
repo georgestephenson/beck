@@ -10,7 +10,7 @@
 #
 # **It also found two gaps in the prelude**, which is `docs/53` §53.5 and is the more interesting
 # half of this port: `Simulator` needs `Math.cos` and `Math.sin`, and `voxelHash` needs a `(int)`
-# cast on a real. Beck's reals arrived in `docs/32` with `sqrt` and nothing else, and three phases
+# cast on a real. Beck's reals arrived in `docs/27` with `sqrt` and nothing else, and three phases
 # of programs never asked for more. `sin`, `cos` and `trunc` are primitives now.
 #
 # The tree is an **arena**: `Map[Int, RbNode]` with integer handles and `-1` for null, which is
@@ -76,8 +76,8 @@ def good_voxel_size() -> Float:
 # The tree's keys and values
 #
 # `RedBlackTree<K extends Comparable<K>, V>` is generic, and the benchmark instantiates it at three
-# value types in one program. A generic tree is expressible in Beck — `docs/36`'s parameterised
-# types and `docs/39`'s bounds are exactly that — and the port uses unions instead because one
+# value types in one program. A generic tree is expressible in Beck — `docs/27`'s parameterised
+# types and `docs/27`'s bounds are exactly that — and the port uses unions instead because one
 # program's worth of variants says in one place what three instantiations would say in three. It is
 # a port decision rather than a limitation, and it is written down because the difference matters
 # to anyone reading this beside the Java.

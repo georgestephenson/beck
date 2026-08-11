@@ -37,7 +37,7 @@ The children are the scope's `let`s. The tail is everything after the last of th
 once, after the join, with every child's result in scope. That is the whole notation.
 
 It is a **form**, so it is lexically scoped by construction — the same argument
-[`45`](45-error-rows-report.md) §45.2 made for `try:`, and §38.4's sharper Beck-specific version of
+[`27`](27-the-walls-come-down-report.md) §27.7 made for `try:`, and §38.4's sharper Beck-specific version of
 it: in a language where effects decide placement, an accidentally intercepted effect would be an
 accidental *re-placement*. A nursery whose membership were decided at run time would be the dynamic
 handler search POPL 2019 argues against.
@@ -54,8 +54,8 @@ no handle type, so a child cannot outlive its scope, and the only thing in the l
 read a child's result is the lambda the scope itself built. Structured concurrency's central rule is
 usually a discipline a nursery API enforces at run time; here it is the shape of one IR node.
 
-**No IR node and one evaluator case.** [`37`](37-traits-report.md) §37.8 item 3 and
-[`39`](39-bounds-report.md) each cost neither, which is one better; this one needs a case because a
+**No IR node and one evaluator case.** [`27`](27-the-walls-come-down-report.md) §27.1 item 3 and
+[`27`](27-the-walls-come-down-report.md) each cost neither, which is one better; this one needs a case because a
 scope is the only thing in the language that runs several expressions and then a fourth, and
 `CoreKind` has no node for that. What it does *not* need is a `Task` type, a handle, a scheduler or
 a runtime — which is the part §38.4 said to aim for.
@@ -226,7 +226,7 @@ corpus, through both surfaces, asserting three things: printing is idempotent, t
 re-parses, and it re-parses to a structurally equal tree. Ten programs failed it, in three ways:
 
 * **A block form used as an operand printed as a call.** `try:` is an *expression*
-  ([`45`](45-error-rows-report.md) §45.2), and `expect (try: benchmark()) == Ok(True)` is how eight
+  ([`27`](27-the-walls-come-down-report.md) §27.7), and `expect (try: benchmark()) == Ok(True)` is how eight
   files in this tree assert a fallible answer. Every one printed as `try(…)`, which is not surface
   syntax — so `beck fmt` on `lib/bignum.beck`, `lib/dates.beck`, `lib/decimal.beck`,
   `lib/money.beck`, `clbg/pidigits.beck`, `awfy/deltablue.beck`, `awfy/json.beck` and

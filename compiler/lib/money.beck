@@ -8,7 +8,7 @@
 #
 # So `Money` is a `model` over minor units with an `impl Num`, the same shape SICP §2.5.1's
 # rationals take in `sicp/ch2.beck`. Writing it found the reason it could not be, once — a trait's
-# row was a ceiling and adding two currencies has to fail — and that finding became `docs/47`.
+# row was a ceiling and adding two currencies has to fail — and that finding became `docs/27`.
 # This file is what the fix is for.
 #
 # What it deliberately is *not*: a general decimal. There is no arbitrary precision (that is Wave
@@ -45,16 +45,16 @@ def zero_of(currency: Str) -> Money:
 ##
 ## Every operation that combines two amounts goes through this, so "you cannot add pounds to euros"
 ## is one line rather than a rule four functions each remember. `raises(MoneyError)` is inferred
-## from it and travels outwards by itself — which is `docs/45`'s property doing the work a library
+## from it and travels outwards by itself — which is `docs/27`'s property doing the work a library
 ## is exactly where you want it doing.
 def same_currency(a: Money, b: Money) -> Str uses raises(MoneyError):
     if a.currency != b.currency:
         raise MixedCurrency(left=a.currency, right=b.currency)
     return a.currency
 
-# `+` and `-` on `Money`, through the prelude trait `Num` (`docs/41`).
+# `+` and `-` on `Money`, through the prelude trait `Num` (`docs/27`).
 #
-# This file is the reason effect-polymorphic traits exist (`docs/47`). Until they did, a trait's
+# This file is the reason effect-polymorphic traits exist (`docs/27`). Until they did, a trait's
 # declared row was a *ceiling* every impl was held to, `Num` is pure, and adding two amounts in
 # different currencies has to fail — so an operator was unavailable to any type whose operation
 # could fail, which is most of the interesting ones. The row is now inferred per impl and travels
@@ -111,7 +111,7 @@ def split(m: Money, parts: Int) -> list[Money] uses raises(MoneyError):
 ##
 ## A range is the one piece of this file that is *not* about money, and it is written in Beck for
 ## the same reason the rest is: it can be. It is a tail-recursive accumulation, which costs no host
-## stack at all (`docs/31`), so `range_to(250_000)` is a list and not a crash.
+## stack at all (`docs/27`), so `range_to(250_000)` is a list and not a crash.
 def range_to(n: Int) -> list[Int]:
     return range_from(0, n, [])
 

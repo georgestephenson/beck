@@ -16,7 +16,7 @@ struct gained a field that fourteen passes would have walked straight past.
 `|` is an infix operator in the expression grammar, at the lowest precedence, producing an ordinary
 `Node` — which is [`02`](02-syntax.md) §2.6's rule ("patterns *are* expressions … nothing new to
 represent") and the same division `*rest` has had since
-[`33`](33-effect-polymorphism-and-list-patterns-report.md): the grammar accepts it anywhere and the
+[`27`](27-the-walls-come-down-report.md): the grammar accepts it anywhere and the
 **checker** is what refuses it where a pattern is not wanted (`B0357`). The token was free because
 [`53`](53-are-we-fast-yet-report.md) §53.7 established that Beck has no bitwise operators.
 
@@ -85,7 +85,7 @@ walks do not see is not a compile error. It is a `Core` that
 be moved out from under it — and a `Core` that [`70`](70-the-evaluator-gets-fast-report.md)'s frame pass
 never counts a slot for, and a `Core` whose variables the plan reports as *free*.
 
-This is [`33`](33-effect-polymorphism-and-list-patterns-report.md) §33.5's finding, one struct over.
+This is [`27`](27-the-walls-come-down-report.md) §27.3's finding, one struct over.
 That report added `Pattern::binders` for exactly this reason — "a new pattern kind falling into that
 `_` is not a compile error; it is a silent miscount" — and the answer here is the same shape:
 `Arm::exprs()` yields every `Core` an arm holds, in the order they run, and all fourteen sites go
@@ -155,7 +155,7 @@ treats as a bug report. It is listed rather than claimed.
 |---|---|
 | [`90`](90-nested-patterns-report.md) §90.6 | "**Guards** … not built, and it is the largest thing left in this bullet" and "**Or-patterns** … not built. The check would need no change: an or-pattern is two rows of the same matrix". Both built; the second forecast was right about the algorithm and wrong that it cost nothing — §91.1's bug is what it cost |
 | [`08`](08-roadmap.md) | The concurrency-and-errors bullet's remainder is now structured concurrency's missing backend alone |
-| [`33`](33-effect-polymorphism-and-list-patterns-report.md) §33.5 | Its `Pattern::binders` argument, applied to `Arm` (§91.3) |
+| [`27`](27-the-walls-come-down-report.md) §27.3 | Its `Pattern::binders` argument, applied to `Arm` (§91.3) |
 | The error index | `B0356`, `B0357` and `B0358` are new |
 
 ## 91.8 What Phase 3 is still not

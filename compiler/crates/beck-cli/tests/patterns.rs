@@ -2,7 +2,7 @@
 //!
 //! [`docs/08-roadmap.md`](../../../../docs/08-roadmap.md)'s concurrency-and-errors bullet has named
 //! "pattern matching completion" as its remaining half since Phase 3 began, and
-//! [`docs/33`](../../../../docs/33-effect-polymorphism-and-list-patterns-report.md) §33.5 said what
+//! [`docs/27`](../../../../docs/27-the-walls-come-down-report.md) §27.3 said what
 //! was missing in one sentence: "**nested patterns are still refused** … patterns in Beck are one
 //! level deep, which is what §3.1's exhaustiveness check needs and no more".
 //! [`docs/90`](../../../../docs/90-nested-patterns-report.md) is what building them found.
@@ -72,7 +72,7 @@ union Found:
 
 #[test]
 fn a_pattern_matches_inside_a_field_and_binds_what_is_there() {
-    // The shape `docs/33` §33.5 refused, and the reason to want it: without the inner pattern this
+    // The shape `docs/27` §27.3 refused, and the reason to want it: without the inner pattern this
     // is a `match` inside a `match`, which is three more lines and a name for a value that has one.
     let out = run_tests(
         "nested.beck",

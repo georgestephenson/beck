@@ -1,7 +1,7 @@
 # SICP chapter 3 — "Modularity, Objects, and State".
 #
 # `docs/08` §8.5.4 lists "more of SICP, chapter 3 being the part closest to what Beck is for" as a
-# free-standing item with no predecessors, and `sicp/README.md` has said since docs/41 that
+# free-standing item with no predecessors, and `sicp/README.md` has said since docs/27 that
 # "chapters 3, 4 and 5 are unattempted, and finding the next wall needs somebody to write more of
 # the book". This is chapter 3 attempted.
 #
