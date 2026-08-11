@@ -58,7 +58,7 @@ that starts being able to fail a breaking change, in the same sentence it alread
 library that starts phoning home. Several labels in one row get a name —
 `row Fallible = raises(Refusal), log` — because rows of five and six labels are ordinary and a
 signature nobody reads is not a contract.
-[`45`](45-error-rows-report.md) is what was built and what was not.
+[`27`](27-the-walls-come-down-report.md) is what was built and what was not.
 
 > **Correction, Phase 2** ([`20`](20-phase-2-report.md) §20.4 item 3). This paragraph originally put
 > `time` and `rand` in the ambient set as well, "implicitly available *outside folds* … except where
@@ -415,10 +415,10 @@ State schema evolution is a *language* concern, not an ops concern (Lamdera's pr
 
 1. HM + ADTs + traits; `Stream`/`Signal`/`fold`/`durable` typed but **placement fully manual**
    (`@on`), matching the original sketch exactly. — **Phase 1**, except traits, which parsed and
-   warned until Phase 3 checked them: declarations and impls ([`37`](37-traits-report.md)), bounds
-   on a type parameter ([`39`](39-bounds-report.md)), the `.becki` boundary
-   ([`40`](40-traits-across-modules-report.md)) and the arithmetic operators
-   ([`41`](41-generic-arithmetic-report.md)). Dispatch is static and an impl desugars to ordinary
+   warned until Phase 3 checked them: declarations and impls ([`27`](27-the-walls-come-down-report.md)), bounds
+   on a type parameter ([`27`](27-the-walls-come-down-report.md)), the `.becki` boundary
+   ([`27`](27-the-walls-come-down-report.md)) and the arithmetic operators
+   ([`27`](27-the-walls-come-down-report.md)). Dispatch is static and an impl desugars to ordinary
    definitions, so the IR and the evaluator are unchanged.
 2. Effect rows inferred; placement manual but **verified** (reject `@on(client)` + `durable`;
    reject impure folds). Already novel, already shippable. — **Phase 2**.

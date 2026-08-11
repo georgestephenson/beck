@@ -19,6 +19,10 @@ beck-host.workspace = true
 beck-infra.workspace = true
 beck-macro.workspace = true
 beck-syntax.workspace = true
+# A share link carries the program (`src/share.rs`), and base64 of raw source is 4/3 of the source.
+# The backend is `miniz_oxide` — Rust rather than a vendored zlib — which is why a compressor
+# crosses to `wasm32-unknown-unknown` at all (docs/adr/0025).
+flate2.workspace = true
 serde_json.workspace = true
 
 # The other half of this crate: `beck play` serves the page over HTTP so a browser can load a

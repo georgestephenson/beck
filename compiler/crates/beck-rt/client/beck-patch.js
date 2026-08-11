@@ -325,6 +325,16 @@
   // calls `handlers.open` *after* returning — a transport that is ready the moment it is dialled
   // has to defer, because `open` is where the `hello` frame is sent and it sends it through the
   // object `dial` has not handed back yet.
+  // Where the mode's own artefacts come from, as a seam — the kernel module and the component's
+  // bundle in Mode B. A deployment fetches them from the origin it was served from, on the two
+  // reserved routes `beck_rt::http` answers; the playground has no server behind the frame, so it
+  // hands over the bundle its worker derived and reads the kernel from the directory the page was
+  // deployed to (docs/103).
+  //
+  // The contract: `asset(name)` returns a promise of a `Response`, because that is what
+  // `WebAssembly.instantiateStreaming` takes and a synthetic one is a constructor call.
+  const asset = (name) => fetch("/" + name);
+
   const websocket = (handlers) => {
     const url = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/socket";
     const socket = new WebSocket(url);
@@ -449,8 +459,11 @@
 
   // `dial` is deliberately absent rather than null: a page that wants a different transport sets
   // it on this object before the mode's script runs, and one that does not gets a websocket.
+  // `asset` is present and overridable for the same reason, and `shell` says whether this document
+  // may cache itself — a frame with no origin of its own may not, and says so rather than failing a
+  // registration nobody reads.
   window.beck = {
     build, apply, uuid7, fill, capture, connect, announce, ready, route, here, stats, inspect,
-    devtools,
+    devtools, asset, shell: true,
   };
 })();

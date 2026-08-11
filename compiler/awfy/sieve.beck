@@ -16,7 +16,7 @@ def benchmark() -> Int:
 ##
 ## Tail-recursive on purpose rather than by accident. The Java is a `for` with a nested `while`, and
 ## a transcription that recursed non-tail would spend 5,000 host frames on a loop that needs none
-## — which `docs/31` made a property of the language rather than a hope about the optimiser.
+## — which `docs/27` made a property of the language rather than a hope about the optimiser.
 def sieve(i: Int, size: Int, crossed: Map[Int, Bool], count: Int) -> Int:
     if i > size:
         return count

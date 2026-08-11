@@ -301,7 +301,7 @@ fn building_a_list_by_accumulation_costs_the_same_per_element_however_long_it_ge
 /// with no spare capacity, so `+` allocated and copied both sides; `str_len` counted characters and
 /// `str_slice` skipped to its start, so both were `O(n)` in the string rather than in the answer.
 /// A loop that builds text was `O(n²)` and a loop that reads it by index was `O(n²)` — `docs/70`
-/// §70.6 measured them and `docs/71` is the fix: a string carries its character count and whether
+/// §70.2 measured them and `docs/70` is the fix: a string carries its character count and whether
 /// it is ASCII, and `+` pushes into the left side when the last-use analysis proves nobody else
 /// holds it.
 ///
@@ -359,16 +359,16 @@ fn text_costs_the_same_per_character_however_long_it_gets() {
     assert!(
         long < short * 3.0,
         "sixteen times the characters cost {:.1}× as much per character ({short:.0} ns → \
-         {long:.0} ns), which is the shape of a copy per append or a walk per index — see docs/71",
+         {long:.0} ns), which is the shape of a copy per append or a walk per index — see docs/70",
         long / short
     );
 }
 
 /// The same shape as the two gates above, asserted **deterministically**: the *budget* sees it.
 ///
-/// `docs/70` §70.7 had to say the opposite — "it cannot be a fuel assertion […] a primitive that
+/// `docs/70` §70.6 had to say the opposite — "it cannot be a fuel assertion […] a primitive that
 /// copies ten thousand values is one step" — and that was true of a budget that counted nodes.
-/// `docs/72` made `--fuel` charge for the work a primitive does over a length the caller chose, so
+/// `docs/70` made `--fuel` charge for the work a primitive does over a length the caller chose, so
 /// a copy per append is now visible to it, and this gate needs no clock at all: same numbers on any
 /// machine, no 3× slack for a shared runner, no [`docs/13`](../../../../docs/13-testing.md) §13.7
 /// caveat.
@@ -408,7 +408,7 @@ fn the_budget_itself_shows_that_accumulating_is_linear() {
         assert!(
             out.status.success(),
             "accumulating {n} elements needed more than {PER_ELEMENT} steps each, which is the \
-             shape of a copy per append rather than a push — see docs/70 and docs/72:\n{}{}",
+             shape of a copy per append rather than a push — see docs/70 and docs/70:\n{}{}",
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );
@@ -429,10 +429,10 @@ fn the_budget_itself_shows_that_accumulating_is_linear() {
 /// mentions — the exclusion that keeps a closure from having its captures moved out from under it,
 /// applied to a variable the closure itself binds. So the fold form stayed `O(n²)` for three
 /// reports while the recursive form was linear, which is `docs/19` §19.4's defect in its third
-/// place. `docs/79` is the fix: a lambda body is analysed as the frame it is.
+/// place. `docs/70` is the fix: a lambda body is analysed as the frame it is.
 ///
 /// Deterministic, like the gate above and for the same reason: the budget charges a primitive for
-/// the work it does over a length the caller chose (`docs/72`), so a copy per append is visible to
+/// the work it does over a length the caller chose (`docs/70`), so a copy per append is visible to
 /// it. Measured at 18 steps an element either side of 1,000 and 8,000; 25 is that with room to
 /// spare, against the 640 and 5,120 an element the copying version needed — which is the shape
 /// itself, since eight times the elements cost eight times as much *each*.
@@ -467,7 +467,7 @@ fn accumulating_inside_a_fold_costs_the_same_per_element_however_long_it_gets() 
         assert!(
             out.status.success(),
             "folding {n} elements into a list needed more than {PER_ELEMENT} steps each, which is \
-             the shape of a copy per append rather than a push — see docs/79:\n{}{}",
+             the shape of a copy per append rather than a push — see docs/70:\n{}{}",
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );

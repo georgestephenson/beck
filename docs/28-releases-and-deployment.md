@@ -126,7 +126,7 @@ Debts found by the Phase 3 review (2026-08) that no report names, smallest first
   three near-identical compile-and-report helpers should be one.
 - redb 2→4: [ADR-0003](adr/0003-redb-held-at-2.md).
 - `check.rs` (3,012 lines) and the remaining walls are already on the record
-  ([`22`](22-phase-3-report.md) §22.6, [`27`](27-walls-report.md) §27.7,
+  ([`22`](22-phase-3-report.md) §22.6, [`27`](27-the-walls-come-down-report.md) §27.10,
   [`25`](25-benchmarks-and-expressiveness.md) §25.7) and are not repeated here.
 
 ## 28.7 What this document refuses

@@ -68,7 +68,7 @@ is where the code generator lives, not what the process boundary is for.
 - **A native backend on a machine with no LLVM.** Which is most containers.
 - **`return_call`.** Cranelift verifies that a tail call discards its frame and refuses the function
   otherwise, which is the same guarantee `musttail` gives and what
-  [`31`](../31-tail-calls-report.md)'s language property needs from any backend.
+  [`27`](../27-the-walls-come-down-report.md)'s language property needs from any backend.
 
 ## What was considered and refused
 

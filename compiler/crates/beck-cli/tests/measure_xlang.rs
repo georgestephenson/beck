@@ -324,7 +324,7 @@ fn beck_beside_five_other_languages() {
 /// Four spellings of one loop, all compiled by the same `clang -O2`, so the only variable is what
 /// the language demands. `xlang/README.md` says what each is; the row that matters is `key`, which
 /// is what `beck-llvm` emits today — if Beck's `image` number lands on it, the code generation is
-/// at parity and what is left is the price of `docs/32` §32.2's structural equality on reals.
+/// at parity and what is left is the price of `docs/27` §27.8's structural equality on reals.
 #[test]
 fn what_the_mandelbrot_gap_is_made_of() {
     let Some(toolchain) = beck_llvm::Toolchain::find() else {

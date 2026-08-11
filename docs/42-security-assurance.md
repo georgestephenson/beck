@@ -96,7 +96,7 @@ Measured thresholds, bisected on `0853b79`:
 | release | 50,000 | 55,000 | ~110 KB |
 
 The debug figure is not stable across commits — it was ~3,000 one commit earlier, and moved when
-[`39`](39-bounds-report.md)'s work changed the checker's frames. That instability is not an aside;
+[`27`](27-the-walls-come-down-report.md)'s work changed the checker's frames. That instability is not an aside;
 it is the defect, restated as a number.
 
 Three observations, in increasing order of how much they should sting.

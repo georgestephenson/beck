@@ -122,7 +122,7 @@ dependencies whose signatures didn't change.
 > slicer — Phase 2's debt, delivered here rather than listed below — the language's own means of
 > abstraction, and now **`Result` and error rows**, which is the first half of the
 > structured-concurrency-and-errors bullet and the piece §8.5.3 trap 2 says the standard library
-> may not be written before ([`45`](45-error-rows-report.md)). A fifth, incremental views, has its
+> may not be written before ([`27`](27-the-walls-come-down-report.md)). A fifth, incremental views, has its
 > engine and its shared dataflow but not its read models, its pgwire exposure or its fusion. A
 > sixth, the expressiveness suite, has started and runs two chapters. Of the fourteen below, eight
 > are untouched.
@@ -209,23 +209,23 @@ dependencies whose signatures didn't change.
 > The nine other bullets are **untouched**, and [`26`](26-arrangement-sharing-report.md) §26.9 names
 > them one at a time rather than by omission. Of the two added since (§8.4), the
 > means-of-abstraction bullet is **done** — all six walls
-> ([`27`](27-walls-report.md), [`31`](31-tail-calls-report.md),
-> [`32`](32-numeric-tower-and-polymorphism-report.md)), and the three that removing them wrote
-> ([`33`](33-effect-polymorphism-and-list-patterns-report.md),
-> [`36`](36-parameterised-types-report.md), [`41`](41-generic-arithmetic-report.md)), with traits
-> across [`37`](37-traits-report.md), [`39`](39-bounds-report.md) and
-> [`40`](40-traits-across-modules-report.md) — and the expressiveness suite runs two chapters of
+> ([`27`](27-the-walls-come-down-report.md), [`27`](27-the-walls-come-down-report.md),
+> [`27`](27-the-walls-come-down-report.md)), and the three that removing them wrote
+> ([`27`](27-the-walls-come-down-report.md),
+> [`27`](27-the-walls-come-down-report.md), [`27`](27-the-walls-come-down-report.md)), with traits
+> across [`27`](27-the-walls-come-down-report.md), [`27`](27-the-walls-come-down-report.md) and
+> [`27`](27-the-walls-come-down-report.md) — and the expressiveness suite runs two chapters of
 > SICP against the book's own answers.
 >
 > Removing the six walls wrote three more, and all three came down too: a `list[T]` may be taken
-> apart ([`33`](33-effect-polymorphism-and-list-patterns-report.md)), a `model`, a `union`, a
-> `newtype` and a `type` may take a type parameter ([`36`](36-parameterised-types-report.md)), and
+> apart ([`27`](27-the-walls-come-down-report.md)), a `model`, a `union`, a
+> `newtype` and a `type` may take a type parameter ([`27`](27-the-walls-come-down-report.md)), and
 > `+` reaches a type the compiler does not know about
-> ([`41`](41-generic-arithmetic-report.md)). The last refusal file said **traits**, and four reports
+> ([`27`](27-the-walls-come-down-report.md)). The last refusal file said **traits**, and four reports
 > answered it: declarations, impls, coherence and static dispatch in
-> [`37`](37-traits-report.md), bounds and dictionary passing in [`39`](39-bounds-report.md), the
-> module boundary in [`40`](40-traits-across-modules-report.md), and the operators in
-> [`41`](41-generic-arithmetic-report.md) — which gives §2.1.1 its exact rationals and leaves
+> [`27`](27-the-walls-come-down-report.md), bounds and dictionary passing in [`27`](27-the-walls-come-down-report.md), the
+> module boundary in [`27`](27-the-walls-come-down-report.md), and the operators in
+> [`27`](27-the-walls-come-down-report.md) — which gives §2.1.1 its exact rationals and leaves
 > `sicp/refusals/` **empty**. That is the narrow claim that every wall this project has *found* has
 > been removed, not that Beck expresses SICP, and `sicp/refusals/README.md` is where the difference
 > is written down. The standard-library bullet has no remaining blocker and is work rather than
@@ -290,13 +290,13 @@ dependencies whose signatures didn't change.
   for, and Phase 2 shipped with no way for them to write a single test about their own program.
   `beck test --update` for page snapshots is the part that did not ship.
 - Structured concurrency, `Result`/error rows, `match` exhaustiveness, pattern matching completion.
-  *`Result`/error rows are **built** ([`45`](45-error-rows-report.md)): failure is the effect atom
+  *`Result`/error rows are **built** ([`27`](27-the-walls-come-down-report.md)): failure is the effect atom
   `raises(E)`, `try:` is the handler that reifies it, and row aliases arrived with them. Nothing was
   added to the effect system to make that work, which is the point — inference, the `uses` bound,
   `.becki` and `--wire-compat` all applied to failure unchanged. Structured concurrency is
   **built** ([`80`](80-a-scope-owns-its-children-report.md)): `parallel:` is a scope whose
   bindings are its children, and what it lacks is a backend that runs two of them at once
-  (§80.5). `match` exhaustiveness is built for unions ([`33`](33-effect-polymorphism-and-list-patterns-report.md)
+  (§80.5). `match` exhaustiveness is built for unions ([`27`](27-the-walls-come-down-report.md)
   added lists). **Pattern matching nests** ([`90`](90-nested-patterns-report.md)):
   `case Some(Circle(r))`, a literal or a constructor wherever a binder goes, through a type
   parameter and inside a list — and the exhaustiveness check was rebuilt for it, because a set of
@@ -322,48 +322,48 @@ dependencies whose signatures didn't change.
 - Standard library v1: collections, strings, time, money/decimal, HTTP client, JSON, UUID, crypto
   primitives (delegated to `ring`/`aws-lc-rs`, not hand-rolled). **Reals first**, because §25.6
   measures that §1.1.7 of SICP — the first substantial program in the book — does not typecheck
-  without them. *Reals are **built** ([`32`](32-numeric-tower-and-polymorphism-report.md)): §1.1.7
+  without them. *Reals are **built** ([`27`](27-the-walls-come-down-report.md)): §1.1.7
   runs and reproduces the doubles the book prints. Exact rationals and bignums are not, and §2.1.1
   of SICP is about the first of those rather than about reals. Collections, strings, time,
   money/decimal, HTTP, JSON, UUID and crypto are untouched. A fold over a list *can* now be written
-  ([`33`](33-effect-polymorphism-and-list-patterns-report.md)) — and so can a library whose callers
-  do not inherit each other's effects, which §33.8 records as the precondition nobody had listed.
+  ([`27`](27-the-walls-come-down-report.md)) — and so can a library whose callers
+  do not inherit each other's effects, which §27.1 records as the precondition nobody had listed.
   Exact rationals are now expressible as a user's type rather than a compiler's, because `+`
-  resolves through the prelude trait `Num` ([`41`](41-generic-arithmetic-report.md)) — which is a
+  resolves through the prelude trait `Num` ([`27`](27-the-walls-come-down-report.md)) — which is a
   mechanism the standard library can be built on and not a standard library. Bignums are still not
   built, and neither is coercion between numeric types.*
   ***The first half is now built** ([`46`](46-standard-library-report.md)): strings, list and map
   collections, JSON and time as thirty-one primitives, plus `compiler/lib/` — the half written in
   Beck, three libraries with their own tests. HTTP, crypto, decimal, bignums and numeric coercion
   are untouched, and §46.6 is the item-by-item list. The `Num` mechanism turned out not to be
-  enough for money — §46.5 is the wall — and [`47`](47-effect-polymorphic-traits-report.md) took it
+  enough for money — §46.5 is the wall — and [`27`](27-the-walls-come-down-report.md) took it
   down: an impl may now be more effectful than its trait, so `Money` has its operator.*
 - **The language's own means of abstraction, which four phases had never been pointed at**
   ([`25`](25-benchmarks-and-expressiveness.md) §25.6, measured; §25.7 orders them). Every corpus
   program is shaped like the todo sketch, which is why none of these had surfaced. ***All six are
   built.** Running a module with no merge point, recursive and forward-referencing types, and the
   `B0320` row-unification defect that refused an `if` over two function values
-  ([`27`](27-walls-report.md)); proper tail calls, with the bounded-depth diagnostic **as well as**
+  ([`27`](27-the-walls-come-down-report.md)); proper tail calls, with the bounded-depth diagnostic **as well as**
   rather than instead of them, so no Beck program aborts its own process any more
-  ([`31`](31-tail-calls-report.md)); and reals plus user-written polymorphic definitions
-  ([`32`](32-numeric-tower-and-polymorphism-report.md)). Everything that stood in their place is
+  ([`27`](27-the-walls-come-down-report.md)); and reals plus user-written polymorphic definitions
+  ([`27`](27-the-walls-come-down-report.md)). Everything that stood in their place is
   built too: effect polymorphism for a user's higher-order definition and a way to take a `list[T]`
-  apart ([`33`](33-effect-polymorphism-and-list-patterns-report.md)), type parameters on a `model`,
-  a `union`, a `newtype` and a `type` ([`36`](36-parameterised-types-report.md)), and traits —
-  declarations and impls ([`37`](37-traits-report.md)), bounds
-  ([`39`](39-bounds-report.md)), the `.becki` boundary
-  ([`40`](40-traits-across-modules-report.md)) and the operators
-  ([`41`](41-generic-arithmetic-report.md)). This bullet is **done**; what the suite below needs
+  apart ([`27`](27-the-walls-come-down-report.md)), type parameters on a `model`,
+  a `union`, a `newtype` and a `type` ([`27`](27-the-walls-come-down-report.md)), and traits —
+  declarations and impls ([`27`](27-the-walls-come-down-report.md)), bounds
+  ([`27`](27-the-walls-come-down-report.md)), the `.becki` boundary
+  ([`27`](27-the-walls-come-down-report.md)) and the operators
+  ([`27`](27-the-walls-come-down-report.md)). This bullet is **done**; what the suite below needs
   next is more of the book rather than more of the language.*
 - **The expressiveness suite** ([`25`](25-benchmarks-and-expressiveness.md) §25.5, D18): SICP
   stage 1, and Felleisen's criterion answered for the special forms the book introduces. It needs
   macros and nothing else, so it starts now and does not wait on the bullet above. *Chapter 1 is
-  complete and chapter 2 reaches §2.2's closure property ([`27`](27-walls-report.md)); both run as
+  complete and chapter 2 reaches §2.2's closure property ([`27`](27-the-walls-come-down-report.md)); both run as
   **libraries**, with no application wrapped around them. Chapter 1 also carries §1.2.1's *property*
   — an iterative process running a quarter of a million levels deep — now that there is one to carry
-  ([`31`](31-tail-calls-report.md)), and §1.1.7/§1.3.3/§1.3.4's reals asserted against the doubles
+  ([`27`](27-the-walls-come-down-report.md)), and §1.1.7/§1.3.3/§1.3.4's reals asserted against the doubles
   the book prints, while chapter 2 carries §2.2.1's `map` written by the reader rather than borrowed
-  from the prelude ([`32`](32-numeric-tower-and-polymorphism-report.md)). **Felleisen's table is
+  from the prelude ([`27`](27-the-walls-come-down-report.md)). **Felleisen's table is
   written** ([`63`](63-felleisen-report.md)): six of the seven forms recovered and `amb` conceded,
   which is the shape §25.9's forecast predicted, with the CPS reorganisation the concession costs
   written out beside it rather than asserted.*
@@ -382,6 +382,11 @@ dependencies whose signatures didn't change.
   `identity = external(issuer=…)` is a declaration, so §6.5's egress rule covers the issuer like any
   other peer (§95.7).*
 - LSP: completion, hover with *inferred placement*, go-to-def, rename, inline diagnostics.
+  *All but **rename** are built: hover, go-to-def and inline diagnostics by
+  [`65`](65-lsp-report.md), completion and semantic-token highlighting by
+  [`103`](103-playground-phase-3-report.md) §103.1 — which also moved every one of those answers
+  into `beck_core::editor`, so the playground's editor and an editor's are the same answers rather
+  than two implementations of them.*
 - **The playground** ([`17`](17-playground.md)) — highest-leverage adoption artefact: rung A
   (compile-time, static) and rung B (the whole app in the tab — the worker-server is the rung-0
   platform compiled to WASM, riding Mode B's kernel work; `seq` scrubber and two-client demos).
@@ -391,9 +396,14 @@ dependencies whose signatures didn't change.
   would ride Mode B's kernel work is the one thing it got wrong (§98.9): a tab server is a
   sequencer, a log and a differ, and none of those are in `beck-wasm`. What it rode was a division
   of the runtime — `beck-host`, the half of `beck-rt` that is program-shaped rather than
-  machine-shaped. Rung C is Phase 4's, and §98.7 lists what rungs A and B still lack: no IndexedDB,
-  no content-addressed sharing, no Mode B in the tab, and a `<textarea>` where the LSP already
-  exists.*
+  machine-shaped. Rung C is Phase 4's, and §98.7's four remaining lacks — no IndexedDB, no
+  content-addressed sharing, no Mode B in the tab, and a `<textarea>` where the LSP already exists —
+  are **built** by [`103`](103-playground-phase-3-report.md): the log survives a reload as the
+  records a durable store writes, a share link is a fragment that carries the program and names its
+  digest, a `@render(client)` program runs in the client iframe in Mode B's kernel, and the editor
+  highlights, completes and squiggles from the same module `beck lsp` answers from. What §103.6
+  still says is not built is rung C, the playground being written in Beck, and a link short enough
+  to need a registry.*
 - `beck init ci`, apko image build in-process, cosign signing, SBOM. *All four are built. The
   **SBOM** ([`92`](92-sbom-report.md)): `beck sbom` emits CycloneDX 1.6 and `beck build` writes one
   beside the manifests, derived from the same object graph the image config is — so the package list
@@ -447,7 +457,7 @@ developer would ask in order:
 | "How do I test this?" | A command, since [`22`](22-phase-3-report.md) |
 | "Will this recount a million rows every time somebody clicks?" | A command *and* a number ([`24`](24-incremental-views-report.md), [`26`](26-arrangement-sharing-report.md)) |
 | "Can I write my own abstractions, or only the ones the todo sketch needed?" | Ten walls down and an empty `sicp/refusals/` |
-| "How do I say something failed?" | `raise` and `try:`, and the signature says so whether or not I wrote it down ([`45`](45-error-rows-report.md)) |
+| "How do I say something failed?" | `raise` and `try:`, and the signature says so whether or not I wrote it down ([`27`](27-the-walls-come-down-report.md)) |
 | "Is there a string library? A JSON parser?" | Yes, and `compiler/lib/` shows how to write the next one ([`46`](46-standard-library-report.md)) |
 | "Can I trust the actor in my ownership check?" | With a verifying provider, yes ([`48`](48-identity-report.md)); against a real identity provider, yes ([`95`](95-oidc-relying-party-report.md)) — and `session.claims` says what they may do. The default still believes the client, and says so |
 | "Can my DBA see the data?" | `psql` against the read models ([`88`](88-read-models-and-pgwire-report.md)) — one table per collection, derived, no annotation |
@@ -637,10 +647,10 @@ LSP, SQL read models, query fusion — and S is where attention naturally goes, 
 is. The items that are actually urgent are small, and several of them are prose.
 
 The classification has just paid for itself once. Bounds were the project's textbook **F**: one
-feature with six successors queued behind it ([`37`](37-traits-report.md) §37.8). Taking it first
+feature with six successors queued behind it ([`27`](27-the-walls-come-down-report.md) §27.1). Taking it first
 carried two of those successors in behind it — the module boundary
-([`40`](40-traits-across-modules-report.md)) and the operators
-([`41`](41-generic-arithmetic-report.md)) — and emptied `sicp/refusals/`. Three reports from one
+([`27`](27-the-walls-come-down-report.md)) and the operators
+([`27`](27-the-walls-come-down-report.md)) — and emptied `sicp/refusals/`. Three reports from one
 feature, because it was the right feature. That is what taking the fan-out item first buys, and it
 is the argument for reading the rest of this section.
 
@@ -651,7 +661,7 @@ is the argument for reading the rest of this section.
 | ~~Virtualized clock~~, ~~then network~~, then disk | F11; [`13`](13-testing.md) §13.4 | **Two of three.** The clock is supplied rather than ambient ([`44`](44-wave-0-report.md) §44.3), with a test that counts the readers; the network is a seam with three implementations ([`49`](49-http-client-report.md) §49.5), and it arrived *with* the first thing that needed it rather than after. The **disk** is not, and elapsed time is not |
 | ~~The two syntax decisions~~ | [`09`](09-risks-and-open-questions.md) §9.6 item 5 | **Taken** — [`10`](10-decisions.md) D21 and D22, inside the deadline |
 | ~~Unicode version pinned per release + UTS #39 security profile~~ | [`35`](35-standards-landscape.md) §35.5 item 2 | **Done** ([`44`](44-wave-0-report.md) §44.5), with the bidirectional half the profile does not reach closed alongside it |
-| ~~Errors as a row label, `Result` reified, lexical handlers~~ | [`38`](38-literature-survey.md) §38.4 | **Done** ([`45`](45-error-rows-report.md)), before the standard library's signatures rather than after — which is the one thing §8.5.3 trap 2 asked for |
+| ~~Errors as a row label, `Result` reified, lexical handlers~~ | [`38`](38-literature-survey.md) §38.4 | **Done** ([`27`](27-the-walls-come-down-report.md)), before the standard library's signatures rather than after — which is the one thing §8.5.3 trap 2 asked for |
 | Trusted publishing on crates.io | [`42`](42-security-assurance.md) §42.7 | The **first** `cargo publish` — a long-lived token used once is a risk already taken |
 | Diverse double-compiling / bootstrappability | [`42`](42-security-assurance.md) §42.7 | The first `beck` built by `beck` (Phase 5) |
 | Deterministic libm (F9) | [`35`](35-standards-landscape.md) §35.5 item 1 | First transcendental **or** second backend |
@@ -669,7 +679,7 @@ Where doing the right work in the wrong order costs the most.
 2. ~~**The standard library before error rows.**~~ **Discharged, and it was the right call.** The
    argument was that a standard library's signatures are exactly where the error decision shows up
    — every fallible function in it — so a library written before error rows land gets rewritten
-   when they do. Error rows landed first ([`45`](45-error-rows-report.md)), so the trap is closed
+   when they do. Error rows landed first ([`27`](27-the-walls-come-down-report.md)), so the trap is closed
    and Wave 2 may start. The disagreement this bullet recorded with the prose above it is resolved
    in that prose's favour, and the note is kept rather than deleted because the *shape* of the trap
    recurs: a bullet list makes every item look independent, and the one that has a predecessor is
@@ -705,7 +715,7 @@ list:
 7. ~~Retarget [`12`](12-standards-and-conformance.md)'s four moved rows~~ *(S)*
 
 **Wave 1 — weeks. `Result` and error rows. ✅ Built, in two halves**
-([`45`](45-error-rows-report.md), [`80`](80-a-scope-owns-its-children-report.md)).
+([`27`](27-the-walls-come-down-report.md), [`80`](80-a-scope-owns-its-children-report.md)).
 Errors as a row label with `Result` reified, and row aliases: **built**. Lexical handlers: built in
 the narrow sense that `try:` is a form and therefore lexical by construction, and unbuilt in the
 general sense — there is no `handle … with`, no resumption, no user-defined effect. **Structured
@@ -749,9 +759,9 @@ compiler and importable by name from anywhere, which nothing outside that direct
 three waves it took to write. §46.6 has the item-by-item list, §49.6 the client's own, §50.6 the two newest
 files' and §52.6 the crypto half's — including what a digest deliberately is not: no asymmetric
 signature, no TLS, no encryption of any kind. The **Are We Fast Yet harness is complete — all fourteen
-benchmarks** ([`53`](53-are-we-fast-yet-report.md), [`57`](57-richards-report.md),
-[`58`](58-json-report.md), [`59`](59-havlak-report.md), [`60`](60-collision-detection-report.md),
-[`61`](61-deltablue-report.md)), each verified against the constant
+benchmarks** ([`53`](53-are-we-fast-yet-report.md), [`53`](53-are-we-fast-yet-report.md),
+[`53`](53-are-we-fast-yet-report.md), [`53`](53-are-we-fast-yet-report.md), [`53`](53-are-we-fast-yet-report.md),
+[`53`](53-are-we-fast-yet-report.md)), each verified against the constant
 the original suite's own `verifyResult` checks, with wall-clock printed and nothing compared to
 anything — §8.4's ask, half discharged. The **CLBG** harness is stood up too
 ([`68`](68-clbg-report.md)) — eight of the Game's ten, verified against the Game's own published
@@ -775,16 +785,16 @@ rather than by weakening the property, so `"Bearer " + reveal(token)` is still a
 *Writing it found a wall, which is what writing a library is for: **a trait's declared row is a
 bound, so a fallible operation cannot be a trait method** — `Money` cannot have `+` because `Num`
 is pure and mixing currencies has to fail (§46.5). The fix is one feature, a row variable in a
-trait's method signatures, which [`33`](33-effect-polymorphism-and-list-patterns-report.md) built
+trait's method signatures, which [`27`](27-the-walls-come-down-report.md) built
 for a user's higher-order definitions and nothing has built for traits. It is asserted as a
 refusal, so it is a test that goes red rather than a paragraph.*
 
-**Wave 2b — the wall Wave 2 wrote. ✅ Built** ([`47`](47-effect-polymorphic-traits-report.md)). A
+**Wave 2b — the wall Wave 2 wrote. ✅ Built** ([`27`](27-the-walls-come-down-report.md)). A
 trait's declared row is a floor rather than a ceiling: an impl's row is inferred, published with
 the impl so it crosses a module, and inherited by whoever calls it — so `Money` has its `+` and
 every numeric or fallible type can have one. It cost one line of the checker plus the module
 boundary, because bounded generics had been effect-polymorphic since
-[`39`](39-bounds-report.md) and nothing had noticed. This wave existed for a day: Wave 2 wrote it
+[`27`](27-the-walls-come-down-report.md) and nothing had noticed. This wave existed for a day: Wave 2 wrote it
 and Wave 2b closed it, which is the shortest a wave has been and the argument for recording a wall
 the moment it is found rather than at the end of the work that found it.
 
@@ -915,9 +925,9 @@ boundaries are real directories.
 language features on two branches. Do not: they rewrite `check/mod.rs` (3,345 lines) and `ty.rs`
 together, and they change what `core.rs` carries. Lane A is the critical path and absorbs one pair
 of hands; everything else in this section exists to keep other hands off those files.
-[`37`](37-traits-report.md) §37.7 records the mitigation that works — traits went into
+[`27`](27-the-walls-come-down-report.md) §27.10 records the mitigation that works — traits went into
 `check/traits.rs` rather than into `check/mod.rs`, and bounds then grew that file rather than the
-one everybody complains about ([`39`](39-bounds-report.md)). Keep doing that, and a second Lane A
+one everybody complains about ([`27`](27-the-walls-come-down-report.md)). Keep doing that, and a second Lane A
 branch eventually becomes thinkable.
 
 Recommended pairings, in order:
@@ -925,7 +935,7 @@ Recommended pairings, in order:
 | When | Branch 1 (critical path) | Branch 2 | Why it is safe |
 |---|---|---|---|
 | ~~**Then**~~ | ~~Lane A: `Result` and error rows~~ | ~~Lane D, plus Lane C's half of Wave 0~~ | **Done.** Both branches landed together, and the prediction held: the error rows touched `check/`, `ty.rs`, `row.rs` and `core.rs`, and Wave 0 touched `beck-diag`, `beck-syntax`, `beck-rt` and `docs/`. The one collision was the one the table names below — `beck-diag/src/index.rs`, four new codes — and it was trivial because the numbers were far apart |
-| ~~**Then**~~ | ~~Lane A: the standard library, on the error shape Wave 1 settled~~ | ~~Lane B: the shared dataflow's three loose ends~~ | **Half done.** The library's first half landed ([`46`](46-standard-library-report.md)), then the wall it wrote ([`47`](47-effect-polymorphic-traits-report.md)), then the HTTP client ([`49`](49-http-client-report.md)) — which was Lane A *and* Lane B, because the seam is in `beck-core` and the implementation is in `beck-rt`. The prediction held anyway: nothing in `engine.rs` was touched |
+| ~~**Then**~~ | ~~Lane A: the standard library, on the error shape Wave 1 settled~~ | ~~Lane B: the shared dataflow's three loose ends~~ | **Half done.** The library's first half landed ([`46`](46-standard-library-report.md)), then the wall it wrote ([`27`](27-the-walls-come-down-report.md)), then the HTTP client ([`49`](49-http-client-report.md)) — which was Lane A *and* Lane B, because the seam is in `beck-core` and the implementation is in `beck-rt`. The prediction held anyway: nothing in `engine.rs` was touched |
 | ~~**Then**~~ | ~~Lane A: the rest of Wave 2 — `Set`, dates~~ | ~~Lane B: the shared dataflow's three loose ends~~ | **Half done.** `Set` and dates landed ([`50`](50-collections-and-dates-report.md)) and were not Lane A at all: two files in `compiler/lib/`, no primitive, and the only Rust touched was one diagnostic's label. Lane B is untouched, so the pairing was never tested — the prediction it made cannot be claimed to have held |
 | ~~**Then**~~ | ~~Lane A: bignums, coercion, `@derive`~~ | ~~Lane B: the shared dataflow's three loose ends~~ | **Half done, and the other half.** Lane B was taken at last, after being the recommended Branch 2 for three consecutive rewrites: two of the three loose ends are closed ([`51`](51-arrangement-lifecycle-report.md)) and the third — the render lock — is deliberately left. The prediction held exactly: `engine.rs`, `beck-rt/` and one test suite, and nothing in `check/`, `ty.rs` or `core.rs`. Lane A is untouched, so this pairing was again never actually run as a pair |
 | ~~**Then**~~ | ~~Lane A: bignums, coercion, `@derive`~~ | ~~Lane B: SQL read models and pgwire~~ | **Half done, and the other half again.** Lane B was taken ([`88`](88-read-models-and-pgwire-report.md)) and the prediction held: `beck-core/src/read.rs`, `beck-rt/src/pgwire.rs`, one reader type on `engine.rs`, and nothing in `check/`, `ty.rs` or `core.rs`. Lane A is untouched, so this pairing was never run as a pair either — the fourth consecutive rewrite in which it was not |
@@ -955,7 +965,7 @@ discipline that avoids the collision.
 
 - **Phase 3's bullets are a set presented as a list.** The standard library had a predecessor the
   list did not show — `Result`/error rows — which §8.5.3 trap 2 stated in full and
-  [`45`](45-error-rows-report.md) has now removed. The correction stands for the next one: the
+  [`27`](27-the-walls-come-down-report.md) has now removed. The correction stands for the next one: the
   concurrency half of the same bullet has *no* predecessor and should not be scheduled as though it
   shares one.
 - **F11 should be read as two-thirds met, not `FIXED`.** [`14`](14-review-findings.md) recorded the

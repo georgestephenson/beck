@@ -3,7 +3,7 @@
 **Built.** `beck test --fuel`, and with it the three Are We Fast Yet benchmarks that could not run at
 the size their suite measures at now do.
 
-[`61`](61-deltablue-report.md) §61.3 ended by naming this as owed:
+[`53`](53-are-we-fast-yet-report.md) §53.3 ended by naming this as owed:
 
 > Three is enough to stop calling it a finding and start calling it a missing feature. **`beck test`
 > needs a `--fuel`, or a program needs a way to declare its own budget.**
@@ -21,8 +21,8 @@ the fourteen benchmarks in [`awfy/`](../compiler/awfy/) do:
 | | Refused at | Reported in |
 |---|---|---|
 | `mandelbrot` | size 500 | [`53`](53-are-we-fast-yet-report.md) §53.3 |
-| `havlak` | the published `find_loop_iterations = 50` | [`59`](59-havlak-report.md) §59.3 |
-| `deltablue` | the published `n = 12,000` | [`61`](61-deltablue-report.md) §61.3 |
+| `havlak` | the published `find_loop_iterations = 50` | [`53`](53-are-we-fast-yet-report.md) §53.3 |
+| `deltablue` | the published `n = 12,000` | [`53`](53-are-we-fast-yet-report.md) §53.3 |
 
 Each of those was reported as a fact about the *benchmark*. Three of them is a fact about the
 **evaluator**, and that is the whole content of this change: nothing about the budget was wrong
@@ -65,7 +65,7 @@ needs, so no smaller default would have helped.
 **The gates are unchanged.** `awfy/`'s files still run their reduced configurations, because a suite
 that took three minutes per benchmark is a suite nobody runs. What changed is that the reduction is
 now a *choice about the gate* rather than a limit of the tool, and
-[`59`](59-havlak-report.md) §59.3's two tests — the answers do not depend on the parameter, and each
+[`53`](53-are-we-fast-yet-report.md) §53.3's two tests — the answers do not depend on the parameter, and each
 discarded run does the whole job — are what make that choice honest.
 
 ## 62.4 `mandelbrot` reaches the suite's *default* size, and that is worth more than the other two
@@ -75,7 +75,7 @@ something stronger: at size 500 it produces **191**, which is `Mandelbrot.java`'
 `verifyResult` at the size Are We Fast Yet's published results are about.
 
 [`53`](53-are-we-fast-yet-report.md) §53.3 had to record this as a caveat — the port verified at
-size 1, which the suite publishes a value for but does not measure at, and §53.6 listed "the suite's
+size 1, which the suite publishes a value for but does not measure at, and §53.7 listed "the suite's
 default sizes for `mandelbrot` and `nbody`" as not reached. Half of that is now reached, and it took
 43.4 s and a flag rather than any change to the port.
 
@@ -105,8 +105,8 @@ where the smallest benchmark that would demonstrate the same thing takes ninety.
 
 ## 62.7 What this corrects
 
-- **[`61`](61-deltablue-report.md) §61.3's owed item is built**, and with it
-  [`59`](59-havlak-report.md) §59.6's and [`53`](53-are-we-fast-yet-report.md) §53.3's.
+- **[`53`](53-are-we-fast-yet-report.md) §53.3's owed item is built**, and with it
+  [`53`](53-are-we-fast-yet-report.md) §53.7's and [`53`](53-are-we-fast-yet-report.md) §53.3's.
 - **[`53`](53-are-we-fast-yet-report.md) §53.3's sentence about `mandelbrot` needs reading
   differently.** "Nothing exposes that budget to a caller, so the size is out of reach of `beck
   test`" was true when written and is the thing this change removes. The size is reachable; the
@@ -115,7 +115,7 @@ where the smallest benchmark that would demonstrate the same thing takes ninety.
 
 ## 62.8 What Phase 3 is still not
 
-Unchanged from [`61`](61-deltablue-report.md) §61.8. The standard-library bullet is done, Are We
+Unchanged from [`53`](53-are-we-fast-yet-report.md) §53.7. The standard-library bullet is done, Are We
 Fast Yet is complete, and CLBG, the compile-speed budgets and the Felleisen table are outstanding
 under [`25`](25-benchmarks-and-expressiveness.md) §25.9.
 

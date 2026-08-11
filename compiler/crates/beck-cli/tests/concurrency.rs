@@ -368,8 +368,8 @@ def load(p: Str) -> Int uses fs(profiles):
 /// A scope pinned to the browser is a placement error, and nothing was written to make it one.
 ///
 /// §3.3's table already said `server` discharges `spawn` and `client` does not. This is the third
-/// feature running whose refusal is the effect system's rather than its own (`docs/37` §37.8,
-/// `docs/39`), and the reason the row is charged in the checker rather than inferred from what the
+/// feature running whose refusal is the effect system's rather than its own (`docs/27` §27.1,
+/// `docs/27`), and the reason the row is charged in the checker rather than inferred from what the
 /// children happen to do: a scope over two pure children still cannot run in a patch interpreter.
 #[test]
 fn a_scope_cannot_be_pinned_to_the_browser() {

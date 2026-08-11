@@ -604,7 +604,7 @@ async fn a_recovered_process_starts_with_nobody_in_it() {
 ///
 /// Gated on a **shape** rather than a rate, per `AGENTS.md`: the same constant has to hold at both
 /// accumulator sizes, and the budget is the evaluator's own step count, which is deterministic and
-/// has no clock in it (`docs/72` made it charge for work). Measured at **112 steps** for a roster
+/// has no clock in it (`docs/70` made it charge for work). Measured at **112 steps** for a roster
 /// of two and **298** for a roster of eight — the same two numbers at 200 notes and at 1,600, to
 /// the step, which is what "does not grow with the accumulator" means. The constants below are
 /// those with room for a node or two.

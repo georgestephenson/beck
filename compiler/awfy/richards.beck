@@ -1,7 +1,7 @@
 # Are We Fast Yet — Richards.
 #
 # The first of the five **macro**-benchmarks, and the one this directory was most owed: `docs/53`
-# §53.6 recorded all five as "not ported, not attempted and not declined … nothing is known about
+# §53.7 recorded all five as "not ported, not attempted and not declined … nothing is known about
 # whether they are expressible". This is that question answered for one of them.
 #
 # Richards is an operating-system task scheduler: six tasks pass packets to one another until an
@@ -11,12 +11,12 @@
 # scheduler to change another task's queue and the scheduler's own counters.
 #
 # Beck has no mutation, so the port is a rewrite rather than a transcription, and the shape it takes
-# is the finding (`docs/57` §57.2). Three rules, applied everywhere:
+# is the finding (`docs/53` §53.4). Three rules, applied everywhere:
 #
 #   * **A mutable field is a rebuilt record.** Every setter becomes a value returned.
 #   * **A pointer chain is a `list`.** `Packet.link` exists only to be the next packet in one queue,
 #     and a packet is in exactly one queue at a time, so the field disappears into the list that
-#     holds it. Nothing is lost, and `docs/33` §33.6's cost — a `list` cannot share a suffix — is
+#     holds it. Nothing is lost, and `docs/27` §27.3's cost — a `list` cannot share a suffix — is
 #     paid on queues that are a few packets long.
 #   * **A closure over mutable state is a function of the state.** Java's `ProcessFunction` returns
 #     the next task and mutates the scheduler on the way; here every one of them takes the scheduler
@@ -426,7 +426,7 @@ def dispatch(s: Scheduler, t: Task, message: list[Packet]) -> Step:
 ## The original's `while (NO_TASK != currentTask)` loop, as a tail call.
 ##
 ## It runs about thirty-three thousand task activations, so this is the one benchmark in the
-## directory where `docs/31`'s tail calls are not a nicety: a non-tail transcription would want
+## directory where `docs/27`'s tail calls are not a nicety: a non-tail transcription would want
 ## thirty-three thousand host frames.
 def schedule(s: Scheduler) -> Scheduler:
     if s.current == no_task():

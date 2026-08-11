@@ -26,7 +26,7 @@ pub mod protocol;
 pub mod record;
 pub mod sequence;
 
-pub use program::{describe, Runtime, Viewer};
+pub use program::{describe, At, Runtime, Viewer};
 pub use protocol::{ClientMsg, Resumption, ServerMsg};
 pub use record::{Envelope, Instant, Pending, Seq, Snapshot};
 pub use sequence::{sequence, Committed, Decision};

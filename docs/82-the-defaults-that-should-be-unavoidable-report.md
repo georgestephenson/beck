@@ -138,7 +138,7 @@ for as long as it has produced objects. Nothing was wrong with the *derivation* 
 that no test asked for, because no test asks for a field nobody has written.
 
 That is the same shape as [`80`](80-a-scope-owns-its-children-report.md) §80.6's round-trip harness
-and [`78`](78-a-record-is-a-permutation-report.md) §78.6's gate that could not fail, and it is the
+and [`70`](70-the-evaluator-gets-fast-report.md) §70.7's gate that could not fail, and it is the
 third instance in three reports: **a claim in a design document is not a claim anything checks.** The
 difference this time is that the claim was checkable all along and one quarter of it was not
 *expressible*, which is the more interesting failure — the missing test and the missing atom were

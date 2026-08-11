@@ -636,8 +636,8 @@ the two annotations are not the same kind of thing.
 never `@uses(...)`. Three reasons, in the order they carry weight:
 
 1. **It is part of the type.** An effect row unifies, it is inferred, it is generalised over
-   ([`33`](33-effect-polymorphism-and-list-patterns-report.md)'s effect polymorphism), and it is a
-   bound an impl is held to ([`37`](37-traits-report.md)). A decorator is an AST transform (§2.3)
+   ([`27`](27-the-walls-come-down-report.md)'s effect polymorphism), and it is a
+   bound an impl is held to ([`27`](27-the-walls-come-down-report.md)). A decorator is an AST transform (§2.3)
    that runs before the checker — a transform cannot be the notation for something the checker
    *solves*.
 2. **It is published.** §3.6 requires the module interface to carry it; `.becki` does, and
@@ -687,7 +687,7 @@ The argument that decided it is not aesthetics but *what else the decision costs
   tree of `Node`s the analysis walks. A literal syntax could have been given the same treatment;
   the point is that this one needed no special case to receive it.
 - **It costs nothing when unused.** Two chapters of SICP run as libraries with no `ui:` anywhere
-  ([`27`](27-walls-report.md), [`32`](32-numeric-tower-and-polymorphism-report.md)) — a surface
+  ([`27`](27-the-walls-come-down-report.md), [`27`](27-the-walls-come-down-report.md)) — a surface
   feature would have been in the grammar whether or not a program had a page.
 
 Its lineage is stated rather than hidden: the output is Hiccup's, and

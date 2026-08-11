@@ -41,7 +41,7 @@ def toggled(s: State, id: Id) -> State:
 # than in `sicp/`: a generic signature that crosses a `.becki` boundary is a different claim from
 # one that does not. `beck iface` publishes `[T]`, the importing module instantiates it afresh per
 # call, and `app.beck` uses both at two different element types — which is the thing that would
-# silently over-constrain if the published scheme were monomorphic (docs/32 §32.8).
+# silently over-constrain if the published scheme were monomorphic (docs/27 §27.2).
 
 def only[T](xs: list[T], keep: T -> Bool) -> list[T]:
     return filter_list(xs, keep)
@@ -52,7 +52,7 @@ def count_where[T](xs: list[T], keep: T -> Bool) -> Int:
 # The project's first *trait*, and the reason it is here rather than in a single file: what a call
 # in another module resolves against is the published header, not the body. `beck iface` writes the
 # trait and the `impl` line; `app.beck` calls `label()` on a `Todo` it imported and never sees the
-# implementation (docs/40 §40.3).
+# implementation (docs/27 §27.5).
 
 trait Labelled:
     def label(self) -> Str

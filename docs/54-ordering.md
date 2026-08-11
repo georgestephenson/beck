@@ -9,7 +9,7 @@ is today, everything that depends on it, four options with their costs, and a re
 
 Nothing here is built and nothing here is settled. It exists so the decision is taken deliberately
 rather than under the time pressure of the change that needs it — which is
-[`39`](39-bounds-report.md) §39.7's precedent, and that decision came out better for having been
+[`27`](27-the-walls-come-down-report.md) §27.10's precedent, and that decision came out better for having been
 written down first.
 
 ## 54.1 What the order is today
@@ -18,7 +18,7 @@ written down first.
 structural comparison of the payload. Two consequences are worth having in front of you.
 
 **A real is stored as an order-preserving key rather than as `f64::to_bits`**, so the derived order
-*is* the numeric one — `docs/32` §32.2, which found that `to_bits` made `<` answer backwards for
+*is* the numeric one — `docs/27` §27.8, which found that `to_bits` made `<` answer backwards for
 every negative number. That is the precedent this whole document is about: the project has met this
 question once already and answered it "**one order, and make it the right one**" rather than "two
 orders, and let the program pick".
@@ -62,9 +62,9 @@ correct and embarrassing.
 ## 54.4 Option B — `Ord` as a trait, the `Num` shape
 
 A prelude `trait Ord` with a comparison method; `<` resolves through it when the operand type has an
-`impl`, exactly as `+` resolves through `Num` ([`41`](41-generic-arithmetic-report.md)). All the
-machinery exists: [`39`](39-bounds-report.md)'s bounds, [`47`](47-effect-polymorphic-traits-report.md)'s
-per-impl rows, [`40`](40-traits-across-modules-report.md)'s module crossing.
+`impl`, exactly as `+` resolves through `Num` ([`27`](27-the-walls-come-down-report.md)). All the
+machinery exists: [`27`](27-the-walls-come-down-report.md)'s bounds, [`27`](27-the-walls-come-down-report.md)'s
+per-impl rows, [`27`](27-the-walls-come-down-report.md)'s module crossing.
 
 This is the option §50.5's closing sentence points at, and it is the one to **reject**, for a reason
 that only becomes visible once §54.2's table is written out.
@@ -118,7 +118,7 @@ The checker knows the declaration at every `Make`, so it can emit fields in decl
 the runtime can preserve it; `With` updates in place and preserves it too.
 
 **For:** the intuitive answer, one order, and no trait. It is the same answer
-[`32`](32-numeric-tower-and-polymorphism-report.md) §32.2 gave for reals — change the representation
+[`27`](27-the-walls-come-down-report.md) §27.8 gave for reals — change the representation
 so the one order is the right one — which is the strongest precedent in the tree.
 
 **Against, and unverified:** three things would have to be established rather than assumed, and this

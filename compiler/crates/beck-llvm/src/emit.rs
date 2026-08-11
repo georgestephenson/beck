@@ -32,7 +32,7 @@
 //!   guard. An overflow is a *value* — a trap code and a span the host turns back into the
 //!   evaluator's own message — not a wrapped result and not a `SIGFPE`.
 //! * **Reals are compared by `beck_core`'s order key, not by `fcmp`.** `Value::Float` stores a
-//!   monotone transform of the bits so the derived `Ord` is the numeric one (`docs/32` §32.2), and
+//!   monotone transform of the bits so the derived `Ord` is the numeric one (`docs/27` §27.8), and
 //!   under it `-0.0 < 0.0` and NaN is the maximum. `fcmp` says something else for both, so a
 //!   comparison here bitcasts and compares the keys — four integer instructions, and the same
 //!   answer as the tree-walker.
@@ -616,7 +616,7 @@ impl<'a> Function<'a> {
 
     /// Emit `c` for `dest`.
     ///
-    /// `Dest::Return` is not an optimisation: `docs/31-tail-calls-report.md` makes "a call in tail
+    /// `Dest::Return` is not an optimisation: `docs/27-the-walls-come-down-report.md` makes "a call in tail
     /// position is free" a property of the *language*, so a backend that spent a frame on one
     /// would be a backend on which a Beck loop overflows the stack. It is threaded through `if`,
     /// `let` and `match` rather than pattern-matched at the top of a body because tail position
@@ -1119,7 +1119,7 @@ impl<'a> Function<'a> {
     /// `p.with(x = 3)` — a new object with the old one's other fields.
     ///
     /// Always a fresh object. The evaluator rebuilds in place when the base is held by nobody else
-    /// ([`docs/70`](../../../../../docs/70-last-use-moves-report.md)), and this cannot: an arena
+    /// ([`docs/70`](../../../../../docs/70-the-evaluator-gets-fast-report.md)), and this cannot: an arena
     /// with no ownership in it cannot prove nobody else holds an offset. What that costs is
     /// [`docs/101`] §101.6's first row, and it is a cost rather than a difference — the answer is
     /// the same one.
@@ -1174,7 +1174,7 @@ impl<'a> Function<'a> {
     /// The tail case is `musttail`, which LLVM *guarantees* rather than attempts: if it could not
     /// discard the frame it refuses the module, so a build that succeeds is a build in which every
     /// tail call is a jump. That is stronger than the usual `-O2` sibling-call heuristic and it is
-    /// the point — `docs/31` §31.2 says 1,500 and 60,000 tail calls spend the same host stack, and
+    /// the point — `docs/27` §27.2 says 1,500 and 60,000 tail calls spend the same host stack, and
     /// an optimisation that "usually" fires cannot be what a language guarantee rests on.
     ///
     /// It is `tailcc` rather than the C convention because the C convention's `musttail` demands

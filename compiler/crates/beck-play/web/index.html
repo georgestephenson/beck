@@ -13,13 +13,23 @@
     <select id="example"></select>
   </label>
   <button id="run" type="button">Run it ▸</button>
+  <button id="share" type="button" title="a link that carries this program">Share</button>
   <span id="status" class="status">compiling…</span>
 </header>
 
 <main id="split">
   <section class="pane source">
-    <!-- Left: what the person wrote. Right: what the compiler derived from it (docs/17 §17.1). -->
-    <textarea id="source" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+    <!-- Left: what the person wrote, over what the compiler made of it. The `<textarea>` is the
+         editor — undo, selection, IME, screen readers — and the layer under it is highlighting and
+         squiggles, painted from the same lexer and the same diagnostics `beck check` reports
+         (docs/101). Right: what the compiler derived (docs/17 §17.1). -->
+    <div id="editor" class="editor">
+      <pre id="highlight" aria-hidden="true"></pre>
+      <textarea id="source" spellcheck="false" autocomplete="off" autocapitalize="off"
+                autocorrect="off" wrap="off"></textarea>
+      <ul id="complete" class="complete" hidden></ul>
+    </div>
+    <div id="under" class="under"></div>
   </section>
 
   <section class="pane derived">
@@ -48,7 +58,10 @@
       <small>drag to fold it again from genesis — <code>beck replay</code>, as something you can hold</small>
     </h3>
     <input id="scrub" type="range" min="0" max="0" value="0" step="1">
-    <div id="at">at <output id="at-seq">0</output> of <output id="at-head">0</output></div>
+    <div id="at">at <output id="at-seq">0</output> of <output id="at-head">0</output>
+      <span id="kept" class="kept"></span>
+      <button id="forget" type="button">Forget this log</button>
+    </div>
     <div id="preview" class="preview"></div>
     <table id="log"><tbody></tbody></table>
   </div>

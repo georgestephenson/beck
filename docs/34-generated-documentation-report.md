@@ -166,7 +166,7 @@ Fixing it turned up 56 problems, of two kinds:
   function and a primitive type (`slice`); and one pair of `<dir>` / `<file>` placeholders inside a
   doc comment that rustdoc read as unclosed HTML tags.
 
-The last of those arrived while this branch was open: [`31`](31-tail-calls-report.md)'s trampoline
+The last of those arrived while this branch was open: [`27`](27-the-walls-come-down-report.md)'s trampoline
 documents `Interp::eval` in terms of the private `Interp::step`, which no documentation build
 contains. That is the gate working — a warning-free rustdoc is a thing that has to be kept, not a
 thing that is achieved once.

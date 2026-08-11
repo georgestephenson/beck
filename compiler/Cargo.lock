@@ -336,6 +336,7 @@ dependencies = [
  "beck-macro",
  "beck-rt",
  "beck-syntax",
+ "flate2",
  "http-body-util",
  "hyper",
  "hyper-util",

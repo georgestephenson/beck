@@ -158,7 +158,7 @@ this pass declines to make but one that would be **wrong** (§89.6).
 
 What one of those arrangements costs, on the sketch, whose `for t in mine:` is the shape the rewrite
 is for. The two plans are measured **alternating** rather than one after the other, because
-[`78`](78-a-record-is-a-permutation-report.md) §78.6 found that a fixed A-then-B order biases a
+[`70`](70-the-evaluator-gets-fast-report.md) §70.7 found that a fixed A-then-B order biases a
 wall-clock comparison by as much as the effects this project reports:
 
 | rows | entries held, unfused | entries held, fused | held | work/event | µs/event, unfused | µs/event, fused |
@@ -178,7 +178,7 @@ the memory its page already held; this gives back a sixth of what the sketch hol
 difference between the two columns. Per event the rewrite saves exactly one arrangement insert —
 `work/event` falls by 1 at every size, which is the honest arithmetic — and the 2–6% on the clock is
 inside what this measurement can distinguish. Saying otherwise would be
-[`78`](78-a-record-is-a-permutation-report.md) §78.4's mistake in the other direction.
+[`70`](70-the-evaluator-gets-fast-report.md) §70.1's mistake in the other direction.
 
 ## 89.5 What building it found, and it is three kinds of unreachable
 
@@ -186,7 +186,7 @@ inside what this measurement can distinguish. Saying otherwise would be
 `corpus/28-catalogue.beck` built two operators that no other operator, no name and no root referred
 to. The decomposition builds an operator for every argument of a call it inlines and for every
 `let`'s value, before it knows whether the body reads them — and a bounded definition's arguments
-include one **dictionary per method of each bound** ([`39`](39-bounds-report.md)). `Priced` declares
+include one **dictionary per method of each bound** ([`27`](27-the-walls-come-down-report.md)). `Priced` declares
 `pence` and `describe`; `priced_total[T: Priced]` calls only `pence`; so each of its two call sites
 contributed an operator for a `describe` the body never mentions. They were harmless — a `Pointwise`
 nothing reads is never evaluated — and they were *counted*, in `beck explain incremental`'s operator
@@ -315,7 +315,7 @@ part of the line [`08`](08-roadmap.md) has carried since the phase began.
 Beyond it, and unchanged: **no LLVM backend and no native codegen**; **no Mode B and no client
 polish**; **no playground**; **no supply-chain tooling**; the OIDC relying party, `managed()`
 provisioning, the claims mapping and presence ([`48`](48-identity-report.md) §48.5); the rest of
-pattern matching ([`45`](45-error-rows-report.md)); the page is still assembled and diffed rather
+pattern matching ([`27`](27-the-walls-come-down-report.md)); the page is still assembled and diffed rather
 than streamed as deltas ([`24`](24-incremental-views-report.md) §24.6) — and this report makes that
 one *more* visible rather than less, because `beck explain cost` now prints the operator that does
 it, by number, on every program that has one. `parallel:` still has no backend that runs two

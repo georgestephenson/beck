@@ -4,7 +4,7 @@
 //! and an `Arc` around a clone of the enclosing environment, three allocations for one name. At
 //! about 126 ns each that is most of what a function call costs, paid again per binding, and a
 //! body of two dozen `let`s spent more on scopes than on the work
-//! ([`76`](../../../../../docs/76-the-record-and-the-read-report.md) is where the number came
+//! ([`70`](../../../../../docs/70-the-evaluator-gets-fast-report.md) is where the number came
 //! from).
 //!
 //! The count here is what removes them. A lambda's `Core::locals` is the number of bindings its
@@ -44,7 +44,7 @@ pub fn reserve_program(program: &mut crate::check::Program) {
 ///
 /// The count [`reserve`] writes onto a lambda, for a caller holding an expression that is not one
 /// yet: the test runner wraps a clause in a lambda of its own at the moment it evaluates it, and
-/// this is how that lambda gets sized. `docs/79`.
+/// this is how that lambda gets sized. `docs/70`.
 pub fn locals_of(c: &Core) -> u32 {
     locals(c)
 }

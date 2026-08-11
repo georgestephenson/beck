@@ -52,17 +52,95 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .pane { min-width: 0; display: flex; flex-direction: column; }
 .pane.source { border-right: 1px solid var(--line); }
 
-#source {
+/* The editor: a `<textarea>` over a `<pre>`, sharing one set of metrics.
+   Every property that decides where a character lands is declared once, on `.editor`, and
+   inherited by both layers — a font, a size, a line height, a padding or a tab size that differed
+   between them would show up as text drifting away from its own highlighting further down the
+   file, which is the one failure mode this construction has. */
+.editor {
+  position: relative;
   flex: 1;
-  border: 0;
-  resize: none;
-  padding: 1rem;
+  min-height: 0;
   font: 13px/1.55 var(--mono);
-  background: transparent;
-  color: inherit;
-  outline: none;
   tab-size: 4;
 }
+
+#source, #highlight {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  padding: 1rem;
+  border: 0;
+  font: inherit;
+  tab-size: inherit;
+  white-space: pre;
+  overflow: auto;
+  overflow-wrap: normal;
+}
+
+#source {
+  resize: none;
+  background: transparent;
+  /* The text is painted by the layer underneath; what the textarea contributes is the caret, the
+     selection and every editing behaviour a browser already implements. */
+  color: transparent;
+  caret-color: var(--ink);
+  outline: none;
+}
+#source::selection { background: #c9c0f5; }
+
+#highlight { pointer-events: none; color: var(--ink); }
+
+.k-keyword { color: #7a2ea8; font-weight: 600; }
+.k-name    { color: var(--ink); }
+.k-atom    { color: #0b6b63; }
+.k-number  { color: #9a4a00; }
+.k-string  { color: #1f6f3f; }
+.k-comment { color: var(--quiet); font-style: italic; }
+.k-doc     { color: #4a5d2a; }
+.k-punct   { color: #55606f; }
+
+/* A squiggle is drawn under the span the compiler pointed at, in the layer that already has the
+   text at exactly those coordinates. */
+.m-error, .m-warning {
+  text-decoration: underline wavy;
+  text-decoration-skip-ink: none;
+  text-underline-offset: 0.2em;
+}
+.m-error { text-decoration-color: var(--bad); }
+.m-warning { text-decoration-color: #b07d00; }
+
+.under {
+  border-top: 1px solid var(--line);
+  padding: 0.35rem 1rem;
+  min-height: 1.9rem;
+  font: 12px/1.5 var(--mono);
+  color: var(--bad);
+  white-space: pre-wrap;
+  max-height: 6rem;
+  overflow: auto;
+}
+.under:empty { display: none; }
+
+.complete {
+  position: absolute;
+  z-index: 2;
+  margin: 0;
+  padding: 0.2rem 0;
+  list-style: none;
+  max-height: 14rem;
+  min-width: 14rem;
+  overflow: auto;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(16, 20, 28, 0.13);
+  font: 12px/1.5 var(--mono);
+}
+.complete li { padding: 0.1rem 0.6rem; display: flex; gap: 0.6rem; cursor: pointer; }
+.complete li.on { background: var(--accent); color: #fff; }
+.complete li .detail { margin-left: auto; opacity: 0.65; }
+.complete li.on .detail { opacity: 0.9; }
 
 #tabs {
   display: flex;
@@ -95,7 +173,9 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 #history { margin-top: 1.2rem; }
 #history h3 { font-size: 0.9rem; margin: 0 0 0.5rem; }
 #scrub { width: 100%; }
-#at { font: 12px var(--mono); color: var(--quiet); }
+#at { font: 12px var(--mono); color: var(--quiet); display: flex; align-items: center; gap: 0.6rem; }
+.kept { margin-left: auto; }
+#forget { font-size: 0.75rem; padding: 0.05rem 0.4rem; }
 .preview {
   border: 1px dashed var(--line);
   border-radius: 6px;

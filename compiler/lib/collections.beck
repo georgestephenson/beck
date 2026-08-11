@@ -10,7 +10,7 @@
 #
 # - **Every function here is total.** A collection has no failure of its own — the only way to get
 #   an error out of this file is to pass in a function that has one, and then the row is that
-#   function's and travels by inference (`docs/33`, `docs/45`). Nothing here `raise`s.
+#   function's and travels by inference (`docs/27`, `docs/27`). Nothing here `raise`s.
 # - **Every result is ordered, and the order is a function of the values.** `elements` is sorted
 #   because a `Map` is, not because anything sorts it; `group_by` returns a `Map` for the same
 #   reason. A replay that disagrees with the run it is replaying about the order of a set would be
@@ -125,7 +125,7 @@ def empty_map[K, V]() -> Map[K, V]:
 ## Everything in `xs`, filed under `key(x)`, each group in the order it was read.
 ##
 ## `key` may do anything a function may do: if it can fail, `group_by` can fail, and the row says
-## so without this signature mentioning one (`docs/33`). That is the property that lets a library
+## so without this signature mentioning one (`docs/27`). That is the property that lets a library
 ## take a function at all without deciding on its caller's behalf what a function is allowed to be.
 def group_by[T, K](xs: list[T], key: T -> K) -> Map[K, list[T]]:
     return list_fold(xs, empty_map(), lambda acc, x: file_under(acc, key(x), x))

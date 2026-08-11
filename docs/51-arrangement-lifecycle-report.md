@@ -294,7 +294,7 @@ because nothing enforces it.
   this section is the correction.
 - **[`38`](38-literature-survey.md) §38.2's first **adopt** verdict is cashed**, and its estimate
   was right: the engine did have versions and subscribers and did lack only the rule. It is the second of that survey's verdicts to become
-  work — [`45`](45-error-rows-report.md) cashed §38.4's before it — and it is worth recording that
+  work — [`27`](27-the-walls-come-down-report.md) cashed §38.4's before it — and it is worth recording that
   the survey's value here was not a technique, since a reader set is not a hard idea, but the
   observation that **two bullets were one bullet**. §38.9 says an adopt verdict "awaits its named
   piece of work"; this one has had it.

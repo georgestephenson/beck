@@ -1,4 +1,4 @@
-# The program that would embarrass parameterised types (docs/36).
+# The program that would embarrass parameterised types (docs/27).
 #
 # `25-thread.beck` is this file's precedent and says why a corpus program is the right place for it:
 # every pass this project has walks a type, and a shape that only `sicp/` exercises is a shape the

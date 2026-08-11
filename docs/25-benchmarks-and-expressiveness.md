@@ -507,11 +507,11 @@ no regression-detecting power, which is the only thing a benchmark is for.
 | **4** | TechEmpower, js-framework-benchmark, YCSB, Lighthouse; SICP stages 2–3; **the DDIA matrix** ([`15`](15-scale-and-distribution.md) §15.6), beside the Jepsen work that discharges its rows | The whole-system numbers, with §25.2's methodology notes attached |
 | **5** | TPC-H/ClickBench on read models; the incremental-view workload nobody has standardised; SICP stage 4 | The Phase 5 suite, and the expressiveness result — **including the rows §25.5 forecasts we lose**. The DDIA matrix's **Conceded** and **Bounded** rows, which are the ones a platform team reads |
 
-> **Phase 3, in progress.** SICP chapters 1 and 2 run ([`27`](27-walls-report.md),
-> [`41`](41-generic-arithmetic-report.md)), and the Are We Fast Yet harness is stood up for **all
+> **Phase 3, in progress.** SICP chapters 1 and 2 run ([`27`](27-the-walls-come-down-report.md),
+> [`27`](27-the-walls-come-down-report.md)), and the Are We Fast Yet harness is stood up for **all
 > fourteen** of its benchmarks ([`53`](53-are-we-fast-yet-report.md),
-> [`57`](57-richards-report.md), [`58`](58-json-report.md), [`59`](59-havlak-report.md),
-> [`60`](60-collision-detection-report.md), [`61`](61-deltablue-report.md)) — verified against the
+> [`53`](53-are-we-fast-yet-report.md), [`53`](53-are-we-fast-yet-report.md), [`53`](53-are-we-fast-yet-report.md),
+> [`53`](53-are-we-fast-yet-report.md), [`53`](53-are-we-fast-yet-report.md)) — verified against the
 > original suite's own constants, with wall-clock printed and no comparative claim, which is this
 > table's "Published" column kept and §25.3 item 1's "adopt now, publish now, make them
 > unflattering" kept at the same time. **The Felleisen table below is built**
@@ -565,7 +565,7 @@ recovered would be a result worth double-checking.
 > result, [`sicp/felleisen.beck`](../compiler/sicp/felleisen.beck) is the evidence, and the count
 > came out where this table put it: six recovered, `amb` conceded. One forecast was wrong in the
 > generous direction — `quote` was "blocked, not global" and the block came down in
-> [`27`](27-walls-report.md), so the verdict is recovered. `delay`, forecast as the row that would
+> [`27`](27-the-walls-come-down-report.md), so the verdict is recovered. `delay`, forecast as the row that would
 > put the whole claim in trouble if it failed, was blocked by an off-by-one in the checker instead
 > (§63.3).
 

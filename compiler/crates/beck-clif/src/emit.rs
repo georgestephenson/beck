@@ -39,7 +39,7 @@
 //!
 //! * **A tail call is `return_call`** under [`CallConv::Tail`], which Cranelift *verifies* rather
 //!   than attempts — the same guarantee `musttail` gives and the reason
-//!   [`31`](../../../../../docs/31-tail-calls-report.md)'s property holds on this backend too.
+//!   [`27`](../../../../../docs/27-the-walls-come-down-report.md)'s property holds on this backend too.
 //! * **A block parameter replaces a `phi`.** The joins are the same joins; Cranelift's SSA is
 //!   built by [`cranelift_frontend`] rather than written out.
 //! * **A `Bool` is an `I8` holding 0 or 1**, because Cranelift has no `i1`. Every comparison here
@@ -169,7 +169,7 @@ fn host_isa() -> Result<Arc<dyn TargetIsa>, String> {
         .map_err(|e| format!("cranelift setting: {e}"))?;
     // Not a preference. Cranelift's x86-64 `return_call` **asserts** on this, because its
     // implementation of a tail call restores the caller's frame through the frame pointer — so a
-    // backend that guarantees `docs/31`'s tail calls has to keep them.
+    // backend that guarantees `docs/27`'s tail calls has to keep them.
     flags
         .set("preserve_frame_pointers", "true")
         .map_err(|e| format!("cranelift setting: {e}"))?;
@@ -380,7 +380,7 @@ fn machine(r: Repr) -> Type {
 
 /// A compiled definition's signature: the error cell, then its parameters.
 ///
-/// [`CallConv::Tail`] because a call in tail position must be a jump — `docs/31` makes that a
+/// [`CallConv::Tail`] because a call in tail position must be a jump — `docs/27` makes that a
 /// property of the language rather than an optimisation — and `return_call` is only available
 /// between functions that share it.
 fn beck_signature(sig: &Signature, ptr: Type) -> cranelift_codegen::ir::Signature {
@@ -1624,7 +1624,7 @@ impl<'a> Body<'a> {
     ///
     /// `return_call` rather than a call and a return: Cranelift's verifier *requires* the frame to
     /// be discardable and refuses the function otherwise, which is the same guarantee `musttail`
-    /// gives the other backend. `docs/31` §31.2 says 1,500 and 60,000 tail calls spend the same
+    /// gives the other backend. `docs/27` §27.2 says 1,500 and 60,000 tail calls spend the same
     /// host stack, and an optimisation that "usually" fires cannot be what a language guarantee
     /// rests on.
     fn call(

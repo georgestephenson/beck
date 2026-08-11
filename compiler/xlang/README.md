@@ -60,7 +60,7 @@ not have prints a skip and is left out of the table.
 
 The mandelbrot loop was once 3× slower in Beck than in C, and the useful question was *which* 3×.
 That file answers it by holding the compiler fixed and changing only the semantics: plain IEEE, the
-order-key comparison [`docs/32`](../../docs/32-numeric-tower-and-polymorphism-report.md) §32.2's
+order-key comparison [`docs/27`](../../docs/27-the-walls-come-down-report.md) §27.8's
 structural equality on reals requires, and the per-operation normalisation the backend used to
 emit. When the `key` row lands on Beck's number, the code generation is at parity with clang and
 what is left is the price of the language's own rule about reals — which is a design question, and

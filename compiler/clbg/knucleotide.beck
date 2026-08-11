@@ -99,7 +99,7 @@ def ranked(counts: Map[Str, Int]) -> list[Entry]:
 ## The denominator is the number of *fragments* rather than of bases, which is why the caller
 ## passes it: there are `n` one-base fragments in `n` bases and only `n - 1` two-base ones. The
 ## Java computes the percentage in single precision (`100.0f`) and Beck's `Float` is IEEE 754
-## double (`docs/32` §32.3). No value in the published output is within `1e-6` of a rounding
+## double (`docs/27` §27.2). No value in the published output is within `1e-6` of a rounding
 ## boundary at three places, so the two agree here; a size where they did not would be a real
 ## difference and not a formatting one.
 def block(chars: list[Str], k: Int, denominator: Int) -> Str:
@@ -145,7 +145,7 @@ test "knucleotide: the suite's own published output for the input it publishes":
 ##
 ## Every number above is a fact about 5,000 bases of sequence THREE. If the reader took ONE and
 ## TWO as well, or stopped at the wrong `>`, the output would still be a well-formed frequency
-## table of the wrong thing — which is `docs/59` §59.5's failure mode exactly.
+## table of the wrong thing — which is `docs/53` §53.6's failure mode exactly.
 test "knucleotide: the sequence read is THREE, and only THREE":
     expect list_len(three_sequence(1000)) == 5000
     expect str_join(list_slice(three_sequence(1000), 0, 20), "") == "AACACTTCACCAGGTATCGT"

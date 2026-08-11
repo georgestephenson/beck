@@ -1,6 +1,6 @@
 //! What a record literal promises, now that the compiler decides where its fields go.
 //!
-//! `docs/78` replaced the sort a record literal ran on every construction with a permutation
+//! `docs/70` replaced the sort a record literal ran on every construction with a permutation
 //! computed once, in `beck_core::fields`. Two things rest on that, and only the first of them is
 //! about speed:
 //!
@@ -14,7 +14,7 @@
 //! two records that should be equal comparing as different, or the wrong failure coming out of a
 //! literal with two fallible fields.
 //!
-//! Nothing here is about speed. `docs/78` §78.4 has the numbers.
+//! Nothing here is about speed. `docs/70` §70.1 has the numbers.
 
 use beck_rt::testing::{Options, Outcome};
 
