@@ -1,4 +1,4 @@
-# 101 — Phase 3 report, part 69: the page that says it is guessing, and a budget that had never been weighed
+# 102 — Phase 3 report, part 70: the page that says it is guessing, and a budget that had never been weighed
 
 **Built.** [`08`](08-roadmap.md) §8.6's Mode B bullet names four things. [`94`](94-mode-b-report.md)
 built the kernel and the reconciliation and closed with a list; this is the two the list still had,
@@ -17,9 +17,9 @@ in a design document that no job weighs is a number somebody wrote down.
 The interesting half is again a refusal, and this one points the other way from every rule Mode B
 has had so far. Every previous one asks whether the *browser* may be given something. This one asks
 whether the **server** can answer something, and it cannot: a server renders what it has recorded,
-so `freshness()` there is `Confirmed` at every position of every log. §101.2 is that rule.
+so `freshness()` there is `Confirmed` at every position of every log. §102.2 is that rule.
 
-## 101.1 The dimension, and the shape it actually takes
+## 102.1 The dimension, and the shape it actually takes
 
 [`03`](03-type-and-effect-system.md) §3.7 has carried one sentence since before there was a
 compiler:
@@ -51,7 +51,7 @@ page: Signal[Html] = map2(view, doc, saving)
 so a page reads the freshness of *the render it is part of* — "is any of this a guess" — and not the
 freshness of each value it is built from. A per-signal dimension would let a page say that one list
 is speculative while the header beside it is not. That is a stronger thing and it is not built;
-§101.7 says so rather than letting the sentence above imply otherwise. What is built is what
+§102.7 says so rather than letting the sentence above imply otherwise. What is built is what
 "saving…" needs, which is what the sentence gives as its example.
 
 The implementation is the smallest one available, because `presence()` had already paid for the
@@ -66,7 +66,7 @@ people ([`14`](14-review-findings.md) F16), and that capability is also what pin
 A client counting its own unacknowledged commands says something about nobody else, so the row is
 empty and what constrains the placement is the rendering rule below rather than authority.
 
-## 101.2 A server cannot say it is saving, because it has nothing to save
+## 102.2 A server cannot say it is saving, because it has nothing to save
 
 `presence()` is refused to a Mode B page (`B0516`): who is connected is in neither the accumulator
 nor the log, so a browser handed the state would have nothing to render it from. Freshness is the
@@ -115,7 +115,7 @@ command today and refuse it on the way back.
 Both are checked by *reachability in the graph* rather than by the shape of `validate`'s argument,
 because the freshness reaches the chokepoint through whatever `map2` a program cares to write.
 
-## 101.3 The render that had to learn a second question
+## 102.3 The render that had to learn a second question
 
 [`94`](94-mode-b-report.md) §94.14's finding was that an interaction paid for **two** full renders:
 the client renders its guess, and then the server's data patch confirms exactly that guess and
@@ -145,7 +145,7 @@ The bundle format is 2 rather than 1 because of that one boolean. postcard is no
 so a field added is a format changed, and [`94`](94-mode-b-report.md) §94.4 had already named
 "bundle format 2" as where the next field goes rather than somewhere it could arrive quietly.
 
-## 101.4 The budget, weighed
+## 102.4 The budget, weighed
 
 §5.1 says "Size budgets enforced in CI: < 150 KB brotli for a typical Mode-B component bundle".
 §94.6 *measured* 1,753 bytes brotli for `board.beck` and §94.8 recorded that there was no gate, with
@@ -179,7 +179,7 @@ failure — the same reason the thin-client step beside it carries the line.
 
 Both failure paths were run by hand rather than trusted: a budget of 100 bytes fails the step, and a
 `PATH` without `brotli` fails at `command -v` instead of passing at zero. (The step's numbers land a
-byte above §101.5's, because it compresses a file where the measurement suite compresses a stream
+byte above §102.5's, because it compresses a file where the measurement suite compresses a stream
 and `brotli` knows the length in one case and not the other. Naming it is cheaper than a reader
 finding two numbers for one artefact and wondering which is wrong.)
 
@@ -209,7 +209,7 @@ byte on a varint past 127. A hundred unreached definitions cost **five bytes bet
 each, `O(log n)` in the program's size. A definition that were genuinely carried would cost hundreds
 of bytes, which is four orders of magnitude away from what this gate admits.
 
-## 101.5 What it costs
+## 102.5 What it costs
 
 `cargo test --release --test measure_mode_b -- --nocapture`, on the container this was written in:
 
@@ -251,10 +251,10 @@ which of them, only that it has now been measured rather than assumed.
 What freshness costs a page that reads it, at runtime, is one comparison per repaint of two values
 that are `Confirmed` almost always, plus the render on a confirmation that used to be skipped. That
 render is the *feature*: it is the page ceasing to say "saving". It is charged to the interaction it
-belongs to, and it is the reason §101.3's conditional exists — so that a program that did not ask
+belongs to, and it is the reason §102.3's conditional exists — so that a program that did not ask
 for the feature does not pay for it.
 
-## 101.6 The gates, and what makes each go red
+## 102.6 The gates, and what makes each go red
 
 `crates/beck-cli/tests/mode_b.rs` (30 tests, 7 of them new):
 
@@ -281,24 +281,26 @@ returns. Polling for "saving" afterwards would be a race against the server's ow
 pass just as well against a page that never said it at all.
 
 And in Beck, `examples/editor.beck` asserts its own behaviour — including that a server-rendered page
-says `saved`, which is §101.2's rule from the program's side. What a Beck test cannot assert is the
-pending branch: `beck test` holds the log, and a log has nothing in flight. §101.7 has that as the
+says `saved`, which is §102.2's rule from the program's side. What a Beck test cannot assert is the
+pending branch: `beck test` holds the log, and a log has nothing in flight. §102.7 has that as the
 one gap this feature leaves in the in-language test surface.
 
-## 101.7 What is not built
+## 102.7 What is not built
 
-- **Freshness is one value for a render, not a dimension on every signal** (§101.1). A page can ask
+- **Freshness is one value for a render, not a dimension on every signal** (§102.1). A page can ask
   "is any of this a guess" and not "is *this list* a guess". The stronger reading of §3.7 would need
   the pending events' reach through the dataflow to be tracked per operator, which is the same
   machinery §5.3's engine uses for change and is not wired to this.
 - **`beck test` cannot render a pending page.** The harness is the server's fold, so every page it
   renders is `Confirmed` — which is correct rather than broken, and it means a program's "saving…"
-  branch is gated in Rust (§101.6) and not in Beck. Making it expressible means the test surface
+  branch is gated in Rust (§102.6) and not in Beck. Making it expressible means the test surface
   saying "proposed but not confirmed", which is a fourth clause shape and was not taken under this
   report's time.
 - **No codegen**, unchanged: [`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md) and
-  [`08`](08-roadmap.md) §8.19's Lane E, behind a heap in the native backends. This is now the whole
-  of what §8.6's Mode B bullet still owes.
+  [`08`](08-roadmap.md) §8.19's Lane E. This is now the whole of what §8.6's Mode B bullet still
+  owes — and [`101`](101-the-heap-report.md), which landed alongside this work and gave both native
+  backends the *algebraic* half of a heap, says plainly that it does not bring Mode B codegen
+  closer: a page is `Html` and `Str` all the way down, and that heap holds neither yet.
 - **One component per program**, unchanged ([`94`](94-mode-b-report.md) §94.8), and with it lazy
   routes ([`100`](100-client-polish-report.md) §100.7). A program has one `page`, so §5.1's "a page
   mixes modes freely; the boundary is per component subtree" is unbuilt *in the language* rather
@@ -311,24 +313,24 @@ one gap this feature leaves in the in-language test surface.
   still counted. That is the reading a person watching a spinner wants, and it means `Pending(n)`
   and the page's own content can disagree about *n* for the moment before a refusal arrives.
 
-## 101.8 What this corrects, elsewhere
+## 102.8 What this corrects, elsewhere
 
 - [`03`](03-type-and-effect-system.md) §3.7's freshness sentence is built, and §3.7's staging list
   item 3 — "except freshness-typed optimism, which needs Mode B and is Phase 3's" — is discharged,
-  with §101.1's narrowing stated in both places.
+  with §102.1's narrowing stated in both places.
 - [`05`](05-tier-lowering.md) §5.1's "Size budgets enforced in CI" is true of the component bundle
   as of this change. It was the only clause of that bullet that named CI and had none.
 - [`08`](08-roadmap.md) §8.6's Mode B bullet has one item left — codegen — where it had three.
 - [`94`](94-mode-b-report.md) §94.8's last bullet ("no `wasm-opt`, no size gate in CI") is half
   answered: the size gate exists and `wasm-opt` still does not run. Its §94.14 shortcut is
   unchanged in the common case and now asks a second question of the components that need one
-  (§101.3).
-- **The bundle format is 2** (§101.3), and `FORMAT` is checked on load, so a kernel and a compiler
+  (§102.3).
+- **The bundle format is 2** (§102.3), and `FORMAT` is checked on load, so a kernel and a compiler
   that disagree refuse each other rather than misreading a byte.
 - `beck bundle` is a new command; the generated reference (`docs/reference/`) carries it, as it
   carries `B0517` and `B0518`.
 
-## 101.9 What Phase 3 is still not
+## 102.9 What Phase 3 is still not
 
 Unchanged: the per-component boundary in the language, and lazy routes behind it. Every other item
 [`94`](94-mode-b-report.md) §94.11 listed has since had a report of its own — the playground

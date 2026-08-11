@@ -38,6 +38,7 @@ use beck_core::{Program, Value};
 use beck_llvm::Artifact as LlvmArtifact;
 
 mod support;
+use support::heapfix::{self, RECORDS, STILL_REFUSED, UNIONS};
 use support::scalar::{
     float_pairs, floats, ints, pairs, render, singles, ARITHMETIC, CONTROL, REALS, RECURSION,
     REFUSED,
@@ -378,6 +379,122 @@ fn a_trap_carries_the_evaluators_own_message_and_a_span() {
 }
 
 // -------------------------------------------------------------------------------------------
+// The heap
+// -------------------------------------------------------------------------------------------
+
+/// Records, through the second emitter: built, read, updated and compared.
+///
+/// The interesting half is not that Cranelift can build a record — it is that the *layout* is
+/// [`beck_llvm::heap`]'s rather than this emitter's, so the three backends have to agree about
+/// which word a field is in and which rank a variant has. `docs/101` §101.3 is why that one
+/// decision is shared where the emitters are not.
+#[test]
+fn the_three_backends_agree_on_records() {
+    linker!();
+    let all = All::over("records.beck", RECORDS);
+    let ps = heapfix::records();
+    let mut compared = 0;
+    compared += all.agree("origin", &[vec![]]);
+    compared += all.agree("make", &pairs(&ints(0x5eed_0021, 10)));
+    for name in ["sum_of", "swapped"] {
+        compared += all.agree(name, &heapfix::singles(&ps));
+    }
+    for name in ["same_point", "point_order", "span_of", "segment_order"] {
+        compared += all.agree(name, &heapfix::pairs(&ps));
+    }
+    compared += all.agree("key_order", &heapfix::pairs(&heapfix::keys()));
+    for name in ["heavier", "same_weight"] {
+        compared += all.agree(name, &heapfix::pairs(&heapfix::weighted()));
+    }
+    for name in ["negated", "negated_is_zero"] {
+        compared += all.agree(name, &heapfix::singles(&heapfix::weighted()));
+    }
+    let with_dx: Vec<Vec<Value>> = ps
+        .iter()
+        .flat_map(|p| [-1i64, 0, 1, i64::MAX].map(|d| vec![p.clone(), Value::Int(d)]))
+        .collect();
+    compared += all.agree("moved", &with_dx);
+    compared += all.agree("scaled", &with_dx);
+    println!("{compared} record calls compared across every backend on this machine");
+}
+
+#[test]
+fn the_three_backends_agree_on_unions() {
+    linker!();
+    let all = All::over("unions.beck", UNIONS);
+    let rs = heapfix::ranked();
+    let ts = heapfix::trees();
+    let mut compared = 0;
+    for name in ["rank", "guarded", "either", "whole", "n_or_zero"] {
+        compared += all.agree(name, &heapfix::singles(&rs));
+    }
+    for name in ["ranked_order", "same_ranked"] {
+        compared += all.agree(name, &heapfix::pairs(&rs));
+    }
+    for name in ["total", "left_leaf", "first_number"] {
+        compared += all.agree(name, &heapfix::singles(&ts));
+    }
+    compared += all.agree("tree_order", &heapfix::pairs(&ts));
+    compared += all.agree("spine", &singles(&(0..12).collect::<Vec<_>>()));
+    compared += all.agree(
+        "chain",
+        &(0..12)
+            .map(|n| vec![Value::Int(n), heapfix::leaf(0)])
+            .collect::<Vec<_>>(),
+    );
+    compared += all.agree("bigger", &singles(&ints(0x5eed_0022, 8)));
+    compared += all.agree("wrap", &singles(&ints(0x5eed_0023, 8)));
+    compared += all.agree("maybe", &singles(&ints(0x5eed_0024, 8)));
+    compared += all.agree(
+        "or_else",
+        &heapfix::options()
+            .iter()
+            .map(|o| vec![o.clone(), Value::Int(-1)])
+            .collect::<Vec<_>>(),
+    );
+    println!("{compared} union calls compared across every backend on this machine");
+}
+
+/// The same shape gate the other backend has, with the same two sizes and the same arithmetic.
+///
+/// Written again rather than shared because the *allocator* is written again: this is where a
+/// bump pointer that rounded, or a layout that padded, would show up on this backend and not the
+/// other. No clock in it (`AGENTS.md`).
+#[test]
+fn the_arena_costs_the_same_per_object_at_every_size() {
+    linker!();
+    let all = All::over("unions.beck", UNIONS);
+    for n in [100usize, 800] {
+        let (_, bytes) = all
+            .clif
+            .call_sized("chain", &[Value::Int(n as i64), heapfix::leaf(0)])
+            .expect("runs");
+        assert_eq!(
+            bytes,
+            8 + 2 * 8 + n * 5 * 8,
+            "chain({n}) left {bytes} bytes of arena"
+        );
+    }
+}
+
+/// A program with no object in it gets the object file it got before there was a heap.
+#[test]
+fn a_program_with_no_object_has_no_arena() {
+    let scalar = beck_clif::module(&compile("arithmetic.beck", ARITHMETIC)).expect("compiles");
+    assert!(
+        !scalar.clif.contains("beck.alloc"),
+        "a program of pure arithmetic must not reserve a heap"
+    );
+    assert!(scalar.heap.is_empty(), "and must have no layout at all");
+    let heaped = beck_clif::module(&compile("records.beck", RECORDS)).expect("compiles");
+    assert_eq!(
+        heaped.heap.layouts().count(),
+        4,
+        "Point, Key, Weighed and Segment"
+    );
+}
+
+// -------------------------------------------------------------------------------------------
 // The two emitters, held to one subset
 // -------------------------------------------------------------------------------------------
 
@@ -405,6 +522,9 @@ fn the_two_emitters_accept_and_refuse_the_same_definitions() {
         ("control.beck", CONTROL),
         ("rec.beck", RECURSION),
         ("refused.beck", REFUSED),
+        ("records.beck", RECORDS),
+        ("unions.beck", UNIONS),
+        ("still-refused.beck", STILL_REFUSED),
     ]
     .iter()
     .map(|(n, s)| (n.to_string(), s.to_string()))
@@ -467,11 +587,8 @@ fn what_cannot_be_compiled_is_refused_by_name_and_with_a_reason() {
     linker!();
     let all = All::over("refused.beck", REFUSED);
     for name in [
-        "takes_a_record",
-        "builds_a_record",
         "takes_a_list",
         "builds_a_string",
-        "matches_a_union",
         "is_generic",
         "reads_the_clock",
         "calls_something_refused",
@@ -488,7 +605,7 @@ fn what_cannot_be_compiled_is_refused_by_name_and_with_a_reason() {
     );
     assert_eq!(
         all.refusal("calls_something_refused"),
-        Some("calls `takes_a_record`, which does not compile"),
+        Some("calls `takes_a_list`, which does not compile"),
         "the fixed point has to name what it was waiting on"
     );
 }
@@ -505,22 +622,15 @@ fn the_seam_runs_the_compiled_half_and_falls_back_for_the_rest() {
         .expect("there is a linker");
     assert_eq!(dev.name(), "cranelift");
     let scalar = &program.defs["scalar_and_fine"].body;
-    let record = &program.defs["takes_a_record"].body;
+    let listy = &program.defs["takes_a_list"].body;
     assert!(dev.compiled(scalar), "the scalar definition is compiled");
-    assert!(!dev.compiled(record), "the record one is not");
+    assert!(!dev.compiled(listy), "the one that takes a list is not");
     let f = dev.function(scalar).expect("prepares");
     assert_eq!(f(vec![Value::Int(21)]).expect("runs"), Value::Int(42));
     // …and the refused one still answers, from the tree-walker behind the seam.
-    let g = dev.function(record).expect("prepares");
-    let point = beck_core::Value::data(
-        Arc::from("Point"),
-        None,
-        beck_core::core::Fields::from_iter([
-            (Arc::from("x"), Value::Int(2)),
-            (Arc::from("y"), Value::Int(3)),
-        ]),
-    );
-    assert_eq!(g(vec![point]).expect("runs"), Value::Int(5));
+    let g = dev.function(listy).expect("prepares");
+    let xs = Value::List(Arc::new(vec![Value::Int(2), Value::Int(3)]));
+    assert_eq!(g(vec![xs]).expect("runs"), Value::Int(2));
 }
 
 /// Every corpus program produces an object the linker accepts.

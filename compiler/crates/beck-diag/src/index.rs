@@ -990,7 +990,7 @@ pub const INDEX: &[CodeEntry] = &[
          yet had confirmed. A server renders what it has recorded, so its answer is `Confirmed` at \
          every position of every log and the page's other branch would be unreachable. This is \
          `B0516` from the other side: `@render(client)` is what makes a guess possible, and \
-         therefore what makes saying so possible (docs/101 §101.2).",
+         therefore what makes saying so possible (docs/102 §102.2).",
     ),
     // --------------------------------------------------------- B06xx: modules and interfaces
     e(
