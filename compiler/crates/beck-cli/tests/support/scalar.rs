@@ -342,8 +342,8 @@ def ackermann(m: Int, n: Int) -> Int:
 
 /// Definitions this backend must refuse, one per reason.
 ///
-/// The heap ([`super::heapfix`]) took the record and the union off this list, `docs/104` took text
-/// off it, and `docs/105` took *reading* a collection off it — what is left of one is the half that
+/// The heap ([`super::heapfix`]) took the record and the union off this list, `docs/105` took text
+/// off it, and `docs/106` took *reading* a collection off it — what is left of one is the half that
 /// **grows** it. `str` of an `Int` came off it too, so the row here is a **real**, whose shortest
 /// round-trip decimal is an algorithm rather than a loop. What is left is what `docs/101` §101.5 names as not built — and `scalar_and_fine`
 /// is the control: a list of refusals with nothing on the other side of it would pass against a

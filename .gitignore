@@ -2,3 +2,7 @@
 # the module pages and rustdoc. Built on every run; never checked in. What *is* checked in is
 # `docs/reference/`, the markdown the drift gate compares against (docs/adr/0007).
 site/
+
+# `release/build.sh`'s output: a tarball and its checksum, per target. Built by the release
+# workflow and uploaded to the release; never checked in (docs/101 §101.3).
+dist/

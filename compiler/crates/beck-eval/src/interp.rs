@@ -758,7 +758,7 @@ fn work_of(op: Prim, args: &[Value]) -> usize {
         // clamps, so "from `i` to the end" is ordinarily written with a length nobody bothered to
         // bound — and charging the number the caller wrote made `str_slice(s, 0, 1_000_000)` on a
         // five-character string cost a million steps. Found by the native differential, where the
-        // compiled answer arrived and the evaluator's ran out of fuel (`docs/104` §104.8).
+        // compiled answer arrived and the evaluator's ran out of fuel (`docs/105` §105.8).
         Prim::StrSlice => {
             let chars = match args.first() {
                 Some(Value::Str(t)) => t.chars_len(),
@@ -2390,7 +2390,7 @@ mod tests {
     /// "From here to the end" is ordinarily written with a length nobody bounded, so charging the
     /// number in the source made `str_slice(s, 0, 1_000_000)` on a five-character string cost a
     /// million steps and run an otherwise instant program out of fuel. Found by the native
-    /// differential, where the compiled answer arrived and this one did not (`docs/104` §104.8).
+    /// differential, where the compiled answer arrived and this one did not (`docs/105` §105.8).
     ///
     /// Asserted against `work_of` rather than through a whole program, because what went wrong is
     /// the accounting and this is where it is written.

@@ -24,8 +24,8 @@ Newest first.
   `cranelift.rs::the_three_backends_agree_on_text`, now 3,382 calls each.
 
   **Three of those refusals were wrong about their own reason**, which is
-  [`docs/105`](docs/105-lists-arrive-read-only-report.md) §105.7's finding a second time and
-  corrects [`docs/104`](docs/104-text-on-the-heap-report.md) §104.4:
+  [`docs/106`](docs/106-lists-arrive-read-only-report.md) §106.7's finding a second time and
+  corrects [`docs/105`](docs/105-text-on-the-heap-report.md) §105.4:
 
   - `str` was refused because "the rendering has to be Rust's to the digit". True of a **real**,
     whose shortest round-trip form is an algorithm — and not of an `Int`, whose decimal is a loop.
@@ -46,7 +46,7 @@ Newest first.
 
 
 - **A map arrives read-only, and a fold compiles**
-  ([`docs/106`](docs/106-a-map-arrives-read-only-report.md)): `Map[K, V]` is a count, every key in
+  ([`docs/107`](docs/107-a-map-arrives-read-only-report.md)): `Map[K, V]` is a count, every key in
   key order, then every value — so `map_get` is a binary search and `map_keys` is one `memcpy`.
   `map_len`, `map_get`, `map_contains`, `map_keys`, `map_values`, the six comparisons and `{}`
   compile; `map_insert`, `map_remove` and `map_merge` are refused. **403 → 452 definitions**, the
@@ -56,15 +56,15 @@ Newest first.
   `cranelift.rs::the_three_backends_agree_on_maps` (898 calls each),
   `a_lookup_costs_the_same_whatever_the_map_holds` and `a_corpus_fold_compiles`.
 - **`Repr::order` is the only place either backend names a comparison.**
-  [`docs/105`](docs/105-lists-arrive-read-only-report.md) §105.4 said that would prevent a fourth
+  [`docs/106`](docs/106-lists-arrive-read-only-report.md) §106.4 said that would prevent a fourth
   record-field-compared-by-offset defect; there was a fourth, in the one site not yet converted, and
   all five go through the accessor now. A new reference kind is a compile error where its comparison
-  has to be written (§106.5).
+  has to be written (§107.5).
 - **`Html` is refused by name.** It fell through to "not a type this module declares", which is true
   about the path taken and misleading about the cause.
 
 
-- **A list arrives read-only** ([`docs/105`](docs/105-lists-arrive-read-only-report.md)): a
+- **A list arrives read-only** ([`docs/106`](docs/106-lists-arrive-read-only-report.md)): a
   `list[T]` is a value both code generators compile — literals, the six comparisons, `list_len`,
   `list_is_empty`, `list_get`, `list_contains`, `list_index_of`, `list_slice`, `list_take`,
   `list_drop` and `list_reverse` — and **`list_append` is refused** by name, because an arena cannot
@@ -74,19 +74,19 @@ Newest first.
   `cranelift.rs::the_three_backends_agree_on_lists` (1,425 calls each), and by
   `a_list_slice_costs_its_answer_and_not_the_list_it_came_from`.
 - **`str_index_of` compiles, and the reason it did not was false.**
-  [`docs/104`](docs/104-text-on-the-heap-report.md) §104.4 blamed the prelude's `Option` for having
+  [`docs/105`](docs/105-text-on-the-heap-report.md) §105.4 blamed the prelude's `Option` for having
   no layout; it has had one since [`docs/101`](docs/101-the-heap-report.md). Every gate stayed green
   because each asserted a refusal *said* something and none asked whether what it said was so.
   `a_refusal_that_blames_a_type_is_asked_whether_that_type_has_one` is the gate that would have
-  gone red (§105.7).
+  gone red (§106.7).
 - **The reply decoder is iterative**, so `MAX_DEPTH` bounds the *value* rather than the host
   thread's stack. It recursed, and a debug build aborted at about 1,600 against a declared ceiling
   of 2,048 — which made what could be decoded a function of how the compiler was built. Gated by
   `a_value_at_the_declared_ceiling_decodes_rather_than_aborting`, which builds a value exactly that
-  deep by hand (§105.6).
+  deep by hand (§106.6).
 - **The LLVM record comparison compared a `list` field by its offset** — the same defect
-  [`docs/104`](docs/104-text-on-the-heap-report.md) §104.5 found in Cranelift for a `Str`, third
-  occurrence. Caught by the differential's pairs (§105.4).
+  [`docs/105`](docs/105-text-on-the-heap-report.md) §105.5 found in Cranelift for a `Str`, third
+  occurrence. Caught by the differential's pairs (§106.4).
 - **An unreachable refusal reason deleted.** The higher-order collection primitives are refused a
   line earlier by their own argument, so the table's entry for them could never be produced
   ([`docs/89`](docs/89-query-fusion-report.md) §89.5's pattern).
@@ -96,7 +96,7 @@ Newest first.
   `an_accumulator_costs_the_square_of_what_it_builds` reads the arena and finds 15.9× the bytes for
   4× the steps.
 
-- **Text is on the heap** ([`docs/104`](docs/104-text-on-the-heap-report.md)): a `Str` is a value
+- **Text is on the heap** ([`docs/105`](docs/105-text-on-the-heap-report.md)): a `Str` is a value
   both code generators compile — a layout of two counts and the bytes, a literal pool the host
   writes in front of every request, `+`, the six comparisons, `str_len`, `str_is_empty`,
   `str_slice`, `str_contains`, `str_starts_with` and `str_ends_with`. **283 → 344 definitions**
@@ -108,7 +108,7 @@ Newest first.
   `the_literal_pool_is_a_function_of_the_program`.
 - **The Cranelift record comparison compared a `Str` field by its offset**, so two equal strings
   allocated at different places compared unequal. Found by the three-way differential's pairs one
-  minute after the second emitter existed (§104.5).
+  minute after the second emitter existed (§105.5).
 
 ### The evaluator
 
@@ -117,7 +117,7 @@ Newest first.
   the end" could exhaust the fuel budget on a program doing nothing. The arm one above it in
   `work_of` has stated the rule since it was written. Gated by
   `interp::tests::a_slice_is_charged_what_it_takes`, and found by the native differential answering
-  while the tree-walker ran out of fuel (§104.8).
+  while the tree-walker ran out of fuel (§105.8).
 
 ### Docs
 
@@ -134,6 +134,32 @@ Newest first.
   every one out of a rustdoc page, has to land on a file that exists — and every `§number` in a
   Rust doc comment was remapped to the section that now carries the claim, rather than to the
   chapter's front door.
+
+### Releases
+
+- **The release pipeline and the installer**
+  ([`docs/104`](docs/104-the-release-and-the-installer-report.md)) — the two items on
+  [`docs/08`](docs/08-roadmap.md) §8.5.4's apology list that were on nobody's bullet.
+  `.github/workflows/release.yml` turns a tag into four native builds, one `SHA256SUMS` and a
+  GitHub Release; it *calls* `compiler.yml` rather than restating a gate, so §28.2's "a release is
+  a tag on a commit that passed the whole matrix" is a `needs:` edge. `install.sh` verifies what it
+  downloaded and refuses to install on a mismatch. Everything executable is outside the YAML —
+  a tag-triggered workflow is the one artefact that cannot be run before it is used — and
+  §104.7 splits what was executed from what was only written: no tag has been pushed.
+  Gated by `release.rs` (nine tests; the one that matters corrupts an archive and asserts the
+  installer exits non-zero *and* installs nothing, checked by breaking the comparison).
+- **The version means something.** `0.1.0` on fourteen unpublished crates became **0.3.0**, read
+  from one place by `release/version.sh`; a tag that disagrees fails the build, and
+  `beck --version` carries the commit and the target triple, because four tarballs share a release.
+- **A release publishes a checksum and no signature**
+  ([`adr/0027`](docs/adr/0027-a-release-publishes-a-checksum-and-not-a-signature.md)): `beck sign`'s
+  subject is an OCI manifest digest and a compiler release is a tarball.
+  `pending_security.rs::a_release_artefact_carries_a_checksum_and_no_signature` asserts the absence
+  from both ends, and [`docs/43`](docs/43-threat-model.md) §43.4 names it.
+- **Documentation brought back in line with the code** on the way through: `docs/13`'s "Cranelift is
+  not built", `docs/06`'s "the `Platform` trait does not exist yet", and "all ten crates inherit
+  `forbid(unsafe)`" in `SECURITY.md` and `docs/42` — which is twelve of fourteen, with `beck-wasm`
+  and `beck-play` at `deny` plus an export-only exception each test asserts the extent of.
 
 ### The playground
 

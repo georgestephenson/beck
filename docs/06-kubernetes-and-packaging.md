@@ -258,8 +258,11 @@ endpoint, and the thing an SSRF is usually after.
 Enforcing the host list exactly needs a CNI that understands names — Cilium's `toFQDNs`, Calico's
 `NetworkSet` — which is a **`Platform` implementation's** decision and not core Kubernetes'. The
 annotation exists so that such an implementation has the list without re-deriving it. §6.1's
-`Platform` trait is where that belongs; [`20`](20-phase-2-report.md) §20.5 records that the trait
-does not exist yet.
+`Platform` trait is where that belongs — and ~~[`20`](20-phase-2-report.md) §20.5 records that the
+trait does not exist yet~~: it exists (`beck-infra/src/platform.rs`), with two implementations, and
+Compose is the one that keeps it honest, because a trait shaped so that only Kubernetes could
+satisfy it would have looked fine with one. What still does not exist is a name-aware CNI
+implementation of this particular rule.
 
 ## 6.6 The dev→prod parity ladder
 

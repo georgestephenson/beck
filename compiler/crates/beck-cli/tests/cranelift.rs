@@ -504,7 +504,7 @@ fn the_three_backends_agree_on_text() {
     compared += all.agree("repeat", &textfix::repeats(&ss));
 
     // Building text out of something that is not text, and taking an `Option` apart without a
-    // `match` — the primitives `docs/104`'s and `docs/105`'s layouts made reachable.
+    // `match` — the primitives `docs/105`'s and `docs/106`'s layouts made reachable.
     compared += all.agree("shown", &textfix::integers());
     compared += all.agree(
         "shown_bool",

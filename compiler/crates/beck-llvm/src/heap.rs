@@ -207,7 +207,7 @@ impl Repr {
 
     /// How two values of this repr are ordered, and **the only place that decides**.
     ///
-    /// [`docs/105`](../../../../../docs/105-lists-arrive-read-only-report.md) §105.4 records the
+    /// [`docs/106`](../../../../../docs/106-lists-arrive-read-only-report.md) §106.4 records the
     /// same defect three times: a record's field comparison matched `Repr::Obj` and `Repr::Str`
     /// by name and let a `_` arm swallow whichever reference kind had just been added, so two
     /// equal values compared unequal because their **offsets** differed. Each time the differential
@@ -552,7 +552,7 @@ impl Heap {
             Ty::UNIT => return Err("the unit value, which has no machine representation".into()),
             // Named rather than left to fall through to "not a type this module declares", which
             // is where they landed and is a true sentence about the wrong thing: `Html` is a
-            // builtin, and what it lacks is a layout. `docs/106` §106.7 is the correction.
+            // builtin, and what it lacks is a layout. `docs/107` §107.7 is the correction.
             Ty::HTML => {
                 return Err(
                     "`Html`, which is a tree of children and follows the collections rather than \

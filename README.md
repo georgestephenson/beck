@@ -46,6 +46,16 @@ graph. Every program in it is compiled and run by a test. It is
 alongside the generated language reference and the compiler's API docs. In short:
 
 ```console
+$ curl -fsSL https://raw.githubusercontent.com/georgestephenson/beck/main/install.sh | sh
+$ beck --help
+```
+
+[`install.sh`](install.sh) downloads the tarball for your platform, checks it against the release's
+`SHA256SUMS`, and puts `beck` in `~/.beck/bin`. **No release has been cut yet**
+([`104`](docs/104-the-release-and-the-installer-report.md) §104.7), so until a tag is pushed, build
+it from source — the same binary, and it needs a C compiler and CMake:
+
+```console
 $ cd compiler
 $ cargo build --release          # the pinned toolchain downloads on the first build
 $ ./target/release/beck --help
@@ -88,22 +98,30 @@ and `beck up` round it out. The full command tree is in
 | [`compiler/`](compiler/) | The compiler, the runtime and the standard library |
 | [`compiler/examples/todo.beck`](compiler/examples/todo.beck) | The sketch the project grew from, as a working program |
 | [`phase0/`](phase0/) | The *output* the compiler generates, hand-written in Rust once so the architecture could be measured before anything was built on it |
+| [`install.sh`](install.sh), [`release/`](release/README.md) | Installing a released `beck`, and building one — the executable half of the release pipeline, so it can be run before it is trusted |
 | [`SECURITY.md`](SECURITY.md) | How to report a vulnerability; [`docs/43`](docs/43-threat-model.md) is who is defended and who is not |
 
 ## Status
 
-**Phases 0, 1 and 2 are built; Phase 3 is most of the way.** Effects are inferred and placement is
-solved, so deleting every `@on(...)` from a program leaves it compiling, placing and running — 52%
-of everything placed across a 31-program corpus has no tier at all. Views are maintained from the
-change rather than recomputed, and the operators that do not read the session are held **once** for
-the whole fanout. A program's own tests are written in it. The language has traits, bounds, tail
-calls, reals, parameterised types and error rows; the standard library has strings, collections,
-JSON, time, HTTP, crypto, bignums and decimal. There is an LSP, a SQLite substrate, structured
-concurrency, and read models any Postgres client can query.
+**Phases 0, 1 and 2 are built; Phase 3 has nothing untouched left on its list.** Effects are
+inferred and placement is solved, so deleting every `@on(...)` from a program leaves it compiling,
+placing and running — 52% of everything placed across a 31-program corpus has no tier at all. Views
+are maintained from the change rather than recomputed, and the operators that do not read the session
+are held **once** for the whole fanout; a DBA can `psql` the read models they project. A program's
+own tests are written in it. The language has traits, bounds, tail calls, reals, parameterised types,
+error rows, nested patterns with guards, and `parallel:` scopes; the standard library has strings,
+collections, JSON, time, HTTP, crypto, bignums and decimal. There is an LSP, a SQLite substrate, an
+OIDC relying party with presence, a client-side WASM mode, a playground that runs the whole
+application in a tab, two native code generators behind one seam, an OCI image builder that needs no
+daemon, and — since [`docs/104`](docs/104-the-release-and-the-installer-report.md) — a release
+pipeline and an installer.
 
-**What is not built is named rather than implied**: no native codegen (the tree-walker is the only
-backend), no client-side WASM mode, no playground, no OIDC relying party, and no supply-chain
-tooling. Phase 3's exit criterion — *an outside developer builds a non-trivial app from
+**What is not built is named rather than implied.** Both code generators share one bound, and it is
+half lifted: a record, a union and a newtype compile natively, and **text, collections, closures and
+every effect do not**, so a program that touches a `Str` still walks. Mode B's codegen waits on that
+same half, and lazy routes wait on a per-component boundary the language does not have. **No release
+has been cut**, so the installer has nothing to install yet, and the binaries it would install carry
+a checksum rather than a signature. Phase 3's exit criterion — *an outside developer builds a non-trivial app from
 documentation alone* — is **not met**, and [`docs/08`](docs/08-roadmap.md) tracks that literally.
 
 Every report in [`docs/`](docs/README.md) ends with what it refuses to claim. That is the house

@@ -2560,7 +2560,7 @@ fn compare_function(
                     // for whatever it refers to, and `Repr::order` is the only place that names
                     // one. Comparing the *offsets* would answer that two equal values differ
                     // whenever they were allocated at different places, which is almost always —
-                    // and `docs/106` §106.5 is the **fourth** time a case analysis here let a
+                    // and `docs/107` §107.5 is the **fourth** time a case analysis here let a
                     // reference kind fall through to exactly that.
                     heap::Order::Call(symbol) => {
                         let inner_sig = compare_signature(m);
@@ -4686,7 +4686,7 @@ impl<'a> Body<'a> {
 /// Why a primitive this backend does not compile is not compiled.
 ///
 /// The string half is spelled out one at a time rather than swept into "not a scalar primitive",
-/// because since `docs/104` a `Str` *is* a value here and "text is not on this heap" would be
+/// because since `docs/105` a `Str` *is* a value here and "text is not on this heap" would be
 /// false. The wording is this emitter's own — `cranelift.rs` holds the two to refusing the same
 /// **set** of definitions and not to saying the same words about them.
 fn refusal(op: Prim) -> String {

@@ -1,10 +1,10 @@
-# 105 — A list arrives read-only
+# 106 — A list arrives read-only
 
 **Built.** A `list[T]` is a value both code generators compile — a layout, literals, all six
 comparisons, `list_len`, `list_is_empty`, `list_get`, `list_contains`, `list_index_of`,
 `list_slice`, `list_take`, `list_drop` and `list_reverse` — and `list_append` is **refused**, by
 name and with the reason. [`101`](101-the-heap-report.md) §101.5's table of what the heap does not
-reach had six rows, [`104`](104-text-on-the-heap-report.md) removed one, and this removes half of
+reach had six rows, [`105`](105-text-on-the-heap-report.md) removed one, and this removes half of
 another: what is left of collections is the half that **grows** one.
 
 **283 → 344 → 403 definitions** compile across the tree.
@@ -12,21 +12,21 @@ another: what is left of collections is the half that **grows** one.
 
 Three things in it are worth more than the feature, and none is about lists:
 
-- **A refusal reason was false.** [`104`](104-text-on-the-heap-report.md) §104.4 refused
+- **A refusal reason was false.** [`105`](105-text-on-the-heap-report.md) §105.4 refused
   `str_index_of` because "its `Option` has no layout here", and the prelude's `Option` has had one
   since [`101`](101-the-heap-report.md) — a definition returning `Option[Int]` compiled in the
   fixture *beside* it. Every gate was green, because each asserted that the refusal said something
-  and none asked whether what it said was so. §105.7.
+  and none asked whether what it said was so. §106.7.
 - **A refusal reason could not fire.** The higher-order half of the collection primitives is
   refused a line earlier, by its own argument, so the table's entry for them was unreachable prose.
-  Deleted, which is [`89`](89-query-fusion-report.md) §89.5's answer to the same thing. §105.7.
+  Deleted, which is [`89`](89-query-fusion-report.md) §89.5's answer to the same thing. §106.7.
 - **The declared depth ceiling was not reachable.** The host's decoder recursed, so `MAX_DEPTH =
   2048` was a claim about the *thread's stack* and a debug build aborted at about 1,600. It is
-  iterative now, and the ceiling is a bound on the value in every profile. §105.6.
+  iterative now, and the ceiling is a bound on the value in every profile. §106.6.
 
 ---
 
-## 105.1 The shape
+## 106.1 The shape
 
 One header word and one word per element:
 
@@ -51,9 +51,9 @@ exactly what a closure would need.
 
 Ordering is `Vec<Value>`'s: element by element, and a list that is a prefix of another is less than
 it. The prefix half is the one a plausible implementation gets wrong in exactly one direction, and
-it is [`104`](104-text-on-the-heap-report.md) §104.4's `memcmp("ab", "abc", 2)` one type up.
+it is [`105`](105-text-on-the-heap-report.md) §105.4's `memcmp("ab", "abc", 2)` one type up.
 
-## 105.2 What compiles now that did not
+## 106.2 What compiles now that did not
 
 `beck native <file>` over the corpus, the examples, all three SICP chapters, Are We Fast Yet, the
 Benchmarks Game, the standard library and `xlang/`:
@@ -74,7 +74,7 @@ Where this half landed:
 | [`awfy/json.beck`](../compiler/awfy/json.beck) | 3 | **8** | |
 | [`clbg/`](../compiler/clbg/README.md) | 63 | **72** | |
 
-## 105.3 What it answers, and what it refuses
+## 106.3 What it answers, and what it refuses
 
 | Compiled | How |
 |---|---|
@@ -86,7 +86,7 @@ Where this half landed:
 | `list_slice`, `list_take`, `list_drop` | one clamped range and one `memcpy`, clamped where the evaluator clamps |
 | `list_reverse` | a word-by-word walk |
 | a `list` field, a list in a variant, `with` over one | the layout was already there; a list is one more word |
-| `str_index_of` | the row [`104`](104-text-on-the-heap-report.md) got wrong (§105.7) |
+| `str_index_of` | the row [`105`](105-text-on-the-heap-report.md) got wrong (§106.7) |
 
 `list_get` is the interesting one, and the trick is the **address** rather than the value. An index
 outside the list would read a word that may be past the end of the arena, so the address handed to
@@ -100,18 +100,18 @@ Refused, each by name with the reason:
 
 | | why |
 |---|---|
-| `list_append`, `concat_lists` | §105.5 — the decision, not a gap |
+| `list_append`, `concat_lists` | §106.5 — the decision, not a gap |
 | `list_zip` | answers with a list of pairs, and there is no pair type to lay out |
-| `map_list`, `filter_list`, `list_fold`, `sort_by`, `list_all`, `list_any`, `list_flat_map` | **nothing in the table** — see §105.7 |
+| `map_list`, `filter_list`, `list_fold`, `sort_by`, `list_all`, `list_any`, `list_flat_map` | **nothing in the table** — see §106.7 |
 | `str_split`, `str_chars` | answer with a list whose *elements* they also allocate, which is two loops rather than the one every list here builds |
 | `str_join` | builds text whose size is a sum over a list |
 | `Map[K, V]` | still the whole row: a `PMap` is a weight-balanced tree with structural sharing |
 
-## 105.4 One layout, three runtimes — and what writing it twice caught again
+## 106.4 One layout, three runtimes — and what writing it twice caught again
 
 [`97`](97-cranelift-report.md) §97.3's rule holds and paid again, in the same place and for the
 third time: the **record comparison compared a reference field by its offset**.
-[`104`](104-text-on-the-heap-report.md) §104.5 found it in Cranelift for a `Str`; this found it in
+[`105`](105-text-on-the-heap-report.md) §105.5 found it in Cranelift for a `Str`; this found it in
 **LLVM** for a `list`, because a `Repr` carried in an `i64` looks exactly like an `Int` to a match
 that is not asked to distinguish them, and each emitter's fall-through arm swallows whichever
 reference kind was added last.
@@ -125,7 +125,7 @@ would make the fourth impossible is a `Repr::reference()` accessor that the comp
 against instead of a match; it is not built, and it is named here so the next person does not have
 to find it a fourth time.
 
-## 105.5 `list_append` is refused, and text's `+` is not
+## 106.5 `list_append` is refused, and text's `+` is not
 
 The two decisions look inconsistent and are not, so both arguments are here.
 
@@ -141,7 +141,7 @@ So `list_append` is refused. A definition that grows a list stays with the evalu
 searching, slicing and comparing all compile, so a program that reads collections gets the backend
 and one that builds them keeps the tree-walker's asymptote.
 
-Text's `+` shipped instead, and [`104`](104-text-on-the-heap-report.md) §104.6 measured it at
+Text's `+` shipped instead, and [`105`](105-text-on-the-heap-report.md) §105.6 measured it at
 **0.17× the tree-walker** at 4,000 appends. The difference is not principle but what refusing costs:
 `+` is the *only* way to build a `Str`, so refusing it would mean a `Str` could be received and read
 and never combined — no `"hello, " + name`. Refusing `list_append` costs a program the loop that
@@ -157,7 +157,7 @@ the arena" is not the same question, because a value already handed to an earlie
 at the top. That is the piece somebody has to design, and it is the whole of what stands between
 this backend and a linear accumulator.
 
-## 105.6 The ceiling that was not reachable
+## 106.6 The ceiling that was not reachable
 
 `Heap::decode` walked a reply by recursing, and `MAX_DEPTH = 2048` bounded that recursion. Adding a
 `list` arm made the frame bigger, and a `cargo test` build then **aborted the process** on a value
@@ -179,11 +179,11 @@ hand — no toolchain, the same default-stack thread `cargo test` gives everythi
 walks the answer to check it really is that deep, and asserts that one level further is a message.
 It goes red on the recursive version, which is how it was checked.
 
-## 105.7 What a refusal's reason is worth
+## 106.7 What a refusal's reason is worth
 
 Two findings, and they are the same finding from opposite ends.
 
-**A reason that was false.** [`104`](104-text-on-the-heap-report.md) §104.4 refused `str_index_of`
+**A reason that was false.** [`105`](105-text-on-the-heap-report.md) §105.4 refused `str_index_of`
 because it "answers with an `Option`, whose layout this backend resolves from a program's own types
 and not from the prelude's". The prelude's `Option` has had a layout since
 [`101`](101-the-heap-report.md); `maybe(n) -> Option[Int]` compiles, and compiled in the fixture
@@ -211,7 +211,7 @@ closure", which is both truer and more specific. A reason that cannot be produce
 [`89`](89-query-fusion-report.md) §89.5's rule that could not fire, and it gets the same answer —
 deleted. The fixture now asserts the message that is actually produced.
 
-## 105.8 The numbers
+## 106.8 The numbers
 
 `cargo test --release --test measure_native -- --nocapture --test-threads=1`, Ubuntu clang 18.1.3,
 `-O2`, median of seven runs at the small size and three at the large one. Two sizes each per
@@ -226,9 +226,9 @@ deleted. The fixture now asserts the message that is actually produced.
 | `windows` — a four-element slice at every position | 2,000 | 1.226 ms | 58.6 µs | **20.9×** |
 | | 16,000 | 10.037 ms | 314 µs | **31.9×** |
 
-There is no accumulator row, because `list_append` is refused — §105.5. The claim
-[`104`](104-text-on-the-heap-report.md) §104.6 made about text's accumulator is now gated **with no
-clock in it** as well, which is the correction §105.9 records:
+There is no accumulator row, because `list_append` is refused — §106.5. The claim
+[`105`](105-text-on-the-heap-report.md) §105.6 made about text's accumulator is now gated **with no
+clock in it** as well, which is the correction §106.9 records:
 `an_accumulator_costs_the_square_of_what_it_builds` reads the arena rather than the wall clock and
 finds **15.9× the bytes for 4× the steps**.
 
@@ -237,11 +237,11 @@ The shape gates are the same two, one per type:
 at 1,600, so a `list_slice` that copied what it was taken *from* would be quadratic there — which
 the differential cannot see, because copying too much still answers correctly.
 
-## 105.9 What this corrects
+## 106.9 What this corrects
 
-- [`104`](104-text-on-the-heap-report.md) §104.4's reason for refusing `str_index_of` is **false**,
-  and §105.7 is the correction. The row is gone and the primitive compiles.
-- [`104`](104-text-on-the-heap-report.md) §104.6's `str_split` reason — "answers with a list, and a
+- [`105`](105-text-on-the-heap-report.md) §105.4's reason for refusing `str_index_of` is **false**,
+  and §106.7 is the correction. The row is gone and the primitive compiles.
+- [`105`](105-text-on-the-heap-report.md) §105.6's `str_split` reason — "answers with a list, and a
   collection is not on this heap yet" — is stale rather than wrong; the true reason is that it
   allocates the *elements* too.
 - `measure_native.rs` asserted that text's accumulator is **slower** than the tree-walker. That was
@@ -250,11 +250,11 @@ the differential cannot see, because copying too much still answers correctly.
   workspace sweep the day it was written. The assertion is gone; the row is still printed, and the
   claim it was evidence for is gated without a clock instead.
 - [`101`](101-the-heap-report.md) §101.5's `list[T]` row is half gone. Its forecast — that the
-  in-place append is what an arena cannot have — was exactly right, and §105.5 is that forecast
+  in-place append is what an arena cannot have — was exactly right, and §106.5 is that forecast
   cashed rather than argued with.
 - [`08`](08-roadmap.md) §8.5.5's Lane E row: what is left is `Map`, closures and the effects.
 
-## 105.10 What this establishes
+## 106.10 What this establishes
 
 That reading a collection is compiled and growing one is not, over 1,425 calls per backend on an
 alphabet with an empty list, a prefix pair, and elements of every kind that is itself an offset —

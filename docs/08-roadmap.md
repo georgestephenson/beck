@@ -430,8 +430,11 @@ expressiveness suite (three chapters of SICP and the Felleisen table, with chapt
 to Phase 5), incremental views, whose last part is
 [`89`](89-query-fusion-report.md)'s fusion, **identity**, whose last part is
 [`96`](96-presence-report.md)'s presence, and the supply-chain tooling
-([`92`](92-sbom-report.md), [`99`](99-supply-chain-report.md)) — whose remainder is a release
-pipeline rather than a piece of the bullet.
+([`92`](92-sbom-report.md), [`99`](99-supply-chain-report.md)) — whose remainder was a release
+pipeline rather than a piece of the bullet, and **that pipeline is now built**
+([`104`](104-the-release-and-the-installer-report.md)), with an installer in front of it and no tag
+pushed through it. What is still missing there is a signature a consumer can check: `beck sign`'s
+subject is an image manifest, and a release publishes tarballs (§104.6).
 **No bullet has a named remainder**: the concurrency-and-errors bullet has `Result`, error rows,
 `parallel:` and pattern matching with nesting, guards and alternatives
 ([`90`](90-nested-patterns-report.md), [`91`](91-guards-and-alternatives-report.md)); what
@@ -440,14 +443,14 @@ pipeline rather than a piece of the bullet.
 half-built**: the codegen bullet has **both** of §5.2's code generators
 ([`93`](93-llvm-backend-report.md), [`97`](97-cranelift-report.md)) and a heap for the *algebraic*
 half of what the language stores ([`101`](101-the-heap-report.md)) plus **text**
-([`104`](104-text-on-the-heap-report.md)) and **reading a collection**
-([`105`](105-lists-arrive-read-only-report.md), [`106`](106-a-map-arrives-read-only-report.md)) — a
+([`105`](105-text-on-the-heap-report.md)) and **reading a collection**
+([`106`](106-lists-arrive-read-only-report.md), [`107`](107-a-map-arrives-read-only-report.md)) — a
 record, a union, a newtype, a `Str`, a `list[T]` and a `Map[K, V]` compile, and a closure, every
 effect, `Html` and the loop that *grows* a collection do not; Mode B has the mode, the bundle,
 the data patch, the reconciliation, a browser that runs it and an offline queue, without codegen —
 which waits on the half of that heap that is not built — and it is the **collection** half rather
 than the text half, since a page is a tree of children
-([`94`](94-mode-b-report.md) §94.8, [`104`](104-text-on-the-heap-report.md) §104.10); and the
+([`94`](94-mode-b-report.md) §94.8, [`105`](105-text-on-the-heap-report.md) §105.10); and the
 playground has rungs A and B and not rung C, which is Phase 4's
 ([`98`](98-playground-report.md) §98.7). **Client polish is built too**
 ([`100`](100-client-polish-report.md)) except for lazy routes, which wait on the same
@@ -466,6 +469,7 @@ developer would ask in order:
 | "Can I trust the actor in my ownership check?" | With a verifying provider, yes ([`48`](48-identity-report.md)); against a real identity provider, yes ([`95`](95-oidc-relying-party-report.md)) — and `session.claims` says what they may do. The default still believes the client, and says so |
 | "Can my DBA see the data?" | `psql` against the read models ([`88`](88-read-models-and-pgwire-report.md)) — one table per collection, derived, no annotation |
 | "Where's the tutorial?" | [`86`](86-getting-started.md), published on the site since [`88`](88-read-models-and-pgwire-report.md) §88.8, and every program in it compiled and run by a test |
+| "How do I get the compiler?" | One command, since [`104`](104-the-release-and-the-installer-report.md) — and it has nothing to download until a tag is pushed, so today the answer is still "build it", which §86.1 now says in that order |
 
 **That last row has moved, and the criterion has not.** It measures a *person* — an outside
 developer building a non-trivial app without asking a question — and what the guide changes is that
@@ -473,8 +477,16 @@ the answer to "from what?" is no longer "there is nothing"; §86.8 is the list o
 cover. Every other row above is a prerequisite for a tutorial being worth writing, and §8.3 item 6
 — "write the tutorial as you build, and treat any sentence that requires an apology as a bug report
 against the design" — is the practice this phase has least honoured. The apologies it would
-currently need are shorter than they were and still enumerable: no OIDC, no Mode B, no installation
-story, no released binary.
+currently need are shorter than they were and still enumerable — and the list this paragraph carried
+has been overtaken twice. ~~No OIDC~~ ([`95`](95-oidc-relying-party-report.md)), ~~no Mode B~~
+([`94`](94-mode-b-report.md)), ~~no installation story~~
+([`104`](104-the-release-and-the-installer-report.md)), **no released binary** — which is now one
+`git tag` rather than a piece of missing work, because the pipeline that would build it exists and
+has never run ([`104`](104-the-release-and-the-installer-report.md) §104.7). What is left to
+apologise for is the one an outside developer meets in week two rather than minute one: a record, a
+union and a newtype compile ([`101`](101-the-heap-report.md)) and **text, collections, closures and
+every effect still walk**, so a program that does anything with a `Str` is running on the
+tree-walker.
 
 ## Phase 4 — Production readiness (4–5 months)
 
@@ -868,16 +880,16 @@ and Cranelift on every call, with the two emitters held to accepting and refusin
 definitions. ~~What still bounds *both* is the **heap**: no record, list, string or effect compiles~~ — the
 **algebraic half is built** ([`101`](101-the-heap-report.md)): a `model`, a `union` and a `newtype`
 have a layout, an arena and a place on the wire, and 283 definitions across the tree compile where
-187 did. **Text is built too** ([`104`](104-text-on-the-heap-report.md)) — a `Str` is two counts and
+187 did. **Text is built too** ([`105`](105-text-on-the-heap-report.md)) — a `Str` is two counts and
 its bytes, a literal is an offset into a pool the host writes, and **344** definitions compile where
 283 did, with the corpus going 4 → 28. **Reading a collection is built too**
-([`105`](105-lists-arrive-read-only-report.md), [`106`](106-a-map-arrives-read-only-report.md)) — a
+([`106`](106-lists-arrive-read-only-report.md), [`107`](107-a-map-arrives-read-only-report.md)) — a
 `list[T]` and a `Map[K, V]` have layouts and **625** definitions compile where 344 did, with **nine
 corpus folds** among them — and the operations that *grow* one are **refused** rather than shipped
 with a worse asymptote than the evaluator's, which is §101.5's forecast cashed. What is left of that
 bullet is closures, the effects, `Html` and growing a collection
-([`106`](106-a-map-arrives-read-only-report.md) §106.4), which is still Phase 4's Lane E and still the prerequisite Mode B codegen is behind
-([`94`](94-mode-b-report.md) §94.8) — and §104.10 corrects which half of that prerequisite text was:
+([`107`](107-a-map-arrives-read-only-report.md) §107.4), which is still Phase 4's Lane E and still the prerequisite Mode B codegen is behind
+([`94`](94-mode-b-report.md) §94.8) — and §105.10 corrects which half of that prerequisite text was:
 `Html` is a tree of children, so it follows the **collection** row rather than the text one. Mode B and
 ~~client polish~~ — **built** ([`100`](100-client-polish-report.md)), and it was not a Lane B item
 either: a route is a field of `Session`, so the engine, the splitter and the plan are untouched and
@@ -909,8 +921,13 @@ No predecessors, and they never acquire any.
 
 **Wave 5 — the Phase 4 gates, arranged before Phase 4 rather than during it.** Supply-chain tooling
 (SLSA v1.2 provenance, 2026-element SBOMs, ~~signing~~ — **the signing machinery is built**
-([`99`](99-supply-chain-report.md)) and what is left of that row is the transparency log and a
-registry to push to — trusted publishing configured *before* the first publish); DST proper, on the
+([`99`](99-supply-chain-report.md)) and what is left of that row is the transparency log, a registry
+to push to, and a **subject the signer can take**: [`104`](104-the-release-and-the-installer-report.md)
+§104.6 found that `beck sign` signs an image manifest digest and a compiler release is a tarball, so
+the binaries carry a checksum and nothing more. ~~The pipeline a provenance attestation would attach
+to~~ exists now ([`104`](104-the-release-and-the-installer-report.md)), which was
+[`92`](92-sbom-report.md)'s stated reason for that row being empty, and the row is still empty —
+trusted publishing configured *before* the first publish); DST proper, on the
 seam Wave 0 created; then the operator, the replay tooling and the
 choreography. **Grammar-aware fuzzing is now due rather than pending**: [`42`](42-security-assurance.md)
 §42.9 pinned it with the trigger "the bound lands", and the bound has landed. Kani proofs of the
@@ -929,8 +946,8 @@ boundaries are real directories.
 | **A — type system** | `beck-core/src/check/`, `ty.rs`, `core.rs`, `prelude.rs`, `iface.rs` | Error rows and handlers; `@derive`; bignums and coercion | **Itself, completely** — see below |
 | **B — runtime and views** | `beck-rt/`, `beck-core/src/{engine,plan,incremental,pmap,signal}.rs` | Clock injection; the shared dataflow's release policy, history constant and render lock; SQL read models, pgwire, query fusion; Mode B's server half | Nothing in A, C, E or F |
 | **C — front end and tooling** | `beck-syntax/`, `beck-cli/`, `beck-diag/` | The recursion bound; the two syntax decisions; Unicode and UTS #39; LSP; `test --update`; fuzzing | A, if a syntax decision changes what the checker sees |
-| **D — process and supply chain** | `docs/`, `.github/`, `deny.toml`, `SECURITY.md` | Threat model, disclosure policy, memory-safety roadmap, `pending_security`, the four retargeted §12 rows, SLSA/SBOM/trusted publishing | Nothing in code |
-| **E — backends** | `beck-eval/`, `beck-llvm/`, `beck-clif/`, `beck-core/src/backend.rs`, any new codegen crate | ~~LLVM backend, native codegen, the differential suite~~ — **built** ([`93`](93-llvm-backend-report.md)), ~~and Cranelift~~ — **built** ([`97`](97-cranelift-report.md)), ~~and a heap~~ — **half built** ([`101`](101-the-heap-report.md)): records, unions and newtypes, ~~and text~~ — **built** ([`104`](104-text-on-the-heap-report.md)), ~~and reading a collection~~ — **built** ([`105`](105-lists-arrive-read-only-report.md), [`106`](106-a-map-arrives-read-only-report.md)), lists and maps alike. What is left is closures, the effects, `Html` and *growing* a collection | Nothing — the seam is why ([`19`](19-phase-1-report.md) §19.9), and [`93`](93-llvm-backend-report.md) is the first thing to test that claim: not one line of `beck-rt` changed |
+| **D — process and supply chain** | `docs/`, `.github/`, `deny.toml`, `SECURITY.md`, `release/`, `install.sh` | Threat model, disclosure policy, memory-safety roadmap, `pending_security`, the four retargeted §12 rows, SLSA/SBOM/trusted publishing, ~~the release pipeline and the installer~~ ([`104`](104-the-release-and-the-installer-report.md)) | Nothing in code — **except that the release lands in `Cargo.toml`, a `build.rs` and `--version`**, which §104.4 is about and which this cell had assumed away |
+| **E — backends** | `beck-eval/`, `beck-llvm/`, `beck-clif/`, `beck-core/src/backend.rs`, any new codegen crate | ~~LLVM backend, native codegen, the differential suite~~ — **built** ([`93`](93-llvm-backend-report.md)), ~~and Cranelift~~ — **built** ([`97`](97-cranelift-report.md)), ~~and a heap~~ — **half built** ([`101`](101-the-heap-report.md)): records, unions and newtypes, ~~and text~~ — **built** ([`105`](105-text-on-the-heap-report.md)), ~~and reading a collection~~ — **built** ([`106`](106-lists-arrive-read-only-report.md), [`107`](107-a-map-arrives-read-only-report.md)), lists and maps alike. What is left is closures, the effects, `Html` and *growing* a collection | Nothing — the seam is why ([`19`](19-phase-1-report.md) §19.9), and [`93`](93-llvm-backend-report.md) is the first thing to test that claim: not one line of `beck-rt` changed |
 | **F — infrastructure** | `beck-infra/` | Effect-derived NetworkPolicy/RBAC/grants; Crossplane emitter; conformance rungs | Nothing |
 
 **Lane A is strictly serial, and that is the real staffing constraint.** It is tempting to run two
@@ -951,12 +968,22 @@ Recommended pairings, in order:
 | ~~**Then**~~ | ~~Lane A: the rest of Wave 2 — `Set`, dates~~ | ~~Lane B: the shared dataflow's three loose ends~~ | **Half done.** `Set` and dates landed ([`50`](50-collections-and-dates-report.md)) and were not Lane A at all: two files in `compiler/lib/`, no primitive, and the only Rust touched was one diagnostic's label. Lane B is untouched, so the pairing was never tested — the prediction it made cannot be claimed to have held |
 | ~~**Then**~~ | ~~Lane A: bignums, coercion, `@derive`~~ | ~~Lane B: the shared dataflow's three loose ends~~ | **Half done, and the other half.** Lane B was taken at last, after being the recommended Branch 2 for three consecutive rewrites: two of the three loose ends are closed ([`51`](51-arrangement-lifecycle-report.md)) and the third — the render lock — is deliberately left. The prediction held exactly: `engine.rs`, `beck-rt/` and one test suite, and nothing in `check/`, `ty.rs` or `core.rs`. Lane A is untouched, so this pairing was again never actually run as a pair |
 | ~~**Then**~~ | ~~Lane A: bignums, coercion, `@derive`~~ | ~~Lane B: SQL read models and pgwire~~ | **Half done, and the other half again.** Lane B was taken ([`88`](88-read-models-and-pgwire-report.md)) and the prediction held: `beck-core/src/read.rs`, `beck-rt/src/pgwire.rs`, one reader type on `engine.rs`, and nothing in `check/`, `ty.rs` or `core.rs`. Lane A is untouched, so this pairing was never run as a pair either — the fourth consecutive rewrite in which it was not |
-| **Now** | Lane A: ~~the pattern-matching completion the error-rows bullet still names~~ — **built**, with nesting, guards and alternatives ([`90`](90-nested-patterns-report.md), [`91`](91-guards-and-alternatives-report.md)); what is left in this lane is `Ord` as a trait, which [`54`](54-ordering.md) writes out and explicitly does *not* recommend | Lane B: ~~query fusion on symbolic plans~~ — **built** ([`89`](89-query-fusion-report.md)); ~~Mode B's server half~~ — **built** ([`94`](94-mode-b-report.md)), and it is one branch in `session.rs`; what is left in this lane is the render lock ([`51`](51-arrangement-lifecycle-report.md) §51.7) | `beck-rt` and `engine.rs` are untouched by anything in `check/` |
+| ~~**Then**~~ | Lane A: ~~the pattern-matching completion the error-rows bullet still names~~ — **built**, with nesting, guards and alternatives ([`90`](90-nested-patterns-report.md), [`91`](91-guards-and-alternatives-report.md)); what is left in this lane is `Ord` as a trait, which [`54`](54-ordering.md) writes out and explicitly does *not* recommend | Lane B: ~~query fusion on symbolic plans~~ — **built** ([`89`](89-query-fusion-report.md)); ~~Mode B's server half~~ — **built** ([`94`](94-mode-b-report.md)), and it is one branch in `session.rs`; what is left in this lane is the render lock ([`51`](51-arrangement-lifecycle-report.md) §51.7), which survives into the row below still unowned | `beck-rt` and `engine.rs` are untouched by anything in `check/` |
 | ~~**Then**~~ | ~~Lane A, continued~~ | ~~Lane E: the LLVM backend~~ | **Half done, and the other half.** Lane E was taken ([`93`](93-llvm-backend-report.md)) and the prediction held to the letter: a new crate, one new CLI command, and one defect fixed in `beck-eval` — and nothing in `beck-rt`, `engine.rs`, `check/`, `ty.rs` or `core.rs`. Lane A is untouched, so the pairing was again not run as a pair |
-| **Then** | Lane A, continued | Lane E: a heap for the native backend, then Cranelift ([`93`](93-llvm-backend-report.md) §93.6) | The backend seam exists so these do not interact, and it has now been tested |
+| ~~**Then**~~ | ~~Lane A, continued~~ | ~~Lane D: the release pipeline and the installer~~ | **Half done, and the other half — for the sixth consecutive rewrite.** Lane D was taken ([`104`](104-the-release-and-the-installer-report.md)) and its "collides with nothing in code" held for the pipeline and failed for the *release*: a version number that means something is `compiler/Cargo.toml`, a `build.rs` and one line of `main.rs`. Lane A is untouched, so this pairing was not run as a pair |
+| ~~**Then**~~ | ~~Lane A, continued~~ | ~~Lane E: a heap for the native backends~~ | **Half done, and the other half — again.** Lane E was taken ([`101`](101-the-heap-report.md)): the *algebraic* half of the heap is built, so a record, a union and a newtype compile. Lane A is untouched, which makes seven consecutive rewrites in which the recommended pair was not run as a pair — the prediction that Lane E collides with nothing keeps holding, and the one about Lane A keeps not being tested |
+| **Now** | Lane A: `Ord` as a trait, which [`54`](54-ordering.md) writes out and does *not* recommend — so realistically nothing | Lane E: **the rest of the heap** — text, collections, closures, the effects ([`101`](101-the-heap-report.md) §101.5) — which is what Mode B's codegen and every benchmark number wait on | The backend seam exists so these do not interact, and it has now been tested three times. Lane B's render lock is still open and still has no owner — it is a third branch rather than a reason to hold either of these |
 | **Any time** | — | Lane F; Lane C's LSP; more of SICP | No predecessors, no collisions |
 
 A third branch is viable whenever E or F is staffed. The ceiling is four, because of these:
+
+**The heap's second half is this phase's remaining F**, and the first half is the evidence for
+saying so. §8.5.1's classification says to take the fan-out item first; the algebraic half
+([`101`](101-the-heap-report.md)) was taken and it moved two rows of the exit paragraph at once.
+What is behind the rest of it — text, collections, closures, the effects — is the same set it
+always was: native codegen for anything a program actually manipulates, and Mode B's codegen, which
+is that plus a wasm emitter ([`94`](94-mode-b-report.md) §94.8). It sits in Lane E, which collides
+with nothing.
 
 **The four shared artefacts that serialise otherwise-independent branches.** Each has a cheap
 discipline that avoids the collision.

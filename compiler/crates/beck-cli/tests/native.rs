@@ -483,7 +483,7 @@ fn the_two_backends_agree_on_text() {
     compared += both.agree("repeat", &textfix::repeats(&ss));
 
     // Building text out of something that is not text, and taking an `Option` apart without a
-    // `match` — the primitives `docs/104`'s and `docs/105`'s layouts made reachable.
+    // `match` — the primitives `docs/105`'s and `docs/106`'s layouts made reachable.
     compared += both.agree("shown", &textfix::integers());
     compared += both.agree(
         "shown_bool",
@@ -973,7 +973,7 @@ fn running_out_of_heap_is_a_diagnostic() {
     // Text runs out the same way, and through a different allocation: `beck.str.alloc` sizes an
     // object the program never named, so its failure has to reach the same cell the constructor's
     // does. `repeat` builds `n` strings of growing length, which is `O(n²)` bytes — 30,000 copies
-    // of a 16-byte string is well past the arena (§104.6 is why that is quadratic and not a bug).
+    // of a 16-byte string is well past the arena (§105.6 is why that is quadratic and not a bug).
     let text = Both::over("text.beck", TEXT);
     let err = text
         .native
@@ -1112,7 +1112,7 @@ fn a_slice_costs_its_answer_and_not_the_string_it_came_from() {
 /// A corpus program's **fold** compiles, which is what the collections were for.
 ///
 /// `apply_event` is a `durable` fold's step function — `(State, Envelope[Event]) -> State` — and
-/// until `docs/106` its state was a `Map` and so it could not. This asserts it by name over the
+/// until `docs/107` its state was a `Map` and so it could not. This asserts it by name over the
 /// whole corpus rather than as a count in a report, and asserts the other side too: `view` is still
 /// refused, because a page is `Html`.
 ///
@@ -1142,7 +1142,7 @@ fn a_corpus_fold_compiles() {
     }
     assert!(
         folded.len() >= 9,
-        "at least nine corpus folds compiled when `docs/106` was written, and {} do now: {folded:?}",
+        "at least nine corpus folds compiled when `docs/107` was written, and {} do now: {folded:?}",
         folded.len()
     );
     // The other side, so this is not passing because everything compiles: a page is `Html`, which
@@ -1231,7 +1231,7 @@ fn a_lookup_costs_the_same_whatever_the_map_holds() {
 
 /// Building text in a loop costs the **square** of what it builds, and the gate has no clock in it.
 ///
-/// `docs/104` §104.6's largest cost, asserted rather than only measured. `repeat(s, n, "")` builds
+/// `docs/105` §105.6's largest cost, asserted rather than only measured. `repeat(s, n, "")` builds
 /// `n` strings whose lengths are `|s|, 2|s|, …, n|s|`, so the arena it leaves is `Θ(n²)` — where the
 /// evaluator's is `Θ(n)`, because `docs/70` gave it an in-place `push_str` when `liveness` proves
 /// the accumulator is a last use and an arena with no ownership in it cannot.
@@ -1257,8 +1257,8 @@ fn an_accumulator_costs_the_square_of_what_it_builds() {
     assert!(
         growth > steps * steps * 0.9,
         "four times the steps left {growth:.1}× the arena, and a quadratic accumulator leaves \
-         about {:.0}× — this backend appears to have grown an ownership analysis, which `docs/104` \
-         §104.6 says it cannot have",
+         about {:.0}× — this backend appears to have grown an ownership analysis, which `docs/105` \
+         §105.6 says it cannot have",
         steps * steps
     );
     println!(
@@ -1378,7 +1378,7 @@ fn what_cannot_be_compiled_is_refused_by_name_and_with_a_reason() {
 /// list in prose goes stale where a list with a test attached cannot (`docs/83` §83.7). Each of
 /// these goes red the day its row starts compiling, which is the day the row should be deleted.
 ///
-/// Two rows were deleted that way: `docs/104` gave a `Str` a layout and `docs/105` gave a `list`
+/// Two rows were deleted that way: `docs/105` gave a `Str` a layout and `docs/106` gave a `list`
 /// one. What is left of both is the primitives — text that reads a Unicode table or renders a
 /// number, and a collection that **grows** or takes a **function**.
 #[test]
@@ -1430,7 +1430,7 @@ fn what_the_heap_does_not_reach_is_refused_by_name() {
 
 /// A refusal's reason is a **claim**, and this asks whether the claim is true.
 ///
-/// `docs/104` §104.4 refused `str_index_of` on the grounds that it "answers with an `Option`,
+/// `docs/105` §105.4 refused `str_index_of` on the grounds that it "answers with an `Option`,
 /// whose layout this backend resolves from a program's own types and not from the prelude's".
 /// That sentence was false: the prelude's `Option` has had a layout since
 /// [`docs/101`](../../../../docs/101-the-heap-report.md), and `maybe(n) -> Option[Int]` compiled in
@@ -1472,8 +1472,8 @@ def finds(a: Str, b: Str) -> Option[Int]:
     let mut heap = module.heap.clone();
     let ty_of = |name: &str| program.defs[name].params[0].2.clone();
 
-    // Blamed by a refusal, and it really has no layout. One row, because `docs/105` and
-    // `docs/106` took the other two off this list — which is the direction this gate is meant to
+    // Blamed by a refusal, and it really has no layout. One row, because `docs/106` and
+    // `docs/107` took the other two off this list — which is the direction this gate is meant to
     // move in, and a row that stayed while its type acquired a layout is what it exists to catch.
     let why = heap
         .repr(&ty_of("a_closure"), &program)
@@ -1509,7 +1509,7 @@ fn a_refusal_travels_to_whoever_calls_it() {
     let _ = toolchain!();
     let src = r#"
 ## A closure rather than a record, a `Str`, a `list` or a `Map`: `docs/101` gave the record a
-## layout, `docs/104` gave text one, `docs/105` gave a list one and `docs/106` gave a map one, and
+## layout, `docs/105` gave text one, `docs/106` gave a list one and `docs/107` gave a map one, and
 ## what a refusal has to travel *from* is something the heap still does not reach.
 def bottom(n: Int) -> Int:
     return apply(double_it, n)

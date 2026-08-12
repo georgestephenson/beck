@@ -2597,7 +2597,7 @@ impl<'a> Function<'a> {
 /// Why a primitive this backend does not compile is not compiled.
 ///
 /// The string half is spelled out one at a time rather than swept into "not a scalar primitive",
-/// because since `docs/104` a `Str` *is* a value here and "text is not on this heap" would be
+/// because since `docs/105` a `Str` *is* a value here and "text is not on this heap" would be
 /// false. Each reason names the thing that is missing rather than the primitive that wanted it —
 /// which is the difference between a refusal a reader can act on and one they can only observe.
 fn refusal(op: Prim) -> String {
@@ -2618,7 +2618,7 @@ fn refusal(op: Prim) -> String {
         Prim::ListZip => "answers with a list of pairs, and there is no pair type to lay out",
         // The same rule `list_append` gets, one type over: the evaluator's `PMap` shares everything
         // it did not touch and rebuilds one path, and a sorted run in an arena has to copy all of
-        // it. `docs/106` §106.4 is the argument.
+        // it. `docs/107` §107.4 is the argument.
         Prim::MapInsert | Prim::MapRemove | Prim::MapMerge => {
             "grows a map, and a sorted run in an arena has to be copied whole where the \
              evaluator's tree rebuilds one path"
@@ -3271,7 +3271,7 @@ declare i64 @write(i32, ptr, i64)
 /// `beck.str.byteof` is the one with a cost worth naming: it is constant time when the text is
 /// ASCII — every character one byte, which is what the two equal counts say — and a walk otherwise,
 /// where the evaluator has a chunked index and answers in at most a stride
-/// ([`beck_core::core::Text`]). `docs/104` §104.6 carries that as a difference rather than hiding
+/// ([`beck_core::core::Text`]). `docs/105` §105.6 carries that as a difference rather than hiding
 /// it, and the fix, if a program ever needs it, is the same index in the same header.
 const TEXT: &str = r#"define internal i64 @"beck.str.alloc"(ptr noalias %err, i64 %bytes, i64 %chars, i32 %span) {
 entry:
@@ -3764,7 +3764,7 @@ declare ptr @memcpy(ptr, ptr, i64)
 ///
 /// `beck.list.copy` is `list_slice`, `list_take` and `list_drop` at once, because all three are "a
 /// range of the elements, clamped" and the clamping is arithmetic the caller does. It costs the
-/// **answer** rather than the list, which is `docs/104` §104.7's rule applied one type over.
+/// **answer** rather than the list, which is `docs/105` §105.7's rule applied one type over.
 const LISTS: &str = r#"define internal i64 @"beck.list.alloc"(ptr noalias %err, i64 %n, i32 %span) {
 entry:
   %body = mul i64 %n, 8
@@ -3849,7 +3849,7 @@ out:
 /// needs `LISTS` as well — which is why [`assemble`] emits it only when both are there.
 ///
 /// `beck.str.from_int` is Rust's `i64::to_string` and has to be, to the digit: `str(n)` is
-/// `Value::display`, and `docs/104` §104.4 refused this whole primitive rather than answer a decimal
+/// `Value::display`, and `docs/105` §105.4 refused this whole primitive rather than answer a decimal
 /// that might differ. An integer's decimal *is* reproducible — the one that is not is a real's,
 /// whose shortest round-trip form is a whole algorithm — so this compiles for an `Int`, a `Bool` and
 /// a `Str`, and a `Float` is still refused.

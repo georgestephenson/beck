@@ -345,7 +345,7 @@ def scan(n: Int, acc: Acc, sum: Int) -> Int:
 ///
 /// Nothing here is asserted except the direction, and `grown`'s direction is asserted **the other
 /// way**: a run in which the compiled accumulator caught up would mean the evaluator had lost its
-/// in-place append, which is a finding rather than good news (§104.6).
+/// in-place append, which is a finding rather than good news (§105.6).
 #[test]
 fn what_text_costs_against_the_tree_walker() {
     const TEXT: &str = r#"
@@ -458,7 +458,7 @@ def grown(s: Str, n: Int, acc: Str) -> Int:
     }
     println!(
         "\nRatios are evaluator ÷ native, wall clock, on this machine. `grown` is the row that \
-         goes the\nother way in a release build: `docs/104` §104.6 is the in-place append this \
+         goes the\nother way in a release build: `docs/105` §105.6 is the in-place append this \
          backend does not have."
     );
 }
@@ -467,7 +467,7 @@ def grown(s: Str, n: Int, acc: Str) -> Int:
 ///
 /// The same three shapes text has, one type over: walking one, searching one, and taking a range
 /// out of one. There is no accumulator row, because `list_append` is **refused** here — which is
-/// `docs/105` §105.5's decision and the asymmetry with text, where `+` had to ship because there is
+/// `docs/106` §106.5's decision and the asymmetry with text, where `+` had to ship because there is
 /// no other way to build a string.
 #[test]
 fn what_a_list_costs_against_the_tree_walker() {

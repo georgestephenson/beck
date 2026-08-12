@@ -1,9 +1,9 @@
-# 106 — A map arrives read-only
+# 107 — A map arrives read-only
 
 **Built.** `Map[K, V]` is a value both code generators compile — `map_len`, `map_get`,
 `map_contains`, `map_keys`, `map_values`, all six comparisons and the empty literal — with
 `map_insert`, `map_remove` and `map_merge` refused by name, on the rule
-[`105`](105-lists-arrive-read-only-report.md) §105.5 gave `list_append`.
+[`106`](106-lists-arrive-read-only-report.md) §106.5 gave `list_append`.
 [`101`](101-the-heap-report.md) §101.5's collection row is gone.
 
 The number that says why this one mattered: of the **1,026 refusals** across the tree before it,
@@ -16,14 +16,14 @@ in the tree that blames a collection for having no layout**.
 is the first time anything at the centre of what Beck is *for* has compiled to machine code. What
 still does not is `view`, because a page is `Html`.
 
-The finding is §106.5, and it is the **fourth** occurrence of one defect: a record's field
-comparison compared a reference by its **offset**. [`105`](105-lists-arrive-read-only-report.md)
-§105.4 named what would prevent a fourth; this is that fix, built, plus the fourth occurrence it
+The finding is §107.5, and it is the **fourth** occurrence of one defect: a record's field
+comparison compared a reference by its **offset**. [`106`](106-lists-arrive-read-only-report.md)
+§106.4 named what would prevent a fourth; this is that fix, built, plus the fourth occurrence it
 caught on the way in.
 
 ---
 
-## 106.1 The shape
+## 107.1 The shape
 
 | Word | What |
 |---|---|
@@ -38,14 +38,14 @@ contiguous is what makes `map_keys` and `map_values` one `memcpy` each into a fr
 Key order is not a convenience — it is the contract. `PMap::iter` is in key order and `PMap`'s `Ord`
 is `self.iter().cmp(other.iter())`, so a sorted run *is* the tree, flattened, and a comparison
 walking it pair by pair gives the answer the evaluator gives. The host writes the keys by iterating
-the `PMap`, which is already sorted; nothing sorts at run time, which is also why §106.3 refuses the
+the `PMap`, which is already sorted; nothing sorts at run time, which is also why §107.3 refuses the
 non-empty literal.
 
 A `Repr::Map(u32)` indexes a table of `(key, value)` repr **indices**, and those indices are into the
 same table a list's element uses — so `Map[Str, Int]` asks for `Str`'s word comparison, which is the
 one a `list[Str]` would have asked for. One table, one comparison per repr.
 
-## 106.2 What compiles now that did not
+## 107.2 What compiles now that did not
 
 | | after lists | after maps |
 |---|---:|---:|
@@ -74,7 +74,7 @@ Two rows are worth reading together. The collection row is **empty**, and the "g
 tripled — which is the same definitions, re-refused for the reason that is actually true of them.
 That is the shape of a wall being replaced by a decision.
 
-## 106.3 What it answers, and what it refuses
+## 107.3 What it answers, and what it refuses
 
 | Compiled | How |
 |---|---|
@@ -86,7 +86,7 @@ That is the shape of a wall being replaced by a decision.
 | `{}` | one allocation and a zero |
 | a `Map` field, a map in a variant, `with` over one | the layout was already there |
 
-`map_get` is [`105`](105-lists-arrive-read-only-report.md)'s address trick with one more step: the
+`map_get` is [`106`](106-lists-arrive-read-only-report.md)'s address trick with one more step: the
 search answers an index, the value lives `n` words past the keys, and the address handed to the load
 is a `select` between that cell and the map's own header. A miss loads the count into a word the
 `None` tag means nobody reads.
@@ -96,12 +96,12 @@ expressions, so a non-empty one would have to sort at run time — a sort in emi
 a form that is almost always written empty. Every `durable` fold in this tree starts at `{}`, which
 is the case that mattered; the rest is refused by name until something needs it.
 
-Refused: `map_insert`, `map_remove` and `map_merge` — see §106.4 — and, still, a closure, an effect,
+Refused: `map_insert`, `map_remove` and `map_merge` — see §107.4 — and, still, a closure, an effect,
 `Html`, and a type parameter.
 
-## 106.4 Growing a map, refused, and the argument is not quite `list_append`'s
+## 107.4 Growing a map, refused, and the argument is not quite `list_append`'s
 
-[`105`](105-lists-arrive-read-only-report.md) §105.5 refused `list_append` because the tree-walker
+[`106`](106-lists-arrive-read-only-report.md) §106.5 refused `list_append` because the tree-walker
 pushes in place when `liveness` proves the accumulator is a last use, and an arena cannot prove
 that. The map case is *worse* than that, and the difference is worth stating rather than assuming.
 
@@ -110,25 +110,25 @@ and it comes from an analysis the front end already has half of. `map_insert` is
 `O(log n)` in the evaluator, and the gap is **not** an ownership question: a `PMap` is a
 weight-balanced tree that shares every subtree it did not touch, and a sorted run in an arena has no
 subtrees to share. Even with a perfect last-use analysis, inserting into a flat sorted run is a
-copy. So this refusal would survive the fix §105.5 asks for, and the thing that would remove it is a
+copy. So this refusal would survive the fix §106.5 asks for, and the thing that would remove it is a
 different representation — a tree in the arena, which is a design and not a patch.
 
 The rule is the same either way and worth restating because it now applies twice: **this backend
 does not ship an operation whose asymptote is worse than the evaluator's.** A program that reads
 collections gets compiled; one that builds them keeps the tree-walker, and the refusal says which.
 
-## 106.5 The fourth occurrence, and the fix that was promised
+## 107.5 The fourth occurrence, and the fix that was promised
 
 A record's field comparison compared a reference by its **offset**, so two equal values compared
 unequal whenever they were allocated at different places. That is now the fourth time:
 
 | | where | caught by |
 |---|---|---|
-| [`104`](104-text-on-the-heap-report.md) §104.5 | Cranelift, a `Str` field | the differential's pairs |
-| [`105`](105-lists-arrive-read-only-report.md) §105.4 | LLVM, a `list` field | the differential's pairs |
+| [`105`](105-text-on-the-heap-report.md) §105.5 | Cranelift, a `Str` field | the differential's pairs |
+| [`106`](106-lists-arrive-read-only-report.md) §106.4 | LLVM, a `list` field | the differential's pairs |
 | here | Cranelift, a `Map` field | the differential's pairs |
 
-[`105`](105-lists-arrive-read-only-report.md) §105.4 said what would stop it: "a `Repr::reference()`
+[`106`](106-lists-arrive-read-only-report.md) §106.4 said what would stop it: "a `Repr::reference()`
 accessor that the comparison is written against instead of a match". That is
 [`Repr::order`](../compiler/crates/beck-llvm/src/heap.rs) now. It answers one of three things —
 compare the words (signed or not), take `beck_core`'s order key first, or **call this symbol** — and
@@ -146,7 +146,7 @@ exist is one method rather than three call sites, and `reachable` is one fixed p
 word comparisons and maps together — because a record with a `Map[Str, Point]` field needs that
 map's comparison, which needs `Str`'s and `Point`'s.
 
-## 106.6 The numbers, and the one this cannot measure
+## 107.6 The numbers, and the one this cannot measure
 
 `cargo test --release --test measure_native -- --nocapture --test-threads=1`, Ubuntu clang 18.1.3,
 `-O2`, median of seven runs at the small size and three at the large one.
@@ -179,15 +179,15 @@ every step — a quadratic in the **program**, not in either implementation, and
 [`19`](19-phase-1-report.md) §19.4 calls a semantic defect rather than a backend one. It is in the
 fixture deliberately, because a reader who sees `map_keys(m)` in a loop should see this number.
 
-## 106.7 What this corrects
+## 107.7 What this corrects
 
 - [`101`](101-the-heap-report.md) §101.5's `Map[K, V]` row is gone, and with it the last collection
   row. Its stated reason — "a `PMap` is a weight-balanced tree with structural sharing; the same
   ownership question one level up" — was right about the *writing* half and did not need to be true
-  of the reading half, which is what §106.4 separates.
-- [`104`](104-text-on-the-heap-report.md) §104.3 quotes a refusal from `corpus/01-counter.beck`
+  of the reading half, which is what §107.4 separates.
+- [`105`](105-text-on-the-heap-report.md) §105.3 quotes a refusal from `corpus/01-counter.beck`
   blaming `Session.claims` for being a `Map`. That definition compiles.
-- [`105`](105-lists-arrive-read-only-report.md) §105.4's named prevention is built.
+- [`106`](106-lists-arrive-read-only-report.md) §106.4's named prevention is built.
 - **`Html` was refused for a reason that named the wrong thing.** It fell through to "returns
   `Html`, which is not a type this module declares" — a true sentence about the path taken and a
   misleading one about the cause, since `Html` is a builtin and what it lacks is a layout. It is
@@ -195,7 +195,7 @@ fixture deliberately, because a reader who sees `map_keys(m)` in a loop should s
 - [`08`](08-roadmap.md) §8.5.5's Lane E row: what is left is closures, the effects, `Html`, and
   growing a collection.
 
-## 106.8 What this establishes
+## 107.8 What this establishes
 
 That reading a `Map` is compiled and growing one is not, over 898 calls per backend on an alphabet
 containing the empty map, a prefix pair, maps differing only in a value, and — for the search — keys
@@ -206,5 +206,5 @@ And that nine corpus folds compile, which `a_corpus_fold_compiles` asserts by na
 side asserted too, so it cannot pass by everything compiling: no corpus `view` does.
 
 It establishes nothing about a view, which builds `Html`; nothing about a fold that *inserts*, which
-most of the other twenty-six do; and nothing about how a compiled binary search scales, which §106.6
+most of the other twenty-six do; and nothing about how a compiled binary search scales, which §107.6
 says plainly rather than inferring from a number that was measuring something else.

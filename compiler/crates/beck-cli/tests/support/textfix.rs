@@ -256,7 +256,7 @@ def sliced_or(s: Str, i: Int, fallback: Int) -> Int:
     return unwrap_or(str_index_of(s, str_slice(s, i, 1)), fallback)
 
 ## Answers with an `Option`, which is the prelude's union and has a layout like any other — the
-## thing `docs/104` §104.4 said it did not.
+## thing `docs/105` §105.4 said it did not.
 def at(a: Str, b: Str) -> Option[Int]:
     return str_index_of(a, b)
 

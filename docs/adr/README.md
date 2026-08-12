@@ -42,3 +42,4 @@ The split this directory creates:
 | [0024](0024-cranelift-emits-an-object-and-a-linker-makes-it-a-program.md) | Cranelift as a crate, emitting an object a linker turns into a program — the `unsafe` ADR 0021 refused was in *running* code, not in generating it |
 | [0025](0025-deflate-so-the-image-build-needs-no-tools.md) | DEFLATE is taken and tar is written — the image build needs an inflater it cannot write and a byte-deterministic tar no library offers |
 | [0026](0026-the-native-heap-is-an-arena-of-offsets.md) | The native heap is an arena of offsets and the host marshals against it — a value that carries no pointer crosses a pipe as bytes, so neither emitter generates a line of marshalling |
+| [0027](0027-a-release-publishes-a-checksum-and-not-a-signature.md) | A release publishes a checksum and not a signature — `beck sign`'s subject is an image manifest, and a compiler release is a tarball |
