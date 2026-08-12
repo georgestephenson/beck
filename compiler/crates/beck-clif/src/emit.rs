@@ -250,11 +250,18 @@ fn build(
     } else {
         None
     };
+    let builds = match text {
+        Some(_) => {
+            Some(Builds::declare(&mut object, ptr, lists.is_some()).map_err(Failure::Fatal)?)
+        }
+        None => None,
+    };
     let runtime = Runtime {
         arena,
         text,
         lists,
         maps,
+        builds,
     };
 
     // Every compiled definition, declared before any is defined: a body may call one declared
@@ -329,6 +336,11 @@ fn build(
         if let Some(text) = text {
             text.define(arena, &mut object, &mut ctx, &mut fctx, ptr)
                 .map_err(Failure::Fatal)?;
+            if let Some(builds) = builds {
+                builds
+                    .define(runtime, &mut object, &mut ctx, &mut fctx, ptr)
+                    .map_err(Failure::Fatal)?;
+            }
         }
         if let Some(lists) = lists {
             lists
@@ -471,6 +483,7 @@ struct Runtime {
     text: Option<Text>,
     lists: Option<Lists>,
     maps: Option<Maps>,
+    builds: Option<Builds>,
 }
 
 /// The four list functions that do not care what an element *is*.
@@ -1567,6 +1580,332 @@ fn reachable(
     (out_l, out_x, out_m)
 }
 
+/// Building text: the three that make one out of something that is not text.
+///
+/// `from_int` is Rust's `i64::to_string` and has to be, to the digit. `join` reads a **list**, so it
+/// is declared only when that runtime is there too — which is why it is an `Option` here.
+#[derive(Clone, Copy, Debug)]
+struct Builds {
+    from_int: FuncId,
+    repeat: FuncId,
+    join: Option<FuncId>,
+}
+
+impl Builds {
+    fn declare(m: &mut ObjectModule, ptr: Type, lists: bool) -> Result<Builds, String> {
+        let conv = CallConv::triple_default(m.isa().triple());
+        let mut one = |name: &str, params: &[Type]| -> Result<FuncId, String> {
+            let mut sig = cranelift_codegen::ir::Signature::new(conv);
+            for p in params {
+                sig.params.push(AbiParam::new(*p));
+            }
+            sig.returns.push(AbiParam::new(types::I64));
+            m.declare_function(name, Linkage::Local, &sig)
+                .map_err(|e| format!("declaring `{name}`: {e}"))
+        };
+        let from_int = one("beck.str.from_int", &[ptr, types::I64, types::I32])?;
+        let repeat = one(
+            "beck.str.repeat",
+            &[ptr, types::I64, types::I64, types::I32],
+        )?;
+        let join = if lists {
+            Some(one(
+                "beck.str.join",
+                &[ptr, types::I64, types::I64, types::I32],
+            )?)
+        } else {
+            None
+        };
+        Ok(Builds {
+            from_int,
+            repeat,
+            join,
+        })
+    }
+
+    fn define(
+        self,
+        runtime: Runtime,
+        m: &mut ObjectModule,
+        ctx: &mut cranelift_codegen::Context,
+        fctx: &mut FunctionBuilderContext,
+        ptr: Type,
+    ) -> Result<(), String> {
+        let arena = runtime.arena.ok_or("text without an arena")?;
+        let text = runtime.text.ok_or("a text builder without text")?;
+        let lists = runtime.lists;
+        let flags = MemFlagsData::trusted();
+
+        let sig = Text::signature(m, &[ptr, types::I64, types::I32], types::I64);
+        Text::wrote(self.from_int, sig, 20, m, ctx, fctx, |b, m| {
+            let entry = b.current_block().expect("an entry block");
+            let err = b.block_params(entry)[0];
+            let n = b.block_params(entry)[1];
+            let span = b.block_params(entry)[2];
+            let neg = b.ins().icmp_imm_s(IntCC::SignedLessThan, n, 0);
+            // `0 - i64::MIN` wraps to 2^63, which read as unsigned is exactly its magnitude — the
+            // one input where negating in signed arithmetic has no answer.
+            let flip = b.ins().ineg(n);
+            let u = b.ins().select(neg, flip, n);
+
+            // How many digits, by dividing it away.
+            let d = b.declare_var(types::I64);
+            let t = b.declare_var(types::I64);
+            let one = b.ins().iconst(types::I64, 1);
+            b.def_var(d, one);
+            b.def_var(t, u);
+            let count = b.create_block();
+            b.ins().jump(count, &[]);
+
+            b.switch_to_block(count);
+            let more = b.create_block();
+            let sized = b.create_block();
+            let tv = b.use_var(t);
+            let t1 = b.ins().udiv_imm_s(tv, 10);
+            b.def_var(t, t1);
+            let done = b.ins().icmp_imm_s(IntCC::Equal, t1, 0);
+            b.ins().brif(done, sized, &[], more, &[]);
+
+            b.switch_to_block(more);
+            let dv = b.use_var(d);
+            let d1 = b.ins().iadd_imm_s(dv, 1);
+            b.def_var(d, d1);
+            b.ins().jump(count, &[]);
+
+            b.switch_to_block(sized);
+            let digits = b.use_var(d);
+            let sign = b.ins().uextend(types::I64, neg);
+            let bytes = b.ins().iadd(digits, sign);
+            // Every byte is a digit or a minus, so the character count is the byte count.
+            let f = m.declare_func_in_func(text.alloc, b.func);
+            let call = b.ins().call(f, &[err, bytes, bytes, span]);
+            let r = b.inst_results(call)[0];
+            let fill = b.create_block();
+            let out = b.create_block();
+            let failed = b.ins().icmp_imm_s(IntCC::Equal, r, 0);
+            b.ins().brif(failed, out, &[], fill, &[]);
+
+            b.switch_to_block(fill);
+            let p = text.data(arena, r, b, m);
+            let minus = b.create_block();
+            let start = b.create_block();
+            b.ins().brif(neg, minus, &[], start, &[]);
+            b.switch_to_block(minus);
+            let dash = b.ins().iconst(types::I8, 45);
+            b.ins().store(MemFlagsData::trusted(), dash, p, 0);
+            b.ins().jump(start, &[]);
+
+            // Backwards from the last byte, which is the order division produces them in.
+            b.switch_to_block(start);
+            let i = b.declare_var(types::I64);
+            let v = b.declare_var(types::I64);
+            b.def_var(i, bytes);
+            b.def_var(v, u);
+            let loop_ = b.create_block();
+            b.ins().jump(loop_, &[]);
+
+            b.switch_to_block(loop_);
+            let iv = b.use_var(i);
+            let vv = b.use_var(v);
+            let i1 = b.ins().iadd_imm_s(iv, -1);
+            let rem = b.ins().urem_imm_s(vv, 10);
+            let v1 = b.ins().udiv_imm_s(vv, 10);
+            let ch = b.ins().ireduce(types::I8, rem);
+            let byte = b.ins().iadd_imm_s(ch, 48);
+            let at = b.ins().iadd(p, i1);
+            b.ins().store(MemFlagsData::trusted(), byte, at, 0);
+            b.def_var(i, i1);
+            b.def_var(v, v1);
+            let left = b.ins().icmp_imm_s(IntCC::Equal, v1, 0);
+            b.ins().brif(left, out, &[], loop_, &[]);
+
+            b.switch_to_block(out);
+            b.ins().return_(&[r]);
+        })?;
+
+        let sig = Text::signature(m, &[ptr, types::I64, types::I64, types::I32], types::I64);
+        Text::wrote(self.repeat, sig, 21, m, ctx, fctx, |b, m| {
+            let entry = b.current_block().expect("an entry block");
+            let err = b.block_params(entry)[0];
+            let s = b.block_params(entry)[1];
+            let n = b.block_params(entry)[2];
+            let span = b.block_params(entry)[3];
+            // The evaluator's bound, so the same answer.
+            let zero = b.ins().iconst(types::I64, 0);
+            let neg = b.ins().icmp_imm_s(IntCC::SignedLessThan, n, 0);
+            let low = b.ins().select(neg, zero, n);
+            let cap = b.ins().iconst(types::I64, 1_000_000);
+            let big = b.ins().icmp_imm_s(IntCC::SignedGreaterThan, low, 1_000_000);
+            let k = b.ins().select(big, cap, low);
+            let lb = text.header(arena, s, 0, b, m);
+            let lc = text.header(arena, s, heap::WORD as i64, b, m);
+            let tb = b.ins().imul(lb, k);
+            let tc = b.ins().imul(lc, k);
+            let f = m.declare_func_in_func(text.alloc, b.func);
+            let call = b.ins().call(f, &[err, tb, tc, span]);
+            let r = b.inst_results(call)[0];
+            let copy = b.create_block();
+            let out = b.create_block();
+            let failed = b.ins().icmp_imm_s(IntCC::Equal, r, 0);
+            b.ins().brif(failed, out, &[], copy, &[]);
+
+            b.switch_to_block(copy);
+            let pr = text.data(arena, r, b, m);
+            let ps = text.data(arena, s, b, m);
+            let i = b.declare_var(types::I64);
+            let z = b.ins().iconst(types::I64, 0);
+            b.def_var(i, z);
+            let loop_ = b.create_block();
+            b.ins().jump(loop_, &[]);
+
+            b.switch_to_block(loop_);
+            let step = b.create_block();
+            let iv = b.use_var(i);
+            let past = b.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, iv, k);
+            b.ins().brif(past, out, &[], step, &[]);
+
+            b.switch_to_block(step);
+            let at = b.ins().imul(iv, lb);
+            let dst = b.ins().iadd(pr, at);
+            let config = m.target_config();
+            b.call_memcpy(config, dst, ps, lb);
+            let j = b.ins().iadd_imm_s(iv, 1);
+            b.def_var(i, j);
+            b.ins().jump(loop_, &[]);
+
+            b.switch_to_block(out);
+            b.ins().return_(&[r]);
+        })?;
+
+        let (Some(join), Some(lists)) = (self.join, lists) else {
+            return Ok(());
+        };
+        let sig = Text::signature(m, &[ptr, types::I64, types::I64, types::I32], types::I64);
+        Text::wrote(join, sig, 22, m, ctx, fctx, |b, m| {
+            let entry = b.current_block().expect("an entry block");
+            let err = b.block_params(entry)[0];
+            let xs = b.block_params(entry)[1];
+            let sep = b.block_params(entry)[2];
+            let span = b.block_params(entry)[3];
+            let n = lists.count(arena, xs, b, m);
+            let p = lists.data(arena, xs, b, m);
+            let sb = text.header(arena, sep, 0, b, m);
+            let sc = text.header(arena, sep, heap::WORD as i64, b, m);
+            let alloc = m.declare_func_in_func(text.alloc, b.func);
+
+            let none = b.create_block();
+            let measure = b.create_block();
+            let empty = b.ins().icmp_imm_s(IntCC::Equal, n, 0);
+            b.ins().brif(empty, none, &[], measure, &[]);
+
+            b.switch_to_block(none);
+            let z = b.ins().iconst(types::I64, 0);
+            let call = b.ins().call(alloc, &[err, z, z, span]);
+            let e = b.inst_results(call)[0];
+            b.ins().return_(&[e]);
+
+            b.switch_to_block(measure);
+            let i = b.declare_var(types::I64);
+            let bs = b.declare_var(types::I64);
+            let cs = b.declare_var(types::I64);
+            let zero = b.ins().iconst(types::I64, 0);
+            b.def_var(i, zero);
+            b.def_var(bs, zero);
+            b.def_var(cs, zero);
+            let sum = b.create_block();
+            b.ins().jump(sum, &[]);
+
+            b.switch_to_block(sum);
+            let add = b.create_block();
+            let sized = b.create_block();
+            let iv = b.use_var(i);
+            let past = b.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, iv, n);
+            b.ins().brif(past, sized, &[], add, &[]);
+
+            b.switch_to_block(add);
+            let off = b.ins().imul_imm_s(iv, heap::WORD as i64);
+            let cell = b.ins().iadd(p, off);
+            let x = b.ins().load(types::I64, flags, cell, 0);
+            let xb = text.header(arena, x, 0, b, m);
+            let xc = text.header(arena, x, heap::WORD as i64, b, m);
+            let b0 = b.use_var(bs);
+            let c0 = b.use_var(cs);
+            let b1 = b.ins().iadd(b0, xb);
+            let c1 = b.ins().iadd(c0, xc);
+            b.def_var(bs, b1);
+            b.def_var(cs, c1);
+            let i1 = b.ins().iadd_imm_s(iv, 1);
+            b.def_var(i, i1);
+            b.ins().jump(sum, &[]);
+
+            // One separator between each pair, which is `n - 1` of them.
+            b.switch_to_block(sized);
+            let gaps = b.ins().iadd_imm_s(n, -1);
+            let sepb = b.ins().imul(gaps, sb);
+            let sepc = b.ins().imul(gaps, sc);
+            let bt = b.use_var(bs);
+            let ct = b.use_var(cs);
+            let tb = b.ins().iadd(bt, sepb);
+            let tc = b.ins().iadd(ct, sepc);
+            let call = b.ins().call(alloc, &[err, tb, tc, span]);
+            let r = b.inst_results(call)[0];
+            let write = b.create_block();
+            let out = b.create_block();
+            let failed = b.ins().icmp_imm_s(IntCC::Equal, r, 0);
+            b.ins().brif(failed, out, &[], write, &[]);
+
+            b.switch_to_block(write);
+            let pr = text.data(arena, r, b, m);
+            let pv = text.data(arena, sep, b, m);
+            let k = b.declare_var(types::I64);
+            let at = b.declare_var(types::I64);
+            b.def_var(k, zero);
+            b.def_var(at, zero);
+            let walk = b.create_block();
+            b.ins().jump(walk, &[]);
+
+            b.switch_to_block(walk);
+            let maybe = b.create_block();
+            let kv = b.use_var(k);
+            let fin = b.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, kv, n);
+            b.ins().brif(fin, out, &[], maybe, &[]);
+
+            b.switch_to_block(maybe);
+            let gap = b.create_block();
+            let part = b.create_block();
+            let first = b.ins().icmp_imm_s(IntCC::Equal, kv, 0);
+            b.ins().brif(first, part, &[], gap, &[]);
+
+            b.switch_to_block(gap);
+            let here = b.use_var(at);
+            let gd = b.ins().iadd(pr, here);
+            let config = m.target_config();
+            b.call_memcpy(config, gd, pv, sb);
+            let at1 = b.ins().iadd(here, sb);
+            b.def_var(at, at1);
+            b.ins().jump(part, &[]);
+
+            b.switch_to_block(part);
+            let cursor = b.use_var(at);
+            let off = b.ins().imul_imm_s(kv, heap::WORD as i64);
+            let pc = b.ins().iadd(p, off);
+            let px = b.ins().load(types::I64, flags, pc, 0);
+            let pb = text.header(arena, px, 0, b, m);
+            let pd = text.data(arena, px, b, m);
+            let dst = b.ins().iadd(pr, cursor);
+            b.call_memcpy(config, dst, pd, pb);
+            let at2 = b.ins().iadd(cursor, pb);
+            b.def_var(at, at2);
+            let k1 = b.ins().iadd_imm_s(kv, 1);
+            b.def_var(k, k1);
+            b.ins().jump(walk, &[]);
+
+            b.switch_to_block(out);
+            b.ins().return_(&[r]);
+        })
+    }
+}
+
 /// The three functions that do not care what a key or a value *is*.
 ///
 /// A map is a count, then every key in key order, then every value in the same order. The keys
@@ -2286,6 +2625,15 @@ fn compare_function(
         .map_err(|e| format!("defining a comparison: {e}"))?;
     m.clear_context(ctx);
     Ok(())
+}
+
+/// A raw word read back as the value its [`Repr`] says it is.
+fn word_as(w: IrValue, repr: Repr, b: &mut FunctionBuilder<'_>) -> IrValue {
+    match repr {
+        Repr::Bool => b.ins().icmp_imm_s(IntCC::NotEqual, w, 0),
+        Repr::Float => b.ins().bitcast(types::F64, MemFlagsData::new(), w),
+        _ => w,
+    }
 }
 
 /// `beck_core`'s order key over raw bits already in an `I64`.
@@ -3491,6 +3839,89 @@ impl<'a> Body<'a> {
                 }
                 self.list_range(op, &vals, span, b, m)
             }
+            Prim::ToStr => {
+                arity(1, &vals)?;
+                match vals[0].ty {
+                    Repr::Str => Ok(vals[0]),
+                    Repr::Int => {
+                        let f = self.builds().from_int;
+                        Ok(self.build_call(f, &[vals[0].v], span, b, m))
+                    }
+                    // Two literals from the pool, which is what `Value::display` answers.
+                    Repr::Bool => {
+                        let (t, f) = (self.literal("true"), self.literal("false"));
+                        let t = b.ins().iconst(types::I64, t as i64);
+                        let f = b.ins().iconst(types::I64, f as i64);
+                        Ok(Val {
+                            v: b.ins().select(vals[0].v, t, f),
+                            ty: Repr::Str,
+                        })
+                    }
+                    other => Err(format!(
+                        "`str` of {}, whose rendering is not a decimal this backend can reproduce \
+                         — a real's shortest round-trip form is an algorithm rather than a loop",
+                        self.heap.show(other)
+                    )),
+                }
+            }
+            Prim::StrRepeat => {
+                arity(2, &vals)?;
+                self.text_arg(&vals[0], op)?;
+                if vals[1].ty != Repr::Int {
+                    return Err("`str_repeat` takes an Int count".into());
+                }
+                let f = self.builds().repeat;
+                Ok(self.build_call(f, &[vals[0].v, vals[1].v], span, b, m))
+            }
+            Prim::StrJoin => {
+                arity(2, &vals)?;
+                let Repr::List(at) = vals[0].ty else {
+                    return Err("`str_join` on something that is not a list".into());
+                };
+                if self.heap.element(at) != Repr::Str {
+                    return Err(
+                        "`str_join` over a list of something other than text, and the evaluator \
+                         renders those through `display` rather than joining them"
+                            .into(),
+                    );
+                }
+                self.text_arg(&vals[1], op)?;
+                let f = self
+                    .builds()
+                    .join
+                    .ok_or("`str_join` in a module with no list runtime")?;
+                Ok(self.build_call(f, &[vals[0].v, vals[1].v], span, b, m))
+            }
+            Prim::OptionIsSome => {
+                arity(1, &vals)?;
+                let (some, ..) = self.option_taken(vals[0].ty)?;
+                let tag = self.load_word(vals[0].v, 0, b, m);
+                Ok(Val {
+                    v: b.ins().icmp_imm_s(IntCC::Equal, tag, i64::from(some)),
+                    ty: Repr::Bool,
+                })
+            }
+            Prim::OptionUnwrapOr => {
+                arity(2, &vals)?;
+                let (some, slot, payload) = self.option_taken(vals[0].ty)?;
+                if vals[1].ty != payload {
+                    return Err("`unwrap_or`'s fallback is not what the `Option` carries".into());
+                }
+                let tag = self.load_word(vals[0].v, 0, b, m);
+                let is_some = b.ins().icmp_imm_s(IntCC::Equal, tag, i64::from(some));
+                // The address, not the value: a `None` the *host* wrote is one word long, because
+                // `encode_object` allocates the variant's own size — so reading the payload slot
+                // unconditionally can read past the end of the arena.
+                let field = self.word_addr(vals[0].v, slot, b, m);
+                let header = self.word_addr(vals[0].v, 0, b, m);
+                let p = b.ins().select(is_some, field, header);
+                let w = b.ins().load(types::I64, MemFlagsData::trusted(), p, 0);
+                let held = word_as(w, payload, b);
+                Ok(Val {
+                    v: b.ins().select(is_some, held, vals[1].v),
+                    ty: payload,
+                })
+            }
             Prim::MapLen => {
                 arity(1, &vals)?;
                 self.map_arg(&vals[0], op)?;
@@ -3652,6 +4083,57 @@ impl<'a> Body<'a> {
             self.store_field(off, i + 1, v, b, m);
         }
         Ok(Val { v: off, ty: repr })
+    }
+
+    fn builds(&self) -> Builds {
+        self.runtime
+            .builds
+            .expect("a body that builds text is a module with that runtime")
+    }
+
+    /// A string literal's offset in the pool, interned on the spot.
+    fn literal(&mut self, s: &str) -> u64 {
+        let at = self.heap.intern(s);
+        self.heap.string_offset(at)
+    }
+
+    /// One of [`Builds`]'s functions: the error cell, the arguments, the span.
+    fn build_call(
+        &mut self,
+        id: FuncId,
+        args: &[IrValue],
+        span: Span,
+        b: &mut FunctionBuilder<'_>,
+        m: &mut ObjectModule,
+    ) -> Val {
+        let idx = self.span(span);
+        let span = b.ins().iconst(types::I32, i64::from(idx));
+        let mut operands = vec![self.err()];
+        operands.extend_from_slice(args);
+        operands.push(span);
+        let f = m.declare_func_in_func(id, b.func);
+        let call = b.ins().call(f, &operands);
+        let v = b.inst_results(call)[0];
+        self.check_call(b);
+        Val { v, ty: Repr::Str }
+    }
+
+    /// The `Some` tag, the slot its payload is in, and what that payload is.
+    ///
+    /// For *consuming* an `Option`, where [`Body::option_of`] is for answering with one. The
+    /// evaluator reads these by **name**, so this does too.
+    fn option_taken(&mut self, repr: Repr) -> Result<(u32, usize, Repr), String> {
+        let Repr::Obj(at) = repr else {
+            return Err("an `Option` operation on something that is not an object".into());
+        };
+        let layout = self.heap.layout(at);
+        let some = layout
+            .tag_of(Some("Some"))
+            .ok_or_else(|| format!("`{}` has no `Some`", layout.shown))?;
+        let (slot, payload) = layout.variants[some as usize]
+            .slot("value")
+            .ok_or_else(|| format!("`{}`'s `Some` has no `value`", layout.shown))?;
+        Ok((some, slot, payload))
     }
 
     /// Insist an argument is a map, and say which map it is.
@@ -4213,10 +4695,6 @@ fn refusal(op: Prim) -> String {
             "answers with a list whose elements it also allocates, which is two loops rather than \
              the one every list this backend builds has"
         }
-        Prim::StrJoin => {
-            "builds text whose size is a sum over a list, and the arena cannot grow an allocation \
-             it has already made"
-        }
         // The one that is a decision rather than a gap. `docs/69` §69.7 and `docs/101` §101.5 both
         // name shipping this as the mistake: the tree-walker pushes in place when `liveness` proves
         // the accumulator is a last use, and an arena with no ownership in it cannot.
@@ -4246,12 +4724,13 @@ fn refusal(op: Prim) -> String {
         Prim::StrTrim => {
             "trims Unicode whitespace, which is a table for the same reason case mapping is"
         }
-        Prim::StrReplace | Prim::StrRepeat => {
-            "builds text whose size is not a function of its arguments' sizes, and this arena \
-             cannot grow an allocation it has already made"
+        Prim::StrReplace => {
+            "builds text whose size is the number of occurrences of one string in another, which \
+             needs a pass to count before there is anything to allocate"
         }
-        Prim::ToStr | Prim::StrToInt => {
-            "converts between text and a number, and the rendering has to be Rust's to the digit"
+        Prim::StrToInt => {
+            "reads a number out of text, and has to agree with Rust's parser about every input \
+             that is not one"
         }
         _ => return format!("`{}` is not one of the scalar primitives", op.name()),
     };

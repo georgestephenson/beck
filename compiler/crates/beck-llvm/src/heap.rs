@@ -1187,7 +1187,16 @@ fn walk(c: &beck_core::Core, program: &Program, heap: &mut Heap) {
                 walk(a, program, heap);
             }
         }
-        CoreKind::Prim { args, .. } => {
+        CoreKind::Prim { op, args } => {
+            // `str(b)` answers with one of two literals, and a pool the survey did not decide is a
+            // pool that depends on the fixed point rather than on the program — which is exactly
+            // what `the_literal_pool_is_a_function_of_the_program` exists to catch, and did.
+            if *op == beck_core::core::Prim::ToStr
+                && args.first().is_some_and(|a| a.ty == Ty::bool_())
+            {
+                heap.intern("true");
+                heap.intern("false");
+            }
             for a in args {
                 walk(a, program, heap);
             }

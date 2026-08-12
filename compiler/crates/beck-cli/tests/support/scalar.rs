@@ -344,15 +344,16 @@ def ackermann(m: Int, n: Int) -> Int:
 ///
 /// The heap ([`super::heapfix`]) took the record and the union off this list, `docs/104` took text
 /// off it, and `docs/105` took *reading* a collection off it — what is left of one is the half that
-/// **grows** it. What is left is what `docs/101` §101.5 names as not built — and `scalar_and_fine`
+/// **grows** it. `str` of an `Int` came off it too, so the row here is a **real**, whose shortest
+/// round-trip decimal is an algorithm rather than a loop. What is left is what `docs/101` §101.5 names as not built — and `scalar_and_fine`
 /// is the control: a list of refusals with nothing on the other side of it would pass against a
 /// backend that refused everything.
 pub const REFUSED: &str = r#"
 def grows_a_list(xs: list[Int], n: Int) -> list[Int]:
     return list_append(xs, n)
 
-def renders_a_number(n: Int) -> Str:
-    return str(n)
+def renders_a_real(x: Float) -> Str:
+    return str(x)
 
 def is_generic[T](x: T) -> T:
     return x

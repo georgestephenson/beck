@@ -482,6 +482,51 @@ fn the_two_backends_agree_on_text() {
     );
     compared += both.agree("repeat", &textfix::repeats(&ss));
 
+    // Building text out of something that is not text, and taking an `Option` apart without a
+    // `match` — the primitives `docs/104`'s and `docs/105`'s layouts made reachable.
+    compared += both.agree("shown", &textfix::integers());
+    compared += both.agree(
+        "shown_bool",
+        &[vec![Value::Bool(true)], vec![Value::Bool(false)]],
+    );
+    compared += both.agree("shown_str", &textfix::singles(&ss));
+    compared += both.agree(
+        "repeated",
+        &textfix::repeats(&ss)
+            .into_iter()
+            .map(|mut t| {
+                t.truncate(2);
+                t
+            })
+            .collect::<Vec<_>>(),
+    );
+    compared += both.agree("glued", &textfix::joins(&ss));
+    for name in ["or_else", "present"] {
+        compared += both.agree(
+            name,
+            &textfix::options()
+                .into_iter()
+                .map(|mut t| {
+                    if name == "present" {
+                        t.truncate(1);
+                    }
+                    t
+                })
+                .collect::<Vec<_>>(),
+        );
+    }
+    compared += both.agree(
+        "sliced_or",
+        &textfix::with_char(&ss)
+            .into_iter()
+            .map(|mut t| {
+                // `(s, c, i, acc)` for `count_of`; `sliced_or` wants `(s, i, fallback)`.
+                t.remove(1);
+                t
+            })
+            .collect::<Vec<_>>(),
+    );
+
     // Text inside a record and inside a union, so a `Str` in a field is compared, rebuilt by
     // `with`, read back out and ordered against another record's.
     let named: Vec<Value> = ss
@@ -1296,10 +1341,7 @@ fn what_cannot_be_compiled_is_refused_by_name_and_with_a_reason() {
 
     for (name, expect) in [
         ("grows_a_list", "`list_append` grows a list"),
-        (
-            "renders_a_number",
-            "`str` converts between text and a number",
-        ),
+        ("renders_a_real", "`str` of Float"),
         ("is_generic", "generic over T"),
         (
             "reads_the_clock",
@@ -1344,12 +1386,10 @@ fn what_the_heap_does_not_reach_is_refused_by_name() {
     let program = compile("still-refused.beck", STILL_REFUSED);
     let module = beck_llvm::module(&program);
     for (name, expect) in [
-        (
-            "renders_a_number",
-            "`str` converts between text and a number",
-        ),
+        ("renders_a_real", "`str` of Float"),
         ("splits_a_string", "`str_split` answers with a list"),
         ("upcases", "`str_upper` is Unicode case mapping"),
+        ("trims", "`str_trim` trims Unicode whitespace"),
         ("grows", "`list_append` grows a list"),
         ("mapped", "is used as a value rather than called"),
         ("is_generic", "generic over T"),

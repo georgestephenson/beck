@@ -503,6 +503,51 @@ fn the_three_backends_agree_on_text() {
     );
     compared += all.agree("repeat", &textfix::repeats(&ss));
 
+    // Building text out of something that is not text, and taking an `Option` apart without a
+    // `match` — the primitives `docs/104`'s and `docs/105`'s layouts made reachable.
+    compared += all.agree("shown", &textfix::integers());
+    compared += all.agree(
+        "shown_bool",
+        &[vec![Value::Bool(true)], vec![Value::Bool(false)]],
+    );
+    compared += all.agree("shown_str", &textfix::singles(&ss));
+    compared += all.agree(
+        "repeated",
+        &textfix::repeats(&ss)
+            .into_iter()
+            .map(|mut t| {
+                t.truncate(2);
+                t
+            })
+            .collect::<Vec<_>>(),
+    );
+    compared += all.agree("glued", &textfix::joins(&ss));
+    for name in ["or_else", "present"] {
+        compared += all.agree(
+            name,
+            &textfix::options()
+                .into_iter()
+                .map(|mut t| {
+                    if name == "present" {
+                        t.truncate(1);
+                    }
+                    t
+                })
+                .collect::<Vec<_>>(),
+        );
+    }
+    compared += all.agree(
+        "sliced_or",
+        &textfix::with_char(&ss)
+            .into_iter()
+            .map(|mut t| {
+                // `(s, c, i, acc)` for `count_of`; `sliced_or` wants `(s, i, fallback)`.
+                t.remove(1);
+                t
+            })
+            .collect::<Vec<_>>(),
+    );
+
     let named: Vec<Value> = ss
         .iter()
         .map(|s| heapfix::record("Named", &[("label", s.clone()), ("rank", Value::Int(1))]))
@@ -873,7 +918,7 @@ fn what_cannot_be_compiled_is_refused_by_name_and_with_a_reason() {
     let all = All::over("refused.beck", REFUSED);
     for name in [
         "grows_a_list",
-        "renders_a_number",
+        "renders_a_real",
         "is_generic",
         "reads_the_clock",
         "calls_something_refused",

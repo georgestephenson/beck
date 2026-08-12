@@ -872,7 +872,7 @@ have a layout, an arena and a place on the wire, and 283 definitions across the 
 its bytes, a literal is an offset into a pool the host writes, and **344** definitions compile where
 283 did, with the corpus going 4 → 28. **Reading a collection is built too**
 ([`105`](105-lists-arrive-read-only-report.md), [`106`](106-a-map-arrives-read-only-report.md)) — a
-`list[T]` and a `Map[K, V]` have layouts and **452** definitions compile where 344 did, with **nine
+`list[T]` and a `Map[K, V]` have layouts and **625** definitions compile where 344 did, with **nine
 corpus folds** among them — and the operations that *grow* one are **refused** rather than shipped
 with a worse asymptote than the evaluator's, which is §101.5's forecast cashed. What is left of that
 bullet is closures, the effects, `Html` and growing a collection

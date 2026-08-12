@@ -99,6 +99,64 @@ pub fn with_char(xs: &[Value]) -> Vec<Vec<Value>> {
     out
 }
 
+/// The integers `str` has to render exactly as Rust does, including the one whose magnitude has no
+/// signed representation.
+pub fn integers() -> Vec<Vec<Value>> {
+    [
+        0i64,
+        1,
+        -1,
+        9,
+        10,
+        -10,
+        99,
+        100,
+        12345,
+        -12345,
+        i64::MAX,
+        i64::MIN,
+        i64::MIN + 1,
+    ]
+    .iter()
+    .map(|n| vec![Value::Int(*n)])
+    .collect()
+}
+
+/// The lists of text `str_join` is asked about, with each separator.
+pub fn joins(seps: &[Value]) -> Vec<Vec<Value>> {
+    let parts: Vec<Value> = [
+        vec![],
+        vec![""],
+        vec!["a"],
+        vec!["a", "b"],
+        vec!["", "a", ""],
+        vec!["héllo", "日本語", "a\0b"],
+    ]
+    .iter()
+    .map(|p| Value::List(std::sync::Arc::new(p.iter().map(Value::str_).collect())))
+    .collect();
+    let mut out = Vec::new();
+    for xs in &parts {
+        for sep in seps.iter().take(5) {
+            out.push(vec![xs.clone(), sep.clone()]);
+        }
+    }
+    out
+}
+
+/// Every `Option[Int]` a fallback could be asked about.
+pub fn options() -> Vec<Vec<Value>> {
+    [
+        Value::some(Value::Int(0)),
+        Value::some(Value::Int(7)),
+        Value::some(Value::Int(i64::MIN)),
+        Value::none(),
+    ]
+    .iter()
+    .flat_map(|o| [-1i64, 0, 42].map(|f| vec![o.clone(), Value::Int(f)]))
+    .collect()
+}
+
 /// Each string repeated a handful of times, which is what exercises the arena.
 pub fn repeats(xs: &[Value]) -> Vec<Vec<Value>> {
     let mut out = Vec::new();
@@ -169,6 +227,33 @@ def opens(a: Str, b: Str) -> Bool:
 
 def closes(a: Str, b: Str) -> Bool:
     return str_ends_with(a, b)
+
+## Building text out of something that is not text. `str` of an `Int` has to be Rust's decimal to
+## the digit, including `i64::MIN`, whose magnitude has no signed representation.
+def shown(n: Int) -> Str:
+    return str(n)
+
+def shown_bool(x: Bool) -> Str:
+    return str(x)
+
+def shown_str(s: Str) -> Str:
+    return str(s)
+
+def repeated(s: Str, n: Int) -> Str:
+    return str_repeat(s, n)
+
+def glued(xs: list[Str], sep: Str) -> Str:
+    return str_join(xs, sep)
+
+## The two ways an `Option` is taken apart without a `match`.
+def or_else(o: Option[Int], fallback: Int) -> Int:
+    return unwrap_or(o, fallback)
+
+def present(o: Option[Int]) -> Bool:
+    return is_some(o)
+
+def sliced_or(s: Str, i: Int, fallback: Int) -> Int:
+    return unwrap_or(str_index_of(s, str_slice(s, i, 1)), fallback)
 
 ## Answers with an `Option`, which is the prelude's union and has a layout like any other — the
 ## thing `docs/104` §104.4 said it did not.

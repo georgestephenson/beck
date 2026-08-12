@@ -14,6 +14,37 @@ Newest first.
 
 ### The native backends
 
+- **The primitives the layouts had already unlocked**, and the refusals that were hiding them.
+  `unwrap_or` and `is_some` take an `Option` apart, `str` renders an `Int`, a `Bool` and a `Str`,
+  and `str_join` and `str_repeat` build one. **452 → 625 definitions** compile across the tree and
+  refusals go 977 → 806 — the largest jump any of these rounds has produced, from the smallest
+  amount of code, because `unwrap_or` alone was the leading cause of 71 refusals and the root of
+  hundreds of inherited ones. `lib/bignum.beck` goes 7 → 25, `lib/decimal.beck` 13 → 35 and
+  `clbg/pidigits.beck` 10 → 30. Gated by `native.rs::the_two_backends_agree_on_text` and
+  `cranelift.rs::the_three_backends_agree_on_text`, now 3,382 calls each.
+
+  **Three of those refusals were wrong about their own reason**, which is
+  [`docs/105`](docs/105-lists-arrive-read-only-report.md) §105.7's finding a second time and
+  corrects [`docs/104`](docs/104-text-on-the-heap-report.md) §104.4:
+
+  - `str` was refused because "the rendering has to be Rust's to the digit". True of a **real**,
+    whose shortest round-trip form is an algorithm — and not of an `Int`, whose decimal is a loop.
+    An `Int`, a `Bool` and a `Str` compile; a `Float` is still refused, and now says why.
+  - `str_join` was refused because it "builds text whose size is a sum over a list, and the arena
+    cannot grow an allocation it has already made". A sum over a list is one pass, and the
+    allocation happens after it.
+  - `str_repeat` was refused because it "builds text whose size is not a function of its arguments'
+    sizes". It is `|s| × n` — a function of an argument's *value*, which is available.
+
+  What is left of text is genuinely a table: `str_trim` and `str_upper`/`str_lower` are Unicode
+  properties, and `str_to_int` has to agree with Rust's parser about every input that is not a
+  number.
+- **`str(b)` interned its two literals during emission**, which
+  `the_literal_pool_is_a_function_of_the_program` caught immediately: the pool has to be decided by
+  the survey, or it is a function of the fixed point rather than of the program. `"true"` and
+  `"false"` are interned in the survey now, where the walk sees a `ToStr` over a `Bool`.
+
+
 - **A map arrives read-only, and a fold compiles**
   ([`docs/106`](docs/106-a-map-arrives-read-only-report.md)): `Map[K, V]` is a count, every key in
   key order, then every value — so `map_get` is a binary search and `map_keys` is one `memcpy`.

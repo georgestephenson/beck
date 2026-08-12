@@ -1629,6 +1629,98 @@ impl<'a> Function<'a> {
                 }
                 self.list_range(op, &vals, span)
             }
+            Prim::ToStr => {
+                arity(1)?;
+                match vals[0].ty {
+                    Repr::Str => Ok(vals[0].clone()),
+                    Repr::Int => Ok(self.text_call("from_int", &[&vals[0]], Repr::Str, span)),
+                    // Two literals from the pool, which is what `Value::display` answers.
+                    Repr::Bool => {
+                        let (t, f) = (self.literal("true"), self.literal("false"));
+                        let r = self.fresh();
+                        self.line(format!(
+                            "{r} = select i1 {}, i64 {t}, i64 {f}",
+                            vals[0].text
+                        ));
+                        Ok(Val {
+                            text: r,
+                            ty: Repr::Str,
+                        })
+                    }
+                    other => Err(format!(
+                        "`str` of {}, whose rendering is not a decimal this backend can reproduce \
+                         — a real's shortest round-trip form is an algorithm rather than a loop",
+                        self.heap.show(other)
+                    )),
+                }
+            }
+            Prim::StrRepeat => {
+                arity(2)?;
+                self.text_arg(&vals[0], op)?;
+                if vals[1].ty != Repr::Int {
+                    return Err("`str_repeat` takes an Int count".into());
+                }
+                Ok(self.text_call("repeat", &[&vals[0], &vals[1]], Repr::Str, span))
+            }
+            Prim::StrJoin => {
+                arity(2)?;
+                let Repr::List(at) = vals[0].ty else {
+                    return Err("`str_join` on something that is not a list".into());
+                };
+                if self.heap.element(at) != Repr::Str {
+                    return Err(
+                        "`str_join` over a list of something other than text, and the evaluator \
+                         renders those through `display` rather than joining them"
+                            .into(),
+                    );
+                }
+                self.text_arg(&vals[1], op)?;
+                Ok(self.text_call("join", &[&vals[0], &vals[1]], Repr::Str, span))
+            }
+            Prim::OptionIsSome => {
+                arity(1)?;
+                let (some, ..) = self.option_taken(vals[0].ty)?;
+                let tag = self.load_word(&vals[0].text, 0);
+                let r = self.fresh();
+                self.line(format!("{r} = icmp eq i64 {tag}, {some}"));
+                Ok(Val {
+                    text: r,
+                    ty: Repr::Bool,
+                })
+            }
+            Prim::OptionUnwrapOr => {
+                arity(2)?;
+                let (some, slot, payload) = self.option_taken(vals[0].ty)?;
+                if vals[1].ty != payload {
+                    return Err("`unwrap_or`'s fallback is not what the `Option` carries".into());
+                }
+                let tag = self.load_word(&vals[0].text, 0);
+                let is_some = self.fresh();
+                self.line(format!("{is_some} = icmp eq i64 {tag}, {some}"));
+                // The address, not the value: a `None` the *host* wrote is one word long, because
+                // `encode_object` allocates the variant's own size — so reading the payload slot
+                // unconditionally can read past the end of the arena. The same `select` between the
+                // field's address and the object's header that `list_get` and `map_get` use.
+                let field = self.word_addr(&vals[0].text, slot);
+                let header = self.word_addr(&vals[0].text, 0);
+                let p = self.fresh();
+                self.line(format!(
+                    "{p} = select i1 {is_some}, ptr {field}, ptr {header}"
+                ));
+                let w = self.fresh();
+                self.line(format!("{w} = load i64, ptr {p}"));
+                let held = self.word_as(&w, payload);
+                let r = self.fresh();
+                self.line(format!(
+                    "{r} = select i1 {is_some}, {ty} {held}, {ty} {}",
+                    vals[1].text,
+                    ty = payload.llvm()
+                ));
+                Ok(Val {
+                    text: r,
+                    ty: payload,
+                })
+            }
             Prim::MapLen => {
                 arity(1)?;
                 self.map_arg(&vals[0], op)?;
@@ -1892,6 +1984,50 @@ impl<'a> Function<'a> {
             text: off,
             ty: repr,
         })
+    }
+
+    /// A string literal's offset in the pool, interned on the spot.
+    fn literal(&mut self, s: &str) -> u64 {
+        self.uses_heap = true;
+        let at = self.heap.intern(s);
+        self.heap.string_offset(at)
+    }
+
+    /// The `Some` tag, the slot its payload is in, and what that payload is.
+    ///
+    /// For *consuming* an `Option`, where [`Function::option_of`] is for answering with one. The
+    /// evaluator reads these by **name** — `variant() == Some("Some")` and `field("value")` — so
+    /// this does too, and a union of a program's own with the same two names is answered for
+    /// exactly as the tree-walker answers for it.
+    fn option_taken(&mut self, repr: Repr) -> Result<(u32, usize, Repr), String> {
+        let Repr::Obj(at) = repr else {
+            return Err("an `Option` operation on something that is not an object".into());
+        };
+        let layout = self.heap.layout(at);
+        let some = layout
+            .tag_of(Some("Some"))
+            .ok_or_else(|| format!("`{}` has no `Some`", layout.shown))?;
+        let (slot, payload) = layout.variants[some as usize]
+            .slot("value")
+            .ok_or_else(|| format!("`{}`'s `Some` has no `value`", layout.shown))?;
+        Ok((some, slot, payload))
+    }
+
+    /// A raw word read back as the value its [`Repr`] says it is.
+    fn word_as(&mut self, w: &str, repr: Repr) -> String {
+        match repr {
+            Repr::Bool => {
+                let r = self.fresh();
+                self.line(format!("{r} = icmp ne i64 {w}, 0"));
+                r
+            }
+            Repr::Float => {
+                let r = self.fresh();
+                self.line(format!("{r} = bitcast i64 {w} to double"));
+                r
+            }
+            _ => w.to_string(),
+        }
     }
 
     /// Insist an argument is a map, and say which map it is.
@@ -2470,10 +2606,6 @@ fn refusal(op: Prim) -> String {
             "answers with a list whose elements it also allocates, which is two loops rather than \
              the one every list this backend builds has"
         }
-        Prim::StrJoin => {
-            "builds text whose size is a sum over a list, and the arena cannot grow an allocation \
-             it has already made"
-        }
         // The one that is a decision rather than a gap. `docs/69` §69.7 and `docs/101` §101.5 both
         // name shipping this as the mistake: the tree-walker pushes in place when `liveness` proves
         // the accumulator is a last use, and an arena with no ownership in it cannot, so every loop
@@ -2504,12 +2636,13 @@ fn refusal(op: Prim) -> String {
         Prim::StrTrim => {
             "trims Unicode whitespace, which is a table for the same reason case mapping is"
         }
-        Prim::StrReplace | Prim::StrRepeat => {
-            "builds text whose size is not a function of its arguments' sizes, and this arena \
-             cannot grow an allocation it has already made"
+        Prim::StrReplace => {
+            "builds text whose size is the number of occurrences of one string in another, which \
+             needs a pass to count before there is anything to allocate"
         }
-        Prim::ToStr | Prim::StrToInt => {
-            "converts between text and a number, and the rendering has to be Rust's to the digit"
+        Prim::StrToInt => {
+            "reads a number out of text, and has to agree with Rust's parser about every input \
+             that is not one"
         }
         _ => return format!("`{}` is not one of the scalar primitives", op.name()),
     };
@@ -2654,6 +2787,13 @@ fn assemble(
     }
     if heap.uses_maps() {
         m.push_str(MAPS);
+    }
+    if heap.uses_text() {
+        m.push_str(BUILDS);
+    }
+    // `beck.str.join` reads a list, so it needs both runtimes present.
+    if heap.uses_text() && (heap.uses_lists() || heap.uses_maps()) {
+        m.push_str(JOINS);
     }
     m.push_str(bodies);
     for at in compared {
@@ -3697,6 +3837,174 @@ step:
   store i64 %w, ptr %dst
   %j = add i64 %i, 1
   br label %loop
+out:
+  ret i64 %r
+}
+
+"#;
+
+/// Building text: the three that make one out of something that is not text.
+///
+/// Emitted beside [`TEXT`] rather than in it because `beck.str.join` reads a **list**, so this half
+/// needs `LISTS` as well — which is why [`assemble`] emits it only when both are there.
+///
+/// `beck.str.from_int` is Rust's `i64::to_string` and has to be, to the digit: `str(n)` is
+/// `Value::display`, and `docs/104` §104.4 refused this whole primitive rather than answer a decimal
+/// that might differ. An integer's decimal *is* reproducible — the one that is not is a real's,
+/// whose shortest round-trip form is a whole algorithm — so this compiles for an `Int`, a `Bool` and
+/// a `Str`, and a `Float` is still refused.
+const BUILDS: &str = r#"define internal i64 @"beck.str.from_int"(ptr noalias %err, i64 %n, i32 %span) {
+entry:
+  %neg = icmp slt i64 %n, 0
+  ; `0 - i64::MIN` wraps to 2^63, which read as unsigned is exactly its magnitude — the one input
+  ; where negating in signed arithmetic has no answer.
+  %flip = sub i64 0, %n
+  %u = select i1 %neg, i64 %flip, i64 %n
+  br label %count
+count:
+  %d = phi i64 [ 1, %entry ], [ %d1, %more ]
+  %t = phi i64 [ %u, %entry ], [ %t1, %more ]
+  %t1 = udiv i64 %t, 10
+  %done = icmp eq i64 %t1, 0
+  br i1 %done, label %sized, label %more
+more:
+  %d1 = add i64 %d, 1
+  br label %count
+sized:
+  %sign = zext i1 %neg to i64
+  %bytes = add i64 %d, %sign
+  ; Every byte is a digit or a minus, so the character count is the byte count.
+  %r = call i64 @"beck.str.alloc"(ptr %err, i64 %bytes, i64 %bytes, i32 %span)
+  %failed = icmp eq i64 %r, 0
+  br i1 %failed, label %out, label %fill
+fill:
+  %p = call ptr @"beck.str.data"(i64 %r)
+  br i1 %neg, label %minus, label %digits
+minus:
+  store i8 45, ptr %p
+  br label %digits
+digits:
+  br label %loop
+loop:
+  ; Backwards from the last byte, which is the order division produces them in.
+  %i = phi i64 [ %bytes, %digits ], [ %i1, %loop ]
+  %v = phi i64 [ %u, %digits ], [ %v1, %loop ]
+  %i1 = sub i64 %i, 1
+  %rem = urem i64 %v, 10
+  %v1 = udiv i64 %v, 10
+  %ch = trunc i64 %rem to i8
+  %byte = add i8 %ch, 48
+  %at = getelementptr inbounds i8, ptr %p, i64 %i1
+  store i8 %byte, ptr %at
+  %left = icmp eq i64 %v1, 0
+  br i1 %left, label %out, label %loop
+out:
+  ret i64 %r
+}
+
+define internal i64 @"beck.str.repeat"(ptr noalias %err, i64 %s, i64 %n, i32 %span) {
+entry:
+  ; The evaluator clamps to a million, "because `"x" * 10_000_000_000` is a request nobody makes on
+  ; purpose". The same bound, so the same answer.
+  %neg = icmp slt i64 %n, 0
+  %low = select i1 %neg, i64 0, i64 %n
+  %big = icmp sgt i64 %low, 1000000
+  %k = select i1 %big, i64 1000000, i64 %low
+  %lb = call i64 @"beck.str.bytes"(i64 %s)
+  %lc = call i64 @"beck.str.chars"(i64 %s)
+  %tb = mul i64 %lb, %k
+  %tc = mul i64 %lc, %k
+  %r = call i64 @"beck.str.alloc"(ptr %err, i64 %tb, i64 %tc, i32 %span)
+  %failed = icmp eq i64 %r, 0
+  br i1 %failed, label %out, label %copy
+copy:
+  %pr = call ptr @"beck.str.data"(i64 %r)
+  %ps = call ptr @"beck.str.data"(i64 %s)
+  br label %loop
+loop:
+  %i = phi i64 [ 0, %copy ], [ %j, %step ]
+  %past = icmp uge i64 %i, %k
+  br i1 %past, label %out, label %step
+step:
+  %at = mul i64 %i, %lb
+  %dst = getelementptr inbounds i8, ptr %pr, i64 %at
+  %ignored = call ptr @memcpy(ptr %dst, ptr %ps, i64 %lb)
+  %j = add i64 %i, 1
+  br label %loop
+out:
+  ret i64 %r
+}
+
+"#;
+
+/// `str_join`, which is the one of the three that reads a **list** — so it is emitted only when
+/// that runtime is there too.
+const JOINS: &str = r#"define internal i64 @"beck.str.join"(ptr noalias %err, i64 %xs, i64 %sep, i32 %span) {
+entry:
+  %n = call i64 @"beck.list.len"(i64 %xs)
+  %p = call ptr @"beck.list.data"(i64 %xs)
+  %sb = call i64 @"beck.str.bytes"(i64 %sep)
+  %sc = call i64 @"beck.str.chars"(i64 %sep)
+  %empty = icmp eq i64 %n, 0
+  br i1 %empty, label %none, label %measure
+none:
+  %e = call i64 @"beck.str.alloc"(ptr %err, i64 0, i64 0, i32 %span)
+  ret i64 %e
+measure:
+  br label %sum
+sum:
+  %i = phi i64 [ 0, %measure ], [ %i1, %add ]
+  %b = phi i64 [ 0, %measure ], [ %b1, %add ]
+  %c = phi i64 [ 0, %measure ], [ %c1, %add ]
+  %past = icmp uge i64 %i, %n
+  br i1 %past, label %sized, label %add
+add:
+  %cell = getelementptr inbounds i64, ptr %p, i64 %i
+  %x = load i64, ptr %cell
+  %xb = call i64 @"beck.str.bytes"(i64 %x)
+  %xc = call i64 @"beck.str.chars"(i64 %x)
+  %b1 = add i64 %b, %xb
+  %c1 = add i64 %c, %xc
+  %i1 = add i64 %i, 1
+  br label %sum
+sized:
+  ; One separator between each pair, which is `n - 1` of them.
+  %gaps = sub i64 %n, 1
+  %sepb = mul i64 %gaps, %sb
+  %sepc = mul i64 %gaps, %sc
+  %tb = add i64 %b, %sepb
+  %tc = add i64 %c, %sepc
+  %r = call i64 @"beck.str.alloc"(ptr %err, i64 %tb, i64 %tc, i32 %span)
+  %failed = icmp eq i64 %r, 0
+  br i1 %failed, label %out, label %write
+write:
+  %pr = call ptr @"beck.str.data"(i64 %r)
+  %pv = call ptr @"beck.str.data"(i64 %sep)
+  br label %walk
+walk:
+  %k = phi i64 [ 0, %write ], [ %k1, %part ]
+  %at = phi i64 [ 0, %write ], [ %at2, %part ]
+  %fin = icmp uge i64 %k, %n
+  br i1 %fin, label %out, label %maybe
+maybe:
+  %first = icmp eq i64 %k, 0
+  br i1 %first, label %part, label %gap
+gap:
+  %gd = getelementptr inbounds i8, ptr %pr, i64 %at
+  %g = call ptr @memcpy(ptr %gd, ptr %pv, i64 %sb)
+  %at1 = add i64 %at, %sb
+  br label %part
+part:
+  %here = phi i64 [ %at, %maybe ], [ %at1, %gap ]
+  %pc = getelementptr inbounds i64, ptr %p, i64 %k
+  %px = load i64, ptr %pc
+  %pb = call i64 @"beck.str.bytes"(i64 %px)
+  %pd = call ptr @"beck.str.data"(i64 %px)
+  %dst = getelementptr inbounds i8, ptr %pr, i64 %here
+  %w = call ptr @memcpy(ptr %dst, ptr %pd, i64 %pb)
+  %at2 = add i64 %here, %pb
+  %k1 = add i64 %k, 1
+  br label %walk
 out:
   ret i64 %r
 }

@@ -401,11 +401,14 @@ pub const STILL_REFUSED: &str = r#"
 model Named:
     label: Str
 
-def renders_a_number(n: Int) -> Str:
-    return str(n)
+def renders_a_real(x: Float) -> Str:
+    return str(x)
 
 def splits_a_string(s: Str) -> Int:
     return list_len(str_split(s, ","))
+
+def trims(s: Str) -> Str:
+    return str_trim(s)
 
 def upcases(s: Str) -> Str:
     return str_upper(s)
