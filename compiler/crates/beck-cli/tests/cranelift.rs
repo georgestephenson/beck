@@ -38,6 +38,7 @@ use beck_core::{Program, Value};
 use beck_llvm::{Artifact as LlvmArtifact, Repr};
 
 mod support;
+use support::clofix::{self, CLOSURES};
 use support::heapfix::{self, RECORDS, STILL_REFUSED, UNIONS};
 use support::listfix::{self, LISTS};
 use support::mapfix::{self, MAPS};
@@ -755,6 +756,78 @@ fn the_three_backends_agree_on_maps() {
     println!("{compared} map calls compared, and every backend agreed on every one");
 }
 
+/// Closures, over all three backends.
+///
+/// `native.rs`'s sweep with the third implementation in it. What it is for is the same thing the
+/// record and the map differentials were for: the two emitters lower an application differently —
+/// the other writes a `switch` and this writes a chain of comparisons — and a differential over the
+/// *answers* is what says that a difference in shape is not a difference in meaning.
+#[test]
+fn the_three_backends_agree_on_closures() {
+    linker!();
+    let all = All::over("closures.beck", CLOSURES);
+    let ns: Vec<i64> = vec![0, 1, -1, 2, 7, -7, i64::MAX, i64::MIN];
+    let mut compared = 0;
+    for name in ["twice", "again", "through", "double"] {
+        compared += all.agree(name, &clofix::each_of(&ns));
+    }
+    for name in ["add_on", "nested"] {
+        compared += all.agree(name, &clofix::pairs_of(&ns));
+    }
+    compared += all.agree("between", &clofix::triples_of(&ns));
+    compared += all.agree("either", &clofix::flagged(&ns));
+
+    let xs = clofix::lists();
+    let bys: Vec<i64> = vec![0, 1, -1, 3, i64::MAX];
+    for name in ["doubled", "summed", "flags", "tally", "risky"] {
+        compared += all.agree(name, &clofix::singles(&xs));
+    }
+    for name in [
+        "scaled",
+        "kept",
+        "biggest",
+        "all_above",
+        "any_above",
+        "twice_over",
+    ] {
+        compared += all.agree(name, &clofix::with(&xs, &bys));
+    }
+    let ts = clofix::texts();
+    for name in ["lengths", "shouted", "long_ones", "joined"] {
+        compared += all.agree(name, &clofix::singles(&ts));
+    }
+    let rs = clofix::reals();
+    for name in ["halved", "negated", "added"] {
+        compared += all.agree(name, &clofix::singles(&rs));
+    }
+    for name in ["same_lambda", "two_lambdas", "ordered"] {
+        compared += all.agree(name, &[vec![]]);
+    }
+    compared += all.agree("captures_ignored", &clofix::pairs_of(&ns));
+
+    println!("{compared} closure calls compared, and every backend agreed on every one");
+}
+
+/// A tail call through an application is a tail call here too.
+///
+/// `native.rs`'s gate on the third backend, and it is not the same mechanism: that one emits
+/// `musttail` and this one emits `return_call`, which Cranelift **asserts** on rather than merely
+/// honouring. Both hops have to be one — the call into the application and the arm inside it — and
+/// ten million iterations is past any host stack, so a frame spent on either is a crash.
+///
+/// The gate was checked by making it red: with the application's own call site emitted as an
+/// ordinary call, the other backend answers `SIGSEGV` at this size.
+#[test]
+fn a_tail_call_through_a_closure_costs_nothing() {
+    linker!();
+    let all = All::over("closures.beck", CLOSURES);
+    let deep = all
+        .clif
+        .call("spin", &[Value::Int(10_000_000), Value::Int(0)])
+        .expect("ten million applications in tail position");
+    assert_eq!(deep, Value::Int(50_000_005_000_000));
+}
+
 /// The same shape gate the other backend has, with the same two sizes and the same arithmetic.
 ///
 /// Written again rather than shared because the *allocator* is written again: this is where a
@@ -855,6 +928,8 @@ fn the_two_emitters_accept_and_refuse_the_same_definitions() {
         ("records.beck", RECORDS),
         ("unions.beck", UNIONS),
         ("still-refused.beck", STILL_REFUSED),
+        ("closures.beck", CLOSURES),
+        ("closures-refused.beck", support::clofix::REFUSED),
     ]
     .iter()
     .map(|(n, s)| (n.to_string(), s.to_string()))

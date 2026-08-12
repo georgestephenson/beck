@@ -14,6 +14,35 @@ Newest first.
 
 ### The native backends
 
+- **A closure arrives, and it does not leave**
+  ([`docs/108`](docs/108-closures-arrive-report.md)): a `lambda` compiles to both code generators as
+  an object holding the lambda's **rank** and its captures, applying one is a switch on that word
+  into a direct call, and `map_list`, `filter_list`, `list_fold`, `list_all` and `list_any` are five
+  generated loops that go through it. There is no indirect call and no code address in the arena,
+  because [`adr/0026`](docs/adr/0026-the-native-heap-is-an-arena-of-offsets.md) says a value is an
+  offset. A closure is refused at every boundary the host would read one across — a parameter, a
+  result, a field, an element, a map's key or value — so nothing in the host changed.
+  **605 → 619 definitions** compile across the tree; of the 96 refusals that blamed a closure, 11
+  compile, 52 are the boundary and **33 were re-refused for a deeper reason that was always true of
+  them**. Ranks are ordered the way `Closure`'s `Ord` compares two closures — the parameters, then
+  where the body starts — so `==` on two functions is one word comparison that agrees.
+  Gated by `native.rs::the_two_backends_agree_on_closures` and
+  `cranelift.rs::the_three_backends_agree_on_closures` (1,108 calls each),
+  `a_loop_costs_its_answer_and_one_closure`, `a_tail_call_through_a_closure_costs_nothing` (ten
+  million applications in tail position, on both backends) and
+  `a_closure_does_not_cross_the_boundary`.
+- **The gate that asks whether a refusal's reason is *true* fired**
+  ([`docs/108`](docs/108-closures-arrive-report.md) §108.7). `a_refusal_that_blames_a_type_is_asked_whether_that_type_has_one`
+  went red because giving a closure a shape made "a closure, which has no layout here" false while
+  the refusal saying it stayed. It now asserts both halves of what is true instead: the shape exists,
+  and `Heap::crossing` is what refuses it. `what_the_heap_does_not_reach_is_refused_by_name` lost a
+  row the same way — `map_list(xs, double_it)` compiles, so `mapped` moved to that test's control
+  list.
+- **`free_vars` is `beck_core::core`'s, once.** `plan.rs` had it privately for deciding what a
+  dataflow operator is handed; a closure needs the same answer for deciding what its object carries.
+  A second walk that disagreed about one construct would give a compiled closure a field the
+  evaluator's environment does not have.
+
 - **The primitives the layouts had already unlocked**, and the refusals that were hiding them.
   `unwrap_or` and `is_some` take an `Option` apart, `str` renders an `Int`, a `Bool` and a `Str`,
   and `str_join` and `str_repeat` build one. **452 → 625 definitions** compile across the tree and

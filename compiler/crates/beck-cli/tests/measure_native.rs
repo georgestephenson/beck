@@ -569,6 +569,103 @@ def windows(xs: list[Int], i: Int, acc: Int) -> Int:
     }
 }
 
+/// What a closure costs against the tree-walker.
+///
+/// Three shapes: applying one in a loop, mapping a list through one, and folding a list with one.
+/// The evaluator builds a `Value::Closure` per `lam` *evaluated* — an `Arc` bump over shared code
+/// since `docs/70` §70.3 — and applies it by pushing an environment frame; here it is one object of
+/// one word per capture and a switch into a direct call.
+///
+/// The row that says whether the design is right is **apply**: it is the one where the loop's work
+/// *is* the application, so a switch that had turned into something expensive would show there and
+/// nowhere else. The two sizes are what separate a constant from a growth (`AGENTS.md`).
+#[test]
+fn what_a_closure_costs_against_the_tree_walker() {
+    const SRC: &str = r#"
+def apply_often(n: Int, acc: Int) -> Int:
+    f = lambda x: x + 1
+    if n <= 0:
+        return acc
+    return apply_often(n - 1, f(acc))
+
+def mapped(xs: list[Int], by: Int) -> Int:
+    return list_len(map_list(xs, lambda x: x * by))
+
+def folded(xs: list[Int]) -> Int:
+    return list_fold(xs, 0, lambda acc, x: acc + x)
+"#;
+    let program = compile("closures.beck", SRC);
+    let Some(artifact) = Artifact::build_within(&program, Duration::from_secs(300))
+        .expect("clang accepts the module")
+    else {
+        assert!(
+            !require_llvm(),
+            "BECK_REQUIRE_LLVM=1 and there is no `clang` on the path"
+        );
+        println!("skipped: no LLVM toolchain. Set BECK_REQUIRE_LLVM=1 to make this a failure.");
+        return;
+    };
+    let evaluator = beck_eval::backend_for(program.clone());
+    println!("{}\n", artifact.toolchain().version);
+    println!(
+        "{:<14} {:>10} {:>14} {:>14} {:>9}",
+        "benchmark", "size", "evaluator", "native", "ratio"
+    );
+
+    let long = |n: usize| {
+        Value::List(std::sync::Arc::new(
+            (0..n as i64).map(Value::Int).collect::<Vec<_>>(),
+        ))
+    };
+    let benches: [(&str, [usize; 2]); 3] = [
+        ("apply_often", [20_000, 160_000]),
+        ("mapped", [2_000, 16_000]),
+        ("folded", [2_000, 16_000]),
+    ];
+    let mut ratios: Vec<(&str, f64, f64)> = Vec::new();
+    for (name, sizes) in benches {
+        let mut seen = [0.0f64; 2];
+        for (i, size) in sizes.iter().enumerate() {
+            let args = match name {
+                "apply_often" => vec![Value::Int(*size as i64), Value::Int(0)],
+                "mapped" => vec![long(*size), Value::Int(3)],
+                _ => vec![long(*size)],
+            };
+            let runs = if i == 0 { 7 } else { 3 };
+            let walked = beck_eval::on_the_evaluator_stack(|| {
+                let f = evaluator
+                    .function(&program.defs[name].body)
+                    .expect("prepares");
+                median(runs, || {
+                    f(args.clone()).expect("the evaluator answers");
+                })
+            });
+            let compiled = median(runs, || {
+                artifact
+                    .call(name, &args)
+                    .expect("the native backend answers");
+            });
+            let ratio = walked.as_secs_f64() / compiled.as_secs_f64();
+            seen[i] = ratio;
+            println!(
+                "{:<14} {:>10} {:>14} {:>14} {:>8.2}×",
+                if i == 0 { name } else { "" },
+                size,
+                format!("{walked:?}"),
+                format!("{compiled:?}"),
+                ratio
+            );
+        }
+        ratios.push((name, seen[0], seen[1]));
+    }
+    for (name, small, large) in &ratios {
+        assert!(
+            *small > 1.0 && *large > 1.0,
+            "`{name}` was {small:.2}× at the small size and {large:.2}× at the large one"
+        );
+    }
+}
+
 /// What a map costs against the tree-walker, and whether the search is really binary.
 ///
 /// The interesting row is `lookup`. A `PMap` is a weight-balanced tree and this is a sorted run

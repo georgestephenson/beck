@@ -148,6 +148,12 @@ pub enum Trap {
     /// The arena is full. [`crate::heap::ARENA_BYTES`] is how much there is, and this is the one
     /// failure a compiled program has that the evaluator does not.
     HeapExhausted,
+    /// A closure carried a rank no arm of its family answers to. Unreachable for a stronger reason
+    /// than [`Trap::NoMatchData`]'s: a closure object is built by this module and by nothing else,
+    /// so its rank came from the same table the switch was written from. It is here rather than an
+    /// `unreachable` because a wrong rank should be a message naming this trap and not an
+    /// optimiser's licence to delete the path that produced it.
+    NoSuchLambda,
 }
 
 impl Trap {
@@ -170,11 +176,12 @@ impl Trap {
             Trap::NoMatchBool => 10,
             Trap::NoMatchData => 11,
             Trap::HeapExhausted => 12,
+            Trap::NoSuchLambda => 13,
         }
     }
 
     pub fn from_code(code: u32) -> Option<Trap> {
-        const ALL: [Trap; 12] = [
+        const ALL: [Trap; 13] = [
             Trap::AddOverflow,
             Trap::SubOverflow,
             Trap::MulOverflow,
@@ -187,6 +194,7 @@ impl Trap {
             Trap::NoMatchBool,
             Trap::NoMatchData,
             Trap::HeapExhausted,
+            Trap::NoSuchLambda,
         ];
         ALL.into_iter().find(|t| t.code() == code)
     }
@@ -223,6 +231,7 @@ impl Trap {
                 "the compiled program used all {} MiB of its heap",
                 crate::heap::ARENA_BYTES >> 20
             ),
+            Trap::NoSuchLambda => format!("no lambda of this module has rank {payload}"),
         }
     }
 }
@@ -318,6 +327,10 @@ pub fn module(program: &Program) -> Module {
     let mut compared: BTreeSet<u32> = BTreeSet::new();
     let mut list_compared: BTreeSet<u32> = BTreeSet::new();
     let mut map_compared: BTreeSet<u32> = BTreeSet::new();
+    let mut compared_fns = false;
+    let mut lambdas: BTreeMap<u32, String> = BTreeMap::new();
+    let mut applied: BTreeSet<u32> = BTreeSet::new();
+    let mut loops: BTreeSet<(Loop, u32)> = BTreeSet::new();
     for name in &order {
         let def = &program.defs[name];
         let mut fun = Function::new(&indexed, &eligible, program, &mut heap);
@@ -329,13 +342,39 @@ pub fn module(program: &Program) -> Module {
         compared.append(&mut fun.compared);
         list_compared.append(&mut fun.list_compared);
         map_compared.append(&mut fun.map_compared);
+        applied.append(&mut fun.applied);
+        loops.append(&mut fun.loops);
+        compared_fns |= fun.compared_fns;
+        for (rank, lam) in std::mem::take(&mut fun.lambdas) {
+            lambdas.entry(rank).or_insert(lam);
+        }
         bodies.push_str(&text);
+        bodies.push('\n');
+    }
+    // In rank order rather than in the order the bodies met them, for the reason the definitions
+    // are in declaration order: the IR is the same bytes twice.
+    for lam in lambdas.values() {
+        bodies.push_str(lam);
         bodies.push('\n');
     }
 
     let functions: Vec<Signature> = order.iter().map(|n| indexed[n].clone()).collect();
     let (layouts, elements, entries) = reachable(&compared, &list_compared, &map_compared, &heap);
-    let ir = assemble(&bodies, &functions, &heap, &layouts, &elements, &entries);
+    let ir = assemble(
+        &bodies,
+        &functions,
+        &heap,
+        &layouts,
+        &elements,
+        &entries,
+        &Closures {
+            applied: &applied,
+            emitted: &lambdas.keys().copied().collect(),
+            compiled: &eligible,
+            compared: compared_fns,
+            loops: &loops,
+        },
+    );
     refusals.sort_by(|a, b| a.name.cmp(&b.name));
     Module {
         ir,
@@ -425,13 +464,17 @@ fn signature_of(def: &Def, heap: &mut Heap, program: &Program) -> Result<Signatu
     let mut params = Vec::with_capacity(def.params.len());
     for (_, name, ty) in &def.params {
         match heap.repr(ty, program) {
-            Ok(r) => params.push(r),
+            Ok(r) => {
+                Heap::crossing(r).map_err(|why| format!("parameter `{name}` is {why}"))?;
+                params.push(r);
+            }
             Err(why) => return Err(format!("parameter `{name}` is {why}")),
         }
     }
     let ret = heap
         .repr(&def.ret, program)
         .map_err(|why| format!("returns {why}"))?;
+    Heap::crossing(ret).map_err(|why| format!("returns {why}"))?;
     Ok(Signature {
         name: def.name.clone(),
         params,
@@ -489,6 +532,20 @@ struct Function<'a> {
     list_compared: BTreeSet<u32>,
     /// And the map reprs.
     map_compared: BTreeSet<u32>,
+    /// Whether this body compares two closures, which needs one function for the whole module.
+    compared_fns: bool,
+    /// The lambdas this body built, by rank, each already emitted as its own function.
+    ///
+    /// Collected upwards rather than written where they are met, because a `lam` is an expression
+    /// *inside* a function and its body is a function of its own: LLVM has no nested definitions,
+    /// so what a closure compiles to is one object here and one `define` beside the module's.
+    lambdas: BTreeMap<u32, String>,
+    /// The closure families this body applies, so the module writes an application for those and
+    /// not for every shape a type mentions.
+    applied: BTreeSet<u32>,
+    /// The higher-order list primitives this body reaches, by shape, so the module writes those
+    /// loops and no others.
+    loops: BTreeSet<(Loop, u32)>,
     /// Whether this body reaches the arena, and therefore needs its base in a register.
     uses_heap: bool,
 }
@@ -516,6 +573,10 @@ impl<'a> Function<'a> {
             compared: BTreeSet::new(),
             list_compared: BTreeSet::new(),
             map_compared: BTreeSet::new(),
+            compared_fns: false,
+            lambdas: BTreeMap::new(),
+            applied: BTreeSet::new(),
+            loops: BTreeSet::new(),
             uses_heap: false,
         }
     }
@@ -697,17 +758,8 @@ impl<'a> Function<'a> {
             }
             CoreKind::App { func, args } => return self.call(func, args, dest),
             CoreKind::Prim { op, args } => self.prim(*op, args, &c.ty, c.span)?,
-            CoreKind::Lam { .. } => {
-                return Err(
-                    "a nested function is a closure, and a closure is not on this heap".into(),
-                )
-            }
-            CoreKind::Global(name) => {
-                return Err(format!(
-                    "`{name}` is used as a value rather than called, and a function value is a \
-                     closure"
-                ))
-            }
+            CoreKind::Lam { params, body } => self.closure(params, body, &c.ty, c.span)?,
+            CoreKind::Global(name) => self.named(name, &c.ty, c.span)?,
             CoreKind::Make {
                 variant, fields, ..
             } => self.make(&c.ty, variant.as_deref(), fields, c.span)?,
@@ -848,7 +900,9 @@ impl<'a> Function<'a> {
             Repr::Int => Trap::NoMatchInt,
             Repr::Float => Trap::NoMatchFloat,
             Repr::Bool => Trap::NoMatchBool,
-            Repr::Str | Repr::List(_) | Repr::Map(_) | Repr::Obj(_) => Trap::NoMatchData,
+            Repr::Str | Repr::List(_) | Repr::Map(_) | Repr::Obj(_) | Repr::Fn(_) => {
+                Trap::NoMatchData
+            }
         };
         let payload = self.widen(&v);
         self.trap(trap, span, &payload, "true");
@@ -1038,7 +1092,7 @@ impl<'a> Function<'a> {
                 self.line(format!("{raw} = load i64, ptr {p}"));
                 self.line(format!("{r} = icmp ne i64 {raw}, 0"));
             }
-            Repr::Int | Repr::Str | Repr::List(_) | Repr::Map(_) | Repr::Obj(_) => {
+            Repr::Int | Repr::Str | Repr::List(_) | Repr::Map(_) | Repr::Obj(_) | Repr::Fn(_) => {
                 self.line(format!("{r} = load i64, ptr {p}"))
             }
         }
@@ -1065,7 +1119,7 @@ impl<'a> Function<'a> {
                 self.line(format!("{w} = zext i1 {} to i64", v.text));
                 self.line(format!("store i64 {w}, ptr {p}"));
             }
-            Repr::Int | Repr::Str | Repr::List(_) | Repr::Map(_) | Repr::Obj(_) => {
+            Repr::Int | Repr::Str | Repr::List(_) | Repr::Map(_) | Repr::Obj(_) | Repr::Fn(_) => {
                 self.line(format!("store i64 {}, ptr {p}", v.text))
             }
         }
@@ -1217,6 +1271,277 @@ impl<'a> Function<'a> {
         })
     }
 
+    /// `lambda x: …` — an object holding the lambda's rank and everything its body reads from here.
+    ///
+    /// The captures are the [`heap::Lambda`] record's, in that record's order, because the code that
+    /// *reads* them back is [`Function::lam_body`] and the two must agree about which word is which.
+    /// A closure is the one value this backend builds that the host never sees: it is refused in a
+    /// signature, a field, an element and a map, so it lives and dies inside one compiled call.
+    fn closure(
+        &mut self,
+        params: &Arc<[VarId]>,
+        body: &Arc<Core>,
+        ty: &Ty,
+        span: Span,
+    ) -> Result<Val, String> {
+        let repr = self
+            .repr(ty)
+            .map_err(|why| format!("builds a closure that is {why}"))?;
+        let Repr::Fn(family) = repr else {
+            return Err(format!("builds a closure whose type is `{ty}`"));
+        };
+        let rank = self
+            .heap
+            .rank_of(params, body.span.start)
+            .ok_or("builds a closure from a `lam` the survey did not rank")?;
+        let captures = self.heap.lam(rank).captures.clone();
+        let mut vals = Vec::with_capacity(captures.len());
+        for (var, ty) in &captures {
+            let want = self
+                .repr(ty)
+                .map_err(|why| format!("captures a variable that is {why}"))?;
+            let v = self
+                .env
+                .get(var)
+                .cloned()
+                .ok_or("captures a variable that is not bound here")?;
+            if v.ty != want {
+                return Err("captures a variable at a type this backend reads two ways".into());
+            }
+            vals.push(v);
+        }
+        self.lambda(rank, params, body, family)?;
+        let off = self.alloc(heap::closure_bytes(captures.len() as u64), span);
+        self.store_word(&off, 0, &rank.to_string());
+        for (i, v) in vals.iter().enumerate() {
+            self.store_field(&off, i + 1, v);
+        }
+        Ok(Val {
+            text: off,
+            ty: repr,
+        })
+    }
+
+    /// A definition named where a value is expected — `map_list(xs, double)`.
+    ///
+    /// The closure carries nothing, because a definition closes over nothing, and the arm the
+    /// application switches into calls the definition itself: there is no wrapper function and no
+    /// second copy of the body. Its rank is the one [`heap::survey`] gave the definition's own
+    /// outermost `lam`, which is why that lambda is ranked along with every other.
+    fn named(&mut self, name: &str, ty: &Ty, span: Span) -> Result<Val, String> {
+        if !self.eligible.contains(name) {
+            return Err(format!(
+                "names `{name}` as a value, and it does not compile"
+            ));
+        }
+        let repr = self
+            .repr(ty)
+            .map_err(|why| format!("names `{name}` as a value, which is {why}"))?;
+        let Repr::Fn(family) = repr else {
+            return Err(format!("names `{name}` as a value, whose type is `{ty}`"));
+        };
+        let def = self
+            .program
+            .defs
+            .get(name)
+            .ok_or_else(|| format!("names `{name}`, which this program does not define"))?;
+        let CoreKind::Lam { params, body } = &def.body.kind else {
+            return Err(format!("names `{name}`, whose body is not a lambda"));
+        };
+        let rank = self
+            .heap
+            .rank_of(params, body.span.start)
+            .ok_or("names a definition the survey did not rank")?;
+        let sig = self
+            .sigs
+            .get(name)
+            .ok_or_else(|| format!("names `{name}`, which has no signature"))?;
+        let fam = self.heap.family(family);
+        if sig.params != fam.params || sig.ret != fam.ret {
+            return Err(format!(
+                "names `{name}` as a `{}`, and that is not the shape it compiled to",
+                fam.shown
+            ));
+        }
+        let off = self.alloc(heap::closure_bytes(0), span);
+        self.store_word(&off, 0, &rank.to_string());
+        Ok(Val {
+            text: off,
+            ty: repr,
+        })
+    }
+
+    /// Emit the function a `lam` becomes, once per rank.
+    fn lambda(
+        &mut self,
+        rank: u32,
+        params: &Arc<[VarId]>,
+        body: &Arc<Core>,
+        family: u32,
+    ) -> Result<(), String> {
+        if self.lambdas.contains_key(&rank) {
+            return Ok(());
+        }
+        let fam = self.heap.family(family).clone();
+        if params.len() != fam.params.len() {
+            return Err("builds a closure whose parameters are not the ones its type has".into());
+        }
+        let captures = self.heap.lam(rank).captures.clone();
+        // Reserved before the body is emitted, so that a `lam` reaching itself would not recurse
+        // here forever — and overwritten with the text below.
+        self.lambdas.insert(rank, String::new());
+        let mut inner = Function::new(self.sigs, self.eligible, self.program, self.heap);
+        inner.spans = std::mem::take(&mut self.spans);
+        let emitted = inner.lam_body(rank, params, body, &fam, &captures);
+        self.spans = std::mem::take(&mut inner.spans);
+        self.compared.append(&mut inner.compared);
+        self.list_compared.append(&mut inner.list_compared);
+        self.map_compared.append(&mut inner.map_compared);
+        self.applied.append(&mut inner.applied);
+        self.loops.append(&mut inner.loops);
+        self.compared_fns |= inner.compared_fns;
+        let nested = std::mem::take(&mut inner.lambdas);
+        for (r, text) in nested {
+            self.lambdas.entry(r).or_insert(text);
+        }
+        self.lambdas.insert(rank, emitted?);
+        Ok(())
+    }
+
+    /// The body of one lambda, as its own `define`.
+    ///
+    /// Two things separate it from [`Function::emit`]: the closure itself is the first parameter,
+    /// and the captures are loaded off it into the environment before the body is compiled — so the
+    /// body reads a capture exactly as it reads a parameter, and nothing below this knows the
+    /// difference.
+    fn lam_body(
+        &mut self,
+        rank: u32,
+        params: &[VarId],
+        body: &Core,
+        fam: &heap::Family,
+        captures: &[(VarId, Ty)],
+    ) -> Result<String, String> {
+        self.ret = fam.ret;
+        let mut head = format!(
+            "define internal tailcc {} @\"beck.lam.{rank}\"(ptr noalias %err, i64 %clo",
+            fam.ret.llvm()
+        );
+        for (i, ty) in fam.params.iter().enumerate() {
+            let _ = write!(head, ", {} %a{i}", ty.llvm());
+            self.env.insert(
+                params[i],
+                Val {
+                    text: format!("%a{i}"),
+                    ty: *ty,
+                },
+            );
+        }
+        head.push_str(") {\n");
+        self.label = "entry".into();
+        for (i, (var, ty)) in captures.iter().enumerate() {
+            let want = self
+                .repr(ty)
+                .map_err(|why| format!("captures a variable that is {why}"))?;
+            let v = self.load_field("%clo", i + 1, want);
+            self.env.insert(*var, v);
+        }
+        self.expr(body, Dest::Return)?;
+
+        let mut text = head;
+        if self.uses_heap {
+            let at = self.out.find('\n').map_or(0, |i| i + 1);
+            self.out
+                .insert_str(at, "  %hp = load ptr, ptr @\"beck.heap\"\n");
+        }
+        text.push_str(&self.out);
+        if self.trapped {
+            let _ = write!(
+                text,
+                "trap:\n  ret {} {}\n",
+                fam.ret.llvm(),
+                fam.ret.machine().zero()
+            );
+        }
+        text.push_str("}\n");
+        Ok(text)
+    }
+
+    /// Applying a value rather than calling a name: one switch, one direct call per rank.
+    fn apply(&mut self, func: &Core, args: &[Core], dest: Dest) -> Result<Option<Val>, String> {
+        let f = self.value(func)?;
+        let Repr::Fn(family) = f.ty else {
+            return Err("calls something that is neither a definition nor a function value".into());
+        };
+        let fam = self.heap.family(family).clone();
+        if args.len() != fam.params.len() {
+            return Err(format!(
+                "applies a `{}` to {} arguments",
+                fam.shown,
+                args.len()
+            ));
+        }
+        let mut vals = Vec::with_capacity(args.len());
+        for (a, want) in args.iter().zip(&fam.params) {
+            let v = self.value(a)?;
+            if v.ty != *want {
+                return Err(format!(
+                    "an argument to a `{}` is the wrong type",
+                    fam.shown
+                ));
+            }
+            vals.push(v);
+        }
+        let v = self.apply_call(family, &fam, &f.text, &vals, dest == Dest::Return);
+        match v {
+            // The application was a tail call and has already returned.
+            None => Ok(None),
+            Some(v) => self.finish(v, dest),
+        }
+    }
+
+    /// The call into a family's application, tail or not.
+    ///
+    /// `tail` is honoured rather than advisory: `docs/27` makes a call in tail position free, and an
+    /// application is a call — so a loop written as a closure calling itself must not grow the
+    /// stack. Both hops are `musttail` (here, and the arm inside the application), which is what
+    /// makes the whole path a jump.
+    fn apply_call(
+        &mut self,
+        family: u32,
+        fam: &heap::Family,
+        closure: &str,
+        args: &[Val],
+        tail: bool,
+    ) -> Option<Val> {
+        self.applied.insert(family);
+        self.uses_heap = true;
+        let mut operands = format!("ptr %err, i64 {closure}");
+        for v in args {
+            let _ = write!(operands, ", {} {}", v.ty.llvm(), v.text);
+        }
+        let r = self.fresh();
+        let kind = if tail && fam.ret == self.ret {
+            "musttail call"
+        } else {
+            "call"
+        };
+        self.line(format!(
+            "{r} = {kind} tailcc {} @\"beck.apply.{family}\"({operands})",
+            fam.ret.llvm()
+        ));
+        if kind == "musttail call" {
+            self.terminate(format!("ret {} {r}", fam.ret.llvm()));
+            return None;
+        }
+        self.check_call();
+        Some(Val {
+            text: r,
+            ty: fam.ret,
+        })
+    }
+
+    /// and would have been a stack frame here.
     /// A direct call of a named definition — and in tail position, a jump.
     ///
     /// The tail case is `musttail`, which LLVM *guarantees* rather than attempts: if it could not
@@ -1229,9 +1554,11 @@ impl<'a> Function<'a> {
     /// that the caller and callee prototypes match, which is a rule about arity and not about
     /// tails: `def loop(n, acc)` calling `def done(acc)` is an ordinary tail call in the language
     /// and would have been a stack frame here.
+    ///
+    /// Anything that is not a name is a closure being applied, which is [`Function::apply`].
     fn call(&mut self, func: &Core, args: &[Core], dest: Dest) -> Result<Option<Val>, String> {
         let CoreKind::Global(name) = &func.kind else {
-            return Err("calls something other than a named definition".into());
+            return self.apply(func, args, dest);
         };
         if !self.eligible.contains(&**name) {
             return Err(format!("calls `{name}`, which does not compile"));
@@ -1353,7 +1680,12 @@ impl<'a> Function<'a> {
                             ty: Repr::Float,
                         })
                     }
-                    Repr::Bool | Repr::Str | Repr::List(_) | Repr::Map(_) | Repr::Obj(_) => {
+                    Repr::Bool
+                    | Repr::Str
+                    | Repr::List(_)
+                    | Repr::Map(_)
+                    | Repr::Obj(_)
+                    | Repr::Fn(_) => {
                         Err(format!("`{}` on a value that is not a number", op.name()))
                     }
                 }
@@ -1418,9 +1750,12 @@ impl<'a> Function<'a> {
                             ty: Repr::Float,
                         })
                     }
-                    Repr::Bool | Repr::Str | Repr::List(_) | Repr::Map(_) | Repr::Obj(_) => {
-                        Err("`negate` on a value that is not a number".into())
-                    }
+                    Repr::Bool
+                    | Repr::Str
+                    | Repr::List(_)
+                    | Repr::Map(_)
+                    | Repr::Obj(_)
+                    | Repr::Fn(_) => Err("`negate` on a value that is not a number".into()),
                 }
             }
             Prim::Abs => {
@@ -1451,9 +1786,12 @@ impl<'a> Function<'a> {
                             ty: Repr::Float,
                         })
                     }
-                    Repr::Bool | Repr::Str | Repr::List(_) | Repr::Map(_) | Repr::Obj(_) => {
-                        Err("`abs` on a value that is not a number".into())
-                    }
+                    Repr::Bool
+                    | Repr::Str
+                    | Repr::List(_)
+                    | Repr::Map(_)
+                    | Repr::Obj(_)
+                    | Repr::Fn(_) => Err("`abs` on a value that is not a number".into()),
                 }
             }
             Prim::Sqrt | Prim::Sin | Prim::Cos => {
@@ -1776,8 +2114,157 @@ impl<'a> Function<'a> {
                     ty: Repr::List(at),
                 })
             }
+            Prim::MapList | Prim::FilterList => {
+                arity(2)?;
+                let element = self.heap.element(self.list_arg(&vals[0], op)?);
+                let fam = self.function_arg(&vals[1], op, &[element])?;
+                let family = self.heap.family(fam).clone();
+                let out = if op == Prim::MapList {
+                    let repr = self
+                        .repr(ty)
+                        .map_err(|why| format!("`{}` answers with {why}", op.name()))?;
+                    let Repr::List(at) = repr else {
+                        return Err(format!("`{}` answers with a `{ty}`", op.name()));
+                    };
+                    if self.heap.element(at) != family.ret {
+                        return Err(format!(
+                            "`{}` answers a list of something other than what its function does",
+                            op.name()
+                        ));
+                    }
+                    repr
+                } else {
+                    if family.ret != Repr::Bool {
+                        return Err("`filter_list`'s function does not answer a Bool".into());
+                    }
+                    vals[0].ty
+                };
+                let which = if op == Prim::MapList {
+                    Loop::Map
+                } else {
+                    Loop::Filter
+                };
+                let r = self.list_loop(
+                    which,
+                    fam,
+                    &vals[0].text.clone(),
+                    None,
+                    &vals[1].text.clone(),
+                    None,
+                    span,
+                );
+                Ok(Val { text: r, ty: out })
+            }
+            Prim::ListFold => {
+                arity(3)?;
+                let element = self.heap.element(self.list_arg(&vals[0], op)?);
+                let acc = vals[1].ty;
+                let fam = self.function_arg(&vals[2], op, &[acc, element])?;
+                let family = self.heap.family(fam).clone();
+                if family.ret != acc {
+                    return Err(
+                        "`list_fold`'s function answers something other than the accumulator it \
+                         is given"
+                            .into(),
+                    );
+                }
+                let r = self.list_loop(
+                    Loop::Fold,
+                    fam,
+                    &vals[0].text.clone(),
+                    Some(&vals[1].clone()),
+                    &vals[2].text.clone(),
+                    None,
+                    span,
+                );
+                Ok(Val { text: r, ty: acc })
+            }
+            Prim::ListAll | Prim::ListAny => {
+                arity(2)?;
+                let element = self.heap.element(self.list_arg(&vals[0], op)?);
+                let fam = self.function_arg(&vals[1], op, &[element])?;
+                if self.heap.family(fam).ret != Repr::Bool {
+                    return Err(format!("`{}`'s function does not answer a Bool", op.name()));
+                }
+                let r = self.list_loop(
+                    Loop::Every,
+                    fam,
+                    &vals[0].text.clone(),
+                    None,
+                    &vals[1].text.clone(),
+                    Some(op == Prim::ListAny),
+                    span,
+                );
+                Ok(Val {
+                    text: r,
+                    ty: Repr::Bool,
+                })
+            }
             other => Err(refusal(other)),
         }
+    }
+
+    /// Insist an argument is a closure of the shape this primitive applies it at.
+    ///
+    /// The parameters are checked here rather than left to the application, because a mismatch is a
+    /// *refusal* about a primitive — `map_list` over a list whose element is not what its function
+    /// takes — and the message should name the primitive the program wrote.
+    fn function_arg(&mut self, v: &Val, op: Prim, want: &[Repr]) -> Result<u32, String> {
+        let Repr::Fn(fam) = v.ty else {
+            return Err(format!(
+                "`{}` on something that is not a function",
+                op.name()
+            ));
+        };
+        if self.heap.family(fam).params != want {
+            return Err(format!(
+                "`{}` applies its function to something it does not take",
+                op.name()
+            ));
+        }
+        Ok(fam)
+    }
+
+    /// Call one of the generated loops.
+    #[allow(clippy::too_many_arguments)] // the four signatures are four shapes; see `loop_function`
+    ///
+    /// The four signatures are [`loop_function`]'s and the four call sites are these, so a change to
+    /// one and not the other is a module `clang` refuses rather than a wrong answer.
+    fn list_loop(
+        &mut self,
+        which: Loop,
+        fam: u32,
+        xs: &str,
+        init: Option<&Val>,
+        closure: &str,
+        want: Option<bool>,
+        span: Span,
+    ) -> String {
+        self.applied.insert(fam);
+        self.loops.insert((which, fam));
+        self.uses_heap = true;
+        let family = self.heap.family(fam).clone();
+        let ret = match which {
+            Loop::Map | Loop::Filter => "i64".to_string(),
+            Loop::Fold => family.ret.llvm().to_string(),
+            Loop::Every => "i1".to_string(),
+        };
+        let mut operands = format!("ptr %err, i64 {xs}");
+        if let Some(v) = init {
+            let _ = write!(operands, ", {} {}", v.ty.llvm(), v.text);
+        }
+        let _ = write!(operands, ", i64 {closure}");
+        if let Some(want) = want {
+            let _ = write!(operands, ", i1 {want}");
+        }
+        let idx = self.span(span);
+        let r = self.fresh();
+        self.line(format!(
+            "{r} = call {ret} @\"{}\"({operands}, i32 {idx})",
+            which.symbol(fam)
+        ));
+        self.check_call();
+        r
     }
 
     /// A literal, as the operand that carries it.
@@ -2523,6 +3010,9 @@ impl<'a> Function<'a> {
                 self.map_compared.insert(at);
             }
             Repr::Int | Repr::Float | Repr::Bool | Repr::Str => {}
+            // A closure's comparison is one word — `beck.fn.cmp` is written once for the module
+            // rather than per family, because every closure's rank is in the same table.
+            Repr::Fn(_) => self.compared_fns = true,
         }
     }
 
@@ -2589,7 +3079,7 @@ impl<'a> Function<'a> {
             // Its offset, which is what an object *is* here. Only a trap payload reads this, and
             // the one trap that can carry an object says nothing about the value it carries —
             // `Trap::NoMatchData` is the message, and this is what makes it honest.
-            Repr::Str | Repr::List(_) | Repr::Map(_) | Repr::Obj(_) => v.text.clone(),
+            Repr::Str | Repr::List(_) | Repr::Map(_) | Repr::Obj(_) | Repr::Fn(_) => v.text.clone(),
         }
     }
 }
@@ -2623,11 +3113,21 @@ fn refusal(op: Prim) -> String {
             "grows a map, and a sorted run in an arena has to be copied whole where the \
              evaluator's tree rebuilds one path"
         }
-        // `map_list` and the rest of the higher-order half are deliberately absent. Their argument
-        // is a function, `prim` evaluates its arguments before it looks at the operator, and
-        // "`double_it` is used as a value rather than called, and a function value is a closure" is
-        // both truer and more specific than anything this table could say. A reason that cannot be
-        // produced is `docs/89` §89.5's unreachable rule, and the answer is the same: delete it.
+        // The higher-order primitives that are one pass over a list — `map_list`, `filter_list`,
+        // `list_fold`, `list_all`, `list_any` — compile, so what is left of that half is the two
+        // that are not.
+        Prim::ListFlatMap => {
+            "answers a list whose length is the sum of the lists its function answers, which is \
+             growing a list under another name"
+        }
+        // The one higher-order primitive here that is not a pass. Decorate, sort, undecorate, with
+        // a *stable* sort — `beck-eval` is explicit that stability is what makes the order total
+        // without a second key — so it is two allocations and a merge written in two emitters
+        // rather than a loop, and it is the next one to build rather than one that cannot be.
+        Prim::SortBy => {
+            "sorts by decorating each element with its key and merging stably, which is a sort in \
+             the emitter rather than a pass over the list"
+        }
         Prim::StrUpper | Prim::StrLower => {
             "is Unicode case mapping, which is a table rather than an operation — and a compiled \
              half-answer that folded ASCII only would disagree with the evaluator on the first \
@@ -2758,6 +3258,24 @@ fn expand(pat: &Pattern, out: &mut Vec<Pattern>) -> Result<(), String> {
 // -------------------------------------------------------------------------------------------
 
 /// The declarations, the arena, the compiled bodies, the dispatch table and the worker loop.
+/// What the module has to write for the closures its bodies turned out to build.
+///
+/// Four facts rather than one set, because an application's arms are the *intersection* of what a
+/// family could hold and what was emitted: a rank whose definition was refused has no function to
+/// call, and an arm calling one would be a link error rather than a refusal.
+struct Closures<'a> {
+    /// The families a body applies. An application is written for these and no others.
+    applied: &'a BTreeSet<u32>,
+    /// The ranks that became a `beck.lam.N`.
+    emitted: &'a BTreeSet<u32>,
+    /// The definitions that compiled, for the ranks that are a definition's own lambda.
+    compiled: &'a BTreeSet<Arc<str>>,
+    /// Whether anything compares two closures.
+    compared: bool,
+    /// The higher-order list primitives that were reached, by shape.
+    loops: &'a BTreeSet<(Loop, u32)>,
+}
+
 fn assemble(
     bodies: &str,
     functions: &[Signature],
@@ -2765,6 +3283,7 @@ fn assemble(
     compared: &BTreeSet<u32>,
     lists: &BTreeSet<u32>,
     maps: &BTreeSet<u32>,
+    closures: &Closures<'_>,
 ) -> String {
     let arena = !heap.is_empty();
     let mut m = String::new();
@@ -2804,6 +3323,15 @@ fn assemble(
     }
     for at in maps {
         m.push_str(&map_functions(*at, heap));
+    }
+    for at in closures.applied {
+        m.push_str(&apply_function(*at, heap, closures));
+    }
+    for (which, at) in closures.loops {
+        m.push_str(&loop_function(*which, *at, heap));
+    }
+    if closures.compared {
+        m.push_str(FN_CMP);
     }
 
     // One thunk per function: the protocol carries every argument as eight bytes, so this is where
@@ -2938,6 +3466,336 @@ ok:
         first = heap::FIRST,
         code = Trap::HeapExhausted.code(),
     )
+}
+
+/// The list primitives whose argument is a function, each one loop.
+///
+/// Generated per family rather than written inline, for the reason a list's comparison is: the
+/// emitter's own output is straight-line, so a loop here would be the first place it needed `phi`
+/// nodes of its own. One function per (primitive, family) is also one function per *shape* rather
+/// than per call site, and the shape is what decides how a word becomes an argument.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Loop {
+    /// `map_list` — one answer per element, into a list allocated up front.
+    Map,
+    /// `filter_list` — the answers that are `true`, into a list allocated for all of them.
+    Filter,
+    /// `list_fold` — the accumulator through every element.
+    Fold,
+    /// `list_all` and `list_any`, which are one loop and a flag.
+    Every,
+}
+
+impl Loop {
+    fn symbol(self, fam: u32) -> String {
+        match self {
+            Loop::Map => format!("beck.list.map.{fam}"),
+            Loop::Filter => format!("beck.list.filter.{fam}"),
+            Loop::Fold => format!("beck.list.fold.{fam}"),
+            Loop::Every => format!("beck.list.every.{fam}"),
+        }
+    }
+}
+
+/// One of [`Loop`]'s four, for one family.
+///
+/// What every one of them shares: the element is a **word** in the arena and the closure takes a
+/// value, so each iteration converts one way and — for `map` — back again. And every call to
+/// `beck.apply` is followed by a look at the error cell, because a closure can trap and a loop that
+/// carried on would run the rest of the program's iterations after the failure the caller is about
+/// to report.
+fn loop_function(which: Loop, fam: u32, heap: &Heap) -> String {
+    let family = heap.family(fam);
+    let symbol = which.symbol(fam);
+    let mut b = Text::new();
+    let _ = writeln!(b.out, "; {} over {}", which.symbol(fam), family.shown);
+
+    match which {
+        Loop::Map => {
+            let element = family.params[0];
+            let _ = writeln!(
+                b.out,
+                "define internal i64 @\"{symbol}\"(ptr noalias %err, i64 %xs, i64 %clo, i32 %span) {{\nentry:"
+            );
+            b.line("%n = call i64 @\"beck.list.len\"(i64 %xs)".into());
+            b.line("%src = call ptr @\"beck.list.data\"(i64 %xs)".into());
+            b.line("%out = call i64 @\"beck.list.alloc\"(ptr %err, i64 %n, i32 %span)".into());
+            b.checked("ready");
+            b.block("ready");
+            b.line("%dst = call ptr @\"beck.list.data\"(i64 %out)".into());
+            b.line("br label %loop".into());
+            b.block("loop");
+            b.line("%i = phi i64 [ 0, %ready ], [ %j, %next ]".into());
+            b.line("%past = icmp uge i64 %i, %n".into());
+            b.line("br i1 %past, label %done, label %one".into());
+            b.block("one");
+            b.line("%at = getelementptr inbounds i64, ptr %src, i64 %i".into());
+            b.line("%w = load i64, ptr %at".into());
+            let arg = b.value_of("%w", element);
+            let r = b.fresh();
+            b.line(format!(
+                "{r} = call tailcc {} @\"beck.apply.{fam}\"(ptr %err, i64 %clo, {} {arg})",
+                family.ret.llvm(),
+                element.llvm()
+            ));
+            b.checked("store");
+            b.block("store");
+            let word = b.word_of(&r, family.ret);
+            b.line("%to = getelementptr inbounds i64, ptr %dst, i64 %i".into());
+            b.line(format!("store i64 {word}, ptr %to"));
+            b.line("br label %next".into());
+            b.block("next");
+            b.line("%j = add i64 %i, 1".into());
+            b.line("br label %loop".into());
+            b.block("done");
+            b.line("ret i64 %out".into());
+            b.block("failed");
+            b.line("ret i64 0".into());
+        }
+        Loop::Filter => {
+            let element = family.params[0];
+            let _ = writeln!(
+                b.out,
+                "define internal i64 @\"{symbol}\"(ptr noalias %err, i64 %xs, i64 %clo, i32 %span) {{\nentry:"
+            );
+            b.line("%n = call i64 @\"beck.list.len\"(i64 %xs)".into());
+            b.line("%src = call ptr @\"beck.list.data\"(i64 %xs)".into());
+            // Room for every element, and the header written at the end says how many were kept.
+            // One pass rather than a count and a fill: a predicate called twice per element would
+            // double what a filter costs to save arena the next allocation does not need.
+            b.line("%out = call i64 @\"beck.list.alloc\"(ptr %err, i64 %n, i32 %span)".into());
+            b.checked("ready");
+            b.block("ready");
+            b.line("%dst = call ptr @\"beck.list.data\"(i64 %out)".into());
+            b.line("br label %loop".into());
+            b.block("loop");
+            b.line("%i = phi i64 [ 0, %ready ], [ %j, %next ]".into());
+            b.line("%k = phi i64 [ 0, %ready ], [ %kn, %next ]".into());
+            b.line("%past = icmp uge i64 %i, %n".into());
+            b.line("br i1 %past, label %done, label %one".into());
+            b.block("one");
+            b.line("%at = getelementptr inbounds i64, ptr %src, i64 %i".into());
+            b.line("%w = load i64, ptr %at".into());
+            let arg = b.value_of("%w", element);
+            let r = b.fresh();
+            b.line(format!(
+                "{r} = call tailcc i1 @\"beck.apply.{fam}\"(ptr %err, i64 %clo, {} {arg})",
+                element.llvm()
+            ));
+            b.checked("decide");
+            b.block("decide");
+            b.line(format!("br i1 {r}, label %take, label %skip"));
+            b.block("take");
+            b.line("%to = getelementptr inbounds i64, ptr %dst, i64 %k".into());
+            b.line("store i64 %w, ptr %to".into());
+            b.line("%k1 = add i64 %k, 1".into());
+            b.line("br label %next".into());
+            b.block("skip");
+            b.line("br label %next".into());
+            b.block("next");
+            b.line("%kn = phi i64 [ %k1, %take ], [ %k, %skip ]".into());
+            b.line("%j = add i64 %i, 1".into());
+            b.line("br label %loop".into());
+            b.block("done");
+            // The count, at last: the list is as long as what was kept, and the words after it are
+            // arena nobody reads — bounded by the input's length and given back when it is reset.
+            b.line("%hp = load ptr, ptr @\"beck.heap\"".into());
+            b.line("%hdr = getelementptr inbounds i8, ptr %hp, i64 %out".into());
+            b.line("store i64 %k, ptr %hdr".into());
+            b.line("ret i64 %out".into());
+            b.block("failed");
+            b.line("ret i64 0".into());
+        }
+        Loop::Fold => {
+            let acc = family.ret;
+            let element = family.params[1];
+            let _ = writeln!(
+                b.out,
+                "define internal {} @\"{symbol}\"(ptr noalias %err, i64 %xs, {} %init, i64 %clo, i32 %span) {{\nentry:",
+                acc.llvm(),
+                acc.llvm()
+            );
+            b.line("%n = call i64 @\"beck.list.len\"(i64 %xs)".into());
+            b.line("%src = call ptr @\"beck.list.data\"(i64 %xs)".into());
+            b.line("br label %loop".into());
+            b.block("loop");
+            b.line("%i = phi i64 [ 0, %entry ], [ %j, %next ]".into());
+            b.line(format!(
+                "%acc = phi {} [ %init, %entry ], [ %new, %next ]",
+                acc.llvm()
+            ));
+            b.line("%past = icmp uge i64 %i, %n".into());
+            b.line("br i1 %past, label %done, label %one".into());
+            b.block("one");
+            b.line("%at = getelementptr inbounds i64, ptr %src, i64 %i".into());
+            b.line("%w = load i64, ptr %at".into());
+            let arg = b.value_of("%w", element);
+            b.line(format!(
+                "%new = call tailcc {} @\"beck.apply.{fam}\"(ptr %err, i64 %clo, {} %acc, {} {arg})",
+                acc.llvm(),
+                acc.llvm(),
+                element.llvm()
+            ));
+            b.checked("next");
+            b.block("next");
+            b.line("%j = add i64 %i, 1".into());
+            b.line("br label %loop".into());
+            b.block("done");
+            b.line(format!("ret {} %acc", acc.llvm()));
+            b.block("failed");
+            b.line(format!("ret {} {}", acc.llvm(), acc.machine().zero()));
+        }
+        Loop::Every => {
+            let element = family.params[0];
+            let _ = writeln!(
+                b.out,
+                "define internal i1 @\"{symbol}\"(ptr noalias %err, i64 %xs, i64 %clo, i1 %want, i32 %span) {{\nentry:"
+            );
+            b.line("%n = call i64 @\"beck.list.len\"(i64 %xs)".into());
+            b.line("%src = call ptr @\"beck.list.data\"(i64 %xs)".into());
+            b.line("br label %loop".into());
+            b.block("loop");
+            b.line("%i = phi i64 [ 0, %entry ], [ %j, %next ]".into());
+            b.line("%past = icmp uge i64 %i, %n".into());
+            b.line("br i1 %past, label %exhausted, label %one".into());
+            b.block("one");
+            b.line("%at = getelementptr inbounds i64, ptr %src, i64 %i".into());
+            b.line("%w = load i64, ptr %at".into());
+            let arg = b.value_of("%w", element);
+            let r = b.fresh();
+            b.line(format!(
+                "{r} = call tailcc i1 @\"beck.apply.{fam}\"(ptr %err, i64 %clo, {} {arg})",
+                element.llvm()
+            ));
+            b.checked("decide");
+            b.block("decide");
+            // Short-circuiting, which `beck-eval` documents as a promise rather than an
+            // optimisation: `list_any` stops at the first `true` and `list_all` at the first
+            // `false`, and the flag is which of the two this call is.
+            let hit = b.fresh();
+            b.line(format!("{hit} = icmp eq i1 {r}, %want"));
+            b.line(format!("br i1 {hit}, label %stopped, label %next"));
+            b.block("next");
+            b.line("%j = add i64 %i, 1".into());
+            b.line("br label %loop".into());
+            b.block("stopped");
+            b.line("ret i1 %want".into());
+            b.block("exhausted");
+            b.line("%rest = xor i1 %want, true".into());
+            b.line("ret i1 %rest".into());
+            b.block("failed");
+            b.line("ret i1 false".into());
+        }
+    }
+    let _ = writeln!(b.out, "}}\n");
+    b.out
+}
+
+/// The one function that compares two closures, whatever their family.
+///
+/// One rather than one per family, because a rank is unique across the module: the word at a
+/// closure's start is its place in the program's lambdas, and [`heap::Repr::order`] says why
+/// comparing two of those is comparing what the evaluator compares — the parameters and where the
+/// body starts, with the captured frame deliberately not in it.
+const FN_CMP: &str = r#"define internal i64 @"beck.fn.cmp"(i64 %a, i64 %b) {
+entry:
+  %hp = load ptr, ptr @"beck.heap"
+  %pa = getelementptr inbounds i8, ptr %hp, i64 %a
+  %pb = getelementptr inbounds i8, ptr %hp, i64 %b
+  %ra = load i64, ptr %pa
+  %rb = load i64, ptr %pb
+  %lt = icmp ult i64 %ra, %rb
+  br i1 %lt, label %less, label %test
+test:
+  %gt = icmp ugt i64 %ra, %rb
+  br i1 %gt, label %greater, label %same
+less:
+  ret i64 -1
+greater:
+  ret i64 1
+same:
+  ret i64 0
+}
+
+"#;
+
+/// Applying a closure of one family: the switch, and one direct call per rank.
+///
+/// This is where [`heap::CLOSURE_HEADER`]'s decision is spent. There is no indirect call and no
+/// function pointer anywhere: the closure's first word is a rank, the ranks of a family are known
+/// from the whole program, and every arm is a `musttail` into a function whose symbol was written at
+/// compile time — so a closure crossing the arena as bytes stays a value with no relocation in it.
+///
+/// Two kinds of arm. A `lam` has its own `beck.lam.N`, which takes the closure so it can read its
+/// captures; a *definition* named as a value is called directly, because it closes over nothing and
+/// a wrapper would be a second copy of a body that already exists.
+fn apply_function(at: u32, heap: &Heap, closures: &Closures<'_>) -> String {
+    let fam = heap.family(at);
+    let ret = fam.ret.llvm();
+    let mut b = Text::new();
+    let mut head = format!(
+        "; applying {}\ndefine internal tailcc {ret} @\"beck.apply.{at}\"(ptr noalias %err, i64 %clo",
+        fam.shown
+    );
+    for (i, p) in fam.params.iter().enumerate() {
+        let _ = write!(head, ", {} %a{i}", p.llvm());
+    }
+    let _ = writeln!(b.out, "{head}) {{\nentry:");
+    b.line("%hp = load ptr, ptr @\"beck.heap\"".into());
+    b.line("%p = getelementptr inbounds i8, ptr %hp, i64 %clo".into());
+    b.line("%rank = load i64, ptr %p".into());
+
+    // Only the ranks that became code. A family is a set of shapes and this is the subset of it the
+    // module actually contains — see [`Closures`].
+    let arms: Vec<u32> = fam
+        .ranks
+        .iter()
+        .copied()
+        .filter(|r| match &heap.lam(*r).def {
+            Some(name) => closures.compiled.contains(name),
+            None => closures.emitted.contains(r),
+        })
+        .collect();
+    b.line("switch i64 %rank, label %none [".into());
+    for r in &arms {
+        b.line(format!("  i64 {r}, label %rank{r}"));
+    }
+    b.line("]".into());
+
+    for r in &arms {
+        b.block(&format!("rank{r}"));
+        let lam = heap.lam(*r);
+        let mut operands = String::from("ptr %err");
+        if lam.def.is_none() {
+            operands.push_str(", i64 %clo");
+        }
+        for (i, p) in fam.params.iter().enumerate() {
+            let _ = write!(operands, ", {} %a{i}", p.llvm());
+        }
+        let symbol = match &lam.def {
+            Some(name) => mangle(name),
+            None => format!("\"beck.lam.{r}\""),
+        };
+        let v = b.fresh();
+        b.line(format!(
+            "{v} = musttail call tailcc {ret} @{symbol}({operands})"
+        ));
+        b.line(format!("ret {ret} {v}"));
+    }
+
+    // A rank no arm answers to. Unreachable — this module built the closure — and a trap rather
+    // than LLVM's `unreachable` for [`Trap::NoSuchLambda`]'s reason. The span index is past the end
+    // of the table on purpose: there is no source position for a wrong rank, and the host reads one
+    // it cannot find as `Span::NONE`.
+    b.block("none");
+    b.line(format!("store i32 {}, ptr %err", Trap::NoSuchLambda.code()));
+    b.line("%sp = getelementptr inbounds i8, ptr %err, i64 4".into());
+    b.line(format!("store i32 {}, ptr %sp", u32::MAX));
+    b.line("%pl = getelementptr inbounds i8, ptr %err, i64 8".into());
+    b.line("store i64 %rank, ptr %pl".into());
+    b.line(format!("ret {ret} {}", fam.ret.machine().zero()));
+    let _ = writeln!(b.out, "}}\n");
+    b.out
 }
 
 /// A three-way comparison over one layout: `-1`, `0` or `1`, and the same answer `Value`'s derived
@@ -3086,6 +3944,72 @@ impl Text {
     /// Start a block. Written flush left, because that is where a label goes.
     fn block(&mut self, label: &str) {
         let _ = writeln!(self.out, "{label}:");
+    }
+
+    /// `Value::float`'s two rules on a `double` already in a register: one zero, one NaN.
+    ///
+    /// The same four instructions [`Function::normalise`] emits, here because a generated loop
+    /// stores a real into a list and a real on this heap is the one the evaluator would have built.
+    fn normalised(&mut self, raw: &str) -> String {
+        let is_zero = self.fresh();
+        self.line(format!(
+            "{is_zero} = fcmp oeq double {raw}, 0x0000000000000000"
+        ));
+        let zeroed = self.fresh();
+        self.line(format!(
+            "{zeroed} = select i1 {is_zero}, double 0x0000000000000000, double {raw}"
+        ));
+        let is_nan = self.fresh();
+        self.line(format!("{is_nan} = fcmp uno double {raw}, {raw}"));
+        let r = self.fresh();
+        self.line(format!(
+            "{r} = select i1 {is_nan}, double 0x7FF8000000000000, double {zeroed}"
+        ));
+        r
+    }
+
+    /// One word of a list as the value a closure of this repr takes.
+    fn value_of(&mut self, w: &str, repr: Repr) -> String {
+        match repr {
+            Repr::Float => {
+                let r = self.fresh();
+                self.line(format!("{r} = bitcast i64 {w} to double"));
+                r
+            }
+            Repr::Bool => {
+                let r = self.fresh();
+                self.line(format!("{r} = icmp ne i64 {w}, 0"));
+                r
+            }
+            _ => w.to_string(),
+        }
+    }
+
+    /// A closure's answer as the word a list holds.
+    fn word_of(&mut self, v: &str, repr: Repr) -> String {
+        match repr {
+            Repr::Float => {
+                let n = self.normalised(v);
+                let r = self.fresh();
+                self.line(format!("{r} = bitcast double {n} to i64"));
+                r
+            }
+            Repr::Bool => {
+                let r = self.fresh();
+                self.line(format!("{r} = zext i1 {v} to i64"));
+                r
+            }
+            _ => v.to_string(),
+        }
+    }
+
+    /// Leave for `failed` if the call that just returned stored a trap.
+    fn checked(&mut self, cont: &str) {
+        let code = self.fresh();
+        self.line(format!("{code} = load i32, ptr %err"));
+        let bad = self.fresh();
+        self.line(format!("{bad} = icmp ne i32 {code}, 0"));
+        self.line(format!("br i1 {bad}, label %failed, label %{cont}"));
     }
 
     /// `beck_core`'s order key over raw bits already in an `i64`.
