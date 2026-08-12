@@ -123,7 +123,7 @@ pub const MAX_LAYOUTS: usize = 512;
 /// [`adr/0007`](../../../../../docs/adr/0007-evaluator-stack-is-declared-not-discovered.md) chooses
 /// the evaluator's: a frame here is small, and this is a depth an ordinary thread's stack holds
 /// several times over rather than the deepest one that would fit.
-const MAX_DEPTH: usize = 2048;
+pub const MAX_DEPTH: usize = 2048;
 
 /// The two header words of a `Str`: its length in bytes, then in characters.
 pub const STR_HEADER: u64 = 2 * WORD;
@@ -137,6 +137,14 @@ pub fn str_bytes(n: u64) -> u64 {
     STR_HEADER + n.next_multiple_of(WORD)
 }
 
+/// The one header word of a `list`: how many elements it has.
+pub const LIST_HEADER: u64 = WORD;
+
+/// How many bytes a `list` of `n` elements occupies.
+pub fn list_bytes(n: u64) -> u64 {
+    LIST_HEADER + n * WORD
+}
+
 /// What one value is, at the machine.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Repr {
@@ -145,6 +153,10 @@ pub enum Repr {
     Bool,
     /// Text, carried as its offset into the arena. One shape for every `Str`, so there is no index.
     Str,
+    /// A list, carried as its offset. The index is into [`Heap::element`] — a `list[Int]` and a
+    /// `list[Point]` are the same shape and two different reprs, because what a word of one *is*
+    /// depends on the element type and nothing at the machine records it.
+    List(u32),
     /// An object, carried as its offset into the arena. The index is into [`Heap::layouts`].
     Obj(u32),
 }
@@ -155,18 +167,18 @@ impl Repr {
         match self {
             Repr::Float => Scalar::Float,
             Repr::Bool => Scalar::Bool,
-            Repr::Int | Repr::Str | Repr::Obj(_) => Scalar::Int,
+            Repr::Int | Repr::Str | Repr::List(_) | Repr::Obj(_) => Scalar::Int,
         }
     }
 
     /// Whether this is carried as an offset rather than as the value itself.
     ///
     /// What reads it is the two places the arena becomes visible: the host reserves room for a
-    /// graph in the request, and the worker sends the used arena back with a reply. A `Str` is on
-    /// the heap for both purposes, and the name says *reference* rather than *object* because it is
-    /// the only one of them that has no [`Layout`].
+    /// graph in the request, and the worker sends the used arena back with a reply. A `Str` and a
+    /// `list` are on the heap for both purposes, and the name says *reference* rather than *object*
+    /// because those two have no [`Layout`].
     pub fn is_ref(self) -> bool {
-        matches!(self, Repr::Obj(_) | Repr::Str)
+        matches!(self, Repr::Obj(_) | Repr::Str | Repr::List(_))
     }
 
     /// The LLVM type, which is the machine type's.
@@ -248,6 +260,12 @@ pub struct Heap {
     by_str: BTreeMap<Arc<str>, u32>,
     /// Where the next literal would go, which is also where the arguments' graph begins.
     pool_end: u64,
+    /// The element repr of every distinct list type, in the order they were resolved.
+    ///
+    /// A separate table from [`Heap::slots`] because a list has no [`Layout`] — there are no named
+    /// fields and no variants, only "how many" and "of what".
+    elements: Vec<Repr>,
+    by_element: BTreeMap<Repr, u32>,
     /// Whether any signature or body in this module mentions text.
     ///
     /// Separate from [`Heap::slots`] because a `Str` has no [`Layout`]: a definition taking one and
@@ -271,13 +289,47 @@ impl Heap {
     /// [`docs/93`](../../../../../docs/93-llvm-backend-report.md) §93.5's numbers about the same
     /// code they were measured on.
     pub fn is_empty(&self) -> bool {
-        !self.text && !self.slots.iter().any(|s| matches!(s, Slot::Done(_)))
+        !self.text
+            && self.elements.is_empty()
+            && !self.slots.iter().any(|s| matches!(s, Slot::Done(_)))
+    }
+
+    /// What one element of list repr `at` is.
+    pub fn element(&self, at: u32) -> Repr {
+        self.elements[at as usize]
+    }
+
+    /// Whether any list appears in this module, and therefore whether its runtime is worth
+    /// emitting. A list has no [`Layout`], so [`Heap::layouts`] cannot answer this.
+    pub fn uses_lists(&self) -> bool {
+        !self.elements.is_empty()
+    }
+
+    /// Every distinct list type this module needs, which is what an emitter defines a comparison
+    /// for.
+    pub fn lists(&self) -> impl Iterator<Item = (u32, Repr)> + '_ {
+        self.elements
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(i, r)| (i as u32, r))
     }
 
     /// Whether text appears anywhere in this module, and therefore whether its runtime is worth
     /// emitting. A `Str` has no [`Layout`], so [`Heap::layouts`] cannot answer this.
     pub fn uses_text(&self) -> bool {
         self.text
+    }
+
+    /// The list repr for elements of `inner`, interned.
+    fn list_of(&mut self, inner: Repr) -> u32 {
+        if let Some(at) = self.by_element.get(&inner) {
+            return *at;
+        }
+        let at = self.elements.len() as u32;
+        self.elements.push(inner);
+        self.by_element.insert(inner, at);
+        at
     }
 
     /// The literal `s`, interned: its index, which is what an emitter records.
@@ -343,6 +395,7 @@ impl Heap {
             Repr::Float => "Float".into(),
             Repr::Bool => "Bool".into(),
             Repr::Str => "Str".into(),
+            Repr::List(i) => format!("list[{}]", self.show(self.element(i))),
             Repr::Obj(i) => self.layout(i).shown.clone(),
         }
     }
@@ -366,7 +419,15 @@ impl Heap {
                 self.text = true;
                 return Ok(Repr::Str);
             }
-            Ty::LIST => return Err("a `list`, and a collection is not on this heap yet".into()),
+            Ty::LIST => {
+                let Some(element) = args.first() else {
+                    return Err("a `list` with no element type".into());
+                };
+                let inner = self
+                    .repr(element, program)
+                    .map_err(|why| format!("a `list` whose element is {why}"))?;
+                return Ok(Repr::List(self.list_of(inner)));
+            }
             Ty::MAP => return Err("a `Map`, and a collection is not on this heap yet".into()),
             Ty::UNIT => return Err("the unit value, which has no machine representation".into()),
             _ => {}
@@ -526,6 +587,21 @@ impl Heap {
                 write_text(t.as_str(), blob);
                 Ok(offset)
             }
+            // Depth first, exactly as a record's fields are: an element's offset has to exist
+            // before the word that holds it is written.
+            (Value::List(xs), Repr::List(at)) => {
+                let element = self.element(at);
+                let mut words = Vec::with_capacity(xs.len() + 1);
+                words.push(xs.len() as u64);
+                for x in xs.iter() {
+                    words.push(self.encode(x, element, blob)?);
+                }
+                let offset = blob.len() as u64;
+                for w in words {
+                    blob.extend_from_slice(&w.to_ne_bytes());
+                }
+                Ok(offset)
+            }
             (Value::Data(record), Repr::Obj(at)) => self.encode_object(record, at, blob),
             _ => Err(format!(
                 "a {} where the signature says {}",
@@ -582,55 +658,80 @@ impl Heap {
     }
 
     /// The value a word carries, reading whatever it points at out of `blob`.
+    ///
+    /// **Iterative, with its own stack.** It was recursive, and that made [`MAX_DEPTH`] a number
+    /// about the *host thread* rather than about the value: a debug build spent enough frame per
+    /// level that a value 1,600 deep aborted the process while the declared ceiling said 2,048, so
+    /// which replies could be read depended on how the compiler was built — which is
+    /// [`docs/64`](../../../../../docs/64-compile-speed-report.md) §64.4's defect one subsystem
+    /// over, and [`adr/0007`](../../../../../docs/adr/0007-evaluator-stack-is-declared-not-discovered.md)'s
+    /// property this did not have. With the stack on the heap the ceiling is the only limit and it
+    /// is the same one in every profile.
     pub fn decode(&self, cell: u64, r: Repr, blob: &[u8]) -> Result<Value, String> {
-        self.decode_at(cell, r, blob, 0)
+        let mut stack: Vec<Frame> = Vec::new();
+        let mut next = Some((cell, r));
+        let mut done: Option<Value> = None;
+        loop {
+            if let Some((cell, r)) = next.take() {
+                match self.begin(cell, r, blob)? {
+                    Begun::Leaf(v) => done = Some(v),
+                    Begun::Nested(frame) => {
+                        if stack.len() >= MAX_DEPTH {
+                            return Err(format!(
+                                "the compiled program answered with a value nested more than \
+                                 {MAX_DEPTH} deep"
+                            ));
+                        }
+                        stack.push(frame);
+                    }
+                }
+            }
+            let Some(frame) = stack.last_mut() else {
+                return Ok(done.expect("the first thing decoded is a value"));
+            };
+            if let Some(v) = done.take() {
+                frame.absorb(v);
+            }
+            match frame.next_child(blob)? {
+                Some(child) => next = Some(child),
+                None => {
+                    let frame = stack.pop().expect("just looked at it");
+                    done = Some(frame.finish());
+                }
+            }
+        }
     }
 
-    fn decode_at(&self, cell: u64, r: Repr, blob: &[u8], depth: usize) -> Result<Value, String> {
-        if depth > MAX_DEPTH {
-            return Err(format!(
-                "the compiled program answered with a value nested more than {MAX_DEPTH} deep"
-            ));
-        }
+    /// What one word turns into: a finished value, or a frame whose children are still to come.
+    fn begin(&self, cell: u64, r: Repr, blob: &[u8]) -> Result<Begun, String> {
         match r {
-            Repr::Int => Ok(Value::Int(cell as i64)),
-            Repr::Bool => Ok(Value::Bool(cell != 0)),
+            Repr::Int => Ok(Begun::Leaf(Value::Int(cell as i64))),
+            Repr::Bool => Ok(Begun::Leaf(Value::Bool(cell != 0))),
             // `Value::float` and not `Value::Float`: the constructor applies the order-key
             // transform and the canonicalisation, which is what makes this equal to what the
             // evaluator built.
-            Repr::Float => Ok(Value::float(f64::from_bits(cell))),
-            Repr::Str => {
-                let bytes = word(blob, cell)? as usize;
-                let start = (cell + STR_HEADER) as usize;
-                let end = start
-                    .checked_add(bytes)
-                    .ok_or("an offset past the end of the machine")?;
-                if end > blob.len() {
+            Repr::Float => Ok(Begun::Leaf(Value::float(f64::from_bits(cell)))),
+            Repr::Str => self.decode_text(cell, blob).map(Begun::Leaf),
+            Repr::List(at) => {
+                let element = self.element(at);
+                let count = word(blob, cell)?;
+                // Checked against the arena before it is trusted as a capacity: the count comes
+                // from another process, and `Vec::with_capacity` of whatever the bytes said is the
+                // one place a wrong word becomes an allocation rather than an error.
+                let bytes = count.checked_mul(WORD).and_then(|b| b.checked_add(WORD));
+                if bytes.is_none_or(|b| cell + b > blob.len() as u64) {
                     return Err(format!(
-                        "the compiled program answered with {bytes} bytes of text at offset \
-                         {cell}, and its heap is {} bytes",
+                        "the compiled program answered with a list of {count} at offset {cell}, \
+                         and its heap is {} bytes",
                         blob.len()
                     ));
                 }
-                // Checked rather than assumed: the bytes came from another process, and a `Text`
-                // built out of invalid UTF-8 would be a `Value` nothing else in the language can
-                // produce. Every operation this backend compiles preserves well-formedness — a
-                // slice cuts on a character boundary and a concatenation joins two whole strings —
-                // so this failing is a compiler bug reported as one.
-                let text = std::str::from_utf8(&blob[start..end]).map_err(|e| {
-                    format!("the compiled program answered with invalid UTF-8: {e}")
-                })?;
-                let value = Value::str_(text);
-                // The count the compiled code carried has to be the count the host would compute,
-                // because it is what `str_len` answered inside the call.
-                let claimed = word(blob, cell + WORD)?;
-                match &value {
-                    Value::Str(t) if t.chars_len() as u64 == claimed => Ok(value),
-                    _ => Err(format!(
-                        "the compiled program said its text is {claimed} characters and it is {}",
-                        text.chars().count()
-                    )),
-                }
+                Ok(Begun::Nested(Frame::List {
+                    cell,
+                    element,
+                    count,
+                    done: Vec::with_capacity(count as usize),
+                }))
             }
             Repr::Obj(at) => {
                 let layout = self.layout(at);
@@ -642,17 +743,126 @@ impl Heap {
                         layout.variants.len()
                     )
                 })?;
-                let mut fields = Vec::with_capacity(variant.fields.len());
-                for (i, (name, field)) in variant.fields.iter().enumerate() {
-                    let w = word(blob, cell + (i as u64 + 1) * WORD)?;
-                    fields.push((name.clone(), self.decode_at(w, *field, blob, depth + 1)?));
-                }
-                Ok(Value::Data(Arc::new(Record {
+                Ok(Begun::Nested(Frame::Obj {
+                    cell,
                     ty: layout.name.clone(),
                     variant: variant.name.clone(),
-                    fields: Fields::from_sorted(fields),
-                })))
+                    fields: variant.fields.clone(),
+                    done: Vec::with_capacity(variant.fields.len()),
+                }))
             }
+        }
+    }
+
+    /// Text, which reaches nothing and is therefore always a leaf.
+    fn decode_text(&self, cell: u64, blob: &[u8]) -> Result<Value, String> {
+        let bytes = word(blob, cell)? as usize;
+        let start = (cell + STR_HEADER) as usize;
+        let end = start
+            .checked_add(bytes)
+            .ok_or("an offset past the end of the machine")?;
+        if end > blob.len() {
+            return Err(format!(
+                "the compiled program answered with {bytes} bytes of text at offset {cell}, and \
+                 its heap is {} bytes",
+                blob.len()
+            ));
+        }
+        // Checked rather than assumed: the bytes came from another process, and a `Text` built out
+        // of invalid UTF-8 would be a `Value` nothing else in the language can produce. Every
+        // operation this backend compiles preserves well-formedness — a slice cuts on a character
+        // boundary and a concatenation joins two whole strings — so this failing is a compiler bug
+        // reported as one.
+        let text = std::str::from_utf8(&blob[start..end])
+            .map_err(|e| format!("the compiled program answered with invalid UTF-8: {e}"))?;
+        let value = Value::str_(text);
+        // The count the compiled code carried has to be the count the host would compute, because
+        // it is what `str_len` answered inside the call.
+        let claimed = word(blob, cell + WORD)?;
+        match &value {
+            Value::Str(t) if t.chars_len() as u64 == claimed => Ok(value),
+            _ => Err(format!(
+                "the compiled program said its text is {claimed} characters and it is {}",
+                text.chars().count()
+            )),
+        }
+    }
+}
+
+/// What [`Heap::begin`] found at a word.
+enum Begun {
+    Leaf(Value),
+    Nested(Frame),
+}
+
+/// A value being decoded, with the children it is still waiting for.
+///
+/// The decoder's stack, on the heap: see [`Heap::decode`] for why it is not the thread's.
+enum Frame {
+    List {
+        cell: u64,
+        element: Repr,
+        count: u64,
+        done: Vec<Value>,
+    },
+    Obj {
+        cell: u64,
+        ty: Arc<str>,
+        variant: Option<Arc<str>>,
+        fields: Vec<(Arc<str>, Repr)>,
+        done: Vec<(Arc<str>, Value)>,
+    },
+}
+
+impl Frame {
+    /// Take the child that was just finished.
+    fn absorb(&mut self, v: Value) {
+        match self {
+            Frame::List { done, .. } => done.push(v),
+            Frame::Obj { fields, done, .. } => {
+                let name = fields[done.len()].0.clone();
+                done.push((name, v));
+            }
+        }
+    }
+
+    /// The next child to decode, or `None` when every one is in.
+    fn next_child(&self, blob: &[u8]) -> Result<Option<(u64, Repr)>, String> {
+        match self {
+            Frame::List {
+                cell,
+                element,
+                count,
+                done,
+            } => {
+                if done.len() as u64 == *count {
+                    return Ok(None);
+                }
+                let w = word(blob, cell + (done.len() as u64 + 1) * WORD)?;
+                Ok(Some((w, *element)))
+            }
+            Frame::Obj {
+                cell, fields, done, ..
+            } => {
+                let Some((_, repr)) = fields.get(done.len()) else {
+                    return Ok(None);
+                };
+                let w = word(blob, cell + (done.len() as u64 + 1) * WORD)?;
+                Ok(Some((w, *repr)))
+            }
+        }
+    }
+
+    fn finish(self) -> Value {
+        match self {
+            Frame::List { done, .. } => Value::List(Arc::new(done)),
+            Frame::Obj {
+                ty, variant, done, ..
+            } => Value::Data(Arc::new(Record {
+                ty,
+                variant,
+                fields: Fields::from_sorted(done),
+            })),
         }
     }
 }

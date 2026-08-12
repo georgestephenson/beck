@@ -442,14 +442,13 @@ def grown(s: Str, n: Int, acc: Str) -> Int:
     }
 
     for (name, small, large) in &ratios {
+        // `grown` is not asserted at all, in either direction. It is *slower* here in a release
+        // build and faster in a debug one, because a debug build measures an unoptimised evaluator
+        // against `clang -O2` — which is this file's own warning about the Cranelift row, and a
+        // gate on it would be a gate on which profile ran it. The claim it is evidence for is
+        // gated with no clock in it instead:
+        // `native.rs::an_accumulator_costs_the_square_of_what_it_builds`.
         if *name == "grown" {
-            // The accumulator: asserted to be *slower*, because that is what the missing in-place
-            // append means and a run where it were not would mean the evaluator had lost one.
-            assert!(
-                *large < 1.0,
-                "`grown` was {large:.2}× at the large size — either this backend grew an ownership \
-                 analysis or the evaluator lost its in-place append"
-            );
             continue;
         }
         assert!(
@@ -458,9 +457,116 @@ def grown(s: Str, n: Int, acc: Str) -> Int:
         );
     }
     println!(
-        "\nRatios are evaluator ÷ native, wall clock, on this machine. `grown` is below 1 on \
-         purpose:\n`docs/104` §104.6 is the in-place append this backend does not have."
+        "\nRatios are evaluator ÷ native, wall clock, on this machine. `grown` is the row that \
+         goes the\nother way in a release build: `docs/104` §104.6 is the in-place append this \
+         backend does not have."
     );
+}
+
+/// What a list costs against the tree-walker, and where the arena's shape shows.
+///
+/// The same three shapes text has, one type over: walking one, searching one, and taking a range
+/// out of one. There is no accumulator row, because `list_append` is **refused** here — which is
+/// `docs/105` §105.5's decision and the asymmetry with text, where `+` had to ship because there is
+/// no other way to build a string.
+#[test]
+fn what_a_list_costs_against_the_tree_walker() {
+    const SRC: &str = r#"
+def walk(xs: list[Int], i: Int, acc: Int) -> Int:
+    if i >= list_len(xs):
+        return acc
+    match list_get(xs, i):
+        case Some(value):
+            return walk(xs, i + 1, acc + value)
+        case None():
+            return acc
+
+def hunt(xs: list[Int], n: Int, times: Int, acc: Int) -> Int:
+    if times <= 0:
+        return acc
+    if list_contains(xs, n):
+        return hunt(xs, n, times - 1, acc + 1)
+    return hunt(xs, n, times - 1, acc)
+
+def windows(xs: list[Int], i: Int, acc: Int) -> Int:
+    if i >= list_len(xs):
+        return acc
+    return windows(xs, i + 1, acc + list_len(list_slice(xs, i, 4)))
+"#;
+    let program = compile("lists.beck", SRC);
+    let Some(artifact) = Artifact::build_within(&program, Duration::from_secs(300))
+        .expect("clang accepts the module")
+    else {
+        assert!(
+            !require_llvm(),
+            "BECK_REQUIRE_LLVM=1 and there is no `clang` on the path"
+        );
+        println!("skipped: no LLVM toolchain. Set BECK_REQUIRE_LLVM=1 to make this a failure.");
+        return;
+    };
+    let evaluator = beck_eval::backend_for(program.clone());
+    println!("{}\n", artifact.toolchain().version);
+    println!(
+        "{:<14} {:>10} {:>14} {:>14} {:>9}",
+        "benchmark", "size", "evaluator", "native", "ratio"
+    );
+
+    let long = |n: usize| {
+        Value::List(std::sync::Arc::new(
+            (0..n as i64).map(Value::Int).collect::<Vec<_>>(),
+        ))
+    };
+    let benches: [(&str, [usize; 2]); 3] = [
+        ("walk", [2_000, 16_000]),
+        ("hunt", [500, 4_000]),
+        ("windows", [2_000, 16_000]),
+    ];
+    let mut ratios: Vec<(&str, f64, f64)> = Vec::new();
+    for (name, sizes) in benches {
+        let mut seen = [0.0f64; 2];
+        for (i, size) in sizes.iter().enumerate() {
+            let args = match name {
+                "hunt" => vec![
+                    long(500),
+                    Value::Int(-1),
+                    Value::Int(*size as i64),
+                    Value::Int(0),
+                ],
+                _ => vec![long(*size), Value::Int(0), Value::Int(0)],
+            };
+            let runs = if i == 0 { 7 } else { 3 };
+            let walked = beck_eval::on_the_evaluator_stack(|| {
+                let f = evaluator
+                    .function(&program.defs[name].body)
+                    .expect("prepares");
+                median(runs, || {
+                    f(args.clone()).expect("the evaluator answers");
+                })
+            });
+            let compiled = median(runs, || {
+                artifact
+                    .call(name, &args)
+                    .expect("the native backend answers");
+            });
+            let ratio = walked.as_secs_f64() / compiled.as_secs_f64();
+            seen[i] = ratio;
+            println!(
+                "{:<14} {:>10} {:>14} {:>14} {:>8.2}×",
+                if i == 0 { name } else { "" },
+                size,
+                format!("{walked:?}"),
+                format!("{compiled:?}"),
+                ratio
+            );
+        }
+        ratios.push((name, seen[0], seen[1]));
+    }
+    for (name, small, large) in &ratios {
+        assert!(
+            *small > 1.0 && *large > 1.0,
+            "`{name}` was {small:.2}× at the small size and {large:.2}× at the large one"
+        );
+    }
 }
 
 /// What compiling costs, which is the other half of a dual-backend argument.

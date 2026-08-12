@@ -170,6 +170,20 @@ def opens(a: Str, b: Str) -> Bool:
 def closes(a: Str, b: Str) -> Bool:
     return str_ends_with(a, b)
 
+## Answers with an `Option`, which is the prelude's union and has a layout like any other — the
+## thing `docs/104` §104.4 said it did not.
+def at(a: Str, b: Str) -> Option[Int]:
+    return str_index_of(a, b)
+
+## …and the same answer taken apart, so a wrong tag is a wrong `Int` rather than a value nobody
+## looks inside.
+def at_or(a: Str, b: Str, fallback: Int) -> Int:
+    match str_index_of(a, b):
+        case Some(value):
+            return value
+        case None():
+            return fallback
+
 ## Literals: the pool, one of them read twice in one expression.
 def greeting(s: Str) -> Str:
     return "hello, " + s + "!"

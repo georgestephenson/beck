@@ -393,22 +393,13 @@ def or_else(o: Option[Int], fallback: Int) -> Int:
 /// form that goes red the day one of them starts compiling — which is the point: an absence
 /// asserted as a test is an absence that cannot go stale (`docs/83` §83.7).
 ///
-/// Text is no longer on it. `names_it` is here instead, on the *other* side of the list: a `Str`
-/// argument, a `Str` field and a `Str` answer all compile now, so this fixture asserts that too
-/// rather than leaving the removal to be inferred from a row that is missing.
+/// Text is no longer on it, and neither is *reading* a list. `names_it` and `reads_a_list` are here
+/// instead, on the *other* side of the list — so a removal is a thing this fixture asserts rather
+/// than one a reader infers from a row that is missing. What is left of collections is the half
+/// that **grows** one (`grows`) and the half that takes a function (`mapped`).
 pub const STILL_REFUSED: &str = r#"
-model Boxed:
-    items: list[Int]
-
 model Named:
     label: Str
-
-union Held:
-    One(value: Int)
-    Many(values: list[Int])
-
-def takes_a_list(xs: list[Int]) -> Int:
-    return list_len(xs)
 
 def renders_a_number(n: Int) -> Str:
     return str(n)
@@ -419,15 +410,14 @@ def splits_a_string(s: Str) -> Int:
 def upcases(s: Str) -> Str:
     return str_upper(s)
 
-def takes_a_boxed(b: Boxed) -> Int:
-    return list_len(b.items)
+def grows(xs: list[Int], n: Int) -> list[Int]:
+    return list_append(xs, n)
 
-def matches_a_held(h: Held) -> Int:
-    match h:
-        case One(value):
-            return value
-        case Many(values):
-            return list_len(values)
+def mapped(xs: list[Int]) -> list[Int]:
+    return map_list(xs, double_it)
+
+def double_it(n: Int) -> Int:
+    return n * 2
 
 def is_generic[T](x: T) -> T:
     return x
@@ -435,11 +425,14 @@ def is_generic[T](x: T) -> T:
 def reads_the_clock() -> Int:
     return now()
 
-def calls_something_refused(n: Int) -> Int:
-    return takes_a_list([n])
+def calls_something_refused(n: Int) -> list[Int]:
+    return grows([n], n)
 
 def names_it(label: Str) -> Named:
     return Named(label = label)
+
+def reads_a_list(xs: list[Int]) -> Int:
+    return list_len(xs)
 
 def scalar_and_fine(n: Int) -> Int:
     return n * 2

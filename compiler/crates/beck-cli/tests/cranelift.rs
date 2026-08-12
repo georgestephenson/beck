@@ -39,6 +39,7 @@ use beck_llvm::{Artifact as LlvmArtifact, Repr};
 
 mod support;
 use support::heapfix::{self, RECORDS, STILL_REFUSED, UNIONS};
+use support::listfix::{self, LISTS};
 use support::scalar::{
     float_pairs, floats, ints, pairs, render, singles, ARITHMETIC, CONTROL, REALS, RECURSION,
     REFUSED,
@@ -483,11 +484,22 @@ fn the_three_backends_agree_on_text() {
         "inside",
         "opens",
         "closes",
+        "at",
     ] {
         compared += all.agree(name, &textfix::pairs(&ss));
     }
     compared += all.agree("cut", &textfix::slices(&ss));
     compared += all.agree("count_of", &textfix::with_char(&ss));
+    compared += all.agree(
+        "at_or",
+        &textfix::pairs(&ss)
+            .into_iter()
+            .map(|mut t| {
+                t.push(Value::Int(-1));
+                t
+            })
+            .collect::<Vec<_>>(),
+    );
     compared += all.agree("repeat", &textfix::repeats(&ss));
 
     let named: Vec<Value> = ss
@@ -517,6 +529,107 @@ fn the_three_backends_agree_on_text() {
     compared += all.agree("untag", &textfix::singles(&tagged));
 
     println!("{compared} text calls compared across every backend on this machine");
+}
+
+/// Lists, over every backend this machine has.
+///
+/// The sweep that matters is the **pairs**: a lexicographic comparison can be right for `<` and
+/// wrong for `<=`, and one that ran out of elements before it ran out of answer would order `[1]`
+/// and `[1, 2]` the wrong way round. Every element kind that is itself an offset is here too —
+/// text, a list, a record — because comparing the *words* answers correctly for an `Int` and
+/// wrongly for all three.
+#[test]
+fn the_three_backends_agree_on_lists() {
+    linker!();
+    let all = All::over("lists.beck", LISTS);
+    let xs = listfix::lists();
+    let mut compared = 0;
+    for name in ["size", "empty", "flipped", "held"] {
+        compared += all.agree(name, &listfix::singles(&xs));
+    }
+    for name in [
+        "below",
+        "above",
+        "same",
+        "differ",
+        "not_after",
+        "not_before",
+    ] {
+        compared += all.agree(name, &listfix::pairs(&xs));
+    }
+    for name in ["nth", "nth_or"] {
+        compared += all.agree(name, &listfix::indexed(&xs));
+    }
+    for name in ["has", "at_of"] {
+        compared += all.agree(name, &listfix::searched(&xs));
+    }
+    compared += all.agree("middle", &listfix::ranges(&xs));
+    for name in ["front", "back"] {
+        compared += all.agree(name, &listfix::counted(&xs));
+    }
+    compared += all.agree("three", &[vec![]]);
+    compared += all.agree("none_at_all", &[vec![]]);
+    compared += all.agree("doubled", &singles(&ints(0x5eed_0031, 12)));
+    compared += all.agree(
+        "total",
+        &xs.iter()
+            .map(|v| vec![v.clone(), Value::Int(0), Value::Int(0)])
+            .collect::<Vec<_>>(),
+    );
+    compared += all.agree(
+        "walked",
+        &xs.iter()
+            .map(|v| {
+                vec![
+                    v.clone(),
+                    Value::Int(0),
+                    Value::List(std::sync::Arc::new(Vec::new())),
+                ]
+            })
+            .collect::<Vec<_>>(),
+    );
+
+    // An element that is itself an offset, one kind each.
+    let ts = listfix::texts();
+    for name in ["texts_below", "texts_same"] {
+        compared += all.agree(name, &listfix::pairs(&ts));
+    }
+    let ns = listfix::nested();
+    for name in ["nested_below", "nested_same"] {
+        compared += all.agree(name, &listfix::pairs(&ns));
+    }
+    compared += all.agree("nested_first", &listfix::singles(&ns));
+
+    // A list inside a record and inside a union.
+    let bags: Vec<Value> = xs
+        .iter()
+        .map(|v| heapfix::record("Bag", &[("items", v.clone()), ("rank", Value::Int(1))]))
+        .collect();
+    compared += all.agree("bag_items", &listfix::singles(&bags));
+    for name in ["bag_below", "bag_same"] {
+        compared += all.agree(name, &listfix::pairs(&bags));
+    }
+    compared += all.agree(
+        "rebagged",
+        &bags
+            .iter()
+            .flat_map(|bag| xs.iter().map(move |v| vec![bag.clone(), v.clone()]))
+            .collect::<Vec<_>>(),
+    );
+    compared += all.agree(
+        "bagged",
+        &xs.iter()
+            .map(|v| vec![v.clone(), Value::Int(3)])
+            .collect::<Vec<_>>(),
+    );
+    let holdings: Vec<Value> = xs
+        .iter()
+        .map(|v| heapfix::variant("Holding", "Some_", &[("xs", v.clone())]))
+        .chain([heapfix::variant("Holding", "None_", &[])])
+        .collect();
+    compared += all.agree("held_size", &listfix::singles(&holdings));
+
+    println!("{compared} list calls compared, and every backend agreed on every one");
 }
 
 /// The same shape gate the other backend has, with the same two sizes and the same arithmetic.
@@ -681,7 +794,7 @@ fn what_cannot_be_compiled_is_refused_by_name_and_with_a_reason() {
     linker!();
     let all = All::over("refused.beck", REFUSED);
     for name in [
-        "takes_a_list",
+        "grows_a_list",
         "renders_a_number",
         "is_generic",
         "reads_the_clock",
@@ -699,7 +812,7 @@ fn what_cannot_be_compiled_is_refused_by_name_and_with_a_reason() {
     );
     assert_eq!(
         all.refusal("calls_something_refused"),
-        Some("calls `takes_a_list`, which does not compile"),
+        Some("calls `grows_a_list`, which does not compile"),
         "the fixed point has to name what it was waiting on"
     );
 }
@@ -716,15 +829,18 @@ fn the_seam_runs_the_compiled_half_and_falls_back_for_the_rest() {
         .expect("there is a linker");
     assert_eq!(dev.name(), "cranelift");
     let scalar = &program.defs["scalar_and_fine"].body;
-    let listy = &program.defs["takes_a_list"].body;
+    let listy = &program.defs["grows_a_list"].body;
     assert!(dev.compiled(scalar), "the scalar definition is compiled");
-    assert!(!dev.compiled(listy), "the one that takes a list is not");
+    assert!(!dev.compiled(listy), "the one that grows a list is not");
     let f = dev.function(scalar).expect("prepares");
     assert_eq!(f(vec![Value::Int(21)]).expect("runs"), Value::Int(42));
     // …and the refused one still answers, from the tree-walker behind the seam.
     let g = dev.function(listy).expect("prepares");
     let xs = Value::List(Arc::new(vec![Value::Int(2), Value::Int(3)]));
-    assert_eq!(g(vec![xs]).expect("runs"), Value::Int(2));
+    assert_eq!(
+        g(vec![xs, Value::Int(4)]).expect("runs"),
+        Value::List(Arc::new(vec![Value::Int(2), Value::Int(3), Value::Int(4)]))
+    );
 }
 
 /// Every corpus program produces an object the linker accepts.

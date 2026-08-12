@@ -14,6 +14,38 @@ Newest first.
 
 ### The native backends
 
+- **A list arrives read-only** ([`docs/105`](docs/105-lists-arrive-read-only-report.md)): a
+  `list[T]` is a value both code generators compile — literals, the six comparisons, `list_len`,
+  `list_is_empty`, `list_get`, `list_contains`, `list_index_of`, `list_slice`, `list_take`,
+  `list_drop` and `list_reverse` — and **`list_append` is refused** by name, because an arena cannot
+  prove nobody else holds the accumulator ([`docs/101`](docs/101-the-heap-report.md) §101.5's
+  forecast, cashed). **344 → 403 definitions** compile across the tree. Gated by
+  `native.rs::the_two_backends_agree_on_lists` and
+  `cranelift.rs::the_three_backends_agree_on_lists` (1,425 calls each), and by
+  `a_list_slice_costs_its_answer_and_not_the_list_it_came_from`.
+- **`str_index_of` compiles, and the reason it did not was false.**
+  [`docs/104`](docs/104-text-on-the-heap-report.md) §104.4 blamed the prelude's `Option` for having
+  no layout; it has had one since [`docs/101`](docs/101-the-heap-report.md). Every gate stayed green
+  because each asserted a refusal *said* something and none asked whether what it said was so.
+  `a_refusal_that_blames_a_type_is_asked_whether_that_type_has_one` is the gate that would have
+  gone red (§105.7).
+- **The reply decoder is iterative**, so `MAX_DEPTH` bounds the *value* rather than the host
+  thread's stack. It recursed, and a debug build aborted at about 1,600 against a declared ceiling
+  of 2,048 — which made what could be decoded a function of how the compiler was built. Gated by
+  `a_value_at_the_declared_ceiling_decodes_rather_than_aborting`, which builds a value exactly that
+  deep by hand (§105.6).
+- **The LLVM record comparison compared a `list` field by its offset** — the same defect
+  [`docs/104`](docs/104-text-on-the-heap-report.md) §104.5 found in Cranelift for a `Str`, third
+  occurrence. Caught by the differential's pairs (§105.4).
+- **An unreachable refusal reason deleted.** The higher-order collection primitives are refused a
+  line earlier by their own argument, so the table's entry for them could never be produced
+  ([`docs/89`](docs/89-query-fusion-report.md) §89.5's pattern).
+- **`measure_native.rs` asserted a ratio that depends on the build profile** — that text's
+  accumulator is slower than the tree-walker, which is true in release and false in debug. The
+  assertion is gone and the claim is gated with no clock in it instead:
+  `an_accumulator_costs_the_square_of_what_it_builds` reads the arena and finds 15.9× the bytes for
+  4× the steps.
+
 - **Text is on the heap** ([`docs/104`](docs/104-text-on-the-heap-report.md)): a `Str` is a value
   both code generators compile — a layout of two counts and the bytes, a literal pool the host
   writes in front of every request, `+`, the six comparisons, `str_len`, `str_is_empty`,

@@ -342,13 +342,14 @@ def ackermann(m: Int, n: Int) -> Int:
 
 /// Definitions this backend must refuse, one per reason.
 ///
-/// The heap ([`super::heapfix`]) took the record and the union off this list, and `docs/104` took
-/// text off it. What is left is what `docs/101` §101.5 names as not built — and `scalar_and_fine`
+/// The heap ([`super::heapfix`]) took the record and the union off this list, `docs/104` took text
+/// off it, and `docs/105` took *reading* a collection off it — what is left of one is the half that
+/// **grows** it. What is left is what `docs/101` §101.5 names as not built — and `scalar_and_fine`
 /// is the control: a list of refusals with nothing on the other side of it would pass against a
 /// backend that refused everything.
 pub const REFUSED: &str = r#"
-def takes_a_list(xs: list[Int]) -> Int:
-    return list_len(xs)
+def grows_a_list(xs: list[Int], n: Int) -> list[Int]:
+    return list_append(xs, n)
 
 def renders_a_number(n: Int) -> Str:
     return str(n)
@@ -359,8 +360,8 @@ def is_generic[T](x: T) -> T:
 def reads_the_clock() -> Int:
     return now()
 
-def calls_something_refused(n: Int) -> Int:
-    return takes_a_list([n])
+def calls_something_refused(n: Int) -> list[Int]:
+    return grows_a_list([n], n)
 
 def scalar_and_fine(n: Int) -> Int:
     return n * 2

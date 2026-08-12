@@ -316,6 +316,7 @@ pub fn module(program: &Program) -> Module {
     let mut spans: Vec<Span> = Vec::new();
     let mut bodies = String::new();
     let mut compared: BTreeSet<u32> = BTreeSet::new();
+    let mut list_compared: BTreeSet<u32> = BTreeSet::new();
     for name in &order {
         let def = &program.defs[name];
         let mut fun = Function::new(&indexed, &eligible, program, &mut heap);
@@ -325,12 +326,19 @@ pub fn module(program: &Program) -> Module {
             .expect("the fixed point already proved this emits");
         spans = std::mem::take(&mut fun.spans);
         compared.append(&mut fun.compared);
+        list_compared.append(&mut fun.list_compared);
         bodies.push_str(&text);
         bodies.push('\n');
     }
 
     let functions: Vec<Signature> = order.iter().map(|n| indexed[n].clone()).collect();
-    let ir = assemble(&bodies, &functions, &heap, &closure_of(&compared, &heap));
+    let ir = assemble(
+        &bodies,
+        &functions,
+        &heap,
+        &closure_of(&compared, &heap, &list_compared),
+        &list_closure_of(&list_compared, &heap),
+    );
     refusals.sort_by(|a, b| a.name.cmp(&b.name));
     Module {
         ir,
@@ -345,22 +353,51 @@ pub fn module(program: &Program) -> Module {
 ///
 /// Transitive, because comparing a record compares its fields: asking for `Line` asks for `Point`
 /// whether or not any body compares two points.
-fn closure_of(asked: &BTreeSet<u32>, heap: &Heap) -> BTreeSet<u32> {
-    let mut out: BTreeSet<u32> = BTreeSet::new();
-    let mut todo: Vec<u32> = asked.iter().copied().collect();
-    while let Some(at) = todo.pop() {
-        if !out.insert(at) {
-            continue;
-        }
-        for v in &heap.layout(at).variants {
-            for (_, r) in &v.fields {
-                if let Repr::Obj(inner) = r {
-                    todo.push(*inner);
+fn closure_of(asked: &BTreeSet<u32>, heap: &Heap, lists: &BTreeSet<u32>) -> BTreeSet<u32> {
+    reachable(asked, lists, heap).0
+}
+
+/// The same, for the list reprs.
+fn list_closure_of(asked: &BTreeSet<u32>, heap: &Heap) -> BTreeSet<u32> {
+    reachable(&BTreeSet::new(), asked, heap).1
+}
+
+/// Every layout and every list repr reachable from the ones a body asked to compare.
+///
+/// One fixed point over both, because the two reach each other: a record with a `list[Point]` field
+/// needs that list's comparison, and a `list[Point]` needs `Point`'s. A pair of separate closures
+/// would each be right about its own edges and wrong about the other's.
+fn reachable(
+    layouts: &BTreeSet<u32>,
+    lists: &BTreeSet<u32>,
+    heap: &Heap,
+) -> (BTreeSet<u32>, BTreeSet<u32>) {
+    let (mut out_l, mut out_x) = (BTreeSet::new(), BTreeSet::new());
+    let mut todo: Vec<Repr> = layouts
+        .iter()
+        .map(|a| Repr::Obj(*a))
+        .chain(lists.iter().map(|a| Repr::List(*a)))
+        .collect();
+    while let Some(r) = todo.pop() {
+        match r {
+            Repr::Obj(at) => {
+                if !out_l.insert(at) {
+                    continue;
+                }
+                for v in &heap.layout(at).variants {
+                    todo.extend(v.fields.iter().map(|(_, r)| *r));
                 }
             }
+            Repr::List(at) => {
+                if !out_x.insert(at) {
+                    continue;
+                }
+                todo.push(heap.element(at));
+            }
+            _ => {}
         }
     }
-    out
+    (out_l, out_x)
 }
 
 /// The signature, or the reason there is not one.
@@ -443,6 +480,8 @@ struct Function<'a> {
     trapped: bool,
     /// The layouts this body compares two of, so the module emits a comparison for them.
     compared: BTreeSet<u32>,
+    /// The list reprs this body compares two of, so the module generates their functions.
+    list_compared: BTreeSet<u32>,
     /// Whether this body reaches the arena, and therefore needs its base in a register.
     uses_heap: bool,
 }
@@ -468,6 +507,7 @@ impl<'a> Function<'a> {
             ret: Repr::Int,
             trapped: false,
             compared: BTreeSet::new(),
+            list_compared: BTreeSet::new(),
             uses_heap: false,
         }
     }
@@ -648,7 +688,7 @@ impl<'a> Function<'a> {
                 return self.match_(scrutinee, arms, c.span, dest)
             }
             CoreKind::App { func, args } => return self.call(func, args, dest),
-            CoreKind::Prim { op, args } => self.prim(*op, args, c.span)?,
+            CoreKind::Prim { op, args } => self.prim(*op, args, &c.ty, c.span)?,
             CoreKind::Lam { .. } => {
                 return Err(
                     "a nested function is a closure, and a closure is not on this heap".into(),
@@ -665,9 +705,7 @@ impl<'a> Function<'a> {
             } => self.make(&c.ty, variant.as_deref(), fields, c.span)?,
             CoreKind::Field { base, name } => self.field(base, name)?,
             CoreKind::With { base, fields } => self.with(base, fields, c.span)?,
-            CoreKind::ListLit(_) => {
-                return Err("builds a list, and a collection is not on this heap yet".into())
-            }
+            CoreKind::ListLit(xs) => self.list_lit(&c.ty, xs, c.span)?,
             CoreKind::MapLit(_) => {
                 return Err("builds a map, and a collection is not on this heap yet".into())
             }
@@ -804,7 +842,7 @@ impl<'a> Function<'a> {
             Repr::Int => Trap::NoMatchInt,
             Repr::Float => Trap::NoMatchFloat,
             Repr::Bool => Trap::NoMatchBool,
-            Repr::Str | Repr::Obj(_) => Trap::NoMatchData,
+            Repr::Str | Repr::List(_) | Repr::Obj(_) => Trap::NoMatchData,
         };
         let payload = self.widen(&v);
         self.trap(trap, span, &payload, "true");
@@ -994,7 +1032,9 @@ impl<'a> Function<'a> {
                 self.line(format!("{raw} = load i64, ptr {p}"));
                 self.line(format!("{r} = icmp ne i64 {raw}, 0"));
             }
-            Repr::Int | Repr::Str | Repr::Obj(_) => self.line(format!("{r} = load i64, ptr {p}")),
+            Repr::Int | Repr::Str | Repr::List(_) | Repr::Obj(_) => {
+                self.line(format!("{r} = load i64, ptr {p}"))
+            }
         }
         Val { text: r, ty: repr }
     }
@@ -1019,7 +1059,7 @@ impl<'a> Function<'a> {
                 self.line(format!("{w} = zext i1 {} to i64", v.text));
                 self.line(format!("store i64 {w}, ptr {p}"));
             }
-            Repr::Int | Repr::Str | Repr::Obj(_) => {
+            Repr::Int | Repr::Str | Repr::List(_) | Repr::Obj(_) => {
                 self.line(format!("store i64 {}, ptr {p}", v.text))
             }
         }
@@ -1249,7 +1289,7 @@ impl<'a> Function<'a> {
 
     // -- primitives -------------------------------------------------------------------------
 
-    fn prim(&mut self, op: Prim, args: &[Core], span: Span) -> Result<Val, String> {
+    fn prim(&mut self, op: Prim, args: &[Core], ty: &Ty, span: Span) -> Result<Val, String> {
         let mut vals = Vec::with_capacity(args.len());
         for a in args {
             vals.push(self.value(a)?);
@@ -1307,7 +1347,7 @@ impl<'a> Function<'a> {
                             ty: Repr::Float,
                         })
                     }
-                    Repr::Bool | Repr::Str | Repr::Obj(_) => {
+                    Repr::Bool | Repr::Str | Repr::List(_) | Repr::Obj(_) => {
                         Err(format!("`{}` on a value that is not a number", op.name()))
                     }
                 }
@@ -1372,7 +1412,7 @@ impl<'a> Function<'a> {
                             ty: Repr::Float,
                         })
                     }
-                    Repr::Bool | Repr::Str | Repr::Obj(_) => {
+                    Repr::Bool | Repr::Str | Repr::List(_) | Repr::Obj(_) => {
                         Err("`negate` on a value that is not a number".into())
                     }
                 }
@@ -1405,7 +1445,7 @@ impl<'a> Function<'a> {
                             ty: Repr::Float,
                         })
                     }
-                    Repr::Bool | Repr::Str | Repr::Obj(_) => {
+                    Repr::Bool | Repr::Str | Repr::List(_) | Repr::Obj(_) => {
                         Err("`abs` on a value that is not a number".into())
                     }
                 }
@@ -1514,6 +1554,91 @@ impl<'a> Function<'a> {
                 self.text_arg(&vals[1], op)?;
                 Ok(self.text_search(op, &vals[0], &vals[1]))
             }
+            Prim::StrIndexOf => {
+                arity(2)?;
+                self.text_arg(&vals[0], op)?;
+                self.text_arg(&vals[1], op)?;
+                self.index_of(ty, &vals[0], &vals[1], span)
+            }
+            Prim::ListLen | Prim::ListIsEmpty => {
+                arity(1)?;
+                self.list_arg(&vals[0], op)?;
+                let n = self.list_len(&vals[0]);
+                if op == Prim::ListLen {
+                    return Ok(Val {
+                        text: n,
+                        ty: Repr::Int,
+                    });
+                }
+                let r = self.fresh();
+                self.line(format!("{r} = icmp eq i64 {n}, 0"));
+                Ok(Val {
+                    text: r,
+                    ty: Repr::Bool,
+                })
+            }
+            Prim::ListGet => {
+                arity(2)?;
+                let at = self.list_arg(&vals[0], op)?;
+                if vals[1].ty != Repr::Int {
+                    return Err("`list_get` takes an Int index".into());
+                }
+                self.list_get(ty, at, &vals[0], &vals[1], span)
+            }
+            Prim::ListContains | Prim::ListIndexOf => {
+                arity(2)?;
+                let at = self.list_arg(&vals[0], op)?;
+                let element = self.heap.element(at);
+                if vals[1].ty != element {
+                    return Err(format!(
+                        "`{}` against an element of another type",
+                        op.name()
+                    ));
+                }
+                let word = self.widen(&vals[1]);
+                let found = self.fresh();
+                self.line(format!(
+                    "{found} = call i64 @\"beck.list.find.{at}\"(i64 {}, i64 {word})",
+                    vals[0].text
+                ));
+                self.list_compared.insert(at);
+                if op == Prim::ListContains {
+                    let r = self.fresh();
+                    self.line(format!("{r} = icmp sge i64 {found}, 0"));
+                    return Ok(Val {
+                        text: r,
+                        ty: Repr::Bool,
+                    });
+                }
+                self.some_or_none(ty, &found, span)
+            }
+            Prim::ListSlice | Prim::ListTake | Prim::ListDrop => {
+                let want = if op == Prim::ListSlice { 3 } else { 2 };
+                arity(want)?;
+                self.list_arg(&vals[0], op)?;
+                for v in &vals[1..] {
+                    if v.ty != Repr::Int {
+                        return Err(format!("`{}` takes Int positions", op.name()));
+                    }
+                }
+                self.list_range(op, &vals, span)
+            }
+            Prim::ListReverse => {
+                arity(1)?;
+                let at = self.list_arg(&vals[0], op)?;
+                self.uses_heap = true;
+                let idx = self.span(span);
+                let r = self.fresh();
+                self.line(format!(
+                    "{r} = call i64 @\"beck.list.reverse\"(ptr %err, i64 {}, i32 {idx})",
+                    vals[0].text
+                ));
+                self.check_call();
+                Ok(Val {
+                    text: r,
+                    ty: Repr::List(at),
+                })
+            }
             other => Err(refusal(other)),
         }
     }
@@ -1550,6 +1675,281 @@ impl<'a> Function<'a> {
             }
             Const::Unit => Err("the unit value, which has no machine representation here".into()),
         }
+    }
+
+    /// `[a, b, c]` — one allocation, filled left to right.
+    ///
+    /// Left to right because an element expression can trap and *which* trap the caller sees is
+    /// part of what the evaluator answers, which is the same reason a record's fields are.
+    fn list_lit(&mut self, ty: &Ty, xs: &[Core], span: Span) -> Result<Val, String> {
+        let repr = self
+            .repr(ty)
+            .map_err(|why| format!("builds a value that is {why}"))?;
+        let Repr::List(at) = repr else {
+            return Err(format!("builds a `{ty}`, which is not a list"));
+        };
+        let element = self.heap.element(at);
+        let mut vals = Vec::with_capacity(xs.len());
+        for x in xs {
+            let v = self.value(x)?;
+            if v.ty != element {
+                return Err(format!("an element of this `{ty}` is the wrong type"));
+            }
+            vals.push(v);
+        }
+        let off = self.alloc(heap::list_bytes(xs.len() as u64), span);
+        self.store_word(&off, 0, &xs.len().to_string());
+        for (i, v) in vals.iter().enumerate() {
+            self.store_field(&off, i + 1, v);
+        }
+        Ok(Val {
+            text: off,
+            ty: repr,
+        })
+    }
+
+    /// The address of element `i` of `xs`, where `i` is a value rather than a constant.
+    fn element_addr(&mut self, xs: &Val, index: &str) -> String {
+        let base = self.base();
+        let p = self.fresh();
+        self.line(format!(
+            "{p} = getelementptr inbounds i8, ptr {base}, i64 {}",
+            xs.text
+        ));
+        let q = self.fresh();
+        self.line(format!("{q} = getelementptr inbounds i8, ptr {p}, i64 8"));
+        let r = self.fresh();
+        self.line(format!(
+            "{r} = getelementptr inbounds i64, ptr {q}, i64 {index}"
+        ));
+        r
+    }
+
+    /// `str_index_of` — a byte search, a byte-to-character conversion, and an `Option`.
+    ///
+    /// The interesting half is that there is **no branch**. `Some(value=i)` is two words and
+    /// `None()` is one, so allocating the larger of the two and choosing the tag with a `select`
+    /// answers both: the host reads a variant's own fields and nothing else, so the word a `None`
+    /// leaves behind is never looked at. A branch would be an `if` over two allocations, two
+    /// arena bumps and a join — correct, and three times the code for a value that fits in a
+    /// register either way.
+    ///
+    /// The tags are read off the layout rather than written down. `Option`'s variants sort to
+    /// `None` then `Some`, which is a fact about two strings and not one to hardcode here.
+    fn index_of(&mut self, ty: &Ty, hay: &Val, needle: &Val, span: Span) -> Result<Val, String> {
+        let found = self.fresh();
+        self.line(format!(
+            "{found} = call i64 @\"beck.str.find\"(i64 {}, i64 {})",
+            hay.text, needle.text
+        ));
+        let missing = self.fresh();
+        self.line(format!("{missing} = icmp slt i64 {found}, 0"));
+        // Clamped before the conversion rather than after it: `-1` is not a byte offset, and a
+        // walk that started there would read backwards off the front of the string.
+        let safe = self.fresh();
+        self.line(format!("{safe} = select i1 {missing}, i64 0, i64 {found}"));
+        let index = self.fresh();
+        self.line(format!(
+            "{index} = call i64 @\"beck.str.charat\"(i64 {}, i64 {safe})",
+            hay.text
+        ));
+        // `-1` when it is missing, so the shape `some_or_none` answers is the shape here too.
+        let answer = self.fresh();
+        self.line(format!(
+            "{answer} = select i1 {missing}, i64 -1, i64 {index}"
+        ));
+        self.some_or_none(ty, &answer, span)
+    }
+
+    /// The layout of the `Option[T]` a primitive answers with: the repr, its two tags, which word
+    /// `Some`'s payload goes in, and how much to allocate for either.
+    ///
+    /// Resolved from the node's own type, which is the prelude's `Option` instantiated by the
+    /// checker — so this needs no special case and would answer for a program's own union of the
+    /// same shape. `want` is what the payload has to be, which is the element type for a list and
+    /// an `Int` for a search.
+    fn option_of(&mut self, ty: &Ty, want: Repr) -> Result<(Repr, u32, u32, usize, u64), String> {
+        let repr = self
+            .repr(ty)
+            .map_err(|why| format!("answers with a value that is {why}"))?;
+        let Repr::Obj(at) = repr else {
+            return Err(format!("answers with `{ty}`, which is not an object"));
+        };
+        let layout = self.heap.layout(at);
+        let some = layout
+            .tag_of(Some("Some"))
+            .ok_or_else(|| format!("`{}` has no `Some`", layout.shown))?;
+        let none = layout
+            .tag_of(Some("None"))
+            .ok_or_else(|| format!("`{}` has no `None`", layout.shown))?;
+        let (slot, carried) = layout.variants[some as usize]
+            .slot("value")
+            .ok_or_else(|| format!("`{}`'s `Some` has no `value`", layout.shown))?;
+        if carried != want {
+            return Err(format!(
+                "`{}` does not carry what it is given",
+                layout.shown
+            ));
+        }
+        let bytes = layout
+            .variants
+            .iter()
+            .map(|v| v.bytes())
+            .max()
+            .unwrap_or(heap::WORD);
+        Ok((repr, some, none, slot, bytes))
+    }
+
+    /// `Some(value = i)` when `found` is not `-1`, and `None()` when it is.
+    ///
+    /// The shape both searches answer with, and the reason neither needs a branch: see
+    /// [`Function::list_get`].
+    fn some_or_none(&mut self, ty: &Ty, found: &str, span: Span) -> Result<Val, String> {
+        let (repr, some, none, slot, bytes) = self.option_of(ty, Repr::Int)?;
+        let missing = self.fresh();
+        self.line(format!("{missing} = icmp slt i64 {found}, 0"));
+        let off = self.alloc(bytes, span);
+        let tag = self.fresh();
+        self.line(format!(
+            "{tag} = select i1 {missing}, i64 {none}, i64 {some}"
+        ));
+        self.store_word(&off, 0, &tag);
+        self.store_word(&off, slot, found);
+        Ok(Val {
+            text: off,
+            ty: repr,
+        })
+    }
+
+    /// Insist an argument is a list, and say which list it is.
+    fn list_arg(&self, v: &Val, op: Prim) -> Result<u32, String> {
+        match v.ty {
+            Repr::List(at) => Ok(at),
+            _ => Err(format!("`{}` on something that is not a list", op.name())),
+        }
+    }
+
+    /// How many elements, which is the header word.
+    fn list_len(&mut self, xs: &Val) -> String {
+        self.uses_heap = true;
+        let base = self.base();
+        let p = self.fresh();
+        self.line(format!(
+            "{p} = getelementptr inbounds i8, ptr {base}, i64 {}",
+            xs.text
+        ));
+        let r = self.fresh();
+        self.line(format!("{r} = load i64, ptr {p}"));
+        r
+    }
+
+    /// `list_get(xs, i)` — an `Option[T]`, and **no branch**.
+    ///
+    /// The trick is the address rather than the value: an index outside the list would read a word
+    /// that may be past the end of the arena, so the address is a `select` between the element's
+    /// and the list's own **header**, which is always there. Out of bounds therefore loads the
+    /// length, stores it where `Some`'s payload would go, and tags the answer `None` — and the host
+    /// reads a variant's own fields and nothing else, so that word is never looked at.
+    fn list_get(
+        &mut self,
+        ty: &Ty,
+        at: u32,
+        xs: &Val,
+        index: &Val,
+        span: Span,
+    ) -> Result<Val, String> {
+        let element = self.heap.element(at);
+        let (option, some, none, slot, bytes) = self.option_of(ty, element)?;
+        let n = self.list_len(xs);
+        let low = self.fresh();
+        self.line(format!("{low} = icmp sge i64 {}, 0", index.text));
+        let high = self.fresh();
+        self.line(format!("{high} = icmp slt i64 {}, {n}", index.text));
+        let inside = self.fresh();
+        self.line(format!("{inside} = and i1 {low}, {high}"));
+        let safe = self.fresh();
+        self.line(format!(
+            "{safe} = select i1 {inside}, i64 {}, i64 0",
+            index.text
+        ));
+        let element_at = self.element_addr(xs, &safe);
+        let header = self.fresh();
+        let base = self.base();
+        self.line(format!(
+            "{header} = getelementptr inbounds i8, ptr {base}, i64 {}",
+            xs.text
+        ));
+        let p = self.fresh();
+        self.line(format!(
+            "{p} = select i1 {inside}, ptr {element_at}, ptr {header}"
+        ));
+        let w = self.fresh();
+        self.line(format!("{w} = load i64, ptr {p}"));
+
+        let off = self.alloc(bytes, span);
+        let tag = self.fresh();
+        self.line(format!(
+            "{tag} = select i1 {inside}, i64 {some}, i64 {none}"
+        ));
+        self.store_word(&off, 0, &tag);
+        self.store_word(&off, slot, &w);
+        Ok(Val {
+            text: off,
+            ty: option,
+        })
+    }
+
+    /// `list_slice`, `list_take` and `list_drop`: one clamped range, one copy.
+    ///
+    /// Clamped exactly where the evaluator clamps — a negative start or count is zero, and a range
+    /// past the end stops at the end — so the three differ only in the arithmetic above the copy.
+    fn list_range(&mut self, op: Prim, vals: &[Val], span: Span) -> Result<Val, String> {
+        let n = self.list_len(&vals[0]);
+        let zero = |me: &mut Self, v: &str| {
+            let neg = me.fresh();
+            me.line(format!("{neg} = icmp slt i64 {v}, 0"));
+            let r = me.fresh();
+            me.line(format!("{r} = select i1 {neg}, i64 0, i64 {v}"));
+            r
+        };
+        let (from, count) = match op {
+            Prim::ListSlice => {
+                let from = zero(self, &vals[1].text);
+                let want = zero(self, &vals[2].text);
+                (from, want)
+            }
+            Prim::ListTake => ("0".to_string(), zero(self, &vals[1].text)),
+            _ => {
+                let from = zero(self, &vals[1].text);
+                (from, n.clone())
+            }
+        };
+        // `from` first, then how many are left after it, then how many were asked for.
+        let over = self.fresh();
+        self.line(format!("{over} = icmp ugt i64 {from}, {n}"));
+        let start = self.fresh();
+        self.line(format!("{start} = select i1 {over}, i64 {n}, i64 {from}"));
+        let left = self.fresh();
+        self.line(format!("{left} = sub i64 {n}, {start}"));
+        let too_many = self.fresh();
+        self.line(format!("{too_many} = icmp ugt i64 {count}, {left}"));
+        let take = self.fresh();
+        self.line(format!(
+            "{take} = select i1 {too_many}, i64 {left}, i64 {count}"
+        ));
+
+        self.uses_heap = true;
+        let idx = self.span(span);
+        let r = self.fresh();
+        self.line(format!(
+            "{r} = call i64 @\"beck.list.copy\"(ptr %err, i64 {}, i64 {start}, i64 {take}, i32 {idx})",
+            vals[0].text
+        ));
+        self.check_call();
+        Ok(Val {
+            text: r,
+            ty: vals[0].ty,
+        })
     }
 
     /// Insist an argument is text, so a message names the primitive rather than the operand.
@@ -1815,6 +2215,17 @@ impl<'a> Function<'a> {
                 ));
                 (r, "0".to_string(), true)
             }
+            // A list compares element by element and then by length, which is what a `Vec`'s
+            // derived `Ord` does — the function is generated per element repr.
+            Repr::List(at) => {
+                self.list_compared.insert(at);
+                let r = self.fresh();
+                self.line(format!(
+                    "{r} = call i64 @\"beck.list.cmp.{at}\"(i64 {}, i64 {})",
+                    a.text, b.text
+                ));
+                (r, "0".to_string(), true)
+            }
             Repr::Obj(at) => {
                 self.compared.insert(at);
                 let r = self.fresh();
@@ -1868,7 +2279,7 @@ impl<'a> Function<'a> {
             // Its offset, which is what an object *is* here. Only a trap payload reads this, and
             // the one trap that can carry an object says nothing about the value it carries —
             // `Trap::NoMatchData` is the message, and this is what makes it honest.
-            Repr::Str | Repr::Obj(_) => v.text.clone(),
+            Repr::Str | Repr::List(_) | Repr::Obj(_) => v.text.clone(),
         }
     }
 }
@@ -1882,13 +2293,28 @@ impl<'a> Function<'a> {
 fn refusal(op: Prim) -> String {
     let why = match op {
         Prim::StrSplit | Prim::StrChars => {
-            "answers with a list, and a collection is not on this heap yet"
+            "answers with a list whose elements it also allocates, which is two loops rather than \
+             the one every list this backend builds has"
         }
-        Prim::StrJoin => "reads a list, and a collection is not on this heap yet",
-        Prim::StrIndexOf => {
-            "answers with an `Option`, whose layout this backend resolves from a program's own \
-             types and not from the prelude's"
+        Prim::StrJoin => {
+            "builds text whose size is a sum over a list, and the arena cannot grow an allocation \
+             it has already made"
         }
+        // The one that is a decision rather than a gap. `docs/69` §69.7 and `docs/101` §101.5 both
+        // name shipping this as the mistake: the tree-walker pushes in place when `liveness` proves
+        // the accumulator is a last use, and an arena with no ownership in it cannot, so every loop
+        // in the language would be quadratic here and linear there.
+        Prim::ListAppend | Prim::ConcatLists => {
+            "grows a list, and this arena cannot prove nobody else holds the one it would push \
+             into — so the accumulator every loop is written as would be quadratic here and linear \
+             in the evaluator"
+        }
+        Prim::ListZip => "answers with a list of pairs, and there is no pair type to lay out",
+        // `map_list` and the rest of the higher-order half are deliberately absent. Their argument
+        // is a function, `prim` evaluates its arguments before it looks at the operator, and
+        // "`double_it` is used as a value rather than called, and a function value is a closure" is
+        // both truer and more specific than anything this table could say. A reason that cannot be
+        // produced is `docs/89` §89.5's unreachable rule, and the answer is the same: delete it.
         Prim::StrUpper | Prim::StrLower => {
             "is Unicode case mapping, which is a table rather than an operation — and a compiled \
              half-answer that folded ASCII only would disagree with the evaluator on the first \
@@ -2023,6 +2449,7 @@ fn assemble(
     functions: &[Signature],
     heap: &Heap,
     compared: &BTreeSet<u32>,
+    lists: &BTreeSet<u32>,
 ) -> String {
     let arena = !heap.is_empty();
     let mut m = String::new();
@@ -2030,12 +2457,23 @@ fn assemble(
     if arena {
         let _ = write!(m, "{}", arena_prelude());
     }
+    // The two C library functions both runtimes reach for, declared once: `LISTS` copies words and
+    // `TEXT` copies and compares bytes, and a second `declare` of either would be a redefinition.
+    if heap.uses_text() || heap.uses_lists() {
+        m.push_str(LIBC);
+    }
     if heap.uses_text() {
         m.push_str(TEXT);
+    }
+    if heap.uses_lists() {
+        m.push_str(LISTS);
     }
     m.push_str(bodies);
     for at in compared {
         m.push_str(&compare_function(*at, heap));
+    }
+    for at in lists {
+        m.push_str(&element_functions(*at, heap));
     }
 
     // One thunk per function: the protocol carries every argument as eight bytes, so this is where
@@ -2232,9 +2670,10 @@ fn compare_function(at: u32, heap: &Heap) -> String {
             match repr {
                 // A field that is itself a reference decides through the three-way comparison for
                 // whatever it refers to: a layout's own, or text's one.
-                Repr::Obj(_) | Repr::Str => {
+                Repr::Obj(_) | Repr::Str | Repr::List(_) => {
                     let called = match repr {
                         Repr::Obj(inner) => format!("beck.cmp.{inner}"),
+                        Repr::List(inner) => format!("beck.list.cmp.{inner}"),
                         _ => "beck.str.cmp".to_string(),
                     };
                     let r = b.fresh();
@@ -2505,10 +2944,7 @@ declare i64 @write(i32, ptr, i64)
 /// where the evaluator has a chunked index and answers in at most a stride
 /// ([`beck_core::core::Text`]). `docs/104` §104.6 carries that as a difference rather than hiding
 /// it, and the fix, if a program ever needs it, is the same index in the same header.
-const TEXT: &str = r#"declare i32 @memcmp(ptr, ptr, i64)
-declare ptr @memcpy(ptr, ptr, i64)
-
-define internal i64 @"beck.str.alloc"(ptr noalias %err, i64 %bytes, i64 %chars, i32 %span) {
+const TEXT: &str = r#"define internal i64 @"beck.str.alloc"(ptr noalias %err, i64 %bytes, i64 %chars, i32 %span) {
 entry:
   %pad = add i64 %bytes, 7
   %body = and i64 %pad, -8
@@ -2668,6 +3104,40 @@ end:
   ret i64 %len
 }
 
+define internal i64 @"beck.str.charat"(i64 %s, i64 %byte) {
+entry:
+  %len = call i64 @"beck.str.bytes"(i64 %s)
+  %chars = call i64 @"beck.str.chars"(i64 %s)
+  %ascii = icmp eq i64 %len, %chars
+  br i1 %ascii, label %direct, label %count
+direct:
+  ret i64 %byte
+count:
+  ; How many characters begin before this byte, which is how many bytes before it are not
+  ; continuation bytes. The inverse of `beck.str.byteof`, and the reason it exists is that a search
+  ; answers in bytes and the language indexes in characters.
+  %p = call ptr @"beck.str.data"(i64 %s)
+  br label %loop
+loop:
+  %k = phi i64 [ 0, %count ], [ %k1, %next ]
+  %n = phi i64 [ 0, %count ], [ %n1, %next ]
+  %done = icmp uge i64 %k, %byte
+  br i1 %done, label %out, label %look
+look:
+  %bp = getelementptr inbounds i8, ptr %p, i64 %k
+  %b = load i8, ptr %bp
+  %top = and i8 %b, -64
+  %cont = icmp eq i8 %top, -128
+  %step = select i1 %cont, i64 0, i64 1
+  br label %next
+next:
+  %k1 = add i64 %k, 1
+  %n1 = add i64 %n, %step
+  br label %loop
+out:
+  ret i64 %n
+}
+
 define internal i64 @"beck.str.slice"(ptr noalias %err, i64 %s, i64 %start, i64 %len, i32 %span) {
 entry:
   ; A negative index or a negative length is zero, which is what `i64::max(0)` does in the
@@ -2730,6 +3200,228 @@ found:
   ret i64 %i
 missing:
   ret i64 -1
+}
+
+"#;
+
+/// The three functions a list of a given element repr needs, generated per repr.
+///
+/// One three-way comparison over two **words**, and two functions built on it: the lexicographic
+/// order over two lists, and a linear search. Written per repr rather than taking a function
+/// pointer, because an indirect call is the one thing this backend does not have — it is what a
+/// closure would need, and `docs/101` §101.5 lists it as unbuilt.
+///
+/// The order is `Vec<Value>`'s: element by element, and a list that is a prefix of another is less
+/// than it. That is Rust's derived `Ord` on a slice, which is what [`beck_core::Value`] holds.
+fn element_functions(at: u32, heap: &Heap) -> String {
+    let element = heap.element(at);
+    let mut b = Text::new();
+
+    // The word-level comparison. Every element crosses this as an `i64`, which is what it is in the
+    // arena — a real is the bits of a double the store already normalised.
+    let _ = writeln!(
+        b.out,
+        "; element of {}\ndefine internal i64 @\"beck.elem.cmp.{at}\"(i64 %a, i64 %b) {{\nentry:",
+        heap.show(Repr::List(at))
+    );
+    match element {
+        Repr::Str => {
+            b.line("%c = call i64 @\"beck.str.cmp\"(i64 %a, i64 %b)".into());
+            b.line("ret i64 %c".into());
+        }
+        Repr::List(inner) => {
+            b.line(format!(
+                "%c = call i64 @\"beck.list.cmp.{inner}\"(i64 %a, i64 %b)"
+            ));
+            b.line("ret i64 %c".into());
+        }
+        Repr::Obj(inner) => {
+            b.line(format!(
+                "%c = call i64 @\"beck.cmp.{inner}\"(i64 %a, i64 %b)"
+            ));
+            b.line("ret i64 %c".into());
+        }
+        _ => {
+            // A real compares through `beck_core`'s order key; an `Int` is signed; a `Bool` is a 0
+            // or a 1 in the low bit and is therefore either way round.
+            let (ka, kb) = if element == Repr::Float {
+                (b.order_key("%a"), b.order_key("%b"))
+            } else {
+                ("%a".to_string(), "%b".to_string())
+            };
+            let pred = if element == Repr::Int { "s" } else { "u" };
+            b.line(format!("%lt = icmp {pred}lt i64 {ka}, {kb}"));
+            b.line("br i1 %lt, label %less, label %test".into());
+            b.block("test");
+            b.line(format!("%gt = icmp {pred}gt i64 {ka}, {kb}"));
+            b.line("br i1 %gt, label %greater, label %same".into());
+            b.block("less");
+            b.line("ret i64 -1".into());
+            b.block("greater");
+            b.line("ret i64 1".into());
+            b.block("same");
+            b.line("ret i64 0".into());
+        }
+    }
+    b.out.push_str("}\n\n");
+
+    let _ = write!(
+        b.out,
+        r#"define internal i64 @"beck.list.cmp.{at}"(i64 %a, i64 %b) {{
+entry:
+  %la = call i64 @"beck.list.len"(i64 %a)
+  %lb = call i64 @"beck.list.len"(i64 %b)
+  %shorter = icmp ult i64 %la, %lb
+  %n = select i1 %shorter, i64 %la, i64 %lb
+  %pa = call ptr @"beck.list.data"(i64 %a)
+  %pb = call ptr @"beck.list.data"(i64 %b)
+  br label %loop
+loop:
+  %i = phi i64 [ 0, %entry ], [ %j, %next ]
+  %past = icmp uge i64 %i, %n
+  br i1 %past, label %lengths, label %one
+one:
+  %xa = getelementptr inbounds i64, ptr %pa, i64 %i
+  %xb = getelementptr inbounds i64, ptr %pb, i64 %i
+  %wa = load i64, ptr %xa
+  %wb = load i64, ptr %xb
+  %c = call i64 @"beck.elem.cmp.{at}"(i64 %wa, i64 %wb)
+  %decided = icmp ne i64 %c, 0
+  br i1 %decided, label %answer, label %next
+next:
+  %j = add i64 %i, 1
+  br label %loop
+answer:
+  ret i64 %c
+lengths:
+  ; Equal as far as both go, so the shorter one is the smaller: `[1] < [1, 2]`.
+  %lt = icmp ult i64 %la, %lb
+  %gt = icmp ugt i64 %la, %lb
+  %up = select i1 %gt, i64 1, i64 -1
+  %same = icmp eq i64 %la, %lb
+  %r = select i1 %same, i64 0, i64 %up
+  ret i64 %r
+}}
+
+define internal i64 @"beck.list.find.{at}"(i64 %xs, i64 %w) {{
+entry:
+  %n = call i64 @"beck.list.len"(i64 %xs)
+  %p = call ptr @"beck.list.data"(i64 %xs)
+  br label %loop
+loop:
+  %i = phi i64 [ 0, %entry ], [ %j, %next ]
+  %past = icmp uge i64 %i, %n
+  br i1 %past, label %missing, label %one
+one:
+  %at = getelementptr inbounds i64, ptr %p, i64 %i
+  %x = load i64, ptr %at
+  %c = call i64 @"beck.elem.cmp.{at}"(i64 %x, i64 %w)
+  %hit = icmp eq i64 %c, 0
+  br i1 %hit, label %found, label %next
+next:
+  %j = add i64 %i, 1
+  br label %loop
+found:
+  ret i64 %i
+missing:
+  ret i64 -1
+}}
+
+"#
+    );
+    b.out
+}
+
+/// The C library, which is linked in anyway because `main` calls `read` and `write`.
+const LIBC: &str = r#"declare i32 @memcmp(ptr, ptr, i64)
+declare ptr @memcpy(ptr, ptr, i64)
+
+"#;
+
+/// Lists: the four functions that do not care what an element *is*.
+///
+/// A list is one header word — how many — and one word per element, so allocating one, taking a
+/// range out of one and turning one around are word moves and nothing else. Everything that has to
+/// know what a word means is generated per element repr instead: [`element_functions`] writes a
+/// three-way comparison, a lexicographic one over two lists, and a linear search.
+///
+/// `beck.list.copy` is `list_slice`, `list_take` and `list_drop` at once, because all three are "a
+/// range of the elements, clamped" and the clamping is arithmetic the caller does. It costs the
+/// **answer** rather than the list, which is `docs/104` §104.7's rule applied one type over.
+const LISTS: &str = r#"define internal i64 @"beck.list.alloc"(ptr noalias %err, i64 %n, i32 %span) {
+entry:
+  %body = mul i64 %n, 8
+  %total = add i64 %body, 8
+  %off = call i64 @"beck.alloc"(ptr %err, i64 %total, i32 %span)
+  %failed = icmp eq i64 %off, 0
+  br i1 %failed, label %out, label %fill
+fill:
+  %hp = load ptr, ptr @"beck.heap"
+  %p = getelementptr inbounds i8, ptr %hp, i64 %off
+  store i64 %n, ptr %p
+  br label %out
+out:
+  ret i64 %off
+}
+
+define internal i64 @"beck.list.len"(i64 %xs) {
+entry:
+  %hp = load ptr, ptr @"beck.heap"
+  %p = getelementptr inbounds i8, ptr %hp, i64 %xs
+  %n = load i64, ptr %p
+  ret i64 %n
+}
+
+define internal ptr @"beck.list.data"(i64 %xs) {
+entry:
+  %hp = load ptr, ptr @"beck.heap"
+  %at = add i64 %xs, 8
+  %p = getelementptr inbounds i8, ptr %hp, i64 %at
+  ret ptr %p
+}
+
+define internal i64 @"beck.list.copy"(ptr noalias %err, i64 %xs, i64 %from, i64 %count, i32 %span) {
+entry:
+  %r = call i64 @"beck.list.alloc"(ptr %err, i64 %count, i32 %span)
+  %failed = icmp eq i64 %r, 0
+  br i1 %failed, label %out, label %move
+move:
+  %pr = call ptr @"beck.list.data"(i64 %r)
+  %px = call ptr @"beck.list.data"(i64 %xs)
+  %skip = mul i64 %from, 8
+  %at = getelementptr inbounds i8, ptr %px, i64 %skip
+  %bytes = mul i64 %count, 8
+  %ignored = call ptr @memcpy(ptr %pr, ptr %at, i64 %bytes)
+  br label %out
+out:
+  ret i64 %r
+}
+
+define internal i64 @"beck.list.reverse"(ptr noalias %err, i64 %xs, i32 %span) {
+entry:
+  %n = call i64 @"beck.list.len"(i64 %xs)
+  %r = call i64 @"beck.list.alloc"(ptr %err, i64 %n, i32 %span)
+  %failed = icmp eq i64 %r, 0
+  br i1 %failed, label %out, label %walk
+walk:
+  %pr = call ptr @"beck.list.data"(i64 %r)
+  %px = call ptr @"beck.list.data"(i64 %xs)
+  br label %loop
+loop:
+  %i = phi i64 [ 0, %walk ], [ %j, %step ]
+  %done = icmp uge i64 %i, %n
+  br i1 %done, label %out, label %step
+step:
+  %back = sub i64 %n, %i
+  %k = sub i64 %back, 1
+  %src = getelementptr inbounds i64, ptr %px, i64 %i
+  %dst = getelementptr inbounds i64, ptr %pr, i64 %k
+  %w = load i64, ptr %src
+  store i64 %w, ptr %dst
+  %j = add i64 %i, 1
+  br label %loop
+out:
+  ret i64 %r
 }
 
 "#;

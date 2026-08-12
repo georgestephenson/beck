@@ -40,6 +40,7 @@ use beck_llvm::{Artifact, Native, Repr};
 
 mod support;
 use support::heapfix::{self, RECORDS, STILL_REFUSED, UNIONS};
+use support::listfix::{self, LISTS};
 use support::scalar::{
     float_pairs, floats, ints, pairs, render, singles, ARITHMETIC, CONTROL, REALS, RECURSION,
     REFUSED,
@@ -461,12 +462,23 @@ fn the_two_backends_agree_on_text() {
         "inside",
         "opens",
         "closes",
+        "at",
     ] {
         compared += both.agree(name, &textfix::pairs(&ss));
     }
     compared += both.agree("thrice", &textfix::singles(&ss));
     compared += both.agree("cut", &textfix::slices(&ss));
     compared += both.agree("count_of", &textfix::with_char(&ss));
+    compared += both.agree(
+        "at_or",
+        &textfix::pairs(&ss)
+            .into_iter()
+            .map(|mut t| {
+                t.push(Value::Int(-1));
+                t
+            })
+            .collect::<Vec<_>>(),
+    );
     compared += both.agree("repeat", &textfix::repeats(&ss));
 
     // Text inside a record and inside a union, so a `Str` in a field is compared, rebuilt by
@@ -498,6 +510,107 @@ fn the_two_backends_agree_on_text() {
     compared += both.agree("untag", &textfix::singles(&tagged));
 
     println!("{compared} text calls compared, and both backends agreed on every one");
+}
+
+/// Lists, over every backend this machine has.
+///
+/// The sweep that matters is the **pairs**: a lexicographic comparison can be right for `<` and
+/// wrong for `<=`, and one that ran out of elements before it ran out of answer would order `[1]`
+/// and `[1, 2]` the wrong way round. Every element kind that is itself an offset is here too —
+/// text, a list, a record — because comparing the *words* answers correctly for an `Int` and
+/// wrongly for all three.
+#[test]
+fn the_two_backends_agree_on_lists() {
+    let _ = toolchain!();
+    let both = Both::over("lists.beck", LISTS);
+    let xs = listfix::lists();
+    let mut compared = 0;
+    for name in ["size", "empty", "flipped", "held"] {
+        compared += both.agree(name, &listfix::singles(&xs));
+    }
+    for name in [
+        "below",
+        "above",
+        "same",
+        "differ",
+        "not_after",
+        "not_before",
+    ] {
+        compared += both.agree(name, &listfix::pairs(&xs));
+    }
+    for name in ["nth", "nth_or"] {
+        compared += both.agree(name, &listfix::indexed(&xs));
+    }
+    for name in ["has", "at_of"] {
+        compared += both.agree(name, &listfix::searched(&xs));
+    }
+    compared += both.agree("middle", &listfix::ranges(&xs));
+    for name in ["front", "back"] {
+        compared += both.agree(name, &listfix::counted(&xs));
+    }
+    compared += both.agree("three", &[vec![]]);
+    compared += both.agree("none_at_all", &[vec![]]);
+    compared += both.agree("doubled", &singles(&ints(0x5eed_0031, 12)));
+    compared += both.agree(
+        "total",
+        &xs.iter()
+            .map(|v| vec![v.clone(), Value::Int(0), Value::Int(0)])
+            .collect::<Vec<_>>(),
+    );
+    compared += both.agree(
+        "walked",
+        &xs.iter()
+            .map(|v| {
+                vec![
+                    v.clone(),
+                    Value::Int(0),
+                    Value::List(std::sync::Arc::new(Vec::new())),
+                ]
+            })
+            .collect::<Vec<_>>(),
+    );
+
+    // An element that is itself an offset, one kind each.
+    let ts = listfix::texts();
+    for name in ["texts_below", "texts_same"] {
+        compared += both.agree(name, &listfix::pairs(&ts));
+    }
+    let ns = listfix::nested();
+    for name in ["nested_below", "nested_same"] {
+        compared += both.agree(name, &listfix::pairs(&ns));
+    }
+    compared += both.agree("nested_first", &listfix::singles(&ns));
+
+    // A list inside a record and inside a union.
+    let bags: Vec<Value> = xs
+        .iter()
+        .map(|v| heapfix::record("Bag", &[("items", v.clone()), ("rank", Value::Int(1))]))
+        .collect();
+    compared += both.agree("bag_items", &listfix::singles(&bags));
+    for name in ["bag_below", "bag_same"] {
+        compared += both.agree(name, &listfix::pairs(&bags));
+    }
+    compared += both.agree(
+        "rebagged",
+        &bags
+            .iter()
+            .flat_map(|bag| xs.iter().map(move |v| vec![bag.clone(), v.clone()]))
+            .collect::<Vec<_>>(),
+    );
+    compared += both.agree(
+        "bagged",
+        &xs.iter()
+            .map(|v| vec![v.clone(), Value::Int(3)])
+            .collect::<Vec<_>>(),
+    );
+    let holdings: Vec<Value> = xs
+        .iter()
+        .map(|v| heapfix::variant("Holding", "Some_", &[("xs", v.clone())]))
+        .chain([heapfix::variant("Holding", "None_", &[])])
+        .collect();
+    compared += both.agree("held_size", &listfix::singles(&holdings));
+
+    println!("{compared} list calls compared, and every backend agreed on every one");
 }
 
 /// A tag is a variant's rank **by name**, and a field's slot is its rank by name.
@@ -554,6 +667,87 @@ fn a_program_with_no_object_has_no_arena() {
         4,
         "Point, Key, Weighed and Segment"
     );
+}
+
+/// The ceiling on how deep a decoded value may be is one the machine can actually reach.
+///
+/// `beck_llvm::heap::MAX_DEPTH` is 2,048 and the decoder is recursive, so the *real* limit is the
+/// host thread's stack — and for a while it was **smaller than the declared one**: adding a `list`
+/// arm made the frame big enough that a value 800 deep aborted a debug build, which is
+/// [`docs/52`](../../../../docs/52-crypto-and-identifiers-report.md) §52.6's "nine match arms cost
+/// a thousand levels of recursion" in the host rather than the evaluator.
+///
+/// A comment saying the frame is small is not a gate. This decodes a value **at** the ceiling,
+/// built by hand rather than by a compiled program so it needs no toolchain and runs in the same
+/// default-stack thread `cargo test` gives everything else. That is
+/// [`adr/0007`](../../../../docs/adr/0007-evaluator-stack-is-declared-not-discovered.md)'s property
+/// — a ceiling is declared, not discovered — applied to the one place in this backend that recurses
+/// over data somebody else produced.
+#[test]
+fn a_value_at_the_declared_ceiling_decodes_rather_than_aborting() {
+    const SRC: &str = r#"
+union Chain:
+    Link(next: Chain)
+    End()
+
+def deep(c: Chain) -> Chain:
+    return c
+"#;
+    let program = compile("chain.beck", SRC);
+    let module = beck_llvm::module(&program);
+    let repr = module.signature("deep").expect("compiles").ret;
+
+    // The blob, by hand: `End()` at the bottom and a `Link` per level above it. Written rather than
+    // encoded from a `Value`, because building the `Value` is the thing being tested.
+    let (end, link) = {
+        let beck_llvm::Repr::Obj(at) = repr else {
+            panic!("a union is an object")
+        };
+        let l = module.heap.layout(at);
+        (
+            u64::from(l.tag_of(Some("End")).expect("End")),
+            u64::from(l.tag_of(Some("Link")).expect("Link")),
+        )
+    };
+    let mut blob: Vec<u8> = vec![0; 8];
+    let mut cell = blob.len() as u64;
+    blob.extend_from_slice(&end.to_ne_bytes());
+    // One `End` and `MAX_DEPTH - 1` `Link`s, so the whole value is exactly `MAX_DEPTH` deep —
+    // the ceiling counts nested values and the innermost one is the first of them.
+    for _ in 0..beck_llvm::heap::MAX_DEPTH - 1 {
+        let here = blob.len() as u64;
+        blob.extend_from_slice(&link.to_ne_bytes());
+        blob.extend_from_slice(&cell.to_ne_bytes());
+        cell = here;
+    }
+
+    let value = module
+        .heap
+        .decode(cell, repr, &blob)
+        .expect("a value at the ceiling decodes");
+    // …and it really is that deep, so this did not pass by decoding something short.
+    let mut depth = 0usize;
+    let mut at = &value;
+    while let Value::Data(record) = at {
+        match record.fields.get("next") {
+            Some(next) => {
+                depth += 1;
+                at = next;
+            }
+            None => break,
+        }
+    }
+    assert_eq!(depth, beck_llvm::heap::MAX_DEPTH - 1);
+
+    // One level past it is a message rather than a deeper walk.
+    let here = blob.len() as u64;
+    blob.extend_from_slice(&link.to_ne_bytes());
+    blob.extend_from_slice(&cell.to_ne_bytes());
+    let why = module
+        .heap
+        .decode(here, repr, &blob)
+        .expect_err("one past the ceiling is refused");
+    assert!(why.contains("nested more than"), "{why}");
 }
 
 /// The literal pool is a function of the program, and of nothing else.
@@ -792,6 +986,97 @@ fn a_slice_costs_its_answer_and_not_the_string_it_came_from() {
     assert_eq!(one[0], PER_CHARACTER);
 }
 
+/// Building text in a loop costs the **square** of what it builds, and the gate has no clock in it.
+///
+/// `docs/104` §104.6's largest cost, asserted rather than only measured. `repeat(s, n, "")` builds
+/// `n` strings whose lengths are `|s|, 2|s|, …, n|s|`, so the arena it leaves is `Θ(n²)` — where the
+/// evaluator's is `Θ(n)`, because `docs/70` gave it an in-place `push_str` when `liveness` proves
+/// the accumulator is a last use and an arena with no ownership in it cannot.
+///
+/// `measure_native.rs` prints the wall clock and asserts nothing about it, because that comparison
+/// runs the other way in a debug build. This is the same claim with the clock taken out: four times
+/// the steps has to cost about sixteen times the arena, and a run in which it cost four would mean
+/// this backend had grown the analysis — which is a finding rather than a passing test.
+#[test]
+fn an_accumulator_costs_the_square_of_what_it_builds() {
+    let _ = toolchain!();
+    let both = Both::over("text.beck", TEXT);
+    let unit = Value::str_("abcdefgh");
+    let mut sizes = Vec::new();
+    for n in [500usize, 2000] {
+        let args = [unit.clone(), Value::Int(n as i64), Value::str_("")];
+        let (_, bytes) = both.native.call_sized("repeat", &args).expect("runs");
+        sizes.push((n, bytes));
+    }
+    let (small, big) = (sizes[0], sizes[1]);
+    let growth = big.1 as f64 / small.1 as f64;
+    let steps = (big.0 / small.0) as f64;
+    assert!(
+        growth > steps * steps * 0.9,
+        "four times the steps left {growth:.1}× the arena, and a quadratic accumulator leaves \
+         about {:.0}× — this backend appears to have grown an ownership analysis, which `docs/104` \
+         §104.6 says it cannot have",
+        steps * steps
+    );
+    println!(
+        "repeat({}) left {} bytes and repeat({}) left {} — {growth:.1}× for {steps:.0}× the steps",
+        small.0, small.1, big.0, big.1
+    );
+}
+
+/// A slice of a list costs its answer, and the loop that walks one stays linear.
+///
+/// `a_slice_costs_its_answer_and_not_the_string_it_came_from` one type over, and for the same
+/// reason: `docs/69` §69.7 found the quadratic in a list and `docs/70` §70.2 found it in text, so
+/// the shape gate belongs on both. One element sliced out is two words — a header and the element —
+/// so `n` steps are `16n` bytes, and a `list_slice` that copied what it was taken *from* would be
+/// `O(n²)` with no clock in the measurement.
+#[test]
+fn a_list_slice_costs_its_answer_and_not_the_list_it_came_from() {
+    let _ = toolchain!();
+    let both = Both::over("lists.beck", LISTS);
+    // A header word and one element.
+    const PER_ELEMENT: usize = 16;
+    let mut sizes = Vec::new();
+    for n in [200usize, 1600] {
+        let xs = Value::List(std::sync::Arc::new(
+            (0..n as i64).map(Value::Int).collect::<Vec<_>>(),
+        ));
+        let empty = Value::List(std::sync::Arc::new(Vec::new()));
+        let args = [xs, Value::Int(0), empty];
+        let arguments = both
+            .native
+            .module()
+            .heap
+            .encode_args(
+                &args,
+                &both.native.module().signature("walked").unwrap().params,
+            )
+            .expect("encodes")
+            .1
+            .len();
+        let (_, bytes) = both.native.call_sized("walked", &args).expect("runs");
+        let allocated = bytes - arguments;
+        assert_eq!(
+            allocated,
+            n * PER_ELEMENT,
+            "walked over {n} elements should allocate {} bytes and allocated {allocated}",
+            n * PER_ELEMENT
+        );
+        sizes.push((n, allocated));
+    }
+    let (small, big) = (sizes[0], sizes[1]);
+    println!(
+        "walked({}) allocated {} bytes and walked({}) allocated {} — {} bytes an element at both \
+         sizes",
+        small.0,
+        small.1,
+        big.0,
+        big.1,
+        (big.1 - small.1) / (big.0 - small.0)
+    );
+}
+
 /// The reserved first word, plus one object of `words` words: what the host writes for an argument.
 fn heap_bytes(words: usize) -> usize {
     8 + words * 8
@@ -812,7 +1097,7 @@ fn what_cannot_be_compiled_is_refused_by_name_and_with_a_reason() {
     let both = Both::over("refused.beck", REFUSED);
 
     for (name, expect) in [
-        ("takes_a_list", "parameter `xs` is a `list`"),
+        ("grows_a_list", "`list_append` grows a list"),
         (
             "renders_a_number",
             "`str` converts between text and a number",
@@ -822,7 +1107,7 @@ fn what_cannot_be_compiled_is_refused_by_name_and_with_a_reason() {
             "reads_the_clock",
             "`now` is not one of the scalar primitives",
         ),
-        ("calls_something_refused", "calls `takes_a_list`"),
+        ("calls_something_refused", "calls `grows_a_list`"),
     ] {
         let reason = both
             .refusal(name)
@@ -842,7 +1127,7 @@ fn what_cannot_be_compiled_is_refused_by_name_and_with_a_reason() {
     // an error rather than an evaluator call wearing a native backend's name.
     let err = both
         .native
-        .call("takes_a_list", &[Value::Int(1)])
+        .call("grows_a_list", &[Value::Int(1)])
         .expect_err("a refused definition is not callable natively");
     assert!(err.message.contains("did not compile natively"), "{err}");
 }
@@ -853,22 +1138,22 @@ fn what_cannot_be_compiled_is_refused_by_name_and_with_a_reason() {
 /// list in prose goes stale where a list with a test attached cannot (`docs/83` §83.7). Each of
 /// these goes red the day its row starts compiling, which is the day the row should be deleted.
 ///
-/// The text row was deleted that way: `docs/104` gave a `Str` a layout, so what is left of text
-/// here is the primitives that answer with a collection or read a Unicode table, one row each.
+/// Two rows were deleted that way: `docs/104` gave a `Str` a layout and `docs/105` gave a `list`
+/// one. What is left of both is the primitives — text that reads a Unicode table or renders a
+/// number, and a collection that **grows** or takes a **function**.
 #[test]
 fn what_the_heap_does_not_reach_is_refused_by_name() {
     let program = compile("still-refused.beck", STILL_REFUSED);
     let module = beck_llvm::module(&program);
     for (name, expect) in [
-        ("takes_a_list", "a `list`"),
         (
             "renders_a_number",
             "`str` converts between text and a number",
         ),
         ("splits_a_string", "`str_split` answers with a list"),
         ("upcases", "`str_upper` is Unicode case mapping"),
-        ("takes_a_boxed", "whose field `items` is a `list`"),
-        ("matches_a_held", "whose field `values` is a `list`"),
+        ("grows", "`list_append` grows a list"),
+        ("mapped", "is used as a value rather than called"),
         ("is_generic", "generic over T"),
         (
             "reads_the_clock",
@@ -896,8 +1181,80 @@ fn what_the_heap_does_not_reach_is_refused_by_name() {
             .iter()
             .map(|f| f.name.to_string())
             .collect::<Vec<_>>(),
-        vec!["names_it".to_string(), "scalar_and_fine".to_string()]
+        vec![
+            "double_it".to_string(),
+            "names_it".to_string(),
+            "reads_a_list".to_string(),
+            "scalar_and_fine".to_string()
+        ]
     );
+}
+
+/// A refusal's reason is a **claim**, and this asks whether the claim is true.
+///
+/// `docs/104` §104.4 refused `str_index_of` on the grounds that it "answers with an `Option`,
+/// whose layout this backend resolves from a program's own types and not from the prelude's".
+/// That sentence was false: the prelude's `Option` has had a layout since
+/// [`docs/101`](../../../../docs/101-the-heap-report.md), and `maybe(n) -> Option[Int]` compiled in
+/// the very fixture beside it. Every gate around the refusal was green, because each asserted that
+/// the refusal *said* something and none asked whether what it said was *so* — `docs/84` §84.5's
+/// pattern, in the one place this project had not looked for it.
+///
+/// So: every type a refusal blames for having no layout is asked whether it has one, and the
+/// control is the type that broke. It goes red the day a blamed type acquires a layout and the
+/// refusal that blames it is not deleted.
+#[test]
+fn a_refusal_that_blames_a_type_is_asked_whether_that_type_has_one() {
+    const PROBE: &str = r#"
+model Held:
+    n: Int
+
+def a_list(xs: list[Int]) -> Int:
+    return list_len(xs)
+
+def a_map(m: Map[Str, Int]) -> Int:
+    return map_len(m)
+
+def an_option(n: Int) -> Option[Int]:
+    return Some(value = n)
+
+def a_record(h: Held) -> Int:
+    return h.n
+
+## The definition the false reason was about. It is on the compiled side now, which is the
+## specific half of this gate: the general half below asserts the *fact* the reason denied.
+def finds(a: Str, b: Str) -> Option[Int]:
+    return str_index_of(a, b)
+"#;
+    let program = compile("probe.beck", PROBE);
+    let module = beck_llvm::module(&program);
+    let mut heap = module.heap.clone();
+    let ty_of = |name: &str| program.defs[name].params[0].2.clone();
+
+    // Blamed by a refusal, and it really has no layout. One row, because `docs/105` took the
+    // other one off this list — which is the direction this gate is meant to move in.
+    let why = heap
+        .repr(&ty_of("a_map"), &program)
+        .expect_err("this is what a refusal blames");
+    assert!(
+        why.contains("Map"),
+        "`a_map`'s parameter should be refused as a `Map`, and the reason is {why:?}"
+    );
+
+    // …and the control, which is the assertion that did not exist. `Option[Int]` is the prelude's
+    // and has a layout, so no refusal may blame it for not having one.
+    let option = program.defs["an_option"].ret.clone();
+    assert!(
+        heap.repr(&option, &program).is_ok(),
+        "`Option[Int]` has a layout, and a refusal that says otherwise is wrong"
+    );
+    for name in ["an_option", "a_record", "finds", "a_list"] {
+        assert!(
+            module.signature(name).is_some(),
+            "`{name}` compiles — a primitive that answers with a prelude union is not a wall, and \
+             this program is not passing by refusing everything"
+        );
+    }
 }
 
 /// The refusal a call *inherits*, and the fixed point that computes it.
@@ -909,14 +1266,14 @@ fn what_the_heap_does_not_reach_is_refused_by_name() {
 fn a_refusal_travels_to_whoever_calls_it() {
     let _ = toolchain!();
     let src = r#"
-## A `list` rather than a record or a `Str`: `docs/101` gave the record a layout and `docs/104`
-## gave text one, and what a refusal has to travel *from* is something the heap still does not
-## reach.
-def bottom(xs: list[Int]) -> Int:
-    return list_len(xs)
+## A `Map` rather than a record, a `Str` or a `list`: `docs/101` gave the record a layout,
+## `docs/104` gave text one and `docs/105` gave a list one, and what a refusal has to travel *from*
+## is something the heap still does not reach.
+def bottom(m: Map[Str, Int]) -> Int:
+    return map_len(m)
 
 def middle(n: Int) -> Int:
-    return bottom([n])
+    return bottom({})
 
 def top(n: Int) -> Int:
     return middle(n) + 1
@@ -925,7 +1282,7 @@ def top(n: Int) -> Int:
 ## round, so a single pass in either direction keeps one of them.
 def ping(n: Int) -> Int:
     if n == 0:
-        return bottom([])
+        return bottom({})
     return pong(n - 1)
 
 def pong(n: Int) -> Int:
@@ -1121,13 +1478,18 @@ fn what_is_not_compiled_falls_back_and_says_so() {
         .expect("builds")
         .expect("a toolchain, checked above");
 
-    let refused = &program.defs["takes_a_list"].body;
+    let refused = &program.defs["grows_a_list"].body;
     assert!(!native.compiled(refused));
 
     let f = beck_eval::on_the_evaluator_stack(|| native.function(refused).expect("prepares"));
     let xs = Value::List(Arc::new(vec![Value::Int(2), Value::Int(3)]));
-    let got = beck_eval::on_the_evaluator_stack(|| f(vec![xs]).expect("the fallback answers"));
-    assert_eq!(got, Value::Int(2));
+    let got = beck_eval::on_the_evaluator_stack(|| {
+        f(vec![xs, Value::Int(4)]).expect("the fallback answers")
+    });
+    assert_eq!(
+        got,
+        Value::List(Arc::new(vec![Value::Int(2), Value::Int(3), Value::Int(4)]))
+    );
 }
 
 // -------------------------------------------------------------------------------------------
