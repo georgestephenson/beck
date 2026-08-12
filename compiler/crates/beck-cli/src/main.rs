@@ -1317,12 +1317,19 @@ fn native(
                 text.parse()
                     .with_context(|| format!("`{text}` is not a Bool"))?,
             ),
-            // A record has no notation on a command line — `Point(x=1, y=2)` would be a parser for
-            // the language's own literals, written a second time and in a worse place. The
-            // definition still compiled, and `--out` writes the artefact that can be called.
-            beck_llvm::Repr::Obj(_) => bail!(
-                "`{name}` takes a record or a union, and `--call` can only pass Int, Float and Bool"
-            ),
+            // Text is passed as written. There is no quoting to get wrong: the shell already
+            // separated the arguments, so the argument *is* the string.
+            beck_llvm::Repr::Str => beck_core::Value::str_(text),
+            // A record and a list have no notation on a command line — `Point(x=1, y=2)` or
+            // `[1, 2]` would be a parser for the language's own literals, written a second time and
+            // in a worse place. The definition still compiled, and `--out` writes the artefact that
+            // can be called.
+            beck_llvm::Repr::List(_) | beck_llvm::Repr::Map(_) | beck_llvm::Repr::Obj(_) => {
+                bail!(
+                    "`{name}` takes a collection or a record, and `--call` can only pass Int, \
+                     Float, Bool and Str"
+                )
+            }
         });
     }
     match compiled.call(name, &values) {

@@ -35,14 +35,17 @@ use std::time::Duration;
 use beck_clif::Artifact as ClifArtifact;
 use beck_core::backend::Backend;
 use beck_core::{Program, Value};
-use beck_llvm::Artifact as LlvmArtifact;
+use beck_llvm::{Artifact as LlvmArtifact, Repr};
 
 mod support;
 use support::heapfix::{self, RECORDS, STILL_REFUSED, UNIONS};
+use support::listfix::{self, LISTS};
+use support::mapfix::{self, MAPS};
 use support::scalar::{
     float_pairs, floats, ints, pairs, render, singles, ARITHMETIC, CONTROL, REALS, RECURSION,
     REFUSED,
 };
+use support::textfix::{self, TEXT};
 
 /// One call may not take longer than this. Nothing here should come close; it is the difference
 /// between a red test and a hung suite.
@@ -455,6 +458,303 @@ fn the_three_backends_agree_on_unions() {
     println!("{compared} union calls compared across every backend on this machine");
 }
 
+/// Text, over every backend this machine has.
+///
+/// `native.rs`'s sweep with Cranelift added, and it is the sweep that matters rather than the
+/// sample: the two emitters write the search, the clamp and the three-way comparison twice, so
+/// this is where writing them twice is worth something.
+#[test]
+fn the_three_backends_agree_on_text() {
+    linker!();
+    let all = All::over("text.beck", TEXT);
+    let ss = textfix::strings();
+    let mut compared = 0;
+    for name in [
+        "size", "empty", "first", "rest", "greeting", "is_yes", "echoed", "which", "tag", "thrice",
+    ] {
+        compared += all.agree(name, &textfix::singles(&ss));
+    }
+    for name in [
+        "joined",
+        "below",
+        "above",
+        "same",
+        "differ",
+        "not_after",
+        "not_before",
+        "inside",
+        "opens",
+        "closes",
+        "at",
+    ] {
+        compared += all.agree(name, &textfix::pairs(&ss));
+    }
+    compared += all.agree("cut", &textfix::slices(&ss));
+    compared += all.agree("count_of", &textfix::with_char(&ss));
+    compared += all.agree(
+        "at_or",
+        &textfix::pairs(&ss)
+            .into_iter()
+            .map(|mut t| {
+                t.push(Value::Int(-1));
+                t
+            })
+            .collect::<Vec<_>>(),
+    );
+    compared += all.agree("repeat", &textfix::repeats(&ss));
+
+    // Building text out of something that is not text, and taking an `Option` apart without a
+    // `match` — the primitives `docs/105`'s and `docs/106`'s layouts made reachable.
+    compared += all.agree("shown", &textfix::integers());
+    compared += all.agree(
+        "shown_bool",
+        &[vec![Value::Bool(true)], vec![Value::Bool(false)]],
+    );
+    compared += all.agree("shown_str", &textfix::singles(&ss));
+    compared += all.agree(
+        "repeated",
+        &textfix::repeats(&ss)
+            .into_iter()
+            .map(|mut t| {
+                t.truncate(2);
+                t
+            })
+            .collect::<Vec<_>>(),
+    );
+    compared += all.agree("glued", &textfix::joins(&ss));
+    for name in ["or_else", "present"] {
+        compared += all.agree(
+            name,
+            &textfix::options()
+                .into_iter()
+                .map(|mut t| {
+                    if name == "present" {
+                        t.truncate(1);
+                    }
+                    t
+                })
+                .collect::<Vec<_>>(),
+        );
+    }
+    compared += all.agree(
+        "sliced_or",
+        &textfix::with_char(&ss)
+            .into_iter()
+            .map(|mut t| {
+                // `(s, c, i, acc)` for `count_of`; `sliced_or` wants `(s, i, fallback)`.
+                t.remove(1);
+                t
+            })
+            .collect::<Vec<_>>(),
+    );
+
+    let named: Vec<Value> = ss
+        .iter()
+        .map(|s| heapfix::record("Named", &[("label", s.clone()), ("rank", Value::Int(1))]))
+        .collect();
+    compared += all.agree("label_of", &textfix::singles(&named));
+    for name in ["named_below", "named_same"] {
+        compared += all.agree(name, &textfix::pairs(&named));
+    }
+    compared += all.agree(
+        "relabel",
+        &named
+            .iter()
+            .flat_map(|n| ss.iter().map(move |s| vec![n.clone(), s.clone()]))
+            .collect::<Vec<_>>(),
+    );
+    let tagged: Vec<Value> = ss
+        .iter()
+        .map(|s| heapfix::variant("Tagged", "Word", &[("text", s.clone())]))
+        .chain([heapfix::variant(
+            "Tagged",
+            "Number",
+            &[("n", Value::Int(3))],
+        )])
+        .collect();
+    compared += all.agree("untag", &textfix::singles(&tagged));
+
+    println!("{compared} text calls compared across every backend on this machine");
+}
+
+/// Lists, over every backend this machine has.
+///
+/// The sweep that matters is the **pairs**: a lexicographic comparison can be right for `<` and
+/// wrong for `<=`, and one that ran out of elements before it ran out of answer would order `[1]`
+/// and `[1, 2]` the wrong way round. Every element kind that is itself an offset is here too —
+/// text, a list, a record — because comparing the *words* answers correctly for an `Int` and
+/// wrongly for all three.
+#[test]
+fn the_three_backends_agree_on_lists() {
+    linker!();
+    let all = All::over("lists.beck", LISTS);
+    let xs = listfix::lists();
+    let mut compared = 0;
+    for name in ["size", "empty", "flipped", "held"] {
+        compared += all.agree(name, &listfix::singles(&xs));
+    }
+    for name in [
+        "below",
+        "above",
+        "same",
+        "differ",
+        "not_after",
+        "not_before",
+    ] {
+        compared += all.agree(name, &listfix::pairs(&xs));
+    }
+    for name in ["nth", "nth_or"] {
+        compared += all.agree(name, &listfix::indexed(&xs));
+    }
+    for name in ["has", "at_of"] {
+        compared += all.agree(name, &listfix::searched(&xs));
+    }
+    compared += all.agree("middle", &listfix::ranges(&xs));
+    for name in ["front", "back"] {
+        compared += all.agree(name, &listfix::counted(&xs));
+    }
+    compared += all.agree("three", &[vec![]]);
+    compared += all.agree("none_at_all", &[vec![]]);
+    compared += all.agree("doubled", &singles(&ints(0x5eed_0031, 12)));
+    compared += all.agree(
+        "total",
+        &xs.iter()
+            .map(|v| vec![v.clone(), Value::Int(0), Value::Int(0)])
+            .collect::<Vec<_>>(),
+    );
+    compared += all.agree(
+        "walked",
+        &xs.iter()
+            .map(|v| {
+                vec![
+                    v.clone(),
+                    Value::Int(0),
+                    Value::List(std::sync::Arc::new(Vec::new())),
+                ]
+            })
+            .collect::<Vec<_>>(),
+    );
+
+    // An element that is itself an offset, one kind each.
+    let ts = listfix::texts();
+    for name in ["texts_below", "texts_same"] {
+        compared += all.agree(name, &listfix::pairs(&ts));
+    }
+    let ns = listfix::nested();
+    for name in ["nested_below", "nested_same"] {
+        compared += all.agree(name, &listfix::pairs(&ns));
+    }
+    compared += all.agree("nested_first", &listfix::singles(&ns));
+
+    // A list inside a record and inside a union.
+    let bags: Vec<Value> = xs
+        .iter()
+        .map(|v| heapfix::record("Bag", &[("items", v.clone()), ("rank", Value::Int(1))]))
+        .collect();
+    compared += all.agree("bag_items", &listfix::singles(&bags));
+    for name in ["bag_below", "bag_same"] {
+        compared += all.agree(name, &listfix::pairs(&bags));
+    }
+    compared += all.agree(
+        "rebagged",
+        &bags
+            .iter()
+            .flat_map(|bag| xs.iter().map(move |v| vec![bag.clone(), v.clone()]))
+            .collect::<Vec<_>>(),
+    );
+    compared += all.agree(
+        "bagged",
+        &xs.iter()
+            .map(|v| vec![v.clone(), Value::Int(3)])
+            .collect::<Vec<_>>(),
+    );
+    let holdings: Vec<Value> = xs
+        .iter()
+        .map(|v| heapfix::variant("Holding", "Some_", &[("xs", v.clone())]))
+        .chain([heapfix::variant("Holding", "None_", &[])])
+        .collect();
+    compared += all.agree("held_size", &listfix::singles(&holdings));
+
+    println!("{compared} list calls compared, and every backend agreed on every one");
+}
+
+/// Maps, over every backend this machine has.
+///
+/// The sweep that matters is `keyed`: a binary search ends four ways — on the key, below every key,
+/// above every key, and **between** two — and the last is the one a window that shrinks wrongly
+/// never leaves. And the pairs, because `PMap`'s order is pair by pair and then by length, so a
+/// comparison that ran out of entries before it ran out of answer orders a prefix the wrong way.
+#[test]
+fn the_three_backends_agree_on_maps() {
+    linker!();
+    let all = All::over("maps.beck", MAPS);
+    let ms = mapfix::maps();
+    let mut compared = 0;
+    for name in ["size", "names", "totals", "is_nothing", "held"] {
+        compared += all.agree(name, &mapfix::singles(&ms));
+    }
+    for name in [
+        "below",
+        "above",
+        "same",
+        "differ",
+        "not_after",
+        "not_before",
+    ] {
+        compared += all.agree(name, &mapfix::pairs(&ms));
+    }
+    for name in ["lookup", "lookup_or", "holds"] {
+        compared += all.agree(name, &mapfix::keyed(&ms));
+    }
+    compared += all.agree("nothing", &[vec![]]);
+    compared += all.agree(
+        "total",
+        &ms.iter()
+            .map(|m| vec![m.clone(), Value::Int(0), Value::Int(0)])
+            .collect::<Vec<_>>(),
+    );
+
+    // A value that is itself an offset.
+    let ns = mapfix::nested();
+    for name in ["nested_below", "nested_same"] {
+        compared += all.agree(name, &mapfix::pairs(&ns));
+    }
+    compared += all.agree("nested_at", &mapfix::keyed(&ns));
+
+    // A map inside a record and inside a union.
+    let cs: Vec<Value> = ms
+        .iter()
+        .map(|m| {
+            heapfix::record(
+                "Counts",
+                &[("tally", m.clone()), ("label", Value::str_("x"))],
+            )
+        })
+        .collect();
+    compared += all.agree("counts_tally", &mapfix::singles(&cs));
+    compared += all.agree("counts_below", &mapfix::pairs(&cs));
+    compared += all.agree(
+        "recounted",
+        &cs.iter()
+            .flat_map(|c| ms.iter().map(move |m| vec![c.clone(), m.clone()]))
+            .collect::<Vec<_>>(),
+    );
+    compared += all.agree(
+        "counted",
+        &ms.iter()
+            .map(|m| vec![m.clone(), Value::str_("k")])
+            .collect::<Vec<_>>(),
+    );
+    let hs: Vec<Value> = ms
+        .iter()
+        .map(|m| heapfix::variant("Holding", "Held", &[("m", m.clone())]))
+        .chain([heapfix::variant("Holding", "Empty", &[])])
+        .collect();
+    compared += all.agree("held_size", &mapfix::singles(&hs));
+
+    println!("{compared} map calls compared, and every backend agreed on every one");
+}
+
 /// The same shape gate the other backend has, with the same two sizes and the same arithmetic.
 ///
 /// Written again rather than shared because the *allocator* is written again: this is where a
@@ -473,6 +773,36 @@ fn the_arena_costs_the_same_per_object_at_every_size() {
             bytes,
             8 + 2 * 8 + n * 5 * 8,
             "chain({n}) left {bytes} bytes of arena"
+        );
+    }
+}
+
+/// A slice costs its answer here too, and the allocator is written again so this is written again.
+///
+/// `native.rs`'s gate, at the same two sizes and with the same arithmetic. What it catches on
+/// *this* backend is a `beck.str.slice` that copied the string it was taken from — which the
+/// differential cannot see, because copying too much still answers correctly.
+#[test]
+fn a_slice_costs_its_answer_and_not_the_string_it_came_from() {
+    linker!();
+    let all = All::over("text.beck", TEXT);
+    const PER_CHARACTER: usize = 24;
+    for n in [200usize, 1600] {
+        let s = Value::str_("x".repeat(n));
+        let args = [s.clone(), Value::Int(0), Value::str_("")];
+        let arguments = all
+            .clif
+            .module()
+            .heap
+            .encode_args(&args, &[Repr::Str, Repr::Int, Repr::Str])
+            .expect("encodes")
+            .1
+            .len();
+        let (_, bytes) = all.clif.call_sized("walked", &args).expect("runs");
+        assert_eq!(
+            bytes - arguments,
+            n * PER_CHARACTER,
+            "walked over {n} characters left {bytes} bytes of arena"
         );
     }
 }
@@ -587,8 +917,8 @@ fn what_cannot_be_compiled_is_refused_by_name_and_with_a_reason() {
     linker!();
     let all = All::over("refused.beck", REFUSED);
     for name in [
-        "takes_a_list",
-        "builds_a_string",
+        "grows_a_list",
+        "renders_a_real",
         "is_generic",
         "reads_the_clock",
         "calls_something_refused",
@@ -605,7 +935,7 @@ fn what_cannot_be_compiled_is_refused_by_name_and_with_a_reason() {
     );
     assert_eq!(
         all.refusal("calls_something_refused"),
-        Some("calls `takes_a_list`, which does not compile"),
+        Some("calls `grows_a_list`, which does not compile"),
         "the fixed point has to name what it was waiting on"
     );
 }
@@ -622,15 +952,18 @@ fn the_seam_runs_the_compiled_half_and_falls_back_for_the_rest() {
         .expect("there is a linker");
     assert_eq!(dev.name(), "cranelift");
     let scalar = &program.defs["scalar_and_fine"].body;
-    let listy = &program.defs["takes_a_list"].body;
+    let listy = &program.defs["grows_a_list"].body;
     assert!(dev.compiled(scalar), "the scalar definition is compiled");
-    assert!(!dev.compiled(listy), "the one that takes a list is not");
+    assert!(!dev.compiled(listy), "the one that grows a list is not");
     let f = dev.function(scalar).expect("prepares");
     assert_eq!(f(vec![Value::Int(21)]).expect("runs"), Value::Int(42));
     // …and the refused one still answers, from the tree-walker behind the seam.
     let g = dev.function(listy).expect("prepares");
     let xs = Value::List(Arc::new(vec![Value::Int(2), Value::Int(3)]));
-    assert_eq!(g(vec![xs]).expect("runs"), Value::Int(2));
+    assert_eq!(
+        g(vec![xs, Value::Int(4)]).expect("runs"),
+        Value::List(Arc::new(vec![Value::Int(2), Value::Int(3), Value::Int(4)]))
+    );
 }
 
 /// Every corpus program produces an object the linker accepts.

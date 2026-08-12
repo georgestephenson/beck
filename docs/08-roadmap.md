@@ -442,11 +442,15 @@ subject is an image manifest, and a release publishes tarballs (§104.6).
 [`80`](80-a-scope-owns-its-children-report.md) §80.5's item rather than this bullet's. **Three
 half-built**: the codegen bullet has **both** of §5.2's code generators
 ([`93`](93-llvm-backend-report.md), [`97`](97-cranelift-report.md)) and a heap for the *algebraic*
-half of what the language stores ([`101`](101-the-heap-report.md)) — a record, a union and a newtype
-compile, and text, collections, closures and every effect do not; Mode B has the mode, the bundle,
+half of what the language stores ([`101`](101-the-heap-report.md)) plus **text**
+([`105`](105-text-on-the-heap-report.md)) and **reading a collection**
+([`106`](106-lists-arrive-read-only-report.md), [`107`](107-a-map-arrives-read-only-report.md)) — a
+record, a union, a newtype, a `Str`, a `list[T]` and a `Map[K, V]` compile, and a closure, every
+effect, `Html` and the loop that *grows* a collection do not; Mode B has the mode, the bundle,
 the data patch, the reconciliation, a browser that runs it and an offline queue, without codegen —
-which waits on the half of that heap that is not built, since a page is `Html` and `Str` all the way
-down ([`94`](94-mode-b-report.md) §94.8, [`101`](101-the-heap-report.md) §101.10); and the
+which waits on the half of that heap that is not built — and it is the **collection** half rather
+than the text half, since a page is a tree of children
+([`94`](94-mode-b-report.md) §94.8, [`105`](105-text-on-the-heap-report.md) §105.10); and the
 playground has rungs A and B and not rung C, which is Phase 4's
 ([`98`](98-playground-report.md) §98.7). **Client polish is built too**
 ([`100`](100-client-polish-report.md)) except for lazy routes, which wait on the same
@@ -876,9 +880,17 @@ and Cranelift on every call, with the two emitters held to accepting and refusin
 definitions. ~~What still bounds *both* is the **heap**: no record, list, string or effect compiles~~ — the
 **algebraic half is built** ([`101`](101-the-heap-report.md)): a `model`, a `union` and a `newtype`
 have a layout, an arena and a place on the wire, and 283 definitions across the tree compile where
-187 did. What is left of that bullet is text, collections, closures and the effects
-([`101`](101-the-heap-report.md) §101.5), which is still Phase 4's Lane E and still the prerequisite
-Mode B codegen is behind ([`94`](94-mode-b-report.md) §94.8). Mode B and
+187 did. **Text is built too** ([`105`](105-text-on-the-heap-report.md)) — a `Str` is two counts and
+its bytes, a literal is an offset into a pool the host writes, and **344** definitions compile where
+283 did, with the corpus going 4 → 28. **Reading a collection is built too**
+([`106`](106-lists-arrive-read-only-report.md), [`107`](107-a-map-arrives-read-only-report.md)) — a
+`list[T]` and a `Map[K, V]` have layouts and **625** definitions compile where 344 did, with **nine
+corpus folds** among them — and the operations that *grow* one are **refused** rather than shipped
+with a worse asymptote than the evaluator's, which is §101.5's forecast cashed. What is left of that
+bullet is closures, the effects, `Html` and growing a collection
+([`107`](107-a-map-arrives-read-only-report.md) §107.4), which is still Phase 4's Lane E and still the prerequisite Mode B codegen is behind
+([`94`](94-mode-b-report.md) §94.8) — and §105.10 corrects which half of that prerequisite text was:
+`Html` is a tree of children, so it follows the **collection** row rather than the text one. Mode B and
 ~~client polish~~ — **built** ([`100`](100-client-polish-report.md)), and it was not a Lane B item
 either: a route is a field of `Session`, so the engine, the splitter and the plan are untouched and
 the work is at the edges; the LSP; ~~SQL read models, pgwire~~ — **built**
@@ -935,7 +947,7 @@ boundaries are real directories.
 | **B — runtime and views** | `beck-rt/`, `beck-core/src/{engine,plan,incremental,pmap,signal}.rs` | Clock injection; the shared dataflow's release policy, history constant and render lock; SQL read models, pgwire, query fusion; Mode B's server half | Nothing in A, C, E or F |
 | **C — front end and tooling** | `beck-syntax/`, `beck-cli/`, `beck-diag/` | The recursion bound; the two syntax decisions; Unicode and UTS #39; LSP; `test --update`; fuzzing | A, if a syntax decision changes what the checker sees |
 | **D — process and supply chain** | `docs/`, `.github/`, `deny.toml`, `SECURITY.md`, `release/`, `install.sh` | Threat model, disclosure policy, memory-safety roadmap, `pending_security`, the four retargeted §12 rows, SLSA/SBOM/trusted publishing, ~~the release pipeline and the installer~~ ([`104`](104-the-release-and-the-installer-report.md)) | Nothing in code — **except that the release lands in `Cargo.toml`, a `build.rs` and `--version`**, which §104.4 is about and which this cell had assumed away |
-| **E — backends** | `beck-eval/`, `beck-llvm/`, `beck-clif/`, `beck-core/src/backend.rs`, any new codegen crate | ~~LLVM backend, native codegen, the differential suite~~ — **built** ([`93`](93-llvm-backend-report.md)), ~~and Cranelift~~ — **built** ([`97`](97-cranelift-report.md)), ~~and a heap~~ — **half built** ([`101`](101-the-heap-report.md)): records, unions and newtypes. What is left is text, collections, closures and the effects | Nothing — the seam is why ([`19`](19-phase-1-report.md) §19.9), and [`93`](93-llvm-backend-report.md) is the first thing to test that claim: not one line of `beck-rt` changed |
+| **E — backends** | `beck-eval/`, `beck-llvm/`, `beck-clif/`, `beck-core/src/backend.rs`, any new codegen crate | ~~LLVM backend, native codegen, the differential suite~~ — **built** ([`93`](93-llvm-backend-report.md)), ~~and Cranelift~~ — **built** ([`97`](97-cranelift-report.md)), ~~and a heap~~ — **half built** ([`101`](101-the-heap-report.md)): records, unions and newtypes, ~~and text~~ — **built** ([`105`](105-text-on-the-heap-report.md)), ~~and reading a collection~~ — **built** ([`106`](106-lists-arrive-read-only-report.md), [`107`](107-a-map-arrives-read-only-report.md)), lists and maps alike. What is left is closures, the effects, `Html` and *growing* a collection | Nothing — the seam is why ([`19`](19-phase-1-report.md) §19.9), and [`93`](93-llvm-backend-report.md) is the first thing to test that claim: not one line of `beck-rt` changed |
 | **F — infrastructure** | `beck-infra/` | Effect-derived NetworkPolicy/RBAC/grants; Crossplane emitter; conformance rungs | Nothing |
 
 **Lane A is strictly serial, and that is the real staffing constraint.** It is tempting to run two

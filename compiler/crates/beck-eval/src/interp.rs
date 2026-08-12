@@ -754,10 +754,22 @@ fn work_of(op: Prim, args: &[Value]) -> usize {
             Some(Value::Int(n)) => (*n).max(0) as usize,
             _ => 0,
         }),
-        Prim::StrSlice => match args.get(2) {
-            Some(Value::Int(n)) => (*n).max(0) as usize,
-            _ => 0,
-        },
+        // What it *takes*, which is the arm above's rule and was not applied here: `str_slice`
+        // clamps, so "from `i` to the end" is ordinarily written with a length nobody bothered to
+        // bound — and charging the number the caller wrote made `str_slice(s, 0, 1_000_000)` on a
+        // five-character string cost a million steps. Found by the native differential, where the
+        // compiled answer arrived and the evaluator's ran out of fuel (`docs/105` §105.8).
+        Prim::StrSlice => {
+            let chars = match args.first() {
+                Some(Value::Str(t)) => t.chars_len(),
+                _ => 0,
+            };
+            let at = |i: usize| match args.get(i) {
+                Some(Value::Int(n)) => (*n).max(0) as usize,
+                _ => 0,
+            };
+            at(2).min(chars.saturating_sub(at(1)))
+        }
         _ => 0,
     }
 }
@@ -2371,6 +2383,38 @@ mod tests {
         assert!(run(&prim(Prim::Neg, vec![int(i64::MIN)])).is_err());
         // …and the ordinary case still answers.
         assert_eq!(run(&prim(Prim::Neg, vec![int(7)])).unwrap(), Value::Int(-7));
+    }
+
+    /// A slice is charged what it **takes**, and never what the caller asked for.
+    ///
+    /// "From here to the end" is ordinarily written with a length nobody bounded, so charging the
+    /// number in the source made `str_slice(s, 0, 1_000_000)` on a five-character string cost a
+    /// million steps and run an otherwise instant program out of fuel. Found by the native
+    /// differential, where the compiled answer arrived and this one did not (`docs/105` §105.8).
+    ///
+    /// Asserted against `work_of` rather than through a whole program, because what went wrong is
+    /// the accounting and this is where it is written.
+    #[test]
+    fn a_slice_is_charged_what_it_takes() {
+        let s = Value::str_("héllo");
+        let all = |from: i64, n: i64| {
+            work_of(
+                Prim::StrSlice,
+                &[s.clone(), Value::Int(from), Value::Int(n)],
+            )
+        };
+        assert_eq!(all(0, i64::MAX), 5, "the whole string, and not `i64::MAX`");
+        assert_eq!(all(0, 1_000_000), 5);
+        assert_eq!(all(2, 1_000_000), 3, "clamped from where it starts");
+        assert_eq!(all(9, 1_000_000), 0, "past the end takes nothing");
+        assert_eq!(all(1, 2), 2, "and a slice inside is still what it takes");
+        // The control: a slice of a long string still costs what it takes out of it, so this is
+        // not a rule that charges nothing.
+        let long = Value::str_("x".repeat(10_000));
+        assert_eq!(
+            work_of(Prim::StrSlice, &[long, Value::Int(0), Value::Int(i64::MAX)]),
+            10_000
+        );
     }
 
     #[test]
