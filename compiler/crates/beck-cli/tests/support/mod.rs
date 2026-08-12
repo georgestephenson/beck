@@ -4,6 +4,7 @@ pub mod browser;
 pub mod heapfix;
 pub mod listfix;
 pub mod lsp;
+pub mod mapfix;
 pub mod scalar;
 pub mod socket;
 pub mod textfix;

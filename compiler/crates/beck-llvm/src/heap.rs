@@ -145,6 +145,18 @@ pub fn list_bytes(n: u64) -> u64 {
     LIST_HEADER + n * WORD
 }
 
+/// The one header word of a `Map`: how many entries it has.
+pub const MAP_HEADER: u64 = WORD;
+
+/// How many bytes a `Map` of `n` entries occupies: the count, `n` keys, then `n` values.
+///
+/// The keys and the values are two runs rather than interleaved pairs, so `map_keys` and
+/// `map_values` are each one `memcpy` into a fresh list — and because the keys being contiguous is
+/// what makes the search a binary one with a stride of one.
+pub fn map_bytes(n: u64) -> u64 {
+    MAP_HEADER + 2 * n * WORD
+}
+
 /// What one value is, at the machine.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Repr {
@@ -157,6 +169,10 @@ pub enum Repr {
     /// `list[Point]` are the same shape and two different reprs, because what a word of one *is*
     /// depends on the element type and nothing at the machine records it.
     List(u32),
+    /// A map, carried as its offset. The index is into [`Heap::entry`], which names the key's repr
+    /// and the value's — both as indices into the same table a list's element uses, so the word
+    /// comparison a map's binary search needs is the one a list's search already has.
+    Map(u32),
     /// An object, carried as its offset into the arena. The index is into [`Heap::layouts`].
     Obj(u32),
 }
@@ -167,24 +183,65 @@ impl Repr {
         match self {
             Repr::Float => Scalar::Float,
             Repr::Bool => Scalar::Bool,
-            Repr::Int | Repr::Str | Repr::List(_) | Repr::Obj(_) => Scalar::Int,
+            Repr::Int | Repr::Str | Repr::List(_) | Repr::Map(_) | Repr::Obj(_) => Scalar::Int,
         }
     }
 
     /// Whether this is carried as an offset rather than as the value itself.
     ///
     /// What reads it is the two places the arena becomes visible: the host reserves room for a
-    /// graph in the request, and the worker sends the used arena back with a reply. A `Str` and a
-    /// `list` are on the heap for both purposes, and the name says *reference* rather than *object*
-    /// because those two have no [`Layout`].
+    /// graph in the request, and the worker sends the used arena back with a reply. A `Str`, a
+    /// `list` and a `Map` are on the heap for both purposes, and the name says *reference* rather
+    /// than *object* because those three have no [`Layout`].
     pub fn is_ref(self) -> bool {
-        matches!(self, Repr::Obj(_) | Repr::Str | Repr::List(_))
+        matches!(
+            self,
+            Repr::Obj(_) | Repr::Str | Repr::List(_) | Repr::Map(_)
+        )
     }
 
     /// The LLVM type, which is the machine type's.
     pub fn llvm(self) -> &'static str {
         self.machine().llvm()
     }
+
+    /// How two values of this repr are ordered, and **the only place that decides**.
+    ///
+    /// [`docs/105`](../../../../../docs/105-lists-arrive-read-only-report.md) §105.4 records the
+    /// same defect three times: a record's field comparison matched `Repr::Obj` and `Repr::Str`
+    /// by name and let a `_` arm swallow whichever reference kind had just been added, so two
+    /// equal values compared unequal because their **offsets** differed. Each time the differential
+    /// caught it and each time it was one arm.
+    ///
+    /// This is what that section said would prevent a fourth. Every consumer matches on
+    /// [`Order`]'s three cases rather than on `Repr`'s six, so a new reference kind is a compile
+    /// error *here* — where its comparison has to be named — and nowhere else. A backend that
+    /// forgot it would not build.
+    pub fn order(self) -> Order {
+        match self {
+            // **Unsigned**, which is the whole point of the key: the transform maps every real onto
+            // the unsigned order, so a signed comparison answers `-1.0 < 0.0` with `false`.
+            Repr::Float => Order::Key,
+            Repr::Int => Order::Words { signed: true },
+            // A `Bool` is a 0 or a 1, and is therefore either way round.
+            Repr::Bool => Order::Words { signed: false },
+            Repr::Str => Order::Call("beck.str.cmp".into()),
+            Repr::List(at) => Order::Call(format!("beck.list.cmp.{at}")),
+            Repr::Map(at) => Order::Call(format!("beck.map.cmp.{at}")),
+            Repr::Obj(at) => Order::Call(format!("beck.cmp.{at}")),
+        }
+    }
+}
+
+/// How two values of one [`Repr`] are put in order. See [`Repr::order`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Order {
+    /// Compare the words directly.
+    Words { signed: bool },
+    /// Normalise and take `beck_core`'s order key first, then compare unsigned.
+    Key,
+    /// A three-way comparison function, by symbol: `-1`, `0` or `1`.
+    Call(String),
 }
 
 /// One variant of a layout — or the only one, for a record.
@@ -266,6 +323,10 @@ pub struct Heap {
     /// fields and no variants, only "how many" and "of what".
     elements: Vec<Repr>,
     by_element: BTreeMap<Repr, u32>,
+    /// The key and value reprs of every distinct map type, as indices into [`Heap::elements`] — so
+    /// the word comparison a map's binary search needs is the one a list's search already has.
+    entries: Vec<(u32, u32)>,
+    by_entry: BTreeMap<(u32, u32), u32>,
     /// Whether any signature or body in this module mentions text.
     ///
     /// Separate from [`Heap::slots`] because a `Str` has no [`Layout`]: a definition taking one and
@@ -291,12 +352,31 @@ impl Heap {
     pub fn is_empty(&self) -> bool {
         !self.text
             && self.elements.is_empty()
+            && self.entries.is_empty()
             && !self.slots.iter().any(|s| matches!(s, Slot::Done(_)))
     }
 
     /// What one element of list repr `at` is.
     pub fn element(&self, at: u32) -> Repr {
         self.elements[at as usize]
+    }
+
+    /// Which reprs map `at`'s keys and values are, as indices into the word-comparison table.
+    pub fn entry(&self, at: u32) -> (u32, u32) {
+        self.entries[at as usize]
+    }
+
+    pub fn uses_maps(&self) -> bool {
+        !self.entries.is_empty()
+    }
+
+    /// Every distinct map type this module needs.
+    pub fn maps(&self) -> impl Iterator<Item = (u32, (u32, u32))> + '_ {
+        self.entries
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(i, e)| (i as u32, e))
     }
 
     /// Whether any list appears in this module, and therefore whether its runtime is worth
@@ -321,14 +401,34 @@ impl Heap {
         self.text
     }
 
-    /// The list repr for elements of `inner`, interned.
-    fn list_of(&mut self, inner: Repr) -> u32 {
+    /// A repr's place in the word-comparison table, interned.
+    ///
+    /// One table for two purposes: a list's element and a map's key or value are both "a word this
+    /// module has to be able to compare", and a second table would mean two comparison functions
+    /// for one repr.
+    fn intern_repr(&mut self, inner: Repr) -> u32 {
         if let Some(at) = self.by_element.get(&inner) {
             return *at;
         }
         let at = self.elements.len() as u32;
         self.elements.push(inner);
         self.by_element.insert(inner, at);
+        at
+    }
+
+    /// The list repr for elements of `inner`, interned.
+    fn list_of(&mut self, inner: Repr) -> u32 {
+        self.intern_repr(inner)
+    }
+
+    /// The map repr for keys of `key` and values of `value`, interned.
+    fn map_of(&mut self, key: u32, value: u32) -> u32 {
+        if let Some(at) = self.by_entry.get(&(key, value)) {
+            return *at;
+        }
+        let at = self.entries.len() as u32;
+        self.entries.push((key, value));
+        self.by_entry.insert((key, value), at);
         at
     }
 
@@ -396,6 +496,14 @@ impl Heap {
             Repr::Bool => "Bool".into(),
             Repr::Str => "Str".into(),
             Repr::List(i) => format!("list[{}]", self.show(self.element(i))),
+            Repr::Map(i) => {
+                let (k, v) = self.entry(i);
+                format!(
+                    "Map[{}, {}]",
+                    self.show(self.element(k)),
+                    self.show(self.element(v))
+                )
+            }
             Repr::Obj(i) => self.layout(i).shown.clone(),
         }
     }
@@ -428,8 +536,31 @@ impl Heap {
                     .map_err(|why| format!("a `list` whose element is {why}"))?;
                 return Ok(Repr::List(self.list_of(inner)));
             }
-            Ty::MAP => return Err("a `Map`, and a collection is not on this heap yet".into()),
+            Ty::MAP => {
+                let [key, value] = args.as_slice() else {
+                    return Err("a `Map` without both of its type arguments".into());
+                };
+                let k = self
+                    .repr(key, program)
+                    .map_err(|why| format!("a `Map` whose key is {why}"))?;
+                let v = self
+                    .repr(value, program)
+                    .map_err(|why| format!("a `Map` whose value is {why}"))?;
+                let (k, v) = (self.intern_repr(k), self.intern_repr(v));
+                return Ok(Repr::Map(self.map_of(k, v)));
+            }
             Ty::UNIT => return Err("the unit value, which has no machine representation".into()),
+            // Named rather than left to fall through to "not a type this module declares", which
+            // is where they landed and is a true sentence about the wrong thing: `Html` is a
+            // builtin, and what it lacks is a layout. `docs/106` §106.7 is the correction.
+            Ty::HTML => {
+                return Err(
+                    "`Html`, which is a tree of children and follows the collections rather than \
+                     text"
+                        .into(),
+                )
+            }
+            Ty::ATTR => return Err("an `Attr`, which follows `Html`".into()),
             _ => {}
         }
 
@@ -602,6 +733,27 @@ impl Heap {
                 }
                 Ok(offset)
             }
+            // The keys in key order and then the values in the same order, which is what a `PMap`
+            // iterates and therefore what a binary search here can rely on.
+            (Value::Map(m), Repr::Map(at)) => {
+                let (k, v) = self.entry(at);
+                let (key, value) = (self.element(k), self.element(v));
+                let mut words = Vec::with_capacity(2 * m.len() + 1);
+                words.push(m.len() as u64);
+                for (k, _) in m.iter() {
+                    words.push(self.encode(k, key, blob)?);
+                }
+                let mut values = Vec::with_capacity(m.len());
+                for (_, v) in m.iter() {
+                    values.push(self.encode(v, value, blob)?);
+                }
+                words.extend(values);
+                let offset = blob.len() as u64;
+                for w in words {
+                    blob.extend_from_slice(&w.to_ne_bytes());
+                }
+                Ok(offset)
+            }
             (Value::Data(record), Repr::Obj(at)) => self.encode_object(record, at, blob),
             _ => Err(format!(
                 "a {} where the signature says {}",
@@ -712,6 +864,29 @@ impl Heap {
             // evaluator built.
             Repr::Float => Ok(Begun::Leaf(Value::float(f64::from_bits(cell)))),
             Repr::Str => self.decode_text(cell, blob).map(Begun::Leaf),
+            Repr::Map(at) => {
+                let (k, v) = self.entry(at);
+                let count = word(blob, cell)?;
+                // Checked against the arena before it is trusted as a capacity, for the reason a
+                // list's count is: it came from another process.
+                let bytes = count
+                    .checked_mul(2 * WORD)
+                    .and_then(|b| b.checked_add(WORD));
+                if bytes.is_none_or(|b| cell + b > blob.len() as u64) {
+                    return Err(format!(
+                        "the compiled program answered with a map of {count} at offset {cell}, \
+                         and its heap is {} bytes",
+                        blob.len()
+                    ));
+                }
+                Ok(Begun::Nested(Frame::Map {
+                    cell,
+                    key: self.element(k),
+                    value: self.element(v),
+                    count,
+                    done: Vec::with_capacity(2 * count as usize),
+                }))
+            }
             Repr::List(at) => {
                 let element = self.element(at);
                 let count = word(blob, cell)?;
@@ -812,13 +987,21 @@ enum Frame {
         fields: Vec<(Arc<str>, Repr)>,
         done: Vec<(Arc<str>, Value)>,
     },
+    /// Every key, then every value: the order the words are laid out in, so the walk is one pass.
+    Map {
+        cell: u64,
+        key: Repr,
+        value: Repr,
+        count: u64,
+        done: Vec<Value>,
+    },
 }
 
 impl Frame {
     /// Take the child that was just finished.
     fn absorb(&mut self, v: Value) {
         match self {
-            Frame::List { done, .. } => done.push(v),
+            Frame::List { done, .. } | Frame::Map { done, .. } => done.push(v),
             Frame::Obj { fields, done, .. } => {
                 let name = fields[done.len()].0.clone();
                 done.push((name, v));
@@ -841,6 +1024,20 @@ impl Frame {
                 let w = word(blob, cell + (done.len() as u64 + 1) * WORD)?;
                 Ok(Some((w, *element)))
             }
+            Frame::Map {
+                cell,
+                key,
+                value,
+                count,
+                done,
+            } => {
+                let i = done.len() as u64;
+                if i == 2 * count {
+                    return Ok(None);
+                }
+                let w = word(blob, cell + (i + 1) * WORD)?;
+                Ok(Some((w, if i < *count { *key } else { *value })))
+            }
             Frame::Obj {
                 cell, fields, done, ..
             } => {
@@ -856,6 +1053,12 @@ impl Frame {
     fn finish(self) -> Value {
         match self {
             Frame::List { done, .. } => Value::List(Arc::new(done)),
+            Frame::Map {
+                count, mut done, ..
+            } => {
+                let values = done.split_off(count as usize);
+                Value::Map(done.into_iter().zip(values).collect())
+            }
             Frame::Obj {
                 ty, variant, done, ..
             } => Value::Data(Arc::new(Record {

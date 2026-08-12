@@ -317,6 +317,7 @@ pub fn module(program: &Program) -> Module {
     let mut bodies = String::new();
     let mut compared: BTreeSet<u32> = BTreeSet::new();
     let mut list_compared: BTreeSet<u32> = BTreeSet::new();
+    let mut map_compared: BTreeSet<u32> = BTreeSet::new();
     for name in &order {
         let def = &program.defs[name];
         let mut fun = Function::new(&indexed, &eligible, program, &mut heap);
@@ -327,18 +328,14 @@ pub fn module(program: &Program) -> Module {
         spans = std::mem::take(&mut fun.spans);
         compared.append(&mut fun.compared);
         list_compared.append(&mut fun.list_compared);
+        map_compared.append(&mut fun.map_compared);
         bodies.push_str(&text);
         bodies.push('\n');
     }
 
     let functions: Vec<Signature> = order.iter().map(|n| indexed[n].clone()).collect();
-    let ir = assemble(
-        &bodies,
-        &functions,
-        &heap,
-        &closure_of(&compared, &heap, &list_compared),
-        &list_closure_of(&list_compared, &heap),
-    );
+    let (layouts, elements, entries) = reachable(&compared, &list_compared, &map_compared, &heap);
+    let ir = assemble(&bodies, &functions, &heap, &layouts, &elements, &entries);
     refusals.sort_by(|a, b| a.name.cmp(&b.name));
     Module {
         ir,
@@ -353,30 +350,28 @@ pub fn module(program: &Program) -> Module {
 ///
 /// Transitive, because comparing a record compares its fields: asking for `Line` asks for `Point`
 /// whether or not any body compares two points.
-fn closure_of(asked: &BTreeSet<u32>, heap: &Heap, lists: &BTreeSet<u32>) -> BTreeSet<u32> {
-    reachable(asked, lists, heap).0
-}
-
-/// The same, for the list reprs.
-fn list_closure_of(asked: &BTreeSet<u32>, heap: &Heap) -> BTreeSet<u32> {
-    reachable(&BTreeSet::new(), asked, heap).1
-}
-
-/// Every layout and every list repr reachable from the ones a body asked to compare.
+/// Every layout, word comparison and map this module has to generate a comparison for.
 ///
-/// One fixed point over both, because the two reach each other: a record with a `list[Point]` field
-/// needs that list's comparison, and a `list[Point]` needs `Point`'s. A pair of separate closures
-/// would each be right about its own edges and wrong about the other's.
+/// One fixed point over all three, because they reach each other: a record with a `Map[Str, Point]`
+/// field needs that map's comparison, which needs `Str`'s and `Point`'s, and a `list[Point]` needs
+/// `Point`'s. Three separate closures would each be right about its own edges and wrong about the
+/// others'.
+///
+/// The **elements** set is what [`element_functions`] is generated for, and it is a superset of the
+/// list reprs: a map's key and value are entries in the same table (see [`heap::Heap::entry`]), so
+/// a `Map[Str, Int]` asks for `Str`'s word comparison without there being a `list[Str]` anywhere.
 fn reachable(
     layouts: &BTreeSet<u32>,
     lists: &BTreeSet<u32>,
+    maps: &BTreeSet<u32>,
     heap: &Heap,
-) -> (BTreeSet<u32>, BTreeSet<u32>) {
-    let (mut out_l, mut out_x) = (BTreeSet::new(), BTreeSet::new());
+) -> (BTreeSet<u32>, BTreeSet<u32>, BTreeSet<u32>) {
+    let (mut out_l, mut out_x, mut out_m) = (BTreeSet::new(), BTreeSet::new(), BTreeSet::new());
     let mut todo: Vec<Repr> = layouts
         .iter()
         .map(|a| Repr::Obj(*a))
         .chain(lists.iter().map(|a| Repr::List(*a)))
+        .chain(maps.iter().map(|a| Repr::Map(*a)))
         .collect();
     while let Some(r) = todo.pop() {
         match r {
@@ -394,10 +389,20 @@ fn reachable(
                 }
                 todo.push(heap.element(at));
             }
+            Repr::Map(at) => {
+                if !out_m.insert(at) {
+                    continue;
+                }
+                let (k, v) = heap.entry(at);
+                out_x.insert(k);
+                out_x.insert(v);
+                todo.push(heap.element(k));
+                todo.push(heap.element(v));
+            }
             _ => {}
         }
     }
-    (out_l, out_x)
+    (out_l, out_x, out_m)
 }
 
 /// The signature, or the reason there is not one.
@@ -482,6 +487,8 @@ struct Function<'a> {
     compared: BTreeSet<u32>,
     /// The list reprs this body compares two of, so the module generates their functions.
     list_compared: BTreeSet<u32>,
+    /// And the map reprs.
+    map_compared: BTreeSet<u32>,
     /// Whether this body reaches the arena, and therefore needs its base in a register.
     uses_heap: bool,
 }
@@ -508,6 +515,7 @@ impl<'a> Function<'a> {
             trapped: false,
             compared: BTreeSet::new(),
             list_compared: BTreeSet::new(),
+            map_compared: BTreeSet::new(),
             uses_heap: false,
         }
     }
@@ -706,9 +714,7 @@ impl<'a> Function<'a> {
             CoreKind::Field { base, name } => self.field(base, name)?,
             CoreKind::With { base, fields } => self.with(base, fields, c.span)?,
             CoreKind::ListLit(xs) => self.list_lit(&c.ty, xs, c.span)?,
-            CoreKind::MapLit(_) => {
-                return Err("builds a map, and a collection is not on this heap yet".into())
-            }
+            CoreKind::MapLit(kvs) => self.map_lit(&c.ty, kvs, c.span)?,
         };
         self.finish(value, dest)
     }
@@ -842,7 +848,7 @@ impl<'a> Function<'a> {
             Repr::Int => Trap::NoMatchInt,
             Repr::Float => Trap::NoMatchFloat,
             Repr::Bool => Trap::NoMatchBool,
-            Repr::Str | Repr::List(_) | Repr::Obj(_) => Trap::NoMatchData,
+            Repr::Str | Repr::List(_) | Repr::Map(_) | Repr::Obj(_) => Trap::NoMatchData,
         };
         let payload = self.widen(&v);
         self.trap(trap, span, &payload, "true");
@@ -1032,7 +1038,7 @@ impl<'a> Function<'a> {
                 self.line(format!("{raw} = load i64, ptr {p}"));
                 self.line(format!("{r} = icmp ne i64 {raw}, 0"));
             }
-            Repr::Int | Repr::Str | Repr::List(_) | Repr::Obj(_) => {
+            Repr::Int | Repr::Str | Repr::List(_) | Repr::Map(_) | Repr::Obj(_) => {
                 self.line(format!("{r} = load i64, ptr {p}"))
             }
         }
@@ -1059,7 +1065,7 @@ impl<'a> Function<'a> {
                 self.line(format!("{w} = zext i1 {} to i64", v.text));
                 self.line(format!("store i64 {w}, ptr {p}"));
             }
-            Repr::Int | Repr::Str | Repr::List(_) | Repr::Obj(_) => {
+            Repr::Int | Repr::Str | Repr::List(_) | Repr::Map(_) | Repr::Obj(_) => {
                 self.line(format!("store i64 {}, ptr {p}", v.text))
             }
         }
@@ -1347,7 +1353,7 @@ impl<'a> Function<'a> {
                             ty: Repr::Float,
                         })
                     }
-                    Repr::Bool | Repr::Str | Repr::List(_) | Repr::Obj(_) => {
+                    Repr::Bool | Repr::Str | Repr::List(_) | Repr::Map(_) | Repr::Obj(_) => {
                         Err(format!("`{}` on a value that is not a number", op.name()))
                     }
                 }
@@ -1412,7 +1418,7 @@ impl<'a> Function<'a> {
                             ty: Repr::Float,
                         })
                     }
-                    Repr::Bool | Repr::Str | Repr::List(_) | Repr::Obj(_) => {
+                    Repr::Bool | Repr::Str | Repr::List(_) | Repr::Map(_) | Repr::Obj(_) => {
                         Err("`negate` on a value that is not a number".into())
                     }
                 }
@@ -1445,7 +1451,7 @@ impl<'a> Function<'a> {
                             ty: Repr::Float,
                         })
                     }
-                    Repr::Bool | Repr::Str | Repr::List(_) | Repr::Obj(_) => {
+                    Repr::Bool | Repr::Str | Repr::List(_) | Repr::Map(_) | Repr::Obj(_) => {
                         Err("`abs` on a value that is not a number".into())
                     }
                 }
@@ -1601,7 +1607,7 @@ impl<'a> Function<'a> {
                     "{found} = call i64 @\"beck.list.find.{at}\"(i64 {}, i64 {word})",
                     vals[0].text
                 ));
-                self.list_compared.insert(at);
+                self.wants(Repr::List(at));
                 if op == Prim::ListContains {
                     let r = self.fresh();
                     self.line(format!("{r} = icmp sge i64 {found}, 0"));
@@ -1622,6 +1628,45 @@ impl<'a> Function<'a> {
                     }
                 }
                 self.list_range(op, &vals, span)
+            }
+            Prim::MapLen => {
+                arity(1)?;
+                self.map_arg(&vals[0], op)?;
+                let n = self.map_len(&vals[0]);
+                Ok(Val {
+                    text: n,
+                    ty: Repr::Int,
+                })
+            }
+            Prim::MapGet | Prim::MapContains => {
+                arity(2)?;
+                let at = self.map_arg(&vals[0], op)?;
+                let (k, v) = self.heap.entry(at);
+                let key = self.heap.element(k);
+                if vals[1].ty != key {
+                    return Err(format!("`{}` with a key of another type", op.name()));
+                }
+                self.wants(Repr::Map(at));
+                let word = self.widen(&vals[1]);
+                let found = self.fresh();
+                self.line(format!(
+                    "{found} = call i64 @\"beck.map.find.{at}\"(i64 {}, i64 {word})",
+                    vals[0].text
+                ));
+                if op == Prim::MapContains {
+                    let r = self.fresh();
+                    self.line(format!("{r} = icmp sge i64 {found}, 0"));
+                    return Ok(Val {
+                        text: r,
+                        ty: Repr::Bool,
+                    });
+                }
+                self.map_get(ty, &vals[0], &found, self.heap.element(v), span)
+            }
+            Prim::MapKeys | Prim::MapValues => {
+                arity(1)?;
+                self.map_arg(&vals[0], op)?;
+                self.map_run(op, ty, &vals[0], span)
             }
             Prim::ListReverse => {
                 arity(1)?;
@@ -1819,6 +1864,137 @@ impl<'a> Function<'a> {
             text: off,
             ty: repr,
         })
+    }
+
+    /// `{}` — and only `{}`.
+    ///
+    /// A map's keys are laid out **in key order**, and a literal's keys are expressions, so
+    /// building a non-empty one means sorting at run time. That is a sort in emitted code for a
+    /// form that is almost always written empty — every `durable` fold in this tree starts at `{}`
+    /// — so the empty one compiles and the rest is refused by name until something needs it.
+    fn map_lit(&mut self, ty: &Ty, kvs: &[(Core, Core)], span: Span) -> Result<Val, String> {
+        let repr = self
+            .repr(ty)
+            .map_err(|why| format!("builds a value that is {why}"))?;
+        if !matches!(repr, Repr::Map(_)) {
+            return Err(format!("builds a `{ty}`, which is not a map"));
+        }
+        if !kvs.is_empty() {
+            return Err(
+                "builds a map with entries in it, and their keys would have to be sorted at run \
+                 time — only `{}` is compiled here"
+                    .into(),
+            );
+        }
+        let off = self.alloc(heap::map_bytes(0), span);
+        self.store_word(&off, 0, "0");
+        Ok(Val {
+            text: off,
+            ty: repr,
+        })
+    }
+
+    /// Insist an argument is a map, and say which map it is.
+    fn map_arg(&self, v: &Val, op: Prim) -> Result<u32, String> {
+        match v.ty {
+            Repr::Map(at) => Ok(at),
+            _ => Err(format!("`{}` on something that is not a Map", op.name())),
+        }
+    }
+
+    /// How many entries, which is the header word.
+    fn map_len(&mut self, m: &Val) -> String {
+        self.uses_heap = true;
+        let base = self.base();
+        let p = self.fresh();
+        self.line(format!(
+            "{p} = getelementptr inbounds i8, ptr {base}, i64 {}",
+            m.text
+        ));
+        let r = self.fresh();
+        self.line(format!("{r} = load i64, ptr {p}"));
+        r
+    }
+
+    /// `map_get` — an `Option[V]` from the index a search answered, and **no branch**.
+    ///
+    /// [`Function::list_get`]'s trick, with the value's address rather than the element's: the
+    /// values start `n` words after the keys, so entry `i`'s value is word `1 + n + i`. A miss
+    /// loads the header instead, which is always there, and the `None` tag means nobody reads it.
+    fn map_get(
+        &mut self,
+        ty: &Ty,
+        m: &Val,
+        found: &str,
+        value: Repr,
+        span: Span,
+    ) -> Result<Val, String> {
+        let (option, some, none, slot, bytes) = self.option_of(ty, value)?;
+        let n = self.map_len(m);
+        let inside = self.fresh();
+        self.line(format!("{inside} = icmp sge i64 {found}, 0"));
+        let safe = self.fresh();
+        self.line(format!("{safe} = select i1 {inside}, i64 {found}, i64 0"));
+        let at = self.fresh();
+        self.line(format!("{at} = add i64 {safe}, {n}"));
+        let base = self.base();
+        let p = self.fresh();
+        self.line(format!(
+            "{p} = getelementptr inbounds i8, ptr {base}, i64 {}",
+            m.text
+        ));
+        let data = self.fresh();
+        self.line(format!(
+            "{data} = getelementptr inbounds i8, ptr {p}, i64 8"
+        ));
+        let cell = self.fresh();
+        self.line(format!(
+            "{cell} = getelementptr inbounds i64, ptr {data}, i64 {at}"
+        ));
+        let addr = self.fresh();
+        self.line(format!("{addr} = select i1 {inside}, ptr {cell}, ptr {p}"));
+        let w = self.fresh();
+        self.line(format!("{w} = load i64, ptr {addr}"));
+
+        let off = self.alloc(bytes, span);
+        let tag = self.fresh();
+        self.line(format!(
+            "{tag} = select i1 {inside}, i64 {some}, i64 {none}"
+        ));
+        self.store_word(&off, 0, &tag);
+        self.store_word(&off, slot, &w);
+        Ok(Val {
+            text: off,
+            ty: option,
+        })
+    }
+
+    /// `map_keys` and `map_values`: one run of the data area copied into a fresh list.
+    fn map_run(&mut self, op: Prim, ty: &Ty, m: &Val, span: Span) -> Result<Val, String> {
+        let repr = self
+            .repr(ty)
+            .map_err(|why| format!("answers with a value that is {why}"))?;
+        if !matches!(repr, Repr::List(_)) {
+            return Err(format!(
+                "`{}` answers with `{ty}`, which is not a list",
+                op.name()
+            ));
+        }
+        let n = self.map_len(m);
+        let from = if op == Prim::MapKeys {
+            "0".to_string()
+        } else {
+            n.clone()
+        };
+        self.uses_heap = true;
+        let idx = self.span(span);
+        let r = self.fresh();
+        self.line(format!(
+            "{r} = call i64 @\"beck.map.run\"(ptr %err, i64 {}, i64 {from}, i64 {n}, i32 {idx})",
+            m.text
+        ));
+        self.check_call();
+        Ok(Val { text: r, ty: repr })
     }
 
     /// Insist an argument is a list, and say which list it is.
@@ -2195,42 +2371,40 @@ impl<'a> Function<'a> {
         cmp.text
     }
 
+    /// Record that this repr's comparison has to exist.
+    ///
+    /// One method rather than three call sites, so that adding a reference kind means teaching
+    /// [`heap::Repr::order`] and this — and `reachable` closes over whatever they name.
+    fn wants(&mut self, r: Repr) {
+        match r {
+            Repr::Obj(at) => {
+                self.compared.insert(at);
+            }
+            Repr::List(at) => {
+                self.list_compared.insert(at);
+            }
+            Repr::Map(at) => {
+                self.map_compared.insert(at);
+            }
+            Repr::Int | Repr::Float | Repr::Bool | Repr::Str => {}
+        }
+    }
+
     fn compare(&mut self, op: Prim, a: &Val, b: &Val) -> Val {
         // Reals compare through the order key and Bools compare unsigned, so `false < true`. Both
         // are the ordering `Value`'s derived `Ord` gives, which is the one the evaluator uses.
         // An object compares through the function `compare_functions` emitted for its layout,
         // which answers -1, 0 or 1 — so the six operators are one call and one integer test.
-        let (lhs, rhs, signed) = match a.ty {
-            Repr::Float => (self.order_key(a), self.order_key(b), false),
-            Repr::Int => (a.text.clone(), b.text.clone(), true),
-            Repr::Bool => (a.text.clone(), b.text.clone(), false),
-            // Text compares as its bytes, which is what `Text`'s `Ord` does and is the same order
-            // as its characters: UTF-8 sorts code points and bytes the same way.
-            Repr::Str => {
-                self.uses_heap = true;
+        let (lhs, rhs, signed) = match a.ty.order() {
+            heap::Order::Key => (self.order_key(a), self.order_key(b), false),
+            heap::Order::Words { signed } => (a.text.clone(), b.text.clone(), signed),
+            // A reference decides through the three-way comparison for whatever it refers to. The
+            // symbol is `Repr::order`'s, which is the only place that names one.
+            heap::Order::Call(symbol) => {
+                self.wants(a.ty);
                 let r = self.fresh();
                 self.line(format!(
-                    "{r} = call i64 @\"beck.str.cmp\"(i64 {}, i64 {})",
-                    a.text, b.text
-                ));
-                (r, "0".to_string(), true)
-            }
-            // A list compares element by element and then by length, which is what a `Vec`'s
-            // derived `Ord` does — the function is generated per element repr.
-            Repr::List(at) => {
-                self.list_compared.insert(at);
-                let r = self.fresh();
-                self.line(format!(
-                    "{r} = call i64 @\"beck.list.cmp.{at}\"(i64 {}, i64 {})",
-                    a.text, b.text
-                ));
-                (r, "0".to_string(), true)
-            }
-            Repr::Obj(at) => {
-                self.compared.insert(at);
-                let r = self.fresh();
-                self.line(format!(
-                    "{r} = call i64 @\"beck.cmp.{at}\"(i64 {}, i64 {})",
+                    "{r} = call i64 @\"{symbol}\"(i64 {}, i64 {})",
                     a.text, b.text
                 ));
                 (r, "0".to_string(), true)
@@ -2279,7 +2453,7 @@ impl<'a> Function<'a> {
             // Its offset, which is what an object *is* here. Only a trap payload reads this, and
             // the one trap that can carry an object says nothing about the value it carries —
             // `Trap::NoMatchData` is the message, and this is what makes it honest.
-            Repr::Str | Repr::List(_) | Repr::Obj(_) => v.text.clone(),
+            Repr::Str | Repr::List(_) | Repr::Map(_) | Repr::Obj(_) => v.text.clone(),
         }
     }
 }
@@ -2310,6 +2484,13 @@ fn refusal(op: Prim) -> String {
              in the evaluator"
         }
         Prim::ListZip => "answers with a list of pairs, and there is no pair type to lay out",
+        // The same rule `list_append` gets, one type over: the evaluator's `PMap` shares everything
+        // it did not touch and rebuilds one path, and a sorted run in an arena has to copy all of
+        // it. `docs/106` §106.4 is the argument.
+        Prim::MapInsert | Prim::MapRemove | Prim::MapMerge => {
+            "grows a map, and a sorted run in an arena has to be copied whole where the \
+             evaluator's tree rebuilds one path"
+        }
         // `map_list` and the rest of the higher-order half are deliberately absent. Their argument
         // is a function, `prim` evaluates its arguments before it looks at the operator, and
         // "`double_it` is used as a value rather than called, and a function value is a closure" is
@@ -2450,6 +2631,7 @@ fn assemble(
     heap: &Heap,
     compared: &BTreeSet<u32>,
     lists: &BTreeSet<u32>,
+    maps: &BTreeSet<u32>,
 ) -> String {
     let arena = !heap.is_empty();
     let mut m = String::new();
@@ -2465,8 +2647,13 @@ fn assemble(
     if heap.uses_text() {
         m.push_str(TEXT);
     }
-    if heap.uses_lists() {
+    // A map turns into a list — `map_keys` and `map_values` allocate one — so its runtime needs
+    // lists' even when the program never writes one down.
+    if heap.uses_lists() || heap.uses_maps() {
         m.push_str(LISTS);
+    }
+    if heap.uses_maps() {
+        m.push_str(MAPS);
     }
     m.push_str(bodies);
     for at in compared {
@@ -2474,6 +2661,9 @@ fn assemble(
     }
     for at in lists {
         m.push_str(&element_functions(*at, heap));
+    }
+    for at in maps {
+        m.push_str(&map_functions(*at, heap));
     }
 
     // One thunk per function: the protocol carries every argument as eight bytes, so this is where
@@ -2667,17 +2857,13 @@ fn compare_function(at: u32, heap: &Heap) -> String {
             let (xa, xb) = (b.fresh(), b.fresh());
             b.line(format!("{xa} = load i64, ptr {fa}"));
             b.line(format!("{xb} = load i64, ptr {fb}"));
-            match repr {
-                // A field that is itself a reference decides through the three-way comparison for
-                // whatever it refers to: a layout's own, or text's one.
-                Repr::Obj(_) | Repr::Str | Repr::List(_) => {
-                    let called = match repr {
-                        Repr::Obj(inner) => format!("beck.cmp.{inner}"),
-                        Repr::List(inner) => format!("beck.list.cmp.{inner}"),
-                        _ => "beck.str.cmp".to_string(),
-                    };
+            match repr.order() {
+                // A reference decides through the three-way comparison for whatever it refers to,
+                // and `Repr::order` is the only place that names one — see its own documentation
+                // for the three times a `_` arm here swallowed a reference kind instead.
+                heap::Order::Call(symbol) => {
                     let r = b.fresh();
-                    b.line(format!("{r} = call i64 @\"{called}\"(i64 {xa}, i64 {xb})"));
+                    b.line(format!("{r} = call i64 @\"{symbol}\"(i64 {xa}, i64 {xb})"));
                     let done = b.fresh();
                     let (decided, next) = (b.label("cmp.decided"), b.label("cmp.next"));
                     b.line(format!("{done} = icmp ne i64 {r}, 0"));
@@ -2686,15 +2872,18 @@ fn compare_function(at: u32, heap: &Heap) -> String {
                     b.line(format!("ret i64 {r}"));
                     b.block(&next);
                 }
-                _ => {
+                order => {
                     // A real compares through its order key, and both are already normalised —
-                    // `Function::store_field` is where that is paid for. An `Int` is signed, and a
-                    // `Bool` is a 0 or a 1 and therefore either way round.
-                    let (ka, kb) = match repr {
-                        Repr::Float => (b.order_key(&xa), b.order_key(&xb)),
+                    // `Function::store_field` is where that is paid for.
+                    let (ka, kb) = match order {
+                        heap::Order::Key => (b.order_key(&xa), b.order_key(&xb)),
                         _ => (xa.clone(), xb.clone()),
                     };
-                    let pred = if matches!(repr, Repr::Int) { "s" } else { "u" };
+                    let pred = if order == (heap::Order::Words { signed: true }) {
+                        "s"
+                    } else {
+                        "u"
+                    };
                     let below = b.label("cmp.below");
                     let above = b.label("cmp.above");
                     let test = b.label("cmp.test");
@@ -3204,6 +3393,101 @@ missing:
 
 "#;
 
+/// The two functions a map of a given key and value repr needs, generated per repr.
+///
+/// A **binary search** rather than the linear one a list gets, because the keys are in key order
+/// and `map_get` is what a fold does on every event. And the lexicographic order over two maps,
+/// which is `PMap`'s: pair by pair in key order — key first, then value — and then by length.
+fn map_functions(at: u32, heap: &Heap) -> String {
+    let (key, value) = heap.entry(at);
+    format!(
+        r#"; {shown}
+define internal i64 @"beck.map.find.{at}"(i64 %m, i64 %k) {{
+entry:
+  %n = call i64 @"beck.map.len"(i64 %m)
+  %p = call ptr @"beck.map.data"(i64 %m)
+  br label %loop
+loop:
+  ; The half-open window `[lo, hi)`. Unsigned throughout, because both ends are counts.
+  %lo = phi i64 [ 0, %entry ], [ %lo1, %again ]
+  %hi = phi i64 [ %n, %entry ], [ %hi1, %again ]
+  %done = icmp uge i64 %lo, %hi
+  br i1 %done, label %missing, label %probe
+probe:
+  %span = sub i64 %hi, %lo
+  %half = lshr i64 %span, 1
+  %mid = add i64 %lo, %half
+  %at = getelementptr inbounds i64, ptr %p, i64 %mid
+  %w = load i64, ptr %at
+  %c = call i64 @"beck.elem.cmp.{key}"(i64 %w, i64 %k)
+  %hit = icmp eq i64 %c, 0
+  br i1 %hit, label %found, label %again
+again:
+  %less = icmp slt i64 %c, 0
+  %mid1 = add i64 %mid, 1
+  %lo1 = select i1 %less, i64 %mid1, i64 %lo
+  %hi1 = select i1 %less, i64 %hi, i64 %mid
+  br label %loop
+found:
+  ret i64 %mid
+missing:
+  ret i64 -1
+}}
+
+define internal i64 @"beck.map.cmp.{at}"(i64 %a, i64 %b) {{
+entry:
+  %la = call i64 @"beck.map.len"(i64 %a)
+  %lb = call i64 @"beck.map.len"(i64 %b)
+  %shorter = icmp ult i64 %la, %lb
+  %n = select i1 %shorter, i64 %la, i64 %lb
+  %pa = call ptr @"beck.map.data"(i64 %a)
+  %pb = call ptr @"beck.map.data"(i64 %b)
+  br label %loop
+loop:
+  %i = phi i64 [ 0, %entry ], [ %j, %next ]
+  %past = icmp uge i64 %i, %n
+  br i1 %past, label %lengths, label %keys
+keys:
+  %ka = getelementptr inbounds i64, ptr %pa, i64 %i
+  %kb = getelementptr inbounds i64, ptr %pb, i64 %i
+  %wka = load i64, ptr %ka
+  %wkb = load i64, ptr %kb
+  %ck = call i64 @"beck.elem.cmp.{key}"(i64 %wka, i64 %wkb)
+  %kdecided = icmp ne i64 %ck, 0
+  br i1 %kdecided, label %answerk, label %values
+answerk:
+  ret i64 %ck
+values:
+  ; The values start `la` words after the keys in `a` and `lb` words after them in `b`.
+  %ia = add i64 %i, %la
+  %ib = add i64 %i, %lb
+  %va = getelementptr inbounds i64, ptr %pa, i64 %ia
+  %vb = getelementptr inbounds i64, ptr %pb, i64 %ib
+  %wva = load i64, ptr %va
+  %wvb = load i64, ptr %vb
+  %cv = call i64 @"beck.elem.cmp.{value}"(i64 %wva, i64 %wvb)
+  %vdecided = icmp ne i64 %cv, 0
+  br i1 %vdecided, label %answerv, label %next
+answerv:
+  ret i64 %cv
+next:
+  %j = add i64 %i, 1
+  br label %loop
+lengths:
+  ; Equal as far as both go, so the smaller map is the smaller value.
+  %lt = icmp ult i64 %la, %lb
+  %gt = icmp ugt i64 %la, %lb
+  %up = select i1 %gt, i64 1, i64 -1
+  %same = icmp eq i64 %la, %lb
+  %r = select i1 %same, i64 0, i64 %up
+  ret i64 %r
+}}
+
+"#,
+        shown = heap.show(Repr::Map(at))
+    )
+}
+
 /// The three functions a list of a given element repr needs, generated per repr.
 ///
 /// One three-way comparison over two **words**, and two functions built on it: the lexicographic
@@ -3224,32 +3508,25 @@ fn element_functions(at: u32, heap: &Heap) -> String {
         "; element of {}\ndefine internal i64 @\"beck.elem.cmp.{at}\"(i64 %a, i64 %b) {{\nentry:",
         heap.show(Repr::List(at))
     );
-    match element {
-        Repr::Str => {
-            b.line("%c = call i64 @\"beck.str.cmp\"(i64 %a, i64 %b)".into());
+    match element.order() {
+        // Whatever this element is, its comparison is `Repr::order`'s — one call and no case
+        // analysis, which is the whole point of that accessor.
+        heap::Order::Call(symbol) => {
+            b.line(format!("%c = call i64 @\"{symbol}\"(i64 %a, i64 %b)"));
             b.line("ret i64 %c".into());
         }
-        Repr::List(inner) => {
-            b.line(format!(
-                "%c = call i64 @\"beck.list.cmp.{inner}\"(i64 %a, i64 %b)"
-            ));
-            b.line("ret i64 %c".into());
-        }
-        Repr::Obj(inner) => {
-            b.line(format!(
-                "%c = call i64 @\"beck.cmp.{inner}\"(i64 %a, i64 %b)"
-            ));
-            b.line("ret i64 %c".into());
-        }
-        _ => {
+        order => {
             // A real compares through `beck_core`'s order key; an `Int` is signed; a `Bool` is a 0
             // or a 1 in the low bit and is therefore either way round.
-            let (ka, kb) = if element == Repr::Float {
-                (b.order_key("%a"), b.order_key("%b"))
-            } else {
-                ("%a".to_string(), "%b".to_string())
+            let (ka, kb) = match order {
+                heap::Order::Key => (b.order_key("%a"), b.order_key("%b")),
+                _ => ("%a".to_string(), "%b".to_string()),
             };
-            let pred = if element == Repr::Int { "s" } else { "u" };
+            let pred = if order == (heap::Order::Words { signed: true }) {
+                "s"
+            } else {
+                "u"
+            };
             b.line(format!("%lt = icmp {pred}lt i64 {ka}, {kb}"));
             b.line("br i1 %lt, label %less, label %test".into());
             b.block("test");
@@ -3420,6 +3697,67 @@ step:
   store i64 %w, ptr %dst
   %j = add i64 %i, 1
   br label %loop
+out:
+  ret i64 %r
+}
+
+"#;
+
+/// Maps: the two functions that do not care what a key or a value *is*.
+///
+/// A map is a count, then every key in key order, then every value in the same order. The keys
+/// being one contiguous run is what makes the search a binary one; the values being another is what
+/// makes `map_keys` and `map_values` one `memcpy` each into a fresh list.
+///
+/// What has to know what a word means is generated per map repr by [`map_functions`]: the binary
+/// search, and the lexicographic order over two maps.
+const MAPS: &str = r#"define internal i64 @"beck.map.alloc"(ptr noalias %err, i64 %n, i32 %span) {
+entry:
+  %pairs = mul i64 %n, 16
+  %total = add i64 %pairs, 8
+  %off = call i64 @"beck.alloc"(ptr %err, i64 %total, i32 %span)
+  %failed = icmp eq i64 %off, 0
+  br i1 %failed, label %out, label %fill
+fill:
+  %hp = load ptr, ptr @"beck.heap"
+  %p = getelementptr inbounds i8, ptr %hp, i64 %off
+  store i64 %n, ptr %p
+  br label %out
+out:
+  ret i64 %off
+}
+
+define internal i64 @"beck.map.len"(i64 %m) {
+entry:
+  %hp = load ptr, ptr @"beck.heap"
+  %p = getelementptr inbounds i8, ptr %hp, i64 %m
+  %n = load i64, ptr %p
+  ret i64 %n
+}
+
+define internal ptr @"beck.map.data"(i64 %m) {
+entry:
+  %hp = load ptr, ptr @"beck.heap"
+  %at = add i64 %m, 8
+  %p = getelementptr inbounds i8, ptr %hp, i64 %at
+  ret ptr %p
+}
+
+; `map_keys` and `map_values`: a run of `count` words starting at word `from` of the data area,
+; copied into a fresh list. The one place a map turns into a list.
+define internal i64 @"beck.map.run"(ptr noalias %err, i64 %m, i64 %from, i64 %count, i32 %span) {
+entry:
+  %r = call i64 @"beck.list.alloc"(ptr %err, i64 %count, i32 %span)
+  %failed = icmp eq i64 %r, 0
+  br i1 %failed, label %out, label %move
+move:
+  %pr = call ptr @"beck.list.data"(i64 %r)
+  %pm = call ptr @"beck.map.data"(i64 %m)
+  %skip = mul i64 %from, 8
+  %at = getelementptr inbounds i8, ptr %pm, i64 %skip
+  %bytes = mul i64 %count, 8
+  %ignored = call ptr @memcpy(ptr %pr, ptr %at, i64 %bytes)
+  br label %out
 out:
   ret i64 %r
 }

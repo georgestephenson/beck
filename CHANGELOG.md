@@ -14,6 +14,25 @@ Newest first.
 
 ### The native backends
 
+- **A map arrives read-only, and a fold compiles**
+  ([`docs/106`](docs/106-a-map-arrives-read-only-report.md)): `Map[K, V]` is a count, every key in
+  key order, then every value — so `map_get` is a binary search and `map_keys` is one `memcpy`.
+  `map_len`, `map_get`, `map_contains`, `map_keys`, `map_values`, the six comparisons and `{}`
+  compile; `map_insert`, `map_remove` and `map_merge` are refused. **403 → 452 definitions**, the
+  corpus **30 → 53 across 31 of its 35 files**, and **nine corpus programs compile their
+  `apply_event`**. Of 1,026 refusals across the tree beforehand, 472 blamed a `Map`; **none now
+  blames a collection for having no layout**. Gated by `native.rs::the_two_backends_agree_on_maps`,
+  `cranelift.rs::the_three_backends_agree_on_maps` (898 calls each),
+  `a_lookup_costs_the_same_whatever_the_map_holds` and `a_corpus_fold_compiles`.
+- **`Repr::order` is the only place either backend names a comparison.**
+  [`docs/105`](docs/105-lists-arrive-read-only-report.md) §105.4 said that would prevent a fourth
+  record-field-compared-by-offset defect; there was a fourth, in the one site not yet converted, and
+  all five go through the accessor now. A new reference kind is a compile error where its comparison
+  has to be written (§106.5).
+- **`Html` is refused by name.** It fell through to "not a type this module declares", which is true
+  about the path taken and misleading about the cause.
+
+
 - **A list arrives read-only** ([`docs/105`](docs/105-lists-arrive-read-only-report.md)): a
   `list[T]` is a value both code generators compile — literals, the six comparisons, `list_len`,
   `list_is_empty`, `list_get`, `list_contains`, `list_index_of`, `list_slice`, `list_take`,

@@ -569,6 +569,136 @@ def windows(xs: list[Int], i: Int, acc: Int) -> Int:
     }
 }
 
+/// What a map costs against the tree-walker, and whether the search is really binary.
+///
+/// The interesting row is `lookup`. A `PMap` is a weight-balanced tree and this is a sorted run
+/// searched by halving, so both are `O(log n)` — and the shape claim is what a **ratio that does
+/// not collapse** at eight times the size says: a linear scan here would lose a factor of eight
+/// between the two rows, which no constant explains.
+#[test]
+fn what_a_map_costs_against_the_tree_walker() {
+    const SRC: &str = r#"
+def lookup(m: Map[Int, Int], k: Int, times: Int, acc: Int) -> Int:
+    if times <= 0:
+        return acc
+    match map_get(m, k):
+        case Some(value):
+            return lookup(m, k, times - 1, acc + value)
+        case None():
+            return lookup(m, k, times - 1, acc)
+
+def walk(m: Map[Int, Int], i: Int, acc: Int) -> Int:
+    if i >= map_len(m):
+        return acc
+    match list_get(map_keys(m), i):
+        case Some(value):
+            return walk(m, i + 1, acc + value)
+        case None():
+            return acc
+
+## The control: the same loop, the same map, and **no search**. What separates it from `lookup` is
+## the search and nothing else — in particular not the map arriving down the pipe, which is eight
+## times bigger at the large size and would otherwise be read as the search growing.
+def spin(m: Map[Int, Int], k: Int, times: Int, acc: Int) -> Int:
+    if times <= 0:
+        return acc
+    return spin(m, k, times - 1, acc + map_len(m))
+"#;
+    let program = compile("maps.beck", SRC);
+    let Some(artifact) = Artifact::build_within(&program, Duration::from_secs(300))
+        .expect("clang accepts the module")
+    else {
+        assert!(
+            !require_llvm(),
+            "BECK_REQUIRE_LLVM=1 and there is no `clang` on the path"
+        );
+        println!("skipped: no LLVM toolchain. Set BECK_REQUIRE_LLVM=1 to make this a failure.");
+        return;
+    };
+    let evaluator = beck_eval::backend_for(program.clone());
+    println!("{}\n", artifact.toolchain().version);
+    println!(
+        "{:<14} {:>10} {:>14} {:>14} {:>9}",
+        "benchmark", "entries", "evaluator", "native", "ratio"
+    );
+
+    let big = |n: usize| {
+        Value::Map(
+            (0..n as i64)
+                .map(|i| (Value::Int(i * 2), Value::Int(i)))
+                .collect(),
+        )
+    };
+    let mut ratios: Vec<(&str, f64, f64)> = Vec::new();
+    let mut native_lookup = [0.0f64; 2];
+    let mut native_spin = [0.0f64; 2];
+    for name in ["lookup", "spin", "walk"] {
+        let mut seen = [0.0f64; 2];
+        for (i, size) in [250usize, 2_000].iter().enumerate() {
+            let args = match name {
+                "lookup" | "spin" => vec![
+                    big(*size),
+                    Value::Int(*size as i64),
+                    Value::Int(2_000),
+                    Value::Int(0),
+                ],
+                _ => vec![big(*size), Value::Int(0), Value::Int(0)],
+            };
+            let runs = if i == 0 { 7 } else { 3 };
+            let walked = beck_eval::on_the_evaluator_stack(|| {
+                let f = evaluator
+                    .function(&program.defs[name].body)
+                    .expect("prepares");
+                median(runs, || {
+                    f(args.clone()).expect("the evaluator answers");
+                })
+            });
+            let compiled = median(runs, || {
+                artifact
+                    .call(name, &args)
+                    .expect("the native backend answers");
+            });
+            match name {
+                "lookup" => native_lookup[i] = compiled.as_secs_f64(),
+                "spin" => native_spin[i] = compiled.as_secs_f64(),
+                _ => {}
+            }
+            let ratio = walked.as_secs_f64() / compiled.as_secs_f64();
+            seen[i] = ratio;
+            println!(
+                "{:<14} {:>10} {:>14} {:>14} {:>8.2}×",
+                if i == 0 { name } else { "" },
+                size,
+                format!("{walked:?}"),
+                format!("{compiled:?}"),
+                ratio
+            );
+        }
+        ratios.push((name, seen[0], seen[1]));
+    }
+    for (name, small, large) in &ratios {
+        assert!(
+            *small > 1.0 && *large > 1.0,
+            "`{name}` was {small:.2}× at the small size and {large:.2}× at the large one"
+        );
+    }
+    // The search is **not** asserted, and the control is why. `spin` does the same loop over the
+    // same map and searches nothing, and it costs within a few percent of `lookup` at both sizes —
+    // so at 250 and 2,000 entries a binary search is smaller than the tail-recursive loop that
+    // calls it, and this measurement cannot tell one from a scan. Saying so is the honest answer;
+    // `native.rs::a_lookup_costs_the_same_whatever_the_map_holds` is the claim that *can* be made
+    // here, and it has no clock in it.
+    println!(
+        "\n`spin` is the control: the same loop over the same map, searching nothing. It costs \
+         {:.0} µs and {:.0} µs\nagainst `lookup`'s {:.0} µs and {:.0} µs, so the search is under \
+         the loop's own cost at these sizes\nand this table says nothing about whether it halves.",
+        native_spin[0] * 1e6,
+        native_spin[1] * 1e6,
+        native_lookup[0] * 1e6,
+        native_lookup[1] * 1e6,
+    );
+}
+
 /// What compiling costs, which is the other half of a dual-backend argument.
 ///
 /// §5.2 buys Cranelift for `beck dev` because LLVM's codegen step is slow, and that claim is about

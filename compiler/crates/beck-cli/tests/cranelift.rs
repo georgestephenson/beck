@@ -40,6 +40,7 @@ use beck_llvm::{Artifact as LlvmArtifact, Repr};
 mod support;
 use support::heapfix::{self, RECORDS, STILL_REFUSED, UNIONS};
 use support::listfix::{self, LISTS};
+use support::mapfix::{self, MAPS};
 use support::scalar::{
     float_pairs, floats, ints, pairs, render, singles, ARITHMETIC, CONTROL, REALS, RECURSION,
     REFUSED,
@@ -630,6 +631,83 @@ fn the_three_backends_agree_on_lists() {
     compared += all.agree("held_size", &listfix::singles(&holdings));
 
     println!("{compared} list calls compared, and every backend agreed on every one");
+}
+
+/// Maps, over every backend this machine has.
+///
+/// The sweep that matters is `keyed`: a binary search ends four ways — on the key, below every key,
+/// above every key, and **between** two — and the last is the one a window that shrinks wrongly
+/// never leaves. And the pairs, because `PMap`'s order is pair by pair and then by length, so a
+/// comparison that ran out of entries before it ran out of answer orders a prefix the wrong way.
+#[test]
+fn the_three_backends_agree_on_maps() {
+    linker!();
+    let all = All::over("maps.beck", MAPS);
+    let ms = mapfix::maps();
+    let mut compared = 0;
+    for name in ["size", "names", "totals", "is_nothing", "held"] {
+        compared += all.agree(name, &mapfix::singles(&ms));
+    }
+    for name in [
+        "below",
+        "above",
+        "same",
+        "differ",
+        "not_after",
+        "not_before",
+    ] {
+        compared += all.agree(name, &mapfix::pairs(&ms));
+    }
+    for name in ["lookup", "lookup_or", "holds"] {
+        compared += all.agree(name, &mapfix::keyed(&ms));
+    }
+    compared += all.agree("nothing", &[vec![]]);
+    compared += all.agree(
+        "total",
+        &ms.iter()
+            .map(|m| vec![m.clone(), Value::Int(0), Value::Int(0)])
+            .collect::<Vec<_>>(),
+    );
+
+    // A value that is itself an offset.
+    let ns = mapfix::nested();
+    for name in ["nested_below", "nested_same"] {
+        compared += all.agree(name, &mapfix::pairs(&ns));
+    }
+    compared += all.agree("nested_at", &mapfix::keyed(&ns));
+
+    // A map inside a record and inside a union.
+    let cs: Vec<Value> = ms
+        .iter()
+        .map(|m| {
+            heapfix::record(
+                "Counts",
+                &[("tally", m.clone()), ("label", Value::str_("x"))],
+            )
+        })
+        .collect();
+    compared += all.agree("counts_tally", &mapfix::singles(&cs));
+    compared += all.agree("counts_below", &mapfix::pairs(&cs));
+    compared += all.agree(
+        "recounted",
+        &cs.iter()
+            .flat_map(|c| ms.iter().map(move |m| vec![c.clone(), m.clone()]))
+            .collect::<Vec<_>>(),
+    );
+    compared += all.agree(
+        "counted",
+        &ms.iter()
+            .map(|m| vec![m.clone(), Value::str_("k")])
+            .collect::<Vec<_>>(),
+    );
+    let hs: Vec<Value> = ms
+        .iter()
+        .map(|m| heapfix::variant("Holding", "Held", &[("m", m.clone())]))
+        .chain([heapfix::variant("Holding", "Empty", &[])])
+        .collect();
+    compared += all.agree("held_size", &mapfix::singles(&hs));
+
+    println!("{compared} map calls compared, and every backend agreed on every one");
 }
 
 /// The same shape gate the other backend has, with the same two sizes and the same arithmetic.

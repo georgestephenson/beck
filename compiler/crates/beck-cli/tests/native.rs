@@ -41,6 +41,7 @@ use beck_llvm::{Artifact, Native, Repr};
 mod support;
 use support::heapfix::{self, RECORDS, STILL_REFUSED, UNIONS};
 use support::listfix::{self, LISTS};
+use support::mapfix::{self, MAPS};
 use support::scalar::{
     float_pairs, floats, ints, pairs, render, singles, ARITHMETIC, CONTROL, REALS, RECURSION,
     REFUSED,
@@ -613,6 +614,83 @@ fn the_two_backends_agree_on_lists() {
     println!("{compared} list calls compared, and every backend agreed on every one");
 }
 
+/// Maps, over every backend this machine has.
+///
+/// The sweep that matters is `keyed`: a binary search ends four ways — on the key, below every key,
+/// above every key, and **between** two — and the last is the one a window that shrinks wrongly
+/// never leaves. And the pairs, because `PMap`'s order is pair by pair and then by length, so a
+/// comparison that ran out of entries before it ran out of answer orders a prefix the wrong way.
+#[test]
+fn the_two_backends_agree_on_maps() {
+    let _ = toolchain!();
+    let both = Both::over("maps.beck", MAPS);
+    let ms = mapfix::maps();
+    let mut compared = 0;
+    for name in ["size", "names", "totals", "is_nothing", "held"] {
+        compared += both.agree(name, &mapfix::singles(&ms));
+    }
+    for name in [
+        "below",
+        "above",
+        "same",
+        "differ",
+        "not_after",
+        "not_before",
+    ] {
+        compared += both.agree(name, &mapfix::pairs(&ms));
+    }
+    for name in ["lookup", "lookup_or", "holds"] {
+        compared += both.agree(name, &mapfix::keyed(&ms));
+    }
+    compared += both.agree("nothing", &[vec![]]);
+    compared += both.agree(
+        "total",
+        &ms.iter()
+            .map(|m| vec![m.clone(), Value::Int(0), Value::Int(0)])
+            .collect::<Vec<_>>(),
+    );
+
+    // A value that is itself an offset.
+    let ns = mapfix::nested();
+    for name in ["nested_below", "nested_same"] {
+        compared += both.agree(name, &mapfix::pairs(&ns));
+    }
+    compared += both.agree("nested_at", &mapfix::keyed(&ns));
+
+    // A map inside a record and inside a union.
+    let cs: Vec<Value> = ms
+        .iter()
+        .map(|m| {
+            heapfix::record(
+                "Counts",
+                &[("tally", m.clone()), ("label", Value::str_("x"))],
+            )
+        })
+        .collect();
+    compared += both.agree("counts_tally", &mapfix::singles(&cs));
+    compared += both.agree("counts_below", &mapfix::pairs(&cs));
+    compared += both.agree(
+        "recounted",
+        &cs.iter()
+            .flat_map(|c| ms.iter().map(move |m| vec![c.clone(), m.clone()]))
+            .collect::<Vec<_>>(),
+    );
+    compared += both.agree(
+        "counted",
+        &ms.iter()
+            .map(|m| vec![m.clone(), Value::str_("k")])
+            .collect::<Vec<_>>(),
+    );
+    let hs: Vec<Value> = ms
+        .iter()
+        .map(|m| heapfix::variant("Holding", "Held", &[("m", m.clone())]))
+        .chain([heapfix::variant("Holding", "Empty", &[])])
+        .collect();
+    compared += both.agree("held_size", &mapfix::singles(&hs));
+
+    println!("{compared} map calls compared, and every backend agreed on every one");
+}
+
 /// A tag is a variant's rank **by name**, and a field's slot is its rank by name.
 ///
 /// The differential above covers both, and it covers them by comparing against an oracle rather
@@ -986,6 +1064,126 @@ fn a_slice_costs_its_answer_and_not_the_string_it_came_from() {
     assert_eq!(one[0], PER_CHARACTER);
 }
 
+/// A corpus program's **fold** compiles, which is what the collections were for.
+///
+/// `apply_event` is a `durable` fold's step function — `(State, Envelope[Event]) -> State` — and
+/// until `docs/106` its state was a `Map` and so it could not. This asserts it by name over the
+/// whole corpus rather than as a count in a report, and asserts the other side too: `view` is still
+/// refused, because a page is `Html`.
+///
+/// The set is a floor rather than an equality. A corpus program acquiring a fold that compiles
+/// should not turn this red; a corpus program *losing* one should.
+#[test]
+fn a_corpus_fold_compiles() {
+    let mut folded: Vec<String> = Vec::new();
+    let mut viewed: Vec<String> = Vec::new();
+    for path in corpus_programs() {
+        let src = std::fs::read_to_string(&path).expect("a corpus program");
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .expect("a file name")
+            .to_string();
+        let (placed, diags, map) = beck_core::compile_str(&name, &src);
+        assert!(!diags.has_errors(), "{name}:\n{}", diags.render(&map));
+        let program = Arc::new(placed.expect("compiles").program);
+        let module = beck_llvm::module(&program);
+        if module.signature("apply_event").is_some() {
+            folded.push(name.clone());
+        }
+        if module.signature("view").is_some() {
+            viewed.push(name);
+        }
+    }
+    assert!(
+        folded.len() >= 9,
+        "at least nine corpus folds compiled when `docs/106` was written, and {} do now: {folded:?}",
+        folded.len()
+    );
+    // The other side, so this is not passing because everything compiles: a page is `Html`, which
+    // follows the collections and is not on this heap.
+    assert!(
+        viewed.is_empty(),
+        "a corpus `view` compiled, and `Html` has no layout: {viewed:?}"
+    );
+    println!("{} corpus folds compile natively: {folded:?}", folded.len());
+}
+
+/// A lookup costs the same whatever the map holds, and the gate has no clock in it.
+///
+/// `measure_native.rs` cannot say this: a binary search over two thousand entries is a handful of
+/// comparisons, and its own control shows the search is smaller than the loop that calls it. What
+/// *is* sayable without a clock is the arena: `map_get` allocates one `Option` and nothing else, so
+/// a lookup into a map of 1,600 leaves exactly what a lookup into a map of 200 leaves. A search
+/// that built anything per entry — a copy of the keys, a list of candidates — would show here.
+///
+/// The second half is the one that would go red if `map_keys` stopped being one `memcpy`: it costs
+/// the map's size and not the map's size squared.
+#[test]
+fn a_lookup_costs_the_same_whatever_the_map_holds() {
+    let _ = toolchain!();
+    let both = Both::over("maps.beck", MAPS);
+    let of = |n: usize| {
+        Value::Map(
+            (0..n as i64)
+                .map(|i| (Value::str_(format!("k{i:06}")), Value::Int(i)))
+                .collect(),
+        )
+    };
+    let mut looked = Vec::new();
+    let mut keyed = Vec::new();
+    for n in [200usize, 1600] {
+        let m = of(n);
+        let params = &both.native.module().signature("lookup").unwrap().params;
+        let args = [m.clone(), Value::str_("k000007")];
+        let arguments = both
+            .native
+            .module()
+            .heap
+            .encode_args(&args, params)
+            .expect("encodes")
+            .1
+            .len();
+        let (answer, bytes) = both.native.call_sized("lookup", &args).expect("runs");
+        assert_eq!(
+            answer,
+            Value::some(Value::Int(7)),
+            "and it found the right entry, so this is not measuring a search that gave up"
+        );
+        looked.push(bytes - arguments);
+
+        // Its own arguments, because `names` is handed the map and not the key: subtracting
+        // `lookup`'s would leave the key's own bytes in the answer.
+        let params = &both.native.module().signature("names").unwrap().params;
+        let just_the_map = both
+            .native
+            .module()
+            .heap
+            .encode_args(std::slice::from_ref(&m), params)
+            .expect("encodes")
+            .1
+            .len();
+        let (_, bytes) = both.native.call_sized("names", &[m]).expect("runs");
+        keyed.push(bytes - just_the_map);
+    }
+    assert_eq!(
+        looked[0], looked[1],
+        "a lookup left {} bytes on a map of 200 and {} on a map of 1,600 — it is building \
+         something per entry",
+        looked[0], looked[1]
+    );
+    // Two words: `Some`'s tag and its payload.
+    assert_eq!(looked[0], 16);
+
+    // …and `map_keys` costs its answer: a header and one word per key.
+    assert_eq!(keyed[0], 8 + 200 * 8);
+    assert_eq!(keyed[1], 8 + 1600 * 8);
+    println!(
+        "a lookup left {} bytes at both sizes, and `map_keys` left {} then {}",
+        looked[0], keyed[0], keyed[1]
+    );
+}
+
 /// Building text in a loop costs the **square** of what it builds, and the gate has no clock in it.
 ///
 /// `docs/104` §104.6's largest cost, asserted rather than only measured. `repeat(s, n, "")` builds
@@ -1215,6 +1413,9 @@ def a_list(xs: list[Int]) -> Int:
 def a_map(m: Map[Str, Int]) -> Int:
     return map_len(m)
 
+def a_closure(f: (Int) -> Int, n: Int) -> Int:
+    return f(n)
+
 def an_option(n: Int) -> Option[Int]:
     return Some(value = n)
 
@@ -1231,14 +1432,15 @@ def finds(a: Str, b: Str) -> Option[Int]:
     let mut heap = module.heap.clone();
     let ty_of = |name: &str| program.defs[name].params[0].2.clone();
 
-    // Blamed by a refusal, and it really has no layout. One row, because `docs/105` took the
-    // other one off this list — which is the direction this gate is meant to move in.
+    // Blamed by a refusal, and it really has no layout. One row, because `docs/105` and
+    // `docs/106` took the other two off this list — which is the direction this gate is meant to
+    // move in, and a row that stayed while its type acquired a layout is what it exists to catch.
     let why = heap
-        .repr(&ty_of("a_map"), &program)
+        .repr(&ty_of("a_closure"), &program)
         .expect_err("this is what a refusal blames");
     assert!(
-        why.contains("Map"),
-        "`a_map`'s parameter should be refused as a `Map`, and the reason is {why:?}"
+        why.contains("closure"),
+        "`a_closure`'s parameter should be refused as a closure, and the reason is {why:?}"
     );
 
     // …and the control, which is the assertion that did not exist. `Option[Int]` is the prelude's
@@ -1248,7 +1450,7 @@ def finds(a: Str, b: Str) -> Option[Int]:
         heap.repr(&option, &program).is_ok(),
         "`Option[Int]` has a layout, and a refusal that says otherwise is wrong"
     );
-    for name in ["an_option", "a_record", "finds", "a_list"] {
+    for name in ["an_option", "a_record", "finds", "a_list", "a_map"] {
         assert!(
             module.signature(name).is_some(),
             "`{name}` compiles — a primitive that answers with a prelude union is not a wall, and \
@@ -1266,14 +1468,20 @@ def finds(a: Str, b: Str) -> Option[Int]:
 fn a_refusal_travels_to_whoever_calls_it() {
     let _ = toolchain!();
     let src = r#"
-## A `Map` rather than a record, a `Str` or a `list`: `docs/101` gave the record a layout,
-## `docs/104` gave text one and `docs/105` gave a list one, and what a refusal has to travel *from*
-## is something the heap still does not reach.
-def bottom(m: Map[Str, Int]) -> Int:
-    return map_len(m)
+## A closure rather than a record, a `Str`, a `list` or a `Map`: `docs/101` gave the record a
+## layout, `docs/104` gave text one, `docs/105` gave a list one and `docs/106` gave a map one, and
+## what a refusal has to travel *from* is something the heap still does not reach.
+def bottom(n: Int) -> Int:
+    return apply(double_it, n)
+
+def apply(f: (Int) -> Int, n: Int) -> Int:
+    return f(n)
+
+def double_it(n: Int) -> Int:
+    return n * 2
 
 def middle(n: Int) -> Int:
-    return bottom({})
+    return bottom(n)
 
 def top(n: Int) -> Int:
     return middle(n) + 1
@@ -1282,7 +1490,7 @@ def top(n: Int) -> Int:
 ## round, so a single pass in either direction keeps one of them.
 def ping(n: Int) -> Int:
     if n == 0:
-        return bottom({})
+        return bottom(0)
     return pong(n - 1)
 
 def pong(n: Int) -> Int:
@@ -1591,6 +1799,32 @@ fn every_corpus_program_produces_a_module_llvm_accepts() {
     // The front end and the emitter both recurse on nesting, and a test thread's stack is not the
     // one a `beck` process gives them. Every entry point in the workspace goes through here.
     beck_eval::on_the_evaluator_stack(|| corpus(toolchain));
+}
+
+/// Every `.beck` file in `corpus/`, including the multi-file project under it.
+fn corpus_programs() -> Vec<std::path::PathBuf> {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("the crate lives two levels under the workspace root")
+        .join("corpus");
+    let mut files: Vec<std::path::PathBuf> = Vec::new();
+    for entry in std::fs::read_dir(&root)
+        .expect("the corpus is there")
+        .flatten()
+    {
+        let path = entry.path();
+        if path.extension().is_some_and(|e| e == "beck") {
+            files.push(path);
+        }
+    }
+    files.sort();
+    assert!(
+        files.len() > 30,
+        "only found {} corpus programs",
+        files.len()
+    );
+    files
 }
 
 fn corpus(toolchain: beck_llvm::Toolchain) {
