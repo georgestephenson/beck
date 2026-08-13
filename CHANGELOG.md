@@ -79,6 +79,26 @@ Newest first.
 
 ### The native backends
 
+- **A raise arrives, and a handler catches it**
+  ([`docs/110`](docs/110-a-raise-arrives-report.md)): `raise` and `try:` compile to both code
+  generators. The mechanism was already there — every compiled function takes an error cell, stores
+  into it and returns, and every caller checks it — so this adds a fourteenth trap code, two words of
+  arena for the raised value, and a **handler**: a label the checks branch to instead of the
+  function's exit. **688 → 711 definitions** compile across the tree, refusals go 730 → 707, and the
+  38 refusals that blamed `raise` are **none** (18 compile, 20 inherit a deeper reason). A caught
+  raise from 3,000 frames is **17.0×** the tree-walker against **20.0×** for the same recursion that
+  does not fail. Gated by `the_two_backends_agree_on_failure` /
+  `the_three_backends_agree_on_failure` (84 calls each, including a fault inside a `try:` and a
+  different error type inside one — both of which must **not** be caught),
+  `an_uncaught_raise_names_the_value_it_carried`, and `unwinding_costs_nothing_per_frame` — the same
+  168 bytes of arena whether the raise was 25 frames down or 200.
+  - **The finding is about the protocol, not the feature** (§110.8): the handler cleared the trap
+    code with `store i32 0`, and the cell's first word is a code *and* a span while the worker's loop
+    reads it as one `i64` to decide whether the call answered. So a caught failure came back with a
+    stale span in the high half, looking like a trap with an empty arena. Two pieces of one program
+    disagreeing about what "cleared" means, which is
+    [`docs/107`](docs/107-a-map-arrives-read-only-report.md) §107.5's class of defect one level down.
+
 - **A view arrives, as a recipe** ([`docs/109`](docs/109-a-view-arrives-as-a-recipe-report.md)): a
   definition that returns `Html` compiles to both code generators. What goes in the arena is the
   **call** `html_el(tag, attrs, children)` would have been given rather than the tree, and the host

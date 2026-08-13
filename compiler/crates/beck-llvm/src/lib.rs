@@ -16,10 +16,12 @@
 //!
 //! # What this is not
 //!
-//! Not a general backend. Every **effect** is still the tree-walker's, and so is every operation
-//! that *grows* a collection — `list_append` and `map_insert` are refused rather than shipped with a
-//! worse asymptote than the evaluator's, which is why a fold that keeps a `Map` still does not
-//! compile. Text, collections, closures and a view do; `beck run` and `beck up` are unchanged.
+//! Not a general backend. Every effect that has to **reach the host** — `io`, `log`, `net.out`, a
+//! clock — is still the tree-walker's, and so is every operation that *grows* a collection:
+//! `list_append` and `map_insert` are refused rather than shipped with a worse asymptote than the
+//! evaluator's, which is why a fold that keeps a `Map` still does not compile. Text, collections,
+//! closures, a view and **failure** — `raise` and `try:` — do compile; `beck run` and `beck up` are
+//! unchanged.
 //! There is no collector either — the arena is reset per call
 //! ([`adr/0026`](../../../../docs/adr/0026-the-native-heap-is-an-arena-of-offsets.md)).
 //!
@@ -238,6 +240,17 @@ impl Artifact {
                 .get(reply.span as usize)
                 .copied()
                 .unwrap_or(Span::NONE);
+            // The one failure that carries a value. `beck-eval`'s `EvalError::raise` renders the
+            // *value*, so this decodes rather than describing: a message saying a raise happened
+            // where the evaluator says which one is a divergence the differential would show.
+            if Trap::from_code(reply.code) == Some(Trap::Raised) {
+                let message = self
+                    .module
+                    .heap
+                    .raised(reply.payload as u64, &reply.heap)
+                    .map_or_else(|why| why, |v| format!("raised `{}`", v.display()));
+                return Err(ExecError::new(message, span));
+            }
             let message = match Trap::from_code(reply.code) {
                 Some(trap) => trap.message(reply.payload),
                 None => format!("the compiled program reported trap {}", reply.code),

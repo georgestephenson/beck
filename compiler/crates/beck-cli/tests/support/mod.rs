@@ -2,6 +2,7 @@
 
 pub mod browser;
 pub mod clofix;
+pub mod failfix;
 pub mod heapfix;
 pub mod listfix;
 pub mod lsp;

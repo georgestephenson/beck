@@ -1061,3 +1061,94 @@ def plain(rows: list[Row]) -> Html:
         );
     }
 }
+
+/// What a raise costs against the tree-walker, at two depths.
+///
+/// The evaluator unwinds by returning a Rust `Err` through its own frames; this returns through
+/// compiled frames, each of which loads four bytes and branches. The row that says whether the
+/// design is right is the **ratio's shape over depth**, not its value: a mechanism that cost
+/// something per frame — a trace, a copy, an allocation — would lose ground as the stack got
+/// deeper, and this is where that would show.
+#[test]
+fn what_a_raise_costs_against_the_tree_walker() {
+    const SRC: &str = r#"
+union Bad:
+    Blank
+
+## Raised at the bottom of `n` frames and caught at the top, with the recursion **not** in tail
+## position so that every frame on the way out checks the cell.
+def deeply(n: Int) -> Int uses raises(Bad):
+    if n <= 0:
+        raise Blank
+    return deeply(n - 1) + 1
+
+def caught(n: Int) -> Result[Int, Bad]:
+    return try:
+        deeply(n)
+
+## The same recursion that does not fail, so the row above can be read against the cost of the
+## frames themselves.
+def down(n: Int) -> Int:
+    if n <= 0:
+        return 0
+    return down(n - 1) + 1
+"#;
+    let program = compile("raise.beck", SRC);
+    let Some(artifact) = Artifact::build_within(&program, Duration::from_secs(300))
+        .expect("clang accepts the module")
+    else {
+        assert!(
+            !require_llvm(),
+            "BECK_REQUIRE_LLVM=1 and there is no `clang` on the path"
+        );
+        println!("skipped: no LLVM toolchain. Set BECK_REQUIRE_LLVM=1 to make this a failure.");
+        return;
+    };
+    let evaluator = beck_eval::backend_for(program.clone());
+    println!("{}\n", artifact.toolchain().version);
+    println!(
+        "{:<14} {:>10} {:>14} {:>14} {:>9}",
+        "benchmark", "frames", "evaluator", "native", "ratio"
+    );
+    let mut seen: Vec<(&str, f64, f64)> = Vec::new();
+    for name in ["caught", "down"] {
+        let mut ratios = [0.0f64; 2];
+        // 3,000 rather than 4,000: `adr/0007` gives the evaluator a declared nesting ceiling and
+        // this recursion is not in tail position, so the *evaluator* is what bounds the larger
+        // size — which is itself a difference worth knowing about and is why the sizes are six
+        // times apart rather than eight.
+        for (i, depth) in [500i64, 3_000].iter().enumerate() {
+            let args = vec![Value::Int(*depth)];
+            let runs = if i == 0 { 7 } else { 3 };
+            let walked = beck_eval::on_the_evaluator_stack(|| {
+                let f = evaluator
+                    .function(&program.defs[name].body)
+                    .expect("prepares");
+                median(runs, || {
+                    f(args.clone()).expect("the evaluator answers");
+                })
+            });
+            let compiled = median(runs, || {
+                artifact
+                    .call(name, &args)
+                    .expect("the native backend answers");
+            });
+            ratios[i] = walked.as_secs_f64() / compiled.as_secs_f64();
+            println!(
+                "{:<14} {:>10} {:>14} {:>14} {:>8.2}×",
+                if i == 0 { name } else { "" },
+                depth,
+                format!("{walked:?}"),
+                format!("{compiled:?}"),
+                ratios[i]
+            );
+        }
+        seen.push((name, ratios[0], ratios[1]));
+    }
+    for (name, small, large) in &seen {
+        assert!(
+            *small > 1.0 && *large > 1.0,
+            "`{name}` was {small:.2}× at the small depth and {large:.2}× at the large one"
+        );
+    }
+}

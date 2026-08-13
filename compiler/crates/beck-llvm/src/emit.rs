@@ -19,8 +19,9 @@
 //! field reads, `with`, lambdas and applications, and the arithmetic, comparison, logical, text,
 //! collection and view primitives.
 //!
-//! Every **effect**, and every operation that **grows** a collection, are refused — by name, with
-//! the reason, in [`crate::Report`]. Nothing is silently approximated: a definition either compiles
+//! Every effect that has to reach the **host**, and every operation that **grows** a collection, are
+//! refused — by name, with the reason, in [`crate::Report`]. Failure is not among them: `raise` and
+//! `try:` compile, on the error cell that was already an unwinder. Nothing is silently approximated: a definition either compiles
 //! to machine code that agrees with the evaluator on every input, or it does not compile.
 //!
 //! # Agreeing with the evaluator exactly
@@ -155,6 +156,15 @@ pub enum Trap {
     /// `unreachable` because a wrong rank should be a message naming this trap and not an
     /// optimiser's licence to delete the path that produced it.
     NoSuchLambda,
+    /// A `raise` nothing caught. **The one code that is not a fault**: it is the program failing
+    /// the way its own type says it can, and the value it failed with travels with it.
+    ///
+    /// The payload is the offset of a two-word pair — the raised value's shape and its word, which
+    /// is [`crate::heap::Repr::Html`]'s deferred value one subsystem over — and the arena travels
+    /// with the reply, which is the one place the protocol treats a failure like an answer. What
+    /// the host does with it is build the evaluator's own message out of the decoded value; what a
+    /// compiled `try:` does with it is compare the type name in the error cell's third word.
+    Raised,
 }
 
 impl Trap {
@@ -178,11 +188,12 @@ impl Trap {
             Trap::NoMatchData => 11,
             Trap::HeapExhausted => 12,
             Trap::NoSuchLambda => 13,
+            Trap::Raised => 14,
         }
     }
 
     pub fn from_code(code: u32) -> Option<Trap> {
-        const ALL: [Trap; 13] = [
+        const ALL: [Trap; 14] = [
             Trap::AddOverflow,
             Trap::SubOverflow,
             Trap::MulOverflow,
@@ -196,6 +207,7 @@ impl Trap {
             Trap::NoMatchData,
             Trap::HeapExhausted,
             Trap::NoSuchLambda,
+            Trap::Raised,
         ];
         ALL.into_iter().find(|t| t.code() == code)
     }
@@ -233,6 +245,13 @@ impl Trap {
                 crate::heap::ARENA_BYTES >> 20
             ),
             Trap::NoSuchLambda => format!("no lambda of this module has rank {payload}"),
+            // Never seen by a reader: `Native::exchange` decodes the raised value and builds the
+            // evaluator's own `raised \`…\`` out of it, because a message about a failure the
+            // program declared should say what was raised rather than that something was.
+            Trap::Raised => format!(
+                "a raised value at offset {payload}, which the host did not \
+                                     decode"
+            ),
         }
     }
 }
@@ -551,6 +570,14 @@ struct Function<'a> {
     loops: BTreeSet<(Loop, u32)>,
     /// Whether this body reaches the arena, and therefore needs its base in a register.
     uses_heap: bool,
+    /// Where a failure inside the block being emitted goes, innermost last.
+    ///
+    /// Empty means the function's own trap exit. A `try:` pushes a label while its block is
+    /// emitted, so every check a call makes and every trap a primitive stores lands in the handler
+    /// rather than leaving the function — which is the whole of what makes a handler lexical
+    /// ([`docs/38`](../../../../../docs/38-literature-survey.md) §38.4): there is no dynamic search
+    /// for who handles what, because the label is decided where the block is written.
+    handlers: Vec<String>,
 }
 
 impl<'a> Function<'a> {
@@ -581,6 +608,7 @@ impl<'a> Function<'a> {
             applied: BTreeSet::new(),
             loops: BTreeSet::new(),
             uses_heap: false,
+            handlers: Vec::new(),
         }
     }
 
@@ -684,6 +712,21 @@ impl<'a> Function<'a> {
         self.spans.len() - 1
     }
 
+    /// Where a failure goes from here: the innermost `try:`'s handler, or the function's exit.
+    ///
+    /// One method rather than the literal `trap` at three sites, because a handler that only some
+    /// of them honoured would catch a raise and miss an overflow — or worse, leave a function
+    /// through a block a `try:` had already decided to protect.
+    fn escape(&mut self) -> String {
+        match self.handlers.last() {
+            Some(label) => label.clone(),
+            None => {
+                self.trapped = true;
+                "trap".to_string()
+            }
+        }
+    }
+
     /// Store the trap and leave for the exit block. The caller carries on in `cont`.
     fn trap(&mut self, trap: Trap, span: Span, payload: &str, cond: &str) {
         let idx = self.span(span);
@@ -699,8 +742,8 @@ impl<'a> Function<'a> {
         let pl = self.fresh();
         self.line(format!("{pl} = getelementptr inbounds i8, ptr %err, i64 8"));
         self.line(format!("store i64 {payload}, ptr {pl}"));
-        self.terminate("br label %trap");
-        self.trapped = true;
+        let out = self.escape();
+        self.terminate(format!("br label %{out}"));
 
         self.start(cont);
     }
@@ -712,8 +755,8 @@ impl<'a> Function<'a> {
         let ok = self.fresh();
         self.line(format!("{ok} = icmp eq i32 {code}, 0"));
         let cont = self.label("call.ok");
-        self.terminate(format!("br i1 {ok}, label %{cont}, label %trap"));
-        self.trapped = true;
+        let out = self.escape();
+        self.terminate(format!("br i1 {ok}, label %{cont}, label %{out}"));
         self.start(cont);
     }
 
@@ -913,8 +956,10 @@ impl<'a> Function<'a> {
         };
         let payload = self.widen(&v);
         self.trap(trap, span, &payload, "true");
-        self.terminate("br label %trap");
-        self.trapped = true;
+        // `trap` with a constant condition already left for the handler; this terminates the block
+        // it carried on into, which nothing can reach.
+        let out = self.escape();
+        self.terminate(format!("br label %{out}"));
 
         if dest == Dest::Return {
             return Ok(None);
@@ -1640,6 +1685,11 @@ impl<'a> Function<'a> {
     // -- primitives -------------------------------------------------------------------------
 
     fn prim(&mut self, op: Prim, args: &[Core], ty: &Ty, span: Span) -> Result<Val, String> {
+        // Before the arguments, because this one's first argument is a *block* and evaluating it
+        // here would run it outside the protection it exists to have.
+        if op == Prim::Try {
+            return self.try_(args, ty, span);
+        }
         let mut vals = Vec::with_capacity(args.len());
         for a in args {
             vals.push(self.value(a)?);
@@ -2273,6 +2323,48 @@ impl<'a> Function<'a> {
                     ty: Repr::Bool,
                 })
             }
+            // `raise e` — the one failure that is not a fault, so it carries a value.
+            //
+            // Two words in the arena — the value's shape and its word, which is a view node's
+            // deferred value one subsystem over — and the error cell's third word holds the type
+            // *name*, as the offset of that name in the literal pool. A name and not the shape,
+            // because two instantiations of one generic type are two layouts and one name, and it
+            // is the name `try:` compares (`beck_core`'s own rule: the atom is `raises(T)`).
+            Prim::Raise => {
+                arity(1)?;
+                let Repr::Obj(at) = vals[0].ty else {
+                    return Err(format!(
+                        "raises {}, and a raised value must have a declared type",
+                        self.heap.show(vals[0].ty)
+                    ));
+                };
+                let name = self.heap.layout(at).name.to_string();
+                let shape = self.heap.word_of(vals[0].ty);
+                let pair = self.alloc(heap::RAISED_WORDS * heap::WORD, span);
+                self.store_word(&pair, 0, &shape.to_string());
+                let v = vals[0].clone();
+                self.store_field(&pair, 1, &v);
+                let named = self.literal(&name);
+                let slot = self.fresh();
+                self.line(format!(
+                    "{slot} = getelementptr inbounds i8, ptr %err, i64 16"
+                ));
+                self.line(format!("store i64 {named}, ptr {slot}"));
+                self.trap(Trap::Raised, span, &pair, "true");
+                // Unreachable: the trap above left for the handler with a constant condition. The
+                // block it carried on into still needs a terminator, and the value this answers
+                // with is never read — `raise` has no type of its own, so the checker gave the
+                // expression whatever the context wanted.
+                let out = self.escape();
+                self.terminate(format!("br label %{out}"));
+                let gone = self.label("raise.gone");
+                self.start(gone);
+                let want = self.repr(ty).unwrap_or(Repr::Int);
+                Ok(Val {
+                    text: want.machine().zero().to_string(),
+                    ty: want,
+                })
+            }
             // The five that build a page. Every one of them is an allocation and some stores:
             // nothing is rendered, nothing is hashed, and no attribute is dropped, because what
             // goes in the arena is the *call* rather than the tree it makes — see
@@ -2610,6 +2702,142 @@ impl<'a> Function<'a> {
             .max()
             .unwrap_or(heap::WORD);
         Ok((repr, some, none, slot, bytes))
+    }
+
+    /// `try: block` — run the block under a handler, and reify one failure as a `Result[T, E]`.
+    ///
+    /// The block is emitted **inline**, not as a closure applied. The checker wraps it in a `lam`
+    /// of no parameters so that the evaluator can delay it; here there is nothing to delay, and
+    /// inlining is what puts the block's own calls under the handler — a `beck.lam.N` called
+    /// through an application would check the cell inside *its* frame and leave through its own
+    /// exit.
+    ///
+    /// Emitting it for a **value** is load-bearing and not a style: a call in tail position is a
+    /// `musttail` that does not check the error cell (there is no frame left to check in), which is
+    /// correct at the top of a function and would walk straight through a handler. `Dest::Value`
+    /// is what guarantees no such call is emitted inside one.
+    ///
+    /// What the handler does is the evaluator's `Prim::Try`, word for word: a raise of the caught
+    /// type becomes `Err(value)`, and **everything else keeps travelling** — a fault is not a
+    /// failure, and a different error type belongs to a handler further out.
+    fn try_(&mut self, args: &[Core], ty: &Ty, span: Span) -> Result<Val, String> {
+        let [block, caught] = args else {
+            return Err("`try` takes a block and the name of what it catches".into());
+        };
+        let CoreKind::Lam { params, body } = &block.kind else {
+            return Err("`try` over something that is not a block".into());
+        };
+        if !params.is_empty() {
+            return Err("`try` over a block that takes arguments".into());
+        }
+        let CoreKind::Const(Const::Str(name)) = &caught.kind else {
+            return Err("`try` whose caught type is not written down".into());
+        };
+        // `Result[T, E]`, from the type the checker gave this expression: `E` is what the raised
+        // value is read back as and `T` is what the block answers.
+        let repr = self
+            .repr(ty)
+            .map_err(|why| format!("catches into a value that is {why}"))?;
+        let Repr::Obj(at) = repr else {
+            return Err(format!("catches into `{ty}`, which is not an object"));
+        };
+        let (ok, err, layout) = {
+            let l = self.heap.layout(at);
+            let ok = l
+                .tag_of(Some("Ok"))
+                .ok_or_else(|| format!("`{}` has no `Ok`", l.shown))?;
+            let err = l
+                .tag_of(Some("Err"))
+                .ok_or_else(|| format!("`{}` has no `Err`", l.shown))?;
+            (ok, err, l.clone())
+        };
+        let (ok_slot, ok_ty) = layout.variants[ok as usize]
+            .slot("value")
+            .ok_or_else(|| format!("`{}`'s `Ok` has no `value`", layout.shown))?;
+        let (err_slot, err_ty) = layout.variants[err as usize]
+            .slot("error")
+            .ok_or_else(|| format!("`{}`'s `Err` has no `error`", layout.shown))?;
+        let bytes = layout
+            .variants
+            .iter()
+            .map(super::heap::Variant::bytes)
+            .max()
+            .unwrap_or(heap::WORD);
+
+        let handler = self.label("try.handler");
+        let join = self.label("try.join");
+        self.handlers.push(handler.clone());
+        let value = self.expr(body, Dest::Value);
+        self.handlers.pop();
+        let value = value?.expect("a block emitted for a value produces one");
+        if value.ty != ok_ty {
+            return Err(format!(
+                "`try` over a block answering {} where `{}` carries {}",
+                self.heap.show(value.ty),
+                layout.shown,
+                self.heap.show(ok_ty)
+            ));
+        }
+        let good = self.alloc(bytes, span);
+        self.store_word(&good, 0, &ok.to_string());
+        self.store_field(&good, ok_slot, &value);
+        let from_ok = self.label.clone();
+        self.terminate(format!("br label %{join}"));
+
+        // The handler. Two tests and no search: is this failure a raise at all, and is it the one
+        // this `try:` names. Anything else leaves for the *enclosing* handler with the cell
+        // untouched, which is what "a different error type belongs to a handler further out" is.
+        self.start(handler);
+        let out = self.escape();
+        let code = self.fresh();
+        self.line(format!("{code} = load i32, ptr %err"));
+        let raised = self.fresh();
+        self.line(format!(
+            "{raised} = icmp eq i32 {code}, {}",
+            Trap::Raised.code()
+        ));
+        let named = self.label("try.named");
+        self.terminate(format!("br i1 {raised}, label %{named}, label %{out}"));
+
+        self.start(named);
+        let slot = self.fresh();
+        self.line(format!(
+            "{slot} = getelementptr inbounds i8, ptr %err, i64 16"
+        ));
+        let got = self.fresh();
+        self.line(format!("{got} = load i64, ptr {slot}"));
+        let want = self.literal(name);
+        let mine = self.fresh();
+        self.line(format!("{mine} = icmp eq i64 {got}, {want}"));
+        let caught = self.label("try.caught");
+        self.terminate(format!("br i1 {mine}, label %{caught}, label %{out}"));
+
+        self.start(caught);
+        // Handled: the cell is cleared, because the failure stops here and whatever this function
+        // does next must not look like it is still failing.
+        //
+        // The **whole word**, which is the code and the span together. Clearing the code alone
+        // leaves the raise's span behind, and the worker's loop reads that word as one `i64` to
+        // decide whether the call answered — so a caught failure would come back with a stale span
+        // in the high half and be treated as a trap by everything downstream.
+        self.line("store i64 0, ptr %err");
+        let pl = self.fresh();
+        self.line(format!("{pl} = getelementptr inbounds i8, ptr %err, i64 8"));
+        let pair = self.fresh();
+        self.line(format!("{pair} = load i64, ptr {pl}"));
+        let held = self.load_field(&pair, 1, err_ty);
+        let bad = self.alloc(bytes, span);
+        self.store_word(&bad, 0, &err.to_string());
+        self.store_field(&bad, err_slot, &held);
+        let from_err = self.label.clone();
+        self.terminate(format!("br label %{join}"));
+
+        self.start(join);
+        let r = self.fresh();
+        self.line(format!(
+            "{r} = phi i64 [ {good}, %{from_ok} ], [ {bad}, %{from_err} ]"
+        ));
+        Ok(Val { text: r, ty: repr })
     }
 
     /// `Some(value = i)` when `found` is not `-1`, and `None()` when it is.
@@ -4502,11 +4730,17 @@ run:
 "#,
     );
     if arena {
-        m.push_str(
+        let _ = write!(
+            m,
             r#"  %ok = icmp eq i64 %cell, 0
   %wants = load i64, ptr @"beck.reply"
   %onheap = icmp ne i64 %wants, 0
-  %both = and i1 %ok, %onheap
+  %answered = and i1 %ok, %onheap
+  ; A raise is the one failure whose arena travels: the value it carried is in there, and the host
+  ; builds the evaluator's own message out of it rather than out of the fact that there was one.
+  %what = trunc i64 %cell to i32
+  %raised = icmp eq i32 %what, {raised}
+  %both = or i1 %answered, %raised
   %used = load i64, ptr @"beck.next"
   %send = select i1 %both, i64 %used, i64 0
   store i64 %send, ptr %rb
@@ -4519,6 +4753,7 @@ blob:
   %stalled = icmp ne i64 %pushed, %send
   br i1 %stalled, label %done, label %loop
 "#,
+            raised = Trap::Raised.code()
         );
     } else {
         m.push_str(

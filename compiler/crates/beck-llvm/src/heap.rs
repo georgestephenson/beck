@@ -225,6 +225,14 @@ pub const ATTR_ON: u64 = 1;
 /// `Attr`'s tag for `html_key` — a deferred value and nothing else.
 pub const ATTR_KEY: u64 = 2;
 
+/// How many words a raised value occupies: its shape and its word.
+///
+/// The same pair a view node defers with ([`DEFERRED`]), in the one other place this backend has to
+/// hand the host a value whose type is not on the signature — a `raise` may carry any declared type
+/// and the definition that raised it answers with something else entirely, so the reply's own repr
+/// says nothing about it.
+pub const RAISED_WORDS: u64 = 2;
+
 /// Which word of a view node or an attribute holds the first half of its deferred value.
 ///
 /// The same slot in all five variants, which is the reason [`NODE_WORDS`] is one number: a `Text`
@@ -1549,6 +1557,23 @@ impl Heap {
                 self.family(at).shown
             )),
         }
+    }
+
+    /// The value a `raise` carried, out of the pair the compiled code left in the arena.
+    ///
+    /// [`crate::Trap::Raised`]'s payload is that pair's offset, and the arena travels with the
+    /// reply for this one failure — so the message the host builds is the evaluator's own, made out
+    /// of the value rather than out of the fact that there was one.
+    pub fn raised(&self, cell: u64, blob: &[u8]) -> Result<Value, String> {
+        let at = word(blob, cell)?;
+        let repr = self.elements.get(at as usize).copied().ok_or_else(|| {
+            format!(
+                "the compiled program raised a value of shape {at}, and this \
+                                    module has {}",
+                self.elements.len()
+            )
+        })?;
+        self.decode(word(blob, cell + WORD)?, repr, blob)
     }
 
     /// The word a view node or an attribute deferred, and what to read it as.

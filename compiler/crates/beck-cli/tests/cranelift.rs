@@ -39,6 +39,7 @@ use beck_llvm::{Artifact as LlvmArtifact, Repr};
 
 mod support;
 use support::clofix::{self, CLOSURES};
+use support::failfix;
 use support::heapfix::{self, RECORDS, STILL_REFUSED, UNIONS};
 use support::listfix::{self, LISTS};
 use support::mapfix::{self, MAPS};
@@ -1239,4 +1240,33 @@ fn the_two_emitters_agree_on_which_views_compile() {
             "the two emitters disagree about which of `{name}`'s definitions compile"
         );
     }
+}
+
+/// A `raise` and a `try:`, over all three backends.
+///
+/// `native.rs`'s sweep with the third implementation in it, and the reason it is worth running
+/// twice is `docs/97` §97.3's — but there is a sharper one here: the two emitters write the handler
+/// differently (one branches to a label, the other jumps to a block) and both have to get the same
+/// two questions right, in the same order, about a cell whose shape is the *protocol*.
+#[test]
+fn the_three_backends_agree_on_failure() {
+    linker!();
+    let all = All::over("failure.beck", failfix::FAILURE);
+    let ns = failfix::ints(&failfix::numbers());
+    let mut compared = 0;
+    for name in [
+        "checked",
+        "uncaught",
+        "caught",
+        "described",
+        "overflows",
+        "wrong_type",
+        "nested",
+    ] {
+        compared += all.agree(name, &ns);
+    }
+    compared += all.agree("named", &failfix::texts());
+    compared += all.agree("several", &failfix::lists());
+    compared += all.agree("all_checked", &failfix::lists());
+    println!("{compared} fallible calls compared, and every backend agreed on every one");
 }

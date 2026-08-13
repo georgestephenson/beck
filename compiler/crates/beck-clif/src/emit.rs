@@ -59,8 +59,8 @@ use beck_llvm::{Refusal, Scalar, Signature, Trap, MAX_PARAMS};
 
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::{
-    types, AbiParam, Function, InstBuilder, MemFlagsData, StackSlotData, StackSlotKind, Type,
-    UserFuncName, Value as IrValue,
+    types, AbiParam, Block, Function, InstBuilder, MemFlagsData, StackSlotData, StackSlotKind,
+    Type, UserFuncName, Value as IrValue,
 };
 use cranelift_codegen::isa::{self, CallConv, TargetIsa};
 use cranelift_codegen::settings::{self, Configurable};
@@ -72,6 +72,9 @@ use cranelift_object::{ObjectBuilder, ObjectModule};
 /// `u32` span index, and an `i64` payload.
 const CELL_SPAN: i32 = 4;
 const CELL_PAYLOAD: i32 = 8;
+/// The third word, which only a `raise` writes and only a `try:` reads: the offset of the raised
+/// type's name in the literal pool. It never reaches the host — see `beck_llvm::Trap::Raised`.
+const CELL_RAISED: i32 = 16;
 
 /// What one compilation produced.
 pub struct Module {
@@ -3771,6 +3774,13 @@ struct Body<'a> {
     /// is [`build`]'s drain, and which is also why a `lam` that will not compile refuses the
     /// definition it was written in rather than itself.
     pending: Vec<Pending>,
+    /// Where a failure inside the block being emitted goes, innermost last.
+    ///
+    /// Empty means the function's own exit. A `try:` pushes a block while its own is emitted, so a
+    /// call's check and a primitive's trap land in the handler rather than returning — the LLVM
+    /// emitter's `handlers`, and the same reason: a handler is lexical because the destination is
+    /// decided where the block is written.
+    handlers: Vec<Block>,
     /// The closure families this body applies.
     applied: BTreeSet<u32>,
     /// The higher-order list primitives this body reaches, by shape.
@@ -3788,6 +3798,7 @@ impl<'a> Body<'a> {
         runtime: Runtime,
     ) -> Body<'a> {
         Body {
+            handlers: Vec::new(),
             sigs,
             eligible,
             ids,
@@ -3944,8 +3955,7 @@ impl<'a> Body<'a> {
         let at = b.ins().iconst(types::I32, i64::from(idx));
         b.ins().store(flags, at, err, CELL_SPAN);
         b.ins().store(flags, payload, err, CELL_PAYLOAD);
-        let z = self.zero(self.ret, b);
-        b.ins().return_(&[z]);
+        self.escape(b);
 
         b.switch_to_block(cont);
         b.seal_block(cont);
@@ -3962,11 +3972,27 @@ impl<'a> Body<'a> {
 
         b.switch_to_block(bad);
         b.seal_block(bad);
-        let z = self.zero(self.ret, b);
-        b.ins().return_(&[z]);
+        self.escape(b);
 
         b.switch_to_block(cont);
         b.seal_block(cont);
+    }
+
+    /// Leave for the innermost `try:`'s handler, or out of the function.
+    ///
+    /// One method rather than the `return_` at three sites, for the reason the LLVM emitter's
+    /// `escape` is one: a handler only some of them honoured would catch a raise and miss an
+    /// overflow.
+    fn escape(&mut self, b: &mut FunctionBuilder<'_>) {
+        match self.handlers.last() {
+            Some(handler) => {
+                b.ins().jump(*handler, &[]);
+            }
+            None => {
+                let z = self.zero(self.ret, b);
+                b.ins().return_(&[z]);
+            }
+        }
     }
 
     // -- expressions ------------------------------------------------------------------------
@@ -4202,9 +4228,9 @@ impl<'a> Body<'a> {
         let always = b.ins().iconst(types::I8, 1);
         self.trap(trap, span, payload, always, b);
         // `trap` continues in a fresh block on the "did not trap" edge, which cannot be reached:
-        // the condition was a constant. It still needs a terminator.
-        let z = self.zero(self.ret, b);
-        b.ins().return_(&[z]);
+        // the condition was a constant. It still needs a terminator, and it leaves the way every
+        // other failure in this block does rather than out of the function.
+        self.escape(b);
 
         b.switch_to_block(join);
         b.seal_block(join);
@@ -4863,6 +4889,11 @@ impl<'a> Body<'a> {
         b: &mut FunctionBuilder<'_>,
         m: &mut ObjectModule,
     ) -> Result<Val, String> {
+        // Before the arguments, because this one's first argument is a *block* and evaluating it
+        // here would run it outside the protection it exists to have.
+        if op == Prim::Try {
+            return self.try_(args, ty, span, b, m);
+        }
         let mut vals = Vec::with_capacity(args.len());
         for a in args {
             vals.push(self.value(a, b, m)?);
@@ -5416,6 +5447,44 @@ impl<'a> Body<'a> {
                     ty: Repr::Bool,
                 })
             }
+            // `raise e` — the one failure that is not a fault, so it carries a value. Two words in
+            // the arena and the type *name* in the error cell's third word; see the LLVM emitter's
+            // arm and `beck_llvm::Trap::Raised`.
+            Prim::Raise => {
+                arity(1, &vals)?;
+                let Repr::Obj(at) = vals[0].ty else {
+                    return Err(format!(
+                        "raises {}, and a raised value must have a declared type",
+                        self.heap.show(vals[0].ty)
+                    ));
+                };
+                let name = self.heap.layout(at).name.to_string();
+                let shape = self.heap.word_of(vals[0].ty);
+                let pair = self.alloc(heap::RAISED_WORDS * heap::WORD, span, b, m);
+                let word = b.ins().iconst(types::I64, i64::from(shape));
+                self.store_word(pair, 0, word, b, m);
+                let v = vals[0];
+                self.store_field(pair, 1, &v, b, m);
+                let named = self.literal(&name);
+                let named = b.ins().iconst(types::I64, named as i64);
+                let err = self.err();
+                b.ins()
+                    .store(MemFlagsData::trusted(), named, err, CELL_RAISED);
+                let always = b.ins().iconst(types::I8, 1);
+                self.trap(Trap::Raised, span, pair, always, b);
+                // Unreachable: the trap above left with a constant condition, and the block it
+                // carried on into still needs a terminator. `raise` has no type of its own, so
+                // what this answers with is never read.
+                self.escape(b);
+                let gone = b.create_block();
+                b.switch_to_block(gone);
+                b.seal_block(gone);
+                let want = self.repr(ty).unwrap_or(Repr::Int);
+                Ok(Val {
+                    v: self.zero(want, b),
+                    ty: want,
+                })
+            }
             // The five that build a page: an allocation and some stores, because what goes in the
             // arena is the *call* rather than the tree. See `beck_llvm::heap::Repr::Html`, and the
             // LLVM emitter's five arms, which this is written twice with on purpose
@@ -5724,6 +5793,132 @@ impl<'a> Body<'a> {
     fn literal(&mut self, s: &str) -> u64 {
         let at = self.heap.intern(s);
         self.heap.string_offset(at)
+    }
+
+    /// `try: block` — run the block under a handler, and reify one failure as a `Result[T, E]`.
+    ///
+    /// The LLVM emitter's `try_`, in blocks rather than labels, and the argument for every decision
+    /// in it is written there: the block is emitted **inline** so that its own calls are under the
+    /// handler, and for a **value** so that no tail call can walk through one.
+    fn try_(
+        &mut self,
+        args: &[Core],
+        ty: &beck_core::ty::Ty,
+        span: Span,
+        b: &mut FunctionBuilder<'_>,
+        m: &mut ObjectModule,
+    ) -> Result<Val, String> {
+        let [block, caught] = args else {
+            return Err("`try` takes a block and the name of what it catches".into());
+        };
+        let CoreKind::Lam { params, body } = &block.kind else {
+            return Err("`try` over something that is not a block".into());
+        };
+        if !params.is_empty() {
+            return Err("`try` over a block that takes arguments".into());
+        }
+        let CoreKind::Const(Const::Str(name)) = &caught.kind else {
+            return Err("`try` whose caught type is not written down".into());
+        };
+        let repr = self
+            .repr(ty)
+            .map_err(|why| format!("catches into a value that is {why}"))?;
+        let Repr::Obj(at) = repr else {
+            return Err(format!("catches into `{ty}`, which is not an object"));
+        };
+        let (ok, err_tag, layout) = {
+            let l = self.heap.layout(at);
+            let ok = l
+                .tag_of(Some("Ok"))
+                .ok_or_else(|| format!("`{}` has no `Ok`", l.shown))?;
+            let err = l
+                .tag_of(Some("Err"))
+                .ok_or_else(|| format!("`{}` has no `Err`", l.shown))?;
+            (ok, err, l.clone())
+        };
+        let (ok_slot, ok_ty) = layout.variants[ok as usize]
+            .slot("value")
+            .ok_or_else(|| format!("`{}`'s `Ok` has no `value`", layout.shown))?;
+        let (err_slot, err_ty) = layout.variants[err_tag as usize]
+            .slot("error")
+            .ok_or_else(|| format!("`{}`'s `Err` has no `error`", layout.shown))?;
+        let bytes = layout
+            .variants
+            .iter()
+            .map(beck_llvm::Variant::bytes)
+            .max()
+            .unwrap_or(heap::WORD);
+
+        let handler = b.create_block();
+        let join = b.create_block();
+        b.append_block_param(join, types::I64);
+
+        self.handlers.push(handler);
+        let value = self.expr(body, Dest::Value, b, m);
+        self.handlers.pop();
+        let value = value?.expect("a block emitted for a value produces one");
+        if value.ty != ok_ty {
+            return Err(format!(
+                "`try` over a block answering {} where `{}` carries {}",
+                self.heap.show(value.ty),
+                layout.shown,
+                self.heap.show(ok_ty)
+            ));
+        }
+        let good = self.alloc(bytes, span, b, m);
+        let tag = b.ins().iconst(types::I64, i64::from(ok));
+        self.store_word(good, 0, tag, b, m);
+        self.store_field(good, ok_slot, &value, b, m);
+        b.ins().jump(join, &[good.into()]);
+
+        // The handler. Two tests and no search: is this failure a raise at all, and is it the one
+        // this `try:` names. Anything else leaves for the *enclosing* handler with the cell
+        // untouched.
+        b.switch_to_block(handler);
+        b.seal_block(handler);
+        let flags = MemFlagsData::trusted();
+        let cell = self.err();
+        let code = b.ins().load(types::I32, flags, cell, 0);
+        let named = b.create_block();
+        let away = b.create_block();
+        let is_raise = b
+            .ins()
+            .icmp_imm_s(IntCC::Equal, code, i64::from(Trap::Raised.code()));
+        b.ins().brif(is_raise, named, &[], away, &[]);
+
+        b.switch_to_block(named);
+        b.seal_block(named);
+        let got = b.ins().load(types::I64, flags, cell, CELL_RAISED);
+        let want = self.literal(name);
+        let caught_here = b.create_block();
+        let mine = b.ins().icmp_imm_s(IntCC::Equal, got, want as i64);
+        b.ins().brif(mine, caught_here, &[], away, &[]);
+
+        b.switch_to_block(away);
+        b.seal_block(away);
+        self.escape(b);
+
+        b.switch_to_block(caught_here);
+        b.seal_block(caught_here);
+        // Handled: the whole first word is cleared — the code *and* the span — because the worker's
+        // loop reads it as one `i64` to decide whether the call answered, so a caught failure that
+        // left the span behind would come back looking like a trap.
+        let zero = b.ins().iconst(types::I64, 0);
+        b.ins().store(flags, zero, cell, 0);
+        let pair = b.ins().load(types::I64, flags, cell, CELL_PAYLOAD);
+        let held = self.load_field(pair, 1, err_ty, b, m);
+        let bad = self.alloc(bytes, span, b, m);
+        let tag = b.ins().iconst(types::I64, i64::from(err_tag));
+        self.store_word(bad, 0, tag, b, m);
+        self.store_field(bad, err_slot, &held, b, m);
+        b.ins().jump(join, &[bad.into()]);
+
+        b.switch_to_block(join);
+        b.seal_block(join);
+        Ok(Val {
+            v: b.block_params(join)[0],
+            ty: repr,
+        })
     }
 
     /// One of [`Builds`]'s functions: the error cell, the arguments, the span.
@@ -6734,7 +6929,15 @@ fn driver(
                 let at = arena.addr(arena.reply, &mut b, m);
                 let wants = b.ins().load(types::I64, flags, at, 0);
                 let on_heap = b.ins().icmp_imm_s(IntCC::NotEqual, wants, 0);
-                let both = b.ins().band(ok, on_heap);
+                let answered = b.ins().band(ok, on_heap);
+                // A raise is the one failure whose arena travels: the value it carried is in there,
+                // and the host builds the evaluator's own message out of it rather than out of the
+                // fact that there was one. The code is the cell's low half.
+                let what = b.ins().ireduce(types::I32, code);
+                let raised = b
+                    .ins()
+                    .icmp_imm_s(IntCC::Equal, what, i64::from(Trap::Raised.code()));
+                let both = b.ins().bor(answered, raised);
                 let at = arena.addr(arena.next, &mut b, m);
                 let used = b.ins().load(types::I64, flags, at, 0);
                 let none = b.ins().iconst(types::I64, 0);

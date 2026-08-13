@@ -40,6 +40,7 @@ use beck_llvm::{Artifact, Native, Repr};
 
 mod support;
 use support::clofix::{self, CLOSURES};
+use support::failfix;
 use support::heapfix::{self, RECORDS, STILL_REFUSED, UNIONS};
 use support::listfix::{self, LISTS};
 use support::mapfix::{self, MAPS};
@@ -2444,5 +2445,100 @@ fn a_page_costs_its_own_nodes_and_nothing_per_page() {
         big.0,
         big.1,
         small.1 - PER_ROW * small.0
+    );
+}
+
+/// A `raise` and a `try:`, compiled — and the three things that have to agree.
+///
+/// The value a caught failure becomes, the `Result` it is wrapped in, and the **message** when
+/// nothing catches it: `beck-eval` renders a raise as ``raised `TooBig{n: 101}` ``, so the arena
+/// travels with that one failure and the host builds the same sentence out of the same value. A
+/// backend that reported "something was raised" would pass a test that only compared the fact of a
+/// failure, and fails this one.
+///
+/// The cases that matter most are the ones where a handler must **not** fire — a fault inside a
+/// `try:`, and a different error type raised inside it — because a handler that caught by trap code
+/// rather than by type name would answer an `Err` where the evaluator fails.
+#[test]
+fn the_two_backends_agree_on_failure() {
+    let _ = toolchain!();
+    let both = Both::over("failure.beck", failfix::FAILURE);
+    let ns = failfix::ints(&failfix::numbers());
+    let mut compared = 0;
+    for name in [
+        "checked",
+        "uncaught",
+        "caught",
+        "described",
+        "overflows",
+        "wrong_type",
+        "nested",
+    ] {
+        compared += both.agree(name, &ns);
+    }
+    compared += both.agree("named", &failfix::texts());
+    compared += both.agree("several", &failfix::lists());
+    compared += both.agree("all_checked", &failfix::lists());
+    println!("{compared} fallible calls compared, LLVM against the tree-walker");
+    assert!(compared >= 80, "only {compared} calls compared");
+}
+
+/// The message a raise crosses the boundary with is the evaluator's, value and all.
+///
+/// Asserted directly as well as differentially, because the differential compares the two backends
+/// against each other and this says what the string *is*: a reader of a failing call sees which
+/// value was raised, and a regression to "the compiled program failed" would still agree with
+/// itself.
+#[test]
+fn an_uncaught_raise_names_the_value_it_carried() {
+    let _ = toolchain!();
+    let both = Both::over("failure.beck", failfix::FAILURE);
+    for (n, want) in [(101, "raised `TooBig{n: 101}`"), (0, "raised `Blank`")] {
+        let (walked, compiled) = both.call("uncaught", &[Value::Int(n)]);
+        assert_eq!(compiled, Err(want.to_string()), "`uncaught({n})`");
+        assert_eq!(walked, compiled);
+    }
+    // The control: the same definition, on an argument that does not raise.
+    let (walked, compiled) = both.call("uncaught", &[Value::Int(2)]);
+    assert_eq!(compiled, Ok(Value::Int(5)));
+    assert_eq!(walked, compiled);
+}
+
+/// Unwinding costs nothing per frame, and the gate has **no clock in it**.
+///
+/// `AGENTS.md`'s shape gate for the one thing an error mechanism most easily gets wrong. A raise is
+/// two words of arena for the pair and however many the value takes — a constant — and that has to
+/// be true whether it was raised one frame down or two hundred. A scheme that allocated per frame
+/// on the way out (a trace, a boxed error per level, a copy of the value at each check) would be
+/// linear in the depth and would still answer correctly at every size.
+///
+/// `deeply` is deliberately **not** tail-recursive: every frame on the way out reads the error cell
+/// and returns, which is the path being measured. The two depths are eight times apart.
+#[test]
+fn unwinding_costs_nothing_per_frame() {
+    let _ = toolchain!();
+    let both = Both::over("failure.beck", failfix::FAILURE);
+    let mut sizes = Vec::new();
+    for n in [25i64, 200] {
+        let (answer, bytes) = both
+            .native
+            .call_sized("deeply_caught", &[Value::Int(n)])
+            .expect("runs");
+        assert_eq!(
+            answer.variant(),
+            Some("Err"),
+            "`deeply_caught({n})` should have caught the raise at the bottom"
+        );
+        sizes.push((n, bytes));
+    }
+    assert_eq!(
+        sizes[0].1, sizes[1].1,
+        "a raise from {} frames down cost {} bytes of arena and one from {} cost {} — unwinding \
+         is allocating per frame",
+        sizes[0].0, sizes[0].1, sizes[1].0, sizes[1].1
+    );
+    println!(
+        "a raise caught {} frames up and one caught {} frames up both leave {} bytes of arena",
+        sizes[0].0, sizes[1].0, sizes[0].1
     );
 }
