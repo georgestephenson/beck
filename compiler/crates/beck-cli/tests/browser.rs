@@ -1846,7 +1846,7 @@ async fn a_patch_that_rebuilds_the_page_keeps_the_caret_and_the_scroll() {
 }
 
 browser_test! {
-/// The devtools panel: the three things §8.6 asks for, in the page it is about.
+/// The devtools panel: the three things Phase 3 asks for, in the page it is about.
 ///
 /// It is loaded on request rather than shipped, so this asks for it — and then reads the numbers
 /// off the panel's own DOM rather than off the counters, because a panel that renders nothing

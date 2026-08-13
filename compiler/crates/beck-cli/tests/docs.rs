@@ -709,3 +709,122 @@ fn every_shell_command_in_the_instructions_runs() {
         bad.join("\n  ")
     );
 }
+
+/// The leading number of `104-the-release-and-the-installer-report.md`, or of `104 — the release`.
+///
+/// `None` where the text does not begin with a number: `README.md` is an index rather than a
+/// numbered document, and two reports open with prose instead of their number.
+fn leading_number(text: &str) -> Option<u32> {
+    let digits: String = text.chars().take_while(char::is_ascii_digit).collect();
+    digits.parse().ok()
+}
+
+/// A document's sections are numbered for the document they are in.
+///
+/// `docs/` numbers a document by its filename and its sections `§N.1`, `§N.2` … of that same
+/// number. That is what makes `§104.7` a reference a reader can follow — and, because every
+/// document's headings carry its own filename's number, what makes a section number unique across
+/// the directory without anything having to check for a collision.
+///
+/// The gap this is the shape of is the one `AGENTS.md` tells you to expect: the counter collides
+/// whenever two branches write a report, so a document gets **renumbered on merge** — and a rename
+/// moves the filename while leaving the headings where they were.
+/// `104-the-release-and-the-installer-report.md` landed carrying `101`, the number
+/// `101-the-heap-report.md` already had. So `§101.5` named a section in each of two documents, and
+/// the twenty-nine references to `§104.x` written in `README.md`, `AGENTS.md`, `CHANGELOG.md`,
+/// `release/README.md` and six other documents named a heading that did not exist. The prose inside
+/// the report had been corrected to `§104.x` and the headings had not, which is why reading it did
+/// not show the fault: the half a reader sees was right.
+///
+/// A reference is checked from the *defining* end rather than the citing end on purpose. Reports
+/// are history and are not edited to track a later change, so a rule that every `§N.M` in the
+/// repository resolves would be enforced against files nobody may correct. This one is enforced
+/// against the document that owns the number, which is the file a rename is free to fix.
+#[test]
+fn a_documents_sections_are_numbered_for_the_document_they_are_in() {
+    let root = repo_root();
+    let listed = Command::new("git")
+        .current_dir(&root)
+        .args(["ls-files", "docs/*.md"])
+        .output()
+        .expect("git lists the tracked documents");
+    // `docs/adr/` numbers decisions on its own scheme and `docs/reference/` is generated, so the
+    // convention this asserts is the one directory it belongs to.
+    let files: Vec<String> = String::from_utf8_lossy(&listed.stdout)
+        .split_whitespace()
+        .filter(|f| f.matches('/').count() == 1)
+        .map(str::to_string)
+        .collect();
+    assert!(
+        files.len() > 50,
+        "{} documents found — the listing is wrong, not the repository",
+        files.len()
+    );
+
+    let mut bad = Vec::new();
+    let mut checked = 0usize;
+    for file in &files {
+        let name = file
+            .rsplit('/')
+            .next()
+            .expect("a path has a last component");
+        let Some(number) = leading_number(name) else {
+            continue;
+        };
+        checked += 1;
+        let text = std::fs::read_to_string(root.join(file)).expect("a tracked file is readable");
+
+        if let Some(titled) = text
+            .lines()
+            .next()
+            .and_then(|line| line.strip_prefix("# "))
+            .and_then(|rest| leading_number(rest.trim_start()))
+        {
+            if titled != number {
+                bad.push(format!(
+                    "{file}: the title is numbered {titled} and the file is {number}"
+                ));
+            }
+        }
+
+        for line in text.lines() {
+            let Some(rest) = line.strip_prefix("##") else {
+                continue;
+            };
+            let rest = rest.trim_start_matches('#').trim_start();
+            // A heading opening with `§` is *citing* a section rather than declaring one —
+            // `### §24.6's O(n), paid once instead of removed` is a subheading about another
+            // document, and the sign is what says so: nothing in `docs/` declares a section with it.
+            if rest.starts_with('§') {
+                continue;
+            }
+            // `## 104.7 What has been executed` is a numbered section; `## Phase 4 — …` is not, and
+            // neither is a heading that merely opens with a figure — the digit after the point is
+            // what separates a section number from `## 1.5× the evaluator`.
+            let Some((head, tail)) = rest.split_once('.') else {
+                continue;
+            };
+            if !tail.starts_with(|c: char| c.is_ascii_digit()) {
+                continue;
+            }
+            let Some(section) = leading_number(head) else {
+                continue;
+            };
+            if section != number {
+                bad.push(format!(
+                    "{file}: a heading is numbered {section} — `{}`",
+                    line.trim()
+                ));
+            }
+        }
+    }
+
+    assert!(checked > 50, "only {checked} numbered documents were read");
+    assert!(
+        bad.is_empty(),
+        "{} heading(s) carry a number that is not their document's, so a `§N.M` reference to them \
+         resolves to the wrong document or to nothing:\n  {}",
+        bad.len(),
+        bad.join("\n  ")
+    );
+}

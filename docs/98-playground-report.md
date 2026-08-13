@@ -4,7 +4,7 @@
 answering in the browser, with source on the left and what it derives on the right; and the whole
 *application* in the same tab — a log, a fold, and two client iframes speaking the patch protocol
 over a `MessageChannel` — with a `seq` scrubber that folds the log again from genesis. It is one of
-the two bullets [`08`](08-roadmap.md) §8.6 listed as untouched when this was started, and the last
+the two bullets [`08`](08-roadmap.md) Phase 3 listed as untouched when this was started, and the last
 one that is a *product* rather than a backend.
 
 The interesting half is not the WebAssembly, and it is not the page. It is what §17.2 claims and how
@@ -242,7 +242,7 @@ the absolute microseconds do not.
 
 ## 98.7 What is not built
 
-- **Rung C.** Untouched, and Phase 4's ([`08`](08-roadmap.md) §8.7): an ephemeral cluster per
+- **Rung C.** Untouched, and Phase 4's ([`08`](08-roadmap.md)): an ephemeral cluster per
   session, with the compiler as the first sandbox. Nothing here is that, and nothing here compiles
   against a restricted effect budget — a playground program can name `net.out` and the page will
   show the effect row and the NetworkPolicy it implies, because it never runs anything that has one.
@@ -309,7 +309,7 @@ existed for Mode B, so neither can skip there.
   be is not that Mode B's kernel existed — it is that `beck-rt` could be divided (§98.2). Mode B's
   kernel is a *bundle interpreter*; a tab server is a sequencer, a log and a differ, and none of
   those are in `beck-wasm`. The rung rode a division of the runtime, not the kernel work.
-- [`08`](08-roadmap.md) §8.6's playground bullet is built for rungs A and B; the "untouched" list
+- [`08`](08-roadmap.md) Phase 3's playground bullet is built for rungs A and B; the "untouched" list
   loses it and keeps client polish.
 - **`beck-rt` gained a crate below it** and lost none of its public paths (§98.2). `beck-host` depends on `beck-core` and nothing else that matters, and the rule
   `beck-rt` has carried since Phase 1 — no dependency on a backend crate — is inherited by it.
@@ -342,6 +342,6 @@ last row closed while this was being written ([`96`](96-presence-report.md)).
 The exit criterion is a claim about a person — an outside developer building a non-trivial app
 without asking the authors a question — and no outside developer has read [`86`](86-getting-started.md).
 What a playground changes about that is not the criterion but the *first* thing such a person does:
-§8.6's table of the questions they ask in order now has a row above all of them — "can I see it?" —
+Phase 3's table of the questions they ask in order now has a row above all of them — "can I see it?" —
 and the answer is a URL rather than a `git clone` and a toolchain. That is a real change and it is
 not the criterion, and this report is not going to claim it is.

@@ -266,7 +266,7 @@ dependencies whose signatures didn't change.
   writes the artefact, CI weighs every Mode B example against 150 KB brotli, and a shape gate says
   what a threshold with eighty times its headroom cannot — that a bundle is a function of the
   component's slice rather than of the program around it. What is left of this bullet is **codegen
-  alone**, which [`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md) defers and §8.19's Lane E
+  alone**, which [`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md) defers and §8.5.5's Lane E
   schedules behind a heap.
 - Client polish for both modes: router, forms, lazy routes, focus/scroll preservation, devtools
   extension showing signal graph, patch traffic and pending state. — ***Built, except lazy routes***

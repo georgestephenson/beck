@@ -189,6 +189,51 @@ Newest first.
 
 ### Docs
 
+- **A report was carrying another report's number, and every reference to it named nothing.**
+  [`docs/104`](docs/104-the-release-and-the-installer-report.md) was renumbered on merge — the
+  filename and the prose inside it moved to `104`, the title and eleven headings stayed at `101`,
+  which [`docs/101`](docs/101-the-heap-report.md) already had. So `§101.5` named a section in each
+  of two documents, and the 29 references to `§104.x` from `README.md`, `AGENTS.md`, this file,
+  [`release/README.md`](release/README.md), [`08`](docs/08-roadmap.md),
+  [`28`](docs/28-releases-and-deployment.md), [`43`](docs/43-threat-model.md),
+  [`86`](docs/86-getting-started.md), [`adr/0027`](docs/adr/0027-a-release-publishes-a-checksum-and-not-a-signature.md)
+  and the index named a heading that did not exist. Only the headings, the title and the index's
+  three self-references moved: the report's own prose had been corrected already, which is why
+  reading it did not show the fault — the half a reader sees was right.
+- **The gate is the shape of that gap rather than of the fix**: a document's numbered headings and
+  its numbered title carry its own filename's number. That is also what makes a section number
+  unique across `docs/` without anything checking for a collision, and it is enforced against the
+  document that *owns* the number — the file a rename is free to fix — because reports are history
+  and a rule that every `§N.M` citation resolves would be enforced against files nobody may edit.
+  `docs.rs::a_documents_sections_are_numbered_for_the_document_they_are_in` over all 86 documents,
+  with the `links` job in [`docs.yml`](.github/workflows/docs.yml) keeping its own copy the way it
+  already does for the link rule. Checked by putting the defect back: both go red and name all
+  twelve lines. A heading opening with `§` cites a section rather than declaring one and is skipped
+  — [`26`](docs/26-arrangement-sharing-report.md) has the only one.
+- **Thirty-one citations named roadmap sections that have never existed.** `§8.6` (Phase 3's bullet
+  list), `§8.7` and `§8.19` (Lane E) are cited by nine documents and four Rust doc comments, and
+  `git log -S"## 8.6" -- docs/08-roadmap.md` returns nothing: the phase headings have carried names
+  rather than numbers since the file's first commit. So this was never a rename — the numbers were
+  invented at the citing end, and inconsistently enough that `§8.7` means Phase 4 in
+  [`98`](docs/98-playground-report.md) and [`103`](docs/103-playground-phase-3-report.md) and the
+  **lane table** in [`93`](docs/93-llvm-backend-report.md). Each is repointed at what it claims:
+  Phase 3 and Phase 4 by the names the roadmap gives them, and Lane E to
+  [`08`](docs/08-roadmap.md) §8.5.5 — which is what [`105`](docs/105-text-on-the-heap-report.md),
+  [`106`](docs/106-lists-arrive-read-only-report.md) and
+  [`108`](docs/108-closures-arrive-report.md) already called it. No claim, measurement or refusal
+  moved; this edits reports, which are history, and the warrant is that a pointer that never
+  resolved is a repair rather than a rewrite — the same operation the consolidation below performed
+  when it remapped every `§number` to the section that carries the claim.
+- **There is no gate on the citing end, and the reason is the finding.** Of 157 `§N.M` citations
+  that resolve to no heading, the 31 above are the only ones this project owns: almost all of the
+  rest are **SICP and IEEE 754** section numbers — `§2.5.1`, `§1.1.7`, `§5.11` — which share the
+  notation, are somebody else's to number, and are the whole point of
+  [`25`](docs/25-benchmarks-and-expressiveness.md) §25.5. A rule that every `§N.M` resolves would
+  fire on all of them, so the gate stays on the defining end where it is sound. One internal
+  exception is left standing and named rather than fixed:
+  [`01`](docs/01-vision-and-premise.md) cites its own §1.4.5, which is the fifth item of §1.4's
+  list rather than a heading.
+
 - **Consolidated 27 reports into three chapters, and changed the rule that produced them.**
   Reports 70–79 (the evaluator's quadratics and constants) became
   [`docs/70`](docs/70-the-evaluator-gets-fast-report.md); reports 53 and 57–61 (the Are We Fast Yet

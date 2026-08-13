@@ -85,6 +85,44 @@ jobs:
           sys.exit(1 if bad else 0)
           PY
 
+      # The second deterministic property, and the same bargain as the one above: it is also a
+      # `cargo test` (`beck-cli/tests/docs.rs`), and two implementations of a rule this small are
+      # cheaper than a rule that is only enforced where a compiler happens to build.
+      - name: a document's sections are numbered for the document they are in
+        run: |
+          python3 - <<'PY'
+          import pathlib, re, subprocess, sys
+
+          files = [
+              f
+              for f in subprocess.run(
+                  ["git", "ls-files", "docs/*.md"], capture_output=True, text=True, check=True
+              ).stdout.split()
+              if f.count("/") == 1
+          ]
+          assert len(files) > 50, f"{len(files)} documents found — the listing is wrong, not the repo"
+
+          # `## 104.7 What has been executed` declares a section. A heading opening with `§` cites
+          # one somewhere else, and a digit with no digit after the point is a figure, not a number.
+          head = re.compile(r"^#{2,6}\s+(\d+)\.\d")
+          bad = []
+          for f in files:
+              number = re.match(r"(\d+)-", pathlib.Path(f).name)
+              if not number:
+                  continue
+              number = int(number.group(1))
+              lines = pathlib.Path(f).read_text().splitlines()
+              title = re.match(r"^#\s+(\d+)\b", lines[0]) if lines else None
+              if title and int(title.group(1)) != number:
+                  bad.append(f"{f}: the title is numbered {title.group(1)} and the file is {number}")
+              for line in lines:
+                  m = head.match(line)
+                  if m and int(m.group(1)) != number:
+                      bad.append(f"{f}: a heading is numbered {m.group(1)} — {line.strip()}")
+          print("\n".join(bad) or f"every section number is its document's across {len(files)} documents")
+          sys.exit(1 if bad else 0)
+          PY
+
   generated:
     runs-on: ubuntu-latest
     timeout-minutes: 25
