@@ -39,6 +39,7 @@ use beck_core::{Program, Value};
 use beck_llvm::{Artifact, Native, Repr};
 
 mod support;
+use support::clofix::{self, CLOSURES};
 use support::heapfix::{self, RECORDS, STILL_REFUSED, UNIONS};
 use support::listfix::{self, LISTS};
 use support::mapfix::{self, MAPS};
@@ -736,7 +737,257 @@ fn the_two_backends_agree_on_maps() {
     println!("{compared} map calls compared, and every backend agreed on every one");
 }
 
-/// A tag is a variant's rank **by name**, and a field's slot is its rank by name.
+/// Closures, over every backend this machine has.
+///
+/// What the differential can see here is narrower than what it sees for a list, and the reason is
+/// the feature's own line: a closure never crosses the boundary, so no call can *answer* with one.
+/// Every case is therefore a definition that builds a closure, applies it — itself or through one of
+/// the five loops — and answers with something the host can read. That is the whole of what a
+/// program can observe about a closure anyway.
+#[test]
+fn the_two_backends_agree_on_closures() {
+    let _ = toolchain!();
+    let both = Both::over("closures.beck", CLOSURES);
+    let ns: Vec<i64> = vec![0, 1, -1, 2, 7, -7, i64::MAX, i64::MIN];
+    let mut compared = 0;
+
+    // Applying one where it is built, and the three ways it can carry what it reads.
+    for name in ["twice", "again", "through", "double"] {
+        compared += both.agree(name, &clofix::each_of(&ns));
+    }
+    for name in ["add_on", "nested"] {
+        compared += both.agree(name, &clofix::pairs_of(&ns));
+    }
+    compared += both.agree("between", &clofix::triples_of(&ns));
+    // Two arms, and which one runs is a value.
+    compared += both.agree("either", &clofix::flagged(&ns));
+
+    // The five loops, over the lists and over the second argument the closure captures.
+    let xs = clofix::lists();
+    let bys: Vec<i64> = vec![0, 1, -1, 3, i64::MAX];
+    for name in ["doubled", "summed", "flags", "tally", "risky"] {
+        compared += both.agree(name, &clofix::singles(&xs));
+    }
+    for name in [
+        "scaled",
+        "kept",
+        "biggest",
+        "all_above",
+        "any_above",
+        "twice_over",
+    ] {
+        compared += both.agree(name, &clofix::with(&xs, &bys));
+    }
+
+    // An element that is an offset, and a result that is one.
+    let ts = clofix::texts();
+    for name in ["lengths", "shouted", "long_ones", "joined"] {
+        compared += both.agree(name, &clofix::singles(&ts));
+    }
+
+    // Reals, where a word becomes a `double` and the answer is normalised on the way back.
+    let rs = clofix::reals();
+    for name in ["halved", "negated", "added"] {
+        compared += both.agree(name, &clofix::singles(&rs));
+    }
+
+    // The last two list primitives. `by_rank` is the stability case: every key in one of those
+    // lists is the same, so an unstable sort is free to answer anything and a stable one answers
+    // the input order.
+    compared += both.agree("flattened", &clofix::singles(&clofix::nested()));
+    compared += both.agree("flat_texts", &clofix::singles(&clofix::nested_texts()));
+    compared += both.agree("spread", &clofix::singles(&xs));
+    for name in ["ascending", "descending", "by_sign"] {
+        compared += both.agree(name, &clofix::singles(&xs));
+    }
+    for name in ["by_length", "by_text"] {
+        compared += both.agree(name, &clofix::singles(&ts));
+    }
+    compared += both.agree("by_real", &clofix::singles(&rs));
+    compared += both.agree("by_rank", &clofix::singles(&clofix::notes()));
+
+    // Comparing two closures, which is `Closure`'s own order: the parameters, then where the body
+    // starts — and *not* the captured frame, which `captures_ignored` is about.
+    for name in ["same_lambda", "two_lambdas", "ordered"] {
+        compared += both.agree(name, &[vec![]]);
+    }
+    compared += both.agree(
+        "captures_ignored",
+        &ns.iter()
+            .flat_map(|a| ns.iter().map(move |b| vec![Value::Int(*a), Value::Int(*b)]))
+            .collect::<Vec<_>>(),
+    );
+
+    println!("{compared} closure calls compared, and every backend agreed on every one");
+}
+
+/// The bytes a call's own arguments occupy, so what a body allocated is what is left over.
+///
+/// The reprs come from the *signature* rather than being written down, because an index into the
+/// word table is a property of the program and a test that guessed one would measure another type.
+fn arguments(both: &Both, name: &str, args: &[Value]) -> usize {
+    let sig = both
+        .native
+        .module()
+        .signature(name)
+        .unwrap_or_else(|| panic!("`{name}` compiled"));
+    both.native
+        .module()
+        .heap
+        .encode_args(args, &sig.params)
+        .expect("encodes")
+        .1
+        .len()
+}
+
+/// What a closure and a loop leave in the arena, at two sizes.
+///
+/// A shape gate with no clock in it (`AGENTS.md`), and the shape is the one that would be wrong if a
+/// loop allocated per iteration: a fold that builds nothing must cost **one closure**, whatever the
+/// list is, and a map must cost its answer and one closure and nothing else. The exact bytes are
+/// asserted rather than a ratio, because the arithmetic is `heap::list_bytes` and
+/// `heap::closure_bytes` and both are decided in one place.
+#[test]
+fn a_loop_costs_its_answer_and_one_closure() {
+    let _ = toolchain!();
+    let both = Both::over("closures.beck", CLOSURES);
+    for n in [200usize, 1600] {
+        let xs = Value::List(Arc::new((0..n as i64).map(Value::Int).collect()));
+        // The arguments' own graph is on the wire before anything is allocated, so the arena a call
+        // leaves is measured against what the call was given.
+        let given = arguments(&both, "counted", std::slice::from_ref(&xs));
+
+        // A fold that builds nothing: one closure, and the one-element list the answer is wrapped
+        // in — the same bytes at both sizes, which is the whole claim.
+        let (_, bytes) = both
+            .native
+            .call_sized("counted", std::slice::from_ref(&xs))
+            .expect("runs");
+        assert_eq!(
+            bytes - given,
+            beck_llvm::heap::closure_bytes(0) as usize + beck_llvm::heap::list_bytes(1) as usize,
+            "counted over {n} elements allocated more than its closure and its answer"
+        );
+
+        // A map: the list it answers with, and one closure.
+        let (_, bytes) = both.native.call_sized("doubled", &[xs]).expect("runs");
+        assert_eq!(
+            bytes - given,
+            beck_llvm::heap::list_bytes(n as u64) as usize
+                + beck_llvm::heap::closure_bytes(0) as usize,
+            "doubled over {n} elements allocated more than the list and the closure"
+        );
+    }
+}
+
+/// A sort costs four runs of the list, and a concatenation costs its answer.
+///
+/// The second shape gate with no clock in it, and both halves say something a differential cannot.
+/// **`concat_lists`** is the one whose refusal was *wrong* (`docs/108` §108.4 as corrected in the
+/// changelog): if it grew a list the way `list_append` would have to, the arena would hold every
+/// intermediate — so asserting it leaves exactly its answer is asserting the sum-then-allocate shape.
+/// **`sort_by`** allocates the keys, the elements, and a scratch pair, and a merge sort that
+/// allocated per level rather than reusing that scratch would pass every differential and fail here.
+#[test]
+fn a_sort_costs_four_runs_and_a_concatenation_costs_its_answer() {
+    let _ = toolchain!();
+    let both = Both::over("closures.beck", CLOSURES);
+    for n in [200usize, 1600] {
+        let xs = Value::List(Arc::new((0..n as i64).map(Value::Int).collect()));
+        let given = arguments(&both, "ascending", std::slice::from_ref(&xs));
+        let (_, bytes) = both
+            .native
+            .call_sized("ascending", std::slice::from_ref(&xs))
+            .expect("runs");
+        assert_eq!(
+            bytes - given,
+            4 * beck_llvm::heap::list_bytes(n as u64) as usize
+                + beck_llvm::heap::closure_bytes(0) as usize,
+            "sorting {n} elements allocated more than the keys, the elements, the scratch pair and \
+             one closure"
+        );
+
+        // `n` inner lists of one element each, so the answer is `n` elements and the outer list is
+        // what the call was given.
+        let xss = Value::List(Arc::new(
+            (0..n as i64)
+                .map(|i| Value::List(Arc::new(vec![Value::Int(i)])))
+                .collect(),
+        ));
+        let given = arguments(&both, "flattened", std::slice::from_ref(&xss));
+        let (_, bytes) = both
+            .native
+            .call_sized("flattened", std::slice::from_ref(&xss))
+            .expect("runs");
+        assert_eq!(
+            bytes - given,
+            beck_llvm::heap::list_bytes(n as u64) as usize,
+            "concatenating {n} lists of one allocated more than the list it answers with"
+        );
+    }
+}
+
+/// A tail call through an application is a tail call./// A tail call through an application is a tail call.
+///
+/// `docs/27` makes "a call in tail position is free" a property of the *language*, and an
+/// application is a call — so a loop written as a closure calling itself must not grow the stack.
+/// There are **two** hops to get wrong here rather than one: the call into the family's application,
+/// and the arm inside it. Ten million iterations is past any host stack, so a frame spent on either
+/// is a crash rather than a slow test.
+///
+/// Checked by making it red, because a gate on a property the optimiser might supply anyway is worth
+/// nothing (`AGENTS.md`): with the application's own call site emitted as an ordinary call, this
+/// answers `SIGSEGV` at this size. The arm inside the application is the hop that `tailcc` alone
+/// would have got right — which is why `musttail` is there, since it is *enforced* rather than
+/// hoped for (`docs/93` §93.4).
+#[test]
+fn a_tail_call_through_a_closure_costs_nothing() {
+    let _ = toolchain!();
+    let both = Both::over("closures.beck", CLOSURES);
+    let (walked, compiled) = both.call("spin", &[Value::Int(1_000), Value::Int(0)]);
+    assert_eq!(
+        walked, compiled,
+        "the two agree where the evaluator can answer"
+    );
+    let deep = both
+        .native
+        .call("spin", &[Value::Int(10_000_000), Value::Int(0)])
+        .expect("ten million applications in tail position");
+    assert_eq!(deep, Value::Int(50_000_005_000_000));
+}
+
+/// A closure is refused at every boundary the host would have to read one across./// A closure is refused at every boundary the host would have to read one across.
+///
+/// Two-sided, because a backend that refused everything would pass the first half: `applies` is
+/// refused *and* `twice` in the program above compiles, so what is being asserted is a line rather
+/// than an absence. The reasons are checked too — `docs/106` §106.7 is what happens when a refusal's
+/// reason is nobody's business but the refusal's.
+#[test]
+fn a_closure_does_not_cross_the_boundary() {
+    let _ = toolchain!();
+    let both = Both::over("refused.beck", support::clofix::REFUSED);
+    for (name, expect) in [
+        ("applies", "parameter `f` is a function value"),
+        ("picked", "returns a function value"),
+        ("held", "whose field `apply_to` is a function value"),
+        ("listed", "whose element is a function value"),
+        ("spread_out", "`list_flat_map` answers a list whose length"),
+    ] {
+        let why = both
+            .refusal(name)
+            .unwrap_or_else(|| panic!("`{name}` should be refused, and it compiled"));
+        assert!(
+            why.contains(expect),
+            "the reason for refusing `{name}` should mention {expect:?}, and is {why:?}"
+        );
+    }
+    assert!(
+        both.compiled().iter().any(|n| n == "double"),
+        "`double` compiles, so this program is not passing by refusing everything"
+    );
+}
+
+/// A tag is a variant's rank **by name**, and a field's slot is its rank by name./// A tag is a variant's rank **by name**, and a field's slot is its rank by name.
 ///
 /// The differential above covers both, and it covers them by comparing against an oracle rather
 /// than against an expectation — so this pins the oracle. `Ranked` is declared `Small, Big,
@@ -1378,9 +1629,10 @@ fn what_cannot_be_compiled_is_refused_by_name_and_with_a_reason() {
 /// list in prose goes stale where a list with a test attached cannot (`docs/83` §83.7). Each of
 /// these goes red the day its row starts compiling, which is the day the row should be deleted.
 ///
-/// Two rows were deleted that way: `docs/105` gave a `Str` a layout and `docs/106` gave a `list`
-/// one. What is left of both is the primitives — text that reads a Unicode table or renders a
-/// number, and a collection that **grows** or takes a **function**.
+/// Three rows were deleted that way: `docs/105` gave a `Str` a layout, `docs/106` gave a `list` one,
+/// and `docs/108` compiled the higher-order primitives — so `mapped` moved from this list to the
+/// control below it in the same commit. What is left is the primitives that read a Unicode table or
+/// render a real, and the collections that **grow**.
 #[test]
 fn what_the_heap_does_not_reach_is_refused_by_name() {
     let program = compile("still-refused.beck", STILL_REFUSED);
@@ -1391,7 +1643,6 @@ fn what_the_heap_does_not_reach_is_refused_by_name() {
         ("upcases", "`str_upper` is Unicode case mapping"),
         ("trims", "`str_trim` trims Unicode whitespace"),
         ("grows", "`list_append` grows a list"),
-        ("mapped", "is used as a value rather than called"),
         ("is_generic", "generic over T"),
         (
             "reads_the_clock",
@@ -1420,6 +1671,7 @@ fn what_the_heap_does_not_reach_is_refused_by_name() {
             .map(|f| f.name.to_string())
             .collect::<Vec<_>>(),
         vec![
+            "mapped".to_string(),
             "double_it".to_string(),
             "names_it".to_string(),
             "reads_a_list".to_string(),
@@ -1472,15 +1724,19 @@ def finds(a: Str, b: Str) -> Option[Int]:
     let mut heap = module.heap.clone();
     let ty_of = |name: &str| program.defs[name].params[0].2.clone();
 
-    // Blamed by a refusal, and it really has no layout. One row, because `docs/106` and
-    // `docs/107` took the other two off this list — which is the direction this gate is meant to
-    // move in, and a row that stayed while its type acquired a layout is what it exists to catch.
-    let why = heap
+    // The last row, and this gate **fired on it**: `docs/108` gave a closure a shape, so "a closure,
+    // which has no layout here" stopped being true while the refusal that said it stayed. What is
+    // true now is narrower and is asserted as two things — the shape exists, and the *boundary* is
+    // what refuses it — because a parameter is a value the host has to marshal and a closure is the
+    // one value it cannot.
+    let shape = heap
         .repr(&ty_of("a_closure"), &program)
-        .expect_err("this is what a refusal blames");
+        .expect("a closure has a shape: a rank and its captures");
+    let why = beck_llvm::heap::Heap::crossing(shape)
+        .expect_err("and it may not cross a boundary the host reads");
     assert!(
-        why.contains("closure"),
-        "`a_closure`'s parameter should be refused as a closure, and the reason is {why:?}"
+        why.contains("inside one \ncompiled call") || why.contains("inside one compiled call"),
+        "`a_closure`'s parameter should be refused for crossing, and the reason is {why:?}"
     );
 
     // …and the control, which is the assertion that did not exist. `Option[Int]` is the prelude's

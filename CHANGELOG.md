@@ -14,6 +14,74 @@ Newest first.
 
 ### The native backends
 
+- **The last two list primitives, and one of them was refused for a reason that is false.**
+  `concat_lists` and `sort_by` compile on both backends, so **every** higher-order list primitive
+  except `list_flat_map` now does. **619 → 646 definitions** compile across the tree and refusals go
+  771 → 744.
+  - **`concat_lists` was filed with `list_append` as "grows a list", and it does not.** Its answer's
+    length is a **sum over the outer list's header words** — one pass, and the allocation happens
+    after it, which is exactly the argument `str_join` was corrected under earlier in this section.
+    It is one `memcpy` per inner list and one function for the whole module, because an element is a
+    word whatever it means. **22 refusals blamed it; 9 of those definitions compile and 13 are
+    re-refused for a callee that still does not.** This is
+    [`docs/106`](docs/106-lists-arrive-read-only-report.md) §106.7's finding a fourth time: a refusal
+    is a claim, and this one was inherited from a primitive it only resembles.
+  - **`sort_by`** is decorate–sort–undecorate against a **stable** merge sort over two parallel runs
+    of words — the keys and the elements — with a scratch pair, generated once per *key* repr because
+    what it needs to know is how to compare two key words and `beck.elem.cmp` already is that.
+    Recursive rather than bottom-up: `log n` of host stack against three nested loops to be wrong
+    about. **All 14 refusals that blamed it are gone**, 13 of them compiling.
+    Stability is one `<=` and it is gated: `by_rank` sorts records whose keys are *all the same*, so
+    an unstable sort is free to answer anything — checked by making it red, which took one operator.
+  - **Two numbers worth reading, both from
+    `measure_native.rs::what_a_closure_costs_against_the_tree_walker`.** The sort is **2.1× the
+    tree-walker at 2,000 elements and 1.6× at 16,000** — a small margin with a plain reason: the
+    evaluator's sort *is* Rust's stable sort and only the key function is interpreted, so this
+    compares a merge written here against one written by somebody who tuned it. The shape is the
+    claim, and it holds: 0.76× of the ratio kept over eight times the elements, where a quadratic
+    merge would have lost about a factor of six. And **`concat_lists` is 0.24–0.33×, slower than the
+    tree-walker, asserted to be** — [`docs/105`](docs/105-text-on-the-heap-report.md) §105.7's
+    precedent. The work is a `memcpy` and the *call* is 2,000 list objects down a pipe and an answer
+    read back out of a reply, so what that row measures is
+    [`docs/93`](docs/93-llvm-backend-report.md) §93.1's round trip and not this primitive.
+  - Gated by `native.rs::the_two_backends_agree_on_closures` and
+    `cranelift.rs::the_three_backends_agree_on_closures` (1,178 calls each now) and
+    `a_sort_costs_four_runs_and_a_concatenation_costs_its_answer` — a shape gate with no clock in it,
+    because a concatenation that grew would hold every intermediate and a merge sort that allocated
+    per level would pass every differential.
+  - **Corrects [`docs/108`](docs/108-closures-arrive-report.md)** §108.4 and §108.8, which name both
+    of these as refused. §108.4's claim about `sort_by` — "the next one to build, not one that cannot
+    be" — held for one commit.
+
+- **A closure arrives, and it does not leave**
+  ([`docs/108`](docs/108-closures-arrive-report.md)): a `lambda` compiles to both code generators as
+  an object holding the lambda's **rank** and its captures, applying one is a switch on that word
+  into a direct call, and `map_list`, `filter_list`, `list_fold`, `list_all` and `list_any` are five
+  generated loops that go through it. There is no indirect call and no code address in the arena,
+  because [`adr/0026`](docs/adr/0026-the-native-heap-is-an-arena-of-offsets.md) says a value is an
+  offset. A closure is refused at every boundary the host would read one across — a parameter, a
+  result, a field, an element, a map's key or value — so nothing in the host changed.
+  **605 → 619 definitions** compile across the tree; of the 96 refusals that blamed a closure, 11
+  compile, 52 are the boundary and **33 were re-refused for a deeper reason that was always true of
+  them**. Ranks are ordered the way `Closure`'s `Ord` compares two closures — the parameters, then
+  where the body starts — so `==` on two functions is one word comparison that agrees.
+  Gated by `native.rs::the_two_backends_agree_on_closures` and
+  `cranelift.rs::the_three_backends_agree_on_closures` (1,108 calls each),
+  `a_loop_costs_its_answer_and_one_closure`, `a_tail_call_through_a_closure_costs_nothing` (ten
+  million applications in tail position, on both backends) and
+  `a_closure_does_not_cross_the_boundary`.
+- **The gate that asks whether a refusal's reason is *true* fired**
+  ([`docs/108`](docs/108-closures-arrive-report.md) §108.7). `a_refusal_that_blames_a_type_is_asked_whether_that_type_has_one`
+  went red because giving a closure a shape made "a closure, which has no layout here" false while
+  the refusal saying it stayed. It now asserts both halves of what is true instead: the shape exists,
+  and `Heap::crossing` is what refuses it. `what_the_heap_does_not_reach_is_refused_by_name` lost a
+  row the same way — `map_list(xs, double_it)` compiles, so `mapped` moved to that test's control
+  list.
+- **`free_vars` is `beck_core::core`'s, once.** `plan.rs` had it privately for deciding what a
+  dataflow operator is handed; a closure needs the same answer for deciding what its object carries.
+  A second walk that disagreed about one construct would give a compiled closure a field the
+  evaluator's environment does not have.
+
 - **The primitives the layouts had already unlocked**, and the refusals that were hiding them.
   `unwrap_or` and `is_some` take an `Option` apart, `str` renders an `Int`, a `Bool` and a `Str`,
   and `str_join` and `str_repeat` build one. **452 → 625 definitions** compile across the tree and

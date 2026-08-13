@@ -888,7 +888,7 @@ impl Builder<'_> {
         why: &str,
     ) -> OpId {
         let mut free = BTreeSet::new();
-        free_vars(f, &mut BTreeSet::new(), &mut free);
+        crate::core::free_vars(f, &mut BTreeSet::new(), &mut free);
         let captured: Vec<VarId> = free.into_iter().filter(|v| scope.contains_key(v)).collect();
         let base = captured.iter().copied().max().unwrap_or(0) + 1;
         let ps: Vec<VarId> = (0..args.len() as VarId).map(|i| base + i).collect();
@@ -1209,7 +1209,7 @@ impl Builder<'_> {
     /// The per-element function of a collection operator, closed over the operators it reads.
     fn fun(&mut self, f: &Core, scope: &Scope, elem_ty: &Ty) -> Fun {
         let mut free = BTreeSet::new();
-        free_vars(f, &mut BTreeSet::new(), &mut free);
+        crate::core::free_vars(f, &mut BTreeSet::new(), &mut free);
         let captured: Vec<VarId> = free.into_iter().filter(|v| scope.contains_key(v)).collect();
         // The element parameter cannot collide with a captured variable, because a captured one is
         // free in `f` and this one is bound by the lambda this builds.
@@ -1238,7 +1238,7 @@ impl Builder<'_> {
     /// reads.
     fn opaque(&mut self, c: &Core, scope: &Scope, because: &str) -> OpId {
         let mut free = BTreeSet::new();
-        free_vars(c, &mut BTreeSet::new(), &mut free);
+        crate::core::free_vars(c, &mut BTreeSet::new(), &mut free);
         let params: Vec<VarId> = free.into_iter().filter(|v| scope.contains_key(v)).collect();
         let inputs: Vec<OpId> = params.iter().map(|v| scope[v]).collect();
         let code = lam(params, c.clone());
@@ -1284,91 +1284,4 @@ fn follow_alias(graph: &Graph, mut id: SigId) -> SigId {
         guard += 1;
     }
     id
-}
-
-/// Every variable an expression reads and does not itself bind.
-fn free_vars(c: &Core, bound: &mut BTreeSet<VarId>, out: &mut BTreeSet<VarId>) {
-    match &c.kind {
-        CoreKind::Var(v) => {
-            if !bound.contains(v) {
-                out.insert(*v);
-            }
-        }
-        CoreKind::Const(_) | CoreKind::Global(_) => {}
-        CoreKind::Lam { params, body } => {
-            let added: Vec<VarId> = params
-                .iter()
-                .copied()
-                .filter(|p| bound.insert(*p))
-                .collect();
-            free_vars(body, bound, out);
-            for p in added {
-                bound.remove(&p);
-            }
-        }
-        CoreKind::App { func, args } => {
-            free_vars(func, bound, out);
-            for a in args {
-                free_vars(a, bound, out);
-            }
-        }
-        CoreKind::Prim { args, .. } => {
-            for a in args {
-                free_vars(a, bound, out);
-            }
-        }
-        CoreKind::Let { var, value, body } => {
-            free_vars(value, bound, out);
-            let added = bound.insert(*var);
-            free_vars(body, bound, out);
-            if added {
-                bound.remove(var);
-            }
-        }
-        CoreKind::If { cond, then, alt } => {
-            free_vars(cond, bound, out);
-            free_vars(then, bound, out);
-            free_vars(alt, bound, out);
-        }
-        CoreKind::Match { scrutinee, arms } => {
-            free_vars(scrutinee, bound, out);
-            for a in arms {
-                let added: Vec<VarId> = a
-                    .pattern
-                    .binders()
-                    .into_iter()
-                    .filter(|p| bound.insert(*p))
-                    .collect();
-                for e in a.exprs() {
-                    free_vars(e, bound, out);
-                }
-                for p in added {
-                    bound.remove(&p);
-                }
-            }
-        }
-        CoreKind::Make { fields, .. } => {
-            for (_, f) in fields {
-                free_vars(f, bound, out);
-            }
-        }
-        CoreKind::Field { base, .. } => free_vars(base, bound, out),
-        CoreKind::With { base, fields } => {
-            free_vars(base, bound, out);
-            for (_, f) in fields {
-                free_vars(f, bound, out);
-            }
-        }
-        CoreKind::ListLit(items) => {
-            for i in items {
-                free_vars(i, bound, out);
-            }
-        }
-        CoreKind::MapLit(pairs) => {
-            for (k, v) in pairs {
-                free_vars(k, bound, out);
-                free_vars(v, bound, out);
-            }
-        }
-    }
 }

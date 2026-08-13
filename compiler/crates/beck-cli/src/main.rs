@@ -1324,7 +1324,10 @@ fn native(
             // `[1, 2]` would be a parser for the language's own literals, written a second time and
             // in a worse place. The definition still compiled, and `--out` writes the artefact that
             // can be called.
-            beck_llvm::Repr::List(_) | beck_llvm::Repr::Map(_) | beck_llvm::Repr::Obj(_) => {
+            beck_llvm::Repr::List(_)
+            | beck_llvm::Repr::Map(_)
+            | beck_llvm::Repr::Obj(_)
+            | beck_llvm::Repr::Fn(_) => {
                 bail!(
                     "`{name}` takes a collection or a record, and `--call` can only pass Int, \
                      Float, Bool and Str"

@@ -25,6 +25,7 @@
 //! says is what lets a backend slot in later. The Phase 1 report says plainly that native codegen
 //! is not done.
 
+use std::collections::BTreeSet;
 use std::fmt;
 use std::sync::Arc;
 
@@ -1893,6 +1894,99 @@ fn hash_into(v: &Value, h: &mut blake3::Hasher) {
         Value::Attr(_) => h.update(&[9]),
         Value::Closure(_) => h.update(&[10]),
     };
+}
+
+/// Every variable an expression reads and does not itself bind.
+///
+/// One implementation, because two passes need the same answer for different reasons:
+/// [`crate::plan`] asks it of a signal function to decide what a dataflow operator has to be
+/// handed, and a native backend asks it of a `lam` to decide what a closure has to *carry* — a
+/// second walk that disagreed about one construct would give a compiled closure a field the
+/// evaluator's environment does not have.
+pub fn free_vars(c: &Core, bound: &mut BTreeSet<VarId>, out: &mut BTreeSet<VarId>) {
+    match &c.kind {
+        CoreKind::Var(v) => {
+            if !bound.contains(v) {
+                out.insert(*v);
+            }
+        }
+        CoreKind::Const(_) | CoreKind::Global(_) => {}
+        CoreKind::Lam { params, body } => {
+            let added: Vec<VarId> = params
+                .iter()
+                .copied()
+                .filter(|p| bound.insert(*p))
+                .collect();
+            free_vars(body, bound, out);
+            for p in added {
+                bound.remove(&p);
+            }
+        }
+        CoreKind::App { func, args } => {
+            free_vars(func, bound, out);
+            for a in args {
+                free_vars(a, bound, out);
+            }
+        }
+        CoreKind::Prim { args, .. } => {
+            for a in args {
+                free_vars(a, bound, out);
+            }
+        }
+        CoreKind::Let { var, value, body } => {
+            free_vars(value, bound, out);
+            let added = bound.insert(*var);
+            free_vars(body, bound, out);
+            if added {
+                bound.remove(var);
+            }
+        }
+        CoreKind::If { cond, then, alt } => {
+            free_vars(cond, bound, out);
+            free_vars(then, bound, out);
+            free_vars(alt, bound, out);
+        }
+        CoreKind::Match { scrutinee, arms } => {
+            free_vars(scrutinee, bound, out);
+            for a in arms {
+                let added: Vec<VarId> = a
+                    .pattern
+                    .binders()
+                    .into_iter()
+                    .filter(|p| bound.insert(*p))
+                    .collect();
+                for e in a.exprs() {
+                    free_vars(e, bound, out);
+                }
+                for p in added {
+                    bound.remove(&p);
+                }
+            }
+        }
+        CoreKind::Make { fields, .. } => {
+            for (_, f) in fields {
+                free_vars(f, bound, out);
+            }
+        }
+        CoreKind::Field { base, .. } => free_vars(base, bound, out),
+        CoreKind::With { base, fields } => {
+            free_vars(base, bound, out);
+            for (_, f) in fields {
+                free_vars(f, bound, out);
+            }
+        }
+        CoreKind::ListLit(items) => {
+            for i in items {
+                free_vars(i, bound, out);
+            }
+        }
+        CoreKind::MapLit(pairs) => {
+            for (k, v) in pairs {
+                free_vars(k, bound, out);
+                free_vars(v, bound, out);
+            }
+        }
+    }
 }
 
 #[cfg(test)]

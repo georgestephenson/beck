@@ -283,6 +283,13 @@ fn build(
     let mut compared: BTreeSet<u32> = BTreeSet::new();
     let mut list_compared: BTreeSet<u32> = BTreeSet::new();
     let mut map_compared: BTreeSet<u32> = BTreeSet::new();
+    let mut compared_fns = false;
+    let mut applied: BTreeSet<u32> = BTreeSet::new();
+    let mut loops: BTreeSet<(Loop, u32)> = BTreeSet::new();
+    // Every `lam` still to be written, and every rank already written. A `lam` met while a body is
+    // being built cannot be defined there — one context is being held — so it waits here.
+    let mut pending: Vec<(Arc<str>, Pending)> = Vec::new();
+    let mut lams: BTreeSet<u32> = BTreeSet::new();
 
     for (n, name) in order.iter().enumerate() {
         let def = &program.defs[name];
@@ -308,6 +315,14 @@ fn build(
         compared.append(&mut body.compared);
         list_compared.append(&mut body.list_compared);
         map_compared.append(&mut body.map_compared);
+        applied.append(&mut body.applied);
+        loops.append(&mut body.loops);
+        compared_fns |= body.compared_fns;
+        pending.extend(
+            std::mem::take(&mut body.pending)
+                .into_iter()
+                .map(|p| (name.clone(), p)),
+        );
         match emitted {
             Ok(()) => {}
             Err(reason) => {
@@ -325,6 +340,72 @@ fn build(
             .map_err(|e| Failure::Fatal(format!("defining `{name}`: {e}")))?;
         object.clear_context(&mut ctx);
     }
+    // The lambdas, drained: each is its own function, and one met inside another goes on the end of
+    // the queue. A `lam` that will not emit refuses the *definition* it was written in — the object
+    // is thrown away and the round runs again without it, which is what makes this the same fixed
+    // point a body's own refusal is part of.
+    while let Some((owner, lam)) = pending.pop() {
+        if !lams.insert(lam.rank) {
+            continue;
+        }
+        if arena.is_none() {
+            // The survey sets `uses_closures` for every `lam` under anything and `is_empty` reads
+            // it, so a closure here without an arena would be those two disagreeing.
+            return Err(Failure::Fatal(
+                "a closure in a module with no arena: `Heap::is_empty` and \
+                 `Heap::uses_closures` disagree"
+                    .into(),
+            ));
+        }
+        let fam = heap.family(lam.family).clone();
+        let sig = family_signature(&fam, ptr);
+        let id = object
+            .declare_function(&lam_symbol(lam.rank), Linkage::Local, &sig)
+            .map_err(|e| Failure::Fatal(format!("declaring a lambda: {e}")))?;
+        ctx.func = Function::with_name_signature(UserFuncName::user(16, lam.rank), sig);
+        let taken = std::mem::take(&mut spans);
+        let mut body = Body::new(&indexed, eligible, &ids, taken, program, heap, runtime);
+        let emitted = {
+            let mut b = FunctionBuilder::new(&mut ctx.func, &mut fctx);
+            let outcome = body.emit_lam(&lam, &mut b, &mut object);
+            if outcome.is_ok() {
+                b.finalize(object.target_config());
+            }
+            outcome
+        };
+        if emitted.is_err() {
+            fctx = FunctionBuilderContext::new();
+        }
+        spans = std::mem::take(&mut body.spans);
+        compared.append(&mut body.compared);
+        list_compared.append(&mut body.list_compared);
+        map_compared.append(&mut body.map_compared);
+        applied.append(&mut body.applied);
+        loops.append(&mut body.loops);
+        compared_fns |= body.compared_fns;
+        pending.extend(
+            std::mem::take(&mut body.pending)
+                .into_iter()
+                .map(|p| (owner.clone(), p)),
+        );
+        match emitted {
+            Ok(()) => {}
+            Err(reason) => {
+                refused.push(Refusal {
+                    name: owner,
+                    reason,
+                });
+                object.clear_context(&mut ctx);
+                continue;
+            }
+        }
+        clif.push_str(&format!("; lam {}\n{}\n", lam.rank, ctx.func));
+        object
+            .define_function(id, &mut ctx)
+            .map_err(|e| Failure::Fatal(format!("defining a lambda: {e}")))?;
+        object.clear_context(&mut ctx);
+    }
+
     if !refused.is_empty() {
         return Err(Failure::Refused(refused));
     }
@@ -364,6 +445,45 @@ fn build(
         for at in entries {
             map_functions(at, heap, arena, runtime, &mut object, &mut ctx, &mut fctx)
                 .map_err(Failure::Fatal)?;
+        }
+        for at in &applied {
+            apply_function(
+                *at,
+                heap,
+                &lams,
+                &ids,
+                &mut object,
+                &mut ctx,
+                &mut fctx,
+                arena,
+            )
+            .map_err(Failure::Fatal)?;
+        }
+        for (which, at) in &loops {
+            loop_function(
+                *which,
+                *at,
+                heap,
+                arena,
+                runtime,
+                &mut object,
+                &mut ctx,
+                &mut fctx,
+            )
+            .map_err(Failure::Fatal)?;
+        }
+        // One merge sort per key repr, over the families that sort — deduplicated here because two
+        // families can sort by the same kind of key and one function has one definition.
+        let sorted: BTreeSet<u32> = loops
+            .iter()
+            .filter(|(which, _)| *which == Loop::Sort)
+            .filter_map(|(_, fam)| heap.word_at(heap.family(*fam).ret))
+            .collect();
+        for at in sorted {
+            merge_sort(at, &mut object, &mut ctx, &mut fctx).map_err(Failure::Fatal)?;
+        }
+        if compared_fns {
+            fn_compare(&mut object, &mut ctx, &mut fctx, arena).map_err(Failure::Fatal)?;
         }
     }
 
@@ -414,13 +534,17 @@ fn signature_of(def: &Def, heap: &mut Heap, program: &Program) -> Result<Signatu
     let mut params = Vec::with_capacity(def.params.len());
     for (_, name, ty) in &def.params {
         match heap.repr(ty, program) {
-            Ok(r) => params.push(r),
+            Ok(r) => {
+                Heap::crossing(r).map_err(|why| format!("parameter `{name}` is {why}"))?;
+                params.push(r);
+            }
             Err(why) => return Err(format!("parameter `{name}` is {why}")),
         }
     }
     let ret = heap
         .repr(&def.ret, program)
         .map_err(|why| format!("returns {why}"))?;
+    Heap::crossing(ret).map_err(|why| format!("returns {why}"))?;
     Ok(Signature {
         name: def.name.clone(),
         params,
@@ -499,6 +623,10 @@ struct Lists {
     /// clamping is arithmetic the caller does.
     copy: FuncId,
     reverse: FuncId,
+    /// `concat_lists`: a sum over the outer list's header words, then one allocation and one
+    /// `memcpy` per inner list. Not a growth — see the other emitter's `refusal` for the correction
+    /// that says why it was refused as one.
+    concat: FuncId,
 }
 
 impl Lists {
@@ -527,6 +655,11 @@ impl Lists {
             )?,
             reverse: one(
                 "beck.list.reverse",
+                &[ptr, types::I64, types::I32],
+                types::I64,
+            )?,
+            concat: one(
+                "beck.list.concat",
                 &[ptr, types::I64, types::I32],
                 types::I64,
             )?,
@@ -678,6 +811,90 @@ impl Lists {
 
             b.switch_to_block(out);
             b.ins().return_(&[r]);
+        })?;
+
+        let sig = Text::signature(m, &[ptr, types::I64, types::I32], types::I64);
+        Text::wrote(self.concat, sig, 17, m, ctx, fctx, |b, m| {
+            let entry = b.current_block().expect("an entry block");
+            let err = b.block_params(entry)[0];
+            let xss = b.block_params(entry)[1];
+            let span = b.block_params(entry)[2];
+            let n = self.count(arena, xss, b, m);
+            let outer = self.data(arena, xss, b, m);
+            let word = heap::WORD as i64;
+
+            // One pass for the size. Every inner length is a header word, so the total is known
+            // before a byte is reserved — which is what makes this an allocation and not a growth.
+            let i = b.declare_var(types::I64);
+            let total = b.declare_var(types::I64);
+            let zero = b.ins().iconst(types::I64, 0);
+            b.def_var(i, zero);
+            b.def_var(total, zero);
+            let sum = b.create_block();
+            let add = b.create_block();
+            let build = b.create_block();
+            b.ins().jump(sum, &[]);
+            b.switch_to_block(sum);
+            let at = b.use_var(i);
+            let done = b.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, at, n);
+            b.ins().brif(done, build, &[], add, &[]);
+            b.switch_to_block(add);
+            let off = b.ins().imul_imm_s(at, word);
+            let src = b.ins().iadd(outer, off);
+            let inner = b.ins().load(types::I64, MemFlagsData::trusted(), src, 0);
+            let len = self.count(arena, inner, b, m);
+            let so_far = b.use_var(total);
+            let grown = b.ins().iadd(so_far, len);
+            b.def_var(total, grown);
+            let next = b.ins().iadd_imm_s(at, 1);
+            b.def_var(i, next);
+            b.ins().jump(sum, &[]);
+
+            b.switch_to_block(build);
+            let want = b.use_var(total);
+            let alloc = m.declare_func_in_func(self.alloc, b.func);
+            let call = b.ins().call(alloc, &[err, want, span]);
+            let out = b.inst_results(call)[0];
+            let move_ = b.create_block();
+            let answer = b.create_block();
+            let failed = b.ins().icmp_imm_s(IntCC::Equal, out, 0);
+            b.ins().brif(failed, answer, &[], move_, &[]);
+
+            // One `memcpy` per inner list. An element is a word whatever it means, and an offset
+            // stays an offset, so nothing here has to know what the elements are.
+            b.switch_to_block(move_);
+            let dst = self.data(arena, out, b, m);
+            let j = b.declare_var(types::I64);
+            let k = b.declare_var(types::I64);
+            b.def_var(j, zero);
+            b.def_var(k, zero);
+            let loop_ = b.create_block();
+            let one = b.create_block();
+            b.ins().jump(loop_, &[]);
+            b.switch_to_block(loop_);
+            let at = b.use_var(j);
+            let past = b.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, at, n);
+            b.ins().brif(past, answer, &[], one, &[]);
+            b.switch_to_block(one);
+            let off = b.ins().imul_imm_s(at, word);
+            let src = b.ins().iadd(outer, off);
+            let inner = b.ins().load(types::I64, MemFlagsData::trusted(), src, 0);
+            let len = self.count(arena, inner, b, m);
+            let from = self.data(arena, inner, b, m);
+            let so_far = b.use_var(k);
+            let skip = b.ins().imul_imm_s(so_far, word);
+            let to = b.ins().iadd(dst, skip);
+            let bytes = b.ins().imul_imm_s(len, word);
+            let config = m.target_config();
+            b.call_memcpy(config, to, from, bytes);
+            let filled = b.ins().iadd(so_far, len);
+            b.def_var(k, filled);
+            let next = b.ins().iadd_imm_s(at, 1);
+            b.def_var(j, next);
+            b.ins().jump(loop_, &[]);
+
+            b.switch_to_block(answer);
+            b.ins().return_(&[out]);
         })
     }
 }
@@ -2462,6 +2679,851 @@ fn element_functions(
     Ok(())
 }
 
+/// One `lam` waiting to be written as a function.
+struct Pending {
+    rank: u32,
+    params: Arc<[VarId]>,
+    body: Arc<Core>,
+    family: u32,
+}
+
+/// The list primitives whose argument is a function, each one loop.
+///
+/// The same four the other emitter generates, written again — `cranelift.rs` is what holds the two
+/// to accepting and refusing the same definitions, and an agreement by construction would be worth
+/// nothing (§97.3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Loop {
+    Map,
+    Filter,
+    Fold,
+    Every,
+    /// `sort_by` — decorate with the keys, merge stably, undecorate. The one that is not a pass.
+    Sort,
+}
+
+impl Loop {
+    fn symbol(self, fam: u32) -> String {
+        match self {
+            Loop::Map => format!("beck.list.map.{fam}"),
+            Loop::Filter => format!("beck.list.filter.{fam}"),
+            Loop::Fold => format!("beck.list.fold.{fam}"),
+            Loop::Every => format!("beck.list.every.{fam}"),
+            Loop::Sort => format!("beck.list.sort.{fam}"),
+        }
+    }
+
+    /// A number for `UserFuncName`, which has to be distinct per generated function.
+    fn seq(self) -> u32 {
+        match self {
+            Loop::Map => 0,
+            Loop::Filter => 1,
+            Loop::Fold => 2,
+            Loop::Every => 3,
+            Loop::Sort => 4,
+        }
+    }
+}
+
+fn apply_symbol(fam: u32) -> String {
+    format!("beck.apply.{fam}")
+}
+
+fn lam_symbol(rank: u32) -> String {
+    format!("beck.lam.{rank}")
+}
+
+/// What applying a closure of this family takes: the error cell, the closure, then its arguments.
+///
+/// [`CallConv::Tail`] for the reason a definition's is: the arm inside an application is a
+/// `return_call`, and that is only available between functions that share the convention.
+fn family_signature(fam: &heap::Family, ptr: Type) -> cranelift_codegen::ir::Signature {
+    let mut out = cranelift_codegen::ir::Signature::new(CallConv::Tail);
+    out.params.push(AbiParam::new(ptr));
+    out.params.push(AbiParam::new(types::I64));
+    for p in &fam.params {
+        out.params.push(AbiParam::new(machine(*p)));
+    }
+    out.returns.push(AbiParam::new(machine(fam.ret)));
+    out
+}
+
+/// The zero of a repr, which is what a function that trapped returns.
+fn zero_of(r: Repr, b: &mut FunctionBuilder<'_>) -> IrValue {
+    match r.machine() {
+        Scalar::Int => b.ins().iconst(types::I64, 0),
+        Scalar::Float => b.ins().f64const(0.0),
+        Scalar::Bool => b.ins().iconst(types::I8, 0),
+    }
+}
+
+/// Applying a closure of one family: read the rank, and jump to the arm that answers to it.
+///
+/// A chain of comparisons rather than a jump table, because a rank is a place in the *program's*
+/// lambdas and the ranks of one family are not contiguous. Every family in this tree has one or two.
+///
+/// There is no indirect call and no code address in the arena — see [`heap::CLOSURE_HEADER`], which
+/// is where that decision is recorded. An arm for a `lam` passes the closure on so the body can read
+/// its captures; an arm for a *definition* does not, because a definition closes over nothing.
+#[allow(clippy::too_many_arguments)]
+fn apply_function(
+    at: u32,
+    heap: &Heap,
+    emitted: &BTreeSet<u32>,
+    compiled: &BTreeMap<Arc<str>, FuncId>,
+    m: &mut ObjectModule,
+    ctx: &mut cranelift_codegen::Context,
+    fctx: &mut FunctionBuilderContext,
+    arena: Arena,
+) -> Result<(), String> {
+    let fam = heap.family(at).clone();
+    let ptr = m.target_config().pointer_type();
+    let sig = family_signature(&fam, ptr);
+    let id = m
+        .declare_function(&apply_symbol(at), Linkage::Local, &sig)
+        .map_err(|e| format!("declaring an application: {e}"))?;
+    // Only the ranks that became code: a rank whose definition was refused has no function to call,
+    // and an arm calling one would be a link error rather than a refusal.
+    let arms: Vec<u32> = fam
+        .ranks
+        .iter()
+        .copied()
+        .filter(|r| match &heap.lam(*r).def {
+            Some(name) => compiled.contains_key(name),
+            None => emitted.contains(r),
+        })
+        .collect();
+
+    ctx.func = Function::with_name_signature(UserFuncName::user(13, at), sig.clone());
+    {
+        let mut b = FunctionBuilder::new(&mut ctx.func, fctx);
+        let entry = b.create_block();
+        b.append_block_params_for_function_params(entry);
+        b.switch_to_block(entry);
+        b.seal_block(entry);
+        let err = b.block_params(entry)[0];
+        let clo = b.block_params(entry)[1];
+        let args: Vec<IrValue> = (0..fam.params.len())
+            .map(|i| b.block_params(entry)[i + 2])
+            .collect();
+        let base = arena.base(&mut b, m);
+        let p = b.ins().iadd(base, clo);
+        let rank = b.ins().load(types::I64, MemFlagsData::trusted(), p, 0);
+
+        for r in &arms {
+            let take = b.create_block();
+            let next = b.create_block();
+            let is = b.ins().icmp_imm_s(IntCC::Equal, rank, i64::from(*r));
+            b.ins().brif(is, take, &[], next, &[]);
+            b.switch_to_block(take);
+            b.seal_block(take);
+            let lam = heap.lam(*r);
+            let mut operands = vec![err];
+            let callee = match &lam.def {
+                Some(name) => compiled[name],
+                None => {
+                    operands.push(clo);
+                    m.declare_function(&lam_symbol(*r), Linkage::Local, &sig)
+                        .map_err(|e| format!("declaring a lambda: {e}"))?
+                }
+            };
+            operands.extend(args.iter().copied());
+            let f = m.declare_func_in_func(callee, b.func);
+            b.ins().return_call(f, &operands);
+            b.switch_to_block(next);
+            b.seal_block(next);
+        }
+
+        // A rank no arm answers to: unreachable, because this module built the closure, and a trap
+        // rather than whatever the machine does next for `Trap::NoSuchLambda`'s reason. The span
+        // index is past the end of the table on purpose — there is no source position for a wrong
+        // rank, and the host reads one it cannot find as `Span::NONE`.
+        let flags = MemFlagsData::trusted();
+        let code = b
+            .ins()
+            .iconst(types::I32, i64::from(Trap::NoSuchLambda.code()));
+        b.ins().store(flags, code, err, 0);
+        let span = b.ins().iconst(types::I32, i64::from(u32::MAX));
+        b.ins().store(flags, span, err, CELL_SPAN);
+        b.ins().store(flags, rank, err, CELL_PAYLOAD);
+        let z = zero_of(fam.ret, &mut b);
+        b.ins().return_(&[z]);
+        b.seal_all_blocks();
+        b.finalize(m.target_config());
+    }
+    m.define_function(id, ctx)
+        .map_err(|e| format!("defining an application: {e}"))?;
+    m.clear_context(ctx);
+    Ok(())
+}
+
+/// A stable merge sort over two parallel runs of words: the keys, and the elements they decorate.
+///
+/// Generated per **key** repr rather than per family, because what it needs to know is how to
+/// compare two key words and nothing else. Recursive rather than bottom-up: the depth is `log n` on
+/// the host's stack and `n` is bounded by the arena, and one loop is easier to be right about than
+/// three nested ones.
+///
+/// **Stability is the property that matters**, and it is one `<=`: on equal keys the element from the
+/// left run goes first. `beck-eval` says why that is a promise rather than a nicety — the input order
+/// is itself deterministic, so a stable sort is what makes the answer total without a second key.
+fn merge_sort(
+    at: u32,
+    m: &mut ObjectModule,
+    ctx: &mut cranelift_codegen::Context,
+    fctx: &mut FunctionBuilderContext,
+) -> Result<(), String> {
+    let ptr = m.target_config().pointer_type();
+    let mut sig = cranelift_codegen::ir::Signature::new(CallConv::triple_default(m.isa().triple()));
+    for _ in 0..4 {
+        sig.params.push(AbiParam::new(ptr));
+    }
+    sig.params.push(AbiParam::new(types::I64));
+    sig.params.push(AbiParam::new(types::I64));
+    let id = m
+        .declare_function(&format!("beck.list.msort.{at}"), Linkage::Local, &sig)
+        .map_err(|e| format!("declaring a sort: {e}"))?;
+    let cmp = m
+        .declare_function(
+            &format!("beck.elem.cmp.{at}"),
+            Linkage::Local,
+            &compare_signature(m),
+        )
+        .map_err(|e| format!("declaring a comparison: {e}"))?;
+    ctx.func = Function::with_name_signature(UserFuncName::user(17, at), sig);
+    {
+        let mut b = FunctionBuilder::new(&mut ctx.func, fctx);
+        let entry = b.create_block();
+        b.append_block_params_for_function_params(entry);
+        b.switch_to_block(entry);
+        b.seal_block(entry);
+        let ps: Vec<IrValue> = b.block_params(entry).to_vec();
+        let (keys, vals, tk, tv, lo, hi) = (ps[0], ps[1], ps[2], ps[3], ps[4], ps[5]);
+        let flags = MemFlagsData::trusted();
+        let word = heap::WORD as i64;
+        let me = m.declare_func_in_func(id, b.func);
+        let three_way = m.declare_func_in_func(cmp, b.func);
+
+        let done = b.create_block();
+        let split = b.create_block();
+        let span = b.ins().isub(hi, lo);
+        let tiny = b.ins().icmp_imm_s(IntCC::UnsignedLessThanOrEqual, span, 1);
+        b.ins().brif(tiny, done, &[], split, &[]);
+
+        b.switch_to_block(split);
+        b.seal_block(split);
+        let half = b.ins().udiv_imm_u(span, 2);
+        let mid = b.ins().iadd(lo, half);
+        b.ins().call(me, &[keys, vals, tk, tv, lo, mid]);
+        b.ins().call(me, &[keys, vals, tk, tv, mid, hi]);
+
+        // Three indices: where each run is up to, and where the answer is going.
+        let i = b.declare_var(types::I64);
+        let j = b.declare_var(types::I64);
+        let k = b.declare_var(types::I64);
+        b.def_var(i, lo);
+        b.def_var(j, mid);
+        b.def_var(k, lo);
+        let merge = b.create_block();
+        let pick = b.create_block();
+        let maybe = b.create_block();
+        let compare = b.create_block();
+        let left = b.create_block();
+        let right = b.create_block();
+        let took = b.create_block();
+        b.append_block_param(took, types::I64);
+        b.append_block_param(took, types::I64);
+        let back = b.create_block();
+        b.ins().jump(merge, &[]);
+
+        b.switch_to_block(merge);
+        let filling = b.use_var(k);
+        let filled = b.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, filling, hi);
+        b.ins().brif(filled, back, &[], pick, &[]);
+
+        b.switch_to_block(pick);
+        b.seal_block(pick);
+        let li = b.use_var(i);
+        let more_left = b.ins().icmp(IntCC::UnsignedLessThan, li, mid);
+        b.ins().brif(more_left, maybe, &[], right, &[]);
+
+        b.switch_to_block(maybe);
+        b.seal_block(maybe);
+        let rj = b.use_var(j);
+        let right_gone = b.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, rj, hi);
+        b.ins().brif(right_gone, left, &[], compare, &[]);
+
+        b.switch_to_block(compare);
+        b.seal_block(compare);
+        let ia = b.ins().imul_imm_s(li, word);
+        let ja = b.ins().imul_imm_s(rj, word);
+        let ka_at = b.ins().iadd(keys, ia);
+        let kb_at = b.ins().iadd(keys, ja);
+        let ka = b.ins().load(types::I64, flags, ka_at, 0);
+        let kb = b.ins().load(types::I64, flags, kb_at, 0);
+        let call = b.ins().call(three_way, &[ka, kb]);
+        let c = b.inst_results(call)[0];
+        // `<=`, which is the whole of the stability: on equal keys the left run goes first.
+        let take_left = b.ins().icmp_imm_s(IntCC::SignedLessThanOrEqual, c, 0);
+        b.ins().brif(take_left, left, &[], right, &[]);
+
+        for (which, from) in [(left, true), (right, false)] {
+            b.switch_to_block(which);
+            b.seal_block(which);
+            let at_i = if from { b.use_var(i) } else { b.use_var(j) };
+            let off = b.ins().imul_imm_s(at_i, word);
+            let key_at = b.ins().iadd(keys, off);
+            let val_at = b.ins().iadd(vals, off);
+            let key = b.ins().load(types::I64, flags, key_at, 0);
+            let val = b.ins().load(types::I64, flags, val_at, 0);
+            let stepped = b.ins().iadd_imm_s(at_i, 1);
+            if from {
+                b.def_var(i, stepped);
+            } else {
+                b.def_var(j, stepped);
+            }
+            b.ins().jump(took, &[key.into(), val.into()]);
+        }
+
+        b.switch_to_block(took);
+        b.seal_block(took);
+        let key = b.block_params(took)[0];
+        let val = b.block_params(took)[1];
+        let at_k = b.use_var(k);
+        let off = b.ins().imul_imm_s(at_k, word);
+        let key_to = b.ins().iadd(tk, off);
+        let val_to = b.ins().iadd(tv, off);
+        b.ins().store(flags, key, key_to, 0);
+        b.ins().store(flags, val, val_to, 0);
+        let next = b.ins().iadd_imm_s(at_k, 1);
+        b.def_var(k, next);
+        b.ins().jump(merge, &[]);
+
+        // The merged run, back where the caller's half of it was.
+        b.switch_to_block(back);
+        b.seal_block(back);
+        let bytes = b.ins().imul_imm_s(span, word);
+        let skip = b.ins().imul_imm_s(lo, word);
+        let from_k = b.ins().iadd(tk, skip);
+        let to_k = b.ins().iadd(keys, skip);
+        let config = m.target_config();
+        b.call_memcpy(config, to_k, from_k, bytes);
+        let from_v = b.ins().iadd(tv, skip);
+        let to_v = b.ins().iadd(vals, skip);
+        b.call_memcpy(config, to_v, from_v, bytes);
+        b.ins().jump(done, &[]);
+
+        b.switch_to_block(done);
+        b.ins().return_(&[]);
+        b.seal_all_blocks();
+        b.finalize(m.target_config());
+    }
+    m.define_function(id, ctx)
+        .map_err(|e| format!("defining a sort: {e}"))?;
+    m.clear_context(ctx);
+    Ok(())
+}
+
+/// `sort_by` for one family: decorate every element with its key, sort stably, answer the elements.
+///
+/// Four runs of `n` words — the keys, the elements, and a scratch pair the merge writes into. The
+/// elements come from `beck.list.copy`, which is also the list this answers with, so the sort is in
+/// place in something nobody else holds. The closure is applied exactly `n` times, which is what the
+/// evaluator does: it decorates, sorts and undecorates too.
+#[allow(clippy::too_many_arguments)]
+fn sort_function(
+    at: u32,
+    heap: &Heap,
+    arena: Arena,
+    runtime: Runtime,
+    m: &mut ObjectModule,
+    ctx: &mut cranelift_codegen::Context,
+    fctx: &mut FunctionBuilderContext,
+) -> Result<(), String> {
+    let fam = heap.family(at).clone();
+    let element = fam.params[0];
+    let key = fam.ret;
+    let key_at = heap
+        .word_at(key)
+        .ok_or("a sort whose key repr was never interned")?;
+    let ptr = m.target_config().pointer_type();
+    let lists = runtime
+        .lists
+        .ok_or("a sort in a module with no list runtime")?;
+    let apply = m
+        .declare_function(
+            &apply_symbol(at),
+            Linkage::Local,
+            &family_signature(&fam, ptr),
+        )
+        .map_err(|e| format!("declaring an application: {e}"))?;
+
+    let mut sig = cranelift_codegen::ir::Signature::new(CallConv::triple_default(m.isa().triple()));
+    sig.params.push(AbiParam::new(ptr));
+    sig.params.push(AbiParam::new(types::I64));
+    sig.params.push(AbiParam::new(types::I64));
+    sig.params.push(AbiParam::new(types::I32));
+    sig.returns.push(AbiParam::new(types::I64));
+    let id = m
+        .declare_function(&Loop::Sort.symbol(at), Linkage::Local, &sig)
+        .map_err(|e| format!("declaring a sort: {e}"))?;
+
+    let mut msig =
+        cranelift_codegen::ir::Signature::new(CallConv::triple_default(m.isa().triple()));
+    for _ in 0..4 {
+        msig.params.push(AbiParam::new(ptr));
+    }
+    msig.params.push(AbiParam::new(types::I64));
+    msig.params.push(AbiParam::new(types::I64));
+    let msort = m
+        .declare_function(&format!("beck.list.msort.{key_at}"), Linkage::Local, &msig)
+        .map_err(|e| format!("declaring a sort: {e}"))?;
+
+    ctx.func =
+        Function::with_name_signature(UserFuncName::user(15, at * 8 + Loop::Sort.seq()), sig);
+    {
+        let mut b = FunctionBuilder::new(&mut ctx.func, fctx);
+        let entry = b.create_block();
+        b.append_block_params_for_function_params(entry);
+        b.switch_to_block(entry);
+        let ps: Vec<IrValue> = b.block_params(entry).to_vec();
+        let (err, xs, clo, span) = (ps[0], ps[1], ps[2], ps[3]);
+        let flags = MemFlagsData::trusted();
+        let word = heap::WORD as i64;
+        let failed = b.create_block();
+        let zero = b.ins().iconst(types::I64, 0);
+
+        let n = lists.count(arena, xs, &mut b, m);
+        let src = lists.data(arena, xs, &mut b, m);
+
+        // Four allocations, each one able to exhaust the arena.
+        let alloc = m.declare_func_in_func(lists.alloc, b.func);
+        let copy = m.declare_func_in_func(lists.copy, b.func);
+        let mut runs = Vec::new();
+        for which in 0..4 {
+            let call = if which == 1 {
+                b.ins().call(copy, &[err, xs, zero, n, span])
+            } else {
+                b.ins().call(alloc, &[err, n, span])
+            };
+            let off = b.inst_results(call)[0];
+            let ok = b.create_block();
+            let bad = b.ins().icmp_imm_s(IntCC::Equal, off, 0);
+            b.ins().brif(bad, failed, &[], ok, &[]);
+            b.switch_to_block(ok);
+            b.seal_block(ok);
+            runs.push(off);
+        }
+        let data: Vec<IrValue> = runs
+            .iter()
+            .map(|off| lists.data(arena, *off, &mut b, m))
+            .collect();
+        let vals = runs[1];
+
+        // Decorate: one key per element.
+        let f = m.declare_func_in_func(apply, b.func);
+        let i = b.declare_var(types::I64);
+        b.def_var(i, zero);
+        let head = b.create_block();
+        let one = b.create_block();
+        let alive = b.create_block();
+        let sorted = b.create_block();
+        b.ins().jump(head, &[]);
+        b.switch_to_block(head);
+        let at_i = b.use_var(i);
+        let past = b.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, at_i, n);
+        b.ins().brif(past, sorted, &[], one, &[]);
+        b.switch_to_block(one);
+        b.seal_block(one);
+        let off = b.ins().imul_imm_s(at_i, word);
+        let from = b.ins().iadd(src, off);
+        let w = b.ins().load(types::I64, flags, from, 0);
+        let arg = from_word(w, element, &mut b);
+        let call = b.ins().call(f, &[err, clo, arg]);
+        let answer = b.inst_results(call)[0];
+        let code = b.ins().load(types::I32, flags, err, 0);
+        let trapped = b.ins().icmp_imm_s(IntCC::NotEqual, code, 0);
+        b.ins().brif(trapped, failed, &[], alive, &[]);
+        b.switch_to_block(alive);
+        b.seal_block(alive);
+        let stored = to_word(answer, key, &mut b);
+        let to = b.ins().iadd(data[0], off);
+        b.ins().store(flags, stored, to, 0);
+        let next = b.ins().iadd_imm_s(at_i, 1);
+        b.def_var(i, next);
+        b.ins().jump(head, &[]);
+
+        b.switch_to_block(sorted);
+        b.seal_block(sorted);
+        let sort = m.declare_func_in_func(msort, b.func);
+        b.ins()
+            .call(sort, &[data[0], data[1], data[2], data[3], zero, n]);
+        b.ins().return_(&[vals]);
+
+        b.switch_to_block(failed);
+        b.seal_block(failed);
+        let none = b.ins().iconst(types::I64, 0);
+        b.ins().return_(&[none]);
+        b.seal_all_blocks();
+        b.finalize(m.target_config());
+    }
+    m.define_function(id, ctx)
+        .map_err(|e| format!("defining a sort: {e}"))?;
+    m.clear_context(ctx);
+    Ok(())
+}
+
+/// One of [`Loop`]'s four, for one family.
+///
+/// A list's element is a **word** and a closure takes a value, so each iteration converts one way
+/// and — for a map — back again; and every application is followed by a look at the error cell,
+/// because a closure can trap and a loop that carried on would run the rest of a program that has
+/// already failed.
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+fn loop_function(
+    which: Loop,
+    at: u32,
+    heap: &Heap,
+    arena: Arena,
+    runtime: Runtime,
+    m: &mut ObjectModule,
+    ctx: &mut cranelift_codegen::Context,
+    fctx: &mut FunctionBuilderContext,
+) -> Result<(), String> {
+    // The one that is not a pass over a list: four runs of words, a decorating loop and a sort.
+    if which == Loop::Sort {
+        return sort_function(at, heap, arena, runtime, m, ctx, fctx);
+    }
+    let fam = heap.family(at).clone();
+    let ptr = m.target_config().pointer_type();
+    let lists = runtime
+        .lists
+        .ok_or("a higher-order list primitive in a module with no list runtime")?;
+    let apply = m
+        .declare_function(
+            &apply_symbol(at),
+            Linkage::Local,
+            &family_signature(&fam, ptr),
+        )
+        .map_err(|e| format!("declaring an application: {e}"))?;
+
+    // The four signatures, which are the four the emitter writes calls to.
+    let mut sig = cranelift_codegen::ir::Signature::new(CallConv::triple_default(m.isa().triple()));
+    sig.params.push(AbiParam::new(ptr));
+    sig.params.push(AbiParam::new(types::I64));
+    if which == Loop::Fold {
+        sig.params.push(AbiParam::new(machine(fam.ret)));
+    }
+    sig.params.push(AbiParam::new(types::I64));
+    if which == Loop::Every {
+        sig.params.push(AbiParam::new(types::I8));
+    }
+    sig.params.push(AbiParam::new(types::I32));
+    sig.returns.push(AbiParam::new(match which {
+        Loop::Map | Loop::Filter => types::I64,
+        Loop::Fold => machine(fam.ret),
+        // `Sort` answered above: it is not one of these loops, and the `unreachable` says so where a
+        // `_` arm would have swallowed the next one added.
+        Loop::Every | Loop::Sort => types::I8,
+    }));
+    let id = m
+        .declare_function(&which.symbol(at), Linkage::Local, &sig)
+        .map_err(|e| format!("declaring a list loop: {e}"))?;
+
+    ctx.func =
+        Function::with_name_signature(UserFuncName::user(15, at * 4 + which.seq()), sig.clone());
+    {
+        let mut b = FunctionBuilder::new(&mut ctx.func, fctx);
+        let entry = b.create_block();
+        b.append_block_params_for_function_params(entry);
+        b.switch_to_block(entry);
+        let ps: Vec<IrValue> = b.block_params(entry).to_vec();
+        let err = ps[0];
+        let xs = ps[1];
+        let (init, clo, want, span) = match which {
+            Loop::Fold => (Some(ps[2]), ps[3], None, ps[4]),
+            Loop::Every => (None, ps[2], Some(ps[3]), ps[4]),
+            _ => (None, ps[2], None, ps[3]),
+        };
+        let flags = MemFlagsData::trusted();
+        let f = m.declare_func_in_func(apply, b.func);
+
+        let count = lists.count(arena, xs, &mut b, m);
+        let src = lists.data(arena, xs, &mut b, m);
+
+        // The result list, for the two that build one. `filter` allocates room for every element and
+        // writes the header at the end: one pass, and the words after what was kept are arena
+        // nobody reads — bounded by the input and given back when it is reset. A count-then-fill
+        // would call the predicate twice per element to save that.
+        let out = match which {
+            Loop::Map | Loop::Filter => {
+                let alloc = m.declare_func_in_func(lists.alloc, b.func);
+                let call = b.ins().call(alloc, &[err, count, span]);
+                let off = b.inst_results(call)[0];
+                let failed = b.create_block();
+                let ready = b.create_block();
+                let bad = b.ins().icmp_imm_s(IntCC::Equal, off, 0);
+                b.ins().brif(bad, failed, &[], ready, &[]);
+                b.switch_to_block(failed);
+                b.seal_block(failed);
+                let z = b.ins().iconst(types::I64, 0);
+                b.ins().return_(&[z]);
+                b.switch_to_block(ready);
+                b.seal_block(ready);
+                Some(off)
+            }
+            _ => None,
+        };
+        let dst = out.map(|off| lists.data(arena, off, &mut b, m));
+
+        // The loop carries the index, and — for a fold — the accumulator, and — for a filter — how
+        // many have been kept. A block parameter is the `phi` a textual emitter writes.
+        let head = b.create_block();
+        b.append_block_param(head, types::I64);
+        match which {
+            Loop::Fold => {
+                b.append_block_param(head, machine(fam.ret));
+            }
+            Loop::Filter => {
+                b.append_block_param(head, types::I64);
+            }
+            _ => {}
+        }
+        let zero = b.ins().iconst(types::I64, 0);
+        let mut start = vec![zero.into()];
+        match which {
+            Loop::Fold => start.push(init.expect("a fold is given one").into()),
+            Loop::Filter => start.push(zero.into()),
+            _ => {}
+        }
+        b.ins().jump(head, &start);
+        b.switch_to_block(head);
+        let i = b.block_params(head)[0];
+        let carried = match which {
+            Loop::Fold | Loop::Filter => Some(b.block_params(head)[1]),
+            _ => None,
+        };
+
+        let done = b.create_block();
+        match which {
+            Loop::Fold => {
+                b.append_block_param(done, machine(fam.ret));
+            }
+            Loop::Filter => {
+                b.append_block_param(done, types::I64);
+            }
+            _ => {}
+        }
+        let one = b.create_block();
+        let past = b.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, i, count);
+        let leaving: Vec<cranelift_codegen::ir::BlockArg> = match which {
+            Loop::Fold | Loop::Filter => vec![carried.expect("carried").into()],
+            _ => vec![],
+        };
+        b.ins().brif(past, done, &leaving, one, &[]);
+
+        // One element: the word, the value it stands for, the application, and the trap check.
+        b.switch_to_block(one);
+        b.seal_block(one);
+        let addr = b.ins().imul_imm_s(i, heap::WORD as i64);
+        let at_i = b.ins().iadd(src, addr);
+        let word = b.ins().load(types::I64, flags, at_i, 0);
+        let arg = from_word(
+            word,
+            if which == Loop::Fold {
+                fam.params[1]
+            } else {
+                fam.params[0]
+            },
+            &mut b,
+        );
+        let mut operands = vec![err, clo];
+        if which == Loop::Fold {
+            operands.push(carried.expect("a fold carries its accumulator"));
+        }
+        operands.push(arg);
+        let call = b.ins().call(f, &operands);
+        let answer = b.inst_results(call)[0];
+        let failed = b.create_block();
+        let alive = b.create_block();
+        let code = b.ins().load(types::I32, flags, err, 0);
+        let trapped = b.ins().icmp_imm_s(IntCC::NotEqual, code, 0);
+        b.ins().brif(trapped, failed, &[], alive, &[]);
+        b.switch_to_block(failed);
+        b.seal_block(failed);
+        let z = match which {
+            Loop::Map | Loop::Filter => b.ins().iconst(types::I64, 0),
+            Loop::Fold => zero_of(fam.ret, &mut b),
+            Loop::Every | Loop::Sort => b.ins().iconst(types::I8, 0),
+        };
+        b.ins().return_(&[z]);
+        b.switch_to_block(alive);
+        b.seal_block(alive);
+
+        let next = b.create_block();
+        let step = b.ins().iadd_imm_s(i, 1);
+        match which {
+            Loop::Map => {
+                let stored = to_word(answer, fam.ret, &mut b);
+                let to = b.ins().iadd(dst.expect("a map builds a list"), addr);
+                b.ins().store(flags, stored, to, 0);
+                b.ins().jump(next, &[]);
+                b.switch_to_block(next);
+                b.seal_block(next);
+                b.ins().jump(head, &[step.into()]);
+            }
+            Loop::Filter => {
+                let kept = carried.expect("a filter carries how many it has kept");
+                let take = b.create_block();
+                let skip = b.create_block();
+                b.append_block_param(next, types::I64);
+                b.ins().brif(answer, take, &[], skip, &[]);
+                b.switch_to_block(take);
+                b.seal_block(take);
+                let at_k = b.ins().imul_imm_s(kept, heap::WORD as i64);
+                let to = b.ins().iadd(dst.expect("a filter builds a list"), at_k);
+                b.ins().store(flags, word, to, 0);
+                let more = b.ins().iadd_imm_s(kept, 1);
+                b.ins().jump(next, &[more.into()]);
+                b.switch_to_block(skip);
+                b.seal_block(skip);
+                b.ins().jump(next, &[kept.into()]);
+                b.switch_to_block(next);
+                b.seal_block(next);
+                let now = b.block_params(next)[0];
+                b.ins().jump(head, &[step.into(), now.into()]);
+            }
+            Loop::Fold => {
+                b.ins().jump(next, &[]);
+                b.switch_to_block(next);
+                b.seal_block(next);
+                b.ins().jump(head, &[step.into(), answer.into()]);
+            }
+            Loop::Every | Loop::Sort => {
+                // Short-circuiting, which `beck-eval` documents as a promise rather than an
+                // optimisation: `list_any` stops at the first `true` and `list_all` at the first
+                // `false`, and the flag is which of the two this call is.
+                let stop = b.create_block();
+                let want = want.expect("every is given the answer it stops on");
+                let hit = b.ins().icmp(IntCC::Equal, answer, want);
+                b.ins().brif(hit, stop, &[], next, &[]);
+                b.switch_to_block(stop);
+                b.seal_block(stop);
+                b.ins().return_(&[want]);
+                b.switch_to_block(next);
+                b.seal_block(next);
+                b.ins().jump(head, &[step.into()]);
+            }
+        }
+
+        b.switch_to_block(done);
+        match which {
+            Loop::Map => {
+                b.ins().return_(&[out.expect("a map builds a list")]);
+            }
+            Loop::Filter => {
+                // The count, at last: the list is as long as what was kept.
+                let kept = b.block_params(done)[0];
+                let off = out.expect("a filter builds a list");
+                let base = arena.base(&mut b, m);
+                let hdr = b.ins().iadd(base, off);
+                b.ins().store(flags, kept, hdr, 0);
+                b.ins().return_(&[off]);
+            }
+            Loop::Fold => {
+                let acc = b.block_params(done)[0];
+                b.ins().return_(&[acc]);
+            }
+            Loop::Every | Loop::Sort => {
+                let want = want.expect("every is given the answer it stops on");
+                let rest = b.ins().bxor_imm_u(want, 1);
+                b.ins().return_(&[rest]);
+            }
+        }
+        b.seal_all_blocks();
+        b.finalize(m.target_config());
+    }
+    m.define_function(id, ctx)
+        .map_err(|e| format!("defining a list loop: {e}"))?;
+    m.clear_context(ctx);
+    Ok(())
+}
+
+/// One word of a list as the value a closure of this repr takes.
+fn from_word(w: IrValue, repr: Repr, b: &mut FunctionBuilder<'_>) -> IrValue {
+    match repr {
+        Repr::Float => b.ins().bitcast(types::F64, MemFlagsData::new(), w),
+        Repr::Bool => b.ins().icmp_imm_s(IntCC::NotEqual, w, 0),
+        _ => w,
+    }
+}
+
+/// A closure's answer as the word a list holds.
+///
+/// A real is normalised on the way in, for the reason [`Body::store_field`] normalises one: every
+/// real on this heap is the one the evaluator would have built, so nothing downstream has to
+/// remember which ones are not.
+fn to_word(v: IrValue, repr: Repr, b: &mut FunctionBuilder<'_>) -> IrValue {
+    match repr {
+        Repr::Float => {
+            let zero = b.ins().f64const(0.0);
+            let is_zero = b.ins().fcmp(FloatCC::Equal, v, zero);
+            let zeroed = b.ins().select(is_zero, zero, v);
+            let nan = b.ins().f64const(f64::NAN);
+            let is_nan = b.ins().fcmp(FloatCC::NotEqual, v, v);
+            let normal = b.ins().select(is_nan, nan, zeroed);
+            b.ins().bitcast(types::I64, MemFlagsData::new(), normal)
+        }
+        Repr::Bool => b.ins().uextend(types::I64, v),
+        _ => v,
+    }
+}
+
+/// The one function that compares two closures, whatever their family.
+///
+/// One rather than one per family: a rank is unique across the module, and
+/// [`heap::Repr::order`] says why comparing two ranks is comparing what the evaluator compares.
+fn fn_compare(
+    m: &mut ObjectModule,
+    ctx: &mut cranelift_codegen::Context,
+    fctx: &mut FunctionBuilderContext,
+    arena: Arena,
+) -> Result<(), String> {
+    let sig = compare_signature(m);
+    let id = m
+        .declare_function("beck.fn.cmp", Linkage::Local, &sig)
+        .map_err(|e| format!("declaring a comparison: {e}"))?;
+    ctx.func = Function::with_name_signature(UserFuncName::user(14, 0), sig);
+    {
+        let mut b = FunctionBuilder::new(&mut ctx.func, fctx);
+        let entry = b.create_block();
+        b.append_block_params_for_function_params(entry);
+        b.switch_to_block(entry);
+        b.seal_block(entry);
+        let (a, c) = (b.block_params(entry)[0], b.block_params(entry)[1]);
+        let base = arena.base(&mut b, m);
+        let flags = MemFlagsData::trusted();
+        let pa = b.ins().iadd(base, a);
+        let pc = b.ins().iadd(base, c);
+        let ra = b.ins().load(types::I64, flags, pa, 0);
+        let rc = b.ins().load(types::I64, flags, pc, 0);
+        let down = b.ins().iconst(types::I64, -1);
+        let up = b.ins().iconst(types::I64, 1);
+        let same = b.ins().iconst(types::I64, 0);
+        let lt = b.ins().icmp(IntCC::UnsignedLessThan, ra, rc);
+        let gt = b.ins().icmp(IntCC::UnsignedGreaterThan, ra, rc);
+        let high = b.ins().select(gt, up, same);
+        let r = b.ins().select(lt, down, high);
+        b.ins().return_(&[r]);
+        b.seal_all_blocks();
+        b.finalize(m.target_config());
+    }
+    m.define_function(id, ctx)
+        .map_err(|e| format!("defining a comparison: {e}"))?;
+    m.clear_context(ctx);
+    Ok(())
+}
+
 /// The signature every comparison has: two offsets in, `-1`, `0` or `1` out.
 fn compare_signature(m: &ObjectModule) -> cranelift_codegen::ir::Signature {
     let mut sig = cranelift_codegen::ir::Signature::new(CallConv::triple_default(m.isa().triple()));
@@ -2683,6 +3745,19 @@ struct Body<'a> {
     list_compared: BTreeSet<u32>,
     /// And the map reprs.
     map_compared: BTreeSet<u32>,
+    /// Whether this body compares two closures, which needs one function for the whole module.
+    compared_fns: bool,
+    /// The lambdas this body built, each still to be written as a function of its own.
+    ///
+    /// A queue rather than a nested emission: one [`FunctionBuilder`] owns the context while it is
+    /// building, so the body of a `lam` met inside one is written after that one is defined — which
+    /// is [`build`]'s drain, and which is also why a `lam` that will not compile refuses the
+    /// definition it was written in rather than itself.
+    pending: Vec<Pending>,
+    /// The closure families this body applies.
+    applied: BTreeSet<u32>,
+    /// The higher-order list primitives this body reaches, by shape.
+    loops: BTreeSet<(Loop, u32)>,
 }
 
 impl<'a> Body<'a> {
@@ -2709,6 +3784,10 @@ impl<'a> Body<'a> {
             compared: BTreeSet::new(),
             list_compared: BTreeSet::new(),
             map_compared: BTreeSet::new(),
+            compared_fns: false,
+            pending: Vec::new(),
+            applied: BTreeSet::new(),
+            loops: BTreeSet::new(),
         }
     }
 
@@ -2746,6 +3825,9 @@ impl<'a> Body<'a> {
                 self.map_compared.insert(at);
             }
             Repr::Int | Repr::Float | Repr::Bool | Repr::Str => {}
+            // One function for the whole module rather than one per family, because every closure's
+            // rank is in the same table. See `beck_llvm::heap::Repr::order`.
+            Repr::Fn(_) => self.compared_fns = true,
         }
     }
 
@@ -2912,17 +3994,8 @@ impl<'a> Body<'a> {
             }
             CoreKind::App { func, args } => return self.call(func, args, dest, b, m),
             CoreKind::Prim { op, args } => self.prim(*op, args, &c.ty, c.span, b, m)?,
-            CoreKind::Lam { .. } => {
-                return Err(
-                    "a nested function is a closure, and a closure is not on this heap".into(),
-                )
-            }
-            CoreKind::Global(name) => {
-                return Err(format!(
-                    "`{name}` is used as a value rather than called, and a function value is a \
-                     closure"
-                ))
-            }
+            CoreKind::Lam { params, body } => self.closure(params, body, &c.ty, c.span, b, m)?,
+            CoreKind::Global(name) => self.named(name, &c.ty, c.span, b, m)?,
             CoreKind::Make {
                 variant, fields, ..
             } => self.make(&c.ty, variant.as_deref(), fields, c.span, b, m)?,
@@ -3095,7 +4168,9 @@ impl<'a> Body<'a> {
             Repr::Int => Trap::NoMatchInt,
             Repr::Float => Trap::NoMatchFloat,
             Repr::Bool => Trap::NoMatchBool,
-            Repr::Str | Repr::List(_) | Repr::Map(_) | Repr::Obj(_) => Trap::NoMatchData,
+            Repr::Str | Repr::List(_) | Repr::Map(_) | Repr::Obj(_) | Repr::Fn(_) => {
+                Trap::NoMatchData
+            }
         };
         let payload = self.widen(&v, b);
         let always = b.ins().iconst(types::I8, 1);
@@ -3293,7 +4368,7 @@ impl<'a> Body<'a> {
                 let raw = b.ins().load(types::I64, flags, at, 0);
                 b.ins().icmp_imm_s(IntCC::NotEqual, raw, 0)
             }
-            Repr::Int | Repr::Str | Repr::List(_) | Repr::Map(_) | Repr::Obj(_) => {
+            Repr::Int | Repr::Str | Repr::List(_) | Repr::Map(_) | Repr::Obj(_) | Repr::Fn(_) => {
                 b.ins().load(types::I64, flags, at, 0)
             }
         };
@@ -3317,7 +4392,9 @@ impl<'a> Body<'a> {
         let word = match v.ty {
             Repr::Float => self.normalise(v.v, b),
             Repr::Bool => b.ins().uextend(types::I64, v.v),
-            Repr::Int | Repr::Str | Repr::List(_) | Repr::Map(_) | Repr::Obj(_) => v.v,
+            Repr::Int | Repr::Str | Repr::List(_) | Repr::Map(_) | Repr::Obj(_) | Repr::Fn(_) => {
+                v.v
+            }
         };
         let at = self.word_addr(off, slot, b, m);
         b.ins().store(MemFlagsData::trusted(), word, at, 0);
@@ -3475,6 +4552,202 @@ impl<'a> Body<'a> {
         Ok(Val { v: off, ty: v.ty })
     }
 
+    /// `lambda x: …` — the object, and the lambda's body queued to be written.
+    ///
+    /// The captures and their order are [`heap::Lambda`]'s, which is the same record
+    /// [`Body::emit_lam`] reads them back out of. That is the contract, and it is in `beck_llvm`'s
+    /// `heap` because it is shared with the other emitter and with nothing else.
+    fn closure(
+        &mut self,
+        params: &Arc<[VarId]>,
+        body: &Arc<Core>,
+        ty: &beck_core::ty::Ty,
+        span: Span,
+        b: &mut FunctionBuilder<'_>,
+        m: &mut ObjectModule,
+    ) -> Result<Val, String> {
+        let repr = self
+            .repr(ty)
+            .map_err(|why| format!("builds a closure that is {why}"))?;
+        let Repr::Fn(family) = repr else {
+            return Err(format!("builds a closure whose type is `{ty}`"));
+        };
+        let rank = self
+            .heap
+            .rank_of(params, body.span.start)
+            .ok_or("builds a closure from a `lam` the survey did not rank")?;
+        if params.len() != self.heap.family(family).params.len() {
+            return Err("builds a closure whose parameters are not the ones its type has".into());
+        }
+        let captures = self.heap.lam(rank).captures.clone();
+        let mut vals = Vec::with_capacity(captures.len());
+        for (var, ty) in &captures {
+            let want = self
+                .repr(ty)
+                .map_err(|why| format!("captures a variable that is {why}"))?;
+            let v = *self
+                .env
+                .get(var)
+                .ok_or("captures a variable that is not bound here")?;
+            if v.ty != want {
+                return Err("captures a variable at a type this backend reads two ways".into());
+            }
+            vals.push(v);
+        }
+        self.pending.push(Pending {
+            rank,
+            params: params.clone(),
+            body: body.clone(),
+            family,
+        });
+        let off = self.alloc(heap::closure_bytes(captures.len() as u64), span, b, m);
+        let tag = b.ins().iconst(types::I64, i64::from(rank));
+        self.store_word(off, 0, tag, b, m);
+        for (i, v) in vals.iter().enumerate() {
+            self.store_field(off, i + 1, v, b, m);
+        }
+        Ok(Val { v: off, ty: repr })
+    }
+
+    /// A definition named where a value is expected — `map_list(xs, double)`.
+    ///
+    /// No captures and no lambda of its own: the arm of the application that answers to this rank
+    /// calls the definition, so what is allocated here is one word.
+    fn named(
+        &mut self,
+        name: &str,
+        ty: &beck_core::ty::Ty,
+        span: Span,
+        b: &mut FunctionBuilder<'_>,
+        m: &mut ObjectModule,
+    ) -> Result<Val, String> {
+        if !self.eligible.contains(name) {
+            return Err(format!(
+                "names `{name}` as a value, and it does not compile"
+            ));
+        }
+        let repr = self
+            .repr(ty)
+            .map_err(|why| format!("names `{name}` as a value, which is {why}"))?;
+        let Repr::Fn(family) = repr else {
+            return Err(format!("names `{name}` as a value, whose type is `{ty}`"));
+        };
+        let def = self
+            .program
+            .defs
+            .get(name)
+            .ok_or_else(|| format!("names `{name}`, which this program does not define"))?;
+        let CoreKind::Lam { params, body } = &def.body.kind else {
+            return Err(format!("names `{name}`, whose body is not a lambda"));
+        };
+        let rank = self
+            .heap
+            .rank_of(params, body.span.start)
+            .ok_or("names a definition the survey did not rank")?;
+        let sig = self
+            .sigs
+            .get(name)
+            .ok_or_else(|| format!("names `{name}`, which has no signature"))?;
+        let fam = self.heap.family(family);
+        if sig.params != fam.params || sig.ret != fam.ret {
+            return Err(format!(
+                "names `{name}` as a `{}`, and that is not the shape it compiled to",
+                fam.shown
+            ));
+        }
+        let off = self.alloc(heap::closure_bytes(0), span, b, m);
+        let tag = b.ins().iconst(types::I64, i64::from(rank));
+        self.store_word(off, 0, tag, b, m);
+        Ok(Val { v: off, ty: repr })
+    }
+
+    /// Applying a value rather than calling a name.
+    fn apply(
+        &mut self,
+        func: &Core,
+        args: &[Core],
+        dest: Dest,
+        b: &mut FunctionBuilder<'_>,
+        m: &mut ObjectModule,
+    ) -> Result<Option<Val>, String> {
+        let f = self.value(func, b, m)?;
+        let Repr::Fn(family) = f.ty else {
+            return Err("calls something that is neither a definition nor a function value".into());
+        };
+        let fam = self.heap.family(family).clone();
+        if args.len() != fam.params.len() {
+            return Err(format!(
+                "applies a `{}` to {} arguments",
+                fam.shown,
+                args.len()
+            ));
+        }
+        let mut operands = vec![self.err(), f.v];
+        for (a, want) in args.iter().zip(&fam.params) {
+            let v = self.value(a, b, m)?;
+            if v.ty != *want {
+                return Err(format!(
+                    "an argument to a `{}` is the wrong type",
+                    fam.shown
+                ));
+            }
+            operands.push(v.v);
+        }
+        self.applied.insert(family);
+        let ptr = m.target_config().pointer_type();
+        let id = m
+            .declare_function(
+                &apply_symbol(family),
+                Linkage::Local,
+                &family_signature(&fam, ptr),
+            )
+            .map_err(|e| format!("declaring an application: {e}"))?;
+        let fref = m.declare_func_in_func(id, b.func);
+        // A call in tail position stays one, through the application and through the arm inside it —
+        // `docs/27`'s guarantee is about the language, so a loop written as a closure calling itself
+        // must not grow the stack.
+        if dest == Dest::Return && fam.ret == self.ret {
+            b.ins().return_call(fref, &operands);
+            return Ok(None);
+        }
+        let call = b.ins().call(fref, &operands);
+        let r = b.inst_results(call)[0];
+        self.check_call(b);
+        self.finish(Val { v: r, ty: fam.ret }, dest, b)
+    }
+
+    /// The body of one `lam`, as its own function: the captures, then the body.
+    fn emit_lam(
+        &mut self,
+        pending: &Pending,
+        b: &mut FunctionBuilder<'_>,
+        m: &mut ObjectModule,
+    ) -> Result<(), String> {
+        let fam = self.heap.family(pending.family).clone();
+        self.ret = fam.ret;
+        let entry = b.create_block();
+        b.append_block_params_for_function_params(entry);
+        b.switch_to_block(entry);
+        b.seal_block(entry);
+        self.err = Some(b.block_params(entry)[0]);
+        let clo = b.block_params(entry)[1];
+        for (i, (var, ty)) in pending.params.iter().zip(&fam.params).enumerate() {
+            let v = b.block_params(entry)[i + 2];
+            self.env.insert(*var, Val { v, ty: *ty });
+        }
+        let captures = self.heap.lam(pending.rank).captures.clone();
+        for (i, (var, ty)) in captures.iter().enumerate() {
+            let want = self
+                .repr(ty)
+                .map_err(|why| format!("captures a variable that is {why}"))?;
+            let v = self.load_field(clo, i + 1, want, b, m);
+            self.env.insert(*var, v);
+        }
+        self.expr(&pending.body, Dest::Return, b, m)?;
+        Ok(())
+    }
+
+    /// rests on.
     /// A direct call of a named definition — and in tail position, a jump.
     ///
     /// `return_call` rather than a call and a return: Cranelift's verifier *requires* the frame to
@@ -3482,6 +4755,8 @@ impl<'a> Body<'a> {
     /// gives the other backend. `docs/27` §27.2 says 1,500 and 60,000 tail calls spend the same
     /// host stack, and an optimisation that "usually" fires cannot be what a language guarantee
     /// rests on.
+    ///
+    /// Anything that is not a name is a closure being applied, which is [`Body::apply`].
     fn call(
         &mut self,
         func: &Core,
@@ -3491,7 +4766,7 @@ impl<'a> Body<'a> {
         m: &mut ObjectModule,
     ) -> Result<Option<Val>, String> {
         let CoreKind::Global(name) = &func.kind else {
-            return Err("calls something other than a named definition".into());
+            return self.apply(func, args, dest, b, m);
         };
         if !self.eligible.contains(&**name) {
             return Err(format!("calls `{name}`, which does not compile"));
@@ -3598,7 +4873,12 @@ impl<'a> Body<'a> {
                         };
                         Ok(Val { v, ty: Repr::Float })
                     }
-                    Repr::Bool | Repr::Str | Repr::List(_) | Repr::Map(_) | Repr::Obj(_) => {
+                    Repr::Bool
+                    | Repr::Str
+                    | Repr::List(_)
+                    | Repr::Map(_)
+                    | Repr::Obj(_)
+                    | Repr::Fn(_) => {
                         Err(format!("`{}` on a value that is not a number", op.name()))
                     }
                 }
@@ -3633,9 +4913,12 @@ impl<'a> Body<'a> {
                         v: b.ins().fneg(vals[0].v),
                         ty: Repr::Float,
                     }),
-                    Repr::Bool | Repr::Str | Repr::List(_) | Repr::Map(_) | Repr::Obj(_) => {
-                        Err("`negate` on a value that is not a number".into())
-                    }
+                    Repr::Bool
+                    | Repr::Str
+                    | Repr::List(_)
+                    | Repr::Map(_)
+                    | Repr::Obj(_)
+                    | Repr::Fn(_) => Err("`negate` on a value that is not a number".into()),
                 }
             }
             Prim::Abs => {
@@ -3654,9 +4937,12 @@ impl<'a> Body<'a> {
                         v: b.ins().fabs(vals[0].v),
                         ty: Repr::Float,
                     }),
-                    Repr::Bool | Repr::Str | Repr::List(_) | Repr::Map(_) | Repr::Obj(_) => {
-                        Err("`abs` on a value that is not a number".into())
-                    }
+                    Repr::Bool
+                    | Repr::Str
+                    | Repr::List(_)
+                    | Repr::Map(_)
+                    | Repr::Obj(_)
+                    | Repr::Fn(_) => Err("`abs` on a value that is not a number".into()),
                 }
             }
             Prim::Sqrt => {
@@ -3962,6 +5248,27 @@ impl<'a> Body<'a> {
                 self.map_arg(&vals[0], op)?;
                 self.map_run(op, ty, &vals[0], span, b, m)
             }
+            // A list of lists into one list. Not a growth: the total is a sum over the outer
+            // list's header words, so the allocation happens once and after it.
+            Prim::ConcatLists => {
+                arity(1, &vals)?;
+                let outer = self.list_arg(&vals[0], op)?;
+                let Repr::List(inner) = self.heap.element(outer) else {
+                    return Err("`concat_lists` on something that is not a list of lists".into());
+                };
+                let lists = self.lists();
+                let idx = self.span(span);
+                let span = b.ins().iconst(types::I32, i64::from(idx));
+                let err = self.err();
+                let f = m.declare_func_in_func(lists.concat, b.func);
+                let call = b.ins().call(f, &[err, vals[0].v, span]);
+                let r = b.inst_results(call)[0];
+                self.check_call(b);
+                Ok(Val {
+                    v: r,
+                    ty: Repr::List(inner),
+                })
+            }
             Prim::ListReverse => {
                 arity(1, &vals)?;
                 let at = self.list_arg(&vals[0], op)?;
@@ -3978,8 +5285,178 @@ impl<'a> Body<'a> {
                     ty: Repr::List(at),
                 })
             }
+            Prim::MapList | Prim::FilterList => {
+                arity(2, &vals)?;
+                let element = self.heap.element(self.list_arg(&vals[0], op)?);
+                let fam = self.function_arg(&vals[1], op, &[element])?;
+                let family = self.heap.family(fam).clone();
+                let out = if op == Prim::MapList {
+                    let repr = self
+                        .repr(ty)
+                        .map_err(|why| format!("`{}` answers with {why}", op.name()))?;
+                    let Repr::List(at) = repr else {
+                        return Err(format!("`{}` answers with a `{ty}`", op.name()));
+                    };
+                    if self.heap.element(at) != family.ret {
+                        return Err(format!(
+                            "`{}` answers a list of something other than what its function does",
+                            op.name()
+                        ));
+                    }
+                    repr
+                } else {
+                    if family.ret != Repr::Bool {
+                        return Err("`filter_list`'s function does not answer a Bool".into());
+                    }
+                    vals[0].ty
+                };
+                let which = if op == Prim::MapList {
+                    Loop::Map
+                } else {
+                    Loop::Filter
+                };
+                let r = self.list_loop(which, fam, &[vals[0].v, vals[1].v], span, b, m)?;
+                Ok(Val { v: r, ty: out })
+            }
+            Prim::ListFold => {
+                arity(3, &vals)?;
+                let element = self.heap.element(self.list_arg(&vals[0], op)?);
+                let acc = vals[1].ty;
+                let fam = self.function_arg(&vals[2], op, &[acc, element])?;
+                if self.heap.family(fam).ret != acc {
+                    return Err(
+                        "`list_fold`'s function answers something other than the accumulator it \
+                         is given"
+                            .into(),
+                    );
+                }
+                let r = self.list_loop(
+                    Loop::Fold,
+                    fam,
+                    &[vals[0].v, vals[1].v, vals[2].v],
+                    span,
+                    b,
+                    m,
+                )?;
+                Ok(Val { v: r, ty: acc })
+            }
+            // Decorate, sort, undecorate — and the keys are words like any others, so what compares
+            // two of them is the function a list's element comparison already is.
+            Prim::SortBy => {
+                arity(2, &vals)?;
+                let element = self.heap.element(self.list_arg(&vals[0], op)?);
+                let fam = self.function_arg(&vals[1], op, &[element])?;
+                let key = self.heap.family(fam).ret;
+                // Interned here rather than in the survey: the keys are not a list any program
+                // wrote, so nothing else would have asked for their comparison — and recording the
+                // index is what makes the module generate it.
+                let at = self.heap.word_of(key);
+                self.list_compared.insert(at);
+                let r = self.list_loop(Loop::Sort, fam, &[vals[0].v, vals[1].v], span, b, m)?;
+                Ok(Val {
+                    v: r,
+                    ty: vals[0].ty,
+                })
+            }
+            Prim::ListAll | Prim::ListAny => {
+                arity(2, &vals)?;
+                let element = self.heap.element(self.list_arg(&vals[0], op)?);
+                let fam = self.function_arg(&vals[1], op, &[element])?;
+                if self.heap.family(fam).ret != Repr::Bool {
+                    return Err(format!("`{}`'s function does not answer a Bool", op.name()));
+                }
+                let want = b.ins().iconst(types::I8, i64::from(op == Prim::ListAny));
+                let r =
+                    self.list_loop(Loop::Every, fam, &[vals[0].v, vals[1].v, want], span, b, m)?;
+                Ok(Val {
+                    v: r,
+                    ty: Repr::Bool,
+                })
+            }
             other => Err(refusal(other)),
         }
+    }
+
+    /// Insist an argument is a closure of the shape this primitive applies it at.
+    fn function_arg(&mut self, v: &Val, op: Prim, want: &[Repr]) -> Result<u32, String> {
+        let Repr::Fn(fam) = v.ty else {
+            return Err(format!(
+                "`{}` on something that is not a function",
+                op.name()
+            ));
+        };
+        if self.heap.family(fam).params != want {
+            return Err(format!(
+                "`{}` applies its function to something it does not take",
+                op.name()
+            ));
+        }
+        Ok(fam)
+    }
+
+    /// Call one of the generated loops.
+    ///
+    /// The arguments are in the order [`loop_function`] writes its signatures in: the list, the
+    /// accumulator when there is one, the closure, the flag when there is one, then the span. Both
+    /// halves are here and in that function, so a change to one is an object the linker refuses
+    /// rather than a wrong answer.
+    fn list_loop(
+        &mut self,
+        which: Loop,
+        fam: u32,
+        args: &[IrValue],
+        span: Span,
+        b: &mut FunctionBuilder<'_>,
+        m: &mut ObjectModule,
+    ) -> Result<IrValue, String> {
+        self.applied.insert(fam);
+        self.loops.insert((which, fam));
+        let family = self.heap.family(fam).clone();
+        let ptr = m.target_config().pointer_type();
+        let mut sig =
+            cranelift_codegen::ir::Signature::new(CallConv::triple_default(m.isa().triple()));
+        sig.params.push(AbiParam::new(ptr));
+        sig.params.push(AbiParam::new(types::I64));
+        if which == Loop::Fold {
+            sig.params.push(AbiParam::new(machine(family.ret)));
+        }
+        sig.params.push(AbiParam::new(types::I64));
+        if which == Loop::Every {
+            sig.params.push(AbiParam::new(types::I8));
+        }
+        sig.params.push(AbiParam::new(types::I32));
+        sig.returns.push(AbiParam::new(match which {
+            Loop::Map | Loop::Filter | Loop::Sort => types::I64,
+            Loop::Fold => machine(family.ret),
+            Loop::Every => types::I8,
+        }));
+        let id = m
+            .declare_function(&which.symbol(fam), Linkage::Local, &sig)
+            .map_err(|e| format!("declaring a list loop: {e}"))?;
+        let f = m.declare_func_in_func(id, b.func);
+        let idx = self.span(span);
+        let sp = b.ins().iconst(types::I32, i64::from(idx));
+        let err = self.err();
+        // The list, then whatever this loop takes between it and the span. `args` is the primitive's
+        // own operands in source order — the list, the closure, and the initial accumulator or the
+        // flag — and this is where they become the order the signature has.
+        let mut operands = vec![err, args[0]];
+        match which {
+            Loop::Fold => {
+                operands.push(args[1]);
+                operands.push(args[2]);
+            }
+            Loop::Every => {
+                operands.push(args[1]);
+                operands.push(args[2]);
+            }
+            _ => operands.push(args[1]),
+        }
+        operands.push(sp);
+        let call = b.ins().call(f, &operands);
+        let r = b.inst_results(call)[0];
+        self.check_call(b);
+        Ok(r)
     }
 
     /// A literal, as the value that carries it.
@@ -4678,7 +6155,7 @@ impl<'a> Body<'a> {
             }
             Repr::Bool => b.ins().uextend(types::I64, v.v),
             // Its offset, which is what a reference *is* here.
-            Repr::Str | Repr::List(_) | Repr::Map(_) | Repr::Obj(_) => v.v,
+            Repr::Str | Repr::List(_) | Repr::Map(_) | Repr::Obj(_) | Repr::Fn(_) => v.v,
         }
     }
 }
@@ -4698,7 +6175,7 @@ fn refusal(op: Prim) -> String {
         // The one that is a decision rather than a gap. `docs/69` §69.7 and `docs/101` §101.5 both
         // name shipping this as the mistake: the tree-walker pushes in place when `liveness` proves
         // the accumulator is a last use, and an arena with no ownership in it cannot.
-        Prim::ListAppend | Prim::ConcatLists => {
+        Prim::ListAppend => {
             "grows a list, and this arena cannot prove nobody else holds the one it would push \
              into — so the accumulator every loop is written as would be quadratic here and linear \
              in the evaluator"
@@ -4711,11 +6188,12 @@ fn refusal(op: Prim) -> String {
             "grows a map, and a sorted run in an arena has to be copied whole where the \
              evaluator's tree rebuilds one path"
         }
-        // `map_list` and the rest of the higher-order half are deliberately absent. Their argument
-        // is a function, `prim` evaluates its arguments before it looks at the operator, and
-        // "`double_it` is used as a value rather than called, and a function value is a closure" is
-        // both truer and more specific than anything this table could say. A reason that cannot be
-        // produced is `docs/89` §89.5's unreachable rule, and the answer is the same: delete it.
+        // The higher-order half compiles, `sort_by` included — so what is left of it is the one
+        // that grows a list.
+        Prim::ListFlatMap => {
+            "answers a list whose length is the sum of the lists its function answers, which is \
+             growing a list under another name"
+        }
         Prim::StrUpper | Prim::StrLower => {
             "is Unicode case mapping, which is a table rather than an operation — and a compiled \
              half-answer that folded ASCII only would disagree with the evaluator on the first \

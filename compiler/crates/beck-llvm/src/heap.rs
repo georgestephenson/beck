@@ -69,14 +69,29 @@
 //! What that costs is the pool copied down the pipe on every call, which is [`Heap::pool_bytes`]
 //! and is a property of the program's literals rather than of its arguments.
 //!
+//! # Closures
+//!
+//! A closure is an object too, and the only one that never leaves: one word saying which `lam` it
+//! came from — a **rank**, see [`CLOSURE_HEADER`] — and one word per captured value.
+//!
+//! | Word | What |
+//! |---|---|
+//! | 0 | the lambda's rank among the program's lambdas |
+//! | 1.. | one word per capture, in the order [`Lambda::captures`] holds them |
+//!
+//! [`Heap::crossing`] is the rule that keeps it inside one call: a signature, a field, an element and
+//! a map's key or value all refuse one, because the host would have to turn a rank and some words
+//! back into a [`beck_core::Value::Closure`] — a body, an environment and a frame size. So there is
+//! no closure to marshal, and nothing in the two halves below knows closures exist.
+//!
 //! # What has a layout, and what does not
 //!
 //! `Int`, `Float` and `Bool` are [`Repr`]'s scalars and live in registers as they always have. A
 //! `model`, a `union` and a `newtype` — including a recursive one, and including one that takes a
-//! type parameter — have a layout, and a `Str` has the one above. Everything else does not, and
-//! [`Heap::repr`] says which by name: a `list`, a `Map`, a closure, `Html` and `Unit` are refused,
-//! and a definition that mentions one is left to the evaluator exactly as it was before there was a
-//! heap at all.
+//! type parameter — have a layout; a `Str`, a `list` and a `Map` have the ones above; and a closure
+//! has the one above that, inside a call. What is left has none, and [`Heap::repr`] says which by
+//! name: `Html` and `Unit` are refused, and a definition that mentions one is left to the evaluator
+//! exactly as it was before there was a heap at all.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -145,6 +160,21 @@ pub fn list_bytes(n: u64) -> u64 {
     LIST_HEADER + n * WORD
 }
 
+/// The one header word of a closure: which `lam` it came from.
+///
+/// A **rank**, not a code address. A value here is an offset into an arena that crosses a pipe as
+/// bytes ([`adr/0026`](../../../../../docs/adr/0026-the-native-heap-is-an-arena-of-offsets.md)), so
+/// a closure cannot hold a pointer to code and applying one cannot be an indirect call. What it
+/// holds instead is the lambda's rank among the lambdas of the program, and an application is a
+/// switch on that word into a direct call per rank — which is also why neither emitter needs a
+/// function pointer, a jump table in data, or a relocation the arena would have to carry.
+pub const CLOSURE_HEADER: u64 = WORD;
+
+/// How many bytes a closure with `n` captured values occupies: the rank and one word each.
+pub fn closure_bytes(n: u64) -> u64 {
+    CLOSURE_HEADER + n * WORD
+}
+
 /// The one header word of a `Map`: how many entries it has.
 pub const MAP_HEADER: u64 = WORD;
 
@@ -175,6 +205,10 @@ pub enum Repr {
     Map(u32),
     /// An object, carried as its offset into the arena. The index is into [`Heap::layouts`].
     Obj(u32),
+    /// A closure, carried as its offset. The index is into [`Heap::family`] — every closure of one
+    /// shape is one family, because what an application needs to know is the *signature* it is
+    /// calling through and not which lambda is at the other end.
+    Fn(u32),
 }
 
 impl Repr {
@@ -183,7 +217,9 @@ impl Repr {
         match self {
             Repr::Float => Scalar::Float,
             Repr::Bool => Scalar::Bool,
-            Repr::Int | Repr::Str | Repr::List(_) | Repr::Map(_) | Repr::Obj(_) => Scalar::Int,
+            Repr::Int | Repr::Str | Repr::List(_) | Repr::Map(_) | Repr::Obj(_) | Repr::Fn(_) => {
+                Scalar::Int
+            }
         }
     }
 
@@ -193,10 +229,15 @@ impl Repr {
     /// graph in the request, and the worker sends the used arena back with a reply. A `Str`, a
     /// `list` and a `Map` are on the heap for both purposes, and the name says *reference* rather
     /// than *object* because those three have no [`Layout`].
+    ///
+    /// A closure is an object here and never reaches either of those places: [`Heap::repr`] admits
+    /// one inside a body and every *boundary* — a signature, a field, an element, a map's key or
+    /// value — refuses it, so the host has no closure to marshal. This answers `true` because the
+    /// value is an offset, not because anything encodes one.
     pub fn is_ref(self) -> bool {
         matches!(
             self,
-            Repr::Obj(_) | Repr::Str | Repr::List(_) | Repr::Map(_)
+            Repr::Obj(_) | Repr::Str | Repr::List(_) | Repr::Map(_) | Repr::Fn(_)
         )
     }
 
@@ -229,6 +270,12 @@ impl Repr {
             Repr::List(at) => Order::Call(format!("beck.list.cmp.{at}")),
             Repr::Map(at) => Order::Call(format!("beck.map.cmp.{at}")),
             Repr::Obj(at) => Order::Call(format!("beck.cmp.{at}")),
+            // `Closure`'s `Ord` in `beck_core::core` is its parameters and then where its body
+            // starts — the captured frame is *not* in it, so two closures from one `lam` are equal
+            // however differently they were built. A rank is assigned in exactly that order
+            // ([`survey`]), so comparing two ranks is comparing two code positions and the tag
+            // word answers all six operators.
+            Repr::Fn(_) => Order::Call("beck.fn.cmp".into()),
         }
     }
 }
@@ -290,6 +337,49 @@ impl Layout {
     }
 }
 
+/// Every closure of one shape: what applying one takes and what it answers.
+///
+/// Interned by its *reprs* rather than by the type as written, because an effect row is not part of
+/// a machine shape: `(Int) -> Int` and `(Int) -> Int ! io` are one family, and a lambda inferred at
+/// one of those types must be applicable at a site that says the other — otherwise the switch an
+/// application compiles to would be missing the arm for the closure standing in front of it.
+#[derive(Clone, Debug)]
+pub struct Family {
+    pub params: Vec<Repr>,
+    pub ret: Repr,
+    /// The type as a person writes it, for a report and a refusal. The first spelling met.
+    pub shown: String,
+    /// Every lambda of this shape, by rank, in rank order — which is what an application switches
+    /// over. A rank here does not promise the lambda *compiled*: an emitter switches over the ones
+    /// it emitted, and this is the set they are drawn from.
+    pub ranks: Vec<u32>,
+}
+
+/// One `lam` of the program, ranked.
+#[derive(Clone, Debug)]
+pub struct Lambda {
+    /// The parameters, which are the first half of the order a rank is assigned in.
+    pub params: Vec<beck_core::core::VarId>,
+    /// Where the body starts, which is the second half — and [`beck_core::core::Closure`]'s own
+    /// tie-breaker.
+    pub span_start: u32,
+    /// The shape, when it has one here. A lambda over a `Map[Str, Html]` has no family, and any use
+    /// of it is refused for the reason `Html` is.
+    pub family: Option<u32>,
+    /// What the closure carries: every variable the body reads and does not bind, in `VarId` order,
+    /// with the type it is read at.
+    ///
+    /// The order is the *object's* order, and it is decided here so that the code which builds a
+    /// closure and the code which reads its captures back cannot disagree — the same reason a
+    /// layout is decided here rather than in an emitter. The type comes from a `Var` node inside
+    /// the body: a captured variable is captured *because* the body reads it, so there is always
+    /// one, and it may be under a nested `lam` rather than at the top.
+    pub captures: Vec<(beck_core::core::VarId, Ty)>,
+    /// Whether this is a definition's own outermost `lam` — the one that *is* a compiled function.
+    /// Using such a definition as a value builds a closure of no captures whose arm calls it.
+    pub def: Option<Arc<str>>,
+}
+
 /// A slot in the table, so a type that is *being* resolved can be referred to by the resolution.
 #[derive(Clone, Debug)]
 enum Slot {
@@ -333,6 +423,18 @@ pub struct Heap {
     /// returning one needs an arena and would otherwise get the module a program of pure arithmetic
     /// gets.
     text: bool,
+    /// Every distinct closure shape, interned by its reprs.
+    families: Vec<Family>,
+    by_family: BTreeMap<(Vec<Repr>, Repr), u32>,
+    /// Every `lam` in the program, in rank order — so the index *is* the rank.
+    lams: Vec<Lambda>,
+    by_lam: BTreeMap<(Vec<beck_core::core::VarId>, u32), u32>,
+    /// Whether this program builds a closure, and therefore needs an arena to build it in.
+    ///
+    /// Not "has a `lam` in it": every definition's body *is* one, and a program of pure arithmetic
+    /// must keep getting the module `docs/93` §93.5 measured — no `malloc`, no globals, no blob on
+    /// the wire. What sets this is a `lam` under something, or a definition named as a value.
+    closures: bool,
 }
 
 impl Heap {
@@ -351,9 +453,90 @@ impl Heap {
     /// code they were measured on.
     pub fn is_empty(&self) -> bool {
         !self.text
+            && !self.closures
             && self.elements.is_empty()
             && self.entries.is_empty()
             && !self.slots.iter().any(|s| matches!(s, Slot::Done(_)))
+    }
+
+    /// Whether this program builds a closure, and therefore needs an arena.
+    pub fn uses_closures(&self) -> bool {
+        self.closures
+    }
+
+    /// What applying a closure of family `at` takes and answers.
+    pub fn family(&self, at: u32) -> &Family {
+        &self.families[at as usize]
+    }
+
+    /// Every closure shape this module has, which is what an emitter writes an application for.
+    pub fn families(&self) -> impl Iterator<Item = (u32, &Family)> {
+        self.families.iter().enumerate().map(|(i, f)| (i as u32, f))
+    }
+
+    /// The lambda of rank `at`.
+    pub fn lam(&self, at: u32) -> &Lambda {
+        &self.lams[at as usize]
+    }
+
+    /// Which rank a `lam` was given, by the two things that decide it.
+    ///
+    /// `None` when the program does not contain this lambda, which is a compiler bug rather than a
+    /// program's problem — an emitter walks the same bodies [`survey`] did.
+    pub fn rank_of(&self, params: &[beck_core::core::VarId], span_start: u32) -> Option<u32> {
+        self.by_lam.get(&(params.to_vec(), span_start)).copied()
+    }
+
+    /// Give every lambda of the program its rank, in the order two closures are compared in.
+    ///
+    /// The order is [`beck_core::core::Closure`]'s own — the parameters, then where the body starts
+    /// — so a rank is not an arbitrary index: comparing two ranks *is* comparing two closures the
+    /// way the evaluator does, which is what lets [`Repr::order`] answer with one word comparison
+    /// and agree. Assigned here, from the whole program, so that both emitters give one lambda one
+    /// rank and neither has to have compiled anything to know it.
+    fn rank(&mut self, lams: BTreeMap<(Vec<beck_core::core::VarId>, u32), Lambda>) {
+        for (rank, (key, lam)) in lams.into_iter().enumerate() {
+            let rank = rank as u32;
+            if let Some(at) = lam.family {
+                self.families[at as usize].ranks.push(rank);
+            }
+            self.by_lam.insert(key, rank);
+            self.lams.push(lam);
+        }
+    }
+
+    /// The reason a closure may not be *inside* something, when that is what `r` is.
+    ///
+    /// A closure is an offset like every other object, and the arena it points into is copied down
+    /// a pipe and read back by the host — which would have to turn one into a
+    /// [`beck_core::Value::Closure`], and that is a body, an environment and a frame size rather
+    /// than bytes. So a closure lives inside one compiled call: it may be built, bound, captured
+    /// and applied there, and every boundary refuses it. A field is a boundary because a record
+    /// crosses; an element and a map's key or value are boundaries for the same reason.
+    pub fn crossing(r: Repr) -> Result<(), String> {
+        match r {
+            Repr::Fn(_) => Err("a function value, which is built and applied inside one \
+                                compiled call and has no form the host can read back"
+                .into()),
+            _ => Ok(()),
+        }
+    }
+
+    /// The family for a shape, interned.
+    fn family_of(&mut self, params: Vec<Repr>, ret: Repr, shown: &str) -> u32 {
+        let key = (params.clone(), ret);
+        if let Some(at) = self.by_family.get(&key) {
+            return *at;
+        }
+        let at = self.families.len() as u32;
+        self.families.push(Family {
+            params,
+            ret,
+            shown: shown.to_string(),
+            ranks: Vec::new(),
+        });
+        self.by_family.insert(key, at);
+        at
     }
 
     /// What one element of list repr `at` is.
@@ -399,6 +582,24 @@ impl Heap {
     /// emitting. A `Str` has no [`Layout`], so [`Heap::layouts`] cannot answer this.
     pub fn uses_text(&self) -> bool {
         self.text
+    }
+
+    /// Where `inner` already is in the word-comparison table, if anything has interned it.
+    ///
+    /// Read by an emitter that has to *name* `beck.elem.cmp.{at}` for a repr it interned earlier in
+    /// the same body — the index is the name, so asking twice has to answer twice the same.
+    pub fn word_at(&self, inner: Repr) -> Option<u32> {
+        self.by_element.get(&inner).copied()
+    }
+
+    /// A repr's place in the word-comparison table, for something that is not a list's element.
+    ///
+    /// `sort_by` is what wants this: its keys are values of one repr, held in a run of words and
+    /// compared pairwise, which is exactly what the table is for — and the *keys* are not a list any
+    /// program wrote down, so nothing else would have interned their repr. The caller must record the
+    /// index the way a comparison is recorded, or the function this names is not generated.
+    pub fn word_of(&mut self, inner: Repr) -> u32 {
+        self.intern_repr(inner)
     }
 
     /// A repr's place in the word-comparison table, interned.
@@ -505,6 +706,7 @@ impl Heap {
                 )
             }
             Repr::Obj(i) => self.layout(i).shown.clone(),
+            Repr::Fn(i) => self.family(i).shown.clone(),
         }
     }
 
@@ -513,11 +715,25 @@ impl Heap {
     /// Resolves through aliases and instantiates a declaration's parameters, so `Tree[Int]` and
     /// `Tree[Str]` are two questions and only the first has an answer.
     pub fn repr(&mut self, ty: &Ty, program: &Program) -> Result<Repr, String> {
+        // A closure has a shape but no [`Layout`]: what a family records is the signature an
+        // application goes through, and the object's own words are the lambda's captures — which
+        // differ between two lambdas of one family and are therefore not a property of the type.
+        if let Ty::Fun(params, ret, _) = ty {
+            let mut ps = Vec::with_capacity(params.len());
+            for p in params {
+                ps.push(
+                    self.repr(p, program)
+                        .map_err(|why| format!("a function whose parameter is {why}"))?,
+                );
+            }
+            let r = self
+                .repr(ret, program)
+                .map_err(|why| format!("a function that answers {why}"))?;
+            let at = self.family_of(ps, r, &ty.to_string());
+            return Ok(Repr::Fn(at));
+        }
         let Ty::Con(name, args) = ty else {
-            return Err(match ty {
-                Ty::Fun(..) => "a function value, which is a closure".into(),
-                _ => format!("`{ty}`, whose type is not known here"),
-            });
+            return Err(format!("`{ty}`, whose type is not known here"));
         };
         match &**name {
             Ty::INT => return Ok(Repr::Int),
@@ -534,6 +750,7 @@ impl Heap {
                 let inner = self
                     .repr(element, program)
                     .map_err(|why| format!("a `list` whose element is {why}"))?;
+                Heap::crossing(inner).map_err(|why| format!("a `list` whose element is {why}"))?;
                 return Ok(Repr::List(self.list_of(inner)));
             }
             Ty::MAP => {
@@ -543,9 +760,11 @@ impl Heap {
                 let k = self
                     .repr(key, program)
                     .map_err(|why| format!("a `Map` whose key is {why}"))?;
+                Heap::crossing(k).map_err(|why| format!("a `Map` whose key is {why}"))?;
                 let v = self
                     .repr(value, program)
                     .map_err(|why| format!("a `Map` whose value is {why}"))?;
+                Heap::crossing(v).map_err(|why| format!("a `Map` whose value is {why}"))?;
                 let (k, v) = (self.intern_repr(k), self.intern_repr(v));
                 return Ok(Repr::Map(self.map_of(k, v)));
             }
@@ -666,6 +885,8 @@ impl Heap {
             let ty = instantiate_decl(ty, args);
             let repr = self
                 .repr(&ty, program)
+                .map_err(|why| format!("a `{shown}`, whose field `{name}` is {why}"))?;
+            Heap::crossing(repr)
                 .map_err(|why| format!("a `{shown}`, whose field `{name}` is {why}"))?;
             out.push((name.clone(), repr));
         }
@@ -926,6 +1147,15 @@ impl Heap {
                     done: Vec::with_capacity(variant.fields.len()),
                 }))
             }
+            // Unreachable rather than unwritten, and it is [`Heap::crossing`] that makes it so: a
+            // closure is refused in every position the host reads — a result, a field, an element,
+            // a map's key or value — so no reply can contain one to decode. Written as the reason
+            // rather than as a `panic!`, because a bug in that rule should be a message about a
+            // compiler and not a crash in a host.
+            Repr::Fn(at) => Err(format!(
+                "the compiled program answered with `{}`, and a closure has no form here",
+                self.family(at).shown
+            )),
         }
     }
 
@@ -1128,6 +1358,7 @@ fn kind_of(v: &Value) -> &'static str {
 /// Errors are dropped on purpose: a type with no layout is a definition this backend refuses, and
 /// the refusal is written where the definition is, with the reason.
 pub fn survey(program: &Program, heap: &mut Heap) {
+    let mut lams: BTreeMap<(Vec<beck_core::core::VarId>, u32), Lambda> = BTreeMap::new();
     for name in &program.def_order {
         let Some(def) = program.defs.get(name) else {
             continue;
@@ -1136,8 +1367,9 @@ pub fn survey(program: &Program, heap: &mut Heap) {
             let _ = heap.repr(ty, program);
         }
         let _ = heap.repr(&def.ret, program);
-        walk(&def.body, program, heap);
+        walk(&def.body, Some(name), program, heap, &mut lams);
     }
+    heap.rank(lams);
 }
 
 /// Every string constant a pattern tests against, interned along with the bodies'.
@@ -1169,9 +1401,42 @@ fn pattern(p: &beck_core::core::Pattern, heap: &mut Heap) {
     }
 }
 
-fn walk(c: &beck_core::Core, program: &Program, heap: &mut Heap) {
+/// The type each of `want`'s variables is read at, found in the expression that reads it.
+///
+/// A capture has no declaration to look the type up in — a `VarId` is a slot rather than a name — so
+/// the type comes from a use. Every free variable of a `lam` has one somewhere under it, which is
+/// what makes it free, and [`beck_core::core::children`] is what makes "somewhere" a walk nothing
+/// has to keep in step with `CoreKind`.
+fn var_types(
+    c: &beck_core::Core,
+    want: &std::collections::BTreeSet<beck_core::core::VarId>,
+    out: &mut BTreeMap<beck_core::core::VarId, Ty>,
+) {
+    if let beck_core::core::CoreKind::Var(v) = &c.kind {
+        if want.contains(v) {
+            out.entry(*v).or_insert_with(|| c.ty.clone());
+        }
+    }
+    for child in beck_core::core::children(c) {
+        var_types(child, want, out);
+    }
+}
+
+/// One expression: its literals, its layouts and its lambdas.
+///
+/// `def` is the name of the definition whose *outermost* `lam` this is, and `None` everywhere else.
+/// The distinction is the one thing this walk knows that a walk for literals would not have to: a
+/// definition's own lambda is the compiled function, and a `lam` under anything is a closure that
+/// has to be built — which is what decides whether a program needs an arena.
+fn walk(
+    c: &beck_core::Core,
+    def: Option<&Arc<str>>,
+    program: &Program,
+    heap: &mut Heap,
+    lams: &mut BTreeMap<(Vec<beck_core::core::VarId>, u32), Lambda>,
+) {
     use beck_core::core::{Const, CoreKind};
-    let _ = heap.repr(&c.ty, program);
+    let shape = heap.repr(&c.ty, program);
     match &c.kind {
         // Interned here rather than where a body is emitted, so the pool is the same table in both
         // emitters and in the host: a literal in a definition that turns out not to compile still
@@ -1179,12 +1444,41 @@ fn walk(c: &beck_core::Core, program: &Program, heap: &mut Heap) {
         CoreKind::Const(Const::Str(s)) => {
             heap.intern(s);
         }
-        CoreKind::Const(_) | CoreKind::Var(_) | CoreKind::Global(_) => {}
-        CoreKind::Lam { body, .. } => walk(body, program, heap),
+        CoreKind::Const(_) | CoreKind::Var(_) => {}
+        // A definition named where a value is expected. The closure it evaluates to carries nothing
+        // and its arm calls the definition, but it is still an object in the arena — so this is one
+        // of the two things that makes a program of arithmetic need a heap.
+        CoreKind::Global(_) => heap.closures = true,
+        CoreKind::Lam { params, body } => {
+            let key = (params.to_vec(), body.span.start);
+            let mut free = std::collections::BTreeSet::new();
+            beck_core::core::free_vars(c, &mut std::collections::BTreeSet::new(), &mut free);
+            let mut types = BTreeMap::new();
+            var_types(c, &free, &mut types);
+            lams.entry(key).or_insert_with(|| Lambda {
+                params: params.to_vec(),
+                span_start: body.span.start,
+                family: match shape {
+                    Ok(Repr::Fn(at)) => Some(at),
+                    _ => None,
+                },
+                captures: types.into_iter().collect(),
+                def: def.cloned(),
+            });
+            if def.is_none() {
+                heap.closures = true;
+            }
+            walk(body, None, program, heap, lams);
+        }
         CoreKind::App { func, args } => {
-            walk(func, program, heap);
+            // A call to a named definition is a call and not a value: walking `func` here would set
+            // `closures` for every call in every program, and the arena would stop being a function
+            // of what a program builds.
+            if !matches!(func.kind, CoreKind::Global(_)) {
+                walk(func, None, program, heap, lams);
+            }
             for a in args {
-                walk(a, program, heap);
+                walk(a, None, program, heap, lams);
             }
         }
         CoreKind::Prim { op, args } => {
@@ -1198,51 +1492,51 @@ fn walk(c: &beck_core::Core, program: &Program, heap: &mut Heap) {
                 heap.intern("false");
             }
             for a in args {
-                walk(a, program, heap);
+                walk(a, None, program, heap, lams);
             }
         }
         CoreKind::Let { value, body, .. } => {
-            walk(value, program, heap);
-            walk(body, program, heap);
+            walk(value, None, program, heap, lams);
+            walk(body, None, program, heap, lams);
         }
         CoreKind::If { cond, then, alt } => {
-            walk(cond, program, heap);
-            walk(then, program, heap);
-            walk(alt, program, heap);
+            walk(cond, None, program, heap, lams);
+            walk(then, None, program, heap, lams);
+            walk(alt, None, program, heap, lams);
         }
         CoreKind::Match { scrutinee, arms } => {
-            walk(scrutinee, program, heap);
+            walk(scrutinee, None, program, heap, lams);
             for arm in arms {
                 // A pattern's constants are not expressions and `Arm::exprs` does not reach them,
                 // so `case "one":` would otherwise be a literal the pool learned about while a
                 // body was being emitted rather than before one was.
                 pattern(&arm.pattern, heap);
                 for e in arm.exprs() {
-                    walk(e, program, heap);
+                    walk(e, None, program, heap, lams);
                 }
             }
         }
         CoreKind::Make { fields, .. } => {
             for (_, f) in fields {
-                walk(f, program, heap);
+                walk(f, None, program, heap, lams);
             }
         }
-        CoreKind::Field { base, .. } => walk(base, program, heap),
+        CoreKind::Field { base, .. } => walk(base, None, program, heap, lams),
         CoreKind::With { base, fields } => {
-            walk(base, program, heap);
+            walk(base, None, program, heap, lams);
             for (_, f) in fields {
-                walk(f, program, heap);
+                walk(f, None, program, heap, lams);
             }
         }
         CoreKind::ListLit(xs) => {
             for x in xs {
-                walk(x, program, heap);
+                walk(x, None, program, heap, lams);
             }
         }
         CoreKind::MapLit(kvs) => {
             for (k, v) in kvs {
-                walk(k, program, heap);
-                walk(v, program, heap);
+                walk(k, None, program, heap, lams);
+                walk(v, None, program, heap, lams);
             }
         }
     }
