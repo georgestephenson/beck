@@ -197,40 +197,11 @@ fn the_quiesce_buffer_has_no_declared_budget() {
 // F17 — macro fuel
 // ---------------------------------------------------------------------------------------------
 
-/// Macro expansion is bounded in **depth** and not in **work**.
-///
-/// `adr/0012` separated the expander's structural walk from its re-expansion count, and both are
-/// depth counters. Neither bounds the total size of what is produced, which is what F17 asks for:
-/// a macro that doubles its output at each of a few levels is shallow, terminating, and enormous.
-/// The test keeps the doubling small on purpose — it is asserting that nothing refuses, and a test
-/// that proves the point by exhausting memory is not a test.
-#[test]
-fn macro_expansion_is_bounded_in_depth_but_not_in_work() {
-    let sites = mentions(&["macro_fuel", "expansion_budget", "Fuel"]);
-    assert!(
-        sites.is_empty(),
-        "macro fuel appears to exist now ({sites:?}) — delete this test and correct docs/14 F17"
-    );
-
-    // Eight doublings: 256 copies of the leaf, produced by a program of six lines. The shape is
-    // what matters — the multiplier is under the author's control and the compiler does not count.
-    let mut src = String::from("macro pair(x):\n    return quote:\n        f(x, x)\n\n");
-    src.push_str("def f(a: Int, b: Int) -> Int:\n    return a + b\n\n");
-    src.push_str("def go() -> Int:\n    return ");
-    let mut expr = String::from("1");
-    for _ in 0..8 {
-        expr = format!("pair({expr})");
-    }
-    src.push_str(&expr);
-    src.push('\n');
-
-    let (_, d, map) = beck_core::compile_str("bomb.beck", &src);
-    assert!(
-        !d.iter().any(|x| x.code == "B0201" || x.code == "B0213"),
-        "expansion was refused, which would mean something now bounds it:\n{}",
-        d.render(&map)
-    );
-}
+// F17's expansion half was here — expansion was bounded in depth and not in work, and a macro that
+// doubles its output is shallow, terminating and enormous. It is built, so the test is gone, which
+// is what this file's own rule asks for. What replaces it is `beck-cli/tests/macro_bomb.rs`, which
+// asserts the refusal *and* the two controls a refusal needs: a macro a person would write still
+// compiles, and so does every program in the tree.
 
 /// The read-model port has no authentication, and the loopback bound is what stands in for one.
 ///

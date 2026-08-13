@@ -306,6 +306,17 @@ pub const INDEX: &[CodeEntry] = &[
          two were one counter until they were separated, and a deep expression with no macros in \
          it reported the wrong one.",
     ),
+    e(
+        "B0214",
+        Stage::Macros,
+        "macro expansion produced too much",
+        "`B0201` and `B0213` bound how *deep* expansion goes; this bounds how much it makes. A \
+         macro that doubles its output at each of a few levels is shallow, terminates, and is \
+         enormous — eight nestings of a two-line macro is 256 copies of its argument — so the \
+         expander charges what it produces against a budget for the whole module. Reaching it means \
+         a macro is generating far more than any program in this repository does, and the fix is \
+         almost never a bigger budget.",
+    ),
     // ------------------------------------------------------- B03xx: names, types and effects
     e(
         "B0300",

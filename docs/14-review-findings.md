@@ -164,7 +164,13 @@ the gateway, metrics exported — folded into R5's mitigation set.
   which is what places it on the server, keeps it out of a fold and puts it in the published row.
 - **F17** Compile-time macro fuel: typed-literal parsers and macro expansion get bounded
   fuel/timeouts so a malicious dependency cannot DoS the compiler (macro sandbox already blocks
-  I/O).
+  I/O). **`BUILT`, for expansion**: the expander charges what each expansion *produces* against a
+  budget for the whole module (`B0214`, 100,000 nodes against a measured largest-real of 138), which
+  is the half that had a live attack surface — [`42`](42-security-assurance.md) §42.2's playground
+  compiles a stranger's source in their own tab. The depth counters that already existed bounded how
+  *deep* expansion goes and a doubling macro is shallow, which is
+  [`85`](85-what-the-generator-found-report.md) §85.7's pattern a fourth time. Typed-literal parsers
+  have no compile-time work to bound yet, so that half stays open by not existing.
 - **F18** NATS/Synadia governance dispute (2025): the "verify licence at adoption" note applies to
   NATS JetStream specifically; it is post-1.0 and optional either way.
 - **F19** Keycloak is JVM-heavy for the distroless ethos; fine as `managed()` default (it is its

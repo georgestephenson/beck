@@ -76,6 +76,36 @@ Newest first.
   executed, which is why it is deliberately unconditional and a `workflow_dispatch` dry run
   exercises it. §109.5 records seven mutations, one gate each, and the one that did not fire until
   it was rewritten.
+### The front end
+
+- **Macro expansion is bounded by what it produces** (`B0214`), which is
+  [`docs/14`](docs/14-review-findings.md)'s **F17** — open since the review — and a row of
+  [`docs/43`](docs/43-threat-model.md) §43.4 that now says *built*. Expansion was bounded in **depth**
+  twice over and in **work** not at all, and a macro that doubles its output is shallow: eight
+  nestings of a two-line macro is 256 copies of its argument, twenty-four is sixteen million, and
+  every one of those programs is six lines long and satisfies every other limit the front end has.
+  That is [`docs/85`](docs/85-what-the-generator-found-report.md) §85.7's pattern a fourth time — a
+  limit added at the one production somebody thought of, bypassed through a different one — and it
+  matters here rather than in the abstract because [`docs/42`](docs/42-security-assurance.md) §42.2's
+  playground compiles a stranger's source in their own browser tab.
+  - The expander charges what each expansion **produces**, per node, against **100,000 nodes for the
+    whole module** — per module because that is what a compile is, and because a per-call budget
+    would let a program spend it once per call
+    ([`docs/84`](docs/84-a-quota-is-only-as-good-as-its-actor-report.md) §84.4's arithmetic one
+    subsystem over).
+  - **The number is measured, not declared.** Across the corpus, both benchmark suites, both SICP
+    chapters, the examples and the standard library, the largest total expansion is **138 nodes**
+    (`sicp/ch3.beck`; `examples/todo.beck`'s page is 94), so the budget is about 725× the biggest
+    real one and about seventeen nestings of a doubling macro.
+  - The count is **iterative and self-bounding**: it walks with its own stack, because the tree being
+    measured is one a macro just built and a recursive count would be a claim about the *host's*
+    stack ([`docs/106`](docs/106-lists-arrive-read-only-report.md) §106.6 one subsystem over) — and
+    it stops when the budget does, so a macro that would produce a billion nodes is refused after a
+    hundred thousand have been counted.
+  - Gated by `macro_bomb.rs` in **both** directions and with the control a refusal needs: a doubling
+    macro 24 deep is refused *by the budget* and not by either depth counter, the same macro 8 deep
+    still compiles, and every program in the tree still expands. `pending_security.rs`'s F17 test is
+    deleted, which is what that file's own rule asks for.
 
 ### The native backends
 

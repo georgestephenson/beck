@@ -155,9 +155,16 @@ The controls a reader would reasonably assume exist, that do not:
   page. This project *has* signing machinery ([`99`](99-supply-chain-report.md) §99.5) and it still
   cannot take this subject — `beck sign` signs an OCI manifest digest and a compiler release is a
   tarball (§104.6) — which is §99.7's row, unchanged.
-- **Macro fuel** (F17). Expansion is bounded in *depth* — twice over, since
+- ~~**Macro fuel** (F17)~~ — **built.** Expansion was bounded in *depth* twice over — since
   [`adr/0012`](adr/0012-the-front-end-counts-its-own-recursion.md) separated the two counters that
-  had been one — and not in *work*.
+  had been one — and in *work* not at all, which is the gap a doubling macro walked through: eight
+  nestings of a two-line macro is 256 copies of its argument, and twenty-four is sixteen million,
+  from six lines of source that satisfy every other limit the front end has. The expander now
+  charges what each expansion **produces** against a budget of 100,000 nodes for the whole module,
+  and the accounting stops when the budget does, so the cost of counting is bounded by the thing it
+  is counting. The number is measured rather than declared: the largest total expansion any program
+  in this repository performs is **138 nodes**. What remains absent is a bound on the *other* half
+  of F17 — a typed-literal parser's own work — which does not exist to bound yet.
 
 None of these is a secret, and none of them is prose only:
 `compiler/crates/beck-cli/tests/pending_security.rs` asserts each one **as an absence**, in the
