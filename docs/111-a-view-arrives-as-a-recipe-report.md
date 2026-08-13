@@ -1,4 +1,4 @@
-# 109 — A view arrives, as a recipe
+# 111 — A view arrives, as a recipe
 
 **Built.** A definition that returns `Html` compiles, to **both** code generators.
 [`08`](08-roadmap.md) §8.5.5's Lane E row read "the effects, `Html` and growing a collection" after
@@ -10,7 +10,7 @@ It does not follow it in the way that sentence predicted. The thing a compiled `
 arena is **not the tree**: it is the *call* `html_el(tag, attrs, children)` would have been given,
 and the host builds the tree out of it on the way back — with
 [`beck_core::html::element`](../compiler/crates/beck-core/src/html.rs), which is the same function
-the evaluator has always built one with. §109.1 is the argument for that, and it is short: a page's
+the evaluator has always built one with. §111.1 is the argument for that, and it is short: a page's
 leaves are **renderings** — `html_text(x)` is `x` displayed, an attribute's value is displayed, and a
 handler's command is *JSON* — so a compiled `view` that built the tree would need `Value::display`
 and `Value::to_json` generated per repr, in two emitters, agreeing with the host's about every shape
@@ -22,7 +22,7 @@ been true of them**. **Twenty-one of the thirty-two corpus programs have a `view
 including `examples/todo.beck`'s, which is the `ui:` block a reader of
 [`00`](00-original-idea.md) meets first.
 
-**What it is not is faster** (§109.6). A compiled page is 0.80×–1.33× the tree-walker at two sizes,
+**What it is not is faster** (§111.6). A compiled page is 0.80×–1.33× the tree-walker at two sizes,
 and the reason is the design rather than a constant to tune: the rendering is the host's either way
 and the pipe is additional. What moved is what *compiles* — which is the number
 [`101`](101-the-heap-report.md) §101.2 said matters — and the row Mode B's codegen has been behind
@@ -30,7 +30,7 @@ since [`94`](94-mode-b-report.md) §94.8.
 
 ---
 
-## 109.1 A page's leaves are renderings, and rendering is the host's
+## 111.1 A page's leaves are renderings, and rendering is the host's
 
 Five primitives build a page, and the type of every one of them says what the problem is:
 
@@ -72,7 +72,7 @@ time. That ADR's claim is that marshalling needs **no generated code**, because 
 and the arena crosses a pipe as bytes; a recipe is that claim applied to something that is not a
 value at all. Neither emitter contains a string of markup, an escape, a hash or a byte of JSON.
 
-## 109.2 What the host does with one, and why it is not a second builder
+## 111.2 What the host does with one, and why it is not a second builder
 
 Decoding a node calls `beck_core::html::element(tag, attrs, children)`. That function did not exist
 before this change: it is the body of the evaluator's `Prim::HtmlEl`, lifted out and called from
@@ -96,7 +96,7 @@ tree is **spliced** rather than rendered, which is what makes a view composable 
 ([`94`](94-mode-b-report.md) §94.4 is what happens when it is not). The compiled `html_text` has that
 arm too and answers with its argument, so a spliced child costs no node at all.
 
-## 109.3 Going the other way, and why the round trip is exact
+## 111.3 Going the other way, and why the round trip is exact
 
 A compiled definition may **take** an `Html` — `def again(h: Html) -> Html` — and what the host holds
 by then is a baked tree with its hashes computed. So the encoder writes the recipe back, and every
@@ -126,7 +126,7 @@ different shapes. A closure is refused in **both** directions and in every neste
 is refused in one. `Heap::crossing` could not have expressed that, which is why it is a second
 function rather than a case added to the first.
 
-## 109.4 A view has no order, and that is a refusal rather than an omission
+## 111.4 A view has no order, and that is a refusal rather than an omission
 
 An `Html` in the arena is a recipe, so two nodes that render the same page can be different objects:
 `html_text(3)` and `html_text("3")` are two words apart and one tree. `beck_core::Html`'s derived
@@ -154,7 +154,7 @@ reference kind had just been added, so two equal values compared unequal because
 differed — and the shape of this change is exactly what it was built for: a new repr, a new case in
 one enum, and a compile error at every site that has to say what it means.
 
-## 109.5 What compiles now
+## 111.5 What compiles now
 
 | | before | after |
 |---|---|---|
@@ -199,7 +199,7 @@ here, and not before.
   validate      `str_trim` trims Unicode whitespace …
 ```
 
-## 109.6 What it costs, and it is not a win
+## 111.6 What it costs, and it is not a win
 
 `measure_native.rs::what_a_page_costs_against_the_tree_walker`, release build, two sizes eight times
 apart:
@@ -229,7 +229,7 @@ What *is* asserted is a shape, twice, because a shape is what a wrong design sho
   occupies in the page's own child list. A builder that reallocated a list per child would be
   quadratic in the arena and would still answer correctly at every size a test would run.
 
-## 109.7 The gates
+## 111.7 The gates
 
 - **`native.rs::the_two_backends_agree_on_views`** — 253 calls, LLVM against the tree-walker, over
   programs written to make each rule bite: an attribute whose value is empty (dropped), a key (not an
@@ -247,16 +247,16 @@ What *is* asserted is a shape, twice, because a shape is what a wrong design sho
   contains.
 - **`native.rs::a_view_has_no_order_and_the_refusal_says_why`** — the three ways an ordering can be
   demanded (a search over a list of views, a record holding one being compared, `==` between two),
-  each refused with `Repr::order`'s sentence; and §109.3's directional rule, both ways — an `Attr`
+  each refused with `Repr::order`'s sentence; and §111.3's directional rule, both ways — an `Attr`
   parameter and a `list[Attr]` parameter refused, against the control that answering with one
   compiles and so does taking a whole tree.
 - **`native.rs::a_corpus_fold_compiles`** — `view` moved from that test's refusal side to its control
   side, which is what those lists are for. The other side is now "something in the corpus is still
   refused for growing a map", so it cannot pass by everything compiling.
 
-## 109.8 What this does not establish
+## 111.8 What this does not establish
 
-- **Nothing about speed.** §109.6 is the whole of it, and the two rows that beat the tree-walker are
+- **Nothing about speed.** §111.6 is the whole of it, and the two rows that beat the tree-walker are
   a fixed pipe cost being amortised rather than a code generator winning.
 - **Nothing about a page that is *rendered* by compiled code.** SSR, the wire encoding and the diff
   are all `beck_core`'s and are reached after the value comes back. A compiled `view` shortens no
@@ -271,7 +271,7 @@ What *is* asserted is a shape, twice, because a shape is what a wrong design sho
   ([`106`](106-lists-arrive-read-only-report.md) §106.5). A `ui:` block that accumulated its children
   would not compile.
 
-## 109.9 What this corrects
+## 111.9 What this corrects
 
 - [`105`](105-text-on-the-heap-report.md) §105.10, [`106`](106-lists-arrive-read-only-report.md)
   §106.8, [`107`](107-a-map-arrives-read-only-report.md) §107.7 and

@@ -138,8 +138,8 @@ The two must agree observably — enforced by differential tests ([`04`](04-comp
 >
 > *And that list is now two rows long* ([`105`](105-text-on-the-heap-report.md),
 > [`106`](106-lists-arrive-read-only-report.md), [`107`](107-a-map-arrives-read-only-report.md),
-> [`108`](108-closures-arrive-report.md), [`109`](109-a-view-arrives-as-a-recipe-report.md)): text, a
-> `list`, a `Map`, a closure and — since [`109`](109-a-view-arrives-as-a-recipe-report.md) — **the
+> [`108`](108-closures-arrive-report.md), [`111`](111-a-view-arrives-as-a-recipe-report.md)): text, a
+> `list`, a `Map`, a closure and — since [`111`](111-a-view-arrives-as-a-recipe-report.md) — **the
 > view** all compile on both, so "a view that builds `Html`" above is no longer among what runs on
 > the tree-walker, and 21 of the 32 corpus programs have a `view` that compiles. The paragraph before
 > this one is therefore corrected in its last sentence: what is still the tree-walker's is **every
@@ -147,7 +147,7 @@ The two must agree observably — enforced by differential tests ([`04`](04-comp
 > gap ([`107`](107-a-map-arrives-read-only-report.md) §107.4), which is why "a fold over a record"
 > stays half-true and this section's "compiles to native binaries, statically linked, one per
 > `service`" stays a design. A view compiles as the **call** that builds the page rather than as the
-> page, so §109.6 is explicit that it buys no speed: it removes a prerequisite, and the one it
+> page, so §111.6 is explicit that it buys no speed: it removes a prerequisite, and the one it
 > removes is Mode B's codegen ([`94`](94-mode-b-report.md) §94.8).
 
 **Runtime we must ship** (the "Roc platform" of Beck — an effectful Rust host owning I/O, scheduling

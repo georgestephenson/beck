@@ -110,12 +110,12 @@ Newest first.
 ### The native backends
 
 - **A map grows, as the tree it always was**
-  ([`docs/112`](docs/112-a-map-grows-report.md)): `map_insert`, `map_remove` and `map_merge` compile
+  ([`docs/114`](docs/114-a-map-grows-report.md)): `map_insert`, `map_remove` and `map_merge` compile
   to both code generators, and a fold that keeps a `Map` is `Θ(n log n)` rather than `Θ(n²)`.
   **895 → 1,137 definitions** compile across the tree and refusals go 523 → 281.
   `examples/todo.beck` compiles **eight of its nine definitions**; the one left needs a Unicode
   table.
-  - [`docs/111`](docs/111-a-list-grows-report.md) §111.7 forecast that a list's answer would not work
+  - [`docs/113`](docs/113-a-list-grows-report.md) §113.7 forecast that a list's answer would not work
     here, and it was right: a list's refusal was about a *layout* and a map's is about a *structure*.
     An insert lands in the middle of a sorted run and every entry after it shifts, however the header
     is arranged. What removes it is the structure `beck_core::pmap` already uses — a
@@ -123,7 +123,7 @@ Newest first.
     touch. Five words a node (subtree size, key, value, two children), the same `DELTA` and `RATIO`
     the evaluator's module argues for, and an empty map is the offset `0`.
   - **Sound for free**: a node is never written after it is built, so the map an insert was given is
-    exactly what it was — [`docs/111`](docs/111-a-list-grows-report.md) §111.2's argument again,
+    exactly what it was — [`docs/113`](docs/113-a-list-grows-report.md) §113.2's argument again,
     arriving here as a property of the structure rather than as a design.
   - **Everything that moves nodes is one function for the whole module.** Rebalancing shuffles
     *words* and never asks what a key is, so `size`, `node`, `balance`, `nth` and the in-order walk
@@ -134,7 +134,7 @@ Newest first.
     length and both lookups, so a rotation that wrote through a shared node fails on the first case —
     and `descending`, the insertion order a tree that did not rebalance degenerates on and a sorted
     run handled by accident.
-  - **The finding is a name collision** (§112.5): `awfy/richards.beck` has a definition called
+  - **The finding is a name collision** (§114.5): `awfy/richards.beck` has a definition called
     `dispatch`, every user definition was mangled to `beck.<name>`, and the module's own dispatcher
     is `beck.dispatch` — so a program that had done nothing wrong got *"invalid redefinition of
     function"*. Latent since [`docs/93`](docs/93-llvm-backend-report.md), and it surfaced here
@@ -142,7 +142,7 @@ Newest first.
     definition is `beck.def.<name>` now, in both emitters.
 
 - **A list grows, and the refusal was about a layout**
-  ([`docs/111`](docs/111-a-list-grows-report.md)): `list_append` compiles to both code generators and
+  ([`docs/113`](docs/113-a-list-grows-report.md)): `list_append` compiles to both code generators and
   the accumulator every loop is written as is **linear**. **711 → 895 definitions** compile across
   the tree and refusals go 707 → 523 — the largest jump any of these rounds has produced, because
   `list_append` appears in 65 definitions and the other 119 had inherited the refusal from a callee.
@@ -167,7 +167,7 @@ Newest first.
     reply, which is [`docs/93`](docs/93-llvm-backend-report.md) §93.1's round trip again.
 
 - **A raise arrives, and a handler catches it**
-  ([`docs/110`](docs/110-a-raise-arrives-report.md)): `raise` and `try:` compile to both code
+  ([`docs/112`](docs/112-a-raise-arrives-report.md)): `raise` and `try:` compile to both code
   generators. The mechanism was already there — every compiled function takes an error cell, stores
   into it and returns, and every caller checks it — so this adds a fourteenth trap code, two words of
   arena for the raised value, and a **handler**: a label the checks branch to instead of the
@@ -179,14 +179,14 @@ Newest first.
   different error type inside one — both of which must **not** be caught),
   `an_uncaught_raise_names_the_value_it_carried`, and `unwinding_costs_nothing_per_frame` — the same
   168 bytes of arena whether the raise was 25 frames down or 200.
-  - **The finding is about the protocol, not the feature** (§110.8): the handler cleared the trap
+  - **The finding is about the protocol, not the feature** (§112.8): the handler cleared the trap
     code with `store i32 0`, and the cell's first word is a code *and* a span while the worker's loop
     reads it as one `i64` to decide whether the call answered. So a caught failure came back with a
     stale span in the high half, looking like a trap with an empty arena. Two pieces of one program
     disagreeing about what "cleared" means, which is
     [`docs/107`](docs/107-a-map-arrives-read-only-report.md) §107.5's class of defect one level down.
 
-- **A view arrives, as a recipe** ([`docs/109`](docs/109-a-view-arrives-as-a-recipe-report.md)): a
+- **A view arrives, as a recipe** ([`docs/111`](docs/111-a-view-arrives-as-a-recipe-report.md)): a
   definition that returns `Html` compiles to both code generators. What goes in the arena is the
   **call** `html_el(tag, attrs, children)` would have been given rather than the tree, and the host
   bakes it with `beck_core::html::element` — the evaluator's own `html_el`, lifted out and called
@@ -196,7 +196,7 @@ Newest first.
   `cranelift.rs::the_three_backends_agree_on_views` (127), the `ui:` block's own pair, and
   `a_page_costs_its_own_nodes_and_nothing_per_page` — 96 bytes a row and 504 a page at 100 rows and
   at 800, a shape gate with no clock in it. **Not faster**: 0.80×–1.33× the tree-walker at two
-  sizes, and §109.6 says why that is the design rather than a constant to tune.
+  sizes, and §111.6 says why that is the design rather than a constant to tune.
 
 - **The last two list primitives, and one of them was refused for a reason that is false.**
   `concat_lists` and `sort_by` compile on both backends, so **every** higher-order list primitive

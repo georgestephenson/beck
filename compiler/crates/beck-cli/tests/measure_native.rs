@@ -1050,7 +1050,7 @@ def plain(rows: list[Row]) -> Html:
     println!(
         "\n  Neither row is asserted to be faster. A compiled `view` builds the call and the host\n  \
          bakes the tree, so the rendering is the same `Value::display` either way and the pipe is\n  \
-         additional — `docs/109` §109.6. What is asserted is that the ratio holds its shape over\n  \
+         additional — `docs/111` §111.6. What is asserted is that the ratio holds its shape over\n  \
          eight times the rows, because a page that copied what it had built would lose it."
     );
     for (name, small, large) in &seen {

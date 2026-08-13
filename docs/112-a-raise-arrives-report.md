@@ -1,11 +1,11 @@
-# 110 — A raise arrives, and a handler catches it
+# 112 — A raise arrives, and a handler catches it
 
 **Built.** `raise` and `try:` compile, to **both** code generators. A failure the program's own type
 declares — [`27`](27-the-walls-come-down-report.md)'s Wave 1, an error as a row label with `Result`
 as its reified form — now happens in compiled code, travels out of it, and is caught in it.
 
 [`08`](08-roadmap.md) §8.5.5's Lane E row reads "the effects and growing a collection" after
-[`109`](109-a-view-arrives-as-a-recipe-report.md). This is the first piece of the effects, and it is
+[`111`](111-a-view-arrives-as-a-recipe-report.md). This is the first piece of the effects, and it is
 the piece that needed no callback to the host at all: **a raise is not a call out, it is a way of
 returning**. The mechanism it wanted was already there — every compiled function takes an error cell,
 stores into it and returns, and every caller checks it and returns in turn
@@ -17,17 +17,17 @@ that blamed `raise`**, **18 now compile** and **20 are re-refused for a deeper r
 of them a callee that still does not compile. `raise` no longer appears in a refusal anywhere in the
 tree.
 
-§110.6 is the honest column and for once it is not a caution: a raise caught 3,000 frames up is
+§112.6 is the honest column and for once it is not a caution: a raise caught 3,000 frames up is
 **17.0× the tree-walker**, against **20.0×** for the same recursion that does not fail — so the
-failure costs about a sixth more than the frames it unwinds, and **nothing per frame** (§110.7's
+failure costs about a sixth more than the frames it unwinds, and **nothing per frame** (§112.7's
 clockless gate says so at two depths).
 
-§110.8 is the finding, and it is about the *protocol* rather than the feature: clearing the trap code
+§112.8 is the finding, and it is about the *protocol* rather than the feature: clearing the trap code
 is not clearing the cell.
 
 ---
 
-## 110.1 The mechanism was already there
+## 112.1 The mechanism was already there
 
 [`93`](93-llvm-backend-report.md) §93.2 gave every compiled function a first parameter — a pointer to
 a 24-byte cell holding a code, a span index and a payload — because the host is a different process
@@ -46,10 +46,10 @@ wrong exhaustiveness check let through — and a raise is the same motion with t
 So the work is those three rows. A fourteenth code (`Trap::Raised`), a pair of words in the arena for
 the value, and a handler that a check can branch to instead of the exit.
 
-## 110.2 What a raise carries, and the one failure whose arena travels
+## 112.2 What a raise carries, and the one failure whose arena travels
 
 A raise allocates two words — the raised value's **shape** and its **word** — which is
-[`109`](109-a-view-arrives-as-a-recipe-report.md)'s deferred value one subsystem over, and for the
+[`111`](111-a-view-arrives-as-a-recipe-report.md)'s deferred value one subsystem over, and for the
 same reason: the signature says nothing about what was raised, so the reply cannot be decoded without
 being told. The cell's payload is that pair's offset.
 
@@ -71,7 +71,7 @@ sends the used arena, because the host has to decode the value to *make* the mes
 `beck-eval`'s `EvalError::raise` renders `raised \`TooBig{n: 101}\``, and a compiled program that said
 "something was raised" would be a divergence the differential shows.
 
-## 110.3 The handler is a label, and two decisions hold it up
+## 112.3 The handler is a label, and two decisions hold it up
 
 `try:` is a form, not a function — [`38`](38-literature-survey.md) §38.4's lexical handler, with no
 dynamic search for who handles what. Compiled, it is a label:
@@ -111,7 +111,7 @@ and walks straight through a handler. `Dest::Value` is what guarantees no such c
 a protected block, and `caught` in the fixture is written in tail position precisely so that a
 regression there is a failing test rather than a subtlety.
 
-## 110.4 What it must not catch
+## 112.4 What it must not catch
 
 The evaluator's `Prim::Try` catches one type and lets everything else travel: *a fault is not a
 failure, and a different error type belongs to a handler further out*. Both halves are what the two
@@ -128,7 +128,7 @@ tests in the handler are, and both are in the differential as programs written t
 Forwarding means branching to the *enclosing* handler with the cell **untouched**, which is what
 makes the outer one see the same failure the inner one declined.
 
-## 110.5 What compiles now
+## 112.5 What compiles now
 
 | | before | after |
 |---|---|---|
@@ -136,7 +136,7 @@ makes the outer one see the same failure the inner one declined.
 | definitions refused | 730 | **707** |
 | refusals blaming `raise` | 38 | **0** |
 
-Counted the way [`109`](109-a-view-arrives-as-a-recipe-report.md) §109.5 counts: the totals of
+Counted the way [`111`](111-a-view-arrives-as-a-recipe-report.md) §109.5 counts: the totals of
 `beck native <file>`'s own two headline lines over `corpus/ awfy/ clbg/ sicp/ examples/ lib/`, at the
 commit before this change and at this one.
 
@@ -148,10 +148,10 @@ refusal is usually inherited, so removing a cause moves more than the definition
 `corpus/29-fallible.beck` — the program written to be about this feature — compiles `check_budget`,
 which is a `raise` at the point the decision is made, and refuses the other two for a reason that has
 nothing to do with failure: `parse_amount` calls `str_trim`, and `validate` calls `parse_amount`. So
-the program whose subject is this feature is also an example of §110.5's ratio, and of what is
+the program whose subject is this feature is also an example of §112.5's ratio, and of what is
 actually holding the tree back.
 
-## 110.6 What it costs
+## 112.6 What it costs
 
 `measure_native.rs::what_a_raise_costs_against_the_tree_walker`, release build. `deeply` raises at the
 bottom of `n` frames and is deliberately **not** tail-recursive, so every frame on the way out reads
@@ -171,7 +171,7 @@ at both depths, on both implementations. The sizes are six times apart rather th
 4,000 and this recursion is not in tail position, which is itself a difference worth knowing: the
 compiled side has no such ceiling and the tree-walker does.
 
-## 110.7 The gates
+## 112.7 The gates
 
 - **`native.rs::the_two_backends_agree_on_failure`** and
   **`cranelift.rs::the_three_backends_agree_on_failure`** — 84 calls each, over programs written to
@@ -192,7 +192,7 @@ after it, and a raise is a code in that cell — so "leave the loop rather than 
 was true the moment a raise could happen at all. That is the argument for reusing the fault path
 rather than building a second one, cashed.
 
-## 110.8 The finding: clearing the code is not clearing the cell
+## 112.8 The finding: clearing the code is not clearing the cell
 
 The first end-to-end call of a caught raise came back as *"the compiled program answered with offset
 64, and its heap is 0 bytes"* — a decode failure, on a call that had answered correctly.
@@ -213,7 +213,7 @@ piece of shared shape that is written as three constants rather than as a type.
 
 Both emitters now clear the whole word, and both say why in a comment beside it.
 
-## 110.9 What this does not establish
+## 112.9 What this does not establish
 
 - **Nothing about the other effects.** `io`, `log`, `net.out`, `fs.read` and the rest need the worker
   to call *back* into the host mid-call, which is a protocol with a second direction. A raise needed
@@ -228,10 +228,10 @@ Both emitters now clear the whole word, and both say why in a comment beside it.
   refused at the raise site, by name, with the reason.
 - **Nothing about `list_flat_map`, growing a collection, or the rest of Lane E.**
 
-## 110.10 What this corrects
+## 112.10 What this corrects
 
 - [`108`](108-closures-arrive-report.md) §108.9's "nothing about the effects, which are the other
-  unbuilt row" and [`109`](109-a-view-arrives-as-a-recipe-report.md) §109.8's "nothing about the
+  unbuilt row" and [`111`](111-a-view-arrives-as-a-recipe-report.md) §109.8's "nothing about the
   effects" both stand as history; this is the first row of that item, and the roadmap's Lane E cell
   now says which part is left.
 - **No refusal in the tree says "`raise` is not one of the scalar primitives"** any more. That

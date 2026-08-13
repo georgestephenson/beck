@@ -1,4 +1,4 @@
-# 111 — A list grows, and the refusal was about a layout
+# 113 — A list grows, and the refusal was about a layout
 
 **Built.** `list_append` compiles, to **both** code generators, and the accumulator every loop in
 this language is written as is **linear**.
@@ -32,7 +32,7 @@ definitions: it appears in 65, and the rest inherited the refusal from a callee 
 
 ---
 
-## 111.1 What the old reason got right, and where it stopped
+## 113.1 What the old reason got right, and where it stopped
 
 [`106`](106-lists-arrive-read-only-report.md) §106.5 and [`107`](107-a-map-arrives-read-only-report.md)
 §107.4 state the rule this backend is held to, and it is a good rule: **this backend does not ship an
@@ -51,13 +51,13 @@ two-word header per append is cheaper than an ownership analysis and does not ne
 took separating "what this list is" from "where the elements are", which is a layout question, and
 the refusal had filed it as an analysis question.
 
-§111.6 is the part of this worth carrying: the refusal was **inherited from the evaluator's
+§113.6 is the part of this worth carrying: the refusal was **inherited from the evaluator's
 implementation strategy**. `beck-eval` solves this with uniqueness because `beck-eval` is written in
 Rust over `Arc<Vec<T>>`; the backend copied the shape of that answer, found it unavailable, and
 stopped. [`106`](106-lists-arrive-read-only-report.md) §106.7's gate asks whether a refusal's stated
 reason is *true*; every sentence of this one was, and the refusal was still wrong.
 
-## 111.2 Why it is sound, in one paragraph
+## 113.2 Why it is sound, in one paragraph
 
 Two lists can share a block. Call their counts `a` and `b`, and the block's `used` count `u`.
 
@@ -70,9 +70,9 @@ taken and copies instead. Nothing else mutates anything.
 
 The one mutable word in the design is `used`, it only ever grows, and it is read and written by one
 compare-and-store. `beck-eval`'s equivalent is `Arc::get_mut`, and the two agree by a differential
-rather than by argument (§111.5).
+rather than by argument (§113.5).
 
-## 111.3 What it costs: one load, once per operation
+## 113.3 What it costs: one load, once per operation
 
 An element used to be an add away from the list's offset; it is now a load away — the block's offset
 — and then the same add. That load is paid **once per operation and not once per element**, because
@@ -91,7 +91,7 @@ Three gates in `native.rs` carry those constants, and each was updated rather th
 what they assert is that the number does not grow with `n` and that claim is unchanged. The
 per-element word is the same word it was.
 
-## 111.4 The accumulator, measured
+## 113.4 The accumulator, measured
 
 `native.rs::an_appended_accumulator_is_linear`, a gate with **no clock in it**: `doubled_up` walks a
 list and appends each element doubled, which is the idiom in question.
@@ -105,7 +105,7 @@ list and appends each element doubled, which is the idiom in question.
 accumulator beside it in the same file still does — `an_accumulator_costs_the_square_of_what_it_builds`
 asserts the quadratic for `Str`, and the two tests are worth reading together: one asserts a
 quadratic and one a linear, on the same shape, in the same backend, because only one of the two
-layouts has been separated. §111.7 is what that implies for text.
+layouts has been separated. §113.7 is what that implies for text.
 
 And the wall clock, `measure_native.rs::what_an_appended_accumulator_costs_against_the_tree_walker`:
 
@@ -123,7 +123,7 @@ into `Value`s, which is [`93`](93-llvm-backend-report.md) §93.1's round trip an
 [`108`](108-closures-arrive-report.md) measured as `concat_lists` losing to the tree-walker outright.
 A definition that appends and answers with a *number* keeps the 80×.
 
-## 111.5 The gates
+## 113.5 The gates
 
 - **`native.rs::the_two_backends_agree_on_lists`** and
   **`cranelift.rs::the_three_backends_agree_on_lists`**, extended with the cases this feature has:
@@ -135,12 +135,12 @@ A definition that appends and answers with a *number* keeps the 80×.
   - `doubled_up`, the accumulator, against the evaluator's own answer;
   - `named`, appending a `Str`, because an element's word is an offset and a block holds words;
   - `grown_bag`, appending to a list read out of a record — a header the emitter did not allocate.
-- **`native.rs::an_appended_accumulator_is_linear`** — §111.4's clockless gate.
+- **`native.rs::an_appended_accumulator_is_linear`** — §113.4's clockless gate.
 - The three arena-shape gates above, with their constants moved and their claims unchanged.
 - **Four refusal lists** moved `list_append` to their control side and put `map_insert` in its place,
   which is what those lists are for.
 
-## 111.6 What this corrects
+## 113.6 What this corrects
 
 - [`106`](106-lists-arrive-read-only-report.md) §106.5, [`107`](107-a-map-arrives-read-only-report.md)
   §107.4, [`101`](101-the-heap-report.md) §101.5 and [`105`](105-text-on-the-heap-report.md) §105.7
@@ -150,9 +150,9 @@ A definition that appends and answers with a *number* keeps the 80×.
 - [`08`](08-roadmap.md) §8.5.5's Lane E cell called the remainder "growing a collection" and called
   it a decision. Half of it was a layout.
 - **`beck_llvm`'s module documentation** said every operation that grows a collection is refused. It
-  is `map_insert` and its two siblings now, and §111.7 says what that one still needs.
+  is `map_insert` and its two siblings now, and §113.7 says what that one still needs.
 
-## 111.7 What this does not establish
+## 113.7 What this does not establish
 
 - **Nothing about a `Map`.** [`107`](107-a-map-arrives-read-only-report.md) §107.4's argument for
   `map_insert` is *not* the one this report corrects: a `PMap` is a weight-balanced tree that shares
@@ -171,5 +171,5 @@ A definition that appends and answers with a *number* keeps the 80×.
   thing for the same reason (its refcount is 2), so the *asymptotes still match*, which is the rule.
   It is not a claim that the constant matches.
 - **Nothing about memory.** A block that doubles holds up to twice what it needs, and an arena frees
-  nothing, so a long accumulator leaves about 4× its elements behind. That is what §111.4's gate
+  nothing, so a long accumulator leaves about 4× its elements behind. That is what §113.4's gate
   measures and asserts as linear; it is not a claim that it is small.

@@ -290,8 +290,8 @@ pub const MAP_HEADER: u64 = WORD;
 /// it for that reason: *this backend does not ship an operation whose asymptote is worse than the
 /// evaluator's*.
 ///
-/// [`docs/111`](../../../../../docs/111-a-list-grows-report.md) removed the same refusal for a list
-/// by separating the count from the elements, and §111.7 said in advance that the map's would
+/// [`docs/111`](../../../../../docs/113-a-list-grows-report.md) removed the same refusal for a list
+/// by separating the count from the elements, and §113.7 said in advance that the map's would
 /// **survive** that trick — a sorted run has to shift however its header is arranged. What removes
 /// it is the structure the evaluator already uses: a **weight-balanced tree**, whose insert rebuilds
 /// the path and shares every subtree it did not touch. `beck_core::pmap`'s own module documentation

@@ -2430,7 +2430,7 @@ fn a_view_has_no_order_and_the_refusal_says_why() {
         "comparing a record with a view in it has no answer"
     );
 
-    // …and the boundary's one directional rule, which is §109.3's and not §109.4's: an `Attr` may
+    // …and the boundary's one directional rule, which is §111.3's and not §111.4's: an `Attr` may
     // be answered with and may not be taken, because the host writes a handler back as the plain
     // attribute it would become and a bare one has not become it yet.
     for name in ["takes_an_attr", "takes_a_list_of_attrs"] {
