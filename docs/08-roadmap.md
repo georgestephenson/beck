@@ -417,8 +417,10 @@ dependencies whose signatures didn't change.
   produce and check a Sigstore signature over the manifest digest, in the shape
   `cosign verify --key` reads, and `openssl` verifies it rather than only this project's own code.
   **`beck init ci`** writes §28.3's workflow. What is left is not a piece of this bullet but the
-  pipeline around it: **no registry push**, **no provenance attestation** — SLSA's build track still
-  wants a builder identity and a transparency log — and **no pinned package versions** (§99.7),
+  pipeline around it: **no registry push**, ~~**no provenance attestation**~~ — **built for the
+  compiler's own release** ([`109`](109-provenance-report.md)), which is where SLSA's build track
+  gets its builder identity and its transparency log; a user's `beck build` still attests nothing —
+  and **no pinned package versions** (§99.7),
   which is why an image is reproducible twice over and not across weeks. **Package signatures are
   not verified** (§99.7), and that is named as the largest security gap rather than as a detail.*
 
@@ -433,8 +435,10 @@ to Phase 5), incremental views, whose last part is
 ([`92`](92-sbom-report.md), [`99`](99-supply-chain-report.md)) — whose remainder was a release
 pipeline rather than a piece of the bullet, and **that pipeline is now built**
 ([`104`](104-the-release-and-the-installer-report.md)), with an installer in front of it and no tag
-pushed through it. What is still missing there is a signature a consumer can check: `beck sign`'s
-subject is an image manifest, and a release publishes tarballs (§104.6).
+pushed through it — and it now attests build provenance over what it publishes
+([`109`](109-provenance-report.md)). What is still missing there is a signature a consumer can check
+over the release *listing*: `beck sign`'s subject is an image manifest, and a release publishes
+tarballs (§104.6).
 **No bullet has a named remainder**: the concurrency-and-errors bullet has `Result`, error rows,
 `parallel:` and pattern matching with nesting, guards and alternatives
 ([`90`](90-nested-patterns-report.md), [`91`](91-guards-and-alternatives-report.md)); what
@@ -927,14 +931,19 @@ chapter cannot express, measured at ×5.2 per term (§87.7). Chapters 4 and 5 ar
 No predecessors, and they never acquire any.
 
 **Wave 5 — the Phase 4 gates, arranged before Phase 4 rather than during it.** Supply-chain tooling
-(SLSA v1.2 provenance, 2026-element SBOMs, ~~signing~~ — **the signing machinery is built**
-([`99`](99-supply-chain-report.md)) and what is left of that row is the transparency log, a registry
-to push to, and a **subject the signer can take**: [`104`](104-the-release-and-the-installer-report.md)
+(~~SLSA v1.2 provenance~~ — **built** ([`109`](109-provenance-report.md)): the release attests
+in-toto provenance over every artefact `SHA256SUMS` lists, signed by a Sigstore certificate whose
+identity is the release workflow and recorded in the public transparency log, and `install.sh`
+checks it on request. A *level* is not claimed and a user's `beck build` still attests nothing;
+2026-element SBOMs, whose component hashes and mandatory signature are
+[`92`](92-sbom-report.md) §92.5's rows and unmoved; ~~signing~~ — **the signing machinery is built**
+([`99`](99-supply-chain-report.md)) and what is left of that row is a registry to push to and a
+**subject the signer can take**: [`104`](104-the-release-and-the-installer-report.md)
 §104.6 found that `beck sign` signs an image manifest digest and a compiler release is a tarball, so
-the binaries carry a checksum and nothing more. ~~The pipeline a provenance attestation would attach
-to~~ exists now ([`104`](104-the-release-and-the-installer-report.md)), which was
-[`92`](92-sbom-report.md)'s stated reason for that row being empty, and the row is still empty —
-trusted publishing configured *before* the first publish); DST proper, on the
+the release *listing* carries a checksum and nothing more —
+[`adr/0028`](adr/0028-a-release-carries-provenance-and-still-no-signature.md) is why that was left
+where it was; trusted publishing configured *before* the first publish, which is now the whole of
+what this row still owns); DST proper, on the
 seam Wave 0 created; then the operator, the replay tooling and the
 choreography. **Grammar-aware fuzzing is now due rather than pending**: [`42`](42-security-assurance.md)
 §42.9 pinned it with the trigger "the bound lands", and the bound has landed. Kani proofs of the
@@ -953,7 +962,7 @@ boundaries are real directories.
 | **A — type system** | `beck-core/src/check/`, `ty.rs`, `core.rs`, `prelude.rs`, `iface.rs` | Error rows and handlers; `@derive`; bignums and coercion | **Itself, completely** — see below |
 | **B — runtime and views** | `beck-rt/`, `beck-core/src/{engine,plan,incremental,pmap,signal}.rs` | Clock injection; the shared dataflow's release policy, history constant and render lock; SQL read models, pgwire, query fusion; Mode B's server half | Nothing in A, C, E or F |
 | **C — front end and tooling** | `beck-syntax/`, `beck-cli/`, `beck-diag/` | The recursion bound; the two syntax decisions; Unicode and UTS #39; LSP; `test --update`; fuzzing | A, if a syntax decision changes what the checker sees |
-| **D — process and supply chain** | `docs/`, `.github/`, `deny.toml`, `SECURITY.md`, `release/`, `install.sh` | Threat model, disclosure policy, memory-safety roadmap, `pending_security`, the four retargeted §12 rows, SLSA/SBOM/trusted publishing, ~~the release pipeline and the installer~~ ([`104`](104-the-release-and-the-installer-report.md)) | Nothing in code — **except that the release lands in `Cargo.toml`, a `build.rs` and `--version`**, which §104.4 is about and which this cell had assumed away |
+| **D — process and supply chain** | `docs/`, `.github/`, `deny.toml`, `SECURITY.md`, `release/`, `install.sh` | Threat model, disclosure policy, memory-safety roadmap, `pending_security`, the four retargeted §12 rows, ~~SLSA~~ ([`109`](109-provenance-report.md))/SBOM/trusted publishing, ~~the release pipeline and the installer~~ ([`104`](104-the-release-and-the-installer-report.md)) | Nothing in code — **except that the release lands in `Cargo.toml`, a `build.rs` and `--version`**, which §104.4 is about and which this cell had assumed away. The provenance held the cell's original claim: the only executable artefacts it changed were `install.sh` and `.github/workflows/release.yml`, and inside `compiler/` it touched three test files and nothing else |
 | **E — backends** | `beck-eval/`, `beck-llvm/`, `beck-clif/`, `beck-core/src/backend.rs`, any new codegen crate | ~~LLVM backend, native codegen, the differential suite~~ — **built** ([`93`](93-llvm-backend-report.md)), ~~and Cranelift~~ — **built** ([`97`](97-cranelift-report.md)), ~~and a heap~~ — **half built** ([`101`](101-the-heap-report.md)): records, unions and newtypes, ~~and text~~ — **built** ([`105`](105-text-on-the-heap-report.md)), ~~and reading a collection~~ — **built** ([`106`](106-lists-arrive-read-only-report.md), [`107`](107-a-map-arrives-read-only-report.md)), lists and maps alike, ~~and closures~~ — **built** ([`108`](108-closures-arrive-report.md)): a rank and its captures, an application as a switch, and every list primitive that takes a function except `list_flat_map` — `sort_by` and `concat_lists` included, the second because its refusal was false. What is left is the effects, `Html` and *growing* a collection | Nothing — the seam is why ([`19`](19-phase-1-report.md) §19.9), and [`93`](93-llvm-backend-report.md) is the first thing to test that claim: not one line of `beck-rt` changed |
 | **F — infrastructure** | `beck-infra/` | Effect-derived NetworkPolicy/RBAC/grants; Crossplane emitter; conformance rungs | Nothing |
 
@@ -980,7 +989,8 @@ Recommended pairings, in order:
 | ~~**Then**~~ | ~~Lane A, continued~~ | ~~Lane D: the release pipeline and the installer~~ | **Half done, and the other half — for the sixth consecutive rewrite.** Lane D was taken ([`104`](104-the-release-and-the-installer-report.md)) and its "collides with nothing in code" held for the pipeline and failed for the *release*: a version number that means something is `compiler/Cargo.toml`, a `build.rs` and one line of `main.rs`. Lane A is untouched, so this pairing was not run as a pair |
 | ~~**Then**~~ | ~~Lane A, continued~~ | ~~Lane E: a heap for the native backends~~ | **Half done, and the other half — again.** Lane E was taken ([`101`](101-the-heap-report.md)): the *algebraic* half of the heap is built, so a record, a union and a newtype compile. Lane A is untouched, which makes seven consecutive rewrites in which the recommended pair was not run as a pair — the prediction that Lane E collides with nothing keeps holding, and the one about Lane A keeps not being tested |
 | ~~**Then**~~ | ~~Lane A: `Ord` as a trait~~ | ~~Lane E: the rest of the heap — text, collections, closures, the effects~~ | **Three quarters done, and the other half again.** Lane E was taken four times running ([`105`](105-text-on-the-heap-report.md), [`106`](106-lists-arrive-read-only-report.md), [`107`](107-a-map-arrives-read-only-report.md), [`108`](108-closures-arrive-report.md)) and the prediction held every time: `beck-llvm`, `beck-clif`, their two suites, and one public function moved in `beck-core` for [`108`](108-closures-arrive-report.md)'s closures. Lane A is untouched, which makes eight consecutive rewrites in which the recommended pair was not run as a pair |
-| **Now** | Lane A: `Ord` as a trait, which [`54`](54-ordering.md) writes out and does *not* recommend — so realistically nothing | Lane E: **what is left of the heap** — `Html`, growing a collection, the effects ([`107`](107-a-map-arrives-read-only-report.md) §107.4, [`108`](108-closures-arrive-report.md) §108.8) — which is what Mode B's codegen and every benchmark number wait on | The backend seam exists so these do not interact, and it has now been tested three times. Lane B's render lock is still open and still has no owner — it is a third branch rather than a reason to hold either of these |
+| ~~**Then**~~ | ~~Lane A: `Ord` as a trait~~ | ~~Lane E: what is left of the heap~~, ~~plus Lane D as a third branch~~ | **A third of it done, and the third branch.** Lane D was taken ([`109`](109-provenance-report.md)) and the prediction in its own row held rather than the one that keeps failing: `install.sh`, one workflow, three test files, and nothing in `check/`, `ty.rs`, `core.rs`, `engine.rs` or any backend, so it could have run beside either of the other two. It did not, because neither of the other two was staffed — which is the ninth consecutive rewrite in which the recommended pair was not run as a pair, and the first in which the *third* branch is the one that moved |
+| **Now** | Lane A: `Ord` as a trait, which [`54`](54-ordering.md) writes out and does *not* recommend — so realistically nothing | Lane E: **what is left of the heap** — `Html`, growing a collection, the effects ([`107`](107-a-map-arrives-read-only-report.md) §107.4, [`108`](108-closures-arrive-report.md) §108.8) — which is what Mode B's codegen and every benchmark number wait on | The backend seam exists so these do not interact, and it has now been tested three times. Lane B's render lock is still open and still has no owner — it is a third branch rather than a reason to hold either of these. Lane D's remaining item is **trusted publishing**, which is an account setting rather than a branch |
 | **Any time** | — | Lane F; Lane C's LSP; more of SICP | No predecessors, no collisions |
 
 A third branch is viable whenever E or F is staffed. The ceiling is four, because of these:

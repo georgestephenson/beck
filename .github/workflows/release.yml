@@ -130,6 +130,12 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: write
+      # The provenance step's two. `id-token` mints the OIDC token Sigstore exchanges for a
+      # short-lived signing certificate; `attestations` persists the bundle. Neither is needed by
+      # anything else in this job, and no other job asks for either — a token that can sign as this
+      # repository is worth granting to one step of one job (docs/109 §109.4).
+      id-token: write
+      attestations: write
     env:
       VERSION: ${{ needs.the-tag-is-the-version.outputs.version }}
     steps:
@@ -171,6 +177,28 @@ jobs:
           "$BECK_INSTALL_DIR/beck" --version
           "$BECK_INSTALL_DIR/beck" check compiler/examples/todo.beck
 
+      - name: provenance for every artefact this release publishes
+        # SLSA build provenance, in-toto, signed by a short-lived Sigstore certificate and recorded
+        # in the public-good transparency log (docs/12 §12.6, docs/adr/0028).
+        #
+        # The subject is `SHA256SUMS`, not a glob over the tarballs: `subject-checksums` reads that
+        # file and attests one subject per line, so the set of digests the attestation covers is
+        # *the same set* `install.sh` verifies against, read from the same bytes. A glob could drift
+        # from the sums file; this cannot.
+        #
+        # Deliberately **not** guarded by `if: github.event_name == 'push'`, unlike the step below.
+        # A `workflow_dispatch` dry run publishes nothing and still attests, which is the only way
+        # this step runs before the first tag is cut — `release/README.md`'s point about the one
+        # artefact that cannot be executed before it is used. The statement stays true either way:
+        # it says this workflow built these digests, and a dry run's digests are its own.
+        #
+        # It comes last, after the checks above, so a release that fails one of them never mints a
+        # provenance record for artefacts it refused to publish.
+        id: provenance
+        uses: actions/attest@v4
+        with:
+          subject-checksums: staging/SHA256SUMS
+
       - name: publish
         if: github.event_name == 'push'
         env:
@@ -191,8 +219,26 @@ jobs:
 
           It downloads the tarball for your platform, checks it against `SHA256SUMS`, and puts
           `beck` in `~/.beck/bin`. `SHA256SUMS` is a checksum and not a signature: it proves the
-          download was not corrupted, and nothing about the release page. A signature and a
-          transparency log are `docs/99-supply-chain-report.md` §99.7's unbuilt items.
+          download was not corrupted, and nothing about the release page.
+
+          ## Provenance
+
+          Every tarball listed in `SHA256SUMS` is a subject of a SLSA build provenance
+          attestation, signed by a short-lived Sigstore certificate and recorded in the public
+          transparency log. That is the part a rewritten release page cannot forge. Check it:
+
+          ```
+          curl -fsSL .../install.sh | BECK_VERIFY_PROVENANCE=1 sh   # needs the GitHub CLI
+          gh attestation verify beck-*.tar.gz --repo ${{ github.repository }} \
+            --signer-workflow ${{ github.repository }}/.github/workflows/release.yml
+          ```
+
+          The attestation this release minted: ${{ steps.provenance.outputs.attestation-url }}
+
+          It is **not** checked by default, because `gh` is not a tool an installer can assume is
+          present; opting in makes a missing `gh` fatal rather than skipped.
+          `docs/adr/0028-a-release-carries-provenance-and-still-no-signature.md` is the decision,
+          and what remains unsigned is the release page itself.
 
           ## What this is
 

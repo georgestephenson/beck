@@ -1,6 +1,10 @@
 # ADR 0027 — A release publishes a checksum, and not a signature
 
-**Status:** accepted
+**Superseded by [0028](0028-a-release-carries-provenance-and-still-no-signature.md)**, which took the
+third of the three routes below — GitHub's artifact attestations — for the reason this record gives
+for deferring it, once the pipeline it needed existed.
+
+**Status:** superseded
 **Date:** 2026-08-10
 **Context:** [`104`](../104-the-release-and-the-installer-report.md),
 [`28`](../28-releases-and-deployment.md) §28.2, [`99`](../99-supply-chain-report.md) §99.5 and

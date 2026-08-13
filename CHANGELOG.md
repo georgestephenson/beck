@@ -12,6 +12,23 @@ Newest first.
 
 ## Unreleased
 
+### The release
+
+- **The release attests build provenance, and the installer can check it** —
+  [`docs/109`](docs/109-provenance-report.md),
+  [`adr/0028`](docs/adr/0028-a-release-carries-provenance-and-still-no-signature.md), which
+  supersedes [`0027`](docs/adr/0027-a-release-publishes-a-checksum-and-not-a-signature.md) by taking
+  the one route that record named as right and deferred. `actions/attest` over
+  `subject-checksums: staging/SHA256SUMS`, so the digests the attestation vouches for are the
+  digests `install.sh` verifies against, read from the same bytes; `BECK_VERIFY_PROVENANCE=1` runs
+  `gh attestation verify` with `--signer-workflow` pinned, and a missing `gh` is a failed install
+  rather than a skipped step. The gates are in `release.rs` and — for the absence that remains, a
+  default install that checks a checksum and nothing else — in `pending_security.rs`.
+  **Nothing has been attested yet**: no tag has been pushed, so the step is written and not
+  executed, which is why it is deliberately unconditional and a `workflow_dispatch` dry run
+  exercises it. §109.5 records seven mutations, one gate each, and the one that did not fire until
+  it was rewritten.
+
 ### The native backends
 
 - **The last two list primitives, and one of them was refused for a reason that is false.**

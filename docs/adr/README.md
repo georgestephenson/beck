@@ -43,3 +43,4 @@ The split this directory creates:
 | [0025](0025-deflate-so-the-image-build-needs-no-tools.md) | DEFLATE is taken and tar is written — the image build needs an inflater it cannot write and a byte-deterministic tar no library offers |
 | [0026](0026-the-native-heap-is-an-arena-of-offsets.md) | The native heap is an arena of offsets and the host marshals against it — a value that carries no pointer crosses a pipe as bytes, so neither emitter generates a line of marshalling |
 | [0027](0027-a-release-publishes-a-checksum-and-not-a-signature.md) | A release publishes a checksum and not a signature — `beck sign`'s subject is an image manifest, and a compiler release is a tarball |
+| [0028](0028-a-release-carries-provenance-and-still-no-signature.md) | A release carries SLSA build provenance over `SHA256SUMS`, checkable on request and not by default — supersedes [0027](0027-a-release-publishes-a-checksum-and-not-a-signature.md) |
