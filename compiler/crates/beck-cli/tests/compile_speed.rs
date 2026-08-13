@@ -204,7 +204,7 @@ fn hinted(n: usize) -> String {
 ///
 /// The shape this guards is the one the first version of
 /// [`Editor::hints`](beck_core::editor::Editor::hints) had and
-/// [`docs/109`](../../../../docs/109-the-editor-edits-report.md) §109.5 records: finding the colon
+/// [`docs/110`](../../../../docs/110-the-editor-edits-report.md) §110.5 records: finding the colon
 /// that ends a signature by filtering the file's whole token stream, once per definition, which is
 /// `definitions × tokens` and reads as a small constant at the sizes anybody tests by hand. It is
 /// the same defect [`docs/64`](../../../../docs/64-compile-speed-report.md) §64.2 found in

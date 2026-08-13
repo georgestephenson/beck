@@ -915,7 +915,7 @@ impl Editor {
     /// reference the checker resolves and keeps no [`Core`] node for. It is still a use of the
     /// name, and it was the one thing in the corpus that a rename could not account for: `page` is
     /// the name most Beck programs assert about, and 48 of them declined until this was here
-    /// ([`docs/109`](../../../../../docs/109-the-editor-edits-report.md) §109.4).
+    /// ([`docs/110`](../../../../../docs/110-the-editor-edits-report.md) §110.4).
     fn static_mentions(&self, placed: &Placed, name: &str) -> Vec<u32> {
         let mut out = Vec::new();
         for test in &placed.program.tests {

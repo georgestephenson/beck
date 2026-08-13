@@ -790,7 +790,7 @@ fn renaming_every_name_in_the_corpus_either_works_or_says_why() {
         refused.join("\n")
     );
     // Every refusal is one of the two stated shapes rather than an accident, and the corpus
-    // contains one of each (`docs/109` §109.4):
+    // contains one of each (`docs/110` §110.4):
     //
     // * a name the analysis cannot account for — `page` in a program whose view is a local of the
     //   same name, which is the shadow this declines rather than captures;

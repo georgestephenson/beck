@@ -7,7 +7,7 @@
 //! This file runs them, and checks the parts of the workflow that only a reader could otherwise
 //! check.
 //!
-//! Three properties, and the third is the one that matters:
+//! Four properties, and the last two are the ones that matter:
 //!
 //! 1. **The installer and the pipeline name the same platforms**, in both directions. An installer
 //!    offering a target no release contains is a 404 in somebody's first five minutes; a target
@@ -18,22 +18,22 @@
 //!    is the gap this script exists to close, so it is the gap the gate is written against
 //!    (`docs/84-a-quota-is-only-as-good-as-its-actor-report.md` §84.5), rather than the presence of
 //!    a `sha256sum` call somewhere in the file.
+//! 4. **The installer refuses an archive whose provenance does not verify**, and refuses to
+//!    pretend it verified one when the tool that would is missing
+//!    (`docs/109-provenance-report.md`). Tested the same way: a verifier that says no, and a
+//!    verifier that is not there.
 //!
-//! The last one needs `sh`, `tar` and a SHA-256 tool, so it **skips loudly** when one is missing;
-//! `BECK_REQUIRE_INSTALL=1` forbids the skip.
+//! The last two need `sh`, `tar` and a SHA-256 tool, so they **skip loudly** when one is missing;
+//! `BECK_REQUIRE_INSTALL=1` forbids the skip. Neither needs `gh`, and neither needs a network —
+//! `support::relfix` explains what that buys and what it does not.
 
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
-fn repo_root() -> PathBuf {
-    // .../compiler/crates/beck-cli → the repository
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .ancestors()
-        .nth(3)
-        .expect("the crate lives three levels under the repository root")
-        .to_path_buf()
-}
+mod support;
+
+use support::relfix::{self, repo_root, tool};
 
 fn read(rel: &str) -> String {
     let path = repo_root().join(rel);
@@ -251,45 +251,13 @@ fn the_guide_installs_before_it_builds_from_source() {
 /// release.
 #[test]
 fn the_installer_refuses_an_archive_whose_checksum_is_wrong() {
-    let Some(sh) = tool("sh") else { return };
-    let Some(tar) = tool("tar") else { return };
-    if which("sha256sum").is_none() && which("shasum").is_none() {
-        skip("no sha256sum and no shasum");
+    let Some(release) = relfix::fixture("checksum") else {
         return;
-    }
-    if which("curl").is_none() && which("wget").is_none() {
-        skip("no curl and no wget");
-        return;
-    }
-
-    let version = env!("CARGO_PKG_VERSION");
-    let target = "x86_64-unknown-linux-gnu";
-    let root = scratch("install");
-    let assets = root.join("assets");
-    let stage = root.join("stage").join(format!("beck-{version}-{target}"));
-    std::fs::create_dir_all(&assets).expect("scratch");
-    std::fs::create_dir_all(&stage).expect("scratch");
-
-    // A stub that answers `--version`, because the installer runs what it installed.
-    let stub = stage.join("beck");
-    std::fs::write(&stub, "#!/bin/sh\necho \"beck fixture\"\n").expect("write");
-    make_executable(&stub);
-
-    let asset = format!("beck-{version}-{target}.tar.gz");
-    let built = Command::new(&tar)
-        .args(["-czf", assets.join(&asset).to_str().expect("utf-8"), "-C"])
-        .arg(root.join("stage"))
-        .arg(format!("beck-{version}-{target}"))
-        .status()
-        .expect("tar runs");
-    assert!(built.success(), "the fixture tarball was not built");
-
-    let good = sha256(&assets.join(&asset));
-    std::fs::write(assets.join("SHA256SUMS"), format!("{good}  {asset}\n")).expect("write");
+    };
 
     // 1. A release whose checksum agrees installs, and the binary is on disk afterwards.
-    let bin = root.join("bin");
-    let ok = install(&sh, &assets, &bin, version, target);
+    let bin = release.root.join("bin");
+    let ok = release.install(&bin, &[]);
     assert!(
         ok.status.success(),
         "the installer refused a release whose checksum is correct:\n{}\n{}",
@@ -298,20 +266,15 @@ fn the_installer_refuses_an_archive_whose_checksum_is_wrong() {
     );
     assert!(bin.join("beck").exists(), "nothing was installed");
     assert!(
-        String::from_utf8_lossy(&ok.stdout).contains(&good),
+        String::from_utf8_lossy(&ok.stdout).contains(&release.published_digest()),
         "the installer did not print the checksum it verified"
     );
 
-    // 2. The same release with one byte of the archive changed installs nothing. The checksum file
-    //    is left alone, which is the shape of the failure this is about: the artefact moved and the
-    //    published digest did not.
-    let mut bytes = std::fs::read(assets.join(&asset)).expect("read");
-    let last = bytes.len() - 1;
-    bytes[last] ^= 0xff;
-    std::fs::write(assets.join(&asset), bytes).expect("write");
+    // 2. The same release with one byte of the archive changed installs nothing.
+    release.corrupt_the_archive();
 
-    let fresh = root.join("bin-2");
-    let bad = install(&sh, &assets, &fresh, version, target);
+    let fresh = release.root.join("bin-2");
+    let bad = release.install(&fresh, &[]);
     assert!(
         !bad.status.success(),
         "the installer accepted an archive whose checksum does not match:\n{}",
@@ -328,41 +291,179 @@ fn the_installer_refuses_an_archive_whose_checksum_is_wrong() {
     );
 }
 
-// ---- the plumbing -----------------------------------------------------------------------------
+// ---- the provenance ----------------------------------------------------------------------------
 
-fn skip(why: &str) {
-    // A skip that prints, per `docs/19-phase-1-report.md` §19.4 item 10: a gate that reports
-    // success without running is worse than one that reports nothing.
+#[test]
+fn the_pipeline_attests_the_file_the_installer_verifies_against() {
+    let text = read(".github/workflows/release.yml");
+
+    // The subject. `subject-checksums` reads `SHA256SUMS` and attests one subject per line, so the
+    // digests the attestation covers are the digests the installer checks — the same bytes, not two
+    // lists that agree today. A glob over the tarballs would pass this file's other tests and
+    // silently cover a different set the day an artefact stops being listed.
     assert!(
-        std::env::var("BECK_REQUIRE_INSTALL").is_err(),
-        "BECK_REQUIRE_INSTALL is set and this test cannot run: {why}"
+        text.contains("subject-checksums: staging/SHA256SUMS"),
+        "the release no longer attests the assembled SHA256SUMS, so the set of digests it vouches \
+         for is no longer the set install.sh verifies against"
     );
-    eprintln!("release.rs: skipping — {why}");
-}
 
-fn which(tool: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path)
-        .map(|dir| dir.join(tool))
-        .find(|candidate| candidate.is_file())
-}
-
-fn tool(name: &str) -> Option<PathBuf> {
-    match which(name) {
-        Some(path) => Some(path),
-        None => {
-            skip(&format!("no {name} on the path"));
-            None
-        }
+    // The permissions the signing step needs, on the one job that has them. `id-token: write` is
+    // the right to sign as this repository; a workflow that granted it at the top level would grant
+    // it to every job, including the ones that run a build.
+    let (before, publish) = text
+        .split_once("\n  publish:")
+        .expect("the release workflow has a publish job");
+    for permission in ["id-token: write", "attestations: write"] {
+        assert!(
+            publish.contains(permission),
+            "the publish job no longer asks for `{permission}`, so the attestation cannot be signed"
+        );
+        assert!(
+            !before.contains(permission),
+            "`{permission}` is granted outside the publish job — it is the right to sign as this \
+             repository and belongs to the one step that signs"
+        );
     }
+
+    // A dry run attests too. This is the only way the step runs before the first tag is cut, which
+    // is `release/README.md`'s point about the one artefact that cannot be executed before it is
+    // used — and a `if: github.event_name == 'push'` here would take that away without failing
+    // anything.
+    //
+    // The whole step, from its `- name:` to the next one — not the part after `uses:`. A condition
+    // is legal anywhere among a step's keys, and the first version of this assertion read only the
+    // tail: `if:` written above `uses:` passed it. Slice the step the way YAML delimits one.
+    let step = publish
+        .split("\n      - name:")
+        .find(|step| step.contains("uses: actions/attest@"))
+        .expect("the publish job attests what it publishes");
+    assert!(
+        !step.lines().any(|l| l.trim_start().starts_with("if:")),
+        "the attest step is now conditional, so a workflow_dispatch dry run no longer exercises \
+         it — and nothing does until the first tag is cut:\n{step}"
+    );
 }
 
-fn scratch(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("beck-release-{name}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("a scratch directory");
-    dir
+#[test]
+fn the_installer_refuses_an_archive_whose_provenance_does_not_verify() {
+    let Some(release) = relfix::fixture("provenance") else {
+        return;
+    };
+    let no = release.stub_gh("refuses", 1);
+
+    let bin = release.root.join("bin");
+    let out = release.install(
+        &bin,
+        &[
+            ("BECK_VERIFY_PROVENANCE", "1"),
+            ("BECK_GH", no.to_str().expect("utf-8")),
+        ],
+    );
+    assert!(
+        !out.status.success(),
+        "the installer accepted an archive whose provenance did not verify:\n{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    assert!(
+        !bin.join("beck").exists(),
+        "the installer refused the provenance and installed the binary anyway"
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("provenance"),
+        "the refusal does not say what was wrong:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // …and a verifier that agrees installs. Asserted together with the refusal, because a script
+    // that refused everything would pass the half above on its own.
+    let yes = release.stub_gh("agrees", 0);
+    let second = release.root.join("bin-2");
+    let ok = release.install(
+        &second,
+        &[
+            ("BECK_VERIFY_PROVENANCE", "1"),
+            ("BECK_GH", yes.to_str().expect("utf-8")),
+        ],
+    );
+    assert!(
+        ok.status.success(),
+        "the installer refused a release whose provenance verified:\n{}\n{}",
+        String::from_utf8_lossy(&ok.stdout),
+        String::from_utf8_lossy(&ok.stderr)
+    );
+    assert!(second.join("beck").exists(), "nothing was installed");
+
+    // What the check was actually made with. `--signer-workflow` is the whole value of it: without
+    // that flag any attestation this repository can produce satisfies the check, including one
+    // minted by a workflow added by whoever could rewrite the release page.
+    let argv = release.gh_argv("agrees");
+    assert!(
+        argv.contains("attestation verify"),
+        "the installer ran the GitHub CLI for something other than verifying an attestation: {argv}"
+    );
+    assert!(
+        argv.contains("--signer-workflow"),
+        "the installer verifies provenance without pinning the workflow that signed it, so any \
+         attestation this repository can produce satisfies it: {argv}"
+    );
+    let workflow = argv
+        .split("--signer-workflow ")
+        .nth(1)
+        .and_then(|rest| rest.split_whitespace().next())
+        .expect("a value for --signer-workflow");
+    let (_, path) = workflow
+        .split_once(".github/")
+        .expect("--signer-workflow names a workflow file in the repository");
+    assert!(
+        repo_root().join(".github").join(path).is_file(),
+        "the installer pins `{workflow}`, which is not a workflow file in this repository"
+    );
 }
+
+#[test]
+fn provenance_verification_is_refused_rather_than_skipped_when_the_tool_is_missing() {
+    // The installer resolves its SHA-256 tool fatally for a stated reason — "an installer that
+    // skips verification when the tool is missing has taught its users that verification is
+    // optional" — and the verifier is the same argument with a second tool. A run that asked for
+    // provenance and could not check it must not end with a binary on disk.
+    let Some(release) = relfix::fixture("no-gh") else {
+        return;
+    };
+    let absent = release.root.join("there-is-no-gh-here");
+
+    let bin = release.root.join("bin");
+    let out = release.install(
+        &bin,
+        &[
+            ("BECK_VERIFY_PROVENANCE", "1"),
+            ("BECK_GH", absent.to_str().expect("utf-8")),
+        ],
+    );
+    assert!(
+        !out.status.success(),
+        "the installer was asked to verify provenance, had no tool to do it with, and installed \
+         anyway:\n{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    assert!(
+        !bin.join("beck").exists(),
+        "the installer failed and left a binary behind"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("BECK_VERIFY_PROVENANCE") && stderr.contains("CLI"),
+        "the refusal does not say which tool is missing or how to proceed without it:\n{stderr}"
+    );
+    // Before the download, not after it: nothing should be fetched for an install that cannot
+    // finish. The fixture is local, so this is about the order rather than about the bytes.
+    assert!(
+        !String::from_utf8_lossy(&out.stdout).contains("sha256"),
+        "the installer downloaded and checksummed an archive it was never going to install:\n{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+}
+
+// ---- the plumbing -----------------------------------------------------------------------------
 
 fn script(sh: &Path, args: &[&str]) -> std::process::Output {
     Command::new(sh)
@@ -370,48 +471,4 @@ fn script(sh: &Path, args: &[&str]) -> std::process::Output {
         .args(args)
         .output()
         .expect("release/build.sh runs")
-}
-
-fn install(
-    sh: &Path,
-    assets: &Path,
-    into: &Path,
-    version: &str,
-    target: &str,
-) -> std::process::Output {
-    Command::new(sh)
-        .arg(repo_root().join("install.sh"))
-        .env("BECK_VERSION", version)
-        .env("BECK_TARGET", target)
-        .env("BECK_BASE_URL", format!("file://{}", assets.display()))
-        .env("BECK_INSTALL_DIR", into)
-        .output()
-        .expect("install.sh runs")
-}
-
-fn sha256(path: &Path) -> String {
-    let (tool, args): (PathBuf, Vec<&str>) = match which("sha256sum") {
-        Some(t) => (t, vec![]),
-        None => (which("shasum").expect("checked above"), vec!["-a", "256"]),
-    };
-    let out = Command::new(tool)
-        .args(args)
-        .arg(path)
-        .output()
-        .expect("a sha256 tool runs");
-    String::from_utf8_lossy(&out.stdout)
-        .split_whitespace()
-        .next()
-        .expect("a digest")
-        .to_string()
-}
-
-fn make_executable(path: &Path) {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
-    }
-    #[cfg(not(unix))]
-    let _ = path;
 }

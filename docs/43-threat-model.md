@@ -136,16 +136,25 @@ The controls a reader would reasonably assume exist, that do not:
   [`adr/0020`](adr/0020-the-read-model-speaks-pgwire-by-hand.md) is why, and it is the record that
   has to change before the bound does. The absence is asserted by connecting without a password and
   expecting it to work, which goes red the day one is required.
-- **A signature on the compiler you downloaded.** [`104`](104-the-release-and-the-installer-report.md)
-  built the release pipeline and [`install.sh`](../install.sh), which verifies the tarball against
-  the release's `SHA256SUMS` and refuses to install on a mismatch. That is a **checksum, not a
-  chain of trust**: it establishes that the download was not corrupted in transit and nothing at all
-  about the page it came from, because whoever can rewrite the tarball can rewrite the line
-  describing it. It would be reasonable to assume otherwise — this project *has* signing machinery
-  ([`99`](99-supply-chain-report.md) §99.5) — but `beck sign`'s subject is an OCI manifest digest and
-  a compiler release is a tarball (§104.6). The absence is asserted from both ends in
-  `pending_security.rs`: the pipeline signs nothing, and the installer checks nothing. A provenance
-  attestation and a transparency log are §99.7's rows and are also absent.
+- **Verification of the compiler you downloaded, unless you ask for it.** Narrowed once.
+  [`104`](104-the-release-and-the-installer-report.md) built the release pipeline and
+  [`install.sh`](../install.sh), which verifies the tarball against the release's `SHA256SUMS` and
+  refuses to install on a mismatch — a **checksum, not a chain of trust**, establishing that the
+  download was not corrupted in transit and nothing at all about the page it came from.
+  ~~A provenance attestation and a transparency log are absent~~ — **the release attests SLSA build
+  provenance** ([`109`](109-provenance-report.md), [`adr/0028`](adr/0028-a-release-carries-provenance-and-still-no-signature.md)):
+  every artefact listed in `SHA256SUMS` is a subject of an in-toto statement signed by a short-lived
+  Sigstore certificate whose identity is this repository's release workflow, recorded in the
+  public-good transparency log, and `BECK_VERIFY_PROVENANCE=1` makes the installer check it with
+  `--signer-workflow` pinned. What remains absent is that **the default does not**, because `gh` is
+  not a tool a script piped from `curl` can assume — so the install a reader will actually run
+  establishes what it established before. Asserted as behaviour in `pending_security.rs`: a
+  default install with a verifier that refuses everything succeeds, and never consults it. Absent
+  too, and separately: **a signature over the release page**. `SHA256SUMS` carries none, so a
+  reader who checks the sums and stops has checked one file on the page against another file on the
+  page. This project *has* signing machinery ([`99`](99-supply-chain-report.md) §99.5) and it still
+  cannot take this subject — `beck sign` signs an OCI manifest digest and a compiler release is a
+  tarball (§104.6) — which is §99.7's row, unchanged.
 - **Macro fuel** (F17). Expansion is bounded in *depth* — twice over, since
   [`adr/0012`](adr/0012-the-front-end-counts-its-own-recursion.md) separated the two counters that
   had been one — and not in *work*.
