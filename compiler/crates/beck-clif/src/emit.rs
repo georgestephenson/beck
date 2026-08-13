@@ -536,6 +536,8 @@ fn signature_of(def: &Def, heap: &mut Heap, program: &Program) -> Result<Signatu
         match heap.repr(ty, program) {
             Ok(r) => {
                 Heap::crossing(r).map_err(|why| format!("parameter `{name}` is {why}"))?;
+                heap.inbound(r)
+                    .map_err(|why| format!("parameter `{name}` is {why}"))?;
                 params.push(r);
             }
             Err(why) => return Err(format!("parameter `{name}` is {why}")),
@@ -2468,6 +2470,15 @@ fn element_functions(
     fctx: &mut FunctionBuilderContext,
 ) -> Result<(), String> {
     let element = heap.element(at);
+    // An element with no order at all: the three functions below are a comparison, a lexicographic
+    // one and a search, and every one of them is that element's comparison in a loop. Nothing is
+    // emitted rather than something that compares offsets — `Body::wants` refuses the demand
+    // before this is reached, and a bug in that rule is then a missing symbol at link time rather
+    // than a list of views that sorts by where they were allocated. The LLVM emitter returns here
+    // for the same reason and in the same place.
+    if let heap::Order::Absent(_) = element.order() {
+        return Ok(());
+    }
     let lists = runtime
         .lists
         .ok_or("a list in a module with no list runtime")?;
@@ -3642,6 +3653,12 @@ fn compare_function(
                         b.switch_to_block(next);
                         b.seal_block(next);
                     }
+                    // A field with no order at all. Unreachable, and by a rule rather than an
+                    // argument: `Body::wants` asks `Heap::ordered` before it records a demand, and
+                    // that walks a record's fields — so a layout holding one is never in the set
+                    // this is generated for. "Equal" for the same reason the unnamed tag above
+                    // answers it: it is the one answer that cannot make a comparison asymmetric.
+                    heap::Order::Absent(_) => {}
                     order => {
                         // A real compares through its order key, and both are already normalised —
                         // `Body::store_field` is where that is paid for.
@@ -3809,11 +3826,15 @@ impl<'a> Body<'a> {
             .expect("a body with text in it is a module with text's runtime")
     }
 
-    /// Record that this repr's comparison has to exist.
+    /// Record that this repr's comparison has to exist, or refuse because it cannot.
     ///
     /// One method rather than three call sites, so adding a reference kind means teaching
     /// [`beck_llvm::heap::Repr::order`] and this, and `reachable` closes over whatever they name.
-    fn wants(&mut self, r: Repr) {
+    ///
+    /// It asks [`beck_llvm::heap::Heap::ordered`] first — see that method and the LLVM emitter's
+    /// `wants`, which is the same rule written for the same reason.
+    fn wants(&mut self, r: Repr) -> Result<(), String> {
+        self.heap.ordered(r)?;
         match r {
             Repr::Obj(at) => {
                 self.compared.insert(at);
@@ -3824,11 +3845,12 @@ impl<'a> Body<'a> {
             Repr::Map(at) => {
                 self.map_compared.insert(at);
             }
-            Repr::Int | Repr::Float | Repr::Bool | Repr::Str => {}
+            Repr::Int | Repr::Float | Repr::Bool | Repr::Str | Repr::Html | Repr::Attr => {}
             // One function for the whole module rather than one per family, because every closure's
             // rank is in the same table. See `beck_llvm::heap::Repr::order`.
             Repr::Fn(_) => self.compared_fns = true,
         }
+        Ok(())
     }
 
     fn lists(&self) -> Lists {
@@ -4168,9 +4190,13 @@ impl<'a> Body<'a> {
             Repr::Int => Trap::NoMatchInt,
             Repr::Float => Trap::NoMatchFloat,
             Repr::Bool => Trap::NoMatchBool,
-            Repr::Str | Repr::List(_) | Repr::Map(_) | Repr::Obj(_) | Repr::Fn(_) => {
-                Trap::NoMatchData
-            }
+            Repr::Str
+            | Repr::List(_)
+            | Repr::Map(_)
+            | Repr::Obj(_)
+            | Repr::Fn(_)
+            | Repr::Html
+            | Repr::Attr => Trap::NoMatchData,
         };
         let payload = self.widen(&v, b);
         let always = b.ins().iconst(types::I8, 1);
@@ -4368,9 +4394,14 @@ impl<'a> Body<'a> {
                 let raw = b.ins().load(types::I64, flags, at, 0);
                 b.ins().icmp_imm_s(IntCC::NotEqual, raw, 0)
             }
-            Repr::Int | Repr::Str | Repr::List(_) | Repr::Map(_) | Repr::Obj(_) | Repr::Fn(_) => {
-                b.ins().load(types::I64, flags, at, 0)
-            }
+            Repr::Int
+            | Repr::Str
+            | Repr::List(_)
+            | Repr::Map(_)
+            | Repr::Obj(_)
+            | Repr::Fn(_)
+            | Repr::Html
+            | Repr::Attr => b.ins().load(types::I64, flags, at, 0),
         };
         Val { v, ty: repr }
     }
@@ -4392,9 +4423,14 @@ impl<'a> Body<'a> {
         let word = match v.ty {
             Repr::Float => self.normalise(v.v, b),
             Repr::Bool => b.ins().uextend(types::I64, v.v),
-            Repr::Int | Repr::Str | Repr::List(_) | Repr::Map(_) | Repr::Obj(_) | Repr::Fn(_) => {
-                v.v
-            }
+            Repr::Int
+            | Repr::Str
+            | Repr::List(_)
+            | Repr::Map(_)
+            | Repr::Obj(_)
+            | Repr::Fn(_)
+            | Repr::Html
+            | Repr::Attr => v.v,
         };
         let at = self.word_addr(off, slot, b, m);
         b.ins().store(MemFlagsData::trusted(), word, at, 0);
@@ -4878,9 +4914,9 @@ impl<'a> Body<'a> {
                     | Repr::List(_)
                     | Repr::Map(_)
                     | Repr::Obj(_)
-                    | Repr::Fn(_) => {
-                        Err(format!("`{}` on a value that is not a number", op.name()))
-                    }
+                    | Repr::Fn(_)
+                    | Repr::Html
+                    | Repr::Attr => Err(format!("`{}` on a value that is not a number", op.name())),
                 }
             }
             Prim::Div | Prim::Rem => {
@@ -4918,7 +4954,9 @@ impl<'a> Body<'a> {
                     | Repr::List(_)
                     | Repr::Map(_)
                     | Repr::Obj(_)
-                    | Repr::Fn(_) => Err("`negate` on a value that is not a number".into()),
+                    | Repr::Fn(_)
+                    | Repr::Html
+                    | Repr::Attr => Err("`negate` on a value that is not a number".into()),
                 }
             }
             Prim::Abs => {
@@ -4942,7 +4980,9 @@ impl<'a> Body<'a> {
                     | Repr::List(_)
                     | Repr::Map(_)
                     | Repr::Obj(_)
-                    | Repr::Fn(_) => Err("`abs` on a value that is not a number".into()),
+                    | Repr::Fn(_)
+                    | Repr::Html
+                    | Repr::Attr => Err("`abs` on a value that is not a number".into()),
                 }
             }
             Prim::Sqrt => {
@@ -5104,7 +5144,8 @@ impl<'a> Body<'a> {
                 let f = m.declare_func_in_func(id, b.func);
                 let call = b.ins().call(f, &[vals[0].v, word]);
                 let found = b.inst_results(call)[0];
-                self.wants(Repr::List(at));
+                self.wants(Repr::List(at))
+                    .map_err(|why| format!("`{}` over {why}", op.name()))?;
                 if op == Prim::ListContains {
                     return Ok(Val {
                         v: b.ins()
@@ -5225,7 +5266,8 @@ impl<'a> Body<'a> {
                 if vals[1].ty != key {
                     return Err(format!("`{}` with a key of another type", op.name()));
                 }
-                self.wants(Repr::Map(at));
+                self.wants(Repr::Map(at))
+                    .map_err(|why| format!("`{}` over {why}", op.name()))?;
                 let word = self.widen(&vals[1], b);
                 let sig = compare_signature(m);
                 let id = m
@@ -5351,7 +5393,8 @@ impl<'a> Body<'a> {
                 // wrote, so nothing else would have asked for their comparison — and recording the
                 // index is what makes the module generate it.
                 let at = self.heap.word_of(key);
-                self.list_compared.insert(at);
+                self.wants(Repr::List(at))
+                    .map_err(|why| format!("`{}` by a key that is {why}", op.name()))?;
                 let r = self.list_loop(Loop::Sort, fam, &[vals[0].v, vals[1].v], span, b, m)?;
                 Ok(Val {
                     v: r,
@@ -5373,8 +5416,117 @@ impl<'a> Body<'a> {
                     ty: Repr::Bool,
                 })
             }
+            // The five that build a page: an allocation and some stores, because what goes in the
+            // arena is the *call* rather than the tree. See `beck_llvm::heap::Repr::Html`, and the
+            // LLVM emitter's five arms, which this is written twice with on purpose
+            // (`docs/97` §97.3).
+            Prim::HtmlEl => {
+                arity(3, &vals)?;
+                let (attrs, children) = self.view_lists()?;
+                if vals[0].ty != Repr::Str {
+                    return Err("`html_el` with a tag that is not text".into());
+                }
+                if vals[1].ty != Repr::List(attrs) {
+                    return Err("`html_el` with attributes that are not a `list[Attr]`".into());
+                }
+                if vals[2].ty != Repr::List(children) {
+                    return Err("`html_el` with children that are not a `list[Html]`".into());
+                }
+                let off = self.alloc(heap::NODE_WORDS * heap::WORD, span, b, m);
+                let tag = b.ins().iconst(types::I64, heap::HTML_ELEMENT as i64);
+                self.store_word(off, 0, tag, b, m);
+                for (slot, v) in vals.clone().into_iter().enumerate() {
+                    self.store_field(off, slot + 1, &v, b, m);
+                }
+                Ok(Val {
+                    v: off,
+                    ty: Repr::Html,
+                })
+            }
+            Prim::HtmlText => {
+                arity(1, &vals)?;
+                // A child that is already a tree is spliced rather than rendered, which is the
+                // evaluator's own arm — and here it needs no node at all.
+                if vals[0].ty == Repr::Html {
+                    return Ok(vals[0]);
+                }
+                let v = vals[0];
+                self.node(Repr::Html, heap::HTML_TEXT, None, Some(&v), span, b, m)
+            }
+            Prim::HtmlAttr | Prim::HtmlOn => {
+                arity(2, &vals)?;
+                if vals[0].ty != Repr::Str {
+                    return Err(format!("`{}` with a name that is not text", op.name()));
+                }
+                let tag = if op == Prim::HtmlAttr {
+                    heap::ATTR_PLAIN
+                } else {
+                    heap::ATTR_ON
+                };
+                let (name, value) = (vals[0], vals[1]);
+                self.node(Repr::Attr, tag, Some(&name), Some(&value), span, b, m)
+            }
+            Prim::HtmlKey => {
+                arity(1, &vals)?;
+                let v = vals[0];
+                self.node(Repr::Attr, heap::ATTR_KEY, None, Some(&v), span, b, m)
+            }
             other => Err(refusal(other)),
         }
+    }
+
+    /// The `list[Attr]` and `list[Html]` reprs, resolving `Html` first if nothing has.
+    fn view_lists(&mut self) -> Result<(u32, u32), String> {
+        self.repr(&beck_core::ty::Ty::html())?;
+        self.heap
+            .html_lists()
+            .ok_or_else(|| "a view node in a module with no view in it".to_string())
+    }
+
+    /// One view node or attribute: four words, a tag, a name for the two shapes that have one, and
+    /// a deferred value for the four that have one. The LLVM emitter's `node`, twice over.
+    #[allow(clippy::too_many_arguments)] // a tag, two optional words, and the three the emitter threads
+    fn node(
+        &mut self,
+        ty: Repr,
+        tag: u64,
+        name: Option<&Val>,
+        deferred: Option<&Val>,
+        span: Span,
+        b: &mut FunctionBuilder<'_>,
+        m: &mut ObjectModule,
+    ) -> Result<Val, String> {
+        if let Some(v) = deferred {
+            Heap::crossing(v.ty)
+                .map_err(|why| format!("puts {why} in a page, and a page is read by the host"))?;
+        }
+        self.view_lists()?;
+        let off = self.alloc(heap::NODE_WORDS * heap::WORD, span, b, m);
+        let word = b.ins().iconst(types::I64, tag as i64);
+        self.store_word(off, 0, word, b, m);
+        match name {
+            Some(v) => self.store_field(off, 1, v, b, m),
+            None => {
+                let z = b.ins().iconst(types::I64, 0);
+                self.store_word(off, 1, z, b, m);
+            }
+        }
+        // The unused words are written rather than left as they were found: the whole used arena
+        // goes back down the pipe, and a word nobody reads is still a byte two runs would differ in.
+        match deferred {
+            Some(v) => {
+                let at = self.heap.word_of(v.ty);
+                let shape = b.ins().iconst(types::I64, i64::from(at));
+                self.store_word(off, heap::DEFERRED, shape, b, m);
+                self.store_field(off, heap::DEFERRED + 1, v, b, m);
+            }
+            None => {
+                let z = b.ins().iconst(types::I64, 0);
+                self.store_word(off, heap::DEFERRED, z, b, m);
+                self.store_word(off, heap::DEFERRED + 1, z, b, m);
+            }
+        }
+        Ok(Val { v: off, ty })
     }
 
     /// Insist an argument is a closure of the shape this primitive applies it at.
@@ -6111,8 +6263,14 @@ impl<'a> Body<'a> {
             // A reference decides through the three-way comparison for whatever it refers to, and
             // `Repr::order` is the only place that names one — see its own documentation for the
             // three times a `_` arm swallowed a reference kind instead.
+            // Nothing to compare with: `Repr::order` names the reason and this is where a program
+            // that asked hears it.
+            heap::Order::Absent(why) => {
+                return Err(format!("compares {}, which is {why}", self.heap.show(a.ty)))
+            }
             heap::Order::Call(symbol) => {
-                self.wants(a.ty);
+                self.wants(a.ty)
+                    .map_err(|why| format!("compares {}, which is {why}", self.heap.show(a.ty)))?;
                 let sig = compare_signature(m);
                 let id = m
                     .declare_function(&symbol, Linkage::Local, &sig)
@@ -6155,7 +6313,13 @@ impl<'a> Body<'a> {
             }
             Repr::Bool => b.ins().uextend(types::I64, v.v),
             // Its offset, which is what a reference *is* here.
-            Repr::Str | Repr::List(_) | Repr::Map(_) | Repr::Obj(_) | Repr::Fn(_) => v.v,
+            Repr::Str
+            | Repr::List(_)
+            | Repr::Map(_)
+            | Repr::Obj(_)
+            | Repr::Fn(_)
+            | Repr::Html
+            | Repr::Attr => v.v,
         }
     }
 }

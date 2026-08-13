@@ -79,6 +79,18 @@ Newest first.
 
 ### The native backends
 
+- **A view arrives, as a recipe** ([`docs/109`](docs/109-a-view-arrives-as-a-recipe-report.md)): a
+  definition that returns `Html` compiles to both code generators. What goes in the arena is the
+  **call** `html_el(tag, attrs, children)` would have been given rather than the tree, and the host
+  bakes it with `beck_core::html::element` — the evaluator's own `html_el`, lifted out and called
+  from both. **650 → 688 definitions** compile across the tree, refusals go 768 → 730, and **21 of
+  the 32 corpus programs have a `view` that compiles**, `examples/todo.beck`'s among them. Gated by
+  `native.rs::the_two_backends_agree_on_views` (253 calls),
+  `cranelift.rs::the_three_backends_agree_on_views` (127), the `ui:` block's own pair, and
+  `a_page_costs_its_own_nodes_and_nothing_per_page` — 96 bytes a row and 504 a page at 100 rows and
+  at 800, a shape gate with no clock in it. **Not faster**: 0.80×–1.33× the tree-walker at two
+  sizes, and §109.6 says why that is the design rather than a constant to tune.
+
 - **The last two list primitives, and one of them was refused for a reason that is false.**
   `concat_lists` and `sort_by` compile on both backends, so **every** higher-order list primitive
   except `list_flat_map` now does. **619 → 646 definitions** compile across the tree and refusals go

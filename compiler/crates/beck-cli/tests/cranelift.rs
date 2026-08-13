@@ -47,6 +47,7 @@ use support::scalar::{
     REFUSED,
 };
 use support::textfix::{self, TEXT};
+use support::viewfix;
 
 /// One call may not take longer than this. Nothing here should come close; it is the difference
 /// between a red test and a hung suite.
@@ -1145,4 +1146,97 @@ fn both_code_generators_answer_for_the_same_wide_program() {
         clif.as_secs_f64() * 1000.0,
         text.as_secs_f64() * 1000.0
     );
+}
+
+/// Views, over all three backends.
+///
+/// `native.rs`'s sweep with the third implementation in it, and the reason it is worth running
+/// twice is `docs/97` §97.3's: the two emitters write these five primitives separately, and the
+/// only thing that says the subset is one subset is that the answers agree. A view is where that
+/// bites hardest, because a node in the arena is a *recipe* — four words whose meaning depends on
+/// a tag and on a repr index — so a backend that wrote the words in a different order would still
+/// produce a tree, and it would be the wrong one.
+#[test]
+fn the_three_backends_agree_on_views() {
+    linker!();
+    let all = All::over("views.beck", viewfix::VIEWS);
+    let cards = viewfix::cards();
+    let lists = viewfix::lists();
+    let mut compared = 0;
+
+    compared += all.agree("just_text", &viewfix::singles(&textfix::strings()));
+    compared += all.agree("a_number", &singles(&[0, 1, -1, i64::MAX, i64::MIN]));
+    compared += all.agree(
+        "a_flag",
+        &[vec![Value::Bool(true)], vec![Value::Bool(false)]],
+    );
+    compared += all.agree(
+        "a_real",
+        &[0.0, -0.0, 1.5, f64::INFINITY, f64::NAN]
+            .iter()
+            .map(|f| vec![Value::float(*f)])
+            .collect::<Vec<_>>(),
+    );
+    compared += all.agree("a_record", &viewfix::singles(&cards));
+    compared += all.agree("a_list", &viewfix::singles(&lists));
+    for name in [
+        "titled",
+        "maybe_done",
+        "ordered",
+        "keyed",
+        "keyed_number",
+        "handled",
+        "handled_nullary",
+        "wrapped",
+        "nested",
+        "one_attr",
+        "one_key",
+        "one_handler",
+        "panelled",
+    ] {
+        compared += all.agree(name, &viewfix::singles(&cards));
+    }
+    compared += all.agree("blank", &[vec![]]);
+    for name in ["rows", "attrs_from"] {
+        compared += all.agree(name, &viewfix::singles(&lists));
+    }
+    compared += all.agree("whole", &viewfix::with(&cards, &lists));
+
+    println!("{compared} view calls compared, and every backend agreed on every one");
+}
+
+/// The `ui:` block, over all three backends.
+#[test]
+fn the_three_backends_agree_on_a_ui_block() {
+    linker!();
+    let all = All::over("page.beck", viewfix::PAGE);
+    let lefts = [0i64, 1, 7];
+    let tuples: Vec<Vec<Value>> = viewfix::todos()
+        .iter()
+        .flat_map(|ts| lefts.iter().map(move |n| vec![ts.clone(), Value::Int(*n)]))
+        .collect();
+    let compared = all.agree("page", &tuples);
+    println!("{compared} `ui:` pages compared, and every backend agreed on every one");
+}
+
+/// The two emitters accept and refuse the same views.
+///
+/// `docs/97` §97.3's assertion, one type over: the subset is written twice, so the thing to check
+/// is that both wrote the same one. A view is the case where the two halves could most easily
+/// drift, because neither generates a runtime function for it — there is nothing to link against
+/// that would notice.
+#[test]
+fn the_two_emitters_agree_on_which_views_compile() {
+    for (name, src) in [("views.beck", viewfix::VIEWS), ("page.beck", viewfix::PAGE)] {
+        let program = compile(name, src);
+        let llvm = beck_llvm::module(&program);
+        let clif = beck_clif::emit::module(&program).expect("emits");
+        let names =
+            |fs: &[beck_llvm::Signature]| fs.iter().map(|f| f.name.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            names(&llvm.functions),
+            names(&clif.functions),
+            "the two emitters disagree about which of `{name}`'s definitions compile"
+        );
+    }
 }

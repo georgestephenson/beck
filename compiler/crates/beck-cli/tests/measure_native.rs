@@ -940,3 +940,124 @@ fn the_two_code_generators_against_each_other() {
          for. Neither is asserted (docs/13 §13.7)."
     );
 }
+
+/// What a page costs against the tree-walker, and it is the row this feature has to be honest
+/// about.
+///
+/// A compiled `view` does not render anything: what it builds is the *call*, and the host bakes the
+/// tree out of it on the way back (`docs/109`). So the work is divided rather than removed — the
+/// program's own logic is compiled and every leaf's rendering is still `Value::display` in the
+/// host, plus a pipe in the middle that the evaluator does not have. The two sizes are what
+/// separate a constant from a growth (`AGENTS.md`), and nothing here is asserted to be **faster**:
+/// what is asserted is that the ratio does not *collapse* with size, which is what a recipe that
+/// copied the children built so far would do.
+#[test]
+fn what_a_page_costs_against_the_tree_walker() {
+    const SRC: &str = r#"
+model Row:
+    id: Str
+    text: Str
+    done: Bool
+
+union Command:
+    Toggle(id: Str)
+
+## The `ui:` block `examples/todo.beck` has, at whatever size it is given.
+def page(rows: list[Row]) -> Html:
+    return ui:
+        ul:
+            for r in rows:
+                li(key=r.id, class=done_class(r)):
+                    span(on_click=Toggle(id=r.id)): r.text
+
+def done_class(r: Row) -> Str:
+    return "done" if r.done else ""
+
+## The same page with nothing deferred but text, so the row above can be read against one where no
+## handler has to become JSON.
+def plain(rows: list[Row]) -> Html:
+    return ui:
+        ul:
+            for r in rows:
+                li: r.text
+"#;
+    let program = compile("page.beck", SRC);
+    let Some(artifact) = Artifact::build_within(&program, Duration::from_secs(300))
+        .expect("clang accepts the module")
+    else {
+        assert!(
+            !require_llvm(),
+            "BECK_REQUIRE_LLVM=1 and there is no `clang` on the path"
+        );
+        println!("skipped: no LLVM toolchain. Set BECK_REQUIRE_LLVM=1 to make this a failure.");
+        return;
+    };
+    let evaluator = beck_eval::backend_for(program.clone());
+    println!("{}\n", artifact.toolchain().version);
+    println!(
+        "{:<14} {:>10} {:>14} {:>14} {:>9}",
+        "page", "rows", "evaluator", "native", "ratio"
+    );
+
+    let rows = |n: usize| {
+        Value::List(Arc::new(
+            (0..n)
+                .map(|i| {
+                    Value::record(
+                        "Row",
+                        None,
+                        [
+                            ("id", Value::str_(format!("r{i}"))),
+                            ("text", Value::str_("something to do")),
+                            ("done", Value::Bool(i % 2 == 0)),
+                        ],
+                    )
+                })
+                .collect::<Vec<_>>(),
+        ))
+    };
+    let mut seen: Vec<(&str, f64, f64)> = Vec::new();
+    for name in ["page", "plain"] {
+        let mut ratios = [0.0f64; 2];
+        for (i, size) in [200usize, 1_600].iter().enumerate() {
+            let args = vec![rows(*size)];
+            let runs = if i == 0 { 7 } else { 3 };
+            let walked = beck_eval::on_the_evaluator_stack(|| {
+                let f = evaluator
+                    .function(&program.defs[name].body)
+                    .expect("prepares");
+                median(runs, || {
+                    f(args.clone()).expect("the evaluator answers");
+                })
+            });
+            let compiled = median(runs, || {
+                artifact
+                    .call(name, &args)
+                    .expect("the native backend answers");
+            });
+            ratios[i] = walked.as_secs_f64() / compiled.as_secs_f64();
+            println!(
+                "{:<14} {:>10} {:>14} {:>14} {:>8.2}×",
+                if i == 0 { name } else { "" },
+                size,
+                format!("{walked:?}"),
+                format!("{compiled:?}"),
+                ratios[i]
+            );
+        }
+        seen.push((name, ratios[0], ratios[1]));
+    }
+    println!(
+        "\n  Neither row is asserted to be faster. A compiled `view` builds the call and the host\n  \
+         bakes the tree, so the rendering is the same `Value::display` either way and the pipe is\n  \
+         additional — `docs/109` §109.6. What is asserted is that the ratio holds its shape over\n  \
+         eight times the rows, because a page that copied what it had built would lose it."
+    );
+    for (name, small, large) in &seen {
+        assert!(
+            large / small > 0.5,
+            "`{name}` was {small:.2}× at 200 rows and {large:.2}× at 1,600 — the ratio collapsed, \
+             which is what a page whose cost is quadratic in its rows looks like"
+        );
+    }
+}

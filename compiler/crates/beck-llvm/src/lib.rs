@@ -16,9 +16,11 @@
 //!
 //! # What this is not
 //!
-//! Not a general backend. Text, collections, closures and every effect are still the tree-walker's,
-//! so a view that builds `Html` and a fold that keeps a `Map` do not compile; `beck run` and `beck
-//! up` are unchanged. There is no collector either — the arena is reset per call
+//! Not a general backend. Every **effect** is still the tree-walker's, and so is every operation
+//! that *grows* a collection — `list_append` and `map_insert` are refused rather than shipped with a
+//! worse asymptote than the evaluator's, which is why a fold that keeps a `Map` still does not
+//! compile. Text, collections, closures and a view do; `beck run` and `beck up` are unchanged.
+//! There is no collector either — the arena is reset per call
 //! ([`adr/0026`](../../../../docs/adr/0026-the-native-heap-is-an-arena-of-offsets.md)).
 //!
 //! # Using it

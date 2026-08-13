@@ -48,6 +48,7 @@ use support::scalar::{
     REFUSED,
 };
 use support::textfix::{self, TEXT};
+use support::viewfix;
 
 /// One call may not take longer than this. Nothing here should come close; it is the difference
 /// between a red test and a hung suite.
@@ -154,6 +155,15 @@ impl Both {
             outcome(f(args.to_vec()))
         });
         (evaluated, outcome(self.native.call(name, args)))
+    }
+
+    /// What the *evaluator* answers, for a test that needs a value only it can build.
+    ///
+    /// The one caller is the view differential, which hands a compiled definition a tree the
+    /// tree-walker made: an argument this backend cannot construct is exactly the argument worth
+    /// passing, because the encoder is the half of the boundary nothing else exercises.
+    fn evaluated(&self, name: &str, args: &[Value]) -> Result<Value, String> {
+        self.call(name, args).0
     }
 
     /// Assert the two agree on every tuple, and answer how many were compared.
@@ -1360,19 +1370,21 @@ fn a_slice_costs_its_answer_and_not_the_string_it_came_from() {
     assert_eq!(one[0], PER_CHARACTER);
 }
 
-/// A corpus program's **fold** compiles, which is what the collections were for.
+/// A corpus program's **fold** and its **page** compile, by name and over the whole corpus.
 ///
 /// `apply_event` is a `durable` fold's step function — `(State, Envelope[Event]) -> State` — and
-/// until `docs/107` its state was a `Map` and so it could not. This asserts it by name over the
-/// whole corpus rather than as a count in a report, and asserts the other side too: `view` is still
-/// refused, because a page is `Html`.
+/// until `docs/107` its state was a `Map` and so it could not. `view` is `(State, Session) -> Html`
+/// and until `docs/109` a page had no shape at all; this test asserted it was refused, and that row
+/// moved here rather than being deleted, which is what the refusal lists in this file are for.
 ///
-/// The set is a floor rather than an equality. A corpus program acquiring a fold that compiles
-/// should not turn this red; a corpus program *losing* one should.
+/// Both sets are floors rather than equalities. A corpus program acquiring one should not turn this
+/// red; a corpus program *losing* one should. The other side is below: something in the corpus is
+/// still refused, so this cannot pass by everything compiling.
 #[test]
 fn a_corpus_fold_compiles() {
     let mut folded: Vec<String> = Vec::new();
     let mut viewed: Vec<String> = Vec::new();
+    let mut refused: Vec<String> = Vec::new();
     for path in corpus_programs() {
         let src = std::fs::read_to_string(&path).expect("a corpus program");
         let name = path
@@ -1390,19 +1402,31 @@ fn a_corpus_fold_compiles() {
         if module.signature("view").is_some() {
             viewed.push(name);
         }
+        refused.extend(module.refusals.iter().map(|r| r.reason.clone()));
     }
     assert!(
         folded.len() >= 9,
         "at least nine corpus folds compiled when `docs/107` was written, and {} do now: {folded:?}",
         folded.len()
     );
-    // The other side, so this is not passing because everything compiles: a page is `Html`, which
-    // follows the collections and is not on this heap.
     assert!(
-        viewed.is_empty(),
-        "a corpus `view` compiled, and `Html` has no layout: {viewed:?}"
+        viewed.len() >= 21,
+        "twenty-one corpus pages compiled when `docs/109` was written, and {} do now: {viewed:?}",
+        viewed.len()
     );
-    println!("{} corpus folds compile natively: {folded:?}", folded.len());
+    // The other side, so this is not passing because everything compiles. What is still refused
+    // across the corpus is a collection that **grows**, which is `docs/107` §107.4's decision
+    // rather than a gap — and the day it stops being refused this line is the one to rewrite.
+    assert!(
+        refused.iter().any(|r| r.contains("grows a map")),
+        "no corpus definition was refused for growing a map, and this test would then be \
+         asserting that everything compiles: {refused:?}"
+    );
+    println!(
+        "{} corpus folds and {} corpus pages compile natively: {folded:?} / {viewed:?}",
+        folded.len(),
+        viewed.len()
+    );
 }
 
 /// A lookup costs the same whatever the map holds, and the gate has no clock in it.
@@ -2214,4 +2238,211 @@ fn the_subset_is_decided_without_a_toolchain() {
             refusal.name
         );
     }
+}
+
+/// A page, compiled — and the tree it bakes into is the tree the evaluator built.
+///
+/// This is the differential over `docs/109`'s recipe. What crosses the pipe is the *call* rather
+/// than the tree, so the assertion that matters is not that the bytes arrived: it is that
+/// `beck_core::html::element` and `Value`'s equality — which includes every structural hash — say
+/// the two trees are one. A recipe that dropped an attribute in the wrong place, kept a key as an
+/// attribute, or folded two attributes in the other order renders identically and fails here.
+#[test]
+fn the_two_backends_agree_on_views() {
+    let _ = toolchain!();
+    let both = Both::over("views.beck", viewfix::VIEWS);
+    let cards = viewfix::cards();
+    let lists = viewfix::lists();
+    let mut compared = 0;
+
+    // A text node of every shape a value has here: the repr is a *datum* in this one place, and a
+    // wrong index reads the right word as the wrong thing.
+    compared += both.agree("just_text", &viewfix::singles(&textfix::strings()));
+    compared += both.agree("a_number", &singles(&[0, 1, -1, i64::MAX, i64::MIN]));
+    compared += both.agree(
+        "a_flag",
+        &[vec![Value::Bool(true)], vec![Value::Bool(false)]],
+    );
+    compared += both.agree(
+        "a_real",
+        &[0.0, -0.0, 1.5, f64::INFINITY, f64::NAN]
+            .iter()
+            .map(|f| vec![Value::float(*f)])
+            .collect::<Vec<_>>(),
+    );
+    compared += both.agree("a_record", &viewfix::singles(&cards));
+    compared += both.agree("a_list", &viewfix::singles(&lists));
+
+    // The elements, the attributes and the two rules that make a recipe and a tree differ.
+    for name in [
+        "titled",
+        "maybe_done",
+        "ordered",
+        "keyed",
+        "keyed_number",
+        "handled",
+        "handled_nullary",
+        "wrapped",
+        "nested",
+        "one_attr",
+        "one_key",
+        "one_handler",
+        "panelled",
+    ] {
+        compared += both.agree(name, &viewfix::singles(&cards));
+    }
+    compared += both.agree("blank", &[vec![]]);
+    for name in ["rows", "attrs_from"] {
+        compared += both.agree(name, &viewfix::singles(&lists));
+    }
+    compared += both.agree("whole", &viewfix::with(&cards, &lists));
+
+    // The direction nothing in a program needs: a baked tree back *in*, which the host has to
+    // write as a recipe whose leaves are text. Every argument here is a tree the evaluator built.
+    let mut trees: Vec<Value> = Vec::new();
+    for name in ["titled", "keyed", "handled", "nested"] {
+        for c in &cards {
+            trees.push(
+                both.evaluated(name, std::slice::from_ref(c))
+                    .expect("the evaluator builds it"),
+            );
+        }
+    }
+    trees.push(
+        both.evaluated("just_text", &[Value::str_("hello")])
+            .expect("the evaluator builds it"),
+    );
+    compared += both.agree("again", &viewfix::singles(&trees));
+    compared += both.agree("beside", &viewfix::with(&trees, &cards));
+
+    println!("{compared} view calls compared, LLVM against the tree-walker");
+    assert!(compared >= 200, "only {compared} calls compared");
+}
+
+/// The same page written with `ui:`, which is what a program actually contains.
+///
+/// `views.beck` exercises the five primitives; this exercises what the macro lowers to — a keyed
+/// list built by a loop, a conditional class that is empty on one branch, two handlers carrying
+/// records, and text built by `+` — and it is `examples/todo.beck`'s own `render` with the types
+/// inlined.
+#[test]
+fn a_ui_block_compiles_and_agrees() {
+    let _ = toolchain!();
+    let both = Both::over("page.beck", viewfix::PAGE);
+    let lefts = [0i64, 1, 7];
+    let tuples: Vec<Vec<Value>> = viewfix::todos()
+        .iter()
+        .flat_map(|ts| lefts.iter().map(move |n| vec![ts.clone(), Value::Int(*n)]))
+        .collect();
+    let compared = both.agree("page", &tuples);
+    println!("{compared} `ui:` pages compared, LLVM against the tree-walker");
+}
+
+/// What a view still cannot do, each with the reason a reader is given.
+///
+/// Every row is an **ordering**, and the reason is one sentence in `Repr::order`: a node in the
+/// arena is the call that builds a tree, so two of them can be ordered by what they render and not
+/// by what they are. The rows are three because the demand can arrive three ways — a search over a
+/// list of them, a record that holds one being compared, and `==` between two directly — and
+/// `Heap::ordered` is what has to walk to each.
+#[test]
+fn a_view_has_no_order_and_the_refusal_says_why() {
+    let program = compile("refused-views.beck", viewfix::REFUSED);
+    let module = beck_llvm::module(&program);
+    for name in ["sorted_views", "same_panel", "same_view"] {
+        let reason = module
+            .refusals
+            .iter()
+            .find(|r| &*r.name == name)
+            .unwrap_or_else(|| panic!("`{name}` compiled, and a view has no order"))
+            .reason
+            .clone();
+        assert!(
+            reason.contains("carried as the call that builds it"),
+            "the reason for refusing `{name}` should be the one `Repr::order` gives, and is \
+             {reason:?}"
+        );
+    }
+    // A record *holding* a view is refused only when it is compared: building one is fine, and a
+    // rule that refused the type outright would take a page's own model with it.
+    assert!(
+        module.signature("same_panel").is_none(),
+        "comparing a record with a view in it has no answer"
+    );
+
+    // …and the boundary's one directional rule, which is §109.3's and not §109.4's: an `Attr` may
+    // be answered with and may not be taken, because the host writes a handler back as the plain
+    // attribute it would become and a bare one has not become it yet.
+    for name in ["takes_an_attr", "takes_a_list_of_attrs"] {
+        let reason = module
+            .refusals
+            .iter()
+            .find(|r| &*r.name == name)
+            .unwrap_or_else(|| panic!("`{name}` compiled, and an `Attr` may not be taken"))
+            .reason
+            .clone();
+        assert!(
+            reason.contains("may answer with and may not take"),
+            "the reason for refusing `{name}` should be the directional one, and is {reason:?}"
+        );
+    }
+    // The other side of *that* rule, so it is not refusing the type outright: answering with one
+    // compiles, and so does taking a whole tree.
+    let built = compile("views.beck", viewfix::VIEWS);
+    let views = beck_llvm::module(&built);
+    for name in ["one_attr", "one_key", "one_handler", "again", "beside"] {
+        assert!(
+            views.signature(name).is_some(),
+            "`{name}` should compile: an `Attr` crosses outward and an `Html` crosses both ways"
+        );
+    }
+}
+
+/// What a page costs is a function of the page, and the gate has **no clock in it**.
+///
+/// `AGENTS.md`'s shape gate, for the one thing a recipe could most plausibly get wrong: a node
+/// holds two lists, so a builder that reallocated a list per child — or that copied the children
+/// built so far on every step — would be `O(n²)` in the arena and would still answer correctly at
+/// every size anybody would run in a test. The per-row cost is the whole assertion, and it must be
+/// the same number at 100 rows and at 800.
+///
+/// The constant is written down rather than derived, because deriving it here would be the layout
+/// spelled a second time (`beck_llvm::heap`'s own argument): a row is an `li` (four words), its
+/// empty attribute list (one), its child list (two), its text node (four) and the word it occupies
+/// in the page's own child list — twelve words, 96 bytes. What is left over is the page itself and
+/// the literal pool, and *that* number has to be the same at both sizes too, which is the half of
+/// this test a per-row division would hide.
+#[test]
+fn a_page_costs_its_own_nodes_and_nothing_per_page() {
+    let _ = toolchain!();
+    let both = Both::over("views.beck", viewfix::VIEWS);
+    const PER_ROW: usize = 96;
+    let mut sizes = Vec::new();
+    for n in [100usize, 800] {
+        let xs = viewfix::ints(&(0..n as i64).collect::<Vec<_>>());
+        let (_, bytes) = both.native.call_sized("rows", &[xs]).expect("runs");
+        // The argument list is in the arena too — a header and one word an element — and it is the
+        // page that is being measured.
+        sizes.push((n, bytes - heap_bytes(n + 1)));
+    }
+    let (small, big) = (sizes[0], sizes[1]);
+    let per = (big.1 - small.1) / (big.0 - small.0);
+    assert_eq!(
+        per, PER_ROW,
+        "a row costs {per} bytes and the layout says {PER_ROW}"
+    );
+    assert_eq!(
+        small.1 - PER_ROW * small.0,
+        big.1 - PER_ROW * big.0,
+        "the page itself should cost the same whatever is in it: {small:?} against {big:?}"
+    );
+    println!(
+        "a page of {} rows costs {} bytes of arena and a page of {} costs {} — {PER_ROW} bytes a \
+         row and {} bytes a page at both sizes",
+        small.0,
+        small.1,
+        big.0,
+        big.1,
+        small.1 - PER_ROW * small.0
+    );
 }

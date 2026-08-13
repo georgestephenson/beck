@@ -1327,10 +1327,12 @@ fn native(
             beck_llvm::Repr::List(_)
             | beck_llvm::Repr::Map(_)
             | beck_llvm::Repr::Obj(_)
-            | beck_llvm::Repr::Fn(_) => {
+            | beck_llvm::Repr::Fn(_)
+            | beck_llvm::Repr::Html
+            | beck_llvm::Repr::Attr => {
                 bail!(
-                    "`{name}` takes a collection or a record, and `--call` can only pass Int, \
-                     Float, Bool and Str"
+                    "`{name}` takes a collection, a record or a view, and `--call` can only pass \
+                     Int, Float, Bool and Str"
                 )
             }
         });

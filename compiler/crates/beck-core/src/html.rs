@@ -286,6 +286,63 @@ impl Html {
     }
 }
 
+/// The node `html_el(tag, attrs, children)` builds, out of the three values it is given.
+///
+/// **One function, two callers.** The evaluator reaches it from `Prim::HtmlEl`; the native heap's
+/// decoder reaches it because a compiled `view` answers with the *arguments* rather than with a
+/// tree — a `Str`, a list of attributes and a list of children — and the tree is built here on the
+/// way out. What lives in this function is not the assembly but the three rules that go with it:
+/// an attribute with an empty value is **dropped** rather than emitted, a handler becomes
+/// `data-b-<event>` carrying the command as JSON, and a key sets the node's key rather than an
+/// attribute. Each is a decision the differ downstream depends on, and a second spelling of any of
+/// them would be a compiled page that differs from an interpreted one in a way no type can catch.
+pub fn element(
+    tag: &crate::core::Value,
+    attrs: &[crate::core::Value],
+    children: &[crate::core::Value],
+) -> Result<Html, String> {
+    use crate::core::{AttrValue, Value as Val};
+
+    let mut el = Html::el(tag.display());
+    for a in attrs {
+        match a {
+            Val::Attr(at) => match &**at {
+                // An empty attribute value is dropped rather than emitted, so the differ has
+                // nothing to churn on — Phase 0's `attr_if`.
+                AttrValue::Plain(k, v) => {
+                    if !v.is_empty() {
+                        el = el.attr(k.to_string(), v.to_string());
+                    }
+                }
+                AttrValue::On(ev, cmd) => el = el.on(ev, cmd.to_json()),
+                AttrValue::Key(k) => el = el.key(k.to_string()),
+            },
+            other => return Err(format!("not an attribute: {}", other.display())),
+        }
+    }
+    for ch in children {
+        match ch.as_html() {
+            Some(h) => el = el.child(h.clone()),
+            None => return Err(format!("not an Html child: {}", ch.display())),
+        }
+    }
+    Ok(el)
+}
+
+/// The node `html_text(v)` builds: a tree that is *already* a tree is spliced, and anything else is
+/// its rendering as text.
+///
+/// The same two callers as [`element`], and the same reason: `ui:` lowers every non-element child
+/// through `html_text`, so "or Html" deciding differently in a compiled view than in an interpreted
+/// one would make a view composed out of functions render its parts as escaped markup in one
+/// backend and as markup in the other (`docs/94` §94.4).
+pub fn text_of(v: &crate::core::Value) -> Html {
+    match v {
+        crate::core::Value::Html(h) => (**h).clone(),
+        other => Html::text(other.display()),
+    }
+}
+
 fn escape_text_into(s: &str, out: &mut String) {
     for c in s.chars() {
         match c {

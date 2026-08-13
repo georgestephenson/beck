@@ -10,6 +10,7 @@ pub mod relfix;
 pub mod scalar;
 pub mod socket;
 pub mod textfix;
+pub mod viewfix;
 
 use std::sync::Arc;
 
