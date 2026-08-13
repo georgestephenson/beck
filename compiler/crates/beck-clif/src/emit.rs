@@ -590,8 +590,12 @@ fn beck_signature(sig: &Signature, ptr: Type) -> cranelift_codegen::ir::Signatur
 ///
 /// Hex-escaped rather than transliterated, for [`beck_llvm`]'s reason: identifiers are Unicode
 /// (`docs/44` §44.4) and a scheme that folded characters could give two definitions one symbol.
+///
+/// `beck.def.` and not `beck.`, for the reason `beck_llvm::emit::mangle` gives: everything either
+/// emitter generates for itself is `beck.<something>`, so a definition called `dispatch` used to
+/// take the dispatcher's own symbol.
 fn symbol(name: &str) -> String {
-    let mut out = String::from("beck.");
+    let mut out = String::from("beck.def.");
     for b in name.bytes() {
         match b {
             b'0'..=b'9' | b'A'..=b'Z' | b'a'..=b'z' | b'_' | b'.' => out.push(b as char),
@@ -2306,9 +2310,17 @@ impl Builds {
 /// makes `map_keys` and `map_values` one `memcpy` each into a fresh list.
 #[derive(Clone, Copy, Debug)]
 struct Maps {
-    alloc: FuncId,
-    len: FuncId,
-    /// `map_keys` and `map_values`: a run of the data area copied into a fresh list.
+    /// A subtree's size, which is `0` for the empty map and the root's first word otherwise.
+    size: FuncId,
+    /// A fresh node, its size summed from its children.
+    node: FuncId,
+    /// Adams's rebalance — see `beck_llvm::heap::MAP_NODE` and the LLVM emitter's `MAPS`.
+    balance: FuncId,
+    /// The `i`th entry in key order, by subtree size.
+    nth: FuncId,
+    /// The in-order walk that fills a list, told which word of a node to take.
+    into: FuncId,
+    /// `map_keys` and `map_values`: a fresh list of the map's size, filled by that walk.
     run: FuncId,
 }
 
@@ -2325,39 +2337,70 @@ impl Maps {
                 .map_err(|e| format!("declaring `{name}`: {e}"))
         };
         Ok(Maps {
-            alloc: one("beck.map.alloc", &[ptr, types::I64, types::I32], types::I64)?,
-            len: one("beck.map.len", &[types::I64], types::I64)?,
+            size: one("beck.map.size", &[types::I64], types::I64)?,
+            node: one(
+                "beck.map.node",
+                &[
+                    ptr,
+                    types::I64,
+                    types::I64,
+                    types::I64,
+                    types::I64,
+                    types::I32,
+                ],
+                types::I64,
+            )?,
+            balance: one(
+                "beck.map.balance",
+                &[
+                    ptr,
+                    types::I64,
+                    types::I64,
+                    types::I64,
+                    types::I64,
+                    types::I32,
+                ],
+                types::I64,
+            )?,
+            nth: one("beck.map.nth", &[types::I64, types::I64], types::I64)?,
+            into: one(
+                "beck.map.into",
+                &[types::I64, ptr, types::I64, types::I64],
+                types::I64,
+            )?,
             run: one(
                 "beck.map.run",
-                &[ptr, types::I64, types::I64, types::I64, types::I32],
+                &[ptr, types::I64, types::I64, types::I32],
                 types::I64,
             )?,
         })
     }
 
-    /// Where a map's keys start, as an address. The values start `n` words after them.
-    fn data(
+    /// One word of a node, by slot. Inline rather than a runtime function, because a load off a
+    /// known offset is what it is — the other emitter names them for the sake of reading its own
+    /// rotations, and this one has variables to name them with.
+    fn field(
         self,
         arena: Arena,
-        map: IrValue,
+        node: IrValue,
+        slot: usize,
         b: &mut FunctionBuilder<'_>,
         m: &mut ObjectModule,
     ) -> IrValue {
         let base = arena.base(b, m);
-        let at = b.ins().iadd(base, map);
-        b.ins().iadd_imm_s(at, heap::MAP_HEADER as i64)
+        let p = b.ins().iadd(base, node);
+        b.ins().load(
+            types::I64,
+            MemFlagsData::trusted(),
+            p,
+            (slot * heap::WORD as usize) as i32,
+        )
     }
 
-    fn count(
-        self,
-        arena: Arena,
-        map: IrValue,
-        b: &mut FunctionBuilder<'_>,
-        m: &mut ObjectModule,
-    ) -> IrValue {
-        let base = arena.base(b, m);
-        let p = b.ins().iadd(base, map);
-        b.ins().load(types::I64, MemFlagsData::trusted(), p, 0)
+    fn sized(self, node: IrValue, b: &mut FunctionBuilder<'_>, m: &mut ObjectModule) -> IrValue {
+        let f = m.declare_func_in_func(self.size, b.func);
+        let call = b.ins().call(f, &[node]);
+        b.inst_results(call)[0]
     }
 
     fn define(
@@ -2369,15 +2412,54 @@ impl Maps {
         fctx: &mut FunctionBuilderContext,
         ptr: Type,
     ) -> Result<(), String> {
-        let sig = Text::signature(m, &[ptr, types::I64, types::I32], types::I64);
-        Text::wrote(self.alloc, sig, 14, m, ctx, fctx, |b, m| {
+        // `size`: zero for the empty map, the root's first word otherwise.
+        let sig = Text::signature(m, &[types::I64], types::I64);
+        Text::wrote(self.size, sig, 15, m, ctx, fctx, |b, m| {
+            let entry = b.current_block().expect("an entry block");
+            let node = b.block_params(entry)[0];
+            let some = b.create_block();
+            let out = b.create_block();
+            b.append_block_param(out, types::I64);
+            let empty = b.ins().icmp_imm_s(IntCC::Equal, node, 0);
+            let zero = b.ins().iconst(types::I64, 0);
+            b.ins().brif(empty, out, &[zero.into()], some, &[]);
+            b.switch_to_block(some);
+            let base = arena.base(b, m);
+            let p = b.ins().iadd(base, node);
+            let n = b.ins().load(types::I64, MemFlagsData::trusted(), p, 0);
+            b.ins().jump(out, &[n.into()]);
+            b.switch_to_block(out);
+            let r = b.block_params(out)[0];
+            b.ins().return_(&[r]);
+        })?;
+
+        // `node`: five words, its size summed from its children.
+        let sig = Text::signature(
+            m,
+            &[
+                ptr,
+                types::I64,
+                types::I64,
+                types::I64,
+                types::I64,
+                types::I32,
+            ],
+            types::I64,
+        );
+        Text::wrote(self.node, sig, 14, m, ctx, fctx, |b, m| {
             let entry = b.current_block().expect("an entry block");
             let err = b.block_params(entry)[0];
-            let n = b.block_params(entry)[1];
-            let span = b.block_params(entry)[2];
-            let pairs = b.ins().imul_imm_s(n, 2 * heap::WORD as i64);
-            let total = b.ins().iadd_imm_s(pairs, heap::MAP_HEADER as i64);
+            let k = b.block_params(entry)[1];
+            let v = b.block_params(entry)[2];
+            let l = b.block_params(entry)[3];
+            let r = b.block_params(entry)[4];
+            let span = b.block_params(entry)[5];
+            let ls = self.sized(l, b, m);
+            let rs = self.sized(r, b, m);
+            let sub = b.ins().iadd(ls, rs);
+            let size = b.ins().iadd_imm_s(sub, 1);
             let f = arena.alloc_in(b, m);
+            let total = b.ins().iconst(types::I64, heap::MAP_NODE as i64);
             let call = b.ins().call(f, &[err, total, span]);
             let off = b.inst_results(call)[0];
             let fill = b.create_block();
@@ -2388,48 +2470,250 @@ impl Maps {
             b.switch_to_block(fill);
             let base = arena.base(b, m);
             let p = b.ins().iadd(base, off);
-            b.ins().store(MemFlagsData::trusted(), n, p, 0);
+            let flags = MemFlagsData::trusted();
+            let w = heap::WORD as i32;
+            b.ins().store(flags, size, p, 0);
+            b.ins().store(flags, k, p, w * heap::NODE_KEY as i32);
+            b.ins().store(flags, v, p, w * heap::NODE_VALUE as i32);
+            b.ins().store(flags, l, p, w * heap::NODE_LEFT as i32);
+            b.ins().store(flags, r, p, w * heap::NODE_RIGHT as i32);
             b.ins().jump(out, &[off.into()]);
             b.switch_to_block(out);
             let r = b.block_params(out)[0];
             b.ins().return_(&[r]);
         })?;
 
-        let sig = Text::signature(m, &[types::I64], types::I64);
-        Text::wrote(self.len, sig, 15, m, ctx, fctx, |b, m| {
-            let entry = b.current_block().expect("an entry block");
-            let map = b.block_params(entry)[0];
-            let n = self.count(arena, map, b, m);
-            b.ins().return_(&[n]);
-        })?;
-
+        // `balance`: Adams's four cases, with `beck_core::pmap`'s own DELTA and RATIO.
         let sig = Text::signature(
             m,
-            &[ptr, types::I64, types::I64, types::I64, types::I32],
+            &[
+                ptr,
+                types::I64,
+                types::I64,
+                types::I64,
+                types::I64,
+                types::I32,
+            ],
             types::I64,
         );
-        Text::wrote(self.run, sig, 16, m, ctx, fctx, |b, m| {
+        Text::wrote(self.balance, sig, 16, m, ctx, fctx, |b, m| {
+            let entry = b.current_block().expect("an entry block");
+            let err = b.block_params(entry)[0];
+            let k = b.block_params(entry)[1];
+            let v = b.block_params(entry)[2];
+            let l = b.block_params(entry)[3];
+            let r = b.block_params(entry)[4];
+            let span = b.block_params(entry)[5];
+            let out = b.create_block();
+            b.append_block_param(out, types::I64);
+            let plain = |k: IrValue,
+                         v: IrValue,
+                         l: IrValue,
+                         r: IrValue,
+                         b: &mut FunctionBuilder<'_>,
+                         m: &mut ObjectModule| {
+                let f = m.declare_func_in_func(self.node, b.func);
+                let call = b.ins().call(f, &[err, k, v, l, r, span]);
+                b.inst_results(call)[0]
+            };
+
+            let ls = self.sized(l, b, m);
+            let rs = self.sized(r, b, m);
+            let tot = b.ins().iadd(ls, rs);
+            let tiny = b.ins().icmp_imm_s(IntCC::UnsignedLessThanOrEqual, tot, 1);
+            let flat = b.create_block();
+            let ask_right = b.create_block();
+            b.ins().brif(tiny, flat, &[], ask_right, &[]);
+
+            b.switch_to_block(flat);
+            let one = plain(k, v, l, r, b, m);
+            b.ins().jump(out, &[one.into()]);
+
+            b.switch_to_block(ask_right);
+            let ld = b.ins().imul_imm_s(ls, heap::DELTA as i64);
+            let heavy_r = b.ins().icmp(IntCC::UnsignedGreaterThan, rs, ld);
+            let left_rot = b.create_block();
+            let ask_left = b.create_block();
+            b.ins().brif(heavy_r, left_rot, &[], ask_left, &[]);
+
+            b.switch_to_block(left_rot);
+            let rk = self.field(arena, r, heap::NODE_KEY, b, m);
+            let rv = self.field(arena, r, heap::NODE_VALUE, b, m);
+            let rl = self.field(arena, r, heap::NODE_LEFT, b, m);
+            let rr = self.field(arena, r, heap::NODE_RIGHT, b, m);
+            let rls = self.sized(rl, b, m);
+            let rrs = self.sized(rr, b, m);
+            let rrx = b.ins().imul_imm_s(rrs, heap::RATIO as i64);
+            let single = b.ins().icmp(IntCC::UnsignedLessThan, rls, rrx);
+            let single_left = b.create_block();
+            let double_left = b.create_block();
+            b.ins().brif(single, single_left, &[], double_left, &[]);
+
+            b.switch_to_block(single_left);
+            let inner = plain(k, v, l, rl, b, m);
+            let sl = plain(rk, rv, inner, rr, b, m);
+            b.ins().jump(out, &[sl.into()]);
+
+            b.switch_to_block(double_left);
+            let rlk = self.field(arena, rl, heap::NODE_KEY, b, m);
+            let rlv = self.field(arena, rl, heap::NODE_VALUE, b, m);
+            let rll = self.field(arena, rl, heap::NODE_LEFT, b, m);
+            let rlr = self.field(arena, rl, heap::NODE_RIGHT, b, m);
+            let a = plain(k, v, l, rll, b, m);
+            let c = plain(rk, rv, rlr, rr, b, m);
+            let dl = plain(rlk, rlv, a, c, b, m);
+            b.ins().jump(out, &[dl.into()]);
+
+            b.switch_to_block(ask_left);
+            let rd = b.ins().imul_imm_s(rs, heap::DELTA as i64);
+            let heavy_l = b.ins().icmp(IntCC::UnsignedGreaterThan, ls, rd);
+            let right_rot = b.create_block();
+            let settled = b.create_block();
+            b.ins().brif(heavy_l, right_rot, &[], settled, &[]);
+
+            b.switch_to_block(settled);
+            let same = plain(k, v, l, r, b, m);
+            b.ins().jump(out, &[same.into()]);
+
+            b.switch_to_block(right_rot);
+            let lk = self.field(arena, l, heap::NODE_KEY, b, m);
+            let lv = self.field(arena, l, heap::NODE_VALUE, b, m);
+            let ll = self.field(arena, l, heap::NODE_LEFT, b, m);
+            let lr = self.field(arena, l, heap::NODE_RIGHT, b, m);
+            let lls = self.sized(ll, b, m);
+            let lrs = self.sized(lr, b, m);
+            let llx = b.ins().imul_imm_s(lls, heap::RATIO as i64);
+            let single_r = b.ins().icmp(IntCC::UnsignedLessThan, lrs, llx);
+            let single_right = b.create_block();
+            let double_right = b.create_block();
+            b.ins().brif(single_r, single_right, &[], double_right, &[]);
+
+            b.switch_to_block(single_right);
+            let inner = plain(k, v, lr, r, b, m);
+            let sr = plain(lk, lv, ll, inner, b, m);
+            b.ins().jump(out, &[sr.into()]);
+
+            b.switch_to_block(double_right);
+            let lrk = self.field(arena, lr, heap::NODE_KEY, b, m);
+            let lrv = self.field(arena, lr, heap::NODE_VALUE, b, m);
+            let lrl = self.field(arena, lr, heap::NODE_LEFT, b, m);
+            let lrr = self.field(arena, lr, heap::NODE_RIGHT, b, m);
+            let a = plain(lk, lv, ll, lrl, b, m);
+            let c = plain(k, v, lrr, r, b, m);
+            let dr = plain(lrk, lrv, a, c, b, m);
+            b.ins().jump(out, &[dr.into()]);
+
+            b.switch_to_block(out);
+            let answer = b.block_params(out)[0];
+            b.ins().return_(&[answer]);
+        })?;
+
+        // `nth`: down the tree by subtree size.
+        let sig = Text::signature(m, &[types::I64, types::I64], types::I64);
+        Text::wrote(self.nth, sig, 17, m, ctx, fctx, |b, m| {
+            let entry = b.current_block().expect("an entry block");
+            let root = b.block_params(entry)[0];
+            let want = b.block_params(entry)[1];
+            let node = b.declare_var(types::I64);
+            let idx = b.declare_var(types::I64);
+            b.def_var(node, root);
+            b.def_var(idx, want);
+            let loop_ = b.create_block();
+            b.ins().jump(loop_, &[]);
+
+            b.switch_to_block(loop_);
+            let probe = b.create_block();
+            let out = b.create_block();
+            b.append_block_param(out, types::I64);
+            let n = b.use_var(node);
+            let empty = b.ins().icmp_imm_s(IntCC::Equal, n, 0);
+            let zero = b.ins().iconst(types::I64, 0);
+            b.ins().brif(empty, out, &[zero.into()], probe, &[]);
+
+            b.switch_to_block(probe);
+            let step = b.create_block();
+            let i = b.use_var(idx);
+            let l = self.field(arena, n, heap::NODE_LEFT, b, m);
+            let ls = self.sized(l, b, m);
+            let here = b.ins().icmp(IntCC::Equal, i, ls);
+            b.ins().brif(here, out, &[n.into()], step, &[]);
+
+            b.switch_to_block(step);
+            let down = b.ins().icmp(IntCC::UnsignedLessThan, i, ls);
+            let r = self.field(arena, n, heap::NODE_RIGHT, b, m);
+            let next = b.ins().select(down, l, r);
+            let past = b.ins().iadd_imm_s(ls, 1);
+            let rest = b.ins().isub(i, past);
+            let i1 = b.ins().select(down, i, rest);
+            b.def_var(node, next);
+            b.def_var(idx, i1);
+            b.ins().jump(loop_, &[]);
+
+            b.switch_to_block(out);
+            let answer = b.block_params(out)[0];
+            b.ins().return_(&[answer]);
+        })?;
+
+        // `into`: the in-order walk, recursive, told which word to take.
+        let sig = Text::signature(m, &[types::I64, ptr, types::I64, types::I64], types::I64);
+        Text::wrote(self.into, sig, 18, m, ctx, fctx, |b, m| {
+            let entry = b.current_block().expect("an entry block");
+            let node = b.block_params(entry)[0];
+            let dst = b.block_params(entry)[1];
+            let i = b.block_params(entry)[2];
+            let slot = b.block_params(entry)[3];
+            let walk = b.create_block();
+            let out = b.create_block();
+            b.append_block_param(out, types::I64);
+            let empty = b.ins().icmp_imm_s(IntCC::Equal, node, 0);
+            b.ins().brif(empty, out, &[i.into()], walk, &[]);
+
+            b.switch_to_block(walk);
+            let me = m.declare_func_in_func(self.into, b.func);
+            let l = self.field(arena, node, heap::NODE_LEFT, b, m);
+            let call = b.ins().call(me, &[l, dst, i, slot]);
+            let i1 = b.inst_results(call)[0];
+            let base = arena.base(b, m);
+            let p = b.ins().iadd(base, node);
+            let off = b.ins().imul_imm_s(slot, heap::WORD as i64);
+            let at = b.ins().iadd(p, off);
+            let w = b.ins().load(types::I64, MemFlagsData::trusted(), at, 0);
+            let step = b.ins().imul_imm_s(i1, heap::WORD as i64);
+            let cell = b.ins().iadd(dst, step);
+            b.ins().store(MemFlagsData::trusted(), w, cell, 0);
+            let i2 = b.ins().iadd_imm_s(i1, 1);
+            let me = m.declare_func_in_func(self.into, b.func);
+            let r = self.field(arena, node, heap::NODE_RIGHT, b, m);
+            let call = b.ins().call(me, &[r, dst, i2, slot]);
+            let i3 = b.inst_results(call)[0];
+            b.ins().jump(out, &[i3.into()]);
+
+            b.switch_to_block(out);
+            let answer = b.block_params(out)[0];
+            b.ins().return_(&[answer]);
+        })?;
+
+        // `run`: a fresh list of the map's size, filled by the walk.
+        let sig = Text::signature(m, &[ptr, types::I64, types::I64, types::I32], types::I64);
+        Text::wrote(self.run, sig, 19, m, ctx, fctx, |b, m| {
             let entry = b.current_block().expect("an entry block");
             let err = b.block_params(entry)[0];
             let map = b.block_params(entry)[1];
-            let from = b.block_params(entry)[2];
-            let count = b.block_params(entry)[3];
-            let span = b.block_params(entry)[4];
+            let slot = b.block_params(entry)[2];
+            let span = b.block_params(entry)[3];
+            let n = self.sized(map, b, m);
             let f = m.declare_func_in_func(lists.alloc, b.func);
-            let call = b.ins().call(f, &[err, count, span]);
+            let call = b.ins().call(f, &[err, n, span]);
             let r = b.inst_results(call)[0];
-            let move_ = b.create_block();
+            let fill = b.create_block();
             let out = b.create_block();
             let failed = b.ins().icmp_imm_s(IntCC::Equal, r, 0);
-            b.ins().brif(failed, out, &[], move_, &[]);
-            b.switch_to_block(move_);
-            let pr = lists.data(arena, r, b, m);
-            let pm = self.data(arena, map, b, m);
-            let skip = b.ins().imul_imm_s(from, heap::WORD as i64);
-            let at = b.ins().iadd(pm, skip);
-            let bytes = b.ins().imul_imm_s(count, heap::WORD as i64);
-            let config = m.target_config();
-            b.call_memcpy(config, pr, at, bytes);
+            b.ins().brif(failed, out, &[], fill, &[]);
+            b.switch_to_block(fill);
+            let dst = lists.data(arena, r, b, m);
+            let me = m.declare_func_in_func(self.into, b.func);
+            let zero = b.ins().iconst(types::I64, 0);
+            b.ins().call(me, &[map, dst, zero, slot]);
             b.ins().jump(out, &[]);
             b.switch_to_block(out);
             b.ins().return_(&[r]);
@@ -2437,11 +2721,11 @@ impl Maps {
     }
 }
 
-/// The two functions a map of a given key and value repr needs, generated per repr.
+/// The functions a map of a given key and value repr needs, generated per repr.
 ///
-/// A **binary search** rather than the linear one a list gets, because the keys are in key order
-/// and `map_get` is what a fold does on every event. And `PMap`'s order over two maps: pair by pair
-/// in key order — key first, then value — and then by length.
+/// A `Map` is a weight-balanced tree (`beck_llvm::heap::MAP_NODE`), and everything that *moves*
+/// nodes is one function for the whole module — only the ones that **compare** are per repr. That is
+/// the search, the insert, the delete and the two-map order, plus the delete's two helpers.
 fn map_functions(
     at: u32,
     heap: &Heap,
@@ -2460,170 +2744,413 @@ fn map_functions(
         m.declare_function(&format!("beck.elem.cmp.{i}"), Linkage::Local, &sig)
             .map_err(|e| format!("declaring a comparison: {e}"))
     };
-
-    // The binary search: the half-open window `[lo, hi)`, unsigned because both ends are counts.
-    let sig = compare_signature(m);
-    let find = m
-        .declare_function(&format!("beck.map.find.{at}"), Linkage::Local, &sig)
-        .map_err(|e| format!("declaring a search: {e}"))?;
+    let ptr = m.isa().pointer_type();
     let key_cmp = elem(key, m)?;
-    ctx.func = Function::with_name_signature(UserFuncName::user(11, at), sig);
-    {
-        let mut b = FunctionBuilder::new(&mut ctx.func, fctx);
-        let entry = b.create_block();
-        b.append_block_params_for_function_params(entry);
-        b.switch_to_block(entry);
-        b.seal_block(entry);
-        let (map, k) = (b.block_params(entry)[0], b.block_params(entry)[1]);
-        let n = maps.count(arena, map, &mut b, m);
-        let p = maps.data(arena, map, &mut b, m);
-        let lo = b.declare_var(types::I64);
-        let hi = b.declare_var(types::I64);
-        let zero = b.ins().iconst(types::I64, 0);
-        b.def_var(lo, zero);
-        b.def_var(hi, n);
+    let value_cmp = elem(value, m)?;
+    let one = |m: &mut ObjectModule, name: String, params: &[Type]| -> Result<FuncId, String> {
+        let mut sig =
+            cranelift_codegen::ir::Signature::new(CallConv::triple_default(m.isa().triple()));
+        for p in params {
+            sig.params.push(AbiParam::new(*p));
+        }
+        sig.returns.push(AbiParam::new(types::I64));
+        m.declare_function(&name, Linkage::Local, &sig)
+            .map_err(|e| format!("declaring `{name}`: {e}"))
+    };
+    let find = one(m, format!("beck.map.find.{at}"), &[types::I64, types::I64])?;
+    let ins = one(
+        m,
+        format!("beck.map.ins.{at}"),
+        &[ptr, types::I64, types::I64, types::I64, types::I32],
+    )?;
+    let min = one(m, format!("beck.map.min.{at}"), &[types::I64])?;
+    let pop = one(
+        m,
+        format!("beck.map.pop.{at}"),
+        &[ptr, types::I64, types::I32],
+    )?;
+    let del = one(
+        m,
+        format!("beck.map.del.{at}"),
+        &[ptr, types::I64, types::I64, types::I32],
+    )?;
+    let merge = one(
+        m,
+        format!("beck.map.merge.{at}"),
+        &[ptr, types::I64, types::I64, types::I32],
+    )?;
+    let cmp = one(m, format!("beck.map.cmp.{at}"), &[types::I64, types::I64])?;
+
+    // The search: down the tree, comparing keys. Answers the node, or 0.
+    let sig = compare_signature(m);
+    Text::wrote(find, sig, 40 + at, m, ctx, fctx, |b, m| {
+        let entry = b.current_block().expect("an entry block");
+        let (root, k) = (b.block_params(entry)[0], b.block_params(entry)[1]);
+        let node = b.declare_var(types::I64);
+        b.def_var(node, root);
         let loop_ = b.create_block();
         b.ins().jump(loop_, &[]);
 
         b.switch_to_block(loop_);
         let probe = b.create_block();
-        let missing = b.create_block();
-        let l = b.use_var(lo);
-        let h = b.use_var(hi);
-        let done = b.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, l, h);
-        b.ins().brif(done, missing, &[], probe, &[]);
+        let out = b.create_block();
+        b.append_block_param(out, types::I64);
+        let n = b.use_var(node);
+        let empty = b.ins().icmp_imm_s(IntCC::Equal, n, 0);
+        let zero = b.ins().iconst(types::I64, 0);
+        b.ins().brif(empty, out, &[zero.into()], probe, &[]);
 
         b.switch_to_block(probe);
-        let found = b.create_block();
-        b.append_block_param(found, types::I64);
-        let again = b.create_block();
-        let span = b.ins().isub(h, l);
-        let half = b.ins().ushr_imm_s(span, 1);
-        let mid = b.ins().iadd(l, half);
-        let off = b.ins().imul_imm_s(mid, heap::WORD as i64);
-        let cell = b.ins().iadd(p, off);
-        let w = b.ins().load(types::I64, MemFlagsData::trusted(), cell, 0);
+        let step = b.create_block();
+        let nk = maps.field(arena, n, heap::NODE_KEY, b, m);
         let f = m.declare_func_in_func(key_cmp, b.func);
-        let call = b.ins().call(f, &[w, k]);
+        let call = b.ins().call(f, &[k, nk]);
         let c = b.inst_results(call)[0];
         let hit = b.ins().icmp_imm_s(IntCC::Equal, c, 0);
-        b.ins().brif(hit, found, &[mid.into()], again, &[]);
+        b.ins().brif(hit, out, &[n.into()], step, &[]);
 
-        b.switch_to_block(again);
-        let less = b.ins().icmp_imm_s(IntCC::SignedLessThan, c, 0);
-        let mid1 = b.ins().iadd_imm_s(mid, 1);
-        let lo1 = b.ins().select(less, mid1, l);
-        let hi1 = b.ins().select(less, h, mid);
-        b.def_var(lo, lo1);
-        b.def_var(hi, hi1);
+        b.switch_to_block(step);
+        let down = b.ins().icmp_imm_s(IntCC::SignedLessThan, c, 0);
+        let l = maps.field(arena, n, heap::NODE_LEFT, b, m);
+        let r = maps.field(arena, n, heap::NODE_RIGHT, b, m);
+        let next = b.ins().select(down, l, r);
+        b.def_var(node, next);
         b.ins().jump(loop_, &[]);
 
-        b.switch_to_block(missing);
-        let none = b.ins().iconst(types::I64, -1);
-        b.ins().jump(found, &[none.into()]);
+        b.switch_to_block(out);
+        let answer = b.block_params(out)[0];
+        b.ins().return_(&[answer]);
+    })?;
 
-        b.switch_to_block(found);
-        let r = b.block_params(found)[0];
-        b.ins().return_(&[r]);
-        b.seal_all_blocks();
-        b.finalize(m.target_config());
-    }
-    m.define_function(find, ctx)
-        .map_err(|e| format!("defining a search: {e}"))?;
-    m.clear_context(ctx);
+    // `map_insert`: rebuild the path, share everything off it, rebalance on the way out.
+    let sig = Text::signature(
+        m,
+        &[ptr, types::I64, types::I64, types::I64, types::I32],
+        types::I64,
+    );
+    Text::wrote(ins, sig, 4_000 + at, m, ctx, fctx, |b, m| {
+        let entry = b.current_block().expect("an entry block");
+        let err = b.block_params(entry)[0];
+        let root = b.block_params(entry)[1];
+        let k = b.block_params(entry)[2];
+        let v = b.block_params(entry)[3];
+        let span = b.block_params(entry)[4];
+        let walk = b.create_block();
+        let out = b.create_block();
+        b.append_block_param(out, types::I64);
+        let empty = b.ins().icmp_imm_s(IntCC::Equal, root, 0);
+        let fresh = b.create_block();
+        b.ins().brif(empty, fresh, &[], walk, &[]);
 
-    // `PMap`'s order: pair by pair in key order, then by length.
+        b.switch_to_block(fresh);
+        let f = m.declare_func_in_func(maps.node, b.func);
+        let zero = b.ins().iconst(types::I64, 0);
+        let call = b.ins().call(f, &[err, k, v, zero, zero, span]);
+        let leaf = b.inst_results(call)[0];
+        b.ins().jump(out, &[leaf.into()]);
+
+        b.switch_to_block(walk);
+        let mk = maps.field(arena, root, heap::NODE_KEY, b, m);
+        let mv = maps.field(arena, root, heap::NODE_VALUE, b, m);
+        let ml = maps.field(arena, root, heap::NODE_LEFT, b, m);
+        let mr = maps.field(arena, root, heap::NODE_RIGHT, b, m);
+        let f = m.declare_func_in_func(key_cmp, b.func);
+        let call = b.ins().call(f, &[k, mk]);
+        let c = b.inst_results(call)[0];
+        let go_left = b.create_block();
+        let not_less = b.create_block();
+        let lt = b.ins().icmp_imm_s(IntCC::SignedLessThan, c, 0);
+        b.ins().brif(lt, go_left, &[], not_less, &[]);
+
+        b.switch_to_block(go_left);
+        let me = m.declare_func_in_func(ins, b.func);
+        let call = b.ins().call(me, &[err, ml, k, v, span]);
+        let nl = b.inst_results(call)[0];
+        let f = m.declare_func_in_func(maps.balance, b.func);
+        let call = b.ins().call(f, &[err, mk, mv, nl, mr, span]);
+        let bl = b.inst_results(call)[0];
+        b.ins().jump(out, &[bl.into()]);
+
+        b.switch_to_block(not_less);
+        let go_right = b.create_block();
+        let replace = b.create_block();
+        let gt = b.ins().icmp_imm_s(IntCC::SignedGreaterThan, c, 0);
+        b.ins().brif(gt, go_right, &[], replace, &[]);
+
+        b.switch_to_block(go_right);
+        let me = m.declare_func_in_func(ins, b.func);
+        let call = b.ins().call(me, &[err, mr, k, v, span]);
+        let nr = b.inst_results(call)[0];
+        let f = m.declare_func_in_func(maps.balance, b.func);
+        let call = b.ins().call(f, &[err, mk, mv, ml, nr, span]);
+        let br = b.inst_results(call)[0];
+        b.ins().jump(out, &[br.into()]);
+
+        // The *new* key as well as the new value, which is the evaluator's `Ordering::Equal` arm.
+        b.switch_to_block(replace);
+        let f = m.declare_func_in_func(maps.node, b.func);
+        let call = b.ins().call(f, &[err, k, v, ml, mr, span]);
+        let same = b.inst_results(call)[0];
+        b.ins().jump(out, &[same.into()]);
+
+        b.switch_to_block(out);
+        let answer = b.block_params(out)[0];
+        b.ins().return_(&[answer]);
+    })?;
+
+    // The leftmost node of a subtree, which is its smallest key.
+    let sig = Text::signature(m, &[types::I64], types::I64);
+    Text::wrote(min, sig, 5_000 + at, m, ctx, fctx, |b, m| {
+        let entry = b.current_block().expect("an entry block");
+        let root = b.block_params(entry)[0];
+        let node = b.declare_var(types::I64);
+        b.def_var(node, root);
+        let loop_ = b.create_block();
+        b.ins().jump(loop_, &[]);
+        b.switch_to_block(loop_);
+        let down = b.create_block();
+        let out = b.create_block();
+        b.append_block_param(out, types::I64);
+        let n = b.use_var(node);
+        let l = maps.field(arena, n, heap::NODE_LEFT, b, m);
+        let none = b.ins().icmp_imm_s(IntCC::Equal, l, 0);
+        b.ins().brif(none, out, &[n.into()], down, &[]);
+        b.switch_to_block(down);
+        b.def_var(node, l);
+        b.ins().jump(loop_, &[]);
+        b.switch_to_block(out);
+        let answer = b.block_params(out)[0];
+        b.ins().return_(&[answer]);
+    })?;
+
+    // The subtree with its smallest node taken out, rebalanced on the way.
+    let sig = Text::signature(m, &[ptr, types::I64, types::I32], types::I64);
+    Text::wrote(pop, sig, 6_000 + at, m, ctx, fctx, |b, m| {
+        let entry = b.current_block().expect("an entry block");
+        let err = b.block_params(entry)[0];
+        let root = b.block_params(entry)[1];
+        let span = b.block_params(entry)[2];
+        let deeper = b.create_block();
+        let out = b.create_block();
+        b.append_block_param(out, types::I64);
+        let l = maps.field(arena, root, heap::NODE_LEFT, b, m);
+        let r = maps.field(arena, root, heap::NODE_RIGHT, b, m);
+        let none = b.ins().icmp_imm_s(IntCC::Equal, l, 0);
+        b.ins().brif(none, out, &[r.into()], deeper, &[]);
+
+        b.switch_to_block(deeper);
+        let me = m.declare_func_in_func(pop, b.func);
+        let call = b.ins().call(me, &[err, l, span]);
+        let nl = b.inst_results(call)[0];
+        let k = maps.field(arena, root, heap::NODE_KEY, b, m);
+        let v = maps.field(arena, root, heap::NODE_VALUE, b, m);
+        let f = m.declare_func_in_func(maps.balance, b.func);
+        let call = b.ins().call(f, &[err, k, v, nl, r, span]);
+        let bal = b.inst_results(call)[0];
+        b.ins().jump(out, &[bal.into()]);
+
+        b.switch_to_block(out);
+        let answer = b.block_params(out)[0];
+        b.ins().return_(&[answer]);
+    })?;
+
+    // `map_remove`: the same path rebuild, with the two-child case joined by the right subtree's
+    // smallest node.
+    let sig = Text::signature(m, &[ptr, types::I64, types::I64, types::I32], types::I64);
+    Text::wrote(del, sig, 7_000 + at, m, ctx, fctx, |b, m| {
+        let entry = b.current_block().expect("an entry block");
+        let err = b.block_params(entry)[0];
+        let root = b.block_params(entry)[1];
+        let k = b.block_params(entry)[2];
+        let span = b.block_params(entry)[3];
+        let walk = b.create_block();
+        let out = b.create_block();
+        b.append_block_param(out, types::I64);
+        let empty = b.ins().icmp_imm_s(IntCC::Equal, root, 0);
+        let zero = b.ins().iconst(types::I64, 0);
+        b.ins().brif(empty, out, &[zero.into()], walk, &[]);
+
+        b.switch_to_block(walk);
+        let mk = maps.field(arena, root, heap::NODE_KEY, b, m);
+        let mv = maps.field(arena, root, heap::NODE_VALUE, b, m);
+        let ml = maps.field(arena, root, heap::NODE_LEFT, b, m);
+        let mr = maps.field(arena, root, heap::NODE_RIGHT, b, m);
+        let f = m.declare_func_in_func(key_cmp, b.func);
+        let call = b.ins().call(f, &[k, mk]);
+        let c = b.inst_results(call)[0];
+        let go_left = b.create_block();
+        let not_less = b.create_block();
+        let lt = b.ins().icmp_imm_s(IntCC::SignedLessThan, c, 0);
+        b.ins().brif(lt, go_left, &[], not_less, &[]);
+
+        b.switch_to_block(go_left);
+        let me = m.declare_func_in_func(del, b.func);
+        let call = b.ins().call(me, &[err, ml, k, span]);
+        let nl = b.inst_results(call)[0];
+        let f = m.declare_func_in_func(maps.balance, b.func);
+        let call = b.ins().call(f, &[err, mk, mv, nl, mr, span]);
+        let bl = b.inst_results(call)[0];
+        b.ins().jump(out, &[bl.into()]);
+
+        b.switch_to_block(not_less);
+        let go_right = b.create_block();
+        let here = b.create_block();
+        let gt = b.ins().icmp_imm_s(IntCC::SignedGreaterThan, c, 0);
+        b.ins().brif(gt, go_right, &[], here, &[]);
+
+        b.switch_to_block(go_right);
+        let me = m.declare_func_in_func(del, b.func);
+        let call = b.ins().call(me, &[err, mr, k, span]);
+        let nr = b.inst_results(call)[0];
+        let f = m.declare_func_in_func(maps.balance, b.func);
+        let call = b.ins().call(f, &[err, mk, mv, ml, nr, span]);
+        let br = b.inst_results(call)[0];
+        b.ins().jump(out, &[br.into()]);
+
+        b.switch_to_block(here);
+        let maybe = b.create_block();
+        let no_left = b.ins().icmp_imm_s(IntCC::Equal, ml, 0);
+        b.ins().brif(no_left, out, &[mr.into()], maybe, &[]);
+
+        b.switch_to_block(maybe);
+        let join = b.create_block();
+        let no_right = b.ins().icmp_imm_s(IntCC::Equal, mr, 0);
+        b.ins().brif(no_right, out, &[ml.into()], join, &[]);
+
+        b.switch_to_block(join);
+        let f = m.declare_func_in_func(min, b.func);
+        let call = b.ins().call(f, &[mr]);
+        let least = b.inst_results(call)[0];
+        let lk = maps.field(arena, least, heap::NODE_KEY, b, m);
+        let lv = maps.field(arena, least, heap::NODE_VALUE, b, m);
+        let f = m.declare_func_in_func(pop, b.func);
+        let call = b.ins().call(f, &[err, mr, span]);
+        let rest = b.inst_results(call)[0];
+        let f = m.declare_func_in_func(maps.balance, b.func);
+        let call = b.ins().call(f, &[err, lk, lv, ml, rest, span]);
+        let joined = b.inst_results(call)[0];
+        b.ins().jump(out, &[joined.into()]);
+
+        b.switch_to_block(out);
+        let answer = b.block_params(out)[0];
+        b.ins().return_(&[answer]);
+    })?;
+
+    // `map_merge`: every entry of the second inserted into the first, so the later map wins.
+    let sig = Text::signature(m, &[ptr, types::I64, types::I64, types::I32], types::I64);
+    Text::wrote(merge, sig, 8_000 + at, m, ctx, fctx, |b, m| {
+        let entry = b.current_block().expect("an entry block");
+        let err = b.block_params(entry)[0];
+        let a = b.block_params(entry)[1];
+        let other = b.block_params(entry)[2];
+        let span = b.block_params(entry)[3];
+        let n = maps.sized(other, b, m);
+        let i = b.declare_var(types::I64);
+        let acc = b.declare_var(types::I64);
+        let zero = b.ins().iconst(types::I64, 0);
+        b.def_var(i, zero);
+        b.def_var(acc, a);
+        let loop_ = b.create_block();
+        b.ins().jump(loop_, &[]);
+
+        b.switch_to_block(loop_);
+        let step = b.create_block();
+        let out = b.create_block();
+        b.append_block_param(out, types::I64);
+        let at_i = b.use_var(i);
+        let carried = b.use_var(acc);
+        let past = b.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, at_i, n);
+        b.ins().brif(past, out, &[carried.into()], step, &[]);
+
+        b.switch_to_block(step);
+        let f = m.declare_func_in_func(maps.nth, b.func);
+        let call = b.ins().call(f, &[other, at_i]);
+        let node = b.inst_results(call)[0];
+        let k = maps.field(arena, node, heap::NODE_KEY, b, m);
+        let v = maps.field(arena, node, heap::NODE_VALUE, b, m);
+        let f = m.declare_func_in_func(ins, b.func);
+        let call = b.ins().call(f, &[err, carried, k, v, span]);
+        let next = b.inst_results(call)[0];
+        let j = b.ins().iadd_imm_s(at_i, 1);
+        b.def_var(i, j);
+        b.def_var(acc, next);
+        b.ins().jump(loop_, &[]);
+
+        b.switch_to_block(out);
+        let answer = b.block_params(out)[0];
+        b.ins().return_(&[answer]);
+    })?;
+
+    // Two maps in key order: the key, then the value, entry by entry, then the sizes.
     let sig = compare_signature(m);
-    let cmp = m
-        .declare_function(&format!("beck.map.cmp.{at}"), Linkage::Local, &sig)
-        .map_err(|e| format!("declaring a comparison: {e}"))?;
-    let value_cmp = elem(value, m)?;
-    ctx.func = Function::with_name_signature(UserFuncName::user(12, at), sig);
-    {
-        let mut b = FunctionBuilder::new(&mut ctx.func, fctx);
-        let entry = b.create_block();
-        b.append_block_params_for_function_params(entry);
-        b.switch_to_block(entry);
-        b.seal_block(entry);
+    Text::wrote(cmp, sig, 9_000 + at, m, ctx, fctx, |b, m| {
+        let entry = b.current_block().expect("an entry block");
         let (ma, mb) = (b.block_params(entry)[0], b.block_params(entry)[1]);
-        let la = maps.count(arena, ma, &mut b, m);
-        let lb = maps.count(arena, mb, &mut b, m);
+        let la = maps.sized(ma, b, m);
+        let lb = maps.sized(mb, b, m);
         let shorter = b.ins().icmp(IntCC::UnsignedLessThan, la, lb);
         let n = b.ins().select(shorter, la, lb);
-        let pa = maps.data(arena, ma, &mut b, m);
-        let pb = maps.data(arena, mb, &mut b, m);
         let i = b.declare_var(types::I64);
         let zero = b.ins().iconst(types::I64, 0);
         b.def_var(i, zero);
         let loop_ = b.create_block();
         b.ins().jump(loop_, &[]);
 
-        let answer = b.create_block();
-        b.append_block_param(answer, types::I64);
-
         b.switch_to_block(loop_);
         let keys = b.create_block();
         let lengths = b.create_block();
-        let k = b.use_var(i);
-        let past = b.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, k, n);
+        let out = b.create_block();
+        b.append_block_param(out, types::I64);
+        let at_i = b.use_var(i);
+        let past = b.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, at_i, n);
         b.ins().brif(past, lengths, &[], keys, &[]);
 
         b.switch_to_block(keys);
         let values = b.create_block();
-        let flags = MemFlagsData::trusted();
-        let off = b.ins().imul_imm_s(k, heap::WORD as i64);
-        let ka = b.ins().iadd(pa, off);
-        let kb = b.ins().iadd(pb, off);
-        let wka = b.ins().load(types::I64, flags, ka, 0);
-        let wkb = b.ins().load(types::I64, flags, kb, 0);
+        let f = m.declare_func_in_func(maps.nth, b.func);
+        let call = b.ins().call(f, &[ma, at_i]);
+        let na = b.inst_results(call)[0];
+        let f = m.declare_func_in_func(maps.nth, b.func);
+        let call = b.ins().call(f, &[mb, at_i]);
+        let nb = b.inst_results(call)[0];
+        let ka = maps.field(arena, na, heap::NODE_KEY, b, m);
+        let kb = maps.field(arena, nb, heap::NODE_KEY, b, m);
         let f = m.declare_func_in_func(key_cmp, b.func);
-        let call = b.ins().call(f, &[wka, wkb]);
+        let call = b.ins().call(f, &[ka, kb]);
         let ck = b.inst_results(call)[0];
         let decided = b.ins().icmp_imm_s(IntCC::NotEqual, ck, 0);
-        b.ins().brif(decided, answer, &[ck.into()], values, &[]);
+        b.ins().brif(decided, out, &[ck.into()], values, &[]);
 
-        // The values start `la` words after the keys in `a` and `lb` words after them in `b`.
         b.switch_to_block(values);
         let next = b.create_block();
-        let ia = b.ins().iadd(k, la);
-        let ib = b.ins().iadd(k, lb);
-        let oa = b.ins().imul_imm_s(ia, heap::WORD as i64);
-        let ob = b.ins().imul_imm_s(ib, heap::WORD as i64);
-        let va = b.ins().iadd(pa, oa);
-        let vb = b.ins().iadd(pb, ob);
-        let wva = b.ins().load(types::I64, flags, va, 0);
-        let wvb = b.ins().load(types::I64, flags, vb, 0);
+        let va = maps.field(arena, na, heap::NODE_VALUE, b, m);
+        let vb = maps.field(arena, nb, heap::NODE_VALUE, b, m);
         let f = m.declare_func_in_func(value_cmp, b.func);
-        let call = b.ins().call(f, &[wva, wvb]);
+        let call = b.ins().call(f, &[va, vb]);
         let cv = b.inst_results(call)[0];
         let decided = b.ins().icmp_imm_s(IntCC::NotEqual, cv, 0);
-        b.ins().brif(decided, answer, &[cv.into()], next, &[]);
+        b.ins().brif(decided, out, &[cv.into()], next, &[]);
 
         b.switch_to_block(next);
-        let j = b.ins().iadd_imm_s(k, 1);
+        let j = b.ins().iadd_imm_s(at_i, 1);
         b.def_var(i, j);
         b.ins().jump(loop_, &[]);
 
+        // Equal as far as both go, so the smaller map is the smaller value.
         b.switch_to_block(lengths);
         let lt = b.ins().icmp(IntCC::UnsignedLessThan, la, lb);
         let gt = b.ins().icmp(IntCC::UnsignedGreaterThan, la, lb);
-        let down = b.ins().iconst(types::I64, -1);
         let up = b.ins().iconst(types::I64, 1);
-        let z = b.ins().iconst(types::I64, 0);
-        let high = b.ins().select(gt, up, z);
+        let down = b.ins().iconst(types::I64, -1);
+        let zero = b.ins().iconst(types::I64, 0);
+        let high = b.ins().select(gt, up, zero);
         let r = b.ins().select(lt, down, high);
-        b.ins().jump(answer, &[r.into()]);
+        b.ins().jump(out, &[r.into()]);
 
-        b.switch_to_block(answer);
-        let out = b.block_params(answer)[0];
-        b.ins().return_(&[out]);
-        b.seal_all_blocks();
-        b.finalize(m.target_config());
-    }
-    m.define_function(cmp, ctx)
-        .map_err(|e| format!("defining a comparison: {e}"))?;
-    m.clear_context(ctx);
-    Ok(())
+        b.switch_to_block(out);
+        let answer = b.block_params(out)[0];
+        b.ins().return_(&[answer]);
+    })
 }
 
 /// The three functions a list of a given element repr needs, generated per repr.
@@ -5471,7 +5998,8 @@ impl<'a> Body<'a> {
             Prim::MapLen => {
                 arity(1, &vals)?;
                 self.map_arg(&vals[0], op)?;
-                let n = self.maps().count(self.arena(), vals[0].v, b, m);
+                let maps = self.maps();
+                let n = maps.sized(vals[0].v, b, m);
                 Ok(Val {
                     v: n,
                     ty: Repr::Int,
@@ -5497,12 +6025,72 @@ impl<'a> Body<'a> {
                 let found = b.inst_results(call)[0];
                 if op == Prim::MapContains {
                     return Ok(Val {
-                        v: b.ins()
-                            .icmp_imm_s(IntCC::SignedGreaterThanOrEqual, found, 0),
+                        v: b.ins().icmp_imm_s(IntCC::NotEqual, found, 0),
                         ty: Repr::Bool,
                     });
                 }
                 self.map_get(ty, &vals[0], found, span, b, m)
+            }
+            // The three that grow a map: a path rebuild over `docs/112`'s tree. See the LLVM
+            // emitter's arms.
+            Prim::MapInsert | Prim::MapRemove | Prim::MapMerge => {
+                arity(
+                    match op {
+                        Prim::MapInsert => 3,
+                        _ => 2,
+                    },
+                    &vals,
+                )?;
+                let at = self.map_arg(&vals[0], op)?;
+                let (k, v) = self.heap.entry(at);
+                self.wants(Repr::Map(at))
+                    .map_err(|why| format!("`{}` over {why}", op.name()))?;
+                let name = match op {
+                    Prim::MapInsert => format!("beck.map.ins.{at}"),
+                    Prim::MapRemove => format!("beck.map.del.{at}"),
+                    _ => format!("beck.map.merge.{at}"),
+                };
+                let ptr = m.isa().pointer_type();
+                let mut args = vec![vals[0].v];
+                let mut params = vec![ptr, types::I64];
+                if op == Prim::MapMerge {
+                    if vals[1].ty != vals[0].ty {
+                        return Err("`map_merge` of two maps of different types".into());
+                    }
+                    args.push(vals[1].v);
+                    params.push(types::I64);
+                } else {
+                    if vals[1].ty != self.heap.element(k) {
+                        return Err(format!("`{}` with a key of another type", op.name()));
+                    }
+                    let kw = self.widen(&vals[1], b);
+                    args.push(kw);
+                    params.push(types::I64);
+                    if op == Prim::MapInsert {
+                        if vals[2].ty != self.heap.element(v) {
+                            return Err("`map_insert` with a value of another type".into());
+                        }
+                        let vw = self.widen(&vals[2], b);
+                        args.push(vw);
+                        params.push(types::I64);
+                    }
+                }
+                params.push(types::I32);
+                let mut sig = cranelift_codegen::ir::Signature::new(CallConv::triple_default(
+                    m.isa().triple(),
+                ));
+                for p in &params {
+                    sig.params.push(AbiParam::new(*p));
+                }
+                sig.returns.push(AbiParam::new(types::I64));
+                let id = m
+                    .declare_function(&name, Linkage::Local, &sig)
+                    .map_err(|e| format!("declaring `{name}`: {e}"))?;
+                let out = self.build_call(id, &args, span, b, m);
+                Ok(Val {
+                    v: out.v,
+                    ty: vals[0].ty,
+                })
             }
             Prim::MapKeys | Prim::MapValues => {
                 arity(1, &vals)?;
@@ -6185,20 +6773,11 @@ impl<'a> Body<'a> {
         let (option, some, none, slot, bytes) = self.option_of(ty, value)?;
         let maps = self.maps();
         let arena = self.arena();
-        let n = maps.count(arena, map.v, b, m);
-        let inside = b
-            .ins()
-            .icmp_imm_s(IntCC::SignedGreaterThanOrEqual, found, 0);
-        let zero = b.ins().iconst(types::I64, 0);
-        let safe = b.ins().select(inside, found, zero);
-        let at = b.ins().iadd(safe, n);
-        let data = maps.data(arena, map.v, b, m);
-        let off = b.ins().imul_imm_s(at, heap::WORD as i64);
-        let cell = b.ins().iadd(data, off);
-        let base = arena.base(b, m);
-        let header = b.ins().iadd(base, map.v);
-        let addr = b.ins().select(inside, cell, header);
-        let w = b.ins().load(types::I64, MemFlagsData::trusted(), addr, 0);
+        let _ = map;
+        // The search answers a node or `0`, and reading the value word of node `0` reads the
+        // arena's first bytes rather than past its end — `list_get`'s trick, one type over.
+        let inside = b.ins().icmp_imm_s(IntCC::NotEqual, found, 0);
+        let w = maps.field(arena, found, heap::NODE_VALUE, b, m);
 
         let out = self.alloc(bytes, span, b, m);
         let some = b.ins().iconst(types::I64, i64::from(some));
@@ -6229,15 +6808,19 @@ impl<'a> Body<'a> {
             ));
         }
         let maps = self.maps();
-        let arena = self.arena();
-        let n = maps.count(arena, map.v, b, m);
-        let zero = b.ins().iconst(types::I64, 0);
-        let from = if op == Prim::MapKeys { zero } else { n };
+        // Which word of a node to take: the key or the value, which is the only thing the two
+        // walks differ by.
+        let which = if op == Prim::MapKeys {
+            heap::NODE_KEY
+        } else {
+            heap::NODE_VALUE
+        };
+        let slot = b.ins().iconst(types::I64, which as i64);
         let idx = self.span(span);
         let span = b.ins().iconst(types::I32, i64::from(idx));
         let err = self.err();
         let f = m.declare_func_in_func(maps.run, b.func);
-        let call = b.ins().call(f, &[err, map.v, from, n, span]);
+        let call = b.ins().call(f, &[err, map.v, slot, span]);
         let r = b.inst_results(call)[0];
         self.check_call(b);
         Ok(Val { v: r, ty: repr })
@@ -6250,7 +6833,7 @@ impl<'a> Body<'a> {
         kvs: &[(Core, Core)],
         span: Span,
         b: &mut FunctionBuilder<'_>,
-        m: &mut ObjectModule,
+        _m: &mut ObjectModule,
     ) -> Result<Val, String> {
         let repr = self
             .repr(ty)
@@ -6265,9 +6848,10 @@ impl<'a> Body<'a> {
                     .into(),
             );
         }
-        let off = self.alloc(heap::map_bytes(0), span, b, m);
-        let zero = b.ins().iconst(types::I64, 0);
-        self.store_word(off, 0, zero, b, m);
+        // An empty map is the offset `0`, which is the one offset no live object has — so `{}`
+        // allocates nothing at all.
+        let _ = span;
+        let off = b.ins().iconst(types::I64, 0);
         Ok(Val { v: off, ty: repr })
     }
 
@@ -6733,10 +7317,6 @@ fn refusal(op: Prim) -> String {
         // The same rule `list_append` gets, one type over: the evaluator's `PMap` shares everything
         // it did not touch and rebuilds one path, and a sorted run in an arena has to copy all of
         // it.
-        Prim::MapInsert | Prim::MapRemove | Prim::MapMerge => {
-            "grows a map, and a sorted run in an arena has to be copied whole where the \
-             evaluator's tree rebuilds one path"
-        }
         // The higher-order half compiles, `sort_by` included — so what is left of it is the one
         // that grows a list.
         Prim::ListFlatMap => {

@@ -2184,13 +2184,72 @@ impl<'a> Function<'a> {
                 ));
                 if op == Prim::MapContains {
                     let r = self.fresh();
-                    self.line(format!("{r} = icmp sge i64 {found}, 0"));
+                    self.line(format!("{r} = icmp ne i64 {found}, 0"));
                     return Ok(Val {
                         text: r,
                         ty: Repr::Bool,
                     });
                 }
                 self.map_get(ty, &vals[0], &found, self.heap.element(v), span)
+            }
+            // The three that grow a map. Refused until `docs/112` because a sorted run has to be
+            // copied whole; a tree rebuilds the path and shares the rest, which is
+            // `beck_core::pmap`'s own cost.
+            Prim::MapInsert | Prim::MapRemove => {
+                arity(if op == Prim::MapInsert { 3 } else { 2 })?;
+                let at = self.map_arg(&vals[0], op)?;
+                let (k, v) = self.heap.entry(at);
+                let key = self.heap.element(k);
+                if vals[1].ty != key {
+                    return Err(format!("`{}` with a key of another type", op.name()));
+                }
+                self.wants(Repr::Map(at))
+                    .map_err(|why| format!("`{}` over {why}", op.name()))?;
+                let kw = self.widen(&vals[1].clone());
+                let idx = self.span(span);
+                let r = self.fresh();
+                if op == Prim::MapInsert {
+                    if vals[2].ty != self.heap.element(v) {
+                        return Err("`map_insert` with a value of another type".into());
+                    }
+                    let vw = self.widen(&vals[2].clone());
+                    self.line(format!(
+                        "{r} = call i64 @\"beck.map.ins.{at}\"(ptr %err, i64 {}, i64 {kw}, i64 \
+                         {vw}, i32 {idx})",
+                        vals[0].text
+                    ));
+                } else {
+                    self.line(format!(
+                        "{r} = call i64 @\"beck.map.del.{at}\"(ptr %err, i64 {}, i64 {kw}, i32 \
+                         {idx})",
+                        vals[0].text
+                    ));
+                }
+                self.check_call();
+                Ok(Val {
+                    text: r,
+                    ty: vals[0].ty,
+                })
+            }
+            Prim::MapMerge => {
+                arity(2)?;
+                let at = self.map_arg(&vals[0], op)?;
+                if vals[1].ty != vals[0].ty {
+                    return Err("`map_merge` of two maps of different types".into());
+                }
+                self.wants(Repr::Map(at))
+                    .map_err(|why| format!("`{}` over {why}", op.name()))?;
+                let idx = self.span(span);
+                let r = self.fresh();
+                self.line(format!(
+                    "{r} = call i64 @\"beck.map.merge.{at}\"(ptr %err, i64 {}, i64 {}, i32 {idx})",
+                    vals[0].text, vals[1].text
+                ));
+                self.check_call();
+                Ok(Val {
+                    text: r,
+                    ty: vals[0].ty,
+                })
             }
             Prim::MapKeys | Prim::MapValues => {
                 arity(1)?;
@@ -2912,10 +2971,11 @@ impl<'a> Function<'a> {
                     .into(),
             );
         }
-        let off = self.alloc(heap::map_bytes(0), span);
-        self.store_word(&off, 0, "0");
+        // An empty map is the offset `0`, which is the one offset no live object has — so `{}`
+        // allocates nothing at all.
+        let _ = span;
         Ok(Val {
-            text: off,
+            text: "0".to_string(),
             ty: repr,
         })
     }
@@ -2972,25 +3032,19 @@ impl<'a> Function<'a> {
         }
     }
 
-    /// How many entries, which is the header word.
+    /// How many entries, which is the root's size word — or zero, for the empty map.
     fn map_len(&mut self, m: &Val) -> String {
         self.uses_heap = true;
-        let base = self.base();
-        let p = self.fresh();
-        self.line(format!(
-            "{p} = getelementptr inbounds i8, ptr {base}, i64 {}",
-            m.text
-        ));
         let r = self.fresh();
-        self.line(format!("{r} = load i64, ptr {p}"));
+        self.line(format!("{r} = call i64 @\"beck.map.size\"(i64 {})", m.text));
         r
     }
 
-    /// `map_get` — an `Option[V]` from the index a search answered, and **no branch**.
+    /// `map_get` — an `Option[V]` from the node a search answered, and **no branch**.
     ///
-    /// [`Function::list_get`]'s trick, with the value's address rather than the element's: the
-    /// values start `n` words after the keys, so entry `i`'s value is word `1 + n + i`. A miss
-    /// loads the header instead, which is always there, and the `None` tag means nobody reads it.
+    /// [`Function::list_get`]'s trick, one type over: the search answers a node or `0`, and reading
+    /// the value word of node `0` reads the arena's first bytes rather than past its end. The `None`
+    /// tag means nobody looks at what that was.
     fn map_get(
         &mut self,
         ty: &Ty,
@@ -3000,31 +3054,11 @@ impl<'a> Function<'a> {
         span: Span,
     ) -> Result<Val, String> {
         let (option, some, none, slot, bytes) = self.option_of(ty, value)?;
-        let n = self.map_len(m);
+        let _ = m;
         let inside = self.fresh();
-        self.line(format!("{inside} = icmp sge i64 {found}, 0"));
-        let safe = self.fresh();
-        self.line(format!("{safe} = select i1 {inside}, i64 {found}, i64 0"));
-        let at = self.fresh();
-        self.line(format!("{at} = add i64 {safe}, {n}"));
-        let base = self.base();
-        let p = self.fresh();
-        self.line(format!(
-            "{p} = getelementptr inbounds i8, ptr {base}, i64 {}",
-            m.text
-        ));
-        let data = self.fresh();
-        self.line(format!(
-            "{data} = getelementptr inbounds i8, ptr {p}, i64 8"
-        ));
-        let cell = self.fresh();
-        self.line(format!(
-            "{cell} = getelementptr inbounds i64, ptr {data}, i64 {at}"
-        ));
-        let addr = self.fresh();
-        self.line(format!("{addr} = select i1 {inside}, ptr {cell}, ptr {p}"));
+        self.line(format!("{inside} = icmp ne i64 {found}, 0"));
         let w = self.fresh();
-        self.line(format!("{w} = load i64, ptr {addr}"));
+        self.line(format!("{w} = call i64 @\"beck.map.value\"(i64 {found})"));
 
         let off = self.alloc(bytes, span);
         let tag = self.fresh();
@@ -3050,17 +3084,18 @@ impl<'a> Function<'a> {
                 op.name()
             ));
         }
-        let n = self.map_len(m);
-        let from = if op == Prim::MapKeys {
-            "0".to_string()
+        // Which word of a node to take: the key or the value, which is the only thing the two
+        // walks differ by.
+        let slot = if op == Prim::MapKeys {
+            heap::NODE_KEY
         } else {
-            n.clone()
+            heap::NODE_VALUE
         };
         self.uses_heap = true;
         let idx = self.span(span);
         let r = self.fresh();
         self.line(format!(
-            "{r} = call i64 @\"beck.map.run\"(ptr %err, i64 {}, i64 {from}, i64 {n}, i32 {idx})",
+            "{r} = call i64 @\"beck.map.run\"(ptr %err, i64 {}, i64 {slot}, i32 {idx})",
             m.text
         ));
         self.check_call();
@@ -3561,13 +3596,6 @@ fn refusal(op: Prim) -> String {
              the one every list this backend builds has"
         }
         Prim::ListZip => "answers with a list of pairs, and there is no pair type to lay out",
-        // The same rule `list_append` gets, one type over: the evaluator's `PMap` shares everything
-        // it did not touch and rebuilds one path, and a sorted run in an arena has to copy all of
-        // it. `docs/107` §107.4 is the argument.
-        Prim::MapInsert | Prim::MapRemove | Prim::MapMerge => {
-            "grows a map, and a sorted run in an arena has to be copied whole where the \
-             evaluator's tree rebuilds one path"
-        }
         // The higher-order half compiles — `map_list`, `filter_list`, `list_fold`, `list_all`,
         // `list_any` and `sort_by` — so what is left of it is the one that grows a list.
         Prim::ListFlatMap => {
@@ -3600,8 +3628,15 @@ fn refusal(op: Prim) -> String {
 ///
 /// Quoted and escaped rather than transliterated: identifiers are Unicode (`docs/44` §44.4), and a
 /// scheme that dropped or folded characters could give two definitions one symbol.
+///
+/// **`beck.def.` and not `beck.`**, which is a namespace rather than a prefix. Everything this
+/// module generates for itself is `beck.<something>` — `beck.dispatch`, `beck.alloc`, `beck.map.*`
+/// — so a definition *called* `dispatch` used to take the dispatcher's own symbol, and the
+/// assembler answered "invalid redefinition" for a program that had done nothing wrong.
+/// `awfy/richards.beck` has one, and it was invisible until `docs/112` made that definition
+/// compile: a collision needs both halves to exist, and one of them never had.
 fn mangle(name: &str) -> String {
-    let mut out = String::from("\"beck.");
+    let mut out = String::from("\"beck.def.");
     for b in name.bytes() {
         match b {
             b'"' | b'\\' => {
@@ -5110,69 +5145,195 @@ fn map_functions(at: u32, heap: &Heap) -> String {
     let (key, value) = heap.entry(at);
     format!(
         r#"; {shown}
+; The search: down the tree, comparing keys. Answers the *node*, or 0 — a lookup and a containment
+; test are the same walk, and so is the value, which is a word off the node it found.
 define internal i64 @"beck.map.find.{at}"(i64 %m, i64 %k) {{
 entry:
-  %n = call i64 @"beck.map.len"(i64 %m)
-  %p = call ptr @"beck.map.data"(i64 %m)
   br label %loop
 loop:
-  ; The half-open window `[lo, hi)`. Unsigned throughout, because both ends are counts.
-  %lo = phi i64 [ 0, %entry ], [ %lo1, %again ]
-  %hi = phi i64 [ %n, %entry ], [ %hi1, %again ]
-  %done = icmp uge i64 %lo, %hi
-  br i1 %done, label %missing, label %probe
+  %n = phi i64 [ %m, %entry ], [ %next, %step ]
+  %empty = icmp eq i64 %n, 0
+  br i1 %empty, label %missing, label %probe
 probe:
-  %span = sub i64 %hi, %lo
-  %half = lshr i64 %span, 1
-  %mid = add i64 %lo, %half
-  %at = getelementptr inbounds i64, ptr %p, i64 %mid
-  %w = load i64, ptr %at
-  %c = call i64 @"beck.elem.cmp.{key}"(i64 %w, i64 %k)
+  %nk = call i64 @"beck.map.key"(i64 %n)
+  %c = call i64 @"beck.elem.cmp.{key}"(i64 %k, i64 %nk)
   %hit = icmp eq i64 %c, 0
-  br i1 %hit, label %found, label %again
-again:
-  %less = icmp slt i64 %c, 0
-  %mid1 = add i64 %mid, 1
-  %lo1 = select i1 %less, i64 %mid1, i64 %lo
-  %hi1 = select i1 %less, i64 %hi, i64 %mid
+  br i1 %hit, label %found, label %step
+step:
+  %down = icmp slt i64 %c, 0
+  %l = call i64 @"beck.map.left"(i64 %n)
+  %r = call i64 @"beck.map.right"(i64 %n)
+  %next = select i1 %down, i64 %l, i64 %r
   br label %loop
 found:
-  ret i64 %mid
+  ret i64 %n
 missing:
-  ret i64 -1
+  ret i64 0
 }}
 
+; `map_insert`: rebuild the path, share everything off it, rebalance on the way out. `O(log n)`
+; fresh nodes, which is `beck_core::pmap`'s own cost and the reason this can be compiled at all.
+define internal i64 @"beck.map.ins.{at}"(ptr noalias %err, i64 %m, i64 %k, i64 %v, i32 %span) {{
+entry:
+  %empty = icmp eq i64 %m, 0
+  br i1 %empty, label %fresh, label %walk
+fresh:
+  %leaf = call i64 @"beck.map.node"(ptr %err, i64 %k, i64 %v, i64 0, i64 0, i32 %span)
+  ret i64 %leaf
+walk:
+  %mk = call i64 @"beck.map.key"(i64 %m)
+  %mv = call i64 @"beck.map.value"(i64 %m)
+  %ml = call i64 @"beck.map.left"(i64 %m)
+  %mr = call i64 @"beck.map.right"(i64 %m)
+  %c = call i64 @"beck.elem.cmp.{key}"(i64 %k, i64 %mk)
+  %lt = icmp slt i64 %c, 0
+  br i1 %lt, label %go.left, label %not.less
+go.left:
+  %nl = call i64 @"beck.map.ins.{at}"(ptr %err, i64 %ml, i64 %k, i64 %v, i32 %span)
+  %bl = call i64 @"beck.map.balance"(ptr %err, i64 %mk, i64 %mv, i64 %nl, i64 %mr, i32 %span)
+  ret i64 %bl
+not.less:
+  %gt = icmp sgt i64 %c, 0
+  br i1 %gt, label %go.right, label %replace
+go.right:
+  %nr = call i64 @"beck.map.ins.{at}"(ptr %err, i64 %mr, i64 %k, i64 %v, i32 %span)
+  %br = call i64 @"beck.map.balance"(ptr %err, i64 %mk, i64 %mv, i64 %ml, i64 %nr, i32 %span)
+  ret i64 %br
+replace:
+  ; The *new* key as well as the new value, which is what the evaluator's `Ordering::Equal` arm
+  ; does — two keys that compare equal need not be the same value.
+  %same = call i64 @"beck.map.node"(ptr %err, i64 %k, i64 %v, i64 %ml, i64 %mr, i32 %span)
+  ret i64 %same
+}}
+
+; The smallest node of a subtree, and the subtree with it taken out. `map_remove` needs both, and
+; a weight-balanced tree needs the rebalance on the way out of each.
+define internal i64 @"beck.map.min.{at}"(i64 %m) {{
+entry:
+  br label %loop
+loop:
+  %n = phi i64 [ %m, %entry ], [ %l, %down ]
+  %l = call i64 @"beck.map.left"(i64 %n)
+  %none = icmp eq i64 %l, 0
+  br i1 %none, label %found, label %down
+down:
+  br label %loop
+found:
+  ret i64 %n
+}}
+
+define internal i64 @"beck.map.pop.{at}"(ptr noalias %err, i64 %m, i32 %span) {{
+entry:
+  %l = call i64 @"beck.map.left"(i64 %m)
+  %none = icmp eq i64 %l, 0
+  br i1 %none, label %gone, label %deeper
+gone:
+  %r = call i64 @"beck.map.right"(i64 %m)
+  ret i64 %r
+deeper:
+  %nl = call i64 @"beck.map.pop.{at}"(ptr %err, i64 %l, i32 %span)
+  %k = call i64 @"beck.map.key"(i64 %m)
+  %v = call i64 @"beck.map.value"(i64 %m)
+  %rr = call i64 @"beck.map.right"(i64 %m)
+  %b = call i64 @"beck.map.balance"(ptr %err, i64 %k, i64 %v, i64 %nl, i64 %rr, i32 %span)
+  ret i64 %b
+}}
+
+; `map_remove`: the same path rebuild as an insert. A node with two children is replaced by the
+; smallest of its right subtree, which is that subtree's leftmost — the textbook deletion, with the
+; rebalance the weights need.
+define internal i64 @"beck.map.del.{at}"(ptr noalias %err, i64 %m, i64 %k, i32 %span) {{
+entry:
+  %empty = icmp eq i64 %m, 0
+  br i1 %empty, label %absent, label %walk
+absent:
+  ret i64 0
+walk:
+  %mk = call i64 @"beck.map.key"(i64 %m)
+  %mv = call i64 @"beck.map.value"(i64 %m)
+  %ml = call i64 @"beck.map.left"(i64 %m)
+  %mr = call i64 @"beck.map.right"(i64 %m)
+  %c = call i64 @"beck.elem.cmp.{key}"(i64 %k, i64 %mk)
+  %lt = icmp slt i64 %c, 0
+  br i1 %lt, label %go.left, label %not.less
+go.left:
+  %nl = call i64 @"beck.map.del.{at}"(ptr %err, i64 %ml, i64 %k, i32 %span)
+  %bl = call i64 @"beck.map.balance"(ptr %err, i64 %mk, i64 %mv, i64 %nl, i64 %mr, i32 %span)
+  ret i64 %bl
+not.less:
+  %gt = icmp sgt i64 %c, 0
+  br i1 %gt, label %go.right, label %here
+go.right:
+  %nr = call i64 @"beck.map.del.{at}"(ptr %err, i64 %mr, i64 %k, i32 %span)
+  %br = call i64 @"beck.map.balance"(ptr %err, i64 %mk, i64 %mv, i64 %ml, i64 %nr, i32 %span)
+  ret i64 %br
+here:
+  %no.left = icmp eq i64 %ml, 0
+  br i1 %no.left, label %lift.right, label %maybe
+lift.right:
+  ret i64 %mr
+maybe:
+  %no.right = icmp eq i64 %mr, 0
+  br i1 %no.right, label %lift.left, label %join
+lift.left:
+  ret i64 %ml
+join:
+  %least = call i64 @"beck.map.min.{at}"(i64 %mr)
+  %lk = call i64 @"beck.map.key"(i64 %least)
+  %lv = call i64 @"beck.map.value"(i64 %least)
+  %rest = call i64 @"beck.map.pop.{at}"(ptr %err, i64 %mr, i32 %span)
+  %joined = call i64 @"beck.map.balance"(ptr %err, i64 %lk, i64 %lv, i64 %ml, i64 %rest, i32 %span)
+  ret i64 %joined
+}}
+
+; `map_merge`: every entry of the second map inserted into the first, in key order, so the later
+; map wins — which is what the evaluator's own merge does.
+define internal i64 @"beck.map.merge.{at}"(ptr noalias %err, i64 %a, i64 %b, i32 %span) {{
+entry:
+  %n = call i64 @"beck.map.size"(i64 %b)
+  br label %loop
+loop:
+  %i = phi i64 [ 0, %entry ], [ %j, %step ]
+  %acc = phi i64 [ %a, %entry ], [ %next, %step ]
+  %past = icmp uge i64 %i, %n
+  br i1 %past, label %done, label %step
+step:
+  %node = call i64 @"beck.map.nth"(i64 %b, i64 %i)
+  %k = call i64 @"beck.map.key"(i64 %node)
+  %v = call i64 @"beck.map.value"(i64 %node)
+  %next = call i64 @"beck.map.ins.{at}"(ptr %err, i64 %acc, i64 %k, i64 %v, i32 %span)
+  %j = add i64 %i, 1
+  br label %loop
+done:
+  ret i64 %acc
+}}
+
+; Two maps in key order: the keys, then the values, entry by entry, then the sizes. The order is
+; `beck_core`'s own — what a `PMap` iterates is what this walks.
 define internal i64 @"beck.map.cmp.{at}"(i64 %a, i64 %b) {{
 entry:
-  %la = call i64 @"beck.map.len"(i64 %a)
-  %lb = call i64 @"beck.map.len"(i64 %b)
+  %la = call i64 @"beck.map.size"(i64 %a)
+  %lb = call i64 @"beck.map.size"(i64 %b)
   %shorter = icmp ult i64 %la, %lb
   %n = select i1 %shorter, i64 %la, i64 %lb
-  %pa = call ptr @"beck.map.data"(i64 %a)
-  %pb = call ptr @"beck.map.data"(i64 %b)
   br label %loop
 loop:
   %i = phi i64 [ 0, %entry ], [ %j, %next ]
   %past = icmp uge i64 %i, %n
   br i1 %past, label %lengths, label %keys
 keys:
-  %ka = getelementptr inbounds i64, ptr %pa, i64 %i
-  %kb = getelementptr inbounds i64, ptr %pb, i64 %i
-  %wka = load i64, ptr %ka
-  %wkb = load i64, ptr %kb
+  %na = call i64 @"beck.map.nth"(i64 %a, i64 %i)
+  %nb = call i64 @"beck.map.nth"(i64 %b, i64 %i)
+  %wka = call i64 @"beck.map.key"(i64 %na)
+  %wkb = call i64 @"beck.map.key"(i64 %nb)
   %ck = call i64 @"beck.elem.cmp.{key}"(i64 %wka, i64 %wkb)
   %kdecided = icmp ne i64 %ck, 0
   br i1 %kdecided, label %answerk, label %values
 answerk:
   ret i64 %ck
 values:
-  ; The values start `la` words after the keys in `a` and `lb` words after them in `b`.
-  %ia = add i64 %i, %la
-  %ib = add i64 %i, %lb
-  %va = getelementptr inbounds i64, ptr %pa, i64 %ia
-  %vb = getelementptr inbounds i64, ptr %pb, i64 %ib
-  %wva = load i64, ptr %va
-  %wvb = load i64, ptr %vb
+  %wva = call i64 @"beck.map.value"(i64 %na)
+  %wvb = call i64 @"beck.map.value"(i64 %nb)
   %cv = call i64 @"beck.elem.cmp.{value}"(i64 %wva, i64 %wvb)
   %vdecided = icmp ne i64 %cv, 0
   br i1 %vdecided, label %answerv, label %next
@@ -5733,57 +5894,225 @@ out:
 ///
 /// What has to know what a word means is generated per map repr by [`map_functions`]: the binary
 /// search, and the lexicographic order over two maps.
-const MAPS: &str = r#"define internal i64 @"beck.map.alloc"(ptr noalias %err, i64 %n, i32 %span) {
+const MAPS: &str = r#"; A `Map` is a weight-balanced tree; see `beck_llvm::heap::MAP_NODE` for the shape and for why.
+; An empty map is the offset 0, which is the one offset no live object has.
+;
+; Everything here is one function for the whole module: rebalancing moves *words* — sizes, keys,
+; values and two children — and never looks at what a key is. Only the three functions that compare
+; are generated per map repr.
+define internal i64 @"beck.map.size"(i64 %n) {
 entry:
-  %pairs = mul i64 %n, 16
-  %total = add i64 %pairs, 8
-  %off = call i64 @"beck.alloc"(ptr %err, i64 %total, i32 %span)
+  %empty = icmp eq i64 %n, 0
+  br i1 %empty, label %none, label %some
+none:
+  ret i64 0
+some:
+  %hp = load ptr, ptr @"beck.heap"
+  %p = getelementptr inbounds i8, ptr %hp, i64 %n
+  %s = load i64, ptr %p
+  ret i64 %s
+}
+
+define internal i64 @"beck.map.node"(ptr noalias %err, i64 %k, i64 %v, i64 %l, i64 %r, i32 %span) {
+entry:
+  %ls = call i64 @"beck.map.size"(i64 %l)
+  %rs = call i64 @"beck.map.size"(i64 %r)
+  %sub = add i64 %ls, %rs
+  %s = add i64 %sub, 1
+  %off = call i64 @"beck.alloc"(ptr %err, i64 40, i32 %span)
   %failed = icmp eq i64 %off, 0
   br i1 %failed, label %out, label %fill
 fill:
   %hp = load ptr, ptr @"beck.heap"
   %p = getelementptr inbounds i8, ptr %hp, i64 %off
-  store i64 %n, ptr %p
+  store i64 %s, ptr %p
+  %pk = getelementptr inbounds i8, ptr %p, i64 8
+  store i64 %k, ptr %pk
+  %pv = getelementptr inbounds i8, ptr %p, i64 16
+  store i64 %v, ptr %pv
+  %pl = getelementptr inbounds i8, ptr %p, i64 24
+  store i64 %l, ptr %pl
+  %pr = getelementptr inbounds i8, ptr %p, i64 32
+  store i64 %r, ptr %pr
   br label %out
 out:
   ret i64 %off
 }
 
-define internal i64 @"beck.map.len"(i64 %m) {
+; The four fields, so the rotations below read like the algorithm rather than like arithmetic.
+define internal i64 @"beck.map.key"(i64 %n) {
 entry:
   %hp = load ptr, ptr @"beck.heap"
-  %p = getelementptr inbounds i8, ptr %hp, i64 %m
-  %n = load i64, ptr %p
+  %p = getelementptr inbounds i8, ptr %hp, i64 %n
+  %q = getelementptr inbounds i8, ptr %p, i64 8
+  %w = load i64, ptr %q
+  ret i64 %w
+}
+
+define internal i64 @"beck.map.value"(i64 %n) {
+entry:
+  %hp = load ptr, ptr @"beck.heap"
+  %p = getelementptr inbounds i8, ptr %hp, i64 %n
+  %q = getelementptr inbounds i8, ptr %p, i64 16
+  %w = load i64, ptr %q
+  ret i64 %w
+}
+
+define internal i64 @"beck.map.left"(i64 %n) {
+entry:
+  %hp = load ptr, ptr @"beck.heap"
+  %p = getelementptr inbounds i8, ptr %hp, i64 %n
+  %q = getelementptr inbounds i8, ptr %p, i64 24
+  %w = load i64, ptr %q
+  ret i64 %w
+}
+
+define internal i64 @"beck.map.right"(i64 %n) {
+entry:
+  %hp = load ptr, ptr @"beck.heap"
+  %p = getelementptr inbounds i8, ptr %hp, i64 %n
+  %q = getelementptr inbounds i8, ptr %p, i64 32
+  %w = load i64, ptr %q
+  ret i64 %w
+}
+
+; Adams's rebalance, with `beck_core::pmap`'s own DELTA = 3 and RATIO = 2. Four cases and no loop:
+; a subtree that grew by one is at most one rotation away from balanced.
+define internal i64 @"beck.map.balance"(ptr noalias %err, i64 %k, i64 %v, i64 %l, i64 %r, i32 %span) {
+entry:
+  %ls = call i64 @"beck.map.size"(i64 %l)
+  %rs = call i64 @"beck.map.size"(i64 %r)
+  %tot = add i64 %ls, %rs
+  %tiny = icmp ule i64 %tot, 1
+  br i1 %tiny, label %plain, label %ask.right
+plain:
+  %flat = call i64 @"beck.map.node"(ptr %err, i64 %k, i64 %v, i64 %l, i64 %r, i32 %span)
+  ret i64 %flat
+ask.right:
+  %ld = mul i64 %ls, 3
+  %heavy.r = icmp ugt i64 %rs, %ld
+  br i1 %heavy.r, label %left.rot, label %ask.left
+left.rot:
+  %rk = call i64 @"beck.map.key"(i64 %r)
+  %rv = call i64 @"beck.map.value"(i64 %r)
+  %rl = call i64 @"beck.map.left"(i64 %r)
+  %rr = call i64 @"beck.map.right"(i64 %r)
+  %rls = call i64 @"beck.map.size"(i64 %rl)
+  %rrs = call i64 @"beck.map.size"(i64 %rr)
+  %rrx = mul i64 %rrs, 2
+  %single.l = icmp ult i64 %rls, %rrx
+  br i1 %single.l, label %single.left, label %double.left
+single.left:
+  %sl.inner = call i64 @"beck.map.node"(ptr %err, i64 %k, i64 %v, i64 %l, i64 %rl, i32 %span)
+  %sl.out = call i64 @"beck.map.node"(ptr %err, i64 %rk, i64 %rv, i64 %sl.inner, i64 %rr, i32 %span)
+  ret i64 %sl.out
+double.left:
+  %rlk = call i64 @"beck.map.key"(i64 %rl)
+  %rlv = call i64 @"beck.map.value"(i64 %rl)
+  %rll = call i64 @"beck.map.left"(i64 %rl)
+  %rlr = call i64 @"beck.map.right"(i64 %rl)
+  %dl.a = call i64 @"beck.map.node"(ptr %err, i64 %k, i64 %v, i64 %l, i64 %rll, i32 %span)
+  %dl.b = call i64 @"beck.map.node"(ptr %err, i64 %rk, i64 %rv, i64 %rlr, i64 %rr, i32 %span)
+  %dl.out = call i64 @"beck.map.node"(ptr %err, i64 %rlk, i64 %rlv, i64 %dl.a, i64 %dl.b, i32 %span)
+  ret i64 %dl.out
+ask.left:
+  %rd = mul i64 %rs, 3
+  %heavy.l = icmp ugt i64 %ls, %rd
+  br i1 %heavy.l, label %right.rot, label %settled
+settled:
+  %same = call i64 @"beck.map.node"(ptr %err, i64 %k, i64 %v, i64 %l, i64 %r, i32 %span)
+  ret i64 %same
+right.rot:
+  %lk = call i64 @"beck.map.key"(i64 %l)
+  %lv = call i64 @"beck.map.value"(i64 %l)
+  %ll = call i64 @"beck.map.left"(i64 %l)
+  %lr = call i64 @"beck.map.right"(i64 %l)
+  %lls = call i64 @"beck.map.size"(i64 %ll)
+  %lrs = call i64 @"beck.map.size"(i64 %lr)
+  %llx = mul i64 %lls, 2
+  %single.r = icmp ult i64 %lrs, %llx
+  br i1 %single.r, label %single.right, label %double.right
+single.right:
+  %sr.inner = call i64 @"beck.map.node"(ptr %err, i64 %k, i64 %v, i64 %lr, i64 %r, i32 %span)
+  %sr.out = call i64 @"beck.map.node"(ptr %err, i64 %lk, i64 %lv, i64 %ll, i64 %sr.inner, i32 %span)
+  ret i64 %sr.out
+double.right:
+  %lrk = call i64 @"beck.map.key"(i64 %lr)
+  %lrv = call i64 @"beck.map.value"(i64 %lr)
+  %lrl = call i64 @"beck.map.left"(i64 %lr)
+  %lrr = call i64 @"beck.map.right"(i64 %lr)
+  %dr.a = call i64 @"beck.map.node"(ptr %err, i64 %lk, i64 %lv, i64 %ll, i64 %lrl, i32 %span)
+  %dr.b = call i64 @"beck.map.node"(ptr %err, i64 %k, i64 %v, i64 %lrr, i64 %r, i32 %span)
+  %dr.out = call i64 @"beck.map.node"(ptr %err, i64 %lrk, i64 %lrv, i64 %dr.a, i64 %dr.b, i32 %span)
+  ret i64 %dr.out
+}
+
+; The `i`th entry in key order, by subtree size. `map_keys`, `map_values` and the comparison all
+; walk in order; only the comparison needs to do it by index, and this is how.
+define internal i64 @"beck.map.nth"(i64 %m, i64 %i) {
+entry:
+  br label %loop
+loop:
+  %n = phi i64 [ %m, %entry ], [ %next, %step ]
+  %want = phi i64 [ %i, %entry ], [ %want1, %step ]
+  %empty = icmp eq i64 %n, 0
+  br i1 %empty, label %missing, label %probe
+probe:
+  %l = call i64 @"beck.map.left"(i64 %n)
+  %ls = call i64 @"beck.map.size"(i64 %l)
+  %here = icmp eq i64 %want, %ls
+  br i1 %here, label %found, label %step
+step:
+  %down = icmp ult i64 %want, %ls
+  %r = call i64 @"beck.map.right"(i64 %n)
+  %next = select i1 %down, i64 %l, i64 %r
+  %past = add i64 %ls, 1
+  %rest = sub i64 %want, %past
+  %want1 = select i1 %down, i64 %want, i64 %rest
+  br label %loop
+found:
   ret i64 %n
+missing:
+  ret i64 0
 }
 
-define internal ptr @"beck.map.data"(i64 %m) {
+; The in-order walk that fills a list. One function for keys and values, told which word to take —
+; the two differ by eight bytes and nothing else.
+define internal i64 @"beck.map.into"(i64 %n, ptr %dst, i64 %i, i64 %slot) {
 entry:
+  %empty = icmp eq i64 %n, 0
+  br i1 %empty, label %done, label %walk
+walk:
+  %l = call i64 @"beck.map.left"(i64 %n)
+  %i1 = call i64 @"beck.map.into"(i64 %l, ptr %dst, i64 %i, i64 %slot)
   %hp = load ptr, ptr @"beck.heap"
-  %at = add i64 %m, 8
-  %p = getelementptr inbounds i8, ptr %hp, i64 %at
-  ret ptr %p
+  %p = getelementptr inbounds i8, ptr %hp, i64 %n
+  %q = getelementptr inbounds i64, ptr %p, i64 %slot
+  %w = load i64, ptr %q
+  %at = getelementptr inbounds i64, ptr %dst, i64 %i1
+  store i64 %w, ptr %at
+  %i2 = add i64 %i1, 1
+  %r = call i64 @"beck.map.right"(i64 %n)
+  %i3 = call i64 @"beck.map.into"(i64 %r, ptr %dst, i64 %i2, i64 %slot)
+  ret i64 %i3
+done:
+  ret i64 %i
 }
 
-; `map_keys` and `map_values`: a run of `count` words starting at word `from` of the data area,
-; copied into a fresh list. The one place a map turns into a list.
-define internal i64 @"beck.map.run"(ptr noalias %err, i64 %m, i64 %from, i64 %count, i32 %span) {
+; `map_keys` and `map_values`: a fresh list of the map's size, filled by the walk above.
+define internal i64 @"beck.map.run"(ptr noalias %err, i64 %m, i64 %slot, i32 %span) {
 entry:
-  %r = call i64 @"beck.list.alloc"(ptr %err, i64 %count, i32 %span)
+  %n = call i64 @"beck.map.size"(i64 %m)
+  %r = call i64 @"beck.list.alloc"(ptr %err, i64 %n, i32 %span)
   %failed = icmp eq i64 %r, 0
-  br i1 %failed, label %out, label %move
-move:
-  %pr = call ptr @"beck.list.data"(i64 %r)
-  %pm = call ptr @"beck.map.data"(i64 %m)
-  %skip = mul i64 %from, 8
-  %at = getelementptr inbounds i8, ptr %pm, i64 %skip
-  %bytes = mul i64 %count, 8
-  %ignored = call ptr @memcpy(ptr %pr, ptr %at, i64 %bytes)
+  br i1 %failed, label %out, label %fill
+fill:
+  %dst = call ptr @"beck.list.data"(i64 %r)
+  %ignored = call i64 @"beck.map.into"(i64 %m, ptr %dst, i64 0, i64 %slot)
   br label %out
 out:
   ret i64 %r
 }
-
 "#;
 
 /// Moving bytes to and from the host, in whatever pieces the pipe hands over.

@@ -109,6 +109,38 @@ Newest first.
 
 ### The native backends
 
+- **A map grows, as the tree it always was**
+  ([`docs/112`](docs/112-a-map-grows-report.md)): `map_insert`, `map_remove` and `map_merge` compile
+  to both code generators, and a fold that keeps a `Map` is `Θ(n log n)` rather than `Θ(n²)`.
+  **895 → 1,137 definitions** compile across the tree and refusals go 523 → 281.
+  `examples/todo.beck` compiles **eight of its nine definitions**; the one left needs a Unicode
+  table.
+  - [`docs/111`](docs/111-a-list-grows-report.md) §111.7 forecast that a list's answer would not work
+    here, and it was right: a list's refusal was about a *layout* and a map's is about a *structure*.
+    An insert lands in the middle of a sorted run and every entry after it shifts, however the header
+    is arranged. What removes it is the structure `beck_core::pmap` already uses — a
+    **weight-balanced tree**, whose insert rebuilds the path and shares every subtree it did not
+    touch. Five words a node (subtree size, key, value, two children), the same `DELTA` and `RATIO`
+    the evaluator's module argues for, and an empty map is the offset `0`.
+  - **Sound for free**: a node is never written after it is built, so the map an insert was given is
+    exactly what it was — [`docs/111`](docs/111-a-list-grows-report.md) §111.2's argument again,
+    arriving here as a property of the structure rather than as a design.
+  - **Everything that moves nodes is one function for the whole module.** Rebalancing shuffles
+    *words* and never asks what a key is, so `size`, `node`, `balance`, `nth` and the in-order walk
+    are written once; only `find`, `insert`, `remove`, `merge` and the two-map order are generated
+    per repr, because those are the ones that compare.
+  - Gated by `a_fold_over_a_map_is_not_quadratic` (**4.9× the arena for 4× the entries**, no clock in
+    it) and by the differential's `branched` — two maps grown from one, answering with the original's
+    length and both lookups, so a rotation that wrote through a shared node fails on the first case —
+    and `descending`, the insertion order a tree that did not rebalance degenerates on and a sorted
+    run handled by accident.
+  - **The finding is a name collision** (§112.5): `awfy/richards.beck` has a definition called
+    `dispatch`, every user definition was mangled to `beck.<name>`, and the module's own dispatcher
+    is `beck.dispatch` — so a program that had done nothing wrong got *"invalid redefinition of
+    function"*. Latent since [`docs/93`](docs/93-llvm-backend-report.md), and it surfaced here
+    because a collision needs both halves to exist: `dispatch` had never compiled before. A user
+    definition is `beck.def.<name>` now, in both emitters.
+
 - **A list grows, and the refusal was about a layout**
   ([`docs/111`](docs/111-a-list-grows-report.md)): `list_append` compiles to both code generators and
   the accumulator every loop is written as is **linear**. **711 → 895 definitions** compile across

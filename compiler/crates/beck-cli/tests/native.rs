@@ -728,6 +728,31 @@ fn the_two_backends_agree_on_maps() {
     for name in ["lookup", "lookup_or", "holds"] {
         compared += both.agree(name, &mapfix::keyed(&ms));
     }
+    // Growing one: the three operations, the fork onto a shared tree, and the fold.
+    for name in ["put", "branched"] {
+        compared += both.agree(
+            name,
+            &mapfix::keyed(&ms)
+                .iter()
+                .map(|args| {
+                    let mut args = args.clone();
+                    args.push(Value::Int(7));
+                    args
+                })
+                .collect::<Vec<_>>(),
+        );
+    }
+    compared += both.agree("dropped", &mapfix::keyed(&ms));
+    compared += both.agree("joined", &mapfix::pairs(&ms));
+    for name in ["grown", "descending"] {
+        compared += both.agree(
+            name,
+            &[0i64, 1, 2, 3, 7, 16, 33]
+                .iter()
+                .map(|n| vec![Value::Int(*n)])
+                .collect::<Vec<_>>(),
+        );
+    }
     compared += both.agree("nothing", &[vec![]]);
     compared += both.agree(
         "total",
@@ -1445,11 +1470,11 @@ fn a_corpus_fold_compiles() {
         viewed.len()
     );
     // The other side, so this is not passing because everything compiles. What is still refused
-    // across the corpus is a collection that **grows**, which is `docs/107` §107.4's decision
-    // rather than a gap — and the day it stops being refused this line is the one to rewrite.
+    // across the corpus is a Unicode table — `docs/112` compiled the last collection that grows,
+    // and this line has been rewritten once per report that removed the previous answer.
     assert!(
-        refused.iter().any(|r| r.contains("grows a map")),
-        "no corpus definition was refused for growing a map, and this test would then be \
+        refused.iter().any(|r| r.contains("Unicode whitespace")),
+        "no corpus definition was refused for a Unicode table, and this test would then be \
          asserting that everything compiles: {refused:?}"
     );
     println!(
@@ -1649,14 +1674,14 @@ fn what_cannot_be_compiled_is_refused_by_name_and_with_a_reason() {
     let both = Both::over("refused.beck", REFUSED);
 
     for (name, expect) in [
-        ("grows_a_map", "`map_insert` grows a map"),
+        ("grows_a_list", "`list_flat_map` answers a list"),
         ("renders_a_real", "`str` of Float"),
         ("is_generic", "generic over T"),
         (
             "reads_the_clock",
             "`now` is not one of the scalar primitives",
         ),
-        ("calls_something_refused", "calls `grows_a_map`"),
+        ("calls_something_refused", "calls `grows_a_list`"),
     ] {
         let reason = both
             .refusal(name)
@@ -1700,7 +1725,7 @@ fn what_the_heap_does_not_reach_is_refused_by_name() {
         ("splits_a_string", "`str_split` answers with a list"),
         ("upcases", "`str_upper` is Unicode case mapping"),
         ("trims", "`str_trim` trims Unicode whitespace"),
-        ("grows", "`map_insert` grows a map"),
+        ("grows", "`list_flat_map` answers a list"),
         ("is_generic", "generic over T"),
         (
             "reads_the_clock",
@@ -2040,24 +2065,18 @@ fn what_is_not_compiled_falls_back_and_says_so() {
         .expect("builds")
         .expect("a toolchain, checked above");
 
-    let refused = &program.defs["grows_a_map"].body;
+    let refused = &program.defs["grows_a_list"].body;
     assert!(!native.compiled(refused));
 
     let f = beck_eval::on_the_evaluator_stack(|| native.function(refused).expect("prepares"));
-    let m = Value::Map([(Value::str_("a"), Value::Int(1))].into_iter().collect());
-    let got = beck_eval::on_the_evaluator_stack(|| {
-        f(vec![m, Value::str_("b"), Value::Int(2)]).expect("the fallback answers")
-    });
+    let xss = Value::List(Arc::new(vec![
+        Value::List(Arc::new(vec![Value::Int(2), Value::Int(3)])),
+        Value::List(Arc::new(vec![Value::Int(4)])),
+    ]));
+    let got = beck_eval::on_the_evaluator_stack(|| f(vec![xss]).expect("the fallback answers"));
     assert_eq!(
         got,
-        Value::Map(
-            [
-                (Value::str_("a"), Value::Int(1)),
-                (Value::str_("b"), Value::Int(2))
-            ]
-            .into_iter()
-            .collect()
-        )
+        Value::List(Arc::new(vec![Value::Int(2), Value::Int(3), Value::Int(4)]))
     );
 }
 
@@ -2635,6 +2654,48 @@ fn an_appended_accumulator_is_linear() {
     println!(
         "doubled_up({}) left {} bytes and doubled_up({}) left {} — {growth:.1}× for {steps:.0}× \
          the elements",
+        small.0, small.1, big.0, big.1
+    );
+}
+
+/// A fold that keeps a `Map` is **not quadratic**, and the gate has no clock in it.
+///
+/// This is `docs/112`'s claim and the reason the operation could be compiled at all. `map_insert`
+/// over a sorted run copies the whole run, so `n` inserts cost `Θ(n²)` — where `beck_core::pmap` is
+/// `Θ(n log n)` because it rebuilds one path and shares the rest. `docs/107` §107.4 refused to ship
+/// the first, and this asserts the second.
+///
+/// Four times the entries costs about *five* times the arena — `n log n` — where a copying insert
+/// costs sixteen. The bound is generous on purpose: what separates the two is a factor of three, and
+/// a gate that split them at 5.1 would be measuring the balance constants rather than the asymptote.
+#[test]
+fn a_fold_over_a_map_is_not_quadratic() {
+    let _ = toolchain!();
+    let both = Both::over("maps.beck", MAPS);
+    let mut sizes = Vec::new();
+    for n in [500i64, 2000] {
+        let (answer, bytes) = both
+            .native
+            .call_sized("grown", &[Value::Int(n)])
+            .expect("runs");
+        assert_eq!(
+            answer.as_map().map(beck_core::PMap::len),
+            Some(n as usize),
+            "`grown({n})` should answer with {n} entries"
+        );
+        sizes.push((n, bytes));
+    }
+    let (small, big) = (sizes[0], sizes[1]);
+    let growth = big.1 as f64 / small.1 as f64;
+    let steps = (big.0 / small.0) as f64;
+    assert!(
+        growth < steps * 2.0,
+        "four times the entries left {growth:.1}× the arena, and an insert that copies the run \
+         leaves about {:.0}× — this is the quadratic `docs/112` exists to remove",
+        steps * steps
+    );
+    println!(
+        "grown({}) left {} bytes and grown({}) left {} — {growth:.1}× for {steps:.0}× the entries",
         small.0, small.1, big.0, big.1
     );
 }

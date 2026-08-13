@@ -738,6 +738,31 @@ fn the_three_backends_agree_on_maps() {
     for name in ["lookup", "lookup_or", "holds"] {
         compared += all.agree(name, &mapfix::keyed(&ms));
     }
+    // Growing one: the three operations, the fork onto a shared tree, and the fold.
+    for name in ["put", "branched"] {
+        compared += all.agree(
+            name,
+            &mapfix::keyed(&ms)
+                .iter()
+                .map(|args| {
+                    let mut args = args.clone();
+                    args.push(Value::Int(7));
+                    args
+                })
+                .collect::<Vec<_>>(),
+        );
+    }
+    compared += all.agree("dropped", &mapfix::keyed(&ms));
+    compared += all.agree("joined", &mapfix::pairs(&ms));
+    for name in ["grown", "descending"] {
+        compared += all.agree(
+            name,
+            &[0i64, 1, 2, 3, 7, 16, 33]
+                .iter()
+                .map(|n| vec![Value::Int(*n)])
+                .collect::<Vec<_>>(),
+        );
+    }
     compared += all.agree("nothing", &[vec![]]);
     compared += all.agree(
         "total",
@@ -1037,7 +1062,7 @@ fn what_cannot_be_compiled_is_refused_by_name_and_with_a_reason() {
     linker!();
     let all = All::over("refused.beck", REFUSED);
     for name in [
-        "grows_a_map",
+        "grows_a_list",
         "renders_a_real",
         "is_generic",
         "reads_the_clock",
@@ -1055,7 +1080,7 @@ fn what_cannot_be_compiled_is_refused_by_name_and_with_a_reason() {
     );
     assert_eq!(
         all.refusal("calls_something_refused"),
-        Some("calls `grows_a_map`, which does not compile"),
+        Some("calls `grows_a_list`, which does not compile"),
         "the fixed point has to name what it was waiting on"
     );
 }
@@ -1072,24 +1097,23 @@ fn the_seam_runs_the_compiled_half_and_falls_back_for_the_rest() {
         .expect("there is a linker");
     assert_eq!(dev.name(), "cranelift");
     let scalar = &program.defs["scalar_and_fine"].body;
-    let mappy = &program.defs["grows_a_map"].body;
+    let listy = &program.defs["grows_a_list"].body;
     assert!(dev.compiled(scalar), "the scalar definition is compiled");
-    assert!(!dev.compiled(mappy), "the one that grows a map is not");
+    assert!(
+        !dev.compiled(listy),
+        "the one that flattens a list of lists is not"
+    );
     let f = dev.function(scalar).expect("prepares");
     assert_eq!(f(vec![Value::Int(21)]).expect("runs"), Value::Int(42));
     // …and the refused one still answers, from the tree-walker behind the seam.
-    let g = dev.function(mappy).expect("prepares");
-    let m = Value::Map([(Value::str_("a"), Value::Int(1))].into_iter().collect());
+    let g = dev.function(listy).expect("prepares");
+    let xss = Value::List(Arc::new(vec![
+        Value::List(Arc::new(vec![Value::Int(2), Value::Int(3)])),
+        Value::List(Arc::new(vec![Value::Int(4)])),
+    ]));
     assert_eq!(
-        g(vec![m, Value::str_("b"), Value::Int(2)]).expect("runs"),
-        Value::Map(
-            [
-                (Value::str_("a"), Value::Int(1)),
-                (Value::str_("b"), Value::Int(2))
-            ]
-            .into_iter()
-            .collect()
-        )
+        g(vec![xss]).expect("runs"),
+        Value::List(Arc::new(vec![Value::Int(2), Value::Int(3), Value::Int(4)]))
     );
 }
 

@@ -279,13 +279,61 @@ pub const DEFERRED: usize = 2;
 /// The one header word of a `Map`: how many entries it has.
 pub const MAP_HEADER: u64 = WORD;
 
-/// How many bytes a `Map` of `n` entries occupies: the count, `n` keys, then `n` values.
+/// A `Map`'s node: its subtree's size, the key, the value, and the two children.
 ///
-/// The keys and the values are two runs rather than interleaved pairs, so `map_keys` and
-/// `map_values` are each one `memcpy` into a fresh list — and because the keys being contiguous is
-/// what makes the search a binary one with a stride of one.
+/// # Why a map is a tree
+///
+/// It was a sorted run — a count and then every key followed by every value — which makes a lookup
+/// a binary search over contiguous words and makes an **insert** a copy of the whole run. That is
+/// `O(n)` where [`beck_core::pmap`] is `O(log n)`, and
+/// [`docs/107`](../../../../../docs/107-a-map-arrives-read-only-report.md) §107.4 refused to ship
+/// it for that reason: *this backend does not ship an operation whose asymptote is worse than the
+/// evaluator's*.
+///
+/// [`docs/111`](../../../../../docs/111-a-list-grows-report.md) removed the same refusal for a list
+/// by separating the count from the elements, and §111.7 said in advance that the map's would
+/// **survive** that trick — a sorted run has to shift however its header is arranged. What removes
+/// it is the structure the evaluator already uses: a **weight-balanced tree**, whose insert rebuilds
+/// the path and shares every subtree it did not touch. `beck_core::pmap`'s own module documentation
+/// is the argument for that choice; this is the same tree with the same `DELTA` and `RATIO`, in an
+/// arena.
+///
+/// | word | what |
+/// |---|---|
+/// | 0 | how many entries this subtree holds |
+/// | 1 | the key |
+/// | 2 | the value |
+/// | 3 | the left child, or `0` |
+/// | 4 | the right child, or `0` |
+///
+/// An empty map is the offset `0`, which is the one offset [`FIRST`] reserves so that no live object
+/// has it. A node is never mutated after it is written, so an insert's answer and the map it was
+/// given share every node off the path — which is what makes the fold that keeps a `Map` linear in
+/// the events rather than quadratic.
+pub const MAP_NODE: u64 = 5 * WORD;
+
+/// Where a node's fields are, in words.
+pub const NODE_KEY: usize = 1;
+pub const NODE_VALUE: usize = 2;
+pub const NODE_LEFT: usize = 3;
+pub const NODE_RIGHT: usize = 4;
+
+/// The weight-balanced tree's two constants, which are [`beck_core::pmap`]'s.
+///
+/// Written here as well as there because the rebalancing is generated code and a tree built with
+/// one pair of constants and rebalanced with another is a tree with no invariant at all. They are
+/// Adams's, by way of Haskell's `Data.Map`: a subtree may be up to `DELTA` times its sibling, and
+/// the choice between a single and a double rotation is `RATIO`.
+pub const DELTA: u64 = 3;
+pub const RATIO: u64 = 2;
+
+/// How many bytes a `Map` of `n` entries occupies: one node each.
+///
+/// A *fresh* map, which is what the host writes and what a literal builds. An insert allocates the
+/// path it rebuilt — `O(log n)` nodes — and shares the rest, so what a fold leaves behind is not
+/// this number times the events.
 pub fn map_bytes(n: u64) -> u64 {
-    MAP_HEADER + 2 * n * WORD
+    n * MAP_NODE
 }
 
 /// What one value is, at the machine.
@@ -1233,21 +1281,11 @@ impl Heap {
             (Value::Map(m), Repr::Map(at)) => {
                 let (k, v) = self.entry(at);
                 let (key, value) = (self.element(k), self.element(v));
-                let mut words = Vec::with_capacity(2 * m.len() + 1);
-                words.push(m.len() as u64);
-                for (k, _) in m.iter() {
-                    words.push(self.encode(k, key, blob)?);
+                let mut pairs = Vec::with_capacity(m.len());
+                for (k, v) in m.iter() {
+                    pairs.push((self.encode(k, key, blob)?, self.encode(v, value, blob)?));
                 }
-                let mut values = Vec::with_capacity(m.len());
-                for (_, v) in m.iter() {
-                    values.push(self.encode(v, value, blob)?);
-                }
-                words.extend(values);
-                let offset = blob.len() as u64;
-                for w in words {
-                    blob.extend_from_slice(&w.to_ne_bytes());
-                }
-                Ok(offset)
+                Ok(self.encode_tree(&pairs, blob))
             }
             (Value::Data(record), Repr::Obj(at)) => self.encode_object(record, at, blob),
             (Value::Html(h), Repr::Html) => self.encode_html(h, blob),
@@ -1370,6 +1408,24 @@ impl Heap {
         offset
     }
 
+    /// A sorted run of entries as a **perfectly balanced** tree.
+    ///
+    /// The middle entry is the root and each half is built the same way, so the two subtrees differ
+    /// in size by at most one — which satisfies `DELTA` with room to spare, and is what lets the
+    /// compiled code insert into a map the host wrote without rebalancing it first. Recursive over
+    /// `log n` frames, on a run the host already holds.
+    fn encode_tree(&self, pairs: &[(u64, u64)], blob: &mut Vec<u8>) -> u64 {
+        if pairs.is_empty() {
+            // The one offset `FIRST` reserves, which is what an empty map is.
+            return 0;
+        }
+        let mid = pairs.len() / 2;
+        let left = self.encode_tree(&pairs[..mid], blob);
+        let right = self.encode_tree(&pairs[mid + 1..], blob);
+        let (key, value) = pairs[mid];
+        self.write_words(vec![pairs.len() as u64, key, value, left, right], blob)
+    }
+
     fn encode_object(&self, record: &Record, at: u32, blob: &mut Vec<u8>) -> Result<u64, String> {
         let layout = self.layout(at);
         if record.ty != layout.name {
@@ -1473,25 +1529,16 @@ impl Heap {
             Repr::Str => self.decode_text(cell, blob).map(Begun::Leaf),
             Repr::Map(at) => {
                 let (k, v) = self.entry(at);
-                let count = word(blob, cell)?;
-                // Checked against the arena before it is trusted as a capacity, for the reason a
-                // list's count is: it came from another process.
-                let bytes = count
-                    .checked_mul(2 * WORD)
-                    .and_then(|b| b.checked_add(WORD));
-                if bytes.is_none_or(|b| cell + b > blob.len() as u64) {
-                    return Err(format!(
-                        "the compiled program answered with a map of {count} at offset {cell}, \
-                         and its heap is {} bytes",
-                        blob.len()
-                    ));
-                }
+                // The nodes in key order, worked out before any of them is decoded — the walk is
+                // the only place the *shape* of the tree matters, and doing it here keeps the frame
+                // below a flat list of cells exactly as a list's is.
+                let nodes = self.in_order(cell, blob)?;
                 Ok(Begun::Nested(Frame::Map {
-                    cell,
                     key: self.element(k),
                     value: self.element(v),
-                    count,
-                    done: Vec::with_capacity(2 * count as usize),
+                    count: nodes.len() as u64,
+                    nodes,
+                    done: Vec::new(),
                 }))
             }
             Repr::List(at) => {
@@ -1612,6 +1659,44 @@ impl Heap {
         }
     }
 
+    /// Every node of a map, in key order.
+    ///
+    /// **Iterative, with its own stack**, for the reason [`Heap::decode`] is: the tree came from
+    /// another process, and a recursive walk would make [`MAX_DEPTH`] a claim about the host's stack
+    /// rather than about the value. A weight-balanced tree of `n` entries is about `2.4 log n` deep,
+    /// so the ceiling is reached by a tree nothing could have built — which is exactly when it
+    /// should be.
+    fn in_order(&self, root: u64, blob: &[u8]) -> Result<Vec<u64>, String> {
+        let mut out = Vec::new();
+        let mut stack = Vec::new();
+        let mut node = root;
+        loop {
+            while node != 0 {
+                if stack.len() >= MAX_DEPTH {
+                    return Err(format!(
+                        "the compiled program answered with a map nested more than {MAX_DEPTH} deep"
+                    ));
+                }
+                stack.push(node);
+                node = word(blob, node + NODE_LEFT as u64 * WORD)?;
+            }
+            let Some(seen) = stack.pop() else {
+                return Ok(out);
+            };
+            // A size word that disagrees with the walk is a compiler bug reported as one rather
+            // than a decoder that runs until the arena ends.
+            if out.len() as u64 >= word(blob, root)? {
+                return Err(format!(
+                    "the compiled program answered with a map whose root says {} entries and whose \
+                     walk found more",
+                    word(blob, root)?
+                ));
+            }
+            out.push(seen);
+            node = word(blob, seen + NODE_RIGHT as u64 * WORD)?;
+        }
+    }
+
     /// The value a `raise` carried, out of the pair the compiled code left in the arena.
     ///
     /// [`crate::Trap::Raised`]'s payload is that pair's offset, and the arena travels with the
@@ -1707,9 +1792,13 @@ enum Frame {
         fields: Vec<(Arc<str>, Repr)>,
         done: Vec<(Arc<str>, Value)>,
     },
-    /// Every key, then every value: the order the words are laid out in, so the walk is one pass.
+    /// A key and then its value, entry by entry in key order.
+    ///
+    /// `nodes` is the tree's in-order walk, done once in [`Heap::begin`] — so this frame is a flat
+    /// list of cells exactly as a list's is, and the *shape* of the tree is not something the
+    /// decoder's stack has to carry.
     Map {
-        cell: u64,
+        nodes: Vec<u64>,
         key: Repr,
         value: Repr,
         count: u64,
@@ -1765,7 +1854,7 @@ impl Frame {
                 Ok(Some((w, *element)))
             }
             Frame::Map {
-                cell,
+                nodes,
                 key,
                 value,
                 count,
@@ -1775,8 +1864,14 @@ impl Frame {
                 if i == 2 * count {
                     return Ok(None);
                 }
-                let w = word(blob, cell + (i + 1) * WORD)?;
-                Ok(Some((w, if i < *count { *key } else { *value })))
+                // A key and then its value, so the two reprs alternate.
+                let node = nodes[(i / 2) as usize];
+                let (slot, repr) = if i.is_multiple_of(2) {
+                    (NODE_KEY, *key)
+                } else {
+                    (NODE_VALUE, *value)
+                };
+                Ok(Some((word(blob, node + slot as u64 * WORD)?, repr)))
             }
             Frame::Obj {
                 cell, fields, done, ..
@@ -1841,12 +1936,12 @@ impl Frame {
                 }))
             }
             Frame::List { done, .. } => Value::List(Arc::new(done)),
-            Frame::Map {
-                count, mut done, ..
-            } => {
-                let values = done.split_off(count as usize);
-                Value::Map(done.into_iter().zip(values).collect())
-            }
+            // Pairs, in the order they were asked for.
+            Frame::Map { done, .. } => Value::Map(
+                done.chunks_exact(2)
+                    .map(|kv| (kv[0].clone(), kv[1].clone()))
+                    .collect(),
+            ),
             Frame::Obj {
                 ty, variant, done, ..
             } => Value::Data(Arc::new(Record {
