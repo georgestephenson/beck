@@ -210,6 +210,29 @@ Newest first.
   already does for the link rule. Checked by putting the defect back: both go red and name all
   twelve lines. A heading opening with `§` cites a section rather than declaring one and is skipped
   — [`26`](docs/26-arrangement-sharing-report.md) has the only one.
+- **Thirty-one citations named roadmap sections that have never existed.** `§8.6` (Phase 3's bullet
+  list), `§8.7` and `§8.19` (Lane E) are cited by nine documents and four Rust doc comments, and
+  `git log -S"## 8.6" -- docs/08-roadmap.md` returns nothing: the phase headings have carried names
+  rather than numbers since the file's first commit. So this was never a rename — the numbers were
+  invented at the citing end, and inconsistently enough that `§8.7` means Phase 4 in
+  [`98`](docs/98-playground-report.md) and [`103`](docs/103-playground-phase-3-report.md) and the
+  **lane table** in [`93`](docs/93-llvm-backend-report.md). Each is repointed at what it claims:
+  Phase 3 and Phase 4 by the names the roadmap gives them, and Lane E to
+  [`08`](docs/08-roadmap.md) §8.5.5 — which is what [`105`](docs/105-text-on-the-heap-report.md),
+  [`106`](docs/106-lists-arrive-read-only-report.md) and
+  [`108`](docs/108-closures-arrive-report.md) already called it. No claim, measurement or refusal
+  moved; this edits reports, which are history, and the warrant is that a pointer that never
+  resolved is a repair rather than a rewrite — the same operation the consolidation below performed
+  when it remapped every `§number` to the section that carries the claim.
+- **There is no gate on the citing end, and the reason is the finding.** Of 157 `§N.M` citations
+  that resolve to no heading, the 31 above are the only ones this project owns: almost all of the
+  rest are **SICP and IEEE 754** section numbers — `§2.5.1`, `§1.1.7`, `§5.11` — which share the
+  notation, are somebody else's to number, and are the whole point of
+  [`25`](docs/25-benchmarks-and-expressiveness.md) §25.5. A rule that every `§N.M` resolves would
+  fire on all of them, so the gate stays on the defining end where it is sound. One internal
+  exception is left standing and named rather than fixed:
+  [`01`](docs/01-vision-and-premise.md) cites its own §1.4.5, which is the fifth item of §1.4's
+  list rather than a heading.
 
 - **Consolidated 27 reports into three chapters, and changed the rule that produced them.**
   Reports 70–79 (the evaluator's quadratics and constants) became

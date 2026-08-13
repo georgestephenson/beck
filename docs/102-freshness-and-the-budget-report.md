@@ -1,6 +1,6 @@
 # 102 — Phase 3 report, part 70: the page that says it is guessing, and a budget that had never been weighed
 
-**Built.** [`08`](08-roadmap.md) §8.6's Mode B bullet names four things. [`94`](94-mode-b-report.md)
+**Built.** [`08`](08-roadmap.md) Phase 3's Mode B bullet names four things. [`94`](94-mode-b-report.md)
 built the kernel and the reconciliation and closed with a list; this is the two the list still had,
 and after it what the bullet owes is codegen alone — the item
 [`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md) defers on purpose:
@@ -297,7 +297,7 @@ one gap this feature leaves in the in-language test surface.
   saying "proposed but not confirmed", which is a fourth clause shape and was not taken under this
   report's time.
 - **No codegen**, unchanged: [`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md) and
-  [`08`](08-roadmap.md) §8.19's Lane E. This is now the whole of what §8.6's Mode B bullet still
+  [`08`](08-roadmap.md) §8.5.5's Lane E. This is now the whole of what Phase 3's Mode B bullet still
   owes — and [`101`](101-the-heap-report.md), which landed alongside this work and gave both native
   backends the *algebraic* half of a heap, says plainly that it does not bring Mode B codegen
   closer: a page is `Html` and `Str` all the way down, and that heap holds neither yet.
@@ -320,7 +320,7 @@ one gap this feature leaves in the in-language test surface.
   with §102.1's narrowing stated in both places.
 - [`05`](05-tier-lowering.md) §5.1's "Size budgets enforced in CI" is true of the component bundle
   as of this change. It was the only clause of that bullet that named CI and had none.
-- [`08`](08-roadmap.md) §8.6's Mode B bullet has one item left — codegen — where it had three.
+- [`08`](08-roadmap.md) Phase 3's Mode B bullet has one item left — codegen — where it had three.
 - [`94`](94-mode-b-report.md) §94.8's last bullet ("no `wasm-opt`, no size gate in CI") is half
   answered: the size gate exists and `wasm-opt` still does not run. Its §94.14 shortcut is
   unchanged in the common case and now asks a second question of the components that need one

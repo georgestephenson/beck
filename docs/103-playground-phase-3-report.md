@@ -269,7 +269,7 @@ truncates, and exactly the thing a resolver would fix.
 
 ## 103.6 What is still not built
 
-- **Rung C.** Untouched, and Phase 4's ([`08`](08-roadmap.md) §8.7). Nothing here compiles against a
+- **Rung C.** Untouched, and Phase 4's ([`08`](08-roadmap.md)). Nothing here compiles against a
   restricted effect budget.
 - **The playground is still not a Beck app.** §17.5 and D15 say it should be; it is a page of
   JavaScript with two Rust modules under it. What would make it one is the registry and the site

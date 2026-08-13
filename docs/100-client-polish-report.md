@@ -2,13 +2,13 @@
 
 **Built**, except for the one item that has nothing to be about yet, which §100.7 says so about.
 
-[`08-roadmap.md`](08-roadmap.md) §8.6 has carried one line since Phase 3 began that nothing had
+[`08-roadmap.md`](08-roadmap.md) Phase 3 has carried one line since Phase 3 began that nothing had
 touched:
 
 > Client polish for both modes: router, forms, lazy routes, focus/scroll preservation, devtools
 > extension showing signal graph, patch traffic and pending state.
 
-[`94`](94-mode-b-report.md) §94.8 listed it as "the rest of §8.6's client bullet, untouched" and
+[`94`](94-mode-b-report.md) §94.8 listed it as "the rest of Phase 3's client bullet, untouched" and
 §94.11 repeated it. This is that line, and the interesting half is not any of the five items. It is
 what the first one found: **`Session` had been one word for two facts**, and the rule that decides
 where a component may render was about only one of them.
@@ -215,7 +215,7 @@ spends its gates refusing.
 
 ## 100.6 The panel, and why it is not an extension
 
-§8.6 asks for "a devtools **extension** showing signal graph, patch traffic and pending state". What
+Phase 3 asks for "a devtools **extension** showing signal graph, patch traffic and pending state". What
 is here is the three things and not the extension, and the difference is deliberate rather than a
 shortcut: an extension is a second artefact with its own distribution, its own permissions and its
 own release pipeline, and **nothing in this repository could run one** —
@@ -267,7 +267,7 @@ route would be splitting the only thing there is.
 
 The honest ordering is therefore: per-component rendering first, in the language; lazy routes are a
 consequence of it and not a feature that can precede it. This is written here rather than left to be
-rediscovered, and it is the one item of §8.6's client bullet that this report does not close.
+rediscovered, and it is the one item of Phase 3's client bullet that this report does not close.
 
 ## 100.8 The gates, and what makes each go red
 
@@ -318,14 +318,14 @@ cannot be read back without guessing.
   subscription". It is not, and the engine was already right about it.
 * `B0514`'s entry in the error index said "renders differently for each session". It says *actor*
   now, and names what is allowed.
-* [`08`](08-roadmap.md) §8.6's client bullet is updated with what remains, which is one item, and
-  §8.19's "two untouched" is one — the playground.
+* [`08`](08-roadmap.md) Phase 3's client bullet is updated with what remains, which is one item, and
+  Phase 3's "two untouched" is one — the playground.
 * [`96`](96-presence-report.md) landed between this work starting and finishing, and its `B0516` is
   `B0514`'s sibling rather than a second version of it: two refusals, for the two things a browser
   handed the accumulator would not have (§100.2).
 * [`98`](98-playground-report.md) §98.10 and [`99`](99-supply-chain-report.md) §99.10 both name client
   polish as the one bullet left untouched — the last two reports to be able to say so. With this,
-  **no bullet on [`08`](08-roadmap.md) §8.6's list is untouched**; what each has left is named in
+  **no bullet on [`08`](08-roadmap.md) Phase 3's list is untouched**; what each has left is named in
   its own report, and this one's is lazy routes (§100.7).
 * [`05`](05-tier-lowering.md) §5.1 says the router is "derived from route declarations" and that
   "navigation is just another command". There are no route declarations, and a navigation is not a

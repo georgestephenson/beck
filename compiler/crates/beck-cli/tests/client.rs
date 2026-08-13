@@ -1,6 +1,6 @@
 //! Client polish: the router, forms, and what a devtools panel is allowed to know.
 //!
-//! [`docs/08-roadmap.md`](../../../../docs/08-roadmap.md) §8.6's client bullet — "router, forms,
+//! [`docs/08-roadmap.md`](../../../../docs/08-roadmap.md) Phase 3's client bullet — "router, forms,
 //! lazy routes, focus/scroll preservation, devtools" — and
 //! [`docs/100`](../../../../docs/100-client-polish-report.md) is what was built of it. This gates the
 //! half that does not need a browser; `browser.rs` gates the half that does, because focus and
@@ -446,7 +446,7 @@ fn the_signal_graph_a_panel_draws_is_the_programs_own_and_carries_no_state() {
     }
 }
 
-/// The panel names the three things §8.6 asks it for, and loads only when it is asked for.
+/// The panel names the three things Phase 3 asks it for, and loads only when it is asked for.
 #[test]
 fn the_panel_shows_the_three_things_and_is_not_shipped_by_default() {
     for what in ["signal graph", "patch traffic", "pending"] {

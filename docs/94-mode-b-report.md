@@ -5,7 +5,7 @@ state and starts carrying the state. The browser holds the accumulator, runs the
 `validate` and the program's own fold speculatively, renders the same view the server would have
 rendered, and reconciles by `seq`. [`08`](08-roadmap.md)'s "**Mode B client**: per-component WASM
 (view + fold + signal kernel), optimistic application with `seq` reconciliation" — one of the four
-bullets [`08`](08-roadmap.md) §8.6 has listed as untouched since Phase 3 began.
+bullets [`08`](08-roadmap.md) Phase 3 has listed as untouched since Phase 3 began.
 
 The interesting half is not the WebAssembly. It is what a component has to give up to earn the
 mode: **a Mode B page may not be a function of who is asking**, because Mode B sends the browser
@@ -288,7 +288,7 @@ browser in CI that §94.8 still owes.
   at rather than a rewrite. The seam now has two implementations behind it
   ([`93`](93-llvm-backend-report.md)) and **neither of them can render a page**: `beck-llvm` refuses
   anything needing a heap, which a view is made of. The heap is the shared prerequisite, and it is
-  Phase 4's rather than this bullet's — [`08`](08-roadmap.md) §8.19's Lane E is where it is
+  Phase 4's rather than this bullet's — [`08`](08-roadmap.md) §8.5.5's Lane E is where it is
   scheduled. **§94.14 measures what this bullet costs and finds it is not the leading cost**: a
   code generator divides the constant and leaves the growth, because what grows is `view` being a
   pure function of the whole state, which both existing backends share.
@@ -309,7 +309,7 @@ browser in CI that §94.8 still owes.
   `@render(client)` is the whole surface. A wrong inference here would ship a state to a browser,
   so a declaration is the conservative default; `beck explain render` prints the counterfactual so
   the choice is informed rather than guessed at.
-- **No router, no lazy routes, no focus/scroll polish, no devtools.** The rest of §8.6's client
+- **No router, no lazy routes, no focus/scroll polish, no devtools.** The rest of Phase 3's client
   bullet, untouched.
 - **No `wasm-opt`**, no size gate in CI. `mode_b.rs` asserts a *ceiling* of 8 MB — enough to catch
   the kernel becoming a different kind of object, and deliberately not a budget, because a budget
@@ -360,7 +360,7 @@ which is the snapshot §94.7 ends on.
   `@render(client)`, explicitly, with the cost printed beside it and no inference. D5 also did not
   anticipate §94.2's refusal, which is the one thing this work adds to the decision rather than
   implementing from it.
-- [`08`](08-roadmap.md) §8.6's Mode B bullet is built except for the pieces §94.8 names; the client
+- [`08`](08-roadmap.md) Phase 3's Mode B bullet is built except for the pieces §94.8 names; the client
   polish bullet is untouched.
 - [`24`](24-incremental-views-report.md) §24.9 item 2 — "the plan is where the client work attaches.
   Mode B needs a per-component kernel" — is answered, and the answer is that the kernel needed the

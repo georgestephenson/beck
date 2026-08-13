@@ -276,7 +276,7 @@ emits what it always did.
 | [`93`](93-llvm-backend-report.md) §93.6, [`97`](97-cranelift-report.md) §97.7 | "there is no heap" — there is one, for records, unions and newtypes. Every other row of both tables stands, and §101.5 restates them with tests |
 | [`97`](97-cranelift-report.md) §97.7 | "all 32 corpus programs compile **nothing at all**" — three of them compile four definitions. The sentence's point survives, and §101.6 says why |
 | [`93`](93-llvm-backend-report.md) §93.3 | "59 programs assemble, 136 definitions compile" was a measurement of that day over a different file set; §101.2 is this day's, with the command |
-| [`08`](08-roadmap.md) §8.5.4, §8.6 | The codegen bullet is no longer "both code generators and no heap". It is both code generators, a heap for the algebraic core, and no text, collections, closures or effects |
+| [`08`](08-roadmap.md) §8.5.4, Phase 3 | The codegen bullet is no longer "both code generators and no heap". It is both code generators, a heap for the algebraic core, and no text, collections, closures or effects |
 | [`05`](05-tier-lowering.md) §5.2 | "compiles to native binaries, one per `service`" is still not true and is closer: what stands between is §101.5's table rather than the whole idea of a heap |
 | [`91`](91-guards-and-alternatives-report.md) §91.3 | Fourteen walks over an `Arm` were taught about guards. There was a fifteenth, and §101.8 is it |
 

@@ -1,6 +1,6 @@
 //! The signal graph a devtools panel draws, as JSON.
 //!
-//! [`docs/08-roadmap.md`](../../../../../docs/08-roadmap.md) §8.6 asks for a devtools view of "the
+//! [`docs/08-roadmap.md`](../../../../../docs/08-roadmap.md) Phase 3 asks for a devtools view of "the
 //! signal graph, patch traffic and pending state". Two of those three are the client's own and are
 //! measured where they happen ([`crate::PATCH_CLIENT`]); this is the third, and it is the only one
 //! the browser cannot know, because the signal graph is a fact about the *program* and a Mode A
