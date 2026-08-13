@@ -17,11 +17,11 @@
 //! # What this is not
 //!
 //! Not a general backend. Every effect that has to **reach the host** — `io`, `log`, `net.out`, a
-//! clock — is still the tree-walker's, and so is every operation that *grows* a collection:
-//! `list_append` and `map_insert` are refused rather than shipped with a worse asymptote than the
-//! evaluator's, which is why a fold that keeps a `Map` still does not compile. Text, collections,
-//! closures, a view and **failure** — `raise` and `try:` — do compile; `beck run` and `beck up` are
-//! unchanged.
+//! clock — is still the tree-walker's, and so is growing a **map**: `map_insert` is refused rather
+//! than shipped with a worse asymptote than the evaluator's, whose `PMap` shares every subtree it
+//! did not touch, which is why a fold that keeps one still does not compile. Text, collections,
+//! closures, a view, **failure** — `raise` and `try:` — and growing a **list** do compile; `beck
+//! run` and `beck up` are unchanged.
 //! There is no collector either — the arena is reset per call
 //! ([`adr/0026`](../../../../docs/adr/0026-the-native-heap-is-an-arena-of-offsets.md)).
 //!

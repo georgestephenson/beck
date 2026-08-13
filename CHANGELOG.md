@@ -109,6 +109,31 @@ Newest first.
 
 ### The native backends
 
+- **A list grows, and the refusal was about a layout**
+  ([`docs/111`](docs/111-a-list-grows-report.md)): `list_append` compiles to both code generators and
+  the accumulator every loop is written as is **linear**. **711 → 895 definitions** compile across
+  the tree and refusals go 707 → 523 — the largest jump any of these rounds has produced, because
+  `list_append` appears in 65 definitions and the other 119 had inherited the refusal from a callee.
+  - **The reason on record was true and the conclusion did not follow.** It was *ownership*: the
+    tree-walker pushes in place when last-use analysis proves the accumulator is nobody else's, and
+    an arena cannot prove that. Every sentence of that holds. What forced the copy was the **layout**
+    — a count sitting in front of the elements, so an append could copy them or overwrite what other
+    holders see. A list is two objects now: an immutable **header** `[count, block]` and a shared
+    **data block** `[cap, used, elements…]`.
+  - **Sound by the shape of the writes, not by an argument about who holds what.** Every header over
+    a block has a count of at most `used`, so the slot at `used` is one no reader can see: an append
+    writes it, bumps `used`, and answers a *new* header. A second list grown from the same one finds
+    the slot taken and copies. No ownership analysis, no reference count, no last-use flag.
+  - **Costs one load, once per operation** — every generated loop takes the data pointer before it
+    starts — and 24 bytes per list, which three arena-shape gates now carry as moved constants (16 →
+    40 bytes for a one-element slice, 96 → 144 for a row of the todo page). What those gates assert
+    is unchanged: the number does not grow with `n`.
+  - Gated by `an_appended_accumulator_is_linear` (**4.0× the arena for 4× the elements**, no clock in
+    it) and by `forked` in the differential — two lists grown from one, so the soundness argument is
+    a program rather than a paragraph. Measured at **11.4× the tree-walker at 2,000 elements and
+    7.0× at 8,000**, against a control that holds 80× flat: the arena is linear and what grows is the
+    reply, which is [`docs/93`](docs/93-llvm-backend-report.md) §93.1's round trip again.
+
 - **A raise arrives, and a handler catches it**
   ([`docs/110`](docs/110-a-raise-arrives-report.md)): `raise` and `try:` compile to both code
   generators. The mechanism was already there — every compiled function takes an error cell, stores

@@ -349,8 +349,8 @@ def ackermann(m: Int, n: Int) -> Int:
 /// is the control: a list of refusals with nothing on the other side of it would pass against a
 /// backend that refused everything.
 pub const REFUSED: &str = r#"
-def grows_a_list(xs: list[Int], n: Int) -> list[Int]:
-    return list_append(xs, n)
+def grows_a_map(m: Map[Str, Int], k: Str, n: Int) -> Map[Str, Int]:
+    return map_insert(m, k, n)
 
 def renders_a_real(x: Float) -> Str:
     return str(x)
@@ -361,8 +361,8 @@ def is_generic[T](x: T) -> T:
 def reads_the_clock() -> Int:
     return now()
 
-def calls_something_refused(n: Int) -> list[Int]:
-    return grows_a_list([n], n)
+def calls_something_refused(n: Int) -> Map[Str, Int]:
+    return grows_a_map({}, "k", n)
 
 def scalar_and_fine(n: Int) -> Int:
     return n * 2

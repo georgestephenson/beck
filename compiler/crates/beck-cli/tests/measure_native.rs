@@ -1152,3 +1152,100 @@ def down(n: Int) -> Int:
         );
     }
 }
+
+/// What an appended accumulator costs against the tree-walker, at two sizes.
+///
+/// `docs/69` §69.7 measured this loop as **quadratic in time** on the evaluator before
+/// `docs/70` gave it last-use moves, and `docs/106` §106.5 refused to compile it rather than ship
+/// the quadratic back. `docs/111` is the layout that removed the choice, and this is the row that
+/// says so: the ratio has to **hold its shape** over four times the elements, because a copying
+/// append would lose a factor of four between the two rows.
+///
+/// The second pair is the control from the other direction — the same loop reading rather than
+/// growing — so a reader can tell a linear append from a fast one.
+#[test]
+fn what_an_appended_accumulator_costs_against_the_tree_walker() {
+    const SRC: &str = r#"
+## The idiom: a tail-recursive accumulator, appended to once per element.
+def doubled(xs: list[Int]) -> list[Int]:
+    return push_from(xs, 0, [])
+
+def push_from(xs: list[Int], i: Int, acc: list[Int]) -> list[Int]:
+    if i >= list_len(xs):
+        return acc
+    match list_get(xs, i):
+        case Some(value):
+            return push_from(xs, i + 1, list_append(acc, value * 2))
+        case None():
+            return acc
+
+## The same walk with nothing built, so the append is what the difference is.
+def summed(xs: list[Int]) -> Int:
+    return add_from(xs, 0, 0)
+
+def add_from(xs: list[Int], i: Int, acc: Int) -> Int:
+    if i >= list_len(xs):
+        return acc
+    match list_get(xs, i):
+        case Some(value):
+            return add_from(xs, i + 1, acc + value)
+        case None():
+            return acc
+"#;
+    let program = compile("append.beck", SRC);
+    let Some(artifact) = Artifact::build_within(&program, Duration::from_secs(300))
+        .expect("clang accepts the module")
+    else {
+        assert!(
+            !require_llvm(),
+            "BECK_REQUIRE_LLVM=1 and there is no `clang` on the path"
+        );
+        println!("skipped: no LLVM toolchain. Set BECK_REQUIRE_LLVM=1 to make this a failure.");
+        return;
+    };
+    let evaluator = beck_eval::backend_for(program.clone());
+    println!("{}\n", artifact.toolchain().version);
+    println!(
+        "{:<14} {:>10} {:>14} {:>14} {:>9}",
+        "benchmark", "elements", "evaluator", "native", "ratio"
+    );
+    let long = |n: usize| Value::List(Arc::new((0..n as i64).map(Value::Int).collect::<Vec<_>>()));
+    let mut seen: Vec<(&str, f64, f64)> = Vec::new();
+    for name in ["doubled", "summed"] {
+        let mut ratios = [0.0f64; 2];
+        for (i, size) in [2_000usize, 8_000].iter().enumerate() {
+            let args = vec![long(*size)];
+            let runs = if i == 0 { 7 } else { 3 };
+            let walked = beck_eval::on_the_evaluator_stack(|| {
+                let f = evaluator
+                    .function(&program.defs[name].body)
+                    .expect("prepares");
+                median(runs, || {
+                    f(args.clone()).expect("the evaluator answers");
+                })
+            });
+            let compiled = median(runs, || {
+                artifact
+                    .call(name, &args)
+                    .expect("the native backend answers");
+            });
+            ratios[i] = walked.as_secs_f64() / compiled.as_secs_f64();
+            println!(
+                "{:<14} {:>10} {:>14} {:>14} {:>8.2}×",
+                if i == 0 { name } else { "" },
+                size,
+                format!("{walked:?}"),
+                format!("{compiled:?}"),
+                ratios[i]
+            );
+        }
+        seen.push((name, ratios[0], ratios[1]));
+    }
+    for (name, small, large) in &seen {
+        assert!(
+            large / small > 0.5,
+            "`{name}` was {small:.2}× at 2,000 elements and {large:.2}× at 8,000 — the ratio \
+             collapsed, which is what an append that copies looks like"
+        );
+    }
+}

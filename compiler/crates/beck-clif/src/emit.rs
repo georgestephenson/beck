@@ -622,7 +622,15 @@ struct Runtime {
 /// know what a word means is generated per element repr instead, by [`element_functions`].
 #[derive(Clone, Copy, Debug)]
 struct Lists {
+    /// A data block of a given capacity, with `used` written — see `beck_llvm::heap::LIST_HEADER`
+    /// for why a list is two objects.
+    block: FuncId,
+    /// A header over a block.
+    head: FuncId,
     alloc: FuncId,
+    /// `list_append`: a new header over the same block when this list stands at its end and the
+    /// block has room, and a doubled copy otherwise.
+    append: FuncId,
     len: FuncId,
     /// `list_slice`, `list_take` and `list_drop` at once: all three are "a range, clamped", and the
     /// clamping is arithmetic the caller does.
@@ -647,9 +655,24 @@ impl Lists {
                 .map_err(|e| format!("declaring `{name}`: {e}"))
         };
         Ok(Lists {
+            block: one(
+                "beck.list.block",
+                &[ptr, types::I64, types::I64, types::I32],
+                types::I64,
+            )?,
+            head: one(
+                "beck.list.head",
+                &[ptr, types::I64, types::I64, types::I32],
+                types::I64,
+            )?,
             alloc: one(
                 "beck.list.alloc",
                 &[ptr, types::I64, types::I32],
+                types::I64,
+            )?,
+            append: one(
+                "beck.list.append",
+                &[ptr, types::I64, types::I64, types::I32],
                 types::I64,
             )?,
             len: one("beck.list.len", &[types::I64], types::I64)?,
@@ -672,6 +695,10 @@ impl Lists {
     }
 
     /// Where a list's elements start, as an address.
+    ///
+    /// Through the block, which is the one load `beck_llvm::heap::LIST_HEADER`'s indirection costs —
+    /// and it is paid once per operation rather than once per element, because every loop takes this
+    /// pointer before it starts.
     fn data(
         self,
         arena: Arena,
@@ -680,8 +707,12 @@ impl Lists {
         m: &mut ObjectModule,
     ) -> IrValue {
         let base = arena.base(b, m);
-        let at = b.ins().iadd(base, xs);
-        b.ins().iadd_imm_s(at, heap::LIST_HEADER as i64)
+        let ph = b.ins().iadd(base, xs);
+        let d = b
+            .ins()
+            .load(types::I64, MemFlagsData::trusted(), ph, heap::WORD as i32);
+        let at = b.ins().iadd(base, d);
+        b.ins().iadd_imm_s(at, heap::DATA_HEADER as i64)
     }
 
     /// The header word, which is how many elements there are.
@@ -705,14 +736,16 @@ impl Lists {
         fctx: &mut FunctionBuilderContext,
         ptr: Type,
     ) -> Result<(), String> {
-        let sig = Text::signature(m, &[ptr, types::I64, types::I32], types::I64);
-        Text::wrote(self.alloc, sig, 10, m, ctx, fctx, |b, m| {
+        // The data block: `[cap, used, elements…]`.
+        let sig = Text::signature(m, &[ptr, types::I64, types::I64, types::I32], types::I64);
+        Text::wrote(self.block, sig, 24, m, ctx, fctx, |b, m| {
             let entry = b.current_block().expect("an entry block");
             let err = b.block_params(entry)[0];
-            let n = b.block_params(entry)[1];
-            let span = b.block_params(entry)[2];
-            let body = b.ins().imul_imm_s(n, heap::WORD as i64);
-            let total = b.ins().iadd_imm_s(body, heap::LIST_HEADER as i64);
+            let cap = b.block_params(entry)[1];
+            let used = b.block_params(entry)[2];
+            let span = b.block_params(entry)[3];
+            let body = b.ins().imul_imm_s(cap, heap::WORD as i64);
+            let total = b.ins().iadd_imm_s(body, heap::DATA_HEADER as i64);
             let f = arena.alloc_in(b, m);
             let call = b.ins().call(f, &[err, total, span]);
             let off = b.inst_results(call)[0];
@@ -724,9 +757,147 @@ impl Lists {
             b.switch_to_block(fill);
             let base = arena.base(b, m);
             let p = b.ins().iadd(base, off);
-            b.ins().store(MemFlagsData::trusted(), n, p, 0);
+            b.ins().store(MemFlagsData::trusted(), cap, p, 0);
+            b.ins()
+                .store(MemFlagsData::trusted(), used, p, heap::WORD as i32);
             b.ins().jump(out, &[off.into()]);
             b.switch_to_block(out);
+            let r = b.block_params(out)[0];
+            b.ins().return_(&[r]);
+        })?;
+
+        // The header: `[count, block]`.
+        let sig = Text::signature(m, &[ptr, types::I64, types::I64, types::I32], types::I64);
+        Text::wrote(self.head, sig, 25, m, ctx, fctx, |b, m| {
+            let entry = b.current_block().expect("an entry block");
+            let err = b.block_params(entry)[0];
+            let n = b.block_params(entry)[1];
+            let data = b.block_params(entry)[2];
+            let span = b.block_params(entry)[3];
+            let f = arena.alloc_in(b, m);
+            let total = b.ins().iconst(types::I64, heap::LIST_HEADER as i64);
+            let call = b.ins().call(f, &[err, total, span]);
+            let off = b.inst_results(call)[0];
+            let fill = b.create_block();
+            let out = b.create_block();
+            b.append_block_param(out, types::I64);
+            let failed = b.ins().icmp_imm_s(IntCC::Equal, off, 0);
+            b.ins().brif(failed, out, &[off.into()], fill, &[]);
+            b.switch_to_block(fill);
+            let base = arena.base(b, m);
+            let p = b.ins().iadd(base, off);
+            b.ins().store(MemFlagsData::trusted(), n, p, 0);
+            b.ins()
+                .store(MemFlagsData::trusted(), data, p, heap::WORD as i32);
+            b.ins().jump(out, &[off.into()]);
+            b.switch_to_block(out);
+            let r = b.block_params(out)[0];
+            b.ins().return_(&[r]);
+        })?;
+
+        // A list of exactly `n`: a block that size, and a header over it.
+        let sig = Text::signature(m, &[ptr, types::I64, types::I32], types::I64);
+        Text::wrote(self.alloc, sig, 10, m, ctx, fctx, |b, m| {
+            let entry = b.current_block().expect("an entry block");
+            let err = b.block_params(entry)[0];
+            let n = b.block_params(entry)[1];
+            let span = b.block_params(entry)[2];
+            let f = m.declare_func_in_func(self.block, b.func);
+            let call = b.ins().call(f, &[err, n, n, span]);
+            let d = b.inst_results(call)[0];
+            let top = b.create_block();
+            let out = b.create_block();
+            b.append_block_param(out, types::I64);
+            let failed = b.ins().icmp_imm_s(IntCC::Equal, d, 0);
+            b.ins().brif(failed, out, &[d.into()], top, &[]);
+            b.switch_to_block(top);
+            let f = m.declare_func_in_func(self.head, b.func);
+            let call = b.ins().call(f, &[err, n, d, span]);
+            let h = b.inst_results(call)[0];
+            b.ins().jump(out, &[h.into()]);
+            b.switch_to_block(out);
+            let r = b.block_params(out)[0];
+            b.ins().return_(&[r]);
+        })?;
+
+        // `list_append`. The test is `count == used`: every header over a block has a count of at
+        // most `used`, so the slot at `used` is one no reader can see. Writing it and answering a
+        // *new* header leaves every existing list exactly as it was.
+        let sig = Text::signature(m, &[ptr, types::I64, types::I64, types::I32], types::I64);
+        Text::wrote(self.append, sig, 26, m, ctx, fctx, |b, m| {
+            let entry = b.current_block().expect("an entry block");
+            let err = b.block_params(entry)[0];
+            let xs = b.block_params(entry)[1];
+            let w = b.block_params(entry)[2];
+            let span = b.block_params(entry)[3];
+            let flags = MemFlagsData::trusted();
+            let base = arena.base(b, m);
+            let ph = b.ins().iadd(base, xs);
+            let n = b.ins().load(types::I64, flags, ph, 0);
+            let d = b.ins().load(types::I64, flags, ph, heap::WORD as i32);
+            let pb = b.ins().iadd(base, d);
+            let cap = b.ins().load(types::I64, flags, pb, 0);
+            let used = b.ins().load(types::I64, flags, pb, heap::WORD as i32);
+
+            let push = b.create_block();
+            let grow = b.create_block();
+            let done = b.create_block();
+            b.append_block_param(done, types::I64);
+            b.append_block_param(done, types::I64);
+            let out = b.create_block();
+            b.append_block_param(out, types::I64);
+            let at_end = b.ins().icmp(IntCC::Equal, n, used);
+            let room = b.ins().icmp(IntCC::UnsignedLessThan, used, cap);
+            let fits = b.ins().band(at_end, room);
+            b.ins().brif(fits, push, &[], grow, &[]);
+
+            b.switch_to_block(push);
+            b.seal_block(push);
+            let off = b.ins().imul_imm_s(n, heap::WORD as i64);
+            let slot = b.ins().iadd(pb, off);
+            b.ins().store(flags, w, slot, heap::DATA_HEADER as i32);
+            let n1 = b.ins().iadd_imm_s(n, 1);
+            b.ins().store(flags, n1, pb, heap::WORD as i32);
+            b.ins().jump(done, &[d.into(), n1.into()]);
+
+            b.switch_to_block(grow);
+            b.seal_block(grow);
+            let want = b.ins().iadd_imm_s(n, 1);
+            let twice = b.ins().imul_imm_s(want, 2);
+            let four = b.ins().iconst(types::I64, 4);
+            let small = b.ins().icmp(IntCC::UnsignedLessThan, twice, four);
+            let cap2 = b.ins().select(small, four, twice);
+            let f = m.declare_func_in_func(self.block, b.func);
+            let call = b.ins().call(f, &[err, cap2, want, span]);
+            let d2 = b.inst_results(call)[0];
+            let move_ = b.create_block();
+            let failed = b.ins().icmp_imm_s(IntCC::Equal, d2, 0);
+            b.ins().brif(failed, out, &[d2.into()], move_, &[]);
+
+            b.switch_to_block(move_);
+            b.seal_block(move_);
+            let base = arena.base(b, m);
+            let pb2 = b.ins().iadd(base, d2);
+            let pe2 = b.ins().iadd_imm_s(pb2, heap::DATA_HEADER as i64);
+            let from = self.data(arena, xs, b, m);
+            let bytes = b.ins().imul_imm_s(n, heap::WORD as i64);
+            b.call_memcpy(m.target_config(), pe2, from, bytes);
+            let off = b.ins().imul_imm_s(n, heap::WORD as i64);
+            let slot = b.ins().iadd(pe2, off);
+            b.ins().store(flags, w, slot, 0);
+            b.ins().jump(done, &[d2.into(), want.into()]);
+
+            b.switch_to_block(done);
+            b.seal_block(done);
+            let block = b.block_params(done)[0];
+            let len = b.block_params(done)[1];
+            let f = m.declare_func_in_func(self.head, b.func);
+            let call = b.ins().call(f, &[err, len, block, span]);
+            let h = b.inst_results(call)[0];
+            b.ins().jump(out, &[h.into()]);
+
+            b.switch_to_block(out);
+            b.seal_block(out);
             let r = b.block_params(out)[0];
             b.ins().return_(&[r]);
         })?;
@@ -5134,6 +5305,23 @@ impl<'a> Body<'a> {
                 self.text_arg(&vals[1], op)?;
                 self.index_of(ty, vals[0].v, vals[1].v, span, b, m)
             }
+            // `list_append` — a new header, and a slot in the block when there is one. See the LLVM
+            // emitter's arm and `beck_llvm::heap::LIST_HEADER`.
+            Prim::ListAppend => {
+                arity(2, &vals)?;
+                let at = self.list_arg(&vals[0], op)?;
+                let element = self.heap.element(at);
+                if vals[1].ty != element {
+                    return Err("`list_append` of an element of another type".into());
+                }
+                let lists = self.lists();
+                let word = self.widen(&vals[1], b);
+                let out = self.build_call(lists.append, &[vals[0].v, word], span, b, m);
+                Ok(Val {
+                    v: out.v,
+                    ty: vals[0].ty,
+                })
+            }
             Prim::ListLen | Prim::ListIsEmpty => {
                 arity(1, &vals)?;
                 self.list_arg(&vals[0], op)?;
@@ -5774,12 +5962,19 @@ impl<'a> Body<'a> {
             }
             vals.push(v);
         }
-        let off = self.alloc(heap::list_bytes(xs.len() as u64), span, b, m);
-        let n = b.ins().iconst(types::I64, xs.len() as i64);
-        self.store_word(off, 0, n, b, m);
+        // The block and then the header, in that order, because the header holds the block's
+        // offset — the same depth-first rule a record's fields follow.
+        let count = xs.len() as u64;
+        let data = self.alloc(heap::DATA_HEADER + count * heap::WORD, span, b, m);
+        let n = b.ins().iconst(types::I64, count as i64);
+        self.store_word(data, 0, n, b, m);
+        self.store_word(data, 1, n, b, m);
         for (i, v) in vals.iter().enumerate() {
-            self.store_field(off, i + 1, v, b, m);
+            self.store_field(data, i + 2, v, b, m);
         }
+        let off = self.alloc(heap::LIST_HEADER, span, b, m);
+        self.store_word(off, 0, n, b, m);
+        self.store_word(off, 1, data, b, m);
         Ok(Val { v: off, ty: repr })
     }
 
@@ -6534,11 +6729,6 @@ fn refusal(op: Prim) -> String {
         // The one that is a decision rather than a gap. `docs/69` §69.7 and `docs/101` §101.5 both
         // name shipping this as the mistake: the tree-walker pushes in place when `liveness` proves
         // the accumulator is a last use, and an arena with no ownership in it cannot.
-        Prim::ListAppend => {
-            "grows a list, and this arena cannot prove nobody else holds the one it would push \
-             into — so the accumulator every loop is written as would be quadratic here and linear \
-             in the evaluator"
-        }
         Prim::ListZip => "answers with a list of pairs, and there is no pair type to lay out",
         // The same rule `list_append` gets, one type over: the evaluator's `PMap` shares everything
         // it did not touch and rebuilds one path, and a sorted run in an arena has to copy all of

@@ -53,7 +53,7 @@ const MAX_DEPTH: u32 = 64;
 
 /// How many nodes a module's macros may **produce**, in total.
 ///
-/// [`MAX_DEPTH`] and [`Nesting`] bound how deep expansion goes and neither bounds how much it makes,
+/// `MAX_DEPTH` and [`Nesting`] bound how deep expansion goes and neither bounds how much it makes,
 /// which is [`14`](../../../../docs/14-review-findings.md)'s F17: *a macro that doubles its output
 /// at each of a few levels is shallow, terminating, and enormous*. Eight nestings of a two-line
 /// macro is 256 copies of its argument; sixty nestings is 10^18 of them, which is more nodes than a

@@ -19,9 +19,10 @@
 //! field reads, `with`, lambdas and applications, and the arithmetic, comparison, logical, text,
 //! collection and view primitives.
 //!
-//! Every effect that has to reach the **host**, and every operation that **grows** a collection, are
-//! refused — by name, with the reason, in [`crate::Report`]. Failure is not among them: `raise` and
-//! `try:` compile, on the error cell that was already an unwinder. Nothing is silently approximated: a definition either compiles
+//! Every effect that has to reach the **host**, and growing a **map**, are refused — by name, with
+//! the reason, in [`crate::Report`]. Failure is not among them: `raise` and `try:` compile, on the
+//! error cell that was already an unwinder. Nor is growing a *list*, since `docs/111` separated the
+//! count from the elements. Nothing is silently approximated: a definition either compiles
 //! to machine code that agrees with the evaluator on every input, or it does not compile.
 //!
 //! # Agreeing with the evaluator exactly
@@ -1975,6 +1976,31 @@ impl<'a> Function<'a> {
                 self.text_arg(&vals[1], op)?;
                 self.index_of(ty, &vals[0], &vals[1], span)
             }
+            // `list_append` — a new header, and a slot in the block when there is one.
+            //
+            // Refused until `docs/111` for a reason that was true of the *layout* rather than of the
+            // operation: with the count in front of the elements, an append could copy or it could
+            // overwrite what other holders see. Separating the two made a third answer available.
+            Prim::ListAppend => {
+                arity(2)?;
+                let at = self.list_arg(&vals[0], op)?;
+                let element = self.heap.element(at);
+                if vals[1].ty != element {
+                    return Err("`list_append` of an element of another type".into());
+                }
+                let word = self.widen(&vals[1].clone());
+                let idx = self.span(span);
+                let r = self.fresh();
+                self.line(format!(
+                    "{r} = call i64 @\"beck.list.append\"(ptr %err, i64 {}, i64 {word}, i32 {idx})",
+                    vals[0].text
+                ));
+                self.check_call();
+                Ok(Val {
+                    text: r,
+                    ty: vals[0].ty,
+                })
+            }
             Prim::ListLen | Prim::ListIsEmpty => {
                 arity(1)?;
                 self.list_arg(&vals[0], op)?;
@@ -2601,11 +2627,18 @@ impl<'a> Function<'a> {
             }
             vals.push(v);
         }
-        let off = self.alloc(heap::list_bytes(xs.len() as u64), span);
-        self.store_word(&off, 0, &xs.len().to_string());
+        // The block and then the header, in that order, because the header holds the block's
+        // offset — the same depth-first rule a record's fields follow.
+        let n = xs.len() as u64;
+        let data = self.alloc(heap::DATA_HEADER + n * heap::WORD, span);
+        self.store_word(&data, 0, &n.to_string());
+        self.store_word(&data, 1, &n.to_string());
         for (i, v) in vals.iter().enumerate() {
-            self.store_field(&off, i + 1, v);
+            self.store_field(&data, i + 2, v);
         }
+        let off = self.alloc(heap::LIST_HEADER, span);
+        self.store_word(&off, 0, &n.to_string());
+        self.store_word(&off, 1, &data);
         Ok(Val {
             text: off,
             ty: repr,
@@ -2614,14 +2647,12 @@ impl<'a> Function<'a> {
 
     /// The address of element `i` of `xs`, where `i` is a value rather than a constant.
     fn element_addr(&mut self, xs: &Val, index: &str) -> String {
-        let base = self.base();
-        let p = self.fresh();
+        // Through the block, which is the one load `heap::LIST_HEADER`'s indirection costs.
+        let q = self.fresh();
         self.line(format!(
-            "{p} = getelementptr inbounds i8, ptr {base}, i64 {}",
+            "{q} = call ptr @\"beck.list.data\"(i64 {})",
             xs.text
         ));
-        let q = self.fresh();
-        self.line(format!("{q} = getelementptr inbounds i8, ptr {p}, i64 8"));
         let r = self.fresh();
         self.line(format!(
             "{r} = getelementptr inbounds i64, ptr {q}, i64 {index}"
@@ -3528,15 +3559,6 @@ fn refusal(op: Prim) -> String {
         Prim::StrSplit | Prim::StrChars => {
             "answers with a list whose elements it also allocates, which is two loops rather than \
              the one every list this backend builds has"
-        }
-        // The one that is a decision rather than a gap. `docs/69` §69.7 and `docs/101` §101.5 both
-        // name shipping this as the mistake: the tree-walker pushes in place when `liveness` proves
-        // the accumulator is a last use, and an arena with no ownership in it cannot, so every loop
-        // in the language would be quadratic here and linear there.
-        Prim::ListAppend => {
-            "grows a list, and this arena cannot prove nobody else holds the one it would push \
-             into — so the accumulator every loop is written as would be quadratic here and linear \
-             in the evaluator"
         }
         Prim::ListZip => "answers with a list of pairs, and there is no pair type to lay out",
         // The same rule `list_append` gets, one type over: the evaluator's `PMap` shares everything
@@ -5317,20 +5339,51 @@ declare ptr @memcpy(ptr, ptr, i64)
 /// `beck.list.copy` is `list_slice`, `list_take` and `list_drop` at once, because all three are "a
 /// range of the elements, clamped" and the clamping is arithmetic the caller does. It costs the
 /// **answer** rather than the list, which is `docs/105` §105.7's rule applied one type over.
-const LISTS: &str = r#"define internal i64 @"beck.list.alloc"(ptr noalias %err, i64 %n, i32 %span) {
+const LISTS: &str = r#"define internal i64 @"beck.list.block"(ptr noalias %err, i64 %cap, i64 %used, i32 %span) {
 entry:
-  %body = mul i64 %n, 8
-  %total = add i64 %body, 8
+  %body = mul i64 %cap, 8
+  %total = add i64 %body, 16
   %off = call i64 @"beck.alloc"(ptr %err, i64 %total, i32 %span)
   %failed = icmp eq i64 %off, 0
   br i1 %failed, label %out, label %fill
 fill:
   %hp = load ptr, ptr @"beck.heap"
   %p = getelementptr inbounds i8, ptr %hp, i64 %off
-  store i64 %n, ptr %p
+  store i64 %cap, ptr %p
+  %pu = getelementptr inbounds i8, ptr %p, i64 8
+  store i64 %used, ptr %pu
   br label %out
 out:
   ret i64 %off
+}
+
+define internal i64 @"beck.list.head"(ptr noalias %err, i64 %n, i64 %data, i32 %span) {
+entry:
+  %off = call i64 @"beck.alloc"(ptr %err, i64 16, i32 %span)
+  %failed = icmp eq i64 %off, 0
+  br i1 %failed, label %out, label %fill
+fill:
+  %hp = load ptr, ptr @"beck.heap"
+  %p = getelementptr inbounds i8, ptr %hp, i64 %off
+  store i64 %n, ptr %p
+  %pd = getelementptr inbounds i8, ptr %p, i64 8
+  store i64 %data, ptr %pd
+  br label %out
+out:
+  ret i64 %off
+}
+
+define internal i64 @"beck.list.alloc"(ptr noalias %err, i64 %n, i32 %span) {
+entry:
+  %d = call i64 @"beck.list.block"(ptr %err, i64 %n, i64 %n, i32 %span)
+  %failed = icmp eq i64 %d, 0
+  br i1 %failed, label %out, label %top
+top:
+  %h = call i64 @"beck.list.head"(ptr %err, i64 %n, i64 %d, i32 %span)
+  br label %out
+out:
+  %r = phi i64 [ 0, %entry ], [ %h, %top ]
+  ret i64 %r
 }
 
 define internal i64 @"beck.list.len"(i64 %xs) {
@@ -5344,9 +5397,70 @@ entry:
 define internal ptr @"beck.list.data"(i64 %xs) {
 entry:
   %hp = load ptr, ptr @"beck.heap"
-  %at = add i64 %xs, 8
+  %ph = getelementptr inbounds i8, ptr %hp, i64 %xs
+  %pd = getelementptr inbounds i8, ptr %ph, i64 8
+  %d = load i64, ptr %pd
+  %at = add i64 %d, 16
   %p = getelementptr inbounds i8, ptr %hp, i64 %at
   ret ptr %p
+}
+
+; `list_append` — a new header over the same block when the block has room and this list is the one
+; standing at its end, and a doubled copy otherwise.
+;
+; The test is `count == used`, and it is the whole of what makes this sound: every header over a
+; block has a count of at most `used`, so the slot at `used` is one no reader can see. Writing it
+; and answering a *new* header leaves every existing list exactly as it was — no ownership analysis,
+; no reference count, and no way for two holders to disagree about what a list contains.
+define internal i64 @"beck.list.append"(ptr noalias %err, i64 %xs, i64 %w, i32 %span) {
+entry:
+  %hp = load ptr, ptr @"beck.heap"
+  %ph = getelementptr inbounds i8, ptr %hp, i64 %xs
+  %n = load i64, ptr %ph
+  %pd = getelementptr inbounds i8, ptr %ph, i64 8
+  %d = load i64, ptr %pd
+  %pb = getelementptr inbounds i8, ptr %hp, i64 %d
+  %cap = load i64, ptr %pb
+  %pu = getelementptr inbounds i8, ptr %pb, i64 8
+  %used = load i64, ptr %pu
+  %at.end = icmp eq i64 %n, %used
+  %room = icmp ult i64 %used, %cap
+  %fits = and i1 %at.end, %room
+  br i1 %fits, label %push, label %grow
+push:
+  %pe = getelementptr inbounds i8, ptr %pb, i64 16
+  %slot = getelementptr inbounds i64, ptr %pe, i64 %n
+  store i64 %w, ptr %slot
+  %n1 = add i64 %n, 1
+  store i64 %n1, ptr %pu
+  br label %done
+grow:
+  ; Doubled, so the copies over a whole accumulator sum to a constant per element.
+  %want = add i64 %n, 1
+  %twice = mul i64 %want, 2
+  %big = icmp ult i64 %twice, 4
+  %cap2 = select i1 %big, i64 4, i64 %twice
+  %d2 = call i64 @"beck.list.block"(ptr %err, i64 %cap2, i64 %want, i32 %span)
+  %failed = icmp eq i64 %d2, 0
+  br i1 %failed, label %out, label %move
+move:
+  %hp2 = load ptr, ptr @"beck.heap"
+  %pb2 = getelementptr inbounds i8, ptr %hp2, i64 %d2
+  %pe2 = getelementptr inbounds i8, ptr %pb2, i64 16
+  %from = call ptr @"beck.list.data"(i64 %xs)
+  %bytes = mul i64 %n, 8
+  %ignored = call ptr @memcpy(ptr %pe2, ptr %from, i64 %bytes)
+  %slot2 = getelementptr inbounds i64, ptr %pe2, i64 %n
+  store i64 %w, ptr %slot2
+  br label %done
+done:
+  %block = phi i64 [ %d, %push ], [ %d2, %move ]
+  %len = phi i64 [ %n1, %push ], [ %want, %move ]
+  %h = call i64 @"beck.list.head"(ptr %err, i64 %len, i64 %block, i32 %span)
+  br label %out
+out:
+  %r = phi i64 [ 0, %grow ], [ %h, %done ]
+  ret i64 %r
 }
 
 define internal i64 @"beck.list.copy"(ptr noalias %err, i64 %xs, i64 %from, i64 %count, i32 %span) {

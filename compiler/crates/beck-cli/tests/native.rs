@@ -608,6 +608,35 @@ fn the_two_backends_agree_on_lists() {
     }
     compared += both.agree("three", &[vec![]]);
     compared += both.agree("none_at_all", &[vec![]]);
+    // Growing one: the operation, the fork onto a shared block, and the accumulator.
+    for name in ["appended", "forked"] {
+        compared += both.agree(name, &listfix::searched(&xs));
+    }
+    for name in ["doubled_up", "sum_of"] {
+        compared += both.agree(name, &listfix::singles(&xs));
+    }
+    compared += both.agree(
+        "named",
+        &listfix::texts()
+            .iter()
+            .flat_map(|v| {
+                ["", "z", "aa"]
+                    .iter()
+                    .map(move |s| vec![v.clone(), Value::str_(s)])
+            })
+            .collect::<Vec<_>>(),
+    );
+    compared += both.agree(
+        "grown_bag",
+        &xs.iter()
+            .map(|v| {
+                vec![
+                    Value::record("Bag", None, [("items", v.clone()), ("rank", Value::Int(1))]),
+                    Value::Int(9),
+                ]
+            })
+            .collect::<Vec<_>>(),
+    );
     compared += both.agree("doubled", &singles(&ints(0x5eed_0031, 12)));
     compared += both.agree(
         "total",
@@ -1496,9 +1525,9 @@ fn a_lookup_costs_the_same_whatever_the_map_holds() {
     // Two words: `Some`'s tag and its payload.
     assert_eq!(looked[0], 16);
 
-    // …and `map_keys` costs its answer: a header and one word per key.
-    assert_eq!(keyed[0], 8 + 200 * 8);
-    assert_eq!(keyed[1], 8 + 1600 * 8);
+    // …and `map_keys` costs its answer: a list's two headers and one word per key.
+    assert_eq!(keyed[0], 32 + 200 * 8);
+    assert_eq!(keyed[1], 32 + 1600 * 8);
     println!(
         "a lookup left {} bytes at both sizes, and `map_keys` left {} then {}",
         looked[0], keyed[0], keyed[1]
@@ -1547,15 +1576,19 @@ fn an_accumulator_costs_the_square_of_what_it_builds() {
 ///
 /// `a_slice_costs_its_answer_and_not_the_string_it_came_from` one type over, and for the same
 /// reason: `docs/69` §69.7 found the quadratic in a list and `docs/70` §70.2 found it in text, so
-/// the shape gate belongs on both. One element sliced out is two words — a header and the element —
-/// so `n` steps are `16n` bytes, and a `list_slice` that copied what it was taken *from* would be
+/// the shape gate belongs on both. One element sliced out is a header, a block and the element — so
+/// `n` steps are `40n` bytes, and a `list_slice` that copied what it was taken *from* would be
 /// `O(n²)` with no clock in the measurement.
+///
+/// The constant went 16 → 40 at `docs/111`, which is that report's cost stated in a gate: a list is
+/// two objects now, so the *smallest* one is five words rather than two. What this test is about is
+/// unchanged, because what it asserts is that the number does not grow with `n`.
 #[test]
 fn a_list_slice_costs_its_answer_and_not_the_list_it_came_from() {
     let _ = toolchain!();
     let both = Both::over("lists.beck", LISTS);
-    // A header word and one element.
-    const PER_ELEMENT: usize = 16;
+    // A two-word header, a two-word block header, and one element.
+    const PER_ELEMENT: usize = 40;
     let mut sizes = Vec::new();
     for n in [200usize, 1600] {
         let xs = Value::List(std::sync::Arc::new(
@@ -1616,14 +1649,14 @@ fn what_cannot_be_compiled_is_refused_by_name_and_with_a_reason() {
     let both = Both::over("refused.beck", REFUSED);
 
     for (name, expect) in [
-        ("grows_a_list", "`list_append` grows a list"),
+        ("grows_a_map", "`map_insert` grows a map"),
         ("renders_a_real", "`str` of Float"),
         ("is_generic", "generic over T"),
         (
             "reads_the_clock",
             "`now` is not one of the scalar primitives",
         ),
-        ("calls_something_refused", "calls `grows_a_list`"),
+        ("calls_something_refused", "calls `grows_a_map`"),
     ] {
         let reason = both
             .refusal(name)
@@ -1667,7 +1700,7 @@ fn what_the_heap_does_not_reach_is_refused_by_name() {
         ("splits_a_string", "`str_split` answers with a list"),
         ("upcases", "`str_upper` is Unicode case mapping"),
         ("trims", "`str_trim` trims Unicode whitespace"),
-        ("grows", "`list_append` grows a list"),
+        ("grows", "`map_insert` grows a map"),
         ("is_generic", "generic over T"),
         (
             "reads_the_clock",
@@ -2007,17 +2040,24 @@ fn what_is_not_compiled_falls_back_and_says_so() {
         .expect("builds")
         .expect("a toolchain, checked above");
 
-    let refused = &program.defs["grows_a_list"].body;
+    let refused = &program.defs["grows_a_map"].body;
     assert!(!native.compiled(refused));
 
     let f = beck_eval::on_the_evaluator_stack(|| native.function(refused).expect("prepares"));
-    let xs = Value::List(Arc::new(vec![Value::Int(2), Value::Int(3)]));
+    let m = Value::Map([(Value::str_("a"), Value::Int(1))].into_iter().collect());
     let got = beck_eval::on_the_evaluator_stack(|| {
-        f(vec![xs, Value::Int(4)]).expect("the fallback answers")
+        f(vec![m, Value::str_("b"), Value::Int(2)]).expect("the fallback answers")
     });
     assert_eq!(
         got,
-        Value::List(Arc::new(vec![Value::Int(2), Value::Int(3), Value::Int(4)]))
+        Value::Map(
+            [
+                (Value::str_("a"), Value::Int(1)),
+                (Value::str_("b"), Value::Int(2))
+            ]
+            .into_iter()
+            .collect()
+        )
     );
 }
 
@@ -2409,15 +2449,16 @@ fn a_view_has_no_order_and_the_refusal_says_why() {
 ///
 /// The constant is written down rather than derived, because deriving it here would be the layout
 /// spelled a second time (`beck_llvm::heap`'s own argument): a row is an `li` (four words), its
-/// empty attribute list (one), its child list (two), its text node (four) and the word it occupies
-/// in the page's own child list — twelve words, 96 bytes. What is left over is the page itself and
+/// empty attribute list (four), its child list (five), its text node (four) and the word it occupies
+/// in the page's own child list — eighteen words, 144 bytes. It was twelve words until `docs/111`
+/// made a list two objects. What is left over is the page itself and
 /// the literal pool, and *that* number has to be the same at both sizes too, which is the half of
 /// this test a per-row division would hide.
 #[test]
 fn a_page_costs_its_own_nodes_and_nothing_per_page() {
     let _ = toolchain!();
     let both = Both::over("views.beck", viewfix::VIEWS);
-    const PER_ROW: usize = 96;
+    const PER_ROW: usize = 144;
     let mut sizes = Vec::new();
     for n in [100usize, 800] {
         let xs = viewfix::ints(&(0..n as i64).collect::<Vec<_>>());
@@ -2540,5 +2581,60 @@ fn unwinding_costs_nothing_per_frame() {
     println!(
         "a raise caught {} frames up and one caught {} frames up both leave {} bytes of arena",
         sizes[0].0, sizes[1].0, sizes[0].1
+    );
+}
+
+/// An accumulator built with `list_append` is **linear**, and the gate has no clock in it.
+///
+/// This is `docs/111`'s claim and the reason the operation could be compiled at all. The idiom is
+/// the one every loop in the language is written as — `f(…, list_append(acc, x))` in tail position —
+/// and it was refused rather than shipped because with the count in front of the elements an append
+/// can only copy, which is `Θ(n²)` where `beck-eval` is `Θ(n)` (`docs/69` §69.7).
+///
+/// Four times the elements must cost about four times the arena. A copying append leaves about
+/// sixteen, which is what the text accumulator beside this still does — `docs/105` §105.6, and the
+/// two tests are worth reading together: one asserts a quadratic and one asserts a linear, on the
+/// same shape, in the same backend, because only one of the two layouts was separated.
+#[test]
+fn an_appended_accumulator_is_linear() {
+    let _ = toolchain!();
+    let both = Both::over("lists.beck", LISTS);
+    let mut sizes = Vec::new();
+    for n in [500usize, 2000] {
+        let xs = Value::List(std::sync::Arc::new(
+            (0..n as i64).map(Value::Int).collect::<Vec<_>>(),
+        ));
+        let arguments = both
+            .native
+            .module()
+            .heap
+            .encode_args(
+                std::slice::from_ref(&xs),
+                &both.native.module().signature("doubled_up").unwrap().params,
+            )
+            .expect("encodes")
+            .1
+            .len();
+        let (answer, bytes) = both.native.call_sized("doubled_up", &[xs]).expect("runs");
+        assert_eq!(
+            answer.as_list().map(|xs| xs.len()),
+            Some(n),
+            "`doubled_up({n})` should answer with {n} elements"
+        );
+        sizes.push((n, bytes - arguments));
+    }
+    let (small, big) = (sizes[0], sizes[1]);
+    let growth = big.1 as f64 / small.1 as f64;
+    let steps = (big.0 / small.0) as f64;
+    assert!(
+        growth < steps * 2.0,
+        "four times the elements left {growth:.1}× the arena, and an append that copies leaves \
+         about {:.0}× — this is the quadratic `docs/111` exists to remove",
+        steps * steps
+    );
+    println!(
+        "doubled_up({}) left {} bytes and doubled_up({}) left {} — {growth:.1}× for {steps:.0}× \
+         the elements",
+        small.0, small.1, big.0, big.1
     );
 }

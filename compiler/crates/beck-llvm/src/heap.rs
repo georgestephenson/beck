@@ -184,12 +184,48 @@ pub fn str_bytes(n: u64) -> u64 {
     STR_HEADER + n.next_multiple_of(WORD)
 }
 
-/// The one header word of a `list`: how many elements it has.
-pub const LIST_HEADER: u64 = WORD;
+/// The two header words of a `list`: how many elements it has, and where they are.
+///
+/// # Why a list is an indirection
+///
+/// It was one word and the elements after it, which is the shape every read wants and the one shape
+/// an **append** cannot have. A list is immutable, so `list_append` must answer a list of `n + 1`
+/// where the old one still says `n` — and with the count sitting in front of the elements, the only
+/// ways to do that are to copy the elements (`O(n)`, which is
+/// [`docs/69`](../../../../../docs/69-standard-library-imports-report.md) §69.7's quadratic
+/// accumulator) or to overwrite the count (which every other holder of that list can see).
+///
+/// So the count and the elements are separated. A **header** is two words and is written once,
+/// never touched again; a **data block** is `[cap, used, …]` and is shared by every list that was
+/// built from it. Appending writes at index `used` — a slot no header covers, because every header's
+/// count is at most `used` — and answers a *new* header. Nothing a reader can see is ever rewritten,
+/// so this needs no ownership analysis and no reference count: it is sound by the shape of the
+/// writes rather than by an argument about who holds what.
+///
+/// | | word 0 | word 1 | word 2.. |
+/// |---|---|---|---|
+/// | header | how many elements | the data block's offset | — |
+/// | data | how many the block holds (`cap`) | how many are written (`used`) | the elements |
+///
+/// What it costs is one load: [`docs/106`](../../../../../docs/106-lists-arrive-read-only-report.md)
+/// reached an element with an add, and this reaches the block first. That is paid **once per
+/// operation** rather than once per element — every generated loop takes the data pointer before it
+/// starts — and `docs/111` measures what is left.
+pub const LIST_HEADER: u64 = 2 * WORD;
 
-/// How many bytes a `list` of `n` elements occupies.
+/// The two header words of a list's data block: how many elements it can hold, and how many have
+/// been written.
+pub const DATA_HEADER: u64 = 2 * WORD;
+
+/// How many bytes a `list` of `n` elements occupies: the header, and a data block sized exactly `n`.
+///
+/// Exactly `n` and not a doubled capacity, because this is what an allocation of a *known* list
+/// costs — a literal, a slice, a map's keys, the answer of a loop. Only an **append** reserves more,
+/// and the doubling that makes the idiom linear is written in each emitter's `beck.list.append`
+/// rather than here: nothing outside generated code needs to know it, and a constant in this file
+/// that neither emitter read would be a third place for it to be wrong.
 pub fn list_bytes(n: u64) -> u64 {
-    LIST_HEADER + n * WORD
+    LIST_HEADER + DATA_HEADER + n * WORD
 }
 
 /// The one header word of a closure: which `lam` it came from.
@@ -1181,16 +1217,16 @@ impl Heap {
             // before the word that holds it is written.
             (Value::List(xs), Repr::List(at)) => {
                 let element = self.element(at);
-                let mut words = Vec::with_capacity(xs.len() + 1);
+                let mut words = Vec::with_capacity(xs.len() + 2);
+                // The data block: what it can hold, what is written, then the elements. Exactly the
+                // length, because a list the host writes is one nothing has appended to yet.
+                words.push(xs.len() as u64);
                 words.push(xs.len() as u64);
                 for x in xs.iter() {
                     words.push(self.encode(x, element, blob)?);
                 }
-                let offset = blob.len() as u64;
-                for w in words {
-                    blob.extend_from_slice(&w.to_ne_bytes());
-                }
-                Ok(offset)
+                let data = self.write_words(words, blob);
+                Ok(self.write_words(vec![xs.len() as u64, data], blob))
             }
             // The keys in key order and then the values in the same order, which is what a `PMap`
             // iterates and therefore what a binary search here can rely on.
@@ -1315,12 +1351,15 @@ impl Heap {
         Ok((u64::from(at), offset))
     }
 
-    /// A list of words already encoded, as a list object: the count and then the words.
+    /// A list of words already encoded, as a list: a data block and a header over it.
     fn encode_words(&self, items: Vec<u64>, blob: &mut Vec<u8>) -> u64 {
-        let mut words = Vec::with_capacity(items.len() + 1);
-        words.push(items.len() as u64);
+        let n = items.len() as u64;
+        let mut words = Vec::with_capacity(items.len() + 2);
+        words.push(n);
+        words.push(n);
         words.extend(items);
-        self.write_words(words, blob)
+        let data = self.write_words(words, blob);
+        self.write_words(vec![n, data], blob)
     }
 
     fn write_words(&self, words: Vec<u64>, blob: &mut Vec<u8>) -> u64 {
@@ -1458,19 +1497,33 @@ impl Heap {
             Repr::List(at) => {
                 let element = self.element(at);
                 let count = word(blob, cell)?;
+                // The header says where the elements are; the block in front of them says how many
+                // it holds. See [`LIST_HEADER`] for why a list is two objects.
+                let data = word(blob, cell + WORD)?;
                 // Checked against the arena before it is trusted as a capacity: the count comes
                 // from another process, and `Vec::with_capacity` of whatever the bytes said is the
                 // one place a wrong word becomes an allocation rather than an error.
-                let bytes = count.checked_mul(WORD).and_then(|b| b.checked_add(WORD));
-                if bytes.is_none_or(|b| cell + b > blob.len() as u64) {
+                let bytes = count
+                    .checked_mul(WORD)
+                    .and_then(|b| b.checked_add(DATA_HEADER));
+                if bytes.is_none_or(|b| data + b > blob.len() as u64) {
                     return Err(format!(
                         "the compiled program answered with a list of {count} at offset {cell}, \
                          and its heap is {} bytes",
                         blob.len()
                     ));
                 }
+                // A header that claims more than its block holds is a compiler bug reported as one
+                // rather than a read of whatever follows the block.
+                let used = word(blob, data + WORD)?;
+                if count > used {
+                    return Err(format!(
+                        "the compiled program answered with a list of {count} over a block holding \
+                         {used}"
+                    ));
+                }
                 Ok(Begun::Nested(Frame::List {
-                    cell,
+                    cell: data + DATA_HEADER,
                     element,
                     count,
                     done: Vec::with_capacity(count as usize),
@@ -1697,6 +1750,8 @@ impl Frame {
     /// The next child to decode, or `None` when every one is in.
     fn next_child(&self, blob: &[u8]) -> Result<Option<(u64, Repr)>, String> {
         match self {
+            // `cell` is the first *element*, not the header: a list's elements live in a block of
+            // their own, and `begin` resolved it.
             Frame::List {
                 cell,
                 element,
@@ -1706,7 +1761,7 @@ impl Frame {
                 if done.len() as u64 == *count {
                     return Ok(None);
                 }
-                let w = word(blob, cell + (done.len() as u64 + 1) * WORD)?;
+                let w = word(blob, cell + done.len() as u64 * WORD)?;
                 Ok(Some((w, *element)))
             }
             Frame::Map {
