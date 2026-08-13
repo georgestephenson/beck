@@ -593,6 +593,16 @@ def mapped(xs: list[Int], by: Int) -> Int:
 
 def folded(xs: list[Int]) -> Int:
     return list_fold(xs, 0, lambda acc, x: acc + x)
+
+## Sorted by a key that reverses the order, so the input is the worst case for a merge that walks it.
+## Two sizes eight times apart, because a sort is where a wrong asymptote hides: `n log n` costs about
+## 9.3× more at 16,000 than at 2,000 and `n²` costs 64×, and the *ratio against the tree-walker* —
+## which is Rust's own stable sort — is what would collapse.
+def sorted_down(xs: list[Int]) -> list[Int]:
+    return sort_by(xs, lambda x: 0 - x)
+
+def joined_up(xss: list[list[Int]]) -> Int:
+    return list_len(concat_lists(xss))
 "#;
     let program = compile("closures.beck", SRC);
     let Some(artifact) = Artifact::build_within(&program, Duration::from_secs(300))
@@ -617,18 +627,29 @@ def folded(xs: list[Int]) -> Int:
             (0..n as i64).map(Value::Int).collect::<Vec<_>>(),
         ))
     };
-    let benches: [(&str, [usize; 2]); 3] = [
-        ("apply_often", [20_000, 160_000]),
-        ("mapped", [2_000, 16_000]),
-        ("folded", [2_000, 16_000]),
+    // The last column is whether the *compiled* side is expected to win, and one row says no. See
+    // the assertions below, which are per row rather than one threshold for all of them.
+    let benches: [(&str, [usize; 2], bool); 5] = [
+        ("apply_often", [20_000, 160_000], true),
+        ("mapped", [2_000, 16_000], true),
+        ("folded", [2_000, 16_000], true),
+        ("sorted_down", [2_000, 16_000], true),
+        ("joined_up", [2_000, 16_000], false),
     ];
-    let mut ratios: Vec<(&str, f64, f64)> = Vec::new();
-    for (name, sizes) in benches {
+    let mut ratios: Vec<(&str, f64, f64, bool)> = Vec::new();
+    for (name, sizes, faster) in benches {
         let mut seen = [0.0f64; 2];
         for (i, size) in sizes.iter().enumerate() {
             let args = match name {
                 "apply_often" => vec![Value::Int(*size as i64), Value::Int(0)],
                 "mapped" => vec![long(*size), Value::Int(3)],
+                // `n` inner lists of one element, so the answer is `n` and the outer list is the
+                // input: a concatenation's cost is its answer's size either way.
+                "joined_up" => vec![Value::List(std::sync::Arc::new(
+                    (0..*size as i64)
+                        .map(|i| Value::List(std::sync::Arc::new(vec![Value::Int(i)])))
+                        .collect::<Vec<_>>(),
+                ))],
                 _ => vec![long(*size)],
             };
             let runs = if i == 0 { 7 } else { 3 };
@@ -656,14 +677,46 @@ def folded(xs: list[Int]) -> Int:
                 ratio
             );
         }
-        ratios.push((name, seen[0], seen[1]));
+        ratios.push((name, seen[0], seen[1], faster));
     }
-    for (name, small, large) in &ratios {
-        assert!(
-            *small > 1.0 && *large > 1.0,
-            "`{name}` was {small:.2}× at the small size and {large:.2}× at the large one"
-        );
+    for (name, small, large, faster) in &ratios {
+        if *faster {
+            assert!(
+                *small > 1.0 && *large > 1.0,
+                "`{name}` was {small:.2}× at the small size and {large:.2}× at the large one"
+            );
+        } else {
+            // **`concat_lists` is slower here, and asserted to be.** `docs/105` §105.7 is the
+            // precedent: a row below one is a fact to pin rather than a number to leave out. The
+            // work *is* the marshalling — the evaluator already holds the lists and copies words
+            // between two `Vec`s, while a compiled call sends 2,000 list objects down a pipe and
+            // reads the answer back out of the reply's arena. `docs/93` §93.1's round trip is the
+            // whole of the difference, and it is a property of every call rather than of this one.
+            assert!(
+                *small < 1.0 && *large < 1.0,
+                "`{name}` was expected to lose to the tree-walker and was {small:.2}× and {large:.2}×"
+            );
+        }
     }
+    // And the shape the sort is really about. Eight times the elements is about ten times the work
+    // for `n log n` and sixty-four for `n²`, so a quadratic merge would show as a ratio that fell by
+    // about a factor of six against a tree-walker whose own sort is Rust's. The bound is the loose
+    // one this file already uses for `scaling.rs`'s reason: a gate that flakes gets deleted.
+    let (_, small, large, _) = ratios
+        .iter()
+        .find(|(n, ..)| *n == "sorted_down")
+        .expect("the sort was measured");
+    println!(
+        "the sort was {small:.2}× at the small size and {large:.2}× at the large one — {:.2}× of the \
+         ratio kept over eight times the elements, which is `n log n` with a constant worse than \
+         Rust's stable sort. A quadratic would have lost about a factor of six",
+        large / small
+    );
+    assert!(
+        large > &(small * 0.5),
+        "the sort was {small:.2}× at the small size and only {large:.2}× at the large one, which is \
+         the shape a merge sort must not have"
+    );
 }
 
 /// What a map costs against the tree-walker, and whether the search is really binary.

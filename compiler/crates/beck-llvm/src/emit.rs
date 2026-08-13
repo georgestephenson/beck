@@ -2098,6 +2098,29 @@ impl<'a> Function<'a> {
                 self.map_arg(&vals[0], op)?;
                 self.map_run(op, ty, &vals[0], span)
             }
+            // A list of lists into one list. Not a growth: the total is a sum over the outer list's
+            // header words, so the allocation happens once and after it — the same argument
+            // `str_join` is compiled under, and the reason `docs/108` §108.8 corrects this
+            // primitive's own refusal.
+            Prim::ConcatLists => {
+                arity(1)?;
+                let outer = self.list_arg(&vals[0], op)?;
+                let Repr::List(inner) = self.heap.element(outer) else {
+                    return Err("`concat_lists` on something that is not a list of lists".into());
+                };
+                self.uses_heap = true;
+                let idx = self.span(span);
+                let r = self.fresh();
+                self.line(format!(
+                    "{r} = call i64 @\"beck.list.concat\"(ptr %err, i64 {}, i32 {idx})",
+                    vals[0].text
+                ));
+                self.check_call();
+                Ok(Val {
+                    text: r,
+                    ty: Repr::List(inner),
+                })
+            }
             Prim::ListReverse => {
                 arity(1)?;
                 let at = self.list_arg(&vals[0], op)?;
@@ -2179,6 +2202,32 @@ impl<'a> Function<'a> {
                 );
                 Ok(Val { text: r, ty: acc })
             }
+            // Decorate, sort, undecorate — and the keys are words like any others, so what compares
+            // two of them is the function a list's element comparison already is.
+            Prim::SortBy => {
+                arity(2)?;
+                let element = self.heap.element(self.list_arg(&vals[0], op)?);
+                let fam = self.function_arg(&vals[1], op, &[element])?;
+                let key = self.heap.family(fam).ret;
+                // Interned here rather than in the survey: the keys are not a list any program
+                // wrote, so nothing else would have asked for their comparison — and recording the
+                // index is what makes the module generate it.
+                let at = self.heap.word_of(key);
+                self.list_compared.insert(at);
+                let r = self.list_loop(
+                    Loop::Sort,
+                    fam,
+                    &vals[0].text.clone(),
+                    None,
+                    &vals[1].text.clone(),
+                    None,
+                    span,
+                );
+                Ok(Val {
+                    text: r,
+                    ty: vals[0].ty,
+                })
+            }
             Prim::ListAll | Prim::ListAny => {
                 arity(2)?;
                 let element = self.heap.element(self.list_arg(&vals[0], op)?);
@@ -2245,7 +2294,7 @@ impl<'a> Function<'a> {
         self.uses_heap = true;
         let family = self.heap.family(fam).clone();
         let ret = match which {
-            Loop::Map | Loop::Filter => "i64".to_string(),
+            Loop::Map | Loop::Filter | Loop::Sort => "i64".to_string(),
             Loop::Fold => family.ret.llvm().to_string(),
             Loop::Every => "i1".to_string(),
         };
@@ -3100,7 +3149,7 @@ fn refusal(op: Prim) -> String {
         // name shipping this as the mistake: the tree-walker pushes in place when `liveness` proves
         // the accumulator is a last use, and an arena with no ownership in it cannot, so every loop
         // in the language would be quadratic here and linear there.
-        Prim::ListAppend | Prim::ConcatLists => {
+        Prim::ListAppend => {
             "grows a list, and this arena cannot prove nobody else holds the one it would push \
              into — so the accumulator every loop is written as would be quadratic here and linear \
              in the evaluator"
@@ -3113,21 +3162,13 @@ fn refusal(op: Prim) -> String {
             "grows a map, and a sorted run in an arena has to be copied whole where the \
              evaluator's tree rebuilds one path"
         }
-        // The higher-order primitives that are one pass over a list — `map_list`, `filter_list`,
-        // `list_fold`, `list_all`, `list_any` — compile, so what is left of that half is the two
-        // that are not.
+        // The higher-order half compiles — `map_list`, `filter_list`, `list_fold`, `list_all`,
+        // `list_any` and `sort_by` — so what is left of it is the one that grows a list.
         Prim::ListFlatMap => {
             "answers a list whose length is the sum of the lists its function answers, which is \
              growing a list under another name"
         }
-        // The one higher-order primitive here that is not a pass. Decorate, sort, undecorate, with
-        // a *stable* sort — `beck-eval` is explicit that stability is what makes the order total
-        // without a second key — so it is two allocations and a merge written in two emitters
-        // rather than a loop, and it is the next one to build rather than one that cannot be.
-        Prim::SortBy => {
-            "sorts by decorating each element with its key and merging stably, which is a sort in \
-             the emitter rather than a pass over the list"
-        }
+
         Prim::StrUpper | Prim::StrLower => {
             "is Unicode case mapping, which is a table rather than an operation — and a compiled \
              half-answer that folded ASCII only would disagree with the evaluator on the first \
@@ -3330,6 +3371,17 @@ fn assemble(
     for (which, at) in closures.loops {
         m.push_str(&loop_function(*which, *at, heap));
     }
+    // One merge sort per key repr, over the families that sort. Deduplicated here for the reason
+    // every generated function is: the module has one definition of each.
+    let sorted: BTreeSet<u32> = closures
+        .loops
+        .iter()
+        .filter(|(which, _)| *which == Loop::Sort)
+        .filter_map(|(_, fam)| heap.word_at(heap.family(*fam).ret))
+        .collect();
+    for at in sorted {
+        m.push_str(&merge_sort(at, heap));
+    }
     if closures.compared {
         m.push_str(FN_CMP);
     }
@@ -3468,6 +3520,100 @@ ok:
     )
 }
 
+/// A stable merge sort over two parallel runs of words: the keys, and the elements they decorate.
+///
+/// Generated per **key** repr rather than per family, because what it needs to know is how to
+/// compare two key words and nothing else — `beck.elem.cmp.{at}` is that, and it is the same
+/// function a list's own comparison and search use.
+///
+/// Recursive rather than bottom-up, which is the difference between a function with one loop in it
+/// and a function with three nested ones. The depth is `log n` on the host's stack, and `n` is
+/// bounded by the arena.
+///
+/// **Stability is the property that matters**, and it is one `<=`: on equal keys the element from
+/// the left run goes first. `beck-eval` says why it matters rather than being nice — the input order
+/// is itself deterministic (a `Map`'s values come out in key order), so a stable sort is what makes
+/// the answer total without a second key, and a replay reproduces it.
+fn merge_sort(at: u32, heap: &Heap) -> String {
+    let shown = heap.show(heap.element(at));
+    format!(
+        r#"; a stable merge sort keyed by {shown}
+define internal void @"beck.list.msort.{at}"(ptr %keys, ptr %vals, ptr %tk, ptr %tv, i64 %lo, i64 %hi) {{
+entry:
+  %span = sub i64 %hi, %lo
+  %tiny = icmp ule i64 %span, 1
+  br i1 %tiny, label %done, label %split
+split:
+  %half = udiv i64 %span, 2
+  %mid = add i64 %lo, %half
+  call void @"beck.list.msort.{at}"(ptr %keys, ptr %vals, ptr %tk, ptr %tv, i64 %lo, i64 %mid)
+  call void @"beck.list.msort.{at}"(ptr %keys, ptr %vals, ptr %tk, ptr %tv, i64 %mid, i64 %hi)
+  br label %merge
+merge:
+  ; Three indices: where each run is up to, and where the answer is going.
+  %i = phi i64 [ %lo, %split ], [ %i1, %took ]
+  %j = phi i64 [ %mid, %split ], [ %j1, %took ]
+  %k = phi i64 [ %lo, %split ], [ %k1, %took ]
+  %filled = icmp uge i64 %k, %hi
+  br i1 %filled, label %back, label %pick
+pick:
+  %left.left = icmp ult i64 %i, %mid
+  br i1 %left.left, label %maybe, label %right
+maybe:
+  %right.gone = icmp uge i64 %j, %hi
+  br i1 %right.gone, label %left, label %compare
+compare:
+  %ka.at = getelementptr inbounds i64, ptr %keys, i64 %i
+  %kb.at = getelementptr inbounds i64, ptr %keys, i64 %j
+  %ka = load i64, ptr %ka.at
+  %kb = load i64, ptr %kb.at
+  %c = call i64 @"beck.elem.cmp.{at}"(i64 %ka, i64 %kb)
+  ; `<=`, which is the whole of the stability: on equal keys the left run goes first.
+  %take.left = icmp sle i64 %c, 0
+  br i1 %take.left, label %left, label %right
+left:
+  %lk.at = getelementptr inbounds i64, ptr %keys, i64 %i
+  %lv.at = getelementptr inbounds i64, ptr %vals, i64 %i
+  %lk = load i64, ptr %lk.at
+  %lv = load i64, ptr %lv.at
+  %il = add i64 %i, 1
+  br label %took
+right:
+  %rk.at = getelementptr inbounds i64, ptr %keys, i64 %j
+  %rv.at = getelementptr inbounds i64, ptr %vals, i64 %j
+  %rk = load i64, ptr %rk.at
+  %rv = load i64, ptr %rv.at
+  %jr = add i64 %j, 1
+  br label %took
+took:
+  %key = phi i64 [ %lk, %left ], [ %rk, %right ]
+  %val = phi i64 [ %lv, %left ], [ %rv, %right ]
+  %i1 = phi i64 [ %il, %left ], [ %i, %right ]
+  %j1 = phi i64 [ %j, %left ], [ %jr, %right ]
+  %ok.at = getelementptr inbounds i64, ptr %tk, i64 %k
+  %ov.at = getelementptr inbounds i64, ptr %tv, i64 %k
+  store i64 %key, ptr %ok.at
+  store i64 %val, ptr %ov.at
+  %k1 = add i64 %k, 1
+  br label %merge
+back:
+  ; The merged run, back where the caller's half of it was.
+  %bytes = mul i64 %span, 8
+  %from.k = getelementptr inbounds i64, ptr %tk, i64 %lo
+  %to.k = getelementptr inbounds i64, ptr %keys, i64 %lo
+  %copied.k = call ptr @memcpy(ptr %to.k, ptr %from.k, i64 %bytes)
+  %from.v = getelementptr inbounds i64, ptr %tv, i64 %lo
+  %to.v = getelementptr inbounds i64, ptr %vals, i64 %lo
+  %copied.v = call ptr @memcpy(ptr %to.v, ptr %from.v, i64 %bytes)
+  br label %done
+done:
+  ret void
+}}
+
+"#
+    )
+}
+
 /// The list primitives whose argument is a function, each one loop.
 ///
 /// Generated per family rather than written inline, for the reason a list's comparison is: the
@@ -3484,6 +3630,8 @@ enum Loop {
     Fold,
     /// `list_all` and `list_any`, which are one loop and a flag.
     Every,
+    /// `sort_by` — decorate with the keys, merge stably, undecorate. The one that is not a pass.
+    Sort,
 }
 
 impl Loop {
@@ -3493,6 +3641,7 @@ impl Loop {
             Loop::Filter => format!("beck.list.filter.{fam}"),
             Loop::Fold => format!("beck.list.fold.{fam}"),
             Loop::Every => format!("beck.list.every.{fam}"),
+            Loop::Sort => format!("beck.list.sort.{fam}"),
         }
     }
 }
@@ -3644,6 +3793,81 @@ fn loop_function(which: Loop, fam: u32, heap: &Heap) -> String {
             b.line(format!("ret {} %acc", acc.llvm()));
             b.block("failed");
             b.line(format!("ret {} {}", acc.llvm(), acc.machine().zero()));
+        }
+        Loop::Sort => {
+            let element = family.params[0];
+            let key = family.ret;
+            let at = heap
+                .word_at(key)
+                .expect("the key's repr was interned when the sort was met");
+            let _ = writeln!(
+                b.out,
+                "define internal i64 @\"{symbol}\"(ptr noalias %err, i64 %xs, i64 %clo, i32 %span) {{\nentry:"
+            );
+            b.line("%n = call i64 @\"beck.list.len\"(i64 %xs)".into());
+            b.line("%src = call ptr @\"beck.list.data\"(i64 %xs)".into());
+            // Four runs of `n` words: the keys, the elements, and a scratch pair the merge writes
+            // into. `beck.list.copy` gives the elements as a fresh list, which is also the list this
+            // answers with — so the sort is in place in something nobody else holds.
+            b.line("%keys = call i64 @\"beck.list.alloc\"(ptr %err, i64 %n, i32 %span)".into());
+            b.checked("two");
+            b.block("two");
+            b.line(
+                "%vals = call i64 @\"beck.list.copy\"(ptr %err, i64 %xs, i64 0, i64 %n, i32 %span)"
+                    .into(),
+            );
+            b.checked("three");
+            b.block("three");
+            b.line("%tk = call i64 @\"beck.list.alloc\"(ptr %err, i64 %n, i32 %span)".into());
+            b.checked("four");
+            b.block("four");
+            b.line("%tv = call i64 @\"beck.list.alloc\"(ptr %err, i64 %n, i32 %span)".into());
+            b.checked("ready");
+            b.block("ready");
+            b.line("%pk = call ptr @\"beck.list.data\"(i64 %keys)".into());
+            b.line("%pv = call ptr @\"beck.list.data\"(i64 %vals)".into());
+            b.line("%ptk = call ptr @\"beck.list.data\"(i64 %tk)".into());
+            b.line("%ptv = call ptr @\"beck.list.data\"(i64 %tv)".into());
+            b.line("br label %loop".into());
+
+            // Decorate: one key per element, and the closure is applied exactly `n` times, which is
+            // what the evaluator does — `beck-eval` decorates, sorts and undecorates too.
+            b.block("loop");
+            b.line("%i = phi i64 [ 0, %ready ], [ %j, %next ]".into());
+            b.line("%past = icmp uge i64 %i, %n".into());
+            b.line("br i1 %past, label %sort, label %one".into());
+            b.block("one");
+            b.line("%at = getelementptr inbounds i64, ptr %src, i64 %i".into());
+            b.line("%w = load i64, ptr %at".into());
+            let arg = b.value_of("%w", element);
+            let r = b.fresh();
+            b.line(format!(
+                "{r} = call tailcc {} @\"beck.apply.{fam}\"(ptr %err, i64 %clo, {} {arg})",
+                key.llvm(),
+                element.llvm()
+            ));
+            b.checked("store");
+            b.block("store");
+            let word = b.word_of(&r, key);
+            b.line("%to = getelementptr inbounds i64, ptr %pk, i64 %i".into());
+            b.line(format!("store i64 {word}, ptr %to"));
+            b.line("br label %next".into());
+            b.block("next");
+            b.line("%j = add i64 %i, 1".into());
+            b.line("br label %loop".into());
+
+            b.block("sort");
+            b.line(format!(
+                "call void @\"beck.list.msort.{at}\"(ptr %pk, ptr %pv, ptr %ptk, ptr %ptv, i64 0, i64 %n)"
+            ));
+            b.line("ret i64 %vals".into());
+            b.block("failed");
+            b.line("ret i64 0".into());
+            let _ = writeln!(b.out, "}}\n");
+            // The sort itself is generated once per **key** repr rather than here, because two
+            // families can sort by the same kind of key and a second `define` of one function is a
+            // module `clang` refuses.
+            return b.out;
         }
         Loop::Every => {
             let element = family.params[0];
@@ -4736,6 +4960,54 @@ move:
   br label %out
 out:
   ret i64 %r
+}
+
+define internal i64 @"beck.list.concat"(ptr noalias %err, i64 %xss, i32 %span) {
+entry:
+  %n = call i64 @"beck.list.len"(i64 %xss)
+  %outer = call ptr @"beck.list.data"(i64 %xss)
+  br label %sum
+sum:
+  ; One pass for the size, which is what makes this an allocation rather than a growth: the length
+  ; of every inner list is a header word, so the total is known before a byte is reserved.
+  %i = phi i64 [ 0, %entry ], [ %i1, %next ]
+  %so.far = phi i64 [ 0, %entry ], [ %grown, %next ]
+  %at.end = icmp uge i64 %i, %n
+  br i1 %at.end, label %build, label %next
+next:
+  %at = getelementptr inbounds i64, ptr %outer, i64 %i
+  %inner = load i64, ptr %at
+  %m = call i64 @"beck.list.len"(i64 %inner)
+  %grown = add i64 %so.far, %m
+  %i1 = add i64 %i, 1
+  br label %sum
+build:
+  %out = call i64 @"beck.list.alloc"(ptr %err, i64 %so.far, i32 %span)
+  %failed = icmp eq i64 %out, 0
+  br i1 %failed, label %finish, label %move
+move:
+  %dst = call ptr @"beck.list.data"(i64 %out)
+  br label %loop
+loop:
+  ; One `memcpy` per inner list. An element is a word whatever it means, and an offset stays an
+  ; offset — so nothing here has to know what the elements are.
+  %j = phi i64 [ 0, %move ], [ %j1, %again ]
+  %k = phi i64 [ 0, %move ], [ %k1, %again ]
+  %past = icmp uge i64 %j, %n
+  br i1 %past, label %finish, label %again
+again:
+  %src.at = getelementptr inbounds i64, ptr %outer, i64 %j
+  %one = load i64, ptr %src.at
+  %len = call i64 @"beck.list.len"(i64 %one)
+  %src = call ptr @"beck.list.data"(i64 %one)
+  %to = getelementptr inbounds i64, ptr %dst, i64 %k
+  %bytes = mul i64 %len, 8
+  %copied = call ptr @memcpy(ptr %to, ptr %src, i64 %bytes)
+  %k1 = add i64 %k, %len
+  %j1 = add i64 %j, 1
+  br label %loop
+finish:
+  ret i64 %out
 }
 
 define internal i64 @"beck.list.reverse"(ptr noalias %err, i64 %xs, i32 %span) {

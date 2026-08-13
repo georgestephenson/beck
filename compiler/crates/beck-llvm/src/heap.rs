@@ -584,6 +584,24 @@ impl Heap {
         self.text
     }
 
+    /// Where `inner` already is in the word-comparison table, if anything has interned it.
+    ///
+    /// Read by an emitter that has to *name* `beck.elem.cmp.{at}` for a repr it interned earlier in
+    /// the same body — the index is the name, so asking twice has to answer twice the same.
+    pub fn word_at(&self, inner: Repr) -> Option<u32> {
+        self.by_element.get(&inner).copied()
+    }
+
+    /// A repr's place in the word-comparison table, for something that is not a list's element.
+    ///
+    /// `sort_by` is what wants this: its keys are values of one repr, held in a run of words and
+    /// compared pairwise, which is exactly what the table is for — and the *keys* are not a list any
+    /// program wrote down, so nothing else would have interned their repr. The caller must record the
+    /// index the way a comparison is recorded, or the function this names is not generated.
+    pub fn word_of(&mut self, inner: Repr) -> u32 {
+        self.intern_repr(inner)
+    }
+
     /// A repr's place in the word-comparison table, interned.
     ///
     /// One table for two purposes: a list's element and a map's key or value are both "a word this

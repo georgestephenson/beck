@@ -123,6 +123,75 @@ pub fn singles(xs: &[Value]) -> Vec<Vec<Value>> {
     xs.iter().map(|x| vec![x.clone()]).collect()
 }
 
+/// Lists of lists, which `concat_lists` is asked for — including empty ones inside and outside.
+pub fn nested() -> Vec<Value> {
+    [
+        vec![],
+        vec![vec![]],
+        vec![vec![1]],
+        vec![vec![], vec![1]],
+        vec![vec![1], vec![]],
+        vec![vec![1, 2], vec![3], vec![]],
+        vec![vec![-1], vec![0], vec![1]],
+    ]
+    .iter()
+    .map(|xss| Value::List(Arc::new(xss.iter().map(|xs| ints(xs)).collect())))
+    .collect()
+}
+
+/// Lists of lists of `Str`, so an element that is an offset survives being copied wholesale.
+pub fn nested_texts() -> Vec<Value> {
+    [
+        vec![],
+        vec![vec![]],
+        vec![vec!["a"]],
+        vec![vec!["a", "bb"], vec!["c"]],
+        vec![vec![""], vec!["é"]],
+    ]
+    .iter()
+    .map(|xss| {
+        Value::List(Arc::new(
+            xss.iter()
+                .map(|xs| Value::List(Arc::new(xs.iter().map(Value::str_).collect())))
+                .collect(),
+        ))
+    })
+    .collect()
+}
+
+/// Records with one key repeated, so a sort that is not stable answers differently from one that is.
+pub fn notes() -> Vec<Value> {
+    let note = |at: i64, text: &str| {
+        Value::data(
+            Arc::from("Note"),
+            None,
+            beck_core::core::Fields::from_iter([
+                (Arc::from("at"), Value::Int(at)),
+                (Arc::from("text"), Value::str_(text)),
+            ]),
+        )
+    };
+    [
+        vec![],
+        vec![note(0, "a")],
+        // Every key the same: the answer *is* the input order, and only a stable sort gives it.
+        vec![note(1, "a"), note(1, "b"), note(1, "c"), note(1, "d")],
+        // Ties inside a sort that has work to do.
+        vec![note(2, "a"), note(1, "b"), note(2, "c"), note(1, "d")],
+        vec![note(3, "a"), note(2, "b"), note(1, "c")],
+        vec![
+            note(1, "a"),
+            note(2, "b"),
+            note(1, "c"),
+            note(2, "d"),
+            note(1, "e"),
+        ],
+    ]
+    .iter()
+    .map(|xs| Value::List(Arc::new(xs.clone())))
+    .collect()
+}
+
 /// Each list with a second argument the closure captures.
 pub fn with(xs: &[Value], ns: &[i64]) -> Vec<Vec<Value>> {
     let mut out = Vec::new();
@@ -243,6 +312,47 @@ def twice_over(xs: list[Int], by: Int) -> list[Int]:
     step = lambda x: x + by
     return map_list(map_list(xs, step), step)
 
+## The last two list primitives. `concat_lists` is a sum over one pass and then one allocation;
+## `sort_by` decorates, merges stably and undecorates.
+def flattened(xss: list[list[Int]]) -> list[Int]:
+    return concat_lists(xss)
+
+def flat_texts(xss: list[list[Str]]) -> list[Str]:
+    return concat_lists(xss)
+
+def spread(xs: list[Int]) -> list[Int]:
+    return concat_lists(map_list(xs, lambda x: [x, x + 1]))
+
+def ascending(xs: list[Int]) -> list[Int]:
+    return sort_by(xs, lambda x: x)
+
+def descending(xs: list[Int]) -> list[Int]:
+    return sort_by(xs, lambda x: 0 - x)
+
+def by_length(xs: list[Str]) -> list[Str]:
+    return sort_by(xs, lambda s: str_len(s))
+
+def by_text(xs: list[Str]) -> list[Str]:
+    return sort_by(xs, lambda s: s)
+
+def by_real(xs: list[Float]) -> list[Float]:
+    return sort_by(xs, lambda x: x * -1.0)
+
+## Stability, which is the property a sort has or has not: every key here is the same, so a stable
+## sort answers the input and an unstable one may answer anything. Keyed on a field so the elements
+## are distinguishable while the keys are not.
+model Note:
+    at: Int
+    text: Str
+
+def by_rank(ns: list[Note]) -> list[Str]:
+    return map_list(sort_by(ns, lambda n: n.at), lambda n: n.text)
+
+## A key that trips over the two things a comparison of words can get wrong: a real's order key, and
+## a `Bool` being 0 or 1.
+def by_sign(xs: list[Int]) -> list[Int]:
+    return sort_by(xs, lambda x: x < 0)
+
 ## A tail call *through* an application: the closure is this definition itself, so every hop is
 ## apply-then-lambda and neither may spend a frame.
 def spin(n: Int, acc: Int) -> Int:
@@ -309,10 +419,8 @@ def listed(n: Int) -> Int:
     fs = [double]
     return list_len(fs) + n
 
-## The two higher-order primitives that are not a pass over a list.
-def sorted_by(xs: list[Int]) -> list[Int]:
-    return sort_by(xs, lambda x: 0 - x)
-
-def spread(xs: list[Int]) -> list[Int]:
+## The one higher-order list primitive left: it answers a list whose length is a sum over the lists
+## its *function* answers, which is not known until they have been built.
+def spread_out(xs: list[Int]) -> list[Int]:
     return list_flat_map(xs, lambda x: [x, x])
 "#;

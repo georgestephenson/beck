@@ -800,6 +800,20 @@ fn the_three_backends_agree_on_closures() {
     for name in ["halved", "negated", "added"] {
         compared += all.agree(name, &clofix::singles(&rs));
     }
+    // The last two list primitives, and `by_rank` is the stability case: every key in one of those
+    // lists is the same, so an unstable sort is free to answer anything.
+    compared += all.agree("flattened", &clofix::singles(&clofix::nested()));
+    compared += all.agree("flat_texts", &clofix::singles(&clofix::nested_texts()));
+    compared += all.agree("spread", &clofix::singles(&xs));
+    for name in ["ascending", "descending", "by_sign"] {
+        compared += all.agree(name, &clofix::singles(&xs));
+    }
+    for name in ["by_length", "by_text"] {
+        compared += all.agree(name, &clofix::singles(&ts));
+    }
+    compared += all.agree("by_real", &clofix::singles(&rs));
+    compared += all.agree("by_rank", &clofix::singles(&clofix::notes()));
+
     for name in ["same_lambda", "two_lambdas", "ordered"] {
         compared += all.agree(name, &[vec![]]);
     }

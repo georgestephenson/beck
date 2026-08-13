@@ -791,6 +791,21 @@ fn the_two_backends_agree_on_closures() {
         compared += both.agree(name, &clofix::singles(&rs));
     }
 
+    // The last two list primitives. `by_rank` is the stability case: every key in one of those
+    // lists is the same, so an unstable sort is free to answer anything and a stable one answers
+    // the input order.
+    compared += both.agree("flattened", &clofix::singles(&clofix::nested()));
+    compared += both.agree("flat_texts", &clofix::singles(&clofix::nested_texts()));
+    compared += both.agree("spread", &clofix::singles(&xs));
+    for name in ["ascending", "descending", "by_sign"] {
+        compared += both.agree(name, &clofix::singles(&xs));
+    }
+    for name in ["by_length", "by_text"] {
+        compared += both.agree(name, &clofix::singles(&ts));
+    }
+    compared += both.agree("by_real", &clofix::singles(&rs));
+    compared += both.agree("by_rank", &clofix::singles(&clofix::notes()));
+
     // Comparing two closures, which is `Closure`'s own order: the parameters, then where the body
     // starts — and *not* the captured frame, which `captures_ignored` is about.
     for name in ["same_lambda", "two_lambdas", "ordered"] {
@@ -804,6 +819,25 @@ fn the_two_backends_agree_on_closures() {
     );
 
     println!("{compared} closure calls compared, and every backend agreed on every one");
+}
+
+/// The bytes a call's own arguments occupy, so what a body allocated is what is left over.
+///
+/// The reprs come from the *signature* rather than being written down, because an index into the
+/// word table is a property of the program and a test that guessed one would measure another type.
+fn arguments(both: &Both, name: &str, args: &[Value]) -> usize {
+    let sig = both
+        .native
+        .module()
+        .signature(name)
+        .unwrap_or_else(|| panic!("`{name}` compiled"));
+    both.native
+        .module()
+        .heap
+        .encode_args(args, &sig.params)
+        .expect("encodes")
+        .1
+        .len()
 }
 
 /// What a closure and a loop leave in the arena, at two sizes.
@@ -821,14 +855,7 @@ fn a_loop_costs_its_answer_and_one_closure() {
         let xs = Value::List(Arc::new((0..n as i64).map(Value::Int).collect()));
         // The arguments' own graph is on the wire before anything is allocated, so the arena a call
         // leaves is measured against what the call was given.
-        let given = both
-            .native
-            .module()
-            .heap
-            .encode_args(std::slice::from_ref(&xs), &[Repr::List(0)])
-            .expect("encodes")
-            .1
-            .len();
+        let given = arguments(&both, "counted", std::slice::from_ref(&xs));
 
         // A fold that builds nothing: one closure, and the one-element list the answer is wrapped
         // in — the same bytes at both sizes, which is the whole claim.
@@ -853,7 +880,54 @@ fn a_loop_costs_its_answer_and_one_closure() {
     }
 }
 
-/// A tail call through an application is a tail call.
+/// A sort costs four runs of the list, and a concatenation costs its answer.
+///
+/// The second shape gate with no clock in it, and both halves say something a differential cannot.
+/// **`concat_lists`** is the one whose refusal was *wrong* (`docs/108` §108.4 as corrected in the
+/// changelog): if it grew a list the way `list_append` would have to, the arena would hold every
+/// intermediate — so asserting it leaves exactly its answer is asserting the sum-then-allocate shape.
+/// **`sort_by`** allocates the keys, the elements, and a scratch pair, and a merge sort that
+/// allocated per level rather than reusing that scratch would pass every differential and fail here.
+#[test]
+fn a_sort_costs_four_runs_and_a_concatenation_costs_its_answer() {
+    let _ = toolchain!();
+    let both = Both::over("closures.beck", CLOSURES);
+    for n in [200usize, 1600] {
+        let xs = Value::List(Arc::new((0..n as i64).map(Value::Int).collect()));
+        let given = arguments(&both, "ascending", std::slice::from_ref(&xs));
+        let (_, bytes) = both
+            .native
+            .call_sized("ascending", std::slice::from_ref(&xs))
+            .expect("runs");
+        assert_eq!(
+            bytes - given,
+            4 * beck_llvm::heap::list_bytes(n as u64) as usize
+                + beck_llvm::heap::closure_bytes(0) as usize,
+            "sorting {n} elements allocated more than the keys, the elements, the scratch pair and \
+             one closure"
+        );
+
+        // `n` inner lists of one element each, so the answer is `n` elements and the outer list is
+        // what the call was given.
+        let xss = Value::List(Arc::new(
+            (0..n as i64)
+                .map(|i| Value::List(Arc::new(vec![Value::Int(i)])))
+                .collect(),
+        ));
+        let given = arguments(&both, "flattened", std::slice::from_ref(&xss));
+        let (_, bytes) = both
+            .native
+            .call_sized("flattened", std::slice::from_ref(&xss))
+            .expect("runs");
+        assert_eq!(
+            bytes - given,
+            beck_llvm::heap::list_bytes(n as u64) as usize,
+            "concatenating {n} lists of one allocated more than the list it answers with"
+        );
+    }
+}
+
+/// A tail call through an application is a tail call./// A tail call through an application is a tail call.
 ///
 /// `docs/27` makes "a call in tail position is free" a property of the *language*, and an
 /// application is a call — so a loop written as a closure calling itself must not grow the stack.
@@ -897,8 +971,7 @@ fn a_closure_does_not_cross_the_boundary() {
         ("picked", "returns a function value"),
         ("held", "whose field `apply_to` is a function value"),
         ("listed", "whose element is a function value"),
-        ("sorted_by", "`sort_by` sorts by decorating"),
-        ("spread", "`list_flat_map` answers a list whose length"),
+        ("spread_out", "`list_flat_map` answers a list whose length"),
     ] {
         let why = both
             .refusal(name)

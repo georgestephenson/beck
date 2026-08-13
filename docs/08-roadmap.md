@@ -888,11 +888,12 @@ its bytes, a literal is an offset into a pool the host writes, and **344** defin
 corpus folds** among them — and the operations that *grow* one are **refused** rather than shipped
 with a worse asymptote than the evaluator's, which is §101.5's forecast cashed. **Closures are built too**
 ([`108`](108-closures-arrive-report.md)) — a `lam` is an object holding its **rank** and its captures,
-an application is a switch on that word into a direct call, and the five higher-order list
-primitives that are one pass compile through it; a closure is refused at every boundary the host
-would read one across, so it lives inside one compiled call. **619** definitions compile where 605
-did, and the refusals that blamed a closure went 96 → 52 with 33 of the difference re-refused for a
-deeper reason. What is left of that
+an application is a switch on that word into a direct call, and every higher-order list primitive
+but `list_flat_map` compiles through it — including `sort_by`, as a stable merge sort — and so does
+`concat_lists`, whose refusal turned out to be false (its length is a sum over one pass). A closure is
+refused at every boundary the host would read one across, so it lives inside one compiled call.
+**646** definitions compile where 605 did, and the refusals that blamed a closure went 96 → 52 with 33
+of the difference re-refused for a deeper reason. What is left of that
 bullet is the effects, `Html` and growing a collection
 ([`107`](107-a-map-arrives-read-only-report.md) §107.4), which is still Phase 4's Lane E and still the prerequisite Mode B codegen is behind
 ([`94`](94-mode-b-report.md) §94.8) — and §105.10 corrects which half of that prerequisite text was:
@@ -953,7 +954,7 @@ boundaries are real directories.
 | **B — runtime and views** | `beck-rt/`, `beck-core/src/{engine,plan,incremental,pmap,signal}.rs` | Clock injection; the shared dataflow's release policy, history constant and render lock; SQL read models, pgwire, query fusion; Mode B's server half | Nothing in A, C, E or F |
 | **C — front end and tooling** | `beck-syntax/`, `beck-cli/`, `beck-diag/` | The recursion bound; the two syntax decisions; Unicode and UTS #39; LSP; `test --update`; fuzzing | A, if a syntax decision changes what the checker sees |
 | **D — process and supply chain** | `docs/`, `.github/`, `deny.toml`, `SECURITY.md`, `release/`, `install.sh` | Threat model, disclosure policy, memory-safety roadmap, `pending_security`, the four retargeted §12 rows, SLSA/SBOM/trusted publishing, ~~the release pipeline and the installer~~ ([`104`](104-the-release-and-the-installer-report.md)) | Nothing in code — **except that the release lands in `Cargo.toml`, a `build.rs` and `--version`**, which §104.4 is about and which this cell had assumed away |
-| **E — backends** | `beck-eval/`, `beck-llvm/`, `beck-clif/`, `beck-core/src/backend.rs`, any new codegen crate | ~~LLVM backend, native codegen, the differential suite~~ — **built** ([`93`](93-llvm-backend-report.md)), ~~and Cranelift~~ — **built** ([`97`](97-cranelift-report.md)), ~~and a heap~~ — **half built** ([`101`](101-the-heap-report.md)): records, unions and newtypes, ~~and text~~ — **built** ([`105`](105-text-on-the-heap-report.md)), ~~and reading a collection~~ — **built** ([`106`](106-lists-arrive-read-only-report.md), [`107`](107-a-map-arrives-read-only-report.md)), lists and maps alike, ~~and closures~~ — **built** ([`108`](108-closures-arrive-report.md)): a rank and its captures, an application as a switch, and the five list primitives that take a function and are one pass. What is left is the effects, `Html` and *growing* a collection | Nothing — the seam is why ([`19`](19-phase-1-report.md) §19.9), and [`93`](93-llvm-backend-report.md) is the first thing to test that claim: not one line of `beck-rt` changed |
+| **E — backends** | `beck-eval/`, `beck-llvm/`, `beck-clif/`, `beck-core/src/backend.rs`, any new codegen crate | ~~LLVM backend, native codegen, the differential suite~~ — **built** ([`93`](93-llvm-backend-report.md)), ~~and Cranelift~~ — **built** ([`97`](97-cranelift-report.md)), ~~and a heap~~ — **half built** ([`101`](101-the-heap-report.md)): records, unions and newtypes, ~~and text~~ — **built** ([`105`](105-text-on-the-heap-report.md)), ~~and reading a collection~~ — **built** ([`106`](106-lists-arrive-read-only-report.md), [`107`](107-a-map-arrives-read-only-report.md)), lists and maps alike, ~~and closures~~ — **built** ([`108`](108-closures-arrive-report.md)): a rank and its captures, an application as a switch, and every list primitive that takes a function except `list_flat_map` — `sort_by` and `concat_lists` included, the second because its refusal was false. What is left is the effects, `Html` and *growing* a collection | Nothing — the seam is why ([`19`](19-phase-1-report.md) §19.9), and [`93`](93-llvm-backend-report.md) is the first thing to test that claim: not one line of `beck-rt` changed |
 | **F — infrastructure** | `beck-infra/` | Effect-derived NetworkPolicy/RBAC/grants; Crossplane emitter; conformance rungs | Nothing |
 
 **Lane A is strictly serial, and that is the real staffing constraint.** It is tempting to run two

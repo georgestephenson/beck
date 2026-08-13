@@ -472,6 +472,16 @@ fn build(
             )
             .map_err(Failure::Fatal)?;
         }
+        // One merge sort per key repr, over the families that sort — deduplicated here because two
+        // families can sort by the same kind of key and one function has one definition.
+        let sorted: BTreeSet<u32> = loops
+            .iter()
+            .filter(|(which, _)| *which == Loop::Sort)
+            .filter_map(|(_, fam)| heap.word_at(heap.family(*fam).ret))
+            .collect();
+        for at in sorted {
+            merge_sort(at, &mut object, &mut ctx, &mut fctx).map_err(Failure::Fatal)?;
+        }
         if compared_fns {
             fn_compare(&mut object, &mut ctx, &mut fctx, arena).map_err(Failure::Fatal)?;
         }
@@ -613,6 +623,10 @@ struct Lists {
     /// clamping is arithmetic the caller does.
     copy: FuncId,
     reverse: FuncId,
+    /// `concat_lists`: a sum over the outer list's header words, then one allocation and one
+    /// `memcpy` per inner list. Not a growth — see the other emitter's `refusal` for the correction
+    /// that says why it was refused as one.
+    concat: FuncId,
 }
 
 impl Lists {
@@ -641,6 +655,11 @@ impl Lists {
             )?,
             reverse: one(
                 "beck.list.reverse",
+                &[ptr, types::I64, types::I32],
+                types::I64,
+            )?,
+            concat: one(
+                "beck.list.concat",
                 &[ptr, types::I64, types::I32],
                 types::I64,
             )?,
@@ -792,6 +811,90 @@ impl Lists {
 
             b.switch_to_block(out);
             b.ins().return_(&[r]);
+        })?;
+
+        let sig = Text::signature(m, &[ptr, types::I64, types::I32], types::I64);
+        Text::wrote(self.concat, sig, 17, m, ctx, fctx, |b, m| {
+            let entry = b.current_block().expect("an entry block");
+            let err = b.block_params(entry)[0];
+            let xss = b.block_params(entry)[1];
+            let span = b.block_params(entry)[2];
+            let n = self.count(arena, xss, b, m);
+            let outer = self.data(arena, xss, b, m);
+            let word = heap::WORD as i64;
+
+            // One pass for the size. Every inner length is a header word, so the total is known
+            // before a byte is reserved — which is what makes this an allocation and not a growth.
+            let i = b.declare_var(types::I64);
+            let total = b.declare_var(types::I64);
+            let zero = b.ins().iconst(types::I64, 0);
+            b.def_var(i, zero);
+            b.def_var(total, zero);
+            let sum = b.create_block();
+            let add = b.create_block();
+            let build = b.create_block();
+            b.ins().jump(sum, &[]);
+            b.switch_to_block(sum);
+            let at = b.use_var(i);
+            let done = b.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, at, n);
+            b.ins().brif(done, build, &[], add, &[]);
+            b.switch_to_block(add);
+            let off = b.ins().imul_imm_s(at, word);
+            let src = b.ins().iadd(outer, off);
+            let inner = b.ins().load(types::I64, MemFlagsData::trusted(), src, 0);
+            let len = self.count(arena, inner, b, m);
+            let so_far = b.use_var(total);
+            let grown = b.ins().iadd(so_far, len);
+            b.def_var(total, grown);
+            let next = b.ins().iadd_imm_s(at, 1);
+            b.def_var(i, next);
+            b.ins().jump(sum, &[]);
+
+            b.switch_to_block(build);
+            let want = b.use_var(total);
+            let alloc = m.declare_func_in_func(self.alloc, b.func);
+            let call = b.ins().call(alloc, &[err, want, span]);
+            let out = b.inst_results(call)[0];
+            let move_ = b.create_block();
+            let answer = b.create_block();
+            let failed = b.ins().icmp_imm_s(IntCC::Equal, out, 0);
+            b.ins().brif(failed, answer, &[], move_, &[]);
+
+            // One `memcpy` per inner list. An element is a word whatever it means, and an offset
+            // stays an offset, so nothing here has to know what the elements are.
+            b.switch_to_block(move_);
+            let dst = self.data(arena, out, b, m);
+            let j = b.declare_var(types::I64);
+            let k = b.declare_var(types::I64);
+            b.def_var(j, zero);
+            b.def_var(k, zero);
+            let loop_ = b.create_block();
+            let one = b.create_block();
+            b.ins().jump(loop_, &[]);
+            b.switch_to_block(loop_);
+            let at = b.use_var(j);
+            let past = b.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, at, n);
+            b.ins().brif(past, answer, &[], one, &[]);
+            b.switch_to_block(one);
+            let off = b.ins().imul_imm_s(at, word);
+            let src = b.ins().iadd(outer, off);
+            let inner = b.ins().load(types::I64, MemFlagsData::trusted(), src, 0);
+            let len = self.count(arena, inner, b, m);
+            let from = self.data(arena, inner, b, m);
+            let so_far = b.use_var(k);
+            let skip = b.ins().imul_imm_s(so_far, word);
+            let to = b.ins().iadd(dst, skip);
+            let bytes = b.ins().imul_imm_s(len, word);
+            let config = m.target_config();
+            b.call_memcpy(config, to, from, bytes);
+            let filled = b.ins().iadd(so_far, len);
+            b.def_var(k, filled);
+            let next = b.ins().iadd_imm_s(at, 1);
+            b.def_var(j, next);
+            b.ins().jump(loop_, &[]);
+
+            b.switch_to_block(answer);
+            b.ins().return_(&[out]);
         })
     }
 }
@@ -2595,6 +2698,8 @@ enum Loop {
     Filter,
     Fold,
     Every,
+    /// `sort_by` — decorate with the keys, merge stably, undecorate. The one that is not a pass.
+    Sort,
 }
 
 impl Loop {
@@ -2604,6 +2709,7 @@ impl Loop {
             Loop::Filter => format!("beck.list.filter.{fam}"),
             Loop::Fold => format!("beck.list.fold.{fam}"),
             Loop::Every => format!("beck.list.every.{fam}"),
+            Loop::Sort => format!("beck.list.sort.{fam}"),
         }
     }
 
@@ -2614,6 +2720,7 @@ impl Loop {
             Loop::Filter => 1,
             Loop::Fold => 2,
             Loop::Every => 3,
+            Loop::Sort => 4,
         }
     }
 }
@@ -2750,6 +2857,322 @@ fn apply_function(
     Ok(())
 }
 
+/// A stable merge sort over two parallel runs of words: the keys, and the elements they decorate.
+///
+/// Generated per **key** repr rather than per family, because what it needs to know is how to
+/// compare two key words and nothing else. Recursive rather than bottom-up: the depth is `log n` on
+/// the host's stack and `n` is bounded by the arena, and one loop is easier to be right about than
+/// three nested ones.
+///
+/// **Stability is the property that matters**, and it is one `<=`: on equal keys the element from the
+/// left run goes first. `beck-eval` says why that is a promise rather than a nicety — the input order
+/// is itself deterministic, so a stable sort is what makes the answer total without a second key.
+fn merge_sort(
+    at: u32,
+    m: &mut ObjectModule,
+    ctx: &mut cranelift_codegen::Context,
+    fctx: &mut FunctionBuilderContext,
+) -> Result<(), String> {
+    let ptr = m.target_config().pointer_type();
+    let mut sig = cranelift_codegen::ir::Signature::new(CallConv::triple_default(m.isa().triple()));
+    for _ in 0..4 {
+        sig.params.push(AbiParam::new(ptr));
+    }
+    sig.params.push(AbiParam::new(types::I64));
+    sig.params.push(AbiParam::new(types::I64));
+    let id = m
+        .declare_function(&format!("beck.list.msort.{at}"), Linkage::Local, &sig)
+        .map_err(|e| format!("declaring a sort: {e}"))?;
+    let cmp = m
+        .declare_function(
+            &format!("beck.elem.cmp.{at}"),
+            Linkage::Local,
+            &compare_signature(m),
+        )
+        .map_err(|e| format!("declaring a comparison: {e}"))?;
+    ctx.func = Function::with_name_signature(UserFuncName::user(17, at), sig);
+    {
+        let mut b = FunctionBuilder::new(&mut ctx.func, fctx);
+        let entry = b.create_block();
+        b.append_block_params_for_function_params(entry);
+        b.switch_to_block(entry);
+        b.seal_block(entry);
+        let ps: Vec<IrValue> = b.block_params(entry).to_vec();
+        let (keys, vals, tk, tv, lo, hi) = (ps[0], ps[1], ps[2], ps[3], ps[4], ps[5]);
+        let flags = MemFlagsData::trusted();
+        let word = heap::WORD as i64;
+        let me = m.declare_func_in_func(id, b.func);
+        let three_way = m.declare_func_in_func(cmp, b.func);
+
+        let done = b.create_block();
+        let split = b.create_block();
+        let span = b.ins().isub(hi, lo);
+        let tiny = b.ins().icmp_imm_s(IntCC::UnsignedLessThanOrEqual, span, 1);
+        b.ins().brif(tiny, done, &[], split, &[]);
+
+        b.switch_to_block(split);
+        b.seal_block(split);
+        let half = b.ins().udiv_imm_u(span, 2);
+        let mid = b.ins().iadd(lo, half);
+        b.ins().call(me, &[keys, vals, tk, tv, lo, mid]);
+        b.ins().call(me, &[keys, vals, tk, tv, mid, hi]);
+
+        // Three indices: where each run is up to, and where the answer is going.
+        let i = b.declare_var(types::I64);
+        let j = b.declare_var(types::I64);
+        let k = b.declare_var(types::I64);
+        b.def_var(i, lo);
+        b.def_var(j, mid);
+        b.def_var(k, lo);
+        let merge = b.create_block();
+        let pick = b.create_block();
+        let maybe = b.create_block();
+        let compare = b.create_block();
+        let left = b.create_block();
+        let right = b.create_block();
+        let took = b.create_block();
+        b.append_block_param(took, types::I64);
+        b.append_block_param(took, types::I64);
+        let back = b.create_block();
+        b.ins().jump(merge, &[]);
+
+        b.switch_to_block(merge);
+        let filling = b.use_var(k);
+        let filled = b.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, filling, hi);
+        b.ins().brif(filled, back, &[], pick, &[]);
+
+        b.switch_to_block(pick);
+        b.seal_block(pick);
+        let li = b.use_var(i);
+        let more_left = b.ins().icmp(IntCC::UnsignedLessThan, li, mid);
+        b.ins().brif(more_left, maybe, &[], right, &[]);
+
+        b.switch_to_block(maybe);
+        b.seal_block(maybe);
+        let rj = b.use_var(j);
+        let right_gone = b.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, rj, hi);
+        b.ins().brif(right_gone, left, &[], compare, &[]);
+
+        b.switch_to_block(compare);
+        b.seal_block(compare);
+        let ia = b.ins().imul_imm_s(li, word);
+        let ja = b.ins().imul_imm_s(rj, word);
+        let ka_at = b.ins().iadd(keys, ia);
+        let kb_at = b.ins().iadd(keys, ja);
+        let ka = b.ins().load(types::I64, flags, ka_at, 0);
+        let kb = b.ins().load(types::I64, flags, kb_at, 0);
+        let call = b.ins().call(three_way, &[ka, kb]);
+        let c = b.inst_results(call)[0];
+        // `<=`, which is the whole of the stability: on equal keys the left run goes first.
+        let take_left = b.ins().icmp_imm_s(IntCC::SignedLessThanOrEqual, c, 0);
+        b.ins().brif(take_left, left, &[], right, &[]);
+
+        for (which, from) in [(left, true), (right, false)] {
+            b.switch_to_block(which);
+            b.seal_block(which);
+            let at_i = if from { b.use_var(i) } else { b.use_var(j) };
+            let off = b.ins().imul_imm_s(at_i, word);
+            let key_at = b.ins().iadd(keys, off);
+            let val_at = b.ins().iadd(vals, off);
+            let key = b.ins().load(types::I64, flags, key_at, 0);
+            let val = b.ins().load(types::I64, flags, val_at, 0);
+            let stepped = b.ins().iadd_imm_s(at_i, 1);
+            if from {
+                b.def_var(i, stepped);
+            } else {
+                b.def_var(j, stepped);
+            }
+            b.ins().jump(took, &[key.into(), val.into()]);
+        }
+
+        b.switch_to_block(took);
+        b.seal_block(took);
+        let key = b.block_params(took)[0];
+        let val = b.block_params(took)[1];
+        let at_k = b.use_var(k);
+        let off = b.ins().imul_imm_s(at_k, word);
+        let key_to = b.ins().iadd(tk, off);
+        let val_to = b.ins().iadd(tv, off);
+        b.ins().store(flags, key, key_to, 0);
+        b.ins().store(flags, val, val_to, 0);
+        let next = b.ins().iadd_imm_s(at_k, 1);
+        b.def_var(k, next);
+        b.ins().jump(merge, &[]);
+
+        // The merged run, back where the caller's half of it was.
+        b.switch_to_block(back);
+        b.seal_block(back);
+        let bytes = b.ins().imul_imm_s(span, word);
+        let skip = b.ins().imul_imm_s(lo, word);
+        let from_k = b.ins().iadd(tk, skip);
+        let to_k = b.ins().iadd(keys, skip);
+        let config = m.target_config();
+        b.call_memcpy(config, to_k, from_k, bytes);
+        let from_v = b.ins().iadd(tv, skip);
+        let to_v = b.ins().iadd(vals, skip);
+        b.call_memcpy(config, to_v, from_v, bytes);
+        b.ins().jump(done, &[]);
+
+        b.switch_to_block(done);
+        b.ins().return_(&[]);
+        b.seal_all_blocks();
+        b.finalize(m.target_config());
+    }
+    m.define_function(id, ctx)
+        .map_err(|e| format!("defining a sort: {e}"))?;
+    m.clear_context(ctx);
+    Ok(())
+}
+
+/// `sort_by` for one family: decorate every element with its key, sort stably, answer the elements.
+///
+/// Four runs of `n` words — the keys, the elements, and a scratch pair the merge writes into. The
+/// elements come from `beck.list.copy`, which is also the list this answers with, so the sort is in
+/// place in something nobody else holds. The closure is applied exactly `n` times, which is what the
+/// evaluator does: it decorates, sorts and undecorates too.
+#[allow(clippy::too_many_arguments)]
+fn sort_function(
+    at: u32,
+    heap: &Heap,
+    arena: Arena,
+    runtime: Runtime,
+    m: &mut ObjectModule,
+    ctx: &mut cranelift_codegen::Context,
+    fctx: &mut FunctionBuilderContext,
+) -> Result<(), String> {
+    let fam = heap.family(at).clone();
+    let element = fam.params[0];
+    let key = fam.ret;
+    let key_at = heap
+        .word_at(key)
+        .ok_or("a sort whose key repr was never interned")?;
+    let ptr = m.target_config().pointer_type();
+    let lists = runtime
+        .lists
+        .ok_or("a sort in a module with no list runtime")?;
+    let apply = m
+        .declare_function(
+            &apply_symbol(at),
+            Linkage::Local,
+            &family_signature(&fam, ptr),
+        )
+        .map_err(|e| format!("declaring an application: {e}"))?;
+
+    let mut sig = cranelift_codegen::ir::Signature::new(CallConv::triple_default(m.isa().triple()));
+    sig.params.push(AbiParam::new(ptr));
+    sig.params.push(AbiParam::new(types::I64));
+    sig.params.push(AbiParam::new(types::I64));
+    sig.params.push(AbiParam::new(types::I32));
+    sig.returns.push(AbiParam::new(types::I64));
+    let id = m
+        .declare_function(&Loop::Sort.symbol(at), Linkage::Local, &sig)
+        .map_err(|e| format!("declaring a sort: {e}"))?;
+
+    let mut msig =
+        cranelift_codegen::ir::Signature::new(CallConv::triple_default(m.isa().triple()));
+    for _ in 0..4 {
+        msig.params.push(AbiParam::new(ptr));
+    }
+    msig.params.push(AbiParam::new(types::I64));
+    msig.params.push(AbiParam::new(types::I64));
+    let msort = m
+        .declare_function(&format!("beck.list.msort.{key_at}"), Linkage::Local, &msig)
+        .map_err(|e| format!("declaring a sort: {e}"))?;
+
+    ctx.func =
+        Function::with_name_signature(UserFuncName::user(15, at * 8 + Loop::Sort.seq()), sig);
+    {
+        let mut b = FunctionBuilder::new(&mut ctx.func, fctx);
+        let entry = b.create_block();
+        b.append_block_params_for_function_params(entry);
+        b.switch_to_block(entry);
+        let ps: Vec<IrValue> = b.block_params(entry).to_vec();
+        let (err, xs, clo, span) = (ps[0], ps[1], ps[2], ps[3]);
+        let flags = MemFlagsData::trusted();
+        let word = heap::WORD as i64;
+        let failed = b.create_block();
+        let zero = b.ins().iconst(types::I64, 0);
+
+        let n = lists.count(arena, xs, &mut b, m);
+        let src = lists.data(arena, xs, &mut b, m);
+
+        // Four allocations, each one able to exhaust the arena.
+        let alloc = m.declare_func_in_func(lists.alloc, b.func);
+        let copy = m.declare_func_in_func(lists.copy, b.func);
+        let mut runs = Vec::new();
+        for which in 0..4 {
+            let call = if which == 1 {
+                b.ins().call(copy, &[err, xs, zero, n, span])
+            } else {
+                b.ins().call(alloc, &[err, n, span])
+            };
+            let off = b.inst_results(call)[0];
+            let ok = b.create_block();
+            let bad = b.ins().icmp_imm_s(IntCC::Equal, off, 0);
+            b.ins().brif(bad, failed, &[], ok, &[]);
+            b.switch_to_block(ok);
+            b.seal_block(ok);
+            runs.push(off);
+        }
+        let data: Vec<IrValue> = runs
+            .iter()
+            .map(|off| lists.data(arena, *off, &mut b, m))
+            .collect();
+        let vals = runs[1];
+
+        // Decorate: one key per element.
+        let f = m.declare_func_in_func(apply, b.func);
+        let i = b.declare_var(types::I64);
+        b.def_var(i, zero);
+        let head = b.create_block();
+        let one = b.create_block();
+        let alive = b.create_block();
+        let sorted = b.create_block();
+        b.ins().jump(head, &[]);
+        b.switch_to_block(head);
+        let at_i = b.use_var(i);
+        let past = b.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, at_i, n);
+        b.ins().brif(past, sorted, &[], one, &[]);
+        b.switch_to_block(one);
+        b.seal_block(one);
+        let off = b.ins().imul_imm_s(at_i, word);
+        let from = b.ins().iadd(src, off);
+        let w = b.ins().load(types::I64, flags, from, 0);
+        let arg = from_word(w, element, &mut b);
+        let call = b.ins().call(f, &[err, clo, arg]);
+        let answer = b.inst_results(call)[0];
+        let code = b.ins().load(types::I32, flags, err, 0);
+        let trapped = b.ins().icmp_imm_s(IntCC::NotEqual, code, 0);
+        b.ins().brif(trapped, failed, &[], alive, &[]);
+        b.switch_to_block(alive);
+        b.seal_block(alive);
+        let stored = to_word(answer, key, &mut b);
+        let to = b.ins().iadd(data[0], off);
+        b.ins().store(flags, stored, to, 0);
+        let next = b.ins().iadd_imm_s(at_i, 1);
+        b.def_var(i, next);
+        b.ins().jump(head, &[]);
+
+        b.switch_to_block(sorted);
+        b.seal_block(sorted);
+        let sort = m.declare_func_in_func(msort, b.func);
+        b.ins()
+            .call(sort, &[data[0], data[1], data[2], data[3], zero, n]);
+        b.ins().return_(&[vals]);
+
+        b.switch_to_block(failed);
+        b.seal_block(failed);
+        let none = b.ins().iconst(types::I64, 0);
+        b.ins().return_(&[none]);
+        b.seal_all_blocks();
+        b.finalize(m.target_config());
+    }
+    m.define_function(id, ctx)
+        .map_err(|e| format!("defining a sort: {e}"))?;
+    m.clear_context(ctx);
+    Ok(())
+}
+
 /// One of [`Loop`]'s four, for one family.
 ///
 /// A list's element is a **word** and a closure takes a value, so each iteration converts one way
@@ -2767,6 +3190,10 @@ fn loop_function(
     ctx: &mut cranelift_codegen::Context,
     fctx: &mut FunctionBuilderContext,
 ) -> Result<(), String> {
+    // The one that is not a pass over a list: four runs of words, a decorating loop and a sort.
+    if which == Loop::Sort {
+        return sort_function(at, heap, arena, runtime, m, ctx, fctx);
+    }
     let fam = heap.family(at).clone();
     let ptr = m.target_config().pointer_type();
     let lists = runtime
@@ -2795,7 +3222,9 @@ fn loop_function(
     sig.returns.push(AbiParam::new(match which {
         Loop::Map | Loop::Filter => types::I64,
         Loop::Fold => machine(fam.ret),
-        Loop::Every => types::I8,
+        // `Sort` answered above: it is not one of these loops, and the `unreachable` says so where a
+        // `_` arm would have swallowed the next one added.
+        Loop::Every | Loop::Sort => types::I8,
     }));
     let id = m
         .declare_function(&which.symbol(at), Linkage::Local, &sig)
@@ -2925,7 +3354,7 @@ fn loop_function(
         let z = match which {
             Loop::Map | Loop::Filter => b.ins().iconst(types::I64, 0),
             Loop::Fold => zero_of(fam.ret, &mut b),
-            Loop::Every => b.ins().iconst(types::I8, 0),
+            Loop::Every | Loop::Sort => b.ins().iconst(types::I8, 0),
         };
         b.ins().return_(&[z]);
         b.switch_to_block(alive);
@@ -2970,7 +3399,7 @@ fn loop_function(
                 b.seal_block(next);
                 b.ins().jump(head, &[step.into(), answer.into()]);
             }
-            Loop::Every => {
+            Loop::Every | Loop::Sort => {
                 // Short-circuiting, which `beck-eval` documents as a promise rather than an
                 // optimisation: `list_any` stops at the first `true` and `list_all` at the first
                 // `false`, and the flag is which of the two this call is.
@@ -3005,7 +3434,7 @@ fn loop_function(
                 let acc = b.block_params(done)[0];
                 b.ins().return_(&[acc]);
             }
-            Loop::Every => {
+            Loop::Every | Loop::Sort => {
                 let want = want.expect("every is given the answer it stops on");
                 let rest = b.ins().bxor_imm_u(want, 1);
                 b.ins().return_(&[rest]);
@@ -4819,6 +5248,27 @@ impl<'a> Body<'a> {
                 self.map_arg(&vals[0], op)?;
                 self.map_run(op, ty, &vals[0], span, b, m)
             }
+            // A list of lists into one list. Not a growth: the total is a sum over the outer
+            // list's header words, so the allocation happens once and after it.
+            Prim::ConcatLists => {
+                arity(1, &vals)?;
+                let outer = self.list_arg(&vals[0], op)?;
+                let Repr::List(inner) = self.heap.element(outer) else {
+                    return Err("`concat_lists` on something that is not a list of lists".into());
+                };
+                let lists = self.lists();
+                let idx = self.span(span);
+                let span = b.ins().iconst(types::I32, i64::from(idx));
+                let err = self.err();
+                let f = m.declare_func_in_func(lists.concat, b.func);
+                let call = b.ins().call(f, &[err, vals[0].v, span]);
+                let r = b.inst_results(call)[0];
+                self.check_call(b);
+                Ok(Val {
+                    v: r,
+                    ty: Repr::List(inner),
+                })
+            }
             Prim::ListReverse => {
                 arity(1, &vals)?;
                 let at = self.list_arg(&vals[0], op)?;
@@ -4890,6 +5340,24 @@ impl<'a> Body<'a> {
                 )?;
                 Ok(Val { v: r, ty: acc })
             }
+            // Decorate, sort, undecorate — and the keys are words like any others, so what compares
+            // two of them is the function a list's element comparison already is.
+            Prim::SortBy => {
+                arity(2, &vals)?;
+                let element = self.heap.element(self.list_arg(&vals[0], op)?);
+                let fam = self.function_arg(&vals[1], op, &[element])?;
+                let key = self.heap.family(fam).ret;
+                // Interned here rather than in the survey: the keys are not a list any program
+                // wrote, so nothing else would have asked for their comparison — and recording the
+                // index is what makes the module generate it.
+                let at = self.heap.word_of(key);
+                self.list_compared.insert(at);
+                let r = self.list_loop(Loop::Sort, fam, &[vals[0].v, vals[1].v], span, b, m)?;
+                Ok(Val {
+                    v: r,
+                    ty: vals[0].ty,
+                })
+            }
             Prim::ListAll | Prim::ListAny => {
                 arity(2, &vals)?;
                 let element = self.heap.element(self.list_arg(&vals[0], op)?);
@@ -4958,7 +5426,7 @@ impl<'a> Body<'a> {
         }
         sig.params.push(AbiParam::new(types::I32));
         sig.returns.push(AbiParam::new(match which {
-            Loop::Map | Loop::Filter => types::I64,
+            Loop::Map | Loop::Filter | Loop::Sort => types::I64,
             Loop::Fold => machine(family.ret),
             Loop::Every => types::I8,
         }));
@@ -5707,7 +6175,7 @@ fn refusal(op: Prim) -> String {
         // The one that is a decision rather than a gap. `docs/69` §69.7 and `docs/101` §101.5 both
         // name shipping this as the mistake: the tree-walker pushes in place when `liveness` proves
         // the accumulator is a last use, and an arena with no ownership in it cannot.
-        Prim::ListAppend | Prim::ConcatLists => {
+        Prim::ListAppend => {
             "grows a list, and this arena cannot prove nobody else holds the one it would push \
              into — so the accumulator every loop is written as would be quadratic here and linear \
              in the evaluator"
@@ -5720,15 +6188,11 @@ fn refusal(op: Prim) -> String {
             "grows a map, and a sorted run in an arena has to be copied whole where the \
              evaluator's tree rebuilds one path"
         }
-        // The higher-order primitives that are one pass over a list compile. What is left of that
-        // half is the two that are not.
+        // The higher-order half compiles, `sort_by` included — so what is left of it is the one
+        // that grows a list.
         Prim::ListFlatMap => {
             "answers a list whose length is the sum of the lists its function answers, which is \
              growing a list under another name"
-        }
-        Prim::SortBy => {
-            "sorts by decorating each element with its key and merging stably, which is a sort in \
-             the emitter rather than a pass over the list"
         }
         Prim::StrUpper | Prim::StrLower => {
             "is Unicode case mapping, which is a table rather than an operation — and a compiled \
