@@ -39,8 +39,22 @@ release's `SHA256SUMS`, **refuses to go on unless the two agree**, and puts `bec
 on Linux and macOS; there is no Windows build.
 
 A checksum is not a signature: it says the download was not corrupted, and nothing about the page it
-came from. [`104`](104-the-release-and-the-installer-report.md) §104.6 is exact about that, and
-[`99`](99-supply-chain-report.md) §99.7 is where the signature and the transparency log sit unbuilt.
+came from. What does say something about the page is the **build provenance** the release attests
+over every artefact it publishes ([`109`](109-provenance-report.md)) — check it by asking, which
+needs the [GitHub CLI](https://cli.github.com):
+
+```text
+$ curl -fsSL https://raw.githubusercontent.com/georgestephenson/beck/main/install.sh \
+    | BECK_VERIFY_PROVENANCE=1 sh
+```
+
+That refuses to install unless the tarball's digest is the subject of a Sigstore-signed statement
+naming this repository's release workflow as its builder. It is off by default because `gh` is not a
+tool this script can assume you have; with it set and no `gh`, the install fails rather than
+quietly skipping the check. What is still unsigned is the release *listing* itself —
+[`adr/0028`](adr/0028-a-release-carries-provenance-and-still-no-signature.md) is exact about the
+line between those two, and [`99`](99-supply-chain-report.md) §99.7 is where a signature a
+`cosign` user could check sits unbuilt.
 
 **Or build it from source**, which is the same binary and needs a C compiler and CMake. The
 toolchain is pinned in `rust-toolchain.toml` and the first build downloads it:

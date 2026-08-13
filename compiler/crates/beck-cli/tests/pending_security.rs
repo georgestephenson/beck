@@ -278,20 +278,59 @@ async fn the_read_model_port_authenticates_nobody_and_answers_only_to_localhost(
 }
 
 // ---------------------------------------------------------------------------------------------
-// The release artefacts — a checksum, and no signature
+// The release artefacts — provenance nobody is made to check, and a page nobody signs
 // ---------------------------------------------------------------------------------------------
 
-/// A reader who downloads a compiler binary reasonably assumes it is signed. It is not.
+/// The `curl … | sh` a reader will actually run checks a checksum and stops there.
 ///
-/// `docs/104-the-release-and-the-installer-report.md` §104.6 is the argument: `beck sign`'s subject
-/// is an OCI manifest digest, so the signing machinery `docs/99` built does not reach a tarball,
-/// and what a release publishes is a `SHA256SUMS` — which proves a download was not corrupted and
-/// nothing whatever about the page it came from.
+/// This entry has been **narrowed once**. It used to say a release carried no signature at all;
+/// [`docs/109`](../../../../docs/109-provenance-report.md) attached SLSA build provenance to every
+/// artefact and taught the installer to check it, so what a determined reader can establish is now
+/// a great deal more than a checksum. What is absent is that they have to ask:
+/// `BECK_VERIFY_PROVENANCE` is off by default ([`adr/0028`](../../../../docs/adr/0028-a-release-carries-provenance-and-still-no-signature.md)),
+/// because `gh` is not a tool an installer can assume, so the ordinary install path establishes
+/// only that the download was not corrupted in transit.
 ///
-/// This asserts the gap from both ends, because either one could close first: the pipeline signs
-/// nothing, and the installer checks no signature.
+/// Asserted as behaviour rather than as source, because it is observable: a verifier that would
+/// refuse, on a default install, is never consulted. The day the default changes — a bundled
+/// verifier, a check that runs when the tool happens to be present — this goes red, and whoever
+/// changed it has to come here and to `docs/43` §43.4 and say what the new default establishes.
 #[test]
-fn a_release_artefact_carries_a_checksum_and_no_signature() {
+fn the_default_install_checks_a_checksum_and_not_the_provenance() {
+    let Some(release) = support::relfix::fixture("pending-provenance") else {
+        return;
+    };
+    // A verifier that refuses everything. If the default consulted one, this install would fail.
+    let no = release.stub_gh("refuses", 1);
+
+    let bin = release.root.join("bin");
+    let out = release.install(&bin, &[("BECK_GH", no.to_str().expect("utf-8"))]);
+    assert!(
+        out.status.success(),
+        "the default install path failed with a verifier that refuses everything. If that is \
+         because provenance is now checked by default: good — rewrite this test, correct \
+         docs/43 §43.4 and docs/adr/0028, and say what a plain `curl … | sh` now establishes.\n{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(bin.join("beck").exists(), "nothing was installed");
+    assert!(
+        release.gh_argv("refuses").is_empty(),
+        "the default install path consulted the provenance verifier after all: {}",
+        release.gh_argv("refuses")
+    );
+}
+
+/// And the release *page* is signed by nobody.
+///
+/// The provenance covers each artefact's digest, which is the thing worth covering. What it does
+/// not cover is the listing: `SHA256SUMS` itself carries no signature, so a reader who checks the
+/// sums and stops has checked one file against another file from the same page. The signing
+/// machinery `docs/99` §99.5 built still cannot take this subject — it signs an OCI manifest digest
+/// — which is [`104`](../../../../docs/104-the-release-and-the-installer-report.md) §104.6's
+/// finding, unchanged by the provenance work.
+#[test]
+fn the_release_page_itself_carries_no_signature() {
     let repo = crates_dir()
         .ancestors()
         .nth(2)
@@ -301,7 +340,7 @@ fn a_release_artefact_carries_a_checksum_and_no_signature() {
     for (file, needles) in [
         (
             ".github/workflows/release.yml",
-            ["cosign", "beck sign", "attest", "--certificate"],
+            ["cosign", "beck sign", "SHA256SUMS.sig", "--certificate"],
         ),
         (
             "install.sh",
@@ -322,9 +361,9 @@ fn a_release_artefact_carries_a_checksum_and_no_signature() {
             .collect();
         assert!(
             found.is_empty(),
-            "{file} appears to sign or verify a release artefact now ({found:?}). Good — delete \
-             this test, correct docs/43 §43.4 and docs/104 §104.6, and say in the same change what \
-             the signature's subject is and who can check it"
+            "{file} appears to sign or verify the release listing now ({found:?}). Good — delete \
+             this test, correct docs/43 §43.4 and docs/adr/0028, and say in the same change what \
+             the signature's subject is and who can check it without a Beck-specific tool"
         );
     }
 }

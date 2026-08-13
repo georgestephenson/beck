@@ -65,9 +65,11 @@ that is the harder half. Plus Phase 4's multi-arch and air-gapped items. In land
    image ([`06`](06-kubernetes-and-packaging.md) §6.2, [`99`](99-supply-chain-report.md)); the SBOM
    — which `beck build` writes and which nothing yet **attaches** to the image; a cosign signature
    per artefact, **built for an image** (§99.5) and **not reaching a tarball**, because `beck sign`'s
-   subject is a manifest digest ([`104`](104-the-release-and-the-installer-report.md) §104.6); a
-   provenance attestation, **not**; checksums in the release notes. GitHub Releases first; §6.7's
-   OCI/ORAS route in Phase 4. The Mere serves packages, not the compiler.
+   subject is a manifest digest ([`104`](104-the-release-and-the-installer-report.md) §104.6); ~~a
+   provenance attestation, **not**~~ — **built** ([`109`](109-provenance-report.md)), over every
+   artefact `SHA256SUMS` lists, signed by a Sigstore certificate whose identity is this workflow and
+   logged where the release page's owner cannot reach it; checksums in the release notes. GitHub
+   Releases first; §6.7's OCI/ORAS route in Phase 4. The Mere serves packages, not the compiler.
 3. ~~**Reproducibility as a gate**: build the image twice, `diff` the digests~~ — **built, and per
    commit rather than per release** ([`99`](99-supply-chain-report.md) §99.4). Its limit is now
    written down too: the digest is stable for one package set, and the resolver takes the highest
@@ -85,9 +87,13 @@ that is the harder half. Plus Phase 4's multi-arch and air-gapped items. In land
 **The pipeline exists and no tag has been cut.** That sentence used to read the other way round.
 What is published is nothing, and the one thing that would make a signature reachable by a consumer
 — a push, so cosign can find `sha256-<digest>.sig` in a registry — is
-[`99`](99-supply-chain-report.md) §99.7's first row, unchanged. The next slice is not a smaller job
-than it was; it is a **different** one: a signature over `SHA256SUMS`, which the signing command
-cannot produce today because its subject is an image (§104.6).
+[`99`](99-supply-chain-report.md) §99.7's first row, unchanged. The next slice is still the one
+[`104`](104-the-release-and-the-installer-report.md) named: a signature over `SHA256SUMS`, which the
+signing command cannot produce today because its subject is an image (§104.6).
+[`109`](109-provenance-report.md) did **not** take that slice — it took the other one, a builder
+identity and a transparency log per artefact, which needed no key and no new subject type for
+`beck sign`. So a determined reader can now establish who built a tarball and cannot establish who
+wrote the page listing it.
 
 ## 28.3 The pipeline a user's application gets
 

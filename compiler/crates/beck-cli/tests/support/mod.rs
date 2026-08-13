@@ -6,6 +6,7 @@ pub mod heapfix;
 pub mod listfix;
 pub mod lsp;
 pub mod mapfix;
+pub mod relfix;
 pub mod scalar;
 pub mod socket;
 pub mod textfix;

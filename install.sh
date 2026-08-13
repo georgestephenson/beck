@@ -12,16 +12,23 @@
 # that this script exits non-zero and installs nothing — the gate is about the gap, not about the
 # code that closed it (`docs/84-a-quota-is-only-as-good-as-its-actor-report.md` §84.5).
 #
-# It is *not* a chain of trust. A checksum published beside the artefact it describes proves the
-# download was not corrupted in transit; it proves nothing about the release page. What would is a
-# signature and a transparency log, which `docs/99-supply-chain-report.md` §99.7 lists as unbuilt.
+# The checksum on its own is *not* a chain of trust. A checksum published beside the artefact it
+# describes proves the download was not corrupted in transit; it proves nothing about the release
+# page. What does is `BECK_VERIFY_PROVENANCE=1`, which checks the SLSA build provenance
+# `.github/workflows/release.yml` attests — a signature over the artefact's digest by an identity
+# that is a workflow in this repository, recorded in a public transparency log. It is off by
+# default because it needs the GitHub CLI, and on by request it is fatal rather than skipped:
+# `docs/adr/0028-a-release-carries-provenance-and-still-no-signature.md` is the decision and says
+# what is still unsigned.
 #
 # Environment:
-#   BECK_VERSION      version to install, e.g. 0.3.0 (default: the latest release)
-#   BECK_INSTALL_DIR  where the binary goes (default: $HOME/.beck/bin)
-#   BECK_TARGET       override the detected platform triple
-#   BECK_BASE_URL     where the assets are (default: the GitHub release for that version)
-#   BECK_REPO         owner/name (default: georgestephenson/beck)
+#   BECK_VERSION            version to install, e.g. 0.3.0 (default: the latest release)
+#   BECK_INSTALL_DIR        where the binary goes (default: $HOME/.beck/bin)
+#   BECK_TARGET             override the detected platform triple
+#   BECK_BASE_URL           where the assets are (default: the GitHub release for that version)
+#   BECK_REPO               owner/name (default: georgestephenson/beck)
+#   BECK_VERIFY_PROVENANCE  1 to check the build provenance too (needs `gh`)
+#   BECK_GH                 the GitHub CLI to use for that (default: `gh` on the path)
 set -eu
 
 REPO=${BECK_REPO:-georgestephenson/beck}
@@ -38,11 +45,13 @@ case "${1:-}" in
     # the answer.
     say "install.sh — install a released beck."
     say ""
-    say "  BECK_VERSION      version to install (default: the latest release)"
-    say "  BECK_INSTALL_DIR  where the binary goes (default: \$HOME/.beck/bin)"
-    say "  BECK_TARGET       override the detected platform triple"
-    say "  BECK_BASE_URL     where the assets are (default: the GitHub release for that version)"
-    say "  BECK_REPO         owner/name (default: georgestephenson/beck)"
+    say "  BECK_VERSION            version to install (default: the latest release)"
+    say "  BECK_INSTALL_DIR        where the binary goes (default: \$HOME/.beck/bin)"
+    say "  BECK_TARGET             override the detected platform triple"
+    say "  BECK_BASE_URL           where the assets are (default: the GitHub release for that version)"
+    say "  BECK_REPO               owner/name (default: georgestephenson/beck)"
+    say "  BECK_VERIFY_PROVENANCE  1 to check the build provenance too (needs \`gh\`)"
+    say "  BECK_GH                 the GitHub CLI to use for that (default: \`gh\` on the path)"
     exit 0
     ;;
 "") ;;
@@ -132,6 +141,17 @@ else
     die "no sha256sum and no shasum — cannot verify the download"
 fi
 
+# ---- the provenance ---------------------------------------------------------------------------
+# Off unless asked for, and once asked for, resolved here — before anything is downloaded — for the
+# same reason the checksum tool is: a verification that quietly does not happen is worse than one
+# that was never offered. A missing `gh` is fatal, not a warning.
+verify_provenance=${BECK_VERIFY_PROVENANCE:-0}
+gh_cli=${BECK_GH:-gh}
+if [ "$verify_provenance" != 0 ]; then
+    command -v "$gh_cli" >/dev/null 2>&1 || die "BECK_VERIFY_PROVENANCE is set and the GitHub CLI is not installed.
+Install it (https://cli.github.com) or unset BECK_VERIFY_PROVENANCE to install on the checksum alone."
+fi
+
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
@@ -148,6 +168,21 @@ actual=$(sha256_of "$work/$asset")
   got      $actual
 Nothing was installed."
 say "  sha256 $actual ✓"
+
+# `--signer-workflow` is the whole value of this step. Without it the check would accept any
+# attestation this repository can produce; with it, the identity that signed has to be *this*
+# workflow file, so a provenance record minted by some other workflow — added to the repository by
+# whoever could rewrite the release page — does not satisfy it. `gh` looks the artefact up by the
+# digest it computes from the file on disk, so the subject is the bytes just downloaded.
+if [ "$verify_provenance" != 0 ]; then
+    "$gh_cli" attestation verify "$work/$asset" \
+        --repo "$REPO" \
+        --signer-workflow "$REPO/.github/workflows/release.yml" \
+        --predicate-type https://slsa.dev/provenance/v1 ||
+        die "the build provenance for $asset did not verify.
+Nothing was installed."
+    say "  provenance ✓ built by $REPO/.github/workflows/release.yml"
+fi
 
 # ---- installing -------------------------------------------------------------------------------
 tar -xzf "$work/$asset" -C "$work" || die "could not unpack $asset"
