@@ -1,4 +1,4 @@
-# 101 — Phase 3 report, part 69: the release, and the installer that reaches it
+# 104 — Phase 3 report, part 72: the release, and the installer that reaches it
 
 **Built.** [`08`](08-roadmap.md) §8.5.4 closes Phase 3's exit criterion with a list of the apologies
 a tutorial would still have to make, and after [`94`](94-mode-b-report.md),
@@ -33,7 +33,7 @@ What is **not** built is a cut release: no tag has been pushed, so nothing is pu
 §104.7 is careful about which parts of the above have been executed and which have only been
 written.
 
-## 101.1 Why these two were not on the phase list
+## 104.1 Why these two were not on the phase list
 
 Every other remaining item in Phase 3 is a piece of a bullet — the rest of the heap under both code
 generators ([`101`](101-the-heap-report.md) §101.5), Mode B's codegen, lazy routes, the render lock.
@@ -50,7 +50,7 @@ It also has a predecessor nothing had listed, and it is the reason this report e
 than a paragraph in [`99`](99-supply-chain-report.md): the supply-chain work built a command that
 signs an *image*, and a compiler release is a **tarball**. §104.6 is what that costs.
 
-## 101.2 A pipeline is the one artefact that cannot be run before it is used
+## 104.2 A pipeline is the one artefact that cannot be run before it is used
 
 This repository's rule is [`19`](19-phase-1-report.md) §19.4 item 10 — an artefact nobody has
 executed is a design document — and Phase 2 paid for it once when a CI workflow turned out to have
@@ -79,7 +79,7 @@ The same argument decided one absence. The publish job re-checks the assembled `
 base URL, before it publishes anything. A release whose own installer cannot install it is the
 failure that would be discovered by a stranger, and it costs one job step to make it impossible.
 
-## 101.3 What a release is made of
+## 104.3 What a release is made of
 
 Four tarballs, one per target, each containing a directory with the binary and the licence, plus one
 `SHA256SUMS` and a copy of `install.sh`.
@@ -115,7 +115,7 @@ bsdtar, which has neither `--sort` nor `--owner` — does not normalise ownershi
 reproducible for a fixed package set ([`99`](99-supply-chain-report.md) §99.4), and the difference is
 written into `build.sh` beside the command rather than left to be discovered.
 
-## 101.4 The version was not a number, and the first gate is about that
+## 104.4 The version was not a number, and the first gate is about that
 
 `0.1.0`, in fourteen crates, none of them published, for four phases. §28.1 called it meaningless and
 was right: nothing read it, nothing compared it to anything, and no artefact carried it anywhere.
@@ -143,7 +143,7 @@ missing one, which is the worse of the two for a field whose whole purpose is id
 artefact. It watches both now. A release build is a fresh checkout and was never affected, which is
 exactly why this would have survived: the pipeline is the one place the bug could not appear.
 
-## 101.5 The installer, and the one thing it refuses
+## 104.5 The installer, and the one thing it refuses
 
 `install.sh` is POSIX `sh`, about 150 lines, and configured entirely by environment variables:
 `BECK_VERSION`, `BECK_TARGET`, `BECK_INSTALL_DIR`, `BECK_BASE_URL`, `BECK_REPO`.
@@ -172,7 +172,7 @@ The alternative it replaces is a Rust toolchain download plus a release build of
 clean-build figure is quoted here, because none was measured for this report and
 [`64`](64-compile-speed-report.md) measures Beck programs compiling rather than the compiler.
 
-## 101.6 A checksum is not a signature, and this project already had the machinery
+## 104.6 A checksum is not a signature, and this project already had the machinery
 
 [`99`](99-supply-chain-report.md) §99.5 built `beck sign` and `beck verify`: a Sigstore-shaped
 signature over a manifest digest, in the form `cosign verify --key` reads, checked by `openssl` and
@@ -198,7 +198,7 @@ records the three cheaper-looking routes and why none of them is cheap.
 [`92`](92-sbom-report.md) §92's table gave "this repository has no release pipeline to attach one
 to" as the reason that row was empty; that reason is gone, and the row is still empty.
 
-## 101.7 What has been executed, and what has only been written
+## 104.7 What has been executed, and what has only been written
 
 The distinction this project insists on ([`AGENTS.md`](../AGENTS.md): "built", "runs" and "measured"
 are three different claims), applied to this change.
@@ -232,7 +232,7 @@ are three different claims), applied to this change.
   group. That is a hazard read from the documentation and not one observed here; the group is simply
   absent, because tags are unique and there is nothing to serialise.
 
-## 101.8 The gates, and what makes each go red
+## 104.8 The gates, and what makes each go red
 
 `compiler/crates/beck-cli/tests/release.rs`, nine tests, plus one in `pending_security.rs`. Two of
 them run a script and look at what it did; the rest read the files a person would otherwise have to
@@ -262,7 +262,7 @@ the copy above the check reddens it the same way.
 It skips loudly when `sh`, `tar` or a SHA-256 tool is missing, and `BECK_REQUIRE_INSTALL=1` forbids
 the skip. CI sets it.
 
-## 101.9 What this corrects, elsewhere
+## 104.9 What this corrects, elsewhere
 
 - **[`28`](28-releases-and-deployment.md) §28.1's "not existing" paragraph** loses one of its four
   clauses. "No version number is meaningful" is gone: it is read by a script, compared against the
@@ -288,7 +288,7 @@ the skip. CI sets it.
 
 Reports are history, so none of them is edited; this section is where the correction lives.
 
-## 101.10 What is not built
+## 104.10 What is not built
 
 - **No tag, so no release.** Everything above produces artefacts on a laptop and in a workflow that
   has never run. The next action is one command, and it is the user's rather than this report's.
@@ -314,7 +314,7 @@ Reports are history, so none of them is edited; this section is where the correc
   `beck upgrade`. `install.sh` run again is the upgrade path, and it overwrites in place.
 - **No size budget on the binary**, per §104.3.
 
-## 101.11 What Phase 3 is still not
+## 104.11 What Phase 3 is still not
 
 Unchanged by this, and worth repeating so the two items above are not mistaken for the criterion:
 Phase 3 exits when **an outside developer builds a non-trivial app from documentation alone, without

@@ -189,6 +189,28 @@ Newest first.
 
 ### Docs
 
+- **A report was carrying another report's number, and every reference to it named nothing.**
+  [`docs/104`](docs/104-the-release-and-the-installer-report.md) was renumbered on merge — the
+  filename and the prose inside it moved to `104`, the title and eleven headings stayed at `101`,
+  which [`docs/101`](docs/101-the-heap-report.md) already had. So `§101.5` named a section in each
+  of two documents, and the 29 references to `§104.x` from `README.md`, `AGENTS.md`, this file,
+  [`release/README.md`](release/README.md), [`08`](docs/08-roadmap.md),
+  [`28`](docs/28-releases-and-deployment.md), [`43`](docs/43-threat-model.md),
+  [`86`](docs/86-getting-started.md), [`adr/0027`](docs/adr/0027-a-release-publishes-a-checksum-and-not-a-signature.md)
+  and the index named a heading that did not exist. Only the headings, the title and the index's
+  three self-references moved: the report's own prose had been corrected already, which is why
+  reading it did not show the fault — the half a reader sees was right.
+- **The gate is the shape of that gap rather than of the fix**: a document's numbered headings and
+  its numbered title carry its own filename's number. That is also what makes a section number
+  unique across `docs/` without anything checking for a collision, and it is enforced against the
+  document that *owns* the number — the file a rename is free to fix — because reports are history
+  and a rule that every `§N.M` citation resolves would be enforced against files nobody may edit.
+  `docs.rs::a_documents_sections_are_numbered_for_the_document_they_are_in` over all 86 documents,
+  with the `links` job in [`docs.yml`](.github/workflows/docs.yml) keeping its own copy the way it
+  already does for the link rule. Checked by putting the defect back: both go red and name all
+  twelve lines. A heading opening with `§` cites a section rather than declaring one and is skipped
+  — [`26`](docs/26-arrangement-sharing-report.md) has the only one.
+
 - **Consolidated 27 reports into three chapters, and changed the rule that produced them.**
   Reports 70–79 (the evaluator's quadratics and constants) became
   [`docs/70`](docs/70-the-evaluator-gets-fast-report.md); reports 53 and 57–61 (the Are We Fast Yet
