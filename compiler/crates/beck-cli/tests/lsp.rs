@@ -29,6 +29,27 @@ def double(x: Int) -> Str:
     return x * 2
 ";
 
+/// A file with something to *say* about it: a definition the solver has to place, and a row it has
+/// to infer. `GOOD` is pure arithmetic, so it is unplaced and performs nothing — which is the right
+/// fixture for the questions above and answers none of the two below.
+const PLACED: &str = "\
+def key() -> secret[Str]:
+    return secret_env(\"API_KEY\")
+
+def stamped(n: Int) -> Int:
+    return n + now()
+";
+
+/// Where a line and column land in a text, so a test can apply the edits a client would.
+fn offset_of(text: &str, position: &Value) -> u32 {
+    beck_core::editor::byte_offset(
+        text,
+        position["line"].as_u64().expect("a line") as u32,
+        position["character"].as_u64().expect("a character") as u32,
+    )
+    .expect("a position inside the document")
+}
+
 // ---------------------------------------------------------------------------------------------
 // 1. The protocol
 // ---------------------------------------------------------------------------------------------
@@ -359,4 +380,434 @@ fn it_offers_completions_and_semantic_tokens() {
     );
 
     server.shutdown();
+}
+
+// ---------------------------------------------------------------------------------------------
+// 4. The answers that change the file
+// ---------------------------------------------------------------------------------------------
+
+/// A caret on the *use* of `double` inside `label`'s body, as a client would send it.
+fn a_use_of_double() -> Value {
+    let line = GOOD
+        .lines()
+        .position(|l| l.contains("return str(double(n))"))
+        .expect("it is there");
+    let character = GOOD
+        .lines()
+        .nth(line)
+        .expect("a line")
+        .find("double")
+        .expect("it is there");
+    json!({ "line": line, "character": character })
+}
+
+#[test]
+fn references_are_every_use_and_the_declaration_among_them() {
+    let mut server = handshake();
+    let uri = "file:///tmp/good.beck";
+    server.open(uri, GOOD);
+    let _ = server.diagnostics(uri);
+
+    let reply = server.request(
+        "textDocument/references",
+        json!({
+            "textDocument": { "uri": uri },
+            "position": a_use_of_double(),
+            "context": { "includeDeclaration": true },
+        }),
+    );
+    let all = reply
+        .pointer("/result")
+        .and_then(Value::as_array)
+        .expect("an array")
+        .clone();
+    assert_eq!(all.len(), 2, "declared once, called once: {all:#?}");
+    assert!(all.iter().all(|l| l["uri"] == json!(uri)));
+    for location in &all {
+        let start = offset_of(GOOD, &location["range"]["start"]);
+        let end = offset_of(GOOD, &location["range"]["end"]);
+        assert_eq!(
+            &GOOD[start as usize..end as usize],
+            "double",
+            "a reference range has to cover the name and nothing else"
+        );
+    }
+
+    // And the declaration is droppable, which is what "who calls this" means.
+    let reply = server.request(
+        "textDocument/references",
+        json!({
+            "textDocument": { "uri": uri },
+            "position": a_use_of_double(),
+            "context": { "includeDeclaration": false },
+        }),
+    );
+    let calls = reply
+        .pointer("/result")
+        .and_then(Value::as_array)
+        .expect("an array");
+    assert_eq!(calls.len(), 1, "{calls:#?}");
+    assert_eq!(
+        calls[0]["range"]["start"]["line"],
+        json!(4),
+        "the one left is the call, not the definition"
+    );
+
+    // The same set, as the editor's own highlight: `3` is Write, and the only write a name gets in
+    // a language with no assignment is the one that declares it.
+    let reply = server.request(
+        "textDocument/documentHighlight",
+        json!({ "textDocument": { "uri": uri }, "position": a_use_of_double() }),
+    );
+    let marks = reply
+        .pointer("/result")
+        .and_then(Value::as_array)
+        .expect("an array");
+    assert_eq!(marks.len(), 2);
+    assert_eq!(marks.iter().filter(|m| m["kind"] == json!(3)).count(), 1);
+
+    server.shutdown();
+}
+
+#[test]
+fn a_rename_produces_edits_the_server_itself_then_accepts() {
+    // The property that matters is not the shape of the `WorkspaceEdit` — it is that a client
+    // which applies it has a file that still compiles. So this applies them and hands the result
+    // back through the same server, which is exactly what an editor does next.
+    let mut server = handshake();
+    let uri = "file:///tmp/renaming.beck";
+    server.open(uri, GOOD);
+    let _ = server.diagnostics(uri);
+
+    let reply = server.request(
+        "textDocument/prepareRename",
+        json!({ "textDocument": { "uri": uri }, "position": a_use_of_double() }),
+    );
+    assert_eq!(
+        reply.pointer("/result/placeholder"),
+        Some(&json!("double")),
+        "the box a client opens is filled with the name being changed: {reply}"
+    );
+
+    let reply = server.request(
+        "textDocument/rename",
+        json!({
+            "textDocument": { "uri": uri },
+            "position": a_use_of_double(),
+            "newName": "twice",
+        }),
+    );
+    // Indexed rather than `pointer`ed: a URI is full of `/`, which a JSON pointer reads as its
+    // own separator, so the key has to be looked up as a key.
+    let edits = reply["result"]["changes"][uri]
+        .as_array()
+        .unwrap_or_else(|| panic!("edits for this document: {reply}"))
+        .clone();
+    assert_eq!(edits.len(), 2, "{edits:#?}");
+
+    // Applied back to front, which is what a client does and what keeps the offsets valid.
+    let mut applied: Vec<(u32, u32, String)> = edits
+        .iter()
+        .map(|e| {
+            (
+                offset_of(GOOD, &e["range"]["start"]),
+                offset_of(GOOD, &e["range"]["end"]),
+                e["newText"].as_str().expect("new text").to_string(),
+            )
+        })
+        .collect();
+    applied.sort_by_key(|(start, _, _)| std::cmp::Reverse(*start));
+    let mut renamed = GOOD.to_string();
+    for (start, end, text) in applied {
+        renamed.replace_range(start as usize..end as usize, &text);
+    }
+    assert!(!renamed.contains("double"), "{renamed}");
+    assert_eq!(renamed.matches("twice").count(), 2, "{renamed}");
+
+    server.change(uri, &renamed);
+    assert!(
+        server.diagnostics(uri).is_empty(),
+        "the edits a rename returned have to leave a file that compiles:\n{renamed}"
+    );
+
+    server.shutdown();
+}
+
+#[test]
+fn a_rename_it_will_not_do_says_why_rather_than_doing_nothing() {
+    // Three refusals over the wire. `-32803` is 3.17's `RequestFailed`, and the message is the one
+    // `beck_core::editor::Refusal` writes — a client shows it, so it is the whole of what somebody
+    // sees when a rename does not happen.
+    let mut server = handshake();
+    let uri = "file:///tmp/refused.beck";
+    server.open(uri, GOOD);
+    let _ = server.diagnostics(uri);
+
+    let refuse = |server: &mut support::lsp::Server, position: Value, to: &str| -> String {
+        let reply = server.request(
+            "textDocument/rename",
+            json!({
+                "textDocument": { "uri": uri },
+                "position": position,
+                "newName": to,
+            }),
+        );
+        assert_eq!(
+            reply.pointer("/error/code"),
+            Some(&json!(-32803)),
+            "a refused rename is an error response, not an empty edit: {reply}"
+        );
+        reply
+            .pointer("/error/message")
+            .and_then(Value::as_str)
+            .expect("a reason")
+            .to_string()
+    };
+
+    assert!(
+        refuse(&mut server, a_use_of_double(), "label").contains("already used"),
+        "renaming onto a name this file already has is refused"
+    );
+    assert!(
+        refuse(&mut server, a_use_of_double(), "2fast").contains("not a name"),
+        "so is a new name the lexer would not read"
+    );
+
+    // And an imported name, whose declaration is in a file this server is not showing.
+    let importing = "import text\n\ndef size(s: Str) -> Int:\n    return word_count(s)\n";
+    let uri = "file:///tmp/importing.beck";
+    server.open(uri, importing);
+    let _ = server.diagnostics(uri);
+    let line = importing
+        .lines()
+        .position(|l| l.contains("word_count"))
+        .expect("it is there");
+    let character = importing
+        .lines()
+        .nth(line)
+        .expect("a line")
+        .find("word_count")
+        .expect("it is there");
+    let reply = server.request(
+        "textDocument/rename",
+        json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": line, "character": character },
+            "newName": "words",
+        }),
+    );
+    assert!(
+        reply
+            .pointer("/error/message")
+            .and_then(Value::as_str)
+            .expect("a reason")
+            .contains("another module"),
+        "{reply}"
+    );
+
+    server.shutdown();
+}
+
+#[test]
+fn an_inlay_hint_is_the_placement_the_solver_chose_and_the_row_it_inferred() {
+    let mut server = handshake();
+    let uri = "file:///tmp/placed.beck";
+    server.open(uri, PLACED);
+    assert!(server.diagnostics(uri).is_empty());
+
+    let reply = server.request(
+        "textDocument/inlayHint",
+        json!({ "textDocument": { "uri": uri } }),
+    );
+    let hints = reply
+        .pointer("/result")
+        .and_then(Value::as_array)
+        .expect("an array")
+        .clone();
+    assert!(!hints.is_empty(), "{reply}");
+
+    // Against the compiler's own answers rather than against literals: the tier is the one the
+    // solver recorded and the row is the one `beck iface` publishes, so a hint that drifted from
+    // either fails here.
+    let (placed, _, _) = beck_core::compile_or_library_str("/tmp/placed.beck", PLACED);
+    let interface = beck_core::iface::Interface::of(&placed.expect("it compiles").program);
+    let key = interface.item("key").expect("`key` is published");
+    let stamped = interface.item("stamped").expect("`stamped` is published");
+
+    let labels: Vec<&str> = hints.iter().filter_map(|h| h["label"].as_str()).collect();
+    assert!(
+        labels.contains(&format!("@on({})", key.tier.name()).as_str()),
+        "the tier hint is the solver's answer: {labels:?}"
+    );
+    assert!(
+        labels.contains(&beck_core::iface::render_uses(&stamped.effects).as_str()),
+        "the row hint is the published row: {labels:?}"
+    );
+
+    // Each one is offered where it could be written, which is what makes it worth showing: pasted
+    // in at its own position, the file still compiles.
+    let mut written: Vec<(u32, String)> = hints
+        .iter()
+        .map(|h| {
+            (
+                offset_of(PLACED, &h["position"]),
+                h["label"].as_str().expect("a label").to_string(),
+            )
+        })
+        .collect();
+    written.sort_by_key(|(at, _)| std::cmp::Reverse(*at));
+    let mut source = PLACED.to_string();
+    for (at, label) in written {
+        // A tier is a decorator on its own line; a row belongs against the signature it ends.
+        let text = if label.starts_with("@on(") {
+            format!("{label}\n")
+        } else {
+            label
+        };
+        source.insert_str(at as usize, &text);
+    }
+    server.change(uri, &source);
+    assert!(
+        server.diagnostics(uri).is_empty(),
+        "a hint has to be the text it says it is:\n{source}"
+    );
+
+    server.shutdown();
+}
+
+// ---------------------------------------------------------------------------------------------
+// 5. The same two answers, over programs nobody wrote for this test
+// ---------------------------------------------------------------------------------------------
+
+/// Where the corpus lives, relative to this crate.
+fn corpus() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../corpus")
+        .canonicalize()
+        .expect("the corpus is checked in")
+}
+
+/// Renaming every name in every corpus program either works or is refused — never neither.
+///
+/// The fixtures above are four-line files written by somebody who knew what the rename would do.
+/// [`corpus/`](../../../../corpus) is 30-odd programs written for a different purpose entirely,
+/// with folds, signals, views, tests and `expect place(…)` clauses in them, and it is where the
+/// interesting shapes are: a name mentioned in a static expectation, a signal a view reads, a
+/// helper called from four places.
+///
+/// Two things are asserted of every name, and the second is the one worth the runtime: the edited
+/// text **compiles**, and it publishes exactly the interface the original did with that one name
+/// substituted. The first says the rename did not break the program; the second says it did not
+/// quietly change it — a rename that dropped an occurrence would still compile whenever the name
+/// it left behind resolved to something else.
+///
+/// The refusal count is asserted too, from both ends. A rename that refused everything would pass
+/// an "either works or is refused" test without doing anything at all.
+#[test]
+fn renaming_every_name_in_the_corpus_either_works_or_says_why() {
+    let mut renamed = 0usize;
+    let mut refused: Vec<String> = Vec::new();
+
+    for path in std::fs::read_dir(corpus())
+        .expect("the corpus is readable")
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|e| e == "beck"))
+    {
+        let name = path.display().to_string();
+        let source = std::fs::read_to_string(&path).expect("a corpus program");
+        let editor = beck_core::editor::Editor::of(&name, &source);
+        if editor.diagnostics().has_errors() {
+            panic!("the corpus compiles; {name} does not");
+        }
+        let before: Vec<String> = editor.symbols().map(|(n, _)| n.to_string()).collect();
+
+        for symbol in &before {
+            let (start, end) = editor
+                .symbol(symbol)
+                .and_then(|s| s.span)
+                .expect("an own name has a span");
+            // The caret on the declaration's own name, which is where somebody presses F2.
+            let caret = start
+                + source[start as usize..end as usize]
+                    .find(symbol.as_str())
+                    .expect("a declaration writes its own name") as u32;
+            let to = format!("renamed_{symbol}");
+
+            let edits = match editor.rename(caret, &to) {
+                Ok(edits) => edits,
+                Err(refusal) => {
+                    refused.push(format!(
+                        "{}: {symbol} — {}",
+                        path.display(),
+                        refusal.message()
+                    ));
+                    continue;
+                }
+            };
+            let mut after = source.clone();
+            for edit in edits.iter().rev() {
+                after.replace_range(edit.start as usize..edit.end as usize, &to);
+            }
+
+            let checked = beck_core::editor::Editor::of(&name, &after);
+            assert!(
+                !checked.diagnostics().has_errors(),
+                "renaming `{symbol}` in {} broke it:\n{}",
+                path.display(),
+                checked.diagnostics().render(checked.source_map())
+            );
+            let expected: Vec<String> = before
+                .iter()
+                .map(|n| if n == symbol { to.clone() } else { n.clone() })
+                .collect();
+            let mut published: Vec<String> =
+                checked.symbols().map(|(n, _)| n.to_string()).collect();
+            let mut expected = expected;
+            published.sort();
+            expected.sort();
+            assert_eq!(
+                published,
+                expected,
+                "renaming `{symbol}` in {} changed what the module publishes",
+                path.display()
+            );
+            renamed += 1;
+        }
+    }
+
+    // Both ends, because each catches a different regression: a floor stops a change that refuses
+    // its way to green, and a ceiling on the refusals stops one that quietly narrows what an editor
+    // can do. The corpus renames 316 of its 325 names today and declines nine.
+    assert!(
+        renamed >= 250,
+        "the corpus should rename hundreds of names; it renamed {renamed}, refusing:\n{}",
+        refused.join("\n")
+    );
+    assert!(
+        refused.len() <= 15,
+        "{} refusals is more than this corpus has ever needed:\n{}",
+        refused.len(),
+        refused.join("\n")
+    );
+    // Every refusal is one of the two stated shapes rather than an accident, and the corpus
+    // contains one of each (`docs/109` §109.4):
+    //
+    // * a name the analysis cannot account for — `page` in a program whose view is a local of the
+    //   same name, which is the shadow this declines rather than captures;
+    // * a rename that was made and did not compile — a *signal* that is one of several folds, whose
+    //   name is also the field it occupies in the fused accumulator, so `expect state.tally.joins`
+    //   reads it as a field and the edited file no longer type-checks. That refusal is the
+    //   verification step firing, which is the one this suite most wants to see happen.
+    for reason in &refused {
+        assert!(
+            reason.contains("cannot account for") || reason.contains("would not compile"),
+            "an unexpected refusal: {reason}"
+        );
+    }
+    assert!(
+        refused.iter().any(|r| r.contains("would not compile")),
+        "the verification step is load-bearing here, and a corpus that never triggers it is a \
+         corpus that stopped testing it:\n{}",
+        refused.join("\n")
+    );
 }

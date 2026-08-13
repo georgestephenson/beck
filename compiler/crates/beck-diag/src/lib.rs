@@ -112,6 +112,20 @@ impl SourceMap {
         &self.files[file.0 as usize].name
     }
 
+    /// The file this map holds under `name`, if it holds one.
+    ///
+    /// For a caller that has a span and needs to know **which file it is in** rather than what it
+    /// says: an editor answering a question about one document holds spans from every module the
+    /// project linked, and two files' byte offsets overlap by construction. Compares whole names
+    /// rather than suffixes, because a `FileId` that is nearly right is a span pointing into the
+    /// wrong buffer.
+    pub fn find(&self, name: &str) -> Option<FileId> {
+        self.files
+            .iter()
+            .position(|f| f.name == name)
+            .map(|i| FileId(i as u32))
+    }
+
     pub fn text(&self, file: FileId) -> &str {
         &self.files[file.0 as usize].text
     }

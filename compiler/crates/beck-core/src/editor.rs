@@ -32,7 +32,10 @@ use std::collections::BTreeMap;
 use beck_diag::{Diagnostic, Diagnostics, Severity, SourceMap};
 use beck_syntax::lexer::{lex, Raw, KEYWORDS};
 
-use crate::iface::{render_item, Kind};
+use crate::check::Def;
+use crate::core::{Core, CoreKind};
+use crate::iface::{render_item, render_uses, Kind};
+use crate::ty::Tier;
 use crate::Placed;
 
 // ---------------------------------------------------------------------------------------------
@@ -225,6 +228,9 @@ pub struct Symbol {
     pub span: Option<(u32, u32)>,
     /// The signature as `beck iface` would publish it — [`render_item`], not a second renderer.
     pub signature: String,
+    /// The ` uses …` clause of that signature, alone — [`render_uses`], the half of it an inlay
+    /// hint offers where the source did not write one. Empty for a name that performs nothing.
+    pub uses: String,
     pub kind: SymbolKind,
     pub tier: String,
     /// The `##` comment attached to the declaration, if it has one.
@@ -315,7 +321,17 @@ impl Index {
 
 /// One document, analysed: what the front end made of the text the editor last sent.
 pub struct Editor {
+    /// What the document is called, so a rename can re-analyse the text it proposes to write.
+    name: String,
     text: String,
+    /// Which file in [`Editor::map`] this document *is*.
+    ///
+    /// An [`Editor`] holds a whole linked project — the standard library included — so a span it
+    /// can reach is not necessarily a span in this buffer, and two files' byte offsets overlap by
+    /// construction. Every answer that turns a span into a range in *this* document checks it
+    /// against this first. `None` for a document that did not get as far as being read, where
+    /// there is nothing to answer anyway.
+    file: Option<beck_diag::FileId>,
     placed: Option<Placed>,
     diagnostics: Diagnostics,
     map: SourceMap,
@@ -388,6 +404,7 @@ impl Editor {
             let symbol = |item: &crate::iface::Item, span: Option<(u32, u32)>, own: bool| Symbol {
                 span,
                 signature: render_item(item).trim_end().to_string(),
+                uses: render_uses(&item.effects),
                 kind: match item.kind {
                     Kind::Signal { .. } => SymbolKind::Signal,
                     Kind::Function { .. } => SymbolKind::Function,
@@ -423,8 +440,13 @@ impl Editor {
             }
         }
 
+        // The root module is added to the map before anything it imports, so the first file under
+        // this name is this document even when a library module happens to share it.
+        let file = map.find(name);
         Editor {
+            name: name.to_string(),
             text: text.to_string(),
+            file,
             placed,
             diagnostics,
             map,
@@ -552,6 +574,494 @@ impl Editor {
     pub fn prefix(&self, offset: u32) -> String {
         prefix_at(&self.text, offset)
     }
+
+    // -----------------------------------------------------------------------------------------
+    // Occurrences, and the rename built on them
+    // -----------------------------------------------------------------------------------------
+
+    /// Every place the name under the caret appears in this document.
+    ///
+    /// Empty rather than partial when the two accounts of the document disagree — see
+    /// [`occurrences`](Editor::occurrences), which is where that rule is.
+    pub fn references(&self, offset: u32) -> Vec<Occurrence> {
+        let Some(name) = word_at(&self.text, offset) else {
+            return Vec::new();
+        };
+        self.occurrences(&name).unwrap_or_default()
+    }
+
+    /// Every place `name` appears, or `None` when this document's two accounts of it disagree.
+    ///
+    /// # The two accounts, and why both
+    ///
+    /// The **lexical** account is the token stream: every run of the text that reads
+    /// `name`, keywords included. It is complete by construction — the lexer saw the whole file —
+    /// and it knows nothing, so a local variable that happens to share the name is in it, and so is
+    /// the `page` in `expect page contains "1"`, which is the grammar's word rather than a
+    /// reference to the signal of that name.
+    ///
+    /// The **semantic** account is the checked program: a [`CoreKind::Global`] node per reference,
+    /// resolved, so a local of the same name is *not* in it and a name reached through an import
+    /// is. It knows everything and is not complete: a reference the checker rewrote — a trait
+    /// method resolved to an impl, a macro's expansion — has a span that is a call site rather
+    /// than an identifier.
+    ///
+    /// What makes an *edit* safe is the two agreeing: every semantic reference begins on a lexical
+    /// identifier that reads `name`, and the only lexical identifier left over is the
+    /// declaration's own. A file where that holds has no shadow, no unspanned mention and no
+    /// rewritten reference, and the lexical ranges are then the whole truth about where the name
+    /// is — which is also why the *edits* are the lexical ranges and never the spans. Where
+    /// it does not hold this answers `None`, and both callers decline rather than edit — because
+    /// the alternative to declining is a rename that silently changes what a program means, which
+    /// is worse than a rename that does not happen.
+    pub fn occurrences(&self, name: &str) -> Option<Vec<Occurrence>> {
+        let placed = self.placed.as_ref()?;
+        if self.stale {
+            return None;
+        }
+        let symbol = self.names.get(name)?;
+
+        let lexical = self.written(name);
+        if lexical.is_empty() {
+            return None;
+        }
+
+        let mut semantic: Vec<u32> = Vec::new();
+        for core in self.own_expressions(placed) {
+            self.globals_in(core, name, &mut semantic);
+        }
+        semantic.extend(self.static_mentions(placed, name));
+        semantic.sort_unstable();
+        semantic.dedup();
+        // Both sides are in source order, so every membership question below is a binary search:
+        // a name used a thousand times in a file is not a thousand scans of a thousand tokens.
+        let is_reference = |at: &u32| semantic.binary_search(at).is_ok();
+        if !semantic
+            .iter()
+            .all(|at| lexical.binary_search_by_key(at, |(s, _)| *s).is_ok())
+        {
+            return None;
+        }
+
+        // A `test` block's clauses are a grammar of their own — `expect page contains "1"`,
+        // `when session("ana") sends …`, `expect state == fold_of […]` — and its words are
+        // identifiers to the lexer. `page` there does not name the `page` signal: the runner finds
+        // the page by its *type*, so renaming the signal leaves the clause saying what it said.
+        // Nothing inside a clause is edited on the strength of a lexical match, and nothing inside
+        // one refuses the rename either; the clause's actual expressions are in the semantic
+        // account like any others, and get edited from there.
+        let grammar: Vec<(u32, u32)> = placed
+            .program
+            .tests
+            .iter()
+            .filter(|t| self.owns(t.span))
+            .flat_map(|t| t.clause_spans())
+            .filter(|s| self.owns(*s))
+            .map(|s| (s.start, s.end))
+            .collect();
+        let left: Vec<(u32, u32)> = lexical
+            .iter()
+            .copied()
+            .filter(|(s, _)| !is_reference(s))
+            .filter(|(s, e)| !grammar.iter().any(|(from, to)| s >= from && e <= to))
+            .collect();
+        // A name this document declares is written once more than it is referred to, and that once
+        // is inside its own declaration. An imported name is not written here at all.
+        let declaration = match symbol.span {
+            Some((start, end)) => match left[..] {
+                [only] if only.0 >= start && only.1 <= end => Some(only),
+                _ => return None,
+            },
+            None => {
+                if !left.is_empty() {
+                    return None;
+                }
+                None
+            }
+        };
+
+        let mut out: Vec<Occurrence> = lexical
+            .into_iter()
+            .filter(|(start, end)| is_reference(start) || Some((*start, *end)) == declaration)
+            .map(|(start, end)| Occurrence {
+                start,
+                end,
+                declaration: Some((start, end)) == declaration,
+            })
+            .collect();
+        out.sort_unstable_by_key(|o| o.start);
+        Some(out)
+    }
+
+    /// Where a rename would edit, or why it will not.
+    ///
+    /// The edits are [`occurrences`](Editor::occurrences)', and everything else here is a refusal.
+    /// [`docs/03`](../../../../../docs/03-type-and-effect-system.md) §3.4's rule for placement — a
+    /// compile error with a suggested annotation, never a silent guess — is the same rule this
+    /// keeps for an edit: a refusal an author can read beats a rewrite they have to check.
+    ///
+    /// The last check is the expensive and the decisive one: the proposed text is **analysed**,
+    /// and a rename that would not compile is not offered. That costs one more compile of one file
+    /// — [`docs/64`](../../../../../docs/64-compile-speed-report.md) §64.6's 4.7 ms at the worst
+    /// file in this tree — on a keystroke nobody types twice a minute, and it is what turns the
+    /// reasoning above into a fact about the text rather than an argument about the IR.
+    pub fn rename(&self, offset: u32, to: &str) -> Result<Vec<Occurrence>, Refusal> {
+        if self.placed.is_none() || self.stale {
+            return Err(Refusal::Broken);
+        }
+        let name = word_at(&self.text, offset).ok_or(Refusal::NotAName)?;
+        let symbol = self.names.get(&name).ok_or(Refusal::NotAName)?;
+        if !symbol.own || symbol.span.is_none() {
+            return Err(Refusal::Imported(name));
+        }
+        if !is_name(to) {
+            return Err(Refusal::NotAnIdentifier(to.to_string()));
+        }
+        // Anything already written under that name, whether or not the checker resolved it: a
+        // top-level name, a parameter, a binding, a type. `occurrences` would notice the collision
+        // for a global and could not for a local — a body's `let` keeps no name past the checker —
+        // so the question asked here is the lexical one, which needs no resolution to answer.
+        if self.names.contains_key(to) || !self.written(to).is_empty() {
+            return Err(Refusal::Taken(to.to_string()));
+        }
+        let edits = self.occurrences(&name).ok_or(Refusal::Unaccounted(name))?;
+
+        let mut proposed = self.text.clone();
+        for edit in edits.iter().rev() {
+            proposed.replace_range(edit.start as usize..edit.end as usize, to);
+        }
+        let after = Editor::of(&self.name, &proposed);
+        if let Some(broken) = after
+            .diagnostics()
+            .iter()
+            .find(|d| d.severity == Severity::Error)
+        {
+            return Err(Refusal::WouldNotCompile {
+                code: broken.code.to_string(),
+                message: broken.message.clone(),
+            });
+        }
+        // Compiling is not enough on its own. A module with no merge point is a *library* rather
+        // than an error ([`crate::project::slice_or_library`]), so a rename that cost a program its
+        // page or its fold would pass the check above while quietly demoting an application to a
+        // module that no longer runs.
+        let kind = |e: &Editor| e.placed().map(|p| p.is_application());
+        if kind(&after) != kind(self) {
+            return Err(Refusal::WouldStopBeingAnApplication);
+        }
+        Ok(edits)
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // Inlay hints
+    // -----------------------------------------------------------------------------------------
+
+    /// What the compiler worked out that the source does not say, where it could be written down.
+    ///
+    /// The two inferred halves of a Beck signature, and only those: **where a definition runs**,
+    /// which §3.4 makes a solved constraint rather than an annotation, and **what it performs**,
+    /// which §3.6 makes an inferred row a boundary later has to declare. A name whose source
+    /// already carries the annotation gets no hint for it — an inlay hint repeating what is on the
+    /// line beside it is noise, and the point of these is that they are the part nobody wrote.
+    ///
+    /// Every label is what an author could paste in at the offset it carries, which is why the
+    /// effect hint is rendered by [`render_uses`] and the tier hint reads `@on(...)`: a hint you
+    /// can accept is worth more than a hint you have to translate.
+    pub fn hints(&self) -> Vec<Hint> {
+        let Some(placed) = self.placed.as_ref() else {
+            return Vec::new();
+        };
+        let program = &placed.program;
+        let lexed = tokens(&self.text);
+        let mut out: Vec<Hint> = Vec::new();
+        for name in &program.def_order {
+            let Some(def) = program.defs.get(name) else {
+                continue;
+            };
+            // A `.becki` line has no body to place and no row to infer: it is the declaration.
+            if def.is_declaration || !self.owns(def.span) {
+                continue;
+            }
+            if let Some(hint) = self.tier_hint(def.tier, def.tier_is_written, def.span) {
+                out.push(hint);
+            }
+            if !def.row_is_declared {
+                let uses = self
+                    .names
+                    .get(&**name)
+                    .map(|s| s.uses.clone())
+                    .unwrap_or_default();
+                if let (false, Some(offset)) = (uses.is_empty(), self.signature_end(def, &lexed)) {
+                    out.push(Hint {
+                        offset,
+                        label: uses,
+                        kind: HintKind::Effects,
+                    });
+                }
+            }
+        }
+        for signal in &program.signals {
+            if let Some(hint) = self.tier_hint(signal.tier, signal.tier_is_written, signal.span) {
+                out.push(hint);
+            }
+        }
+        out.sort_by_key(|h| h.offset);
+        out
+    }
+
+    /// The `@on(...)` a declaration did not write, where there is one to show.
+    ///
+    /// [`Tier::Any`] is not one. It is what §3.3 calls *unplaced* — pure code, compiled to every
+    /// tier that needs it — so it is the absence of a placement rather than a placement, and a
+    /// library whose every helper carried `@on(any)` would be a file of hints saying nothing. What
+    /// this shows is the answer to "where does this end up", asked where that has an answer.
+    fn tier_hint(&self, tier: Tier, written: bool, span: beck_diag::Span) -> Option<Hint> {
+        (!written && tier != Tier::Any && self.owns(span)).then(|| Hint {
+            offset: span.start,
+            label: format!("@on({})", tier.name()),
+            kind: HintKind::Tier,
+        })
+    }
+
+    /// The colon that ends a definition's signature — where a `uses` clause would be written.
+    ///
+    /// A signature contains colons of its own, one per parameter, so it is the first colon at
+    /// **bracket depth zero** rather than the first colon: `def f(x: Int) -> Int:` has two, and an
+    /// offset at the earlier one would put the clause in the middle of the parameter list. Over
+    /// the token stream rather than over the text, so a `:` inside a string or a comment is not
+    /// one — the same reason [`tokens`] exists at all.
+    ///
+    /// Not found from the body's span, which is where this was first written and wrong: a body's
+    /// first expression starts *after* the `return` that introduces it, so the text between the
+    /// colon and the span is a keyword rather than whitespace and there is nothing there to
+    /// recognise the colon by.
+    ///
+    /// The tokens are in source order, so the declaration's own are found by binary search and the
+    /// scan stops at the colon. Filtering the whole stream per definition would have made hinting a
+    /// file cost `definitions × tokens`, which is the quadratic this codebase keeps finding in
+    /// exactly this shape ([`docs/64`](../../../../../docs/64-compile-speed-report.md) §64.2).
+    fn signature_end(&self, def: &Def, tokens: &[Token]) -> Option<u32> {
+        let from = tokens.partition_point(|t| t.start < def.span.start);
+        let mut depth = 0i32;
+        for token in tokens[from..].iter().take_while(|t| t.end <= def.span.end) {
+            if token.kind != TokenKind::Punct {
+                continue;
+            }
+            match self.text.get(token.start as usize..token.end as usize)? {
+                "(" | "[" | "{" => depth += 1,
+                ")" | "]" | "}" => depth -= 1,
+                ":" if depth == 0 => return Some(token.start),
+                _ => {}
+            }
+        }
+        None
+    }
+
+    /// Every run of this document that reads as the word `name`, in source order.
+    ///
+    /// A **keyword** counts, and that is not an oversight: `page`, `state`, `events` and `session`
+    /// are words the parser reads as syntax inside a `test` block and perfectly ordinary names for
+    /// a signal outside one — `page: Signal[Html] = per_session(count, view)` is in nearly every
+    /// program in [`corpus/`](../../../../corpus). Reading only [`TokenKind::Name`] meant the most
+    /// common name in the language had *no* occurrences at all and every question about it was
+    /// declined. What separates the two uses is not the token, it is where it sits: the grammar's
+    /// own words are inside a clause, and [`occurrences`](Editor::occurrences) drops those.
+    fn written(&self, name: &str) -> Vec<(u32, u32)> {
+        tokens(&self.text)
+            .into_iter()
+            .filter(|t| matches!(t.kind, TokenKind::Name | TokenKind::Keyword))
+            .map(|t| (t.start, t.end))
+            .filter(|(s, e)| self.text.get(*s as usize..*e as usize) == Some(name))
+            .collect()
+    }
+
+    /// True for a span that is a range of *this* document.
+    fn owns(&self, span: beck_diag::Span) -> bool {
+        !span.is_none() && Some(span.file) == self.file
+    }
+
+    /// Every expression this document wrote: the bodies it declares, its signals, and its tests.
+    ///
+    /// Tests are in the list because a name used only by a `test` block is used — this is the
+    /// walk [`docs/70`](../../../../../docs/70-the-evaluator-gets-fast-report.md) found three
+    /// passes had been missing — and a rename blind to them would edit a program into one that no
+    /// longer compiles.
+    fn own_expressions<'a>(&'a self, placed: &'a Placed) -> Vec<&'a Core> {
+        let program = &placed.program;
+        let mut out: Vec<&Core> = Vec::new();
+        for def in program.defs.values() {
+            if self.owns(def.span) {
+                out.push(&def.body);
+            }
+        }
+        for signal in &program.signals {
+            if self.owns(signal.span) {
+                out.push(&signal.expr);
+            }
+        }
+        for test in &program.tests {
+            if self.owns(test.span) {
+                out.extend(test.cores());
+            }
+        }
+        out
+    }
+
+    /// Where a static expectation names `name` — `expect place(page) == client`.
+    ///
+    /// Not in [`own_expressions`](Editor::own_expressions), because it is not an expression:
+    /// [`docs/21`](../../../../../docs/21-tests-in-beck-and-proof.md) §21.2's static assertions are
+    /// answered from the placement table without running anything, so the name in one is a
+    /// reference the checker resolves and keeps no [`Core`] node for. It is still a use of the
+    /// name, and it was the one thing in the corpus that a rename could not account for: `page` is
+    /// the name most Beck programs assert about, and 48 of them declined until this was here
+    /// ([`docs/109`](../../../../../docs/109-the-editor-edits-report.md) §109.4).
+    fn static_mentions(&self, placed: &Placed, name: &str) -> Vec<u32> {
+        let mut out = Vec::new();
+        for test in &placed.program.tests {
+            if !self.owns(test.span) {
+                continue;
+            }
+            for clause in &test.clauses {
+                if let crate::testing::Clause::Expect {
+                    what:
+                        crate::testing::Expectation::Place {
+                            what, what_span, ..
+                        },
+                    ..
+                } = clause
+                {
+                    if &**what == name && self.owns(*what_span) {
+                        out.push(what_span.start);
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Where each reference to `name` in an expression tree **begins**.
+    ///
+    /// The start rather than the range, because a reference that is called carries the span of the
+    /// *call*: `double(x)` is one node spanning the parentheses and their contents, and the name
+    /// is its first token. Which token that is, is the lexical account's question — this one only
+    /// says that the checker resolved a reference to `name` starting there.
+    fn globals_in(&self, core: &Core, name: &str, out: &mut Vec<u32>) {
+        if let CoreKind::Global(global) = &core.kind {
+            if &**global == name && self.owns(core.span) {
+                out.push(core.span.start);
+            }
+        }
+        for child in crate::core::children(core) {
+            self.globals_in(child, name, out);
+        }
+    }
+}
+
+/// One place a name appears in the document.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Occurrence {
+    pub start: u32,
+    pub end: u32,
+    /// True for the one that declares it, so a client can mark it as the write among the reads.
+    pub declaration: bool,
+}
+
+/// Why a rename will not happen.
+///
+/// A variant per reason rather than one string, because the caller renders them: a language server
+/// puts them in an error response and a browser tab puts them beside the box somebody typed in.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Refusal {
+    /// The document does not currently compile, so there is no program to rename in.
+    Broken,
+    /// There is no name under the caret.
+    NotAName,
+    /// The name is declared in another module, and this editor is not showing that file.
+    Imported(String),
+    /// The new name is not one the lexer would read as an identifier.
+    NotAnIdentifier(String),
+    /// Something in this document is already written under the new name.
+    Taken(String),
+    /// The name is used in a way this document's analysis cannot account for — see
+    /// [`Editor::occurrences`].
+    Unaccounted(String),
+    /// The edit was made and the result does not compile.
+    WouldNotCompile { code: String, message: String },
+    /// The edit was made, the result compiles, and it is no longer an application.
+    WouldStopBeingAnApplication,
+}
+
+impl Refusal {
+    /// The sentence a person reads, in the terms they typed in.
+    pub fn message(&self) -> String {
+        match self {
+            Refusal::Broken => {
+                "this file does not compile, so there is nothing to rename in it yet".to_string()
+            }
+            Refusal::NotAName => "there is no name under the cursor".to_string(),
+            Refusal::Imported(name) => {
+                format!("`{name}` is declared in another module, which this file cannot edit")
+            }
+            Refusal::NotAnIdentifier(to) => format!("`{to}` is not a name Beck can read"),
+            Refusal::Taken(to) => format!("`{to}` is already used in this file"),
+            Refusal::Unaccounted(name) => format!(
+                "`{name}` is used somewhere this rename cannot account for — a local of the same \
+                 name, or a mention the checker keeps no position for, such as `expect place({name})`"
+            ),
+            Refusal::WouldNotCompile { code, message } => {
+                format!("the renamed file would not compile: {code}: {message}")
+            }
+            Refusal::WouldStopBeingAnApplication => {
+                "the renamed file would still compile, as a library rather than as the \
+                 application it is now"
+                    .to_string()
+            }
+        }
+    }
+}
+
+/// One thing the compiler worked out and the source does not say.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Hint {
+    /// Where it belongs, as a byte offset into the document.
+    pub offset: u32,
+    /// The label, which is also what could be written at `offset` to say the same thing.
+    pub label: String,
+    pub kind: HintKind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HintKind {
+    /// `@on(server)` — where the solver put this definition (§3.4).
+    Tier,
+    /// ` uses net.out(…)` — the row the checker inferred for it (§3.6).
+    Effects,
+}
+
+/// True for a word the lexer would read as one identifier.
+///
+/// The lexer rather than a rule written here, because "what is a name" already has an answer with
+/// a Unicode profile behind it ([`beck_syntax::security`], `docs/44` §44.5), and a rename that
+/// accepted a name the compiler would refuse — a confusable, a bidirectional control, a keyword —
+/// would be a second definition of an identifier in a project that has spent a report on having
+/// one.
+fn is_name(text: &str) -> bool {
+    if text.is_empty() || KEYWORDS.contains(&text) {
+        return false;
+    }
+    let mut map = SourceMap::new();
+    let file = map.add("rename.beck", text);
+    let mut diags = Diagnostics::new();
+    let lexed = lex(file, text, &mut diags);
+    if diags.has_errors() {
+        return false;
+    }
+    let mut words = lexed.iter().filter_map(|t| t.raw());
+    matches!(
+        (words.next(), words.next()),
+        (Some(Raw::Ident(word)), None) if word.as_str() == text
+    )
 }
 
 /// Diagnostics as an editor draws them, for a caller that has the diagnostics and not an
@@ -933,5 +1443,253 @@ mod tests {
         assert!(mark.error);
         assert!(mark.message.contains("expected"), "{}", mark.message);
         assert!(mark.end > mark.start);
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // Occurrences, rename and hints
+    // ------------------------------------------------------------------------------------------
+
+    const USED_TWICE: &str = "\
+def double(x: Int) -> Int:
+    return x * 2
+
+def quadruple(x: Int) -> Int:
+    return double(double(x))
+";
+
+    fn caret(text: &str, at: &str) -> u32 {
+        text.find(at).expect("it is there") as u32
+    }
+
+    #[test]
+    fn every_use_of_a_name_is_found_and_the_declaration_is_marked() {
+        let editor = Editor::of("t.beck", USED_TWICE);
+        let found = editor.references(caret(USED_TWICE, "double"));
+        assert_eq!(found.len(), 3, "{found:?}");
+        // The one inside `def double(…)` is the declaration; the two inside `quadruple` are not.
+        assert!(found[0].declaration);
+        assert!(found[1..].iter().all(|o| !o.declaration));
+        for occurrence in &found {
+            assert_eq!(
+                &USED_TWICE[occurrence.start as usize..occurrence.end as usize],
+                "double"
+            );
+        }
+        // Asked from a use rather than from the declaration, the answer is the same set.
+        let from_use = editor.references(caret(USED_TWICE, "double(double"));
+        assert_eq!(from_use, found);
+    }
+
+    #[test]
+    fn a_rename_edits_every_use_and_the_declaration() {
+        let editor = Editor::of("t.beck", USED_TWICE);
+        let edits = editor
+            .rename(caret(USED_TWICE, "double"), "twice")
+            .expect("a plain rename");
+        let mut renamed = USED_TWICE.to_string();
+        for edit in edits.iter().rev() {
+            renamed.replace_range(edit.start as usize..edit.end as usize, "twice");
+        }
+        assert_eq!(
+            renamed,
+            "def twice(x: Int) -> Int:\n    return x * 2\n\ndef quadruple(x: Int) -> Int:\n    \
+             return twice(twice(x))\n"
+        );
+        // And the thing the edits are *for*: the file still compiles.
+        let after = Editor::of("t.beck", &renamed);
+        assert!(
+            !after.diagnostics().has_errors(),
+            "{}",
+            after.diagnostics().render(after.source_map())
+        );
+    }
+
+    #[test]
+    fn a_name_used_only_by_a_test_is_still_renamed() {
+        // The walk `docs/70` found three passes had been missing. A rename that missed it would
+        // edit every definition and leave the `test` block calling a name that no longer exists —
+        // and the verification step is what turns that into a refusal rather than a broken file,
+        // so this asserts the *edit*, which is the outcome the refusal would have hidden.
+        let source = "\
+def limit() -> Int:
+    return 3
+
+def under(n: Int) -> Bool:
+    return n < limit()
+
+test \"the limit holds\":
+    expect under(limit() - 1)
+";
+        let editor = Editor::of("t.beck", source);
+        assert!(
+            !editor.diagnostics().has_errors(),
+            "{}",
+            editor.diagnostics().render(editor.source_map())
+        );
+        let edits = editor
+            .rename(caret(source, "limit"), "ceiling")
+            .expect("a name a test uses is renameable");
+        assert_eq!(edits.len(), 3, "{edits:?}");
+        assert!(
+            edits.iter().any(|e| e.start > caret(source, "test ")),
+            "the use inside the test block is edited too: {edits:?}"
+        );
+    }
+
+    #[test]
+    fn a_local_of_the_same_name_stops_the_rename_rather_than_capturing_it() {
+        // The failure this rules out is silent: `total` the parameter and `total` the definition
+        // are different bindings, the lexer cannot tell them apart, and an edit that renamed both
+        // would change what the body means while still compiling.
+        let source = "\
+def total(x: Int) -> Int:
+    return x + 1
+
+def report(total: Int) -> Int:
+    return total + 1
+";
+        let editor = Editor::of("t.beck", source);
+        assert!(
+            !editor.diagnostics().has_errors(),
+            "{}",
+            editor.diagnostics().render(editor.source_map())
+        );
+        assert_eq!(
+            editor.rename(caret(source, "total"), "amount"),
+            Err(Refusal::Unaccounted("total".to_string()))
+        );
+        // And references declines for the same reason rather than reporting the shadow as a use.
+        assert!(editor.references(caret(source, "total")).is_empty());
+    }
+
+    #[test]
+    fn a_rename_onto_a_name_that_is_taken_is_refused() {
+        let editor = Editor::of("t.beck", USED_TWICE);
+        assert_eq!(
+            editor.rename(caret(USED_TWICE, "double"), "quadruple"),
+            Err(Refusal::Taken("quadruple".to_string()))
+        );
+        // Including a name that is only a *parameter* — which is not in the name table, so the
+        // check that catches it is the lexical one.
+        assert_eq!(
+            editor.rename(caret(USED_TWICE, "double"), "x"),
+            Err(Refusal::Taken("x".to_string()))
+        );
+    }
+
+    #[test]
+    fn a_new_name_is_one_the_lexer_would_read() {
+        let editor = Editor::of("t.beck", USED_TWICE);
+        for bad in ["", "2fast", "with space", "def", "a-b", "🎈"] {
+            assert!(
+                matches!(
+                    editor.rename(caret(USED_TWICE, "double"), bad),
+                    Err(Refusal::NotAnIdentifier(_))
+                ),
+                "`{bad}` is not a name Beck can read"
+            );
+        }
+        assert!(editor
+            .rename(caret(USED_TWICE, "double"), "twice_over")
+            .is_ok());
+    }
+
+    #[test]
+    fn an_imported_name_and_a_broken_file_are_both_refused() {
+        let source = "import text\n\ndef size(s: Str) -> Int:\n    return word_count(s)\n";
+        let editor = Editor::of("t.beck", source);
+        assert_eq!(
+            editor.rename(caret(source, "word_count"), "words"),
+            Err(Refusal::Imported("word_count".to_string()))
+        );
+
+        let broken = Editor::of("t.beck", "def f(x: Int) -> Str:\n    return x\n");
+        assert_eq!(
+            broken.rename(caret("def f(", "f"), "g"),
+            Err(Refusal::Broken)
+        );
+    }
+
+    #[test]
+    fn a_hint_is_the_annotation_nobody_wrote() {
+        let source = "\
+def key() -> secret[Str]:
+    return secret_env(\"API_KEY\")
+
+@on(server)
+def other() -> secret[Str]:
+    return secret_env(\"OTHER_KEY\")
+
+def pure(x: Int) -> Int:
+    return x + 1
+";
+        let editor = Editor::of("t.beck", source);
+        assert!(
+            !editor.diagnostics().has_errors(),
+            "{}",
+            editor.diagnostics().render(editor.source_map())
+        );
+        let tiers: Vec<Hint> = editor
+            .hints()
+            .into_iter()
+            .filter(|h| h.kind == HintKind::Tier)
+            .collect();
+        // `key` is placed and does not say so. `other` says so. `pure` is unplaced, and "anywhere"
+        // is not a placement worth writing on the line.
+        assert_eq!(tiers.len(), 1, "{tiers:?}");
+        assert_eq!(tiers[0].offset, caret(source, "def key"));
+        assert_eq!(tiers[0].label, "@on(server)");
+
+        // And it is the annotation the source would have carried: written in, it still compiles,
+        // and it no longer hints.
+        let mut written = source.to_string();
+        written.insert_str(tiers[0].offset as usize, "@on(server)\n");
+        let after = Editor::of("t.beck", &written);
+        assert!(
+            !after.diagnostics().has_errors(),
+            "{written}\n{}",
+            after.diagnostics().render(after.source_map())
+        );
+        assert!(after.hints().iter().all(|h| h.kind != HintKind::Tier));
+    }
+
+    #[test]
+    fn an_inferred_row_is_hinted_where_the_signature_would_carry_it() {
+        // Two properties in one, and the second is the interesting one: the offset is the colon
+        // that ends the signature, so pasting the label in writes a signature that parses.
+        let source = "\
+def stamp() -> Int uses nondet:
+    return now()
+
+def later() -> Int:
+    return stamp() + 1000
+";
+        let editor = Editor::of("t.beck", source);
+        assert!(
+            !editor.diagnostics().has_errors(),
+            "{}",
+            editor.diagnostics().render(editor.source_map())
+        );
+        let hint = editor
+            .hints()
+            .into_iter()
+            .find(|h| h.kind == HintKind::Effects)
+            .expect("`later` performs what `stamp` performs and does not say so");
+        assert_eq!(&source[hint.offset as usize..hint.offset as usize + 1], ":");
+        assert!(hint.label.starts_with(" uses "), "{}", hint.label);
+
+        let mut written = source.to_string();
+        written.insert_str(hint.offset as usize, &hint.label);
+        let after = Editor::of("t.beck", &written);
+        assert!(
+            !after.diagnostics().has_errors(),
+            "a hint you can paste in:\n{written}\n{}",
+            after.diagnostics().render(after.source_map())
+        );
+        // And `stamp`, which declares its row, is not hinted about it a second time.
+        assert!(editor
+            .hints()
+            .iter()
+            .all(|h| h.kind != HintKind::Effects || h.offset > caret(source, "def later")));
     }
 }

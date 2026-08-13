@@ -270,9 +270,14 @@ impl Checker<'_> {
                     }
                     Some(sym::EXPECT_PLACE) if stmt.args.len() == 2 => {
                         let what: Arc<str> = stmt.args[0].as_var()?.name.clone();
+                        let what_span = stmt.args[0].span();
                         let tier = ck.test_tier(&stmt.args[1])?;
                         Clause::Expect {
-                            what: Expectation::Place { what, tier },
+                            what: Expectation::Place {
+                                what,
+                                what_span,
+                                tier,
+                            },
                             span: cspan,
                         }
                     }

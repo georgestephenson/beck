@@ -141,6 +141,25 @@ pub fn serve() -> Result<()> {
             "textDocument/semanticTokens/full" => {
                 respond(&mut writer, id, semantic_tokens(&docs, &params))?;
             }
+            "textDocument/references" => {
+                respond(&mut writer, id, references(&mut docs, &params))?;
+            }
+            "textDocument/documentHighlight" => {
+                respond(&mut writer, id, highlights(&mut docs, &params))?;
+            }
+            "textDocument/prepareRename" => {
+                respond(&mut writer, id, prepare_rename(&mut docs, &params))?;
+            }
+            "textDocument/rename" => match rename(&mut docs, &params) {
+                Ok(edit) => respond(&mut writer, id, edit)?,
+                // 3.17's `RequestFailed`, which is what a client shows the person who asked. A
+                // refusal is the *answer* here rather than a failure to answer, and saying so with
+                // `null` would be a rename that quietly did nothing.
+                Err(refusal) => respond_error(&mut writer, id, -32803, &refusal)?,
+            },
+            "textDocument/inlayHint" => {
+                respond(&mut writer, id, inlay_hints(&mut docs, &params))?;
+            }
             "shutdown" => {
                 shutdown_requested = true;
                 respond(&mut writer, id, Value::Null)?;
@@ -187,6 +206,14 @@ fn capabilities() -> Value {
                 "legend": { "tokenTypes": TokenKind::legend(), "tokenModifiers": [] },
                 "full": true,
             },
+            "referencesProvider": true,
+            "documentHighlightProvider": true,
+            // `prepareRename` is offered because the answer to "may I rename this" is worth having
+            // before somebody types a new name: the refusals are the substance of this one
+            // (`beck_core::editor::Refusal`), and a client that learns about them only on submit
+            // makes people type into a box that was never going to accept anything.
+            "renameProvider": { "prepareProvider": true },
+            "inlayHintProvider": true,
         },
         "serverInfo": { "name": "beck", "version": env!("CARGO_PKG_VERSION") },
         "lspVersion": LSP_VERSION,
@@ -323,6 +350,176 @@ fn completion(docs: &mut Documents, params: &Value) -> Value {
         })
         .collect();
     json!({ "isIncomplete": false, "items": items })
+}
+
+/// Everywhere the name under the caret is written, as `Location`s in this document.
+///
+/// `context.includeDeclaration` is honoured: a client asking "who calls this" does not want the
+/// line it is standing on in the list, and the editor knows which occurrence that is
+/// ([`Occurrence::declaration`](beck_core::editor::Occurrence)) rather than guessing from the
+/// cursor.
+fn references(docs: &mut Documents, params: &Value) -> Value {
+    let include = params
+        .pointer("/context/includeDeclaration")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    let Some((uri, text, found)) = occurrences(docs, params) else {
+        return json!([]);
+    };
+    let out: Vec<Value> = found
+        .iter()
+        .filter(|o| include || !o.declaration)
+        .map(|o| json!({ "uri": uri, "range": range(&text, o.start, o.end) }))
+        .collect();
+    json!(out)
+}
+
+/// The same occurrences, for the editor's own "the thing under my cursor" highlight.
+///
+/// `2` is Read and `3` is Write in the protocol's `DocumentHighlightKind`. Beck has no assignment,
+/// so the only write a name ever gets is the one that declares it — which makes this list exactly
+/// the shape the protocol was drawn for, once.
+fn highlights(docs: &mut Documents, params: &Value) -> Value {
+    let Some((_, text, found)) = occurrences(docs, params) else {
+        return json!([]);
+    };
+    let out: Vec<Value> = found
+        .iter()
+        .map(|o| {
+            json!({
+                "range": range(&text, o.start, o.end),
+                "kind": if o.declaration { 3 } else { 2 },
+            })
+        })
+        .collect();
+    json!(out)
+}
+
+/// Whether the name under the caret can be renamed, answered before a new one is typed.
+///
+/// `null` is the protocol's "not here", and a client shows its own message for it. The refusals
+/// that depend on the *new* name — it is taken, it is not an identifier — cannot be answered yet
+/// and are not: this is the half of the question that has an answer at this point.
+fn prepare_rename(docs: &mut Documents, params: &Value) -> Value {
+    let Some((uri, offset)) = position(docs, params) else {
+        return Value::Null;
+    };
+    let Some(editor) = docs.analyse(&uri) else {
+        return Value::Null;
+    };
+    let Some(text) = docs.text.get(&uri) else {
+        return Value::Null;
+    };
+    let Some(name) = beck_core::editor::word_at(text, offset) else {
+        return Value::Null;
+    };
+    match editor.symbol(&name) {
+        Some(symbol) if symbol.own && symbol.span.is_some() => {}
+        _ => return Value::Null,
+    }
+    let Some(here) = editor
+        .references(offset)
+        .into_iter()
+        .find(|o| o.start <= offset && offset <= o.end)
+    else {
+        return Value::Null;
+    };
+    json!({ "range": range(text, here.start, here.end), "placeholder": name })
+}
+
+/// The edits a rename would make, or the sentence saying why it will not.
+///
+/// One document's worth: `beck_core::editor` analyses one file, so the `WorkspaceEdit` names one
+/// URI. A name that is *used* in another module is a name this refuses to touch, because it is
+/// declared here and imported there — `Refusal::Imported` is the mirror of that, and the two
+/// together are why nothing here can silently half-rename a project.
+fn rename(docs: &mut Documents, params: &Value) -> Result<Value, String> {
+    let Some((uri, offset)) = position(docs, params) else {
+        return Err("there is no position in that request".to_string());
+    };
+    let to = params
+        .get("newName")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let editor = docs
+        .analyse(&uri)
+        .ok_or_else(|| "that document is not open".to_string())?;
+    let text = docs
+        .text
+        .get(&uri)
+        .ok_or_else(|| "that document is not open".to_string())?;
+    let edits = editor
+        .rename(offset, &to)
+        .map_err(|refusal| refusal.message())?;
+    let changes: Vec<Value> = edits
+        .iter()
+        .map(|o| json!({ "range": range(text, o.start, o.end), "newText": to }))
+        .collect();
+    Ok(json!({ "changes": { uri: changes } }))
+}
+
+/// What the compiler worked out and the source does not say, in the range the client is showing.
+///
+/// The range is honoured because a client sends the viewport and expects the answer for it; the
+/// analysis is of the whole file either way, since that is what an [`Editor`] is.
+///
+/// `paddingRight` on a tier and `paddingLeft` on a row is not decoration: the labels are the text
+/// an author could paste in, `@on(server)` goes before a `def` and ` uses net` goes after a
+/// signature, so each needs the space on the side the code is on.
+fn inlay_hints(docs: &mut Documents, params: &Value) -> Value {
+    use beck_core::editor::HintKind;
+    let Some(uri) = uri_of(params) else {
+        return json!([]);
+    };
+    let Some(editor) = docs.analyse(&uri) else {
+        return json!([]);
+    };
+    let Some(text) = docs.text.get(&uri) else {
+        return json!([]);
+    };
+    let (from, to) = match params.get("range") {
+        Some(r) => {
+            let at = |which: &str| -> Option<u32> {
+                let p = r.get(which)?;
+                byte_offset(
+                    text,
+                    p.get("line")?.as_u64()? as u32,
+                    p.get("character")?.as_u64()? as u32,
+                )
+            };
+            (at("start").unwrap_or(0), at("end").unwrap_or(u32::MAX))
+        }
+        None => (0, u32::MAX),
+    };
+    let out: Vec<Value> = editor
+        .hints()
+        .into_iter()
+        .filter(|h| h.offset >= from && h.offset <= to)
+        .map(|h| {
+            let (line, character) = utf16_position(text, h.offset);
+            json!({
+                "position": { "line": line, "character": character },
+                "label": h.label,
+                // 1 = Type, 2 = Parameter. A tier and a row are neither, and the protocol has no
+                // third kind, so the field is left off rather than filled in with the closer lie.
+                "paddingLeft": h.kind == HintKind::Effects,
+                "paddingRight": h.kind == HintKind::Tier,
+            })
+        })
+        .collect();
+    json!(out)
+}
+
+/// The occurrence list two requests share, with the document's text to convert it against.
+fn occurrences(
+    docs: &mut Documents,
+    params: &Value,
+) -> Option<(String, String, Vec<beck_core::editor::Occurrence>)> {
+    let (uri, offset) = position(docs, params)?;
+    let editor = docs.analyse(&uri)?;
+    let text = docs.text.get(&uri)?.clone();
+    Some((uri, text, editor.references(offset)))
 }
 
 /// Highlighting, in the protocol's five-integers-per-token encoding.

@@ -168,8 +168,21 @@ pub struct Def {
     /// true: otherwise `def show(self) -> Str` would let one implementation reach for a clock and
     /// every caller of `show` would inherit it silently.
     pub row_is_declared: bool,
-    /// True when the placement was written by hand rather than solved for (§3.4).
+    /// True when this definition's tier is a **given** rather than something to solve for (§3.4).
+    ///
+    /// An `@on(...)` in the source sets it, and so does [`crate::project`]'s linker, for every
+    /// definition that arrived from another module: an imported placement is part of a published
+    /// signature and the root's solve must not move it. So it answers "may the solver place this?"
+    /// and not "did somebody write it down" — [`tier_is_written`](Def::tier_is_written) is the
+    /// second question.
     pub tier_is_annotated: bool,
+    /// True when *this module's source* wrote the annotation.
+    ///
+    /// Set once, by the checker, and never overwritten, which is the difference that matters:
+    /// after linking, every definition in the program is annotated in the sense above, and an
+    /// editor offering to write down the tier it inferred would offer it for definitions that
+    /// already say ([`crate::editor::Editor::hints`]).
+    pub tier_is_written: bool,
     /// A signature with nothing behind it: a line of a `.becki` interface, or a trait's method.
     pub is_declaration: bool,
     /// `@signal` — a declaration that publishes a signal rather than a function (§3.6).
@@ -187,7 +200,10 @@ pub struct SignalDecl {
     pub tier: Tier,
     pub effects: Vec<Effect>,
     pub row: Row,
+    /// A given rather than something to solve for — see [`Def::tier_is_annotated`].
     pub tier_is_annotated: bool,
+    /// Written by this module's source — see [`Def::tier_is_written`].
+    pub tier_is_written: bool,
     /// `@render(client|server)` — where this component's `view` runs, when it said so
     /// ([`crate::render`]). Only a `Signal[Html]` can carry one, and nothing else reads it.
     pub render: Option<(render::Mode, Span)>,
@@ -1714,6 +1730,7 @@ impl<'a> Checker<'a> {
             bounds,
             row_is_declared,
             tier_is_annotated,
+            tier_is_written: tier_is_annotated,
             is_declaration: body_node.is_none(),
             declares_signal,
             span,
@@ -1759,6 +1776,7 @@ impl<'a> Checker<'a> {
             effects: Vec::new(),
             row,
             tier_is_annotated,
+            tier_is_written: tier_is_annotated,
             render: None,
             span: item.span(),
             tier_span,

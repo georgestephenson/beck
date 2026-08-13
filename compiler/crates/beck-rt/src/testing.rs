@@ -950,7 +950,9 @@ fn static_only(placed: &Placed, t: &TestDef, opts: &Options) -> Result<(), Strin
 /// The assertions answered from the compiler's own data.
 fn check_static(placed: &Placed, what: &Expectation, opts: &Options) -> Result<(), String> {
     match what {
-        Expectation::Place { what: name, tier } => {
+        Expectation::Place {
+            what: name, tier, ..
+        } => {
             let actual = placed
                 .program
                 .defs

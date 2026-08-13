@@ -679,23 +679,33 @@ fn impl_signature(i: &ImplSig) -> String {
     )
 }
 
+/// The ` uses …` clause of a signature, or nothing for a row with no atoms in it.
+///
+/// Its own function because two things write it: a published signature, and the inlay hint that
+/// offers an *inferred* row as the clause an author could paste into one
+/// ([`crate::editor::Editor::hints`]). A hint spelling the row its own way would be a second
+/// renderer of the thing §4.6 says there is only one of, and the way it would go wrong is silent —
+/// the hint reads plausibly and the signature it suggests does not parse.
+pub fn render_uses(effects: &[Effect]) -> String {
+    if effects.is_empty() {
+        return String::new();
+    }
+    format!(
+        " uses {}",
+        effects
+            .iter()
+            .map(|e| e.name())
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
 /// One published name, as a `.becki` line.
 ///
 /// Public because `beck lsp` shows it on hover, and `docs/04` §4.6 forbids a second renderer: what
 /// an editor says a name's signature is has to be what `beck iface` publishes it as.
 pub fn render_item(i: &Item) -> String {
-    let uses = if i.effects.is_empty() {
-        String::new()
-    } else {
-        format!(
-            " uses {}",
-            i.effects
-                .iter()
-                .map(|e| e.name())
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
-    };
+    let uses = render_uses(&i.effects);
     match &i.kind {
         Kind::Function {
             typarams,
