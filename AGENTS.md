@@ -141,6 +141,23 @@ is part of a change's correctness rather than a follow-up to it.
   ([`docs/70`](docs/70-the-evaluator-gets-fast-report.md) §70.1). A candidate you have only
   counted has not been measured.
 
+### A choice the system makes for you is switchable and recorded
+
+Beck's proposition is that the compiler decides things a developer would otherwise decide — where
+code runs, what is maintained incrementally, what fuses. That proposition inverts the moment a wrong
+choice cannot be worked around or cannot be found. So anything new that **decides** owes two things,
+and [`docs/08`](docs/08-roadmap.md) §8.3 items 8–9 are the long form:
+
+- **An off switch, proved rather than promised.** `AppConfig` is the standard — `maintain_views` and
+  `share_arrangements` turn off the largest optimisations in the runtime without a recompile, and
+  their doc comments say *why* the switch exists. A default nobody has run is a claim, so the
+  switched-off path belongs in a gate beside the fast one. Query fusion is the current exception and
+  it is a hole rather than a decision ([`docs/100`](docs/100-placement-at-runtime.md) §100.5).
+- **A record of what was chosen and why**, reachable after the fact rather than only from source.
+  `beck explain` covers the compile-time half well; the run-time half does not exist yet, and until
+  the Phase 4 decision record lands, new work that makes a choice should at minimum make it
+  explainable rather than inventing a private log format.
+
 ### Claims in docs are stated from evidence
 
 If you write a number, it must be reproducible, and the report that quotes it must name the command

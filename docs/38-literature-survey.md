@@ -212,7 +212,21 @@ cost-model min-cut with secrecy as a hard constraint — is the Coign (OSDI 1999
 (ECOOP 2002) → Swift (Chong et al., SOSP 2007) → Viaduct (Acay et al., PLDI 2021) lineage; Swift
 specifically proved a compiler split can guarantee confidential data stays server-side, so
 `secret[T]` ([`20`](20-phase-2-report.md) §20.3) has twenty years of precedent, with Cocoon
-(OOPSLA 2024) as the modern zero-cost form. And effect-driven tierless design is where the
+(OOPSLA 2024) as the modern zero-cost form.
+
+**This lineage is entirely static, and the gap that leaves is a second literature this section did
+not have.** Every system above partitions once, at compile time; Swift's own paper has no runtime
+re-evaluation. The systems that *do* re-place from measurement are a different tradition —
+MAUI (MobiSys 2010), which decides at run time which methods to offload with an LP solver over
+measured connectivity; CloneCloud (EuroSys 2011), which pairs static analysis with dynamic profiling
+and migrates a live thread; Wishbone (NSDI 2009), whose unit is a **dataflow operator** and whose
+ILP minimises bandwidth against CPU; and Emerald (Jul, Levy, Hutchinson & Black, TOCS 6(1), 1988) as
+the fine-grained mobility ancestor of all of them. None carries a static legality proof: they move
+what fits, and safety is the programmer's. **Beck is the only design in view that has both halves**,
+and [`100`](100-placement-at-runtime.md) is where the conjunction is worked out — legality static,
+choice possibly dynamic, with deterministic replay making a cutover a comparison rather than a leap.
+**Watch** rather than adopt: the offloading results are fifteen years old and their metric is
+handset energy. And effect-driven tierless design is where the
 survivors converged — Links is alive and grew a WasmFX backend in 2025. The standing objection is
 Eliom's (Radanne, Vouillon & Balat, APLAS 2016): explicit placement buys predictability and
 separate compilation. Beck's answer must be legibility — `beck explain placement` already prints

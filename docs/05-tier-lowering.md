@@ -40,7 +40,14 @@ WASM, no size crisis, trivially good Lighthouse scores) — with Mode B in Phase
 > a component whose view reads the session cannot render on the client, since Mode B hands the
 > browser the state a per-session view was filtering (§94.2). *That refusal is narrower than it was
 > written: it is about **who** is asking, and reading `session.path` — where the browser is, which
-> the browser chose — is allowed ([`94`](94-the-client-report.md) §94.3).* The kernel interprets rather than
+> the browser chose — is allowed ([`94`](94-the-client-report.md) §94.3).* **"Inferred from those
+> requirements" is not permanently wrong, and [`100`](100-placement-at-runtime.md) §100.3 states the
+> conditions under which it becomes legal again**: inference is safe exactly where §94.2's refusal
+> does not bite — above the session cut — and only when it is *measured* rather than guessed, per
+> subscriber, and reversible. That is its level P3, and it is the level the cost model was written
+> for: [`cost.rs`](../compiler/crates/beck-core/src/cost.rs) has charged a crossing the minimum of
+> its two ends since Phase 2 while saying in a comment that "the minimum is a prediction rather than
+> a choice". The kernel interprets rather than
 > compiles ([`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md)), which is what the size
 > budget below has to be read against: 179,195 bytes brotli once per application, 1,753 per
 > component.
@@ -213,7 +220,15 @@ functions. The lowering question is substrates. **We do not write a storage engi
 - Subscribed/materialized views compile to **differential-dataflow-style incremental plans**
   (timely/differential are MIT-licensed Rust; DBSP/Feldera is the maintained modern embodiment —
   [`07`](07-dependencies.md) §7.4). `remaining` updates by ±1 per event; a joined read model
-  updates by delta, not by re-join. Materialize itself validates the approach commercially but is
+  updates by delta, not by re-join — *except that **there is no join to update by delta***, because
+  the view algebra's combining forms are all unary: every operator takes one collection, and
+  `concat_lists`, the one that takes several, unions same-typed streams rather than relating them
+  ([`99`](99-the-data-tier-means-of-combination.md) §99.4). A program that relates two collections
+  says so with a `map_get` inside a loop, which compiles to a per-element function that captured the
+  accumulator, so the whole collection is reapplied on every event —
+  [`23`](23-incremental-views-report.md) §23.13's rebuild rule working exactly as designed on a shape
+  nobody had asked it about. [`99`](99-the-data-tier-means-of-combination.md) is the design that
+  closes it. Materialize itself validates the approach commercially but is
   BUSL — excluded as a dependency by the open-source constraint.
 - **Per-session fanout is the scaling problem to design for** ([`03`](03-type-and-effect-system.md)
   §3.8): a thousand connected users of `todos.map(filter_by(session.user))` must compile to *one*
