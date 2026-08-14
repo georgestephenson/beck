@@ -35,6 +35,27 @@ Newest first.
   - **889 → 905 definitions compile and refusals go 189 → 173**: six list patterns, and ten
     definitions that were only waiting on them.
 
+### The image build
+
+- **A reset connection no longer ends an image build.** `the-image-builds` failed with `the TLS
+  handshake with packages.wolfi.dev failed: Connection reset by peer` on the eleventh package of a
+  dozen, after the first ten had been fetched and cached — the first thing the live fetch found
+  since [`docs/92`](docs/92-supply-chain-and-release-report.md) §92.13 named the transport as the step
+  nobody had executed. `beck-cli/src/fetch.rs` now attempts a hop up to four times, backing off from 500 ms,
+  and **classifies rather than reports**: a transport that went away or a 408/425/429/5xx is
+  attempted again; a 404, a certificate that does not verify, a reply over the size cap or a URL
+  that is not HTTPS is answered once, because a second attempt fails the same way and only delays
+  the message. Attempts are counted per hop, so a redirect does not spend the budget the package
+  behind it needs.
+  - **A body that stops early said the wrong thing**, and the classification is what surfaced it:
+    a truncated reply and one over the 128 MiB cap arrived at the same `map_err` and both read
+    "the reply is longer than 128 MiB". That message sends a reader looking for a package that
+    grew, and it would have classified a mid-body reset as permanent. The two are now distinguished
+    by `LengthLimitError`.
+  - **The gates drive the retry loop itself** with the attempt supplied by the test and no network
+    — a reset twice then a body, four resets then one error naming the bound, a 404 attempted once,
+    a redirect whose second hop is reset. Checked by setting `ATTEMPTS` to 1: three go red.
+
 ### Concurrency
 
 - **A `parallel:` child that fails stops its siblings**

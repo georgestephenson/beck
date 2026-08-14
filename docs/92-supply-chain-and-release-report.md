@@ -380,6 +380,8 @@ unflattering.
 - The image resolve, unpack, build, double-build comparison, key, signature, verification and its
   negative control.
 - Every workflow file through PyYAML.
+- **The package fetch**, in CI rather than here, and the first thing it found was a reset
+  connection — see below.
 
 **Written and not executed:**
 
@@ -395,10 +397,19 @@ unflattering.
   cannot be added back without a red test.
 - **Three of the four targets**, which are native builds on hosted runners and have never been
   compiled here.
-- **The package fetch.** Everything else in the image job was run locally, but this environment's
-  HTTPS goes through a TLS-intercepting proxy, so the packages were placed in the cache with `curl`
-  and the build was run offline. **The index and the packages are real and the *transport* is not
-  exercised**, and the first CI run is what executes it.
+
+**The package fetch has since run in CI, and the first thing it found was a reset connection.**
+Everything else in the image job was run locally, but this environment's HTTPS goes through a
+TLS-intercepting proxy, so the packages were placed in the cache with `curl` and the build was run
+offline — the *transport* was the one step nobody had exercised, which is why
+[`19`](19-phase-1-report.md) §19.4 item 10 — an artefact nobody has executed is a design document —
+made it a named gap rather than an assumption. CI executed it, and a later build failed with
+`the TLS handshake with packages.wolfi.dev failed: Connection reset by peer` on the eleventh package
+of a dozen whose first ten had arrived. An image is a package per connection and a public repository
+resets some of them, so the fetcher now attempts a hop again when the transport goes away and
+answers a refusal — a 404, a certificate that does not verify — once (`beck-cli/src/fetch.rs`, gated
+by its own tests). **No offline run could have shown this**: it is a property of what the repository
+does to a client, not of the bytes it serves.
 
 **And two things nothing has run at all.** No container runtime has been handed the image: GNU tar
 reads and extracts the layer and the digests are what the documents say, but this environment has a
@@ -424,6 +435,7 @@ and reverted.
 | Let a missing verifier silently turn verification off | `provenance_verification_is_refused_rather_than_skipped_when_the_tool_is_missing` |
 | Default verification to **on** | `the_default_install_checks_a_checksum_and_not_the_provenance` — the absence gate, firing as designed |
 | Guard the attest step by event, replace `subject-checksums` with a glob, or hoist the permissions | `the_pipeline_attests_the_file_the_installer_verifies_against` |
+| Set the fetcher's `ATTEMPTS` to 1 | three of `fetch.rs`'s four retry tests — a reset twice then a body, four resets then one error naming the bound, and a redirect whose second hop is reset. The fourth, a 404 attempted once, is the one that must *not* move |
 
 **One of those gates did not catch its own mutation the first time, and that is the finding.** The
 attest-step assertion sliced the step's text from `uses:` to the next `- name:` and looked for a
