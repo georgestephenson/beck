@@ -20,11 +20,13 @@
 //! collection and view primitives.
 //!
 //! What is refused is refused **by name, with the reason**, in [`crate::Report`]: the signal
-//! vocabulary, a bounded definition, and the handful of primitives that read a Unicode table or
-//! grow a collection whose size needs a counting pass. Nothing else on this list is still here —
-//! failure compiles on the error cell that was already an unwinder (`docs/93`), growing a list and
-//! a map compile (`docs/93`, `docs/93`), and the four primitives that have to **ask the host**
-//! compile by asking it ([`Upcall`], `docs/93`). Nothing is silently approximated: a definition
+//! vocabulary, a bounded definition, the two `Json` primitives, and the two collection primitives
+//! that have no pair type or grow a list under another name. Nothing else on this list is still
+//! here — failure compiles on the error cell that was already an unwinder, growing a list and a map
+//! compile, the four primitives that have to **ask the host** compile by asking it ([`Upcall`]),
+//! and the fifteen that are a table, a grammar or somebody else's parser compile by **calling the
+//! runtime library** the program is linked against ([`crate::prim`]). `docs/93` is the chapter.
+//! Nothing is silently approximated: a definition
 //! either compiles to machine code that agrees with the evaluator on every input, or it does not
 //! compile.
 //!
@@ -68,6 +70,7 @@ use beck_core::ty::Ty;
 use beck_diag::Span;
 
 use crate::heap::{self, Heap, Repr};
+use crate::prim;
 
 /// The most parameters a compiled function may have.
 ///
@@ -405,6 +408,9 @@ pub struct Module {
     pub spans: Vec<Span>,
     /// Definitions this backend declined, and why.
     pub refusals: Vec<Refusal>,
+    /// Whether anything in it calls the runtime library, and therefore whether the link step has
+    /// to put the archive on the line ([`crate::prim`]).
+    pub links: bool,
     /// What every object in this module looks like — and therefore how the host writes one and
     /// reads one back. [`crate::heap`] is why this is one table rather than three.
     pub heap: Heap,
@@ -496,6 +502,7 @@ pub fn module(program: &Program) -> Module {
     let mut applied: BTreeSet<u32> = BTreeSet::new();
     let mut loops: BTreeSet<(Loop, u32)> = BTreeSet::new();
     let mut asks = false;
+    let mut links = false;
     for name in &order {
         let def = &program.defs[name];
         let mut fun = Function::new(&indexed, &eligible, program, &mut heap);
@@ -511,6 +518,7 @@ pub fn module(program: &Program) -> Module {
         loops.append(&mut fun.loops);
         compared_fns |= fun.compared_fns;
         asks |= fun.asks;
+        links |= fun.links;
         for (rank, lam) in std::mem::take(&mut fun.lambdas) {
             lambdas.entry(rank).or_insert(lam);
         }
@@ -534,6 +542,7 @@ pub fn module(program: &Program) -> Module {
         &elements,
         &entries,
         asks,
+        links,
         &Closures {
             applied: &applied,
             emitted: &lambdas.keys().copied().collect(),
@@ -548,6 +557,7 @@ pub fn module(program: &Program) -> Module {
         functions,
         spans,
         refusals,
+        links,
         heap,
     }
 }
@@ -717,6 +727,11 @@ struct Function<'a> {
     loops: BTreeSet<(Loop, u32)>,
     /// Whether this body reaches the arena, and therefore needs its base in a register.
     uses_heap: bool,
+    /// Whether this body calls the runtime library, and therefore whether the module links it.
+    ///
+    /// Per module rather than per call because it decides a *link* line: an archive on it that
+    /// nothing references costs a linker's read of it, and one missing costs an undefined symbol.
+    links: bool,
     /// Whether this body asks the host anything, and therefore needs a question buffer.
     ///
     /// One buffer per *function* rather than one per call: a question is answered before the next
@@ -761,6 +776,7 @@ impl<'a> Function<'a> {
             applied: BTreeSet::new(),
             loops: BTreeSet::new(),
             uses_heap: false,
+            links: false,
             asks: false,
             handlers: Vec::new(),
         }
@@ -1481,6 +1497,259 @@ impl<'a> Function<'a> {
         Ok(self.narrow(&got, ret))
     }
 
+    /// Call the runtime library, and turn its outcome record into a value.
+    ///
+    /// The other half of `beck_prim::abi`, and the shape is that module's: the mark goes in, the
+    /// new mark comes back, and two words sit above it saying what happened. Three outcomes and a
+    /// trap:
+    ///
+    /// * **A value** — a scalar, or the offset of a `Str` the library allocated in *this* arena.
+    ///   Nothing is copied and nothing is decoded; a `Str` built by the library and a `Str` built
+    ///   by this module are the same bytes in the same place.
+    /// * **A raise**, whose message the library wrote and whose *value* is built here — because
+    ///   the value has a declared type, and a layout is this module's. `beck_prim::Raise` is what
+    ///   says which type and which fields, so neither side writes the other's half down.
+    /// * **Nothing**, which is `str_to_int` answering `None`.
+    /// * **No room**, which is the arena's own [`Trap::HeapExhausted`] with this call's span —
+    ///   the same trap `beck.alloc` stores, because it is the same condition.
+    fn runtime(&mut self, op: prim::Op, vals: &[Val], ty: &Ty, span: Span) -> Result<Val, String> {
+        if vals.len() != op.arity() {
+            return Err(format!(
+                "`{}` is applied to {} arguments here",
+                op.name(),
+                vals.len()
+            ));
+        }
+        self.links = true;
+        let base = self.base();
+
+        // One word per argument: an offset for text, the number itself for `time_format`.
+        let mut words: Vec<String> = Vec::with_capacity(3);
+        for (i, v) in vals.iter().enumerate() {
+            if i >= op.text_args() {
+                if v.ty != Repr::Int {
+                    return Err(format!(
+                        "`{}` is given something that is not an Int",
+                        op.name()
+                    ));
+                }
+                words.push(v.text.clone());
+                continue;
+            }
+            match v.ty {
+                Repr::Str => words.push(v.text.clone()),
+                // `digest_keyed` takes a `secret[Str]`, and this is the one place in the compiled
+                // half that opens one — the capability in the row is what pays for it (adr/0014).
+                Repr::Obj(at) if op == prim::Op::DigestKeyed && i == 0 => {
+                    let (slot, inner) = {
+                        let layout = self.heap.layout(at);
+                        layout.variants[0].slot("value").ok_or_else(|| {
+                            format!("`{}` is given something that is not a secret", op.name())
+                        })?
+                    };
+                    if inner != Repr::Str {
+                        return Err(format!(
+                            "`{}` is given a secret that is not text",
+                            op.name()
+                        ));
+                    }
+                    let text = self.load_field(&v.text.clone(), slot, Repr::Str);
+                    words.push(text.text);
+                }
+                _ => {
+                    return Err(format!(
+                        "`{}` is given something that is not text",
+                        op.name()
+                    ))
+                }
+            }
+        }
+        while words.len() < 3 {
+            words.push("0".to_string());
+        }
+
+        let mark = self.fresh();
+        self.line(format!("{mark} = load i64, ptr @\"beck.next\""));
+        let got = self.fresh();
+        self.line(format!(
+            "{got} = call i64 @{}(i32 {}, i64 {mark}, i64 {}, i64 {}, i64 {})",
+            prim::CALL,
+            op.code(),
+            words[0],
+            words[1],
+            words[2]
+        ));
+        let full = self.fresh();
+        self.line(format!("{full} = icmp slt i64 {got}, 0"));
+        self.trap(Trap::HeapExhausted, span, "0", &full);
+        self.line(format!("store i64 {got}, ptr @\"beck.next\""));
+
+        // The record is *at* the new mark — above the water line, so the call costs no arena
+        // beyond its answer. Both words are read here, before anything can allocate over them.
+        let rec = self.fresh();
+        self.line(format!(
+            "{rec} = getelementptr inbounds i8, ptr {base}, i64 {got}"
+        ));
+        let status = self.fresh();
+        self.line(format!("{status} = load i64, ptr {rec}"));
+        let at = self.fresh();
+        self.line(format!(
+            "{at} = getelementptr inbounds i8, ptr {rec}, i64 {}",
+            heap::WORD
+        ));
+        let word = self.fresh();
+        self.line(format!("{word} = load i64, ptr {at}"));
+
+        if let Some(raise) = op.raises() {
+            self.raise_from(&raise, &status, &word, span)?;
+        }
+
+        // `str_to_int` is the one that can answer nothing, and what `None` looks like is the
+        // `Option` the checker gave this expression rather than a shape this module invented.
+        if op == prim::Op::StrToInt {
+            let (repr, some, none, slot, bytes) = self.option_of(ty, Repr::Int)?;
+            let missing = self.fresh();
+            self.line(format!(
+                "{missing} = icmp eq i64 {status}, {}",
+                prim::Status::Nothing.word()
+            ));
+            let off = self.alloc(bytes, span);
+            let tag = self.fresh();
+            self.line(format!(
+                "{tag} = select i1 {missing}, i64 {none}, i64 {some}"
+            ));
+            self.store_word(&off, 0, &tag);
+            self.store_word(&off, slot, &word);
+            return Ok(Val {
+                text: off,
+                ty: repr,
+            });
+        }
+
+        let want = self
+            .repr(ty)
+            .map_err(|why| format!("`{}` answers {why}", op.name()))?;
+        let expected = match op {
+            prim::Op::DigestEq => Repr::Bool,
+            prim::Op::UuidVersion | prim::Op::TimeParse => Repr::Int,
+            _ => Repr::Str,
+        };
+        if want != expected {
+            return Err(format!("`{}` answers something else here", op.name()));
+        }
+        Ok(self.narrow(&word, want))
+    }
+
+    /// Raise the declared value a runtime-library failure carries, when it failed.
+    ///
+    /// The message is the library's and everything around it is this module's: the variant, the
+    /// fields the primitive fixes, and the type *name* as a literal's offset, which is what a
+    /// `try:` compares against ([`Prim::Raise`] is where that rule is written).
+    fn raise_from(
+        &mut self,
+        raise: &prim::Raise,
+        status: &str,
+        why: &str,
+        span: Span,
+    ) -> Result<(), String> {
+        let ty = Ty::con(raise.ty);
+        let repr = self
+            .repr(&ty)
+            .map_err(|reason| format!("raises a value that is {reason}"))?;
+        let Repr::Obj(at) = repr else {
+            return Err(format!("raises `{}`, which is not an object", raise.ty));
+        };
+        let (tag, layout) = {
+            let l = self.heap.layout(at);
+            let tag = l
+                .tag_of(Some(raise.variant))
+                .ok_or_else(|| format!("`{}` has no `{}`", l.shown, raise.variant))?;
+            (tag, l.variants[tag as usize].clone())
+        };
+        if layout.fields.len() != raise.constants.len() + 1 {
+            return Err(format!(
+                "`{}.{}` has fields this primitive does not fill",
+                raise.ty, raise.variant
+            ));
+        }
+
+        let failed = self.fresh();
+        self.line(format!(
+            "{failed} = icmp eq i64 {status}, {}",
+            prim::Status::Raised.word()
+        ));
+        let bad = self.label("prim.raised");
+        let good = self.label("prim.value");
+        self.terminate(format!("br i1 {failed}, label %{bad}, label %{good}"));
+
+        self.start(bad);
+        let mut placed: Vec<(usize, Val)> = Vec::with_capacity(layout.fields.len());
+        for (name, text) in raise.constants {
+            let (slot, want) = layout
+                .slot(name)
+                .ok_or_else(|| format!("`{}` has no field `{name}`", raise.ty))?;
+            if want != Repr::Str {
+                return Err(format!("the field `{name}` of `{}` is not text", raise.ty));
+            }
+            let literal = self.literal(text);
+            placed.push((
+                slot,
+                Val {
+                    text: literal.to_string(),
+                    ty: Repr::Str,
+                },
+            ));
+        }
+        let (slot, want) = layout
+            .slot(raise.why)
+            .ok_or_else(|| format!("`{}` has no field `{}`", raise.ty, raise.why))?;
+        if want != Repr::Str {
+            return Err(format!(
+                "the field `{}` of `{}` is not text",
+                raise.why, raise.ty
+            ));
+        }
+        placed.push((
+            slot,
+            Val {
+                text: why.to_string(),
+                ty: Repr::Str,
+            },
+        ));
+
+        let off = self.alloc(layout.bytes(), span);
+        self.store_word(&off, 0, &tag.to_string());
+        for (slot, v) in &placed {
+            self.store_field(&off, *slot, v);
+        }
+        // The raised value, as `raise` itself carries one: a pair of the shape and the word, and
+        // the type's name in the error cell for a handler to compare.
+        let shape = self.heap.word_of(repr);
+        let pair = self.alloc(heap::RAISED_WORDS * heap::WORD, span);
+        self.store_word(&pair, 0, &shape.to_string());
+        self.store_field(
+            &pair,
+            1,
+            &Val {
+                text: off,
+                ty: repr,
+            },
+        );
+        let named = self.literal(raise.ty);
+        let slot = self.fresh();
+        self.line(format!(
+            "{slot} = getelementptr inbounds i8, ptr %err, i64 16"
+        ));
+        self.line(format!("store i64 {named}, ptr {slot}"));
+        self.trap(Trap::Raised, span, &pair, "true");
+        // The trap above left for the handler unconditionally; this block still needs a
+        // terminator, and the value path is where it goes.
+        self.terminate(format!("br label %{good}"));
+
+        self.start(good);
+        Ok(())
+    }
+
     /// The eight bytes the protocol carries, as the value its [`Repr`] says it is.
     fn narrow(&mut self, word: &str, ty: Repr) -> Val {
         let text = match ty {
@@ -1604,7 +1873,7 @@ impl<'a> Function<'a> {
     /// Always a fresh object. The evaluator rebuilds in place when the base is held by nobody else
     /// ([`docs/70`](../../../../../docs/70-the-evaluator-gets-fast-report.md)), and this cannot: an arena
     /// with no ownership in it cannot prove nobody else holds an offset. What that costs is
-    /// [`docs/93`] §93.12's first row, and it is a cost rather than a difference — the answer is
+    /// [`docs/93`] §93.13's first row, and it is a cost rather than a difference — the answer is
     /// the same one.
     fn with(
         &mut self,
@@ -2041,6 +2310,12 @@ impl<'a> Function<'a> {
         // separates them is not what they do with their arguments.
         if let Some(ask) = Upcall::of(op) {
             return self.upcall(ask, &vals, ty, span);
+        }
+        // And the fifteen that are neither a computation this module can emit nor a question the
+        // host can answer: a table, a grammar, somebody else's parser. Those are a call into the
+        // runtime library, which is the same code the evaluator runs (`docs/93` §93.12).
+        if let Some(linked) = prim::op_of(op) {
+            return self.runtime(linked, &vals, ty, span);
         }
 
         match op {
@@ -3957,18 +4232,16 @@ fn refusal(op: Prim) -> String {
              growing a list under another name"
         }
 
-        Prim::StrUpper | Prim::StrLower => {
-            "is Unicode case mapping, which is a table rather than an operation — and a compiled \
-             half-answer that folded ASCII only would disagree with the evaluator on the first \
-             letter that is not"
+        // `str_upper`, `str_lower`, `str_to_int` and `str_replace` were here, refused for being a
+        // table and somebody else's parser. They are the runtime library's now (`crate::prim`),
+        // which is what those two sentences were describing without naming.
+        Prim::JsonParse => {
+            "answers a `Json`, whose object variant is a `Map` this module lays out — so the \
+             library would have to build a balanced tree in a shape only the emitter knows"
         }
-        Prim::StrReplace => {
-            "builds text whose size is the number of occurrences of one string in another, which \
-             needs a pass to count before there is anything to allocate"
-        }
-        Prim::StrToInt => {
-            "reads a number out of text, and has to agree with Rust's parser about every input \
-             that is not one"
+        Prim::JsonRender => {
+            "reads a `Json`, and what a value of a declared type looks like in the arena is this \
+             module's layout rather than the library's"
         }
         _ => return format!("`{}` is not one of the scalar primitives", op.name()),
     };
@@ -4120,14 +4393,23 @@ fn assemble(
     lists: &BTreeSet<u32>,
     maps: &BTreeSet<u32>,
     asks: bool,
+    links: bool,
     closures: &Closures<'_>,
 ) -> String {
     let arena = !heap.is_empty();
     let mut m = String::new();
     m.push_str(HEADER);
     if arena {
-        let _ = write!(m, "{}", arena_prelude());
+        let _ = write!(m, "{}", arena_prelude(links));
     }
+    // A program that links the runtime library takes its arena from it — the library reads that
+    // arena through a buffer it owns, so there cannot be a second one. `debug_assert` rather than a
+    // branch, for the reason the question buffer's is one: a body that calls a primitive has text
+    // in it, and a module with text has a heap.
+    debug_assert!(
+        arena || !links,
+        "a module that links the runtime library has an arena"
+    );
     // A question needs the arena, because an answer is written into it — and it has one, because
     // asking interns the shape of what it answers with and a module with an interned shape is not
     // an empty heap. `debug_assert` rather than a branch: the two facts are one fact.
@@ -4276,7 +4558,7 @@ fn assemble(
     }
 
     m.push_str(PIPE);
-    m.push_str(&main_loop(arena));
+    m.push_str(&main_loop(arena, links));
     m
 }
 
@@ -4393,9 +4675,21 @@ value:
 /// bounded, the arena is reset before every one, and a collector is a design with a cost that this
 /// backend has not measured a need for. What it means for a program that allocates without bound
 /// *within* one call is [`Trap::HeapExhausted`], which is a message rather than a crash.
-fn arena_prelude() -> String {
+fn arena_prelude(links: bool) -> String {
+    let reserve = if links {
+        // Two declarations and no definition: the archive `crate::prim` stages is what the link
+        // step resolves them against, and a module that names them without linking it is an
+        // undefined symbol rather than a wrong answer.
+        format!(
+            "declare ptr @{}(i64)\ndeclare i64 @{}(i32, i64, i64, i64, i64)\n",
+            prim::ARENA,
+            prim::CALL
+        )
+    } else {
+        "declare ptr @malloc(i64)\n".to_string()
+    };
     format!(
-        r#"declare ptr @malloc(i64)
+        r#"{reserve}
 
 @"beck.heap" = internal global ptr null
 @"beck.next" = internal global i64 {first}
@@ -5170,7 +5464,7 @@ impl Text {
 /// copied in before the call and the whole used part copied back out after one that answers with an
 /// object. A module of pure arithmetic gets neither, which is what keeps `docs/93` §93.5's round
 /// trip the same round trip.
-fn main_loop(arena: bool) -> String {
+fn main_loop(arena: bool, links: bool) -> String {
     let mut m = String::from(
         r#"define i32 @main() {
 entry:
@@ -5183,13 +5477,16 @@ entry:
     if arena {
         let _ = write!(
             m,
-            r#"  %arena = call ptr @malloc(i64 {bytes})
+            r#"  %arena = call ptr @{reserve}(i64 {bytes})
   store ptr %arena, ptr @"beck.heap"
   %failed = icmp eq ptr %arena, null
   %cap = select i1 %failed, i64 0, i64 {bytes}
   store i64 %cap, ptr @"beck.limit"
 "#,
-            bytes = heap::ARENA_BYTES
+            bytes = heap::ARENA_BYTES,
+            // The runtime library owns the heap of a program that links it, because that is what
+            // lets every call into it carry offsets rather than a pointer (`beck_prim::arena`).
+            reserve = if links { prim::ARENA } else { "malloc" }
         );
     }
     m.push_str(
@@ -6063,7 +6360,7 @@ lengths:
 /// One three-way comparison over two **words**, and two functions built on it: the lexicographic
 /// order over two lists, and a linear search. Written per repr rather than taking a function
 /// pointer, because an indirect call is the one thing this backend does not have — it is what a
-/// closure would need, and `docs/93` §93.14 lists it as unbuilt.
+/// closure would need, and `docs/93` §93.15 lists it as unbuilt.
 ///
 /// The order is `Vec<Value>`'s: element by element, and a list that is a prefix of another is less
 /// than it. That is Rust's derived `Ord` on a slice, which is what [`beck_core::Value`] holds.

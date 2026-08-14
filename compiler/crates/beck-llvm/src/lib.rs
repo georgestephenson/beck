@@ -19,11 +19,14 @@
 //! Not a general backend. The **signal vocabulary** — the fold, `validate`, the view, `parallel:` —
 //! is still the tree-walker's, and so is a **bounded** definition, whose dictionary parameter is a
 //! function value. Text, collections, closures, a view, **failure** — `raise` and `try:` — growing a
-//! **list** or a **map**, a **generic** definition, and the four primitives that **ask the host**
-//! (`now()`, `uuid()`, `secret_env`, `http_fetch`) do compile. The generic one by being specialised
-//! per instantiation ([`mono`]), which refuses polymorphic recursion and a call where nothing
-//! decides the type; the four by asking, which is [`worker`]'s second direction and [`service`]'s
-//! answer. `beck run` and `beck up` are unchanged.
+//! **list** or a **map**, a **generic** definition, the four primitives that **ask the host**
+//! (`now()`, `uuid()`, `secret_env`, `http_fetch`) and the fifteen that are a **table or somebody
+//! else's parser** (`digest`, the encodings, the identifiers, the case mappings, `str_to_int`, the
+//! calendar) do compile. The generic one by being specialised per instantiation ([`mono`]), which
+//! refuses polymorphic recursion and a call where nothing decides the type; the four by asking,
+//! which is [`worker`]'s second direction and [`service`]'s answer; the fifteen by **linking**
+//! `beck-prim`, which is the same code the evaluator calls ([`prim`], `docs/93` §93.12). `beck run` and
+//! `beck up` are unchanged.
 //! There is no collector either — the arena is reset per call
 //! ([`adr/0026`](../../../../docs/adr/0026-the-native-heap-is-an-arena-of-offsets.md)).
 //!
@@ -47,6 +50,7 @@
 pub mod emit;
 pub mod heap;
 pub mod mono;
+pub mod prim;
 pub mod service;
 pub mod toolchain;
 pub mod worker;
@@ -147,7 +151,10 @@ impl Artifact {
         let stem = sanitise(&program.name);
         let ll = dir.path.join(format!("{stem}.ll"));
         let exe = dir.path.join(&stem);
-        toolchain.build(&module.ir, &ll, &exe)?;
+        // The runtime library is unpacked only for a module that calls it, so a program that
+        // reaches none of its primitives pays neither the write nor the linker's read of it.
+        let archive = module.links.then(|| prim::stage(&dir.path)).transpose()?;
+        toolchain.build(&module.ir, &ll, &exe, archive.as_deref())?;
         let worker = Worker::start_with(&exe, limit)?;
         Ok(Artifact {
             module,

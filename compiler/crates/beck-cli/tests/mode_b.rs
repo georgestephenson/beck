@@ -1001,17 +1001,23 @@ fn the_kernel_builds_for_the_browser() {
 
 /// The extent of the exception to the workspace's `forbid(unsafe_code)`.
 ///
-/// Two crates deny rather than forbid, and both for the same reason: rustc classifies
-/// `#[no_mangle]` as unsafe code, and a WebAssembly module that exports nothing cannot be called.
-/// `beck-wasm` is Mode B's kernel and `beck-play` is the playground (`docs/98` §98.3). That is a
-/// narrow exception and this is what keeps it narrow: no `unsafe` block, no `unsafe fn`, and every
-/// `allow` attached to an export. Every other crate still inherits the workspace lint.
+/// Three crates deny rather than forbid, and all three for one reason: rustc classifies
+/// `#[no_mangle]` as unsafe code, because two libraries exporting one symbol is undefined at link
+/// time — and a library nobody can call is not one. `beck-wasm` is Mode B's kernel, `beck-play` is
+/// the playground (`docs/98` §98.3), and `beck-prim` is the runtime library a compiled program
+/// links (`docs/93` §93.12). That is a narrow exception and this is what keeps it narrow: no
+/// `unsafe` block, no `unsafe fn`, and every `allow` attached to an export. Every other crate still
+/// inherits the workspace lint.
 ///
-/// The count is per crate and exact, so a fifth export in the kernel or a fourth in the playground
-/// is a decision somebody has to come here and make.
+/// The count is per crate and exact, so a fifth export in the kernel, a fourth in the playground
+/// or a third in the runtime library is a decision somebody has to come here and make.
+///
+/// `beck-prim` is the one where the exception could have been much larger, and §93.12 is why it is
+/// not: a runtime library that took a pointer and a length would need an `unsafe` block per
+/// primitive, so it takes **offsets into an arena it owns** instead.
 #[test]
-fn the_wasm_boundary_is_the_only_exception_to_forbid_unsafe() {
-    for (crate_name, exports) in [("beck-wasm", 4), ("beck-play", 3)] {
+fn an_exported_symbol_is_the_only_exception_to_forbid_unsafe() {
+    for (crate_name, exports) in [("beck-wasm", 4), ("beck-play", 3), ("beck-prim", 2)] {
         let crate_dir = root().join("crates").join(crate_name);
         let mut allows = 0;
         for entry in std::fs::read_dir(crate_dir.join("src")).expect("the crate's sources") {
@@ -1050,7 +1056,11 @@ fn the_wasm_boundary_is_the_only_exception_to_forbid_unsafe() {
     for entry in std::fs::read_dir(root().join("crates")).expect("the crates") {
         let path = entry.expect("an entry").path();
         let manifest = path.join("Cargo.toml");
-        if !manifest.is_file() || path.ends_with("beck-wasm") || path.ends_with("beck-play") {
+        if !manifest.is_file()
+            || path.ends_with("beck-wasm")
+            || path.ends_with("beck-play")
+            || path.ends_with("beck-prim")
+        {
             continue;
         }
         let toml = std::fs::read_to_string(&manifest).expect("readable");

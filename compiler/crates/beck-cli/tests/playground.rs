@@ -1119,7 +1119,7 @@ fn the_playground_serves_the_runtimes_own_residue() {
 }
 
 // The exception to `forbid(unsafe_code)` — three export attributes and no `unsafe` code — is
-// gated in `mode_b.rs::the_wasm_boundary_is_the_only_exception_to_forbid_unsafe`, which counts it
+// gated in `mode_b.rs::an_exported_symbol_is_the_only_exception_to_forbid_unsafe`, which counts it
 // per crate and asserts that every *other* crate still inherits the workspace lint. One gate rather
 // than one per module: the property is about the workspace, and two copies of it would be two
 // things to keep in step (`docs/98` §98.3).

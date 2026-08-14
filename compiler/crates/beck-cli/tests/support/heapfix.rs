@@ -389,7 +389,7 @@ def or_else(o: Option[Int], fallback: Int) -> Int:
 
 /// Definitions the heap does **not** reach, one per reason.
 ///
-/// The list is what `docs/93` §93.14 said is not built, less the row `docs/93` removed, in the
+/// The list is what `docs/93` §93.15 said is not built, less the row `docs/93` removed, in the
 /// form that goes red the day one of them starts compiling — which is the point: an absence
 /// asserted as a test is an absence that cannot go stale (`docs/82` §82.10).
 ///
@@ -397,6 +397,9 @@ def or_else(o: Option[Int], fallback: Int) -> Int:
 /// instead, on the *other* side of the list — so a removal is a thing this fixture asserts rather
 /// than one a reader infers from a row that is missing. What is left of collections is the half
 /// that **grows** one (`grows`) and the half that takes a function (`mapped`).
+///
+/// `upcases` is here for the same reason and on the same side: it was a refusal until `docs/93` §93.12
+/// and it compiles now, so it stays in the fixture and moves to the control.
 pub const STILL_REFUSED: &str = r#"
 model Named:
     label: Str

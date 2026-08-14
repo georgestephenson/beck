@@ -14,6 +14,39 @@ Newest first.
 
 ### The native backends
 
+- **Fifteen primitives that are a table, a grammar or somebody else's parser compile**, to both
+  code generators, as a **call into a runtime library the program links**
+  ([`docs/93`](docs/93-the-native-backends-report.md) §93.12,
+  [`adr/0029`](docs/adr/0029-the-runtime-library-is-linked-and-owns-the-arena.md)): `digest`,
+  `digest_keyed`, `digest_eq`, the two hex and two base64 primitives, `uuid_parse`, `uuid_version`,
+  `str_upper`, `str_lower`, `str_to_int`, `str_replace`, `time_format` and `time_parse`. The
+  library is `compiler/crates/beck-prim`, and it is **the same crate the evaluator calls** —
+  `beck-core`'s digests and `beck-eval`'s civil calendar moved into it — so "both backends compute
+  the same digest" is a property of there being one function rather than a claim a differential
+  supports. **905 → 941 definitions compile across the tree and refusals go 173 → 137.**
+  - **Linked rather than emitted or asked for**, and the argument is a cost: a linked `digest` is
+    274 ns a call where the same call *asked* across the worker's pipe is 5.2 µs, measured in one
+    run by `measure_native.rs::what_a_linked_primitive_costs`. Emitting instead would be a second
+    BLAKE3 and a second Unicode table beside the ones already linked.
+  - **No pointer crosses the ABI.** The library owns the arena — `main` asks `beck_prim_arena` for
+    the heap instead of `malloc` — so every call carries **offsets**, and `beck-prim` contains no
+    `unsafe` block and no raw-pointer read. That is what keeps
+    [`docs/43`](docs/43-threat-model.md) §43.4's structural claim true; the crate joins `beck-wasm`
+    and `beck-play` in `mode_b.rs::an_exported_symbol_is_the_only_exception_to_forbid_unsafe`,
+    which counts its two export attributes exactly.
+  - **A call costs its answer and nothing else**, because the outcome record sits *above* the
+    arena's mark: `a_linked_call_costs_its_answer_and_nothing_else` counts bytes rather than
+    seconds, in both emitters. The archive is embedded in `beck` (6.1 MiB compressed, from
+    21.4 MiB) and written out only for a module that calls one of the fifteen — which takes a
+    compiled program from 16 KiB to 4.9 MiB, so "only when it is called" is a gate.
+  - **A latent bug in Cranelift's `narrow`**: its `Bool` arm extended an `I8` to an `I8`, which the
+    verifier rejects. It had been unreachable since the four host primitives arrived, because none
+    of them answers a `Bool`, and `digest_eq` is the first that does.
+  - **Corrected in place**: `docs/93`'s not-built list carried seven primitives that compile —
+    `str_trim`, `str_repeat` and `sort_by` had been compiling before this change — and its opening
+    named `validate` as the definition `examples/todo.beck` could not compile, which was also out
+    of date. All nine of that program's definitions compile.
+
 - **`case [first, *rest]` compiles**, to both code generators
   ([`docs/93`](docs/93-the-native-backends-report.md)) — the last pattern form they refused. The
   length is tested before any element is read, so nothing can load past the end of a short list;
@@ -313,7 +346,7 @@ Newest first.
     `a_polymorphically_recursive_definition_is_refused_rather_than_compiled_forever` and
     `a_generic_whose_type_nothing_decides_is_refused_rather_than_guessed`, which asserts that no
     symbol is named after an inference variable.
-  - **Corrects [`docs/93`](docs/93-the-native-backends-report.md)** §93.14, whose table has generic and
+  - **Corrects [`docs/93`](docs/93-the-native-backends-report.md)** §93.15, whose table has generic and
     bounded definitions as one row. They were never one item: a generic definition needs no
     dictionary at all.
 
@@ -493,8 +526,8 @@ Newest first.
     `a_sort_costs_four_runs_and_a_concatenation_costs_its_answer` — a shape gate with no clock in it,
     because a concatenation that grew would hold every intermediate and a merge sort that allocated
     per level would pass every differential.
-  - **Corrects [`docs/93`](docs/93-the-native-backends-report.md)** §93.12 and §93.9, which name both
-    of these as refused. §93.12's claim about `sort_by` — "the next one to build, not one that cannot
+  - **Corrects [`docs/93`](docs/93-the-native-backends-report.md)** §93.13 and §93.9, which name both
+    of these as refused. §93.13's claim about `sort_by` — "the next one to build, not one that cannot
     be" — held for one commit.
 
 - **A closure arrives, and it does not leave**
@@ -515,7 +548,7 @@ Newest first.
   million applications in tail position, on both backends) and
   `a_closure_does_not_cross_the_boundary`.
 - **The gate that asks whether a refusal's reason is *true* fired**
-  ([`docs/93`](docs/93-the-native-backends-report.md) §93.13). `a_refusal_that_blames_a_type_is_asked_whether_that_type_has_one`
+  ([`docs/93`](docs/93-the-native-backends-report.md) §93.14). `a_refusal_that_blames_a_type_is_asked_whether_that_type_has_one`
   went red because giving a closure a shape made "a closure, which has no layout here" false while
   the refusal saying it stayed. It now asserts both halves of what is true instead: the shape exists,
   and `Heap::crossing` is what refuses it. `what_the_heap_does_not_reach_is_refused_by_name` lost a
@@ -580,7 +613,7 @@ Newest first.
   `list[T]` is a value both code generators compile — literals, the six comparisons, `list_len`,
   `list_is_empty`, `list_get`, `list_contains`, `list_index_of`, `list_slice`, `list_take`,
   `list_drop` and `list_reverse` — and **`list_append` is refused** by name, because an arena cannot
-  prove nobody else holds the accumulator ([`docs/93`](docs/93-the-native-backends-report.md) §93.14's
+  prove nobody else holds the accumulator ([`docs/93`](docs/93-the-native-backends-report.md) §93.15's
   forecast, cashed). **344 → 403 definitions** compile across the tree. Gated by
   `native.rs::the_two_backends_agree_on_lists` and
   `cranelift.rs::the_three_backends_agree_on_lists` (1,425 calls each), and by

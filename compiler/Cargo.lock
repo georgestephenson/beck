@@ -248,6 +248,7 @@ version = "0.3.0"
 dependencies = [
  "beck-diag",
  "beck-macro",
+ "beck-prim",
  "beck-syntax",
  "blake3",
  "postcard",
@@ -276,6 +277,7 @@ version = "0.3.0"
 dependencies = [
  "beck-core",
  "beck-diag",
+ "beck-prim",
  "serde_json",
 ]
 
@@ -313,6 +315,8 @@ version = "0.3.0"
 dependencies = [
  "beck-core",
  "beck-diag",
+ "beck-prim",
+ "flate2",
 ]
 
 [[package]]
@@ -343,6 +347,13 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "beck-prim"
+version = "0.3.0"
+dependencies = [
+ "blake3",
 ]
 
 [[package]]

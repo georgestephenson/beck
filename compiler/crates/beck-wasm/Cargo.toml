@@ -22,7 +22,7 @@ serde_json.workspace = true
 # time. A WebAssembly module has to export something or the host cannot call it.
 #
 # So the exception is `deny` plus four `#[allow]`s on the export attributes themselves, and its
-# extent is a test rather than a promise: `mode_b.rs::the_wasm_boundary_is_the_only_exception_to_forbid_unsafe`
+# extent is a test rather than a promise: `mode_b.rs::an_exported_symbol_is_the_only_exception_to_forbid_unsafe`
 # asserts that this crate contains no `unsafe` block, no `unsafe fn` and no allow site that is not
 # on an export. There is no `unsafe` *code* here, only an attribute rustc classifies with it.
 [lints.rust]

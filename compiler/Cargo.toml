@@ -4,6 +4,7 @@ members = [
     "crates/beck-diag",
     "crates/beck-syntax",
     "crates/beck-macro",
+    "crates/beck-prim",
     "crates/beck-core",
     "crates/beck-eval",
     "crates/beck-host",
@@ -33,6 +34,9 @@ publish = false
 beck-diag = { path = "crates/beck-diag", version = "0.3.0" }
 beck-syntax = { path = "crates/beck-syntax", version = "0.3.0" }
 beck-macro = { path = "crates/beck-macro", version = "0.3.0" }
+# The runtime library: linked into the compiler as an rlib so the evaluator calls it, and
+# built as a static archive the native backends link into what they compile (docs/93 §93.12).
+beck-prim = { path = "crates/beck-prim", version = "0.3.0" }
 beck-core = { path = "crates/beck-core", version = "0.3.0" }
 beck-eval = { path = "crates/beck-eval", version = "0.3.0" }
 beck-host = { path = "crates/beck-host", version = "0.3.0" }

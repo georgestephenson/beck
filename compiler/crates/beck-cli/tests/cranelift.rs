@@ -8,7 +8,7 @@
 //!
 //! # Why three matters more than two
 //!
-//! [`93`](../docs/93-the-native-backends-report.md) §93.14's finding is that a differential
+//! [`93`](../docs/93-the-native-backends-report.md) §93.15's finding is that a differential
 //! compares what somebody thought to write down, and its worst case is a boundary that normalises
 //! on both sides. Two independent emitters make a different kind of mistake available to
 //! detection: an agreement between the tree-walker and *both* of them is evidence about the
@@ -43,6 +43,7 @@ use support::failfix;
 use support::genfix::{self, GENERIC};
 use support::heapfix::{self, RECORDS, STILL_REFUSED, UNIONS};
 use support::hostfix::{self, Stated, EFFECTS};
+use support::libfix::{self, RUNTIME};
 use support::listfix::{self, LISTS, PATTERNS};
 use support::mapfix::{self, MAPS};
 use support::scalar::{
@@ -508,6 +509,111 @@ fn the_three_backends_agree_on_unions() {
 /// `native.rs`'s sweep with Cranelift added, and it is the sweep that matters rather than the
 /// sample: the two emitters write the search, the clamp and the three-way comparison twice, so
 /// this is where writing them twice is worth something.
+/// The fifteen primitives that are a call into the runtime library (`docs/93` §93.12).
+///
+/// The third backend over `native.rs`'s differential, and it is worth having twice for a reason
+/// specific to this one: the ABI is a *call to an imported symbol*, and the two emitters reach it
+/// by different routes — a `declare` resolved by `clang`, and a `Linkage::Import` resolved by
+/// whatever `cc` is. An argument-passing mistake in either would show here and nowhere else.
+#[test]
+fn the_three_backends_agree_on_the_runtime_library() {
+    linker!();
+    let all = All::over("runtime.beck", RUNTIME);
+    let ss = libfix::strings();
+    let mut compared = 0;
+
+    for name in ["hashed", "hexed", "b64", "shout", "whisper", "fingerprint"] {
+        compared += all.agree(name, &textfix::singles(&ss));
+    }
+    compared += all.agree("same_digest", &textfix::pairs(&ss));
+    for name in ["round_trip", "twice_over", "counted"] {
+        compared += all.agree(name, &textfix::singles(&ss));
+    }
+
+    let encoded = libfix::encoded();
+    for name in ["unhexed", "read_hex", "unb64", "read_b64"] {
+        compared += all.agree(name, &textfix::singles(&encoded));
+    }
+    let ids = libfix::identifiers();
+    for name in ["canonical", "which_version", "read_uuid"] {
+        compared += all.agree(name, &textfix::singles(&ids));
+    }
+    for name in ["numbered", "defaulted"] {
+        compared += all.agree(name, &textfix::singles(&libfix::numerals()));
+    }
+    compared += all.agree("stamped", &textfix::singles(&libfix::instants()));
+    for name in ["instant", "read_time"] {
+        compared += all.agree(name, &textfix::singles(&libfix::stamps()));
+    }
+
+    let mut swaps = Vec::new();
+    for s in &ss {
+        for needle in ["", "a", "abc", "é", "\0"] {
+            for to in ["", "-", "longer"] {
+                swaps.push(vec![s.clone(), Value::str_(needle), Value::str_(to)]);
+            }
+        }
+    }
+    compared += all.agree("swapped", &swaps);
+
+    let mut keyed = Vec::new();
+    for key in ["", "k1", "a longer secret", "🎈"] {
+        for message in &ss {
+            keyed.push(vec![libfix::secret(key), message.clone()]);
+        }
+    }
+    compared += all.agree("mac", &keyed);
+
+    println!(
+        "{compared} runtime-library calls compared, and all three backends agreed on every one"
+    );
+}
+
+/// A runtime-library call costs its answer, and not its answer plus a record.
+///
+/// `native.rs::a_linked_call_costs_its_answer_and_nothing_else`, over the other emitter. Both
+/// store the new mark themselves, so the property is per emitter even though the record's
+/// *placement* is the library's.
+#[test]
+fn a_linked_call_costs_its_answer_and_nothing_else_here_either() {
+    linker!();
+    let all = All::over("runtime.beck", RUNTIME);
+    let arena = |n: i64| {
+        all.clif
+            .call_sized("hashes", &[Value::Int(n), Value::str_("")])
+            .expect("runs")
+            .1
+    };
+    let (small, big) = (arena(100), arena(900));
+    assert_eq!(
+        big - small,
+        800 * libfix::DIGEST_BYTES,
+        "800 more digests should cost 800 answers and nothing else: {small} then {big}"
+    );
+    println!(
+        "hashes(100) left {small} bytes and hashes(900) left {big} — {} bytes a call at both sizes",
+        (big - small) / 800
+    );
+}
+
+/// An object names the runtime library's symbols only when a definition in it calls one.
+///
+/// The Cranelift half of `native.rs`'s `a_module_links_the_runtime_library_only_when_it_calls_it`,
+/// and here the cost of getting it wrong is worse than a large binary: an imported symbol nothing
+/// resolves is a link that fails, so a module that named `beck_prim` without linking the archive
+/// would not run at all.
+#[test]
+fn an_object_names_the_runtime_library_only_when_it_calls_it() {
+    let with =
+        beck_clif::module(&compile("runtime.beck", RUNTIME)).expect("this machine has an ISA");
+    assert!(with.links, "a module full of them should link it");
+    let without = beck_clif::module(&compile("text.beck", TEXT)).expect("this machine has an ISA");
+    assert!(
+        !without.links,
+        "a program of text and arithmetic reaches no runtime-library primitive"
+    );
+}
+
 #[test]
 fn the_three_backends_agree_on_text() {
     linker!();

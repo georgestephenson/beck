@@ -31,7 +31,7 @@ Two consequences worth knowing before writing a file here:
 
 | Kind | Where it lives | Why |
 |---|---|---|
-| A host's table or grammar | a primitive in `beck-core/src/prelude.rs` | `str_upper` is a Unicode table, `json_parse` is somebody else's grammar, `time_format` is the civil calendar. Writing any of them over a `list[Str]` in Beck would be a slower, less correct copy of what the host already has |
+| A host's table or grammar | a primitive declared in `beck-core/src/prelude.rs` and implemented in `beck-prim` | `str_upper` is a Unicode table, `json_parse` is somebody else's grammar, `time_format` is the civil calendar. Writing any of them over a `list[Str]` in Beck would be a slower, less correct copy of what the host already has — and implementing one *twice* on the host would be the same mistake one layer down, which is why the implementations live in the runtime library both the evaluator and a compiled program link ([`93`](../../docs/93-the-native-backends-report.md)) |
 | Composition | a file here | lines, words, padding, an amount of money, a split that adds back up. There is nothing to ask the host for, so asking would be an admission |
 
 The line is not "what is fast" — it is **what has a definition in the language**. `money.beck` is

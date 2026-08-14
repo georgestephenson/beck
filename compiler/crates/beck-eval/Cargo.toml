@@ -8,6 +8,9 @@ description = "Phase 1's Core backend: a tree-walking evaluator behind the Backe
 
 [dependencies]
 beck-core.workspace = true
+# The primitives that are a table or somebody else's parser — case mapping, the calendar, the
+# digests — so the tree-walker and a compiled program call one implementation (docs/93 §93.12).
+beck-prim.workspace = true
 # JSON's text form only. The shape in between is Beck's own `Json` union, so this is a reader and
 # a writer rather than a data model the language would then have two of.
 serde_json.workspace = true

@@ -1,4 +1,4 @@
-# Digests, encodings and signed tokens, over the primitives in `beck-core/src/digest.rs`.
+# Digests, encodings and signed tokens, over the primitives in `beck-prim/src/digest.rs`.
 #
 # The division `lib/README.md` states puts a hash function and a base64 alphabet on the host's side:
 # both are tables, and a Beck reimplementation would be a slower copy of one. What is *composition*

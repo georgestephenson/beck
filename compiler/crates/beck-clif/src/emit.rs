@@ -8,7 +8,9 @@
 //! variables, `let`, `if`, `match`, direct calls, record and variant construction, field reads,
 //! `with`, lambdas and applications, and the arithmetic, comparison, logical, text, collection and
 //! view primitives. It asks the host the same four questions through the same frame
-//! ([`beck_llvm::Upcall`]), and refuses what is refused there by name, with a reason.
+//! ([`beck_llvm::Upcall`]), calls the same runtime library for the fifteen primitives that are a
+//! table or somebody else's parser ([`beck_llvm::prim`]), and refuses what is refused there by
+//! name, with a reason.
 //!
 //! Writing the selection a second time rather than importing it is deliberate. The two emitters
 //! are held to *agreeing* — `cranelift.rs` asserts that they accept and refuse the same
@@ -18,7 +20,10 @@
 //! [`beck_llvm::Trap`] are types, [`beck_llvm::Trap`]'s codes are a protocol the host decodes, and
 //! [`beck_llvm::heap`] is the **layout** — which word a field is in, which rank a variant has —
 //! because that one is a contract with the host too, and a contract with three spellings drifts.
-//! A second copy of any of those would be two opinions about one thing.
+//! [`beck_llvm::prim`] joins that list for the same reason: the op codes, the arities and the
+//! outcome record are a contract with a *linked library*, so what is written twice here is how the
+//! call is made and not what it means. A second copy of any of those would be two opinions about
+//! one thing.
 //!
 //! # Agreeing with the evaluator exactly
 //!
@@ -56,7 +61,7 @@ use beck_core::check::{Def, Program};
 use beck_core::core::{Arm, Const, Core, CoreKind, Pattern, Prim, VarId};
 use beck_diag::Span;
 use beck_llvm::heap::{self, Heap, Repr};
-use beck_llvm::{Refusal, Scalar, Signature, Trap, Upcall, MAX_PARAMS};
+use beck_llvm::{prim, Refusal, Scalar, Signature, Trap, Upcall, MAX_PARAMS};
 
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::{
@@ -90,6 +95,9 @@ pub struct Module {
     pub spans: Vec<Span>,
     /// Definitions this backend declined, and why.
     pub refusals: Vec<Refusal>,
+    /// Whether anything in it calls the runtime library, and therefore whether the link step has
+    /// to put the archive on the line ([`beck_llvm::prim`]).
+    pub links: bool,
     /// What every object in this module looks like. [`beck_llvm::heap`] decides the shape for both
     /// backends, because the host marshals against it and three spellings of one contract drift.
     pub heap: Heap,
@@ -154,6 +162,7 @@ pub fn module(program: &Program) -> Result<Module, String> {
                     functions: built.functions,
                     spans: built.spans,
                     refusals,
+                    links: built.links,
                     heap,
                 });
             }
@@ -201,6 +210,8 @@ struct Built {
     clif: String,
     functions: Vec<Signature>,
     spans: Vec<Span>,
+    /// Whether the runtime library's symbols are named in this object.
+    links: bool,
 }
 
 /// One round: declare everything eligible, define every body, and emit the object.
@@ -272,6 +283,13 @@ fn build(
         (Some(_), true) => Some(Host::declare(&mut object, ptr).map_err(Failure::Fatal)?),
         _ => None,
     };
+    // The runtime library, on the same terms and for the same reason: a program that calls none of
+    // its primitives must not name its symbols, or every object file would carry an undefined
+    // reference to an archive its link step has no reason to put on the line.
+    let linked = match (arena, calls_the_runtime_library(program, eligible)) {
+        (Some(_), true) => Some(Linked::declare(&mut object, ptr).map_err(Failure::Fatal)?),
+        _ => None,
+    };
     let runtime = Runtime {
         arena,
         text,
@@ -279,6 +297,7 @@ fn build(
         maps,
         builds,
         host,
+        linked,
     };
 
     // Every compiled definition, declared before any is defined: a body may call one declared
@@ -517,6 +536,7 @@ fn build(
         &ids,
         &order,
         arena,
+        runtime.linked,
     )
     .map_err(Failure::Fatal)?;
 
@@ -529,6 +549,7 @@ fn build(
         clif,
         functions,
         spans,
+        links: runtime.linked.is_some(),
     })
 }
 
@@ -637,6 +658,8 @@ struct Runtime {
     builds: Option<Builds>,
     /// The second direction of the protocol, when this program asks the host anything.
     host: Option<Host>,
+    /// The runtime library, when this program calls one of its primitives.
+    linked: Option<Linked>,
 }
 
 /// The four list functions that do not care what an element *is*.
@@ -5886,16 +5909,256 @@ impl<'a> Body<'a> {
         })
     }
 
+    /// Call the runtime library, and turn its outcome record into a value.
+    ///
+    /// The LLVM emitter's `runtime`, written again — and, as with the upcall, what is *not*
+    /// written again is the protocol: `beck_prim::abi` says the mark goes in, the new mark comes
+    /// back, and two words sit above it. What is Cranelift's here is that the call is an
+    /// **imported** symbol rather than a `declare`, and that a branch is two blocks rather than
+    /// two labels.
+    fn runtime(
+        &mut self,
+        op: prim::Op,
+        vals: &[Val],
+        ty: &beck_core::ty::Ty,
+        span: Span,
+        b: &mut FunctionBuilder<'_>,
+        m: &mut ObjectModule,
+    ) -> Result<Val, String> {
+        let Some(linked) = self.runtime.linked else {
+            return Err(format!(
+                "`{}` is the runtime library's, and this module does not link it",
+                op.name()
+            ));
+        };
+        if vals.len() != op.arity() {
+            return Err(format!(
+                "`{}` is applied to {} arguments here",
+                op.name(),
+                vals.len()
+            ));
+        }
+
+        // One word per argument: an offset for text, the number itself for `time_format`.
+        let mut words: Vec<IrValue> = Vec::with_capacity(3);
+        for (i, v) in vals.iter().enumerate() {
+            if i >= op.text_args() {
+                if v.ty != Repr::Int {
+                    return Err(format!(
+                        "`{}` is given something that is not an Int",
+                        op.name()
+                    ));
+                }
+                words.push(v.v);
+                continue;
+            }
+            match v.ty {
+                Repr::Str => words.push(v.v),
+                // `digest_keyed` takes a `secret[Str]`, and this is the one place in the compiled
+                // half that opens one — the capability in the row is what pays for it (adr/0014).
+                Repr::Obj(at) if op == prim::Op::DigestKeyed && i == 0 => {
+                    let (slot, inner) = {
+                        let layout = self.heap.layout(at);
+                        layout.variants[0].slot("value").ok_or_else(|| {
+                            format!("`{}` is given something that is not a secret", op.name())
+                        })?
+                    };
+                    if inner != Repr::Str {
+                        return Err(format!(
+                            "`{}` is given a secret that is not text",
+                            op.name()
+                        ));
+                    }
+                    let text = self.load_field(v.v, slot, Repr::Str, b, m);
+                    words.push(text.v);
+                }
+                _ => {
+                    return Err(format!(
+                        "`{}` is given something that is not text",
+                        op.name()
+                    ));
+                }
+            }
+        }
+        let zero = b.ins().iconst(types::I64, 0);
+        while words.len() < 3 {
+            words.push(zero);
+        }
+
+        let arena = self.arena();
+        let flags = MemFlagsData::trusted();
+        let next = arena.addr(arena.next, b, m);
+        let mark = b.ins().load(types::I64, flags, next, 0);
+        let f = m.declare_func_in_func(linked.call, b.func);
+        let code = b.ins().iconst(types::I32, i64::from(op.code()));
+        let call = b.ins().call(f, &[code, mark, words[0], words[1], words[2]]);
+        let got = b.inst_results(call)[0];
+        let full = b.ins().icmp_imm_s(IntCC::SignedLessThan, got, 0);
+        self.trap(Trap::HeapExhausted, span, zero, full, b);
+        // Re-taken after the trap's branch: the address is a symbol value, and a block other than
+        // the one it was computed in cannot use it.
+        let next = arena.addr(arena.next, b, m);
+        b.ins().store(flags, got, next, 0);
+
+        // The record is *at* the new mark — above the water line, so the call costs no arena
+        // beyond its answer. Both words are read here, before anything can allocate over them.
+        let base = arena.base(b, m);
+        let rec = b.ins().iadd(base, got);
+        let status = b.ins().load(types::I64, flags, rec, 0);
+        let word = b.ins().load(types::I64, flags, rec, heap::WORD as i32);
+
+        if let Some(raise) = op.raises() {
+            self.raise_from(&raise, status, word, span, b, m)?;
+        }
+
+        // `str_to_int` is the one that can answer nothing, and what `None` looks like is the
+        // `Option` the checker gave this expression rather than a shape this module invented.
+        if op == prim::Op::StrToInt {
+            let (option, some, none, slot, bytes) = self.option_of(ty, Repr::Int)?;
+            let missing = b
+                .ins()
+                .icmp_imm_s(IntCC::Equal, status, prim::Status::Nothing.word());
+            let cell = self.alloc(bytes, span, b, m);
+            let some = b.ins().iconst(types::I64, i64::from(some));
+            let none = b.ins().iconst(types::I64, i64::from(none));
+            let tag = b.ins().select(missing, none, some);
+            self.store_word(cell, 0, tag, b, m);
+            self.store_word(cell, slot, word, b, m);
+            return Ok(Val {
+                v: cell,
+                ty: option,
+            });
+        }
+
+        let want = self
+            .repr(ty)
+            .map_err(|why| format!("`{}` answers {why}", op.name()))?;
+        let expected = match op {
+            prim::Op::DigestEq => Repr::Bool,
+            prim::Op::UuidVersion | prim::Op::TimeParse => Repr::Int,
+            _ => Repr::Str,
+        };
+        if want != expected {
+            return Err(format!("`{}` answers something else here", op.name()));
+        }
+        Ok(Val {
+            v: self.narrow(word, want, b),
+            ty: want,
+        })
+    }
+
+    /// Raise the declared value a runtime-library failure carries, when it failed.
+    ///
+    /// The message is the library's and everything around it is this module's: the variant, the
+    /// fields the primitive fixes, and the type *name* as a literal's offset, which is what a
+    /// `try:` compares against.
+    fn raise_from(
+        &mut self,
+        raise: &prim::Raise,
+        status: IrValue,
+        why: IrValue,
+        span: Span,
+        b: &mut FunctionBuilder<'_>,
+        m: &mut ObjectModule,
+    ) -> Result<(), String> {
+        let ty = beck_core::ty::Ty::con(raise.ty);
+        let repr = self
+            .repr(&ty)
+            .map_err(|reason| format!("raises a value that is {reason}"))?;
+        let Repr::Obj(at) = repr else {
+            return Err(format!("raises `{}`, which is not an object", raise.ty));
+        };
+        let (tag, layout) = {
+            let l = self.heap.layout(at);
+            let tag = l
+                .tag_of(Some(raise.variant))
+                .ok_or_else(|| format!("`{}` has no `{}`", l.shown, raise.variant))?;
+            (tag, l.variants[tag as usize].clone())
+        };
+        if layout.fields.len() != raise.constants.len() + 1 {
+            return Err(format!(
+                "`{}.{}` has fields this primitive does not fill",
+                raise.ty, raise.variant
+            ));
+        }
+
+        let failed = b
+            .ins()
+            .icmp_imm_s(IntCC::Equal, status, prim::Status::Raised.word());
+        let bad = b.create_block();
+        let good = b.create_block();
+        b.ins().brif(failed, bad, &[], good, &[]);
+
+        b.switch_to_block(bad);
+        b.seal_block(bad);
+        let mut placed: Vec<(usize, Val)> = Vec::with_capacity(layout.fields.len());
+        for (name, text) in raise.constants {
+            let (slot, want) = layout
+                .slot(name)
+                .ok_or_else(|| format!("`{}` has no field `{name}`", raise.ty))?;
+            if want != Repr::Str {
+                return Err(format!("the field `{name}` of `{}` is not text", raise.ty));
+            }
+            let at = self.literal(text);
+            let v = b.ins().iconst(types::I64, at as i64);
+            placed.push((slot, Val { v, ty: Repr::Str }));
+        }
+        let (slot, want) = layout
+            .slot(raise.why)
+            .ok_or_else(|| format!("`{}` has no field `{}`", raise.ty, raise.why))?;
+        if want != Repr::Str {
+            return Err(format!(
+                "the field `{}` of `{}` is not text",
+                raise.why, raise.ty
+            ));
+        }
+        placed.push((
+            slot,
+            Val {
+                v: why,
+                ty: Repr::Str,
+            },
+        ));
+
+        let off = self.alloc(layout.bytes(), span, b, m);
+        let tag = b.ins().iconst(types::I64, i64::from(tag));
+        self.store_word(off, 0, tag, b, m);
+        for (slot, v) in &placed {
+            self.store_field(off, *slot, v, b, m);
+        }
+        // The raised value, as `raise` itself carries one: a pair of the shape and the word, and
+        // the type's name in the error cell for a handler to compare.
+        let shape = self.heap.word_of(repr);
+        let pair = self.alloc(heap::RAISED_WORDS * heap::WORD, span, b, m);
+        let word = b.ins().iconst(types::I64, i64::from(shape));
+        self.store_word(pair, 0, word, b, m);
+        self.store_field(pair, 1, &Val { v: off, ty: repr }, b, m);
+        let named = self.literal(raise.ty);
+        let named = b.ins().iconst(types::I64, named as i64);
+        let err = self.err();
+        b.ins()
+            .store(MemFlagsData::trusted(), named, err, CELL_RAISED);
+        let always = b.ins().iconst(types::I8, 1);
+        self.trap(Trap::Raised, span, pair, always, b);
+        // The trap above left with a constant condition; the block it carried on into still needs
+        // a terminator, and the value path is where it goes.
+        b.ins().jump(good, &[]);
+
+        b.switch_to_block(good);
+        b.seal_block(good);
+        Ok(())
+    }
+
     /// The eight bytes the protocol carries, as the value its [`Repr`] says it is.
     fn narrow(&mut self, word: IrValue, ty: Repr, b: &mut FunctionBuilder<'_>) -> IrValue {
         match ty {
             Repr::Float => b.ins().bitcast(types::F64, MemFlagsData::new(), word),
             // An `I8` holding 0 or 1, which is what every comparison here produces and what
-            // `band`/`bor` rely on.
-            Repr::Bool => {
-                let set = b.ins().icmp_imm_s(IntCC::NotEqual, word, 0);
-                b.ins().uextend(types::I8, set)
-            }
+            // `band`/`bor` rely on — and `icmp` already answers one, so there is nothing to
+            // widen. The `uextend` that was here was unreachable until `digest_eq` became the
+            // first primitive to bring a `Bool` back through this protocol, and Cranelift's
+            // verifier refuses an extension from a type to itself.
+            Repr::Bool => b.ins().icmp_imm_s(IntCC::NotEqual, word, 0),
             Repr::Int
             | Repr::Str
             | Repr::List(_)
@@ -6418,6 +6681,11 @@ impl<'a> Body<'a> {
         // separates them is not what they do with their arguments.
         if let Some(ask) = Upcall::of(op) {
             return self.upcall(ask, &vals, ty, span, b, m);
+        }
+        // And the fifteen that are a table, a grammar or somebody else's parser: a call into the
+        // runtime library, which is the same code the evaluator runs (`docs/93` §93.12).
+        if let Some(linked) = prim::op_of(op) {
+            return self.runtime(linked, &vals, ty, span, b, m);
         }
         let arity = |n: usize, vals: &[Val]| -> Result<(), String> {
             if vals.len() == n {
@@ -8161,7 +8429,7 @@ impl<'a> Body<'a> {
 /// **set** of definitions and not to saying the same words about them.
 fn refusal(op: Prim) -> String {
     let why = match op {
-        // The one that is a decision rather than a gap. `docs/46` §46.14 and `docs/93` §93.14 both
+        // The one that is a decision rather than a gap. `docs/46` §46.14 and `docs/93` §93.15 both
         // name shipping this as the mistake: the tree-walker pushes in place when `liveness` proves
         // the accumulator is a last use, and an arena with no ownership in it cannot.
         Prim::ListZip => "answers with a list of pairs, and there is no pair type to lay out",
@@ -8174,18 +8442,16 @@ fn refusal(op: Prim) -> String {
             "answers a list whose length is the sum of the lists its function answers, which is \
              growing a list under another name"
         }
-        Prim::StrUpper | Prim::StrLower => {
-            "is Unicode case mapping, which is a table rather than an operation — and a compiled \
-             half-answer that folded ASCII only would disagree with the evaluator on the first \
-             letter that is not"
+        // `str_upper`, `str_lower`, `str_to_int` and `str_replace` were here, refused for being a
+        // table and somebody else's parser. They are the runtime library's now
+        // (`beck_llvm::prim`), which is what those two sentences were describing without naming.
+        Prim::JsonParse => {
+            "answers a `Json`, whose object variant is a `Map` this module lays out — so the \
+             library would have to build a balanced tree in a shape only the emitter knows"
         }
-        Prim::StrReplace => {
-            "builds text whose size is the number of occurrences of one string in another, which \
-             needs a pass to count before there is anything to allocate"
-        }
-        Prim::StrToInt => {
-            "reads a number out of text, and has to agree with Rust's parser about every input \
-             that is not one"
+        Prim::JsonRender => {
+            "reads a `Json`, and what a value of a declared type looks like in the arena is this \
+             module's layout rather than the library's"
         }
         _ => return format!("`{}` is not one of the scalar primitives", op.name()),
     };
@@ -8419,6 +8685,61 @@ const FRAME_BYTES_AT: i32 = 24;
 /// How many words a question's buffer holds, which is [`beck_llvm::emit`]'s `QUESTION_WORDS`.
 const QUESTION_WORDS: u32 = 8;
 
+/// The runtime library's one entry point, as an **imported** symbol.
+///
+/// The difference from [`Host`] is the linkage and it is the whole point: `beck.host` is a
+/// function this module defines, and `beck_prim` is a function in an archive the link step puts on
+/// the line. [`beck_llvm::prim`] is where the ABI is written down, and `beck_prim::abi` is the
+/// other side of it.
+#[derive(Clone, Copy, Debug)]
+struct Linked {
+    call: FuncId,
+    /// The arena's reservation, which the library owns for a program that links it.
+    arena: FuncId,
+}
+
+impl Linked {
+    fn declare(m: &mut ObjectModule, ptr: Type) -> Result<Linked, String> {
+        let conv = CallConv::triple_default(m.isa().triple());
+        let mut sig = cranelift_codegen::ir::Signature::new(conv);
+        sig.params.push(AbiParam::new(types::I32));
+        for _ in 0..4 {
+            sig.params.push(AbiParam::new(types::I64));
+        }
+        sig.returns.push(AbiParam::new(types::I64));
+        let call = m
+            .declare_function(prim::CALL, Linkage::Import, &sig)
+            .map_err(|e| format!("declaring the runtime library: {e}"))?;
+        let mut reserve = cranelift_codegen::ir::Signature::new(conv);
+        reserve.params.push(AbiParam::new(types::I64));
+        reserve.returns.push(AbiParam::new(ptr));
+        let arena = m
+            .declare_function(prim::ARENA, Linkage::Import, &reserve)
+            .map_err(|e| format!("declaring the runtime library's arena: {e}"))?;
+        Ok(Linked { call, arena })
+    }
+}
+
+/// Whether any definition of this program calls one of the runtime library's primitives.
+///
+/// [`asks_the_host`]'s walk, over the other list, and for the same reason: this backend declares
+/// its runtime up front, and an imported symbol nothing calls is an undefined reference in every
+/// object file with a heap in it.
+fn calls_the_runtime_library(program: &Program, eligible: &BTreeSet<Arc<str>>) -> bool {
+    fn calls(c: &Core) -> bool {
+        if let CoreKind::Prim { op, .. } = &c.kind {
+            if prim::op_of(*op).is_some() {
+                return true;
+            }
+        }
+        beck_core::core::children(c).into_iter().any(calls)
+    }
+    eligible
+        .iter()
+        .filter_map(|name| program.defs.get(name))
+        .any(|def| calls(&def.body))
+}
+
 /// Whether any definition of this program reaches one of the four host primitives.
 ///
 /// Asked before anything is declared, because this backend declares its runtime up front and a
@@ -8450,6 +8771,7 @@ fn asks_the_host(program: &Program, eligible: &BTreeSet<Arc<str>>) -> bool {
 /// The protocol is [`beck_llvm::Worker`]'s, to the byte, because the host is the same host: eight
 /// bytes of header, eight per argument, and a 24-byte reply of trap code, span index, payload and
 /// result. Two spellings of one wire would be the drift this workspace spends its gates on.
+#[allow(clippy::too_many_arguments)]
 fn driver(
     m: &mut ObjectModule,
     ctx: &mut cranelift_codegen::Context,
@@ -8458,6 +8780,7 @@ fn driver(
     ids: &BTreeMap<Arc<str>, FuncId>,
     order: &[Arc<str>],
     arena: Option<Arena>,
+    linked: Option<Linked>,
 ) -> Result<(), String> {
     let ptr = m.target_config().pointer_type();
     let conv = CallConv::triple_default(m.isa().triple());
@@ -8663,16 +8986,21 @@ fn driver(
         .map_err(|e| format!("declaring `main`: {e}"))?;
 
     // `malloc`, and only when there is an arena to reserve.
-    let malloc = if arena.is_some() {
-        let mut sig = cranelift_codegen::ir::Signature::new(conv);
-        sig.params.push(AbiParam::new(types::I64));
-        sig.returns.push(AbiParam::new(ptr));
-        Some(
-            m.declare_function("malloc", Linkage::Import, &sig)
-                .map_err(|e| format!("declaring `malloc`: {e}"))?,
-        )
-    } else {
-        None
+    // The runtime library owns the heap of a program that links it, because that is what lets
+    // every call into it carry offsets rather than a pointer (`beck_prim::arena`). A program that
+    // links none of it reserves its arena the way it always did.
+    let malloc = match (arena, linked) {
+        (Some(_), Some(linked)) => Some(linked.arena),
+        (Some(_), None) => {
+            let mut sig = cranelift_codegen::ir::Signature::new(conv);
+            sig.params.push(AbiParam::new(types::I64));
+            sig.returns.push(AbiParam::new(ptr));
+            Some(
+                m.declare_function("malloc", Linkage::Import, &sig)
+                    .map_err(|e| format!("declaring `malloc`: {e}"))?,
+            )
+        }
+        (None, _) => None,
     };
 
     ctx.func = Function::with_name_signature(UserFuncName::user(4, 0), main_sig);

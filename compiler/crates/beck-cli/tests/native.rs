@@ -44,6 +44,7 @@ use support::failfix;
 use support::genfix::{self, GENERIC};
 use support::heapfix::{self, RECORDS, STILL_REFUSED, UNIONS};
 use support::hostfix::{self, Stated, EFFECTS};
+use support::libfix::{self, RUNTIME};
 use support::listfix::{self, LISTS, PATTERNS};
 use support::mapfix::{self, MAPS};
 use support::scalar::{
@@ -102,7 +103,7 @@ fn artifact(program: &Program) -> Artifact {
 /// The span is deliberately *not* compared. Both sides carry one and both point into the same
 /// file, but the evaluator's is the span of the `Core` node it was walking and the native one is
 /// the span the emitter recorded for the trapping instruction, and those are the same location
-/// only when nothing has been folded. The message is the claim; §93.14 says so.
+/// only when nothing has been folded. The message is the claim; §93.15 says so.
 type Outcome = Result<Value, String>;
 
 fn outcome(r: Result<Value, beck_core::ExecError>) -> Outcome {
@@ -631,6 +632,160 @@ fn the_two_backends_agree_on_text() {
     compared += both.agree("letter_at", &textfix::indexed(&textfix::singles(&ss)));
 
     println!("{compared} text calls compared, and both backends agreed on every one");
+}
+
+/// The fifteen primitives that are a call into the runtime library (`docs/93` §93.12).
+///
+/// What this compares is not two implementations of a digest — there is one, and both backends
+/// reach it — but the **ABI** around it: the mark going in, the outcome record coming back, a
+/// `Str` the library allocated being read by compiled code, and a failure the library described
+/// being built as a declared value by the emitter. Every one of those is a place the answer can be
+/// wrong while the library is right.
+#[test]
+fn the_two_backends_agree_on_the_runtime_library() {
+    let _ = toolchain!();
+    let both = Both::over("runtime.beck", RUNTIME);
+    let ss = libfix::strings();
+    let mut compared = 0;
+
+    // The pure ones, over text chosen for the layout rather than for the primitive.
+    for name in ["hashed", "hexed", "b64", "shout", "whisper", "fingerprint"] {
+        compared += both.agree(name, &textfix::singles(&ss));
+    }
+    compared += both.agree("same_digest", &textfix::pairs(&ss));
+    compared += both.agree("round_trip", &textfix::singles(&ss));
+    compared += both.agree("twice_over", &textfix::singles(&ss));
+    compared += both.agree("counted", &textfix::singles(&ss));
+
+    // The decoders, each asked every string both are asked — including the ones each refuses, so
+    // the raised value is compared and not only the successful answer.
+    let encoded = libfix::encoded();
+    for name in ["unhexed", "read_hex", "unb64", "read_b64"] {
+        compared += both.agree(name, &textfix::singles(&encoded));
+    }
+
+    // Identifiers, where the answer is a *normalisation* and every spelling has to reach one.
+    let ids = libfix::identifiers();
+    for name in ["canonical", "which_version", "read_uuid"] {
+        compared += both.agree(name, &textfix::singles(&ids));
+    }
+
+    // Rust's parser, and the `Option` the emitter builds around a status word.
+    let numerals = libfix::numerals();
+    for name in ["numbered", "defaulted"] {
+        compared += both.agree(name, &textfix::singles(&numerals));
+    }
+
+    // The calendar, in both directions.
+    compared += both.agree("stamped", &textfix::singles(&libfix::instants()));
+    for name in ["instant", "read_time"] {
+        compared += both.agree(name, &textfix::singles(&libfix::stamps()));
+    }
+
+    // `str_replace`, whose third argument is what made it a refusal: the answer's size is a
+    // function of how many times the needle occurs.
+    let mut swaps = Vec::new();
+    for s in &ss {
+        for needle in ["", "a", "abc", "é", "\0"] {
+            for to in ["", "-", "longer"] {
+                swaps.push(vec![s.clone(), Value::str_(needle), Value::str_(to)]);
+            }
+        }
+    }
+    compared += both.agree("swapped", &swaps);
+
+    // The one primitive whose argument is a `secret[Str]`, which is the only place compiled code
+    // opens one (adr/0014).
+    let mut keyed = Vec::new();
+    for key in ["", "k1", "a longer secret", "🎈"] {
+        for message in &ss {
+            keyed.push(vec![libfix::secret(key), message.clone()]);
+        }
+    }
+    compared += both.agree("mac", &keyed);
+
+    // The set has to *contain* the failures, or this passed by never reaching a raise.
+    let (walked, compiled) = both.call("unhexed", &[Value::str_("zz")]);
+    assert_eq!(walked, compiled);
+    assert!(walked.is_err(), "`zz` is not hex");
+    let (walked, compiled) = both.call("canonical", &[Value::str_("nope")]);
+    assert_eq!(walked, compiled);
+    assert!(walked.is_err(), "`nope` is not a UUID");
+    let (walked, _) = both.call("read_hex", &[Value::str_("zz")]);
+    let caught = walked.expect("a `try:` answers a value");
+    assert_eq!(
+        caught.variant(),
+        Some("Err"),
+        "the raise should have been caught, not travelled: {caught:?}"
+    );
+
+    println!("{compared} runtime-library calls compared, and both backends agreed on every one");
+}
+
+/// A runtime-library call costs its answer, and not its answer plus a record.
+///
+/// A shape gate with **no clock in it** (`AGENTS.md`), and it is the one this design most needs:
+/// `beck_prim` writes its two-word outcome record *above* the arena's high-water mark, so the
+/// caller reads it and the next allocation writes over it. Below the mark it would be correct and
+/// leak sixteen bytes a call — which no differential could see, because every answer would still be
+/// right.
+///
+/// Two sizes, and the *difference* rather than the total: the totals differ by the program's
+/// literal pool, and what is being asserted is the per-call cost.
+#[test]
+fn a_linked_call_costs_its_answer_and_nothing_else() {
+    let _ = toolchain!();
+    let both = Both::over("runtime.beck", RUNTIME);
+    let arena = |n: i64| {
+        both.native
+            .call_sized("hashes", &[Value::Int(n), Value::str_("")])
+            .expect("runs")
+            .1
+    };
+    let (small, big) = (arena(100), arena(900));
+    assert_eq!(
+        big - small,
+        800 * libfix::DIGEST_BYTES,
+        "800 more digests should cost 800 answers and nothing else: {small} then {big}"
+    );
+    println!(
+        "hashes(100) left {small} bytes and hashes(900) left {big} — {} bytes a call at both sizes",
+        (big - small) / 800
+    );
+}
+
+/// A program that reaches none of the runtime library's primitives does not link it.
+///
+/// The archive is Rust's standard library, and linking it takes a program from 16 KiB to 4.9 MiB —
+/// so "only when it is called" is a property worth holding rather than an intention. It is also the flag that
+/// decides where the *arena* comes from, so a module that got it wrong would either link an
+/// archive it never calls or call `beck_prim` with a heap the library does not own.
+#[test]
+fn a_module_links_the_runtime_library_only_when_it_calls_it() {
+    let with = beck_llvm::module(&compile("runtime.beck", RUNTIME));
+    assert!(with.links, "a module full of them should link it");
+    assert!(
+        with.ir.contains("declare i64 @beck_prim("),
+        "and declare the call"
+    );
+    assert!(
+        with.ir.contains("@beck_prim_arena"),
+        "and take its arena from the library"
+    );
+
+    let without = beck_llvm::module(&compile("text.beck", TEXT));
+    assert!(
+        !without.links,
+        "a program of text and arithmetic reaches no runtime-library primitive"
+    );
+    assert!(
+        !without.ir.contains("beck_prim"),
+        "so nothing in its module should name one"
+    );
+    assert!(
+        without.ir.contains("declare ptr @malloc"),
+        "and its arena is still the C library's"
+    );
 }
 
 /// `White_Space` is a **closed set**, and this is the assertion that says so with a number.
@@ -1244,7 +1399,7 @@ fn a_loop_costs_its_answer_and_one_closure() {
 /// A sort costs four runs of the list, and a concatenation costs its answer.
 ///
 /// The second shape gate with no clock in it, and both halves say something a differential cannot.
-/// **`concat_lists`** is the one whose refusal was *wrong* (`docs/93` §93.12 as corrected in the
+/// **`concat_lists`** is the one whose refusal was *wrong* (`docs/93` §93.13 as corrected in the
 /// changelog): if it grew a list the way `list_append` would have to, the arena would hold every
 /// intermediate — so asserting it leaves exactly its answer is asserting the sum-then-allocate shape.
 /// **`sort_by`** allocates the keys, the elements, and a scratch pair, and a merge sort that
@@ -2009,24 +2164,28 @@ fn what_cannot_be_compiled_is_refused_by_name_and_with_a_reason() {
 
 /// What the heap does **not** reach, asserted as an absence.
 ///
-/// `docs/93` §93.14 lists what is not built — collections, closures and every effect — and a
+/// `docs/93` §93.15 lists what is not built — collections, closures and every effect — and a
 /// list in prose goes stale where a list with a test attached cannot (`docs/82` §82.10). Each of
 /// these goes red the day its row starts compiling, which is the day the row should be deleted.
 ///
-/// Six rows were deleted that way: `docs/93` gave a `Str` a layout, `docs/93` gave a `list` one,
-/// `docs/93` compiled the higher-order primitives, `str_trim` and `str_split` moved across when
-/// their stated reasons — a Unicode table, and "two loops rather than one" — turned out to be false
-/// of them, and the **host effects** moved when the worker's protocol grew a second direction.
-/// Each time, the row moved from this list to the control below it in the same commit.
-/// What is left is the primitives that really do read a table, the ones that render a real, and a
-/// definition generic over a type.
+/// Seven rows were deleted that way: a `Str` got a layout, a `list` got one, the higher-order
+/// primitives compiled, `str_trim` and `str_split` moved across when their stated reasons — a
+/// Unicode table, and "two loops rather than one" — turned out to be false of them, the **host
+/// effects** moved when the worker's protocol grew a second direction, and `str_upper` moved when
+/// the runtime library made the table something a program **links** rather than something an
+/// emitter would have to copy (`docs/93` §93.12). Each time, the row moved from this list to the
+/// control below it in the same commit.
+///
+/// What is left is the one that renders a real, the two collection primitives with no layout to
+/// answer with, and a definition generic over a type. `str_upper`'s row is the shape to copy: a
+/// refusal whose reason is "this is somebody else's table" is a refusal the runtime library
+/// answers, so it belongs in the control rather than here.
 #[test]
 fn what_the_heap_does_not_reach_is_refused_by_name() {
     let program = compile("still-refused.beck", STILL_REFUSED);
     let module = beck_llvm::module(&program);
     for (name, expect) in [
         ("renders_a_real", "`str` of Float"),
-        ("upcases", "`str_upper` is Unicode case mapping"),
         ("grows", "`list_flat_map` answers a list"),
         ("is_generic", "generic over T"),
         ("calls_something_refused", "which does not compile"),
@@ -2054,6 +2213,7 @@ fn what_the_heap_does_not_reach_is_refused_by_name() {
         vec![
             "splits_a_string".to_string(),
             "trims".to_string(),
+            "upcases".to_string(),
             "mapped".to_string(),
             "double_it".to_string(),
             "names_it".to_string(),
@@ -2277,7 +2437,7 @@ def forever(n: Int) -> Int:
 /// rather than a paragraph because that is the difference between a known gap and a forgotten one.
 /// `docs/adr/0007` records that `beck-eval` replaced a `SIGSEGV` with a counted ceiling; compiled
 /// code spends a real frame per level and counts nothing, so the abort is back — and all a host
-/// can do is notice that the worker stopped and say why it probably did. §93.14 is what closing it
+/// can do is notice that the worker stopped and say why it probably did. §93.15 is what closing it
 /// would cost.
 #[test]
 fn a_native_recursion_without_a_ceiling_says_what_happened() {
@@ -2422,7 +2582,7 @@ fn the_two_backends_agree_on_the_benchmark_and_the_book() {
     }
     // Pascal's triangle, inside its domain. `pascal(0, 1)` is not a value the function has an
     // answer for — it recurses without bottoming out — and neither backend survives it: the
-    // evaluator reaches its depth ceiling and the worker exhausts its stack. §93.14 records that
+    // evaluator reaches its depth ceiling and the worker exhausts its stack. §93.15 records that
     // asymmetry rather than this suite papering over it.
     let triangle: Vec<Vec<Value>> = (0..14)
         .flat_map(|row| (0..=row).map(move |col| vec![Value::Int(row), Value::Int(col)]))
@@ -2580,9 +2740,33 @@ fn corpus(toolchain: beck_llvm::Toolchain) {
     let blamed: Vec<String> = refusal_reasons
         .iter()
         .filter(|(_, reason)| {
-            ["`now`", "`uuid`", "`secret_env`", "`http_fetch`", "`raise`"]
-                .iter()
-                .any(|p| reason.starts_with(p))
+            [
+                "`now`",
+                "`uuid`",
+                "`secret_env`",
+                "`http_fetch`",
+                "`raise`",
+                // The fifteen the runtime library answers (`docs/93` §93.12). Refused by both emitters
+                // until it existed, and a call now — so a refusal blaming one is a refusal that
+                // has not noticed.
+                "`digest`",
+                "`digest_keyed`",
+                "`digest_eq`",
+                "`hex_encode`",
+                "`hex_decode`",
+                "`base64_encode`",
+                "`base64_decode`",
+                "`uuid_parse`",
+                "`uuid_version`",
+                "`str_upper`",
+                "`str_lower`",
+                "`str_to_int`",
+                "`str_replace`",
+                "`time_format`",
+                "`time_parse`",
+            ]
+            .iter()
+            .any(|p| reason.starts_with(p))
         })
         .map(|(name, reason)| format!("{name}: {reason}"))
         .collect();
@@ -2600,9 +2784,18 @@ fn corpus(toolchain: beck_llvm::Toolchain) {
     let stale: Vec<String> = refusal_reasons
         .iter()
         .filter(|(_, reason)| {
-            ["not on this heap", "no collection", "text is not"]
-                .iter()
-                .any(|dead| reason.contains(dead))
+            [
+                "not on this heap",
+                "no collection",
+                "text is not",
+                // `docs/93` §93.12 retired the class, not the names: a primitive that is a table or
+                // somebody else's parser is a call into the runtime library now, so a refusal may
+                // no longer describe one as a reason for refusing anything.
+                "is a table rather than an operation",
+                "agree with Rust's parser",
+            ]
+            .iter()
+            .any(|dead| reason.contains(dead))
         })
         .map(|(name, reason)| format!("{name}: {reason}"))
         .collect();

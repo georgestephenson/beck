@@ -78,14 +78,18 @@ written in memory-unsafe languages to publish a memory-safety roadmap), Beck's r
 because the work was done at the start rather than scheduled:
 
 **Every line of first-party code in this repository is Rust with `unsafe` forbidden at the
-workspace root**, and inheritance is what makes a workspace lint real: **twelve of the fourteen
-crates carry `[lints] workspace = true`**. The two that do not are the WebAssembly modules,
-`beck-wasm` and `beck-play`, and they are the exception rather than a gap — rustc classifies
+workspace root**, and inheritance is what makes a workspace lint real: **twelve of the fifteen
+crates carry `[lints] workspace = true`**. The three that do not are the two WebAssembly modules,
+`beck-wasm` and `beck-play`, and the runtime library a compiled program links, `beck-prim` — and
+they are the exception rather than a gap, for one reason shared between them: rustc classifies
 `#[no_mangle]` as unsafe code (two libraries exporting one symbol is undefined at link time) and a
-WebAssembly module must export something or the host cannot call it. Both set `unsafe_code = "deny"`
-and carry one `#[allow]` per export attribute, and the extent of that is a **test** rather than a
-promise: `mode_b.rs` and `playground.rs` each assert that their crate contains no `unsafe` block, no
-`unsafe fn`, and no allow site that is not on an export. There is no `unsafe` *code* in either.
+library nobody can call is not one. All three set `unsafe_code = "deny"` and carry one `#[allow]`
+per export attribute, and the extent of that is a **test** rather than a promise: `mode_b.rs` and
+`playground.rs` assert that those crates contain no `unsafe` block, no `unsafe fn`, and no allow
+site that is not on an export. There is no `unsafe` *code* in any of them. `beck-prim` is the one
+where the exception could have been much larger: it is handed a compiled program's heap, and it
+takes **offsets into an arena it owns** rather than a pointer and a length precisely so that this
+paragraph does not have to change (`docs/93` §93.12).
 
 There is no `unsafe impl Send`/`Sync` anywhere; every cross-thread type is auto-derived, so the
 compiler is the reviewer. The network-facing tier — the parser, the protocol decoder, the patch

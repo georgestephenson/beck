@@ -135,9 +135,9 @@ fn digest_prim(op: Prim, mut args: Vec<Value>, span: Span) -> Result<Value, Eval
 
 /// A raised value of a prelude-declared union, built from its variant's fields.
 ///
-/// The shape `json_parse` and `time_parse` write out inline; the decoders raise three of these
-/// between them, and three copies of a `Fields::from_iter` would be three chances to name a field
-/// something the prelude does not declare.
+/// The shape `json_parse` writes out inline; `time_parse` and the three decoders raise four of
+/// these between them, and four copies of a `Fields::from_iter` would be four chances to name a
+/// field something the prelude does not declare.
 fn raised<const N: usize>(
     ty: &str,
     variant: &str,
@@ -260,78 +260,6 @@ fn value_to_json(v: &Value, span: Span) -> Result<serde_json::Value, EvalError> 
         }
         _ => Err(EvalError::new("`json_render` expects a Json", span)),
     }
-}
-
-// ------------------------------------------------------------------------------------ time
-//
-// The civil calendar over Unix milliseconds, in UTC. Hinnant's `days_from_civil` and its inverse:
-// well-known, exact for every date this can represent, and — the property that decides it here —
-// pure arithmetic with no table behind it, so `beck replay` cannot disagree with the run it is
-// replaying because a time-zone database was updated in between.
-
-fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
-    let y = if m <= 2 { y - 1 } else { y };
-    let era = if y >= 0 { y } else { y - 399 } / 400;
-    let yoe = y - era * 400;
-    let mp = (m + 9) % 12;
-    let doy = (153 * mp + 2) / 5 + d - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146_097 + doe - 719_468
-}
-
-fn civil_from_days(z: i64) -> (i64, i64, i64) {
-    let z = z + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    (if m <= 2 { y + 1 } else { y }, m, d)
-}
-
-fn format_rfc3339(ms: i64) -> String {
-    // Floor division, so an instant before 1970 formats as the second it is in rather than the one
-    // after it. `-1` is 1969-12-31T23:59:59.999Z, not 1970-01-01T00:00:00.-001Z.
-    let (secs, milli) = (ms.div_euclid(1000), ms.rem_euclid(1000));
-    let (days, sod) = (secs.div_euclid(86_400), secs.rem_euclid(86_400));
-    let (y, m, d) = civil_from_days(days);
-    format!(
-        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}.{milli:03}Z",
-        sod / 3600,
-        (sod % 3600) / 60,
-        sod % 60
-    )
-}
-
-fn parse_rfc3339(s: &str) -> Option<i64> {
-    // `YYYY-MM-DDTHH:MM:SS[.mmm]Z`, UTC only. An offset is refused rather than silently shifted:
-    // accepting `+01:00` would mean accepting that two spellings of the same instant are two
-    // values, and a log is not the place to discover that.
-    let b = s.as_bytes();
-    if b.len() < 20 || (b[10] != b'T' && b[10] != b' ') || *b.last()? != b'Z' {
-        return None;
-    }
-    let num = |from: usize, to: usize| s.get(from..to)?.parse::<i64>().ok();
-    let (y, mo, d) = (num(0, 4)?, num(5, 7)?, num(8, 10)?);
-    let (h, mi, sec) = (num(11, 13)?, num(14, 16)?, num(17, 19)?);
-    if !(1..=12).contains(&mo) || !(1..=31).contains(&d) || h > 23 || mi > 59 || sec > 60 {
-        return None;
-    }
-    let milli = match b[19] {
-        b'.' => {
-            let frac: String = s[20..s.len() - 1].chars().take(3).collect();
-            if frac.is_empty() || !frac.chars().all(|c| c.is_ascii_digit()) {
-                return None;
-            }
-            format!("{frac:0<3}").parse::<i64>().ok()?
-        }
-        b'Z' if s.len() == 20 => 0,
-        _ => return None,
-    };
-    Some((days_from_civil(y, mo, d) * 86_400 + h * 3600 + mi * 60 + sec) * 1000 + milli)
 }
 
 #[derive(Clone, Debug)]
@@ -1625,9 +1553,9 @@ impl<'h> Interp<'h> {
                 let s = v
                     .as_str()
                     .ok_or_else(|| EvalError::new("`str_to_int` expects a Str", span))?;
-                Ok(match s.parse::<i64>() {
-                    Ok(n) => Value::some(Value::Int(n)),
-                    Err(_) => Value::none(),
+                Ok(match beck_prim::text::to_int(s) {
+                    Some(n) => Value::some(Value::Int(n)),
+                    None => Value::none(),
                 })
             }
             // ---- strings. Indices are byte offsets into UTF-8 and are clamped: a slice past the
@@ -1721,10 +1649,12 @@ impl<'h> Interp<'h> {
                 want(1)?;
                 let v = args.pop().expect("arity checked");
                 let s = as_str(&v, op.name(), span)?;
+                // The runtime library's, so that a compiled program folding the same letter
+                // reaches the same table rather than a second one that agrees so far (docs/93 §93.12).
                 Ok(Value::str_(&if op == Prim::StrUpper {
-                    s.to_uppercase()
+                    beck_prim::text::upper(s)
                 } else {
-                    s.to_lowercase()
+                    beck_prim::text::lower(s)
                 }))
             }
             Prim::StrReplace => {
@@ -1735,10 +1665,7 @@ impl<'h> Interp<'h> {
                 let to = as_str(&to, "str_replace", span)?.to_string();
                 let from = as_str(&from, "str_replace", span)?.to_string();
                 let s = as_str(&v, "str_replace", span)?;
-                if from.is_empty() {
-                    return Ok(Value::str_(s));
-                }
-                Ok(Value::str_(s.replace(from.as_str(), &to)))
+                Ok(Value::str_(beck_prim::text::replace(s, &from, &to)))
             }
             Prim::StrIndexOf => {
                 want(2)?;
@@ -1958,24 +1885,20 @@ impl<'h> Interp<'h> {
             Prim::TimeFormat => {
                 want(1)?;
                 let ms = as_int(&args.pop().expect("arity checked"), "time_format", span)?;
-                Ok(Value::str_(format_rfc3339(ms)))
+                Ok(Value::str_(beck_prim::time::format(ms)))
             }
             Prim::TimeParse => {
                 want(1)?;
                 let v = args.pop().expect("arity checked");
                 let text = as_str(&v, "time_parse", span)?;
-                match parse_rfc3339(text) {
-                    Some(ms) => Ok(Value::Int(ms)),
-                    None => Err(EvalError::raise(
-                        Arc::from("TimeError"),
-                        Value::data(
-                            Arc::from("TimeError"),
-                            Some(Arc::from("BadTime")),
-                            Fields::from_iter([(
-                                Arc::from("why"),
-                                Value::str_(format!("`{text}` is not an RFC 3339 instant in UTC")),
-                            )]),
-                        ),
+                match beck_prim::time::parse(text) {
+                    Ok(ms) => Ok(Value::Int(ms)),
+                    // The message is the runtime library's, because a compiled program raises this
+                    // same value with the same `why` in it and one of them has to be the source.
+                    Err(why) => Err(raised(
+                        "TimeError",
+                        "BadTime",
+                        [("why", Value::str_(why))],
                         span,
                     )),
                 }

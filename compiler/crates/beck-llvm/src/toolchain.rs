@@ -39,21 +39,42 @@ impl Toolchain {
     /// `-O2` and not `-O3`: `docs/07` §7.2 buys LLVM for "best peak code quality available in open
     /// source", and `-O2` is what that phrase means in every distribution's build of every
     /// language that uses it. A report that quoted `-O3` would be quoting a setting nobody ships.
-    pub fn build(&self, ir: &str, ll: &Path, exe: &Path) -> Result<(), String> {
+    ///
+    /// `runtime` is the archive [`crate::prim`] staged, for a module that calls the runtime
+    /// library — `None` for one that does not, which is most of them.
+    pub fn build(
+        &self,
+        ir: &str,
+        ll: &Path,
+        exe: &Path,
+        runtime: Option<&Path>,
+    ) -> Result<(), String> {
         std::fs::write(ll, ir).map_err(|e| format!("writing {}: {e}", ll.display()))?;
-        let out = Command::new(&self.clang)
-            .arg("-O2")
+        let mut cmd = Command::new(&self.clang);
+        cmd.arg("-O2")
             // The module names no target triple, so that the same `.ll` is the artefact on every
             // machine and the driver picks the host — which is exactly the case this warning is
             // about, and it is not news.
             .arg("-Wno-override-module")
             .arg("-o")
             .arg(exe)
-            .arg(ll)
-            // `llvm.sin.f64` and `llvm.cos.f64` lower to libm calls: LLVM has no instruction for
-            // either, and the evaluator's `f64::sin` reaches the same library, which is what makes
-            // the two agree bit for bit rather than nearly.
-            .arg("-lm")
+            .arg(ll);
+        // After the module, because a static archive answers the symbols of what precedes it on
+        // the line and nothing on the line precedes the module.
+        if let Some(archive) = runtime {
+            cmd.arg(archive);
+        }
+        // `llvm.sin.f64` and `llvm.cos.f64` lower to libm calls: LLVM has no instruction for
+        // either, and the evaluator's `f64::sin` reaches the same library, which is what makes
+        // the two agree bit for bit rather than nearly.
+        cmd.arg("-lm");
+        if runtime.is_some() {
+            // What Rust's standard library needs from the system. On a glibc since 2.34 both are
+            // empty stubs kept for exactly this kind of link line; on one older than that, or on
+            // another libc, they are the threads and the dynamic loader `libstd` calls into.
+            cmd.args(["-lpthread", "-ldl"]);
+        }
+        let out = cmd
             .output()
             .map_err(|e| format!("running {}: {e}", self.clang.display()))?;
         if !out.status.success() {

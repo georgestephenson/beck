@@ -59,7 +59,7 @@ What that buys, beyond the property:
   ([`93`](../93-the-native-backends-report.md)) — one constant, read twice on a noisy runner. It is a constant, so it is the whole cost of a call that computes nothing and a rounding
   error on one that computes for a millisecond — but it means this backend is for *compute*, and a
   program that crosses it a million times to do a nanosecond of work each time would be slower than
-  the tree-walker. §93.14 says what would remove it.
+  the tree-walker. §93.15 says what would remove it.
 - **One process, one pipe, one lock.** Two threads calling at once serialise on the pipe. The
   runtime calls the fold from a sequencer task and a view from a connection task, so this is a real
   constraint and not a theoretical one — it is the first thing a second version changes.
@@ -75,7 +75,7 @@ What that buys, beyond the property:
 - **No fuel, and no depth ceiling.** [`53`](../53-are-we-fast-yet-report.md)'s step budget and
   [`0007`](0007-evaluator-stack-is-declared-not-discovered.md)'s counted recursion depth are both
   properties of walking a tree, and neither survives compilation. What replaces them is coarser: a
-  wall-clock limit on one call, and a message when the worker dies. §93.14 is the honest list.
+  wall-clock limit on one call, and a message when the worker dies. §93.15 is the honest list.
 
 ## What was considered and refused
 
@@ -107,4 +107,4 @@ as a side effect of wanting a faster benchmark number.
 The trigger that would force it is a *tier* rather than a benchmark: if the server partition ever
 runs compiled rather than walked — the fold, `validate`, the view, all of which cross the seam per
 event — the round trip stops being amortisable and the process boundary stops being affordable.
-Nothing here is on that path yet, and [`93`](../93-the-native-backends-report.md) §93.14 says why.
+Nothing here is on that path yet, and [`93`](../93-the-native-backends-report.md) §93.15 says why.

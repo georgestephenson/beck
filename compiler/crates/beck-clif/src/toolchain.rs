@@ -33,16 +33,34 @@ impl Linker {
     }
 
     /// Link `object` into an executable at `exe`.
-    pub fn link(&self, object: &[u8], obj: &Path, exe: &Path) -> Result<(), String> {
+    ///
+    /// `runtime` is the archive `beck_llvm::prim` staged, for a module that calls the runtime
+    /// library — `None` for one that does not, which is most of them.
+    pub fn link(
+        &self,
+        object: &[u8],
+        obj: &Path,
+        exe: &Path,
+        runtime: Option<&Path>,
+    ) -> Result<(), String> {
         std::fs::write(obj, object).map_err(|e| format!("writing {}: {e}", obj.display()))?;
-        let out = Command::new(&self.cc)
-            .arg("-o")
-            .arg(exe)
-            .arg(obj)
-            // `sin` and `cos` are calls into the C library rather than instructions
-            // ([`crate::emit`]), and the evaluator's `f64::sin` reaches the same library — which
-            // is what makes the two agree bit for bit rather than nearly.
-            .arg("-lm")
+        let mut cmd = Command::new(&self.cc);
+        cmd.arg("-o").arg(exe).arg(obj);
+        // After the object, because a static archive answers the symbols of what precedes it on
+        // the line and nothing on the line precedes the object.
+        if let Some(archive) = runtime {
+            cmd.arg(archive);
+        }
+        // `sin` and `cos` are calls into the C library rather than instructions
+        // ([`crate::emit`]), and the evaluator's `f64::sin` reaches the same library — which
+        // is what makes the two agree bit for bit rather than nearly.
+        cmd.arg("-lm");
+        if runtime.is_some() {
+            // What Rust's standard library needs from the system. On a glibc since 2.34 both are
+            // empty stubs kept for exactly this kind of link line.
+            cmd.args(["-lpthread", "-ldl"]);
+        }
+        let out = cmd
             .output()
             .map_err(|e| format!("running {}: {e}", self.cc.display()))?;
         if !out.status.success() {

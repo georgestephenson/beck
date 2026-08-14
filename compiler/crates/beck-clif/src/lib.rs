@@ -137,7 +137,13 @@ impl Artifact {
         // `.ll`: a code generator whose output cannot be looked at is one nobody can argue with.
         std::fs::write(&clif, &module.clif)
             .map_err(|e| format!("writing {}: {e}", clif.display()))?;
-        linker.link(&module.object, &obj, &exe)?;
+        // The runtime library is unpacked only for a module that calls it, so a program that
+        // reaches none of its primitives pays neither the write nor the linker's read of it.
+        let archive = module
+            .links
+            .then(|| beck_llvm::prim::stage(&dir.path))
+            .transpose()?;
+        linker.link(&module.object, &obj, &exe, archive.as_deref())?;
         let worker = Worker::start_with(&exe, limit)?;
         Ok(Artifact {
             module,
