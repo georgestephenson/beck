@@ -376,7 +376,8 @@ interfaces and the images.
 | 3 | **cross-object invariants, by example** — 15 checks over the canonical program | a selector matching no pod, a dangling `secretKeyRef`, a route to a port nothing serves | anything the canonical program does not exercise | ✅ |
 | 4 | **cross-object invariants, generated** — the same 15 checks over thousands of generated effect rows and adversarial module names | the property holds for programs nobody wrote; turns "these manifests are consistent" into "the emitter cannot produce inconsistent manifests" *for the properties we thought of* | a property nobody stated | ✅ |
 | 5 | **conformance** — `kubectl apply --dry-run=server` against a real API server in CI | admissibility, decided by the only authority there is: admission chains, defaulting, webhooks, and the CRDs no Rust type covers | whether an admissible object *behaves* as intended | ✅ |
-| 6 | **proof** — §21.5 | the properties hold for *all* inputs rather than the sampled ones | the same properties; a proof does not invent them | ✗ |
+| 6 | **ecosystem oracles** — `kubeconform`, kube-score, Polaris, Checkov over the emitted directory in CI ([`28`](28-releases-and-deployment.md) §28.5) | *best practice*, decided by checkers this project does not maintain: [`06`](06-kubernetes-and-packaging.md) §6.3's hardening claims held by somebody else's rules, so a regression in them is a red build rather than our own invariant agreeing with itself | a rule no scanner has; whether a well-scored object *behaves* | ✗ scheduled — due now, per [`28`](28-releases-and-deployment.md) §28.5 |
+| 7 | **proof** — §21.5 | the properties hold for *all* inputs rather than the sampled ones | the same properties; a proof does not invent them | ✗ |
 
 Two things this table is for.
 
@@ -518,4 +519,5 @@ A proof is about a specification. Three things here have no specification we own
 | §21.4 rung 3 — invariants by example | built (`beck-infra/tests/manifests.rs`, 15 checks) |
 | §21.4 rung 4 — invariants over generated graphs | built (`beck-infra/tests/manifest_properties.rs`) |
 | §21.4 rung 5 — conformance against an API server | **written; proved by CI, not by hand.** The harness skips without a cluster and fails without one when `BECK_REQUIRE_CLUSTER=1`; the `conformance` job in `.github/workflows/compiler.yml` sets it. It has never been run on a developer machine, because the container this was written in has no container runtime — so the first real run is CI's, and that is stated here rather than implied |
-| §21.5 rung 6 — proof | not built; §21.5 is the plan |
+| §21.4 rung 6 — ecosystem oracles | not built; scheduled as due now ([`28`](28-releases-and-deployment.md) §28.5) |
+| §21.5 rung 7 — proof | not built; §21.5 is the plan |

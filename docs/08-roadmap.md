@@ -120,7 +120,43 @@ read it.**
 - Playground rung C ([`17`](17-playground.md) §17.3): ephemeral TTL'd cloud environments with the
   compiler-as-first-sandbox effect budget — an operator workload, built alongside the operator.
 - Effect-derived NetworkPolicy/RBAC/DB grants (§6.5) — the platform-team sales pitch.
-- Crossplane emitter for managed Postgres/buckets/DNS; OpenTofu escape hatch; `import infra`.
+- **The managed-cloud path** ([`28`](28-releases-and-deployment.md) §28.3 owns the pipeline view;
+  this is the landing order). The design is deliberately vendor-neutral Kubernetes, and the
+  consensus target is AWS — half again the runner-up's share (Stack Overflow 2025 survey: 43.3%
+  AWS, 26.3% Azure, 24.6% GCP) — so "deploys to a cluster" must become "deploys to EKS with
+  nothing but an AWS account" in these steps, each usable without the next:
+  1. **Publish the first release** — the tag through `release.yml`, which exists and has never
+     run. This is a deployment feature, not just a distribution one: the workflow `beck init ci`
+     emits builds the toolchain from a checkout *because there is no release to install* (the
+     generated file says so in a comment), so the first tag converts every generated pipeline's
+     slowest step into an install.
+  2. **`beck image --push`** — `beck image` writes an OCI layout and deliberately does not upload
+     it; the push to a registry (ECR, GHCR, Harbor) is the one imperative step the generated
+     pipeline cannot finish without. The registry client is the same one §6.7's ORAS package
+     distribution needs — build it once.
+  3. **The Crossplane emitter** — the derivation that turns `durable` into a PVC turns it into a
+     managed-Postgres claim (RDS, Cloud SQL) at rung 4+ of §6.6's ladder; buckets and DNS from the
+     resources a program names; OpenTofu emitter as the escape hatch for estates Crossplane cannot
+     reach; `import infra` for everything else. Terraform stays excluded on licence
+     ([`07`](07-dependencies.md)).
+  4. **Rungs 4–5 executed, not designed**: `beck deploy --to staging` run against a real EKS
+     cluster, end to end, before any document claims it. An artefact nobody has executed is a
+     design document.
+- **A static-host `Platform`** (GitHub Pages, Cloudflare Pages, Netlify — the hosts the web
+  crowd's `git push`-to-deploy expectation comes from): for a program whose effect row a CDN can
+  satisfy — no `durable` server fold, no `merge_clients()` — `beck build --platform static` emits
+  the directory and `beck init ci` the Pages workflow. The admission check *is* the effect row:
+  the same analysis that derives a NetworkPolicy decides whether a static host is a sufficient
+  computer, and a program that does not qualify is told which atom disqualified it
+  (`beck explain deploy`). The playground ([`17`](17-playground.md) §17.1 rung A) is the first
+  artefact through this door and already proves the shape.
+- **ECS/Fargate `Platform`** — explicitly a market-scope decision rather than an engineering one:
+  the Compose implementation priced a new platform at one file and one flag
+  ([`07`](07-dependencies.md) §7.8), and much of "everyone uses AWS" is teams that run no
+  Kubernetes at all. After the Crossplane emitter, if adoption says so.
+- `beck init ci` grows the GitLab CI emitter §6.8 already names beside the GitHub Actions one,
+  and the third-party manifest-scanner gate lands in this project's own CI first
+  ([`28`](28-releases-and-deployment.md) §28.5).
 - OpenTelemetry cross-tier tracing on by default; `beck tune` right-sizing.
 - Multi-arch images; air-gapped install; OCI package registry via ORAS (§6.7).
 - **FFI**: C ABI both directions; JS interop for the client tier; a Python bridge (§9.2) — the

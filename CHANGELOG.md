@@ -12,6 +12,29 @@ Newest first.
 
 ## Unreleased
 
+### The deployment plan
+
+- **The managed-cloud path is a landing order rather than a paragraph**
+  ([`docs/08`](docs/08-roadmap.md) Phase 4, [`docs/28`](docs/28-releases-and-deployment.md) §28.3):
+  publish the first release (it converts `beck init ci`'s build-from-checkout step into an
+  install), `beck image --push` (the one imperative step the generated pipeline cannot finish
+  without — §28.3 also stops describing a push the workflow does not do), the Crossplane emitter
+  (`durable` ⇒ a managed-Postgres claim the way it already ⇒ a PVC), then `beck deploy --to`
+  executed against a real EKS cluster. A static-host `Platform` (GitHub Pages, Cloudflare Pages —
+  admissible exactly when the effect row says a CDN is a sufficient computer) and an ECS/Fargate
+  `Platform` (a market-scope decision, priced by the Compose implementation) join the roadmap.
+- **Third-party manifest scanners are scheduled as a CI gate, due now**
+  ([`docs/28`](docs/28-releases-and-deployment.md) §28.5): `kubeconform`, kube-score, Polaris and
+  Checkov over `beck build`'s emitted directory — the manifest ladder's first *best-practice*
+  oracle this project does not maintain, added to
+  [`docs/21`](docs/21-tests-in-beck-and-proof.md) §21.4 as rung 6 (proof moves to 7).
+- **Two stale claims corrected in place**: [`docs/06`](docs/06-kubernetes-and-packaging.md) §6.3
+  and [`docs/82`](docs/82-the-defaults-that-should-be-unavoidable-report.md) §82.4/§82.5 said no
+  cluster checks the hardening defaults; `compiler.yml`'s conformance job (k3d,
+  `BECK_REQUIRE_CLUSTER=1`) has held admissibility on every merge since it landed. What remains
+  unestablished is behaviour — dry-run schedules nothing — and best practice, which the scanner
+  gate is for.
+
 ### The native backends
 
 - **Fifteen primitives that are a table, a grammar or somebody else's parser compile**, to both

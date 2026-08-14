@@ -103,9 +103,13 @@ digest-pinned. Missing is the pipeline around it:
 
 1. **`beck init ci`** — **built** ([`92`](92-supply-chain-and-release-report.md)) — emits a workflow mirroring
    our discipline:
-   `beck check`, `beck test`, `beck check --wire-compat` against the deployed interface, then
-   `beck build` and an image push on merge. Wire-compat is the load-bearing step — the §3.6/§4.3
-   firewall placed where it stops a bad deploy rather than reporting one.
+   `beck check --locked`, `beck test`, `beck check --wire-compat` against the released interface,
+   `beck build`, `beck up --dry-run`, then on the default branch an image built twice (the digests
+   diffed — reproducibility as a gate) and signed. Wire-compat is the load-bearing step — the
+   §3.6/§4.3 firewall placed where it stops a bad deploy rather than reporting one. The workflow
+   does **not** push the image, because nothing can yet (item 4), and it builds the toolchain from
+   a checkout because there is no release to install (item 5). GitHub Actions only; the GitLab
+   emitter §6.8 names is not written.
 2. **GitOps is the default contract**: `beck build --out` writes manifests-only directories (a
    CI gate asserts it), so a controller pointed at the directory is already a deployment
    pipeline. `beck deploy` stays the imperative form for rungs 0–2 of §6.6's ladder.
@@ -113,6 +117,22 @@ digest-pinned. Missing is the pipeline around it:
    `migrate`/`upcast` → resume (§6.4); canaries via Gateway API + Argo Rollouts. The pipeline
    ends at "the desired state names a new digest and a migration"; the operator owns the stream
    surviving the transition. Until then, deploys are rolling-update only, and docs say so.
+4. **`beck image --push`** — not built. `beck image` writes an OCI layout and deliberately does
+   not upload it, so the registry push (ECR, GHCR, Harbor) is the one imperative step the
+   generated pipeline cannot finish without, and today it is a `crane`/`skopeo` step the user
+   writes themself. The client that fixes this is the client §6.7's ORAS package distribution
+   needs anyway — one code path, twice the reason.
+5. **The first published release is a pipeline feature.** Until a tag goes through
+   `release.yml`, every repository that runs `beck init ci` compiles the whole toolchain from
+   source as its first CI step. Cutting the release is the single highest-leverage act for the
+   generated pipeline's speed, and nothing about the emitted file changes when it lands — the
+   step swaps, the comment above it already says so.
+6. **The managed-cloud rungs** (rungs 4–5 of §6.6, [`08`](08-roadmap.md) Phase 4 has the landing
+   order): the Crossplane emitter turns `durable` into a managed-Postgres claim the way it
+   already turns it into a PVC; `beck deploy --to` is then executed against a real EKS cluster
+   before any document claims the rung. A static-host target (GitHub Pages, Cloudflare Pages) for
+   programs whose effect row a CDN can satisfy, and an ECS/Fargate `Platform`, are the same
+   roadmap block.
 
 ## 28.4 The project's own deployments
 
@@ -135,6 +155,7 @@ Gates deliberately not added yet, and when each becomes due — so absence stays
 | Mutation testing ≥85% on checker/solver/splitter (§13.8) | Phase 3 tail, nightly lane | Too slow for PRs |
 | Docs-as-tests: Beck blocks in docs checked (§13.6) | With the tutorial | Today's doc snippets are design sketches, deliberately ahead of the language |
 | Per-session memory / arrangement-entry gates | Needs an owner | [`23`](23-incremental-views-report.md) §23.10: exported, ungated, deferred by four reports; the value that should fail a build has to be defended, not guessed |
+| Third-party manifest scanners over `beck build` output — `kubeconform`, kube-score, Polaris, Checkov | **Due now** — the next change to `compiler.yml` | Not a deferral, a schedule: [`21`](21-tests-in-beck-and-proof.md) §21.4's ladder tops out at admissibility, and its only third-party deciders are a YAML parser and the API server, which check *validity*. §6.3's hardening defaults are held by our own invariants alone. The scanners are the oracle this project does not maintain — the same discipline as `clbg/` reading the Game's own constants — and they turn "production-grade generated YAML" into somebody else's verdict, renewed on every merge. Run them over the emitted directory; a finding fails the build; a rule we deliberately break (CPU limits, §6.3) is suppressed by name, in the workflow, where the suppression is a reviewable diff |
 
 ## 28.6 The review's ledger
 
