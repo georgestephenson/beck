@@ -350,8 +350,8 @@ dependencies whose signatures didn't change.
   ***The first half is now built** ([`46`](46-standard-library-report.md)): strings, list and map
   collections, JSON and time as thirty-one primitives, plus `compiler/lib/` — the half written in
   Beck, three libraries with their own tests. HTTP, crypto, decimal, bignums and numeric coercion
-  are untouched, and §46.6 is the item-by-item list. The `Num` mechanism turned out not to be
-  enough for money — §46.5 is the wall — and [`27`](27-the-walls-come-down-report.md) took it
+  are untouched, and §46.14 is the item-by-item list. The `Num` mechanism turned out not to be
+  enough for money — §46.6 is the wall — and [`27`](27-the-walls-come-down-report.md) took it
   down: an impl may now be more effectful than its trait, so `Money` has its operator.*
 - **The language's own means of abstraction, which four phases had never been pointed at**
   ([`25`](25-benchmarks-and-expressiveness.md) §25.6, measured; §25.7 orders them). Every corpus
@@ -708,7 +708,7 @@ is the argument for reading the rest of this section.
 
 | Item | Recorded in | Expensive from |
 |---|---|---|
-| ~~Virtualized clock~~, ~~then network~~, then disk | F11; [`13`](13-testing.md) §13.4 | **Two of three.** The clock is supplied rather than ambient ([`44`](44-wave-0-report.md) §44.3), with a test that counts the readers; the network is a seam with three implementations ([`49`](49-http-client-report.md) §49.5), and it arrived *with* the first thing that needed it rather than after. The **disk** is not, and elapsed time is not |
+| ~~Virtualized clock~~, ~~then network~~, then disk | F11; [`13`](13-testing.md) §13.4 | **Two of three.** The clock is supplied rather than ambient ([`44`](44-wave-0-report.md) §44.3), with a test that counts the readers; the network is a seam with three implementations ([`46`](46-standard-library-report.md) §46.9), and it arrived *with* the first thing that needed it rather than after. The **disk** is not, and elapsed time is not |
 | ~~The two syntax decisions~~ | [`09`](09-risks-and-open-questions.md) §9.6 item 5 | **Taken** — [`10`](10-decisions.md) D21 and D22, inside the deadline |
 | ~~Unicode version pinned per release + UTS #39 security profile~~ | [`35`](35-standards-landscape.md) §35.5 item 2 | **Done** ([`44`](44-wave-0-report.md) §44.5), with the bidirectional half the profile does not reach closed alongside it |
 | ~~Errors as a row label, `Result` reified, lexical handlers~~ | [`38`](38-literature-survey.md) §38.4 | **Done** ([`27`](27-the-walls-come-down-report.md)), before the standard library's signatures rather than after — which is the one thing §8.5.3 trap 2 asked for |
@@ -783,12 +783,12 @@ no child may name another, and no child may perform an effect another child coul
 **built** — thirty-one primitives plus `compiler/lib/`, which is the half written in Beck and the
 answer to which parts of a library the *host* owns. `json_parse` and `time_parse` raise rather than
 returning a `Result`, which is trap 2 cashed: a wave earlier, every one of those signatures would
-now be wrong. The **HTTP client is built too** ([`49`](49-http-client-report.md)) — the item whose
+now be wrong. The **HTTP client is built too** ([`46`](46-standard-library-report.md)) — the item whose
 effect row nobody had designed, and the reason to take it next rather than last: `net.out(host)` is
 charged from the host *written at the call site*, so §6.5's egress policy stays derivable, and
 [`adr/0013`](adr/0013-the-host-of-an-outbound-call-is-written-at-the-call-site.md) records what
 that costs. **`Set` operations, sorting, grouping, deduplication, durations and date arithmetic are
-built** ([`50`](50-collections-and-dates-report.md)), and added no primitives: a set is a map's
+built** ([`46`](46-standard-library-report.md)), and added no primitives: a set is a map's
 keys and the civil calendar is arithmetic, so both are files in `compiler/lib/` rather than lines
 in `prelude.rs`. **Digests, encodings and identifiers are built too**
 ([`52`](52-crypto-and-identifiers-report.md)): nine primitives — a hash, a keyed one, a
@@ -804,9 +804,9 @@ function behind `cap.sign` with a test that enumerates the prelude and keeps the
 **arbitrary-precision decimal** is built too ([`56`](56-decimal-report.md)) — canonical, with `/`
 exact or refusing — so **§8.5.4's Wave 2 is finished** and what is left on this bullet is the
 benchmark harness. And it is a standard library a program can *reach* since
-[`69`](69-standard-library-imports-report.md): every file in `compiler/lib/` is carried in the
+[`46`](46-standard-library-report.md): every file in `compiler/lib/` is carried in the
 compiler and importable by name from anywhere, which nothing outside that directory could do for the
-three waves it took to write. §46.6 has the item-by-item list, §49.6 the client's own, §50.6 the two newest
+three waves it took to write. §46.14 has the item-by-item list, §46.14 the client's own, §46.14 the two newest
 files' and §52.6 the crypto half's — including what a digest deliberately is not: no asymmetric
 signature, no TLS, no encryption of any kind. The **Are We Fast Yet harness is complete — all fourteen
 benchmarks** ([`53`](53-are-we-fast-yet-report.md), [`53`](53-are-we-fast-yet-report.md),
@@ -814,12 +814,12 @@ benchmarks** ([`53`](53-are-we-fast-yet-report.md), [`53`](53-are-we-fast-yet-re
 [`53`](53-are-we-fast-yet-report.md)), each verified against the constant
 the original suite's own `verifyResult` checks, with wall-clock printed and nothing compared to
 anything — §8.4's ask, half discharged. The **CLBG** harness is stood up too
-([`68`](68-clbg-report.md)) — eight of the Game's ten, verified against the Game's own published
+([`46`](46-standard-library-report.md)) — eight of the Game's ten, verified against the Game's own published
 output *files*, with the oracle enforced by the gate rather than transcribed by hand — so §8.4's
 ask is **discharged in full**. Its largest finding was not about either suite: **`lib/` was a
 standard library nothing outside `lib/` could import**, since `import` resolved only against the
-root module's own directory (§68.4). That is fixed
-([`69`](69-standard-library-imports-report.md)) — the library is carried in the compiler and an
+root module's own directory (§46.10). That is fixed
+([`46`](46-standard-library-report.md)) — the library is carried in the compiler and an
 import resolves against the caller's directory first ([`10`](10-decisions.md) D23) — which took the
 Game's harness from seven to eight, since `pidigits` was the benchmark it was holding. The
 **Felleisen table** ([`63`](63-felleisen-report.md)) and the **compile-speed budgets**
@@ -827,14 +827,14 @@ Game's harness from seven to eight, since `pidigits` was the benchmark it was ho
 [`25`](25-benchmarks-and-expressiveness.md) §25.9 rather than under this bullet.
 
 *It found a wall too, in the same way and one wave later: **a credential could not be sent**, because
-§3.5 gives a program no way to read a `secret[Str]` and a header value is a `Str` (§49.4). It had
+§3.5 gives a program no way to read a `secret[Str]` and a header value is a `Str` (§46.8). It had
 been invisible for three phases because no program had ever tried to *spend* a secret — `corpus/03`
 has held an `ApiKey` since Phase 1 and never used it. Closed by sending the secret at the edge
 rather than by weakening the property, so `"Bearer " + reveal(token)` is still a compile error.*
 
 *Writing it found a wall, which is what writing a library is for: **a trait's declared row is a
 bound, so a fallible operation cannot be a trait method** — `Money` cannot have `+` because `Num`
-is pure and mixing currencies has to fail (§46.5). The fix is one feature, a row variable in a
+is pure and mixing currencies has to fail (§46.6). The fix is one feature, a row variable in a
 trait's method signatures, which [`27`](27-the-walls-come-down-report.md) built
 for a user's higher-order definitions and nothing has built for traits. It is asserted as a
 refusal, so it is a test that goes red rather than a paragraph.*
@@ -890,7 +890,7 @@ that never asks who is connected is not re-rendered when somebody connects.
 
 *Both of that row's predecessors are gone.* §48.5 said the relying party "needs an HTTP client and a
 signature library, so it is an ADR rather than a line in a module". The HTTP client was built
-([`49`](49-http-client-report.md)); the signature library and TLS were **one decision**, taken in
+([`46`](46-standard-library-report.md)); the signature library and TLS were **one decision**, taken in
 [`adr/0023`](adr/0023-tls-and-the-signature-it-brings.md) — because rustls's cryptography provider
 *is* a signature library, so [`07`](07-dependencies.md) §7.2's TLS row buys the asymmetric half for
 nothing. This row's forecast that the two were one ADR was right; the reason turned out to be
@@ -1035,8 +1035,8 @@ Recommended pairings, in order:
 | When | Branch 1 (critical path) | Branch 2 | Why it is safe |
 |---|---|---|---|
 | ~~**Then**~~ | ~~Lane A: `Result` and error rows~~ | ~~Lane D, plus Lane C's half of Wave 0~~ | **Done.** Both branches landed together, and the prediction held: the error rows touched `check/`, `ty.rs`, `row.rs` and `core.rs`, and Wave 0 touched `beck-diag`, `beck-syntax`, `beck-rt` and `docs/`. The one collision was the one the table names below — `beck-diag/src/index.rs`, four new codes — and it was trivial because the numbers were far apart |
-| ~~**Then**~~ | ~~Lane A: the standard library, on the error shape Wave 1 settled~~ | ~~Lane B: the shared dataflow's three loose ends~~ | **Half done.** The library's first half landed ([`46`](46-standard-library-report.md)), then the wall it wrote ([`27`](27-the-walls-come-down-report.md)), then the HTTP client ([`49`](49-http-client-report.md)) — which was Lane A *and* Lane B, because the seam is in `beck-core` and the implementation is in `beck-rt`. The prediction held anyway: nothing in `engine.rs` was touched |
-| ~~**Then**~~ | ~~Lane A: the rest of Wave 2 — `Set`, dates~~ | ~~Lane B: the shared dataflow's three loose ends~~ | **Half done.** `Set` and dates landed ([`50`](50-collections-and-dates-report.md)) and were not Lane A at all: two files in `compiler/lib/`, no primitive, and the only Rust touched was one diagnostic's label. Lane B is untouched, so the pairing was never tested — the prediction it made cannot be claimed to have held |
+| ~~**Then**~~ | ~~Lane A: the standard library, on the error shape Wave 1 settled~~ | ~~Lane B: the shared dataflow's three loose ends~~ | **Half done.** The library's first half landed ([`46`](46-standard-library-report.md)), then the wall it wrote ([`27`](27-the-walls-come-down-report.md)), then the HTTP client ([`46`](46-standard-library-report.md)) — which was Lane A *and* Lane B, because the seam is in `beck-core` and the implementation is in `beck-rt`. The prediction held anyway: nothing in `engine.rs` was touched |
+| ~~**Then**~~ | ~~Lane A: the rest of Wave 2 — `Set`, dates~~ | ~~Lane B: the shared dataflow's three loose ends~~ | **Half done.** `Set` and dates landed ([`46`](46-standard-library-report.md)) and were not Lane A at all: two files in `compiler/lib/`, no primitive, and the only Rust touched was one diagnostic's label. Lane B is untouched, so the pairing was never tested — the prediction it made cannot be claimed to have held |
 | ~~**Then**~~ | ~~Lane A: bignums, coercion, `@derive`~~ | ~~Lane B: the shared dataflow's three loose ends~~ | **Half done, and the other half.** Lane B was taken at last, after being the recommended Branch 2 for three consecutive rewrites: two of the three loose ends are closed ([`23`](23-incremental-views-report.md)) and the third — the render lock — is deliberately left. The prediction held exactly: `engine.rs`, `beck-rt/` and one test suite, and nothing in `check/`, `ty.rs` or `core.rs`. Lane A is untouched, so this pairing was again never actually run as a pair |
 | ~~**Then**~~ | ~~Lane A: bignums, coercion, `@derive`~~ | ~~Lane B: SQL read models and pgwire~~ | **Half done, and the other half again.** Lane B was taken ([`23`](23-incremental-views-report.md)) and the prediction held: `beck-core/src/read.rs`, `beck-rt/src/pgwire.rs`, one reader type on `engine.rs`, and nothing in `check/`, `ty.rs` or `core.rs`. Lane A is untouched, so this pairing was never run as a pair either — the fourth consecutive rewrite in which it was not |
 | ~~**Then**~~ | Lane A: ~~the pattern-matching completion the error-rows bullet still names~~ — **built**, with nesting, guards and alternatives ([`90`](90-nested-patterns-report.md), [`91`](91-guards-and-alternatives-report.md)); what is left in this lane is `Ord` as a trait, which [`54`](54-ordering.md) writes out and explicitly does *not* recommend | Lane B: ~~query fusion on symbolic plans~~ — **built** ([`23`](23-incremental-views-report.md)); ~~Mode B's server half~~ — **built** ([`94`](94-the-client-report.md)), and it is one branch in `session.rs`; what is left in this lane is the render lock ([`23`](23-incremental-views-report.md) §23.19), which survives into the row below still unowned | `beck-rt` and `engine.rs` are untouched by anything in `check/` |
@@ -1090,7 +1090,7 @@ discipline that avoids the collision.
   constraint, which is all `FIXED (constraint recorded)` ever claimed; the runtime then did not
   honour it for three phases. The clock is now supplied rather than ambient
   ([`44`](44-wave-0-report.md) §44.3) and the network is a seam
-  ([`49`](49-http-client-report.md) §49.5) — the second built *before* its first caller rather than
+  ([`46`](46-standard-library-report.md) §46.9) — the second built *before* its first caller rather than
   three phases after, which is the whole of what F11 asks for. The **disk** is untouched, as is
   elapsed time. Correcting the record is this bullet, since [`14`](14-review-findings.md) is
   history like any report.
@@ -1115,7 +1115,7 @@ they are what the next rewrite should assume:
 - **A wave item can be in the wrong lane.** §8.5.5 filed `Set` and dates under Lane A, the type
   system, on the assumption that a standard-library item is a language item. They turned out to be
   two files of Beck and no compiler change at all
-  ([`50`](50-collections-and-dates-report.md)) — which means they could have run beside a Lane A
+  ([`46`](46-standard-library-report.md)) — which means they could have run beside a Lane A
   branch rather than behind one. The lane table is about which *files* two branches would both
   rewrite, and nothing had asked which files these would touch before assigning them.
 - **A G-class item's real output is the gate, not the artefact.** Every prose item in Wave 0 —

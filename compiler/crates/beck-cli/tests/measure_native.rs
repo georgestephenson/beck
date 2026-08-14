@@ -1155,7 +1155,7 @@ def down(n: Int) -> Int:
 
 /// What an appended accumulator costs against the tree-walker, at two sizes.
 ///
-/// `docs/69` §69.7 measured this loop as **quadratic in time** on the evaluator before
+/// `docs/46` §46.12 measured this loop as **quadratic in time** on the evaluator before
 /// `docs/70` gave it last-use moves, and `docs/93` §93.7 refused to compile it rather than ship
 /// the quadratic back. `docs/93` is the layout that removed the choice, and this is the row that
 /// says so: the ratio has to **hold its shape** over four times the elements, because a copying

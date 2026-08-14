@@ -200,7 +200,7 @@ why there is a second version: doing it inside the clone is free and doing it af
 ### 87.5.1 Why three reports on this did not find it
 
 [`19`](19-phase-1-report.md) §19.4 found a fold that copied its accumulator,
-[`69`](69-standard-library-imports-report.md) §69.7 found `list_append` copying,
+[`46`](46-standard-library-report.md) §46.12 found `list_append` copying,
 [`70`](70-the-evaluator-gets-fast-report.md) fixed the recursive spelling and
 [`70`](70-the-evaluator-gets-fast-report.md) fixed the fold spelling three reports later. This is the same
 defect in a fourth spelling, and the reason it survived is

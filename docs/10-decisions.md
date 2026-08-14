@@ -702,7 +702,7 @@ mitigation is the LSP's, not the grammar's.
 
 ## D23 — The standard library is on an implicit path, and the caller's directory wins — **DECIDED**
 
-[`68`](68-clbg-report.md) §68.4 found that `import` resolved against the root module's own directory
+[`46`](46-standard-library-report.md) §46.10 found that `import` resolved against the root module's own directory
 and against nothing else, and left the fix here rather than taking it in a benchmark's change:
 making `import bignum` work from anywhere "is deciding that `lib/` is on an implicit search path …
 but it changes name resolution for every program in the language". That is the decision, and it is
@@ -735,7 +735,7 @@ engineering record of that and of the alternatives.
 a program can import two — Beck's namespace is flat and has no qualified reference (`B0601`). Two
 collisions were waiting on the day this was taken, and the gate that finds them is
 `stdlib.rs::the_whole_library_links_into_one_program`.
-[`69`](69-standard-library-imports-report.md) is the build report.
+[`46`](46-standard-library-report.md) is the build report.
 
 **What would reopen this.** The package system. A namespaced import (`@beck/std/bignum`) changes the
 notation and could change the precedence; that is a decision for

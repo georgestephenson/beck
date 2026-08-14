@@ -14,7 +14,7 @@
 //!   backend that made the tag a declaration index would answer `<` backwards, and
 //!   `ranked_order` is the definition that says so.
 //! * **`Key`'s fields are declared out of alphabetical order.** A record is compared field by
-//!   field in *name* order (`docs/50` §50.6), so `name` decides before `score` even though `score`
+//!   field in *name* order (`docs/46` §46.14), so `name` decides before `score` even though `score`
 //!   is written first. A layout in declaration order answers the opposite.
 //! * **`Weighed` holds reals.** A real on the heap has to be the one the evaluator would have
 //!   built — `-0.0` normalised to `0.0`, every NaN to one NaN — or `==` on two records disagrees

@@ -4,7 +4,7 @@
 [`55`](55-bignums-report.md)'s bignums. It is the last item of [`08`](08-roadmap.md) §8.5.4's
 **Wave 2**, which is now finished.
 
-[`46`](46-standard-library-report.md) §46.6 said what `money.beck` is and is not — "money, not
+[`46`](46-standard-library-report.md) §46.14 said what `money.beck` is and is not — "money, not
 decimal … no arbitrary precision" — and [`55`](55-bignums-report.md) §55.6 named this as the thing
 the bignums made possible and did not contain, with its one real design question written down:
 **what `/` does when the quotient does not terminate.** §56.3 is that decision.
@@ -157,14 +157,14 @@ iface` were right; `beck doc` was wrong three ways, and one Beck file in `lib/` 
 | Square root, powers, logarithms | **not built.** None has an exact decimal answer in general, so each needs the scale-and-rule shape `divide_to` has, and none is written |
 | A scale that carries significance | **not built**, deliberately — §56.1. `render_at` is the presentation, `money.beck` is the fixed-scale type |
 | `Decimal` in `money.beck` | **not done.** `Money` is still `Int` minor units. Rewriting it over `Decimal` is now expressible and is a change to a type other files use, so it is not being done in passing |
-| A number for any of it | **none.** `beck test lib/decimal.beck` takes 7.2 s in a debug build, which is a fact about the gate. [`46`](46-standard-library-report.md) §46.6's reason is unchanged: the tree-walker would be what a measurement measured |
+| A number for any of it | **none.** `beck test lib/decimal.beck` takes 7.2 s in a debug build, which is a fact about the gate. [`46`](46-standard-library-report.md) §46.14's reason is unchanged: the tree-walker would be what a measurement measured |
 | Per-definition module provenance | **not built**, and it is what the second §56.5 finding is really about. A definition does not record which module it came from; the page is right because the *interface* is the root's, not because the program can be filtered |
 
 ## 56.7 What this corrects
 
 - **[`08`](08-roadmap.md) §8.5.4's Wave 2 is finished.** "Crypto, UUID parsing, arbitrary-precision
   decimal, bignums and numeric coercion" — the last of the five.
-- **[`46`](46-standard-library-report.md) §46.6's money/decimal row moves.** "`lib/money.beck` is
+- **[`46`](46-standard-library-report.md) §46.14's money/decimal row moves.** "`lib/money.beck` is
   money, not decimal … no arbitrary precision" stays true of `money.beck`, and the decimal it said
   was missing now exists beside it.
 - **[`55`](55-bignums-report.md) §55.6's decimal row moves**, and its "one real design question" is

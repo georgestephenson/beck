@@ -586,7 +586,7 @@ pub const DEFAULT_MAX_DEPTH: u32 = 4_000;
 /// `last_use` is [`beck_core::liveness`]'s promise that no later evaluation in this body reads the
 /// binding, and [`Env::take`] only empties a frame nothing else holds — so a value that arrives
 /// here from a last read is one nobody else has, which is what lets `list_append` push into a list
-/// instead of copying it (`docs/69` §69.7).
+/// instead of copying it (`docs/46` §46.12).
 ///
 /// `#[inline]`, unlike [`Interp::leaf`]'s arms: this is the single hottest node in the interpreter
 /// — every argument, every condition and every operand is one — and a call here costs a few percent
@@ -1834,7 +1834,7 @@ impl<'h> Interp<'h> {
                 let xs = args.pop().expect("arity checked");
                 // The other half of what `Env::take` starts: a list that arrived from a last read
                 // is held by nobody else, so the push costs nothing. One that did not is copied,
-                // which is what this always did. `docs/69` §69.7 is the measurement.
+                // which is what this always did. `docs/46` §46.12 is the measurement.
                 if let Value::List(arc) = xs {
                     let mut out = match Arc::try_unwrap(arc) {
                         Ok(owned) => owned,

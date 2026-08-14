@@ -1898,7 +1898,7 @@ fn an_accumulator_costs_the_square_of_what_it_builds() {
 /// A slice of a list costs its answer, and the loop that walks one stays linear.
 ///
 /// `a_slice_costs_its_answer_and_not_the_string_it_came_from` one type over, and for the same
-/// reason: `docs/69` §69.7 found the quadratic in a list and `docs/70` §70.2 found it in text, so
+/// reason: `docs/46` §46.12 found the quadratic in a list and `docs/70` §70.2 found it in text, so
 /// the shape gate belongs on both. One element sliced out is a header, a block and the element — so
 /// `n` steps are `40n` bytes, and a `list_slice` that copied what it was taken *from* would be
 /// `O(n²)` with no clock in the measurement.
@@ -2964,7 +2964,7 @@ fn unwinding_costs_nothing_per_frame() {
 /// This is `docs/93`'s claim and the reason the operation could be compiled at all. The idiom is
 /// the one every loop in the language is written as — `f(…, list_append(acc, x))` in tail position —
 /// and it was refused rather than shipped because with the count in front of the elements an append
-/// can only copy, which is `Θ(n²)` where `beck-eval` is `Θ(n)` (`docs/69` §69.7).
+/// can only copy, which is `Θ(n²)` where `beck-eval` is `Θ(n)` (`docs/46` §46.12).
 ///
 /// Four times the elements must cost about four times the arena. A copying append leaves about
 /// sixteen, which is what the text accumulator beside this still does — `docs/93` §93.7, and the

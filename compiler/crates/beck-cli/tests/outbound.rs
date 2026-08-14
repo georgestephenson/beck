@@ -1,6 +1,6 @@
 //! The outbound call: `http_fetch`, the atom it performs, and the egress rule that follows.
 //!
-//! [`docs/46`](../../../../docs/46-standard-library-report.md) §46.6 called the HTTP client "the
+//! [`docs/46`](../../../../docs/46-standard-library-report.md) §46.14 called the HTTP client "the
 //! one item on the list with an effect row nobody has designed — `net.out(host)` per call site,
 //! with the host in the type". This harness is the design, asserted:
 //!

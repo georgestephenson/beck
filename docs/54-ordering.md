@@ -1,11 +1,11 @@
 # 54 — Ordering: what `Ord` would be, and what it would cost
 
-**Options, not a decision.** [`50`](50-collections-and-dates-report.md) §50.5 ended by naming `Ord`
+**Options, not a decision.** [`46`](46-standard-library-report.md) §46.6 ended by naming `Ord`
 as a trait — "the way `Num` is one, so a type says what its own order is instead of inheriting the
 one its representation happens to have" — and said explicitly that the paragraph was not a proposal
 but a place for the next person to start. This is that person's write-up: what the order actually
 is today, everything that depends on it, four options with their costs, and a recommendation that is
-**not** the one §50.5's sentence points at.
+**not** the one §46.6's sentence points at.
 
 Nothing here is built and nothing here is settled. It exists so the decision is taken deliberately
 rather than under the time pressure of the change that needs it — which is
@@ -25,12 +25,12 @@ orders, and let the program pick".
 
 **A record's fields are a `BTreeMap<Arc<str>, Value>`, so a record orders by field _name_.**
 `Key(score=…, name=…)` sorts by `name`, because `n` precedes `s`. That is
-[`50`](50-collections-and-dates-report.md) §50.5's finding, and it is pinned by
+[`46`](46-standard-library-report.md) §46.6's finding, and it is pinned by
 `stdlib.rs::a_record_orders_by_field_name_and_not_by_declaration_order`.
 
 ## 54.2 Everything that depends on it
 
-This is the part §50.5 could only gesture at, and it is what decides the question.
+This is the part §46.6 could only gesture at, and it is what decides the question.
 
 | | Where | What it means |
 |---|---|---|
@@ -53,7 +53,7 @@ One order, everywhere, and `Key(score=…, name=…)` sorts by the name.
 **For:** nothing can diverge, because there is nothing to diverge from. The digest, the patch stream,
 the arrangements and `sorted` all agree by construction, and they agree today.
 
-**Against:** the reader's intent is silently inverted in the one case §50.5 found, and the workaround
+**Against:** the reader's intent is silently inverted in the one case §46.6 found, and the workaround
 — name the fields so that alphabetical order is the intended order — is the kind of advice that is
 correct and embarrassing.
 
@@ -66,7 +66,7 @@ A prelude `trait Ord` with a comparison method; `<` resolves through it when the
 machinery exists: [`27`](27-the-walls-come-down-report.md)'s bounds, [`27`](27-the-walls-come-down-report.md)'s
 per-impl rows, [`27`](27-the-walls-come-down-report.md)'s module crossing.
 
-This is the option §50.5's closing sentence points at, and it is the one to **reject**, for a reason
+This is the option §46.6's closing sentence points at, and it is the one to **reject**, for a reason
 that only becomes visible once §54.2's table is written out.
 
 **What it buys:** a type may override its own order. That is the whole list. It is worth being exact
@@ -75,12 +75,12 @@ about the things it does *not* buy, because they are the things people assume a 
 - *Generic code that compares.* Already possible — `<` is `(a, a) -> Bool` for every `a`, so
   `def largest[T](xs: list[T])` compiles today with no bound at all. A bound would be ceremony.
 - *Sorting by something other than the natural order.* Already possible — `sort_by` takes a **key**,
-  which [`50`](50-collections-and-dates-report.md) chose over a comparator on purpose.
+  which [`46`](46-standard-library-report.md) chose over a comparator on purpose.
 
 **What it costs:** the type now has **two** orders. The runtime holds no dictionary, so `Map` keys,
 arrangements, the digest and the patch stream keep the representation order while `<` and `sorted`
 use the impl. `sorted(xs)` stops agreeing with `elements(set_of(xs))` over the same records — which
-§50.5 called "exactly the bug a library that promises determinism must not have", about a *different*
+§46.6 called "exactly the bug a library that promises determinism must not have", about a *different*
 mechanism, and the objection transfers intact.
 
 So the one thing it buys is the one thing that costs. That is not a trade-off to weigh; it is the
@@ -112,7 +112,7 @@ Fix the finding rather than the abstraction. `Data.fields` is an
 `Key(score=…, name=…)` compares by `score` first — in `<`, in `sorted`, as a `Map` key, in the
 arrangements, in the digest and in the patch stream, because there is still exactly **one** order.
 
-§50.5 dismissed this in one sentence — "a value carries its fields and not its declaration" — and
+§46.6 dismissed this in one sentence — "a value carries its fields and not its declaration" — and
 that sentence is true of the representation as it stands rather than of representations in general.
 The checker knows the declaration at every `Make`, so it can emit fields in declaration order and
 the runtime can preserve it; `With` updates in place and preserves it too.

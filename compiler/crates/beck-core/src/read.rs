@@ -634,7 +634,7 @@ fn collection_elem(ty: &Ty, types: &BTreeMap<Arc<str>, TyDecl>) -> Option<Ty> {
 /// A `model`'s fields, in the order they were written.
 ///
 /// Declared order rather than name order, which is the one place this disagrees with the run-time
-/// representation ([`crate::core::Fields`] sorts by name, and `docs/50` §50.5 pinned that). Columns
+/// representation ([`crate::core::Fields`] sorts by name, and `docs/46` §46.6 pinned that). Columns
 /// are read by name, so the disagreement costs nothing and the person reading `select *` gets their
 /// own declaration back.
 fn model_fields(ty: &Ty, types: &BTreeMap<Arc<str>, TyDecl>) -> Option<Vec<(Arc<str>, Ty)>> {

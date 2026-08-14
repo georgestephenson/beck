@@ -1,6 +1,6 @@
 # 0013 — The host of an outbound call is written at the call site
 
-**Context.** [`docs/46`](../46-standard-library-report.md) §46.6 left the HTTP client as "the one
+**Context.** [`docs/46`](../46-standard-library-report.md) §46.14 left the HTTP client as "the one
 item on the list with an effect row nobody has designed — `net.out(host)` per call site, with the
 host in the type". The difficulty is real and is not about HTTP. Every other effect atom in the
 language is a *constant* of the thing that performs it: `durable` is `durable`, `env` is `env`,

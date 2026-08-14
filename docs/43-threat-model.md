@@ -101,7 +101,7 @@ The controls a reader would reasonably assume exist, that do not:
   peer ([`95`](95-oidc-relying-party-report.md) §95.7) — and `pending_security.rs` asserts both
   halves: the declared issuer is reachable, and no provider workload is emitted.
 - **Transport security on an outbound call, unless the program asked for it.**
-  [`49`](49-http-client-report.md) built `http_fetch` over **plaintext HTTP/1.1**;
+  [`46`](46-standard-library-report.md) built `http_fetch` over **plaintext HTTP/1.1**;
   [`adr/0023`](adr/0023-tls-and-the-signature-it-brings.md) took rustls, so `over_tls(req)` now puts
   the exchange inside a TLS session whose certificate must answer for the host written at the call
   site. What is absent is therefore narrower and is a property of the *program*: a request that does
@@ -214,7 +214,7 @@ Five crossings, and what each one is:
 4. **Content into an operator's screen** — the one A4 is attacked through, and the reason the
    dashboard escapes in attribute context as well as text.
 5. **The program out to a peer, and the peer's reply back in** — added by
-   [`49`](49-http-client-report.md). The outward half is bounded by construction: the set of hosts
+   [`46`](46-standard-library-report.md). The outward half is bounded by construction: the set of hosts
    reachable is the set written in the source, and — for a request that said `over_tls` — the peer
    answering to one of those names has a certificate for it
    ([`adr/0023`](adr/0023-tls-and-the-signature-it-brings.md)). The inward half is *still* not

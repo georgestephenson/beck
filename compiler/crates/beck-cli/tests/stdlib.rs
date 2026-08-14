@@ -95,9 +95,9 @@ fn every_library_documents() {
 // ---------------------------------------------------------------------------------------------
 // Reaching it from outside
 //
-// `docs/68` §68.4's finding was that none of this could be reached: `import` resolved against the
+// `docs/46` §46.10's finding was that none of this could be reached: `import` resolved against the
 // root module's own directory and nothing else, so the standard library was a standard library that
-// only its own directory could use. `docs/69` is the fix — the Beck half is carried in the compiler
+// only its own directory could use. `docs/46` is the fix — the Beck half is carried in the compiler
 // and resolved after the caller's directory — and these are the gates on it.
 // ---------------------------------------------------------------------------------------------
 
@@ -139,7 +139,7 @@ fn every_library_is_importable_from_outside_the_library_directory() {
 ///
 /// This is the cost of the flat namespace, asserted rather than hoped for. Beck links modules into
 /// one namespace with no qualified reference (`B0601`), so a helper in one library file and a
-/// helper in another are the *same* name to a program that imports both — and until `docs/69` no
+/// helper in another are the *same* name to a program that imports both — and until `docs/46` no
 /// program could import two, so nothing had ever been in a position to notice. Two collisions were
 /// waiting when something finally was: `is_negative` in `money.beck` and `decimal.beck`, and
 /// `pow10` in `decimal.beck` and what is now `format.beck`.
@@ -557,7 +557,7 @@ fn a_token_opens_only_under_the_key_that_minted_it() {
 /// `lib/bignum.beck` multiplied and divided against Rust's `i128`, over 400 pairs.
 ///
 /// [`dates.beck`](../../../../lib/dates.beck) established the shape and
-/// [`50`](../../../../docs/50-collections-and-dates-report.md) §50.3 the limit on what it buys:
+/// [`docs/46`](../../../../docs/46-standard-library-report.md) §46.5 the limit on what it buys:
 /// this is not two independent algorithms, it is one *claim* checked against a different
 /// implementation. The file's own `property` blocks check `Big` against `Int`, which only reaches
 /// values an `Int` holds; the whole point of a bignum is the values it does not, and `i128` is the

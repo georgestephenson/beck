@@ -101,7 +101,7 @@ inputs nobody chose, and it costs three declarations.
 `Int`, so the `property` blocks cannot reach them — multiplies, divides and takes the remainder of
 each pair in Beck and in Rust, and compares the rendered decimal. 1,200 assertions.
 
-Be exact about what that establishes, because [`50`](50-collections-and-dates-report.md) §50.3 was
+Be exact about what that establishes, because [`46`](46-standard-library-report.md) §46.5 was
 exact about the same shape for the calendar and the limit is the same one: **it is not two
 independent algorithms.** It is one claim — "this is the product of those two integers" — checked
 against a different implementation of it, on a different evaluator, in a different language. What it
@@ -155,7 +155,7 @@ signature cannot.
 | | Status |
 |---|---|
 | Sub-quadratic multiplication | **not built.** This is schoolbook: multiplication is O(n²) and division is O(n²) with a fourteen-step binary search inside each limb. No Karatsuba, no Toom-Cook, no FFT. Fine for the hundreds of digits a program actually asks for; wrong for cryptography, which is not what this is for — [`52`](52-crypto-and-identifiers-report.md)'s digests are the host's |
-| A number for any of it | **none**, and [`46`](46-standard-library-report.md) §46.6's reason is unchanged: the tree-walker is 33× CPython, so a measurement of this would measure the interpreter. `beck test lib/bignum.beck` takes 0.85 s in a debug build, which is a fact about the gate and not about the library |
+| A number for any of it | **none**, and [`46`](46-standard-library-report.md) §46.14's reason is unchanged: the tree-walker is 33× CPython, so a measurement of this would measure the interpreter. `beck test lib/bignum.beck` takes 0.85 s in a debug build, which is a fact about the gate and not about the library |
 | Knuth's algorithm D | **not built**, and this is the thing to replace first if any of it is ever a bottleneck. The binary search for a trial digit is fourteen comparisons where the estimate-and-correct is one multiply and a rare fixup; it is here because it is *obviously* right, which for a first division is the trade to make |
 | Arbitrary-precision **decimal** | **not built**, and it is now the only thing left of §8.5.4's Wave 2 list. `money.beck` is fixed-scale integer money and says so; a `Decimal` is a `Big` mantissa and a scale, which this file makes possible and does not contain. Its one real design question is what `/` does when the quotient does not terminate |
 | A rational over `Big` | **not built.** `sicp/ch2.beck`'s `Rational` is over `Int`, so `one_third() + one_third()` is exact and a long chain of them still overflows. Rewriting it over `Big` is now expressible; whether SICP's chapter should be the thing that does it is a separate question |
@@ -168,7 +168,7 @@ signature cannot.
   bignums and numeric coercion" was the untouched remainder after
   [`52`](52-crypto-and-identifiers-report.md); the bignums and the coercion are built, and the
   decimal is what is left.
-- **[`46`](46-standard-library-report.md) §46.6's last "untouched" row moves.** "Bignums and numeric
+- **[`46`](46-standard-library-report.md) §46.14's last "untouched" row moves.** "Bignums and numeric
   coercion — untouched, and §8.5.4 puts them here" is now built.
 - **[`25`](25-benchmarks-and-expressiveness.md) §25.7 item 5 is discharged.** "The numeric tower —
   reals first, then rationals and bignums" is complete: [`27`](27-the-walls-come-down-report.md),

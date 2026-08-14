@@ -943,7 +943,7 @@ impl<'a> IntoIterator for &'a Fields {
 
 /// A string that knows its own length in **characters**, and whether it is ASCII.
 ///
-/// Beck indexes text by character everywhere or nowhere (`docs/50` §50.5), and a `String` counts
+/// Beck indexes text by character everywhere or nowhere (`docs/46` §46.6), and a `String` counts
 /// bytes — so `str_len` used to be `chars().count()` and `str_slice` used to `skip()` its way to
 /// the start. Both are `O(n)` in the *string* rather than in the answer, which makes the ordinary
 /// way to walk one — `while i < str_len(s)` reading `str_slice(s, i, 1)` — quadratic. Measured at
@@ -1315,7 +1315,7 @@ impl Env {
     /// `list_append` pushing in place and `with` rebuilding a record's fields — and measuring it
     /// without this condition showed every benchmark in the tree 6–13% slower, because the reads
     /// that dominate a real program are of `Int`s and nothing was gained by moving one
-    /// ([`69`](../../../../../docs/69-standard-library-imports-report.md) §69.7).
+    /// ([`docs/46`](../../../../../docs/46-standard-library-report.md) §46.12).
     ///
     /// The caller must have established that no later evaluation reads `v` — [`crate::liveness`]
     /// is what establishes it, and `last_use` is the flag. What this adds is the second half of the

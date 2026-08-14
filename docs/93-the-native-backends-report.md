@@ -99,7 +99,7 @@ row.
 
 **A tag is a variant's rank by name, and a field's slot is its rank by name too.** `Value`'s derived
 `Ord` compares a record's type, then its variant *name*, then its fields, and
-[`46`](46-standard-library-report.md) §46.6 established that a record's value order is by field name.
+[`46`](46-standard-library-report.md) §46.14 established that a record's value order is by field name.
 A layout in declaration order answers `<` backwards on a program that reads perfectly, which is why
 `a_layout_is_ordered_by_name_and_not_by_declaration` pins both rules explicitly rather than leaving
 them to the differential — a differential compares two things against an **oracle** and cannot see

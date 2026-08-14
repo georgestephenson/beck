@@ -11,11 +11,11 @@
 
 [`48`](48-identity-report.md) §48.5 gave the reason nothing had been built: "It needs an HTTP
 client and a signature library, and taking either is an ADR rather than a line in a module."
-[`49`](49-http-client-report.md) then built the HTTP client, and [`08`](08-roadmap.md)'s Wave 3 row
+[`46`](46-standard-library-report.md) then built the HTTP client, and [`08`](08-roadmap.md)'s Wave 3 row
 narrowed the remainder to a sentence worth quoting because it turned out to be exactly right:
 
 > What is left is the signature library — and TLS, because JWKS is fetched over it and
-> [`49`](49-http-client-report.md) §49.6 is plaintext. Those two are one dependency decision taken
+> [`46`](46-standard-library-report.md) §46.14 is plaintext. Those two are one dependency decision taken
 > together, which is a better-shaped ADR than the three-way one this row used to describe.
 
 They are one decision for a reason that is not obvious until you look: **rustls's cryptography
@@ -26,7 +26,7 @@ capabilities and the second costs nothing. That is
 cheapest cryptographic dependency is the one already in the graph — arriving one layer up.
 [`adr/0023`](adr/0023-tls-and-the-signature-it-brings.md) is the record, including the alternatives
 refused: `openidconnect` (brings a second HTTP client and would not go through
-[`49`](49-http-client-report.md)'s bounded, stubbable seam), `ring` (identical here; not chosen
+[`46`](46-standard-library-report.md)'s bounded, stubbable seam), `ring` (identical here; not chosen
 because §7.2 says aws-lc-rs and a dependency table nobody follows is fiction), and the `rsa` crate
 (RUSTSEC-2023-0071 is open against it, and
 [`adr/0004`](adr/0004-full-cargo-deny-gate.md)'s ignore list is empty on purpose).
@@ -293,7 +293,7 @@ tests it can write are the **refusals**.
   `openidconnect` Rust crate". It does the code flow, and not with that crate;
   [`adr/0023`](adr/0023-tls-and-the-signature-it-brings.md) is the argument, and the short version
   is that a relying party built on somebody else's HTTP client would not go through
-  [`49`](49-http-client-report.md)'s bounded, stubbable, egress-derivable seam. Everything else D6
+  [`46`](46-standard-library-report.md)'s bounded, stubbable, egress-derivable seam. Everything else D6
   asks for is here except `managed()`.
 - **[`adr/0015`](adr/0015-blake3-for-the-standard-librarys-digests.md)'s closing section** says the
   asymmetric decision is "still one ADR, still unwritten". It is written:

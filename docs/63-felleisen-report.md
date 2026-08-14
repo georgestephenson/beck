@@ -68,7 +68,7 @@ did not have it — reachable only by a macro that had to expand into a promise.
 is where that stays fixed.
 
 This is the same class of finding as [`53`](53-are-we-fast-yet-report.md) §53.5's short-circuiting
-defect and [`50`](50-collections-and-dates-report.md) §50.5's diagnostics: found by writing a
+defect and [`46`](46-standard-library-report.md) §46.6's diagnostics: found by writing a
 program with a purpose rather than by testing the compiler, in a corner nothing had had a reason to
 reach.
 

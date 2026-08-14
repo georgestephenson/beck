@@ -1709,7 +1709,7 @@ impl<'a> Checker<'a> {
         declared_effects.sort();
         // An impl method's row is **inferred**, not bounded by the trait's.
         //
-        // It was bounded until `docs/46` §46.5: a trait's declared row was a ceiling every impl was
+        // It was bounded until `docs/46` §46.6: a trait's declared row was a ceiling every impl was
         // held to, which meant a fallible operation could not be a trait method and `Money` could
         // not have `+`. A trait's row is now a floor and a piece of documentation — what a caller
         // of an *unknown* impl may assume — and what a caller of a known one performs is what that

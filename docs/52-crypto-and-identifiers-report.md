@@ -36,7 +36,7 @@ asserts both halves against `Prim::effects` directly.
 ## 52.2 The one function that spends a secret
 
 §3.5 says a `secret[T]` cannot reach a browser, and three phases have held that without exception.
-[`49`](49-http-client-report.md) §49.4 met the first program that needed to *spend* one — a
+[`46`](46-standard-library-report.md) §46.8 met the first program that needed to *spend* one — a
 credential in a header — and closed it by moving **when** the secret is unwrapped: the request
 carries its secrets apart and the runtime merges them at the edge. Nothing was weakened.
 
@@ -139,7 +139,7 @@ Together they mean the layer of a library that *holds a key* is the layer Beck c
 writing `stub cap.sign:` would make the test worse than absent: the stub is a constant, so a
 tampered token would verify against it and the test would pass on a forgery.
 
-This is not a wall in [`46`](46-standard-library-report.md) §46.5's sense — nothing is
+This is not a wall in [`46`](46-standard-library-report.md) §46.6's sense — nothing is
 inexpressible, and the language is not wrong. It is a **shape the library has to take**, and taking
 it deliberately turned out to improve the library: `crypto.beck` is now two layers with the key at
 the seam. Everything about the token's *format* — the two halves, the comparison, the decoding — is
@@ -180,7 +180,7 @@ declares moved because of a change in a different crate, and a test said so with
 | | Status |
 |---|---|
 | Asymmetric signatures | **not built.** No Ed25519, no RSA, no JWKS, no JWT verification. [`adr/0015`](adr/0015-blake3-for-the-standard-librarys-digests.md) says why the symmetric half was taken without it and that the dependency decision is unchanged and still owed |
-| TLS | **not built**, unchanged from [`49`](49-http-client-report.md) §49.6. Still asserted as absent in `pending_security.rs` |
+| TLS | **not built**, unchanged from [`46`](46-standard-library-report.md) §46.14. Still asserted as absent in `pending_security.rs` |
 | Encryption of any kind | **not built.** There is no AEAD, no key agreement, and no primitive that turns a value into an unreadable one. A digest is not encryption, and a program that needs confidentiality at rest does not get it here |
 | Random bytes | **not built**, and this is a decision rather than an omission. `uuid()` mints an identifier and is `nondet`; a general `random_bytes()` would be a second nondeterministic source at the edge, and the one thing it is usually wanted for — a key — is `secret_env`'s job |
 | A key that is not a `Str` | **not built.** A key is a `secret[Str]`, so a binary key is hex or base64 first. Real, and cheap to live with; a `secret[list[Int]]` would be worse |
@@ -188,9 +188,9 @@ declares moved because of a change in a different crate, and a test said so with
 | An expiry in the token | **not built**, and deliberately not: a time is `now()`, which is `nondet`, and putting it inside `sign` would make a signature nondeterministic. A caller puts an instant in the payload it signs |
 | `uuid()` returning a parsed type | **not built.** An identifier is a `Str` before and after, and `uuid_parse` normalises rather than changing the type. A `Uuid` newtype is expressible in Beck today and is a program's decision |
 | UUID v7's timestamp, the variant bits | **not read.** `uuid_version` reads the version nibble and nothing validates the variant, because a value whose variant bits say nothing is still an identifier and refusing it would refuse an identifier that works |
-| Bignums, arbitrary-precision decimal, numeric coercion | **untouched**, unchanged from [`46`](46-standard-library-report.md) §46.6. That is what is left of Wave 2 besides the harnesses |
-| The AWFY and CLBG harnesses | **still not stood up**, and [`50`](50-collections-and-dates-report.md) §50.6 said the same. They remain the largest thing owed on this bullet |
-| A number for any of this | **none.** [`46`](46-standard-library-report.md) §46.6's reason is unchanged: the tree-walker is 33× CPython, so a measurement of a primitive would measure the interpreter |
+| Bignums, arbitrary-precision decimal, numeric coercion | **untouched**, unchanged from [`46`](46-standard-library-report.md) §46.14. That is what is left of Wave 2 besides the harnesses |
+| The AWFY and CLBG harnesses | **still not stood up**, and [`46`](46-standard-library-report.md) §46.14 said the same. They remain the largest thing owed on this bullet |
+| A number for any of this | **none.** [`46`](46-standard-library-report.md) §46.14's reason is unchanged: the tree-walker is 33× CPython, so a measurement of a primitive would measure the interpreter |
 
 And the limit on the claim in §52.2. What is defended is that **exactly one function declassifies,
 that it requires a capability, and that a test keeps both true**. What is *not* claimed is that a
@@ -211,7 +211,7 @@ program using it is secure: this is a MAC, so it is only as good as the key, the
   lists what a test asserts.
 - **[`08`](08-roadmap.md) §8.5.4's Wave 2 loses two of its five untouched items.** What is left is
   arbitrary-precision decimal, bignums and numeric coercion — and the benchmark harnesses.
-- **[`46`](46-standard-library-report.md) §46.6's table moves two rows.** UUID goes from "`uuid()`
+- **[`46`](46-standard-library-report.md) §46.14's table moves two rows.** UUID goes from "`uuid()`
   has existed since Phase 1; nothing parses or formats one" to built; crypto goes from "untouched"
   to the digest half built and the asymmetric half named in §52.6.
 - **[`48`](48-identity-report.md) §48.5's list is unchanged and one of its predecessors is closer.**

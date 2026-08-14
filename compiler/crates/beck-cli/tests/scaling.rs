@@ -244,7 +244,7 @@ fn the_whole_todo_program_graph_is_built_in_well_under_a_millisecond() {
 ///
 /// It cannot be a fuel assertion, and that is worth knowing: the step count over this loop is
 /// exactly linear either way, because a primitive that copies ten thousand values is one step
-/// (`docs/69` §69.7). Only wall clock sees it.
+/// (`docs/46` §46.12). Only wall clock sees it.
 #[test]
 fn building_a_list_by_accumulation_costs_the_same_per_element_however_long_it_gets() {
     let program = |n: usize| {
