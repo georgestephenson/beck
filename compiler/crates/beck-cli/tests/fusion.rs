@@ -1,7 +1,7 @@
 //! Query fusion: the rewritten plan against the plan it was rewritten from.
 //!
 //! [`docs/05-tier-lowering.md`](../../../../docs/05-tier-lowering.md) §5.3 asks for the pass and
-//! [`docs/89-query-fusion-report.md`](../../../../docs/89-query-fusion-report.md) is what building
+//! [`docs/23-incremental-views-report.md`](../../../../docs/23-incremental-views-report.md) is what building
 //! it found. `incremental_engine.rs` already compares the maintained view with the recomputed one,
 //! and since [`beck_core::plan::Plan::compile`] fuses, that harness covers this pass — which is
 //! exactly why this file exists separately. Three things it cannot say:
@@ -15,8 +15,8 @@
 //!   *pessimisations* rather than errors when they are dropped, so no differential can see them.
 //!   They are asserted on programs built to make each one bite.
 //!
-//! That last group is [`84`](../../../../docs/84-a-quota-is-only-as-good-as-its-actor-report.md)
-//! §84.5's rule applied while the answer is still fresh: what would have to be true for this file
+//! That last group is [`docs/82`](../../../../docs/82-the-edge-report.md)
+//! §82.10's rule applied while the answer is still fresh: what would have to be true for this file
 //! to go red? Delete the `consumers > 1` check and `an_arrangement_two_operators_read_is_not_fused`
 //! fails; delete the session-cut check and `fusion_does_not_move_shared_work_per_subscriber` fails;
 //! get the keys wrong in any rule and the differential fails on the first program that renders a
@@ -381,7 +381,7 @@ fn every_operator_the_engine_implements_is_exercised() {
 fn an_arrangement_two_operators_read_is_not_fused() {
     // `corpus/24-feed.beck` sorts once and reads the result three times — the loop, the count and
     // the emptiness check. Fusing the sort into the count would sort again for every reader, which
-    // is docs/26's shared prefix undone, and the plan would still render the right page. Only a
+    // is docs/23's shared prefix undone, and the plan would still render the right page. Only a
     // test that looks at the plan can say so.
     let src = std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/24-feed.beck"),

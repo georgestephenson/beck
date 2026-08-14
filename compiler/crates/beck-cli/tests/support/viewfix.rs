@@ -27,7 +27,7 @@
 //!   right word as the wrong thing.
 //! * **A child that is already a tree**, which is spliced rather than rendered. That is what makes
 //!   a view composable out of functions, and rendering it instead is escaped markup on the page
-//!   (`docs/94` §94.4).
+//!   (`docs/94` §94.6).
 //! * **Children built by a loop**, since the list is the shape a real `ui:` block always has.
 //! * **The empty element**, whose two lists are empty and whose children hash is the accumulator's
 //!   seed.
@@ -176,7 +176,7 @@ def done_class(t: Todo) -> Str:
 
 /// What the heap still refuses to do with a view, each with the reason a reader is given.
 ///
-/// Two kinds. The three orderings are §111.4's, and the two `Attr` parameters are §111.3's: the
+/// Two kinds. The three orderings are §93.6's, and the two `Attr` parameters are §93.6's: the
 /// boundary is **directional** there, because a handler in the arena keeps its command as a value
 /// and a baked tree has already turned one into a pair of strings — so a definition may answer with
 /// an `Attr` and may not take one.

@@ -33,14 +33,14 @@ subtree. **v0.1 ships Mode A only** — it makes the walking skeleton drasticall
 WASM, no size crisis, trivially good Lighthouse scores) — with Mode B in Phase 3
 ([`08`](08-roadmap.md)).
 
-> **Built** ([`94`](94-mode-b-report.md)), and three lines above are now corrections rather than
+> **Built** ([`94`](94-the-client-report.md)), and three lines above are now corrections rather than
 > plans. `@render(client)` is the whole surface: **the mode is declared, never inferred**, because a
 > wrong inference ships a state to a browser. A page mixes modes freely is still unbuilt, because a
 > program has one `page`. And the promotion carries a **refusal this section did not anticipate** —
 > a component whose view reads the session cannot render on the client, since Mode B hands the
 > browser the state a per-session view was filtering (§94.2). *That refusal is narrower than it was
 > written: it is about **who** is asking, and reading `session.path` — where the browser is, which
-> the browser chose — is allowed ([`100`](100-client-polish-report.md) §100.2).* The kernel interprets rather than
+> the browser chose — is allowed ([`94`](94-the-client-report.md) §94.3).* The kernel interprets rather than
 > compiles ([`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md)), which is what the size
 > budget below has to be read against: 179,195 bytes brotli once per application, 1,753 per
 > component.
@@ -61,11 +61,11 @@ WASM, no size crisis, trivially good Lighthouse scores) — with Mode B in Phase
   fine-grained signal graph, local speculative fold + `seq`-based reconciliation
   ([`03`](03-type-and-effect-system.md) §3.7). Size budgets enforced in CI: < 150 KB brotli for a
   typical Mode-B component bundle; `wasm-opt -Oz` (Binaryen) in the release path. — **Built, with
-  the first clause deferred** ([`94`](94-mode-b-report.md)): the local fold and the reconciliation
+  the first clause deferred** ([`94`](94-the-client-report.md)): the local fold and the reconciliation
   are here, and the WASM is the *evaluator* rather than the component compiled. The budget is
   answered in two parts, because a shared kernel and a per-component payload are different
   questions; `wasm-opt` is not run, so the kernel's number is a ceiling. *The budget is **enforced**
-  now rather than reported ([`102`](102-freshness-and-the-budget-report.md) §102.4): `beck bundle`
+  now rather than reported ([`94`](94-the-client-report.md) §94.11): `beck bundle`
   writes the artefact, a `budgets` job weighs every Mode B example against 150 KB brotli, and a
   shape gate under `cargo test` says the thing the threshold cannot — that a bundle is a function of
   the component's slice and not of the program around it.*
@@ -78,25 +78,25 @@ WASM, no size crisis, trivially good Lighthouse scores) — with Mode B in Phase
 - **Progressive enhancement**: Mode A degrades to plain forms + full-page responses under
   `noscript` — generated from the same `view`, since the server can always render.
 
-> **The router is built** ([`100`](100-client-polish-report.md)), and this line is a correction rather
+> **The router is built** ([`94`](94-the-client-report.md)), and this line is a correction rather
 > than a plan in two places. There are **no route declarations**: a route is a field of `Session`,
 > so the page is a pure function of it and "which page is this" is written in the program. And
 > navigation is **not** a command — a command is a proposal that becomes an event and reaches the
 > log, and where a browser is is neither. It is a `Session` that moved, which is why Mode A answers
 > a navigation with the difference between two pages and Mode B answers it with nothing at all.
-> Focus and scroll are kept by the patch interpreter rather than by frame identity (§100.5), at a
-> cost proportional to the patch. **Lazy routes are not built** and §100.7 says what they wait on.
+> Focus and scroll are kept by the patch interpreter rather than by frame identity (§94.8), at a
+> cost proportional to the patch. **Lazy routes are not built** and §94.15 says what they wait on.
 > Progressive enhancement is not built either — but a route *is* a URL the server renders, which is
 > the half of it that mattered most.
 
 **Debugging**: source maps from patch frames back to `view` expressions; a devtools extension
 showing the signal graph, patch traffic, and pending (optimistic) state; DWARF for Mode B WASM.
 
-> The **panel** is built ([`100`](100-client-polish-report.md) §100.6) — all three of the things this
+> The **panel** is built ([`94`](94-the-client-report.md) §94.9) — all three of the things this
 > line names — and it is a page the server serves rather than an extension, for a reason written out
 > there. Source maps and DWARF are not. What a page could already be asked is whether its client is
 > live — `data-b-ready` carries the mode's letter and `beck:ready`, `beck:rejected` and `beck:error`
-> are bubbling events on the frame root ([`94`](94-mode-b-report.md) §94.12) — and the panel is
+> are bubbling events on the frame root ([`94`](94-the-client-report.md) §94.13) — and the panel is
 > attached to exactly that.
 
 ## 5.2 Service tier → native code (dual backend)
@@ -108,57 +108,57 @@ endpoints — compiles to native binaries, statically linked, one per `service`.
 
 | Mode | Backend | Evidence |
 |---|---|---|
-| `beck dev`, hot reload | **Cranelift**, as a crate, emitting an object a linker turns into a program — **built** for the scalar subset and for records and unions ([`97`](97-cranelift-report.md), [`101`](101-the-heap-report.md), [`adr/0024`](adr/0024-cranelift-emits-an-object-and-a-linker-makes-it-a-program.md)) | ~40% faster whole-compiles; codegen step ~an order of magnitude faster than LLVM |
-| `beck build --release` | **LLVM**, as textual IR through the host's `clang` — **built** for the scalar subset and for records and unions ([`93`](93-llvm-backend-report.md), [`101`](101-the-heap-report.md)), not via `inkwell` ([`adr/0021`](adr/0021-the-native-backend-writes-ir-and-runs-a-process.md)) | Cranelift output ~14% slower; Perry's 2026 Cranelift→LLVM move turned a deficit into 1.7–24.6× wins over Node.js |
+| `beck dev`, hot reload | **Cranelift**, as a crate, emitting an object a linker turns into a program — **built** for the scalar subset and for records and unions ([`93`](93-the-native-backends-report.md), [`93`](93-the-native-backends-report.md), [`adr/0024`](adr/0024-cranelift-emits-an-object-and-a-linker-makes-it-a-program.md)) | ~40% faster whole-compiles; codegen step ~an order of magnitude faster than LLVM |
+| `beck build --release` | **LLVM**, as textual IR through the host's `clang` — **built** for the scalar subset and for records and unions ([`93`](93-the-native-backends-report.md), [`93`](93-the-native-backends-report.md)), not via `inkwell` ([`adr/0021`](adr/0021-the-native-backend-writes-ir-and-runs-a-process.md)) | Cranelift output ~14% slower; Perry's 2026 Cranelift→LLVM move turned a deficit into 1.7–24.6× wins over Node.js |
 
 The two must agree observably — enforced by differential tests ([`04`](04-compiler-architecture.md)
 §4.8). The `Core → Target` seam stays narrow so a third backend (or MLIR) can slot in later.
 
-> **Built, half of it.** [`93`](93-llvm-backend-report.md): the LLVM row exists over the **scalar
+> **Built, half of it.** [`93`](93-the-native-backends-report.md): the LLVM row exists over the **scalar
 > subset** — `Int`, `Float` and `Bool` — and the differential is against the *evaluator*, since
 > Cranelift is still not built. There is no heap in the emitted code, so a fold over a record, a
 > view that builds `Html` and every effect in this section still run on the tree-walker, and this
 > section's "compiles to native binaries, statically linked, one per `service`" remains a design.
 > The seam held: not one line of `beck-rt` changed.
 >
-> *Both rows exist now* ([`97`](97-cranelift-report.md)), over the same scalar subset and held to
+> *Both rows exist now* ([`93`](93-the-native-backends-report.md)), over the same scalar subset and held to
 > the same programs: `beck native --backend cranelift|llvm`, and "the two must agree observably" is
 > a **three-way** differential — the tree-walker, LLVM and Cranelift on every call. The heap is
 > what still bounds them, and it bounds both equally, so the sentence above about records, `Html`
 > and effects is unchanged. What *is* new is that the second implementation exists to disagree:
-> §97.4 is what holding two emitters to one subset found.
+> §93.8 is what holding two emitters to one subset found.
 >
-> *And the heap has its first floor* ([`101`](101-the-heap-report.md)): a `model`, a `union` and a
+> *And the heap has its first floor* ([`93`](93-the-native-backends-report.md)): a `model`, a `union` and a
 > `newtype` compile on both, over one layout shared with the host, in an arena of offsets
 > ([`adr/0026`](adr/0026-the-native-heap-is-an-arena-of-offsets.md)). So "a fold over a record" is
 > half-true rather than false — the *record* compiles and the fold's `Map` does not. Text,
 > collections, closures and every effect are still the tree-walker's, and this section's "compiles
 > to native binaries, statically linked, one per `service`" remains a design for that reason.
-> §101.5 is the list, each row with a test that goes red the day it stops being true.
+> §93.14 is the list, each row with a test that goes red the day it stops being true.
 >
-> *And that list is now two rows long* ([`105`](105-text-on-the-heap-report.md),
-> [`106`](106-lists-arrive-read-only-report.md), [`107`](107-a-map-arrives-read-only-report.md),
-> [`108`](108-closures-arrive-report.md), [`111`](111-a-view-arrives-as-a-recipe-report.md)): text, a
-> `list`, a `Map`, a closure and — since [`111`](111-a-view-arrives-as-a-recipe-report.md) — **the
+> *And that list is now two rows long* ([`93`](93-the-native-backends-report.md),
+> [`93`](93-the-native-backends-report.md), [`93`](93-the-native-backends-report.md),
+> [`93`](93-the-native-backends-report.md), [`93`](93-the-native-backends-report.md)): text, a
+> `list`, a `Map`, a closure and — since [`93`](93-the-native-backends-report.md) — **the
 > view** all compile on both, so "a view that builds `Html`" above is no longer among what runs on
 > the tree-walker, and 21 of the 32 corpus programs have a `view` that compiles. The paragraph before
 > this one is therefore corrected in its last sentence: what is still the tree-walker's is **every
 > effect** and every operation that *grows* a collection — the second being a decision rather than a
-> gap ([`107`](107-a-map-arrives-read-only-report.md) §107.4), which is why "a fold over a record"
+> gap ([`93`](93-the-native-backends-report.md) §93.7), which is why "a fold over a record"
 > stays half-true and this section's "compiles to native binaries, statically linked, one per
 > `service`" stays a design. A view compiles as the **call** that builds the page rather than as the
-> page, so §111.6 is explicit that it buys no speed: it removes a prerequisite, and the one it
-> removes is Mode B's codegen ([`94`](94-mode-b-report.md) §94.8).
+> page, so §93.5 is explicit that it buys no speed: it removes a prerequisite, and the one it
+> removes is Mode B's codegen ([`94`](94-the-client-report.md) §94.15).
 >
-> *And the list is empty of classes* ([`113`](113-a-list-grows-report.md),
-> [`114`](114-a-map-grows-report.md), [`115`](115-monomorphisation-report.md),
-> [`116`](116-the-host-answers-back-report.md), [`119`](119-a-list-comes-apart-report.md)): growing a
+> *And the list is empty of classes* ([`93`](93-the-native-backends-report.md),
+> [`93`](93-the-native-backends-report.md), [`93`](93-the-native-backends-report.md),
+> [`93`](93-the-native-backends-report.md), [`93`](93-the-native-backends-report.md)): growing a
 > `list` and a `Map` compile, a generic definition compiles by being specialised, a list pattern
 > comes apart, and **the four primitives that ask the host** — `now()`, `uuid()`, `secret_env` and
 > `http_fetch` — compile by *asking*, on a worker protocol that grew a second direction. So the
 > paragraph above is corrected twice over: neither "every effect" nor "every operation that grows a
 > collection" is the tree-walker's any more. What is left is not a class but three names
-> ([`116`](116-the-host-answers-back-report.md) §116.10) — the signal vocabulary, which the splitter
+> ([`93`](93-the-native-backends-report.md) §93.14) — the signal vocabulary, which the splitter
 > reads rather than a body calling it; a **bounded** definition, whose dictionary is a function
 > value; and a worker that can answer two calls at once. This section's "compiles to native
 > binaries, statically linked, one per `service`" is *still* a design, and now for one reason rather
@@ -197,7 +197,7 @@ functions. The lowering question is substrates. **We do not write a storage engi
 |---|---|---|
 | The log | **PostgreSQL** (append-only table per app; `seq` from a sequence; logical decoding for tailing) | Boring, transactional, operable everywhere, PITR for free; licence-clean. A dedicated log store (e.g. NATS JetStream, Apache-2.0) is a post-1.0 option when fan-out demands it — Kafka's JVM weight is unnecessary; Redpanda is BSL, excluded |
 | Snapshots | object storage (S3-compatible) or Postgres large objects | Cheap, versioned, feeds `beck fork` |
-| Read models | ~~generated tables in the same Postgres~~ — **the arrangement itself** ([`88`](88-read-models-and-pgwire-report.md), [`10`](10-decisions.md) D26) | One-shot queries and **pgwire access for the outside world**: `psql`, BI tools, DBeaver see materialized views as ordinary tables — the single cheapest trust-builder for adopting teams. Built, and the first half of this row is what changed: a read model is not a second copy written on the append path, it is the collection the fold holds and the arrangement the view engine maintains, projected. Nothing is written per event, and nothing can drift from the page |
+| Read models | ~~generated tables in the same Postgres~~ — **the arrangement itself** ([`23`](23-incremental-views-report.md), [`10`](10-decisions.md) D26) | One-shot queries and **pgwire access for the outside world**: `psql`, BI tools, DBeaver see materialized views as ordinary tables — the single cheapest trust-builder for adopting teams. Built, and the first half of this row is what changed: a read model is not a second copy written on the append path, it is the collection the fold holds and the arrangement the view engine maintains, projected. Nothing is written per event, and nothing can drift from the page |
 | Dev (rung 0) | in-memory folds + embedded append-only log (**redb**, MIT/Apache) | `beck run` needs no server; the log file is still replayable |
 | Analytical stores | **Apache DataFusion** over Arrow/Parquet (log archives Parquet-partitioned) | Fastest single-node Parquet engine (ClickBench); designed to be embedded/extended — the right shape for our plans, where DuckDB is a complete system designed to be used as-is |
 
@@ -216,25 +216,25 @@ functions. The lowering question is substrates. **We do not write a storage engi
   this is where a naive implementation quietly becomes Meteor-at-scale.
 
   *Both halves exist.* The signal graph is a graph and a computation read by two consumers is
-  identified as one ([`23`](23-general-slicer-report.md) §23.5), which is what an arrangement needs
+  identified as one ([`23`](23-incremental-views-report.md) §23.3), which is what an arrangement needs
   to be shareable; the dataflow engine that shares it is built
-  ([`24`](24-incremental-views-report.md), [`26`](26-arrangement-sharing-report.md)), and the
+  ([`23`](23-incremental-views-report.md), [`23`](23-incremental-views-report.md)), and the
   operators above the session cut are held once for the whole fanout rather than once per
   subscriber. What that is worth is a property of the program: 55× less work per event on a public
   feed, 1.3× on the todo sketch, because where a program reads the session decides its fanout cost.
-  Per-session memory is exported ([`26`](26-arrangement-sharing-report.md) §26.7). **The read
-  models and the pgwire exposure below are built too** ([`88`](88-read-models-and-pgwire-report.md)),
+  Per-session memory is exported ([`23`](23-incremental-views-report.md) §23.14). **The read
+  models and the pgwire exposure below are built too** ([`23`](23-incremental-views-report.md)),
   and on the same cut: a table is a view that does not depend on who is asking, which is the
   `per_session` boundary this paragraph draws, used a second time. **Query fusion is built too**
-  ([`89`](89-query-fusion-report.md)), and the condition that turned out to matter is this
+  ([`23`](23-incremental-views-report.md)), and the condition that turned out to matter is this
   paragraph's: a rewrite may not fuse a shared operator into a per-session one, because the smaller
   plan is the slower program.
 
   *The cut has a second thing on the per-subscriber side of it, and it is not the session.*
-  `presence()` ([`96`](96-presence-report.md)) is the same value for everybody and still runs per
+  `presence()` ([`48`](48-identity-report.md)) is the same value for everybody and still runs per
   subscriber, because the shared dataflow is versioned by the log's `seq` and the roster moves when
   `seq` does not: two subscribers at one version must be handed one input, and there is no version
-  at which they can be. Sharing it needs a second clock, which is §96.8's first unbuilt item.
+  at which they can be. Sharing it needs a second clock, which is §48.13's first unbuilt item.
 - v0.1 does **not** need the dataflow engine: full recompute per event on in-memory folds is
   semantically identical and fine at todo-app scale; the incremental plan is an optimisation with
   an exact correctness oracle (recompute) to test against — a luxurious position for CI
@@ -244,7 +244,7 @@ functions. The lowering question is substrates. **We do not write a storage engi
 - Query fusion still matters (a `for` over a view of a view should become one plan, not N+1
   lookups); it is a plan-rewrite on symbolic `Query` nodes, kept symbolic in `Core` precisely for
   this ([`04`](04-compiler-architecture.md) §4.2).
-  *Built* ([`89`](89-query-fusion-report.md)), and on the **dataflow** plan rather than on the
+  *Built* ([`23`](23-incremental-views-report.md)), and on the **dataflow** plan rather than on the
   `Query` sub-language this line names: `for t in todos:` decomposes to a `map_list` under a
   `flatten` and fuses to one operator, so the arrangement between them is never built. Five local
   rewrites, each sound against the change semantics; a rewrite is refused when the operator it would

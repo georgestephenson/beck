@@ -37,7 +37,7 @@ impl Checker<'_> {
         };
         // `state` is the *accumulator*, which is the program's own type when it declares one
         // `durable` fold and the fused record when it declares several — see
-        // `docs/23-general-slicer-report.md` §23.4. The checker has to know which before a signal
+        // `docs/23-incremental-views-report.md` §23.3. The checker has to know which before a signal
         // graph exists, so both it and the slicer ask [`crate::signal::durables`].
         let folds = {
             let subst = &self.subst;

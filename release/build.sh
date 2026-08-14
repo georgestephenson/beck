@@ -107,7 +107,7 @@ cp "$root/LICENSE" "$stage/$dir/LICENSE"
 # Portable flags only: macOS `tar` is bsdtar and does not have GNU's `--sort` or `--owner`. This
 # archive is therefore *not* byte-reproducible — gzip stamps an mtime — and nothing here claims it
 # is. What the release publishes is a checksum of the artefact it built, which is a different and
-# weaker property than the image half's (`docs/99-supply-chain-report.md` §99.4).
+# weaker property than the image half's (`docs/92-supply-chain-and-release-report.md` §99.4).
 tar -czf "$out/$asset" -C "$stage" "$dir"
 
 sum=$(

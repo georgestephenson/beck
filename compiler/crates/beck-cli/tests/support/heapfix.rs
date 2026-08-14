@@ -14,7 +14,7 @@
 //!   backend that made the tag a declaration index would answer `<` backwards, and
 //!   `ranked_order` is the definition that says so.
 //! * **`Key`'s fields are declared out of alphabetical order.** A record is compared field by
-//!   field in *name* order (`docs/50` §50.6), so `name` decides before `score` even though `score`
+//!   field in *name* order (`docs/46` §46.16), so `name` decides before `score` even though `score`
 //!   is written first. A layout in declaration order answers the opposite.
 //! * **`Weighed` holds reals.** A real on the heap has to be the one the evaluator would have
 //!   built — `-0.0` normalised to `0.0`, every NaN to one NaN — or `==` on two records disagrees
@@ -389,9 +389,9 @@ def or_else(o: Option[Int], fallback: Int) -> Int:
 
 /// Definitions the heap does **not** reach, one per reason.
 ///
-/// The list is what `docs/101` §101.5 said is not built, less the row `docs/105` removed, in the
+/// The list is what `docs/93` §93.14 said is not built, less the row `docs/93` removed, in the
 /// form that goes red the day one of them starts compiling — which is the point: an absence
-/// asserted as a test is an absence that cannot go stale (`docs/83` §83.7).
+/// asserted as a test is an absence that cannot go stale (`docs/82` §82.10).
 ///
 /// Text is no longer on it, and neither is *reading* a list. `names_it` and `reads_a_list` are here
 /// instead, on the *other* side of the list — so a removal is a thing this fixture asserts rather

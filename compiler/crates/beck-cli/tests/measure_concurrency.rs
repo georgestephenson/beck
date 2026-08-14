@@ -6,7 +6,7 @@
 //! cargo test --release --test measure_concurrency -- --nocapture
 //! ```
 //!
-//! # The number `docs/80` §80.5 said nobody had
+//! # The number `docs/80` §80.12 said nobody had
 //!
 //! > two children of a scope are worth running together exactly when each costs more than a thread,
 //! > which is a number nobody here has.
@@ -180,7 +180,7 @@ fn what_a_scope_saves_when_its_children_wait() {
 
 /// Where the crossover is: what a child has to cost before a thread is worth it.
 ///
-/// The other half of §80.5's question, and the half a reader needs in order to decide *not* to
+/// The other half of §80.12's question, and the half a reader needs in order to decide *not* to
 /// write a scope. Children that compute are not a lost cause — two of them on two cores is the same
 /// 2× two waits get — so what this measures is not "compute loses" but **the size at which it stops
 /// losing**, which is the thread's own cost.
@@ -222,7 +222,7 @@ fn what_a_child_must_cost_before_a_thread_is_worth_it() {
         "\nThe `ratio` column crosses 1.00 where a child costs about what a thread does. Below it \
          a\nscope is a loss and above it the ceiling is the core count — the same 2× two waits get, \
          for\nthe same reason. A thread here is its own stack reservation and its own globals \
-         cache, and\n`docs/117` §117.5 is what each of those is worth."
+         cache, and\n`docs/80` §80.8 is what each of those is worth."
     );
 }
 
@@ -298,7 +298,7 @@ fn what_the_cancellation_check_costs_a_program_without_a_scope() {
     }
     println!(
         "\nA cost per iteration that grew with the number of iterations would be a check that is\n\
-         not loop-invariant. `docs/118` §118.4 reads these against the same two numbers taken with\n\
+         not loop-invariant. `docs/80` §80.8 reads these against the same two numbers taken with\n\
          the check removed."
     );
 }

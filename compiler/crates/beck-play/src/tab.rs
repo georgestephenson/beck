@@ -23,7 +23,7 @@
 //!
 //! Not a store: [`Tab::records`] hands the log out as the bytes a store writes and [`Tab::restore`]
 //! reads them back, and where those bytes are kept is the page's business — IndexedDB, in the
-//! playground ([`docs/103`](../../../../../docs/103-playground-phase-3-report.md)). The log is still
+//! playground ([`docs/98`](../../../../../docs/98-playground-report.md)). The log is still
 //! a `Vec`; what changed is that it can be handed over.
 //!
 //! # Both modes
@@ -54,7 +54,7 @@ struct Subscriber {
     /// Where this client is. A route is not evidence of anything and nothing verifies it — it is a
     /// string the browser sent — but it is part of the `Session` the program's own `validate` and
     /// `view` see, so a tab that ignored it would be running the program against a session no
-    /// deployment would build ([`docs/100`](../../../../../docs/100-client-polish-report.md)).
+    /// deployment would build ([`docs/94`](../../../../../docs/94-the-client-report.md)).
     path: String,
     /// What this client is holding, and therefore what the next frame is the difference from —
     /// which is the whole of a subscription, and the reason an idle subscriber costs no bytes.

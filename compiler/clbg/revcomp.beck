@@ -14,7 +14,7 @@
 # `revcomp-input.txt` into the program on stdin; Beck has no stdin and a `test` block has no file
 # to open, so this port generates its input by calling the port of the program the suite generated
 # it with. That is exact rather than approximate: `expected/revcomp-input.txt` is byte-for-byte
-# `expected/fasta-output.txt`, and `clbg.rs` asserts it rather than trusting it. `docs/68` §68.2
+# `expected/fasta-output.txt`, and `clbg.rs` asserts it rather than trusting it. `docs/46` §46.13
 # records the substitution and what it costs — the reading half of an I/O benchmark is not
 # measured here, and this file measures the transformation only.
 #

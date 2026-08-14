@@ -2,8 +2,8 @@
 
 **Status:** accepted
 **Date:** 2026-08-10
-**Context:** [`101`](../101-the-heap-report.md), [`93`](../93-llvm-backend-report.md) §93.6,
-[`97`](../97-cranelift-report.md) §97.7, [`05`](../05-tier-lowering.md) §5.2,
+**Context:** [`93`](../93-the-native-backends-report.md), [`93`](../93-the-native-backends-report.md) §93.14,
+[`93`](../93-the-native-backends-report.md) §93.14, [`05`](../05-tier-lowering.md) §5.2,
 [`43`](../43-threat-model.md), [`0021`](0021-the-native-backend-writes-ir-and-runs-a-process.md),
 [`0024`](0024-cranelift-emits-an-object-and-a-linker-makes-it-a-program.md)
 
@@ -41,12 +41,12 @@ object, reading a field, testing a tag, comparing two values.
 
 ## Why the layout is shared and the emitters are not
 
-[`97`](../97-cranelift-report.md) §97.3 established the rule: the *subset* is written twice on
+[`93`](../93-the-native-backends-report.md) §93.8 established the rule: the *subset* is written twice on
 purpose, because two emitters that agreed by construction would make the agreement gate worth
 nothing. A layout is the opposite kind of thing. It is a **contract between three parties** — the
 two emitters and the host that writes a value into it — and a contract with three spellings is the
 drift this project spends its gates on. The precedent is already there: `Trap`'s codes have been one
-table since [`93`](../93-llvm-backend-report.md), read by both emitters and decoded by the host.
+table since [`93`](../93-the-native-backends-report.md), read by both emitters and decoded by the host.
 
 The line between the two is: *what a program means* is written once; *how one backend says it* is
 written twice.
@@ -57,7 +57,7 @@ written twice.
   objects, whether or not the program can still reach them. The bound is
   `beck_llvm::heap::ARENA_BYTES` — 256 MiB — and exceeding it is `Trap::HeapExhausted`, which is a
   message with a span rather than a fault. The evaluator has no such limit, and that difference is
-  written down in [`101`](../101-the-heap-report.md) §101.6 rather than argued away.
+  written down in [`93`](../93-the-native-backends-report.md) §93.12 rather than argued away.
 - **A reply carries the whole used arena, not the value.** The worker cannot tell which objects the
   answer can reach without a walk it has no code for, so a call that answers with an object sends
   back everything it allocated. A call that answers with a scalar sends nothing.
@@ -84,12 +84,12 @@ written twice.
 reachable. It also puts a count in every object, an increment on every field read, and a decrement
 on every path out of every function — and a compiled backend that is slower than the tree-walker
 because of bookkeeping the tree-walker does with `Arc` for free would be a worse answer than none.
-Nothing here has been measured yet ([`101`](../101-the-heap-report.md) §101.7), and this is a
+Nothing here has been measured yet ([`93`](../93-the-native-backends-report.md) §93.5), and this is a
 decision to take *after* a measurement rather than instead of one.
 
 **A uniform boxed value, with `Int` on the heap too.** It makes one representation for everything
 and one comparison function for the whole language. It also allocates on every arithmetic operation
-and would have thrown away every number [`93`](../93-llvm-backend-report.md) §93.5 measured. The
+and would have thrown away every number [`93`](../93-the-native-backends-report.md) §93.5 measured. The
 representation is static and by type: an `Int` is an `i64`, as it was.
 
 **Generating the marshalling in each emitter.** The obvious design, and what pointers would have
@@ -97,7 +97,7 @@ forced. See above: offsets make it unnecessary, and unnecessary code in two IRs 
 layout to be wrong.
 
 **A `Str` and a `list` in the same change.** They fit this arena — a length and then the bytes — and
-they are not here, because what makes them hard is not the layout ([`101`](../101-the-heap-report.md)
-§101.5): a string is a character index and an ASCII flag that has to answer exactly what
+they are not here, because what makes them hard is not the layout ([`93`](../93-the-native-backends-report.md)
+§93.14): a string is a character index and an ASCII flag that has to answer exactly what
 `beck_core::Text` answers, and a list is `list_append`, which is `docs/70`'s in-place push and
 therefore the ownership question this ADR just deferred.

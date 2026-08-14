@@ -6,7 +6,7 @@
 //! for exactly this ("the upgraded socket in the server, and an in-memory duplex in the tests") and
 //! nothing had used the second half of that sentence.
 //!
-//! The reason it exists now is `docs/24-incremental-views-report.md`: the subscription loop is
+//! The reason it exists now is `docs/23-incremental-views-report.md`: the subscription loop is
 //! where the incremental view engine is switched on, one engine per connection. The differential
 //! harness proves the engine renders what a recompute would; this proves the loop is holding one.
 
@@ -104,7 +104,7 @@ async fn a_subscription_maintains_its_view_and_streams_the_patches() {
 #[tokio::test]
 async fn a_subscription_serves_the_same_page_with_maintenance_switched_off() {
     // `AppConfig::maintain_views` is a switch because the engine is a memory-for-time trade
-    // (docs/24 §24.7). A switch nothing exercises is a switch that stops working, and the failure
+    // (docs/23 §23.14). A switch nothing exercises is a switch that stops working, and the failure
     // would be silent: the page would still render, from the other path.
     let app = App::start(
         todo_runtime(),
@@ -243,7 +243,7 @@ async fn two_live_subscriptions_over_one_shared_dataflow_get_their_own_pages() {
 #[tokio::test]
 async fn a_subscription_serves_the_same_page_with_sharing_switched_off() {
     // The other half of the switch tested above. With `share_arrangements` off every subscription
-    // computes the whole plan itself, which is what every subscription did before docs/26 — and the
+    // computes the whole plan itself, which is what every subscription did before docs/23 — and the
     // failure of a switch nobody exercises is silent, because the page still renders.
     let app = App::start(
         todo_runtime(),

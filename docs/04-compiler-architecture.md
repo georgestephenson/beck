@@ -97,7 +97,7 @@ Given placed `Core`, stage 8 does five things:
 
    *Built* — `beck-core/src/{signal,split}.rs`, and "every … edge" is literal: the crossings are
    enumerated with a content-derived id each, which `beck explain flow` prints
-   ([`23`](23-general-slicer-report.md) §23.3). The todo sketch has three, and both earlier reports
+   ([`23`](23-incremental-views-report.md) §23.2). The todo sketch has three, and both earlier reports
    said it had one.
 4. **Emit state artefacts.** Log-store DDL, read-model DDL, snapshot schedules, and — when
    accumulator or event types changed against the previously deployed signature — the demand for
@@ -162,7 +162,7 @@ Targets to hold yourself to: keystroke→diagnostics **< 100 ms** on a 50 kLOC p
 `beck build` for a one-line change **< 2 s** to a running dev process (hot reload); clean release
 build of 50 kLOC **< 60 s** including WASM and image assembly.
 
-*Status ([`65`](65-lsp-report.md)). `beck lsp` is built — diagnostics, hover, go-to-definition and
+*Status ([`65`](65-the-editor-report.md)). `beck lsp` is built — diagnostics, hover, go-to-definition and
 document symbols — and the "no separate implementation to drift" claim is now a harness: the
 server's answers are compared to `compile_or_library_str`'s own diagnostics and to
 `iface::render_item`, rather than to strings written in a test. **The Salsa query graph above is
@@ -204,8 +204,8 @@ Also ship `beck explain wire <op>`, `beck explain query <fn>`, `beck explain dep
 
 *Built*: `place`, `flow`, `wire`, `deploy`, and — with the general slicer, which gave it a plan to
 read — `beck explain incremental <view>`, which [`03`](03-type-and-effect-system.md) §3.8 asks for
-([`23`](23-general-slicer-report.md) §23.8). **`query` and `cost` are built too**
-([`89`](89-query-fusion-report.md)) — `query` prints the view's dataflow plan, what orders each
+([`23`](23-incremental-views-report.md) §23.15). **`query` and `cost` are built too**
+([`23`](23-incremental-views-report.md)) — `query` prints the view's dataflow plan, what orders each
 arrangement, which side of §5.3's session cut each operator is on, and what fusion made of it;
 `cost` prints what one event costs that plan, operator by operator, in the units the engine counts.
 Both take a *file* rather than a `<fn>`: a plan is a property of the program's page, and a program
@@ -225,7 +225,7 @@ testing, TLA+ specs, mutation testing and the meta-testing policies, is
 | Placement | Property: *no valid program is rejected*; *no `secret` reaches client* (assert over generated programs); determinism and stability properties | `proptest` |
 | Splitting | Differential execution: run the whole program single-process vs. split across tiers, assert identical observable behaviour. **This is the highest-value test in the project** | custom harness |
 | Determinism/replay | Fold the same recorded log twice (and across dev/release backends); assert bit-identical states and patch streams. For `retain=forever` stores: **genesis replay** — an archived corpus through the full upcast chain, asserting state equality ([`10`](10-decisions.md) D3) | harness |
-| Codegen | Execution tests per backend; WASM vs native differential. **Three-way and built** ([`93`](93-llvm-backend-report.md), [`97`](97-cranelift-report.md)): the tree-walker, LLVM and Cranelift over the scalar subset, with the two emitters also held to accepting and refusing the same definitions | harness |
+| Codegen | Execution tests per backend; WASM vs native differential. **Three-way and built** ([`93`](93-the-native-backends-report.md), [`93`](93-the-native-backends-report.md)): the tree-walker, LLVM and Cranelift over the scalar subset, with the two emitters also held to accepting and refusing the same definitions | harness |
 | Data tier | Incremental-vs-oracle: every incrementalized view checked against full recompute over the same log; SQL read-model forms checked against both | harness + Postgres |
 | Infra | Golden manifests (`insta`), then apply to ephemeral `k3d` clusters in CI and assert reachability/policy | k3s in CI |
 | End-to-end | The running example, deployed to a kind/k3d cluster, driven by a browser | Playwright (pre-installed here) |

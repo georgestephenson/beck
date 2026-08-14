@@ -1,4 +1,4 @@
-//! What Mode B costs — the numbers `docs/94` §94.6 quotes.
+//! What Mode B costs — the numbers `docs/94` §94.11 quotes.
 //!
 //! Release-only by the convention every measurement suite here follows:
 //!

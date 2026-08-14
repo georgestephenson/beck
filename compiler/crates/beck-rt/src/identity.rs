@@ -63,7 +63,7 @@ impl Actor {
     /// the program sees. They do **not** reach the log — an envelope carries the actor's name and
     /// nothing else, because a fold that read a claim would be a fold whose replay depended on
     /// what the issuer was saying at the time
-    /// ([`docs/95`](../../../../../docs/95-oidc-relying-party-report.md) §95.4).
+    /// ([`docs/48`](../../../../../docs/48-identity-report.md) §48.6).
     pub fn claims(&self) -> &BTreeMap<Arc<str>, Arc<str>> {
         &self.claims
     }
@@ -208,7 +208,7 @@ impl Identity for DevIdentity {
 /// gateway that mints credentials for a Beck process behind it — the shape a rung-1 deployment
 /// actually has — and it does not suit a public identity provider, because everything that can
 /// verify a credential can also mint one. An asymmetric verifier is D6's OIDC work and needs a
-/// signature library ([`48`](../../../../../docs/48-identity-report.md) §48.5).
+/// signature library ([`48`](../../../../../docs/48-identity-report.md) §48.13).
 ///
 /// BLAKE3's keyed mode is a MAC by construction and is already in this workspace's dependency
 /// graph, so this costs no new dependency and no hand-rolled cryptography — the two ways a module

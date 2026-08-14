@@ -3,7 +3,7 @@
 **Built.** `beck_rt::SqliteLog` — a third durable `LogStore`, beside redb and Postgres, and
 `--store sqlite` on `beck run` and `beck replay`.
 
-One of the bullets [`26`](26-arrangement-sharing-report.md) §26.9 lists as untouched, scheduled by
+One of the bullets [`23`](23-incremental-views-report.md) §23.19 lists as untouched, scheduled by
 [`08`](08-roadmap.md) and argued for by [`07`](07-dependencies.md) §7.8.1.
 
 ## 67.1 Why it was added, which is not speed
@@ -105,7 +105,7 @@ and SQLite itself public domain.
 
 | | Status |
 |---|---|
-| A SQL read model | **not built**, and this is the point worth being loudest about. The transaction property §67.1 asserts is *available* and **unused** — nothing in Beck projects into SQL. [`26`](26-arrangement-sharing-report.md) §26.9's "SQL read models and pgwire" is untouched, and this substrate is what it would be built on |
+| A SQL read model | **not built**, and this is the point worth being loudest about. The transaction property §67.1 asserts is *available* and **unused** — nothing in Beck projects into SQL. [`23`](23-incremental-views-report.md) §23.19's "SQL read models and pgwire" is untouched, and this substrate is what it would be built on |
 | Rung 0's default changing | **not changed.** `beck run` still defaults to redb. §67.3's numbers do not justify a change, and "measure and let the number pick" — [`08`](08-roadmap.md)'s instruction — is answered with *the number does not pick*, which is a result rather than an omission |
 | Litestream / LiteFS replication | **not built.** §7.8.1 names them as what makes SQLite viable beyond a laptop; nothing here touches replication |
 | `beck build` emitting SQLite DDL | **not built.** `SQLITE_DDL` is a constant the store applies, not an artefact the compiler emits — unlike `DDL`, which §4.3 stage 4 does emit |
@@ -122,13 +122,3 @@ and SQLite itself public domain.
 - **`beck bench log`'s table gains two rows and a wider first column**, and the wider column is not
   cosmetic: `sqlite-relaxed` did not fit, and a substrate whose name is truncated is a number
   attributed to the wrong thing.
-
-## 67.7 What Phase 3 is still not
-
-The exit criterion is not met. **Five of the fourteen bullets remain untouched** — Mode B, client
-polish, structured concurrency, the playground, supply-chain tooling — with no LLVM backend,
-identity holding its seam and not its relying party, and the incremental-views bullet still without
-read models, pgwire or fusion.
-
-That last one is now the interesting gap rather than one of a list: the substrate a SQL read model
-would be built on exists, is tested, and is used for nothing.

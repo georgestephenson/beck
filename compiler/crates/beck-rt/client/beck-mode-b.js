@@ -117,7 +117,7 @@
   const start = async () => {
     // Through `beck.asset`, not `fetch`, for the same reason the socket goes through `beck.dial`:
     // in a playground tab the bundle comes from the worker that derived it and there is no origin
-    // to fetch either of them from (docs/103).
+    // to fetch either of them from (docs/98).
     const [module, bundle] = await Promise.all([
       WebAssembly.instantiateStreaming(beck.asset("beck-kernel.wasm"), {}),
       beck.asset("beck-bundle.bpk").then((r) => r.arrayBuffer()),

@@ -12,7 +12,7 @@
 //!
 //! Shared between the two emitters for the reason [`crate::heap`] is: it is not a *code generator*,
 //! it is the program both of them are given, and two copies would mean two different subsets
-//! compile ([`docs/97`](../../../../../docs/97-cranelift-report.md) §97.3 is about the emitters, not
+//! compile ([`docs/93`](../../../../../docs/93-the-native-backends-report.md) §93.8 is about the emitters, not
 //! about everything upstream of them).
 //!
 //! # Why the type arguments do not have to be recorded anywhere
@@ -197,7 +197,7 @@ impl Specialiser {
             }
         }
         // The same walk `check::resolve_types` performs, and for the same reason: a node this
-        // missed keeps a name that is about to stop existing. `docs/91` §91.3 counted fourteen
+        // missed keeps a name that is about to stop existing. `docs/90` §90.5 counted fourteen
         // walks that an arm's **guard** was new to, which is why the arms go through `exprs_mut`.
         match &mut c.kind {
             CoreKind::Lam { body, .. } => self.rewrite(Arc::make_mut(body)),

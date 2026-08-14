@@ -3,11 +3,20 @@
 > **The question**: what does the academic literature — the classics Beck already stands on, and
 > the 2023–2026 work published since the design documents were written — say about what this
 > project needs next?
+>
+> **This is a dated survey, and it keeps its date.** Its verdicts are cashed elsewhere — §38.2's
+> reader-frontier discipline in [`23`](23-incremental-views-report.md) §23.11, §38.4's error rows
+> and scope-as-handler in [`27`](27-the-walls-come-down-report.md) and
+> [`80`](80-structured-concurrency-report.md), §38.1's dictionaries-are-the-semantics in
+> [`93`](93-the-native-backends-report.md) §93.10 — and each of those chapters says which half of the
+> forecast held. Folding the surviving verdicts in here and deleting this would keep the conclusions
+> and lose the reading that produced them.
+
 
 This is a survey, not a charter change, in the sense [`35`](35-standards-landscape.md) established:
 nothing below is adopted by being written here. Where [`35`](35-standards-landscape.md) surveyed
 standards bodies, this document surveys research — against the unbuilt list
-([`26`](26-arrangement-sharing-report.md) §26.9, [`27`](27-the-walls-come-down-report.md) §27.10), the open
+([`23`](23-incremental-views-report.md) §23.19, [`27`](27-the-walls-come-down-report.md) §27.10), the open
 questions ([`09`](09-risks-and-open-questions.md) §9.6), and the design's own citations
 ([`00`](00-original-idea.md)'s provenance table), which date from 2022-era literature and had not
 been rechecked since. Every citation below was confirmed against the published record (publisher
@@ -107,7 +116,7 @@ places Scala alone on that branch.
 
 ## 38.2 The incremental view engine: fusion, lifecycle, and the page as deltas
 
-The engine [`24`](24-incremental-views-report.md) built by hand now has a formal twin. **DBSP**
+The engine [`23`](23-incremental-views-report.md) built by hand now has a formal twin. **DBSP**
 (Budiu, Chajed, McSherry, Ryzhyk & Tannen, VLDB 2023 best paper; journal version VLDBJ 2025; SIGMOD
 Research Highlight 2024) gives a small algebra over Z-sets — weighted collections with
 differentiation, integration, delay — and a *mechanical* incrementalization theorem covering
@@ -119,7 +128,7 @@ passed" into a claim with edges. The Lean formalization marks the ceiling a futu
 would aim at — **watch**.
 
 **Query fusion has a substrate waiting.** The unbuilt fusion pass
-([`26`](26-arrangement-sharing-report.md) §26.9) is, per the literature, an equality-saturation
+([`23`](23-incremental-views-report.md) §23.19) is, per the literature, an equality-saturation
 job: egg (Willsey et al., POPL 2021) and egglog (Zhang et al., PLDI 2023) make rewrite-based
 optimization practical without phase-ordering problems; Laddad et al. (*Optimizing Stateful
 Dataflow with Local Rewrites*, EGRAPHS @ PLDI 2023) demonstrate it on stateful streaming plans
@@ -130,17 +139,17 @@ DBSP's algebra is *for*. **Adopt** the shape when fusion is built: small local r
 sound against the change semantics, extracted by the cost model
 [`20`](20-phase-2-report.md) already has.
 
-**The arrangement lifecycle questions have published answers.** §26.9's "the shared dataflow is
+**The arrangement lifecycle questions have published answers.** §23.19's "the shared dataflow is
 never released" and "the history is a constant, not a policy" are both answered by the
 reader-frontier discipline of **Shared Arrangements** (McSherry, Lattuada, Schwarzkopf & Roscoe,
 VLDB 2020): each subscriber holds a frontier; the trace is compactable up to the minimum
 subscriber frontier and droppable when the reader set is empty. Beck's 64-version constant is a
 placeholder for that policy, and the paper is the direct ancestor of
-[`26`](26-arrangement-sharing-report.md)'s design, so the fit is not speculative. **Adopt** —
+[`23`](23-incremental-views-report.md)'s design, so the fit is not speculative. **Adopt** —
 this is the cheapest item in this survey: the engine already has versions and subscribers; it
 lacks only the rule connecting them. For subscribers that outrun any retained history, **Noria**
 (Gjengset et al., OSDI 2018) is the model: partially-stateful dataflow where evicted state refills
-on demand via upqueries — **borrow**, since [`26`](26-arrangement-sharing-report.md) §26.4's
+on demand via upqueries — **borrow**, since [`23`](23-incremental-views-report.md) §23.18's
 rebuild path is the degenerate form already.
 
 **The property the engine must state.** Jamie Brandon's *Internal consistency in streaming
@@ -165,7 +174,7 @@ the bullet stays unbuilt but stops being unshaped. *One SQL to Rule Them All* (B
 SIGMOD 2019) is the vocabulary bridge — a Beck signal is a time-varying relation — when read
 models arrive.
 
-**The page as deltas is the genuinely open one.** [`24`](24-incremental-views-report.md) §24.6's
+**The page as deltas is the genuinely open one.** [`23`](23-incremental-views-report.md) §23.8's
 assembled-and-diffed page has no published system to copy: TreeToaster (Balakrishnan et al.,
 SIGMOD 2021) shows tree-native incremental structures beating relational encodings for tree-shaped
 state, Adapton (Hammer et al., PLDI 2014) legitimises demand-driven maintenance, and the
@@ -195,7 +204,7 @@ as living at a *set* of tiers, without redundant traffic — precisely Beck's un
 compiled twice. **Certified projection** is the proof shape for "the sliced program means what the
 source means": a bisimulation between signal-graph semantics and the projected tiers. **Borrow**
 all three; the trigger to **adopt** (an EPP-style correctness statement for the slicer) is the
-first slicer bug that the differential suite finds late — [`23`](23-general-slicer-report.md)
+first slicer bug that the differential suite finds late — [`23`](23-incremental-views-report.md)
 §23.2's silent mis-slice was one already.
 
 Two adjacent results give Beck's existing claims their citations. The placement pipeline —
@@ -223,7 +232,7 @@ than implying support.
 
 ## 38.4 Errors and structured concurrency: labels and handlers, not mechanisms
 
-Both unbuilt bullets ([`26`](26-arrangement-sharing-report.md) §26.9) land the same way in the
+Both unbuilt bullets ([`23`](23-incremental-views-report.md) §23.19) land the same way in the
 literature: **do not add mechanisms — add row labels and handlers.**
 
 **`Result`/error rows.** Koka's `exn` is the model: an error is a row label, a signature without
@@ -331,7 +340,7 @@ coverage — back into `property` generation is the natural upgrade to
 [`22`](22-phase-3-report.md)'s one type-directed generator. **Adopt**, trigger: the generator
 work `test --update` will force anyway. **Tyche-style reporting** (UIST 2024): show what a
 property run actually exercised, answering the distrust the ICSE study documents — fits
-[`26`](26-arrangement-sharing-report.md) §26.10 item 4's complaint that Beck exports numbers and
+[`23`](23-incremental-views-report.md) §23.10 item 4's complaint that Beck exports numbers and
 gates nothing. **Borrow.** **EMI-style metamorphic testing** (Le, Afshari & Su, PLDI 2014) for
 the slicer and future optimiser: mutate unexecuted code, behaviour must not change — "slicing
 must not change observable behaviour" as a generated test family, cheaper than a second backend.

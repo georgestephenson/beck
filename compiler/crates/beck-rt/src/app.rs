@@ -43,8 +43,8 @@ pub struct AppConfig {
     /// On by default, because it is what §3.8 asks for and it is ~5× faster per event. It is a
     /// *switch* rather than a fact because it is also a memory-for-time trade — about 4× the bytes
     /// a subscription already held for its page
-    /// ([`docs/24-incremental-views-report.md`](../../../../../docs/24-incremental-views-report.md)
-    /// §24.6) — and an operator running a fanout of a hundred thousand idle sessions over a large
+    /// ([`docs/23-incremental-views-report.md`](../../../../../docs/23-incremental-views-report.md)
+    /// §23.8) — and an operator running a fanout of a hundred thousand idle sessions over a large
     /// accumulator should be able to decide that differently without recompiling.
     pub maintain_views: bool,
     /// Whether the operators that do not read the session are held **once** for every subscriber
@@ -55,7 +55,7 @@ pub struct AppConfig {
     /// are the same computation for all of them. How much that is depends entirely on the program:
     /// a view that filters by the session immediately below the fold shares almost nothing, and one
     /// that sorts a public feed and personalises only the greeting shares almost everything
-    /// ([`docs/26-arrangement-sharing-report.md`](../../../../../docs/26-arrangement-sharing-report.md)).
+    /// ([`docs/23-incremental-views-report.md`](../../../../../docs/23-incremental-views-report.md)).
     ///
     /// Ignored when `maintain_views` is off: there are no arrangements to share.
     pub share_arrangements: bool,
@@ -66,8 +66,8 @@ pub struct AppConfig {
     /// connected subscriber's lag, so both numbers are ceilings rather than costs. A deployment
     /// whose clients reconnect constantly wants `release_when_idle` off, and one with slow clients
     /// and fast events wants a deeper history; neither should have to recompile for it
-    /// ([`docs/26-arrangement-sharing-report.md`](../../../../../docs/26-arrangement-sharing-report.md)
-    /// §26.9 asked for exactly this).
+    /// ([`docs/23-incremental-views-report.md`](../../../../../docs/23-incremental-views-report.md)
+    /// §23.19 asked for exactly this).
     ///
     /// Ignored when `share_arrangements` is off: there is no shared dataflow to retain anything.
     pub retention: beck_core::engine::Retention,
@@ -123,7 +123,7 @@ struct Proposal {
     at: Instant,
     /// The whole viewer rather than its name: `validate` is handed a `Session`, and D6's claims →
     /// capability mapping is the chokepoint's to use. Only the **name** goes on the envelope
-    /// (`docs/95` §95.4), so what is durable is unchanged.
+    /// (`docs/48` §48.6), so what is durable is unchanged.
     actor: crate::identity::Actor,
     command: Value,
     reply: oneshot::Sender<Result<Seq, String>>,
@@ -158,7 +158,7 @@ pub struct App {
     /// `http::serve` stops accepting on shutdown, but a websocket that was already accepted is a
     /// task of its own and went on living for as long as the process did. A client whose server
     /// has drained should find out and reconnect — which, for a Mode B client, is also the moment
-    /// its offline queue matters (`docs/94` §94.13).
+    /// its offline queue matters (`docs/94` §94.10).
     draining: watch::Sender<bool>,
 }
 
@@ -272,7 +272,7 @@ impl App {
     ///
     /// With sharing on it owns only the per-session operators; the rest arrive from the one shared
     /// dataflow. With it off it owns the whole plan, which is what every subscription did before
-    /// `docs/26-arrangement-sharing-report.md`.
+    /// `docs/23-incremental-views-report.md`.
     pub fn view_engine(&self) -> Result<beck_core::engine::Engine> {
         if self.config.share_arrangements {
             Ok(self.shared.subscriber())
@@ -327,7 +327,7 @@ impl App {
     /// Public because both edges — the socket and the document handler — have to ask the same
     /// question, and because the dashboard and the startup line have to be able to *say* which
     /// provider is in force. An operator who cannot tell from the logs whether authentication is
-    /// on does not have authentication (`docs/48` §48.3).
+    /// on does not have authentication (`docs/48` §48.2).
     pub fn identity(&self) -> &Arc<dyn crate::identity::Identity> {
         &self.config.identity
     }
@@ -442,7 +442,7 @@ async fn sequencer(app: Arc<App>, mut rx: mpsc::Receiver<Proposal>, config: AppC
     // only safe if the answer to the second attempt is the answer to the first. Remembering the id
     // alone let this reply "duplicate" — a *rejection* — to a command that had been accepted, so a
     // client replaying its offline queue was told its work had been refused and took it back off
-    // the page (`docs/94` §94.13).
+    // the page (`docs/94` §94.10).
     let mut seen = Seen::new(config.dedup_capacity);
     let mut since_snapshot = 0u64;
     let mut batch: Vec<Proposal> = Vec::with_capacity(config.max_batch);

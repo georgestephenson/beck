@@ -3,6 +3,14 @@
 > **The question**: are Beck's security, thread-safety and memory-safety claims backed by
 > evidence today — and what would have to be built before "watertight" is a word this project is
 > entitled to use?
+>
+> **This is a dated survey, and it keeps its date — with one exception.** The outward-looking halves
+> are claims about the world in August 2026 and are left as they were written. §42.1's table is not:
+> it is a claim about *this repository*, so it is corrected in place as rows move, and four of them
+> have. **The current absences live in [`43`](43-threat-model.md) §43.4 and in
+> `pending_security.rs`**, which asserts each one so that closing it turns a test red; where this
+> document and that one disagree, that one is right.
+
 
 This is a survey and an assessment, in the sense [`35`](35-standards-landscape.md) established and
 [`38`](38-literature-survey.md) reused: nothing below is adopted by being written here, and the
@@ -34,7 +42,7 @@ Taken from the tree, not from the design documents. Each row says what kind of c
 
 | Property | Kind | Evidence |
 |---|---|---|
-| No `unsafe` in first-party code | structural | `unsafe_code = "forbid"` in the workspace manifest, and **twelve of the fourteen** crates carry `[lints] workspace = true` — inheritance is what makes a workspace lint real. ~~"all ten crates"~~, twice overtaken: [`97`](97-cranelift-report.md) §97.8 corrected it to twelve, and the count is now fourteen with two of them held to `deny` instead. Those two are `beck-wasm` and `beck-play`, and the reason is the same in both: rustc classifies `#[no_mangle]` as unsafe code, and a WebAssembly module must export something. Each carries one `#[allow]` per export attribute and **a test** that no other allow site, `unsafe` block or `unsafe fn` exists in it (`mode_b.rs`, `playground.rs`) — an exception whose extent is asserted rather than described. The lint is also why `beck-llvm` exists in the shape it does: a native backend that bound LLVM or ran compiled code in process would have needed `unsafe`, so it writes textual IR and spawns a process instead ([`adr/0021`](adr/0021-the-native-backend-writes-ir-and-runs-a-process.md)), where `beck-clif`'s safe API cost nothing ([`adr/0024`](adr/0024-cranelift-emits-an-object-and-a-linker-makes-it-a-program.md)) |
+| No `unsafe` in first-party code | structural | `unsafe_code = "forbid"` in the workspace manifest, and **twelve of the fourteen** crates carry `[lints] workspace = true` — inheritance is what makes a workspace lint real. ~~"all ten crates"~~, twice overtaken: [`93`](93-the-native-backends-report.md) §93.14 corrected it to twelve, and the count is now fourteen with two of them held to `deny` instead. Those two are `beck-wasm` and `beck-play`, and the reason is the same in both: rustc classifies `#[no_mangle]` as unsafe code, and a WebAssembly module must export something. Each carries one `#[allow]` per export attribute and **a test** that no other allow site, `unsafe` block or `unsafe fn` exists in it (`mode_b.rs`, `playground.rs`) — an exception whose extent is asserted rather than described. The lint is also why `beck-llvm` exists in the shape it does: a native backend that bound LLVM or ran compiled code in process would have needed `unsafe`, so it writes textual IR and spawns a process instead ([`adr/0021`](adr/0021-the-native-backend-writes-ir-and-runs-a-process.md)), where `beck-clif`'s safe API cost nothing ([`adr/0024`](adr/0024-cranelift-emits-an-object-and-a-linker-makes-it-a-program.md)) |
 | No hand-written `Send`/`Sync` | structural | no `unsafe impl` anywhere; every cross-thread type is auto-derived, so the compiler is the reviewer |
 | Single-writer state | structural | writes funnel through one sequencer task (`beck-rt/src/app.rs`); the state behind it is a `tokio::sync::RwLock`. Concurrency bugs are excluded by there being one writer, not by lock discipline |
 | No lock held across `.await` | structural (by inspection) | the `std::sync::Mutex` uses in `log.rs` and `telemetry.rs` are each scoped inside a single expression with no `.await` between acquire and drop |
@@ -44,13 +52,13 @@ Taken from the tree, not from the design documents. Each row says what kind of c
 | Licence and advisory policy | tested | `deny.toml` with an **empty** `advisories.ignore` (advisories are fixed at the root, and the comment says so), `yanked = "deny"`, `wildcards = "deny"`, `allow-git = []`; gated in CI ([`adr/0004`](adr/0004-full-cargo-deny-gate.md)) |
 | Warnings are errors | tested | `RUSTFLAGS: -D warnings` with `cargo clippy --workspace --all-targets --all-features` |
 | Escaping, text vs attribute | tested | `beck-core/src/html.rs` separates the two contexts; `a_todo_whose_text_is_a_script_tag_renders_as_text` is the negative test |
-| Front-end recursion bound | **absent** | §42.2 |
-| Authentication | **absent** | §42.6 |
-| Request/connection limits | **tested** | [`83`](83-the-runtime-edge-report.md): the socket's limits are numbers this project argues for, and `Origin` is checked; `runtime_edge.rs` |
-| Per-actor write quotas | **tested** | [`84`](84-a-quota-is-only-as-good-as-its-actor-report.md): 600 events a minute, on by default; `runtime_edge.rs` asserts on the log's head. **Subscription quotas (F15) are still absent** |
+| Front-end recursion bound | **tested** | §42.2 was the finding; [`adr/0012`](adr/0012-the-front-end-counts-its-own-recursion.md) is the bound and [`44`](44-wave-0-report.md) built it, measured at 18 KiB per level and gated both ways. [`82`](82-the-edge-report.md) then found three productions it did not cover |
+| Authentication | **tested** | §42.6 was the finding, and [`48`](48-identity-report.md) closed it: an `Actor` is minted by an `Identity` implementation, there is an OIDC relying party, and claims reach `validate`. **The default provider still believes the client and says so**, which is a deployment's choice rather than a property of the protocol |
+| Request/connection limits | **tested** | [`82`](82-the-edge-report.md): the socket's limits are numbers this project argues for, and `Origin` is checked; `runtime_edge.rs` |
+| Per-actor write quotas | **tested** | [`82`](82-the-edge-report.md): 600 events a minute, on by default; `runtime_edge.rs` asserts on the log's head. **Subscription quotas (F15) are still absent** |
 | Macro expansion fuel | **absent** | F17, unbuilt: nothing in `beck-macro` bounds expansion |
-| A written threat model | **absent** | §42.8 |
-| A disclosure policy | **absent** | no `SECURITY.md`, no contact, no policy |
+| A written threat model | **tested** | [`43`](43-threat-model.md), with `pending_security.rs` asserting each absence it names so a closed one turns a test red |
+| A disclosure policy | **built** | `SECURITY.md` ([`44`](44-wave-0-report.md)) |
 
 Two things this table is careful about. Everything marked *structural* is worth more than
 everything marked *tested*, and the project has more structural rows than most language
@@ -69,7 +77,7 @@ reasons. It says something real about the lexer and the resolver, which is where
 layout algorithm would be expected to break first. And it is the reason §42.2 exists: random
 mutation cannot *generate structure*, so the one crash class the front end actually has is
 precisely the one this method is blind to. §42.11's grammar-aware fuzzing row is the version of
-this that counts — and [`85`](85-what-the-generator-found-report.md) is it, built: a structure-aware
+this that counts — and [`82`](82-the-edge-report.md) is it, built: a structure-aware
 generator found **three** productions the recursion ceiling did not cover, plus the flat-block axis
 [`64`](64-compile-speed-report.md) §64.4 had recorded and not fixed. This paragraph's caution was
 right, and understated: byte mutation was not merely blind to the class, the class was populated.
@@ -238,20 +246,20 @@ What an untrusted client can do to a running Beck app today:
   in every corpus program is therefore enforced against a value the caller chooses. This is honestly
   documented and correctly sequenced — it is Phase 3's work, not a defect — but it is *absent*, and
   §42.1 records it that way.
-- ~~**Send a 64 MiB message.**~~ **Closed** ([`83`](83-the-runtime-edge-report.md)). The handshake
+- ~~**Send a 64 MiB message.**~~ **Closed** ([`82`](82-the-edge-report.md)). The handshake
   passed `None`, so the limits were tungstenite's — 64 MiB a message, 16 MiB a frame. They are now
   256 KiB a message and a frame, 8 KiB of eagerly-allocated read buffer per connection rather than
-  128 KiB, and a bounded write buffer; §83.2 is the argument for each number, and a unit test holds
+  128 KiB, and a bounded write buffer; §82.3 is the argument for each number, and a unit test holds
   the file to them so a drift back to somebody else's defaults is a decision.
-- ~~**Open a socket from any origin.**~~ **Closed** ([`83`](83-the-runtime-edge-report.md)). The
+- ~~**Open a socket from any origin.**~~ **Closed** ([`82`](82-the-edge-report.md)). The
   upgrade compares `Origin`'s authority against `Host` and answers `403` when they differ. An absent
   `Origin` is allowed, because the attack needs a browser and every browser sends one; the scheme is
-  not compared, because §6.5's gateway terminates TLS in front of a plaintext hop. §83.3 is why each
+  not compared, because §6.5's gateway terminates TLS in front of a plaintext hop. §82.2 is why each
   went that way.
-- ~~**Spend the log.**~~ **Closed for F3** ([`84`](84-a-quota-is-only-as-good-as-its-actor-report.md)):
+- ~~**Spend the log.**~~ **Closed for F3** ([`82`](82-the-edge-report.md)):
   600 events a minute per actor, on by default, charged before the ingress queue and counted as
   `throttled` apart from the other two ways a proposal can fail. F15's connection quotas and F12's
-  bounded deploy buffer are still unbuilt. §84.4 is what the F3 bound is worth in practice — a
+  bounded deploy buffer are still unbuilt. §82.5 is what the F3 bound is worth in practice — a
   per-actor limit composes with whichever identity provider is configured, so under `DevIdentity` an
   attacker who rotates names is bounded by the *table* rather than by the limit.
 
@@ -260,24 +268,24 @@ today. What it should do is stop being invisible: these are four F-numbers whose
 [`14`](14-review-findings.md) is a word, and whose status in the code is silence. §42.11's
 `pending_security` row makes the silence audible.
 
-*Three of the four are closed*, and the mechanism worked for two of them: [`83`](83-the-runtime-edge-report.md)'s
+*Three of the four are closed*, and the mechanism worked for two of them: [`82`](82-the-edge-report.md)'s
 pair were bullets whose gap was a **failing test**, so building them turned that test red and the
 person who built them had to come back to this paragraph.
 
 *It did not work for the third.* Both tests guarding F3 stayed **green** through the change that
 closed it — one grepped for identifiers the implementation did not happen to use, and the other
 proposed 200 events against a limit that turned out to be 600.
-[`84`](84-a-quota-is-only-as-good-as-its-actor-report.md) §84.5 is the post-mortem, and the caveat it
+[`82`](82-the-edge-report.md) §82.10 is the post-mortem, and the caveat it
 leaves belongs to every grep-shaped test in `pending_security.rs`: a proxy for a control is defeated
 by naming, and a behavioural test for an absence cannot be calibrated against a limit that does not
 exist yet.
 
 ~~One smaller item, recorded so it does not rot: `dash.html`'s `esc` escapes `&<>` only, and the
 graph renderer interpolates `class="${n.tier}"` into an attribute without it.~~ **Already fixed when
-[`83`](83-the-runtime-edge-report.md) went looking**, and this paragraph is the correction. `esc`
+[`82`](82-the-edge-report.md) went looking**, and this paragraph is the correction. `esc`
 escapes `&<>"'` and says in a comment why quotes are in the set — "half the interpolations below are
 into attributes" — and the graph renderer writes `class="${esc(n.tier)}"`. Every other interpolation
-in the file is escaped, a number computed by the layout, or a literal chosen by a ternary; §83.5
+in the file is escaped, a number computed by the layout, or a literal chosen by a ternary; §82.12
 records the audit. The item rotted in the *other* direction: it was fixed and the record was not, so
 this document has been describing a defect that stopped existing. That is the failure mode a
 `pending_security` test does not have, and it is the argument for turning a paragraph into one.
@@ -297,8 +305,8 @@ Four rows in [`12`](12-standards-and-conformance.md) §12.6 have moved since the
 
 | §12.6 says | August 2026 | What to do |
 |---|---|---|
-| SLSA v1.0, target Build L3 | **v1.2**, adding a whole **Source track** (L1 version control → L2 tamper-resistant history with verified contributor identity → L3 enforced, documented protections → L4 no unilateral change to protected branches); backwards compatible, additive | Reference updated. The **Build track now has something to point at**: the compiler's release attests in-toto provenance over every artefact it publishes, signed by a Sigstore certificate naming the release workflow and logged publicly ([`109`](109-provenance-report.md), [`adr/0028`](adr/0028-a-release-carries-provenance-and-still-no-signature.md)) — a level is *not* claimed, because L3's isolated-builder requirement is a statement about GitHub's runners that this project has not audited. Source L3 is still mostly a GitHub settings exercise the project may already satisfy, and is worth claiming because it is nearly free |
-| SPDX 2.3 SBOMs | CISA's **2026 Minimum Elements** (29 July 2026, with NSA, FBI and sixteen international agencies) supersede the 2021 NTIA baseline: ten new fields, four revised, plus a **mandatory digital signature**, component hashes, licences, generation tool and context; SWID dropped, **SPDX 3.0 and CycloneDX 1.7** named as the accepted formats | Retarget the row at the 2026 elements. The signature and hash requirements were said to land on [`28`](28-releases-and-deployment.md)'s pipeline rather than on the compiler; **half of that is now wrong** — the compiler signs ([`99`](99-supply-chain-report.md) §99.5), and what it signs is the **image**, not the SBOM. So the mandatory-signature element has machinery and is still unmet, and component hashes remain unmet for the reason [`92`](92-sbom-report.md) §92.5 gives |
+| SLSA v1.0, target Build L3 | **v1.2**, adding a whole **Source track** (L1 version control → L2 tamper-resistant history with verified contributor identity → L3 enforced, documented protections → L4 no unilateral change to protected branches); backwards compatible, additive | Reference updated. The **Build track now has something to point at**: the compiler's release attests in-toto provenance over every artefact it publishes, signed by a Sigstore certificate naming the release workflow and logged publicly ([`92`](92-supply-chain-and-release-report.md), [`adr/0028`](adr/0028-a-release-carries-provenance-and-still-no-signature.md)) — a level is *not* claimed, because L3's isolated-builder requirement is a statement about GitHub's runners that this project has not audited. Source L3 is still mostly a GitHub settings exercise the project may already satisfy, and is worth claiming because it is nearly free |
+| SPDX 2.3 SBOMs | CISA's **2026 Minimum Elements** (29 July 2026, with NSA, FBI and sixteen international agencies) supersede the 2021 NTIA baseline: ten new fields, four revised, plus a **mandatory digital signature**, component hashes, licences, generation tool and context; SWID dropped, **SPDX 3.0 and CycloneDX 1.7** named as the accepted formats | Retarget the row at the 2026 elements. The signature and hash requirements were said to land on [`28`](28-releases-and-deployment.md)'s pipeline rather than on the compiler; **half of that is now wrong** — the compiler signs ([`92`](92-supply-chain-and-release-report.md) §92.6), and what it signs is the **image**, not the SBOM. So the mandatory-signature element has machinery and is still unmet, and component hashes remain unmet for the reason [`92`](92-supply-chain-and-release-report.md) §92.15 gives |
 | — (absent) | **Trusted publishing** on crates.io: short-lived OIDC credentials replacing long-lived tokens, plus a trusted-publishing-only mode | Add the row. This is the single highest-value account control for anything that will ever publish a crate, and the Shai-Hulud npm worm (September 2025, 500+ packages, self-replicating through stolen maintainer credentials, with stolen tokens outliving the cleanup) is the argument |
 | Reproducible Builds, build twice and diff | Still right, and better tooled: `cargo-repro` for crate-level byte comparison, and rustc's own `repro-check` building stage-2 twice and comparing sysroots by SHA-256. Known residual gaps are `build.rs`, proc macros and the `cc` crate | Keep; name the known gaps rather than claiming bit-for-bit unconditionally |
 
@@ -358,12 +366,12 @@ which §42.7 is already about, and **A10 Mishandling of Exceptional Conditions**
 
 | Area | Adopt | Borrow | Watch (trigger) | Decline |
 |---|---|---|---|---|
-| Front end (§42.2) | Counted recursion bound in parser, checker and lowering, with a diagnostic and a stack-fits-ceiling test, per ADR 0007's argument | Scriban's incomplete-fix lesson: bound the recursion site, not one grammar rule — **and the tree contained three violations of it**, found by the row to the right ([`85`](85-what-the-generator-found-report.md)) | ~~Grammar-aware fuzzing (trigger: the bound lands)~~ — **built** ([`85`](85-what-the-generator-found-report.md)); what is still watched is *coverage-guided* fuzzing, trigger: a nightly toolchain is taken for another reason | — |
+| Front end (§42.2) | Counted recursion bound in parser, checker and lowering, with a diagnostic and a stack-fits-ceiling test, per ADR 0007's argument | Scriban's incomplete-fix lesson: bound the recursion site, not one grammar rule — **and the tree contained three violations of it**, found by the row to the right ([`82`](82-the-edge-report.md)) | ~~Grammar-aware fuzzing (trigger: the bound lands)~~ — **built** ([`82`](82-the-edge-report.md)); what is still watched is *coverage-guided* fuzzing, trigger: a nightly toolchain is taken for another reason | — |
 | Memory safety (§42.3) | A written memory-safety roadmap paragraph, in CISA's terms | verify-rust-std's null result as the stated reason for aiming verification elsewhere | — | Miri as routine CI (no yield against `forbid(unsafe)`); Kani *for memory safety* |
 | Verification (§42.3, §42.5) | Kani on the solver's security invariants — no `secret[T]` into a client partition, `durable`/`ingress` never client-side | Non-interference as the name of the §3.5 claim; the OOPSLA 2025 and graded-coeffect lineage | Mechanised non-interference over the core calculus (trigger: Phase 5's spec) | — |
 | Concurrency (§42.4) | Injected clock on the seam, now, so DST is never a retrofit | TigerBeetle/WarpStream/S2 as evidence DST is ordinary practice | `loom` (trigger: first hand-rolled synchronisation); DST proper (trigger: second runtime substrate) | — |
 | Runtime edge (§42.6) | Make the four unbuilt F-numbers visible as failing tests rather than as words | OWASP Top 10:2025 A10 as the category name for §42.2 | Origin checks, message limits, quotas (trigger: first deployment outside a laptop) | — |
-| Supply chain (§42.7) | Trusted publishing before the first crate is published; SLSA **v1.2** and CISA's **2026** SBOM elements as the charter's targets. **Signing is built** ([`99`](99-supply-chain-report.md)), over the image and not the SBOM, and **build provenance is built** for the compiler's own release ([`109`](109-provenance-report.md)), which is what supplies the builder identity and the transparency log. **Package signatures are not verified** on the way in — §99.7 names that as the gap, and so is a signature over the release listing | Diverse double-compiling, recorded against self-hosting | SPDX 3.0 / CycloneDX 1.7 tooling maturity (trigger: first signed release) | — |
+| Supply chain (§42.7) | Trusted publishing before the first crate is published; SLSA **v1.2** and CISA's **2026** SBOM elements as the charter's targets. **Signing is built** ([`92`](92-supply-chain-and-release-report.md)), over the image and not the SBOM, and **build provenance is built** for the compiler's own release ([`92`](92-supply-chain-and-release-report.md)), which is what supplies the builder identity and the transparency log. **Package signatures are not verified** on the way in — §92.15 names that as the gap, and so is a signature over the release listing | Diverse double-compiling, recorded against self-hosting | SPDX 3.0 / CycloneDX 1.7 tooling maturity (trigger: first signed release) | — |
 | Process (§42.8) | ISO/IEC 29147 + 30111 disclosure policy; OSPS Baseline as a self-assessment; ASVS **5.0** in §12.7 | SSDF v1.1 as the practice vocabulary | SSDF v1.2 (trigger: final publication); EU CRA (trigger: first commercial distribution) | CRA conformity work now — out of scope, and saying so is the point |
 
 ## 42.10 What "watertight" would actually require
@@ -405,7 +413,7 @@ that carries its own schedule competes with the roadmap instead of feeding it.
 | The memory-safety roadmap (§42.3) | One paragraph in CISA's terms, stating what the workspace already guarantees and where the dependency graph is the answer instead | None; its absence is the defect |
 | Grammar-aware fuzzing (§42.2) | `cargo-fuzz` targets for the parser and the macro expander, with a structure-aware generator over the corpus | A bounded budget per pull request; found inputs checked in |
 | Kani on the solver's invariants (§42.3) | Two or three bounded proofs of the claims §3.5 markets | CI, on the solver's crate only |
-| Supply-chain rows (§42.7) | §12.6 retargeted at SLSA v1.2 and the 2026 SBOM elements; trusted publishing configured before the first publish. The signing half is built ([`99`](99-supply-chain-report.md)), and ~~the transparency log~~ and ~~the provenance statement~~ arrived with it ([`109`](109-provenance-report.md)) for the compiler's release; what is left here is **trusted publishing**, a signature over the *SBOM*, and a signature over the release listing | [`28`](28-releases-and-deployment.md)'s pipeline, which now exists |
+| Supply-chain rows (§42.7) | §12.6 retargeted at SLSA v1.2 and the 2026 SBOM elements; trusted publishing configured before the first publish. The signing half is built ([`92`](92-supply-chain-and-release-report.md)), and ~~the transparency log~~ and ~~the provenance statement~~ arrived with it ([`92`](92-supply-chain-and-release-report.md)) for the compiler's release; what is left here is **trusted publishing**, a signature over the *SBOM*, and a signature over the release listing | [`28`](28-releases-and-deployment.md)'s pipeline, which now exists |
 
 The first four are days of work between them and would move more of §42.1's table from *absent* to
 *structural* than the last four combined. The last four are where the word "watertight" starts to be

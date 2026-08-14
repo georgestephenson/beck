@@ -12,7 +12,7 @@
 //! path is exercised on a machine that has never seen `gh`. What that buys is the installer's
 //! *behaviour* around the verifier: whether a refusal stops the install, whether a missing tool is
 //! fatal, and what arguments the check is made with. What it cannot buy is a real attestation —
-//! `docs/109-provenance-report.md` §109.6 says so under its own heading rather than leaving it to
+//! `docs/92-supply-chain-and-release-report.md` §92.12 says so under its own heading rather than leaving it to
 //! be inferred from the word "stub".
 
 #![allow(dead_code)] // each test binary uses the half of this it needs

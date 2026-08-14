@@ -343,7 +343,7 @@ pub fn apply_order(graph: &InfraGraph) -> Vec<&crate::Derived> {
 /// The identity provider: somebody else's image, a volume, and the realm this graph derived.
 ///
 /// A StatefulSet for [`log_store`]'s reason — its volume is its identity — and with the three
-/// hardening constants but **not** a read-only root filesystem, which is `docs/82` §82.3's
+/// hardening constants but **not** a read-only root filesystem, which is `docs/82` §82.9's
 /// asymmetry: a derived manifest may make claims about the program's own container and not about a
 /// dependency's.
 fn identity_provider(app: &str, name: &str, volume_gb: u32, realm: &str) -> StatefulSet {
@@ -466,7 +466,7 @@ fn log_store(app: &str, name: &str, volume_gb: u32) -> StatefulSet {
                         // The three constants, and deliberately **not** a read-only root
                         // filesystem: this is somebody else's image, Postgres writes its socket
                         // and its temporary files outside the volume, and whether it does is not a
-                        // fact any Beck effect row knows. `docs/82` §82.3 says so rather than
+                        // fact any Beck effect row knows. `docs/82` §82.9 says so rather than
                         // leaving the asymmetry to be noticed.
                         security_context: Some(hardened(None)),
                         env: Some(vec![
@@ -528,7 +528,7 @@ fn log_store(app: &str, name: &str, volume_gb: u32) -> StatefulSet {
 ///
 /// The fourth — `readOnlyRootFilesystem` — is not a constant and is passed in, because for the app
 /// container it is a function of the program's effect row and for the substrate's it is a fact
-/// about somebody else's image (`docs/82` §82.3).
+/// about somebody else's image (`docs/82` §82.9).
 fn hardened(read_only_root: Option<bool>) -> SecurityContext {
     SecurityContext {
         allow_privilege_escalation: Some(false),

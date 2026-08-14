@@ -50,7 +50,7 @@ pub enum Format {
 ///
 /// The program is compiled by the caller rather than here, because a module that **imports**
 /// another cannot be read on its own: `lib/decimal.beck` is written over `lib/bignum.beck`, and a
-/// single-file read of it cannot find `Big`. `docs/56` §56.5 is where that was found — the first
+/// single-file read of it cannot find `Big`. `docs/46` §46.8 is where that was found — the first
 /// library in the tree to import another was the first to notice.
 pub fn module(
     project: &beck_core::project::Project,

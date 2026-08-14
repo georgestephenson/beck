@@ -13,7 +13,7 @@
 //! 3. **Optimism is right and reconciliation is right**: a guess appears before the server answers,
 //!    a guess the program's own `validate` refuses never appears at all, and a guess is retired
 //!    when — and only when — the confirmed state passes the position the server gave it.
-//! 4. **The page can say it is guessing** — §3.7's freshness dimension (`docs/101`). `Confirmed`
+//! 4. **The page can say it is guessing** — §3.7's freshness dimension (`docs/93`). `Confirmed`
 //!    while the client holds nothing of its own, `Pending(n)` while it does, and back again when
 //!    the state that confirms the guess arrives. Refused to a page that renders on the *server*,
 //!    which is the one rule here that points that way.
@@ -426,14 +426,14 @@ fn a_guess_is_retired_by_the_state_that_confirms_it_and_not_before() {
 ///
 /// The test above asserts the confirmation produces no DOM ops; this asserts it does no work to
 /// find that out. They are different claims and the second is the expensive one: `view` is 97% of
-/// what an interaction costs and it grows with the state (§94.14), so a render whose patch is
+/// what an interaction costs and it grows with the state (§94.12), so a render whose patch is
 /// empty by construction is the largest avoidable cost in the client.
 ///
 /// Asserted as a count rather than as a duration, because a gate on a clock flakes ([`13`] §13.7)
 /// and the property here is exact: the state derived after the confirmation *equals* the state the
 /// guess was derived from, and equal states cannot produce different pages.
 ///
-/// This goes red if `repaint` renders unconditionally again — which is what it did until §94.14.
+/// This goes red if `repaint` renders unconditionally again — which is what it did until §94.12.
 ///
 /// [`13`]: ../../../../docs/13-testing.md
 #[test]
@@ -578,7 +578,7 @@ fn a_client_adopts_the_page_it_was_rendered_and_rebuilds_any_other() {
     assert!(shown(&mut client).contains("landed first"));
 }
 
-// --------------------------------------------------------------- 4. freshness (§3.7, docs/101)
+// --------------------------------------------------------------- 4. freshness (§3.7, docs/93)
 
 /// The page says whether what it is showing is a fact, and stops saying it when it becomes one.
 ///
@@ -652,7 +652,7 @@ fn pending_counts_every_command_in_flight_and_not_just_that_there_is_one() {
     assert!(page.contains("saving 3"), "{page}");
 }
 
-/// The shortcut `docs/94` §94.14 added asks whether the *state* moved. A confirmation is exactly
+/// The shortcut `docs/94` §94.12 added asks whether the *state* moved. A confirmation is exactly
 /// where the state does not and the freshness does, so the shortcut had to learn a second question
 /// — and it may only ask it of a component that reads the answer.
 ///
@@ -992,7 +992,7 @@ fn the_kernel_builds_for_the_browser() {
     );
     // A ceiling, not a budget: what this asserts is that the kernel has not grown by an order of
     // magnitude, which is the change that would make Mode B a different proposition. The measured
-    // number and what it means for §5.1's 150 KB are in `docs/94` §94.6.
+    // number and what it means for §5.1's 150 KB are in `docs/94` §94.11.
     assert!(
         bytes < 8 * 1024 * 1024,
         "the kernel is {bytes} bytes, which is not a kernel any more"
@@ -1003,7 +1003,7 @@ fn the_kernel_builds_for_the_browser() {
 ///
 /// Two crates deny rather than forbid, and both for the same reason: rustc classifies
 /// `#[no_mangle]` as unsafe code, and a WebAssembly module that exports nothing cannot be called.
-/// `beck-wasm` is Mode B's kernel and `beck-play` is the playground (`docs/98` §98.5). That is a
+/// `beck-wasm` is Mode B's kernel and `beck-play` is the playground (`docs/98` §98.3). That is a
 /// narrow exception and this is what keeps it narrow: no `unsafe` block, no `unsafe fn`, and every
 /// `allow` attached to an export. Every other crate still inherits the workspace lint.
 ///

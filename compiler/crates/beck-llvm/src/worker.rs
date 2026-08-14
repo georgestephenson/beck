@@ -15,11 +15,11 @@
 //!
 //! # There is no fuel in compiled code
 //!
-//! `beck-eval` bounds a run by steps ([`docs/62`](../../../../../docs/62-fuel-report.md)); machine
+//! `beck-eval` bounds a run by steps ([`docs/53`](../../../../../docs/53-are-we-fast-yet-report.md)); machine
 //! code has no step to count without paying for the counter on every one of them. What is here
 //! instead is coarser and honest about being coarser: an optional **wall-clock limit**, after
 //! which the worker is killed and the call is an error naming the limit. It bounds a run that will
-//! not stop; it does not bound one that is merely slow, and it is not a quota — `docs/93` §93.7
+//! not stop; it does not bound one that is merely slow, and it is not a quota — `docs/93` §93.14
 //! says what a real one would take.
 //!
 //! # The protocol
@@ -130,7 +130,7 @@ pub struct Reply {
 /// One process per [`crate::Artifact`], with the pipe behind a `Mutex` because a
 /// [`beck_core::backend::Callable`] is `Send + Sync` and the runtime calls the fold from one task
 /// and a view from another. The lock is the round trip, not a computation queue: two threads
-/// calling at once serialise, which is what one pipe means and what §93.7 names as the first thing
+/// calling at once serialise, which is what one pipe means and what §93.14 names as the first thing
 /// a second version would change.
 pub struct Worker {
     pipe: Mutex<Pipe>,
@@ -278,7 +278,7 @@ impl Worker {
     /// The overwhelmingly likely cause is that the worker died, and the overwhelmingly likely
     /// reason for *that* is a recursion that is not in tail position exhausting the stack — which
     /// is `docs/adr/0007`'s abort, on the one backend where the ceiling that replaced it does not
-    /// exist (`docs/93` §93.7).
+    /// exist (`docs/93` §93.14).
     fn explain(&self, io: String) -> String {
         let Ok(mut child) = self.child.lock() else {
             return io;

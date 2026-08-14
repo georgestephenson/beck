@@ -9,14 +9,14 @@
 //! nesting count and the expander's own re-expansion depth — and both bound how *deep* expansion
 //! goes. Neither bounded how much it makes.
 //!
-//! That is [`docs/85`](../../../../docs/85-what-the-generator-found-report.md) §85.7's pattern for
+//! That is [`docs/82`](../../../../docs/82-the-edge-report.md) §82.10's pattern for
 //! the fourth time: *a limit added at the one production somebody thought of is bypassed through a
 //! different one*. A macro that doubles its output at each of a few levels is shallow, terminates,
 //! and is enormous.
 //!
 //! # Why the sizes here are what they are
 //!
-//! [`docs/85`](../../../../docs/85-what-the-generator-found-report.md) §85.1 is unflattering about a
+//! [`docs/82`](../../../../docs/82-the-edge-report.md) §82.7 is unflattering about a
 //! generator calibrated against the limits you built rather than against the failures you had, so
 //! these are calibrated against the *failure*: `refuses` doubles until the budget is gone, and
 //! `allows` is the whole repository, which is the only honest statement of what a legitimate program

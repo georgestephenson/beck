@@ -92,12 +92,12 @@ fn identity_defaults_to_believing_the_client() {
 }
 
 // `nothing_here_speaks_oidc` and `a_verified_identitys_claims_do_not_reach_the_program` were here,
-// and both are **built** (`docs/95`): `beck_rt::oidc` is an asymmetric relying party, and `Session`
+// and both are **built** (`docs/48`): `beck_rt::oidc` is an asymmetric relying party, and `Session`
 // carries the claims it verified. Both are gone, which is what this file's own rule asks for, and
 // what replaces them is `beck-cli/tests/oidc.rs` — where the tokens are signed by a key pair
 // generated for the test and the relying party is given nothing but the public half.
 //
-// The first of the two is worth a note beside `docs/84` §84.5's list. It was a **name grep**, for
+// The first of the two is worth a note beside `docs/82` §82.10's list. It was a **name grep**, for
 // `jwks`, `id_token`, `issuer` and `RS256`, and it would have fired on this change — all four
 // appear. But it would equally have fired on a module that fetched a JWKS and checked nothing, and
 // on a comment. A grep proves a subject was touched; it cannot prove a control works, and it is
@@ -110,7 +110,7 @@ fn identity_defaults_to_believing_the_client() {
 // `lib/http.beck`'s own tests, where a reader of the library meets it.
 
 // `no_identity_provider_is_provisioned_into_the_object_graph` was here, and it is **built**
-// (`docs/95` §95.10): `identity = managed()` derives a provider, its Service, its volume, its
+// (`docs/48` §48.8): `identity = managed()` derives a provider, its Service, its volume, its
 // credentials and a realm wired to this application's own route, and the application's egress to it
 // is a `Peer` rather than a DNS name. What replaces it is `oidc.rs`, in both directions — the
 // declaration with it and the same program without.
@@ -118,14 +118,14 @@ fn identity_defaults_to_believing_the_client() {
 // That test is also the one this file's own rules were hardest on. Its first version searched the
 // rendered YAML for `keycloak`, `ory` and `Kratos`, and went red on **`revisionHistoryLimit`**; the
 // second counted `Workload` nodes. Both were asserting an absence by looking at the shape of the
-// fix rather than the shape of the gap, which is `docs/84` §84.5's pattern from the other side.
+// fix rather than the shape of the gap, which is `docs/82` §82.10's pattern from the other side.
 //
 // **Nothing about identity is asserted as absent here now.** Presence — D6's "who is connected now,
 // as a first-class non-durable Signal" — is the last unbuilt row of that bullet, and it is a
 // language feature rather than a control, so it belongs in `docs/08`'s list and not in this file.
 
 // ---------------------------------------------------------------------------------------------
-// F3 — per-actor quotas: BUILT (`docs/84`), and the two tests that were here did not notice
+// F3 — per-actor quotas: BUILT (`docs/82`), and the two tests that were here did not notice
 // ---------------------------------------------------------------------------------------------
 //
 // They are gone, and how they failed is worth more than they were.
@@ -146,7 +146,7 @@ fn identity_defaults_to_believing_the_client() {
 // than on identifiers: five events allowed out of fifty proposed, and the head stops at five.
 //
 // The rest of this file still uses the grep, because for a control that does not exist there is
-// often nothing else to look at. `docs/84` §84.5 is the caveat that now belongs to every one of
+// often nothing else to look at. `docs/82` §82.10 is the caveat that now belongs to every one of
 // them.
 
 // ---------------------------------------------------------------------------------------------
@@ -187,7 +187,7 @@ fn the_quiesce_buffer_has_no_declared_budget() {
 // ---------------------------------------------------------------------------------------------
 
 // §42.6's second and third bullets were here — the websocket's limits were tungstenite's and
-// nothing inspected `Origin`. Both are built (`docs/83`), so both tests are gone, which is what
+// nothing inspected `Origin`. Both are built (`docs/82`), so both tests are gone, which is what
 // this file's own rule asks for: "the day somebody builds one of these, its test goes red, and the
 // person who built it has to come here and to the documents and say so." What replaces them is
 // `beck-cli/tests/runtime_edge.rs`, which asserts the behaviour over a real socket, and the unit
@@ -205,7 +205,7 @@ fn the_quiesce_buffer_has_no_declared_budget() {
 
 /// The read-model port has no authentication, and the loopback bound is what stands in for one.
 ///
-/// Behaviour rather than a grep, which is the second rule above and `docs/84` §84.5's lesson: a
+/// Behaviour rather than a grep, which is the second rule above and `docs/82` §82.10's lesson: a
 /// password is a thing a client either has to send or does not, so the honest test connects without
 /// one. Two halves, and they fail on different days — the first when authentication is built, the
 /// second if the bound is ever lifted without one.
@@ -255,7 +255,7 @@ async fn the_read_model_port_authenticates_nobody_and_answers_only_to_localhost(
 /// The `curl … | sh` a reader will actually run checks a checksum and stops there.
 ///
 /// This entry has been **narrowed once**. It used to say a release carried no signature at all;
-/// [`docs/109`](../../../../docs/109-provenance-report.md) attached SLSA build provenance to every
+/// [`docs/92`](../../../../docs/92-supply-chain-and-release-report.md) attached SLSA build provenance to every
 /// artefact and taught the installer to check it, so what a determined reader can establish is now
 /// a great deal more than a checksum. What is absent is that they have to ask:
 /// `BECK_VERIFY_PROVENANCE` is off by default ([`adr/0028`](../../../../docs/adr/0028-a-release-carries-provenance-and-still-no-signature.md)),
@@ -297,8 +297,8 @@ fn the_default_install_checks_a_checksum_and_not_the_provenance() {
 /// The provenance covers each artefact's digest, which is the thing worth covering. What it does
 /// not cover is the listing: `SHA256SUMS` itself carries no signature, so a reader who checks the
 /// sums and stops has checked one file against another file from the same page. The signing
-/// machinery `docs/99` §99.5 built still cannot take this subject — it signs an OCI manifest digest
-/// — which is [`104`](../../../../docs/104-the-release-and-the-installer-report.md) §104.6's
+/// machinery `docs/92` §92.6 built still cannot take this subject — it signs an OCI manifest digest
+/// — which is [`docs/92`](../../../../docs/92-supply-chain-and-release-report.md) §92.11's
 /// finding, unchanged by the provenance work.
 #[test]
 fn the_release_page_itself_carries_no_signature() {

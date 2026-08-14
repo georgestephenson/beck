@@ -20,8 +20,8 @@
 //! Not a claim that the pod starts. `beck-infra/tests/conformance.rs` skips without a cluster and
 //! there is none here, so this module and its emitter establish "the object graph contains these
 //! objects, wired to each other" — which is a different and smaller claim than "you can log in",
-//! exactly as [`docs/82`](../../../../../docs/82-the-defaults-that-should-be-unavoidable-report.md)
-//! §82.4 says of the pod defaults.
+//! exactly as [`docs/82`](../../../../../docs/82-the-edge-report.md)
+//! §82.8 says of the pod defaults.
 
 /// A concrete identity provider behind `identity = managed()`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -56,7 +56,7 @@ pub const KEYCLOAK: Provider = Provider {
     import_dir: "/opt/keycloak/data/import",
     // `start-dev` rather than `start`: the production mode requires a hostname, a database and TLS
     // material this derivation does not have, and starting it in a mode it cannot satisfy is a
-    // crash-loop rather than a deployment. §95.10 records that as the limit it is.
+    // crash-loop rather than a deployment. §48.8 records that as the limit it is.
     start_args: &["start-dev", "--import-realm"],
     issuer_var: "BECK_IDENTITY_ISSUER",
 };
@@ -73,10 +73,10 @@ impl Provider {
     ///
     /// **`http`, and this is the one place in the project where that is not a defect.** An external
     /// issuer must be `https` because the key set has no integrity protection but the transport
-    /// ([`docs/95`](../../../../../docs/95-oidc-relying-party-report.md) §95.2). A managed one is a
+    /// ([`docs/48`](../../../../../docs/48-identity-report.md) §48.4). A managed one is a
     /// `Service` this derivation emitted, in this application's own namespace, reachable only
     /// through a NetworkPolicy this derivation wrote — so what protects the key set is the policy,
-    /// and §6.5's gateway is where TLS is terminated for everything else. §95.10 is where that
+    /// and §6.5's gateway is where TLS is terminated for everything else. §48.8 is where that
     /// argument is written down rather than left in a URL.
     pub fn issuer(&self, host: &str, realm: &str) -> String {
         format!("http://{host}:{}/realms/{realm}", self.port)
@@ -91,7 +91,7 @@ impl Provider {
     /// application, and the redirect URI is the route the same graph derived.
     ///
     /// A **public** client, because that is what a browser-facing application with PKCE is
-    /// ([`docs/95`](../../../../../docs/95-oidc-relying-party-report.md) §95.3) — a confidential
+    /// ([`docs/48`](../../../../../docs/48-identity-report.md) §48.5) — a confidential
     /// client would need a secret, and a secret this file invented and wrote into a manifest would
     /// be a secret in a git repository.
     pub fn realm(&self, app: &str, origin: &str) -> serde_json::Value {

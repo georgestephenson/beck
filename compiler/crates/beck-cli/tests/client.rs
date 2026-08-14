@@ -2,7 +2,7 @@
 //!
 //! [`docs/08-roadmap.md`](../../../../docs/08-roadmap.md) Phase 3's client bullet — "router, forms,
 //! lazy routes, focus/scroll preservation, devtools" — and
-//! [`docs/100`](../../../../docs/100-client-polish-report.md) is what was built of it. This gates the
+//! [`docs/94`](../../../../docs/94-the-client-report.md) is what was built of it. This gates the
 //! half that does not need a browser; `browser.rs` gates the half that does, because focus and
 //! scroll are facts about a DOM and nothing here has one.
 //!
@@ -243,7 +243,7 @@ async fn a_navigation_on_an_open_socket_produces_the_new_routes_page() {
         patch.to_string().contains("done"),
         "the route's heading is not in the patch: {patch}"
     );
-    // What a navigation costs on the wire, in the two directions. `docs/100` §100.3 quotes both, and
+    // What a navigation costs on the wire, in the two directions. `docs/94` §94.3 quotes both, and
     // they are asserted rather than printed so the report's numbers cannot drift past them: a nav
     // frame is a couple of dozen bytes, and Mode A's answer is the *difference between two pages*
     // rather than a page.

@@ -1010,7 +1010,7 @@ fn chapter_three_ends_where_beck_begins() {
     let report = beck_rt::testing::run(&placed, backend, &Options::default());
     assert!(
         report.cases.len() >= 25,
-        "chapter 3 is the evidence for docs/87 and has to carry the exercises it claims"
+        "chapter 3 is the evidence for docs/63 and has to carry the exercises it claims"
     );
     assert_eq!(
         report.failed(),
@@ -1095,7 +1095,7 @@ def order() -> Int:
 ///
 /// Measured at 53 steps per insert-and-delete pair either side of 500 and 4,000; 70 is that with
 /// room to spare, and nowhere near the `n / 2` a scan-to-the-end would need. It was 380 and 2,661
-/// before `docs/87` §87.5 — this gate is what found that, and it is the reason it is a gate.
+/// before `docs/63` §63.11 — this gate is what found that, and it is the reason it is a gate.
 #[test]
 fn the_functional_queue_costs_the_same_per_operation_however_long_it_gets() {
     const PER_OPERATION: usize = 70;

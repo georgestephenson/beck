@@ -234,7 +234,7 @@ fn cookie(headers: &hyper::HeaderMap, name: &str) -> Option<String> {
 /// `/auth/callback` and `Strict` would withhold the transaction cookie on exactly that navigation.
 /// `Secure` is **not** set: §6.5's gateway terminates TLS in front of a plaintext hop, so setting
 /// it would make the cookie unusable in the deployment this project generates — the same reason
-/// `same_origin` does not compare schemes, and it is recorded in `docs/95` §95.6 rather than left
+/// `same_origin` does not compare schemes, and it is recorded in `docs/48` §48.13 rather than left
 /// to be discovered.
 fn set_cookie(name: &str, value: &str, max_age: i64) -> String {
     format!("{name}={value}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age}")
@@ -340,7 +340,7 @@ async fn callback(app: Arc<App>, req: &Request<Incoming>) -> Result<Response<Ful
 ///
 /// Local only: it clears this app's cookie and does not call the issuer's end-session endpoint, so
 /// the browser is still signed in to the identity provider and `/auth/login` will complete without
-/// another password. That is the ordinary meaning of "log out of this app" and `docs/95` §95.6 says
+/// another password. That is the ordinary meaning of "log out of this app" and `docs/48` §48.13 says
 /// so rather than leaving somebody to find out.
 fn logout() -> Response<Full<Bytes>> {
     redirect(
@@ -550,7 +550,7 @@ fn socket_limits() -> WebSocketConfig {
 
 fn upgrade(app: Arc<App>, mut req: Request<Incoming>) -> Result<Response<Full<Bytes>>> {
     if !same_origin(req.headers()) {
-        // Coarse to the caller on purpose, and the same shape `docs/48` §48.3 chose for a refused
+        // Coarse to the caller on purpose, and the same shape `docs/48` §48.2 chose for a refused
         // identity: a cross-origin page learns that it was refused and nothing about why.
         return Ok(Response::builder()
             .status(StatusCode::FORBIDDEN)
@@ -684,7 +684,7 @@ mod tests {
     ///
     /// Both clients open with `document.getElementById("b-root")` and give up if it is missing, so
     /// a document without it is a page that never connects — and nothing would have said so,
-    /// because no test in this workspace runs JavaScript (`docs/94` §94.8).
+    /// because no test in this workspace runs JavaScript (`docs/94` §94.15).
     #[test]
     fn the_document_carries_the_frame_root_the_residue_looks_for() {
         for client in [crate::THIN_CLIENT, crate::MODE_B_CLIENT] {
@@ -708,7 +708,7 @@ mod tests {
     /// when a client starts reading an attribute the server never writes. That failure is silent —
     /// `dataset.bClaims` on a document without it is `undefined`, so the Mode B kernel would build
     /// a `Session` with no claims and refuse commands the server accepts — and it is exactly the
-    /// shape of the defect Mode B's own `#b-root` finding was (`docs/94` §94.8).
+    /// shape of the defect Mode B's own `#b-root` finding was (`docs/94` §94.15).
     ///
     /// So the list is derived from the residue rather than written down: whatever `dataset.bFoo`
     /// the shipped JavaScript reads, `data-b-foo` has to be in the shell.
@@ -820,7 +820,7 @@ mod tests {
 
     /// The numbers, asserted so that changing one is a decision rather than an edit.
     ///
-    /// `docs/83` §83.2 is the argument for each; this is what stops the file drifting back to
+    /// `docs/82` §82.3 is the argument for each; this is what stops the file drifting back to
     /// somebody else's defaults without the argument moving too.
     #[test]
     fn the_socket_limits_are_the_numbers_this_project_chose() {

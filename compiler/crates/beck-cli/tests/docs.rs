@@ -664,7 +664,7 @@ fn the_published_guide_is_the_checked_guide() {
 /// contains a space has to be quoted. Unquoted, `RUSTDOCFLAGS=-D warnings cargo doc …` is the
 /// assignment `RUSTDOCFLAGS=-D` followed by the command `warnings`, which fails with "command not
 /// found" — so the instruction reads as a verification step and performs none. That is worse than a
-/// missing step, because whoever follows it believes the check ran (`docs/88` §88.8).
+/// missing step, because whoever follows it believes the check ran (`docs/23` §23.17).
 ///
 /// Deliberately narrow. This does not run the commands — several take minutes and one needs a
 /// cluster — and it has no view on whether they are the right commands. It asserts the one thing a
@@ -710,7 +710,7 @@ fn every_shell_command_in_the_instructions_runs() {
     );
 }
 
-/// The leading number of `104-the-release-and-the-installer-report.md`, or of `104 — the release`.
+/// The leading number of `92-supply-chain-and-release-report.md`, or of `104 — the release`.
 ///
 /// `None` where the text does not begin with a number: `README.md` is an index rather than a
 /// numbered document, and two reports open with prose instead of their number.
@@ -722,16 +722,16 @@ fn leading_number(text: &str) -> Option<u32> {
 /// A document's sections are numbered for the document they are in.
 ///
 /// `docs/` numbers a document by its filename and its sections `§N.1`, `§N.2` … of that same
-/// number. That is what makes `§104.7` a reference a reader can follow — and, because every
+/// number. That is what makes `§92.13` a reference a reader can follow — and, because every
 /// document's headings carry its own filename's number, what makes a section number unique across
 /// the directory without anything having to check for a collision.
 ///
 /// The gap this is the shape of is the one `AGENTS.md` tells you to expect: the counter collides
 /// whenever two branches write a report, so a document gets **renumbered on merge** — and a rename
 /// moves the filename while leaving the headings where they were.
-/// `104-the-release-and-the-installer-report.md` landed carrying `101`, the number
-/// `101-the-heap-report.md` already had. So `§101.5` named a section in each of two documents, and
-/// the twenty-nine references to `§104.x` written in `README.md`, `AGENTS.md`, `CHANGELOG.md`,
+/// `92-supply-chain-and-release-report.md` landed carrying the number `101`, which another
+/// document already had. So one `§101.x` named a section in each of two documents, and the
+/// twenty-nine references to `§104.x` written in `README.md`, `AGENTS.md`, `CHANGELOG.md`,
 /// `release/README.md` and six other documents named a heading that did not exist. The prose inside
 /// the report had been corrected to `§104.x` and the headings had not, which is why reading it did
 /// not show the fault: the half a reader sees was right.
@@ -793,7 +793,7 @@ fn a_documents_sections_are_numbered_for_the_document_they_are_in() {
             };
             let rest = rest.trim_start_matches('#').trim_start();
             // A heading opening with `§` is *citing* a section rather than declaring one —
-            // `### §24.6's O(n), paid once instead of removed` is a subheading about another
+            // `### §23.8's O(n), paid once instead of removed` is a subheading about another
             // document, and the sign is what says so: nothing in `docs/` declares a section with it.
             if rest.starts_with('§') {
                 continue;

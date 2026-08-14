@@ -2,7 +2,7 @@
 //!
 //! [`docs/06-kubernetes-and-packaging.md`](../../../../docs/06-kubernetes-and-packaging.md) §6.2
 //! named the destination — "writing the OCI layout directly from Rust … so `beck build` is one
-//! process with no external tools" — and [`docs/98`](../../../../docs/99-supply-chain-report.md) is
+//! process with no external tools" — and [`docs/98`](../../../../docs/92-supply-chain-and-release-report.md) is
 //! what building it found. This is the gate.
 //!
 //! # Somebody else's tar, and somebody else's verifier

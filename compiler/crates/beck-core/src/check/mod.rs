@@ -700,7 +700,7 @@ impl<'a> Checker<'a> {
     /// registers, so a `model Int` was accepted and the name then meant the record in one
     /// definition and the builtin in the next. [`Checker::bind_decl_typarams`] has refused the same
     /// shadowing for a *type parameter* since `docs/27`; this is that rule at the production it was
-    /// missing (`docs/87` §87.4).
+    /// missing (`docs/63` §63.10).
     ///
     /// Returns whether the name was refused, so the caller can skip registering it: leaving the
     /// builtin in place is what keeps the rest of the module's errors about the module.
@@ -1219,7 +1219,7 @@ impl<'a> Checker<'a> {
                     ),
                     e.span(),
                 );
-                // `fs(path)` was one atom until `docs/81` split it, and it is the one spelling a
+                // `fs(path)` was one atom until `docs/80` split it, and it is the one spelling a
                 // reader is likely to arrive with — from §3.2 as it stood, or from a habit. Saying
                 // which of the two to write is more use than saying the name is unknown.
                 if let Some(path) = text.strip_prefix("fs(").and_then(|r| r.strip_suffix(')')) {
@@ -1709,7 +1709,7 @@ impl<'a> Checker<'a> {
         declared_effects.sort();
         // An impl method's row is **inferred**, not bounded by the trait's.
         //
-        // It was bounded until `docs/46` §46.5: a trait's declared row was a ceiling every impl was
+        // It was bounded until `docs/46` §46.6: a trait's declared row was a ceiling every impl was
         // held to, which meant a fallible operation could not be a trait method and `Money` could
         // not have `+`. A trait's row is now a floor and a piece of documentation — what a caller
         // of an *unknown* impl may assume — and what a caller of a known one performs is what that
@@ -3147,7 +3147,7 @@ impl<'a> Checker<'a> {
     /// `Node` and `Some(Some(Some(…)))` is a call expression like any other, so without the guard
     /// this would be a second way past the ceiling
     /// [`44`](../../../../../docs/44-wave-0-report.md) put on the front end — which is exactly the
-    /// shape [`85`](../../../../../docs/85-what-the-generator-found-report.md) found three times.
+    /// shape [`docs/82`](../../../../../docs/82-the-edge-report.md) found three times.
     fn pattern(&mut self, p: &Node, scrut: &Ty) -> Pattern {
         let span = p.span();
         if !self.enter(span) {
@@ -3950,9 +3950,9 @@ fn error_ty_name(t: &Ty) -> Option<Arc<str>> {
 ///   orders it (see [`Checker::parallel_expr`]).
 /// * **`cap.*`** — an authority the caller holds, not state a child writes.
 /// * **`fs.read(path)`** — a read of a file no child of this scope writes, since `fs.write` is
-///   refused. [`docs/80`](../../../../../docs/80-a-scope-owns-its-children-report.md) §80.2 had to
+///   refused. [`docs/80`](../../../../../docs/80-structured-concurrency-report.md) §80.2 had to
 ///   refuse the pair because `fs(path)` was one atom;
-///   [`docs/81`](../../../../../docs/81-fs-is-two-atoms-report.md) split it, and this line is what
+///   [`docs/80`](../../../../../docs/80-structured-concurrency-report.md) split it, and this line is what
 ///   the split was for.
 /// * **`external.read(store)`** — the same argument, and it needed no change because §3.8's
 ///   escape hatches were two atoms from the start.
@@ -3995,7 +3995,7 @@ fn resolve_types(c: &mut Core, s: &Subst) {
             resolve_types(scrutinee, s);
             // `exprs_mut` and not `body`: an arm's guard is an expression of this program too, and
             // a walk that skipped it left every node in a guard carrying whatever type variable it
-            // had when it was lowered. `docs/91` §91.3 found fourteen walks that a guard was new
+            // had when it was lowered. `docs/90` §90.5 found fourteen walks that a guard was new
             // to; this is the fifteenth, and it was invisible until a backend read a node's type.
             for e in arms.iter_mut().flat_map(|a| a.exprs_mut()) {
                 resolve_types(e, s);
@@ -4543,12 +4543,12 @@ def b() -> Tag[Str]:
     }
 
     /// The same rule at the production it was missing — a *declaration* rather than a type
-    /// parameter (`docs/87` §87.4).
+    /// parameter (`docs/63` §63.10).
     ///
     /// Every builtin constructor, because the point of the finding is that the check existed for
     /// two of them (`Option` and `Result`, which are prelude declarations and so were covered by
     /// B0302's "declared twice") and for none of the other fourteen. A test that named one would
-    /// be the shape of the gap rather than the shape of the fix, which is `docs/84` §84.5's
+    /// be the shape of the gap rather than the shape of the fix, which is `docs/82` §82.10's
     /// pattern.
     #[test]
     fn a_declaration_may_not_take_a_builtin_types_name() {
@@ -4662,7 +4662,7 @@ mod nesting_tests {
     #[test]
     fn a_type_past_the_ceiling_is_a_diagnostic_rather_than_an_abort() {
         // Either pass may be the one that refuses, exactly as for an expression below. The reader
-        // gets there first *now*: `docs/85` found `Parser::type_expr` recursing in four places with
+        // gets there first *now*: `docs/82` found `Parser::type_expr` recursing in four places with
         // no counter at all, so a deep type used to arrive here and is now refused a stage earlier
         // and more cheaply. What this test is for is the property in its name — a diagnostic rather
         // than an abort — which is a claim about the front end and not about which half of it.

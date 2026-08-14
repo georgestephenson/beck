@@ -5,7 +5,7 @@
 //! and `beck explain`; there is no separate language server implementation to drift."* Until now
 //! that was true of the *compiler* and not of the editor: `beck lsp` held the indexing, the
 //! positions and the word-under-the-caret rule, and anything else wanting them — a playground with
-//! a `<textarea>` in it ([`docs/98`](../../../../../docs/98-playground-report.md) §98.7) — had to
+//! a `<textarea>` in it ([`docs/98`](../../../../../docs/98-playground-report.md) §98.9) — had to
 //! write them a second time.
 //!
 //! So the answers live here, where `beck-cli` and a `wasm32-unknown-unknown` module can both reach
@@ -352,7 +352,7 @@ impl Editor {
     /// modules come from: a file being edited may `import bignum`, and an editor that answered
     /// "cannot find `add_big`" for every name in it would be answering about a program the compiler
     /// does not have. There is no directory here — a browser tab has none, and a language server
-    /// resolving a relative path off a URI is a decision [`docs/65`](../../../../../docs/65-lsp-report.md)
+    /// resolving a relative path off a URI is a decision [`docs/65`](../../../../../docs/65-the-editor-report.md)
     /// did not take — so the loader serves this text as the root and nothing else, and
     /// [`crate::stdlib`] answers the rest.
     ///
@@ -915,7 +915,7 @@ impl Editor {
     /// reference the checker resolves and keeps no [`Core`] node for. It is still a use of the
     /// name, and it was the one thing in the corpus that a rename could not account for: `page` is
     /// the name most Beck programs assert about, and 48 of them declined until this was here
-    /// ([`docs/110`](../../../../../docs/110-the-editor-edits-report.md) §110.4).
+    /// ([`docs/65`](../../../../../docs/65-the-editor-report.md) §65.6).
     fn static_mentions(&self, placed: &Placed, name: &str) -> Vec<u32> {
         let mut out = Vec::new();
         for test in &placed.program.tests {

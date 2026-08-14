@@ -25,9 +25,9 @@ holds the *rules*; that file holds the *state*, and it is the one that stays cur
 | [`compiler/corpus/`](compiler/corpus/) | 32 programs carrying **no placement annotations** — Phase 2's exit measurement |
 | [`compiler/sicp/`](compiler/sicp/) | The expressiveness benchmark ([`docs/25`](docs/25-benchmarks-and-expressiveness.md) §25.5) |
 | [`compiler/awfy/`](compiler/awfy/README.md), [`compiler/clbg/`](compiler/clbg/README.md) | The performance benchmarks — somebody else's programs, verified against somebody else's constants |
-| [`compiler/xlang/`](compiler/xlang/README.md) | One program in six languages — the only place a Beck number sits beside another language's ([`docs/93`](docs/93-llvm-backend-report.md) §93.5) |
+| [`compiler/xlang/`](compiler/xlang/README.md) | One program in six languages — the only place a Beck number sits beside another language's ([`docs/93`](docs/93-the-native-backends-report.md) §93.5) |
 | [`phase0/`](phase0/) | **History.** The output the compiler now generates, hand-written in Rust once so the architecture could be measured. Do not edit it to track the compiler |
-| [`release/`](release/README.md), [`install.sh`](install.sh) | The parts of a release a person can execute, kept out of `.github/workflows/release.yml` on purpose — a tag-triggered workflow is the one artefact that cannot be run before it is used ([`docs/104`](docs/104-the-release-and-the-installer-report.md) §104.2) |
+| [`release/`](release/README.md), [`install.sh`](install.sh) | The parts of a release a person can execute, kept out of `.github/workflows/release.yml` on purpose — a tag-triggered workflow is the one artefact that cannot be run before it is used ([`docs/92`](docs/92-supply-chain-and-release-report.md) §92.8) |
 
 ### Most work is a changelog entry; a report is for a phase or a subsystem
 
@@ -40,12 +40,15 @@ established a property somebody will later depend on, or that changed a claim a 
 makes. If you cannot name the design document your work changes, or the reader who would go looking
 for it, write the changelog entry instead.
 
-This rule exists because the alternative was tried. One report per change produced **75 of them,
-199,566 words — 2.7× the design documents and half the size of the compiler** — and an index nobody
-could read. Ten reports on the evaluator's constants are one chapter
-([`docs/70`](docs/70-the-evaluator-gets-fast-report.md)); six on porting one benchmark suite are one
-chapter ([`docs/53`](docs/53-are-we-fast-yet-report.md)). Both were consolidated after the fact,
-which is more work than writing the entry would have been.
+This rule exists because the alternative was tried. One report per change produced **105 of them,
+2.4 MB — several times the design documents** — and an index nobody could read. Ten reports on the
+evaluator's constants are one chapter
+([`docs/70`](docs/70-the-evaluator-gets-fast-report.md)); seven on one benchmark suite are one
+chapter ([`docs/53`](docs/53-are-we-fast-yet-report.md)); **fourteen on the native backends are one
+chapter** ([`docs/93`](docs/93-the-native-backends-report.md)), and every one of them had the same
+shape — a thing gets a layout, both emitters learn it, here is the differential, here is what it
+costs — so what a reader wants is the handful of findings and not fourteen repetitions of the frame.
+All were consolidated after the fact, which is more work than writing the entry would have been.
 
 A report that is written gets a row in [`docs/README.md`](docs/README.md)'s index — **three
 sentences, not three hundred words** — and a mention wherever a design document made a claim the work
@@ -166,7 +169,7 @@ suites, plus the nine
 release-only measurement suites. **Keep them green.**
 
 Four gates in this project's history could not have failed
-([`docs/84`](docs/84-a-quota-is-only-as-good-as-its-actor-report.md) §84.5 has the pattern): each
+([`docs/82`](docs/82-the-edge-report.md) §82.10 has the pattern): each
 was written by the person who knew the gap and tested the *shape of the gap* rather than the shape
 of the fix. When you write a gate, ask what would have to be true for it to go red, and check that
 the thing you are guarding against would make it so.
@@ -209,7 +212,7 @@ the thing you are guarding against would make it so.
   `RUSTDOCFLAGS=-D` and then takes the next word — `warnings` — as the command to run. It fails
   with "command not found", `cargo` never runs, and the step reads as a verification that performed
   none. That is worse than a missing step, because whoever followed it believes the check ran
-  (`docs/88` §88.8). `docs.rs::every_shell_command_in_the_instructions_runs` is the gate.
+  (`docs/23` §23.17). `docs.rs::every_shell_command_in_the_instructions_runs` is the gate.
 - **Environment-dependent suites degrade by skipping, and a skip prints itself** — read the output
   for it:
   - Kubernetes conformance (`beck-infra/tests/conformance.rs`): skips without a cluster;

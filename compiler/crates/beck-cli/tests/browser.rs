@@ -4,8 +4,8 @@
 //! **JavaScript** — `beck-patch.js`, `beck-thin.js`, `beck-mode-b.js` and the WebAssembly kernel —
 //! in the program they were written for, which is a browser and not a harness.
 //!
-//! [`docs/94-mode-b-report.md`](../../../../docs/94-mode-b-report.md) §94.8 listed "no browser has
-//! run it" as the largest hole in Mode B, and §94.7 says what the hole had already cost: a served
+//! [`docs/94-the-client-report.md`](../../../../docs/94-the-client-report.md) §94.15 listed "no browser has
+//! run it" as the largest hole in Mode B, and §94.13 says what the hole had already cost: a served
 //! document that never contained the element both clients open by looking for, and a thin client
 //! that had therefore returned immediately in every browser since Phase 1, with every test in the
 //! workspace passing. A suite that cannot execute the residue cannot see that class of defect at
@@ -432,7 +432,7 @@ async fn mode_b_renders_in_the_browser_and_guesses_ahead_of_the_server() {
     // Mode B is live when the kernel holds the bundle and interactions are being captured — which
     // is the end of an *asynchronous* load, and is not the same moment as "the scripts ran". A
     // test that interacts before this sees a click reach nothing, and the page never move; that is
-    // how this suite failed the first time it was written (`docs/94` §94.7).
+    // how this suite failed the first time it was written (`docs/94` §94.13).
     page.wait_for(
         &mut browser,
         "document.getElementById('b-root').dataset.bReady === 'b'",
@@ -497,7 +497,7 @@ async fn mode_b_renders_in_the_browser_and_guesses_ahead_of_the_server() {
     );
 
     // The claim the whole mode rests on, in a real DOM: what the browser rendered locally is what
-    // the server would have sent (`docs/94` §94.5).
+    // the server would have sent (`docs/94` §94.7).
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
     loop {
         let (there, here) = (
@@ -620,7 +620,7 @@ browser_test! {
 /// Reloading is a fresh subscription, and the page comes back.
 ///
 /// A Mode B client resumes from nothing — it holds the state, and after a reload it holds `init`
-/// again (`docs/94` §94.5). This is the assertion that the `seq` a reloaded tab claims is the one
+/// again (`docs/94` §94.7). This is the assertion that the `seq` a reloaded tab claims is the one
 /// that gets it a state rather than a gap it cannot apply.
 async fn mode_b_survives_a_reload() {
     let Some(mut browser) = browser::shared().await else {
@@ -735,7 +735,7 @@ async fn mode_b_works_with_the_server_gone_and_catches_up_when_it_returns() {
     // What is *not* tested here, because it does not work: reloading while the server is gone. The
     // document comes from the server, so a reload with nothing listening gets a browser error page
     // and the local copy is never consulted — the shell would have to be cached by a service
-    // worker, and there is none (`docs/94` §94.13).
+    // worker, and there is none (`docs/94` §94.10).
 
     // Out of the tunnel. The queue goes up as soon as a socket opens.
     serving.listen().await;
@@ -970,7 +970,7 @@ struct Playing {
 impl Playing {
     async fn start() -> Option<Playing> {
         // Both modules, because a `@render(client)` program in the tab runs in Mode B's kernel and
-        // the playground serves it on the same reserved name a deployment does (docs/103).
+        // the playground serves it on the same reserved name a deployment does (docs/98).
         if !point_at_the_kernel() {
             eprintln!("skipped: no Mode B kernel to serve beside the playground.");
             assert!(
@@ -1114,7 +1114,7 @@ async fn the_playground_runs_the_application_and_two_clients_of_it() {
     // These iframes are `srcdoc` documents, so `location.pathname` inside one is the string
     // `srcdoc` — and a residue that read a route off it would put that on the `hello` frame, where
     // no program could ever match it and every test in this workspace would still pass
-    // (`docs/100` §100.1).
+    // (`docs/94` §94.3).
     assert_eq!(
         page.text(
             &mut browser,
@@ -1206,7 +1206,7 @@ async fn the_playground_runs_the_application_and_two_clients_of_it() {
 browser_test! {
 /// The editor, in a browser: colours, a squiggle, and a completion accepted with the keyboard.
 ///
-/// `docs/98` §98.7's last-but-one refusal was "a `<textarea>`, with no highlighting, no completion
+/// `docs/98` §98.9's last-but-one refusal was "a `<textarea>`, with no highlighting, no completion
 /// and no inline diagnostics". Nothing about that was made true in JavaScript: the spans below are
 /// painted from `beck_core::editor::tokens` and the squiggle from the diagnostics `beck check`
 /// reports, and `playground.rs` is what says those are the language server's answers. What this
@@ -1314,7 +1314,7 @@ async fn the_playground_highlights_and_completes_in_the_browser() {
 browser_test! {
 /// The log survives a reload, because the tab kept it.
 ///
-/// §17.2's log-storage row says IndexedDB and `docs/98` §98.7 said the tab's log was an array, so a
+/// §17.2's log-storage row says IndexedDB and `docs/98` §98.9 said the tab's log was an array, so a
 /// reload started from `init`. What is asserted here is the whole of the difference: two clicks, a
 /// reload, and the application comes back **at 2** — folded from records the page stored and the
 /// tab read back, not from a number it remembered.
@@ -1489,7 +1489,7 @@ async fn a_share_link_opens_the_program_it_carries() {
 browser_test! {
 /// A `@render(client)` program runs in the tab — in Mode B's kernel, in the client iframe.
 ///
-/// `docs/98` §98.7 called this "a second module in a second frame and is a piece of work rather
+/// `docs/98` §98.9 called this "a second module in a second frame and is a piece of work rather
 /// than a flag", and that is what it was: the kernel beside the compiler, the bundle over the port,
 /// and a subscription that carries the state instead of the page. What says it worked is
 /// `data-b-ready === 'b'` — set by `beck-mode-b.js` once the kernel holds the bundle — and then a
@@ -1561,7 +1561,7 @@ async fn the_playground_runs_a_mode_b_program_in_the_tab() {
 }
 }
 
-// --------------------------------------------------------------- client polish (docs/100)
+// --------------------------------------------------------------- client polish (docs/94)
 
 browser_test! {
 /// A link, in Mode A: the address bar moves, the server re-renders for the new session, and what
@@ -1916,7 +1916,7 @@ async fn the_devtools_panel_shows_the_signal_graph_the_traffic_and_the_pending_s
 browser_test! {
 /// A cold start **at a route**, with the server gone.
 ///
-/// The router made [`94`](../../../../docs/94-mode-b-report.md) §94.13's cold start narrower without
+/// The router made [`docs/94`](../../../../docs/94-the-client-report.md) §94.10's cold start narrower without
 /// anybody noticing: the worker caches `/`, a reload asks for `/done`, and the tab that had
 /// navigated got an error page for a route it was perfectly able to render. In Mode B the route is
 /// the *client's* to render — it reads `location` and renders from the state it holds — so one

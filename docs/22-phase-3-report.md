@@ -1,14 +1,13 @@
-# 22 — Phase 3 report, part 1: tests written in Beck
+# 22 — Tests written in Beck
 
-Phase 3 of [`08-roadmap.md`](08-roadmap.md) is headed **"Make it real for developers."** It is
-twelve bullets wide — LLVM, incremental views, Mode B, client polish, `test` blocks, structured
-concurrency, SQLite, a standard library, identity, an LSP, the playground, and supply-chain
-tooling — and it is the longest phase in the plan.
+**Built.** `beck test examples/todo.beck` runs eight tests written in Beck, in about 10 ms, with no
+network, no database, no fixture and no mock — including one that asserts a command from one browser
+reaches a *different* browser's page, and one that runs a hundred generated event logs through the
+real fold. §21.3's "mocks nobody writes" is built too: **100% of the effects in a program are
+stubbed by default, and the report says what it stubbed.** §22.10 adds `expect page matches
+snapshot` and the `--update` flag that records one, which was the last of §21.2's open questions.
 
-**One of those twelve is built. Eleven are not, and §22.6 lists them by name.** This report covers
-the one, and the title says "part 1" so that nothing here can be read as a claim about the phase.
-
-The one is the item [`20`](20-phase-2-report.md) §20.5 singles out:
+This is the item [`20`](20-phase-2-report.md) §20.5 singled out:
 
 > **No `test` construct in the language.** … Every harness in this report tests *the compiler*; a
 > person writing a Beck program has `beck check --assert-place`, `beck replay --verify`, and no way
@@ -16,15 +15,11 @@ The one is the item [`20`](20-phase-2-report.md) §20.5 singles out:
 > an outside developer will reach for first, and [`21`](21-tests-in-beck-and-proof.md) §21.2–§21.3
 > is the design that Phase 3 should build.
 
-It is built. `beck test examples/todo.beck` runs eight tests written in Beck, in about 10 ms, with
-no network, no database, no fixture and no mock — including one that asserts a command from one
-browser reaches a *different* browser's page, and one that runs a hundred generated event logs
-through the real fold. §21.3's "mocks nobody writes" is built too: 100% of the effects in a program
-are stubbed by default, and the report says what it stubbed.
-
-Phase 3 also leaves Phase 2's named debt unpaid. §20.5's first item, the general slicer, was
-assigned to Phase 2, not built there, and is **still not built**. §22.6 says so first rather than
-last.
+Two things here outlast the feature. **§22.3 is the load-bearing rule §21.3 did not state** — a stub
+replaces what *performs* an effect, not what inherits it — and it is what makes "everything is
+stubbed by default" a description rather than a slogan. And **§22.4's seam is why `beck test` is not
+a property of the tree-walker**: `Backend::intercepting` defaults to "cannot", so a backend that
+cannot install a stub is *skipped* rather than silently run for real.
 
 ## 22.1 What was built, against what was asked
 
@@ -42,7 +37,7 @@ last.
 | Interaction assertions as queries: `expect no net.out`, `… once`, `… with` (rule 4) | done | `beck-rt/src/testing.rs` |
 | One type-directed generator for stubs, properties and gaps (rule 5) | done — canonical, arbitrary, shrinking, and a refusal for `secret[T]` | `beck-core/src/gen.rs` |
 | `property` blocks with generated inputs (§11.10, §21.2) | done — 100 inputs, shrunk counterexample | `beck-core/src/gen.rs`, `beck-rt/src/testing.rs` |
-| `beck test --update` for page snapshots (§21.2's open question) | **not done** — §22.6 | — |
+| `beck test --update` for page snapshots (§21.2's open question) | done — §22.10 | `beck-rt/src/testing.rs`, `beck-cli/src/main.rs` |
 | A `Backend` seam that can install stubs (**not** a §21 item) | added — `Backend::intercepting`, defaulted to "cannot", so a backend that cannot is *skipped* rather than silently run for real | `beck-core/src/backend.rs` |
 | `beck test` as a command, and as a CI gate (§8.3) | done, and the gate was executed by hand before being trusted | `beck-cli/src/main.rs`, `.github/workflows/compiler.yml` |
 
@@ -251,7 +246,7 @@ wrapping the expression as a `Core` lambda over `state`, `events` and `result` a
 `Backend::function` for it, so there is no second execution path and no `Value::Closure` — the
 tree-walker's representation — anywhere in the runner.
 
-## 22.5 The corrections Phase 3 makes to [`21`](21-tests-in-beck-and-proof.md)
+## 22.5 The corrections this makes to [`21`](21-tests-in-beck-and-proof.md)
 
 §21.2 and §21.3 were written as design, and building them moved five things. Each is applied to that
 document in this commit; they are listed here so the diff is reviewable as a set.
@@ -280,69 +275,24 @@ document in this commit; they are listed here so the diff is reviewable as a set
    changes the state under it. Refusing is the smaller claim, and the diagnostic says what a test is
    instead of what it is not.
 
-## 22.6 What Phase 3 is not
+## 22.6 What is not built
 
-**This is one bullet of twelve.** Nothing below has been started, and the roadmap's Phase 3 exit
-criterion — "an outside developer builds a non-trivial app from documentation alone" — is not met
-and is not close.
+Phase status lives in [`08`](08-roadmap.md) and nowhere else; this is what the *construct* does not
+do. Three of these were closed later and say where, because the code that cites this section cites
+it as the place the limit was named.
 
-- **The general slicer is still not built**, and it is now debt with two phases' names on it.
-  [`19`](19-phase-1-report.md) §19.9 assigned it to Phase 2; [`20`](20-phase-2-report.md) §20.5
-  named it as the one item that phase was handed and did not deliver, and §20.6 item 6 said "Phase 3
-  pays for it either way". Phase 3 has not. The splitter still understands one topology and still
-  refuses anything else by name rather than mis-slicing it, which is what keeps the narrowness
-  survivable — but §5.3's incremental views need the graph treated as a graph, so nothing downstream
-  can start until this is done. **It should be the next thing built.**
-- **No LLVM backend, and still no native codegen at all.** Unchanged from Phase 1 and Phase 2: a
-  `Core` evaluator stands in for Cranelift behind the `Backend` seam. Phase 3 asks for a *second*
-  backend and a differential test between them; there is still one.
-- **No incremental views.** No differential-dataflow plans, no arrangement sharing, no SQL read
-  models, no pgwire, no query fusion. Views are still full recompute per event, which is
-  semantically final and operationally what §5.3 exists to fix. `beck explain query` and `beck
-  explain cost` remain unbuilt for the same reason [`20`](20-phase-2-report.md) §20.5 gave.
-- **No Mode B.** No per-component WASM, no optimistic application with `seq` reconciliation, no
-  freshness-typed pending state, no per-component size budget. [`20`](20-phase-2-report.md) §20.6
-  item 1 says the cost model is ready for the Mode A/B decision and cannot make it; it still cannot,
-  because there is still only one lowering to choose between.
-- **No client polish**: no router, no forms, no lazy routes, no focus/scroll preservation, no
-  devtools extension.
-- **No `test --update`, and no page snapshots.** §21.2 lists golden assertions as an open question
-  with a known answer (`insta`'s update flow, which the compiler's own suite already uses); a page
-  assertion is `contains` and nothing else today.
-- **A stub cannot vary with the call *sequence*.** Rule 3 makes a stub a function of the
-  arguments, and nothing more: there is no "fail the first time, succeed the second", because a
-  stub body is checked with an empty effect row and therefore cannot hold state. Retry logic is
-  testable only through the arguments it passes. Whether that is a limit or the point is a real
-  question — a stateful stub is a small step from a mock framework — and it is recorded as open
-  rather than decided.
-- **A stub cannot name a definition, and cannot replace a pure one.** The unit is the effect atom,
-  so `stub charge: …` is `B0702`. That is §21.3's position rather than an omission — the granularity
-  of an interface-mock is what makes mocking tedious — but it means two definitions performing one
-  atom cannot be told apart except by splitting the atom.
-- **Interception is only at a direct call of a named definition.** A function passed as a value has
-  lost its name by the time it is applied, so a program that stores its payment gateway in a record
-  and calls it through a field would not be stubbed. Nothing in the corpus does this; the limit is
-  recorded rather than left to be discovered, and the fix — naming closures at their binding site —
-  belongs with the general slicer's work on the graph.
-- **`beck test` needs a program the splitter accepts.** A library module — a policy, a domain, the
-  thing §3.6's separate compilation exists to serve — cannot have its tests run, because there is no
-  `Roles` to drive and the runner is built on `Placed`. Even a test that only asks compile-time
-  questions needs the program to slice. `B0706` explains the checker's half of this; the runner's
-  half is a real gap for exactly the modules that most want unit tests.
-- **No parallelism and no test-level isolation beyond the value level.** Cases run in sequence.
-  At 10 ms for eight tests plus a hundred generated inputs this is not yet a problem, and saying so
-  is different from claiming it scales.
-- **No structured concurrency, no `Result`/error rows, no `SQLite` substrate, no standard library
-  v1, no identity beyond a dev-mode actor, no LSP, no playground, no `beck init ci`, no in-process
-  apko, no cosign, no SBOM.** All Phase 3 bullets, all untouched.
-- **`check.rs` grew from 2,166 lines to 2,644 (+22%).** [`19`](19-phase-1-report.md) §19.9 said to
-  watch it and [`20`](20-phase-2-report.md) §20.5 repeated the number; this is the third phase in a
-  row it has grown by about a fifth. The test-checking pass is a genuinely separate concern — it
-  runs *after* the item loop, because a clause's type depends on the whole signal graph — and it is
-  the first thing in that file with a natural seam around it. The next phase to open `check.rs`
-  should move it out rather than adding to it.
+| | |
+|---|---|
+| **A stub cannot vary with the call *sequence*** | **Not built.** Rule 3 makes a stub a function of the arguments and nothing more: there is no "fail the first time, succeed the second", because a stub body is checked with an empty effect row and therefore cannot hold state. Retry logic is testable only through the arguments it passes. Whether that is a limit or the point is a real question — a stateful stub is a small step from a mock framework — and it is recorded as open rather than decided |
+| **A stub cannot name a definition, and cannot replace a pure one** | **Refused.** The unit is the effect atom, so `stub charge: …` is `B0702`. That is §21.3's position rather than an omission — the granularity of an interface-mock is what makes mocking tedious — but it means two definitions performing one atom cannot be told apart except by splitting the atom |
+| **Interception is only at a direct call of a named definition** | **Not built.** A function passed as a value has lost its name by the time it is applied, so a program that stores its payment gateway in a record and calls it through a field would not be stubbed. Nothing in the corpus does this; the limit is recorded rather than left to be discovered, and the fix — naming closures at their binding site — is graph work |
+| **No parallelism and no test-level isolation beyond the value level** | **Not built.** Cases run in sequence. At 10 ms for eight tests plus a hundred generated inputs this is not yet a problem, and saying so is different from claiming it scales |
+| Snapshots of anything but a page, an interactive review flow, pruning an orphan, a structural diff | **Not built** — §22.10 |
+| **`beck test` needed a program the splitter accepts** | **Closed.** A library module — a policy, a domain, the thing §3.6's separate compilation exists to serve — could not have its tests run, because there was no `Roles` to drive and the runner is built on `Placed`. `slice_or_library` gives a library one back; `needs_an_application` is the narrow remainder, and it is the clause forms that drive an application rather than the block |
+| **The general slicer** | **Closed**, and it was debt with two phases' names on it — [`19`](19-phase-1-report.md) §19.9 assigned it to Phase 2, [`20`](20-phase-2-report.md) §20.5 recorded that Phase 2 did not deliver it, and this section said it "should be the next thing built". [`23`](23-incremental-views-report.md) is what building it found |
+| **`check.rs` grew from 2,166 lines to 2,644 (+22%)** | **Acted on.** [`19`](19-phase-1-report.md) §19.9 said to watch it and §20.5 repeated the number; the test-checking pass is a genuinely separate concern — it runs *after* the item loop, because a clause's type depends on the whole signal graph — and it was the first thing in that file with a natural seam around it. It is `check/tests_in_beck.rs` now |
 
-## 22.7 What this changes for the rest of Phase 3
+## 22.7 What this made cheaper elsewhere
 
 1. **The generator is built, so two later features are cheaper than they look.** §21.3 rule 5 said
    to build it once because three features need it; two of the three (stub returns, `property`
@@ -397,10 +347,101 @@ and `beck build`. The S-expression surface carries the test blocks as faithfully
 and `beck test` on the printed `.sx` file runs the same eight tests — which is §2.2's dual-surface
 claim reaching a construct that did not exist when it was made.
 
-## 22.9 The corrections Phase 3 makes to the design documents
+## 22.9 What this corrects, elsewhere
 
 | Document | Correction |
 |---|---|
 | [`21`](21-tests-in-beck-and-proof.md) §21.2 | `page(session(…))` and `fold_of` are clauses, not expressions; `when session("ana") sends` carries an actor, not a `Session`; the two open questions about rows and about where tests live are answered (§22.5) |
 | [`21`](21-tests-in-beck-and-proof.md) §21.3 | A stub replaces what *performs* an atom, not what inherits it; `nondet` and `cap.*` are not auto-stubbed; rule 3's arms match the stubbed definition's parameter, and its guard is the language's conditional rather than a clause on `case` (§22.3) |
-| [`08`](08-roadmap.md) | Phase 3's `test` bullet marked built, with this report as its evidence — and with the eleven bullets it does not cover named in the same breath |
+| [`21`](21-tests-in-beck-and-proof.md) §21.2's last open question | Golden/snapshot assertions — "**Still open — not built**" — is answered, with the update flow it named and not the library it named (§22.10) |
+| [`08`](08-roadmap.md) | Phase 3's `test` bullet is built. What the rest of the phase is remains that document's to say, and this one no longer keeps a copy |
+
+## 22.10 Page snapshots, and `beck test --update`
+
+**Built.** `expect page matches snapshot`, and the flag that records one.
+
+```beck
+test "the page a returning user sees":
+    given [
+        Added(id=Id("1"), text="milk"),
+        Added(id=Id("2"), text="bread"),
+        Toggled(id=Id("1")),
+    ] by "ana"
+    expect page(session("ana")) matches snapshot
+```
+
+That is checked in, in [`examples/todo.beck`](../compiler/examples/todo.beck), against
+`examples/snapshots/the-page-a-returning-user-sees@ana.html`. The difference from `contains` is the
+whole point: `expect page contains "milk"` asserts one string somebody thought to name, and this
+asserts **every attribute, every `data-b-*` binding and the order of the list** — which is what the
+client actually interprets ([`05`](05-tier-lowering.md) §5.1). A change to how a page is built shows
+up as a diff in a checked-in file rather than as nothing at all. The name is optional and defaults
+to the test's; the actor is part of the key, because one test may assert two people's pages and
+those are two snapshots.
+
+§21.2 stated the risk and the mitigation in one line — *"the risk is snapshot rot, and the mitigation
+is the same one — review the diff"* — and taking that seriously rather than quoting it fixes three
+things a snapshot feature gets wrong by default.
+
+**A missing snapshot is a failure, not a silent write.** The first run of a new assertion has to say
+it recorded nothing, or a test that has never compared anything reads as a test that passes:
+
+```console
+test "the page a returning user sees" … FAILED
+  no snapshot recorded at examples/snapshots/the-page-a-returning-user-sees@ana.html
+    run `beck test --update` to write it, then review the file like any other diff
+```
+
+**Writing is only ever `--update`.** A snapshot that rewrites itself when it disagrees asserts
+nothing at all — it is a log of what happened wearing a test's clothes. Nothing infers the flag.
+
+**The diff is in the failure**, and getting this right took a second attempt. The first version
+printed both sides elided from the start of the line, which for a rendered page — one very long
+line — shows two identical prefixes and hides the difference. That is exactly the failure
+[`04`](04-compiler-architecture.md) §4.5 is about: an error message is a product surface. The window
+is centred on the first differing *character*:
+
+```console
+  the page `ana` sees does not match examples/snapshots/…@ana.html
+    line 1, column 295:
+      snapshot: …&quot;id&quot;:&quot;2&quot;}">BREAD</span><button data-b-click=…
+      rendered: …&quot;id&quot;:&quot;2&quot;}">bread</span><button data-b-click=…
+```
+
+`insta` is what §21.2 pointed at and what the compiler's own suite uses. It is not used here, and
+the reason is not preference: `insta` snapshots a Rust value from a Rust test, and this snapshots a
+**Beck** page from a **Beck** test, keyed by a Beck test's name, in a directory beside a `.beck`
+file. The parts that would have been reused are `std::fs::read_to_string` and a diff. What it
+touches is five layers and no new dependency: one more shape of `expect` and its printer case in
+`beck-syntax`, `Expectation::PageMatchesSnapshot` and the checker clause in `beck-core`, the
+comparison and the diff window in `beck-rt`, `--update` and the generated reference entry in
+`beck-cli`, and one assertion with one checked-in page in `examples/`.
+
+The form carries **two slots always** — the name and the actor, with `none` where nothing was
+written — rather than a list whose length varies with which optional part is present. A form like
+that cannot be read back without guessing which one it was, and `beck fmt` reads every form back:
+`a_snapshot_assertion_survives_being_printed_and_read_back` covers all four combinations.
+
+One consequence is worth naming because it caught two harnesses the moment the sketch grew a
+snapshot. `snapshots/` resolves against `Options::base_dir`, which `beck test` sets from the file's
+own directory and `Options::default()` leaves **empty** — so an in-process harness running a program
+read off disk resolves against its own working directory instead. That is right (a snapshot belongs
+beside the program, not beside whatever invoked it) and it means a harness has to say where the
+program lives. `examples_options()` is that.
+
+`tests_in_beck.rs::a_page_snapshot_is_recorded_only_when_asked_and_compared_every_other_time` walks
+all four states **through the binary**, because `--update` is a flag and the property that matters
+is that nothing writes without one. A test that called the runtime with `update_snapshots: true`
+would assert the writing and not the policy: nothing recorded fails and writes no file; `--update`
+writes it and the file is the page; a second run passes against the file rather than against
+anything in memory; and a changed file fails, names the column, and shows both sides *at the
+difference*.
+
+What it does not do: **snapshots of anything but a page** — `state`, `events` and the `Repr` of a
+value are all snapshottable in principle and none is, the page being the one §21.2 asked for and the
+one where `contains` was visibly not enough; **an interactive review flow** — `cargo insta review`
+steps through pending snapshots and here the review is `git diff`, which is §21.2's stated
+mitigation and needs no tool; **pruning an orphaned snapshot** — delete a test and its file stays;
+and **a structural diff** — the comparison is textual, so a reordered attribute is a difference,
+which is arguably right for a page whose bytes are what the client parses and is a decision that has
+not been forced.

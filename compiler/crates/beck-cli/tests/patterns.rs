@@ -5,7 +5,7 @@
 //! [`docs/27`](../../../../docs/27-the-walls-come-down-report.md) §27.3 said what
 //! was missing in one sentence: "**nested patterns are still refused** … patterns in Beck are one
 //! level deep, which is what §3.1's exhaustiveness check needs and no more".
-//! [`docs/90`](../../../../docs/90-nested-patterns-report.md) is what building them found.
+//! [`docs/90`](../../../../docs/90-pattern-matching-report.md) is what building them found.
 //!
 //! Three groups, and the middle one is the point:
 //!
@@ -17,7 +17,7 @@
 //!    **wrongly refused**;
 //! 3. **the ceiling**, because a pattern is an ordinary expression and nesting one is a second way
 //!    to recurse in the front end — which is
-//!    [`docs/85`](../../../../docs/85-what-the-generator-found-report.md)'s finding three times
+//!    [`docs/82`](../../../../docs/82-the-edge-report.md)'s finding three times
 //!    over.
 
 use std::process::Command;
@@ -344,14 +344,14 @@ def area(f: Found) -> Int:
 
 #[test]
 fn a_pattern_that_nests_too_deep_is_a_diagnostic_rather_than_a_crash() {
-    // `docs/44` bounded the front end's recursion as a *count*, and `docs/85` found three
+    // `docs/44` bounded the front end's recursion as a *count*, and `docs/82` found three
     // productions that got past it. A nested pattern is a new recursion in the checker, so this is
     // the same question asked of the new one: a pattern deeper than the ceiling must produce a
     // diagnostic with a span, in every build profile, rather than abort the process.
     //
     // What answers today is the **reader's** counter, `B0121`, and not the checker's: a pattern is
     // an ordinary call form, so the parser meets it first and the two ceilings are the same
-    // number. The checker counts its own recursion anyway, and `docs/90` §90.5 says why that is
+    // number. The checker counts its own recursion anyway, and `docs/90` §90.7 says why that is
     // not belt-and-braces — three times in this project's history a limit at one production has
     // been reached through another.
     let depth = beck_diag::depth::MAX_NESTING as usize + 64;
@@ -400,7 +400,7 @@ fn nest(open: &str, leaf: &str, close: &str, depth: usize) -> String {
 }
 
 // ---------------------------------------------------------------------------------------------
-// 4. Or-patterns and guards — the rest of `docs/90` §90.6's list
+// 4. Or-patterns and guards — the rest of `docs/90` §90.8's list
 // ---------------------------------------------------------------------------------------------
 
 #[test]

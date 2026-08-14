@@ -144,7 +144,7 @@ fn the_front_end_cost_per_declaration_does_not_grow_with_a_module() {
     // sixteen times as many is the measurement whatever the absolute numbers are (docs/64 §64.7).
     //
     // `depth` runs smaller than the other two for a reason that is not about speed. A flat body is
-    // bounded at `beck_diag::depth::MAX_BLOCK` statements (`docs/85`), because the checker recurses
+    // bounded at `beck_diag::depth::MAX_BLOCK` statements (`docs/82`), because the checker recurses
     // once per statement and an unbounded body aborted the process — so 6,400 bindings in one
     // function is now a program the front end refuses, and a gate that measured it would be
     // measuring error recovery. The ceiling is a safety property and cannot move to suit a
@@ -204,7 +204,7 @@ fn hinted(n: usize) -> String {
 ///
 /// The shape this guards is the one the first version of
 /// [`Editor::hints`](beck_core::editor::Editor::hints) had and
-/// [`docs/110`](../../../../docs/110-the-editor-edits-report.md) §110.5 records: finding the colon
+/// [`docs/65`](../../../../docs/65-the-editor-report.md) §65.7 records: finding the colon
 /// that ends a signature by filtering the file's whole token stream, once per definition, which is
 /// `definitions × tokens` and reads as a small constant at the sizes anybody tests by hand. It is
 /// the same defect [`docs/64`](../../../../docs/64-compile-speed-report.md) §64.2 found in

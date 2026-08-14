@@ -2,8 +2,8 @@
 
 **Status:** accepted
 **Date:** 2026-08-09
-**Context:** [`95`](../95-oidc-relying-party-report.md), [`07`](../07-dependencies.md) §7.2,
-[`48`](../48-identity-report.md) §48.5, [`49`](../49-http-client-report.md) §49.6,
+**Context:** [`48`](../48-identity-report.md), [`07`](../07-dependencies.md) §7.2,
+[`48`](../48-identity-report.md) §48.13, [`46`](../46-standard-library-report.md) §46.16,
 [`0004`](0004-full-cargo-deny-gate.md),
 [`0013`](0013-the-host-of-an-outbound-call-is-written-at-the-call-site.md)
 
@@ -36,13 +36,13 @@ how one becomes fiction.
 
 **Why not `jsonwebtoken` or `openidconnect`.** D6 names `openidconnect` and it is a good crate. It
 also brings its own HTTP client, its own async model and its own opinions about where a token is
-stored — and [`49`](../49-http-client-report.md) built the outbound call *on this project's own
+stored — and [`46`](../46-standard-library-report.md) built the outbound call *on this project's own
 seam* so that a request is stubbable, bounded at 8 MiB and 10 s, and made of a host the cluster's
 egress rule already names. A relying party built on somebody else's client would have none of those
 properties, and adding them back is more work than the 500 lines the protocol actually is. What is
 genuinely hard about OIDC is the cryptography and the claim checks; the first is aws-lc-rs's and the
 second is a list. So D6's "the audited `openidconnect` Rust crate" is **narrowed** here rather than
-followed, and [`95`](../95-oidc-relying-party-report.md) §95.7 records that as a correction rather
+followed, and [`48`](../48-identity-report.md) §48.7 records that as a correction rather
 than leaving the decision log to disagree with the tree.
 
 **Why not the `rsa` crate** for the RSA half, which would have been the pure-Rust answer:

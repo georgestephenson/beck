@@ -342,12 +342,12 @@ def ackermann(m: Int, n: Int) -> Int:
 
 /// Definitions this backend must refuse, one per reason.
 ///
-/// The heap ([`super::heapfix`]) took the record and the union off this list, `docs/105` took text
-/// off it, and `docs/106` took *reading* a collection off it — what is left of one is the half that
+/// The heap ([`super::heapfix`]) took the record and the union off this list, `docs/93` took text
+/// off it, and `docs/93` took *reading* a collection off it — what is left of one is the half that
 /// **grows** it. `str` of an `Int` came off it too, so the row here is a **real**, whose shortest
 /// round-trip decimal is an algorithm rather than a loop. The **host effects** came off it when the
 /// worker's protocol grew a second direction, and `reads_the_clock` stayed in the program as a
-/// control rather than being deleted. What is left is what `docs/101` §101.5 names as not built —
+/// control rather than being deleted. What is left is what `docs/93` §93.14 names as not built —
 /// and `scalar_and_fine` is the other control: a list of refusals with nothing on the other side of
 /// it would pass against a backend that refused everything.
 pub const REFUSED: &str = r#"

@@ -86,7 +86,7 @@ exactly what it passed.
 
 **A `list[T]` could not be taken apart**, which blocked §2.2.1's `accumulate` and all of §2.2.3.
 List patterns are built; patterns remained one level deep for four more reports
-([`90`](90-nested-patterns-report.md) is where that ended).
+([`90`](90-pattern-matching-report.md) is where that ended).
 
 ## 27.4 A type takes a parameter
 

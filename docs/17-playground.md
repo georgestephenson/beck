@@ -8,11 +8,11 @@ Beck stack can run in the browser tab — database included — for free.** Rung
 cloud:
 
 > **Status**: rungs A and B are **built** — [`98`](98-playground-report.md), which also says what
-> each of the five sections below still lacks (§98.7). Four of those lacks are now built too:
+> each of the five sections below still lacks (§98.9). Four of those lacks are now built too:
 > the tab's log survives a reload, a share link is a content-addressed fragment, a `@render(client)`
 > program runs in the client iframe, and the editor has highlighting, completion and inline
-> diagnostics — [`103`](103-playground-phase-3-report.md), which says what each still does not
-> deliver (§103.6). Rung C is Phase 4's and untouched.
+> diagnostics — [`98`](98-playground-report.md), which says what each still does not
+> deliver (§98.9). Rung C is Phase 4's and untouched.
 
 ## 17.1 Rung A — compile-time playground (static, costs a CDN)
 
@@ -38,10 +38,10 @@ network/disk interfaces**. A browser tab is just a third implementation of those
 | Network | Tokio/websocket | simulated | `MessageChannel` |
 | Log storage | Postgres/redb | simulated | IndexedDB / memory |
 
-Every row of that table is built, the storage one last ([`103`](103-playground-phase-3-report.md)
-§103.2): the tab's log is an array, handed to IndexedDB as the same records a durable store writes
+Every row of that table is built, the storage one last ([`98`](98-playground-report.md)
+§98.6): the tab's log is an array, handed to IndexedDB as the same records a durable store writes
 and keyed by the program's wire id, so a reload continues rather than starting from `init`. Mode B
-runs in the tab too — the kernel in the client iframe, the bundle over the port (§103.4).
+runs in the tab too — the kernel in the client iframe, the bundle over the port (§98.6).
 
 So the *same* compiled program runs: the "server" — ingress, `validate`, folds, Mode A rendering —
 in a **web worker**; the log in IndexedDB; the thin patch client in an iframe, speaking the
@@ -86,7 +86,7 @@ A playground is a program, and Beck programs are content-addressed artefacts
 live rung-A/B playground (docs-as-tests, [`13`](13-testing.md) §13.6, now also docs-as-demos). Bug
 reports arrive as playground links — a reproduction *is* a digest.
 
-> **Status**: half built ([`103`](103-playground-phase-3-report.md) §103.3). A link is
+> **Status**: half built ([`98`](98-playground-report.md) §98.6). A link is
 > content-addressed and self-certifying — the fragment carries the compressed program and names its
 > BLAKE3 digest, and a link that does not match its digest is refused — and a fork is a new digest
 > because a fork is different bytes. What needs the registry is everything that requires a digest to

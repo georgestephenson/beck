@@ -5,7 +5,7 @@
 nobody here is going to implement a primitive. It was written before there was a standard library,
 and it does not say *which* dependency the standard library's `digest` should be — a hash, a MAC, an
 AEAD and a signature scheme are four decisions, and only the first two are needed by
-[`52`](../52-crypto-and-identifiers-report.md).
+[`46`](../46-standard-library-report.md).
 
 BLAKE3 is already a first-party dependency and has been since Phase 1. It computes the signal
 graph's stable node ids (`signal.rs`), the interface digest (`iface.rs`), the structural hash of a
@@ -42,7 +42,7 @@ the asymmetric half below.
 [`07`](../07-dependencies.md)'s crypto row is now **narrower than it reads**: `ring`/`aws-lc-rs`
 remains the decision for signatures, key agreement and AEAD, and is not the decision for the
 standard library's digests. That correction is recorded in
-[`52`](../52-crypto-and-identifiers-report.md) §52.7 rather than by editing the design document.
+[`46`](../46-standard-library-report.md) §46.16 rather than by editing the design document.
 
 **What this does not decide, and what is now blocked only on it.**
 [`docs/08`](../08-roadmap.md) §8.5.4's Wave 3 says the OIDC relying party is waiting on "the

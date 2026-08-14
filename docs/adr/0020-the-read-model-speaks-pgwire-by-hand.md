@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Date:** 2026-08-08
-**Context:** [`88`](../88-read-models-and-pgwire-report.md), [`05`](../05-tier-lowering.md) §5.3,
+**Context:** [`23`](../23-incremental-views-report.md), [`05`](../05-tier-lowering.md) §5.3,
 [`07`](../07-dependencies.md) §7.2, [`43`](../43-threat-model.md)
 
 ## The decisions
@@ -44,7 +44,7 @@ independent branches.
 client. `beck-cli/tests/read_models.rs` drives the server with `tokio-postgres` — already a
 dependency, for the Postgres log store — over both the simple and the extended protocol, in binary
 format. A protocol server tested by a client written beside it tests agreement with itself, which
-is [`84`](../84-a-quota-is-only-as-good-as-its-actor-report.md) §84.5's finding about four gates
+is [`82`](../82-the-edge-report.md) §82.10's finding about four gates
 that could not fail.
 
 ## Why there is no authentication, and why that is a bound rather than a gap
@@ -80,7 +80,7 @@ should be derived from what the program says rather than from what the runtime f
 Nothing in the language currently *says* "publish these read models", so there is nothing to derive
 it from, and the honest default for an undeclared capability is off. If a later phase gives a
 program a way to declare it — an effect atom, a signal annotation — this flag is what that would
-drive, and [`88`](../88-read-models-and-pgwire-report.md) §88.7 records it as the open question.
+drive, and [`23`](../23-incremental-views-report.md) §23.19 records it as the open question.
 
 ## What this rules out
 

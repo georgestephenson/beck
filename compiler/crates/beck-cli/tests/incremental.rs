@@ -2,7 +2,7 @@
 //!
 //! `docs/03-type-and-effect-system.md` §3.8 asks for this command by name and
 //! `docs/20-phase-2-report.md` §20.5 recorded it as unbuilt. It was the analysis with nothing
-//! behind it; there is now an engine (`docs/24-incremental-views-report.md`), and the obligation
+//! behind it; there is now an engine (`docs/23-incremental-views-report.md`), and the obligation
 //! this harness enforces has not changed: the first line must be true of *this program*, because a
 //! command called `explain incremental` that let a reader believe their view was being maintained
 //! when it is not would be worse than no command.
@@ -295,7 +295,7 @@ fn every_corpus_program_is_assessable_and_none_of_them_is_a_mystery() {
                 ),
                 // A vertex that applies nothing at all is its own verdict rather than an
                 // `Incremental` with an empty explanation — which is what this gate caught the
-                // first time a corpus program had one (`docs/96` §96.5).
+                // first time a corpus program had one (`docs/48` §48.9).
                 Verdict::Trivial => {}
                 Verdict::Recompute { because } => assert!(!because.is_empty()),
                 Verdict::Effectful { effects } => assert!(!effects.is_empty()),

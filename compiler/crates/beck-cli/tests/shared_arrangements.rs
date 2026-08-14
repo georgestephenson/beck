@@ -5,7 +5,7 @@
 //! > a thousand connected users of `todos.map(filter_by(session.user))` must compile to *one*
 //! > shared dataflow whose final per-session operators (filter, project, diff) run per subscriber
 //!
-//! [`docs/24-incremental-views-report.md`](../../../../docs/24-incremental-views-report.md) §24.7
+//! [`docs/23-incremental-views-report.md`](../../../../docs/23-incremental-views-report.md) §23.14
 //! recorded that as identified and not done, and named what blocked it: not the analysis, the
 //! runtime. Subscribers render at different times, so a shared arrangement has to answer a question
 //! a per-subscriber one never does — *what changed since **you** last looked* — and a subscriber
@@ -24,8 +24,8 @@
 //! * that the sharing is real: advanced once for any number of subscribers, and the arrangements
 //!   counted once rather than once each;
 //! * and the *lifecycle* — how much of all that is held once nobody is reading it, which
-//!   [`docs/26-arrangement-sharing-report.md`](../../../../docs/26-arrangement-sharing-report.md)
-//!   §26.9 recorded as two loose ends. The second half of this file is that rule, and it asserts
+//!   [`docs/23-incremental-views-report.md`](../../../../docs/23-incremental-views-report.md)
+//!   §23.19 recorded as two loose ends. The second half of this file is that rule, and it asserts
 //!   the page is unaffected before it asserts anything is dropped.
 
 use std::sync::Arc;
@@ -408,7 +408,7 @@ fn what_a_subscriber_holds_is_only_what_reads_the_session() {
 
 #[test]
 fn a_fanout_costs_the_shared_prefix_once_rather_than_once_each() {
-    // The trade §24.7 measured and could not yet improve: a maintained subscription cost about 4×
+    // The trade §23.14 measured and could not yet improve: a maintained subscription cost about 4×
     // the page it already held, all of it per subscriber. What sharing changes is the *slope*, and
     // the slope is what a fanout estimate multiplies.
     //
@@ -465,14 +465,14 @@ fn a_fanout_costs_the_shared_prefix_once_rather_than_once_each() {
 
 #[test]
 fn a_shared_arrangement_is_listed_once_between_the_subscribers_that_read_it() {
-    // The `O(n)` §24.6 named is assembling an arrangement into a `list` for a pointwise consumer,
+    // The `O(n)` §23.8 named is assembling an arrangement into a `list` for a pointwise consumer,
     // and it was paid per subscriber because the cache lived in the subscriber's cell. It now lives
     // beside the arrangement, so the second subscriber to need the list gets the first one's.
     //
     // On `24-feed.beck` it is more than the list: the whole `ul`, its 200 `li` children and the
     // `html_el` that assembles them read the state and not the session, so the *page's* `O(n)` half
     // is above the cut. Eight subscribers pay it once between them and hold a per-session constant
-    // each — which is §5.3's sentence about the part of the render §24.6 said was where the
+    // each — which is §5.3's sentence about the part of the render §23.8 said was where the
     // remaining `O(n)` lives.
     //
     // Measured at two sizes, because "did not grow with the collection" is the claim and one size
@@ -511,7 +511,7 @@ fn a_shared_arrangement_is_listed_once_between_the_subscribers_that_read_it() {
 // ---------------------------------------------------------------------------------------------
 // The lifecycle: what the dataflow holds when nobody is reading it, and for how long
 //
-// `docs/26-arrangement-sharing-report.md` §26.9 recorded two loose ends — the arrangements are
+// `docs/23-incremental-views-report.md` §23.19 recorded two loose ends — the arrangements are
 // never released, and the change history is a constant rather than a policy. Both are the same
 // missing rule, and everything below is where it is wrong if it is wrong. The rule is a *reader
 // set*: a subscriber engine is counted while it lives and publishes how far it has rendered, so
@@ -586,7 +586,7 @@ fn a_page_survives_the_arrangements_being_released_underneath_it() {
 
 #[test]
 fn the_history_is_bounded_by_the_laggiest_subscriber_and_not_by_the_ceiling() {
-    // §26.9: "The history is a constant, not a policy. 64 versions, chosen because a subscriber
+    // §23.19: "The history is a constant, not a policy. 64 versions, chosen because a subscriber
     // further behind than that is not the bottleneck, and not because anything measured where the
     // knee is."
     //
@@ -679,7 +679,7 @@ fn a_subscriber_that_has_not_rendered_pins_nothing() {
 
 #[test]
 fn the_arrangements_go_when_the_last_subscriber_does() {
-    // §26.9: "The shared dataflow is never released. It holds its arrangements whether or not
+    // §23.19: "The shared dataflow is never released. It holds its arrangements whether or not
     // anybody is subscribed. A process that had a fanout and now has none keeps the accumulator's
     // arrangements warm for a reconnection that may not come. Nothing measures how much that is and
     // nothing drops it."

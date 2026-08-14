@@ -6,10 +6,10 @@
 //!   columns are, and the rule that decides. That half needs no socket and no runtime.
 //! * **The wire** is driven by `tokio-postgres` — somebody else's Postgres client, the same one
 //!   `beck-rt`'s Postgres log store uses. A protocol server tested by a client written beside it
-//!   tests agreement with itself, which is what `docs/84` §84.5 found four gates doing; this one
+//!   tests agreement with itself, which is what `docs/82` §82.10 found four gates doing; this one
 //!   is held to a driver that has never heard of Beck.
 //!
-//! `docs/88-read-models-and-pgwire-report.md` is the report.
+//! `docs/23-incremental-views-report.md` is the report.
 
 use std::sync::Arc;
 

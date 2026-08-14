@@ -6,9 +6,9 @@ for deferring it, once the pipeline it needed existed.
 
 **Status:** superseded
 **Date:** 2026-08-10
-**Context:** [`104`](../104-the-release-and-the-installer-report.md),
-[`28`](../28-releases-and-deployment.md) §28.2, [`99`](../99-supply-chain-report.md) §99.5 and
-§99.7, [`43`](../43-threat-model.md) §43.4,
+**Context:** [`92`](../92-supply-chain-and-release-report.md),
+[`28`](../28-releases-and-deployment.md) §28.2, [`92`](../92-supply-chain-and-release-report.md) §92.6 and
+§92.15, [`43`](../43-threat-model.md) §43.4,
 [`0023`](0023-tls-and-the-signature-it-brings.md)
 
 ## The decision
@@ -19,7 +19,7 @@ mismatch. **Nothing is signed**, and the fact that nothing is signed is written 
 the release notes, the threat model and a test.
 
 This is a decision and not an oversight, because this project *has* a signer.
-[`99`](../99-supply-chain-report.md) §99.5 built `beck sign` and `beck verify` — a Sigstore-shaped
+[`92`](../92-supply-chain-and-release-report.md) §92.6 built `beck sign` and `beck verify` — a Sigstore-shaped
 signature over a digest, in the form `cosign verify --key` reads, checked by `openssl` as well as by
 this repository's own code. A reader who knows that would reasonably assume a released binary
 inherits it.
@@ -38,10 +38,10 @@ Three cheaper-looking routes were considered and none of them is cheap:
 - **Sign `SHA256SUMS` with the existing keyed signer.** Closest, and still a new subject: the
   payload `beck sign` builds is simple-signing over an image reference, so the file would either
   carry a lie in its `critical.image` field or need a different payload — at which point
-  `cosign verify --key` is no longer the consumer, and §99.5's whole argument for that shape ("a
+  `cosign verify --key` is no longer the consumer, and §92.6's whole argument for that shape ("a
   consumer needs no Beck-specific tool") is gone.
 - **`cosign sign-blob` in the workflow.** Adds a tool this repository deliberately does not depend
-  on ([`99`](../99-supply-chain-report.md) §99.1 spends the argument that a build which executes
+  on ([`92`](../92-supply-chain-and-release-report.md) §92.1 spends the argument that a build which executes
   nothing has nothing a compiler cannot do), and moves the trust into a key nobody has generated.
 - **GitHub's artifact attestations.** The right answer eventually and a Phase 4 item
   ([`08`](../08-roadmap.md) §8.5.4 Wave 5), because it is the *provenance* half — a builder
@@ -71,5 +71,5 @@ tool is absent has taught its users that verification is optional.
   than leaving it to be inferred from a supply-chain report.
 - **The upgrade path is not this ADR's to take.** It is one subject decision — what a signature over
   a *release* is about — plus a transparency log, and both belong with the registry push
-  [`99`](../99-supply-chain-report.md) §99.7 already lists. Revisit this record then; do not extend
+  [`92`](../92-supply-chain-and-release-report.md) §92.15 already lists. Revisit this record then; do not extend
   `beck sign` quietly in the meantime.

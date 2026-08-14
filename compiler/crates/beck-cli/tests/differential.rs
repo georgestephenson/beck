@@ -13,7 +13,7 @@
 //!   as written, read literally.
 //! * **Split.** The real runtime: commands go through the ingress channel into the sequencer, are
 //!   validated under the write lock, appended to a log, folded, and the resulting view is
-//!   **maintained by delta** for each subscriber (§5.3, docs/24) and *diffed* against the previous
+//!   **maintained by delta** for each subscriber (§5.3, docs/23) and *diffed* against the previous
 //!   one. A client applies the patches with `diff::apply` and holds a DOM it built from nothing but
 //!   patches.
 //!

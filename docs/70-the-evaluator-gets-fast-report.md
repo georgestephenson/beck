@@ -167,12 +167,12 @@ so. It is cited from five other reports for that reason.
 
 ## 70.8 What this corrected, elsewhere
 
-- [`69`](69-standard-library-imports-report.md) §69.7's measured-but-unfixed quadratic is fixed.
+- [`46`](46-standard-library-report.md) §46.14's measured-but-unfixed quadratic is fixed.
 - **`STACK_BYTES`' derivation was wrong** — the evaluator's ceiling had been measured in a debug
   build, so the release ceiling was a fiction.
   [`adr/0007`](adr/0007-evaluator-stack-is-declared-not-discovered.md)'s property holds in both
   profiles now.
-- [`62`](62-fuel-report.md)'s budget means something different and the number is the same: it counts
+- [`53`](53-are-we-fast-yet-report.md)'s budget means something different and the number is the same: it counts
   work rather than nodes.
 - **Every wall-clock number in reports 69 through 78 is superseded by the one after it**, which is
   the strongest argument for this document existing: ten reports each correcting the previous one's
@@ -187,6 +187,6 @@ so. It is cited from five other reports for that reason.
 - **A walker over `Clause`.** All three annotating passes skip `test` blocks, so a file whose tests
   *are* the work — most of `compiler/lib/` — gets no layout, no reserved slot and no move in them
   (§70.7). Named, not fixed.
-- **A compiler.** This is a tree-walker that got fast; [`93`](93-llvm-backend-report.md),
-  [`97`](97-cranelift-report.md) and [`101`](101-the-heap-report.md) are the other answer, and the
+- **A compiler.** This is a tree-walker that got fast; [`93`](93-the-native-backends-report.md),
+  [`93`](93-the-native-backends-report.md) and [`93`](93-the-native-backends-report.md) are the other answer, and the
   gap between them is what §25.9 is holding.

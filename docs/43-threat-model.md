@@ -39,7 +39,7 @@ harness goes red, **absent** means it is not there and §43.4 says so by name.
 | `durable` and `ingress` are never placed client-side | A2 | structural + tested | Same |
 | A fold is deterministic, so replay is exact | A2, A4 | structural + tested | §3.7's rule in the checker; the replay-determinism harness |
 | Only validated events are logged | A2 | structural | F1/F3's rule: a command envelope is transient |
-| No memory-unsafety in first-party code | all | structural | `unsafe_code = "forbid"`, inherited by every crate but one. The claim is about the compiler and the runtime; **machine code `beck native` generates is not first-party code in this sense** — it is an artefact, and it runs as a separate process for that reason ([`93`](93-llvm-backend-report.md) §93.1). The exception is `beck-wasm`, which **denies** rather than forbids because rustc classifies `#[no_mangle]` as unsafe code and a WebAssembly module that exports nothing cannot be called: four `#[allow]`s, all on export attributes, and no `unsafe` block, `unsafe fn` or raw-pointer read anywhere in the crate. Where the lint could shape the design it did ([`adr/0021`](adr/0021-the-native-backend-writes-ir-and-runs-a-process.md)); where it could not, the extent is a test — `mode_b.rs::the_wasm_boundary_is_the_only_exception_to_forbid_unsafe`, which also asserts that every other crate still inherits the workspace lint ([`94`](94-mode-b-report.md) §94.4) |
+| No memory-unsafety in first-party code | all | structural | `unsafe_code = "forbid"`, inherited by every crate but one. The claim is about the compiler and the runtime; **machine code `beck native` generates is not first-party code in this sense** — it is an artefact, and it runs as a separate process for that reason ([`93`](93-the-native-backends-report.md) §93.1). The exception is `beck-wasm`, which **denies** rather than forbids because rustc classifies `#[no_mangle]` as unsafe code and a WebAssembly module that exports nothing cannot be called: four `#[allow]`s, all on export attributes, and no `unsafe` block, `unsafe fn` or raw-pointer read anywhere in the crate. Where the lint could shape the design it did ([`adr/0021`](adr/0021-the-native-backend-writes-ir-and-runs-a-process.md)); where it could not, the extent is a test — `mode_b.rs::the_wasm_boundary_is_the_only_exception_to_forbid_unsafe`, which also asserts that every other crate still inherits the workspace lint ([`94`](94-the-client-report.md) §94.6) |
 | No SQL injection | A2 | structural | Every value is a bind parameter |
 | No hash flooding | A2 | structural | `Map`/`Set` are ordered, not hashed (F8) |
 | Deeply nested source is refused, not fatal | **A1** | tested | [`adr/0012`](adr/0012-the-front-end-counts-its-own-recursion.md); `front_end_bound.rs` |
@@ -47,7 +47,7 @@ harness goes red, **absent** means it is not there and §43.4 says so by name.
 | Time enters at the merge point and nowhere else | A2, A4 | tested | `beck_core::clock`; `clock.rs`'s one-reader gate |
 | Text in a page is escaped, in both text and attribute context | A2, A4 | tested | `beck-core/src/html.rs`; the dashboard's own escaper |
 | An actor is a decision of the runtime, not a claim of the client | A2 | tested | `beck_rt::identity`; `identity.rs` drives the socket loop. **Only with a verifying provider** — the default verifies nothing, which is §43.4 |
-| An actor a *third party* vouched for cannot be minted by this process | A2 | tested | `beck_rt::oidc` ([`95`](95-oidc-relying-party-report.md)): the signature is checked against the issuer's public key, and `oidc.rs` performs the `alg: none` and `HS256` confusion attacks rather than describing them. **Only for a program that declares an identity provider** |
+| An actor a *third party* vouched for cannot be minted by this process | A2 | tested | `beck_rt::oidc` ([`48`](48-identity-report.md)): the signature is checked against the issuer's public key, and `oidc.rs` performs the `alg: none` and `HS256` confusion attacks rather than describing them. **Only for a program that declares an identity provider** |
 | A named peer's identity is verified before anything is sent to it | A2 | tested | `beck_rt::outbound` with rustls ([`adr/0023`](adr/0023-tls-and-the-signature-it-brings.md)): the certificate must answer for `Request::host`, which is the atom the call performs. **Only for a request that said `over_tls`** |
 | Every host a program can reach is one the program named, and the egress rule is that list | A2 | structural + tested | [`adr/0013`](adr/0013-the-host-of-an-outbound-call-is-written-at-the-call-site.md): a computed host is `B0395`, so the derivation in §6.5 is total; `outbound.rs` |
 | Exactly one function turns a `secret[T]` into a value that is not one, and it needs a capability | A2 | structural + tested | [`adr/0014`](adr/0014-a-keyed-digest-is-the-one-declassifier.md): `digest_keyed` performs `cap.sign`, which no client tier discharges; `security.rs` enumerates the prelude and asserts the count is one |
@@ -61,12 +61,12 @@ decision.
    may travel — not a claim about what its use costs to observe, and nothing in Beck's design
    attempts constant-time anything **except `digest_eq`**, which exists because comparing a message
    authentication code with `==` returns at the first differing byte
-   ([`52`](52-crypto-and-identifiers-report.md) §52.3). One comparison is not a side-channel
+   ([`46`](46-standard-library-report.md) §46.7). One comparison is not a side-channel
    programme, and the exclusion is otherwise unchanged.
 2. **A compromised host.** If the process's memory or its filesystem is under someone else's
    control, no property here survives, and none is claimed to.
 3. **An authenticated insider.** An actor acting within its capabilities is the system working —
-   and there is now something to be inside of, since [`95`](95-oidc-relying-party-report.md) made
+   and there is now something to be inside of, since [`48`](48-identity-report.md) made
    the actor a third party's decision rather than the client's. A deployment left on the default
    provider has no authentication to be inside of, which is §43.4's first bullet rather than this
    exclusion.
@@ -88,7 +88,7 @@ decision.
 The controls a reader would reasonably assume exist, that do not:
 
 - **Identity, under the default provider.** Narrowed twice. [`48`](48-identity-report.md) made
-  identity a seam, so an `Actor` is something only a provider can mint; [`95`](95-oidc-relying-party-report.md)
+  identity a seam, so an `Actor` is something only a provider can mint; [`48`](48-identity-report.md)
   added the asymmetric one, so ~~OIDC is still absent~~ **an OIDC relying party exists** — discovery,
   a cached JWKS, RS/PS/ES signatures, issuer, audience, authorized party, expiry, not-before and
   nonce, plus the authorization-code flow with PKCE — and ~~the claims → `Session` mapping~~ **the
@@ -98,10 +98,10 @@ The controls a reader would reasonably assume exist, that do not:
   What remains absent is `identity = managed()`, which would provision an identity provider into
   the object graph; `external(…)` names one that is already somewhere else. The issuer **is** in the
   derived NetworkPolicy — it is a declaration, so §6.5's egress derivation covers it like any other
-  peer ([`95`](95-oidc-relying-party-report.md) §95.7) — and `pending_security.rs` asserts both
+  peer ([`48`](48-identity-report.md) §48.7) — and `pending_security.rs` asserts both
   halves: the declared issuer is reachable, and no provider workload is emitted.
 - **Transport security on an outbound call, unless the program asked for it.**
-  [`49`](49-http-client-report.md) built `http_fetch` over **plaintext HTTP/1.1**;
+  [`46`](46-standard-library-report.md) built `http_fetch` over **plaintext HTTP/1.1**;
   [`adr/0023`](adr/0023-tls-and-the-signature-it-brings.md) took rustls, so `over_tls(req)` now puts
   the exchange inside a TLS session whose certificate must answer for the host written at the call
   site. What is absent is therefore narrower and is a property of the *program*: a request that does
@@ -113,21 +113,21 @@ The controls a reader would reasonably assume exist, that do not:
   program's own atoms, so a call to a host nobody wrote is a call the network refuses.
 - **Transport security on the way *in*.** `beck run` serves plaintext HTTP and §6.5's gateway
   terminates TLS in front of it. That is why the session cookie is not marked `Secure`
-  ([`95`](95-oidc-relying-party-report.md) §95.6) and why the `Origin` check does not compare
-  schemes ([`83`](83-the-runtime-edge-report.md) §83.3): a deployment that terminates TLS inside the
+  ([`48`](48-identity-report.md) §48.13) and why the `Origin` check does not compare
+  schemes ([`82`](82-the-edge-report.md) §82.2): a deployment that terminates TLS inside the
   pod is not the one this project generates, and would want both.
-- ~~**Per-actor quotas** (F3)~~ — **built** ([`84`](84-a-quota-is-only-as-good-as-its-actor-report.md)),
-  on by default at 600 events a minute. What remains absent is what §84.4 measures rather than
+- ~~**Per-actor quotas** (F3)~~ — **built** ([`82`](82-the-edge-report.md)),
+  on by default at 600 events a minute. What remains absent is what §82.5 measures rather than
   claims: the bound is per *actor*, so under the default `DevIdentity` a client that rotates names
   is bounded by the table (1,024 buckets) rather than by the limit. **Subscription and connection
   quotas** (F15) and **the deploy choreography's bounded buffer** (F12) are still unbuilt.
 - ~~**Message size limits and origin checks** on the websocket~~ — **built**
-  ([`83`](83-the-runtime-edge-report.md)). The limits are numbers this project chose and a unit test
+  ([`82`](82-the-edge-report.md)). The limits are numbers this project chose and a unit test
   holds it to them; the upgrade compares `Origin`'s authority against `Host` and refuses a mismatch
   with `403`. What is *still* absent here is a cross-origin allowlist: a deployment whose client is
   served from another host has nothing to configure, because a Beck app serves its own page and
   same-origin is a description of that rather than a policy chosen over alternatives.
-- **Authentication on the read-model port.** [`88`](88-read-models-and-pgwire-report.md) built
+- **Authentication on the read-model port.** [`23`](23-incremental-views-report.md) built
   `beck run --pgwire`, which serves a program's read models on the PostgreSQL wire protocol. It
   answers `AuthenticationOk` to everyone and speaks plaintext, so it is **off by default** and
   **refuses to bind to anything but loopback** — the compensating control is reachability rather
@@ -137,12 +137,12 @@ The controls a reader would reasonably assume exist, that do not:
   has to change before the bound does. The absence is asserted by connecting without a password and
   expecting it to work, which goes red the day one is required.
 - **Verification of the compiler you downloaded, unless you ask for it.** Narrowed once.
-  [`104`](104-the-release-and-the-installer-report.md) built the release pipeline and
+  [`92`](92-supply-chain-and-release-report.md) built the release pipeline and
   [`install.sh`](../install.sh), which verifies the tarball against the release's `SHA256SUMS` and
   refuses to install on a mismatch — a **checksum, not a chain of trust**, establishing that the
   download was not corrupted in transit and nothing at all about the page it came from.
   ~~A provenance attestation and a transparency log are absent~~ — **the release attests SLSA build
-  provenance** ([`109`](109-provenance-report.md), [`adr/0028`](adr/0028-a-release-carries-provenance-and-still-no-signature.md)):
+  provenance** ([`92`](92-supply-chain-and-release-report.md), [`adr/0028`](adr/0028-a-release-carries-provenance-and-still-no-signature.md)):
   every artefact listed in `SHA256SUMS` is a subject of an in-toto statement signed by a short-lived
   Sigstore certificate whose identity is this repository's release workflow, recorded in the
   public-good transparency log, and `BECK_VERIFY_PROVENANCE=1` makes the installer check it with
@@ -152,9 +152,9 @@ The controls a reader would reasonably assume exist, that do not:
   default install with a verifier that refuses everything succeeds, and never consults it. Absent
   too, and separately: **a signature over the release page**. `SHA256SUMS` carries none, so a
   reader who checks the sums and stops has checked one file on the page against another file on the
-  page. This project *has* signing machinery ([`99`](99-supply-chain-report.md) §99.5) and it still
+  page. This project *has* signing machinery ([`92`](92-supply-chain-and-release-report.md) §92.6) and it still
   cannot take this subject — `beck sign` signs an OCI manifest digest and a compiler release is a
-  tarball (§104.6) — which is §99.7's row, unchanged.
+  tarball (§92.11) — which is §92.15's row, unchanged.
 - ~~**Macro fuel** (F17)~~ — **built.** Expansion was bounded in *depth* twice over — since
   [`adr/0012`](adr/0012-the-front-end-counts-its-own-recursion.md) separated the two counters that
   had been one — and in *work* not at all, which is the gap a doubling macro walked through: eight
@@ -177,13 +177,13 @@ day it is written and quietly wrong six months later.
 
 ```text
    A1 source ─────────▶│ beck check / build │─────▶ artefacts ─────▶│ registry │──▶ A3
-                       │  ← bounded (0012)  │      (signing, SBOM: unbuilt — 28)
+                       │  ← bounded (0012)  │      (signing, SBOM, provenance: 92)
                        └────────────────────┘
    A2 client ──socket──▶│ ingress │──▶ validate ──▶ log ──▶ fold ──▶ view ──▶ patch ──▶ A2
                         └─ actor is self-asserted under the default provider (§43.4); a decision
                            of the runtime under a verifying one, and the issuer's under
-                           `identity = external(issuer=…)` (95). Claims reach `validate` and
-                           stop at the log, which carries the actor's name only (95 §95.4).
+                           `identity = external(issuer=…)` (48). Claims reach `validate` and
+                           stop at the log, which carries the actor's name only (48 §48.6).
                            A Mode B document carries them so the browser's own `validate`
                            decides as the server's does — escaped, and still only advice
                                    └─ the only writer; the only place time enters (§3.7)
@@ -197,7 +197,7 @@ day it is written and quietly wrong six months later.
 
    runtime ──JWKS/token──▶│ the issuer │  over TLS, at startup and on a timer — never on the
                           └─ connection path. The host is `identity = external(issuer=…)`, so
-                             §6.5's egress rule covers it like any other peer (95 §95.7)
+                             §6.5's egress rule covers it like any other peer (95 §48.7)
 ```
 
 Five crossings, and what each one is:
@@ -206,15 +206,15 @@ Five crossings, and what each one is:
    macro work.
 2. **The wire into the sequencer** — the boundary A2 attacks. Typed and decoded before anything
    else happens. ~~Unauthenticated, unquota'd~~: quota'd since
-   [`84`](84-a-quota-is-only-as-good-as-its-actor-report.md), and authenticated when a provider was
-   chosen — the default is still `DevIdentity`, and §84.4's arithmetic (the bound is worth what the
+   [`82`](82-the-edge-report.md), and authenticated when a provider was
+   chosen — the default is still `DevIdentity`, and §82.5's arithmetic (the bound is worth what the
    actor is worth) is why those two facts belong in one sentence.
 3. **The fold into a view, and a view into a patch** — where §3.5's placement properties do their
    work, and the crossing this project has the most evidence about.
 4. **Content into an operator's screen** — the one A4 is attacked through, and the reason the
    dashboard escapes in attribute context as well as text.
 5. **The program out to a peer, and the peer's reply back in** — added by
-   [`49`](49-http-client-report.md). The outward half is bounded by construction: the set of hosts
+   [`46`](46-standard-library-report.md). The outward half is bounded by construction: the set of hosts
    reachable is the set written in the source, and — for a request that said `over_tls` — the peer
    answering to one of those names has a certificate for it
    ([`adr/0023`](adr/0023-tls-and-the-signature-it-brings.md)). The inward half is *still* not
@@ -227,11 +227,11 @@ named so the edit is not left to somebody noticing:
 
 | Event | What has to change here |
 |---|---|
-| ~~Identity lands~~ | **Done, except for the default** ([`48`](48-identity-report.md), [`95`](95-oidc-relying-party-report.md)): §43.2 has three rows, and §43.4's remaining gap is that `DevIdentity` is what a deployment gets when it chooses nothing. A2 splits into authenticated and anonymous when a *verifying* provider becomes the default, which is still not yet |
-| TLS on the way *in* | §43.4 loses its third bullet, the session cookie gains `Secure`, and [`83`](83-the-runtime-edge-report.md) §83.3's decision not to compare `Origin`'s scheme is re-argued |
-| ~~`identity = external(…)` becomes a declaration~~ | **Done** ([`95`](95-oidc-relying-party-report.md) §95.7): §6.5's derivation is total again, and what `pending_security.rs` asserts is now the *provisioning* half |
-| ~~`identity = managed()` is built~~ | **Done** ([`95`](95-oidc-relying-party-report.md) §95.10). An identity provider is now a workload this project's manifests start — and it starts in `start-dev`, which §95.10 records as the limit it is |
-| A managed provider is deployed for real | `start-dev` becomes `start`, which needs a database and TLS material this derivation does not emit — and the plaintext hop §95.10 argues for stops being the only thing between the application and its key set |
+| ~~Identity lands~~ | **Done, except for the default** ([`48`](48-identity-report.md), [`48`](48-identity-report.md)): §43.2 has three rows, and §43.4's remaining gap is that `DevIdentity` is what a deployment gets when it chooses nothing. A2 splits into authenticated and anonymous when a *verifying* provider becomes the default, which is still not yet |
+| TLS on the way *in* | §43.4 loses its third bullet, the session cookie gains `Secure`, and [`82`](82-the-edge-report.md) §82.2's decision not to compare `Origin`'s scheme is re-argued |
+| ~~`identity = external(…)` becomes a declaration~~ | **Done** ([`48`](48-identity-report.md) §48.7): §6.5's derivation is total again, and what `pending_security.rs` asserts is now the *provisioning* half |
+| ~~`identity = managed()` is built~~ | **Done** ([`48`](48-identity-report.md) §48.8). An identity provider is now a workload this project's manifests start — and it starts in `start-dev`, which §48.8 records as the limit it is |
+| A managed provider is deployed for real | `start-dev` becomes `start`, which needs a database and TLS material this derivation does not emit — and the plaintext hop §48.8 argues for stops being the only thing between the application and its key set |
 | The playground ships | A1 stops being hypothetical; the isolation story (§17.3) enters §43.2 |
 | The registry ships | A3 stops being anticipated; tarn signing and effect diffs enter §43.2 |
 | Any quota is built | §43.4 loses a bullet, `pending_security.rs` loses a test, both in one change |

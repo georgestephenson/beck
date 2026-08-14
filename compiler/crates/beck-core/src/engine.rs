@@ -3,7 +3,7 @@
 //! [`docs/03-type-and-effect-system.md`](../../../../../docs/03-type-and-effect-system.md) §3.8:
 //! "`remaining` updates by ±1 per event, never by recount." Until now that sentence described an
 //! intention. This is the machine that makes it true, and
-//! [`docs/24-incremental-views-report.md`](../../../../../docs/24-incremental-views-report.md) is the
+//! [`docs/23-incremental-views-report.md`](../../../../../docs/23-incremental-views-report.md) is the
 //! measurement.
 //!
 //! # The one hard problem, and where it is solved
@@ -81,7 +81,7 @@ struct Arrangement {
     /// subscribers at once, through a read lock ([`SharedDataflow`]): the first one to need the
     /// list builds it, and the rest get the same `Arc`. With an `Option` the cache would need the
     /// write lock, which would serialise every subscriber behind the first — and the list is the
-    /// one thing worth sharing most, because building it is the `O(n)` §24.6 named.
+    /// one thing worth sharing most, because building it is the `O(n)` §23.8 named.
     listed: OnceLock<Value>,
 }
 
@@ -1244,8 +1244,8 @@ impl SharedInner {
 
 /// How long a shared dataflow keeps what a subscriber might still ask for.
 ///
-/// [`docs/26-arrangement-sharing-report.md`](../../../../../docs/26-arrangement-sharing-report.md)
-/// §26.9 recorded both of these as constants that should have been policies: the history was 64
+/// [`docs/23-incremental-views-report.md`](../../../../../docs/23-incremental-views-report.md)
+/// §23.19 recorded both of these as constants that should have been policies: the history was 64
 /// versions "because a subscriber further behind than that is not the bottleneck", and the
 /// arrangements were never dropped at all.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1288,7 +1288,7 @@ impl Default for Retention {
 /// the operators that are a function of the accumulator alone, so everything downstream of
 /// [`crate::plan::Op::Presence`] is excluded too. The reason is this type's `version` — it is the
 /// log's `seq`, and a roster moves when `seq` does not
-/// ([`docs/96`](../../../../../docs/96-presence-report.md) §96.5).
+/// ([`docs/48`](../../../../../docs/48-identity-report.md) §48.9).
 ///
 /// [`docs/05-tier-lowering.md`](../../../../../docs/05-tier-lowering.md) §5.3:
 ///
@@ -1299,7 +1299,7 @@ impl Default for Retention {
 /// false for exactly the operators reachable from the accumulator without passing through the
 /// session. What was missing was somewhere for them to live that is not one subscriber's engine.
 ///
-/// # The three choices §24.7 said this design had in it
+/// # The three choices §23.14 said this design had in it
 ///
 /// 1. **Who advances it.** Not the sequencer: that would put view maintenance on the write path and
 ///    do it for a state nobody is looking at. The *first subscriber to render at a new version*
@@ -1320,13 +1320,13 @@ impl Default for Retention {
 ///
 /// The *page* is per-session in every corpus program, so what is shared is the prefix below the
 /// session, not the render. `24-feed.beck` is the case where that prefix is most of the plan and
-/// the sketch is the case where it is least; `docs/26` has the table.
+/// the sketch is the case where it is least; `docs/23` has the table.
 ///
 /// # The lifecycle: who keeps this alive, and for how long
 ///
 /// The three choices above say how the dataflow is *maintained*. They are silent about when it
-/// stops being worth maintaining, which [`26`](../../../../../docs/26-arrangement-sharing-report.md)
-/// §26.9 recorded as two loose ends — arrangements that are never released, and a change history
+/// stops being worth maintaining, which [`docs/23`](../../../../../docs/23-incremental-views-report.md)
+/// §23.19 recorded as two loose ends — arrangements that are never released, and a change history
 /// that is a constant rather than a policy. Both are the same missing rule, and it is the
 /// reader-frontier discipline of differential dataflow's shared arrangements: a reader set, a
 /// frontier per reader, history compactable up to the minimum frontier, and the trace droppable
@@ -1402,7 +1402,7 @@ impl SharedDataflow {
     /// an implementation convenience. A SQL client holding a connection is a reason to keep the
     /// arrangements — it is going to ask again — and a SQL client that has gone is not, which is
     /// exactly what the reader set already decides for subscribers
-    /// ([`51`](../../../../../docs/51-arrangement-lifecycle-report.md)). The alternative, reading the
+    /// ([`docs/23`](../../../../../docs/23-incremental-views-report.md)). The alternative, reading the
     /// arrangements without joining the set, has a release racing every query.
     ///
     /// Its frontier stays at the unrendered one: a reader that never applies a delta cannot use the
@@ -1879,7 +1879,7 @@ impl Engine {
 /// Summing [`Engine::footprint`] over the subscribers is the wrong number once there is a shared
 /// dataflow, and wrong in the direction that flatters nothing: two subscribers' pages hold the same
 /// `ul` by `Arc`, so charging both would report sharing as costing what it saves. This is the
-/// number a fanout estimate should be built from, and `docs/26` is where it is.
+/// number a fanout estimate should be built from, and `docs/23` is where it is.
 pub fn fanout_footprint(
     base: &Value,
     shared: Option<&SharedDataflow>,

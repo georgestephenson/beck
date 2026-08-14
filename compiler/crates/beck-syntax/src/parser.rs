@@ -1483,7 +1483,7 @@ impl<'a> Parser<'a> {
     ///
     /// A left-associative chain — `1 + 1 + 1 + …` — is flat in source and builds a *left-leaning
     /// tree of the same depth*, one level per operator. Because the loop does not recurse, none of
-    /// the parser's recursion counters ever sees it: `docs/85` measured 300,000 terms aborting the
+    /// the parser's recursion counters ever sees it: `docs/82` measured 300,000 terms aborting the
     /// process while 120,000 was refused by the macro expander's ceiling, which is the wrong
     /// counter catching it for the wrong reason and only sometimes.
     ///
@@ -1621,7 +1621,7 @@ impl<'a> Parser<'a> {
     /// in the loop below, through `call_args` → `expr` → `postfix`. So the depth returned to zero
     /// at every level and 80,000 nested calls aborted the process while 80,000 nested *parens* —
     /// which recurse inside `primary_inner`, where the counter is still held — were refused with a
-    /// span. `docs/85` found it with a generator; `docs/42` §42.2 named the shape in advance,
+    /// span. `docs/82` found it with a generator; `docs/42` §42.2 named the shape in advance,
     /// quoting the Scriban advisory: a limit at the one production somebody thought of is bypassed
     /// through a different one.
     ///
@@ -1933,7 +1933,7 @@ impl<'a> Parser<'a> {
     ///
     /// Counted here rather than only in `expr`/`primary`, because bounding one production is not
     /// bounding the grammar: `docs/42` §42.2 quotes the Scriban advisory for that lesson and
-    /// `docs/85` is where this project learned it the same way, from a generator that reached
+    /// `docs/82` is where this project learned it the same way, from a generator that reached
     /// 80,000 levels of `list[` and aborted the process while every other shape was refused with a
     /// span.
     fn type_expr(&mut self) -> Option<Node> {

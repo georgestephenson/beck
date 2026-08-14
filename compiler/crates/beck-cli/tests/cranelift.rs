@@ -1,14 +1,14 @@
 //! The Cranelift backend, against the tree-walker **and** against LLVM.
 //!
 //! [`docs/07-dependencies.md`](../../../../docs/07-dependencies.md) §7.3 chooses two code
-//! generators and says what each is for; [`93`](../../../../docs/93-llvm-backend-report.md) built
+//! generators and says what each is for; [`93`](../docs/93-the-native-backends-report.md) built
 //! the release one and listed the development one as unbuilt. This is the suite for the second,
 //! and it is a **three-way** differential rather than a second two-way one: the same call goes to
 //! the evaluator, to LLVM and to Cranelift, and all three have to answer the same thing.
 //!
 //! # Why three matters more than two
 //!
-//! [`93`](../../../../docs/93-llvm-backend-report.md) §93.7's finding is that a differential
+//! [`93`](../docs/93-the-native-backends-report.md) §93.14's finding is that a differential
 //! compares what somebody thought to write down, and its worst case is a boundary that normalises
 //! on both sides. Two independent emitters make a different kind of mistake available to
 //! detection: an agreement between the tree-walker and *both* of them is evidence about the
@@ -283,7 +283,7 @@ fn the_three_backends_agree_on_reals() {
 }
 
 /// The three places a real is normalised, each with a program that makes the difference
-/// observable — the same three [`93`](../../../../docs/93-llvm-backend-report.md) §93.2 found the
+/// observable — the same three [`93`](../docs/93-the-native-backends-report.md) §93.3 found the
 /// hard way, asserted here against a second emitter that had to make the same three decisions.
 #[test]
 fn a_negative_zero_and_a_nan_mean_here_what_they_mean_in_the_evaluator() {
@@ -366,7 +366,7 @@ fn a_tail_call_costs_nothing_and_has_no_ceiling() {
     linker!();
     let all = All::over("rec.beck", RECURSION);
     // Sixty million tail calls, which is a stack overflow in any implementation that spends a
-    // frame on one. The evaluator is not asked: `docs/62`'s fuel budget is what bounds it, and
+    // frame on one. The evaluator is not asked: `docs/53`'s fuel budget is what bounds it, and
     // this is a claim about compiled code.
     let deep = all
         .clif
@@ -434,7 +434,7 @@ fn a_trap_carries_the_evaluators_own_message_and_a_span() {
 ///
 /// The interesting half is not that Cranelift can build a record — it is that the *layout* is
 /// [`beck_llvm::heap`]'s rather than this emitter's, so the three backends have to agree about
-/// which word a field is in and which rank a variant has. `docs/101` §101.3 is why that one
+/// which word a field is in and which rank a variant has. `docs/93` §93.8 is why that one
 /// decision is shared where the emitters are not.
 #[test]
 fn the_three_backends_agree_on_records() {
@@ -549,7 +549,7 @@ fn the_three_backends_agree_on_text() {
     compared += all.agree("repeat", &textfix::repeats(&ss));
 
     // Building text out of something that is not text, and taking an `Option` apart without a
-    // `match` — the primitives `docs/105`'s and `docs/106`'s layouts made reachable.
+    // `match` — the primitives `docs/93`'s and `docs/93`'s layouts made reachable.
     compared += all.agree("shown", &textfix::integers());
     compared += all.agree(
         "shown_bool",
@@ -1257,7 +1257,7 @@ fn every_corpus_program_produces_an_object_a_linker_accepts() {
 
 /// The object is a function of the program: the same source twice produces the same bytes.
 ///
-/// [`92`](../../../../docs/92-sbom-report.md) §92.4 makes reproducibility a property this project
+/// [`docs/92`](../../../../docs/92-supply-chain-and-release-report.md) §92.3 makes reproducibility a property this project
 /// checks by building twice and comparing, and a code generator that embedded a timestamp or a
 /// path would defeat it one layer down.
 #[test]
@@ -1320,7 +1320,7 @@ fn both_code_generators_answer_for_the_same_wide_program() {
 /// Views, over all three backends.
 ///
 /// `native.rs`'s sweep with the third implementation in it, and the reason it is worth running
-/// twice is `docs/97` §97.3's: the two emitters write these five primitives separately, and the
+/// twice is `docs/93` §93.8's: the two emitters write these five primitives separately, and the
 /// only thing that says the subset is one subset is that the answers agree. A view is where that
 /// bites hardest, because a node in the arena is a *recipe* — four words whose meaning depends on
 /// a tag and on a repr index — so a backend that wrote the words in a different order would still
@@ -1390,7 +1390,7 @@ fn the_three_backends_agree_on_a_ui_block() {
 
 /// The two emitters accept and refuse the same views.
 ///
-/// `docs/97` §97.3's assertion, one type over: the subset is written twice, so the thing to check
+/// `docs/93` §93.8's assertion, one type over: the subset is written twice, so the thing to check
 /// is that both wrote the same one. A view is the case where the two halves could most easily
 /// drift, because neither generates a runtime function for it — there is nothing to link against
 /// that would notice.
@@ -1413,7 +1413,7 @@ fn the_two_emitters_agree_on_which_views_compile() {
 /// A `raise` and a `try:`, over all three backends.
 ///
 /// `native.rs`'s sweep with the third implementation in it, and the reason it is worth running
-/// twice is `docs/97` §97.3's — but there is a sharper one here: the two emitters write the handler
+/// twice is `docs/93` §93.8's — but there is a sharper one here: the two emitters write the handler
 /// differently (one branches to a label, the other jumps to a block) and both have to get the same
 /// two questions right, in the same order, about a cell whose shape is the *protocol*.
 #[test]

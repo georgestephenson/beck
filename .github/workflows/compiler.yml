@@ -85,11 +85,11 @@ jobs:
       BECK_REQUIRE_LLVM: "1"
       # `image.rs` reads its layer back with somebody else's tar and its signature with somebody
       # else's verifier. Both are on this runner, so a skip would mean the image build was checked
-      # only by the code that wrote it (docs/99 §99.3).
+      # only by the code that wrote it (docs/92 §99.3).
       BECK_REQUIRE_TAR: "1"
       BECK_REQUIRE_OPENSSL: "1"
       # `release.rs` runs the installer against a corrupted archive. A skip here would mean nothing
-      # checked that a bad checksum stops an install (docs/104 §104.8).
+      # checked that a bad checksum stops an install (docs/92 §104.8).
       BECK_REQUIRE_INSTALL: "1"
     steps:
       - uses: actions/checkout@v4
@@ -181,7 +181,7 @@ jobs:
         # programs, through the same roles the runtime drives.
         run: |
           ./target/release/beck test examples/todo.beck --verbose
-          # docs/66: the checked-in page snapshot is compared, not rewritten. `--update` is the
+          # docs/22: the checked-in page snapshot is compared, not rewritten. `--update` is the
           # only thing that writes one, so a run without it that leaves `git status` dirty means a
           # snapshot rewrote itself — which would make the assertion a log rather than a test.
           git diff --quiet examples/snapshots/ \
@@ -196,7 +196,7 @@ jobs:
           # beyond them are held by tests/sicp.rs, which `cargo test` above already runs.
           ./target/release/beck test sicp/ch1.beck
           ./target/release/beck test sicp/ch2.beck
-          # docs/87: chapter 3, the chapter the language disagrees with — §3.1's objects with the
+          # docs/63: chapter 3, the chapter the language disagrees with — §3.1's objects with the
           # state they hide written down, §3.3.4's circuit simulator at the times the book prints,
           # and §3.5.5's account with no assignment, asserted to agree with §3.1.1's fold.
           ./target/release/beck test sicp/ch3.beck
@@ -209,7 +209,7 @@ jobs:
           for f in awfy/*.beck; do
             ./target/release/beck test "$f"
           done
-          # docs/68: the Computer Language Benchmarks Game, verified against the Game's own
+          # docs/46: the Computer Language Benchmarks Game, verified against the Game's own
           # published output files under clbg/expected/. Same reason as awfy/ above — `cargo test`
           # drives tests/clbg.rs, and this is the claim that the binary does it too.
           for f in clbg/*.beck; do
@@ -341,7 +341,7 @@ jobs:
           ./target/release/beck check /tmp/two-pages.beck 2>&1 | grep -q 'B0510'
 
       - name: views are maintained, and the report says so about each program
-        # docs/24. The gate is the *first line*, as it was when the answer was "nothing is
+        # docs/23. The gate is the *first line*, as it was when the answer was "nothing is
         # maintained" (docs/23 §23.8): a command called `explain incremental` that let a reader
         # believe their view was being maintained when it is not would be the most misleading
         # output in the compiler.
@@ -464,7 +464,7 @@ jobs:
     # The one job that executes the JavaScript. Everything else in this workflow tests Beck against
     # Beck; `browser.rs` loads both rendering modes in headless Chromium and asserts that the DOM is
     # the page the server would have rendered (docs/94 §94.12) — and loads the playground, where the
-    # compiler itself is the WebAssembly and the application runs in the tab (docs/96).
+    # compiler itself is the WebAssembly and the application runs in the tab (docs/48).
     #
     # The two `BECK_REQUIRE_*` variables are the point of the job, for the reason `conformance`
     # states about its own: both suites *skip* when the thing they need is absent, which is right on
@@ -715,7 +715,7 @@ jobs:
           # docs/53 §53.3. Printed, never thresholded, and no comparative claim: docs/25 §25.9
           # holds those until there is a second backend for them to be about.
           cargo test --release --test measure_awfy -- --nocapture
-          # docs/68 §68.5. The same rule, and one more qualification stated there: every port runs
+          # docs/46 §68.5. The same rule, and one more qualification stated there: every port runs
           # the Game's format-checking size, because that is the only size it publishes an oracle
           # for.
           cargo test --release --test measure_clbg -- --nocapture
@@ -726,7 +726,7 @@ jobs:
           # docs/93 §93.5. The native backend against the tree-walker, at two sizes each, plus the
           # pipe round trip on its own and what `clang -O2` costs. The *gate* is a shape — the
           # ratio must not fall as the problem grows — and it runs here rather than under
-          # `cargo test` because it is a release measurement. docs/97 §97.5's comparison of the two
+          # `cargo test` because it is a release measurement. docs/93 §97.5's comparison of the two
           # code generators is in the same file and release-only for a stronger reason: a debug
           # build measures our unoptimised Cranelift against a distribution's optimised `clang`.
           cargo test --release --test measure_native -- --nocapture

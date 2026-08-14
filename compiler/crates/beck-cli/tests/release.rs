@@ -16,11 +16,11 @@
 //!    an edge is checkable.
 //! 3. **The installer refuses an archive whose checksum is wrong**, tested by corrupting one. That
 //!    is the gap this script exists to close, so it is the gap the gate is written against
-//!    (`docs/84-a-quota-is-only-as-good-as-its-actor-report.md` §84.5), rather than the presence of
+//!    (`docs/82-the-edge-report.md` §82.10), rather than the presence of
 //!    a `sha256sum` call somewhere in the file.
 //! 4. **The installer refuses an archive whose provenance does not verify**, and refuses to
 //!    pretend it verified one when the tool that would is missing
-//!    (`docs/109-provenance-report.md`). Tested the same way: a verifier that says no, and a
+//!    (`docs/92-supply-chain-and-release-report.md`). Tested the same way: a verifier that says no, and a
 //!    verifier that is not there.
 //!
 //! The last two need `sh`, `tar` and a SHA-256 tool, so they **skip loudly** when one is missing;

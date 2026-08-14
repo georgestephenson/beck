@@ -31,7 +31,7 @@ a deliberate translation between them. Partitioning divides a model's keyspace; 
 | **Context** (this document) | the project into models | total per context (per key within a partitioned context) | published events + sagas — never shared state |
 
 Today the compiler's splitter accepts one program with one log; several `durable` folds fuse into
-one accumulator over that one log ([`23`](23-general-slicer-report.md)). Contexts are not that:
+one accumulator over that one log ([`23`](23-incremental-views-report.md)). Contexts are not that:
 each context owns a log.
 
 ## 30.2 The construct, sketched
@@ -235,7 +235,7 @@ Per the repository rule that a change contradicting a decision says so:
   declarations *into* a context (a payments force lands its commands, fold and saga inside the
   context that adds it); whether a force may declare a whole context of its own is an open
   question (§30.8), deliberately unanswered until a real force wants it.
-- **[`23`](23-general-slicer-report.md)'s slicer is unaffected in meaning, extended in scope**:
+- **[`23`](23-incremental-views-report.md)'s slicer is unaffected in meaning, extended in scope**:
   fusion of several folds into one accumulator happens per log, therefore now per context; the
   signal graph gains cut points at context boundaries, which is what §30.2's rule 1 checks.
 

@@ -22,7 +22,7 @@
 //!
 //! # Agreeing with the evaluator exactly
 //!
-//! Every decision [`docs/93`](../../../../../docs/93-llvm-backend-report.md) §93.2 records is made
+//! Every decision [`docs/93`](../../../../../docs/93-the-native-backends-report.md) §93.3 records is made
 //! again here, because they are decisions about *the language* rather than about LLVM:
 //!
 //! * **Integer arithmetic is checked**, through `sadd_overflow` and friends, with an explicit
@@ -1934,7 +1934,7 @@ impl Text {
             b.ins().jump(out, &[r.into()]);
 
             // All whitespace, or empty to begin with: the answer is a fresh empty `Str` rather than
-            // the argument, because the evaluator's is one too and `docs/105`'s layout has no
+            // the argument, because the evaluator's is one too and `docs/93`'s layout has no
             // interning in it.
             b.switch_to_block(empty);
             let f = m.declare_func_in_func(self.alloc, b.func);
@@ -4041,7 +4041,7 @@ struct Pending {
 ///
 /// The same four the other emitter generates, written again — `cranelift.rs` is what holds the two
 /// to accepting and refusing the same definitions, and an agreement by construction would be worth
-/// nothing (§97.3).
+/// nothing (§93.8).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Loop {
     Map,
@@ -4972,7 +4972,7 @@ fn compare_function(
                     // for whatever it refers to, and `Repr::order` is the only place that names
                     // one. Comparing the *offsets* would answer that two equal values differ
                     // whenever they were allocated at different places, which is almost always —
-                    // and `docs/107` §107.5 is the **fourth** time a case analysis here let a
+                    // and `docs/93` §93.8 is the **fourth** time a case analysis here let a
                     // reference kind fall through to exactly that.
                     heap::Order::Call(symbol) => {
                         let inner_sig = compare_signature(m);
@@ -5672,7 +5672,7 @@ impl<'a> Body<'a> {
             // `[]`, `[a, b]`, `[first, *rest]`. The length is tested before any element is read,
             // so nothing here can load past the end of the block — the other emitter's arm has the
             // same order for the same reason, and this is written again rather than shared because
-            // the two are held to *agreeing* (`docs/97` §97.3).
+            // the two are held to *agreeing* (`docs/93` §93.8).
             Pattern::List { items, rest } => {
                 let Repr::List(at) = v.ty else {
                     return Err(format!(
@@ -6886,7 +6886,7 @@ impl<'a> Body<'a> {
                 }
                 self.map_get(ty, &vals[0], found, span, b, m)
             }
-            // The three that grow a map: a path rebuild over `docs/114`'s tree. See the LLVM
+            // The three that grow a map: a path rebuild over `docs/93`'s tree. See the LLVM
             // emitter's arms.
             Prim::MapInsert | Prim::MapRemove | Prim::MapMerge => {
                 arity(
@@ -7119,7 +7119,7 @@ impl<'a> Body<'a> {
             // The five that build a page: an allocation and some stores, because what goes in the
             // arena is the *call* rather than the tree. See `beck_llvm::heap::Repr::Html`, and the
             // LLVM emitter's five arms, which this is written twice with on purpose
-            // (`docs/97` §97.3).
+            // (`docs/93` §93.8).
             Prim::HtmlEl => {
                 arity(3, &vals)?;
                 let (attrs, children) = self.view_lists()?;
@@ -8052,7 +8052,7 @@ impl<'a> Body<'a> {
     /// The NaN half is not theoretical. `0.0 * inf` on x86-64 is the *indefinite* QNaN with its
     /// sign bit set, which sorts below every number under the order key where `f64::NAN` sorts
     /// above every one — so `(0.0 * inf) > 0.0` answers differently without this
-    /// (`docs/93` §93.2).
+    /// (`docs/93` §93.3).
     fn normalise(&mut self, raw: IrValue, b: &mut FunctionBuilder<'_>) -> IrValue {
         let zero = b.ins().f64const(0.0);
         let is_zero = b.ins().fcmp(FloatCC::Equal, raw, zero);
@@ -8156,12 +8156,12 @@ impl<'a> Body<'a> {
 /// Why a primitive this backend does not compile is not compiled.
 ///
 /// The string half is spelled out one at a time rather than swept into "not a scalar primitive",
-/// because since `docs/105` a `Str` *is* a value here and "text is not on this heap" would be
+/// because since `docs/93` a `Str` *is* a value here and "text is not on this heap" would be
 /// false. The wording is this emitter's own — `cranelift.rs` holds the two to refusing the same
 /// **set** of definitions and not to saying the same words about them.
 fn refusal(op: Prim) -> String {
     let why = match op {
-        // The one that is a decision rather than a gap. `docs/69` §69.7 and `docs/101` §101.5 both
+        // The one that is a decision rather than a gap. `docs/46` §46.14 and `docs/93` §93.14 both
         // name shipping this as the mistake: the tree-walker pushes in place when `liveness` proves
         // the accumulator is a last use, and an arena with no ownership in it cannot.
         Prim::ListZip => "answers with a list of pairs, and there is no pair type to lay out",

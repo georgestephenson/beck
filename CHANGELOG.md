@@ -15,13 +15,13 @@ Newest first.
 ### The native backends
 
 - **`case [first, *rest]` compiles**, to both code generators
-  ([`docs/119`](docs/119-a-list-comes-apart-report.md)) — the last pattern form they refused. The
+  ([`docs/93`](docs/93-the-native-backends-report.md)) — the last pattern form they refused. The
   length is tested before any element is read, so nothing can load past the end of a short list;
-  everything inside a pattern is [`docs/90`](docs/90-nested-patterns-report.md)'s recursion,
+  everything inside a pattern is [`docs/90`](docs/90-pattern-matching-report.md)'s recursion,
   unchanged.
   - **The refusal it replaces had been false for three reports.** It read "a collection is not on
     this heap yet", and a collection has been on this heap since
-    [`docs/106`](docs/106-lists-arrive-read-only-report.md).
+    [`docs/93`](docs/93-the-native-backends-report.md).
     `a_refusal_that_blames_a_type_is_asked_whether_that_type_has_one` exists to catch exactly this
     and could not: it resolves the **type** a reason blames, and this sentence names no type. The
     corpus pass now also holds every refusal against a list of sentences this backend may no longer
@@ -29,7 +29,7 @@ Newest first.
     definitions.
   - **The tail is copied, not borrowed.** A suffix header offset into the element run would have an
     element read as the data block's `used`, which is the word
-    [`docs/113`](docs/113-a-list-grows-report.md)'s append writes at. The evaluator copies too
+    [`docs/93`](docs/93-the-native-backends-report.md)'s append writes at. The evaluator copies too
     (`Arc<Vec<_>>` cannot share a suffix), so neither backend is quietly quadratic against the
     other.
   - **889 → 905 definitions compile and refusals go 189 → 173**: six list patterns, and ten
@@ -40,8 +40,8 @@ Newest first.
 - **A reset connection no longer ends an image build.** `the-image-builds` failed with `the TLS
   handshake with packages.wolfi.dev failed: Connection reset by peer` on the eleventh package of a
   dozen, after the first ten had been fetched and cached — the first thing the live fetch found
-  since [`docs/99`](docs/99-supply-chain-report.md) §99.8 named the transport as the step nobody had
-  executed. `beck-cli/src/fetch.rs` now attempts a hop up to four times, backing off from 500 ms,
+  since [`docs/92`](docs/92-supply-chain-and-release-report.md) §92.13 named the transport as the step
+  nobody had executed. `beck-cli/src/fetch.rs` now attempts a hop up to four times, backing off from 500 ms,
   and **classifies rather than reports**: a transport that went away or a 408/425/429/5xx is
   attempted again; a 404, a certificate that does not verify, a reply over the size cap or a URL
   that is not HTTPS is answered once, because a second attempt fails the same way and only delays
@@ -59,13 +59,13 @@ Newest first.
 ### Concurrency
 
 - **A `parallel:` child that fails stops its siblings**
-  ([`docs/118`](docs/118-a-scope-stops-its-children-report.md)) — the signal
-  [`docs/80`](docs/80-a-scope-owns-its-children-report.md) §80.5 forecast and
-  [`docs/117`](docs/117-a-scope-runs-its-children-report.md) §117.7 left open.
+  ([`docs/80`](docs/80-structured-concurrency-report.md)) — the signal
+  [`docs/80`](docs/80-structured-concurrency-report.md) §80.12 forecast and
+  [`docs/80`](docs/80-structured-concurrency-report.md) §80.12 left open.
   - **It stops the children *after* the failure, and that qualifier cost a defect to learn.** The
     obvious signal — any failing child stops every sibling — passed its own new gate and broke
     `a_childs_failure_joins_at_the_scope_and_the_earliest_child_wins`, green since
-    [`docs/80`](docs/80-a-scope-owns-its-children-report.md): two children that both raise became a
+    [`docs/80`](docs/80-structured-concurrency-report.md): two children that both raise became a
     race over which error the scope reports. **Eight failures in forty runs of the whole suite, and
     none when run alone.** Cancelling only the children an ordered join would never have reached
     makes this a change in when work stops rather than in what a scope answers; the check that the
@@ -79,14 +79,14 @@ Newest first.
   - **Cost to a program with no scope in it**, from
     `measure_concurrency.rs::what_the_cancellation_check_costs_a_program_without_a_scope` (release,
     median of nine): **388.3 / 380.1 ns per iteration with the check, 385.0 / 374.7 without** — about
-    1%, and §118.4 declines to call it free, since an earlier run of the same build differed by more
+    1%, and §80.8 declines to call it free, since an earlier run of the same build differed by more
     than the two columns do. Flat across a 10× size change, which is what a loop-invariant branch
     predicts.
   - **Gated by a count, not a clock**: `concurrency.rs::a_failing_child_stops_its_siblings` asserts
     the stopped sibling reached its peer *more than zero* times (so it was running) and *far fewer
     than 400* (so it was stopped) — it reaches 4 or 5. Checked by disabling the signal and watching
     it hit 400/400, and the ordering gate beside it was run forty times rather than once.
-- **Which wasm can have threads** (§118.5), which corrects a flat "no" this work first wrote down.
+- **Which wasm can have threads** (§80.9), which corrects a flat "no" this work first wrote down.
   `wasm32-wasip1-threads` is a **stable** target and really spawns — its module imports
   `thread-spawn` where `wasm32-unknown-unknown` compiles the same call to "operation not supported
   on this platform". But that is WASI, and the two places this repo emits wasm are *browser*
@@ -99,25 +99,25 @@ Newest first.
   overlap, never an answer.
 
 - **`parallel:` runs its children at the same time**, on a thread each
-  ([`docs/117`](docs/117-a-scope-runs-its-children-report.md)). This closes
-  [`docs/80`](docs/80-a-scope-owns-its-children-report.md) §80.5's first sentence and the last named
+  ([`docs/80`](docs/80-structured-concurrency-report.md)). This closes
+  [`docs/80`](docs/80-structured-concurrency-report.md) §80.12's first sentence and the last named
   remainder of [`docs/08`](docs/08-roadmap.md)'s structured-concurrency bullet.
-  - **The soundness is not in this change.** §80.5 put it in the checker: no child may name another
+  - **The soundness is not in this change.** §80.12 put it in the checker: no child may name another
     (`B0398`) and none may perform an effect another could observe (`B0399`), so the scope's answer
     does not depend on the order. This adds no analysis and no scheduler — it starts two threads,
     because the program has already been proved not to care.
-  - **One of the three blockers §80.5 named was removed by accident.** The `Host` trait became
-    thread-safe in [`docs/116`](docs/116-the-host-answers-back-report.md), which wanted it so three
+  - **One of the three blockers §80.12 named was removed by accident.** The `Host` trait became
+    thread-safe in [`docs/93`](docs/93-the-native-backends-report.md), which wanted it so three
     backends could ask one question. Recorded because the lane table predicts file collisions and
     has nothing to say about a branch that removes another's blocker.
-  - **Fuel is split, not shared** (§117.4). Sharing it is an atomic read-modify-write on every step
+  - **Fuel is split, not shared** (§80.6). Sharing it is an atomic read-modify-write on every step
     of every program — the hot path [`docs/70`](docs/70-the-evaluator-gets-fast-report.md) is about
     — and it makes *which* child runs out a race. Each child gets an equal share of what remains and
     the scope charges the parent what they actually spent, so the total matches a serial run. The
     cost is that a child which would have used more than its share now runs out where a serial run
     would have let it continue; `spawn` is discharged by `Tier::Server` alone, so none of this can
     reach a replay.
-  - **Nothing is cancelled.** A scope whose first child fails still waits for its siblings. §80.5
+  - **Nothing is cancelled.** A scope whose first child fails still waits for its siblings. §80.12
     forecast that a backend starting children together would need a cancellation signal; that
     backend exists now and the signal still does not.
   - **What it is worth**, from `measure_concurrency.rs` (release, medians): two children that each
@@ -137,14 +137,14 @@ Newest first.
 ### The native backends
 
 - **The four primitives that ask the host compile** — `now()`, `uuid()`, `secret_env` and
-  `http_fetch`, to both code generators ([`docs/116`](docs/116-the-host-answers-back-report.md)).
+  `http_fetch`, to both code generators ([`docs/93`](docs/93-the-native-backends-report.md)).
   The worker's protocol has a **second direction**: a compiled call may stop mid-flight, write a
   question frame and block until the host answers. This empties
   [`docs/08`](docs/08-roadmap.md) §8.5.5's **Lane E**, whose last row said this was the one item in
   the lane that is not a missing emitter.
   - **What a question carries is a shape and a word per argument**, so the host decodes and encodes
     through `beck_llvm::heap` without a second table of what each primitive's types are — the trick
-    [`docs/111`](docs/111-a-view-arrives-as-a-recipe-report.md)'s deferred leaves play, one
+    [`docs/93`](docs/93-the-native-backends-report.md)'s deferred leaves play, one
     subsystem over. The answer is a **tail appended at the arena's high-water mark**, never a whole
     arena, so nothing a live value points at can be rewritten by an answer.
   - **The blocker for two of the four was a type, not the protocol.** `secret[T]` had no machine
@@ -154,7 +154,7 @@ Newest first.
     is the one thing §3.5 claims they are not.
   - **A failed `http_fetch` needed nothing new.** The host answers with `Trap::Raised` and the same
     two-word pair a compiled `raise` builds
-    ([`docs/112`](docs/112-a-raise-arrives-report.md)), so the program's own `try:` catches it
+    ([`docs/93`](docs/93-the-native-backends-report.md)), so the program's own `try:` catches it
     without knowing an upcall happened.
   - **The host is one description now**: `beck_core::host::Atoms`, which the evaluator's `Host`
     extends and both compiled backends ask. That is what makes a differential over `now()` a
@@ -172,7 +172,7 @@ Newest first.
     **162.7 µs** for 664 and 163,864 bytes. The shape is gated without a clock by
     `native.rs::what_a_question_carries_is_a_decision_and_not_an_accident`, which counts the bytes
     at the same two sizes.
-  - **A limit on compiled time is not a limit on a call** (§116.8). The worker's wall-clock bound
+  - **A limit on compiled time is not a limit on a call** (§93.11). The worker's wall-clock bound
     exists because there is no fuel in compiled code; it was killing an `http_fetch` that was
     waiting on a peer. The deadline is now stood down while the host works and re-armed as a fresh
     one, so it still covers every instruction the worker executes and nothing the host does.
@@ -180,10 +180,10 @@ Newest first.
 ### The editor
 
 - **`beck lsp` edits: references, document highlight, prepare-rename, rename and inlay hints**
-  ([`docs/110`](docs/110-the-editor-edits-report.md)). Every answer is in `beck_core::editor`, so a
+  ([`docs/65`](docs/65-the-editor-report.md)). Every answer is in `beck_core::editor`, so a
   browser tab can ask for them too; the server translates JSON-RPC and nothing else (§4.6). This
   empties [`docs/08`](docs/08-roadmap.md) §8.5.5's **Lane C** and closes the two rows
-  [`docs/65`](docs/65-lsp-report.md) §65.5 called its largest gaps.
+  [`docs/65`](docs/65-the-editor-report.md) §65.8 called its largest gaps.
   - **A rename is the claim that a set of byte ranges is every place a name is written**, and it is
     made only when the file's two accounts of the name agree: the lexical one, which misses nothing
     and knows nothing, and the checked program's, which knows what each reference means and is not
@@ -228,7 +228,7 @@ Newest first.
 ### The release
 
 - **The release attests build provenance, and the installer can check it** —
-  [`docs/109`](docs/109-provenance-report.md),
+  [`docs/92`](docs/92-supply-chain-and-release-report.md),
   [`adr/0028`](docs/adr/0028-a-release-carries-provenance-and-still-no-signature.md), which
   supersedes [`0027`](docs/adr/0027-a-release-publishes-a-checksum-and-not-a-signature.md) by taking
   the one route that record named as right and deferred. `actions/attest` over
@@ -239,7 +239,7 @@ Newest first.
   default install that checks a checksum and nothing else — in `pending_security.rs`.
   **Nothing has been attested yet**: no tag has been pushed, so the step is written and not
   executed, which is why it is deliberately unconditional and a `workflow_dispatch` dry run
-  exercises it. §109.5 records seven mutations, one gate each, and the one that did not fire until
+  exercises it. §92.14 records seven mutations, one gate each, and the one that did not fire until
   it was rewritten.
 
 ### The front end
@@ -250,14 +250,14 @@ Newest first.
   twice over and in **work** not at all, and a macro that doubles its output is shallow: eight
   nestings of a two-line macro is 256 copies of its argument, twenty-four is sixteen million, and
   every one of those programs is six lines long and satisfies every other limit the front end has.
-  That is [`docs/85`](docs/85-what-the-generator-found-report.md) §85.7's pattern a fourth time — a
+  That is [`docs/82`](docs/82-the-edge-report.md) §82.10's pattern a fourth time — a
   limit added at the one production somebody thought of, bypassed through a different one — and it
   matters here rather than in the abstract because [`docs/42`](docs/42-security-assurance.md) §42.2's
   playground compiles a stranger's source in their own browser tab.
   - The expander charges what each expansion **produces**, per node, against **100,000 nodes for the
     whole module** — per module because that is what a compile is, and because a per-call budget
     would let a program spend it once per call
-    ([`docs/84`](docs/84-a-quota-is-only-as-good-as-its-actor-report.md) §84.4's arithmetic one
+    ([`docs/82`](docs/82-the-edge-report.md) §82.5's arithmetic one
     subsystem over).
   - **The number is measured, not declared.** Across the corpus, both benchmark suites, both SICP
     chapters, the examples and the standard library, the largest total expansion is **138 nodes**
@@ -265,7 +265,7 @@ Newest first.
     real one and about seventeen nestings of a doubling macro.
   - The count is **iterative and self-bounding**: it walks with its own stack, because the tree being
     measured is one a macro just built and a recursive count would be a claim about the *host's*
-    stack ([`docs/106`](docs/106-lists-arrive-read-only-report.md) §106.6 one subsystem over) — and
+    stack ([`docs/93`](docs/93-the-native-backends-report.md) §93.9 one subsystem over) — and
     it stops when the budget does, so a macro that would produce a billion nodes is refused after a
     hundred thousand have been counted.
   - Gated by `macro_bomb.rs` in **both** directions and with the control a refusal needs: a doubling
@@ -276,10 +276,10 @@ Newest first.
 ### The native backends
 
 - **A generic definition compiles, once per type it is used at**
-  ([`docs/115`](docs/115-monomorphisation-report.md)): monomorphisation, on both code generators.
+  ([`docs/93`](docs/93-the-native-backends-report.md)): monomorphisation, on both code generators.
   It was the largest single refusal class left, and the mechanism is a **pass over the program**
   rather than anything in either emitter. **850 → 870 definitions** compile across the tree,
-  refusals go 223 → 208, and the ones blaming a type parameter go **63 → 38** — §115.6 is honest
+  refusals go 223 → 208, and the ones blaming a type parameter go **63 → 38** — §93.10 is honest
   about the 38.
   - **The type arguments were already recorded and nobody had read them.** There is no
     type-argument list in `Core` and no instantiation table on `Program`, and neither is needed:
@@ -299,8 +299,8 @@ Newest first.
     64 against a measured maximum of **three**, over 65 templates and 28 instantiations); a call
     where nothing decides the type, because minting `anything@?3` would make a symbol a function of
     an inference counter rather than of the program; and a **bounded** definition, which is
-    [`docs/108`](docs/108-closures-arrive-report.md)'s closure boundary and not this.
-  - **The finding is that a partial answer was worse than none** (§115.5). The first version gave up
+    [`docs/93`](docs/93-the-native-backends-report.md)'s closure boundary and not this.
+  - **The finding is that a partial answer was worse than none** (§93.10). The first version gave up
     part way through and left sixty-four instantiations behind, each refusing because it called the
     next — sixty-four true refusals that together said nothing, none of them naming a definition the
     reader had written. A round that keeps a template it had been specialising is now thrown away
@@ -313,7 +313,7 @@ Newest first.
     `a_polymorphically_recursive_definition_is_refused_rather_than_compiled_forever` and
     `a_generic_whose_type_nothing_decides_is_refused_rather_than_guessed`, which asserts that no
     symbol is named after an inference variable.
-  - **Corrects [`docs/93`](docs/93-llvm-backend-report.md)** §93.6, whose table has generic and
+  - **Corrects [`docs/93`](docs/93-the-native-backends-report.md)** §93.14, whose table has generic and
     bounded definitions as one row. They were never one item: a generic definition needs no
     dictionary at all.
 
@@ -348,7 +348,7 @@ Newest first.
   handful that change a string's length. So a trim is a switch over five lead bytes, and
   `str_upper` stays refused for a reason that is true of it.
   - **`examples/todo.beck` compiles all nine of its definitions** — the first program in this tree
-    to compile whole, and the row [`docs/114`](docs/114-a-map-grows-report.md) left at eight.
+    to compile whole, and the row [`docs/93`](docs/93-the-native-backends-report.md) left at eight.
     Across the corpus, both benchmark suites, both SICP chapters, the examples and the standard
     library, **812 → 837 definitions** compile and refusals go 261 → 236.
   - One pass, and it allocates once: the leading run is skipped whole, then every byte is either the
@@ -370,12 +370,12 @@ Newest first.
     refused" control now names a **type parameter**, which is what is left.
 
 - **A map grows, as the tree it always was**
-  ([`docs/114`](docs/114-a-map-grows-report.md)): `map_insert`, `map_remove` and `map_merge` compile
+  ([`docs/93`](docs/93-the-native-backends-report.md)): `map_insert`, `map_remove` and `map_merge` compile
   to both code generators, and a fold that keeps a `Map` is `Θ(n log n)` rather than `Θ(n²)`.
   **895 → 1,137 definitions** compile across the tree and refusals go 523 → 281.
   `examples/todo.beck` compiles **eight of its nine definitions**; the one left needs a Unicode
   table.
-  - [`docs/113`](docs/113-a-list-grows-report.md) §113.7 forecast that a list's answer would not work
+  - [`docs/93`](docs/93-the-native-backends-report.md) §93.7 forecast that a list's answer would not work
     here, and it was right: a list's refusal was about a *layout* and a map's is about a *structure*.
     An insert lands in the middle of a sorted run and every entry after it shifts, however the header
     is arranged. What removes it is the structure `beck_core::pmap` already uses — a
@@ -383,7 +383,7 @@ Newest first.
     touch. Five words a node (subtree size, key, value, two children), the same `DELTA` and `RATIO`
     the evaluator's module argues for, and an empty map is the offset `0`.
   - **Sound for free**: a node is never written after it is built, so the map an insert was given is
-    exactly what it was — [`docs/113`](docs/113-a-list-grows-report.md) §113.2's argument again,
+    exactly what it was — [`docs/93`](docs/93-the-native-backends-report.md) §93.7's argument again,
     arriving here as a property of the structure rather than as a design.
   - **Everything that moves nodes is one function for the whole module.** Rebalancing shuffles
     *words* and never asks what a key is, so `size`, `node`, `balance`, `nth` and the in-order walk
@@ -394,15 +394,15 @@ Newest first.
     length and both lookups, so a rotation that wrote through a shared node fails on the first case —
     and `descending`, the insertion order a tree that did not rebalance degenerates on and a sorted
     run handled by accident.
-  - **The finding is a name collision** (§114.5): `awfy/richards.beck` has a definition called
+  - **The finding is a name collision** (§93.6): `awfy/richards.beck` has a definition called
     `dispatch`, every user definition was mangled to `beck.<name>`, and the module's own dispatcher
     is `beck.dispatch` — so a program that had done nothing wrong got *"invalid redefinition of
-    function"*. Latent since [`docs/93`](docs/93-llvm-backend-report.md), and it surfaced here
+    function"*. Latent since [`docs/93`](docs/93-the-native-backends-report.md), and it surfaced here
     because a collision needs both halves to exist: `dispatch` had never compiled before. A user
     definition is `beck.def.<name>` now, in both emitters.
 
 - **A list grows, and the refusal was about a layout**
-  ([`docs/113`](docs/113-a-list-grows-report.md)): `list_append` compiles to both code generators and
+  ([`docs/93`](docs/93-the-native-backends-report.md)): `list_append` compiles to both code generators and
   the accumulator every loop is written as is **linear**. **711 → 895 definitions** compile across
   the tree and refusals go 707 → 523 — the largest jump any of these rounds has produced, because
   `list_append` appears in 65 definitions and the other 119 had inherited the refusal from a callee.
@@ -424,10 +424,10 @@ Newest first.
     it) and by `forked` in the differential — two lists grown from one, so the soundness argument is
     a program rather than a paragraph. Measured at **11.4× the tree-walker at 2,000 elements and
     7.0× at 8,000**, against a control that holds 80× flat: the arena is linear and what grows is the
-    reply, which is [`docs/93`](docs/93-llvm-backend-report.md) §93.1's round trip again.
+    reply, which is [`docs/93`](docs/93-the-native-backends-report.md) §93.1's round trip again.
 
 - **A raise arrives, and a handler catches it**
-  ([`docs/112`](docs/112-a-raise-arrives-report.md)): `raise` and `try:` compile to both code
+  ([`docs/93`](docs/93-the-native-backends-report.md)): `raise` and `try:` compile to both code
   generators. The mechanism was already there — every compiled function takes an error cell, stores
   into it and returns, and every caller checks it — so this adds a fourteenth trap code, two words of
   arena for the raised value, and a **handler**: a label the checks branch to instead of the
@@ -439,14 +439,14 @@ Newest first.
   different error type inside one — both of which must **not** be caught),
   `an_uncaught_raise_names_the_value_it_carried`, and `unwinding_costs_nothing_per_frame` — the same
   168 bytes of arena whether the raise was 25 frames down or 200.
-  - **The finding is about the protocol, not the feature** (§112.8): the handler cleared the trap
+  - **The finding is about the protocol, not the feature** (§93.8): the handler cleared the trap
     code with `store i32 0`, and the cell's first word is a code *and* a span while the worker's loop
     reads it as one `i64` to decide whether the call answered. So a caught failure came back with a
     stale span in the high half, looking like a trap with an empty arena. Two pieces of one program
     disagreeing about what "cleared" means, which is
-    [`docs/107`](docs/107-a-map-arrives-read-only-report.md) §107.5's class of defect one level down.
+    [`docs/93`](docs/93-the-native-backends-report.md) §93.8's class of defect one level down.
 
-- **A view arrives, as a recipe** ([`docs/111`](docs/111-a-view-arrives-as-a-recipe-report.md)): a
+- **A view arrives, as a recipe** ([`docs/93`](docs/93-the-native-backends-report.md)): a
   definition that returns `Html` compiles to both code generators. What goes in the arena is the
   **call** `html_el(tag, attrs, children)` would have been given rather than the tree, and the host
   bakes it with `beck_core::html::element` — the evaluator's own `html_el`, lifted out and called
@@ -456,7 +456,7 @@ Newest first.
   `cranelift.rs::the_three_backends_agree_on_views` (127), the `ui:` block's own pair, and
   `a_page_costs_its_own_nodes_and_nothing_per_page` — 96 bytes a row and 504 a page at 100 rows and
   at 800, a shape gate with no clock in it. **Not faster**: 0.80×–1.33× the tree-walker at two
-  sizes, and §111.6 says why that is the design rather than a constant to tune.
+  sizes, and §93.5 says why that is the design rather than a constant to tune.
 
 - **The last two list primitives, and one of them was refused for a reason that is false.**
   `concat_lists` and `sort_by` compile on both backends, so **every** higher-order list primitive
@@ -468,7 +468,7 @@ Newest first.
     It is one `memcpy` per inner list and one function for the whole module, because an element is a
     word whatever it means. **22 refusals blamed it; 9 of those definitions compile and 13 are
     re-refused for a callee that still does not.** This is
-    [`docs/106`](docs/106-lists-arrive-read-only-report.md) §106.7's finding a fourth time: a refusal
+    [`docs/93`](docs/93-the-native-backends-report.md) §93.9's finding a fourth time: a refusal
     is a claim, and this one was inherited from a primitive it only resembles.
   - **`sort_by`** is decorate–sort–undecorate against a **stable** merge sort over two parallel runs
     of words — the keys and the elements — with a scratch pair, generated once per *key* repr because
@@ -484,21 +484,21 @@ Newest first.
     compares a merge written here against one written by somebody who tuned it. The shape is the
     claim, and it holds: 0.76× of the ratio kept over eight times the elements, where a quadratic
     merge would have lost about a factor of six. And **`concat_lists` is 0.24–0.33×, slower than the
-    tree-walker, asserted to be** — [`docs/105`](docs/105-text-on-the-heap-report.md) §105.7's
+    tree-walker, asserted to be** — [`docs/93`](docs/93-the-native-backends-report.md) §93.5's
     precedent. The work is a `memcpy` and the *call* is 2,000 list objects down a pipe and an answer
     read back out of a reply, so what that row measures is
-    [`docs/93`](docs/93-llvm-backend-report.md) §93.1's round trip and not this primitive.
+    [`docs/93`](docs/93-the-native-backends-report.md) §93.1's round trip and not this primitive.
   - Gated by `native.rs::the_two_backends_agree_on_closures` and
     `cranelift.rs::the_three_backends_agree_on_closures` (1,178 calls each now) and
     `a_sort_costs_four_runs_and_a_concatenation_costs_its_answer` — a shape gate with no clock in it,
     because a concatenation that grew would hold every intermediate and a merge sort that allocated
     per level would pass every differential.
-  - **Corrects [`docs/108`](docs/108-closures-arrive-report.md)** §108.4 and §108.8, which name both
-    of these as refused. §108.4's claim about `sort_by` — "the next one to build, not one that cannot
+  - **Corrects [`docs/93`](docs/93-the-native-backends-report.md)** §93.12 and §93.9, which name both
+    of these as refused. §93.12's claim about `sort_by` — "the next one to build, not one that cannot
     be" — held for one commit.
 
 - **A closure arrives, and it does not leave**
-  ([`docs/108`](docs/108-closures-arrive-report.md)): a `lambda` compiles to both code generators as
+  ([`docs/93`](docs/93-the-native-backends-report.md)): a `lambda` compiles to both code generators as
   an object holding the lambda's **rank** and its captures, applying one is a switch on that word
   into a direct call, and `map_list`, `filter_list`, `list_fold`, `list_all` and `list_any` are five
   generated loops that go through it. There is no indirect call and no code address in the arena,
@@ -515,7 +515,7 @@ Newest first.
   million applications in tail position, on both backends) and
   `a_closure_does_not_cross_the_boundary`.
 - **The gate that asks whether a refusal's reason is *true* fired**
-  ([`docs/108`](docs/108-closures-arrive-report.md) §108.7). `a_refusal_that_blames_a_type_is_asked_whether_that_type_has_one`
+  ([`docs/93`](docs/93-the-native-backends-report.md) §93.13). `a_refusal_that_blames_a_type_is_asked_whether_that_type_has_one`
   went red because giving a closure a shape made "a closure, which has no layout here" false while
   the refusal saying it stayed. It now asserts both halves of what is true instead: the shape exists,
   and `Heap::crossing` is what refuses it. `what_the_heap_does_not_reach_is_refused_by_name` lost a
@@ -536,8 +536,8 @@ Newest first.
   `cranelift.rs::the_three_backends_agree_on_text`, now 3,382 calls each.
 
   **Three of those refusals were wrong about their own reason**, which is
-  [`docs/106`](docs/106-lists-arrive-read-only-report.md) §106.7's finding a second time and
-  corrects [`docs/105`](docs/105-text-on-the-heap-report.md) §105.4:
+  [`docs/93`](docs/93-the-native-backends-report.md) §93.9's finding a second time and
+  corrects [`docs/93`](docs/93-the-native-backends-report.md) §93.9:
 
   - `str` was refused because "the rendering has to be Rust's to the digit". True of a **real**,
     whose shortest round-trip form is an algorithm — and not of an `Int`, whose decimal is a loop.
@@ -558,7 +558,7 @@ Newest first.
 
 
 - **A map arrives read-only, and a fold compiles**
-  ([`docs/107`](docs/107-a-map-arrives-read-only-report.md)): `Map[K, V]` is a count, every key in
+  ([`docs/93`](docs/93-the-native-backends-report.md)): `Map[K, V]` is a count, every key in
   key order, then every value — so `map_get` is a binary search and `map_keys` is one `memcpy`.
   `map_len`, `map_get`, `map_contains`, `map_keys`, `map_values`, the six comparisons and `{}`
   compile; `map_insert`, `map_remove` and `map_merge` are refused. **403 → 452 definitions**, the
@@ -568,47 +568,47 @@ Newest first.
   `cranelift.rs::the_three_backends_agree_on_maps` (898 calls each),
   `a_lookup_costs_the_same_whatever_the_map_holds` and `a_corpus_fold_compiles`.
 - **`Repr::order` is the only place either backend names a comparison.**
-  [`docs/106`](docs/106-lists-arrive-read-only-report.md) §106.4 said that would prevent a fourth
+  [`docs/93`](docs/93-the-native-backends-report.md) §93.8 said that would prevent a fourth
   record-field-compared-by-offset defect; there was a fourth, in the one site not yet converted, and
   all five go through the accessor now. A new reference kind is a compile error where its comparison
-  has to be written (§107.5).
+  has to be written (§93.8).
 - **`Html` is refused by name.** It fell through to "not a type this module declares", which is true
   about the path taken and misleading about the cause.
 
 
-- **A list arrives read-only** ([`docs/106`](docs/106-lists-arrive-read-only-report.md)): a
+- **A list arrives read-only** ([`docs/93`](docs/93-the-native-backends-report.md)): a
   `list[T]` is a value both code generators compile — literals, the six comparisons, `list_len`,
   `list_is_empty`, `list_get`, `list_contains`, `list_index_of`, `list_slice`, `list_take`,
   `list_drop` and `list_reverse` — and **`list_append` is refused** by name, because an arena cannot
-  prove nobody else holds the accumulator ([`docs/101`](docs/101-the-heap-report.md) §101.5's
+  prove nobody else holds the accumulator ([`docs/93`](docs/93-the-native-backends-report.md) §93.14's
   forecast, cashed). **344 → 403 definitions** compile across the tree. Gated by
   `native.rs::the_two_backends_agree_on_lists` and
   `cranelift.rs::the_three_backends_agree_on_lists` (1,425 calls each), and by
   `a_list_slice_costs_its_answer_and_not_the_list_it_came_from`.
 - **`str_index_of` compiles, and the reason it did not was false.**
-  [`docs/105`](docs/105-text-on-the-heap-report.md) §105.4 blamed the prelude's `Option` for having
-  no layout; it has had one since [`docs/101`](docs/101-the-heap-report.md). Every gate stayed green
+  [`docs/93`](docs/93-the-native-backends-report.md) §93.9 blamed the prelude's `Option` for having
+  no layout; it has had one since [`docs/93`](docs/93-the-native-backends-report.md). Every gate stayed green
   because each asserted a refusal *said* something and none asked whether what it said was so.
   `a_refusal_that_blames_a_type_is_asked_whether_that_type_has_one` is the gate that would have
-  gone red (§106.7).
+  gone red (§93.9).
 - **The reply decoder is iterative**, so `MAX_DEPTH` bounds the *value* rather than the host
   thread's stack. It recursed, and a debug build aborted at about 1,600 against a declared ceiling
   of 2,048 — which made what could be decoded a function of how the compiler was built. Gated by
   `a_value_at_the_declared_ceiling_decodes_rather_than_aborting`, which builds a value exactly that
-  deep by hand (§106.6).
+  deep by hand (§93.9).
 - **The LLVM record comparison compared a `list` field by its offset** — the same defect
-  [`docs/105`](docs/105-text-on-the-heap-report.md) §105.5 found in Cranelift for a `Str`, third
-  occurrence. Caught by the differential's pairs (§106.4).
+  [`docs/93`](docs/93-the-native-backends-report.md) §93.8 found in Cranelift for a `Str`, third
+  occurrence. Caught by the differential's pairs (§93.8).
 - **An unreachable refusal reason deleted.** The higher-order collection primitives are refused a
   line earlier by their own argument, so the table's entry for them could never be produced
-  ([`docs/89`](docs/89-query-fusion-report.md) §89.5's pattern).
+  ([`docs/23`](docs/23-incremental-views-report.md) §23.16's pattern).
 - **`measure_native.rs` asserted a ratio that depends on the build profile** — that text's
   accumulator is slower than the tree-walker, which is true in release and false in debug. The
   assertion is gone and the claim is gated with no clock in it instead:
   `an_accumulator_costs_the_square_of_what_it_builds` reads the arena and finds 15.9× the bytes for
   4× the steps.
 
-- **Text is on the heap** ([`docs/105`](docs/105-text-on-the-heap-report.md)): a `Str` is a value
+- **Text is on the heap** ([`docs/93`](docs/93-the-native-backends-report.md)): a `Str` is a value
   both code generators compile — a layout of two counts and the bytes, a literal pool the host
   writes in front of every request, `+`, the six comparisons, `str_len`, `str_is_empty`,
   `str_slice`, `str_contains`, `str_starts_with` and `str_ends_with`. **283 → 344 definitions**
@@ -620,7 +620,7 @@ Newest first.
   `the_literal_pool_is_a_function_of_the_program`.
 - **The Cranelift record comparison compared a `Str` field by its offset**, so two equal strings
   allocated at different places compared unequal. Found by the three-way differential's pairs one
-  minute after the second emitter existed (§105.5).
+  minute after the second emitter existed (§93.8).
 
 ### The evaluator
 
@@ -629,14 +629,14 @@ Newest first.
   the end" could exhaust the fuel budget on a program doing nothing. The arm one above it in
   `work_of` has stated the rule since it was written. Gated by
   `interp::tests::a_slice_is_charged_what_it_takes`, and found by the native differential answering
-  while the tree-walker ran out of fuel (§105.8).
+  while the tree-walker ran out of fuel (§93.6).
 
 ### Docs
 
 - **A report was carrying another report's number, and every reference to it named nothing.**
-  [`docs/104`](docs/104-the-release-and-the-installer-report.md) was renumbered on merge — the
+  [`docs/92`](docs/92-supply-chain-and-release-report.md) was renumbered on merge — the
   filename and the prose inside it moved to `104`, the title and eleven headings stayed at `101`,
-  which [`docs/101`](docs/101-the-heap-report.md) already had. So `§101.5` named a section in each
+  which another document already had. So one `§101.x` named a section in each
   of two documents, and the 29 references to `§104.x` from `README.md`, `AGENTS.md`, this file,
   [`release/README.md`](release/README.md), [`08`](docs/08-roadmap.md),
   [`28`](docs/28-releases-and-deployment.md), [`43`](docs/43-threat-model.md),
@@ -653,18 +653,16 @@ Newest first.
   with the `links` job in [`docs.yml`](.github/workflows/docs.yml) keeping its own copy the way it
   already does for the link rule. Checked by putting the defect back: both go red and name all
   twelve lines. A heading opening with `§` cites a section rather than declaring one and is skipped
-  — [`26`](docs/26-arrangement-sharing-report.md) has the only one.
+  — [`docs/23`](docs/23-incremental-views-report.md) has the only one.
 - **Thirty-one citations named roadmap sections that have never existed.** `§8.6` (Phase 3's bullet
   list), `§8.7` and `§8.19` (Lane E) are cited by nine documents and four Rust doc comments, and
   `git log -S"## 8.6" -- docs/08-roadmap.md` returns nothing: the phase headings have carried names
   rather than numbers since the file's first commit. So this was never a rename — the numbers were
   invented at the citing end, and inconsistently enough that `§8.7` means Phase 4 in
-  [`98`](docs/98-playground-report.md) and [`103`](docs/103-playground-phase-3-report.md) and the
-  **lane table** in [`93`](docs/93-llvm-backend-report.md). Each is repointed at what it claims:
+  [`98`](docs/98-playground-report.md) and [`docs/98`](docs/98-playground-report.md) and the
+  **lane table** in the backend reports. Each is repointed at what it claims:
   Phase 3 and Phase 4 by the names the roadmap gives them, and Lane E to
-  [`08`](docs/08-roadmap.md) §8.5.5 — which is what [`105`](docs/105-text-on-the-heap-report.md),
-  [`106`](docs/106-lists-arrive-read-only-report.md) and
-  [`108`](docs/108-closures-arrive-report.md) already called it. No claim, measurement or refusal
+  [`08`](docs/08-roadmap.md) §8.5.5 — which is what the backend reports already called it. No claim, measurement or refusal
   moved; this edits reports, which are history, and the warrant is that a pointer that never
   resolved is a repair rather than a rewrite — the same operation the consolidation below performed
   when it remapped every `§number` to the section that carries the claim.
@@ -695,14 +693,14 @@ Newest first.
 ### Releases
 
 - **The release pipeline and the installer**
-  ([`docs/104`](docs/104-the-release-and-the-installer-report.md)) — the two items on
+  ([`docs/92`](docs/92-supply-chain-and-release-report.md)) — the two items on
   [`docs/08`](docs/08-roadmap.md) §8.5.4's apology list that were on nobody's bullet.
   `.github/workflows/release.yml` turns a tag into four native builds, one `SHA256SUMS` and a
   GitHub Release; it *calls* `compiler.yml` rather than restating a gate, so §28.2's "a release is
   a tag on a commit that passed the whole matrix" is a `needs:` edge. `install.sh` verifies what it
   downloaded and refuses to install on a mismatch. Everything executable is outside the YAML —
   a tag-triggered workflow is the one artefact that cannot be run before it is used — and
-  §104.7 splits what was executed from what was only written: no tag has been pushed.
+  §92.13 splits what was executed from what was only written: no tag has been pushed.
   Gated by `release.rs` (nine tests; the one that matters corrupts an archive and asserts the
   installer exits non-zero *and* installs nothing, checked by breaking the comparison).
 - **The version means something.** `0.1.0` on fourteen unpublished crates became **0.3.0**, read
@@ -720,7 +718,7 @@ Newest first.
 
 ### The playground
 
-- **Four refusals closed** ([`docs/103`](docs/103-playground-phase-3-report.md)): the editor's
+- **Four refusals closed** ([`docs/98`](docs/98-playground-report.md)): the editor's
   answers moved to `beck_core::editor` so the page and `beck lsp` share them, the tab's log survives
   a reload in IndexedDB, a share link carries the program and names its digest, and a
   `@render(client)` program runs in the client iframe. Gated by

@@ -24,7 +24,7 @@
 #
 # Verified against `expected/fasta-output.txt`, the suite's own published output for `N = 1000`.
 # The assertion is a digest rather than 10,245 characters of literal, and `clbg.rs` recomputes it
-# from that file — `docs/68` §68.2 is why that is the same claim and not a weaker one.
+# from that file — `docs/46` §46.13 is why that is the same claim and not a weaker one.
 
 import format
 

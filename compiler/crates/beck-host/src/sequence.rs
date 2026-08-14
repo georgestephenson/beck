@@ -20,7 +20,7 @@
 //! * **A retry is acknowledged with the position the first attempt got**, never refused. Answering
 //!   "duplicate" to a command that is in the log tells a client replaying an offline queue that its
 //!   work was rejected, and it takes that work back off the page one card at a time
-//!   ([`docs/94`](../../../../../docs/94-mode-b-report.md) §94.13).
+//!   ([`docs/94`](../../../../../docs/94-the-client-report.md) §94.10).
 //! * **Validation sees the batch it is inside.** `Add(x)` followed by `Toggle(x)` in one batch must
 //!   work, so each command is validated against the state the previous ones produced
 //!   (`docs/18` §18.5 item 5).

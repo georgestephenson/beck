@@ -2,7 +2,7 @@
 
 **Context.** §3.5's headline property is that a `secret[T]` cannot reach a browser: it is not
 Sendable, so a boundary crossing that carries one is a compile error naming the flow. Three phases
-have held that line without exception. [`docs/49`](../49-http-client-report.md) §49.4 hit the first
+have held that line without exception. [`46`](../46-standard-library-report.md) §46.10 hit the first
 program that needed to *spend* a secret rather than hold one — a credential in a header — and closed
 it without weakening the property, by moving *when* the secret is unwrapped: `HttpRequest.secrets`
 travels apart and the runtime merges it at the edge.
@@ -34,7 +34,7 @@ minted by the runtime's own identity provider.
 
 *Return a `secret[Str]`.* Rejected: it preserves the property and destroys the operation. A MAC that
 can only travel through `with_secret_header` cannot be a cookie, a URL parameter or a page — which
-is most of what a MAC is for — and the program would be back where §49.4 started, one indirection
+is most of what a MAC is for — and the program would be back where §46.10 started, one indirection
 further along.
 
 *No capability, just a pure function.* Tempting, and nearly defensible: a `secret[Str]` cannot reach
@@ -66,5 +66,5 @@ A capability-bearing function cannot be exercised by a `test` block, because a t
 empty (§21.3) and `cap.*` is deliberately not auto-stubbable. `compiler/lib/crypto.beck` is
 therefore written in two layers — a pure one that takes the code it expects as an argument, and two
 lines that compute one — and the second is tested from Rust.
-[`52`](../52-crypto-and-identifiers-report.md) §52.5 records that as a finding rather than as a
+[`46`](../46-standard-library-report.md) §46.7 records that as a finding rather than as a
 convention.

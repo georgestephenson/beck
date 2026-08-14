@@ -21,12 +21,12 @@ of one shape would prove that the shape works, which Phase 1 already did. What v
 - how many modules it takes;
 - **the shape of the signal graph**: one fold or two, a derived signal read once or twice, a
   `filter_map` between the chokepoint and a fold. Programs 21–23 exist for the general slicer
-  ([`docs/23`](../../docs/23-general-slicer-report.md)), and until it was built every one of them
+  ([`docs/23`](../../docs/23-incremental-views-report.md)), and until it was built every one of them
   was either refused or — in 21's case — silently mis-sliced;
 - **the shape of the view**: a nested loop, a conditional among an element's children, a list read
   by two operators, and a computation that does not read the session even though it sits inside a
   `per_session`. Program 24 exists for the incremental view engine
-  ([`docs/24`](../../docs/24-incremental-views-report.md)) and every one of those shapes is a way
+  ([`docs/23`](../../docs/23-incremental-views-report.md)) and every one of those shapes is a way
   for a maintained view to disagree with the recomputed one;
 - **the shape of the types**: a type that mentions itself, two that mention each other, a
   declaration that takes a type parameter and is used at two different arguments, and a `trait`
@@ -38,16 +38,16 @@ of one shape would prove that the shape works, which Phase 1 already did. What v
 - **the shape of the control flow**: a `try:` at the boundary rather than a `Result` threaded by
   hand (program 29, [`docs/27`](../../docs/27-the-walls-come-down-report.md)), and two outbound calls in one
   `parallel:` scope that do not wait for each other (program 30,
-  [`docs/80`](../../docs/80-a-scope-owns-its-children-report.md)) — where what is being checked is
+  [`docs/80`](../../docs/80-structured-concurrency-report.md)) — where what is being checked is
   that the scope's `spawn` reaches the published signature and the placement without anybody
   writing either down;
 - **who is asking**: a program that declares `identity = external(issuer=…)` and whose `validate`
   refuses a command unless the *issuer* said which tenant is asking (program 31,
-  [`docs/95`](../../docs/95-oidc-relying-party-report.md)). It is the only file here with a
+  [`docs/48`](../../docs/48-identity-report.md)). It is the only file here with a
   top-level form that is neither a definition nor a signal, so it is what holds the printer, the
   round-trip property and the placement property to it;
 - **what is not in the log**: a program whose page reads `presence()` — who is connected now —
-  beside the accumulator (program 32, [`docs/96`](../../docs/96-presence-report.md)). It is the only
+  beside the accumulator (program 32, [`docs/48`](../../docs/48-identity-report.md)). It is the only
   file here with an input that a replay does not reproduce, so it is where the rule that keeps that
   input away from the chokepoint has something to be about.
 

@@ -306,7 +306,7 @@ fn a_library_is_analysed_rather_than_refused() {
     );
 }
 
-/// The two capabilities `docs/103` added, over the protocol rather than through the module.
+/// The two capabilities `docs/98` added, over the protocol rather than through the module.
 ///
 /// The answers themselves are `beck_core::editor`'s and are gated against the playground's in
 /// `playground.rs`; what is asserted here is that a real editor can *get* them — the capability is
@@ -790,7 +790,7 @@ fn renaming_every_name_in_the_corpus_either_works_or_says_why() {
         refused.join("\n")
     );
     // Every refusal is one of the two stated shapes rather than an accident, and the corpus
-    // contains one of each (`docs/110` §110.4):
+    // contains one of each (`docs/65` §65.6):
     //
     // * a name the analysis cannot account for — `page` in a program whose view is a local of the
     //   same name, which is the shadow this declines rather than captures;

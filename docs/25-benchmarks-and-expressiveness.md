@@ -54,7 +54,7 @@ actually asserts.
 | **Functional compilers** | **nofib** (Haskell), the **R7RS/Larceny Scheme benchmark set** | Allocation-heavy, closure-heavy, recursion-heavy workloads | Closer to Beck's shape than CLBG is, and the Scheme set pairs directly with §25.5 |
 | **The log** | **YCSB** workloads A–F | Append and point-read throughput, latency distributions | Maps cleanly onto the durable log. `beck bench log` already exists as the seed ([`08`](08-roadmap.md) Phase 3) |
 | **Read models** | **TPC-H**, **ClickBench** | Analytical query latency over a fixed dataset | For the read-model tier once [`05`](05-tier-lowering.md) §5.3 exists. **TPC-C is not a fit** and should not be attempted: it assumes update-in-place OLTP, which is not Beck's data model |
-| **Incremental views** | *No standard exists* | — | The nearest published sets are DBToaster's and Noria's query workloads, and TPC-H run under a stream of updates. This is a **gap**, and one Beck is unusually well placed to define a yardstick for rather than borrow one — now more so, because the engine landed while this document was being written ([`24`](24-incremental-views-report.md)) and reports a 3–5× constant factor rather than a change of asymptote. That is exactly the kind of number a third-party workload exists to put in context, and there is none to put it in |
+| **Incremental views** | *No standard exists* | — | The nearest published sets are DBToaster's and Noria's query workloads, and TPC-H run under a stream of updates. This is a **gap**, and one Beck is unusually well placed to define a yardstick for rather than borrow one — now more so, because the engine landed while this document was being written ([`23`](23-incremental-views-report.md)) and reports a 3–5× constant factor rather than a change of asymptote. That is exactly the kind of number a third-party workload exists to put in context, and there is none to put it in |
 | **WASM** | **Sightglass** (Bytecode Alliance), PolyBenchC | Runtime and compile-time cost of WASM modules | For Mode B and the server-side WASM target ([`07`](07-dependencies.md) §7's Wasmtime choice) |
 | **Compile speed** | *No standard exists*; **rustc-perf** is the model | Clean build, incremental build, keystroke-to-diagnostic | Copy the instrument, not a suite. [`13`](13-testing.md) §13.7 already lists these budgets |
 | **Conciseness** | **TodoMVC**; **Rosetta Code** as a corpus; Prechelt (2000) as the methodological precedent | Lines of code for a fixed task, across implementations | [`00`](00-original-idea.md) already names the calibration pointers: "Electric Clojure's TodoMVC and Lamdera's, read side by side with the sketch" |
@@ -83,11 +83,14 @@ unit. §25.5 sets that protocol out, because the SICP suite is where LOC does th
 
 It would mean almost nothing, and that is worth stating precisely rather than discovering later.
 
-[`19`](19-phase-1-report.md) records that native codegen was not built and that a `Core` evaluator
-stands in for Cranelift behind the `Backend` seam; [`20`](20-phase-2-report.md) §20.5 and
-[`22`](22-phase-3-report.md) §22.6 both record it as still unbuilt. Every execution number Beck can
-produce today is therefore a number about a tree-walking interpreter that is a placeholder by
-design. To put a size on it — `fib(30)`, naive, as a `test` block:
+*This section is kept as the argument it was, and its premise has half moved. Both code generators
+are built ([`93`](93-the-native-backends-report.md)) and a **definition** compiles — but a whole Beck
+program is a fold, a `validate` and a view, which are signal nodes the splitter reads rather than
+definitions a body calls, so a program run end to end still walks. Every number a benchmark suite
+that runs whole programs can produce is therefore still a number about the tree-walker, which is
+what this section says and why §25.9's rule 2 was right about the sequencing.*
+
+To put a size on the tree-walker — `fib(30)`, naive, as a `test` block:
 
 ```console
 $ beck test fib.beck          # best of three, this 4-core container
@@ -114,8 +117,8 @@ deferral:
 2. **Publish no comparative claim until the second backend exists.** [`13`](13-testing.md) §13.1's
    oracle table wants Cranelift-vs-LLVM-vs-interpreter differentials anyway; the first honest
    performance claim and the first correctness differential arrive on the same day. *They did —
-   [`93`](93-llvm-backend-report.md), and the prediction was exactly right about the sequencing. The
-   comparative claim is [`93`](93-llvm-backend-report.md) §93.5's, and it is **narrower than this
+   [`93`](93-the-native-backends-report.md), and the prediction was exactly right about the sequencing. The
+   comparative claim is [`93`](93-the-native-backends-report.md) §93.5's, and it is **narrower than this
    rule assumed**: it is four arithmetic kernels against C, Rust, Node, Python and Ruby, in
    [`compiler/xlang/`](../compiler/xlang/README.md), because the native backend has no heap and
    every suite in §25.2 runs whole programs — so AWFY and CLBG still measure the tree-walker and
@@ -515,20 +518,20 @@ no regression-detecting power, which is the only thing a benchmark is for.
 > original suite's own constants, with wall-clock printed and no comparative claim, which is this
 > table's "Published" column kept and §25.3 item 1's "adopt now, publish now, make them
 > unflattering" kept at the same time. **The Felleisen table below is built**
-> ([`63`](63-felleisen-report.md)): six of the seven forms recovered, `amb` conceded, which is the
+> ([`63`](63-expressiveness-report.md)): six of the seven forms recovered, `amb` conceded, which is the
 > shape the forecast predicted. **The compile-speed budgets are built too**
 > ([`64`](64-compile-speed-report.md)) — as a *shape* gate rather than a rate, for
 > [`13`](13-testing.md) §13.7's reason, and they found a quadratic in placement on their first run.
-> **And the CLBG harness is built** ([`68`](68-clbg-report.md)) — **eight** of the Game's ten, each
+> **And the CLBG harness is built** ([`46`](46-standard-library-report.md)) — **eight** of the Game's ten, each
 > verified against the Game's own published *output file* rather than against a constant anybody
 > here typed, which is what [`64`](64-compile-speed-report.md) §64.7.1 was waiting for and is
 > enforced rather than promised. **This row is complete.** It was seven: `pidigits` was held up by
-> §68.4's finding that nothing outside `lib/` could import the standard library, and it is ported
-> now that [`69`](69-standard-library-imports-report.md) has fixed that. It is also the first
+> §46.12's finding that nothing outside `lib/` could import the standard library, and it is ported
+> now that [`46`](46-standard-library-report.md) has fixed that. It is also the first
 > benchmark to need more than the evaluator's default budget in a *gate* — the Game publishes an
 > oracle at exactly one size, so unlike `awfy/`'s three there is no reduced configuration to fall
 > back on — and the answer was to make the arithmetic cheaper rather than to raise the budget:
-> §69.6 brackets `lib/bignum.beck`'s trial-digit search, which takes the benchmark from 100 million
+> §46.15 brackets `lib/bignum.beck`'s trial-digit search, which takes the benchmark from 100 million
 > evaluator steps to under 16 million and every other caller of that division with it. Its "Published" column is kept: no
 > compute number, and specifically no entry in the Game's own table, which §25.2 above calls widely
 > misused and §25.3 explains would be a measurement of scaffolding.
@@ -561,7 +564,7 @@ it is visible:
 One row expected to be conceded out of seven is a result worth publishing. Seven out of seven
 recovered would be a result worth double-checking.
 
-> **Built, and the forecasts above are left as written.** [`63`](63-felleisen-report.md) is the
+> **Built, and the forecasts above are left as written.** [`63`](63-expressiveness-report.md) is the
 > result, [`sicp/felleisen.beck`](../compiler/sicp/felleisen.beck) is the evidence, and the count
 > came out where this table put it: six recovered, `amb` conceded. One forecast was wrong in the
 > generous direction — `quote` was "blocked, not global" and the block came down in

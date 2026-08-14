@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Date:** 2026-08-09
-**Context:** [`05`](../05-tier-lowering.md) §5.1, [`94`](../94-mode-b-report.md),
+**Context:** [`05`](../05-tier-lowering.md) §5.1, [`94`](../94-the-client-report.md),
 [`0021`](0021-the-native-backend-writes-ir-and-runs-a-process.md),
 [`0007`](0007-evaluator-stack-is-declared-not-discovered.md)
 
@@ -22,7 +22,7 @@ know nothing about which implementation is behind it.
 
 A WebAssembly code generator for `Core` is a **backend**, and the backend seam now has two
 implementations behind it — the evaluator and `beck-llvm`
-([`93`](../93-llvm-backend-report.md)). The second one is the argument for this decision rather
+([`93`](../93-the-native-backends-report.md)). The second one is the argument for this decision rather
 than against it, because of *what it compiles*: a definition whose parameters and result are `Int`,
 `Float` or `Bool`, whose body is arithmetic, comparison, `if`, `match` and direct calls. **No heap.**
 
@@ -53,7 +53,7 @@ asserts equality rather than similarity — because both sides run the same `Cor
   every component of every Beck application shares, and it is cacheable across deployments because
   it does not depend on the program.
 - **Speed.** A tree-walker in the browser is the same tree-walker, with whatever WebAssembly costs
-  on top. [`94`](../94-mode-b-report.md) §94.6 says what has and has not been measured; the honest
+  on top. [`94`](../94-the-client-report.md) §94.11 says what has and has not been measured; the honest
   summary is that a local render is bounded by the interpreter and not by the network, which is
   still the point of the mode.
 - **Types are erased from the bundle.** A compiling client backend needs them, so it needs bundle

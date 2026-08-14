@@ -7,7 +7,7 @@ Benchmarks Game** for "the language core, popularly", and is blunt about what it
 > compilers. Worth running for the trend line; not worth citing.
 
 §25.9 schedules the harness for Phase 3 and the number for later. This directory is the harness.
-[`docs/68`](../../docs/68-clbg-report.md) is the report: what it establishes, what it refuses to
+[`docs/46`](../../docs/46-standard-library-report.md) is the report: what it establishes, what it refuses to
 claim, and the findings porting it produced.
 
 ## The oracle
@@ -48,8 +48,8 @@ Eight of the Game's ten, each a Beck **library** whose `test` block is its publi
 | [`pidigits.beck`](pidigits.beck) | Gibbons' streaming spigot over arbitrary-precision integers | 30 digits, ten to a line, at `N = 30` |
 
 Every file here is a benchmark. The fixed-decimal formatting three of the ports need lives in
-[`lib/format.beck`](../lib/README.md), where `docs/68` §68.4 said it belonged and could not go:
-until [`docs/69`](../../docs/69-standard-library-imports-report.md) nothing outside `lib/` could
+[`lib/format.beck`](../lib/README.md), where `docs/46` §46.12 said it belonged and could not go:
+until [`docs/46`](../../docs/46-standard-library-report.md) nothing outside `lib/` could
 import the standard library, which is also what stopped `pidigits`.
 
 **`pidigits` measures [`lib/bignum.beck`](../lib/README.md)**, which is worth stating beside the
@@ -59,7 +59,7 @@ written in Beck, on a tree-walker. It was also the first benchmark here to want 
 evaluator's default step budget — the only size the Game publishes an oracle for is `N = 30`, so
 unlike `awfy/`'s three there is no reduced configuration to gate at — and what that bought was a
 faster long division rather than a `--fuel` flag in the harness
-([`docs/69`](../../docs/69-standard-library-imports-report.md) §69.6). Every file here runs under
+([`docs/46`](../../docs/46-standard-library-report.md) §46.15). Every file here runs under
 the default budget.
 
 `beck-cli/tests/clbg.rs` gates the directory: a file added here is run by being here, the eight
@@ -110,13 +110,13 @@ Two more differences are worth naming separately because they are not mechanical
 
 There were three. `pidigits` was the third, and its reason was never a fact about the language:
 Beck had the arbitrary-precision integers it needs and this directory could not reach them
-(`docs/68` §68.4). That was a repository limitation, it is fixed, and the benchmark is ported.
+(`docs/46` §46.12). That was a repository limitation, it is fixed, and the benchmark is ported.
 
 **Every port runs the Game's format-checking size, not its measuring size.** Each description page
 gives two: an `N` it publishes an expected output for, and a much larger one "to check program
 performance" — `N = 100` against 5,500 for `spectralnorm`, 7 against 12 for `fannkuchredux`, 1,000
 against 50,000,000 for `nbody`. The oracle only exists at the first, and this directory is built
-around the oracle. `docs/68` §68.5 says what that costs.
+around the oracle. `docs/46` §46.13 says what that costs.
 
 **There is no comparative number, and there will not be one here yet.**
 [`docs/25`](../../docs/25-benchmarks-and-expressiveness.md) §25.9 holds every comparative claim

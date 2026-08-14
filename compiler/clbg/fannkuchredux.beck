@@ -14,7 +14,7 @@
 # start. Beck has no threads to give a chunk to, so this port runs the one chunk that covers
 # everything — which is what `runTask(0)` with `CHUNKSZ = Fact[n]` does, and is the same walk in
 # the same order. `firstPermutation(0)` is the identity permutation with a zeroed count array, so
-# it is written as that rather than transcribed. `docs/68` §68.3 records the reduction; the walk
+# it is written as that rather than transcribed. `docs/46` §46.13 records the reduction; the walk
 # and both published answers are unaffected, because a chunk boundary is not observable in either.
 #
 # Verified against `expected/fannkuchredux-output.txt`, the suite's own published output for

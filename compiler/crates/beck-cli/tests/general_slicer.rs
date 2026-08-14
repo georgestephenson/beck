@@ -3,7 +3,7 @@
 //! `docs/19-phase-1-report.md` §19.9 assigned a general slicer to Phase 2;
 //! `docs/20-phase-2-report.md` §20.5 recorded that Phase 2 did not deliver it;
 //! `docs/22-phase-3-report.md` §22.6 said it was "debt with two phases' names on it" and "should
-//! be the next thing built". `docs/23-general-slicer-report.md` is what building it found.
+//! be the next thing built". `docs/23-incremental-views-report.md` is what building it found.
 //!
 //! Every test here is a *program*, compiled through the same `beck_core::compile_str` the CLI
 //! uses, because the claim is about programs and not about a data structure. Three groups:
@@ -440,7 +440,7 @@ fn a_signal_that_is_a_computation_rather_than_a_node_is_refused_by_name() {
     //
     // This is one of the few shapes that reaches the graph builder at all. `Signal[T]` and
     // `Stream[T]` are ordinary types, so unification already refuses most of what B0507 and B0508
-    // describe — see docs/23 §23.5.
+    // describe — see docs/23 §23.3.
     let codes = refused(
         "computed.beck",
         &program(

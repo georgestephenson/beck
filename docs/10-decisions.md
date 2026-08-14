@@ -135,7 +135,7 @@ server streams *data* changes instead of DOM changes; the browser renders locall
 
 ### How the choice is made
 
-**Built** ([`94`](94-mode-b-report.md)), with the promotion narrower than this paragraph and a
+**Built** ([`94`](94-the-client-report.md)), with the promotion narrower than this paragraph and a
 condition it did not foresee: a component whose view reads the session is **refused** Mode B,
 because Mode B sends the browser the state and a page that filters by identity is a page whose
 state is not that browser's to hold. Optimism turns out to be the same condition rather than a
@@ -169,7 +169,7 @@ identity = external(issuer="https://login.acme.com")  # Beck is a relying party 
 - Rung 0 (`beck run`) uses a dev-mode identity: auto-login as declared test users, zero setup.
 - **Presence** (who is connected now) ships v1 as a first-class non-durable `Signal` — it is both
   the natural demo of per-session fanout and its permanent stress test. **Built**
-  ([`96`](96-presence-report.md)): `presence() : Signal[Map[Str, Int]] ! {cap.presence}`, refused to
+  ([`48`](48-identity-report.md)): `presence() : Signal[Map[Str, Int]] ! {cap.presence}`, refused to
   the chokepoint (`B0515`) and to a Mode B page (`B0516`), and per subscriber rather than shared
   because the shared dataflow is versioned by the log and this is the one input that is not.
 
@@ -194,7 +194,7 @@ Three rungs of "works without the network", in plain terms:
    type system absolves you, as the original conversation put it. Adopting it wholesale would
    dissolve Beck's central construct, the single merge point.
 
-**Built** for rung 2 ([`94`](94-mode-b-report.md) §94.13), and "falls out of Mode B + determinism"
+**Built** for rung 2 ([`94`](94-the-client-report.md) §94.10), and "falls out of Mode B + determinism"
 held with one correction: the server had de-duplicated a retried command since Phase 0 but *replied
 that it was rejected*, so replaying a queue took the work back off the page. An idempotent operation
 has to be idempotent in its answer. What is still missing is a service worker — the document comes
@@ -683,7 +683,7 @@ The argument that decided it is not aesthetics but *what else the decision costs
   block macro somebody writes, with no change to the parser. That is [`01`](01-vision-and-premise.md)
   §1.1's claim about Lisp's means of abstraction cashed on the surface Beck actually presents.
 - **The compiler reads its structure.** The incremental engine re-renders one row of a `for` inside
-  a `ui:` block rather than the page ([`24`](24-incremental-views-report.md)) because the block is a
+  a `ui:` block rather than the page ([`23`](23-incremental-views-report.md)) because the block is a
   tree of `Node`s the analysis walks. A literal syntax could have been given the same treatment;
   the point is that this one needed no special case to receive it.
 - **It costs nothing when unused.** Two chapters of SICP run as libraries with no `ui:` anywhere
@@ -702,7 +702,7 @@ mitigation is the LSP's, not the grammar's.
 
 ## D23 — The standard library is on an implicit path, and the caller's directory wins — **DECIDED**
 
-[`68`](68-clbg-report.md) §68.4 found that `import` resolved against the root module's own directory
+[`46`](46-standard-library-report.md) §46.12 found that `import` resolved against the root module's own directory
 and against nothing else, and left the fix here rather than taking it in a benchmark's change:
 making `import bignum` work from anywhere "is deciding that `lib/` is on an implicit search path …
 but it changes name resolution for every program in the language". That is the decision, and it is
@@ -735,7 +735,7 @@ engineering record of that and of the alternatives.
 a program can import two — Beck's namespace is flat and has no qualified reference (`B0601`). Two
 collisions were waiting on the day this was taken, and the gate that finds them is
 `stdlib.rs::the_whole_library_links_into_one_program`.
-[`69`](69-standard-library-imports-report.md) is the build report.
+[`46`](46-standard-library-report.md) is the build report.
 
 **What would reopen this.** The package system. A namespaced import (`@beck/std/bignum`) changes the
 notation and could change the precedence; that is a decision for
@@ -770,7 +770,7 @@ scope.
 able to perform one — now decides a placement for real: a scope lands on the server off §3.3's
 table, `client` refuses it (`B0401`), and a function that starts spawning is a breaking change in
 the sentence §4.3 wrote for `net.out`.
-[`80`](80-a-scope-owns-its-children-report.md) is the build report.
+[`80`](80-structured-concurrency-report.md) is the build report.
 
 **What this reopened, and D25 closes.** `fs(path)` was one atom for a read and a write, so refusing
 concurrent writes meant refusing the pair, and two children reading two files was a thing this form
@@ -783,7 +783,7 @@ decide it.
 
 ## D25 — `fs` is two atoms, `fs.read(path)` and `fs.write(path)` — **DECIDED**
 
-D24 left this open, and [`81`](81-fs-is-two-atoms-report.md) is it taken and built.
+D24 left this open, and [`80`](80-structured-concurrency-report.md) is it taken and built.
 
 **An effect atom that names a resource has to say what is being done to it.** `fs(path)` was the
 only atom in §3.2's list that did not. It was not wrong for three phases because nothing had asked
@@ -808,12 +808,12 @@ it does not make filesystem access available.
 **What it enables and does not do.** [`06`](06-kubernetes-and-packaging.md) §6.5's derived
 least-privilege manifests can now distinguish a `readOnly: true` mount from a writable one. They do
 not yet: `beck-infra` derives from `ingress`, `durable` and `net.out` and has never read this atom.
-[`81`](81-fs-is-two-atoms-report.md) §81.5 is the correction to
-[`80`](80-a-scope-owns-its-children-report.md) §80.7, which said otherwise.
+[`80`](80-structured-concurrency-report.md) §80.13 is the correction to
+[`80`](80-structured-concurrency-report.md) §80.12, which said otherwise.
 
 **What would reopen this.** A file operation whose interference is finer than the path — a
 lock, an append, an atomic rename. The scope rule refuses two writers to *any* paths rather than
-comparing them (§81.3), and a real filesystem library is where that becomes worth revisiting.
+comparing them (§80.13), and a real filesystem library is where that becomes worth revisiting.
 
 ## D26 — A read model is the arrangement, not a second copy of it — **DECIDED**
 
@@ -830,7 +830,7 @@ same values the page is rendered from.
 **Why not the durable projection §5.3 describes.** Three reasons, in the order they bite.
 
 1. **It puts view maintenance on the write path**, which is exactly the choice
-   [`26`](26-arrangement-sharing-report.md) §26.2 argued *out* of the design for subscribers: the
+   [`23`](23-incremental-views-report.md) §23.9 argued *out* of the design for subscribers: the
    sequencer would pay, per event, for a projection nobody may read. The read model's own case is
    weaker still than the page's, because a BI tool connects twice a day.
 2. **It is a second code path over the same events**, and a second code path can drift. The
@@ -848,7 +848,7 @@ this port, that transaction is what it is built on, and this record is what it s
 **What decides which signals are tables.** The same cut §5.3 draws for arrangement sharing: a table
 is a view that does not depend on *who is asking*. A `per_session` signal is not a table, because a
 SQL client has no session and inventing one would answer a question nobody asked.
-[`88`](88-read-models-and-pgwire-report.md) is the build report and
+[`23`](23-incremental-views-report.md) is the build report and
 [`adr/0020`](adr/0020-the-read-model-speaks-pgwire-by-hand.md) the engineering record of the wire.
 
 ## Still open (minor, non-blocking)

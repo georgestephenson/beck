@@ -432,7 +432,7 @@ pub trait Host: beck_core::host::Atoms {
 /// Two children that both raise are a race, and whichever got there first would cancel the other
 /// before it could raise, so a scope over `bad(2)` and `bad(1)` would report `Second` or `First`
 /// depending on the scheduler. That is exactly the property
-/// [`docs/117`](../../../../../docs/117-a-scope-runs-its-children-report.md) §117.3 exists to keep,
+/// [`docs/80`](../../../../../docs/80-structured-concurrency-report.md) §80.3 exists to keep,
 /// and `a_childs_failure_joins_at_the_scope_and_the_earliest_child_wins` caught it — eight failures
 /// in forty runs of the suite, and none when run alone.
 ///
@@ -509,7 +509,7 @@ pub struct Interp<'h> {
     /// `None` for everything that is not a `parallel:` child, which is every interpreter the
     /// runtime, the LSP and `beck test` build — so the check in [`Interp::burn`] is a branch on a
     /// discriminant that is `None` for the whole of a program that never writes `parallel:`, and
-    /// is loop-invariant where it is not. `docs/118` §118.4 is what that costs, measured.
+    /// is loop-invariant where it is not. `docs/80` §80.8 is what that costs, measured.
     ///
     /// The index is this child's own place among its siblings, which is what makes the question
     /// "did a child *before* me fail" answerable — see [`Cancel`].
@@ -586,7 +586,7 @@ pub const DEFAULT_MAX_DEPTH: u32 = 4_000;
 /// `last_use` is [`beck_core::liveness`]'s promise that no later evaluation in this body reads the
 /// binding, and [`Env::take`] only empties a frame nothing else holds — so a value that arrives
 /// here from a last read is one nobody else has, which is what lets `list_append` push into a list
-/// instead of copying it (`docs/69` §69.7).
+/// instead of copying it (`docs/46` §46.14).
 ///
 /// `#[inline]`, unlike [`Interp::leaf`]'s arms: this is the single hottest node in the interpreter
 /// — every argument, every condition and every operand is one — and a call here costs a few percent
@@ -701,7 +701,7 @@ fn work_of(op: Prim, args: &[Value]) -> usize {
         // clamps, so "from `i` to the end" is ordinarily written with a length nobody bothered to
         // bound — and charging the number the caller wrote made `str_slice(s, 0, 1_000_000)` on a
         // five-character string cost a million steps. Found by the native differential, where the
-        // compiled answer arrived and the evaluator's ran out of fuel (`docs/105` §105.8).
+        // compiled answer arrived and the evaluator's ran out of fuel (`docs/93` §93.6).
         Prim::StrSlice => {
             let chars = match args.first() {
                 Some(Value::Str(t)) => t.chars_len(),
@@ -838,7 +838,7 @@ impl<'h> Interp<'h> {
     ///
     /// # What makes this sound, and why it is three sentences rather than an analysis
     ///
-    /// [`docs/80`](../../../../../docs/80-a-scope-owns-its-children-report.md) settled the hard
+    /// [`docs/80`](../../../../../docs/80-structured-concurrency-report.md) settled the hard
     /// half in the *checker*: the children are independent by construction, because none of them
     /// can name another, and no child may perform an effect another could observe. So the scope's
     /// answer does not depend on the order they ran in, and running them together is a correct
@@ -867,13 +867,13 @@ impl<'h> Interp<'h> {
     /// What it costs is stated rather than hidden: a child that would have used more than its share
     /// runs out where a serial run would have let it continue. Fuel is a runaway-program backstop
     /// and not a performance knob ([`DEFAULT_FUEL`]), so dividing a backstop is a smaller change
-    /// than it reads as — but it is a change, and `docs/117` §117.4 is where it is written down.
+    /// than it reads as — but it is a change, and `docs/80` §80.6 is where it is written down.
     ///
     /// # Failure
     ///
     /// The **first child in source order** that failed is the failure, whichever finished first, so
     /// the error a scope reports is a function of the program and not of the scheduler. Nothing is
-    /// cancelled: §80.5's table says a backend that starts children together needs a cancellation
+    /// cancelled: §80.12's table says a backend that starts children together needs a cancellation
     /// signal and that nothing designs one, and this does not design one either — the siblings of a
     /// failed child run to completion and their answers are dropped.
     fn children(&self, thunks: &[Value], span: Span) -> Result<Vec<Value>, EvalError> {
@@ -1326,7 +1326,7 @@ impl<'h> Interp<'h> {
             // accumulator idiom written with `with` at the `O(n²)` `docs/70` and `docs/70` removed
             // from every other spelling of it. The fields about to be replaced arrive empty
             // instead, which is one pass rather than the one the clone was already making
-            // (`docs/87` §87.5).
+            // (`docs/63` §63.11).
             Err(shared) => Record {
                 ty: shared.ty.clone(),
                 variant: shared.variant.clone(),
@@ -1459,7 +1459,7 @@ impl<'h> Interp<'h> {
             // child can observe another (`check::observable_order`) and that none can name another,
             // so the scope's answer is the same whichever order they ran in — running them in one
             // is a correct implementation of a form whose meaning is that the order is nobody's
-            // business. Nothing here runs them at the same time, and `docs/80` §80.5 says what
+            // business. Nothing here runs them at the same time, and `docs/80` §80.12 says what
             // would have to change for something to.
             //
             // A child that raises stops the scope at that child. With an ordered join that is the
@@ -1834,7 +1834,7 @@ impl<'h> Interp<'h> {
                 let xs = args.pop().expect("arity checked");
                 // The other half of what `Env::take` starts: a list that arrived from a last read
                 // is held by nobody else, so the push costs nothing. One that did not is copied,
-                // which is what this always did. `docs/69` §69.7 is the measurement.
+                // which is what this always did. `docs/46` §46.14 is the measurement.
                 if let Value::List(arc) = xs {
                     let mut out = match Arc::try_unwrap(arc) {
                         Ok(owned) => owned,
@@ -2430,7 +2430,7 @@ mod tests {
 
     /// Every integer operation without a representable answer, and there is no exception.
     ///
-    /// `negate` was one until `docs/93` §93.2: it computed `-x`, which *panics the compiler* on
+    /// `negate` was one until `docs/93` §93.3: it computed `-x`, which *panics the compiler* on
     /// `i64::MIN` in a debug build and wraps in a release one. That is worse than either answer on
     /// its own — which programs run depended on how the compiler was built — and it is the shape
     /// of defect `docs/64` §64.4 found on the front end's axis. `%` and `/` are here for
@@ -2456,7 +2456,7 @@ mod tests {
     /// "From here to the end" is ordinarily written with a length nobody bounded, so charging the
     /// number in the source made `str_slice(s, 0, 1_000_000)` on a five-character string cost a
     /// million steps and run an otherwise instant program out of fuel. Found by the native
-    /// differential, where the compiled answer arrived and this one did not (`docs/105` §105.8).
+    /// differential, where the compiled answer arrived and this one did not (`docs/93` §93.6).
     ///
     /// Asserted against `work_of` rather than through a whole program, because what went wrong is
     /// the accounting and this is where it is written.

@@ -13,7 +13,7 @@
 //! is what `beck explain incremental` prints — and the operator counts from the plan the engine
 //! executes. Nothing is recomputed for the panel and nothing is stored for it, so a panel cannot
 //! describe a program this process is not running. That is
-//! [`docs/88`](../../../../../docs/88-read-models-and-pgwire-report.md)'s argument for the read
+//! [`docs/23`](../../../../../docs/23-incremental-views-report.md)'s argument for the read
 //! models applied to a third kind of reader: the cheapest way for a view of a thing to be right is
 //! for it to be the thing.
 //!

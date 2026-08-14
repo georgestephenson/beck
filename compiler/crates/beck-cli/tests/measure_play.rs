@@ -16,7 +16,7 @@
 //!    history, and the question a person will ask after ten minutes of clicking is whether it slows
 //!    down. Measured at two log lengths, for the same reason.
 //!
-//! Measured natively rather than in WebAssembly, exactly as `docs/94` §94.14's kernel numbers were:
+//! Measured natively rather than in WebAssembly, exactly as `docs/94` §94.12's kernel numbers were:
 //! the crate is an `rlib` as well as a `cdylib`. The *ratios* and the shapes carry across; the
 //! absolute microseconds do not, and a browser will be slower by some factor this does not
 //! establish.
@@ -107,7 +107,7 @@ fn what_the_playground_costs_to_load() {
     );
 
     // Both modules, because a `@render(client)` program in the tab runs in Mode B's kernel and the
-    // playground serves it beside the compiler (docs/103 §103.4). Relative to the workspace root
+    // playground serves it beside the compiler (docs/98 §98.6). Relative to the workspace root
     // rather than to this crate: `cargo test` runs the binary from `crates/beck-cli`, and the
     // default paths are the ones `cargo build` writes to at the root.
     for (name, env, default, crate_name) in [
@@ -220,7 +220,7 @@ fn what_an_interaction_costs_and_whether_history_makes_it_worse() {
         "\n  a command is a fold and a render of the *state*: this program's state is two integers, so\n  \
          what is measured here is the constant. A scrub is a fold *of* the log, so it grows with\n  \
          the history — linearly, which is what the last column is for. Both are what those two operations are, and the\n  \
-         second is what makes the scrubber a replay rather than an undo stack (docs/98 §98.6)."
+         second is what makes the scrubber a replay rather than an undo stack (docs/98 §98.7)."
     );
 }
 
@@ -275,7 +275,7 @@ fn what_the_editor_costs_per_keystroke() {
     println!(
         "\n  highlighting is a lex and needs no program, which is why it is not debounced and why it\n  \
          still works while the file is broken. Completion is a check — the same one the analysis\n  \
-         pays for — and is asked for rather than continuous (docs/103)."
+         pays for — and is asked for rather than continuous (docs/98)."
     );
 }
 
@@ -358,6 +358,6 @@ fn what_a_kept_log_and_a_share_link_weigh() {
     }
     println!(
         "\n  a link carries the program, so it is proportional to it: §17.4's short, resolvable link\n  \
-         needs a registry, and this is the half that works with no server at all (docs/103)."
+         needs a registry, and this is the half that works with no server at all (docs/98)."
     );
 }

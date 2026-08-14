@@ -110,7 +110,7 @@ pub const NONROOT: Account = Account {
 /// modes. The apko route does it by way of a melange package ([`k8s::melange`]); the in-process
 /// route ([`oci::build`]) writes them into the layer. `supply_chain.rs` reads the *rendered*
 /// melange YAML back and asserts the install targets are this list, which is
-/// [`docs/92`](../../../../docs/92-sbom-report.md) §92.2's rule applied to paths rather than to
+/// [`docs/92`](../../../../docs/92-supply-chain-and-release-report.md) §92.2's rule applied to paths rather than to
 /// package names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Installed {
@@ -182,7 +182,7 @@ pub enum Node {
         ///
         /// [`docs/06`](../../../../docs/06-kubernetes-and-packaging.md) §6.5 lists a read-only root
         /// filesystem among the defaults that "should be *unavoidable*", and it could not be
-        /// derived until [`docs/81`](../../../../docs/81-fs-is-two-atoms-report.md) split `fs` into
+        /// derived until [`docs/80`](../../../../docs/80-structured-concurrency-report.md) split `fs` into
         /// a read and a write: one atom naming a path could not say whether the program writes.
         /// Secure is the default and the row is what relaxes it, which is the direction that fails
         /// safe — a program that writes and forgets to say so gets a container that refuses the
@@ -401,12 +401,12 @@ pub fn graph(placed: &Placed) -> InfraGraph {
     // peer enters it as. Nothing below this line knows the difference between a host the program
     // calls with `http_fetch` and the one the runtime fetches a key set from, which is the point:
     // §6.5's egress rule is "the hosts this program named", and an issuer is one of them
-    // ([`docs/95`](../../../../docs/95-oidc-relying-party-report.md) §95.7).
+    // ([`docs/48`](../../../../docs/48-identity-report.md) §48.7).
     //
     // `managed()` deliberately does **not**: its issuer is a `Service` this same derivation is
     // about to emit, so it is a peer *inside* the cluster and a `net.out` host is the wrong
     // vocabulary for it — `derive` gets the declaration instead, and the difference between the two
-    // shows up as the difference between a rule Kubernetes enforces and one it cannot (§95.10).
+    // shows up as the difference between a rule Kubernetes enforces and one it cannot (§48.8).
     if let Some(beck_core::check::IdentityDecl::External { host, .. }) = &placed.program.identity {
         effects.push((Effect::NetOut(host.clone()), "identity".to_string()));
     }
@@ -441,7 +441,7 @@ pub fn derive(app: &str, effects: &[(Effect, String)], serves_ui: bool) -> Infra
 ///
 /// A separate entry point rather than a fourth argument on [`derive()`], because every existing
 /// caller is asserting something about the effect row and `managed()` is not in one: it is a
-/// declaration, and the two arrive by different routes on purpose (§95.10).
+/// declaration, and the two arrive by different routes on purpose (§48.8).
 pub fn derive_with(
     app: &str,
     effects: &[(Effect, String)],
@@ -567,7 +567,7 @@ pub fn derive_with(
             reads_log: has(Effect::Durable).is_some(),
             // Any path, not a named one: the flag is about the container's root filesystem, and a
             // program that writes anywhere needs it writable. Deriving a *mount* for the path is a
-            // separate question and is not answered here (`docs/82` §82.5).
+            // separate question and is not answered here (`docs/82` §82.11).
             writes_files: effects.iter().any(|(e, _)| matches!(e, Effect::FsWrite(_))),
             reads_identity: managed_identity,
         },
@@ -644,7 +644,7 @@ pub fn derive_with(
     }
     // A **peer**, not a host: a managed issuer is a pod in this namespace, so the egress rule is
     // one Kubernetes can actually enforce — which the `allow_egress_hosts` list for an external
-    // issuer is not (see [`Node::Policy`]). §95.10 is why that asymmetry is worth stating.
+    // issuer is not (see [`Node::Policy`]). §48.8 is why that asymmetry is worth stating.
     if managed_identity {
         egress.push(Peer {
             app: format!("{app}-identity"),

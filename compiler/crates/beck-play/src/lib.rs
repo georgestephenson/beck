@@ -92,7 +92,7 @@ impl Playground {
 ///
 /// The route matters even for the two answers that are not a subscription — the scrubber's page and
 /// the document a client iframe opens with — because a page is a function of `session.path`
-/// (`docs/100`), and rendering the root's page into a frame that is about to resume at `/done`
+/// (`docs/94`), and rendering the root's page into a frame that is about to resume at `/done`
 /// would be a first paint the client immediately has to correct.
 fn viewer(request: &Value) -> beck_host::At<String> {
     let field = |k: &str| {

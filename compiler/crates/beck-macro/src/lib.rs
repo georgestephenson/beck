@@ -63,7 +63,7 @@ const MAX_DEPTH: u32 = 64;
 /// So the meter is what expansion **produces**, charged per node and shared by the whole module —
 /// per module because that is what a compile is, and because a per-call budget would let a program
 /// spend it as many times as it has calls
-/// ([`84`](../../../../docs/84-a-quota-is-only-as-good-as-its-actor-report.md) §84.4 is the same
+/// ([`docs/82`](../../../../docs/82-the-edge-report.md) §82.5 is the same
 /// arithmetic one subsystem over).
 ///
 /// The number is measured rather than declared. Across every program in this repository — the
@@ -183,7 +183,7 @@ impl<'a> Expander<'a> {
     /// **Iterative**, with its own stack, for the reason the walk counts at all: the tree being
     /// measured is one a macro just built, so a recursive count would be a claim about the host's
     /// stack rather than about the program
-    /// ([`106`](../../../../docs/106-lists-arrive-read-only-report.md) §106.6 is the same defect one
+    /// ([`93`](../../../../docs/93-the-native-backends-report.md) §93.9 is the same defect one
     /// subsystem over). It also stops the moment the budget does, so the *accounting* is bounded by
     /// the budget it is accounting for — a macro that produced a billion nodes is refused after a
     /// hundred thousand of them have been counted, not after a billion.

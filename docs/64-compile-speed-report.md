@@ -167,7 +167,7 @@ and the examples.
 Those are not thresholds and are not compared to any other compiler. They are here because §13.7
 lists keystroke→diagnostic latency as a budget and nothing had ever measured it, and because the
 worst number in the tree being under 5 ms is the fact that decides whether the LSP
-([`26`](26-arrangement-sharing-report.md) §26.9) needs an incremental front end or can re-check the
+([`23`](23-incremental-views-report.md) §23.19) needs an incremental front end or can re-check the
 file. On this evidence it can re-check the file.
 
 ## 64.7 What is **not** built
@@ -206,7 +206,7 @@ benchmark with no oracle passes while doing nothing.
 
 The harness is therefore owed **with its sources to hand** rather than owed generally. Nothing else
 about it is blocked: `awfy/` is the shape to copy, `measure_awfy.rs` is the measurement half, and
-[`55`](55-bignums-report.md)'s bignums are what `pidigits` needs and what would have been the
+[`46`](46-standard-library-report.md)'s bignums are what `pidigits` needs and what would have been the
 awkward one.
 
 ## 64.8 What this corrects
@@ -219,10 +219,3 @@ awkward one.
   30 corpus files, 14 benchmarks and two SICP chapters all ran through it without the shape being
   visible, because every one of them is small enough that a quadratic and a linear cost the same.
 - **[`42`](42-security-assurance.md) §42.11's gate covers one axis of two**, per §64.4.
-
-## 64.9 What Phase 3 is still not
-
-Unchanged from [`63`](63-felleisen-report.md) §63.9. The exit criterion — an outside developer
-building a non-trivial app from documentation alone — is not met and is not closer. Seven bullets of
-the fourteen remain untouched, identity has its seam and not its relying party, and
-[`26`](26-arrangement-sharing-report.md) §26.9 still names them one at a time.

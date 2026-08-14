@@ -19,12 +19,12 @@ which needed `+` to reach a type the compiler does not know about
 So: **nothing measured is refused today.** That is not the same claim as "Beck can express SICP".
 It is the narrower and checkable one — that every wall this project has *found* has been removed,
 and finding the next one needs somebody to write more of the book. Chapter 3 has been written since
-([`87`](../../../docs/87-the-chapter-that-argues-back-report.md)) and put no file here: every
+([`docs/63`](../../../docs/63-expressiveness-report.md)) and put no file here: every
 section of it is expressible. Two of its refusals are *decisions* rather than walls and live in
 `sicp.rs` — §3.4's interleaving is `B0399` and exercise 3.8's is `B0398`
-([`80`](../../../docs/80-a-scope-owns-its-children-report.md)) — and the one thing it genuinely
+([`docs/80`](../../../docs/80-structured-concurrency-report.md)) — and the one thing it genuinely
 cannot express, §3.5.1's **memoised** `delay`, is the rule at the bottom of this page working: it
-compiles and it is slow, so it is a cost rather than a refusal (§87.7). Chapters 4 and 5 are still
+compiles and it is slow, so it is a cost rather than a refusal (§63.13). Chapters 4 and 5 are still
 unattempted, and §2.3.4's Huffman decoder wants a pattern more than one level deep
 ([`27`](../../../docs/27-the-walls-come-down-report.md) §27.10), which is the
 nearest thing to a wall with a name on it.

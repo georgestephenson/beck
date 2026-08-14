@@ -161,7 +161,7 @@ async fn mode_a<S: Socket>(
     // engine's own cold start rather than a recompute the engine then has to catch up with.
     //
     // It is also this subscription's membership of the shared dataflow's reader set, and dropping
-    // it is how the dataflow learns the subscription is over (`docs/26` §26.9's lifecycle).
+    // it is how the dataflow learns the subscription is over (`docs/23` §23.19's lifecycle).
     let mut engine = app.view_engine()?;
     let mut arranged = Arranged::new();
     // `seq` comes back from the render rather than from `app.head()` afterwards: it is the version
@@ -489,8 +489,8 @@ async fn wait_for_hello<S: Socket>(
 
 /// Holds this subscription's share of the arranged-entries gauge.
 ///
-/// §5.3 names per-session memory as a metric to export, and `docs/24-incremental-views-report.md`
-/// §24.10 recorded that `Engine::footprint` computed one and nothing exported it. This exports the
+/// §5.3 names per-session memory as a metric to export, and `docs/23-incremental-views-report.md`
+/// §23.19 recorded that `Engine::footprint` computed one and nothing exported it. This exports the
 /// unit that scales — arrangement *entries*, `O(operators)` to read — rather than bytes, which
 /// would need a walk of the accumulator on every render.
 ///
@@ -502,7 +502,7 @@ async fn wait_for_hello<S: Socket>(
 /// Three numbers, and they answer different questions: `arranged` is what a fanout costs once,
 /// `retained` is how far behind the laggiest subscriber is, and `releases` is how often the process
 /// has thrown the arrangements away because nobody was connected. A render is the right moment for
-/// all three — it is when they change, and it is `O(operators)` to read (`docs/26`).
+/// all three — it is when they change, and it is `O(operators)` to read (`docs/23`).
 fn report_shared(app: &Arc<App>) {
     let shared = app.shared_dataflow();
     telemetry().shared_arranged.set(shared.arranged());

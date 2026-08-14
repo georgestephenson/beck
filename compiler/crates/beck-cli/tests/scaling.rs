@@ -27,7 +27,7 @@ use support::{command, todo_runtime};
 /// The default configuration with F3's per-actor write quota switched off.
 ///
 /// Every measurement here proposes more events from one actor than any person could, which is the
-/// definition of what the quota refuses. `docs/84` §84.5 is the sharper version of the same point:
+/// definition of what the quota refuses. `docs/82` §82.10 is the sharper version of the same point:
 /// a limit calibrated against human behaviour is tripped by a benchmark before it is tripped by an
 /// attacker, and a harness has to say which it is.
 fn unthrottled() -> AppConfig {
@@ -42,7 +42,7 @@ async fn fold_cost_ns_per_event(n: usize) -> (u64, f64) {
     let store = Arc::new(MemoryLog::new());
     // F3's write quota is on by default and this harness is exactly what it exists to refuse: one
     // actor appending thousands of events as fast as a machine can. Off here, because what is being
-    // measured is the *shape* of a fold and the quota is not the thing under test (`docs/84` §84.3).
+    // measured is the *shape* of a fold and the quota is not the thing under test (`docs/82` §82.4).
     let app = App::start(todo_runtime(), store.clone(), unthrottled())
         .await
         .expect("app starts");
@@ -102,7 +102,7 @@ async fn folding_a_log_is_not_quadratic() {
 async fn a_view_over_a_large_state_is_still_one_pass() {
     // The other half of §19.4 item 3, about the path that is still a full recompute: `App::render`
     // is what serves the first document and what reconstructs a resuming subscriber's old view, and
-    // it is O(rows) by design. A live subscription maintains its view instead (docs/24); what must
+    // it is O(rows) by design. A live subscription maintains its view instead (docs/23); what must
     // *not* happen on either path is the view becoming super-linear in the rows, which is what a
     // copying map would also cause.
     let store = Arc::new(MemoryLog::new());
@@ -244,7 +244,7 @@ fn the_whole_todo_program_graph_is_built_in_well_under_a_millisecond() {
 ///
 /// It cannot be a fuel assertion, and that is worth knowing: the step count over this loop is
 /// exactly linear either way, because a primitive that copies ten thousand values is one step
-/// (`docs/69` §69.7). Only wall clock sees it.
+/// (`docs/46` §46.14). Only wall clock sees it.
 #[test]
 fn building_a_list_by_accumulation_costs_the_same_per_element_however_long_it_gets() {
     let program = |n: usize| {
@@ -477,7 +477,7 @@ fn accumulating_inside_a_fold_costs_the_same_per_element_however_long_it_gets() 
 /// **Keeping a read model fresh costs the change, not the collection** — and costs nothing at all
 /// until somebody asks.
 ///
-/// [`docs/88-read-models-and-pgwire-report.md`](../../../../docs/88-read-models-and-pgwire-report.md)
+/// [`docs/23-incremental-views-report.md`](../../../../docs/23-incremental-views-report.md)
 /// claims two things about what a read model costs, and both are shapes rather than rates, so both
 /// are counted rather than timed:
 ///

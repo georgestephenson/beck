@@ -98,11 +98,11 @@ change to allow it. Likewise the WASI server target ([`05`](05-tier-lowering.md)
 zero-OS limit of the same idea.
 
 Implementation: ~~shell out to `apko` initially;~~ **the OCI layout is written directly from Rust**
-([`99`](99-supply-chain-report.md)) — `beck image` resolves the packages this config names, fetches
+([`92`](92-supply-chain-and-release-report.md)) — `beck image` resolves the packages this config names, fetches
 them, unpacks them and writes a layout, so the build is one process with no external tools and
 apko was never shelled out to. Neither `oci-client` nor `oci-spec` was needed: the format is four
 JSON documents and a tar. **Signing with Sigstore/cosign is built** in its keyed form, over the
-manifest digest and in the artefact shape `cosign verify --key` reads (§99.5). Still to do:
+manifest digest and in the artefact shape `cosign verify --key` reads (§92.6). Still to do:
 **push with the registry API**, **attach the SBOM** as a referring artefact, and the **provenance
 attestation**, which wants a builder identity and a transparency log this project does not have.
 `beck deploy` then pins by digest, never by tag.
@@ -110,7 +110,7 @@ attestation**, which wants a builder identity and a transparency log this projec
 The melange half is unchanged for the apko route and **drops out of the in-process one**, and the
 reason is worth keeping straight: apko copies nothing from the host because it executes nothing, and
 a build that *is* the compiler has the binary in hand. The reproducibility argument above is about
-execution, not about copying — §99.1.
+execution, not about copying — §92.1.
 
 **Rejected alternatives**: BuildKit (excellent, and the right answer *if* users need arbitrary build
 steps — keep it as `builder = buildkit` for escape-hatch cases, e.g. FFI to a C library needing a
@@ -154,12 +154,12 @@ Non-obvious defaults that should be *unavoidable*, because they are what separat
 throttling pathologies); `revisionHistoryLimit`; anti-affinity across zones; `preStop` sleep for
 connection draining; probes wired to the generated readiness endpoints.
 
-*Built, less two* ([`82`](82-the-defaults-that-should-be-unavoidable-report.md)): the four security
+*Built, less two* ([`82`](82-the-edge-report.md)): the four security
 defaults, `revisionHistoryLimit`, the `preStop` sleep and the probes are emitted, and
 `readOnlyRootFilesystem` is **derived** — true unless the program's row carries `fs.write`, which is
-a distinction one `fs(path)` atom could not make until [`81`](81-fs-is-two-atoms-report.md) split it.
+a distinction one `fs(path)` atom could not make until [`80`](80-structured-concurrency-report.md) split it.
 Resource requests are not emitted, for the reason the next paragraph gives. Anti-affinity is not
-either: `replicas` is 1, so a spread constraint would be a field with no effect. §82.4 is what none
+either: `replicas` is 1, so a spread constraint would be a field with no effect. §82.8 is what none
 of it has been checked against — there is no cluster in CI, so `conformance.rs` skips.
 
 **Resource requests** are a genuinely hard inference problem. Plan: v1 uses a per-language-construct

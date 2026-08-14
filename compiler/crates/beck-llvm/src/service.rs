@@ -26,11 +26,11 @@
 //! # A failure is an answer
 //!
 //! `http_fetch` fails by raising `HttpError`, and a raise is already a thing the compiled code
-//! knows how to carry ([`docs/112`](../../../../../docs/112-a-raise-arrives-report.md)): the error
+//! knows how to carry ([`docs/93`](../../../../../docs/93-the-native-backends-report.md)): the error
 //! cell, a two-word pair of shape and value, and a `try:` that compares a type name. So a failed
 //! fetch is answered with [`Trap::Raised`] and the pair, and the compiled program's own handler
 //! catches it without knowing an upcall happened. Nothing was added to the raise mechanism to make
-//! that work, which is the same shape §112.1 records for the mechanism itself.
+//! that work, which is the same shape §93.6 records for the mechanism itself.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;

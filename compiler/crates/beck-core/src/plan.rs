@@ -95,7 +95,7 @@ pub enum Op {
     /// everybody, and the reason is a clock rather than a privacy rule: the shared dataflow is
     /// versioned by the log's `seq` ([`crate::engine::SharedDataflow`]), and presence moves when
     /// the log does not. Sharing it would need a second version, which is
-    /// [`docs/96`](../../../../../docs/96-presence-report.md) §96.8's first unbuilt item.
+    /// [`docs/48`](../../../../../docs/48-identity-report.md) §48.13's first unbuilt item.
     Presence,
     /// A closed expression, evaluated once when the plan is prepared.
     Const,
@@ -293,7 +293,7 @@ impl Plan {
     /// The plan as the decomposition produced it, before [`crate::fuse`] rewrites it.
     ///
     /// Works from the *graph* rather than from [`crate::split::Roles::view`], for the reason
-    /// [`23`](../../../../../docs/23-general-slicer-report.md) built the graph in the first place: the
+    /// [`docs/23`](../../../../../docs/23-incremental-views-report.md) built the graph in the first place: the
     /// sliced expression has already lost which signal each part came from, and a plan whose nodes
     /// cannot be named is a plan no report can explain.
     pub fn unfused(placed: &Placed) -> Plan {
@@ -399,7 +399,7 @@ impl Plan {
     /// hash-consing shares; pruning afterwards costs one pass and changes nothing else.
     ///
     /// The roots are the page, the two sources, and every **named** signal — a name is projected as
-    /// a read-model table ([`88`](../../../../../docs/88-read-models-and-pgwire-report.md)), so it
+    /// a read-model table ([`docs/23`](../../../../../docs/23-incremental-views-report.md)), so it
     /// keeps its operator alive whether or not the page reads it.
     pub(crate) fn prune(&mut self) -> BTreeMap<OpId, OpId> {
         let mut live = vec![false; self.nodes.len()];
@@ -545,7 +545,7 @@ pub fn query_report(plan: &Plan) -> String {
 fn op_cost(plan: &Plan, i: OpId) -> String {
     let node = &plan.nodes[i];
     // A pointwise operator forces every arrangement it reads into a `Value::List`, which copies
-    // that arrangement's entries: docs/24 §24.6's "the page's children are still assembled in
+    // that arrangement's entries: docs/23 §23.8's "the page's children are still assembled in
     // full", located at the operator that does it.
     let forced: Vec<OpId> = node
         .inputs
@@ -640,7 +640,7 @@ pub fn cost_report(plan: &Plan) -> String {
             out,
             "  {} of {} operators cost O(n) per event, and all of them for the same reason: a\n\
              \x20 recompute needs a `list`, and an arrangement is a keyed collection. That is\n\
-             \x20 docs/24 §24.6's remaining constant factor, at {}.",
+             \x20 docs/23 §23.8's remaining constant factor, at {}.",
             linear.len(),
             plan.nodes.len(),
             linear

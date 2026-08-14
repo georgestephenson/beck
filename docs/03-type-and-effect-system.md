@@ -248,7 +248,7 @@ model Envelope[T]:
 ```
 
 *There is one other source, and it is a `Signal` rather than a `Stream`.* `presence()` is who is
-connected now ([`10`](10-decisions.md) D6, built in [`96`](96-presence-report.md)) — the only input
+connected now ([`10`](10-decisions.md) D6, built in [`48`](48-identity-report.md)) — the only input
 to a view that **moves without an event**. It performs `cap.presence`, which is what places it on
 the server; the chokepoint may not read it, because an event whose existence depended on who
 happened to be connected would not survive a replay.
@@ -264,10 +264,10 @@ our own auth code — with verified claims mapped to typed capabilities
 ([`10`](10-decisions.md) D6).
 
 > It carries a third field that **nothing verifies and nothing should**: `path`, the route the
-> client says it is on ([`100`](100-client-polish-report.md)). `actor` and `claims` say *who* is
+> client says it is on ([`94`](94-the-client-report.md)). `actor` and `claims` say *who* is
 > asking and are a provider's answer; `path` says *where* they are and is the browser's own
 > statement about itself. The two halves are told apart structurally where it matters — a Mode B
-> page may read the second and not the first (§100.2) — and the route cannot reach a **fold**,
+> page may read the second and not the first (§94.3) — and the route cannot reach a **fold**,
 > because an `Envelope` carries the actor's name and nothing else, so no replay depends on where
 > anybody was browsing.
 
@@ -290,7 +290,7 @@ off it: `durable(retain=90.days, snapshot=hourly)` — defaults sane, overridabl
 A program may declare **several** `durable` folds, and that is not several logs. The rule above is
 one totally-ordered log per application, so several folds are several *projections* of it: the
 compiler fuses them into one accumulator with a field per fold, and the runtime persists and
-snapshots exactly what it did before ([`23`](23-general-slicer-report.md) §23.4). A fold may also
+snapshots exactly what it did before ([`23`](23-incremental-views-report.md) §23.3). A fold may also
 read a slice of the log rather than all of it, by naming a `filter_map` between the chokepoint and
 itself; the filter is compiled into the step, because replay has to stay a function of the log.
 
@@ -341,11 +341,11 @@ authoritative patch arrives, speculative state is confirmed or discarded. This i
 mint entity ids (`uuid7()` in the sketch): they must refer to a todo before the server confirms it
 exists. Browsers here are **replicas, not terminals**. `Signal[T]` carries a freshness dimension
 (`confirmed | pending(n)`) that UI code can render ("saving…") — staleness is typed, not pretended
-away. *Built ([`102`](102-freshness-and-the-budget-report.md)), and as a **source** rather than as a
+away. *Built ([`94`](94-the-client-report.md)), and as a **source** rather than as a
 dimension on every signal's type: `freshness()` joins `presence()` in this section's vocabulary and
 answers `Confirmed | Pending(n)` for the render it is part of. What that gives a page is "is any of
 this a guess", which is what "saving…" means; what it does not give is **which part** — a per-signal
-dimension would let a page say that one list is speculative while the header is not, and §102.7 says
+dimension would let a page say that one list is speculative while the header is not, and §94.15 says
 plainly that this is a coarser thing than the sentence above describes.* The concession the original makes explicitly and we inherit: for *concurrent edits to the
 same value* (two users in one text field), speculative-then-reconcile is not enough — you need
 CRDTs or OT, "and no type system absolves you"
@@ -373,7 +373,7 @@ keeping them incremental:
 
   *The command is built* — `beck-core/src/incremental.rs`, and it is the **analysis only**: it says
   which views a plan could maintain and which the rules cannot reach, over a program whose views
-  are all still full recompute per event ([`23`](23-general-slicer-report.md) §23.8).
+  are all still full recompute per event ([`23`](23-incremental-views-report.md) §23.15).
 - **Invalidation does not exist as a concept.** There are no caches to invalidate — only views
   downstream of the log. What ships to a subscribed client is the patch stream of its view
   ([`05`](05-tier-lowering.md) §5.1). This subsumes the entire cache-key/TTL discipline of
@@ -424,7 +424,7 @@ State schema evolution is a *language* concern, not an ops concern (Lamdera's pr
    reject impure folds). Already novel, already shippable. — **Phase 2**.
 3. Placement inference for the unannotated middle; `beck explain place`; freshness-typed optimism.
    — **Phase 2**, except freshness-typed optimism, which needed Mode B and is now built
-   ([`102`](102-freshness-and-the-budget-report.md)): `freshness()` is a signal source, `Freshness`
+   ([`94`](94-the-client-report.md)): `freshness()` is a signal source, `Freshness`
    is `Confirmed | Pending(n)`, and a page that reads it may only render on the client — because a
    server holds the log and its answer would be `Confirmed` at every position of it.
 4. The cost model: rendering placement (DOM-patch vs data-patch, [`05`](05-tier-lowering.md) §5.1)
@@ -433,11 +433,11 @@ State schema evolution is a *language* concern, not an ops concern (Lamdera's pr
    does is charge a crossing the *smaller* of its two ends, which is that choice expressed as a cost
    and ready for the second lowering ([`20`](20-phase-2-report.md) §20.4 item 1).
 5. Incremental view compilation (differential lineage); materialized read models; pgwire exposure.
-   — **all three are Phase 3** ([`24`](24-incremental-views-report.md),
-   [`26`](26-arrangement-sharing-report.md), [`88`](88-read-models-and-pgwire-report.md)). The read
+   — **all three are Phase 3** ([`23`](23-incremental-views-report.md),
+   [`23`](23-incremental-views-report.md), [`23`](23-incremental-views-report.md)). The read
    models are not *materialized* in the sense this line assumed: they are the arrangements, served
    as relations rather than projected into tables ([`10`](10-decisions.md) D26). **Query fusion is
-   built too** ([`89`](89-query-fusion-report.md)), on the dataflow plan rather than on §4.2's
+   built too** ([`23`](23-incremental-views-report.md)), on the dataflow plan rather than on §4.2's
    `Query` sub-language, which is still symbolic and still unwritten — so this item is complete.
 6. Migrations/upcasters + operator choreography; replay/fork tooling.
 

@@ -2,7 +2,7 @@
 //
 // Nothing here compiles, folds, validates, renders, highlights or completes. Every answer on this
 // page came out of the WebAssembly module in the worker, which is the compiler and the runtime this
-// repository builds (docs/17 §17.1, §17.2; docs/103 for the editor, the log and the link). What
+// repository builds (docs/17 §17.1, §17.2; docs/98 for the editor, the log and the link). What
 // this file does is arrange things on a screen and pass ports between them.
 (() => {
   const $ = (id) => document.getElementById(id);
@@ -61,7 +61,7 @@
   //
   // Both the colours and the squiggles come from `beck_core::editor` — the module `beck lsp` asks
   // the same questions of. Every offset that crosses the boundary is a UTF-16 offset, because that
-  // is what `textarea.value` counts in and the conversion belongs where the text is (docs/103).
+  // is what `textarea.value` counts in and the conversion belongs where the text is (docs/98).
 
   let marks = [];
 
@@ -324,7 +324,7 @@
     // The whole log, every time. A playground's history is tens of events, so the alternative — a
     // record per row and a cursor to read them back — would be a store's worth of machinery for a
     // saving nobody in a tab can measure. It is the reason a very long session gets slower to
-    // *store*, and `docs/103` §103.6 says so rather than leaving it to be found.
+    // *store*, and `docs/98` §98.9 says so rather than leaving it to be found.
     async write(wire, records) {
       if (!this.ok) return;
       try {

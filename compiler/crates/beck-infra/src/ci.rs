@@ -134,7 +134,7 @@ pub fn workflow(graph: &InfraGraph, app: &str) -> String {
 /// Exported because the gate needs it: a generator that emits a command the binary does not have
 /// writes a workflow that fails on its first run, and the only way to notice is to compare against
 /// the command tree. Reading the emitted text rather than a list kept beside it is
-/// [`docs/92`](../../../../../docs/92-sbom-report.md) §92.2's rule — a proxy for a control is
+/// [`docs/92`](../../../../../docs/92-supply-chain-and-release-report.md) §92.2's rule — a proxy for a control is
 /// defeated by naming.
 pub fn invocations(workflow: &str) -> Vec<String> {
     let mut out = Vec::new();

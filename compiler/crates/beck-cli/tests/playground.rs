@@ -378,7 +378,7 @@ fn a_command_moves_every_page_it_changes_and_no_others() {
 /// Who is connected is who is connected *to the tab*, and somebody arriving moves the other pages.
 ///
 /// D6's presence signal is the one input to a view that moves without an event
-/// (`docs/96`), so it is also the one place a tab could quietly answer a
+/// (`docs/48`), so it is also the one place a tab could quietly answer a
 /// different question than a server: `beck_host::Runtime::view` renders against the viewer's own
 /// roster, which is right for `beck test` and wrong for an application. The tab keeps a roster —
 /// its own subscriptions — exactly as `beck_rt::App` keeps a registry.
@@ -409,7 +409,7 @@ fn presence_in_the_tab_is_who_is_connected_to_the_tab() {
 ///
 /// The rule is `beck_host::sequence`'s rather than the tab's, which is the point: the tab inherits
 /// it by running that function, and this asserts the inheritance rather than a second copy of the
-/// behaviour (`docs/94` §94.13 is what it cost to get wrong).
+/// behaviour (`docs/94` §94.10 is what it cost to get wrong).
 #[test]
 fn a_retried_command_is_acknowledged_and_appended_once() {
     let mut tab = Tab::load(compiled(
@@ -531,7 +531,7 @@ fn a_mode_b_subscription_carries_the_state_rather_than_the_page() {
 /// And they are the *server's* frames: the same subscription, the same ops.
 ///
 /// The Mode A half of this claim is `the_tab_and_the_server_send_the_same_frames`; this is the half
-/// §98.7 could not make, because the tab did not serve the mode. Compared against a real
+/// §98.9 could not make, because the tab did not serve the mode. Compared against a real
 /// subscription over the socket harness, so what is on the left is what `session::mode_b` wrote.
 #[tokio::test]
 async fn the_tab_and_the_server_send_the_same_data_frames() {
@@ -619,7 +619,7 @@ fn the_bundle_the_tab_hands_over_is_the_program_it_is_running() {
 
 /// A route is part of the session in the tab, in both modes.
 ///
-/// `docs/100` made the route a field of the session, and a host that ignored the `g` frame would be
+/// `docs/94` made the route a field of the session, and a host that ignored the `g` frame would be
 /// running the program against a session no deployment builds — silently, because a page that does
 /// not read `session.path` cannot tell.
 #[test]
@@ -759,11 +759,11 @@ fn a_share_link_carries_the_program_and_is_named_by_its_digest() {
     assert!(why.contains("share link"), "{why}");
 }
 
-// ------------------------------------------------------------------ the editor (docs/65, §98.7)
+// ------------------------------------------------------------------ the editor (docs/65, §98.9)
 
 /// The playground's editor is the language server's, on a different host.
 ///
-/// §98.7's last-but-one item was "a `<textarea>`, with no highlighting, no completion and no inline
+/// §98.9's last-but-one item was "a `<textarea>`, with no highlighting, no completion and no inline
 /// diagnostics — which is odd given `docs/65` built an LSP over this same front end". The answer is
 /// not a second implementation in JavaScript: both ask `beck_core::editor`, and this drives the
 /// **`beck lsp` binary** over stdio and the playground module over its own boundary, on the same
@@ -1029,7 +1029,7 @@ fn lsp_type_of(kind: &str) -> String {
 
 /// Every file the page asks a browser for is a file the playground ships.
 ///
-/// `docs/94` §94.7 is the reason this exists: the served document referenced an element that was
+/// `docs/94` §94.13 is the reason this exists: the served document referenced an element that was
 /// never in it, in every browser, since Phase 1, with every test in the workspace green. A missing
 /// asset is the same class of defect and this is the cheapest place to catch it.
 #[test]
@@ -1044,7 +1044,7 @@ fn the_bundle_carries_everything_the_page_asks_for() {
     // modules, which are build artefacts copied in by `serve::write` because building them needs a
     // target the compiler's own build does not — and the bundle, which is not a file at all. It is
     // derived from the running program and handed to the iframe over the port, so a client can
-    // never load a slice of a program the tab is not executing (docs/103).
+    // never load a slice of a program the tab is not executing (docs/98).
     let elsewhere = ["beck-play.wasm", "beck-kernel.wasm", "beck-bundle.bpk"];
     for name in referenced {
         assert!(
@@ -1122,7 +1122,7 @@ fn the_playground_serves_the_runtimes_own_residue() {
 // gated in `mode_b.rs::the_wasm_boundary_is_the_only_exception_to_forbid_unsafe`, which counts it
 // per crate and asserts that every *other* crate still inherits the workspace lint. One gate rather
 // than one per module: the property is about the workspace, and two copies of it would be two
-// things to keep in step (`docs/98` §98.5).
+// things to keep in step (`docs/98` §98.3).
 
 /// The module builds for the browser.
 ///

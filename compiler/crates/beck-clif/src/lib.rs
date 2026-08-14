@@ -6,7 +6,7 @@
 //! generators and says what each is for: **LLVM** for release, "best peak code quality available in
 //! open source", and **Cranelift** for development, "~40% faster whole-compile and ~10× faster
 //! codegen step than LLVM; makes `beck dev` hot reload feel instant".
-//! [`93`](../../../../docs/93-llvm-backend-report.md) built the first and listed the second as the
+//! [`93`](../../../../docs/93-the-native-backends-report.md) built the first and listed the second as the
 //! half that did not exist. This is the second half.
 //!
 //! It compiles the same subset [`beck_llvm`] compiles — scalars, and the records and unions

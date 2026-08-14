@@ -232,7 +232,7 @@ pub fn prims() -> Vec<(&'static str, Prim, Scheme)> {
         // `str_slice(s, start, count)` takes a **count**, not an end index. Worth stating because
         // the signature cannot: a primitive's parameters have no names in the generated reference,
         // so `(Str, Int, Int) -> Str` reads either way and the first caller to pass a non-zero
-        // start with a real count got it wrong (`docs/55` §55.5).
+        // start with a real count got it wrong (`docs/46` §46.8).
         //
         // Both are clamped rather than refused: a slice past the end is the empty string, not a
         // failure. That is a decision and not an oversight — a slice is not a parse, and `raises`
@@ -1204,7 +1204,7 @@ pub fn types() -> BTreeMap<Arc<str>, TyDecl> {
     //
     // It does not reach the log: an `Envelope` carries `actor` and nothing else, because a fold
     // whose replay depended on what the issuer was saying at the time would not be a fold
-    // (`docs/95` §95.4).
+    // (`docs/48` §48.6).
     //
     // `path` is the third thing a page may be a function of, and it is a different *kind* of thing
     // from the other two: `actor` and `claims` say who is asking and are what a provider verified,
