@@ -166,7 +166,7 @@ pub const MAX_LAYOUTS: usize = 512;
 /// a bound here is what turns a compiler bug into a message rather than into a blown host stack.
 ///
 /// It is also a limit on what a compiled definition may *answer* with, which the evaluator does not
-/// have — `docs/93` §93.12 carries it as a difference. The number is chosen the way
+/// have — `docs/93` §93.13 carries it as a difference. The number is chosen the way
 /// [`adr/0007`](../../../../../docs/adr/0007-evaluator-stack-is-declared-not-discovered.md) chooses
 /// the evaluator's: a frame here is small, and this is a depth an ordinary thread's stack holds
 /// several times over rather than the deepest one that would fit.

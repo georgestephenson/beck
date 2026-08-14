@@ -60,7 +60,7 @@ is where the code generator lives, not what the process boundary is for.
 ## What it buys
 
 - **A second emitter, and therefore a three-way differential.**
-  [`93`](../93-the-native-backends-report.md) §93.14's finding is that a differential compares what somebody
+  [`93`](../93-the-native-backends-report.md) §93.15's finding is that a differential compares what somebody
   thought to write down. Two independent emitters held to one subset make a class of mistake
   visible that one emitter cannot: `cranelift.rs` asserts they accept and refuse exactly the same
   definitions, and the first bug this backend had — a signed comparison of an unsigned order key —

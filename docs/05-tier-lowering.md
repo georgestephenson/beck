@@ -134,7 +134,7 @@ The two must agree observably — enforced by differential tests ([`04`](04-comp
 > half-true rather than false — the *record* compiles and the fold's `Map` does not. Text,
 > collections, closures and every effect are still the tree-walker's, and this section's "compiles
 > to native binaries, statically linked, one per `service`" remains a design for that reason.
-> §93.14 is the list, each row with a test that goes red the day it stops being true.
+> §93.15 is the list, each row with a test that goes red the day it stops being true.
 >
 > *And that list is now two rows long* ([`93`](93-the-native-backends-report.md),
 > [`93`](93-the-native-backends-report.md), [`93`](93-the-native-backends-report.md),
@@ -158,11 +158,18 @@ The two must agree observably — enforced by differential tests ([`04`](04-comp
 > `http_fetch` — compile by *asking*, on a worker protocol that grew a second direction. So the
 > paragraph above is corrected twice over: neither "every effect" nor "every operation that grows a
 > collection" is the tree-walker's any more. What is left is not a class but three names
-> ([`93`](93-the-native-backends-report.md) §93.14) — the signal vocabulary, which the splitter
+> ([`93`](93-the-native-backends-report.md) §93.15) — the signal vocabulary, which the splitter
 > reads rather than a body calling it; a **bounded** definition, whose dictionary is a function
 > value; and a worker that can answer two calls at once. This section's "compiles to native
 > binaries, statically linked, one per `service`" is *still* a design, and now for one reason rather
 > than a list: a compiled definition is called through a pipe rather than linked into a server.
+>
+> *And "statically linked" is half-true now* ([`93`](93-the-native-backends-report.md) §93.12): a
+> compiled program that reaches a digest, an encoding, a case mapping, `str_to_int` or the calendar
+> **links a static library** — `beck-prim`, the same crate the tree-walker calls, so the two cannot
+> disagree about a Unicode table. What is still a design is the sentence's other half: the linked
+> thing is a runtime library rather than the server, and the definition is still reached across a
+> pipe.
 
 **Runtime we must ship** (the "Roc platform" of Beck — an effectful Rust host owning I/O, scheduling
 and memory, executing the pure program):

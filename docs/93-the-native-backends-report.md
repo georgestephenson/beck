@@ -7,15 +7,19 @@ backends** — carried since Phase 1 as a shape with the evaluator on both sides
 file — is a three-way one: the tree-walker, LLVM and Cranelift on every call.
 
 Across the corpus, both benchmark suites, both SICP chapters, the examples and the standard library,
-**905 definitions compile and 173 are refused**. `examples/todo.beck` compiles eight of its nine, the
-one left being `validate`, for a Unicode table. Nine corpus programs compile their `apply_event` —
-the step function of a `durable` fold — and twenty-one of thirty-two compile their `view`.
+**941 definitions compile and 137 are refused**, and `examples/todo.beck` compiles **all nine of its
+definitions** — the sentence that used to name `validate` as the one left, for a Unicode table, was
+out of date rather than made true again by §93.12: `validate` reaches none of the fifteen primitives
+that section is about. Nine corpus programs compile their `apply_event` — the step function of a
+`durable` fold — and twenty-one of thirty-two compile their `view`.
 
-This chapter is the whole of Lane E. It arrived in fourteen pieces over as many changes, and the
-frame was the same every time: a thing gets a layout, both emitters learn it, the differential holds
-them to the evaluator, and the refusal that used to name it says something else instead. §93.6 is
-that sequence as a table, because the interesting content is the handful of findings and not
-fourteen repetitions of the frame.
+This chapter is the whole of Lane E. It arrived in fifteen pieces over as many changes, and for
+fourteen of them the frame was the same: a thing gets a layout, both emitters learn it, the
+differential holds them to the evaluator, and the refusal that used to name it says something else
+instead. §93.6 is that sequence as a table, because the interesting content is the handful of
+findings and not fourteen repetitions of the frame. The fifteenth is not that shape at all and has
+a section of its own: a primitive whose correctness is *somebody else's artefact* is neither emitted
+nor asked for but **linked** (§93.12).
 
 **Three of those findings are worth the chapter on their own.** A refusal is a claim and nothing was
 checking it, so four of them were false for whole reports at a time (§93.9). A `_` arm in a match on
@@ -27,11 +31,13 @@ inherited from the *evaluator's implementation strategy* rather than from the la
 
 ## 93.1 The shape: two emitters, one host, out of process
 
-`unsafe_code = "forbid"` at the workspace root, inherited by every crate, is
+`unsafe_code = "forbid"` at the workspace root, inherited by every crate that can inherit it, is
 [`43`](43-threat-model.md) §43.2's strongest claim — the only one that is *structural* rather than
-tested or asserted. Both of the obvious ways to build a native backend take it away:
-`llvm-sys`/`inkwell` is `unsafe` at the execution engine, and running compiled code in process is a
-pointer transmuted into a function under any name.
+tested or asserted. (The three that cannot are libraries with a `#[no_mangle]` export, which rustc
+classifies as unsafe code; §93.12 is the one of them this chapter is about.) Both of the obvious
+ways to build a native backend take it away: `llvm-sys`/`inkwell` is `unsafe` at the execution
+engine, and running compiled code in process is a pointer transmuted into a function under any
+name.
 
 So neither backend runs what it emits:
 
@@ -241,7 +247,7 @@ round trip, measured at 35.6 µs in the same run.
 runner cannot be held honestly — and there is a sharper reason as well: the native side is
 `clang -O2` whatever profile `cargo` was run in and the evaluator is not, so the same code answers
 2,460× under `cargo test` and 120× under `cargo test --release`. What is asserted is the **shape**,
-and §93.13 lists the gates that assert it with no clock in them at all.
+and §93.14 lists the gates that assert it with no clock in them at all.
 
 ### Scalar arithmetic
 
@@ -391,7 +397,7 @@ the field reads — which on these pages is not where the time goes. [`94`](94-t
 nothing per frame. The sizes are six times apart rather than eight because the *evaluator* bounds the
 larger one: [`adr/0007`](adr/0007-evaluator-stack-is-declared-not-discovered.md)'s declared nesting
 ceiling is 4,000 and that recursion is not in tail position. The compiled side has no such ceiling,
-which is itself worth knowing and is §93.14's regression.
+which is itself worth knowing and is §93.15's regression.
 
 **`map_keys` inside a loop is 55× worse for eight times the entries, on *both* backends.** That is a
 quadratic in the **program** rather than in either implementation, and it is in the fixture
@@ -416,6 +422,10 @@ A question whose argument could point into the arena carries the arena, and grow
 `secret_env` inside a loop over a large heap is a cost a developer can meet and `now()` is not — which
 is stated rather than smoothed because a reader deciding where to put the call needs it.
 
+**These are the numbers that decided §93.12.** A question is the right price for an answer only the
+process outside has; it is the wrong price for one that is a function of its arguments, and §93.12
+is the fifteen primitives that were paying it.
+
 ## 93.6 What compiles, and the order it arrived in
 
 Each row is one change. "Compiled" is the total of `beck native <file>`'s own two headline lines over
@@ -429,14 +439,15 @@ Each row is one change. "Compiled" is the total of `beck native <file>`'s own tw
 | 4 | **Text.** A layout, a literal pool, `+`, six comparisons and seven primitives | 344 | `str_slice` was charged the length the caller wrote rather than the length it takes, so `str_slice(s, 0, 1_000_000)` on a five-character string cost a million steps of fuel |
 | 5 | **A list, read-only.** `list_get` answers an `Option` **without a branch**, by `select`ing between the element's address and the list's own header | 403 | The host's decoder recursed, so `MAX_DEPTH = 2048` was a claim about the *thread's stack*: a debug build aborted at about 1,600. It is iterative now (§93.9) |
 | 6 | **A map, read-only.** Keys in one run and values in another — the first makes the search binary, the second makes `map_keys` a `memcpy` | 452 | Of 1,026 refusals across the tree, **472 blamed a `Map`**; afterwards **no refusal anywhere blamed a collection for having no layout**. Nine corpus `apply_event`s compiled, the first time anything at the centre of what Beck is *for* reached machine code |
-| 7 | **Closures.** A rank rather than a code pointer, an application as a switch into a direct call, five generated loops through it | 619 | A closure never crosses the boundary — §93.14. The gate built at row 5 **fired**, because giving a closure a shape made "a closure, which has no layout here" false while the refusal saying it was still there |
+| 7 | **Closures.** A rank rather than a code pointer, an application as a switch into a direct call, five generated loops through it | 619 | A closure never crosses the boundary — §93.15. The gate built at row 5 **fired**, because giving a closure a shape made "a closure, which has no layout here" false while the refusal saying it was still there |
 | 8 | **A view, as a recipe.** Not the tree: the *call* `html_el(tag, attrs, children)` would have been given, baked by the host with the evaluator's own builder | 688 | 42 refusals blamed a view; 38 compiled and 4 were re-refused for something already true of them. A view has **no order**, which is a refusal rather than an omission (below) |
 | 9 | **`raise` and `try:`.** The error cell every function already returns through *is* an unwinder; what this adds is a code, two words and a handler label | 711 | Clearing a `u32` code is not clearing a cell the worker's loop reads as an `i64` (§93.8) |
 | 10 | **A list grows.** The header split from the data block, so an append writes a slot no reader can see | 895 | The refusal had been inherited from the **evaluator's implementation strategy**, and every sentence of it was true (§93.7) |
 | 11 | **A map grows**, as the weight-balanced tree `beck_core::pmap` already is | 1,137 † | A user definition could take a runtime symbol's name: `awfy/richards.beck` has a `dispatch`, and so did the module. Latent since row 1, surfaced only when `dispatch` first compiled |
 | 12 | **A generic definition**, once per type it is used at | 870 † | A bounded search that gives up should give up on the **whole thing** — sixty-four individually true refusals said nothing together (§93.10) |
 | 13 | **The four primitives that ask the host** — `now()`, `uuid()`, `secret_env`, `http_fetch` | 889 | The lane row was one item and the work was two: `secret[T]` had no layout, which is what had made `HttpRequest` unlayoutable too. And a limit on compiled *time* is not a limit on a *call* (§93.11) |
-| 14 | **A list pattern**, `case [first, *rest]` — the last pattern form either emitter refused | **905** | The refusal it replaced had been false for three reports, and the gate written for exactly this class **could not fire**, because the sentence named no type (§93.9) |
+| 14 | **A list pattern**, `case [first, *rest]` — the last pattern form either emitter refused | 905 | The refusal it replaced had been false for three reports, and the gate written for exactly this class **could not fire**, because the sentence named no type (§93.9) |
+| 15 | **The runtime library.** Fifteen primitives that are a table, a grammar or somebody else's parser, linked rather than emitted or asked for (§93.12) | **941** | An emitter's `Bool` arm that had never executed, because none of row 13's four primitives answers one |
 
 † Rows 11–13 are counted over a different file set from row 10 and from each other, as the refusal
 profile was re-measured; the delta within each row is a delta between two runs of one command, which
@@ -766,7 +777,7 @@ policy. **A call where nothing decides the type**: `list_len(anything())` finish
 *variable*, and minting `anything@?3` would make a symbol a function of an inference counter rather than
 of the program — a determinism defect wearing a feature's clothes. And a **bounded** definition, which
 is not a template here at all, because `expand_bounds` already turned its bounds into value parameters
-holding function values — §93.14's closure boundary, and not something this pass should appear to have
+holding function values — §93.15's closure boundary, and not something this pass should appear to have
 answered.
 
 **The finding is about giving up.** The first version of the pass gave up part way through: on the
@@ -863,7 +874,115 @@ asked to mean two things. So the deadline is **stood down while the host works**
 deadline afterwards — not the old one, because charging the compiled half for time the host spent is the
 same conflation in smaller print.
 
-## 93.12 What it costs, said plainly
+## 93.12 A primitive that is somebody else's table is linked
+
+Fifteen primitives are neither a computation an emitter can produce nor a question only the process
+outside can answer. `digest`, `digest_keyed`, `digest_eq`, `hex_encode`, `hex_decode`,
+`base64_encode`, `base64_decode`, `uuid_parse`, `uuid_version`, `str_upper`, `str_lower`,
+`str_to_int`, `str_replace`, `time_format`, `time_parse` — each one a **pure function of its
+arguments whose correctness is somebody else's artefact**: a Unicode case table, BLAKE3's round
+function, RFC 4648's alphabet, Rust's `i64` parser, the civil calendar. Both emitters refused all
+fifteen, and the refusals said why in as many words:
+
+> `str_upper` **is Unicode case mapping, which is a table rather than an operation** — and a
+> compiled half-answer that folded ASCII only would disagree with the evaluator on the first letter
+> that is not
+
+There were three possible answers and only one is both fast and exactly right:
+
+| | Fast | Exactly the evaluator's answer |
+|---|---|---|
+| **Ask** (§93.11's upcall) | no — a pipe round trip per call | yes |
+| **Emit the algorithm** | yes | only as far as it has been tested |
+| **Link the implementation** | yes | yes, because there is one implementation |
+
+So a compiled program **links a static library**, `beck-prim`, and it is not new code:
+`beck-core`'s digests and encodings and `beck-eval`'s civil calendar moved into it, and the
+evaluator calls it too. "Both backends compute the same digest" is therefore a property of there
+being one function rather than a claim a differential supports. This is what a compiler normally
+does — `rustc` ships `libstd`, `clang` ships `compiler-rt` — and nothing in the subset had needed it
+before, because arithmetic is instructions and a `Str` is §93.2's `memcpy`.
+
+**The measurement is the argument**, and the mechanism it was chosen over is measured beside it in
+the same run: `cargo test --release --test measure_native -- --nocapture`, with each primitive
+called `n` times *inside one compiled call* so that what is timed is the primitive rather than the
+worker's round trip.
+
+| definition | calls | evaluator/call | native/call | ratio |
+|---|---:|---:|---:|---:|
+| `digest` | 1,000 | 785 ns | **262 ns** | 3.0× |
+| | 10,000 | 1,309 ns | **274 ns** | 4.8× |
+| `str_upper` | 1,000 | 662 ns | **122 ns** | 5.4× |
+| | 10,000 | 1,463 ns | **122 ns** | 12.0× |
+| `str_to_int` | 1,000 | 691 ns | **65 ns** | 10.6× |
+| | 10,000 | 1,596 ns | **61 ns** | 26.2× |
+| `now()`, **asked** rather than linked | 100 | 415 ns | **7,816 ns** | 0.1× |
+| | 1,000 | 445 ns | **5,198 ns** | 0.1× |
+
+A question costs **5.2 µs** and a linked primitive **61–274 ns**, so a digest asked for across the
+pipe would cost nineteen times what computing it costs and a `str_to_int` eighty-five times. The
+last two rows are the shape all fifteen would have had: the *evaluator* ten times faster than
+compiled code, because the compiled code is waiting on a pipe and the tree-walker is calling a
+function.
+
+That 5.2 µs is smaller than §93.5's 24.5 µs for the same primitive, and the difference is what each
+is measuring: there, a `now()` and the *call* that carried it, one worker round trip included; here,
+a `now()` issued from inside a call already in flight, a thousand of them to one round trip. The
+cheaper of the two numbers is still nineteen times the work it would be replacing.
+
+**No pointer crosses the ABI, and that was the decision** rather than a detail
+([`adr/0029`](adr/0029-the-runtime-library-is-linked-and-owns-the-arena.md)). §93.1's
+`forbid(unsafe_code)` is structural, and a library whose entry points took `(*const u8, usize)`
+would need `slice::from_raw_parts` in the first line of every one of the fifteen. So the arena is
+turned around: **the library owns the heap**. Generated `main` asks `beck_prim_arena` for it instead
+of calling `malloc`, and every call after that carries offsets into a `Vec<u8>` the library holds,
+where reading one is an index and a bad one is a bounds check.
+
+```c
+uint8_t *beck_prim_arena(int64_t bytes);
+int64_t  beck_prim(int32_t op, int64_t mark, int64_t a0, int64_t a1, int64_t a2);
+```
+
+That is §93.2 paying for itself a second time: a value that is an **offset and not a pointer** was
+made so that a heap could cross a pipe as bytes, and the same property lets one cross a C ABI as a
+number. `beck-prim` contains no `unsafe` block and no raw-pointer read — only the two attributes
+rustc demands on an export, counted exactly by the gate that counts `beck-wasm`'s.
+
+**The answer comes back above the water line.** `beck_prim` allocates from the mark it was given and
+writes a two-word outcome record — a status and a word — immediately *above* everything it
+allocated, answering with that offset; the caller stores it as the new mark and reads the record
+from it. The record is scratch, live exactly as long as the caller needs it, so a call costs no
+arena beyond its answer. Below the mark it would be correct and would leak sixteen bytes a call
+without changing a single answer, which is why the gate for it counts bytes rather than seconds
+(§93.14).
+
+**What the library does not do is build a value.** Five of the fifteen fail on bad input, and a
+failure here is a *declared* value — `EncodingError.BadEncoding(encoding = "hex", why = …)` — whose
+layout belongs to whichever emitter asked. So the failure is **described** rather than built:
+`beck_prim::Op::raises` names the type, the variant, the fields the primitive fixes and the field
+the message goes in; the library produces the message; each emitter builds the value and stores the
+type's name in the error cell for a `try:` to compare, exactly as `raise` does. `str_to_int` is the
+same division for a different reason — it answers `Option[Int]`, so the library says *there is no
+value* as a third status and the emitter builds the `None` its own layout calls for.
+
+**What it costs.** The archive is 21.4 MiB of `staticlib`, 6.1 MiB compressed, which is what the
+`beck` binary carries; it is not stripped, because the embedded bytes would then depend on whether
+the machine that built `beck` had `strip` and [`92`](92-supply-chain-and-release-report.md)'s
+provenance is worth more than the sixth it would save. A program that *links* it goes from 16 KiB to
+**4.9 MiB** — almost none of it the digest, most of it Rust's standard library and most of *that*
+the panic hook's backtrace symboliser. So "only when it is called" is a gate rather than an
+intention, and it decides the arena's source too: a module that reaches none of the fifteen names
+none of the library's symbols and still calls `malloc`.
+
+**The finding is one an emitter written twice produces** (§93.8's theme, in a new place).
+`digest_eq` is the first primitive in this backend's history whose answer arrives as a word and is a
+**`Bool`**, and Cranelift's `narrow` — the function turning a protocol's eight bytes into the value
+its repr says it is — had a `Bool` arm that extended an `I8` to an `I8`, which the verifier rejects.
+The arm had been there since §93.11 and had never executed: the four host primitives answer an
+`Int`, a `Str` and a record, and not one of them answers a `Bool`. A helper written for *n* callers
+is tested by *n* callers, and the arm no caller reaches is the arm that is wrong.
+
+## 93.13 What it costs, said plainly
 
 **Memory is not reclaimed inside a call.** There is no collector. A loop that allocates a million objects
 holds a million objects whether or not the program can still reach them, and the ceiling is 256 MiB. That
@@ -917,7 +1036,7 @@ them. It is the second: one pass, and the words past what was kept are arena nob
 the arena is reset. A predicate called twice would be a cost the evaluator does not have, to save memory
 the next allocation does not need.
 
-## 93.13 The gates
+## 93.14 The gates
 
 The differential is the point, and it compares the **whole outcome** — the value, or the failure and its
 message — because an integer overflow is a value in this language and a backend that failed for a
@@ -940,6 +1059,7 @@ opinion about what the subset is.
 | generics | 103 / 100 |
 | the host effects | 16 each |
 | list patterns | 50 each |
+| the runtime library | 808 each |
 
 Each alphabet is chosen so that a specific mistake would show, rather than to be large: an embedded NUL,
 so nothing can reach for `strlen`; two-, three- and four-byte characters; a prefix pair, because
@@ -958,7 +1078,9 @@ Beyond the differential, three kinds of gate matter more than a timing one:
   sizes; a slice costs its answer and not what it was taken from, at 200 and 1,600; a page costs 96 bytes
   a row and 504 a page, at 100 rows and 800; a fold that builds nothing costs one closure and its answer
   at both sizes; an appended accumulator is 4.0× for 4× the elements and a map fold 4.9×; a raise caught
-  25 frames up and one caught 200 frames up leave the **same 168 bytes**. Every one of these fails on a
+  25 frames up and one caught 200 frames up leave the **same 168 bytes**; and 800 more `digest` calls
+  cost 800 answers and nothing else, which is the deterministic form of §93.12's claim that a call
+  costs no arena beyond what it answers with. Every one of these fails on a
   design that is quadratic in the arena and answers correctly at every size a test would run. It is
   [`64`](64-compile-speed-report.md) §64.1's pattern — gate the shape, print the rate — applied to memory.
 - **Parity gates.** `the_two_emitters_accept_and_refuse_the_same_definitions` over every program in the
@@ -969,7 +1091,10 @@ Beyond the differential, three kinds of gate matter more than a timing one:
 - **Control gates.** The stated host tallies its outbound calls and the differential asserts the count is
   exactly twice the cases that reach `http_fetch`, because a run in which one side quietly fell back to the
   evaluator would agree on every value and be worth nothing. `scalar_and_fine` has to still compile, so a
-  list of refusals cannot pass by refusing everything.
+  list of refusals cannot pass by refusing everything. And a module that reaches none of §93.12's
+  fifteen primitives must name none of the runtime library's symbols: on the Cranelift side getting
+  that wrong is a link that fails rather than a large binary, because an imported symbol nothing
+  resolves has nothing to resolve against.
 
 One thing the gates found rather than asserted: **a raise inside `map_list`'s generated loop already
 worked**, on both backends, with nothing written for it. A loop applies a closure and checks the error cell
@@ -977,7 +1102,7 @@ after it, and a raise is a code in that cell — so "leave the loop rather than 
 true the moment a raise could happen at all. That is the argument for reusing the fault path rather than
 building a second one, cashed.
 
-## 93.14 What is not built, and what is open
+## 93.15 What is not built, and what is open
 
 ### Not built
 
@@ -1021,11 +1146,20 @@ switch either.
 form that is almost always written empty. Every `durable` fold in this tree starts at `{}`, which was the
 case that mattered.
 
-**`str_upper`, `str_lower`, `str_trim`, `str_replace`, `str_repeat`, `str`, `str_to_int`,
-`list_flat_map`, `sort_by`.** Unicode case mapping and whitespace are tables; a rendering has to be Rust's
-to the digit; `list_flat_map` answers a list whose length is a sum over the lists its function answers; and
-`sort_by` decorates and merges **stably**, which `beck-eval` is explicit is what makes the order total
-without a second key. `sort_by` is the next one to build, not one that cannot be.
+**Four primitives, and the two `Json` ones.** `str` of a **`Float`**, whose shortest round-tripping
+decimal is an algorithm rather than a loop and would have to be Rust's to the digit — `str` of an `Int`
+compiles. `list_flat_map`, which answers a list whose length is a sum over the lists its function
+answers, and `list_zip_with`, which answers a list of pairs where there is no pair type to lay out.
+And `json_parse`/`json_render`: a `Json` document's object variant is a `Map[Str, Json]`, whose shape
+in the arena is the emitter's, so the runtime library of §93.12 cannot build one and reading one back
+is the same problem inverted. The way in is visible — the library parses with `serde_json` and writes
+a flat node array, and each emitter generates a builder that walks it with its own layout and its own
+`map_insert` — and it is a piece of work rather than a line.
+
+*Corrected in place:* this list used to carry `str_upper`, `str_lower`, `str_trim`, `str_replace`,
+`str_repeat`, `str_to_int` and `sort_by` as well. All seven compile — the first four and `str_to_int`
+through §93.12, the other two before it — and the probe that says so is one definition per primitive
+through `beck native`.
 
 **In-process execution**, which is refused rather than missing.
 

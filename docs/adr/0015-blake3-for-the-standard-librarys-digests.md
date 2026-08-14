@@ -14,7 +14,7 @@ value (`core.rs`) and the split's fingerprint, and [`docs/48`](../48-identity-re
 
 **Decision.** The standard library's `digest` and `digest_keyed` are BLAKE3 and keyed BLAKE3, from
 the `blake3` crate already in the workspace. No new dependency is taken. Hex and base64url are
-written here (`beck-core/src/digest.rs`) against RFC 4648's own test vectors, because an alphabet is
+written here (`beck-prim/src/digest.rs`, which was `beck-core`'s until the runtime library gave the evaluator and a compiled program one implementation to share — [`0029`](0029-the-runtime-library-is-linked-and-owns-the-arena.md)) against RFC 4648's own test vectors, because an alphabet is
 not cryptography and a third dependency for sixty lines of table lookup is a supply-chain edge for
 nothing.
 

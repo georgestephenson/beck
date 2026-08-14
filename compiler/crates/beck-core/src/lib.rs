@@ -22,7 +22,6 @@ pub mod core;
 pub mod cost;
 pub mod delta;
 pub mod diff;
-pub mod digest;
 pub mod docgen;
 pub mod edge;
 pub mod editor;
@@ -55,6 +54,13 @@ pub mod testing;
 pub mod ty;
 
 pub use backend::{Backend, Callable, ExecError};
+/// The standard library's digests, encodings and identifiers.
+///
+/// Re-exported rather than defined here: they are the runtime library's, so that a compiled
+/// program and the tree-walker call one implementation of them (`docs/93` §93.12). The name is also a
+/// *function* in this crate — `beck_core::digest(&state)`, the state hash — and a module and a
+/// function may share one.
+pub use beck_prim::digest;
 pub use bundle::Bundle;
 pub use check::{check_module, Def, Program, SignalDecl};
 pub use compat::{compare, is_breaking, Change};

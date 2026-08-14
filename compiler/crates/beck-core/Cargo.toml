@@ -9,6 +9,9 @@ publish.workspace = true
 beck-diag.workspace = true
 beck-syntax.workspace = true
 beck-macro.workspace = true
+# The standard library's host half — the digests, the encodings and the identifiers — lives in the
+# runtime library so that the evaluator and a compiled program run one implementation (docs/93 §93.12).
+beck-prim.workspace = true
 blake3.workspace = true
 serde.workspace = true
 serde_json.workspace = true

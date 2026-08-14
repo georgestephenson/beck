@@ -19,7 +19,7 @@
 //!
 //! A ratio that grows with size is the round trip being amortised away, and it is reported rather
 //! than smoothed: at a small size the round trip is most of the cost, which is a real property of
-//! an out-of-process backend and the first thing §93.14 would change.
+//! an out-of-process backend and the first thing §93.15 would change.
 //!
 //! # What is gated, and what is only printed
 //!
@@ -1348,4 +1348,130 @@ def secret_after(n: Int) -> Int uses env:
     xs = range_list(n)
     token = secret_env("BECK_TEST_TOKEN")
     return list_len(xs) + str_len(str(list_len(xs)))
+"#;
+
+/// What a **linked** primitive costs, against the two things it could have been instead.
+///
+/// `docs/93` §93.12 is the change this measures and the argument is entirely about cost, so the numbers
+/// are the argument rather than a footnote to it. Three columns, and each is one of the three ways
+/// a primitive that is "a table or somebody else's parser" could have been served:
+///
+/// * **the evaluator**, which is what a refused definition falls back to;
+/// * **a linked call**, which is what it is now — a direct call into `beck-prim`;
+/// * **a question**, which is what the four `nondet` primitives do ([`docs/116`]) and the design
+///   this one was chosen over. `now()` is measured here rather than quoted from that report, so
+///   the comparison is two mechanisms on one machine in one run.
+///
+/// Two sizes each, `AGENTS.md`'s rule, and the *per-call* cost is what is printed: a mechanism
+/// whose per-call cost grows with the number of calls is a mechanism with a leak, and for this one
+/// the question is specifically whether the outcome record's two words accumulate. They do not —
+/// the record sits above the arena's mark and the next call writes over it — and this is where
+/// that shows.
+///
+/// Nothing is asserted about a rate, for `what_the_heap_costs_against_the_tree_walker`'s reason.
+/// What is asserted is the **shape**: the per-call cost must not grow with the count.
+#[test]
+fn what_a_linked_primitive_costs() {
+    let program = compile("linked.beck", LINKED);
+    let Some(artifact) = Artifact::build_within(&program, Duration::from_secs(300))
+        .expect("clang accepts the module")
+    else {
+        assert!(
+            !require_llvm(),
+            "BECK_REQUIRE_LLVM=1 and there is no `clang` on the path"
+        );
+        println!("skipped: no LLVM toolchain. Set BECK_REQUIRE_LLVM=1 to make this a failure.");
+        return;
+    };
+    let evaluator = beck_eval::backend_for(program.clone());
+    println!("{}\n", artifact.toolchain().version);
+    println!(
+        "{:<14} {:>9} {:>16} {:>16} {:>9}",
+        "definition", "calls", "evaluator/call", "native/call", "ratio"
+    );
+
+    let mut per_call: Vec<(&str, [f64; 2])> = Vec::new();
+    for (name, sizes, runs) in [
+        ("digested", [1_000i64, 10_000], [9usize, 3]),
+        ("shouted", [1_000, 10_000], [9, 3]),
+        ("parsed", [1_000, 10_000], [9, 3]),
+        // The other mechanism, at a hundredth of the count: a question is a pipe round trip, and
+        // ten thousand of them is a test that takes a quarter of a minute to say what a hundred
+        // says.
+        ("asked", [100, 1_000], [9, 3]),
+    ] {
+        let mut ns = [0.0f64; 2];
+        for (i, n) in sizes.iter().enumerate() {
+            let args = vec![Value::Int(*n), Value::Int(0)];
+            let walked = beck_eval::on_the_evaluator_stack(|| {
+                let f = evaluator
+                    .function(&program.defs[name].body)
+                    .expect("prepares");
+                median(runs[i], || {
+                    f(args.clone()).expect("the evaluator answers");
+                })
+            });
+            let compiled = median(runs[i], || {
+                artifact
+                    .call(name, &args)
+                    .expect("the native backend answers");
+            });
+            let each = compiled.as_secs_f64() / *n as f64;
+            ns[i] = each * 1e9;
+            println!(
+                "{:<14} {:>9} {:>16} {:>16} {:>8.1}×",
+                if i == 0 { name } else { "" },
+                n,
+                format!("{:.0} ns", walked.as_secs_f64() / *n as f64 * 1e9),
+                format!("{:.0} ns", ns[i]),
+                walked.as_secs_f64() / compiled.as_secs_f64()
+            );
+        }
+        per_call.push((name, ns));
+    }
+
+    // The shape. A per-call cost that grew with the count would mean the mechanism accumulates
+    // something per call — the outcome record, if it were written *below* the mark rather than
+    // above it — and the arena is 256 MiB, so a leak that small takes a large count to show. The
+    // bound is loose because the small size is noisier, not because the claim is weak.
+    for (name, [small, large]) in &per_call {
+        assert!(
+            large < &(small * 2.0),
+            "`{name}` cost {small:.0} ns per call at the small count and {large:.0} ns at the \
+             large one — a per-call cost that grows with the count is a mechanism that keeps \
+             something, and this one is supposed to keep nothing"
+        );
+    }
+    println!(
+        "\nThe last row is the other mechanism: `now()` is a question, and a question is a pipe\n\
+         round trip. That ratio is the whole of `docs/93` §93.12's argument — a digest asked for across\n\
+         a pipe would cost what the last row costs, whatever the digest itself takes."
+    );
+}
+
+/// A primitive of each kind, called `n` times inside **one** call.
+///
+/// Inside one call on purpose: what is being measured is the per-primitive cost, and a harness that
+/// called the definition `n` times would be measuring the worker's round trip `n` times instead.
+const LINKED: &str = r#"
+def digested(n: Int, acc: Int) -> Int:
+    if n <= 0:
+        return acc
+    return digested(n - 1, acc + str_len(digest("the quick brown fox")))
+
+def shouted(n: Int, acc: Int) -> Int:
+    if n <= 0:
+        return acc
+    return shouted(n - 1, acc + str_len(str_upper("straße")))
+
+def parsed(n: Int, acc: Int) -> Int:
+    if n <= 0:
+        return acc
+    return parsed(n - 1, acc + unwrap_or(str_to_int("12345"), 0))
+
+## The other mechanism, for the same shape of loop: `now()` is a question rather than a computation.
+def asked(n: Int, acc: Int) -> Int uses nondet:
+    if n <= 0:
+        return acc
+    return asked(n - 1, acc + now())
 "#;

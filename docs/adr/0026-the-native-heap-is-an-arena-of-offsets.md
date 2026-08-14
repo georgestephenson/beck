@@ -2,8 +2,8 @@
 
 **Status:** accepted
 **Date:** 2026-08-10
-**Context:** [`93`](../93-the-native-backends-report.md), [`93`](../93-the-native-backends-report.md) §93.14,
-[`93`](../93-the-native-backends-report.md) §93.14, [`05`](../05-tier-lowering.md) §5.2,
+**Context:** [`93`](../93-the-native-backends-report.md), [`93`](../93-the-native-backends-report.md) §93.15,
+[`93`](../93-the-native-backends-report.md) §93.15, [`05`](../05-tier-lowering.md) §5.2,
 [`43`](../43-threat-model.md), [`0021`](0021-the-native-backend-writes-ir-and-runs-a-process.md),
 [`0024`](0024-cranelift-emits-an-object-and-a-linker-makes-it-a-program.md)
 
@@ -57,7 +57,7 @@ written twice.
   objects, whether or not the program can still reach them. The bound is
   `beck_llvm::heap::ARENA_BYTES` — 256 MiB — and exceeding it is `Trap::HeapExhausted`, which is a
   message with a span rather than a fault. The evaluator has no such limit, and that difference is
-  written down in [`93`](../93-the-native-backends-report.md) §93.12 rather than argued away.
+  written down in [`93`](../93-the-native-backends-report.md) §93.13 rather than argued away.
 - **A reply carries the whole used arena, not the value.** The worker cannot tell which objects the
   answer can reach without a walk it has no code for, so a call that answers with an object sends
   back everything it allocated. A call that answers with a scalar sends nothing.
@@ -98,6 +98,6 @@ layout to be wrong.
 
 **A `Str` and a `list` in the same change.** They fit this arena — a length and then the bytes — and
 they are not here, because what makes them hard is not the layout ([`93`](../93-the-native-backends-report.md)
-§93.14): a string is a character index and an ASCII flag that has to answer exactly what
+§93.15): a string is a character index and an ASCII flag that has to answer exactly what
 `beck_core::Text` answers, and a list is `list_append`, which is `docs/70`'s in-place push and
 therefore the ownership question this ADR just deferred.

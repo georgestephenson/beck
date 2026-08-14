@@ -9,6 +9,16 @@ description = "Native code generation for Beck: Core to LLVM IR, and the toolcha
 [dependencies]
 beck-core.workspace = true
 beck-diag.workspace = true
+# The runtime library, for its side of the ABI — the op codes, the arities and the outcome record
+# — so that a call this crate emits and the function it lands in are one table (docs/93 §93.12). The
+# archive a compiled program links is built by `build.rs` and embedded; this is the same crate,
+# without its `abi` feature, linked into the compiler for what it *knows*.
+beck-prim.workspace = true
+# The archive is embedded compressed, and unpacked by the link step that needs it (`crate::prim`).
+flate2.workspace = true
+
+[build-dependencies]
+flate2.workspace = true
 
 [lints]
 workspace = true

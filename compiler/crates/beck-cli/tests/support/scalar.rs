@@ -347,7 +347,7 @@ def ackermann(m: Int, n: Int) -> Int:
 /// **grows** it. `str` of an `Int` came off it too, so the row here is a **real**, whose shortest
 /// round-trip decimal is an algorithm rather than a loop. The **host effects** came off it when the
 /// worker's protocol grew a second direction, and `reads_the_clock` stayed in the program as a
-/// control rather than being deleted. What is left is what `docs/93` §93.14 names as not built —
+/// control rather than being deleted. What is left is what `docs/93` §93.15 names as not built —
 /// and `scalar_and_fine` is the other control: a list of refusals with nothing on the other side of
 /// it would pass against a backend that refused everything.
 pub const REFUSED: &str = r#"

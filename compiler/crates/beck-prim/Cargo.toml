@@ -1,0 +1,31 @@
+[package]
+name = "beck-prim"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Beck's runtime library: the primitives a compiled program links against, and the same ones the evaluator calls"
+
+[lib]
+# `staticlib` is the artefact a compiled program links; `rlib` is the same code linked into the
+# compiler, so the evaluator and the machine code run one implementation rather than two.
+crate-type = ["rlib", "staticlib"]
+
+[dependencies]
+blake3.workspace = true
+
+[features]
+default = []
+# The C entry points. Off by default so that the crate linked *into* the compiler — and into the
+# playground's WebAssembly, which exports symbols of its own — carries no exports at all; the
+# staticlib the backends embed is built with it on.
+abi = []
+
+[lints.rust]
+# The workspace forbids `unsafe_code`, and this crate cannot inherit that for the reason
+# `beck-wasm` cannot: rustc counts `#[no_mangle]` as unsafe code, because two libraries exporting
+# one symbol is undefined at link time. Nothing else here is excepted — there is no raw pointer
+# dereference, no `unsafe` block and no `unsafe fn`, which is what [`arena`] is shaped around and
+# what `mode_b.rs::an_exported_symbol_is_the_only_exception_to_forbid_unsafe` asserts by reading
+# this crate's sources.
+unsafe_code = "deny"
