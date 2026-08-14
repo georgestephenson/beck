@@ -371,12 +371,14 @@ filesystem atom, `fs.read`, `fs.write` — and asserts `true`, `true`, `false`. 
 assertion that would have been impossible before the split, and the one that says the split was
 worth taking: **reading a file is not a reason to make the root writable.** **The manifest set is a
 reviewed diff**: the golden file moved by exactly these fields, and the snapshot gate is what made
-that a decision rather than a surprise. **Nothing here has been applied to a cluster**:
-`beck-infra/tests/conformance.rs` is the rung that would `kubectl apply` these objects and it skips
-without one.
+that a decision rather than a surprise. **Admissibility is checked; behaviour is not**:
+`beck-infra/tests/conformance.rs` `kubectl apply --dry-run=server`s these objects, it skips without
+a cluster, and `compiler.yml`'s conformance job creates a k3d cluster and sets
+`BECK_REQUIRE_CLUSTER=1` so the skip is forbidden in CI.
 
-So what is established is that the emitter *writes* these fields and that the flag is a function of
-the row. That the pod then starts is not established. The specific risk is the obvious one — a
+So what is established is that the emitter *writes* these fields, that the flag is a function of
+the row, and that the API server admits the result on every merge. That the pod then starts is not
+established — dry-run schedules nothing. The specific risk is the obvious one — a
 read-only root filesystem breaks any process that writes to `/tmp`, and the usual remedy is an
 `emptyDir` mounted there. Adding one pre-emptively would be a second unverified guess rather than a
 fix, and the reason to think it is not needed is checkable without a cluster: on the deployed path
@@ -479,7 +481,7 @@ that had been fixed and nobody noticed (§82.12).
 | The same hardening on the **Compose** platform | **not built.** Compose has `read_only`, `cap_drop` and `security_opt`, and the rung it serves is a laptop rather than a cluster. The parity claim between the two platforms is about the objects, not about the hardening |
 | Resource requests and limits | **not built**, and §6.5 says why it is not a one-liner: "a genuinely hard inference problem", with a per-construct heuristic and `beck tune` planned. Emitting a guessed number would be worse than emitting none |
 | Anti-affinity across zones | **not built.** `replicas` is 1, so a spread constraint would be a field with no effect. It becomes real when replicas do |
-| Any of the pod hardening verified against a cluster | **not done** (§82.8) |
+| Any of the pod hardening verified against a cluster | **admissibility is** — the CI conformance job (§82.8). Behaviour — the pod starting, the probes passing — is not, and neither is *best practice*: the third-party scanner gate ([`28`](28-releases-and-deployment.md) §28.5) is the schedule for that |
 
 ## 82.12 What this corrects, elsewhere
 

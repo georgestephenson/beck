@@ -29,7 +29,7 @@ Newest first.
   oracle this project does not maintain, added to
   [`docs/21`](docs/21-tests-in-beck-and-proof.md) §21.4 as rung 6 (proof moves to 7).
 - **Two stale claims corrected in place**: [`docs/06`](docs/06-kubernetes-and-packaging.md) §6.3
-  and [`docs/82`](docs/82-the-defaults-that-should-be-unavoidable-report.md) §82.4/§82.5 said no
+  and [`docs/82`](docs/82-the-edge-report.md) §82.8/§82.11 said no
   cluster checks the hardening defaults; `compiler.yml`'s conformance job (k3d,
   `BECK_REQUIRE_CLUSTER=1`) has held admissibility on every merge since it landed. What remains
   unestablished is behaviour — dry-run schedules nothing — and best practice, which the scanner
