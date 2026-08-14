@@ -389,7 +389,7 @@ def or_else(o: Option[Int], fallback: Int) -> Int:
 
 /// Definitions the heap does **not** reach, one per reason.
 ///
-/// The list is what `docs/101` §101.5 said is not built, less the row `docs/105` removed, in the
+/// The list is what `docs/93` §93.14 said is not built, less the row `docs/93` removed, in the
 /// form that goes red the day one of them starts compiling — which is the point: an absence
 /// asserted as a test is an absence that cannot go stale (`docs/83` §83.7).
 ///

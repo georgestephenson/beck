@@ -176,7 +176,7 @@ def done_class(t: Todo) -> Str:
 
 /// What the heap still refuses to do with a view, each with the reason a reader is given.
 ///
-/// Two kinds. The three orderings are §111.4's, and the two `Attr` parameters are §111.3's: the
+/// Two kinds. The three orderings are §93.6's, and the two `Attr` parameters are §93.6's: the
 /// boundary is **directional** there, because a handler in the arena keeps its command as a value
 /// and a baked tree has already turned one into a pair of strings — so a definition may answer with
 /// an `Attr` and may not take one.

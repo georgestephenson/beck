@@ -729,9 +729,9 @@ fn leading_number(text: &str) -> Option<u32> {
 /// The gap this is the shape of is the one `AGENTS.md` tells you to expect: the counter collides
 /// whenever two branches write a report, so a document gets **renumbered on merge** — and a rename
 /// moves the filename while leaving the headings where they were.
-/// `104-the-release-and-the-installer-report.md` landed carrying `101`, the number
-/// `101-the-heap-report.md` already had. So `§101.5` named a section in each of two documents, and
-/// the twenty-nine references to `§104.x` written in `README.md`, `AGENTS.md`, `CHANGELOG.md`,
+/// `104-the-release-and-the-installer-report.md` landed carrying the number `101`, which another
+/// document already had. So one `§101.x` named a section in each of two documents, and the
+/// twenty-nine references to `§104.x` written in `README.md`, `AGENTS.md`, `CHANGELOG.md`,
 /// `release/README.md` and six other documents named a heading that did not exist. The prose inside
 /// the report had been corrected to `§104.x` and the headings had not, which is why reading it did
 /// not show the fault: the half a reader sees was right.

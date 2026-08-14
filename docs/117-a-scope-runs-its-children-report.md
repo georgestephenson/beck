@@ -8,7 +8,7 @@ last named remainder of [`08`](08-roadmap.md)'s structured-concurrency bullet.
 
 **The design was never the obstacle and §80.5 said so.** What it named was mechanical: two
 interpreters, a shared budget, and a `Host` trait that would have to become thread-safe. The trait
-became thread-safe **for an unrelated reason** — [`116`](116-the-host-answers-back-report.md) moved
+became thread-safe **for an unrelated reason** — [`93`](93-the-native-backends-report.md) moved
 the four host atoms onto `beck_core::host::Atoms` so that three backends could ask one question, and
 `Send + Sync` was the price of a compiled worker sharing a host with the process that spawned it.
 Nothing in that change was about concurrency. It is worth recording because the ordering was luck
@@ -48,7 +48,7 @@ the parallelism is an implementation of it.
 
 | | |
 |---|---|
-| the host | **shared** — one `&dyn Host` behind an `Arc`, which is only expressible because [`116`](116-the-host-answers-back-report.md) made `Atoms` `Send + Sync` |
+| the host | **shared** — one `&dyn Host` behind an `Arc`, which is only expressible because [`93`](93-the-native-backends-report.md) made `Atoms` `Send + Sync` |
 | a stack | **its own**, `beck_eval::STACK_BYTES` of it, because a tree-walker nests host frames on the program's recursion |
 | the depth ceiling | **its own count** against the same ceiling, which is what a per-stack limit always meant |
 | the globals cache | **its own**, rebuilt — sharing it wants a lock on the path a call takes, and [`70`](70-the-evaluator-gets-fast-report.md) §70.9 is what that path costs |
@@ -184,10 +184,10 @@ change with a different question in front of it (how many, and owned by whom), a
   written out.
 - **Nothing about a thread pool.** Every child is a fresh thread; §117.5 is what that costs and what
   a pool would be worth, and neither this report nor §80.5 designs one.
-- **Nothing about the compiled backends.** [`116`](116-the-host-answers-back-report.md) §116.10 says
+- **Nothing about the compiled backends.** [`93`](93-the-native-backends-report.md) §93.14 says
   a worker holds its pipe for a whole call, so two children that both reach compiled code serialise
   behind one lock — further from concurrency than the tree-walker now is.
-  [`93`](93-llvm-backend-report.md) §93.7's "the first thing a second version would change" has been
+  [`93`](93-the-native-backends-report.md) §93.14's "the first thing a second version would change" has been
   the same sentence for four reports and is now blocking something real.
 - **Nothing about more children than cores.** Every child gets a thread, and a scope of forty on a
   four-core machine is forty threads. Nothing here measures that and nothing bounds it.

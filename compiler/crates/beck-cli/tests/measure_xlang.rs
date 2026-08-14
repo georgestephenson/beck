@@ -4,7 +4,7 @@
 //!
 //! [`docs/25-benchmarks-and-expressiveness.md`](../../../../docs/25-benchmarks-and-expressiveness.md)
 //! §25.9 rule 2 held every comparative claim back "until the second backend exists". It exists
-//! ([`docs/93`](../../../../docs/93-llvm-backend-report.md)), and this is the first place in the
+//! ([`docs/93`](../docs/93-the-native-backends-report.md)), and this is the first place in the
 //! repository where a Beck number is put beside another language's.
 //!
 //! [`xlang/README.md`](../../../xlang/README.md) is the rules the ports are held to and the list of

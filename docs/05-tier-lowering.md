@@ -108,57 +108,57 @@ endpoints — compiles to native binaries, statically linked, one per `service`.
 
 | Mode | Backend | Evidence |
 |---|---|---|
-| `beck dev`, hot reload | **Cranelift**, as a crate, emitting an object a linker turns into a program — **built** for the scalar subset and for records and unions ([`97`](97-cranelift-report.md), [`101`](101-the-heap-report.md), [`adr/0024`](adr/0024-cranelift-emits-an-object-and-a-linker-makes-it-a-program.md)) | ~40% faster whole-compiles; codegen step ~an order of magnitude faster than LLVM |
-| `beck build --release` | **LLVM**, as textual IR through the host's `clang` — **built** for the scalar subset and for records and unions ([`93`](93-llvm-backend-report.md), [`101`](101-the-heap-report.md)), not via `inkwell` ([`adr/0021`](adr/0021-the-native-backend-writes-ir-and-runs-a-process.md)) | Cranelift output ~14% slower; Perry's 2026 Cranelift→LLVM move turned a deficit into 1.7–24.6× wins over Node.js |
+| `beck dev`, hot reload | **Cranelift**, as a crate, emitting an object a linker turns into a program — **built** for the scalar subset and for records and unions ([`93`](93-the-native-backends-report.md), [`93`](93-the-native-backends-report.md), [`adr/0024`](adr/0024-cranelift-emits-an-object-and-a-linker-makes-it-a-program.md)) | ~40% faster whole-compiles; codegen step ~an order of magnitude faster than LLVM |
+| `beck build --release` | **LLVM**, as textual IR through the host's `clang` — **built** for the scalar subset and for records and unions ([`93`](93-the-native-backends-report.md), [`93`](93-the-native-backends-report.md)), not via `inkwell` ([`adr/0021`](adr/0021-the-native-backend-writes-ir-and-runs-a-process.md)) | Cranelift output ~14% slower; Perry's 2026 Cranelift→LLVM move turned a deficit into 1.7–24.6× wins over Node.js |
 
 The two must agree observably — enforced by differential tests ([`04`](04-compiler-architecture.md)
 §4.8). The `Core → Target` seam stays narrow so a third backend (or MLIR) can slot in later.
 
-> **Built, half of it.** [`93`](93-llvm-backend-report.md): the LLVM row exists over the **scalar
+> **Built, half of it.** [`93`](93-the-native-backends-report.md): the LLVM row exists over the **scalar
 > subset** — `Int`, `Float` and `Bool` — and the differential is against the *evaluator*, since
 > Cranelift is still not built. There is no heap in the emitted code, so a fold over a record, a
 > view that builds `Html` and every effect in this section still run on the tree-walker, and this
 > section's "compiles to native binaries, statically linked, one per `service`" remains a design.
 > The seam held: not one line of `beck-rt` changed.
 >
-> *Both rows exist now* ([`97`](97-cranelift-report.md)), over the same scalar subset and held to
+> *Both rows exist now* ([`93`](93-the-native-backends-report.md)), over the same scalar subset and held to
 > the same programs: `beck native --backend cranelift|llvm`, and "the two must agree observably" is
 > a **three-way** differential — the tree-walker, LLVM and Cranelift on every call. The heap is
 > what still bounds them, and it bounds both equally, so the sentence above about records, `Html`
 > and effects is unchanged. What *is* new is that the second implementation exists to disagree:
-> §97.4 is what holding two emitters to one subset found.
+> §93.8 is what holding two emitters to one subset found.
 >
-> *And the heap has its first floor* ([`101`](101-the-heap-report.md)): a `model`, a `union` and a
+> *And the heap has its first floor* ([`93`](93-the-native-backends-report.md)): a `model`, a `union` and a
 > `newtype` compile on both, over one layout shared with the host, in an arena of offsets
 > ([`adr/0026`](adr/0026-the-native-heap-is-an-arena-of-offsets.md)). So "a fold over a record" is
 > half-true rather than false — the *record* compiles and the fold's `Map` does not. Text,
 > collections, closures and every effect are still the tree-walker's, and this section's "compiles
 > to native binaries, statically linked, one per `service`" remains a design for that reason.
-> §101.5 is the list, each row with a test that goes red the day it stops being true.
+> §93.14 is the list, each row with a test that goes red the day it stops being true.
 >
-> *And that list is now two rows long* ([`105`](105-text-on-the-heap-report.md),
-> [`106`](106-lists-arrive-read-only-report.md), [`107`](107-a-map-arrives-read-only-report.md),
-> [`108`](108-closures-arrive-report.md), [`111`](111-a-view-arrives-as-a-recipe-report.md)): text, a
-> `list`, a `Map`, a closure and — since [`111`](111-a-view-arrives-as-a-recipe-report.md) — **the
+> *And that list is now two rows long* ([`93`](93-the-native-backends-report.md),
+> [`93`](93-the-native-backends-report.md), [`93`](93-the-native-backends-report.md),
+> [`93`](93-the-native-backends-report.md), [`93`](93-the-native-backends-report.md)): text, a
+> `list`, a `Map`, a closure and — since [`93`](93-the-native-backends-report.md) — **the
 > view** all compile on both, so "a view that builds `Html`" above is no longer among what runs on
 > the tree-walker, and 21 of the 32 corpus programs have a `view` that compiles. The paragraph before
 > this one is therefore corrected in its last sentence: what is still the tree-walker's is **every
 > effect** and every operation that *grows* a collection — the second being a decision rather than a
-> gap ([`107`](107-a-map-arrives-read-only-report.md) §107.4), which is why "a fold over a record"
+> gap ([`93`](93-the-native-backends-report.md) §93.7), which is why "a fold over a record"
 > stays half-true and this section's "compiles to native binaries, statically linked, one per
 > `service`" stays a design. A view compiles as the **call** that builds the page rather than as the
-> page, so §111.6 is explicit that it buys no speed: it removes a prerequisite, and the one it
+> page, so §93.5 is explicit that it buys no speed: it removes a prerequisite, and the one it
 > removes is Mode B's codegen ([`94`](94-mode-b-report.md) §94.8).
 >
-> *And the list is empty of classes* ([`113`](113-a-list-grows-report.md),
-> [`114`](114-a-map-grows-report.md), [`115`](115-monomorphisation-report.md),
-> [`116`](116-the-host-answers-back-report.md), [`119`](119-a-list-comes-apart-report.md)): growing a
+> *And the list is empty of classes* ([`93`](93-the-native-backends-report.md),
+> [`93`](93-the-native-backends-report.md), [`93`](93-the-native-backends-report.md),
+> [`93`](93-the-native-backends-report.md), [`93`](93-the-native-backends-report.md)): growing a
 > `list` and a `Map` compile, a generic definition compiles by being specialised, a list pattern
 > comes apart, and **the four primitives that ask the host** — `now()`, `uuid()`, `secret_env` and
 > `http_fetch` — compile by *asking*, on a worker protocol that grew a second direction. So the
 > paragraph above is corrected twice over: neither "every effect" nor "every operation that grows a
 > collection" is the tree-walker's any more. What is left is not a class but three names
-> ([`116`](116-the-host-answers-back-report.md) §116.10) — the signal vocabulary, which the splitter
+> ([`93`](93-the-native-backends-report.md) §93.14) — the signal vocabulary, which the splitter
 > reads rather than a body calling it; a **bounded** definition, whose dictionary is a function
 > value; and a worker that can answer two calls at once. This section's "compiles to native
 > binaries, statically linked, one per `service`" is *still* a design, and now for one reason rather

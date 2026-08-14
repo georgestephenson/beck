@@ -183,7 +183,7 @@ impl<'a> Expander<'a> {
     /// **Iterative**, with its own stack, for the reason the walk counts at all: the tree being
     /// measured is one a macro just built, so a recursive count would be a claim about the host's
     /// stack rather than about the program
-    /// ([`106`](../../../../docs/106-lists-arrive-read-only-report.md) §106.6 is the same defect one
+    /// ([`93`](../../../../docs/93-the-native-backends-report.md) §93.9 is the same defect one
     /// subsystem over). It also stops the moment the budget does, so the *accounting* is bounded by
     /// the budget it is accounting for — a macro that produced a billion nodes is refused after a
     /// hundred thousand of them have been counted, not after a billion.

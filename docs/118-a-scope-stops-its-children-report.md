@@ -198,7 +198,7 @@ run, so the check that it is gone is forty runs of the whole suite: **8 failures
 - **Nothing about the server-side WASM tier** (§118.5). `wasm32-wasip1-threads` would keep a
   scope's threads and nothing in this repo emits that target, so the claim is about what a future
   tier *could* do rather than about anything that runs. Nothing about the compiled backends either, where
-  [`116`](116-the-host-answers-back-report.md) §116.10's one-pipe-one-lock still means two children
+  [`93`](93-the-native-backends-report.md) §93.14's one-pipe-one-lock still means two children
   that reach compiled code serialise.
 
 ## 118.8 What this corrects

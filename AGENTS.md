@@ -25,7 +25,7 @@ holds the *rules*; that file holds the *state*, and it is the one that stays cur
 | [`compiler/corpus/`](compiler/corpus/) | 32 programs carrying **no placement annotations** — Phase 2's exit measurement |
 | [`compiler/sicp/`](compiler/sicp/) | The expressiveness benchmark ([`docs/25`](docs/25-benchmarks-and-expressiveness.md) §25.5) |
 | [`compiler/awfy/`](compiler/awfy/README.md), [`compiler/clbg/`](compiler/clbg/README.md) | The performance benchmarks — somebody else's programs, verified against somebody else's constants |
-| [`compiler/xlang/`](compiler/xlang/README.md) | One program in six languages — the only place a Beck number sits beside another language's ([`docs/93`](docs/93-llvm-backend-report.md) §93.5) |
+| [`compiler/xlang/`](compiler/xlang/README.md) | One program in six languages — the only place a Beck number sits beside another language's ([`docs/93`](docs/93-the-native-backends-report.md) §93.5) |
 | [`phase0/`](phase0/) | **History.** The output the compiler now generates, hand-written in Rust once so the architecture could be measured. Do not edit it to track the compiler |
 | [`release/`](release/README.md), [`install.sh`](install.sh) | The parts of a release a person can execute, kept out of `.github/workflows/release.yml` on purpose — a tag-triggered workflow is the one artefact that cannot be run before it is used ([`docs/104`](docs/104-the-release-and-the-installer-report.md) §104.2) |
 
@@ -44,8 +44,11 @@ This rule exists because the alternative was tried. One report per change produc
 199,566 words — 2.7× the design documents and half the size of the compiler** — and an index nobody
 could read. Ten reports on the evaluator's constants are one chapter
 ([`docs/70`](docs/70-the-evaluator-gets-fast-report.md)); six on porting one benchmark suite are one
-chapter ([`docs/53`](docs/53-are-we-fast-yet-report.md)). Both were consolidated after the fact,
-which is more work than writing the entry would have been.
+chapter ([`docs/53`](docs/53-are-we-fast-yet-report.md)); **fourteen on the native backends are one
+chapter** ([`docs/93`](docs/93-the-native-backends-report.md)), and every one of them had the same
+shape — a thing gets a layout, both emitters learn it, here is the differential, here is what it
+costs — so what a reader wants is the handful of findings and not fourteen repetitions of the frame.
+All were consolidated after the fact, which is more work than writing the entry would have been.
 
 A report that is written gets a row in [`docs/README.md`](docs/README.md)'s index — **three
 sentences, not three hundred words** — and a mention wherever a design document made a claim the work

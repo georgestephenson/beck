@@ -1,7 +1,7 @@
 # The same four benchmarks, in six languages
 
 [`docs/25`](../../docs/25-benchmarks-and-expressiveness.md) §25.9 rule 2 held every comparative
-claim back "until the second backend exists". It exists ([`docs/93`](../../docs/93-llvm-backend-report.md)),
+claim back "until the second backend exists". It exists ([`docs/93`](../../docs/93-the-native-backends-report.md)),
 and this directory is the comparison — the first place in this repository where a Beck number is
 put beside another language's.
 

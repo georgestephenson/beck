@@ -13,7 +13,7 @@
 //!
 //! **The children do now run at the same time** (`docs/117`), which §80.5 said would need the
 //! `Host` trait to become thread-safe — it did, for an unrelated reason, when
-//! [`docs/116`](../../../../docs/116-the-host-answers-back-report.md) gave the four host atoms one
+//! [`docs/93`](../docs/93-the-native-backends-report.md) gave the four host atoms one
 //! description that three backends could ask. `two_children_actually_overlap` is the gate, and it
 //! is not a timing test: it deadlocks-or-passes, because each child waits for the other to arrive
 //! before either may finish.
@@ -615,7 +615,7 @@ impl beck_core::host::Atoms for Rendezvous {
 ///
 /// `docs/80` §80.5 recorded this as not built and named what stood in the way: two interpreters and
 /// a shared budget, and a `Host` trait that would have to become thread-safe. The trait became
-/// thread-safe in `docs/116` for a different reason entirely, and the budget is split rather than
+/// thread-safe in `docs/93` for a different reason entirely, and the budget is split rather than
 /// shared (`docs/117` §117.4) — so what is left is the two interpreters, which is a thread each.
 #[test]
 fn two_children_actually_overlap() {

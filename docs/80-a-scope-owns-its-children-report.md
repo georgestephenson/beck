@@ -171,7 +171,7 @@ annotations in it.
 
 ## 80.5 What is not built, and why
 
-**Nothing runs two children at the same time.** *(Corrected: [`117`](117-a-scope-runs-its-children-report.md) runs them on a thread each, and [`118`](118-a-scope-stops-its-children-report.md) stops the ones after a failure. What follows is the analysis of why it had not been done, which held up — including that the `Host` trait would have to become thread-safe, which [`116`](116-the-host-answers-back-report.md) did for an unrelated reason.)* The tree-walker applies each child's thunk in order
+**Nothing runs two children at the same time.** *(Corrected: [`117`](117-a-scope-runs-its-children-report.md) runs them on a thread each, and [`118`](118-a-scope-stops-its-children-report.md) stops the ones after a failure. What follows is the analysis of why it had not been done, which held up — including that the `Host` trait would have to become thread-safe, which [`93`](93-the-native-backends-report.md) did for an unrelated reason.)* The tree-walker applies each child's thunk in order
 and then the continuation. That is correct — the form's meaning is that the order is unobservable,
 and one order is an order — but it is not what somebody reading the word `parallel` will assume, so
 it is the first thing this report says and it is said again here.

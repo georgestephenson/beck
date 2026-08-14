@@ -114,8 +114,8 @@ deferral:
 2. **Publish no comparative claim until the second backend exists.** [`13`](13-testing.md) §13.1's
    oracle table wants Cranelift-vs-LLVM-vs-interpreter differentials anyway; the first honest
    performance claim and the first correctness differential arrive on the same day. *They did —
-   [`93`](93-llvm-backend-report.md), and the prediction was exactly right about the sequencing. The
-   comparative claim is [`93`](93-llvm-backend-report.md) §93.5's, and it is **narrower than this
+   [`93`](93-the-native-backends-report.md), and the prediction was exactly right about the sequencing. The
+   comparative claim is [`93`](93-the-native-backends-report.md) §93.5's, and it is **narrower than this
    rule assumed**: it is four arithmetic kernels against C, Rust, Node, Python and Ruby, in
    [`compiler/xlang/`](../compiler/xlang/README.md), because the native backend has no heap and
    every suite in §25.2 runs whole programs — so AWFY and CLBG still measure the tree-walker and

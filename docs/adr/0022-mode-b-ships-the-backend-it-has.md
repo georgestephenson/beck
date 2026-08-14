@@ -22,7 +22,7 @@ know nothing about which implementation is behind it.
 
 A WebAssembly code generator for `Core` is a **backend**, and the backend seam now has two
 implementations behind it — the evaluator and `beck-llvm`
-([`93`](../93-llvm-backend-report.md)). The second one is the argument for this decision rather
+([`93`](../93-the-native-backends-report.md)). The second one is the argument for this decision rather
 than against it, because of *what it compiles*: a definition whose parameters and result are `Int`,
 `Float` or `Bool`, whose body is arithmetic, comparison, `if`, `match` and direct calls. **No heap.**
 

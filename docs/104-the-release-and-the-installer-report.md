@@ -36,7 +36,7 @@ written.
 ## 104.1 Why these two were not on the phase list
 
 Every other remaining item in Phase 3 is a piece of a bullet — the rest of the heap under both code
-generators ([`101`](101-the-heap-report.md) §101.5), Mode B's codegen, lazy routes, the render lock.
+generators ([`93`](93-the-native-backends-report.md) §93.14), Mode B's codegen, lazy routes, the render lock.
 These two are not. The phase list is a list of
 things to *build*, and a release is a thing to *do*; a list of capabilities has no row for the act of
 handing one to somebody.
@@ -320,7 +320,7 @@ Unchanged by this, and worth repeating so the two items above are not mistaken f
 Phase 3 exits when **an outside developer builds a non-trivial app from documentation alone, without
 asking the team a question**. What this removes is the first two sentences of the apology that guide
 would have had to open with. What remains on the list is the **rest of the heap** — a record, a union
-and a newtype compile since [`101`](101-the-heap-report.md), and text, collections, closures and every
+and a newtype compile since [`93`](93-the-native-backends-report.md), and text, collections, closures and every
 effect do not — plus Mode B's codegen, which waits on exactly that, lazy routes and the render lock.
 And the criterion itself, which is a claim about a person and which nothing in this repository can
 make true about itself.

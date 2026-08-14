@@ -233,12 +233,12 @@ dependencies whose signatures didn't change.
 > time, which is the part of SICP closest to what Beck is for.
 
 - LLVM release backend + differential tests against Cranelift (§5.2). *The LLVM half is **built**
-  over the scalar subset ([`93`](93-llvm-backend-report.md)), and the differential is against the
+  over the scalar subset ([`93`](93-the-native-backends-report.md)), and the differential is against the
   **evaluator** rather than against Cranelift, because Cranelift is still not built.*
-  ***Both halves are built now*** ([`97`](97-cranelift-report.md)), the differential runs over all
+  ***Both halves are built now*** ([`93`](93-the-native-backends-report.md)), the differential runs over all
   three backends, and the subset is no longer scalar: it is everything a definition can be made of
   except the signal vocabulary, a dictionary parameter, and a second call in flight
-  ([`116`](116-the-host-answers-back-report.md) §116.10). The last thing to arrive was the four
+  ([`93`](93-the-native-backends-report.md) §93.14). The last thing to arrive was the four
   primitives that have to **ask the host**, which is where the protocol grew a second direction.*
 - **Incremental views**: compile subscribed/materialized views to differential-dataflow plans with
   arrangement sharing (per-session fanout, §5.3); recompute stays as the CI oracle; SQL read models
@@ -304,7 +304,7 @@ dependencies whose signatures didn't change.
   (§80.5). ***It has one*** ([`117`](117-a-scope-runs-its-children-report.md)): a thread per child,
   1.99× on two children that wait and the same on two that compute once each is worth a thread. The
   soundness was already in the checker, and one of the three things §80.5 said stood in the way was
-  removed by [`116`](116-the-host-answers-back-report.md) for a reason that had nothing to do with
+  removed by [`93`](93-the-native-backends-report.md) for a reason that had nothing to do with
   concurrency. `match` exhaustiveness is built for unions ([`27`](27-the-walls-come-down-report.md)
   added lists). **Pattern matching nests** ([`90`](90-nested-patterns-report.md)):
   `case Some(Circle(r))`, a literal or a constructor wherever a binder goes, through a type
@@ -466,22 +466,22 @@ tarballs (§104.6).
 What is left of *it* is **cancellation**: a scope whose first child fails waits for its siblings,
 and §80.5 forecast that a backend starting them together would need a signal nobody has designed. **Three
 half-built**: the codegen bullet has **both** of §5.2's code generators
-([`93`](93-llvm-backend-report.md), [`97`](97-cranelift-report.md)) and a heap that is now whole:
-the *algebraic* half ([`101`](101-the-heap-report.md)), **text**
-([`105`](105-text-on-the-heap-report.md)), **reading a collection**
-([`106`](106-lists-arrive-read-only-report.md), [`107`](107-a-map-arrives-read-only-report.md)),
-**closures** ([`108`](108-closures-arrive-report.md)), a **view**
-([`111`](111-a-view-arrives-as-a-recipe-report.md)), **failure**
-([`112`](112-a-raise-arrives-report.md)), **growing** a list and a map
-([`113`](113-a-list-grows-report.md), [`114`](114-a-map-grows-report.md)), a **generic** definition
-([`115`](115-monomorphisation-report.md)) and the four primitives that **ask the host**
-([`116`](116-the-host-answers-back-report.md)) — so what a compiled definition may not do is now
+([`93`](93-the-native-backends-report.md), [`93`](93-the-native-backends-report.md)) and a heap that is now whole:
+the *algebraic* half ([`93`](93-the-native-backends-report.md)), **text**
+([`93`](93-the-native-backends-report.md)), **reading a collection**
+([`93`](93-the-native-backends-report.md), [`93`](93-the-native-backends-report.md)),
+**closures** ([`93`](93-the-native-backends-report.md)), a **view**
+([`93`](93-the-native-backends-report.md)), **failure**
+([`93`](93-the-native-backends-report.md)), **growing** a list and a map
+([`93`](93-the-native-backends-report.md), [`93`](93-the-native-backends-report.md)), a **generic** definition
+([`93`](93-the-native-backends-report.md)) and the four primitives that **ask the host**
+([`93`](93-the-native-backends-report.md)) — so what a compiled definition may not do is now
 three named things rather than a class: read the signal vocabulary, take a dictionary, or be
-answered while another call is in flight (§116.10); Mode B has the mode, the bundle,
+answered while another call is in flight (§93.14); Mode B has the mode, the bundle,
 the data patch, the reconciliation, a browser that runs it and an offline queue, without codegen —
 which waits on the half of that heap that is not built — and it is the **collection** half rather
 than the text half, since a page is a tree of children
-([`94`](94-mode-b-report.md) §94.8, [`105`](105-text-on-the-heap-report.md) §105.10); and the
+([`94`](94-mode-b-report.md) §94.8, [`93`](93-the-native-backends-report.md) §93.6); and the
 playground has rungs A and B and not rung C, which is Phase 4's
 ([`98`](98-playground-report.md) §98.7). **Client polish is built too**
 ([`100`](100-client-polish-report.md)) except for lazy routes, which wait on the same
@@ -516,11 +516,11 @@ has been overtaken twice. ~~No OIDC~~ ([`95`](95-oidc-relying-party-report.md)),
 has never run ([`104`](104-the-release-and-the-installer-report.md) §104.7). What is left to
 apologise for has moved out of week two and into the parts of a program that are not a *definition*
 at all: a record, text, a collection, a closure, a page, a failure, a generic definition and the
-four primitives that ask the host all compile ([`101`](101-the-heap-report.md) through
-[`116`](116-the-host-answers-back-report.md)), so a program that does something with a `Str` is no
+four primitives that ask the host all compile ([`93`](93-the-native-backends-report.md) through
+[`93`](93-the-native-backends-report.md)), so a program that does something with a `Str` is no
 longer running on the tree-walker. **The fold, `validate` and the view still are** — they are signal
 nodes the splitter reads rather than definitions a body calls — which is a different item and is
-named as one ([`116`](116-the-host-answers-back-report.md) §116.10).
+named as one ([`93`](93-the-native-backends-report.md) §93.14).
 
 ## Phase 4 — Production readiness (4–5 months)
 
@@ -647,13 +647,13 @@ The consequence, stated so it cannot be quietly dropped: **the first numbers we 
 bad**, because §25.3 measures the tree-walking evaluator at roughly 33× CPython on `fib(30)` and
 native codegen is unbuilt. Publishing them anyway is the point. *Native codegen is now built for
 the scalar subset, and the first comparative number is
-[`93`](93-llvm-backend-report.md) §93.5's — **against the evaluator**, not against another
+[`93`](93-the-native-backends-report.md) §93.5's — **against the evaluator**, not against another
 language, because the benchmark suites run whole programs and a whole program still walks.*
 
 | Phase | Stand up | Publish |
 |---|---|---|
 | **3** | The **expressiveness** work, which needs nothing that is not built: SICP stage 1 (chapter 1 complete) and the **Felleisen macro-expressibility table**. Macros are built and hygienic ([`19`](19-phase-1-report.md)), so this is independent of §25.7's six walls and is the cheapest item on this table. Also: the compile-speed budgets §13.7 already lists, on the rustc-perf model | Chapter 1's line-count comparison against the pinned Scheme baseline — the first honest number in either half of §24 |
-| **3** (with the standard library and the LLVM backend) | **Are We Fast Yet** and **CLBG** harnesses, run against the evaluator | Nothing comparative. The interpreter-vs-Cranelift-vs-LLVM differential ([`13`](13-testing.md) §13.1) and the first honest compute number arrive together, and not before. *Both arrived in [`93`](93-llvm-backend-report.md), without the Cranelift term: the differential is `beck-cli/tests/native.rs` and the number is §93.5's. What is still not published is a comparison against **another language** — AWFY and CLBG run whole programs, and a whole program has records and lists in it, so it still walks* |
+| **3** (with the standard library and the LLVM backend) | **Are We Fast Yet** and **CLBG** harnesses, run against the evaluator | Nothing comparative. The interpreter-vs-Cranelift-vs-LLVM differential ([`13`](13-testing.md) §13.1) and the first honest compute number arrive together, and not before. *Both arrived in [`93`](93-the-native-backends-report.md), without the Cranelift term: the differential is `beck-cli/tests/native.rs` and the number is §93.5's. What is still not published is a comparison against **another language** — AWFY and CLBG run whole programs, and a whole program has records and lists in it, so it still walks* |
 | **4** | **TechEmpower** (the five tests that map without argument; the two that assume update-in-place stated as run against a read model), **js-framework-benchmark** (three columns — Mode A at a stated RTT, Mode A at RTT 0, Mode B — never averaged), **YCSB** against the log, **Lighthouse/Core Web Vitals** as gates on the example apps. SICP stages 2–3. **The DDIA matrix** ([`15`](15-scale-and-distribution.md) §15.6) — beside the Jepsen and simulation work that discharges its rows, never before it, because a matrix written ahead of its tests is the table of intentions it exists not to be | The whole-system numbers, unflattering, with the methodology notes of §25.2 attached to each. This is [`01`](01-vision-and-premise.md) §1.5 item 3 measured by somebody else's harness rather than ours |
 | **5** | **TPC-H/ClickBench** on read models once §5.3's engine exists; the incremental-view workload §25.2 records as having *no* standard, which we would be defining rather than borrowing. SICP stage 4 | The Phase 5 suite above, and the expressiveness result — including the rows §25.5 forecasts Beck will lose (§2.4–2.5 generic operations, chapter 4's evaluator), which are published or the exercise was not run honestly |
 
@@ -907,54 +907,54 @@ anything this repository does to itself. §86.8 lists what the guide does not co
 needs an outside developer, and none has read it.
 
 **Wave 4 — free-standing, in parallel with Waves 2–3.** ~~LLVM backend and native codegen~~ —
-**both code generators built** ([`93`](93-llvm-backend-report.md),
-[`97`](97-cranelift-report.md)): §5.2's dual codegen exists over the scalar subset, `beck native
+**both code generators built** ([`93`](93-the-native-backends-report.md),
+[`93`](93-the-native-backends-report.md)): §5.2's dual codegen exists over the scalar subset, `beck native
 --backend cranelift|llvm` chooses, and §4.8's differential is **three-way** — the tree-walker, LLVM
 and Cranelift on every call, with the two emitters held to accepting and refusing the same
 definitions. ~~What still bounds *both* is the **heap**: no record, list, string or effect compiles~~ — the
-**algebraic half is built** ([`101`](101-the-heap-report.md)): a `model`, a `union` and a `newtype`
+**algebraic half is built** ([`93`](93-the-native-backends-report.md)): a `model`, a `union` and a `newtype`
 have a layout, an arena and a place on the wire, and 283 definitions across the tree compile where
-187 did. **Text is built too** ([`105`](105-text-on-the-heap-report.md)) — a `Str` is two counts and
+187 did. **Text is built too** ([`93`](93-the-native-backends-report.md)) — a `Str` is two counts and
 its bytes, a literal is an offset into a pool the host writes, and **344** definitions compile where
 283 did, with the corpus going 4 → 28. **Reading a collection is built too**
-([`106`](106-lists-arrive-read-only-report.md), [`107`](107-a-map-arrives-read-only-report.md)) — a
+([`93`](93-the-native-backends-report.md), [`93`](93-the-native-backends-report.md)) — a
 `list[T]` and a `Map[K, V]` have layouts and **625** definitions compile where 344 did, with **nine
 corpus folds** among them — and the operations that *grow* one are **refused** rather than shipped
-with a worse asymptote than the evaluator's, which is §101.5's forecast cashed. **Closures are built too**
-([`108`](108-closures-arrive-report.md)) — a `lam` is an object holding its **rank** and its captures,
+with a worse asymptote than the evaluator's, which is §93.14's forecast cashed. **Closures are built too**
+([`93`](93-the-native-backends-report.md)) — a `lam` is an object holding its **rank** and its captures,
 an application is a switch on that word into a direct call, and every higher-order list primitive
 but `list_flat_map` compiles through it — including `sort_by`, as a stable merge sort — and so does
 `concat_lists`, whose refusal turned out to be false (its length is a sum over one pass). A closure is
 refused at every boundary the host would read one across, so it lives inside one compiled call.
 **646** definitions compile where 605 did, and the refusals that blamed a closure went 96 → 52 with 33
 of the difference re-refused for a deeper reason. **A view is built too**
-([`111`](111-a-view-arrives-as-a-recipe-report.md)) — and not as a tree: what a compiled `view` puts
+([`93`](93-the-native-backends-report.md)) — and not as a tree: what a compiled `view` puts
 in the arena is the **call** `html_el(tag, attrs, children)` would have been given, because a page's
 leaves are *renderings* and the two functions that make them are the host's. So the host bakes the
 tree with the evaluator's own `html_el`, neither emitter contains a byte of markup or JSON, and
 `html_text(x)` compiles for every `x` that has a shape at all. **688** definitions compile where 650
 did by that report's own count, the 42 refusals that blamed a view are **none**, and 21 of the 32
-corpus programs have a `view` that compiles. It is **not faster** (§111.6) — the win is what
-compiles. **A raise is built too** ([`112`](112-a-raise-arrives-report.md)) — `raise` and `try:`, and
+corpus programs have a `view` that compiles. It is **not faster** (§93.5) — the win is what
+compiles. **A raise is built too** ([`93`](93-the-native-backends-report.md)) — `raise` and `try:`, and
 the piece of "the effects" that needed no callback to the host, because a raise is not a call out but
 a way of returning: the error cell every function already stores into and returns from *is* an
 unwinder, and what this adds is a code, two words for the value and a handler the checks branch to.
 **711** definitions compile where 688 did and the 38 refusals that blamed `raise` are none. What is
 left of that bullet is the **rest** of the effects — the ones that need the worker to call back into
-the host mid-call, which is a protocol with a second direction ([`112`](112-a-raise-arrives-report.md)
-§112.9). **Growing a collection is built** — a *list* first
-([`113`](113-a-list-grows-report.md)), and that report is mostly about why it was refused: the reason
+the host mid-call, which is a protocol with a second direction ([`93`](93-the-native-backends-report.md)
+§93.14). **Growing a collection is built** — a *list* first
+([`93`](93-the-native-backends-report.md)), and that report is mostly about why it was refused: the reason
 on record was ownership, every sentence of it was true, and what forced the copy was the layout. A
 list is an immutable header over a shared data block now, the accumulator is linear, and **895**
-definitions compile where 711 did. A *map* followed ([`114`](114-a-map-grows-report.md)), and it did
+definitions compile where 711 did. A *map* followed ([`93`](93-the-native-backends-report.md)), and it did
 **not** fall to the same trick: an insert lands in the middle of a sorted run and every entry after
 it shifts however the header is arranged, so what removes it is the structure `beck_core::pmap`
 already uses — a weight-balanced tree in the arena, five words a node, sharing every subtree it did
 not touch. **1,137** definitions compile where 895 did, refusals go 523 → 281, and a fold that keeps
 a `Map` is `Θ(n log n)`. What is left of Lane E is the effects with a second direction
-([`107`](107-a-map-arrives-read-only-report.md) §107.4), which is still Phase 4's Lane E and still the prerequisite Mode B codegen is behind
-([`94`](94-mode-b-report.md) §94.8) — and §105.10's correction about which row `Html` belongs to is
-itself corrected by §111.9: a view follows neither the collection row nor the text one, being the
+([`93`](93-the-native-backends-report.md) §93.7), which is still Phase 4's Lane E and still the prerequisite Mode B codegen is behind
+([`94`](94-mode-b-report.md) §94.8) — and §93.6's correction about which row `Html` belongs to is
+itself corrected by §93.14: a view follows neither the collection row nor the text one, being the
 first thing in this arena whose contents are a call. Mode B and
 ~~client polish~~ — **built** ([`100`](100-client-polish-report.md)), and it was not a Lane B item
 either: a route is a field of `Session`, so the engine, the splitter and the plan are untouched and
@@ -1018,7 +1018,7 @@ boundaries are real directories.
 | **B — runtime and views** | `beck-rt/`, `beck-core/src/{engine,plan,incremental,pmap,signal}.rs` | Clock injection; the shared dataflow's release policy, history constant and render lock; SQL read models, pgwire, query fusion; Mode B's server half | Nothing in A, C, E or F |
 | **C — front end and tooling** | `beck-syntax/`, `beck-cli/`, `beck-diag/` | ~~The recursion bound~~ ([`44`](44-wave-0-report.md)); ~~the two syntax decisions~~ ([`10`](10-decisions.md) D21, D22); ~~Unicode and UTS #39~~ ([`44`](44-wave-0-report.md) §44.5); ~~LSP~~ — **built** ([`65`](65-lsp-report.md)) and **finished** ([`110`](110-the-editor-edits-report.md)): references, highlight, rename and inlay hints, so §8.5.2's list of what an LSP is for has no unbuilt entry; ~~`test --update`~~ ([`66`](66-page-snapshots-report.md)); ~~fuzzing~~ ([`85`](85-what-the-generator-found-report.md)). **This lane is empty.** What a *new* Lane C item looks like is in [`110`](110-the-editor-edits-report.md) §110.7: comment-preserving printing, which `textDocument/formatting` waits on, and code actions | A, if a syntax decision changes what the checker sees |
 | **D — process and supply chain** | `docs/`, `.github/`, `deny.toml`, `SECURITY.md`, `release/`, `install.sh` | Threat model, disclosure policy, memory-safety roadmap, `pending_security`, the four retargeted §12 rows, SLSA/SBOM/trusted publishing, ~~the release pipeline and the installer~~ ([`104`](104-the-release-and-the-installer-report.md)) | Nothing in code — **except that the release lands in `Cargo.toml`, a `build.rs` and `--version`**, which §104.4 is about and which this cell had assumed away |
-| **E — backends** | `beck-eval/`, `beck-llvm/`, `beck-clif/`, `beck-core/src/backend.rs`, any new codegen crate | ~~LLVM backend, native codegen, the differential suite~~ — **built** ([`93`](93-llvm-backend-report.md)), ~~and Cranelift~~ — **built** ([`97`](97-cranelift-report.md)), ~~and a heap~~ — **half built** ([`101`](101-the-heap-report.md)): records, unions and newtypes, ~~and text~~ — **built** ([`105`](105-text-on-the-heap-report.md)), ~~and reading a collection~~ — **built** ([`106`](106-lists-arrive-read-only-report.md), [`107`](107-a-map-arrives-read-only-report.md)), lists and maps alike, ~~and closures~~ — **built** ([`108`](108-closures-arrive-report.md)): a rank and its captures, an application as a switch, and every list primitive that takes a function except `list_flat_map` — `sort_by` and `concat_lists` included, the second because its refusal was false, ~~and `Html`~~ — **built** ([`111`](111-a-view-arrives-as-a-recipe-report.md)): as the *call* that builds a page rather than as the page, so the rendering stays the host's, ~~and failure~~ — **built** ([`112`](112-a-raise-arrives-report.md)): `raise` and `try:`, on the error cell that was already an unwinder, ~~and growing a list~~ — **built** ([`113`](113-a-list-grows-report.md)): a header over a shared block, so an append writes a slot no reader can see, ~~and growing a map~~ — **built** ([`114`](114-a-map-grows-report.md)): a weight-balanced tree in the arena, because a sorted run has to shift however its header is arranged, ~~and a generic definition~~ — **built** ([`115`](115-monomorphisation-report.md)): one function per instantiation, recovered from the type every call site was already carrying, ~~and the effects that call *back* into the host~~ — **built** ([`116`](116-the-host-answers-back-report.md)): `now()`, `uuid()`, `secret_env` and `http_fetch`, by giving the protocol a **second direction** — a compiled call may stop mid-flight, ask, and block. Half of that item turned out to be a *type* rather than a protocol: `secret[T]` had no layout, which is what had made `HttpRequest` unlayoutable too. **This lane is empty.** What a *new* Lane E item looks like is [`116`](116-the-host-answers-back-report.md) §116.10: the signal vocabulary compiled rather than read by the splitter, a **bounded** definition (a dictionary is a function value), and a worker that can answer two calls at once | Nothing — the seam is why ([`19`](19-phase-1-report.md) §19.9), and [`93`](93-llvm-backend-report.md) is the first thing to test that claim: not one line of `beck-rt` changed |
+| **E — backends** | `beck-eval/`, `beck-llvm/`, `beck-clif/`, `beck-core/src/backend.rs`, any new codegen crate | ~~LLVM backend, native codegen, the differential suite~~ — **built** ([`93`](93-the-native-backends-report.md)), ~~and Cranelift~~ — **built** ([`93`](93-the-native-backends-report.md)), ~~and a heap~~ — **half built** ([`93`](93-the-native-backends-report.md)): records, unions and newtypes, ~~and text~~ — **built** ([`93`](93-the-native-backends-report.md)), ~~and reading a collection~~ — **built** ([`93`](93-the-native-backends-report.md), [`93`](93-the-native-backends-report.md)), lists and maps alike, ~~and closures~~ — **built** ([`93`](93-the-native-backends-report.md)): a rank and its captures, an application as a switch, and every list primitive that takes a function except `list_flat_map` — `sort_by` and `concat_lists` included, the second because its refusal was false, ~~and `Html`~~ — **built** ([`93`](93-the-native-backends-report.md)): as the *call* that builds a page rather than as the page, so the rendering stays the host's, ~~and failure~~ — **built** ([`93`](93-the-native-backends-report.md)): `raise` and `try:`, on the error cell that was already an unwinder, ~~and growing a list~~ — **built** ([`93`](93-the-native-backends-report.md)): a header over a shared block, so an append writes a slot no reader can see, ~~and growing a map~~ — **built** ([`93`](93-the-native-backends-report.md)): a weight-balanced tree in the arena, because a sorted run has to shift however its header is arranged, ~~and a generic definition~~ — **built** ([`93`](93-the-native-backends-report.md)): one function per instantiation, recovered from the type every call site was already carrying, ~~and the effects that call *back* into the host~~ — **built** ([`93`](93-the-native-backends-report.md)): `now()`, `uuid()`, `secret_env` and `http_fetch`, by giving the protocol a **second direction** — a compiled call may stop mid-flight, ask, and block. Half of that item turned out to be a *type* rather than a protocol: `secret[T]` had no layout, which is what had made `HttpRequest` unlayoutable too. **This lane is empty.** What a *new* Lane E item looks like is [`93`](93-the-native-backends-report.md) §93.14: the signal vocabulary compiled rather than read by the splitter, a **bounded** definition (a dictionary is a function value), and a worker that can answer two calls at once | Nothing — the seam is why ([`19`](19-phase-1-report.md) §19.9), and [`93`](93-the-native-backends-report.md) is the first thing to test that claim: not one line of `beck-rt` changed |
 | **F — infrastructure** | `beck-infra/` | Effect-derived NetworkPolicy/RBAC/grants; Crossplane emitter; conformance rungs | Nothing |
 
 **Lane A is strictly serial, and that is the real staffing constraint.** It is tempting to run two
@@ -1040,25 +1040,25 @@ Recommended pairings, in order:
 | ~~**Then**~~ | ~~Lane A: bignums, coercion, `@derive`~~ | ~~Lane B: the shared dataflow's three loose ends~~ | **Half done, and the other half.** Lane B was taken at last, after being the recommended Branch 2 for three consecutive rewrites: two of the three loose ends are closed ([`51`](51-arrangement-lifecycle-report.md)) and the third — the render lock — is deliberately left. The prediction held exactly: `engine.rs`, `beck-rt/` and one test suite, and nothing in `check/`, `ty.rs` or `core.rs`. Lane A is untouched, so this pairing was again never actually run as a pair |
 | ~~**Then**~~ | ~~Lane A: bignums, coercion, `@derive`~~ | ~~Lane B: SQL read models and pgwire~~ | **Half done, and the other half again.** Lane B was taken ([`88`](88-read-models-and-pgwire-report.md)) and the prediction held: `beck-core/src/read.rs`, `beck-rt/src/pgwire.rs`, one reader type on `engine.rs`, and nothing in `check/`, `ty.rs` or `core.rs`. Lane A is untouched, so this pairing was never run as a pair either — the fourth consecutive rewrite in which it was not |
 | ~~**Then**~~ | Lane A: ~~the pattern-matching completion the error-rows bullet still names~~ — **built**, with nesting, guards and alternatives ([`90`](90-nested-patterns-report.md), [`91`](91-guards-and-alternatives-report.md)); what is left in this lane is `Ord` as a trait, which [`54`](54-ordering.md) writes out and explicitly does *not* recommend | Lane B: ~~query fusion on symbolic plans~~ — **built** ([`89`](89-query-fusion-report.md)); ~~Mode B's server half~~ — **built** ([`94`](94-mode-b-report.md)), and it is one branch in `session.rs`; what is left in this lane is the render lock ([`51`](51-arrangement-lifecycle-report.md) §51.7), which survives into the row below still unowned | `beck-rt` and `engine.rs` are untouched by anything in `check/` |
-| ~~**Then**~~ | ~~Lane A, continued~~ | ~~Lane E: the LLVM backend~~ | **Half done, and the other half.** Lane E was taken ([`93`](93-llvm-backend-report.md)) and the prediction held to the letter: a new crate, one new CLI command, and one defect fixed in `beck-eval` — and nothing in `beck-rt`, `engine.rs`, `check/`, `ty.rs` or `core.rs`. Lane A is untouched, so the pairing was again not run as a pair |
+| ~~**Then**~~ | ~~Lane A, continued~~ | ~~Lane E: the LLVM backend~~ | **Half done, and the other half.** Lane E was taken ([`93`](93-the-native-backends-report.md)) and the prediction held to the letter: a new crate, one new CLI command, and one defect fixed in `beck-eval` — and nothing in `beck-rt`, `engine.rs`, `check/`, `ty.rs` or `core.rs`. Lane A is untouched, so the pairing was again not run as a pair |
 | ~~**Then**~~ | ~~Lane A, continued~~ | ~~Lane D: the release pipeline and the installer~~ | **Half done, and the other half — for the sixth consecutive rewrite.** Lane D was taken ([`104`](104-the-release-and-the-installer-report.md)) and its "collides with nothing in code" held for the pipeline and failed for the *release*: a version number that means something is `compiler/Cargo.toml`, a `build.rs` and one line of `main.rs`. Lane A is untouched, so this pairing was not run as a pair |
-| ~~**Then**~~ | ~~Lane A, continued~~ | ~~Lane E: a heap for the native backends~~ | **Half done, and the other half — again.** Lane E was taken ([`101`](101-the-heap-report.md)): the *algebraic* half of the heap is built, so a record, a union and a newtype compile. Lane A is untouched, which makes seven consecutive rewrites in which the recommended pair was not run as a pair — the prediction that Lane E collides with nothing keeps holding, and the one about Lane A keeps not being tested |
-| ~~**Then**~~ | ~~Lane A: `Ord` as a trait~~ | ~~Lane E: the rest of the heap — text, collections, closures, the effects~~ | **Three quarters done, and the other half again.** Lane E was taken four times running ([`105`](105-text-on-the-heap-report.md), [`106`](106-lists-arrive-read-only-report.md), [`107`](107-a-map-arrives-read-only-report.md), [`108`](108-closures-arrive-report.md)) and the prediction held every time: `beck-llvm`, `beck-clif`, their two suites, and one public function moved in `beck-core` for [`108`](108-closures-arrive-report.md)'s closures. Lane A is untouched, which makes eight consecutive rewrites in which the recommended pair was not run as a pair |
+| ~~**Then**~~ | ~~Lane A, continued~~ | ~~Lane E: a heap for the native backends~~ | **Half done, and the other half — again.** Lane E was taken ([`93`](93-the-native-backends-report.md)): the *algebraic* half of the heap is built, so a record, a union and a newtype compile. Lane A is untouched, which makes seven consecutive rewrites in which the recommended pair was not run as a pair — the prediction that Lane E collides with nothing keeps holding, and the one about Lane A keeps not being tested |
+| ~~**Then**~~ | ~~Lane A: `Ord` as a trait~~ | ~~Lane E: the rest of the heap — text, collections, closures, the effects~~ | **Three quarters done, and the other half again.** Lane E was taken four times running ([`93`](93-the-native-backends-report.md), [`93`](93-the-native-backends-report.md), [`93`](93-the-native-backends-report.md), [`93`](93-the-native-backends-report.md)) and the prediction held every time: `beck-llvm`, `beck-clif`, their two suites, and one public function moved in `beck-core` for [`93`](93-the-native-backends-report.md)'s closures. Lane A is untouched, which makes eight consecutive rewrites in which the recommended pair was not run as a pair |
 | ~~**Then**~~ | ~~Lane A: `Ord` as a trait~~ | ~~Lane E: what is left of the heap~~, ~~plus Lane D as a third branch~~ | **A third of it done, and the third branch.** Lane D was taken ([`109`](109-provenance-report.md)) and the prediction in its own row held rather than the one that keeps failing: `install.sh`, one workflow, three test files, and nothing in `check/`, `ty.rs`, `core.rs`, `engine.rs` or any backend, so it could have run beside either of the other two. It did not, because neither of the other two was staffed — which is the ninth consecutive rewrite in which the recommended pair was not run as a pair, and the first in which the *third* branch is the one that moved |
-| ~~**Then**~~ | ~~Lane A: `Ord` as a trait~~ | ~~Lane E: `Html`~~ | **Half done, and the other half — for the ninth time.** Lane E was taken ([`111`](111-a-view-arrives-as-a-recipe-report.md)) and the prediction held again: `beck-llvm`, `beck-clif`, their two suites, one function lifted out of `beck-eval` into `beck-core`, and **not one line of `beck-rt`**. Lane A is untouched |
-| ~~**Then**~~ | ~~Lane A: `Ord` as a trait~~ | ~~Lane E: failure~~ | **Half done, and the other half — for the tenth time.** Lane E was taken ([`112`](112-a-raise-arrives-report.md)) and the prediction held again: `beck-llvm`, `beck-clif`, their two suites, and nothing in `beck-rt`, `check/`, `ty.rs` or `core.rs` — the checker was not touched at all, because `raise` and `try:` were already language features and this is only their run-time half. Lane A is untouched |
-| ~~**Then**~~ | ~~Lane A: `Ord` as a trait~~ | ~~Lane E: growing a list~~ | **Half done, and the other half — for the eleventh time.** Lane E was taken ([`113`](113-a-list-grows-report.md)): `beck-llvm`, `beck-clif`, their two suites and four refusal lists, and nothing in `beck-rt`, `check/`, `ty.rs` or `core.rs`. Lane A is untouched |
-| ~~**Then**~~ | ~~Lane A: `Ord` as a trait~~ | ~~Lane E: growing a map~~ | **Half done, and the other half — for the twelfth time.** Lane E was taken ([`114`](114-a-map-grows-report.md)): `beck-llvm`, `beck-clif`, their two suites and the refusal lists, and nothing in `beck-rt`, `check/`, `ty.rs` or `core.rs`. The forecast in [`113`](113-a-list-grows-report.md) §111.7 held — it wanted a tree, not a layout. Lane A is untouched |
-| ~~**Then**~~ | ~~Lane A: `Ord` as a trait~~ | ~~Lane E: text's last refusals, and generics~~ | **Half done, and the other half — for the thirteenth time.** Lane E was taken: `str_trim`, `str_split` and `str_chars` compiled once their stated reasons were checked and found false, and [`115`](115-monomorphisation-report.md) monomorphised. The last of those is the first item in this lane that touched neither emitter's code generation — a new module both are handed a program by — and it still held the prediction: nothing in `beck-rt`, `check/`, `ty.rs` or `core.rs`. Lane A is untouched |
-| ~~**Then**~~ | ~~Lane A: `Ord` as a trait~~ | ~~Lane E: the effects that call *back* into the host~~ | **Half done, and the other half — for the fourteenth time.** Lane E was taken ([`116`](116-the-host-answers-back-report.md)) and the prediction held once more: `beck-llvm`, `beck-clif`, their two suites — and, for the first time in this lane, two files that are not a backend's, because the four host atoms had to stop being the *evaluator's* trait before three backends could ask one question. Nothing in `beck-rt`, `check/`, `ty.rs` or `core.rs`. Lane A is untouched |
-| **Now** | Lane A: `Ord` as a trait, which [`54`](54-ordering.md) writes out and does *not* recommend — so realistically nothing | **Lane E has no class left, and a measured list of names.** [`119`](119-a-list-comes-apart-report.md) took list patterns off it and the corpus now stands at **905 compiled against 173 refused**, whose largest remaining class is a **function value at a boundary** — every `parameter f is a function value`, and every `Seq[T]` in SICP chapter 3, whose `Cons(head, rest: () -> Seq[T])` puts a closure in a field. `Heap::crossing` refuses those truly rather than stalely, and what would move them is compiling definitions that are called only by *other compiled definitions*, which never marshal a closure at all. Behind that: three named items ([`116`](116-the-host-answers-back-report.md) §116.10): the signal vocabulary, which the splitter reads rather than a body calling it; a **bounded** definition, which is [`108`](108-closures-arrive-report.md)'s closure boundary; and a worker that can answer two calls at once, which [`93`](93-llvm-backend-report.md) §93.7 has named as the first thing a second version would change since there was a first version. **Mode B's codegen** is the item with a user in front of it, and it is that plus a wasm emitter ([`94`](94-mode-b-report.md) §94.8). ~~The lane's other live item is **cancellation** for a `parallel:` scope~~ — **built** ([`118`](118-a-scope-stops-its-children-report.md)). What is left in `beck-eval` is stopping a child that is *blocked in the host*, which is a deadline on the [`net`](../compiler/crates/beck-core/src/net.rs) seam rather than a change to the scope | Lane B's render lock is still open and still has no owner — it is a third branch rather than a reason to hold anything. Lane D's remaining item is **trusted publishing**, which is an account setting rather than a branch |
+| ~~**Then**~~ | ~~Lane A: `Ord` as a trait~~ | ~~Lane E: `Html`~~ | **Half done, and the other half — for the ninth time.** Lane E was taken ([`93`](93-the-native-backends-report.md)) and the prediction held again: `beck-llvm`, `beck-clif`, their two suites, one function lifted out of `beck-eval` into `beck-core`, and **not one line of `beck-rt`**. Lane A is untouched |
+| ~~**Then**~~ | ~~Lane A: `Ord` as a trait~~ | ~~Lane E: failure~~ | **Half done, and the other half — for the tenth time.** Lane E was taken ([`93`](93-the-native-backends-report.md)) and the prediction held again: `beck-llvm`, `beck-clif`, their two suites, and nothing in `beck-rt`, `check/`, `ty.rs` or `core.rs` — the checker was not touched at all, because `raise` and `try:` were already language features and this is only their run-time half. Lane A is untouched |
+| ~~**Then**~~ | ~~Lane A: `Ord` as a trait~~ | ~~Lane E: growing a list~~ | **Half done, and the other half — for the eleventh time.** Lane E was taken ([`93`](93-the-native-backends-report.md)): `beck-llvm`, `beck-clif`, their two suites and four refusal lists, and nothing in `beck-rt`, `check/`, `ty.rs` or `core.rs`. Lane A is untouched |
+| ~~**Then**~~ | ~~Lane A: `Ord` as a trait~~ | ~~Lane E: growing a map~~ | **Half done, and the other half — for the twelfth time.** Lane E was taken ([`93`](93-the-native-backends-report.md)): `beck-llvm`, `beck-clif`, their two suites and the refusal lists, and nothing in `beck-rt`, `check/`, `ty.rs` or `core.rs`. The forecast in [`93`](93-the-native-backends-report.md) §93.13 held — it wanted a tree, not a layout. Lane A is untouched |
+| ~~**Then**~~ | ~~Lane A: `Ord` as a trait~~ | ~~Lane E: text's last refusals, and generics~~ | **Half done, and the other half — for the thirteenth time.** Lane E was taken: `str_trim`, `str_split` and `str_chars` compiled once their stated reasons were checked and found false, and [`93`](93-the-native-backends-report.md) monomorphised. The last of those is the first item in this lane that touched neither emitter's code generation — a new module both are handed a program by — and it still held the prediction: nothing in `beck-rt`, `check/`, `ty.rs` or `core.rs`. Lane A is untouched |
+| ~~**Then**~~ | ~~Lane A: `Ord` as a trait~~ | ~~Lane E: the effects that call *back* into the host~~ | **Half done, and the other half — for the fourteenth time.** Lane E was taken ([`93`](93-the-native-backends-report.md)) and the prediction held once more: `beck-llvm`, `beck-clif`, their two suites — and, for the first time in this lane, two files that are not a backend's, because the four host atoms had to stop being the *evaluator's* trait before three backends could ask one question. Nothing in `beck-rt`, `check/`, `ty.rs` or `core.rs`. Lane A is untouched |
+| **Now** | Lane A: `Ord` as a trait, which [`54`](54-ordering.md) writes out and does *not* recommend — so realistically nothing | **Lane E has no class left, and a measured list of names.** [`93`](93-the-native-backends-report.md) took list patterns off it and the corpus now stands at **905 compiled against 173 refused**, whose largest remaining class is a **function value at a boundary** — every `parameter f is a function value`, and every `Seq[T]` in SICP chapter 3, whose `Cons(head, rest: () -> Seq[T])` puts a closure in a field. `Heap::crossing` refuses those truly rather than stalely, and what would move them is compiling definitions that are called only by *other compiled definitions*, which never marshal a closure at all. Behind that: three named items ([`93`](93-the-native-backends-report.md) §93.14): the signal vocabulary, which the splitter reads rather than a body calling it; a **bounded** definition, which is [`93`](93-the-native-backends-report.md)'s closure boundary; and a worker that can answer two calls at once, which [`93`](93-the-native-backends-report.md) §93.14 has named as the first thing a second version would change since there was a first version. **Mode B's codegen** is the item with a user in front of it, and it is that plus a wasm emitter ([`94`](94-mode-b-report.md) §94.8). ~~The lane's other live item is **cancellation** for a `parallel:` scope~~ — **built** ([`118`](118-a-scope-stops-its-children-report.md)). What is left in `beck-eval` is stopping a child that is *blocked in the host*, which is a deadline on the [`net`](../compiler/crates/beck-core/src/net.rs) seam rather than a change to the scope | Lane B's render lock is still open and still has no owner — it is a third branch rather than a reason to hold anything. Lane D's remaining item is **trusted publishing**, which is an account setting rather than a branch |
 | **Any time** | — | Lane F; ~~Lane C's LSP~~ — **built** ([`110`](110-the-editor-edits-report.md)), which empties Lane C; more of SICP | No predecessors, no collisions |
 
 A third branch is viable whenever E or F is staffed. The ceiling is four, because of these:
 
 **The heap's second half is this phase's remaining F**, and the first half is the evidence for
 saying so. §8.5.1's classification says to take the fan-out item first; the algebraic half
-([`101`](101-the-heap-report.md)) was taken and it moved two rows of the exit paragraph at once.
+([`93`](93-the-native-backends-report.md)) was taken and it moved two rows of the exit paragraph at once.
 What is behind the rest of it — growing a collection, the effects that call back into the host — is
 the same set it always was, four items and a half shorter: native codegen for anything a program actually manipulates, and Mode B's codegen, which
 is that plus a wasm emitter ([`94`](94-mode-b-report.md) §94.8). It sits in Lane E, which collides

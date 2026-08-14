@@ -187,6 +187,6 @@ so. It is cited from five other reports for that reason.
 - **A walker over `Clause`.** All three annotating passes skip `test` blocks, so a file whose tests
   *are* the work — most of `compiler/lib/` — gets no layout, no reserved slot and no move in them
   (§70.7). Named, not fixed.
-- **A compiler.** This is a tree-walker that got fast; [`93`](93-llvm-backend-report.md),
-  [`97`](97-cranelift-report.md) and [`101`](101-the-heap-report.md) are the other answer, and the
+- **A compiler.** This is a tree-walker that got fast; [`93`](93-the-native-backends-report.md),
+  [`93`](93-the-native-backends-report.md) and [`93`](93-the-native-backends-report.md) are the other answer, and the
   gap between them is what §25.9 is holding.

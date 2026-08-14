@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Date:** 2026-08-09
-**Context:** [`93`](../93-llvm-backend-report.md), [`05`](../05-tier-lowering.md),
+**Context:** [`93`](../93-the-native-backends-report.md), [`05`](../05-tier-lowering.md),
 [`07`](../07-dependencies.md), [`43`](../43-threat-model.md),
 [`0007`](0007-evaluator-stack-is-declared-not-discovered.md)
 
@@ -56,10 +56,10 @@ What that buys, beyond the property:
 ## What it costs, named
 
 - **A pipe round trip per call**, measured at **36–43 µs** across §93.5's two harnesses
-  ([`93`](../93-llvm-backend-report.md)) — one constant, read twice on a noisy runner. It is a constant, so it is the whole cost of a call that computes nothing and a rounding
+  ([`93`](../93-the-native-backends-report.md)) — one constant, read twice on a noisy runner. It is a constant, so it is the whole cost of a call that computes nothing and a rounding
   error on one that computes for a millisecond — but it means this backend is for *compute*, and a
   program that crosses it a million times to do a nanosecond of work each time would be slower than
-  the tree-walker. §93.7 says what would remove it.
+  the tree-walker. §93.14 says what would remove it.
 - **One process, one pipe, one lock.** Two threads calling at once serialise on the pipe. The
   runtime calls the fold from a sequencer task and a view from a connection task, so this is a real
   constraint and not a theoretical one — it is the first thing a second version changes.
@@ -67,15 +67,15 @@ What that buys, beyond the property:
   joins the C compiler that [`0017`](0017-sqlite-is-a-substrate-for-its-transaction-not-its-speed.md)
   and [`0019`](0019-a-modern-allocator-for-the-evaluator.md) already need, so it changes what a
   person has to install by approximately nothing — but the *version* of it is now a variable in a
-  performance number, which is why [`93`](../93-llvm-backend-report.md) quotes it.
+  performance number, which is why [`93`](../93-the-native-backends-report.md) quotes it.
 - **`-O2` runs on every build.** Compiling nine definitions and linking took 195 ms
-  ([`93`](../93-llvm-backend-report.md) §93.5). That is fine for `beck build` and it is exactly the
+  ([`93`](../93-the-native-backends-report.md) §93.5). That is fine for `beck build` and it is exactly the
   cost §5.2 buys Cranelift to avoid for `beck dev`, so this ADR does not settle the dual-codegen
   question — it builds one half of it and measures the reason the other half exists.
 - **No fuel, and no depth ceiling.** [`62`](../62-fuel-report.md)'s step budget and
   [`0007`](0007-evaluator-stack-is-declared-not-discovered.md)'s counted recursion depth are both
   properties of walking a tree, and neither survives compilation. What replaces them is coarser: a
-  wall-clock limit on one call, and a message when the worker dies. §93.7 is the honest list.
+  wall-clock limit on one call, and a message when the worker dies. §93.14 is the honest list.
 
 ## What was considered and refused
 
@@ -107,4 +107,4 @@ as a side effect of wanting a faster benchmark number.
 The trigger that would force it is a *tier* rather than a benchmark: if the server partition ever
 runs compiled rather than walked — the fold, `validate`, the view, all of which cross the seam per
 event — the round trip stops being amortisable and the process boundary stops being affordable.
-Nothing here is on that path yet, and [`93`](../93-llvm-backend-report.md) §93.6 says why.
+Nothing here is on that path yet, and [`93`](../93-the-native-backends-report.md) §93.14 says why.

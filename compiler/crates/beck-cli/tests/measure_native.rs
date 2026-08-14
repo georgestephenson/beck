@@ -19,7 +19,7 @@
 //!
 //! A ratio that grows with size is the round trip being amortised away, and it is reported rather
 //! than smoothed: at a small size the round trip is most of the cost, which is a real property of
-//! an out-of-process backend and the first thing §93.7 would change.
+//! an out-of-process backend and the first thing §93.14 would change.
 //!
 //! # What is gated, and what is only printed
 //!
@@ -345,7 +345,7 @@ def scan(n: Int, acc: Acc, sum: Int) -> Int:
 ///
 /// Nothing here is asserted except the direction, and `grown`'s direction is asserted **the other
 /// way**: a run in which the compiled accumulator caught up would mean the evaluator had lost its
-/// in-place append, which is a finding rather than good news (§105.6).
+/// in-place append, which is a finding rather than good news (§93.7).
 #[test]
 fn what_text_costs_against_the_tree_walker() {
     const TEXT: &str = r#"
@@ -458,7 +458,7 @@ def grown(s: Str, n: Int, acc: Str) -> Int:
     }
     println!(
         "\nRatios are evaluator ÷ native, wall clock, on this machine. `grown` is the row that \
-         goes the\nother way in a release build: `docs/105` §105.6 is the in-place append this \
+         goes the\nother way in a release build: `docs/93` §93.7 is the in-place append this \
          backend does not have."
     );
 }
@@ -467,7 +467,7 @@ def grown(s: Str, n: Int, acc: Str) -> Int:
 ///
 /// The same three shapes text has, one type over: walking one, searching one, and taking a range
 /// out of one. There is no accumulator row, because `list_append` is **refused** here — which is
-/// `docs/106` §106.5's decision and the asymmetry with text, where `+` had to ship because there is
+/// `docs/93` §93.7's decision and the asymmetry with text, where `+` had to ship because there is
 /// no other way to build a string.
 #[test]
 fn what_a_list_costs_against_the_tree_walker() {
@@ -686,7 +686,7 @@ def joined_up(xss: list[list[Int]]) -> Int:
                 "`{name}` was {small:.2}× at the small size and {large:.2}× at the large one"
             );
         } else {
-            // **`concat_lists` is slower here, and asserted to be.** `docs/105` §105.7 is the
+            // **`concat_lists` is slower here, and asserted to be.** `docs/93` §93.5 is the
             // precedent: a row below one is a fact to pin rather than a number to leave out. The
             // work *is* the marshalling — the evaluator already holds the lists and copies words
             // between two `Vec`s, while a compiled call sends 2,000 list objects down a pipe and
@@ -945,7 +945,7 @@ fn the_two_code_generators_against_each_other() {
 /// about.
 ///
 /// A compiled `view` does not render anything: what it builds is the *call*, and the host bakes the
-/// tree out of it on the way back (`docs/111`). So the work is divided rather than removed — the
+/// tree out of it on the way back (`docs/93`). So the work is divided rather than removed — the
 /// program's own logic is compiled and every leaf's rendering is still `Value::display` in the
 /// host, plus a pipe in the middle that the evaluator does not have. The two sizes are what
 /// separate a constant from a growth (`AGENTS.md`), and nothing here is asserted to be **faster**:
@@ -1050,7 +1050,7 @@ def plain(rows: list[Row]) -> Html:
     println!(
         "\n  Neither row is asserted to be faster. A compiled `view` builds the call and the host\n  \
          bakes the tree, so the rendering is the same `Value::display` either way and the pipe is\n  \
-         additional — `docs/111` §111.6. What is asserted is that the ratio holds its shape over\n  \
+         additional — `docs/93` §93.5. What is asserted is that the ratio holds its shape over\n  \
          eight times the rows, because a page that copied what it had built would lose it."
     );
     for (name, small, large) in &seen {
@@ -1156,8 +1156,8 @@ def down(n: Int) -> Int:
 /// What an appended accumulator costs against the tree-walker, at two sizes.
 ///
 /// `docs/69` §69.7 measured this loop as **quadratic in time** on the evaluator before
-/// `docs/70` gave it last-use moves, and `docs/106` §106.5 refused to compile it rather than ship
-/// the quadratic back. `docs/113` is the layout that removed the choice, and this is the row that
+/// `docs/70` gave it last-use moves, and `docs/93` §93.7 refused to compile it rather than ship
+/// the quadratic back. `docs/93` is the layout that removed the choice, and this is the row that
 /// says so: the ratio has to **hold its shape** over four times the elements, because a copying
 /// append would lose a factor of four between the two rows.
 ///

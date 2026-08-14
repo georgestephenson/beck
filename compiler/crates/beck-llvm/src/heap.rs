@@ -166,7 +166,7 @@ pub const MAX_LAYOUTS: usize = 512;
 /// a bound here is what turns a compiler bug into a message rather than into a blown host stack.
 ///
 /// It is also a limit on what a compiled definition may *answer* with, which the evaluator does not
-/// have — `docs/101` §101.6 carries it as a difference. The number is chosen the way
+/// have — `docs/93` §93.12 carries it as a difference. The number is chosen the way
 /// [`adr/0007`](../../../../../docs/adr/0007-evaluator-stack-is-declared-not-discovered.md) chooses
 /// the evaluator's: a frame here is small, and this is a depth an ordinary thread's stack holds
 /// several times over rather than the deepest one that would fit.
@@ -207,10 +207,10 @@ pub fn str_bytes(n: u64) -> u64 {
 /// | header | how many elements | the data block's offset | — |
 /// | data | how many the block holds (`cap`) | how many are written (`used`) | the elements |
 ///
-/// What it costs is one load: [`docs/106`](../../../../../docs/106-lists-arrive-read-only-report.md)
+/// What it costs is one load: [`docs/93`](../../../../../docs/93-the-native-backends-report.md)
 /// reached an element with an add, and this reaches the block first. That is paid **once per
 /// operation** rather than once per element — every generated loop takes the data pointer before it
-/// starts — and `docs/113` measures what is left.
+/// starts — and `docs/93` measures what is left.
 pub const LIST_HEADER: u64 = 2 * WORD;
 
 /// The two header words of a list's data block: how many elements it can hold, and how many have
@@ -286,12 +286,12 @@ pub const MAP_HEADER: u64 = WORD;
 /// It was a sorted run — a count and then every key followed by every value — which makes a lookup
 /// a binary search over contiguous words and makes an **insert** a copy of the whole run. That is
 /// `O(n)` where [`beck_core::pmap`] is `O(log n)`, and
-/// [`docs/107`](../../../../../docs/107-a-map-arrives-read-only-report.md) §107.4 refused to ship
+/// [`docs/93`](../../../../../docs/93-the-native-backends-report.md) §93.7 refused to ship
 /// it for that reason: *this backend does not ship an operation whose asymptote is worse than the
 /// evaluator's*.
 ///
-/// [`docs/113`](../../../../../docs/113-a-list-grows-report.md) removed the same refusal for a list
-/// by separating the count from the elements, and §113.7 said in advance that the map's would
+/// [`docs/93`](../../../../../docs/93-the-native-backends-report.md) removed the same refusal for a list
+/// by separating the count from the elements, and §93.7 said in advance that the map's would
 /// **survive** that trick — a sorted run has to shift however its header is arranged. What removes
 /// it is the structure the evaluator already uses: a **weight-balanced tree**, whose insert rebuilds
 /// the path and shares every subtree it did not touch. `beck_core::pmap`'s own module documentation
@@ -414,7 +414,7 @@ impl Repr {
 
     /// How two values of this repr are ordered, and **the only place that decides**.
     ///
-    /// [`docs/106`](../../../../../docs/106-lists-arrive-read-only-report.md) §106.4 records the
+    /// [`docs/93`](../../../../../docs/93-the-native-backends-report.md) §93.8 records the
     /// same defect three times: a record's field comparison matched `Repr::Obj` and `Repr::Str`
     /// by name and let a `_` arm swallow whichever reference kind had just been added, so two
     /// equal values compared unequal because their **offsets** differed. Each time the differential
@@ -639,7 +639,7 @@ impl Heap {
     ///
     /// A program of pure arithmetic gets the module it always got: no `malloc`, no globals, and no
     /// blob on the wire. That is not an optimisation but the thing that keeps
-    /// [`docs/93`](../../../../../docs/93-llvm-backend-report.md) §93.5's numbers about the same
+    /// [`docs/93`](../../../../../docs/93-the-native-backends-report.md) §93.5's numbers about the same
     /// code they were measured on.
     pub fn is_empty(&self) -> bool {
         !self.text
@@ -2078,7 +2078,7 @@ fn pattern(p: &beck_core::core::Pattern, heap: &mut Heap) {
         }
         // Walked for the same reason every other pattern is: what decides the pool is the
         // program, not what turned out to compile. It said "refused by both emitters" until
-        // `docs/119` compiled one.
+        // `docs/93` compiled one.
         Pattern::List { items, .. } => {
             for sub in items {
                 pattern(sub, heap);

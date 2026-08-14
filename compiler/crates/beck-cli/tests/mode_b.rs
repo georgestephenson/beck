@@ -13,7 +13,7 @@
 //! 3. **Optimism is right and reconciliation is right**: a guess appears before the server answers,
 //!    a guess the program's own `validate` refuses never appears at all, and a guess is retired
 //!    when — and only when — the confirmed state passes the position the server gave it.
-//! 4. **The page can say it is guessing** — §3.7's freshness dimension (`docs/101`). `Confirmed`
+//! 4. **The page can say it is guessing** — §3.7's freshness dimension (`docs/93`). `Confirmed`
 //!    while the client holds nothing of its own, `Pending(n)` while it does, and back again when
 //!    the state that confirms the guess arrives. Refused to a page that renders on the *server*,
 //!    which is the one rule here that points that way.

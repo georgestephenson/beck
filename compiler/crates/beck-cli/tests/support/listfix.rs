@@ -159,7 +159,7 @@ def has(xs: list[Int], n: Int) -> Bool:
     return list_contains(xs, n)
 
 # Growing one. `appended` is the operation; the three below it are what a shared data block does,
-# and they are the whole reason `docs/113`'s layout is two objects rather than one.
+# and they are the whole reason `docs/93`'s layout is two objects rather than one.
 def appended(xs: list[Int], n: Int) -> list[Int]:
     return list_append(xs, n)
 
@@ -170,7 +170,7 @@ def forked(xs: list[Int], n: Int) -> Int:
     zs = list_append(xs, 0 - n)
     return (list_len(xs) * 100) + (sum_of(ys) * 10) + sum_of(zs)
 
-# The accumulator every loop in the language is written as. Quadratic before `docs/113`, and the
+# The accumulator every loop in the language is written as. Quadratic before `docs/93`, and the
 # reason `list_append` was refused rather than shipped.
 def doubled_up(xs: list[Int]) -> list[Int]:
     return push_from(xs, 0, [])

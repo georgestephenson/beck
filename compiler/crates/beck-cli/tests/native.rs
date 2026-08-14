@@ -102,7 +102,7 @@ fn artifact(program: &Program) -> Artifact {
 /// The span is deliberately *not* compared. Both sides carry one and both point into the same
 /// file, but the evaluator's is the span of the `Core` node it was walking and the native one is
 /// the span the emitter recorded for the trapping instruction, and those are the same location
-/// only when nothing has been folded. The message is the claim; §93.7 says so.
+/// only when nothing has been folded. The message is the claim; §93.14 says so.
 type Outcome = Result<Value, String>;
 
 fn outcome(r: Result<Value, beck_core::ExecError>) -> Outcome {
@@ -528,7 +528,7 @@ fn the_two_backends_agree_on_text() {
     compared += both.agree("repeat", &textfix::repeats(&ss));
 
     // Building text out of something that is not text, and taking an `Option` apart without a
-    // `match` — the primitives `docs/105`'s and `docs/106`'s layouts made reachable.
+    // `match` — the primitives `docs/93`'s and `docs/93`'s layouts made reachable.
     compared += both.agree("shown", &textfix::integers());
     compared += both.agree(
         "shown_bool",
@@ -1055,7 +1055,7 @@ fn a_polymorphically_recursive_definition_is_refused_rather_than_compiled_foreve
             .collect::<Vec<_>>()
     );
     // The reason a reader is given names the definition and says what is wrong with it, which is
-    // `docs/106` §106.7's rule about a refusal being a claim.
+    // `docs/93` §93.9's rule about a refusal being a claim.
     let why = beck_llvm::mono::specialise(&program).kept;
     assert!(
         why.get("growing")
@@ -1244,7 +1244,7 @@ fn a_loop_costs_its_answer_and_one_closure() {
 /// A sort costs four runs of the list, and a concatenation costs its answer.
 ///
 /// The second shape gate with no clock in it, and both halves say something a differential cannot.
-/// **`concat_lists`** is the one whose refusal was *wrong* (`docs/108` §108.4 as corrected in the
+/// **`concat_lists`** is the one whose refusal was *wrong* (`docs/93` §93.12 as corrected in the
 /// changelog): if it grew a list the way `list_append` would have to, the arena would hold every
 /// intermediate — so asserting it leaves exactly its answer is asserting the sum-then-allocate shape.
 /// **`sort_by`** allocates the keys, the elements, and a scratch pair, and a merge sort that
@@ -1321,7 +1321,7 @@ fn a_tail_call_through_a_closure_costs_nothing() {
 ///
 /// Two-sided, because a backend that refused everything would pass the first half: `applies` is
 /// refused *and* `twice` in the program above compiles, so what is being asserted is a line rather
-/// than an absence. The reasons are checked too — `docs/106` §106.7 is what happens when a refusal's
+/// than an absence. The reasons are checked too — `docs/93` §93.9 is what happens when a refusal's
 /// reason is nobody's business but the refusal's.
 #[test]
 fn a_closure_does_not_cross_the_boundary() {
@@ -1585,7 +1585,7 @@ fn running_out_of_heap_is_a_diagnostic() {
     // Text runs out the same way, and through a different allocation: `beck.str.alloc` sizes an
     // object the program never named, so its failure has to reach the same cell the constructor's
     // does. `repeat` builds `n` strings of growing length, which is `O(n²)` bytes — 30,000 copies
-    // of a 16-byte string is well past the arena (§105.6 is why that is quadratic and not a bug).
+    // of a 16-byte string is well past the arena (§93.7 is why that is quadratic and not a bug).
     let text = Both::over("text.beck", TEXT);
     let err = text
         .native
@@ -1724,8 +1724,8 @@ fn a_slice_costs_its_answer_and_not_the_string_it_came_from() {
 /// A corpus program's **fold** and its **page** compile, by name and over the whole corpus.
 ///
 /// `apply_event` is a `durable` fold's step function — `(State, Envelope[Event]) -> State` — and
-/// until `docs/107` its state was a `Map` and so it could not. `view` is `(State, Session) -> Html`
-/// and until `docs/111` a page had no shape at all; this test asserted it was refused, and that row
+/// until `docs/93` its state was a `Map` and so it could not. `view` is `(State, Session) -> Html`
+/// and until `docs/93` a page had no shape at all; this test asserted it was refused, and that row
 /// moved here rather than being deleted, which is what the refusal lists in this file are for.
 ///
 /// Both sets are floors rather than equalities. A corpus program acquiring one should not turn this
@@ -1757,16 +1757,16 @@ fn a_corpus_fold_compiles() {
     }
     assert!(
         folded.len() >= 9,
-        "at least nine corpus folds compiled when `docs/107` was written, and {} do now: {folded:?}",
+        "at least nine corpus folds compiled when `docs/93` was written, and {} do now: {folded:?}",
         folded.len()
     );
     assert!(
         viewed.len() >= 21,
-        "twenty-one corpus pages compiled when `docs/111` was written, and {} do now: {viewed:?}",
+        "twenty-one corpus pages compiled when `docs/93` was written, and {} do now: {viewed:?}",
         viewed.len()
     );
     // The other side, so this is not passing because everything compiles. What is still refused
-    // across the corpus is a definition **generic over a type** — `docs/114` compiled the last
+    // across the corpus is a definition **generic over a type** — `docs/93` compiled the last
     // collection that grows and `str_trim` took the last Unicode row that was not one, so a type
     // parameter is what is left. This line has been rewritten once per change that removed the
     // previous answer, which is what it is for.
@@ -1859,7 +1859,7 @@ fn a_lookup_costs_the_same_whatever_the_map_holds() {
 
 /// Building text in a loop costs the **square** of what it builds, and the gate has no clock in it.
 ///
-/// `docs/105` §105.6's largest cost, asserted rather than only measured. `repeat(s, n, "")` builds
+/// `docs/93` §93.7's largest cost, asserted rather than only measured. `repeat(s, n, "")` builds
 /// `n` strings whose lengths are `|s|, 2|s|, …, n|s|`, so the arena it leaves is `Θ(n²)` — where the
 /// evaluator's is `Θ(n)`, because `docs/70` gave it an in-place `push_str` when `liveness` proves
 /// the accumulator is a last use and an arena with no ownership in it cannot.
@@ -1885,8 +1885,8 @@ fn an_accumulator_costs_the_square_of_what_it_builds() {
     assert!(
         growth > steps * steps * 0.9,
         "four times the steps left {growth:.1}× the arena, and a quadratic accumulator leaves \
-         about {:.0}× — this backend appears to have grown an ownership analysis, which `docs/105` \
-         §105.6 says it cannot have",
+         about {:.0}× — this backend appears to have grown an ownership analysis, which `docs/93` \
+         §93.7 says it cannot have",
         steps * steps
     );
     println!(
@@ -1903,7 +1903,7 @@ fn an_accumulator_costs_the_square_of_what_it_builds() {
 /// `n` steps are `40n` bytes, and a `list_slice` that copied what it was taken *from* would be
 /// `O(n²)` with no clock in the measurement.
 ///
-/// The constant went 16 → 40 at `docs/113`, which is that report's cost stated in a gate: a list is
+/// The constant went 16 → 40 at `docs/93`, which is that report's cost stated in a gate: a list is
 /// two objects now, so the *smallest* one is five words rather than two. What this test is about is
 /// unchanged, because what it asserts is that the number does not grow with `n`.
 #[test]
@@ -2009,12 +2009,12 @@ fn what_cannot_be_compiled_is_refused_by_name_and_with_a_reason() {
 
 /// What the heap does **not** reach, asserted as an absence.
 ///
-/// `docs/101` §101.5 lists what is not built — collections, closures and every effect — and a
+/// `docs/93` §93.14 lists what is not built — collections, closures and every effect — and a
 /// list in prose goes stale where a list with a test attached cannot (`docs/83` §83.7). Each of
 /// these goes red the day its row starts compiling, which is the day the row should be deleted.
 ///
-/// Six rows were deleted that way: `docs/105` gave a `Str` a layout, `docs/106` gave a `list` one,
-/// `docs/108` compiled the higher-order primitives, `str_trim` and `str_split` moved across when
+/// Six rows were deleted that way: `docs/93` gave a `Str` a layout, `docs/93` gave a `list` one,
+/// `docs/93` compiled the higher-order primitives, `str_trim` and `str_split` moved across when
 /// their stated reasons — a Unicode table, and "two loops rather than one" — turned out to be false
 /// of them, and the **host effects** moved when the worker's protocol grew a second direction.
 /// Each time, the row moved from this list to the control below it in the same commit.
@@ -2066,10 +2066,10 @@ fn what_the_heap_does_not_reach_is_refused_by_name() {
 
 /// A refusal's reason is a **claim**, and this asks whether the claim is true.
 ///
-/// `docs/105` §105.4 refused `str_index_of` on the grounds that it "answers with an `Option`,
+/// `docs/93` §93.9 refused `str_index_of` on the grounds that it "answers with an `Option`,
 /// whose layout this backend resolves from a program's own types and not from the prelude's".
 /// That sentence was false: the prelude's `Option` has had a layout since
-/// [`docs/101`](../../../../docs/101-the-heap-report.md), and `maybe(n) -> Option[Int]` compiled in
+/// [`docs/93`](../docs/93-the-native-backends-report.md), and `maybe(n) -> Option[Int]` compiled in
 /// the very fixture beside it. Every gate around the refusal was green, because each asserted that
 /// the refusal *said* something and none asked whether what it said was *so* — `docs/84` §84.5's
 /// pattern, in the one place this project had not looked for it.
@@ -2108,7 +2108,7 @@ def finds(a: Str, b: Str) -> Option[Int]:
     let mut heap = module.heap.clone();
     let ty_of = |name: &str| program.defs[name].params[0].2.clone();
 
-    // The last row, and this gate **fired on it**: `docs/108` gave a closure a shape, so "a closure,
+    // The last row, and this gate **fired on it**: `docs/93` gave a closure a shape, so "a closure,
     // which has no layout here" stopped being true while the refusal that said it stayed. What is
     // true now is narrower and is asserted as two things — the shape exists, and the *boundary* is
     // what refuses it — because a parameter is a value the host has to marshal and a closure is the
@@ -2148,8 +2148,8 @@ def finds(a: Str, b: Str) -> Option[Int]:
 fn a_refusal_travels_to_whoever_calls_it() {
     let _ = toolchain!();
     let src = r#"
-## A closure rather than a record, a `Str`, a `list` or a `Map`: `docs/101` gave the record a
-## layout, `docs/105` gave text one, `docs/106` gave a list one and `docs/107` gave a map one, and
+## A closure rather than a record, a `Str`, a `list` or a `Map`: `docs/93` gave the record a
+## layout, `docs/93` gave text one, `docs/93` gave a list one and `docs/93` gave a map one, and
 ## what a refusal has to travel *from* is something the heap still does not reach.
 def bottom(n: Int) -> Int:
     return apply(double_it, n)
@@ -2277,7 +2277,7 @@ def forever(n: Int) -> Int:
 /// rather than a paragraph because that is the difference between a known gap and a forgotten one.
 /// `docs/adr/0007` records that `beck-eval` replaced a `SIGSEGV` with a counted ceiling; compiled
 /// code spends a real frame per level and counts nothing, so the abort is back — and all a host
-/// can do is notice that the worker stopped and say why it probably did. §93.7 is what closing it
+/// can do is notice that the worker stopped and say why it probably did. §93.14 is what closing it
 /// would cost.
 #[test]
 fn a_native_recursion_without_a_ceiling_says_what_happened() {
@@ -2422,7 +2422,7 @@ fn the_two_backends_agree_on_the_benchmark_and_the_book() {
     }
     // Pascal's triangle, inside its domain. `pascal(0, 1)` is not a value the function has an
     // answer for — it recurses without bottoming out — and neither backend survives it: the
-    // evaluator reaches its depth ceiling and the worker exhausts its stack. §93.7 records that
+    // evaluator reaches its depth ceiling and the worker exhausts its stack. §93.14 records that
     // asymmetry rather than this suite papering over it.
     let triangle: Vec<Vec<Value>> = (0..14)
         .flat_map(|row| (0..=row).map(move |col| vec![Value::Int(row), Value::Int(col)]))
@@ -2565,7 +2565,7 @@ fn corpus(toolchain: beck_llvm::Toolchain) {
     }
     // Both halves printed, because a report that quotes "so many more compile" needs the
     // denominator: each file is compiled **alone**, so a library's generic definitions have no
-    // caller and stay refused (`docs/115` §115.6), and the count only means something beside the
+    // caller and stay refused (`docs/93` §93.10), and the count only means something beside the
     // one before it.
     println!(
         "{assembled} programs assembled, {compiled} definitions compiled to native code, \
@@ -2594,7 +2594,7 @@ fn corpus(toolchain: beck_llvm::Toolchain) {
     //
     // `a_refusal_that_blames_a_type_is_asked_whether_that_type_has_one` catches a reason that
     // names a **type** with a layout. It could not catch "a collection is not on this heap yet",
-    // which named no type at all and stayed true-sounding for three reports after `docs/106` made
+    // which named no type at all and stayed true-sounding for three reports after `docs/93` made
     // it false. So these are the sentences this backend may no longer say about itself, and the
     // list grows whenever a report retires a class rather than a name.
     let stale: Vec<String> = refusal_reasons
@@ -2658,7 +2658,7 @@ fn the_subset_is_decided_without_a_toolchain() {
 
 /// A page, compiled — and the tree it bakes into is the tree the evaluator built.
 ///
-/// This is the differential over `docs/111`'s recipe. What crosses the pipe is the *call* rather
+/// This is the differential over `docs/93`'s recipe. What crosses the pipe is the *call* rather
 /// than the tree, so the assertion that matters is not that the bytes arrived: it is that
 /// `beck_core::html::element` and `Value`'s equality — which includes every structural hash — say
 /// the two trees are one. A recipe that dropped an attribute in the wrong place, kept a key as an
@@ -2786,7 +2786,7 @@ fn a_view_has_no_order_and_the_refusal_says_why() {
         "comparing a record with a view in it has no answer"
     );
 
-    // …and the boundary's one directional rule, which is §111.3's and not §111.4's: an `Attr` may
+    // …and the boundary's one directional rule, which is §93.6's and not §93.6's: an `Attr` may
     // be answered with and may not be taken, because the host writes a handler back as the plain
     // attribute it would become and a bare one has not become it yet.
     for name in ["takes_an_attr", "takes_a_list_of_attrs"] {
@@ -2825,7 +2825,7 @@ fn a_view_has_no_order_and_the_refusal_says_why() {
 /// The constant is written down rather than derived, because deriving it here would be the layout
 /// spelled a second time (`beck_llvm::heap`'s own argument): a row is an `li` (four words), its
 /// empty attribute list (four), its child list (five), its text node (four) and the word it occupies
-/// in the page's own child list — eighteen words, 144 bytes. It was twelve words until `docs/113`
+/// in the page's own child list — eighteen words, 144 bytes. It was twelve words until `docs/93`
 /// made a list two objects. What is left over is the page itself and
 /// the literal pool, and *that* number has to be the same at both sizes too, which is the half of
 /// this test a per-row division would hide.
@@ -2961,13 +2961,13 @@ fn unwinding_costs_nothing_per_frame() {
 
 /// An accumulator built with `list_append` is **linear**, and the gate has no clock in it.
 ///
-/// This is `docs/113`'s claim and the reason the operation could be compiled at all. The idiom is
+/// This is `docs/93`'s claim and the reason the operation could be compiled at all. The idiom is
 /// the one every loop in the language is written as — `f(…, list_append(acc, x))` in tail position —
 /// and it was refused rather than shipped because with the count in front of the elements an append
 /// can only copy, which is `Θ(n²)` where `beck-eval` is `Θ(n)` (`docs/69` §69.7).
 ///
 /// Four times the elements must cost about four times the arena. A copying append leaves about
-/// sixteen, which is what the text accumulator beside this still does — `docs/105` §105.6, and the
+/// sixteen, which is what the text accumulator beside this still does — `docs/93` §93.7, and the
 /// two tests are worth reading together: one asserts a quadratic and one asserts a linear, on the
 /// same shape, in the same backend, because only one of the two layouts was separated.
 #[test]
@@ -3004,7 +3004,7 @@ fn an_appended_accumulator_is_linear() {
     assert!(
         growth < steps * 2.0,
         "four times the elements left {growth:.1}× the arena, and an append that copies leaves \
-         about {:.0}× — this is the quadratic `docs/113` exists to remove",
+         about {:.0}× — this is the quadratic `docs/93` exists to remove",
         steps * steps
     );
     println!(
@@ -3072,9 +3072,9 @@ fn a_split_costs_its_answer_and_nothing_per_call() {
 
 /// A fold that keeps a `Map` is **not quadratic**, and the gate has no clock in it.
 ///
-/// This is `docs/114`'s claim and the reason the operation could be compiled at all. `map_insert`
+/// This is `docs/93`'s claim and the reason the operation could be compiled at all. `map_insert`
 /// over a sorted run copies the whole run, so `n` inserts cost `Θ(n²)` — where `beck_core::pmap` is
-/// `Θ(n log n)` because it rebuilds one path and shares the rest. `docs/107` §107.4 refused to ship
+/// `Θ(n log n)` because it rebuilds one path and shares the rest. `docs/93` §93.7 refused to ship
 /// the first, and this asserts the second.
 ///
 /// Four times the entries costs about *five* times the arena — `n log n` — where a copying insert
@@ -3103,7 +3103,7 @@ fn a_fold_over_a_map_is_not_quadratic() {
     assert!(
         growth < steps * 2.0,
         "four times the entries left {growth:.1}× the arena, and an insert that copies the run \
-         leaves about {:.0}× — this is the quadratic `docs/114` exists to remove",
+         leaves about {:.0}× — this is the quadratic `docs/93` exists to remove",
         steps * steps
     );
     println!(
@@ -3216,10 +3216,10 @@ fn what_a_question_carries_is_a_decision_and_not_an_accident() {
 
 /// A list, taken apart by a **pattern** — the length test, the elements and the tail.
 ///
-/// `docs/119` is what this is the differential for. The refusal it replaces said "a collection is
-/// not on this heap yet", which stopped being true at [`docs/106`](../../../../docs/106-lists-arrive-read-only-report.md)
+/// `docs/93` is what this is the differential for. The refusal it replaces said "a collection is
+/// not on this heap yet", which stopped being true at [`docs/93`](../docs/93-the-native-backends-report.md)
 /// and nothing noticed — the third time a refusal's *stated reason* has outlived the thing it
-/// stated ([`docs/105`](../../../../docs/105-text-on-the-heap-report.md) §105.4).
+/// stated ([`docs/93`](../docs/93-the-native-backends-report.md) §93.9).
 #[test]
 fn the_two_backends_agree_on_list_patterns() {
     let _ = toolchain!();

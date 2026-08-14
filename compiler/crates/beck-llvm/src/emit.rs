@@ -22,9 +22,9 @@
 //! What is refused is refused **by name, with the reason**, in [`crate::Report`]: the signal
 //! vocabulary, a bounded definition, and the handful of primitives that read a Unicode table or
 //! grow a collection whose size needs a counting pass. Nothing else on this list is still here —
-//! failure compiles on the error cell that was already an unwinder (`docs/112`), growing a list and
-//! a map compile (`docs/113`, `docs/114`), and the four primitives that have to **ask the host**
-//! compile by asking it ([`Upcall`], `docs/116`). Nothing is silently approximated: a definition
+//! failure compiles on the error cell that was already an unwinder (`docs/93`), growing a list and
+//! a map compile (`docs/93`, `docs/93`), and the four primitives that have to **ask the host**
+//! compile by asking it ([`Upcall`], `docs/93`). Nothing is silently approximated: a definition
 //! either compiles to machine code that agrees with the evaluator on every input, or it does not
 //! compile.
 //!
@@ -56,7 +56,7 @@
 //! maps every NaN to `f64::NAN`. The tempting argument that the platform's default NaN already *is*
 //! that one is false on x86-64, where `0.0 * inf` yields the indefinite QNaN with its sign bit set
 //! — which sorts below every number under the order key where `f64::NAN` sorts above every one.
-//! `Function::normalise` has the whole story, and `docs/93` §93.2 is where it is written down.
+//! `Function::normalise` has the whole story, and `docs/93` §93.3 is where it is written down.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -1604,7 +1604,7 @@ impl<'a> Function<'a> {
     /// Always a fresh object. The evaluator rebuilds in place when the base is held by nobody else
     /// ([`docs/70`](../../../../../docs/70-the-evaluator-gets-fast-report.md)), and this cannot: an arena
     /// with no ownership in it cannot prove nobody else holds an offset. What that costs is
-    /// [`docs/101`] §101.6's first row, and it is a cost rather than a difference — the answer is
+    /// [`docs/93`] §93.12's first row, and it is a cost rather than a difference — the answer is
     /// the same one.
     fn with(
         &mut self,
@@ -2336,7 +2336,7 @@ impl<'a> Function<'a> {
             }
             // `list_append` — a new header, and a slot in the block when there is one.
             //
-            // Refused until `docs/113` for a reason that was true of the *layout* rather than of the
+            // Refused until `docs/93` for a reason that was true of the *layout* rather than of the
             // operation: with the count in front of the elements, an append could copy or it could
             // overwrite what other holders see. Separating the two made a third answer available.
             Prim::ListAppend => {
@@ -2550,7 +2550,7 @@ impl<'a> Function<'a> {
                 }
                 self.map_get(ty, &vals[0], &found, self.heap.element(v), span)
             }
-            // The three that grow a map. Refused until `docs/114` because a sorted run has to be
+            // The three that grow a map. Refused until `docs/93` because a sorted run has to be
             // copied whole; a tree rebuilds the path and shares the rest, which is
             // `beck_core::pmap`'s own cost.
             Prim::MapInsert | Prim::MapRemove => {
@@ -2616,7 +2616,7 @@ impl<'a> Function<'a> {
             }
             // A list of lists into one list. Not a growth: the total is a sum over the outer list's
             // header words, so the allocation happens once and after it — the same argument
-            // `str_join` is compiled under, and the reason `docs/108` §108.8 corrects this
+            // `str_join` is compiled under, and the reason `docs/93` §93.9 corrects this
             // primitive's own refusal.
             Prim::ConcatLists => {
                 arity(1)?;
@@ -3782,7 +3782,7 @@ impl<'a> Function<'a> {
     /// canonicalisation picks" — and that is **false on x86-64**: `0.0 * inf` yields the
     /// *indefinite* QNaN `0xFFF8…`, whose sign bit is set, where `f64::NAN` is `0x7FF8…`. Under the
     /// order key one sorts below every number and the other above every number, so
-    /// `(0.0 * inf) > 0.0` answered `true` in the evaluator and `false` here (`docs/93` §93.2).
+    /// `(0.0 * inf) > 0.0` answered `true` in the evaluator and `false` here (`docs/93` §93.3).
     ///
     /// `product_order` in the differential is what found it, and it found it only because that test
     /// compares a NaN a *computation produced* rather than one the host handed in already
@@ -3944,7 +3944,7 @@ impl<'a> Function<'a> {
 /// Why a primitive this backend does not compile is not compiled.
 ///
 /// The string half is spelled out one at a time rather than swept into "not a scalar primitive",
-/// because since `docs/105` a `Str` *is* a value here and "text is not on this heap" would be
+/// because since `docs/93` a `Str` *is* a value here and "text is not on this heap" would be
 /// false. Each reason names the thing that is missing rather than the primitive that wanted it —
 /// which is the difference between a refusal a reader can act on and one they can only observe.
 fn refusal(op: Prim) -> String {
@@ -3984,7 +3984,7 @@ fn refusal(op: Prim) -> String {
 /// module generates for itself is `beck.<something>` — `beck.dispatch`, `beck.alloc`, `beck.map.*`
 /// — so a definition *called* `dispatch` used to take the dispatcher's own symbol, and the
 /// assembler answered "invalid redefinition" for a program that had done nothing wrong.
-/// `awfy/richards.beck` has one, and it was invisible until `docs/114` made that definition
+/// `awfy/richards.beck` has one, and it was invisible until `docs/93` made that definition
 /// compile: a collision needs both halves to exist, and one of them never had.
 fn mangle(name: &str) -> String {
     let mut out = String::from("\"beck.def.");
@@ -5351,7 +5351,7 @@ declare i64 @write(i32, ptr, i64)
 /// `beck.str.byteof` is the one with a cost worth naming: it is constant time when the text is
 /// ASCII — every character one byte, which is what the two equal counts say — and a walk otherwise,
 /// where the evaluator has a chunked index and answers in at most a stride
-/// ([`beck_core::core::Text`]). `docs/105` §105.6 carries that as a difference rather than hiding
+/// ([`beck_core::core::Text`]). `docs/93` §93.7 carries that as a difference rather than hiding
 /// it, and the fix, if a program ever needs it, is the same index in the same header.
 const TEXT: &str = r#"define internal i64 @"beck.str.alloc"(ptr noalias %err, i64 %bytes, i64 %chars, i32 %span) {
 entry:
@@ -6063,7 +6063,7 @@ lengths:
 /// One three-way comparison over two **words**, and two functions built on it: the lexicographic
 /// order over two lists, and a linear search. Written per repr rather than taking a function
 /// pointer, because an indirect call is the one thing this backend does not have — it is what a
-/// closure would need, and `docs/101` §101.5 lists it as unbuilt.
+/// closure would need, and `docs/93` §93.14 lists it as unbuilt.
 ///
 /// The order is `Vec<Value>`'s: element by element, and a list that is a prefix of another is less
 /// than it. That is Rust's derived `Ord` on a slice, which is what [`beck_core::Value`] holds.
@@ -6200,7 +6200,7 @@ declare ptr @memcpy(ptr, ptr, i64)
 ///
 /// `beck.list.copy` is `list_slice`, `list_take` and `list_drop` at once, because all three are "a
 /// range of the elements, clamped" and the clamping is arithmetic the caller does. It costs the
-/// **answer** rather than the list, which is `docs/105` §105.7's rule applied one type over.
+/// **answer** rather than the list, which is `docs/93` §93.5's rule applied one type over.
 const LISTS: &str = r#"define internal i64 @"beck.list.block"(ptr noalias %err, i64 %cap, i64 %used, i32 %span) {
 entry:
   %body = mul i64 %cap, 8
@@ -6425,7 +6425,7 @@ out:
 /// needs `LISTS` as well — which is why [`assemble`] emits it only when both are there.
 ///
 /// `beck.str.from_int` is Rust's `i64::to_string` and has to be, to the digit: `str(n)` is
-/// `Value::display`, and `docs/105` §105.4 refused this whole primitive rather than answer a decimal
+/// `Value::display`, and `docs/93` §93.9 refused this whole primitive rather than answer a decimal
 /// that might differ. An integer's decimal *is* reproducible — the one that is not is a real's,
 /// whose shortest round-trip form is a whole algorithm — so this compiles for an `Int`, a `Bool` and
 /// a `Str`, and a `Float` is still refused.

@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Date:** 2026-08-09
-**Context:** [`97`](../97-cranelift-report.md), [`07`](../07-dependencies.md) §7.3,
+**Context:** [`93`](../93-the-native-backends-report.md), [`07`](../07-dependencies.md) §7.3,
 [`05`](../05-tier-lowering.md) §5.2, [`43`](../43-threat-model.md),
 [`0021`](0021-the-native-backend-writes-ir-and-runs-a-process.md)
 
@@ -53,14 +53,14 @@ is where the code generator lives, not what the process boundary is for.
   every machine with `clang` has a linker, and a machine with only `gcc` can use this backend and
   not the other.
 - **The link, on the clock.** Cranelift's own codegen is the fast half; `cc` is a process, and
-  starting one costs what starting one costs. [`97`](../97-cranelift-report.md) §97.5 measures
+  starting one costs what starting one costs. [`93`](../93-the-native-backends-report.md) §93.5 measures
   program-to-executable on both paths rather than codegen alone, because the second number is what
   a developer waits for.
 
 ## What it buys
 
 - **A second emitter, and therefore a three-way differential.**
-  [`93`](../93-llvm-backend-report.md) §93.7's finding is that a differential compares what somebody
+  [`93`](../93-the-native-backends-report.md) §93.14's finding is that a differential compares what somebody
   thought to write down. Two independent emitters held to one subset make a class of mistake
   visible that one emitter cannot: `cranelift.rs` asserts they accept and refuse exactly the same
   definitions, and the first bug this backend had — a signed comparison of an unsigned order key —
@@ -75,11 +75,11 @@ is where the code generator lives, not what the process boundary is for.
 **`cranelift-jit`.** The reason is ADR 0021's, unchanged: execution in process is `unsafe`, and the
 threat model's structural claim is not for sale for a build-time saving. It is also worth naming
 what the refusal costs, since a JIT is the shape `beck dev` eventually wants: about 36 µs of pipe
-round trip per call ([`93`](../93-llvm-backend-report.md) §93.5), and the link step.
+round trip per call ([`93`](../93-the-native-backends-report.md) §93.5), and the link step.
 
 **Sharing `beck-llvm`'s subset analysis.** It would have made the two emitters agree by
 construction — and an agreement by construction is not evidence. The selection is written twice and
-the gate holds the two to each other; §97.4 is what that found.
+the gate holds the two to each other; §93.8 is what that found.
 
 **Emitting Cranelift IR as text and shelling out.** Symmetric with ADR 0021 and pointless here:
 there is no `cranelift` binary on anybody's machine to hand it to, and the crate is the interface.

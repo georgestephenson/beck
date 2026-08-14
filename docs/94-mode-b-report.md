@@ -14,7 +14,7 @@ That is §94.2, it is a compile error with the reason attached, and it is the on
 
 What this is not is codegen. The kernel is `beck-eval` compiled to `wasm32-unknown-unknown` —
 [`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md) is that decision, with its cost measured
-rather than estimated in §94.6. [`93`](93-llvm-backend-report.md) landed a *second* backend while
+rather than estimated in §94.6. [`93`](93-the-native-backends-report.md) landed a *second* backend while
 this was being written, and it sharpens the decision rather than changing it: what `beck-llvm`
 compiles is the scalar subset, and a `view` is nothing but heap — records, lists, strings, a map,
 and an `Html` tree at the end. The tree's compiling backend could not execute a view either, so
@@ -286,7 +286,7 @@ browser in CI that §94.8 still owes.
   available; Perceus-style refcounting fallback)" is a backend, and
   [`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md) records why this is the seam it arrives
   at rather than a rewrite. The seam now has two implementations behind it
-  ([`93`](93-llvm-backend-report.md)) and **neither of them can render a page**: `beck-llvm` refuses
+  ([`93`](93-the-native-backends-report.md)) and **neither of them can render a page**: `beck-llvm` refuses
   anything needing a heap, which a view is made of. The heap is the shared prerequisite, and it is
   Phase 4's rather than this bullet's — [`08`](08-roadmap.md) §8.5.5's Lane E is where it is
   scheduled. **§94.14 measures what this bullet costs and finds it is not the leading cost**: a
@@ -396,7 +396,7 @@ which is the snapshot §94.7 ends on.
 Unchanged except for this bullet: **no playground**; identity's OIDC relying party, `managed()`
 provisioning, the claims mapping and presence ([`48`](48-identity-report.md) §48.5); three of the
 supply-chain bullet's four pieces ([`92`](92-sbom-report.md) §92.5). **Client polish** is untouched. The LLVM backend arrived in
-[`93`](93-llvm-backend-report.md) and covers the scalar subset, so "no native codegen" is no longer
+[`93`](93-the-native-backends-report.md) and covers the scalar subset, so "no native codegen" is no longer
 one of these — what is still missing there is a heap, which is also what a compiled Mode B kernel
 waits on.
 

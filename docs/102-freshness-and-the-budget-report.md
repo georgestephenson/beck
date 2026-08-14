@@ -298,7 +298,7 @@ one gap this feature leaves in the in-language test surface.
   report's time.
 - **No codegen**, unchanged: [`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md) and
   [`08`](08-roadmap.md) §8.5.5's Lane E. This is now the whole of what Phase 3's Mode B bullet still
-  owes — and [`101`](101-the-heap-report.md), which landed alongside this work and gave both native
+  owes — and [`93`](93-the-native-backends-report.md), which landed alongside this work and gave both native
   backends the *algebraic* half of a heap, says plainly that it does not bring Mode B codegen
   closer: a page is `Html` and `Str` all the way down, and that heap holds neither yet.
 - **One component per program**, unchanged ([`94`](94-mode-b-report.md) §94.8), and with it lazy
