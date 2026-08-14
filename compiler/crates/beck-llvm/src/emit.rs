@@ -1969,6 +1969,30 @@ impl<'a> Function<'a> {
                 self.text_arg(&vals[0], op)?;
                 Ok(self.text_call("trim", &[&vals[0]], Repr::Str, span))
             }
+            Prim::StrSplit | Prim::StrChars => {
+                // One function, because the evaluator answers characters for an empty separator —
+                // so `str_chars(s)` *is* `str_split(s, "")`, and the two share a body as well as a
+                // fixture.
+                let sep = if op == Prim::StrChars {
+                    arity(1)?;
+                    self.text_arg(&vals[0], op)?;
+                    // The offset `0`, which is never a live object — so `str_chars` needs no
+                    // literal, and the pool stays a function of the program's own text.
+                    Val {
+                        text: "0".to_string(),
+                        ty: Repr::Str,
+                    }
+                } else {
+                    arity(2)?;
+                    self.text_arg(&vals[0], op)?;
+                    self.text_arg(&vals[1], op)?;
+                    vals[1].clone()
+                };
+                // Interning the element is what puts the list runtime in the module: the answer is
+                // a `list[Str]` no program in the module need have written down.
+                let at = self.heap.word_of(Repr::Str);
+                Ok(self.text_call("split", &[&vals[0], &sep], Repr::List(at), span))
+            }
             Prim::StrContains | Prim::StrStartsWith | Prim::StrEndsWith => {
                 arity(2)?;
                 self.text_arg(&vals[0], op)?;
@@ -3596,10 +3620,6 @@ impl<'a> Function<'a> {
 /// which is the difference between a refusal a reader can act on and one they can only observe.
 fn refusal(op: Prim) -> String {
     let why = match op {
-        Prim::StrSplit | Prim::StrChars => {
-            "answers with a list whose elements it also allocates, which is two loops rather than \
-             the one every list this backend builds has"
-        }
         Prim::ListZip => "answers with a list of pairs, and there is no pair type to lay out",
         // The higher-order half compiles — `map_list`, `filter_list`, `list_fold`, `list_all`,
         // `list_any` and `sort_by` — so what is left of it is the one that grows a list.
@@ -5260,12 +5280,27 @@ kept:
   %knext = add i64 %i, 1
   br label %scan
 cut:
-  %bytes = sub i64 %end, %start
+  %r = call i64 @"beck.str.piece"(ptr %err, i64 %s, i64 %start, i64 %end, i32 %span)
+  ret i64 %r
+empty:
+  %e = call i64 @"beck.str.alloc"(ptr %err, i64 0, i64 0, i32 %span)
+  ret i64 %e
+}
+
+; The bytes of %s in `[%from, %to)`, as a `Str` of its own.
+;
+; The character count is the bytes in the range that are not continuations, which is the same test
+; `beck.str.byteof` walks with — and the range is always a whole number of characters, because every
+; caller cuts at a boundary a scan stopped on.
+define internal i64 @"beck.str.piece"(ptr noalias %err, i64 %s, i64 %from, i64 %to, i32 %span) {
+entry:
+  %bytes = sub i64 %to, %from
+  %p = call ptr @"beck.str.data"(i64 %s)
   br label %count
 count:
-  %k = phi i64 [ %start, %cut ], [ %k1, %counted ]
-  %chars = phi i64 [ 0, %cut ], [ %chars1, %counted ]
-  %cdone = icmp uge i64 %k, %end
+  %k = phi i64 [ %from, %entry ], [ %k1, %counted ]
+  %chars = phi i64 [ 0, %entry ], [ %chars1, %counted ]
+  %cdone = icmp uge i64 %k, %to
   br i1 %cdone, label %make, label %counted
 counted:
   %cbp = getelementptr inbounds i8, ptr %p, i64 %k
@@ -5281,18 +5316,46 @@ make:
   %failed = icmp eq i64 %r, 0
   br i1 %failed, label %out, label %copy
 copy:
-  ; The source pointer is taken again: `beck.str.alloc` can move the arena, and `%p` was read
-  ; before it ran.
+  ; Both pointers are taken again: `beck.str.alloc` can move the arena, and `%p` was read before it
+  ; ran.
   %pr = call ptr @"beck.str.data"(i64 %r)
   %ps = call ptr @"beck.str.data"(i64 %s)
-  %at = getelementptr inbounds i8, ptr %ps, i64 %start
+  %at = getelementptr inbounds i8, ptr %ps, i64 %from
   %ignored = call ptr @memcpy(ptr %pr, ptr %at, i64 %bytes)
   br label %out
-empty:
-  %e = call i64 @"beck.str.alloc"(ptr %err, i64 0, i64 0, i32 %span)
-  ret i64 %e
 out:
   ret i64 %r
+}
+
+; `beck.str.find`, starting at a byte offset rather than at zero — what a repeated search needs and
+; the only thing `str_split` asks that `beck.str.find` does not answer.
+define internal i64 @"beck.str.findat"(i64 %h, i64 %n, i64 %from) {
+entry:
+  %lh = call i64 @"beck.str.bytes"(i64 %h)
+  %ln = call i64 @"beck.str.bytes"(i64 %n)
+  %room = sub i64 %lh, %ln
+  %too = icmp slt i64 %room, 0
+  br i1 %too, label %missing, label %search
+search:
+  %ph = call ptr @"beck.str.data"(i64 %h)
+  %pn = call ptr @"beck.str.data"(i64 %n)
+  br label %loop
+loop:
+  %i = phi i64 [ %from, %search ], [ %j, %next ]
+  %over = icmp sgt i64 %i, %room
+  br i1 %over, label %missing, label %try
+try:
+  %at = getelementptr inbounds i8, ptr %ph, i64 %i
+  %c = call i32 @memcmp(ptr %at, ptr %pn, i64 %ln)
+  %hit = icmp eq i32 %c, 0
+  br i1 %hit, label %found, label %next
+next:
+  %j = add i64 %i, 1
+  br label %loop
+found:
+  ret i64 %i
+missing:
+  ret i64 -1
 }
 
 define internal i64 @"beck.str.find"(i64 %h, i64 %n) {
@@ -6004,9 +6067,120 @@ out:
 
 "#;
 
-/// `str_join`, which is the one of the three that reads a **list** — so it is emitted only when
-/// that runtime is there too.
-const JOINS: &str = r#"define internal i64 @"beck.str.join"(ptr noalias %err, i64 %xs, i64 %sep, i32 %span) {
+/// The two text functions that also touch a **list** — so they are emitted only when that runtime is
+/// there too: `str_join`, which reads one, and `str_split`, which writes one.
+const JOINS: &str = r#"; `str_split`, and `str_chars` with it — the evaluator answers characters for an empty separator,
+; so the two primitives are one function with two ways of cutting.
+;
+; Two passes, and the first one exists so the second allocates nothing it has to grow: count the
+; pieces, take the list, then fill it. The list's block is at a fixed **offset**, so a piece moving
+; the arena costs a reload of the data pointer per element and nothing else — which is `adr/0026`'s
+; value-is-an-offset paying for itself.
+define internal i64 @"beck.str.split"(ptr noalias %err, i64 %s, i64 %sep, i32 %span) {
+entry:
+  %len = call i64 @"beck.str.bytes"(i64 %s)
+  ; `str_chars` passes the offset **0**, which is never a live object — `beck.alloc` answers it only
+  ; on a full arena — so it costs no literal, and a program that writes `str_split(s, "")` reaches
+  ; the same path through the length test below.
+  %none = icmp eq i64 %sep, 0
+  br i1 %none, label %chars, label %measure
+measure:
+  %seplen = call i64 @"beck.str.bytes"(i64 %sep)
+  %bychar = icmp eq i64 %seplen, 0
+  br i1 %bychar, label %chars, label %pieces
+chars:
+  ; Every character is a piece, and the header already knows how many there are.
+  %n = call i64 @"beck.str.chars"(i64 %s)
+  br label %take
+pieces:
+  ; One more piece than there are occurrences, which is what `str::split` answers — including for
+  ; the empty string, where nothing is found and the one piece is the string itself.
+  br label %tally
+tally:
+  %at = phi i64 [ 0, %pieces ], [ %past, %again ]
+  %seen = phi i64 [ 0, %pieces ], [ %more, %again ]
+  %hit = call i64 @"beck.str.findat"(i64 %s, i64 %sep, i64 %at)
+  %gone = icmp slt i64 %hit, 0
+  br i1 %gone, label %counted, label %again
+again:
+  %past = add i64 %hit, %seplen
+  %more = add i64 %seen, 1
+  br label %tally
+counted:
+  %parts = add i64 %seen, 1
+  br label %take
+take:
+  %count = phi i64 [ %n, %chars ], [ %parts, %counted ]
+  %onechar = phi i1 [ true, %chars ], [ false, %counted ]
+  ; `%seplen` is measured on one of the two paths in, and the cutting loop below is reachable from
+  ; both — so it travels as a phi rather than on a dominance that is not there.
+  %width = phi i64 [ 0, %chars ], [ %seplen, %counted ]
+  %xs = call i64 @"beck.list.alloc"(ptr %err, i64 %count, i32 %span)
+  %nolist = icmp eq i64 %xs, 0
+  br i1 %nolist, label %out, label %which
+which:
+  br i1 %onechar, label %walk, label %cutting
+walk:
+  ; A character is its lead byte and every continuation after it. Nothing here decodes: a piece is
+  ; the byte range between two lead bytes.
+  %ci = phi i64 [ 0, %which ], [ %cj, %wrote ]
+  %cslot = phi i64 [ 0, %which ], [ %cnext, %wrote ]
+  %cdone = icmp uge i64 %ci, %len
+  br i1 %cdone, label %out, label %stretch
+stretch:
+  %cp = call ptr @"beck.str.data"(i64 %s)
+  %c1 = add i64 %ci, 1
+  br label %reach
+reach:
+  %ck = phi i64 [ %c1, %stretch ], [ %ck1, %continues ]
+  %cover = icmp uge i64 %ck, %len
+  br i1 %cover, label %cend, label %clook
+clook:
+  %cbp = getelementptr inbounds i8, ptr %cp, i64 %ck
+  %cb = load i8, ptr %cbp
+  %ctop = and i8 %cb, -64
+  %ccont = icmp eq i8 %ctop, -128
+  br i1 %ccont, label %continues, label %cend
+continues:
+  %ck1 = add i64 %ck, 1
+  br label %reach
+cend:
+  %cj = phi i64 [ %ck, %reach ], [ %ck, %clook ]
+  %cpiece = call i64 @"beck.str.piece"(ptr %err, i64 %s, i64 %ci, i64 %cj, i32 %span)
+  %cbad = icmp eq i64 %cpiece, 0
+  br i1 %cbad, label %out, label %wrote
+wrote:
+  ; The data pointer is taken here rather than before the loop: a piece allocates, and an allocation
+  ; can move the arena under a pointer read before it.
+  %cdata = call ptr @"beck.list.data"(i64 %xs)
+  %cwp = getelementptr inbounds i64, ptr %cdata, i64 %cslot
+  store i64 %cpiece, ptr %cwp
+  %cnext = add i64 %cslot, 1
+  br label %walk
+cutting:
+  %lo = phi i64 [ 0, %which ], [ %after, %stored ]
+  %slot = phi i64 [ 0, %which ], [ %onwards, %stored ]
+  %found = call i64 @"beck.str.findat"(i64 %s, i64 %sep, i64 %lo)
+  %last = icmp slt i64 %found, 0
+  %upto = select i1 %last, i64 %len, i64 %found
+  %piece = call i64 @"beck.str.piece"(ptr %err, i64 %s, i64 %lo, i64 %upto, i32 %span)
+  %bad = icmp eq i64 %piece, 0
+  br i1 %bad, label %out, label %store
+store:
+  %data = call ptr @"beck.list.data"(i64 %xs)
+  %wp = getelementptr inbounds i64, ptr %data, i64 %slot
+  store i64 %piece, ptr %wp
+  br i1 %last, label %out, label %stored
+stored:
+  %after = add i64 %found, %width
+  %onwards = add i64 %slot, 1
+  br label %cutting
+out:
+  %r = phi i64 [ 0, %take ], [ %xs, %walk ], [ %xs, %store ], [ 0, %cend ], [ 0, %cutting ]
+  ret i64 %r
+}
+
+define internal i64 @"beck.str.join"(ptr noalias %err, i64 %xs, i64 %sep, i32 %span) {
 entry:
   %n = call i64 @"beck.list.len"(i64 %xs)
   %p = call ptr @"beck.list.data"(i64 %xs)

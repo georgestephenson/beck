@@ -1256,6 +1256,10 @@ struct Text {
     ws: FuncId,
     /// `str_trim` — `str::trim`, which is `char::is_whitespace` at both ends.
     trim: FuncId,
+    /// The bytes of a `Str` in `[from, to)`, as a `Str` of its own.
+    piece: FuncId,
+    /// [`Text::find`], starting at a byte offset rather than at zero.
+    findat: FuncId,
     /// How many characters begin before a byte offset — [`Text::byteof`]'s inverse, and what turns
     /// a search's answer into an index the language can use.
     charat: FuncId,
@@ -1303,6 +1307,16 @@ impl Text {
         let charat = one("beck.str.charat", &[types::I64, types::I64], types::I64)?;
         let ws = one("beck.str.ws", &[ptr, types::I64, types::I64], types::I64)?;
         let trim = one("beck.str.trim", &[ptr, types::I64, types::I32], types::I64)?;
+        let piece = one(
+            "beck.str.piece",
+            &[ptr, types::I64, types::I64, types::I64, types::I32],
+            types::I64,
+        )?;
+        let findat = one(
+            "beck.str.findat",
+            &[types::I64, types::I64, types::I64],
+            types::I64,
+        )?;
 
         let mut sig = cranelift_codegen::ir::Signature::new(conv);
         sig.params.push(AbiParam::new(ptr));
@@ -1323,6 +1337,8 @@ impl Text {
             charat,
             ws,
             trim,
+            piece,
+            findat,
             memcmp,
         })
     }
@@ -1379,6 +1395,8 @@ impl Text {
         self.define_find(arena, m, ctx, fctx)?;
         self.define_charat(arena, m, ctx, fctx)?;
         self.define_ws(m, ctx, fctx, ptr)?;
+        self.define_piece(arena, m, ctx, fctx, ptr)?;
+        self.define_findat(arena, m, ctx, fctx)?;
         self.define_trim(arena, m, ctx, fctx, ptr)?;
         Ok(())
     }
@@ -1885,15 +1903,63 @@ impl Text {
             b.def_var(end, on);
             b.ins().jump(scan, &[]);
 
-            // The character count, over the bytes that survived: one per byte that is not a
-            // continuation, which is the same test `beck.str.byteof` walks with.
             b.switch_to_block(cut);
             let head = b.use_var(start);
             let tail = b.use_var(end);
-            let bytes = b.ins().isub(tail, head);
+            let out = b.create_block();
+            b.append_block_param(out, types::I64);
+            let f = m.declare_func_in_func(self.piece, b.func);
+            let call = b.ins().call(f, &[err, s, head, tail, span]);
+            let r = b.inst_results(call)[0];
+            b.ins().jump(out, &[r.into()]);
+
+            // All whitespace, or empty to begin with: the answer is a fresh empty `Str` rather than
+            // the argument, because the evaluator's is one too and `docs/105`'s layout has no
+            // interning in it.
+            b.switch_to_block(empty);
+            let f = m.declare_func_in_func(self.alloc, b.func);
+            let call = b.ins().call(f, &[err, zero, zero, span]);
+            let e = b.inst_results(call)[0];
+            b.ins().jump(out, &[e.into()]);
+
+            b.switch_to_block(out);
+            let answer = b.block_params(out)[0];
+            b.ins().return_(&[answer]);
+        })
+    }
+
+    /// The bytes of `s` in `[from, to)`, as a `Str` of its own.
+    ///
+    /// The character count is the bytes in the range that are not continuations, which is the same
+    /// test [`Text::define_byteof`] walks with — and the range is always a whole number of
+    /// characters, because every caller cuts at a boundary a scan stopped on.
+    fn define_piece(
+        self,
+        arena: Arena,
+        m: &mut ObjectModule,
+        ctx: &mut cranelift_codegen::Context,
+        fctx: &mut FunctionBuilderContext,
+        ptr: Type,
+    ) -> Result<(), String> {
+        let sig = Text::signature(
+            m,
+            &[ptr, types::I64, types::I64, types::I64, types::I32],
+            types::I64,
+        );
+        Text::wrote(self.piece, sig, 10, m, ctx, fctx, |b, m| {
+            let entry = b.current_block().expect("an entry block");
+            let err = b.block_params(entry)[0];
+            let s = b.block_params(entry)[1];
+            let from = b.block_params(entry)[2];
+            let to = b.block_params(entry)[3];
+            let span = b.block_params(entry)[4];
+
+            let bytes = b.ins().isub(to, from);
+            let p = self.data(arena, s, b, m);
             let at = b.declare_var(types::I64);
             let chars = b.declare_var(types::I64);
-            b.def_var(at, head);
+            let zero = b.ins().iconst(types::I64, 0);
+            b.def_var(at, from);
             b.def_var(chars, zero);
             let count = b.create_block();
             b.ins().jump(count, &[]);
@@ -1902,7 +1968,7 @@ impl Text {
             let make = b.create_block();
             let counted = b.create_block();
             let k = b.use_var(at);
-            let ran = b.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, k, tail);
+            let ran = b.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, k, to);
             b.ins().brif(ran, make, &[], counted, &[]);
 
             b.switch_to_block(counted);
@@ -1925,32 +1991,84 @@ impl Text {
             let r = b.inst_results(call)[0];
             let copy = b.create_block();
             let out = b.create_block();
-            b.append_block_param(out, types::I64);
             let failed = b.ins().icmp_imm_s(IntCC::Equal, r, 0);
-            b.ins().brif(failed, out, &[r.into()], copy, &[]);
+            b.ins().brif(failed, out, &[], copy, &[]);
 
             b.switch_to_block(copy);
             // Both pointers are taken again: `beck.str.alloc` can move the arena, and the ones
             // above were read before it ran.
             let pr = self.data(arena, r, b, m);
             let ps = self.data(arena, s, b, m);
-            let src = b.ins().iadd(ps, head);
+            let src = b.ins().iadd(ps, from);
             let config = m.target_config();
             b.call_memcpy(config, pr, src, bytes);
-            b.ins().jump(out, &[r.into()]);
-
-            // All whitespace, or empty to begin with: the answer is a fresh empty `Str` rather than
-            // the argument, because the evaluator's is one too and `docs/105`'s layout has no
-            // interning in it.
-            b.switch_to_block(empty);
-            let f = m.declare_func_in_func(self.alloc, b.func);
-            let call = b.ins().call(f, &[err, zero, zero, span]);
-            let e = b.inst_results(call)[0];
-            b.ins().jump(out, &[e.into()]);
+            b.ins().jump(out, &[]);
 
             b.switch_to_block(out);
-            let answer = b.block_params(out)[0];
+            b.ins().return_(&[r]);
+        })
+    }
+
+    /// [`Text::define_find`], starting at a byte offset rather than at zero — what a repeated
+    /// search needs, and the only thing `str_split` asks that `find` does not answer.
+    fn define_findat(
+        self,
+        arena: Arena,
+        m: &mut ObjectModule,
+        ctx: &mut cranelift_codegen::Context,
+        fctx: &mut FunctionBuilderContext,
+    ) -> Result<(), String> {
+        let sig = Text::signature(m, &[types::I64, types::I64, types::I64], types::I64);
+        Text::wrote(self.findat, sig, 11, m, ctx, fctx, |b, m| {
+            let entry = b.current_block().expect("an entry block");
+            let h = b.block_params(entry)[0];
+            let n = b.block_params(entry)[1];
+            let from = b.block_params(entry)[2];
+
+            let lh = self.header(arena, h, 0, b, m);
+            let ln = self.header(arena, n, 0, b, m);
+            let room = b.ins().isub(lh, ln);
+            let missing = b.create_block();
+            let search = b.create_block();
+            let too = b.ins().icmp_imm_s(IntCC::SignedLessThan, room, 0);
+            b.ins().brif(too, missing, &[], search, &[]);
+
+            b.switch_to_block(search);
+            let ph = self.data(arena, h, b, m);
+            let pn = self.data(arena, n, b, m);
+            let i = b.declare_var(types::I64);
+            b.def_var(i, from);
+            let loop_ = b.create_block();
+            b.ins().jump(loop_, &[]);
+
+            b.switch_to_block(loop_);
+            let attempt = b.create_block();
+            let at = b.use_var(i);
+            let over = b.ins().icmp(IntCC::SignedGreaterThan, at, room);
+            b.ins().brif(over, missing, &[], attempt, &[]);
+
+            b.switch_to_block(attempt);
+            let found = b.create_block();
+            let next = b.create_block();
+            let here = b.ins().iadd(ph, at);
+            let cmp = m.declare_func_in_func(self.memcmp, b.func);
+            let call = b.ins().call(cmp, &[here, pn, ln]);
+            let c = b.inst_results(call)[0];
+            let hit = b.ins().icmp_imm_s(IntCC::Equal, c, 0);
+            b.ins().brif(hit, found, &[], next, &[]);
+
+            b.switch_to_block(next);
+            let j = b.ins().iadd_imm_s(at, 1);
+            b.def_var(i, j);
+            b.ins().jump(loop_, &[]);
+
+            b.switch_to_block(found);
+            let answer = b.use_var(i);
             b.ins().return_(&[answer]);
+
+            b.switch_to_block(missing);
+            let none = b.ins().iconst(types::I64, -1);
+            b.ins().return_(&[none]);
         })
     }
 
@@ -2278,13 +2396,17 @@ fn reachable(
 
 /// Building text: the three that make one out of something that is not text.
 ///
-/// `from_int` is Rust's `i64::to_string` and has to be, to the digit. `join` reads a **list**, so it
-/// is declared only when that runtime is there too — which is why it is an `Option` here.
+/// `from_int` is Rust's `i64::to_string` and has to be, to the digit. `join` reads a **list** and
+/// `split` writes one, so both are declared only when that runtime is there too — which is why they
+/// are `Option`s here.
 #[derive(Clone, Copy, Debug)]
 struct Builds {
     from_int: FuncId,
     repeat: FuncId,
     join: Option<FuncId>,
+    /// `str_split`, and `str_chars` with it: the evaluator answers characters for an empty
+    /// separator, so the two primitives are one function with two ways of cutting.
+    split: Option<FuncId>,
 }
 
 impl Builds {
@@ -2304,18 +2426,25 @@ impl Builds {
             "beck.str.repeat",
             &[ptr, types::I64, types::I64, types::I32],
         )?;
-        let join = if lists {
-            Some(one(
-                "beck.str.join",
-                &[ptr, types::I64, types::I64, types::I32],
-            )?)
+        let (join, split) = if lists {
+            (
+                Some(one(
+                    "beck.str.join",
+                    &[ptr, types::I64, types::I64, types::I32],
+                )?),
+                Some(one(
+                    "beck.str.split",
+                    &[ptr, types::I64, types::I64, types::I32],
+                )?),
+            )
         } else {
-            None
+            (None, None)
         };
         Ok(Builds {
             from_int,
             repeat,
             join,
+            split,
         })
     }
 
@@ -2598,6 +2727,196 @@ impl Builds {
 
             b.switch_to_block(out);
             b.ins().return_(&[r]);
+        })?;
+
+        let Some(split) = self.split else {
+            return Ok(());
+        };
+        let sig = Text::signature(m, &[ptr, types::I64, types::I64, types::I32], types::I64);
+        Text::wrote(split, sig, 23, m, ctx, fctx, |b, m| {
+            let entry = b.current_block().expect("an entry block");
+            let err = b.block_params(entry)[0];
+            let s = b.block_params(entry)[1];
+            let sep = b.block_params(entry)[2];
+            let span = b.block_params(entry)[3];
+
+            let len = text.header(arena, s, 0, b, m);
+            let findat = m.declare_func_in_func(text.findat, b.func);
+            let piece = m.declare_func_in_func(text.piece, b.func);
+            let zero = b.ins().iconst(types::I64, 0);
+            let one = b.ins().iconst(types::I64, 1);
+
+            // `str_chars` passes the offset **0**, which is never a live object — `beck.alloc`
+            // answers it only on a full arena — so it costs no literal, and a program that writes
+            // `str_split(s, "")` reaches the same path through the length test below.
+            let chars = b.create_block();
+            let measure = b.create_block();
+            let tally = b.create_block();
+            let take = b.create_block();
+            b.append_block_param(take, types::I64);
+            b.append_block_param(take, types::I64);
+            // `seplen` is measured on one of the two paths in, and the cutting loop below is
+            // reachable from both — so it travels as a block parameter rather than on a dominance
+            // that is not there.
+            b.append_block_param(take, types::I64);
+            let none = b.ins().icmp_imm_s(IntCC::Equal, sep, 0);
+            b.ins().brif(none, chars, &[], measure, &[]);
+
+            b.switch_to_block(measure);
+            let seplen = text.header(arena, sep, 0, b, m);
+            let bychar = b.ins().icmp_imm_s(IntCC::Equal, seplen, 0);
+            b.ins().brif(bychar, chars, &[], tally, &[]);
+
+            // Every character is a piece, and the header already knows how many there are.
+            b.switch_to_block(chars);
+            let n = text.header(arena, s, heap::WORD as i64, b, m);
+            b.ins().jump(take, &[n.into(), one.into(), zero.into()]);
+
+            // One more piece than there are occurrences, which is what `str::split` answers —
+            // including for the empty string, where nothing is found and the one piece is the
+            // string itself.
+            b.switch_to_block(tally);
+            let at = b.declare_var(types::I64);
+            let seen = b.declare_var(types::I64);
+            b.def_var(at, zero);
+            b.def_var(seen, zero);
+            let counting = b.create_block();
+            b.ins().jump(counting, &[]);
+
+            b.switch_to_block(counting);
+            let again = b.create_block();
+            let counted = b.create_block();
+            let from = b.use_var(at);
+            let call = b.ins().call(findat, &[s, sep, from]);
+            let hit = b.inst_results(call)[0];
+            let gone = b.ins().icmp_imm_s(IntCC::SignedLessThan, hit, 0);
+            b.ins().brif(gone, counted, &[], again, &[]);
+
+            b.switch_to_block(again);
+            let past = b.ins().iadd(hit, seplen);
+            b.def_var(at, past);
+            let more = b.use_var(seen);
+            let up = b.ins().iadd_imm_s(more, 1);
+            b.def_var(seen, up);
+            b.ins().jump(counting, &[]);
+
+            b.switch_to_block(counted);
+            let occurrences = b.use_var(seen);
+            let parts = b.ins().iadd_imm_s(occurrences, 1);
+            b.ins()
+                .jump(take, &[parts.into(), zero.into(), seplen.into()]);
+
+            b.switch_to_block(take);
+            let count = b.block_params(take)[0];
+            let onechar = b.block_params(take)[1];
+            let width = b.block_params(take)[2];
+            let alloc = m.declare_func_in_func(lists.alloc, b.func);
+            let call = b.ins().call(alloc, &[err, count, span]);
+            let xs = b.inst_results(call)[0];
+            let out = b.create_block();
+            b.append_block_param(out, types::I64);
+            let which = b.create_block();
+            let nolist = b.ins().icmp_imm_s(IntCC::Equal, xs, 0);
+            b.ins().brif(nolist, out, &[zero.into()], which, &[]);
+
+            b.switch_to_block(which);
+            let walking = b.create_block();
+            let cutting = b.create_block();
+            let cursor = b.declare_var(types::I64);
+            let slot = b.declare_var(types::I64);
+            b.def_var(cursor, zero);
+            b.def_var(slot, zero);
+            let single = b.ins().icmp_imm_s(IntCC::Equal, onechar, 1);
+            b.ins().brif(single, walking, &[], cutting, &[]);
+
+            // A character is its lead byte and every continuation after it. Nothing here decodes:
+            // a piece is the byte range between two lead bytes.
+            b.switch_to_block(walking);
+            let stretch = b.create_block();
+            let ci = b.use_var(cursor);
+            let done = b.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, ci, len);
+            b.ins().brif(done, out, &[xs.into()], stretch, &[]);
+
+            b.switch_to_block(stretch);
+            let cp = text.data(arena, s, b, m);
+            let reach = b.create_block();
+            let edge = b.declare_var(types::I64);
+            let c1 = b.ins().iadd_imm_s(ci, 1);
+            b.def_var(edge, c1);
+            b.ins().jump(reach, &[]);
+
+            b.switch_to_block(reach);
+            let clook = b.create_block();
+            let cend = b.create_block();
+            let ck = b.use_var(edge);
+            let cover = b.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, ck, len);
+            b.ins().brif(cover, cend, &[], clook, &[]);
+
+            b.switch_to_block(clook);
+            let continues = b.create_block();
+            let cbp = b.ins().iadd(cp, ck);
+            let cb = b.ins().load(types::I8, MemFlagsData::trusted(), cbp, 0);
+            let ctop = b.ins().band_imm_u(cb, 0xc0);
+            let ccont = b.ins().icmp_imm_u(IntCC::Equal, ctop, 0x80);
+            b.ins().brif(ccont, continues, &[], cend, &[]);
+
+            b.switch_to_block(continues);
+            let ck1 = b.ins().iadd_imm_s(ck, 1);
+            b.def_var(edge, ck1);
+            b.ins().jump(reach, &[]);
+
+            b.switch_to_block(cend);
+            let wrote = b.create_block();
+            let cj = b.use_var(edge);
+            let call = b.ins().call(piece, &[err, s, ci, cj, span]);
+            let cpiece = b.inst_results(call)[0];
+            let cbad = b.ins().icmp_imm_s(IntCC::Equal, cpiece, 0);
+            b.ins().brif(cbad, out, &[zero.into()], wrote, &[]);
+
+            // The data pointer is taken here rather than before the loop: a piece allocates, and an
+            // allocation can move the arena under a pointer read before it.
+            b.switch_to_block(wrote);
+            let cdata = lists.data(arena, xs, b, m);
+            let cs = b.use_var(slot);
+            let coff = b.ins().imul_imm_s(cs, heap::WORD as i64);
+            let cwp = b.ins().iadd(cdata, coff);
+            b.ins().store(MemFlagsData::trusted(), cpiece, cwp, 0);
+            let cnext = b.ins().iadd_imm_s(cs, 1);
+            b.def_var(slot, cnext);
+            b.def_var(cursor, cj);
+            b.ins().jump(walking, &[]);
+
+            b.switch_to_block(cutting);
+            let store = b.create_block();
+            let lo = b.use_var(cursor);
+            let call = b.ins().call(findat, &[s, sep, lo]);
+            let found = b.inst_results(call)[0];
+            let last = b.ins().icmp_imm_s(IntCC::SignedLessThan, found, 0);
+            let upto = b.ins().select(last, len, found);
+            let call = b.ins().call(piece, &[err, s, lo, upto, span]);
+            let part = b.inst_results(call)[0];
+            let bad = b.ins().icmp_imm_s(IntCC::Equal, part, 0);
+            b.ins().brif(bad, out, &[zero.into()], store, &[]);
+
+            b.switch_to_block(store);
+            let stored = b.create_block();
+            let data = lists.data(arena, xs, b, m);
+            let sl = b.use_var(slot);
+            let off = b.ins().imul_imm_s(sl, heap::WORD as i64);
+            let wp = b.ins().iadd(data, off);
+            b.ins().store(MemFlagsData::trusted(), part, wp, 0);
+            b.ins().brif(last, out, &[xs.into()], stored, &[]);
+
+            b.switch_to_block(stored);
+            let after = b.ins().iadd(found, width);
+            b.def_var(cursor, after);
+            let onwards = b.ins().iadd_imm_s(sl, 1);
+            b.def_var(slot, onwards);
+            b.ins().jump(cutting, &[]);
+
+            b.switch_to_block(out);
+            let answer = b.block_params(out)[0];
+            b.ins().return_(&[answer]);
         })
     }
 }
@@ -6124,6 +6443,33 @@ impl<'a> Body<'a> {
                 self.text_arg(&vals[0], op)?;
                 Ok(self.text_call(Which::Trim, &[vals[0].v], Repr::Str, span, b, m))
             }
+            Prim::StrSplit | Prim::StrChars => {
+                // One function, because the evaluator answers characters for an empty separator —
+                // so `str_chars(s)` *is* `str_split(s, "")`, and the two share a body as well as a
+                // fixture.
+                let sep = if op == Prim::StrChars {
+                    arity(1, &vals)?;
+                    self.text_arg(&vals[0], op)?;
+                    // The offset `0`, which is never a live object — so `str_chars` needs no
+                    // literal, and the pool stays a function of the program's own text.
+                    b.ins().iconst(types::I64, 0)
+                } else {
+                    arity(2, &vals)?;
+                    self.text_arg(&vals[0], op)?;
+                    self.text_arg(&vals[1], op)?;
+                    vals[1].v
+                };
+                let f = self
+                    .builds()
+                    .split
+                    .ok_or("`str_split` in a module with no list runtime")?;
+                // Interning the element is what puts the list runtime in the module: the answer is
+                // a `list[Str]` no program in the module need have written down.
+                let at = self.heap.word_of(Repr::Str);
+                let mut r = self.build_call(f, &[vals[0].v, sep], span, b, m);
+                r.ty = Repr::List(at);
+                Ok(r)
+            }
             Prim::StrContains | Prim::StrStartsWith | Prim::StrEndsWith => {
                 arity(2, &vals)?;
                 self.text_arg(&vals[0], op)?;
@@ -7610,10 +7956,6 @@ impl<'a> Body<'a> {
 /// **set** of definitions and not to saying the same words about them.
 fn refusal(op: Prim) -> String {
     let why = match op {
-        Prim::StrSplit | Prim::StrChars => {
-            "answers with a list whose elements it also allocates, which is two loops rather than \
-             the one every list this backend builds has"
-        }
         // The one that is a decision rather than a gap. `docs/69` §69.7 and `docs/101` §101.5 both
         // name shipping this as the mistake: the tree-walker pushes in place when `liveness` proves
         // the accumulator is a last use, and an arena with no ownership in it cannot.

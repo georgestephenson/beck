@@ -109,6 +109,30 @@ Newest first.
 
 ### The native backends
 
+- **`str_split` and `str_chars` compile, and "two loops" was never a cost.** On both code
+  generators. The reason on record was *"answers with a list whose elements it also allocates,
+  which is two loops rather than the one every list this backend builds has"* — a description of
+  the **code**, not of what it costs. Two loops is what makes it cheap: the first counts the
+  pieces and the second fills them, so the answer is allocated once and never grown.
+  **837 → 850 definitions** compile across the tree and refusals go 236 → 223.
+  - **One function, because the evaluator makes them one**: `str_split` on an empty separator
+    answers characters, so `str_chars(s)` *is* `str_split(s, "")` and the two share a body. The
+    empty separator arrives as the offset **`0`** rather than a pooled `""` — `0` is never a live
+    object, so `str_chars` costs no literal. That correction came from a gate:
+    `the_literal_pool_is_a_function_of_the_program` went red on the version that interned one,
+    because emitting had discovered a literal the survey never saw.
+  - `beck.str.piece` — the bytes of a `Str` in a byte range, with its character count — is factored
+    out of `str_trim`'s tail and shared, so the one place that decides what a substring's header
+    says is the one place both primitives use.
+  - Gated by `a_split_costs_its_answer_and_nothing_per_call`: **4.0× the arena for 4× the
+    separators**, with no clock in it, read off the whole reply arena so a split that had grown its
+    answer would be caught by the blocks it abandoned. The differentials run every string against
+    eight separators — including the empty one, one that is the whole string, one that **overlaps
+    itself** (`"aaa"` on `"aa"` is `["", "a"]`), and one longer than the string — reading the
+    length *and* an element at six indices, because counting the pieces correctly and allocating
+    them wrongly passes the first test and fails the second. 3,912 → **4,872 text calls** compared,
+    all three backends agreeing.
+
 - **`str_trim` compiles, and its refusal was a claim about the wrong set.** On both code
   generators. The reason on record was *"trims Unicode whitespace, which is a table for the same
   reason case mapping is"*, and the two are not the same reason at all: `White_Space` is **25 code

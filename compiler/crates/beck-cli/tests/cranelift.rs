@@ -594,6 +594,19 @@ fn the_three_backends_agree_on_text() {
         compared += all.agree(name, &ws);
     }
 
+    // Splitting, which answers with a **list** — so the differential reads the length *and* an
+    // element, because a backend that counted the pieces correctly and allocated them wrongly
+    // passes the first and fails the second.
+    let cuts = textfix::separators(&ss);
+    for name in ["parts", "split_len", "rejoined"] {
+        compared += all.agree(name, &cuts);
+    }
+    compared += all.agree("split_at", &textfix::indexed(&cuts));
+    for name in ["letters", "letter_count"] {
+        compared += all.agree(name, &textfix::singles(&ss));
+    }
+    compared += all.agree("letter_at", &textfix::indexed(&textfix::singles(&ss)));
+
     println!("{compared} text calls compared across every backend on this machine");
 }
 

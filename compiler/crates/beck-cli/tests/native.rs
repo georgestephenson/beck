@@ -584,6 +584,19 @@ fn the_two_backends_agree_on_text() {
         compared += both.agree(name, &ws);
     }
 
+    // Splitting, which answers with a **list** — so the differential reads the length *and* an
+    // element, because a backend that counted the pieces correctly and allocated them wrongly
+    // passes the first and fails the second.
+    let cuts = textfix::separators(&ss);
+    for name in ["parts", "split_len", "rejoined"] {
+        compared += both.agree(name, &cuts);
+    }
+    compared += both.agree("split_at", &textfix::indexed(&cuts));
+    for name in ["letters", "letter_count"] {
+        compared += both.agree(name, &textfix::singles(&ss));
+    }
+    compared += both.agree("letter_at", &textfix::indexed(&textfix::singles(&ss)));
+
     println!("{compared} text calls compared, and both backends agreed on every one");
 }
 
@@ -1787,18 +1800,18 @@ fn what_cannot_be_compiled_is_refused_by_name_and_with_a_reason() {
 /// list in prose goes stale where a list with a test attached cannot (`docs/83` §83.7). Each of
 /// these goes red the day its row starts compiling, which is the day the row should be deleted.
 ///
-/// Four rows were deleted that way: `docs/105` gave a `Str` a layout, `docs/106` gave a `list` one,
-/// `docs/108` compiled the higher-order primitives, and `str_trim` moved across when its stated
-/// reason — a Unicode table — turned out to be false of it. Each time, the row moved from this list
-/// to the control below it in the same commit. What is left is the primitives that really do read a
-/// table, the ones that render a real, and a definition generic over a type.
+/// Five rows were deleted that way: `docs/105` gave a `Str` a layout, `docs/106` gave a `list` one,
+/// `docs/108` compiled the higher-order primitives, and `str_trim` and `str_split` moved across when
+/// their stated reasons — a Unicode table, and "two loops rather than one" — turned out to be false
+/// of them. Each time, the row moved from this list to the control below it in the same commit.
+/// What is left is the primitives that really do read a table, the ones that render a real, and a
+/// definition generic over a type.
 #[test]
 fn what_the_heap_does_not_reach_is_refused_by_name() {
     let program = compile("still-refused.beck", STILL_REFUSED);
     let module = beck_llvm::module(&program);
     for (name, expect) in [
         ("renders_a_real", "`str` of Float"),
-        ("splits_a_string", "`str_split` answers with a list"),
         ("upcases", "`str_upper` is Unicode case mapping"),
         ("grows", "`list_flat_map` answers a list"),
         ("is_generic", "generic over T"),
@@ -1829,6 +1842,7 @@ fn what_the_heap_does_not_reach_is_refused_by_name() {
             .map(|f| f.name.to_string())
             .collect::<Vec<_>>(),
         vec![
+            "splits_a_string".to_string(),
             "trims".to_string(),
             "mapped".to_string(),
             "double_it".to_string(),
@@ -2730,6 +2744,62 @@ fn an_appended_accumulator_is_linear() {
     println!(
         "doubled_up({}) left {} bytes and doubled_up({}) left {} — {growth:.1}× for {steps:.0}× \
          the elements",
+        small.0, small.1, big.0, big.1
+    );
+}
+
+/// A split costs **its answer**, and the gate has no clock in it.
+///
+/// The refusal on record said `str_split` "answers with a list whose elements it also allocates,
+/// which is two loops rather than the one every list this backend builds has". Two loops is a
+/// description of the code, not a cost: the first counts the pieces and the second fills them, so
+/// the answer is allocated once and never grown. That is the claim, and this is where it is held.
+///
+/// Four times the separators must cost about four times the arena. What it would look like to be
+/// wrong is a split that appended piece by piece, doubling a block it had already filled — which
+/// is linear in the *pieces* and quadratic in the bytes it copies.
+#[test]
+fn a_split_costs_its_answer_and_nothing_per_call() {
+    let _ = toolchain!();
+    let both = Both::over("text.beck", TEXT);
+    let mut sizes = Vec::new();
+    for n in [500usize, 2000] {
+        // `n` separators between `n + 1` one-character pieces, so the answer's size is the input's.
+        // The definition answers the **list**, because a scalar reply ships no arena — and the
+        // arena is where a split that had grown its answer would have left the blocks it abandoned.
+        let args = vec![Value::str_(vec!["x"; n + 1].join(",")), Value::str_(",")];
+        let arguments = both
+            .native
+            .module()
+            .heap
+            .encode_args(
+                &args,
+                &both.native.module().signature("parts").unwrap().params,
+            )
+            .expect("encodes")
+            .1
+            .len();
+        let (answer, bytes) = both.native.call_sized("parts", &args).expect("runs");
+        assert_eq!(
+            answer.as_list().map(|xs| xs.len()),
+            Some(n + 1),
+            "splitting on {n} separators should answer {} pieces",
+            n + 1
+        );
+        sizes.push((n, bytes - arguments));
+    }
+    let (small, big) = (sizes[0], sizes[1]);
+    let growth = big.1 as f64 / small.1 as f64;
+    let steps = (big.0 / small.0) as f64;
+    assert!(
+        growth < steps * 2.0,
+        "four times the separators left {growth:.1}× the arena, and a split that grew its answer \
+         piece by piece would leave about {:.0}×",
+        steps * steps
+    );
+    println!(
+        "parts on {} separators left {} bytes and on {} left {} — {growth:.1}× for {steps:.0}× \
+         the separators",
         small.0, small.1, big.0, big.1
     );
 }

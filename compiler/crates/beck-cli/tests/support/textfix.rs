@@ -125,6 +125,40 @@ pub fn every_whitespace() -> Vec<Vec<Value>> {
     out
 }
 
+/// Every string against every separator, plus the separators a split has edge cases for.
+///
+/// The four extra are the ones `str::split`'s answer is surprising for and where a hand-written
+/// backend goes wrong: the **empty** separator, which is characters; a separator that is the whole
+/// string, which answers two empty pieces; one that **overlaps** itself, where `"aaa"` split on
+/// `"aa"` is `["", "a"]` and not `["", "", ""]`; and one longer than the string, which is found
+/// nowhere and answers the string back.
+pub fn separators(xs: &[Value]) -> Vec<Vec<Value>> {
+    let seps: Vec<Value> = ["", ",", "a", "ab", "aa", "é", "the seventeen ok", "\0"]
+        .iter()
+        .map(Value::str_)
+        .collect();
+    let mut out = Vec::new();
+    for x in xs {
+        for sep in &seps {
+            out.push(vec![x.clone(), sep.clone()]);
+        }
+    }
+    out
+}
+
+/// The same calls, each asked at a handful of indices — including out of range at both ends.
+pub fn indexed(calls: &[Vec<Value>]) -> Vec<Vec<Value>> {
+    let mut out = Vec::new();
+    for call in calls {
+        for i in [-1i64, 0, 1, 2, 5, i64::MAX] {
+            let mut with = call.clone();
+            with.push(Value::Int(i));
+            out.push(with);
+        }
+    }
+    out
+}
+
 /// The same, as one-argument calls.
 pub fn singles(xs: &[Value]) -> Vec<Vec<Value>> {
     xs.iter().map(|x| vec![x.clone()]).collect()
@@ -425,6 +459,42 @@ def trimmed_up(s: Str, n: Int, acc: Str) -> Str:
     if n <= 0:
         return acc
     return trimmed_up(s, n - 1, acc + str_trim(s))
+
+## Splitting, which answers with a list — so the differential reads both the list and its elements.
+##
+## `split_len` is the shape the refusal on record described as "two loops": the length of the answer
+## and nothing else. `split_at` reads an element out of it, which is what says the *elements* were
+## allocated correctly and not merely counted.
+def parts(s: Str, sep: Str) -> list[Str]:
+    return str_split(s, sep)
+
+def split_len(s: Str, sep: Str) -> Int:
+    return list_len(str_split(s, sep))
+
+def split_at(s: Str, sep: Str, i: Int) -> Str:
+    match list_get(str_split(s, sep), i):
+        case Some(value):
+            return value
+        case None:
+            return "<none>"
+
+def rejoined(s: Str, sep: Str) -> Str:
+    return str_join(str_split(s, sep), sep)
+
+## The characters, which the evaluator answers for an empty separator — so these two are one
+## function underneath and the differential asks both.
+def letters(s: Str) -> list[Str]:
+    return str_chars(s)
+
+def letter_count(s: Str) -> Int:
+    return list_len(str_chars(s))
+
+def letter_at(s: Str, i: Int) -> Str:
+    match list_get(str_chars(s), i):
+        case Some(value):
+            return value
+        case None:
+            return "<none>"
 
 ## Walks a string by character index, which is the loop `docs/70` made linear and the one that
 ## would be quadratic here if `str_len` counted or `str_slice` skipped.
