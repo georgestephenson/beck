@@ -99,7 +99,7 @@ row.
 
 **A tag is a variant's rank by name, and a field's slot is its rank by name too.** `Value`'s derived
 `Ord` compares a record's type, then its variant *name*, then its fields, and
-[`46`](46-standard-library-report.md) §46.14 established that a record's value order is by field name.
+[`46`](46-standard-library-report.md) §46.16 established that a record's value order is by field name.
 A layout in declaration order answers `<` backwards on a program that reads perfectly, which is why
 `a_layout_is_ordered_by_name_and_not_by_declaration` pins both rules explicitly rather than leaving
 them to the differential — a differential compares two things against an **oracle** and cannot see
@@ -491,7 +491,7 @@ a refusal should be read.
 *ownership*. The tree-walker pushes in place when [`70`](70-the-evaluator-gets-fast-report.md)'s
 last-use analysis proves the accumulator is nobody else's; an arena has no ownership in it; therefore
 `O(n)`; therefore refuse — otherwise the idiom every loop in this language is written as would be
-`Θ(n²)` where the evaluator is `Θ(n)`, and [`46`](46-standard-library-report.md) §46.12's quadratic
+`Θ(n²)` where the evaluator is `Θ(n)`, and [`46`](46-standard-library-report.md) §46.14's quadratic
 would be rebuilt on purpose.
 
 The step that does not follow is the second. **In-place mutation is one way to make an append cheap
@@ -609,7 +609,7 @@ Every time, the single-value sweep would have missed it and the pairs found it �
 `Named(label="") < Named(label="")` answering `true`, `Bag{items: []} < Bag{items: []}` answering
 `true`. The shape of it is: **adding a representation variant is a compile error at every site that
 matches exhaustively and silence at every site with a `_`.** That is
-[`91`](91-guards-and-alternatives-report.md) §91.3's `Arm` gaining a field, one enum over.
+[`90`](90-pattern-matching-report.md) §90.5's `Arm` gaining a field, one enum over.
 
 The list report named what would stop it — an accessor the comparison is written against instead of a
 match — and the map report built it. `Repr::order` answers one of four things: compare the words

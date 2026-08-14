@@ -1315,7 +1315,7 @@ impl Env {
     /// `list_append` pushing in place and `with` rebuilding a record's fields — and measuring it
     /// without this condition showed every benchmark in the tree 6–13% slower, because the reads
     /// that dominate a real program are of `Int`s and nothing was gained by moving one
-    /// ([`docs/46`](../../../../../docs/46-standard-library-report.md) §46.12).
+    /// ([`docs/46`](../../../../../docs/46-standard-library-report.md) §46.14).
     ///
     /// The caller must have established that no later evaluation reads `v` — [`crate::liveness`]
     /// is what establishes it, and `last_use` is the flag. What this adds is the second half of the
@@ -1369,8 +1369,8 @@ impl Env {
 ///
 /// The read-only twin of `children_mut`, and it exists for the same reason: a pass that walks
 /// the whole tree should not restate the shape of `CoreKind`, because the day a variant gains a
-/// child every hand-written walk is silently incomplete ([`docs/91`](../../../../../docs/91-guards-and-alternatives-report.md)
-/// §91.3 is that failure, at fourteen sites).
+/// child every hand-written walk is silently incomplete ([`docs/90`](../../../../../docs/90-pattern-matching-report.md)
+/// §90.5 is that failure, at fourteen sites).
 pub fn children(c: &Core) -> Vec<&Core> {
     match &c.kind {
         CoreKind::Const(_) | CoreKind::Var(_) | CoreKind::Global(_) => Vec::new(),

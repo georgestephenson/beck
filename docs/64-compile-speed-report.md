@@ -206,7 +206,7 @@ benchmark with no oracle passes while doing nothing.
 
 The harness is therefore owed **with its sources to hand** rather than owed generally. Nothing else
 about it is blocked: `awfy/` is the shape to copy, `measure_awfy.rs` is the measurement half, and
-[`55`](55-bignums-report.md)'s bignums are what `pidigits` needs and what would have been the
+[`46`](46-standard-library-report.md)'s bignums are what `pidigits` needs and what would have been the
 awkward one.
 
 ## 64.8 What this corrects

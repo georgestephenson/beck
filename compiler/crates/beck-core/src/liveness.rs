@@ -12,7 +12,7 @@
 //!
 //! `list_append` cannot push into `done` because the caller's frame still binds it, so it copies —
 //! and the idiom is therefore quadratic in time. [`docs/46`](../../../../../docs/46-standard-library-report.md)
-//! §46.12 is the measurement, and the fix is knowing that this read of `done` is its last: the frame
+//! §46.14 is the measurement, and the fix is knowing that this read of `done` is its last: the frame
 //! can hand the value over rather than lend it, and the append can push into a list nobody else
 //! holds.
 //!

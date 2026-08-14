@@ -192,7 +192,7 @@ pub fn str_bytes(n: u64) -> u64 {
 /// an **append** cannot have. A list is immutable, so `list_append` must answer a list of `n + 1`
 /// where the old one still says `n` — and with the count sitting in front of the elements, the only
 /// ways to do that are to copy the elements (`O(n)`, which is
-/// [`docs/46`](../../../../../docs/46-standard-library-report.md) §46.12's quadratic
+/// [`docs/46`](../../../../../docs/46-standard-library-report.md) §46.14's quadratic
 /// accumulator) or to overwrite the count (which every other holder of that list can see).
 ///
 /// So the count and the elements are separated. A **header** is two words and is written once,

@@ -232,7 +232,7 @@ pub fn prims() -> Vec<(&'static str, Prim, Scheme)> {
         // `str_slice(s, start, count)` takes a **count**, not an end index. Worth stating because
         // the signature cannot: a primitive's parameters have no names in the generated reference,
         // so `(Str, Int, Int) -> Str` reads either way and the first caller to pass a non-zero
-        // start with a real count got it wrong (`docs/55` §55.5).
+        // start with a real count got it wrong (`docs/46` §46.8).
         //
         // Both are clamped rather than refused: a slice past the end is the empty string, not a
         // failure. That is a decision and not an oversight — a slice is not a parse, and `raises`

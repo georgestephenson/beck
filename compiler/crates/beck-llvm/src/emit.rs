@@ -4013,8 +4013,8 @@ const MAX_ALTERNATIVES: usize = 16;
 /// An or-pattern of plain constants is left whole, because [`Function::probe`] can test it with one
 /// `or` and it binds nothing. Anything else is **split**: two alternatives that take a value apart
 /// bind the same names to different words, so one block reached from both would need a `phi` per
-/// binder, and copying the arm is the same behaviour with no join to get wrong. `docs/91`
-/// §91.1 is the bug that is not available to make here — an alternative that reaches the body
+/// binder, and copying the arm is the same behaviour with no join to get wrong. `docs/90`
+/// §90.4 is the bug that is not available to make here — an alternative that reaches the body
 /// unexpanded is a wildcard — because there is no matrix and no lazy split: every alternative is
 /// its own test.
 fn alternatives(pat: &Pattern) -> Result<Vec<Pattern>, String> {

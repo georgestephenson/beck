@@ -97,7 +97,7 @@ const PORTED: [&str; 8] = [
 /// The two that are not, and the reason each is not.
 ///
 /// Kept beside the eight and asserted against the directory, because "we ported eight of ten" is
-/// only honest if the missing two are named. `docs/46` §46.14 is the long form of each reason;
+/// only honest if the missing two are named. `docs/46` §46.16 is the long form of each reason;
 /// dropping a benchmark from this list without adding it to `PORTED` is what this stops.
 const NOT_PORTED: [(&str, &str); 2] = [
     (
@@ -128,7 +128,7 @@ const SUPPORT: [&str; 0] = [];
 /// The Game publishes one expected output for that benchmark and it is at `N = 30`, so unlike
 /// `awfy/`'s three (`docs/62` §62.3) there is no reduced configuration to gate at — it needed
 /// `--fuel` or nothing. It needed 100,000,000 steps because `lib/bignum.beck` searched every long
-/// division's trial digit over the whole limb range; bracketing that search (`docs/46` §46.13) took
+/// division's trial digit over the whole limb range; bracketing that search (`docs/46` §46.15) took
 /// it to under 16,000,000, which is inside the default. A budget table here would have hidden the
 /// cost rather than fixed it.
 #[test]
@@ -178,7 +178,7 @@ fn the_ported_suite_is_eight_of_the_games_ten() {
     for (name, _) in NOT_PORTED {
         assert!(
             !found.contains(&name.to_string()),
-            "{name} is ported now — move it to PORTED and correct docs/46 §46.14"
+            "{name} is ported now — move it to PORTED and correct docs/46 §46.16"
         );
     }
     // `expected/` holds one file per oracle a port is checked against, plus the two inputs the
@@ -317,7 +317,7 @@ fn every_benchmark_names_the_suite_it_is_a_port_of() {
 /// reference — `B0601`, "defined in more than one module" — so two benchmarks that both called
 /// their entry `benchmark` could never be imported by the same program, and `revcomp` and
 /// `knucleotide` both import `fasta`. Naming each entry after its own benchmark is what makes the
-/// directory composable at all, so it is gated rather than left to habit (`docs/46` §46.10).
+/// directory composable at all, so it is gated rather than left to habit (`docs/46` §46.12).
 #[test]
 fn every_port_publishes_its_output_under_its_own_name() {
     for stem in PORTED {
@@ -336,7 +336,7 @@ fn every_port_publishes_its_output_under_its_own_name() {
 /// the benchmark.
 ///
 /// There were three. The third was `pidigits`, and its reason was not a fact about the language at
-/// all: `lib/bignum.beck` existed and no module outside `lib/` could import it (`docs/46` §46.10).
+/// all: `lib/bignum.beck` existed and no module outside `lib/` could import it (`docs/46` §46.12).
 /// That was a repository limitation, it is fixed (`docs/46`), and the benchmark it was holding is
 /// ported — which is what the assertion was for.
 #[test]
@@ -351,13 +351,13 @@ fn the_two_unported_benchmarks_are_still_out_of_reach() {
     // regexredux: the suite requires its nine patterns, and there is nothing to run them with.
     assert!(
         !prims.contains("\"regex_match\"") && !prims.contains("\"regex_replace\""),
-        "there is a regex primitive now — port regexredux and correct docs/46 §46.14"
+        "there is a regex primitive now — port regexredux and correct docs/46 §46.16"
     );
 
     // mandelbrot: the output is packed bits with NUL bytes in it, and `Str` is UTF-8.
     assert!(
         !prims.contains("\"bytes_of\"") && !prims.contains("Ty::BYTES"),
-        "there is a byte string now — port mandelbrot and correct docs/46 §46.14"
+        "there is a byte string now — port mandelbrot and correct docs/46 §46.16"
     );
 }
 
@@ -365,7 +365,7 @@ fn the_two_unported_benchmarks_are_still_out_of_reach() {
 /// for.
 ///
 /// `pidigits.beck` imports `bignum` and is gated above, so this is not the only thing that would
-/// notice a regression — but it is the one that would say *why*, and `docs/46` §46.10's probe is
+/// notice a regression — but it is the one that would say *why*, and `docs/46` §46.12's probe is
 /// where it comes from. That probe asserted the failure; this asserts the fix.
 #[test]
 fn the_standard_library_is_importable_from_this_directory() {

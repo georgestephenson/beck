@@ -13,15 +13,15 @@ found, which is four walls and two costs:
 
 - A trait's declared row is a **bound**, so `Money` could not have `+` (§46.6). One feature, and the
   test that says so was written to go red the day it lands.
-- **A credential could not be sent** (§46.8), invisible for three phases because no program had ever
+- **A credential could not be sent** (§46.10), invisible for three phases because no program had ever
   tried to *spend* a secret.
-- **`lib/` was a standard library nothing outside `lib/` could import** (§46.10), invisible because
+- **`lib/` was a standard library nothing outside `lib/` could import** (§46.12), invisible because
   nothing had ever reached across a directory boundary.
 - **A record orders by field name, not by declaration** (§46.6), which silently inverts every
   two-key sort written the obvious way.
-- The **accumulator idiom is quadratic** and the evaluator's own step budget cannot see it (§46.12).
+- The **accumulator idiom is quadratic** and the evaluator's own step budget cannot see it (§46.14).
 - And one thing went the other way: a benchmark demanding enough to make a cost visible made
-  **every caller of arbitrary-precision division 2.3× faster** (§46.13).
+  **every caller of arbitrary-precision division 2.3× faster** (§46.15).
 
 ---
 
@@ -57,7 +57,7 @@ in Beck, and what the host keeps is the notation.
 
 **The primitives**: thirteen for strings, fifteen for collections, two for JSON, two for time, one
 exchange for HTTP, and nine for digests, encodings and identifiers
-([`52`](52-crypto-and-identifiers-report.md)). The higher-order ones are row-polymorphic in their
+(§46.7). The higher-order ones are row-polymorphic in their
 argument's effects, so a pure caller of `list_fold` stays pure however another caller uses it —
 §3.2's `map : (list[a], (a -> b ! e)) -> list[b] ! e`, which nothing about this had to re-establish.
 
@@ -71,8 +71,8 @@ argument's effects, so a pure caller of `list_fold` stays pure however another c
 | `collections.beck` | `Set[T]`, sorting, grouping, deduplication — 26 definitions, no primitives added |
 | `dates.beck` | the civil calendar and durations — 49 definitions, no primitives added |
 | `http.beck` | builders, header lookup, status predicates, a JSON body |
-| `crypto.beck` | over the nine primitives ([`52`](52-crypto-and-identifiers-report.md)) |
-| `bignum.beck`, `decimal.beck` | arbitrary precision, in Beck ([`55`](55-bignums-report.md), [`56`](56-decimal-report.md)) |
+| `crypto.beck` | over the nine primitives (§46.7) |
+| `bignum.beck`, `decimal.beck` | arbitrary precision, in Beck (§46.8) |
 | `format.beck` | fixed-decimal rendering, which three benchmark ports needed |
 
 `stdlib.rs` gates the **directory** rather than a list of names, so a library added and not
@@ -256,7 +256,237 @@ real answer is `Ord` as a trait**, the way `Num` is one, so a type says what its
 of inheriting the one its representation happens to have. That is [`54`](54-ordering.md), which
 writes it out and explicitly does not recommend it.
 
-## 46.7 The outbound call: the host is written where the call is
+## 46.7 Digests, encodings and identifiers — and the one function that spends a secret
+
+Nine primitives and one library file, with no new dependency
+([`adr/0015`](adr/0015-blake3-for-the-standard-librarys-digests.md)). A hash function is somebody
+else's table and an alphabet is a grammar, so `digest`, `digest_keyed`, `digest_eq`, hex, base64url
+and the UUID reader are primitives; a fingerprint, a digest of several values and a signed token are
+composition and live in `lib/crypto.beck`. **A canonical form is a grammar too** — which is why
+`uuid_parse` is a primitive rather than a `str_len` check in Beck: it *normalises*.
+
+**A digest is pure, and that is the line this group is drawn on rather than a detail of it.** The
+other things a crypto library is usually asked for — random bytes, a nonce, a clock — are
+nondeterministic, and `uuid()` and `now()` already exist for those, both charged `nondet` and both
+refused inside a fold. `digest` performs nothing, so a fingerprint may be computed inside a fold and
+a replay recomputes the same one.
+
+### The one function that spends a secret
+
+§3.5 says a `secret[T]` cannot reach a browser, and three phases held that without exception. §46.10
+met the first program that needed to *spend* one and closed it by moving **when** the secret is
+unwrapped. **That trick does not reach a MAC.** A message authentication code's output is *meant*
+for the party that must not learn the key — a session cookie, a signed link, a webhook signature —
+so there is no edge to defer to. Either the language computes one, or [`48`](48-identity-report.md)'s
+`SignedIdentity` stays in Rust for ever and a Beck program cannot issue its own tokens.
+
+```
+digest_keyed : (secret[Str], Str) -> Str ! {cap.sign}
+```
+
+Three things make that a decision rather than a hole, and
+[`adr/0014`](adr/0014-a-keyed-digest-is-the-one-declassifier.md) is the record.
+
+**It is one function, and a test says so.** Not a rule about a family of operations, not a
+`declassify` escape hatch — one primitive, and
+`exactly_one_primitive_turns_a_secret_into_something_that_is_not_one` enumerates the whole prelude,
+filters for a parameter that is a `secret[T]` and a result that is not, and asserts the answer is
+that single name. **A second declassifier added without a second argument fails there, which is the
+only place it would fail.**
+
+**It is a capability, and the client does not hold one.** `cap.sign`, so a view that mints a code is
+a *placement error* rather than a review comment. Its pair — the same call inside `validate`,
+asserted to compile — matters as much, **because a capability nothing may hold is not a capability,
+it is a ban.**
+
+**The key is derived, not used.** Under a context string that is not the runtime's, so one secret
+used for two purposes gives two unrelated keys and a token minted by a program does not verify as one
+minted by the runtime's own provider.
+
+The alternative worth naming is the one rejected: making the result a `secret[Str]` keeps §3.5
+exceptionless and **destroys the operation**, because a code that can only travel through a header
+cannot be a cookie or a URL — which is most of what a code is for.
+
+**`digest_eq` is constant-time**, and it is a primitive because it is the one part of a token check
+that cannot be written in Beck: `==` on two strings returns at the first byte that differs, and a
+verifier that does that tells whoever is guessing how much of the guess was right. Length is compared
+first and in the clear, because **the length of a digest is not a secret**. This is the named
+exception to [`43`](43-threat-model.md) §43.3's "nothing in Beck's design attempts constant-time
+anything" — the general claim is unchanged, because one comparison is not a side-channel programme.
+
+Nothing here is checked against itself: BLAKE3's own published vectors, RFC 4648 §10's seven vectors
+in §5's alphabet with every prefix of a 43-character string so no length class goes untested, six
+spellings of one identifier normalising to one, and five near-misses that are not. The decoders read
+what other encoders *write* — base64 accepts padding it does not emit and both alphabets, because **a
+decoder that refuses what other encoders produce is a decoder that fails in production**, and the two
+alphabets do not overlap so accepting both is unambiguous rather than lenient.
+
+### A test block cannot exercise a capability
+
+The first draft had a test that minted a token and opened it. **It does not compile, and the
+diagnostic is right**: a test block's own row must be empty, and `cap.*` is deliberately not
+auto-stubbable because stubbing a capability would bypass it. Both rules are right. Together they
+mean **the layer of a library that holds a key is the layer Beck cannot test** — and writing
+`stub cap.sign:` would make the test *worse than absent*, since the stub is a constant and a tampered
+token would verify against it.
+
+Taking that deliberately improved the library. `crypto.beck` is two layers with the key at the seam:
+everything about the token's *format* is pure and takes the code it expects as an argument, so every
+way a forgery can arrive is reachable from an ordinary `test` block, and what is left is one Rust
+test that a real key produces a code only that key reproduces. **The general statement is not about
+this library: a Beck library whose functions require a capability has a Rust-tested edge, and the
+smaller that edge the better.**
+
+### Nine match arms cost a thousand levels of recursion
+
+Adding the nine primitives to the evaluator's `match op` broke a test that builds a tree 1,000 deep:
+`beck test` overflowed its stack in a debug build. **Nothing about digests is recursive.** The
+mechanism is that the primitive dispatch is one arm per primitive, its frame is as wide as the widest
+arm, and it is reached from the recursive path — so inlining merges the two and **every local a new
+arm adds is a local every nested call carries.**
+
+The fix is one attribute. What is worth recording is the **coupling**: the evaluator's declared stack
+is a budget shared between the depth a program may reach and the width of a `match` nobody thinks of
+as costing anything, and the only reason this was caught is that the depth is *asserted by a test*
+rather than discovered by a user.
+[`adr/0007`](adr/0007-evaluator-stack-is-declared-not-discovered.md)'s argument that a bound must be
+declared rather than discovered has a second illustration: **the number it declares moved because of
+a change in a different crate, and a test said so within the hour.**
+
+## 46.8 The numeric tower: bignums, coercion, and a decimal that refuses to guess
+
+Arbitrary-precision integers and decimals, **written in Beck**, with no new primitive and no new
+dependency. §25.7 ordered the tower — reals first, then rationals and bignums — and these are the
+floor underneath both, plus the decimal built on that floor.
+
+**Why a file and not a primitive**, and this is where §46.1's division first cost something real.
+Schoolbook long multiplication is not a host's table or grammar: a carry, a borrow and a trial
+quotient are arithmetic on `Int`, and `Int` is something the language has. Taking `num-bigint` would
+have been faster to run and would have been the admission the directory exists to avoid making. That
+argument was easy to write for `money.beck`, where the alternative was silly; **it is worth more here,
+because the alternative was *reasonable*.**
+
+A `Big` is a sign and a list of base-10,000 limbs, least significant first. **Base 10,000** so two
+things are true by inspection rather than by argument: a product of two limbs plus a carry is nowhere
+near an `Int`'s range, and a limb is exactly four decimal digits so rendering and parsing are
+*grouping* rather than division. **Canonical form** — no leading zero limbs, zero is the empty list —
+because a library whose zero has two values is a library whose tests pass and whose folds do not. And
+**a magnitude layer that knows nothing about signs**, because a sign rule applied halfway through a
+borrow is the classic way to get subtraction wrong, **and the way not to is to have nowhere to apply
+it.**
+
+`impl Num for Big` is the third floor added from outside the compiler, and the first where the type is
+a number in the ordinary sense — **which matters, because a tower whose new floors can only ever be
+domain types is not a tower.** Only `div` can fail, so the row is inferred from it alone and `a + b`
+stays pure; the checker enforces that in the direction that is easy to get wrong, since a `try:` over
+an expression that cannot fail is itself a diagnostic.
+
+**Coercion is a decision more than it is code**, and none of it is implicit: `big(n)` is total,
+`big_to_int` answers an `Option` because narrowing is a question with a "no" rather than a failure,
+and `big_to_real` is lossy and therefore a different function so a reader has to mean it. Adding a
+bignum is exactly the moment the refusal of `1 + 1.0` comes under pressure — an `Int` that silently
+widened on overflow would be convenient. **It would also make the cost of arbitrary precision
+invisible**, and `Int` arithmetic is checked precisely so that overflow is a message rather than a
+wrong answer. Silent widening trades a loud, cheap failure for a quiet, expensive success.
+
+The one detail worth reading the code for is **the most negative `Int`**, where a conversion written
+the obvious way has exactly one input it cannot take: `abs(n)` of it overflows, so the conversion
+peels limbs off the *signed* value and the reverse accumulates negatively. It is also a number with no
+literal — its text is not a token — so the test reaches the value by arithmetic on both sides.
+
+### `/` is exact, or it refuses
+
+A `Decimal` is `units × 10^-scale` with `units` a `Big`. **Exact, and therefore not a real**: `0.1` is
+not one of the numbers IEEE 754 holds, which is why `0.1 + 0.2 != 0.3` there and is `0.3` here. Not a
+rational either — a third has no decimal expansion, and this type says so rather than rounding.
+
+**The form is canonical, so `1.50` and `1.5` are the same value** — the opposite of `BigDecimal`,
+whose equality is scale-sensitive — and the reason is [`54`](54-ordering.md): the value order here is
+a `Map`'s iteration, the state digest and the patch stream a replay must reproduce bit for bit. **Two
+representations of one number are two keys and two digests for one fact, and that is a worse bug than
+any surprise about trailing zeros.** What it costs is that a scale is not a significance; `render_at`
+carries that as a *presentation* decision, and `money.beck` remains the type whose scale is fixed by
+its currency.
+
+`a / b` produces digits until the remainder reaches zero, and a quotient that never gets there
+**raises**; `divide_to(a, b, scale, rule)` is the division that always answers and takes both. **A `/`
+that silently picked a scale and a rounding rule would be guessing**, and this library set refuses to
+guess in the two places it costs most — `money.beck`'s `split` exists because rounding each part
+independently loses money silently, and §46.3's rule is that a reader raises rather than inventing a
+value. The caller knows how many digits it wants and this type does not.
+
+There is a **bound, and it is honest rather than clever**: deciding whether a quotient terminates
+needs a `gcd` and a factorisation this library does not have, so the cap is 40 places. Forty is past
+anything a program asks for. It is also what keeps a refusal **cheap** — the expansion costs one long
+division per digit, so the bound *is* the work done before `/` gives up, and at 100 it was 25 seconds
+on one input. §46.16 records what the bound gets wrong.
+
+`Rounding` is `HalfEven`, `HalfUp` or `Down`, **because picking one would be picking a jurisdiction**.
+The comparison is `2 × remainder` against the divisor, on `Big`s, so "exactly half" is `==` on integers
+and never a question about a fraction.
+
+### How the tower is known to be right
+
+Constants first — factorials and powers of two computed by an outside arbitrary-precision
+implementation and said to be one. Then `property` blocks checking this implementation against the one
+the language already has: for every generated pair, `Big` arithmetic and `Int` arithmetic agree, and
+division and remainder reassemble the dividend. Then cross-checks against `i128` over 400 pairs built
+*past* `Int`, where the property blocks cannot reach, and against exact rational arithmetic over 300
+rounding cases and all three rules.
+
+**Be exact about what that establishes, because §46.5 was exact about the same shape for the calendar
+and the limit is the same one: it is not two independent algorithms.** It is one claim checked against
+a different implementation of it, on a different evaluator, in a different language. What it catches
+is a transcription error, a carry dropped at a boundary, and a sign rule wrong in a case nobody wrote
+a constant for.
+
+**The part of the rounding cross-check worth copying is not the count.** Fifty-two of its 300 cases
+are generated to land *exactly on a half* at their scale. A uniform sample almost never does, and
+exactly-half is the **only** input where the three rules disagree — so a randomly-sampled rounding test
+has almost no power over the thing it is supposed to be testing. The generator is a fixed xorshift
+rather than a random source, **because a cross-check that fails on Tuesdays is a cross-check nobody
+keeps.**
+
+### What writing the tower found
+
+**A comment, and the finding is about comments.** `str_slice`'s third argument is a **count, not an
+end index** — the signature reads either way and the compiler's own comment beside it did not say.
+Nothing had ever exercised the ambiguity: every other call site in the tree passes a start of zero or
+a count that clamps, and under both readings those give the same answer. **This was the first caller
+with a non-zero start and a real count, and it got a plausible wrong number rather than an error**,
+which is the worst available outcome. Worse, the comment that *was* there said indices are byte
+offsets; they are characters, which a passing test had asserted since §46.4. No test can check that a
+sentence describes the code beside it; what it can have, and now has, is the sentence stating the thing
+a signature cannot.
+
+**And three defects in `beck doc`, all found by one file importing a sibling.** `decimal.beck` is the
+first module in `lib/` to `import` another, and:
+
+- **A rounded division was not canonical.** It built its result directly rather than through the
+  constructor, so `1 / 2` at four places was the same *number* as `0.5` and not the same *value* —
+  a second `Map` key and a second digest for one amount. The file's own tests could not catch it,
+  because every rounding test used scale 0 where canonicalisation has nothing to do. It was found by
+  asking what the division should *equal* rather than what it should render as: **a test that compares
+  rendered strings cannot see a representation defect at all.**
+- **`beck doc` could not read a module that imports another.** It read a single file while `beck check`
+  and `beck test` went through the project loader, and nothing had noticed because no module anybody
+  documented had ever imported one. Fixing that immediately produced the second half: the obvious thing
+  to hand the documenter is the *sliced* program, which is every module merged — right for slicing and
+  wrong for a page, so `beck doc` published 93 names, 53 of them the imported module's. The page is
+  built from the root module's own interface now, which is what `beck iface` had been using correctly
+  all along.
+- **And the merged program dropped every module's doc comments but one.** The linker merged
+  definitions, types, signals and tests across modules and never merged `docs`, and the accumulator is
+  the *deepest import* — so a documented file reported 0 of 40 documented. **This had been wrong since
+  separate compilation landed in Phase 2 and was unreachable**, because `beck doc` never resolved
+  imports, so nothing ever asked the merged program for a doc comment.
+
+**The pattern across all three is one thing.** A module importing another is a shape the compiler
+supported and the *tools around it* had never been run against. `beck check`, `beck test` and `beck
+iface` were right; `beck doc` was wrong three ways, and one Beck file found all of them — **which is
+the argument for fixing a tool even when nothing is currently broken by it.**
+
+## 46.9 The outbound call: the host is written where the call is
 
 Every other effect atom in the language is a constant of whatever performs it. `durable` is
 `durable`; `env` is `env`; `json_parse` raises `JsonError` and always will. **`net.out(host)` is
@@ -303,7 +533,7 @@ And `json_body` is where two failures inherited from two callees stay distinguis
 catches the one its type names while the other travels, so "the peer said 503" and "the peer said
 something that is not JSON" cannot be confused for one another.
 
-## 46.8 A credential could not be sent
+## 46.10 A credential could not be sent
 
 `lib/http.beck` was meant to have `with_bearer(req, token: secret[Str])`, and the first attempt was
 the obvious one:
@@ -331,7 +561,7 @@ Sendable, so the type system already refuses to let it near a client with nobody
 The two halves are both gated: `"Bearer " + reveal(token)` is still a compile error, and the
 credential is still on the wire.
 
-## 46.9 The network, on the seam F11 asked for
+## 46.11 The network, on the seam F11 asked for
 
 [`14`](14-review-findings.md) F11 names three resources that cannot be retrofitted: clock, network
 and disk. [`44`](44-wave-0-report.md) §44.3 closed the clock, three phases late.
@@ -354,7 +584,7 @@ the log, and neither can change what a replay produces.
 the atom is an ordinary atom: `stub net.out(rates.example.com): 42` names the peer, and a test that
 says nothing gets the auto-stub and a line in the report saying what it did.
 
-## 46.10 The library becomes importable, and what that broke in it
+## 46.12 The library becomes importable, and what that broke in it
 
 For three phases `lib/` was a standard library **nothing outside `lib/` could import**, and the
 demonstration is one file in two directories:
@@ -416,12 +646,12 @@ on every build, and there is no interface cache:
 
 About 12 µs a line, which is [`64`](64-compile-speed-report.md) §64.6's front-end figure arriving at
 the same place from the other direction. **The place that will feel it is the editor**:
-[`65`](65-lsp-report.md)'s server re-checks the whole file on every change and does not resolve
+[`65`](65-the-editor-report.md)'s server re-checks the whole file on every change and does not resolve
 imports at all, so the day it does, this table is what it adds to
 [`04`](04-compiler-architecture.md) §4.6's 100 ms budget. There is room at these numbers and there
 would not be at ten times them.
 
-## 46.11 The Benchmarks Game harness, and an oracle nothing here chose
+## 46.13 The Benchmarks Game harness, and an oracle nothing here chose
 
 [`compiler/clbg/`](../compiler/clbg/README.md) — eight of the Computer Language Benchmarks Game's
 ten benchmarks, each verified against the Game's own published output file.
@@ -488,7 +718,7 @@ gate holds the convention rather than leaving it to habit. It is a **constraint 
 defect**, and it is worth recording because a directory of independent programs is precisely the case
 where every file wants the same names.
 
-## 46.12 The accumulator idiom is quadratic, and the step budget cannot see it
+## 46.14 The accumulator idiom is quadratic, and the step budget cannot see it
 
 **`list_append` copies the whole list.** Beck has no mutable sequence, so every loop that builds one
 is written as a tail-recursive accumulator — `return go(i + 1, list_append(done, x))` — which is how
@@ -516,7 +746,7 @@ is *not* what makes those programs slow: their lists are limb vectors and small 
 twenty-five elements long. **The quadratic bites in proportion to how long a list gets**, which means
 it is invisible in a tree of programs that never build a long one and unbounded in the first program
 that does — a 100,000-element list costs five billion element copies to build. It is a defect waiting
-for its caller, in exactly the way division was (§46.13).
+for its caller, in exactly the way division was (§46.15).
 
 [`19`](19-phase-1-report.md) §19.4 found this exact shape in the *fold*, and `scaling.rs` exists to
 keep it fixed, opening with the sentence that settles what this is: **"That is a semantic defect, not
@@ -543,12 +773,12 @@ Perceus and Roc reach performance a persistent-vector language does not aim at.
 [`93`](93-the-native-backends-report.md) §93.7 is where the same question came back on an arena that
 cannot prove uniqueness — and was answered a third way.
 
-## 46.13 What a caller made faster: the trial-digit bracket
+## 46.15 What a caller made faster: the trial-digit bracket
 
 A gate that costs two minutes is a gate somebody stops running, and "the benchmark is inherently
 expensive" is the kind of answer that should be checked before it is accepted. **It was wrong.**
 
-[`55`](55-bignums-report.md) §55.6 had already named the suspect, in the row saying what a first
+§46.16 had already named the suspect, in the row saying what a first
 implementation deliberately did not do: Knuth's algorithm D is "the thing to replace first if any of
 it is ever a bottleneck. The binary search for a trial digit is fourteen comparisons where the
 estimate-and-correct is one multiply and a rare fixup; it is here because it is *obviously* right,
@@ -591,16 +821,16 @@ pairs will find.**
 
 This is the first time a benchmark in this repository has made the language faster rather than just
 measured it. The suite's value is not the numbers it prints, which §25.9 will not let us publish
-anyway. **It is that it is the first caller demanding enough to make a cost visible** — and §46.12 is
+anyway. **It is that it is the first caller demanding enough to make a cost visible** — and §46.14 is
 the same lesson learned one level further down, and only after somebody said the first answer was not
 good enough.
 
-## 46.14 What is not built
+## 46.16 What is not built
 
 | | Status |
 |---|---|
-| **A linear `list_append`** | **Not built** (§46.12), and it is the largest performance item in this chapter. Every accumulator loop in the language is quadratic in time, and the evaluator's step budget cannot see it |
-| **A work-counting budget** | **Not built.** `--fuel` counts nodes evaluated, and §46.12's table is one program whose steps are linear and whose cost is quadratic |
+| **A linear `list_append`** | **Not built** (§46.14), and it is the largest performance item in this chapter. Every accumulator loop in the language is quadratic in time, and the evaluator's step budget cannot see it |
+| **A work-counting budget** | **Not built.** `--fuel` counts nodes evaluated, and §46.14's table is one program whose steps are linear and whose cost is quadratic |
 | **`Ord` as a trait** | **Not built** (§46.6), and [`54`](54-ordering.md) writes it out and does not recommend it. Ordering is the runtime's structural one, so a type cannot say what its own order is |
 | **TLS** | **Not built.** `http_fetch` speaks HTTP/1.1 over TCP, so a credential sent with `with_secret_header` is confidential exactly as far as the network under it is. `pending_security.rs::an_outbound_call_has_no_transport_security` asserts the absence. Taking a TLS stack is a dependency decision, and [`adr/0023`](adr/0023-tls-and-the-signature-it-brings.md) is where it was taken for the identity work |
 | A host that is a value | **Refused, deliberately** ([`adr/0013`](adr/0013-the-host-of-an-outbound-call-is-written-at-the-call-site.md)). The cost is one call site per host in an application that talks to several; a host-parameterised client type is the shape that would lift it, and it needs type-level strings |
@@ -615,9 +845,18 @@ good enough.
 | A set's cost | **A map's.** `Set[T]` is `Map[T, Bool]`, so it is an ordered structure with a comparison at every step and a `Bool` per member nobody reads. No hash set, no bitset. `intersection` and `difference` are linear in the left side, via a list — a map-to-map operation would be a primitive, and the division says a primitive has to be a host's table or grammar rather than a faster copy of something expressible |
 | Time zones and locale | **Not built, deliberately.** A time zone is a database with a release schedule, and a replay must not disagree with the run it is replaying about what a date is |
 | Weeks, ISO week dates, quarters; parsing a duration; a date-only parse in the host | **Not built.** Reading is where a grammar starts, and a grammar is the host's half |
-| Money beyond two minor digits | **Not built.** `lib/money.beck` is fixed at two, which is wrong for JPY and KWD and says so; arbitrary precision is [`56`](56-decimal-report.md)'s |
-| Sub-quadratic multiplication, and Knuth's normalisation | **Not built** (§46.13). Normalising both operands would make the bracket one digit wide *always* rather than usually; what is built is the estimate alone, and the case it does not help is the case a test now pins |
-| `mandelbrot`, `regexredux` | **Not ported** (§46.11), and the gate asserts both reasons are still facts |
+| Money beyond two minor digits | **Not built.** `lib/money.beck` is fixed at two, which is wrong for JPY and KWD and says so. Rewriting it over `Decimal` is now expressible and is a change to a type other files use, so it is not being done in passing |
+| **An exact quotient needing more than 40 places** | **Refused, and wrongly** (§46.8). `1 / 2^41` terminates and this raises. The fix is a `gcd` and a count of twos and fives in the reduced divisor, which is a `gcd` this library does not have — the trade is stated rather than hidden |
+| `gcd`, a rational over `Big`, square root, powers, logarithms | **Not built.** None of the last three has an exact decimal answer in general, so each needs the scale-and-rule shape `divide_to` has, and none is written |
+| An exponent in the decimal reader | **Not built.** The lexer takes one for a *float literal* and this reader does not, which is an inconsistency named rather than defended |
+| A scale that carries significance | **Not built, deliberately** (§46.8). `render_at` is the presentation; `money.beck` is the fixed-scale type |
+| **Asymmetric signatures, and encryption of any kind** | **Not built.** No Ed25519, no RSA, no JWKS, no JWT verification, no AEAD, no key agreement. **A digest is not encryption**, and a program that needs confidentiality at rest does not get it here. [`adr/0015`](adr/0015-blake3-for-the-standard-librarys-digests.md) says why the symmetric half was taken without the dependency decision, which is still owed — [`adr/0023`](adr/0023-tls-and-the-signature-it-brings.md) then took it for the identity work rather than for the library |
+| Random bytes | **Not built, and a decision rather than an omission.** `uuid()` mints an identifier and is `nondet`; a general `random_bytes()` would be a second nondeterministic source at the edge, and the one thing it is usually wanted for — a key — is `secret_env`'s job |
+| A binary key, key rotation, a key id, an expiry in a token | **Not built.** A key is a `secret[Str]`, so a binary key is hex or base64 first. An expiry is *deliberately* absent: a time is `now()`, which is `nondet`, and putting one inside `sign` would make a signature nondeterministic — a caller puts an instant in the payload it signs |
+| A parsed UUID type; the variant bits | **Not built.** An identifier is a `Str` before and after and `uuid_parse` normalises rather than changing the type; a `Uuid` newtype is expressible in Beck today and is a program's decision. Nothing validates the variant, because **a value whose variant bits say nothing is still an identifier and refusing it would refuse an identifier that works** |
+| Per-definition module provenance | **Not built**, and it is what §46.8's second `beck doc` finding is really about. A definition does not record which module it came from; the page is right because the *interface* is the root's, not because the program can be filtered |
+| Sub-quadratic multiplication, and Knuth's normalisation | **Not built** (§46.15). Normalising both operands would make the bracket one digit wide *always* rather than usually; what is built is the estimate alone, and the case it does not help is the case a test now pins |
+| `mandelbrot`, `regexredux` | **Not ported** (§46.13), and the gate asserts both reasons are still facts |
 | The Game's measuring sizes, and a rate gate | **Not run, and not built.** No oracle exists at the measuring sizes, and [`13`](13-testing.md) §13.7's "a gate that flakes gets deleted" covers the rest |
 | A benchmark of any primitive | **None.** [`25`](25-benchmarks-and-expressiveness.md) §25.3 measures the evaluator at roughly 33× CPython, so a measurement of `str_split` would measure the interpreter |
 
@@ -629,13 +868,13 @@ library. And `expect try: f() == x` parses as `try: (f() == x)`, which is the bl
 what §2.3 says and is still a surprise; `(try: f()) == x` is the fix, and a diagnostic when a
 handler's block is a comparison does not exist.
 
-## 46.15 The gates, and what this establishes
+## 46.17 The gates, and what this establishes
 
 | | |
 |---|---|
 | `stdlib.rs` | Every file in `lib/` is a library and runs its own tests; **every file is importable from a directory that is not `lib/`**, in the strong form — `beck test` on a probe — so a file added to the directory and left out of the table fails here; the whole library links into one program; a local module shadows a library one; and the host behaviours the library rests on are pinned separately — character indices agreeing on `"héllo"`, a map's keys coming back in the values' own order, stable sorting with structural comparison, division truncating towards zero, and a record ordering by field name |
 | `clbg.rs` | Every asserted output is rebuilt from the Game's published file; the two substituted inputs are byte-for-byte the published generator's output; the entry-point naming convention; and the two unported benchmarks are still unportable, with neither having an oracle file sitting unused |
-| `outbound.rs` | The two halves of §46.8 — `reveal` on a secret is still a compile error, and the credential is still on the wire |
+| `outbound.rs` | The two halves of §46.10 — `reveal` on a secret is still a compile error, and the credential is still on the wire |
 | `bignum.beck` | The trial-digit bracket at the divisor's widest and narrowest leading limb, at a quotient limb of zero and of 9,999, and over every digit a limb can hold |
 | `beck_core::project` | A module resolves from the library with no file beside the root; a file beside the root shadows it; the library's tests do not become the program's |
 | `check/mod.rs` | `the_spelling_a_missing_type_argument_suggests_is_one_that_compiles` — the first diagnostic in the tree whose suggested spelling is tested by writing it down |

@@ -17,7 +17,7 @@ Newest first.
 - **`case [first, *rest]` compiles**, to both code generators
   ([`docs/93`](docs/93-the-native-backends-report.md)) — the last pattern form they refused. The
   length is tested before any element is read, so nothing can load past the end of a short list;
-  everything inside a pattern is [`docs/90`](docs/90-nested-patterns-report.md)'s recursion,
+  everything inside a pattern is [`docs/90`](docs/90-pattern-matching-report.md)'s recursion,
   unchanged.
   - **The refusal it replaces had been false for three reports.** It read "a collection is not on
     this heap yet", and a collection has been on this heap since
@@ -159,10 +159,10 @@ Newest first.
 ### The editor
 
 - **`beck lsp` edits: references, document highlight, prepare-rename, rename and inlay hints**
-  ([`docs/110`](docs/110-the-editor-edits-report.md)). Every answer is in `beck_core::editor`, so a
+  ([`docs/65`](docs/65-the-editor-report.md)). Every answer is in `beck_core::editor`, so a
   browser tab can ask for them too; the server translates JSON-RPC and nothing else (§4.6). This
   empties [`docs/08`](docs/08-roadmap.md) §8.5.5's **Lane C** and closes the two rows
-  [`docs/65`](docs/65-lsp-report.md) §65.5 called its largest gaps.
+  [`docs/65`](docs/65-the-editor-report.md) §65.8 called its largest gaps.
   - **A rename is the claim that a set of byte ranges is every place a name is written**, and it is
     made only when the file's two accounts of the name agree: the lexical one, which misses nothing
     and knows nothing, and the checked program's, which knows what each reference means and is not

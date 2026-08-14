@@ -167,7 +167,7 @@ so. It is cited from five other reports for that reason.
 
 ## 70.8 What this corrected, elsewhere
 
-- [`46`](46-standard-library-report.md) §46.12's measured-but-unfixed quadratic is fixed.
+- [`46`](46-standard-library-report.md) §46.14's measured-but-unfixed quadratic is fixed.
 - **`STACK_BYTES`' derivation was wrong** — the evaluator's ceiling had been measured in a debug
   build, so the release ceiling was a fiction.
   [`adr/0007`](adr/0007-evaluator-stack-is-declared-not-discovered.md)'s property holds in both

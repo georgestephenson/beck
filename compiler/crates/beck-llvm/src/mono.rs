@@ -197,7 +197,7 @@ impl Specialiser {
             }
         }
         // The same walk `check::resolve_types` performs, and for the same reason: a node this
-        // missed keeps a name that is about to stop existing. `docs/91` §91.3 counted fourteen
+        // missed keeps a name that is about to stop existing. `docs/90` §90.5 counted fourteen
         // walks that an arm's **guard** was new to, which is why the arms go through `exprs_mut`.
         match &mut c.kind {
             CoreKind::Lam { body, .. } => self.rewrite(Arc::make_mut(body)),

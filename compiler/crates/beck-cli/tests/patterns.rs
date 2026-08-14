@@ -5,7 +5,7 @@
 //! [`docs/27`](../../../../docs/27-the-walls-come-down-report.md) §27.3 said what
 //! was missing in one sentence: "**nested patterns are still refused** … patterns in Beck are one
 //! level deep, which is what §3.1's exhaustiveness check needs and no more".
-//! [`docs/90`](../../../../docs/90-nested-patterns-report.md) is what building them found.
+//! [`docs/90`](../../../../docs/90-pattern-matching-report.md) is what building them found.
 //!
 //! Three groups, and the middle one is the point:
 //!
@@ -351,7 +351,7 @@ fn a_pattern_that_nests_too_deep_is_a_diagnostic_rather_than_a_crash() {
     //
     // What answers today is the **reader's** counter, `B0121`, and not the checker's: a pattern is
     // an ordinary call form, so the parser meets it first and the two ceilings are the same
-    // number. The checker counts its own recursion anyway, and `docs/90` §90.5 says why that is
+    // number. The checker counts its own recursion anyway, and `docs/90` §90.7 says why that is
     // not belt-and-braces — three times in this project's history a limit at one production has
     // been reached through another.
     let depth = beck_diag::depth::MAX_NESTING as usize + 64;
@@ -400,7 +400,7 @@ fn nest(open: &str, leaf: &str, close: &str, depth: usize) -> String {
 }
 
 // ---------------------------------------------------------------------------------------------
-// 4. Or-patterns and guards — the rest of `docs/90` §90.6's list
+// 4. Or-patterns and guards — the rest of `docs/90` §90.8's list
 // ---------------------------------------------------------------------------------------------
 
 #[test]

@@ -455,12 +455,12 @@ fn link(root: &str, modules: Vec<Checked>, diags: &mut Diagnostics) -> Option<Pr
         // The doc comments too. Without this the merged program keeps only the *first* module's,
         // which is the deepest import rather than the root — so `beck doc` on a module that imports
         // another documented the wrong module's names. Invisible until a module in `lib/` imported
-        // one (`docs/56` §56.5); a clash is impossible for a definition, because `B0601` above
+        // one (`docs/46` §46.8); a clash is impossible for a definition, because `B0601` above
         // already refuses two modules defining one name.
         acc.docs.extend(program.docs);
         // `identity = external(issuer=…)` is a property of the *program*, so it survives the link
         // from whichever module wrote it — and the accumulator starts as the **first** module,
-        // which is the deepest import rather than the root (`docs/56` §56.5's shape). Leaving it
+        // which is the deepest import rather than the root (`docs/46` §46.8's shape). Leaving it
         // to `out`'s initial value would mean a root that declares one and imports a module that
         // does not gets no identity at all.
         match (acc.identity.is_some(), program.identity) {

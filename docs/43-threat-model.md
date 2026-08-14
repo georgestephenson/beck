@@ -61,7 +61,7 @@ decision.
    may travel — not a claim about what its use costs to observe, and nothing in Beck's design
    attempts constant-time anything **except `digest_eq`**, which exists because comparing a message
    authentication code with `==` returns at the first differing byte
-   ([`52`](52-crypto-and-identifiers-report.md) §52.3). One comparison is not a side-channel
+   ([`46`](46-standard-library-report.md) §46.7). One comparison is not a side-channel
    programme, and the exclusion is otherwise unchanged.
 2. **A compromised host.** If the process's memory or its filesystem is under someone else's
    control, no property here survives, and none is claimed to.

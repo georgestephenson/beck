@@ -636,7 +636,7 @@ fn dispatch(cli: Cli) -> Result<()> {
                 // Through the project loader, not a single-file read: a module that imports another
                 // has to be documented with that other module in scope. The *page* is the root
                 // module's own interface rather than the sliced program, which is every module
-                // merged (`docs/56` §56.5).
+                // merged (`docs/46` §46.8).
                 let (project, map, diags) = checked_project(&file)?;
                 eprint!("{}", diags.render(&map));
                 let project = project.filter(|_| !diags.has_errors()).ok_or_else(|| {

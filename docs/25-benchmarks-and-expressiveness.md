@@ -526,12 +526,12 @@ no regression-detecting power, which is the only thing a benchmark is for.
 > verified against the Game's own published *output file* rather than against a constant anybody
 > here typed, which is what [`64`](64-compile-speed-report.md) §64.7.1 was waiting for and is
 > enforced rather than promised. **This row is complete.** It was seven: `pidigits` was held up by
-> §46.10's finding that nothing outside `lib/` could import the standard library, and it is ported
+> §46.12's finding that nothing outside `lib/` could import the standard library, and it is ported
 > now that [`46`](46-standard-library-report.md) has fixed that. It is also the first
 > benchmark to need more than the evaluator's default budget in a *gate* — the Game publishes an
 > oracle at exactly one size, so unlike `awfy/`'s three there is no reduced configuration to fall
 > back on — and the answer was to make the arithmetic cheaper rather than to raise the budget:
-> §46.13 brackets `lib/bignum.beck`'s trial-digit search, which takes the benchmark from 100 million
+> §46.15 brackets `lib/bignum.beck`'s trial-digit search, which takes the benchmark from 100 million
 > evaluator steps to under 16 million and every other caller of that division with it. Its "Published" column is kept: no
 > compute number, and specifically no entry in the Game's own table, which §25.2 above calls widely
 > misused and §25.3 explains would be a measurement of scaffolding.

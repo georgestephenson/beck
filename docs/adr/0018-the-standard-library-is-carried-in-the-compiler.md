@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Date:** 2026-08-04
-**Context:** [`46`](../46-standard-library-report.md) §46.10, [`46`](../46-standard-library-report.md),
+**Context:** [`46`](../46-standard-library-report.md) §46.12, [`46`](../46-standard-library-report.md),
 [`10`](../10-decisions.md) D23, [`16`](../16-packages-and-ecosystem.md) §16.7
 
 ## The decision
@@ -15,7 +15,7 @@ So `import bignum` works from any directory, and a `bignum.beck` beside the prog
 
 ## The problem it solves
 
-[`46`](../46-standard-library-report.md) §46.10: `import` resolved against the root module's own directory and
+[`46`](../46-standard-library-report.md) §46.12: `import` resolved against the root module's own directory and
 against nothing else, so the Beck half of the standard library was reachable from `lib/` and from
 nowhere. Three phases of work had not noticed, because nothing had reached across a directory.
 
@@ -51,7 +51,7 @@ namespaced form would have to keep working anyway.
   file importing a sibling gets the file beside it and development is unaffected.
 - **The binary carries the sources**, about 200 KB of text. It is compiled per import rather than
   cached, so a program that imports `decimal` typechecks `decimal` and `bignum` on every build.
-  Nothing measures that yet; [`46`](../46-standard-library-report.md) §46.10 has the figure
+  Nothing measures that yet; [`46`](../46-standard-library-report.md) §46.12 has the figure
   it costs today.
 - **A library module's `test` blocks do not become the importing program's.** They are checked and
   then dropped at the link, the way no test runner runs its dependencies' tests.

@@ -162,7 +162,7 @@ Targets to hold yourself to: keystroke→diagnostics **< 100 ms** on a 50 kLOC p
 `beck build` for a one-line change **< 2 s** to a running dev process (hot reload); clean release
 build of 50 kLOC **< 60 s** including WASM and image assembly.
 
-*Status ([`65`](65-lsp-report.md)). `beck lsp` is built — diagnostics, hover, go-to-definition and
+*Status ([`65`](65-the-editor-report.md)). `beck lsp` is built — diagnostics, hover, go-to-definition and
 document symbols — and the "no separate implementation to drift" claim is now a harness: the
 server's answers are compared to `compile_or_library_str`'s own diagnostics and to
 `iface::render_item`, rather than to strings written in a test. **The Salsa query graph above is

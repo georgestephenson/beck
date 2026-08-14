@@ -3,7 +3,7 @@
 **Status:** accepted
 **Date:** 2026-08-09
 **Context:** [`48`](../48-identity-report.md), [`07`](../07-dependencies.md) §7.2,
-[`48`](../48-identity-report.md) §48.13, [`46`](../46-standard-library-report.md) §46.14,
+[`48`](../48-identity-report.md) §48.13, [`46`](../46-standard-library-report.md) §46.16,
 [`0004`](0004-full-cargo-deny-gate.md),
 [`0013`](0013-the-host-of-an-outbound-call-is-written-at-the-call-site.md)
 

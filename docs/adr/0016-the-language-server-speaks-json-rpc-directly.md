@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Date:** 2026-08-04
-**Context:** [`65`](../65-lsp-report.md), [`04`](../04-compiler-architecture.md) §4.6
+**Context:** [`65`](../65-the-editor-report.md), [`04`](../04-compiler-architecture.md) §4.6
 
 ## The decision
 

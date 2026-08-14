@@ -8161,7 +8161,7 @@ impl<'a> Body<'a> {
 /// **set** of definitions and not to saying the same words about them.
 fn refusal(op: Prim) -> String {
     let why = match op {
-        // The one that is a decision rather than a gap. `docs/46` §46.12 and `docs/93` §93.14 both
+        // The one that is a decision rather than a gap. `docs/46` §46.14 and `docs/93` §93.14 both
         // name shipping this as the mistake: the tree-walker pushes in place when `liveness` proves
         // the accumulator is a last use, and an arena with no ownership in it cannot.
         Prim::ListZip => "answers with a list of pairs, and there is no pair type to lay out",

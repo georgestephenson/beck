@@ -95,7 +95,7 @@ fn every_library_documents() {
 // ---------------------------------------------------------------------------------------------
 // Reaching it from outside
 //
-// `docs/46` §46.10's finding was that none of this could be reached: `import` resolved against the
+// `docs/46` §46.12's finding was that none of this could be reached: `import` resolved against the
 // root module's own directory and nothing else, so the standard library was a standard library that
 // only its own directory could use. `docs/46` is the fix — the Beck half is carried in the compiler
 // and resolved after the caller's directory — and these are the gates on it.
@@ -493,7 +493,7 @@ impl Num for Money:
 /// is that a real key produces a code only that key reproduces, which needs the evaluator.
 ///
 /// That limit is a finding rather than an accident, and
-/// [`52`](../../../../docs/52-crypto-and-identifiers-report.md) §52.5 is where it is written down.
+/// [`docs/46`](../../../../docs/46-standard-library-report.md) §46.7 is where it is written down.
 #[test]
 fn a_token_opens_only_under_the_key_that_minted_it() {
     use beck_core::core::Value;
