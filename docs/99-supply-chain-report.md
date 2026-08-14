@@ -198,14 +198,19 @@ package list away and refusing would be deciding that for everybody. The right b
 is also why no image-size number appears in this report: the artefact to measure is not the one
 being built.
 
-**The fetch is the one step that has not been executed by hand.** Everything in the CI job was run
-locally — the resolve, the unpack, the build, the double-build comparison, the key, the signature,
-the verification and its negative control — but this environment's HTTPS goes through a
-TLS-intercepting proxy, so the packages were placed in the cache with `curl` and the build was run
-`--offline`. The index and the packages are therefore real and the *transport* is not exercised.
-[`19`](19-phase-1-report.md) §19.4 item 10 says an artefact nobody has executed is a design
-document; this is a job whose one unexecuted step is named, and the first CI run is what executes
-it.
+**The fetch has since run in CI, and the first thing it found was a reset connection.** Everything
+else in the job was run locally — the resolve, the unpack, the build, the double-build comparison,
+the key, the signature, the verification and its negative control — but this environment's HTTPS
+goes through a TLS-intercepting proxy, so the packages were placed in the cache with `curl` and the
+build was run `--offline`; the *transport* was the one step nobody had exercised, which is why
+[`19`](19-phase-1-report.md) §19.4 item 10 — an artefact nobody has executed is a design document —
+made it a named gap rather than an assumption. CI executed it, and a later build failed with
+`the TLS handshake with packages.wolfi.dev failed: Connection reset by peer` on the eleventh package
+of a dozen whose first ten had arrived. An image is a package per connection and a public repository
+resets some of them, so the fetcher now attempts a hop again when the transport goes away and
+answers a refusal — a 404, a certificate that does not verify — once
+(`beck-cli/src/fetch.rs`, gated by its own tests). No offline run could have shown this: it is a
+property of what the repository does to a client, not of the bytes it serves.
 
 **A signature nobody can find is a signature nobody checks.** cosign discovers a signature by
 looking up `sha256-<digest>.sig` **in a registry**. This project writes it into the layout's index
