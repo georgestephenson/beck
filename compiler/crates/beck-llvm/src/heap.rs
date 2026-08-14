@@ -915,6 +915,16 @@ impl Heap {
         self.by_element.get(&inner).copied()
     }
 
+    /// The repr a shape word names — the inverse of [`Heap::word_of`].
+    ///
+    /// A *datum* rather than a fact fixed at emit time, which is what lets the host service an
+    /// upcall without a second table saying what each primitive's argument and result types are:
+    /// the compiled code sends the shape beside the word, exactly as a view's deferred leaf does
+    /// (a view node's deferred value), and this is how the host reads it back.
+    pub fn shape(&self, at: u32) -> Option<Repr> {
+        self.elements.get(at as usize).copied()
+    }
+
     /// A repr's place in the word-comparison table, for something that is not a list's element.
     ///
     /// `sort_by` is what wants this: its keys are values of one repr, held in a run of words and
@@ -1115,8 +1125,29 @@ impl Heap {
             };
         }
 
-        let Some(decl) = program.types.get(name) else {
-            return Err(format!("`{ty}`, which is not a type this module declares"));
+        // `secret[T]` and `internal[T]` are the two wrappers the language has and no program
+        // declares. Each is a `Value::Data` with one field called `value` at run time — which is
+        // what keeps a `secret[Str]` distinguishable from the `Str` it holds everywhere the wire
+        // format and the digest look at a value — so each is laid out as the newtype it already
+        // behaves like, rather than unwrapped. Unwrapping would make the two indistinguishable in
+        // compiled code and §3.5's whole claim is that they are not.
+        let wrapper;
+        let decl = match &**name {
+            Ty::SECRET | Ty::INTERNAL => {
+                let Some(inner) = args.first() else {
+                    return Err(format!("`{ty}`, with no type inside it"));
+                };
+                wrapper = TyDecl::Newtype {
+                    name: Arc::from(&**name),
+                    params: Vec::new(),
+                    inner: inner.clone(),
+                };
+                &wrapper
+            }
+            _ => match program.types.get(name) {
+                Some(decl) => decl,
+                None => return Err(format!("`{ty}`, which is not a type this module declares")),
+            },
         };
         if let TyDecl::Alias { ty: aliased, .. } = decl {
             return self.repr(&instantiate_decl(aliased, args), program);
@@ -2045,8 +2076,9 @@ fn pattern(p: &beck_core::core::Pattern, heap: &mut Heap) {
                 pattern(sub, heap);
             }
         }
-        // A list pattern is refused by both emitters, and is walked anyway: what decides the pool
-        // is the program, not what turned out to compile.
+        // Walked for the same reason every other pattern is: what decides the pool is the
+        // program, not what turned out to compile. It said "refused by both emitters" until
+        // `docs/119` compiled one.
         Pattern::List { items, .. } => {
             for sub in items {
                 pattern(sub, heap);

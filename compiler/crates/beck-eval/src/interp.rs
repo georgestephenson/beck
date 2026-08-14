@@ -7,7 +7,7 @@
 //! * **Replay purity.** Nothing here reads a clock, a random source, or a socket *of its own*.
 //!   `uuid()` is a primitive the *checker* refuses inside a fold (§3.7), and even outside one it
 //!   is supplied by the host rather than taken from the ambient environment; `http_fetch` goes to
-//!   [`Host::fetch`] for the same reason. A replay is reproducible because every reading of the
+//!   [`beck_core::host::Atoms::fetch`] for the same reason. A replay is reproducible because every reading of the
 //!   outside world enters through the host, where a replay can decide what it says.
 //! * **Total order everywhere.** Maps are `BTreeMap`s and `sort_by` is stable, so two runs over
 //!   the same log render identically — Phase 0 §18.5 item 4 learned this the hard way.
@@ -32,129 +32,7 @@ use beck_core::core::{
     Closure, Const, Core, CoreKind, Env, Fields, Pattern, Prim, Record, Value, VarId,
 };
 use beck_core::digest;
-use beck_core::net::{Failure as NetFailure, Reply, Request};
 use beck_core::PMap;
-
-/// `HttpRequest` — a Beck record — as the seam's [`Request`].
-///
-/// Every field is read by name and defaulted, because a record the checker approved has them all
-/// and a record built by a test may not. The port defaults to 80 rather than 0: a request with no
-/// port is an HTTP request, and making a caller state the obvious is how a library acquires
-/// ceremony.
-fn outbound_request(host: &str, v: &Value, span: Span) -> Result<Request, EvalError> {
-    let field = |name: &str| v.field(name).cloned().unwrap_or(Value::Unit);
-    let text = |name: &str| -> Arc<str> {
-        match field(name) {
-            Value::Str(s) => Arc::from(s.as_str()),
-            _ => Arc::from(""),
-        }
-    };
-    let port = match field("port") {
-        Value::Int(p) if (1..=65_535).contains(&p) => p as u16,
-        Value::Int(0) | Value::Unit => 80,
-        Value::Int(p) => {
-            return Err(EvalError::new(
-                format!("`{p}` is not a port an outbound call can use"),
-                span,
-            ))
-        }
-        _ => 80,
-    };
-    let mut headers: Vec<(Arc<str>, Arc<str>)> = match field("headers") {
-        Value::Map(m) => m
-            .iter()
-            .filter_map(|(k, val)| match (k, val) {
-                (Value::Str(k), Value::Str(v)) => {
-                    Some((Arc::from(k.as_str()), Arc::from(v.as_str())))
-                }
-                _ => None,
-            })
-            .collect(),
-        _ => Vec::new(),
-    };
-    // The secret half, unwrapped here and nowhere else. §3.5 gives a program no way to read a
-    // `secret[Str]`; this is the edge, past every tier the checker places, so the credential
-    // becomes bytes exactly where it becomes a request and never becomes a value the program
-    // could have put somewhere else.
-    if let Value::Map(m) = field("secrets") {
-        for (k, val) in m.iter() {
-            if let (Value::Str(name), Some(Value::Str(secret))) = (k, val.field("value")) {
-                headers.push((Arc::from(name.as_str()), Arc::from(secret.as_str())));
-            }
-        }
-    }
-    let method = text("method");
-    Ok(Request {
-        host: Arc::from(host),
-        port,
-        // Plaintext unless the program said otherwise, which is the same default `lib/http.beck`
-        // writes: `over_tls` is a call somebody makes, so a request that crosses the internet
-        // without one is a thing in the source rather than a thing in the runtime.
-        tls: field("tls").as_bool().unwrap_or(false),
-        method: if method.is_empty() {
-            Arc::from("GET")
-        } else {
-            method
-        },
-        path: {
-            let p = text("path");
-            if p.is_empty() {
-                Arc::from("/")
-            } else {
-                p
-            }
-        },
-        headers,
-        body: text("body"),
-    })
-}
-
-fn reply_value(reply: &Reply) -> Value {
-    let headers = reply.headers.iter().fold(PMap::new(), |m, (k, v)| {
-        m.insert(Value::str_(k), Value::str_(v))
-    });
-    Value::data(
-        Arc::from("HttpResponse"),
-        None,
-        Fields::from_iter([
-            (Arc::from("status"), Value::Int(reply.status)),
-            (Arc::from("headers"), Value::Map(headers)),
-            (Arc::from("body"), Value::str_(&reply.body)),
-        ]),
-    )
-}
-
-/// The seam's [`NetFailure`] as the `HttpError` the call raises.
-///
-/// The host is put back in here rather than carried through the failure, because the seam's
-/// implementation was told which host it was calling and there is no case where the two differ.
-fn failure_value(host: &str, f: &NetFailure) -> Value {
-    let (variant, fields): (&str, Vec<(Arc<str>, Value)>) = match f {
-        NetFailure::Unreachable(why) => (
-            "HttpUnreachable",
-            vec![
-                (Arc::from("host"), Value::str_(host)),
-                (Arc::from("why"), Value::str_(why)),
-            ],
-        ),
-        NetFailure::TimedOut(ms) => (
-            "HttpTimedOut",
-            vec![
-                (Arc::from("host"), Value::str_(host)),
-                (Arc::from("millis"), Value::Int(*ms)),
-            ],
-        ),
-        NetFailure::BadResponse(why) => (
-            "HttpBadResponse",
-            vec![(Arc::from("why"), Value::str_(why))],
-        ),
-    };
-    Value::data(
-        Arc::from("HttpError"),
-        Some(Arc::from(variant)),
-        fields.into_iter().collect(),
-    )
-}
 
 /// The three "this primitive wanted a `T`" conversions, so twenty-odd library primitives do not
 /// each spell out the same `ok_or_else`. The message names the primitive, because "expects a Str"
@@ -466,6 +344,14 @@ pub struct EvalError {
     /// second error type, because everything between the raise and its handler has to pass both
     /// along unchanged and neither of them is the ordinary path. `Prim::Try` is the only reader.
     pub raised: Option<Box<(Arc<str>, Value)>>,
+    /// Whether this is a `parallel:` child that was **stopped because a sibling failed**, rather
+    /// than a failure of its own.
+    ///
+    /// It is a flag rather than a message because the scope has to *discard* it: the answer a
+    /// scope gives is the earliest child in source order that failed for a reason of its own, and
+    /// a child that was cancelled did not fail — it was not allowed to finish. Nothing outside
+    /// a `parallel:` scope reads this, and nothing outside one can produce it.
+    pub cancelled: bool,
 }
 
 impl EvalError {
@@ -474,6 +360,7 @@ impl EvalError {
             message: message.into(),
             span,
             raised: None,
+            cancelled: false,
         }
     }
 
@@ -483,6 +370,17 @@ impl EvalError {
             message: format!("raised `{}`", value.display()),
             span,
             raised: Some(Box::new((ty, value))),
+            cancelled: false,
+        }
+    }
+
+    /// A child that was stopped because a sibling failed.
+    fn cancelled(span: Span) -> EvalError {
+        EvalError {
+            message: "a sibling in this `parallel:` scope failed, so this child was stopped".into(),
+            span,
+            raised: None,
+            cancelled: true,
         }
     }
 }
@@ -497,38 +395,15 @@ impl std::error::Error for EvalError {}
 
 pub type EvalResult = Result<Value, EvalError>;
 
-/// What the evaluator needs from outside itself: the top-level definitions, and the impure
-/// capabilities that the host supplies rather than the program taking.
+/// What the evaluator needs from outside itself: the top-level definitions, the stub seam, and —
+/// through [`beck_core::host::Atoms`] — the impure capabilities a host supplies rather than the
+/// program taking.
 ///
-/// Each of these is exactly one effect atom made concrete — `nondet` for the first two, `env` for
-/// the third — so a host that refuses one is refusing an effect, not disabling a feature.
-pub trait Host {
+/// The four atoms are on that trait rather than on this one because the native backends ask the
+/// same four questions, and two descriptions of one host would make the differential between the
+/// backends a comparison of the descriptions rather than of the program.
+pub trait Host: beck_core::host::Atoms {
     fn global(&self, name: &str) -> Option<&Core>;
-    /// Mint an id. Called only where the checker has proved we are not inside a fold.
-    fn new_uuid(&self) -> Arc<str>;
-    /// Read the wall clock. `nondet`, and forbidden inside a fold for the same reason `uuid` is:
-    /// time is data on the envelope.
-    ///
-    /// Defaulted to the host's clock through the seam rather than to `SystemTime::now()` directly
-    /// (`beck_core::clock`), so a host that wants a stated instant overrides one method and a host
-    /// that does not still never names the standard library's clock.
-    fn now_millis(&self) -> i64 {
-        beck_core::clock::process_clock().now_millis()
-    }
-    /// Read a secret from the process environment — `env`, which no client tier discharges.
-    fn secret(&self, name: &str) -> Arc<str> {
-        std::env::var(name).unwrap_or_default().into()
-    }
-
-    /// Make an outbound request — the runtime half of `net.out(host)`.
-    ///
-    /// Defaulted through the process seam rather than to a client of its own
-    /// ([`beck_core::net`]), for the same reason [`Host::now_millis`] is defaulted through the
-    /// clock: a host that wants to answer differently overrides one method, and a host that does
-    /// not still never names a network stack.
-    fn fetch(&self, request: &beck_core::net::Request) -> Result<Reply, NetFailure> {
-        beck_core::net::process_outbound().fetch(request)
-    }
 
     /// Answer a call to a top-level definition without running its body.
     ///
@@ -545,6 +420,65 @@ pub trait Host {
     /// is slower than it needs to be, which is the harmless direction.
     fn intercepts(&self) -> bool {
         true
+    }
+}
+
+/// The signal that stops a `parallel:` scope's children when one of them fails.
+///
+/// # It stops the children *after* the failure, and only those
+///
+/// The obvious signal — a flag any failing child sets, which stops every sibling — is **wrong**,
+/// and wrong in the one way that matters: it makes the scope's answer depend on which thread won.
+/// Two children that both raise are a race, and whichever got there first would cancel the other
+/// before it could raise, so a scope over `bad(2)` and `bad(1)` would report `Second` or `First`
+/// depending on the scheduler. That is exactly the property
+/// [`docs/117`](../../../../../docs/117-a-scope-runs-its-children-report.md) §117.3 exists to keep,
+/// and `a_childs_failure_joins_at_the_scope_and_the_earliest_child_wins` caught it — eight failures
+/// in forty runs of the suite, and none when run alone.
+///
+/// So what is stored is not "somebody failed" but **the lowest index that has failed**, and a child
+/// is stopped only when a child *before* it has. That set is precisely the one an ordered join
+/// would never have reached: under one, a failure at child `i` means children after `i` never ran,
+/// and children before `i` had already finished. Cancelling exactly the former preserves the
+/// ordered semantics bit for bit, and this is a change in *when* work stops rather than in what the
+/// scope answers.
+///
+/// # Why it is a chain
+///
+/// A scope may nest inside a scope, and a grandchild has to stop when an enclosing scope's earlier
+/// child fails. One link cannot say that, so each scope keeps the scope it is inside **and this
+/// scope's own index within it**, and asking walks the chain. It is as deep as the scopes are
+/// nested, which `a_scope_nests_inside_a_scope` puts at two.
+#[derive(Debug)]
+pub struct Cancel {
+    /// The lowest child index that has failed for a reason of its own, or [`usize::MAX`].
+    first_failed: std::sync::atomic::AtomicUsize,
+    outer: Option<(Arc<Cancel>, usize)>,
+}
+
+impl Cancel {
+    fn under(outer: Option<(Arc<Cancel>, usize)>) -> Arc<Cancel> {
+        Arc::new(Cancel {
+            first_failed: std::sync::atomic::AtomicUsize::new(usize::MAX),
+            outer,
+        })
+    }
+
+    /// Record that child `index` failed. `fetch_min`, so two failures leave the earlier one.
+    fn failed(&self, index: usize) {
+        self.first_failed
+            .fetch_min(index, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Whether the child at `mine` should stop: a child before it failed, or an enclosing scope
+    /// says so.
+    fn asked(&self, mine: usize) -> bool {
+        if self.first_failed.load(std::sync::atomic::Ordering::Relaxed) < mine {
+            return true;
+        }
+        self.outer
+            .as_ref()
+            .is_some_and(|(outer, ours)| outer.asked(*ours))
     }
 }
 
@@ -570,6 +504,16 @@ pub struct Interp<'h> {
     /// Only a `Closure` is cached. Nothing else a global can evaluate to is guaranteed to be the
     /// same value twice, and the cache is not the place to decide that.
     globals: std::cell::RefCell<std::collections::HashMap<Arc<str>, Value, BuildNameHasher>>,
+    /// The scope this interpreter is a child of, if it is one.
+    ///
+    /// `None` for everything that is not a `parallel:` child, which is every interpreter the
+    /// runtime, the LSP and `beck test` build — so the check in [`Interp::burn`] is a branch on a
+    /// discriminant that is `None` for the whole of a program that never writes `parallel:`, and
+    /// is loop-invariant where it is not. `docs/118` §118.4 is what that costs, measured.
+    ///
+    /// The index is this child's own place among its siblings, which is what makes the question
+    /// "did a child *before* me fail" answerable — see [`Cancel`].
+    cancel: Option<(Arc<Cancel>, usize)>,
 }
 
 /// A hash for definition names, on the path a call takes.
@@ -809,7 +753,15 @@ impl<'h> Interp<'h> {
             depth: std::cell::Cell::new(0),
             max_depth: DEFAULT_MAX_DEPTH,
             globals: std::cell::RefCell::new(std::collections::HashMap::default()),
+            cancel: None,
         }
+    }
+
+    /// The same, as child `index` of `cancel` — which stops it when an *earlier* child fails.
+    fn under(host: &'h dyn Host, fuel: u64, cancel: Arc<Cancel>, index: usize) -> Interp<'h> {
+        let mut interp = Interp::with_fuel(host, fuel);
+        interp.cancel = Some((cancel, index));
+        interp
     }
 
     /// Lower the depth ceiling. Only the harnesses use it: raising it is not offered, because the
@@ -827,6 +779,15 @@ impl<'h> Interp<'h> {
         let left = self.fuel.get();
         if left == 0 {
             return Err(EvalError::new("evaluation ran out of fuel", span));
+        }
+        // Cancellation rides the step counter rather than getting a checkpoint of its own: this is
+        // already the one place every evaluation step passes through, and "the program is making
+        // progress" is exactly when stopping it is both possible and worth doing. A tail loop
+        // spends fuel like anything else, so a child in one notices.
+        if let Some((cancel, mine)) = &self.cancel {
+            if cancel.asked(*mine) {
+                return Err(EvalError::cancelled(span));
+            }
         }
         self.fuel.set(left - 1);
         Ok(())
@@ -871,6 +832,138 @@ impl<'h> Interp<'h> {
         }
         self.depth.set(depth);
         Ok(Frame { interp: self })
+    }
+
+    /// Run a `parallel:` scope's children — **at the same time**, on a thread each.
+    ///
+    /// # What makes this sound, and why it is three sentences rather than an analysis
+    ///
+    /// [`docs/80`](../../../../../docs/80-a-scope-owns-its-children-report.md) settled the hard
+    /// half in the *checker*: the children are independent by construction, because none of them
+    /// can name another, and no child may perform an effect another could observe. So the scope's
+    /// answer does not depend on the order they ran in, and running them together is a correct
+    /// implementation of the form rather than a reinterpretation of it. Nothing here re-derives
+    /// that; it is a property of the program the checker already proved.
+    ///
+    /// # What each child gets, and what it shares
+    ///
+    /// | | |
+    /// |---|---|
+    /// | the host | **shared**, which is why [`beck_core::host::Atoms`] is `Send + Sync` |
+    /// | a stack | **its own**, [`crate::STACK_BYTES`] of it, because a tree-walker nests frames |
+    /// | the depth ceiling | **its own count** against the same ceiling — one per stack, which is what the ceiling was always about |
+    /// | the globals cache | **its own**, rebuilt: sharing it wants a lock on the path a call takes, and `docs/70` §70.9 is what that path costs |
+    /// | fuel | **a share of what is left**, and the paragraph below is why |
+    ///
+    /// # Fuel is split, not shared
+    ///
+    /// A shared budget is one atomic read-modify-write per evaluation step — on the hot path
+    /// [`docs/70`](../../../../../docs/70-the-evaluator-gets-fast-report.md) spent a chapter on —
+    /// and it makes *which* child runs out a race, so two runs of one program could differ in which
+    /// error they report. Splitting is neither: each child gets an equal share of what remains, and
+    /// what the scope charges the parent afterwards is the sum of what the children actually spent,
+    /// so the **total** is what a serial run would have spent.
+    ///
+    /// What it costs is stated rather than hidden: a child that would have used more than its share
+    /// runs out where a serial run would have let it continue. Fuel is a runaway-program backstop
+    /// and not a performance knob ([`DEFAULT_FUEL`]), so dividing a backstop is a smaller change
+    /// than it reads as — but it is a change, and `docs/117` §117.4 is where it is written down.
+    ///
+    /// # Failure
+    ///
+    /// The **first child in source order** that failed is the failure, whichever finished first, so
+    /// the error a scope reports is a function of the program and not of the scheduler. Nothing is
+    /// cancelled: §80.5's table says a backend that starts children together needs a cancellation
+    /// signal and that nothing designs one, and this does not design one either — the siblings of a
+    /// failed child run to completion and their answers are dropped.
+    fn children(&self, thunks: &[Value], span: Span) -> Result<Vec<Value>, EvalError> {
+        // One child is a scope somebody wrote for its shape rather than for its concurrency, and a
+        // thread for it would be pure cost. This is the only case decided here rather than by
+        // measurement, because it is not a threshold: there is nothing to overlap with.
+        //
+        // **`wasm32` has no threads**, and this crate is compiled to it twice — `beck-wasm` for a
+        // Mode B client and `beck-play` for the playground, which runs a whole application in a
+        // tab. A client cannot reach a scope at all (`spawn` is `Tier::Server`'s alone, and
+        // `B0401` refuses a scope pinned to the browser), but the playground's server *half* can,
+        // so this is reachable rather than theoretical. Running the children in order there is a
+        // correct implementation of the form for §80's own reason — the order is unobservable, and
+        // one order is an order — so what the playground loses is the overlap and never an answer.
+        #[cfg(target_arch = "wasm32")]
+        let alone = true;
+        #[cfg(not(target_arch = "wasm32"))]
+        let alone = thunks.len() < 2;
+        if alone {
+            let mut out = Vec::with_capacity(thunks.len());
+            for thunk in thunks {
+                out.push(self.apply(thunk, Vec::new(), span)?);
+            }
+            return Ok(out);
+        }
+
+        let each = self.fuel.get() / thunks.len() as u64;
+        // The three things a child needs, taken out of `self` **before** the scope: an `Interp` is
+        // deliberately not `Sync` — its fuel, its depth and its cache are `Cell`s on the hot path,
+        // which is what `docs/70` bought — so what crosses to a thread is the host it borrows, two
+        // numbers and the cancellation link, and never the interpreter that is running here.
+        let (host, max_depth) = (self.host, self.max_depth);
+        // Under the scope this one is inside, if any, so a grandchild stops when an outer scope
+        // does. `Cancel::asked` is what walks it.
+        let cancel = Cancel::under(self.cancel.clone());
+        let mut answers: Vec<(EvalResult, u64)> = std::thread::scope(|scope| {
+            let mut running = Vec::with_capacity(thunks.len());
+            for (index, thunk) in thunks.iter().enumerate() {
+                let cancel = cancel.clone();
+                let handle = std::thread::Builder::new()
+                    .stack_size(crate::STACK_BYTES)
+                    .name("beck-parallel".into())
+                    .spawn_scoped(scope, move || {
+                        let child = Interp::under(host, each, cancel.clone(), index)
+                            .with_max_depth(max_depth);
+                        let answer = child.apply(thunk, Vec::new(), span);
+                        // A child that failed for a reason of its own stops the children *after*
+                        // it — here, as soon as it knows, rather than after the join, because a
+                        // signal that waited for every child to finish would not be cancelling
+                        // anything. `Cancel` is why it is "after" and not "every".
+                        if answer.as_ref().is_err_and(|e| !e.cancelled) {
+                            cancel.failed(index);
+                        }
+                        // Saturating rather than plain: `Interp::reset_fuel` is a
+                        // public method, and a child whose budget went *up* should
+                        // charge the parent nothing rather than panic.
+                        (answer, each.saturating_sub(child.fuel.get()))
+                    })
+                    .expect("a thread for a parallel child");
+                running.push(handle);
+            }
+            running
+                .into_iter()
+                // A panic in a child is the evaluator's own bug and not the program's — programs
+                // get an `EvalError` — so it is put back on this thread rather than turned into
+                // one, exactly as `on_the_evaluator_stack` does for the single-threaded case.
+                .map(|h| h.join().unwrap_or_else(|p| std::panic::resume_unwind(p)))
+                .collect()
+        });
+
+        // Charged before anything is answered, so a scope whose children failed still costs what
+        // they spent — otherwise the cheapest way to run forever would be to fail.
+        let spent: u64 = answers.iter().map(|(_, spent)| *spent).sum();
+        self.fuel.set(self.fuel.get().saturating_sub(spent));
+
+        // The earliest child in source order that failed **for a reason of its own**. A stopped
+        // child did not fail, so its error is not an answer — and it cannot be the earliest one
+        // either, since `Cancel` only ever stops children *after* the failure. Both halves are what
+        // keep the scope's answer a function of the program rather than of the scheduler.
+        if let Some((failed, _)) = answers
+            .iter()
+            .find(|(a, _)| a.as_ref().is_err_and(|e| !e.cancelled))
+        {
+            return Err(failed.as_ref().expect_err("just matched an error").clone());
+        }
+        let mut out = Vec::with_capacity(answers.len());
+        for (answer, _) in answers.drain(..) {
+            out.push(answer?);
+        }
+        Ok(out)
     }
 
     /// Apply a callable value to arguments — the entry point the runtime uses for `validate`,
@@ -1380,10 +1473,7 @@ impl<'h> Interp<'h> {
                     ));
                 }
                 let k = args.pop().expect("length checked");
-                let mut results = Vec::with_capacity(args.len());
-                for thunk in &args {
-                    results.push(self.apply(thunk, Vec::new(), span)?);
-                }
+                let results = self.children(&args, span)?;
                 self.apply(&k, results, span)
             }
             Prim::Add => {
@@ -1916,12 +2006,13 @@ impl<'h> Interp<'h> {
                 let request = args.pop().expect("arity checked");
                 let host = args.pop().expect("arity checked");
                 let host = as_str(&host, "http_fetch", span)?;
-                let request = outbound_request(host, &request, span)?;
+                let request = beck_core::host::request_of(host, &request)
+                    .map_err(|why| EvalError::new(why, span))?;
                 match self.host.fetch(&request) {
-                    Ok(reply) => Ok(reply_value(&reply)),
+                    Ok(reply) => Ok(beck_core::host::reply_value(&reply)),
                     Err(f) => Err(EvalError::raise(
                         Arc::from("HttpError"),
-                        failure_value(host, &f),
+                        beck_core::host::failure_value(host, &f),
                         span,
                     )),
                 }
@@ -2305,6 +2396,8 @@ mod tests {
         fn global(&self, _: &str) -> Option<&Core> {
             None
         }
+    }
+    impl beck_core::host::Atoms for NoHost {
         fn new_uuid(&self) -> Arc<str> {
             Arc::from("fixed-uuid")
         }
@@ -2446,16 +2539,22 @@ mod tests {
     /// primitive that calls back out to the host from wherever evaluation happens to be.
     struct Probe {
         f: Core,
-        deepest: std::cell::Cell<usize>,
+        deepest: std::sync::atomic::AtomicUsize,
     }
 
     impl Host for Probe {
         fn global(&self, name: &str) -> Option<&Core> {
             (name == "f").then_some(&self.f)
         }
+    }
+
+    impl beck_core::host::Atoms for Probe {
         fn new_uuid(&self) -> Arc<str> {
             let here = 0u8;
-            self.deepest.set(std::ptr::addr_of!(here) as usize);
+            self.deepest.store(
+                std::ptr::addr_of!(here) as usize,
+                std::sync::atomic::Ordering::Relaxed,
+            );
             Arc::from("bottom")
         }
     }
@@ -2528,7 +2627,7 @@ mod tests {
     fn stack_spent(f: Core, depth: i64) -> usize {
         let host = Probe {
             f,
-            deepest: std::cell::Cell::new(0),
+            deepest: std::sync::atomic::AtomicUsize::new(0),
         };
         let top = 0u8;
         let top = std::ptr::addr_of!(top) as usize;
@@ -2540,7 +2639,7 @@ mod tests {
         interp
             .eval(&call, &mut Env::new())
             .expect("the probe recursion evaluates");
-        let deepest = host.deepest.get();
+        let deepest = host.deepest.load(std::sync::atomic::Ordering::Relaxed);
         assert!(
             deepest < top,
             "the host stack is expected to grow downwards"
@@ -2613,7 +2712,7 @@ mod tests {
         crate::on_the_evaluator_stack(|| {
             let host = Probe {
                 f: tail_recursion(),
-                deepest: std::cell::Cell::new(0),
+                deepest: std::sync::atomic::AtomicUsize::new(0),
             };
             let interp = Interp::new(&host);
             let call = core(CoreKind::App {
@@ -2634,7 +2733,7 @@ mod tests {
     fn the_depth_ceiling_can_be_lowered_and_not_raised() {
         let host = Probe {
             f: non_tail_recursion(),
-            deepest: std::cell::Cell::new(0),
+            deepest: std::sync::atomic::AtomicUsize::new(0),
         };
         let call = |n: i64| {
             core(CoreKind::App {
@@ -2656,7 +2755,7 @@ mod tests {
         crate::on_the_evaluator_stack(|| {
             let host = Probe {
                 f: non_tail_recursion(),
-                deepest: std::cell::Cell::new(0),
+                deepest: std::sync::atomic::AtomicUsize::new(0),
             };
             let greedy = Interp::new(&host).with_max_depth(u32::MAX);
             let deep = core(CoreKind::App {
@@ -2675,7 +2774,7 @@ mod tests {
         crate::on_the_evaluator_stack(|| {
             let host = Probe {
                 f: non_tail_recursion(),
-                deepest: std::cell::Cell::new(0),
+                deepest: std::sync::atomic::AtomicUsize::new(0),
             };
             let interp = Interp::new(&host);
             let call = core(CoreKind::App {

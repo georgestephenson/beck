@@ -316,7 +316,7 @@ operation *should* cost rather than how to make that one faster.
 | Proper tail calls, at any arity, guaranteed by `musttail` under `tailcc` | **built** |
 | A trap carries the evaluator's own message **and a span** | **built** |
 | Anything on a heap — a list, a string, a map, a record, a union, a closure | **not built.** No allocator and no collector. This is the whole of why the sketch compiles nothing |
-| Any effect — the fold, `validate`, the view, `raise`, `parallel:`, `http_fetch` | **not built.** They cross the seam and land on the evaluator, and `beck run` and `beck up` are unchanged |
+| Any effect — the fold, `validate`, the view, `raise`, `parallel:`, `http_fetch` | **Built, except the signal vocabulary.** `raise` and `try:` compile ([`112`](112-a-raise-arrives-report.md)); the view compiles as the call that builds it ([`111`](111-a-view-arrives-as-a-recipe-report.md)); and `now()`, `uuid()`, `secret_env` and `http_fetch` compile by *asking* the host across a protocol that grew a second direction ([`116`](116-the-host-answers-back-report.md)). What still crosses the seam to the evaluator is the fold, `validate` and `parallel:` — signal nodes the splitter reads rather than primitives a body calls. `beck run` and `beck up` are unchanged |
 | Generic and bounded definitions | **not built.** A dictionary parameter is a function value, and a function value is a closure |
 | **Cranelift**, and therefore §5.2's *dual* codegen | **not built.** One half exists |
 | A WASM target | **not built** |

@@ -215,9 +215,10 @@ Both emitters now clear the whole word, and both say why in a comment beside it.
 
 ## 112.9 What this does not establish
 
-- **Nothing about the other effects.** `io`, `log`, `net.out`, `fs.read` and the rest need the worker
-  to call *back* into the host mid-call, which is a protocol with a second direction. A raise needed
-  none of that, which is why it was worth taking first and why taking it says nothing about the rest.
+- ~~**Nothing about the other effects.**~~ **Built** ([`116`](116-the-host-answers-back-report.md)):
+  the protocol grew the second direction this bullet forecast, and `now()`, `uuid()`, `secret_env`
+  and `http_fetch` compile by asking across it. The forecast held — a raise needed none of it, which
+  is why it was worth taking first.
 - **Nothing about a raise crossing into the evaluator.** `ExecError` carries a message and a span and
   not a raised value, so a failure that leaves a compiled call cannot be caught by a `try:` in an
   interpreted caller. It does not arise today — a compiled definition only calls compiled definitions

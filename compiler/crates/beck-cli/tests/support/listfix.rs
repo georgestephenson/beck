@@ -308,3 +308,83 @@ def walked(xs: list[Int], i: Int, acc: list[Int]) -> list[Int]:
         return acc
     return walked(xs, i + 1, list_slice(xs, i, 1))
 "#;
+
+/// The programs a differential over **list patterns** needs.
+///
+/// A list pattern is the one pattern whose test is a *length* and whose binders are read out of a
+/// block, so what it can get wrong is different from a constructor's:
+///
+/// * **The length rule differs with a tail binder** — `[a, b]` is exactly two and `[a, *rest]` is at
+///   least one — so both are here, at every length around their boundary.
+/// * **An element is read only after the length test proves it is there.** A pattern that loaded
+///   first would read past the block on a short list, and the empty list is where that shows.
+/// * **The tail is a fresh list**, so a `*rest` of nothing and a `*rest` of everything both matter,
+///   and a nested one (`[[a, *inner], *outer]`) reads a copy out of a copy.
+/// * **A nested pattern inside an element** — `[Some(x), *_]` — because the element's repr is what
+///   decides how the word is read, and a wrong one reads an offset as an integer.
+/// * **Ordering between arms**: `[]`, `[x]` and `[x, *rest]` overlap, and the first that matches
+///   wins, so an arm order that compiled to the wrong test answers the wrong branch rather than
+///   failing.
+pub const PATTERNS: &str = r#"
+def described(xs: list[Int]) -> Str:
+    match xs:
+        case []:
+            return "none"
+        case [only]:
+            return "one:" + str(only)
+        case [a, b]:
+            return "two:" + str(a + b)
+        case [first, *rest]:
+            return "many:" + str(first) + ":" + str(list_len(rest))
+
+## The tail, returned rather than counted — so the differential compares the *list* and not a
+## length that a wrong copy could still get right.
+def tail(xs: list[Int]) -> list[Int]:
+    match xs:
+        case [_, *rest]:
+            return rest
+        case _:
+            return []
+
+## Two fixed elements before the tail, which is where an off-by-one in the copy's start shows.
+def after_two(xs: list[Int]) -> list[Int]:
+    match xs:
+        case [_, _, *rest]:
+            return rest
+        case _:
+            return []
+
+## A constant inside a list pattern: the element is tested, not just bound.
+def leading_one(xs: list[Int]) -> Bool:
+    match xs:
+        case [1, *_]:
+            return True
+        case _:
+            return False
+
+## Nested: a list of lists, taken apart at both levels.
+def inner_first(xss: list[list[Int]]) -> Int:
+    match xss:
+        case [[a, *_], *_]:
+            return a
+        case _:
+            return -1
+
+## Text elements, so the element's repr is an offset rather than an integer.
+def joined(xs: list[Str]) -> Str:
+    match xs:
+        case [a, b, *_]:
+            return a + "|" + b
+        case [a]:
+            return a
+        case _:
+            return ""
+
+## Exactly-two against at-least-two, which is the whole length rule in one definition.
+def exactly_two(xs: list[Int]) -> Bool:
+    match xs:
+        case [_, _]:
+            return True
+        case _:
+            return False
+"#;

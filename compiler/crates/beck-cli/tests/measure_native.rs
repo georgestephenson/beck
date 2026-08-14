@@ -1249,3 +1249,103 @@ def add_from(xs: list[Int], i: Int, acc: Int) -> Int:
         );
     }
 }
+
+/// What asking the host costs, at two arena sizes.
+///
+/// The four host primitives are the one place a *call* is not one round trip: the worker writes a
+/// question mid-call and blocks. So the number that matters is not the ratio against the
+/// tree-walker — the tree-walker calls a Rust method and this crosses a pipe, so the tree-walker
+/// wins and will keep winning — it is **what one question costs and what it grows with**.
+///
+/// Two rows, and they are the same program but for which question they end on:
+///
+/// * `clock_after` asks `now()`, whose arguments cannot point into the heap, so the question is a
+///   32-byte header and some words at any size.
+/// * `secret_after` asks `secret_env`, which is handed text the program built, so the live arena
+///   travels with it.
+///
+/// Nothing here is asserted — [`docs/13-testing.md`](../../../../docs/13-testing.md) §13.7's rule
+/// about timing gates on a shared runner. The **shape** is asserted where it needs no clock at
+/// all: `what_a_question_carries_is_a_decision_and_not_an_accident` in `native.rs` counts the
+/// bytes at the same two sizes, and a question that started copying the arena when it should not
+/// would have to show there.
+#[test]
+fn what_asking_the_host_costs() {
+    let program = compile("asking.beck", ASKING);
+    let Some(artifact) = Artifact::build_within(&program, Duration::from_secs(300))
+        .expect("clang accepts the module")
+    else {
+        assert!(
+            !require_llvm(),
+            "BECK_REQUIRE_LLVM=1 and there is no `clang` on the path"
+        );
+        println!("skipped: no LLVM toolchain. Set BECK_REQUIRE_LLVM=1 to make this a failure.");
+        return;
+    };
+
+    println!(
+        "\n{:<16} {:>10} {:>14} {:>14} {:>16}",
+        "definition", "live", "no question", "one question", "the question"
+    );
+    for (name, asking) in [("clock_after", "now()"), ("secret_after", "secret_env")] {
+        for size in [16i64, 4096] {
+            let args = vec![Value::Int(size)];
+            // The same program without the question — and answering an `Int`, like the two
+            // rows do. A control that answered the *list* would carry the whole arena back over
+            // the pipe and be the more expensive of the two, which is a measurement of the reply
+            // rather than of the question.
+            let control = median(9, || {
+                artifact
+                    .call("no_question", &args)
+                    .expect("the native backend answers");
+            });
+            let whole = median(9, || {
+                artifact
+                    .call(name, &args)
+                    .expect("the native backend answers");
+            });
+            let (_, carried) = artifact.questions();
+            println!(
+                "{:<16} {:>10} {:>14} {:>14} {:>16}",
+                if size == 16 { name } else { "" },
+                size,
+                format!("{control:?}"),
+                format!("{whole:?}"),
+                format!("{:?} ({carried} B)", whole.saturating_sub(control))
+            );
+        }
+        println!("  ^ asking {asking}");
+    }
+    println!(
+        "\nThe difference is one round trip plus whatever the arena weighed. A question that\n\
+         carries nothing is the round trip alone at both sizes; one that carries the arena grows\n\
+         with it, which is why `secret_env` in a loop over a large heap is a cost and `now()` is\n\
+         not. `what_native_code_costs_against_the_tree_walker` is where the bare round trip is."
+    );
+}
+
+/// The two questions, in front of an arena of a stated size.
+///
+/// A copy of `hostfix.rs`'s two definitions rather than an import, because a measurement suite that
+/// reached into a differential's fixtures would make one file's edit silently change the other's
+/// number.
+const ASKING: &str = r#"
+def range_list(n: Int) -> list[Int]:
+    if n <= 0:
+        return []
+    return list_append(range_list(n - 1), n)
+
+# The control: the same arena, the same `Int` answer, and nothing asked.
+def no_question(n: Int) -> Int:
+    xs = range_list(n)
+    return list_len(xs)
+
+def clock_after(n: Int) -> Int uses nondet:
+    xs = range_list(n)
+    return now() + list_len(xs)
+
+def secret_after(n: Int) -> Int uses env:
+    xs = range_list(n)
+    token = secret_env("BECK_TEST_TOKEN")
+    return list_len(xs) + str_len(str(list_len(xs)))
+"#;

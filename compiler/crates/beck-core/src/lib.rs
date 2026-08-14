@@ -32,6 +32,7 @@ pub mod frames;
 pub mod fuse;
 pub mod gen;
 pub mod graph;
+pub mod host;
 pub mod html;
 pub mod iface;
 pub mod incremental;

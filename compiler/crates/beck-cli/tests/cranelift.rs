@@ -42,7 +42,8 @@ use support::clofix::{self, CLOSURES};
 use support::failfix;
 use support::genfix::{self, GENERIC};
 use support::heapfix::{self, RECORDS, STILL_REFUSED, UNIONS};
-use support::listfix::{self, LISTS};
+use support::hostfix::{self, Stated, EFFECTS};
+use support::listfix::{self, LISTS, PATTERNS};
 use support::mapfix::{self, MAPS};
 use support::scalar::{
     float_pairs, floats, ints, pairs, render, singles, ARITHMETIC, CONTROL, REALS, RECURSION,
@@ -108,6 +109,9 @@ struct All {
     /// `None` on a machine with a linker and no `clang`, which is a real machine: the two-way
     /// differential still runs there and says so.
     llvm: Option<LlvmArtifact>,
+    /// The stated host, when this program has effects. Rewound before each backend is driven, so
+    /// the *n*th question of a call gets the same answer whichever backend asked it.
+    stated: Option<Arc<Stated>>,
 }
 
 impl All {
@@ -125,6 +129,34 @@ impl All {
             program,
             clif,
             llvm,
+            stated: None,
+        }
+    }
+
+    /// The same, with every backend answering its host effects from one stated host.
+    ///
+    /// Three implementations of one question here rather than two: the tree-walker calls
+    /// [`beck_core::host::Atoms`] directly, and each compiled backend asks across a pipe. What is
+    /// being compared is that all three arrive at the same place.
+    fn answering(name: &str, src: &str, atoms: Arc<Stated>) -> All {
+        let program = compile(name, src);
+        let linker = beck_clif::Linker::find().expect("checked by the caller");
+        let clif = ClifArtifact::build_bounded(&program, linker, None, Some(LIMIT))
+            .expect("cranelift compiles the module")
+            .answering(atoms.clone());
+        let llvm = beck_llvm::Toolchain::find().map(|t| {
+            LlvmArtifact::build_bounded(&program, t, None, Some(LIMIT))
+                .expect("clang accepts the module")
+                .answering(atoms.clone())
+        });
+        All {
+            evaluator: Arc::new(
+                beck_eval::Evaluator::new(program.clone()).answering(atoms.clone()),
+            ),
+            program,
+            clif,
+            llvm,
+            stated: Some(atoms),
         }
     }
 
@@ -160,10 +192,12 @@ impl All {
         for args in tuples {
             // The tree-walker spends host frames on recursion that is not in tail position and
             // says how much stack that needs; every entry point in the workspace honours it.
+            self.rewind();
             let walked = beck_eval::on_the_evaluator_stack(|| {
                 let f = self.evaluator.function(&def.body).expect("prepares");
                 outcome(f(args.to_vec()))
             });
+            self.rewind();
             let compiled = outcome(self.clif.call(name, args));
             assert_eq!(
                 walked,
@@ -173,6 +207,7 @@ impl All {
                 render(args)
             );
             if let Some(llvm) = &self.llvm {
+                self.rewind();
                 let other = outcome(llvm.call(name, args));
                 assert_eq!(
                     other,
@@ -183,6 +218,12 @@ impl All {
             }
         }
         tuples.len()
+    }
+
+    fn rewind(&self) {
+        if let Some(stated) = &self.stated {
+            stated.rewind();
+        }
     }
 }
 
@@ -1131,7 +1172,6 @@ fn what_cannot_be_compiled_is_refused_by_name_and_with_a_reason() {
         "grows_a_list",
         "renders_a_real",
         "is_generic",
-        "reads_the_clock",
         "calls_something_refused",
     ] {
         let reason = all
@@ -1139,10 +1179,12 @@ fn what_cannot_be_compiled_is_refused_by_name_and_with_a_reason() {
             .unwrap_or_else(|| panic!("`{name}` must be refused, and it was not"));
         assert!(!reason.is_empty(), "`{name}` is refused without saying why");
     }
+    // `reads_the_clock` compiles since the protocol grew a second direction, and it is here
+    // rather than above so that the move shows in the diff rather than as a deleted row.
     assert_eq!(
         all.compiled(),
-        vec!["scalar_and_fine".to_string()],
-        "the one scalar definition is the one that compiles"
+        vec!["reads_the_clock".to_string(), "scalar_and_fine".to_string()],
+        "the scalar definition and the one that asks the host are the two that compile"
     );
     assert_eq!(
         all.refusal("calls_something_refused"),
@@ -1395,4 +1437,48 @@ fn the_three_backends_agree_on_failure() {
     compared += all.agree("several", &failfix::lists());
     compared += all.agree("all_checked", &failfix::lists());
     println!("{compared} fallible calls compared, and every backend agreed on every one");
+}
+
+/// The four primitives that ask the host, over all three backends and one stated host.
+///
+/// `native.rs`'s twin, and it exists separately for this file's stated reason: the two emitters
+/// are two independent readings of one language, and a question one of them sends with its words
+/// in the other order shows here and nowhere else. The host is shared — `beck_llvm::service` — so
+/// what is being compared is the two *emitters* and the tree-walker, not three opinions about what
+/// the clock said.
+#[test]
+fn the_three_backends_agree_on_the_host_effects() {
+    linker!();
+    let atoms = Stated::new();
+    let all = All::answering("effects.beck", EFFECTS, atoms.clone());
+    let mut compared = 0;
+    for (name, args) in hostfix::calls() {
+        compared += all.agree(name, std::slice::from_ref(&args));
+    }
+    println!("{compared} host-effect calls compared across every backend on this machine");
+}
+
+/// A list, taken apart by a **pattern**, over every backend this machine can offer.
+///
+/// `native.rs`'s twin, and it exists separately for this file's stated reason: the two emitters are
+/// two independent readings of one language, and a length test written with the wrong comparison —
+/// `>=` where the pattern has no tail binder — shows here and nowhere else.
+#[test]
+fn the_three_backends_agree_on_list_patterns() {
+    linker!();
+    let all = All::over("patterns.beck", PATTERNS);
+    let xs = listfix::lists();
+    let mut n = 0;
+    for name in [
+        "described",
+        "tail",
+        "after_two",
+        "leading_one",
+        "exactly_two",
+    ] {
+        n += all.agree(name, &listfix::singles(&xs));
+    }
+    n += all.agree("inner_first", &listfix::singles(&listfix::nested()));
+    n += all.agree("joined", &listfix::singles(&listfix::texts()));
+    println!("{n} list-pattern calls compared across every backend on this machine");
 }

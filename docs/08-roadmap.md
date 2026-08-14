@@ -235,6 +235,11 @@ dependencies whose signatures didn't change.
 - LLVM release backend + differential tests against Cranelift (§5.2). *The LLVM half is **built**
   over the scalar subset ([`93`](93-llvm-backend-report.md)), and the differential is against the
   **evaluator** rather than against Cranelift, because Cranelift is still not built.*
+  ***Both halves are built now*** ([`97`](97-cranelift-report.md)), the differential runs over all
+  three backends, and the subset is no longer scalar: it is everything a definition can be made of
+  except the signal vocabulary, a dictionary parameter, and a second call in flight
+  ([`116`](116-the-host-answers-back-report.md) §116.10). The last thing to arrive was the four
+  primitives that have to **ask the host**, which is where the protocol grew a second direction.*
 - **Incremental views**: compile subscribed/materialized views to differential-dataflow plans with
   arrangement sharing (per-session fanout, §5.3); recompute stays as the CI oracle; SQL read models
   + pgwire exposure; query fusion on symbolic plans. *The plans and the oracle are **built**
@@ -296,7 +301,11 @@ dependencies whose signatures didn't change.
   `.becki` and `--wire-compat` all applied to failure unchanged. Structured concurrency is
   **built** ([`80`](80-a-scope-owns-its-children-report.md)): `parallel:` is a scope whose
   bindings are its children, and what it lacks is a backend that runs two of them at once
-  (§80.5). `match` exhaustiveness is built for unions ([`27`](27-the-walls-come-down-report.md)
+  (§80.5). ***It has one*** ([`117`](117-a-scope-runs-its-children-report.md)): a thread per child,
+  1.99× on two children that wait and the same on two that compute once each is worth a thread. The
+  soundness was already in the checker, and one of the three things §80.5 said stood in the way was
+  removed by [`116`](116-the-host-answers-back-report.md) for a reason that had nothing to do with
+  concurrency. `match` exhaustiveness is built for unions ([`27`](27-the-walls-come-down-report.md)
   added lists). **Pattern matching nests** ([`90`](90-nested-patterns-report.md)):
   `case Some(Circle(r))`, a literal or a constructor wherever a binder goes, through a type
   parameter and inside a list — and the exhaustiveness check was rebuilt for it, because a set of
@@ -305,8 +314,14 @@ dependencies whose signatures didn't change.
   ([`91`](91-guards-and-alternatives-report.md)) — `case Circle(r) | Square(r):` and
   `case x if x < 0:`, neither of which needed a new algorithm, because an or-pattern is several
   rows of the same matrix and a guarded arm is no row — and `@` bindings with them. Pattern
-  matching is **done**; what is left of this bullet is **structured concurrency's missing backend**
-  ([`80`](80-a-scope-owns-its-children-report.md) §80.5), and §91.5 lists what is not there.*
+  matching is **done**, and so is the backend
+  ([`117`](117-a-scope-runs-its-children-report.md)) that was the last thing left here — so **this
+  bullet has no remainder**. What §91.5 and [`117`](117-a-scope-runs-its-children-report.md) §117.7
+  list are new items rather than the rest of this one, and the largest of them —
+  **cancellation** — is built too ([`118`](118-a-scope-stops-its-children-report.md)): a child that
+  fails stops its siblings, read on the step counter, at about 1% on a program that never writes a
+  scope. What is left is stopping a child that is *blocked in the host* rather than spending steps,
+  which is a property of the [`net`](../compiler/crates/beck-core/src/net.rs) seam.*
 - **SQLite as a durable substrate** ([`07`](07-dependencies.md) §7.8.1): a `LogStore`
   implementation beside redb and Postgres. The reason is not speed — the measurements say the
   durable substrates are within ~16% of each other — it is that SQLite is *also* the read-model
@@ -444,16 +459,25 @@ over the release *listing*: `beck sign`'s subject is an image manifest, and a re
 tarballs (§104.6).
 **No bullet has a named remainder**: the concurrency-and-errors bullet has `Result`, error rows,
 `parallel:` and pattern matching with nesting, guards and alternatives
-([`90`](90-nested-patterns-report.md), [`91`](91-guards-and-alternatives-report.md)); what
-`parallel:` lacks is a backend that runs two children at once, which is
-[`80`](80-a-scope-owns-its-children-report.md) §80.5's item rather than this bullet's. **Three
+([`90`](90-nested-patterns-report.md), [`91`](91-guards-and-alternatives-report.md)) — and
+`parallel:` now has the backend that runs two children at once
+([`117`](117-a-scope-runs-its-children-report.md)), which was
+[`80`](80-a-scope-owns-its-children-report.md) §80.5's item and is closed rather than reassigned.
+What is left of *it* is **cancellation**: a scope whose first child fails waits for its siblings,
+and §80.5 forecast that a backend starting them together would need a signal nobody has designed. **Three
 half-built**: the codegen bullet has **both** of §5.2's code generators
-([`93`](93-llvm-backend-report.md), [`97`](97-cranelift-report.md)) and a heap for the *algebraic*
-half of what the language stores ([`101`](101-the-heap-report.md)) plus **text**
-([`105`](105-text-on-the-heap-report.md)) and **reading a collection**
-([`106`](106-lists-arrive-read-only-report.md), [`107`](107-a-map-arrives-read-only-report.md)) — a
-record, a union, a newtype, a `Str`, a `list[T]` and a `Map[K, V]` compile, and a closure, every
-effect, `Html` and the loop that *grows* a collection do not; Mode B has the mode, the bundle,
+([`93`](93-llvm-backend-report.md), [`97`](97-cranelift-report.md)) and a heap that is now whole:
+the *algebraic* half ([`101`](101-the-heap-report.md)), **text**
+([`105`](105-text-on-the-heap-report.md)), **reading a collection**
+([`106`](106-lists-arrive-read-only-report.md), [`107`](107-a-map-arrives-read-only-report.md)),
+**closures** ([`108`](108-closures-arrive-report.md)), a **view**
+([`111`](111-a-view-arrives-as-a-recipe-report.md)), **failure**
+([`112`](112-a-raise-arrives-report.md)), **growing** a list and a map
+([`113`](113-a-list-grows-report.md), [`114`](114-a-map-grows-report.md)), a **generic** definition
+([`115`](115-monomorphisation-report.md)) and the four primitives that **ask the host**
+([`116`](116-the-host-answers-back-report.md)) — so what a compiled definition may not do is now
+three named things rather than a class: read the signal vocabulary, take a dictionary, or be
+answered while another call is in flight (§116.10); Mode B has the mode, the bundle,
 the data patch, the reconciliation, a browser that runs it and an offline queue, without codegen —
 which waits on the half of that heap that is not built — and it is the **collection** half rather
 than the text half, since a page is a tree of children
@@ -490,10 +514,13 @@ has been overtaken twice. ~~No OIDC~~ ([`95`](95-oidc-relying-party-report.md)),
 ([`104`](104-the-release-and-the-installer-report.md)), **no released binary** — which is now one
 `git tag` rather than a piece of missing work, because the pipeline that would build it exists and
 has never run ([`104`](104-the-release-and-the-installer-report.md) §104.7). What is left to
-apologise for is the one an outside developer meets in week two rather than minute one: a record, a
-union and a newtype compile ([`101`](101-the-heap-report.md)) and **text, collections, closures and
-every effect still walk**, so a program that does anything with a `Str` is running on the
-tree-walker.
+apologise for has moved out of week two and into the parts of a program that are not a *definition*
+at all: a record, text, a collection, a closure, a page, a failure, a generic definition and the
+four primitives that ask the host all compile ([`101`](101-the-heap-report.md) through
+[`116`](116-the-host-answers-back-report.md)), so a program that does something with a `Str` is no
+longer running on the tree-walker. **The fold, `validate` and the view still are** — they are signal
+nodes the splitter reads rather than definitions a body calls — which is a different item and is
+named as one ([`116`](116-the-host-answers-back-report.md) §116.10).
 
 ## Phase 4 — Production readiness (4–5 months)
 
@@ -991,7 +1018,7 @@ boundaries are real directories.
 | **B — runtime and views** | `beck-rt/`, `beck-core/src/{engine,plan,incremental,pmap,signal}.rs` | Clock injection; the shared dataflow's release policy, history constant and render lock; SQL read models, pgwire, query fusion; Mode B's server half | Nothing in A, C, E or F |
 | **C — front end and tooling** | `beck-syntax/`, `beck-cli/`, `beck-diag/` | ~~The recursion bound~~ ([`44`](44-wave-0-report.md)); ~~the two syntax decisions~~ ([`10`](10-decisions.md) D21, D22); ~~Unicode and UTS #39~~ ([`44`](44-wave-0-report.md) §44.5); ~~LSP~~ — **built** ([`65`](65-lsp-report.md)) and **finished** ([`110`](110-the-editor-edits-report.md)): references, highlight, rename and inlay hints, so §8.5.2's list of what an LSP is for has no unbuilt entry; ~~`test --update`~~ ([`66`](66-page-snapshots-report.md)); ~~fuzzing~~ ([`85`](85-what-the-generator-found-report.md)). **This lane is empty.** What a *new* Lane C item looks like is in [`110`](110-the-editor-edits-report.md) §110.7: comment-preserving printing, which `textDocument/formatting` waits on, and code actions | A, if a syntax decision changes what the checker sees |
 | **D — process and supply chain** | `docs/`, `.github/`, `deny.toml`, `SECURITY.md`, `release/`, `install.sh` | Threat model, disclosure policy, memory-safety roadmap, `pending_security`, the four retargeted §12 rows, SLSA/SBOM/trusted publishing, ~~the release pipeline and the installer~~ ([`104`](104-the-release-and-the-installer-report.md)) | Nothing in code — **except that the release lands in `Cargo.toml`, a `build.rs` and `--version`**, which §104.4 is about and which this cell had assumed away |
-| **E — backends** | `beck-eval/`, `beck-llvm/`, `beck-clif/`, `beck-core/src/backend.rs`, any new codegen crate | ~~LLVM backend, native codegen, the differential suite~~ — **built** ([`93`](93-llvm-backend-report.md)), ~~and Cranelift~~ — **built** ([`97`](97-cranelift-report.md)), ~~and a heap~~ — **half built** ([`101`](101-the-heap-report.md)): records, unions and newtypes, ~~and text~~ — **built** ([`105`](105-text-on-the-heap-report.md)), ~~and reading a collection~~ — **built** ([`106`](106-lists-arrive-read-only-report.md), [`107`](107-a-map-arrives-read-only-report.md)), lists and maps alike, ~~and closures~~ — **built** ([`108`](108-closures-arrive-report.md)): a rank and its captures, an application as a switch, and every list primitive that takes a function except `list_flat_map` — `sort_by` and `concat_lists` included, the second because its refusal was false, ~~and `Html`~~ — **built** ([`111`](111-a-view-arrives-as-a-recipe-report.md)): as the *call* that builds a page rather than as the page, so the rendering stays the host's, ~~and failure~~ — **built** ([`112`](112-a-raise-arrives-report.md)): `raise` and `try:`, on the error cell that was already an unwinder, ~~and growing a list~~ — **built** ([`113`](113-a-list-grows-report.md)): a header over a shared block, so an append writes a slot no reader can see, ~~and growing a map~~ — **built** ([`114`](114-a-map-grows-report.md)): a weight-balanced tree in the arena, because a sorted run has to shift however its header is arranged, ~~and a generic definition~~ — **built** ([`115`](115-monomorphisation-report.md)): one function per instantiation, recovered from the type every call site was already carrying. What is left is the effects that call *back* into the host | Nothing — the seam is why ([`19`](19-phase-1-report.md) §19.9), and [`93`](93-llvm-backend-report.md) is the first thing to test that claim: not one line of `beck-rt` changed |
+| **E — backends** | `beck-eval/`, `beck-llvm/`, `beck-clif/`, `beck-core/src/backend.rs`, any new codegen crate | ~~LLVM backend, native codegen, the differential suite~~ — **built** ([`93`](93-llvm-backend-report.md)), ~~and Cranelift~~ — **built** ([`97`](97-cranelift-report.md)), ~~and a heap~~ — **half built** ([`101`](101-the-heap-report.md)): records, unions and newtypes, ~~and text~~ — **built** ([`105`](105-text-on-the-heap-report.md)), ~~and reading a collection~~ — **built** ([`106`](106-lists-arrive-read-only-report.md), [`107`](107-a-map-arrives-read-only-report.md)), lists and maps alike, ~~and closures~~ — **built** ([`108`](108-closures-arrive-report.md)): a rank and its captures, an application as a switch, and every list primitive that takes a function except `list_flat_map` — `sort_by` and `concat_lists` included, the second because its refusal was false, ~~and `Html`~~ — **built** ([`111`](111-a-view-arrives-as-a-recipe-report.md)): as the *call* that builds a page rather than as the page, so the rendering stays the host's, ~~and failure~~ — **built** ([`112`](112-a-raise-arrives-report.md)): `raise` and `try:`, on the error cell that was already an unwinder, ~~and growing a list~~ — **built** ([`113`](113-a-list-grows-report.md)): a header over a shared block, so an append writes a slot no reader can see, ~~and growing a map~~ — **built** ([`114`](114-a-map-grows-report.md)): a weight-balanced tree in the arena, because a sorted run has to shift however its header is arranged, ~~and a generic definition~~ — **built** ([`115`](115-monomorphisation-report.md)): one function per instantiation, recovered from the type every call site was already carrying, ~~and the effects that call *back* into the host~~ — **built** ([`116`](116-the-host-answers-back-report.md)): `now()`, `uuid()`, `secret_env` and `http_fetch`, by giving the protocol a **second direction** — a compiled call may stop mid-flight, ask, and block. Half of that item turned out to be a *type* rather than a protocol: `secret[T]` had no layout, which is what had made `HttpRequest` unlayoutable too. **This lane is empty.** What a *new* Lane E item looks like is [`116`](116-the-host-answers-back-report.md) §116.10: the signal vocabulary compiled rather than read by the splitter, a **bounded** definition (a dictionary is a function value), and a worker that can answer two calls at once | Nothing — the seam is why ([`19`](19-phase-1-report.md) §19.9), and [`93`](93-llvm-backend-report.md) is the first thing to test that claim: not one line of `beck-rt` changed |
 | **F — infrastructure** | `beck-infra/` | Effect-derived NetworkPolicy/RBAC/grants; Crossplane emitter; conformance rungs | Nothing |
 
 **Lane A is strictly serial, and that is the real staffing constraint.** It is tempting to run two
@@ -1023,7 +1050,8 @@ Recommended pairings, in order:
 | ~~**Then**~~ | ~~Lane A: `Ord` as a trait~~ | ~~Lane E: growing a list~~ | **Half done, and the other half — for the eleventh time.** Lane E was taken ([`113`](113-a-list-grows-report.md)): `beck-llvm`, `beck-clif`, their two suites and four refusal lists, and nothing in `beck-rt`, `check/`, `ty.rs` or `core.rs`. Lane A is untouched |
 | ~~**Then**~~ | ~~Lane A: `Ord` as a trait~~ | ~~Lane E: growing a map~~ | **Half done, and the other half — for the twelfth time.** Lane E was taken ([`114`](114-a-map-grows-report.md)): `beck-llvm`, `beck-clif`, their two suites and the refusal lists, and nothing in `beck-rt`, `check/`, `ty.rs` or `core.rs`. The forecast in [`113`](113-a-list-grows-report.md) §111.7 held — it wanted a tree, not a layout. Lane A is untouched |
 | ~~**Then**~~ | ~~Lane A: `Ord` as a trait~~ | ~~Lane E: text's last refusals, and generics~~ | **Half done, and the other half — for the thirteenth time.** Lane E was taken: `str_trim`, `str_split` and `str_chars` compiled once their stated reasons were checked and found false, and [`115`](115-monomorphisation-report.md) monomorphised. The last of those is the first item in this lane that touched neither emitter's code generation — a new module both are handed a program by — and it still held the prediction: nothing in `beck-rt`, `check/`, `ty.rs` or `core.rs`. Lane A is untouched |
-| **Now** | Lane A: `Ord` as a trait, which [`54`](54-ordering.md) writes out and does *not* recommend — so realistically nothing | Lane E: **the effects that call *back* into the host** ([`112`](112-a-raise-arrives-report.md) §112.9) — the last row of the heap, and the only one that is not a missing emitter: it wants a protocol with a second direction, where every feature so far has been the arena answering a question it was already asked. Behind it, nothing that is a class any more: the **generic** row came off with [`115`](115-monomorphisation-report.md)'s monomorphisation, which is a pass over the program rather than an emitter, and `str_trim`, `str_split` and `str_chars` came off when their stated reasons turned out to be false of them — `White_Space` is 25 code points and not a table, and "two loops" is what makes a split cheap rather than what it costs — and `examples/todo.beck` compiles whole because of the first | The backend seam exists so these do not interact, and it has now been tested seven times. Lane B's render lock is still open and still has no owner — it is a third branch rather than a reason to hold either of these. Lane D's remaining item is **trusted publishing**, which is an account setting rather than a branch |
+| ~~**Then**~~ | ~~Lane A: `Ord` as a trait~~ | ~~Lane E: the effects that call *back* into the host~~ | **Half done, and the other half — for the fourteenth time.** Lane E was taken ([`116`](116-the-host-answers-back-report.md)) and the prediction held once more: `beck-llvm`, `beck-clif`, their two suites — and, for the first time in this lane, two files that are not a backend's, because the four host atoms had to stop being the *evaluator's* trait before three backends could ask one question. Nothing in `beck-rt`, `check/`, `ty.rs` or `core.rs`. Lane A is untouched |
+| **Now** | Lane A: `Ord` as a trait, which [`54`](54-ordering.md) writes out and does *not* recommend — so realistically nothing | **Lane E has no class left, and a measured list of names.** [`119`](119-a-list-comes-apart-report.md) took list patterns off it and the corpus now stands at **905 compiled against 173 refused**, whose largest remaining class is a **function value at a boundary** — every `parameter f is a function value`, and every `Seq[T]` in SICP chapter 3, whose `Cons(head, rest: () -> Seq[T])` puts a closure in a field. `Heap::crossing` refuses those truly rather than stalely, and what would move them is compiling definitions that are called only by *other compiled definitions*, which never marshal a closure at all. Behind that: three named items ([`116`](116-the-host-answers-back-report.md) §116.10): the signal vocabulary, which the splitter reads rather than a body calling it; a **bounded** definition, which is [`108`](108-closures-arrive-report.md)'s closure boundary; and a worker that can answer two calls at once, which [`93`](93-llvm-backend-report.md) §93.7 has named as the first thing a second version would change since there was a first version. **Mode B's codegen** is the item with a user in front of it, and it is that plus a wasm emitter ([`94`](94-mode-b-report.md) §94.8). ~~The lane's other live item is **cancellation** for a `parallel:` scope~~ — **built** ([`118`](118-a-scope-stops-its-children-report.md)). What is left in `beck-eval` is stopping a child that is *blocked in the host*, which is a deadline on the [`net`](../compiler/crates/beck-core/src/net.rs) seam rather than a change to the scope | Lane B's render lock is still open and still has no owner — it is a third branch rather than a reason to hold anything. Lane D's remaining item is **trusted publishing**, which is an account setting rather than a branch |
 | **Any time** | — | Lane F; ~~Lane C's LSP~~ — **built** ([`110`](110-the-editor-edits-report.md)), which empties Lane C; more of SICP | No predecessors, no collisions |
 
 A third branch is viable whenever E or F is staffed. The ceiling is four, because of these:

@@ -12,6 +12,150 @@ Newest first.
 
 ## Unreleased
 
+### The native backends
+
+- **`case [first, *rest]` compiles**, to both code generators
+  ([`docs/119`](docs/119-a-list-comes-apart-report.md)) — the last pattern form they refused. The
+  length is tested before any element is read, so nothing can load past the end of a short list;
+  everything inside a pattern is [`docs/90`](docs/90-nested-patterns-report.md)'s recursion,
+  unchanged.
+  - **The refusal it replaces had been false for three reports.** It read "a collection is not on
+    this heap yet", and a collection has been on this heap since
+    [`docs/106`](docs/106-lists-arrive-read-only-report.md).
+    `a_refusal_that_blames_a_type_is_asked_whether_that_type_has_one` exists to catch exactly this
+    and could not: it resolves the **type** a reason blames, and this sentence names no type. The
+    corpus pass now also holds every refusal against a list of sentences this backend may no longer
+    say about itself — checked by putting the old refusal back and watching it name its six
+    definitions.
+  - **The tail is copied, not borrowed.** A suffix header offset into the element run would have an
+    element read as the data block's `used`, which is the word
+    [`docs/113`](docs/113-a-list-grows-report.md)'s append writes at. The evaluator copies too
+    (`Arc<Vec<_>>` cannot share a suffix), so neither backend is quietly quadratic against the
+    other.
+  - **889 → 905 definitions compile and refusals go 189 → 173**: six list patterns, and ten
+    definitions that were only waiting on them.
+
+### Concurrency
+
+- **A `parallel:` child that fails stops its siblings**
+  ([`docs/118`](docs/118-a-scope-stops-its-children-report.md)) — the signal
+  [`docs/80`](docs/80-a-scope-owns-its-children-report.md) §80.5 forecast and
+  [`docs/117`](docs/117-a-scope-runs-its-children-report.md) §117.7 left open.
+  - **It stops the children *after* the failure, and that qualifier cost a defect to learn.** The
+    obvious signal — any failing child stops every sibling — passed its own new gate and broke
+    `a_childs_failure_joins_at_the_scope_and_the_earliest_child_wins`, green since
+    [`docs/80`](docs/80-a-scope-owns-its-children-report.md): two children that both raise became a
+    race over which error the scope reports. **Eight failures in forty runs of the whole suite, and
+    none when run alone.** Cancelling only the children an ordered join would never have reached
+    makes this a change in when work stops rather than in what a scope answers; the check that the
+    race is gone is 0/40 against 8/40.
+  - **It rides `Interp::burn`**, the step counter. A checkpoint at call boundaries would miss an
+    iterative loop, because a tail call does not nest; "the program is spending steps" is exactly
+    when stopping it is possible and worth doing.
+  - **A stopped child's error is discarded rather than raced.** The scope answers with the earliest
+    child in source order that failed for a reason of its own — otherwise the answer would depend on
+    which thread lost. The flag is a chain, because a scope may nest inside a scope.
+  - **Cost to a program with no scope in it**, from
+    `measure_concurrency.rs::what_the_cancellation_check_costs_a_program_without_a_scope` (release,
+    median of nine): **388.3 / 380.1 ns per iteration with the check, 385.0 / 374.7 without** — about
+    1%, and §118.4 declines to call it free, since an earlier run of the same build differed by more
+    than the two columns do. Flat across a 10× size change, which is what a loop-invariant branch
+    predicts.
+  - **Gated by a count, not a clock**: `concurrency.rs::a_failing_child_stops_its_siblings` asserts
+    the stopped sibling reached its peer *more than zero* times (so it was running) and *far fewer
+    than 400* (so it was stopped) — it reaches 4 or 5. Checked by disabling the signal and watching
+    it hit 400/400, and the ordering gate beside it was run forty times rather than once.
+- **Which wasm can have threads** (§118.5), which corrects a flat "no" this work first wrote down.
+  `wasm32-wasip1-threads` is a **stable** target and really spawns — its module imports
+  `thread-spawn` where `wasm32-unknown-unknown` compiles the same call to "operation not supported
+  on this platform". But that is WASI, and the two places this repo emits wasm are *browser*
+  targets: there threads need the `atomics` feature `rustc` reports as unstable on the pinned
+  channel, a `std` rebuilt with it (`-Z build-std`, nightly), and cross-origin isolation plus a
+  worker per thread in the page. `wasm32` is the only bitness on stable — there is no `wasm64`
+  target. Where the threading target *will* matter is the server-side WASM tier
+  [`docs/05`](docs/05-tier-lowering.md) §5.4 names and nothing emits yet. The playground's children
+  run in order, which is *correct* for the same reason an ordered join always was — it loses the
+  overlap, never an answer.
+
+- **`parallel:` runs its children at the same time**, on a thread each
+  ([`docs/117`](docs/117-a-scope-runs-its-children-report.md)). This closes
+  [`docs/80`](docs/80-a-scope-owns-its-children-report.md) §80.5's first sentence and the last named
+  remainder of [`docs/08`](docs/08-roadmap.md)'s structured-concurrency bullet.
+  - **The soundness is not in this change.** §80.5 put it in the checker: no child may name another
+    (`B0398`) and none may perform an effect another could observe (`B0399`), so the scope's answer
+    does not depend on the order. This adds no analysis and no scheduler — it starts two threads,
+    because the program has already been proved not to care.
+  - **One of the three blockers §80.5 named was removed by accident.** The `Host` trait became
+    thread-safe in [`docs/116`](docs/116-the-host-answers-back-report.md), which wanted it so three
+    backends could ask one question. Recorded because the lane table predicts file collisions and
+    has nothing to say about a branch that removes another's blocker.
+  - **Fuel is split, not shared** (§117.4). Sharing it is an atomic read-modify-write on every step
+    of every program — the hot path [`docs/70`](docs/70-the-evaluator-gets-fast-report.md) is about
+    — and it makes *which* child runs out a race. Each child gets an equal share of what remains and
+    the scope charges the parent what they actually spent, so the total matches a serial run. The
+    cost is that a child which would have used more than its share now runs out where a serial run
+    would have let it continue; `spawn` is discharged by `Tier::Server` alone, so none of this can
+    reach a replay.
+  - **Nothing is cancelled.** A scope whose first child fails still waits for its siblings. §80.5
+    forecast that a backend starting children together would need a cancellation signal; that
+    backend exists now and the signal still does not.
+  - **What it is worth**, from `measure_concurrency.rs` (release, medians): two children that each
+    wait 200 ms take **201.1 ms** against **400.7 ms** in order — **1.99×**, and 2× is the ceiling
+    for two children. Children that compute get the same once each is worth a thread, and the
+    crossover is measured rather than guessed: **0.34×** at a child of ~170 µs, **1.30×** at
+    ~580 µs, **1.85×** at 7.9 ms.
+  - **Where the per-child cost goes** is not where the question expects: a bare thread is 94.4 µs on
+    this machine and the 256 MiB stack reservation adds 29.3 µs, so the reservation is the *smaller*
+    half. Neither is a knob — the reservation is what the depth ceiling needs
+    ([`adr/0007`](docs/adr/0007-evaluator-stack-is-declared-not-discovered.md)) and the thread is
+    what running two things at once is.
+  - **The gate is a deadlock-or-pass, not a clock**: `concurrency.rs::two_children_actually_overlap`
+    uses a host that will not answer until every child has arrived, so a serial evaluator cannot
+    pass it at any speed. Checked by forcing it back to an ordered join and watching it go red.
+
+### The native backends
+
+- **The four primitives that ask the host compile** — `now()`, `uuid()`, `secret_env` and
+  `http_fetch`, to both code generators ([`docs/116`](docs/116-the-host-answers-back-report.md)).
+  The worker's protocol has a **second direction**: a compiled call may stop mid-flight, write a
+  question frame and block until the host answers. This empties
+  [`docs/08`](docs/08-roadmap.md) §8.5.5's **Lane E**, whose last row said this was the one item in
+  the lane that is not a missing emitter.
+  - **What a question carries is a shape and a word per argument**, so the host decodes and encodes
+    through `beck_llvm::heap` without a second table of what each primitive's types are — the trick
+    [`docs/111`](docs/111-a-view-arrives-as-a-recipe-report.md)'s deferred leaves play, one
+    subsystem over. The answer is a **tail appended at the arena's high-water mark**, never a whole
+    arena, so nothing a live value points at can be rewritten by an answer.
+  - **The blocker for two of the four was a type, not the protocol.** `secret[T]` had no machine
+    representation, so `secret_env` could not answer with one and `HttpRequest` — whose `secrets`
+    field holds them — had no layout at all. It is laid out as the one-field object it already is at
+    run time; unwrapping would make a secret and its `Str` indistinguishable in compiled code, which
+    is the one thing §3.5 claims they are not.
+  - **A failed `http_fetch` needed nothing new.** The host answers with `Trap::Raised` and the same
+    two-word pair a compiled `raise` builds
+    ([`docs/112`](docs/112-a-raise-arrives-report.md)), so the program's own `try:` catches it
+    without knowing an upcall happened.
+  - **The host is one description now**: `beck_core::host::Atoms`, which the evaluator's `Host`
+    extends and both compiled backends ask. That is what makes a differential over `now()` a
+    comparison of the program rather than of two clocks —
+    `native.rs::the_two_backends_agree_on_the_host_effects` and its Cranelift twin drive all three
+    backends from one stated host over 16 calls, and assert the outbound count so a silent fallback
+    cannot pass.
+  - **870 → 889 definitions compile across the tree and refusals go 208 → 189**, over 64 programs
+    each compiled alone. None of the four appears in a refusal anywhere, and
+    `every_corpus_program_produces_a_module_llvm_accepts` is the gate that says so rather than a
+    grep somebody ran once.
+  - **Cost**, from `measure_native.rs::what_asking_the_host_costs` (release, median of nine): a
+    question that cannot point into the heap is a flat round trip — **24.5 µs** at 16 live elements
+    and **29.0 µs** at 4,096 — and one that can carries the live arena, **26.8 µs** and
+    **162.7 µs** for 664 and 163,864 bytes. The shape is gated without a clock by
+    `native.rs::what_a_question_carries_is_a_decision_and_not_an_accident`, which counts the bytes
+    at the same two sizes.
+  - **A limit on compiled time is not a limit on a call** (§116.8). The worker's wall-clock bound
+    exists because there is no fuel in compiled code; it was killing an `http_fetch` that was
+    waiting on a peer. The deadline is now stood down while the host works and re-armed as a fresh
+    one, so it still covers every instruction the worker executes and nothing the host does.
+
 ### The editor
 
 - **`beck lsp` edits: references, document highlight, prepare-rename, rename and inlay hints**

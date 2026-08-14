@@ -149,6 +149,20 @@ The two must agree observably — enforced by differential tests ([`04`](04-comp
 > `service`" stays a design. A view compiles as the **call** that builds the page rather than as the
 > page, so §111.6 is explicit that it buys no speed: it removes a prerequisite, and the one it
 > removes is Mode B's codegen ([`94`](94-mode-b-report.md) §94.8).
+>
+> *And the list is empty of classes* ([`113`](113-a-list-grows-report.md),
+> [`114`](114-a-map-grows-report.md), [`115`](115-monomorphisation-report.md),
+> [`116`](116-the-host-answers-back-report.md), [`119`](119-a-list-comes-apart-report.md)): growing a
+> `list` and a `Map` compile, a generic definition compiles by being specialised, a list pattern
+> comes apart, and **the four primitives that ask the host** — `now()`, `uuid()`, `secret_env` and
+> `http_fetch` — compile by *asking*, on a worker protocol that grew a second direction. So the
+> paragraph above is corrected twice over: neither "every effect" nor "every operation that grows a
+> collection" is the tree-walker's any more. What is left is not a class but three names
+> ([`116`](116-the-host-answers-back-report.md) §116.10) — the signal vocabulary, which the splitter
+> reads rather than a body calling it; a **bounded** definition, whose dictionary is a function
+> value; and a worker that can answer two calls at once. This section's "compiles to native
+> binaries, statically linked, one per `service`" is *still* a design, and now for one reason rather
+> than a list: a compiled definition is called through a pipe rather than linked into a server.
 
 **Runtime we must ship** (the "Roc platform" of Beck — an effectful Rust host owning I/O, scheduling
 and memory, executing the pure program):

@@ -57,6 +57,7 @@ use beck_core::check::Program;
 use beck_core::core::CoreKind;
 use beck_core::{Core, Value};
 use beck_diag::Span;
+use beck_llvm::service::{self, Asking};
 use beck_llvm::{Refusal, Signature, Trap, Worker};
 
 pub use emit::{module, Module};
@@ -67,6 +68,13 @@ pub struct Artifact {
     module: Module,
     linker: Linker,
     worker: Worker,
+    /// Who answers the four questions compiled code cannot ([`beck_llvm::Upcall`]).
+    ///
+    /// [`beck_core::host::ProcessAtoms`] unless a caller said otherwise, and the *same* trait the
+    /// other backend and the tree-walker ask — which is what keeps a differential over `now()` a
+    /// comparison of the program rather than of three clocks.
+    atoms: std::sync::Arc<dyn beck_core::host::Atoms>,
+    asking: Asking,
     dir: Workspace,
     clif: PathBuf,
     obj: PathBuf,
@@ -135,6 +143,8 @@ impl Artifact {
             module,
             linker,
             worker,
+            atoms: std::sync::Arc::new(beck_core::host::ProcessAtoms),
+            asking: Asking::new(),
             dir,
             clif,
             obj,
@@ -143,8 +153,23 @@ impl Artifact {
         })
     }
 
+    /// Answer this artefact's host effects with something other than the process.
+    pub fn answering(mut self, atoms: std::sync::Arc<dyn beck_core::host::Atoms>) -> Artifact {
+        self.atoms = atoms;
+        self
+    }
+
     pub fn module(&self) -> &Module {
         &self.module
+    }
+    /// How many questions the last call asked the host, and how many bytes of arena went with them.
+    ///
+    /// The number a **shape** gate reads, with no clock in it: a question whose arguments cannot
+    /// point into the heap sends none of it however much the program has allocated, and one whose
+    /// arguments can sends all of it. Both halves are a decision rather than an accident, and this
+    /// is how a test says so (`AGENTS.md`, and `docs/64` §64.1's pattern).
+    pub fn questions(&self) -> (u64, u64) {
+        self.asking.traffic()
     }
 
     pub fn linker(&self) -> &Linker {
@@ -235,9 +260,12 @@ impl Artifact {
             .encode_args(args, &sig.params)
             .map_err(|why| ExecError::new(format!("`{}` was given {why}", sig.name), Span::NONE))?;
 
+        self.asking.clear();
         let reply = self
             .worker
-            .call(sig.index, &cells, &blob)
+            .call(sig.index, &cells, &blob, &|q| {
+                service::answer(&self.module.heap, &*self.atoms, &self.asking, q)
+            })
             .map_err(|e| ExecError::new(e, Span::NONE))?;
         if reply.code != 0 {
             let span = self
@@ -256,9 +284,11 @@ impl Artifact {
                     .map_or_else(|why| why, |v| format!("raised `{}`", v.display()));
                 return Err(ExecError::new(message, span));
             }
-            let message = match Trap::from_code(reply.code) {
-                Some(trap) => trap.message(reply.payload),
-                None => format!("the compiled program reported trap {}", reply.code),
+            // The sentence a `HostFailed` could not carry, if there is one.
+            let message = match (Trap::from_code(reply.code), self.asking.take()) {
+                (Some(Trap::HostFailed), Some(why)) => why,
+                (Some(trap), _) => trap.message(reply.payload),
+                (None, _) => format!("the compiled program reported trap {}", reply.code),
             };
             return Err(ExecError::new(message, span));
         }

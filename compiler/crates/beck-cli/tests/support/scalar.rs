@@ -345,9 +345,11 @@ def ackermann(m: Int, n: Int) -> Int:
 /// The heap ([`super::heapfix`]) took the record and the union off this list, `docs/105` took text
 /// off it, and `docs/106` took *reading* a collection off it — what is left of one is the half that
 /// **grows** it. `str` of an `Int` came off it too, so the row here is a **real**, whose shortest
-/// round-trip decimal is an algorithm rather than a loop. What is left is what `docs/101` §101.5 names as not built — and `scalar_and_fine`
-/// is the control: a list of refusals with nothing on the other side of it would pass against a
-/// backend that refused everything.
+/// round-trip decimal is an algorithm rather than a loop. The **host effects** came off it when the
+/// worker's protocol grew a second direction, and `reads_the_clock` stayed in the program as a
+/// control rather than being deleted. What is left is what `docs/101` §101.5 names as not built —
+/// and `scalar_and_fine` is the other control: a list of refusals with nothing on the other side of
+/// it would pass against a backend that refused everything.
 pub const REFUSED: &str = r#"
 def grows_a_list(xs: list[list[Int]]) -> list[Int]:
     return list_flat_map(xs, lambda ys: ys)
@@ -358,11 +360,13 @@ def renders_a_real(x: Float) -> Str:
 def is_generic[T](x: T) -> T:
     return x
 
-def reads_the_clock() -> Int:
-    return now()
-
 def calls_something_refused(n: Int) -> list[Int]:
     return grows_a_list([[n]])
+
+# The control, twice over: a definition with nothing wrong with it, and one that reaches the host.
+# The second was on the list above until the protocol grew a second direction.
+def reads_the_clock() -> Int:
+    return now()
 
 def scalar_and_fine(n: Int) -> Int:
     return n * 2

@@ -171,7 +171,7 @@ annotations in it.
 
 ## 80.5 What is not built, and why
 
-**Nothing runs two children at the same time.** The tree-walker applies each child's thunk in order
+**Nothing runs two children at the same time.** *(Corrected: [`117`](117-a-scope-runs-its-children-report.md) runs them on a thread each, and [`118`](118-a-scope-stops-its-children-report.md) stops the ones after a failure. What follows is the analysis of why it had not been done, which held up — including that the `Host` trait would have to become thread-safe, which [`116`](116-the-host-answers-back-report.md) did for an unrelated reason.)* The tree-walker applies each child's thunk in order
 and then the continuation. That is correct — the form's meaning is that the order is unobservable,
 and one order is an order — but it is not what somebody reading the word `parallel` will assume, so
 it is the first thing this report says and it is said again here.
@@ -192,7 +192,7 @@ Also not built:
 
 | | |
 |---|---|
-| A child that is cancelled when a sibling fails | **not built.** With an ordered join a later child has not started when an earlier one raises, so there is nothing to cancel *yet*. A backend that starts them together needs a cancellation signal, and nothing designs one |
+| A child that is cancelled when a sibling fails | **Built** ([`118`](118-a-scope-stops-its-children-report.md)) — and only the children *after* the failure, since stopping every sibling made the scope's answer a race. Originally: With an ordered join a later child has not started when an earlier one raises, so there is nothing to cancel *yet*. A backend that starts them together needs a cancellation signal, and nothing designs one |
 | A scope over a *collection* — `parallel for x in xs` | **not built.** The children are written out, so their number is a property of the source. A dynamic fan-out is a different form with a different rule about what its children may perform |
 | `spawn` reaching the data tier | **not built and not wanted.** `Tier::Data` does not discharge it, so a fold cannot spawn — and `Effect::breaks_replay` still says `spawn` breaks replay, which is now unreachable rather than wrong. Left alone: an ordered join is replay-safe, but nothing can observe that, and a claim nothing can test is not worth the edit |
 

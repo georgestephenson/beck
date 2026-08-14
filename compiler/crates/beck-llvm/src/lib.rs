@@ -16,12 +16,14 @@
 //!
 //! # What this is not
 //!
-//! Not a general backend. Every effect that has to **reach the host** — `io`, `log`, `net.out`, a
-//! clock — is still the tree-walker's, and so is a **bounded** definition, whose dictionary
-//! parameter is a function value. Text, collections, closures, a view, **failure** — `raise` and
-//! `try:` — growing a **list** or a **map**, and a **generic** definition do compile; the last of
-//! those by being specialised per instantiation ([`mono`]), which refuses polymorphic recursion and
-//! a call where nothing decides the type. `beck run` and `beck up` are unchanged.
+//! Not a general backend. The **signal vocabulary** — the fold, `validate`, the view, `parallel:` —
+//! is still the tree-walker's, and so is a **bounded** definition, whose dictionary parameter is a
+//! function value. Text, collections, closures, a view, **failure** — `raise` and `try:` — growing a
+//! **list** or a **map**, a **generic** definition, and the four primitives that **ask the host**
+//! (`now()`, `uuid()`, `secret_env`, `http_fetch`) do compile. The generic one by being specialised
+//! per instantiation ([`mono`]), which refuses polymorphic recursion and a call where nothing
+//! decides the type; the four by asking, which is [`worker`]'s second direction and [`service`]'s
+//! answer. `beck run` and `beck up` are unchanged.
 //! There is no collector either — the arena is reset per call
 //! ([`adr/0026`](../../../../docs/adr/0026-the-native-heap-is-an-arena-of-offsets.md)).
 //!
@@ -45,6 +47,7 @@
 pub mod emit;
 pub mod heap;
 pub mod mono;
+pub mod service;
 pub mod toolchain;
 pub mod worker;
 
@@ -59,16 +62,26 @@ use beck_core::core::CoreKind;
 use beck_core::{Core, Value};
 use beck_diag::Span;
 
-pub use emit::{module, Module, Refusal, Scalar, Signature, Trap, MAX_PARAMS};
+pub use emit::{module, Module, Refusal, Scalar, Signature, Trap, Upcall, MAX_PARAMS};
 pub use heap::{Heap, Layout, Repr, Variant};
 pub use toolchain::Toolchain;
-pub use worker::Worker;
+pub use worker::{Answer, Question, Worker};
 
 /// A compiled program: the module, the executable, and the process running it.
 pub struct Artifact {
     module: Module,
     toolchain: Toolchain,
     worker: Worker,
+    /// Who answers the four questions compiled code cannot answer itself
+    /// ([`Upcall`]) — the clock, the id source, the environment and the network.
+    ///
+    /// [`beck_core::host::ProcessAtoms`] unless a caller said otherwise, whose every method is the
+    /// process seam the evaluator's host defaults to. That is what makes the differential between
+    /// the two backends a comparison of the *program*: run under a stated clock, both read the
+    /// same millisecond.
+    atoms: Arc<dyn beck_core::host::Atoms>,
+    /// What this artefact's questions did — how many, how much heap, and why one failed.
+    asking: service::Asking,
     dir: Workspace,
     ll: PathBuf,
     exe: PathBuf,
@@ -140,14 +153,36 @@ impl Artifact {
             module,
             toolchain,
             worker,
+            atoms: Arc::new(beck_core::host::ProcessAtoms),
+            asking: service::Asking::new(),
             dir,
             ll,
             exe,
         })
     }
 
+    /// Answer this artefact's host effects with something other than the process.
+    ///
+    /// What a harness uses to pin `uuid()`, and what a differential uses so that two backends
+    /// asked the same nondeterministic question get the same answer. Without it the clock, the
+    /// environment and the network are the process seams — which is what the evaluator reads too,
+    /// so the two agree by default on everything but a minted id.
+    pub fn answering(mut self, atoms: Arc<dyn beck_core::host::Atoms>) -> Artifact {
+        self.atoms = atoms;
+        self
+    }
+
     pub fn module(&self) -> &Module {
         &self.module
+    }
+    /// How many questions the last call asked the host, and how many bytes of arena went with them.
+    ///
+    /// The number a **shape** gate reads, with no clock in it: a question whose arguments cannot
+    /// point into the heap sends none of it however much the program has allocated, and one whose
+    /// arguments can sends all of it. Both halves are a decision rather than an accident, and this
+    /// is how a test says so (`AGENTS.md`, and `docs/64` §64.1's pattern).
+    pub fn questions(&self) -> (u64, u64) {
+        self.asking.traffic()
     }
 
     pub fn toolchain(&self) -> &Toolchain {
@@ -230,9 +265,12 @@ impl Artifact {
             .encode_args(args, &sig.params)
             .map_err(|why| ExecError::new(format!("`{}` was given {why}", sig.name), Span::NONE))?;
 
+        self.asking.clear();
         let reply = self
             .worker
-            .call(sig.index, &cells, &blob)
+            .call(sig.index, &cells, &blob, &|q| {
+                service::answer(&self.module.heap, &*self.atoms, &self.asking, q)
+            })
             .map_err(|e| ExecError::new(e, Span::NONE))?;
         if reply.code != 0 {
             let span = self
@@ -252,9 +290,13 @@ impl Artifact {
                     .map_or_else(|why| why, |v| format!("raised `{}`", v.display()));
                 return Err(ExecError::new(message, span));
             }
-            let message = match Trap::from_code(reply.code) {
-                Some(trap) => trap.message(reply.payload),
-                None => format!("the compiled program reported trap {}", reply.code),
+            // The sentence a `HostFailed` could not carry, if there is one: the trap's own message
+            // says only that the host could not answer, and the reason is what a reader can act
+            // on.
+            let message = match (Trap::from_code(reply.code), self.asking.take()) {
+                (Some(Trap::HostFailed), Some(why)) => why,
+                (Some(trap), _) => trap.message(reply.payload),
+                (None, _) => format!("the compiled program reported trap {}", reply.code),
             };
             return Err(ExecError::new(message, span));
         }

@@ -52,12 +52,34 @@ sentences, not three hundred words** — and a mention wherever a design documen
 changed. Number it after the highest number in `docs/`, and expect to renumber on merge: the counter
 collides whenever two branches write one, which is a second reason to prefer the changelog.
 
-### Reports are history
+### Documents state the current truth, and are corrected in place
 
-**Do not edit an earlier report to reflect a later change** — a later report's "what this corrects"
-section is where a correction goes. The exception is consolidation: folding a series of reports into
-one chapter is editing history on purpose, and the chapter says which reports it replaced and where
-each one's content went.
+**When you find a document that is false, out of date, or contradicted by another, fix it there.**
+Not in a "what this corrects" section three documents later — *there*, in the sentence that is
+wrong. If a document has been overtaken entirely, delete it and fold anything still worth keeping
+into the one that replaced it.
+
+This reverses an earlier rule that said reports were immutable history and corrections belonged in
+whatever report came next. It was tried and it failed in a way that is easy to state: a reader —
+including the next agent — opens document N, believes it, and never learns that document N+3 took it
+back. Four sentences in this repo were false for three reports each under that rule, every one of
+them with a correction filed somewhere the reader had no reason to look. The rule also guaranteed
+the document count could only grow, which is how the first 75-report pile happened; the immutability
+rule was written *after* that pile and made a second one inevitable.
+
+**Git is the immutable history.** The commit that changed something records what changed, when, and
+why, and no one has to maintain it. A prose report duplicating that is redundancy with a maintenance
+cost, and prose that disagrees with the code is worse than no prose.
+
+So:
+
+- **Correct in place.** A document says what is true now. Where the *reasoning* behind a change
+  matters and would be lost, an ADR is where it goes ([`docs/adr/`](docs/adr/)) — those are decision
+  records and are genuinely immutable, because a decision is a thing that happened at a time.
+- **Delete what a later document replaced**, and say in the commit message what was deleted and
+  where it went. Two documents that disagree are worse than either alone.
+- **Prefer editing an existing document to adding one.** The bar for a new file is that no existing
+  one is about the same thing.
 
 ### The conventions each directory carries
 
