@@ -263,7 +263,7 @@ Compile what can be compiled to native code, and say what could not (§5.2).
 
 ## `beck bundle`
 
-Write a Mode B component's bundle — the slice a browser downloads (§5.1, `docs/94` §94.4).
+Write a Mode B component's bundle — the slice a browser downloads (§5.1, `docs/94` §94.6).
 
 This is not how a deployment gets one. `beck run` derives the bundle from the program it is executing, so a served slice cannot be of a different program than the running one, and `beck build` deliberately writes no bundle for the same reason. This is how a *measurement* gets one: §5.1 budgets "< 150 KB brotli for a typical Mode-B component bundle", and a budget nothing can weigh is not a budget.
 

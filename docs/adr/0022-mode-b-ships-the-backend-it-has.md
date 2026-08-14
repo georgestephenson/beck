@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Date:** 2026-08-09
-**Context:** [`05`](../05-tier-lowering.md) §5.1, [`94`](../94-mode-b-report.md),
+**Context:** [`05`](../05-tier-lowering.md) §5.1, [`94`](../94-the-client-report.md),
 [`0021`](0021-the-native-backend-writes-ir-and-runs-a-process.md),
 [`0007`](0007-evaluator-stack-is-declared-not-discovered.md)
 
@@ -53,7 +53,7 @@ asserts equality rather than similarity — because both sides run the same `Cor
   every component of every Beck application shares, and it is cacheable across deployments because
   it does not depend on the program.
 - **Speed.** A tree-walker in the browser is the same tree-walker, with whatever WebAssembly costs
-  on top. [`94`](../94-mode-b-report.md) §94.6 says what has and has not been measured; the honest
+  on top. [`94`](../94-the-client-report.md) §94.11 says what has and has not been measured; the honest
   summary is that a local render is bounded by the interpreter and not by the network, which is
   still the point of the mode.
 - **Types are erased from the bundle.** A compiling client backend needs them, so it needs bundle

@@ -102,13 +102,13 @@ because a fold takes a `Stream` and a roster is a `Signal`.
 ## 96.4 Mode B may not read it, for the same reason it may not read the session
 
 `B0516`. `@render(client)` sends the browser the **accumulator** and lets it run the program's own
-fold and view locally ([`94`](94-mode-b-report.md)). The roster is in neither the accumulator nor
+fold and view locally ([`94`](94-the-client-report.md)). The roster is in neither the accumulator nor
 the log — it is a fact the server holds about its own sockets — so a browser handed the state would
 have nothing to render that part of the page from. Shipping the roster alongside would be a second
 wire that nothing reconciles by `seq`, which is exactly the thing Mode B's correctness argument
 rests on not having.
 
-The refusal is separate from [`94`](94-mode-b-report.md)'s `B0514`, and the program in the harness
+The refusal is separate from [`94`](94-the-client-report.md)'s `B0514`, and the program in the harness
 that triggers it is written so that **only** the new one can fire — its page does not read the
 session. A program refused for two reasons proves neither.
 

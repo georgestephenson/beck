@@ -16,7 +16,7 @@
 //!    history, and the question a person will ask after ten minutes of clicking is whether it slows
 //!    down. Measured at two log lengths, for the same reason.
 //!
-//! Measured natively rather than in WebAssembly, exactly as `docs/94` §94.14's kernel numbers were:
+//! Measured natively rather than in WebAssembly, exactly as `docs/94` §94.12's kernel numbers were:
 //! the crate is an `rlib` as well as a `cdylib`. The *ratios* and the shapes carry across; the
 //! absolute microseconds do not, and a browser will be slower by some factor this does not
 //! establish.

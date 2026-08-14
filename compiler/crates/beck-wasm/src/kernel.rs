@@ -187,7 +187,7 @@ struct Shown {
     html: Html,
     from: Value,
     /// The `Freshness` the page was rendered against. Compared only when the component reads it —
-    /// see [`Client::paint`], where skipping the comparison is what keeps `docs/94` §94.14's
+    /// see [`Client::paint`], where skipping the comparison is what keeps `docs/94` §94.12's
     /// shortcut for every program that does not.
     fresh: Value,
 }
@@ -517,7 +517,7 @@ impl Client {
     /// right: a client proposes, renders its guess, and the server's data patch then confirms
     /// exactly that guess. The state derived after the confirmation equals the state the guess was
     /// derived from — that equality is what makes the optimism correct — so without this an
-    /// interaction pays for two renders and the second is guaranteed to produce no patch (§94.14).
+    /// interaction pays for two renders and the second is guaranteed to produce no patch (§94.12).
     pub fn repaint(&mut self) -> Result<Vec<diff::Op>, String> {
         self.paint(false)
     }
@@ -537,7 +537,7 @@ impl Client {
         // the guess was right, so the derived state before and after are equal, and `Pending(1)`
         // becomes `Confirmed`. A page that renders "saving…" has to be repainted for that; a page
         // that does not read `freshness()` renders the same bytes either way, and repainting it
-        // would hand back the second render `docs/94` §94.14 removed — 150× the cost of a
+        // would hand back the second render `docs/94` §94.12 removed — 150× the cost of a
         // confirmation, for every program in the tree, to show nobody anything.
         let same = self
             .shown

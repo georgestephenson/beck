@@ -102,7 +102,7 @@ pub struct Bundle {
     /// Whether this component's `view` reads `freshness()` — §3.7's freshness dimension.
     ///
     /// The client needs it for one reason and it is not rendering: a page that does *not* observe
-    /// freshness must keep [`docs/94`](../../../../../docs/94-mode-b-report.md) §94.14's
+    /// freshness must keep [`docs/94`](../../../../../docs/94-the-client-report.md) §94.12's
     /// shortcut, where a confirmation that does not move the state costs no render. Comparing the
     /// freshness unconditionally would make every confirmation move it — from `Pending(1)` to
     /// `Confirmed` — and hand every program in the tree back the second render that report

@@ -965,7 +965,7 @@ pub const INDEX: &[CodeEntry] = &[
          scopes or hides by identity. `@render(client)` sends the browser the state rather than \
          the page, which would hand every actor what the filter was removing (docs/94 §94.2). \
          Reading `session.path` is not this: the browser chose the route and already holds the \
-         state, so a page that varies by route is eligible (docs/100 §100.2).",
+         state, so a page that varies by route is eligible (docs/100 §94.3).",
     ),
     e(
         "B0515",
@@ -1001,7 +1001,7 @@ pub const INDEX: &[CodeEntry] = &[
          yet had confirmed. A server renders what it has recorded, so its answer is `Confirmed` at \
          every position of every log and the page's other branch would be unreachable. This is \
          `B0516` from the other side: `@render(client)` is what makes a guess possible, and \
-         therefore what makes saying so possible (docs/102 §102.2).",
+         therefore what makes saying so possible (docs/102 §94.5).",
     ),
     // --------------------------------------------------------- B06xx: modules and interfaces
     e(

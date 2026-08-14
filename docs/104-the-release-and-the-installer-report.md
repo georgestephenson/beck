@@ -1,8 +1,8 @@
 # 104 — Phase 3 report, part 72: the release, and the installer that reaches it
 
 **Built.** [`08`](08-roadmap.md) §8.5.4 closes Phase 3's exit criterion with a list of the apologies
-a tutorial would still have to make, and after [`94`](94-mode-b-report.md),
-[`95`](95-oidc-relying-party-report.md) and [`100`](100-client-polish-report.md) the list was down to
+a tutorial would still have to make, and after [`94`](94-the-client-report.md),
+[`95`](95-oidc-relying-party-report.md) and [`94`](94-the-client-report.md) the list was down to
 two: **no installation story, no released binary**. Neither is a bullet in the phase list — they were
 never anybody's work — and they are the two an outside developer meets before any of the language
 exists for them.
@@ -275,7 +275,7 @@ the skip. CI sets it.
   does not reach a tarball (§104.6).
 - **[`08`](08-roadmap.md) §8.5.4's apology list** — "no OIDC, no Mode B, no installation story, no
   released binary" — was already two items out of date when this began
-  ([`94`](94-mode-b-report.md), [`95`](95-oidc-relying-party-report.md)) and is now down to the
+  ([`94`](94-the-client-report.md), [`95`](95-oidc-relying-party-report.md)) and is now down to the
   distinction §104.7 draws: the story is built and executed, the release is built and uncut.
 - **[`86`](86-getting-started.md) §86.1** opened by telling a newcomer to build a compiler, and
   §86.8 listed "there is no installation story" as something belonging to

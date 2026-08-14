@@ -409,7 +409,7 @@ fn presence_in_the_tab_is_who_is_connected_to_the_tab() {
 ///
 /// The rule is `beck_host::sequence`'s rather than the tab's, which is the point: the tab inherits
 /// it by running that function, and this asserts the inheritance rather than a second copy of the
-/// behaviour (`docs/94` §94.13 is what it cost to get wrong).
+/// behaviour (`docs/94` §94.10 is what it cost to get wrong).
 #[test]
 fn a_retried_command_is_acknowledged_and_appended_once() {
     let mut tab = Tab::load(compiled(
@@ -619,7 +619,7 @@ fn the_bundle_the_tab_hands_over_is_the_program_it_is_running() {
 
 /// A route is part of the session in the tab, in both modes.
 ///
-/// `docs/100` made the route a field of the session, and a host that ignored the `g` frame would be
+/// `docs/94` made the route a field of the session, and a host that ignored the `g` frame would be
 /// running the program against a session no deployment builds — silently, because a page that does
 /// not read `session.path` cannot tell.
 #[test]
@@ -1029,7 +1029,7 @@ fn lsp_type_of(kind: &str) -> String {
 
 /// Every file the page asks a browser for is a file the playground ships.
 ///
-/// `docs/94` §94.7 is the reason this exists: the served document referenced an element that was
+/// `docs/94` §94.13 is the reason this exists: the served document referenced an element that was
 /// never in it, in every browser, since Phase 1, with every test in the workspace green. A missing
 /// asset is the same class of defect and this is the cheapest place to catch it.
 #[test]

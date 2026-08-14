@@ -131,7 +131,7 @@ mint the thing [`48`](48-identity-report.md) §48.2 built a private field to pre
 
 ### The claims have to travel to Mode B, and the reason is `validate` rather than the view
 
-[`94`](94-mode-b-report.md) landed while this was being written, and the two meet at a place neither
+[`94`](94-the-client-report.md) landed while this was being written, and the two meet at a place neither
 of them is: a browser that runs the program's own `validate`.
 
 Mode B's own rule looks as if it settles the question. B0514 refuses `@render(client)` for a page

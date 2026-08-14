@@ -219,7 +219,7 @@ impl Html {
                 // different order than the same element the server rendered into the document. It
                 // is invisible until something compares the two, and then it is the difference
                 // between "the DOM is the page" and "the DOM is nearly the page"
-                // (`docs/94` §94.7).
+                // (`docs/94` §94.13).
                 let mut pairs: Vec<Value> = attrs.iter().map(|(k, v)| json!([k, v])).collect();
                 if let Some(k) = key {
                     pairs.push(json!([KEY_ATTR, k]));
@@ -335,7 +335,7 @@ pub fn element(
 /// The same two callers as [`element`], and the same reason: `ui:` lowers every non-element child
 /// through `html_text`, so "or Html" deciding differently in a compiled view than in an interpreted
 /// one would make a view composed out of functions render its parts as escaped markup in one
-/// backend and as markup in the other (`docs/94` §94.4).
+/// backend and as markup in the other (`docs/94` §94.6).
 pub fn text_of(v: &crate::core::Value) -> Html {
     match v {
         crate::core::Value::Html(h) => (**h).clone(),
@@ -467,7 +467,7 @@ mod tests {
     /// client rebuilt from a patch carried its attributes in a different order than the same
     /// element the server rendered into the document. Nothing was wrong with the page; it simply
     /// was not the same page, and only a browser comparing the two could see it
-    /// (`docs/94` §94.12).
+    /// (`docs/94` §94.13).
     #[test]
     fn attributes_cross_in_the_order_they_were_written() {
         let tree = Html::el("input")

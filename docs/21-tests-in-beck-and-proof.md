@@ -351,7 +351,7 @@ property tests need it too.
 * **Mode B and real browsers.** §21.2's cross-boundary tests run the tiers co-located. That proves
   what the boundary means, not that a particular browser renders it. Phase 3's Mode B will need a
   browser-in-the-loop harness, and it will be a different suite with a different failure budget.
-  — ***Built*** ([`94`](94-mode-b-report.md) §94.12): `beck-cli/tests/browser.rs` drives headless
+  — ***Built*** ([`94`](94-the-client-report.md) §94.13): `beck-cli/tests/browser.rs` drives headless
   Chromium over the DevTools Protocol and asserts, in both modes, that the DOM is the page the
   server would have rendered. It found three defects nothing else could see. The failure budget is
   the one predicted: it skips without a browser, and every assertion about the page is a wait with

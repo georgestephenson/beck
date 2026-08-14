@@ -33,14 +33,14 @@ subtree. **v0.1 ships Mode A only** — it makes the walking skeleton drasticall
 WASM, no size crisis, trivially good Lighthouse scores) — with Mode B in Phase 3
 ([`08`](08-roadmap.md)).
 
-> **Built** ([`94`](94-mode-b-report.md)), and three lines above are now corrections rather than
+> **Built** ([`94`](94-the-client-report.md)), and three lines above are now corrections rather than
 > plans. `@render(client)` is the whole surface: **the mode is declared, never inferred**, because a
 > wrong inference ships a state to a browser. A page mixes modes freely is still unbuilt, because a
 > program has one `page`. And the promotion carries a **refusal this section did not anticipate** —
 > a component whose view reads the session cannot render on the client, since Mode B hands the
 > browser the state a per-session view was filtering (§94.2). *That refusal is narrower than it was
 > written: it is about **who** is asking, and reading `session.path` — where the browser is, which
-> the browser chose — is allowed ([`100`](100-client-polish-report.md) §100.2).* The kernel interprets rather than
+> the browser chose — is allowed ([`94`](94-the-client-report.md) §94.3).* The kernel interprets rather than
 > compiles ([`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md)), which is what the size
 > budget below has to be read against: 179,195 bytes brotli once per application, 1,753 per
 > component.
@@ -61,11 +61,11 @@ WASM, no size crisis, trivially good Lighthouse scores) — with Mode B in Phase
   fine-grained signal graph, local speculative fold + `seq`-based reconciliation
   ([`03`](03-type-and-effect-system.md) §3.7). Size budgets enforced in CI: < 150 KB brotli for a
   typical Mode-B component bundle; `wasm-opt -Oz` (Binaryen) in the release path. — **Built, with
-  the first clause deferred** ([`94`](94-mode-b-report.md)): the local fold and the reconciliation
+  the first clause deferred** ([`94`](94-the-client-report.md)): the local fold and the reconciliation
   are here, and the WASM is the *evaluator* rather than the component compiled. The budget is
   answered in two parts, because a shared kernel and a per-component payload are different
   questions; `wasm-opt` is not run, so the kernel's number is a ceiling. *The budget is **enforced**
-  now rather than reported ([`102`](102-freshness-and-the-budget-report.md) §102.4): `beck bundle`
+  now rather than reported ([`94`](94-the-client-report.md) §94.11): `beck bundle`
   writes the artefact, a `budgets` job weighs every Mode B example against 150 KB brotli, and a
   shape gate under `cargo test` says the thing the threshold cannot — that a bundle is a function of
   the component's slice and not of the program around it.*
@@ -78,25 +78,25 @@ WASM, no size crisis, trivially good Lighthouse scores) — with Mode B in Phase
 - **Progressive enhancement**: Mode A degrades to plain forms + full-page responses under
   `noscript` — generated from the same `view`, since the server can always render.
 
-> **The router is built** ([`100`](100-client-polish-report.md)), and this line is a correction rather
+> **The router is built** ([`94`](94-the-client-report.md)), and this line is a correction rather
 > than a plan in two places. There are **no route declarations**: a route is a field of `Session`,
 > so the page is a pure function of it and "which page is this" is written in the program. And
 > navigation is **not** a command — a command is a proposal that becomes an event and reaches the
 > log, and where a browser is is neither. It is a `Session` that moved, which is why Mode A answers
 > a navigation with the difference between two pages and Mode B answers it with nothing at all.
-> Focus and scroll are kept by the patch interpreter rather than by frame identity (§100.5), at a
-> cost proportional to the patch. **Lazy routes are not built** and §100.7 says what they wait on.
+> Focus and scroll are kept by the patch interpreter rather than by frame identity (§94.8), at a
+> cost proportional to the patch. **Lazy routes are not built** and §94.15 says what they wait on.
 > Progressive enhancement is not built either — but a route *is* a URL the server renders, which is
 > the half of it that mattered most.
 
 **Debugging**: source maps from patch frames back to `view` expressions; a devtools extension
 showing the signal graph, patch traffic, and pending (optimistic) state; DWARF for Mode B WASM.
 
-> The **panel** is built ([`100`](100-client-polish-report.md) §100.6) — all three of the things this
+> The **panel** is built ([`94`](94-the-client-report.md) §94.9) — all three of the things this
 > line names — and it is a page the server serves rather than an extension, for a reason written out
 > there. Source maps and DWARF are not. What a page could already be asked is whether its client is
 > live — `data-b-ready` carries the mode's letter and `beck:ready`, `beck:rejected` and `beck:error`
-> are bubbling events on the frame root ([`94`](94-mode-b-report.md) §94.12) — and the panel is
+> are bubbling events on the frame root ([`94`](94-the-client-report.md) §94.13) — and the panel is
 > attached to exactly that.
 
 ## 5.2 Service tier → native code (dual backend)
@@ -148,7 +148,7 @@ The two must agree observably — enforced by differential tests ([`04`](04-comp
 > stays half-true and this section's "compiles to native binaries, statically linked, one per
 > `service`" stays a design. A view compiles as the **call** that builds the page rather than as the
 > page, so §93.5 is explicit that it buys no speed: it removes a prerequisite, and the one it
-> removes is Mode B's codegen ([`94`](94-mode-b-report.md) §94.8).
+> removes is Mode B's codegen ([`94`](94-the-client-report.md) §94.15).
 >
 > *And the list is empty of classes* ([`93`](93-the-native-backends-report.md),
 > [`93`](93-the-native-backends-report.md), [`93`](93-the-native-backends-report.md),

@@ -129,7 +129,7 @@ the way to earn it is not to write a playground client.
 set one and through the websocket when it has not, and everything else about the connection is the
 same code either way — the outbox, the backoff, the `hello` frame, and the rule that a null `seq` is
 sent as an *absent* field because "I hold nothing" and "I hold the frame as of zero" are different
-facts ([`94`](94-mode-b-report.md) §94.12).
+facts ([`94`](94-the-client-report.md) §94.13).
 
 So a client iframe loads `beck-patch.js`, then a **32-line** `beck-play-port.js` that sets
 `beck.dial`, then `beck-thin.js` — unmodified, and unaware it is in a playground.
@@ -204,7 +204,7 @@ the same bytes on a port so that a browser can instantiate WebAssembly at all, w
 
 `brotli` is not installed on this machine, so the compressed column is gzip and is a **ceiling** on
 what a CDN would send; `wasm-opt -Oz` has not been run either, for the same reason
-[`94`](94-mode-b-report.md) §94.6 gives. The module is large and honestly so: it is the whole front
+[`94`](94-the-client-report.md) §94.11 gives. The module is large and honestly so: it is the whole front
 end — parser, macro expander, inference, placement, the splitter, the plan, the read-model
 derivation and the Kubernetes emitter — plus the evaluator. What it buys is that there is no server
 in the answer, which is the entire point of the rung.
@@ -236,7 +236,7 @@ scrub is a fold **of the log**, so it grows with the history, linearly, at about
 thousand events is under a millisecond and a million would be a second; the fix, if it is ever
 needed, is the snapshots the durable substrates already have and a tab does not.
 
-Measured natively rather than in WebAssembly, exactly as [`94`](94-mode-b-report.md) §94.14's kernel
+Measured natively rather than in WebAssembly, exactly as [`94`](94-the-client-report.md) §94.12's kernel
 numbers were: the crate is an `rlib` as well as a `cdylib`. The ratios and the shapes carry across;
 the absolute microseconds do not.
 
@@ -252,7 +252,7 @@ the absolute microseconds do not.
   the Mode B kernel inside the client iframe with its bundle over the port, which is a second module
   in a second frame and is a piece of work rather than a flag.
 - **No IndexedDB.** §17.2's log-storage row says IndexedDB; the tab's log is an array, so a reload
-  starts from `init`. Mode B's `localStorage` snapshot ([`94`](94-mode-b-report.md) §94.13) is the
+  starts from `init`. Mode B's `localStorage` snapshot ([`94`](94-the-client-report.md) §94.10) is the
   shape the answer would take and it is not wired here.
 - **No sharing.** §17.4 is content-addressed share links — "a share link is a digest; forks are new
   digests" — and there is none. The playground has no URL state at all: an edit is not addressable.
@@ -316,14 +316,14 @@ existed for Mode B, so neither can skip there.
 - **`Runtime::new_uuid` is gone.** It had no callers: the evaluator mints its own ids
   (`beck_eval::uuid_v7`), and the field on `Runtime` was a second source nothing read. Removing it
   is what let `beck-host` carry no `uuid` dependency, which matters because `uuid`'s
-  `wasm32-unknown-unknown` support is `wasm-bindgen`, and [`94`](94-mode-b-report.md) §94.4's "no
+  `wasm32-unknown-unknown` support is `wasm-bindgen`, and [`94`](94-the-client-report.md) §94.6's "no
   `wasm-bindgen`, no generated glue" is a property worth keeping.
 - **`beck-patch.js` has a transport seam** (§98.3). A deployment is unchanged — no `beck.dial`, so a
   websocket — and `browser.rs`'s five Mode A and Mode B tests are what says so.
 - **A command's events are all-or-nothing** (§98.2), which the log's contract already required and
   the sequencer did not do.
 - **A measurement suite could deadlock on a large artefact**, and one that has been in the tree
-  since [`94`](94-mode-b-report.md) did. `compressed()` wrote its input into a compressor's stdin
+  since [`94`](94-the-client-report.md) did. `compressed()` wrote its input into a compressor's stdin
   and only then read the output — so a compressor that emits while it reads fills a 64 KiB pipe,
   blocks, and blocks the writer. `brotli -q 11` buffers a whole window and never hit it; `gzip -9`
   on this 2.6 MB module hit it every time, which is how a machine without brotli found a bug a
@@ -336,7 +336,7 @@ existed for Mode B, so neither can skip there.
 Unchanged except for this bullet: **the playground exists**, for the two rungs that need no cloud.
 What is still missing is three of the supply-chain bullet's four pieces
 ([`92`](92-sbom-report.md) §92.5), client polish, and the heap both code generators and Mode B's
-kernel wait on ([`94`](94-mode-b-report.md) §94.8, [`93`](93-the-native-backends-report.md) §93.14). Identity's
+kernel wait on ([`94`](94-the-client-report.md) §94.15, [`93`](93-the-native-backends-report.md) §93.14). Identity's
 last row closed while this was being written ([`96`](96-presence-report.md)).
 
 The exit criterion is a claim about a person — an outside developer building a non-trivial app

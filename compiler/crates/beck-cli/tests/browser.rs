@@ -4,8 +4,8 @@
 //! **JavaScript** — `beck-patch.js`, `beck-thin.js`, `beck-mode-b.js` and the WebAssembly kernel —
 //! in the program they were written for, which is a browser and not a harness.
 //!
-//! [`docs/94-mode-b-report.md`](../../../../docs/94-mode-b-report.md) §94.8 listed "no browser has
-//! run it" as the largest hole in Mode B, and §94.7 says what the hole had already cost: a served
+//! [`docs/94-the-client-report.md`](../../../../docs/94-the-client-report.md) §94.15 listed "no browser has
+//! run it" as the largest hole in Mode B, and §94.13 says what the hole had already cost: a served
 //! document that never contained the element both clients open by looking for, and a thin client
 //! that had therefore returned immediately in every browser since Phase 1, with every test in the
 //! workspace passing. A suite that cannot execute the residue cannot see that class of defect at
@@ -432,7 +432,7 @@ async fn mode_b_renders_in_the_browser_and_guesses_ahead_of_the_server() {
     // Mode B is live when the kernel holds the bundle and interactions are being captured — which
     // is the end of an *asynchronous* load, and is not the same moment as "the scripts ran". A
     // test that interacts before this sees a click reach nothing, and the page never move; that is
-    // how this suite failed the first time it was written (`docs/94` §94.7).
+    // how this suite failed the first time it was written (`docs/94` §94.13).
     page.wait_for(
         &mut browser,
         "document.getElementById('b-root').dataset.bReady === 'b'",
@@ -497,7 +497,7 @@ async fn mode_b_renders_in_the_browser_and_guesses_ahead_of_the_server() {
     );
 
     // The claim the whole mode rests on, in a real DOM: what the browser rendered locally is what
-    // the server would have sent (`docs/94` §94.5).
+    // the server would have sent (`docs/94` §94.7).
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
     loop {
         let (there, here) = (
@@ -620,7 +620,7 @@ browser_test! {
 /// Reloading is a fresh subscription, and the page comes back.
 ///
 /// A Mode B client resumes from nothing — it holds the state, and after a reload it holds `init`
-/// again (`docs/94` §94.5). This is the assertion that the `seq` a reloaded tab claims is the one
+/// again (`docs/94` §94.7). This is the assertion that the `seq` a reloaded tab claims is the one
 /// that gets it a state rather than a gap it cannot apply.
 async fn mode_b_survives_a_reload() {
     let Some(mut browser) = browser::shared().await else {
@@ -735,7 +735,7 @@ async fn mode_b_works_with_the_server_gone_and_catches_up_when_it_returns() {
     // What is *not* tested here, because it does not work: reloading while the server is gone. The
     // document comes from the server, so a reload with nothing listening gets a browser error page
     // and the local copy is never consulted — the shell would have to be cached by a service
-    // worker, and there is none (`docs/94` §94.13).
+    // worker, and there is none (`docs/94` §94.10).
 
     // Out of the tunnel. The queue goes up as soon as a socket opens.
     serving.listen().await;
@@ -1114,7 +1114,7 @@ async fn the_playground_runs_the_application_and_two_clients_of_it() {
     // These iframes are `srcdoc` documents, so `location.pathname` inside one is the string
     // `srcdoc` — and a residue that read a route off it would put that on the `hello` frame, where
     // no program could ever match it and every test in this workspace would still pass
-    // (`docs/100` §100.1).
+    // (`docs/94` §94.3).
     assert_eq!(
         page.text(
             &mut browser,
@@ -1916,7 +1916,7 @@ async fn the_devtools_panel_shows_the_signal_graph_the_traffic_and_the_pending_s
 browser_test! {
 /// A cold start **at a route**, with the server gone.
 ///
-/// The router made [`94`](../../../../docs/94-mode-b-report.md) §94.13's cold start narrower without
+/// The router made [`docs/94`](../../../../docs/94-the-client-report.md) §94.10's cold start narrower without
 /// anybody noticing: the worker caches `/`, a reload asks for `/done`, and the tab that had
 /// navigated got an error page for a route it was perfectly able to render. In Mode B the route is
 /// the *client's* to render — it reads `location` and renders from the state it holds — so one

@@ -684,7 +684,7 @@ mod tests {
     ///
     /// Both clients open with `document.getElementById("b-root")` and give up if it is missing, so
     /// a document without it is a page that never connects — and nothing would have said so,
-    /// because no test in this workspace runs JavaScript (`docs/94` §94.8).
+    /// because no test in this workspace runs JavaScript (`docs/94` §94.15).
     #[test]
     fn the_document_carries_the_frame_root_the_residue_looks_for() {
         for client in [crate::THIN_CLIENT, crate::MODE_B_CLIENT] {
@@ -708,7 +708,7 @@ mod tests {
     /// when a client starts reading an attribute the server never writes. That failure is silent —
     /// `dataset.bClaims` on a document without it is `undefined`, so the Mode B kernel would build
     /// a `Session` with no claims and refuse commands the server accepts — and it is exactly the
-    /// shape of the defect Mode B's own `#b-root` finding was (`docs/94` §94.8).
+    /// shape of the defect Mode B's own `#b-root` finding was (`docs/94` §94.15).
     ///
     /// So the list is derived from the residue rather than written down: whatever `dataset.bFoo`
     /// the shipped JavaScript reads, `data-b-foo` has to be in the shell.

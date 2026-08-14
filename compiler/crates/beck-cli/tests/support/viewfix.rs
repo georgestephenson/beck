@@ -27,7 +27,7 @@
 //!   right word as the wrong thing.
 //! * **A child that is already a tree**, which is spliced rather than rendered. That is what makes
 //!   a view composable out of functions, and rendering it instead is escaped markup on the page
-//!   (`docs/94` §94.4).
+//!   (`docs/94` §94.6).
 //! * **Children built by a loop**, since the list is the shape a real `ui:` block always has.
 //! * **The empty element**, whose two lists are empty and whose children hash is the accumulator's
 //!   seed.

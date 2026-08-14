@@ -26,7 +26,7 @@ pub enum ClientMsg {
     /// nothing, send me the world" and `Some(n)` is "I hold the frame as of `n`" — including
     /// `Some(0)`, which is what a browser says when the document it is running in was rendered
     /// from an empty log. Those were the same message until a browser ran the thin client and the
-    /// first paint rebuilt the page it had just been served (`docs/94` §94.7): position zero and
+    /// first paint rebuilt the page it had just been served (`docs/94` §94.13): position zero and
     /// nothing-at-all are different facts, and a protocol that spells them the same way cannot
     /// keep §5.1's "first paint is free" promise.
     #[serde(rename = "hello")]

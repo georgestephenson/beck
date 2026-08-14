@@ -141,7 +141,7 @@ measures it), and the page stores the whole log on every command rather than app
 tens of events is what a playground session is, and a cursor and a row per event would be a store's
 worth of machinery for a saving nobody in a tab can measure. A browser's storage quota is the only
 bound. And a page that will not store — a private window, a disabled store — says so once and keeps
-working, which is the posture [`94`](94-mode-b-report.md) §94.13 took for the same problem.
+working, which is the posture [`94`](94-the-client-report.md) §94.10 took for the same problem.
 
 ## 103.3 A share link is the program, and it names itself
 
@@ -206,7 +206,7 @@ Two things fell out that were not the point:
   so that the `Session` the server hands `validate` is the one the client's own `validate` saw — and
   a tab that ignored it would run the program against a session no deployment builds. Handling it
   meant giving a subscription a path, which in Mode A makes a link in a playground iframe behave the
-  way a link in a deployment does. [`100`](100-client-polish-report.md) made the route a field of the
+  way a link in a deployment does. [`94`](94-the-client-report.md) made the route a field of the
   session; this is the tab catching up with it.
 
 ## 103.5 What it costs
@@ -225,7 +225,7 @@ there is a second module, which a visitor pays for only if they run a `@render(c
 The page grew from 30,243 bytes to 75,636 ([`98`](98-playground-report.md) §98.6 is the before): the
 editor, the store, the link and Mode B's residue. `brotli` is not installed on this machine, so the
 compressed column is gzip and is a **ceiling** on what a CDN would send; `wasm-opt -Oz` has not been
-run, for the same reason [`94`](94-mode-b-report.md) §94.6 gives.
+run, for the same reason [`94`](94-the-client-report.md) §94.11 gives.
 
 **The editor**, which is the cost a person pays per keystroke:
 
@@ -328,10 +328,10 @@ for Mode B, so neither can skip there.
   `beck_core::editor`'s (§103.1). It gained two capabilities and the ability to analyse a file that
   imports the standard library, neither of which that report contemplated. Its "no Salsa, whole file
   every time" position is unchanged.
-- [`94`](94-mode-b-report.md)'s kernel now has a second host. Nothing in `beck-wasm` changed;
+- [`94`](94-the-client-report.md)'s kernel now has a second host. Nothing in `beck-wasm` changed;
   `beck-mode-b.js` gained the `beck.asset` seam and a `beck.shell` flag, and `browser.rs`'s five Mode
   A and Mode B tests against a deployment are what says a deployment is unaffected.
-- [`100`](100-client-polish-report.md)'s route reaches the tab (§103.4).
+- [`94`](94-the-client-report.md)'s route reaches the tab (§103.4).
 - **`beck play --out <dir>` now needs the kernel built**, not only the playground module. The failure
   names the command, as the playground module's already did.
 - `beck-play` takes one dependency it did not have — `flate2`, already in this workspace for the

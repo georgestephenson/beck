@@ -426,14 +426,14 @@ fn a_guess_is_retired_by_the_state_that_confirms_it_and_not_before() {
 ///
 /// The test above asserts the confirmation produces no DOM ops; this asserts it does no work to
 /// find that out. They are different claims and the second is the expensive one: `view` is 97% of
-/// what an interaction costs and it grows with the state (§94.14), so a render whose patch is
+/// what an interaction costs and it grows with the state (§94.12), so a render whose patch is
 /// empty by construction is the largest avoidable cost in the client.
 ///
 /// Asserted as a count rather than as a duration, because a gate on a clock flakes ([`13`] §13.7)
 /// and the property here is exact: the state derived after the confirmation *equals* the state the
 /// guess was derived from, and equal states cannot produce different pages.
 ///
-/// This goes red if `repaint` renders unconditionally again — which is what it did until §94.14.
+/// This goes red if `repaint` renders unconditionally again — which is what it did until §94.12.
 ///
 /// [`13`]: ../../../../docs/13-testing.md
 #[test]
@@ -652,7 +652,7 @@ fn pending_counts_every_command_in_flight_and_not_just_that_there_is_one() {
     assert!(page.contains("saving 3"), "{page}");
 }
 
-/// The shortcut `docs/94` §94.14 added asks whether the *state* moved. A confirmation is exactly
+/// The shortcut `docs/94` §94.12 added asks whether the *state* moved. A confirmation is exactly
 /// where the state does not and the freshness does, so the shortcut had to learn a second question
 /// — and it may only ask it of a component that reads the answer.
 ///
@@ -992,7 +992,7 @@ fn the_kernel_builds_for_the_browser() {
     );
     // A ceiling, not a budget: what this asserts is that the kernel has not grown by an order of
     // magnitude, which is the change that would make Mode B a different proposition. The measured
-    // number and what it means for §5.1's 150 KB are in `docs/94` §94.6.
+    // number and what it means for §5.1's 150 KB are in `docs/94` §94.11.
     assert!(
         bytes < 8 * 1024 * 1024,
         "the kernel is {bytes} bytes, which is not a kernel any more"

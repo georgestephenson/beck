@@ -135,7 +135,7 @@ server streams *data* changes instead of DOM changes; the browser renders locall
 
 ### How the choice is made
 
-**Built** ([`94`](94-mode-b-report.md)), with the promotion narrower than this paragraph and a
+**Built** ([`94`](94-the-client-report.md)), with the promotion narrower than this paragraph and a
 condition it did not foresee: a component whose view reads the session is **refused** Mode B,
 because Mode B sends the browser the state and a page that filters by identity is a page whose
 state is not that browser's to hold. Optimism turns out to be the same condition rather than a
@@ -194,7 +194,7 @@ Three rungs of "works without the network", in plain terms:
    type system absolves you, as the original conversation put it. Adopting it wholesale would
    dissolve Beck's central construct, the single merge point.
 
-**Built** for rung 2 ([`94`](94-mode-b-report.md) §94.13), and "falls out of Mode B + determinism"
+**Built** for rung 2 ([`94`](94-the-client-report.md) §94.10), and "falls out of Mode B + determinism"
 held with one correction: the server had de-duplicated a retried command since Phase 0 but *replied
 that it was rejected*, so replaying a queue took the work back off the page. An idempotent operation
 has to be idempotent in its answer. What is still missing is a service worker — the document comes

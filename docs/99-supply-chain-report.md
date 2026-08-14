@@ -233,7 +233,7 @@ The exit criterion is a claim about a person, and no outside developer has read 
 [`23`](23-incremental-views-report.md) published. Of the fourteen bullets, what remains
 untouched is **client polish**, and nothing else; the codegen bullet has both of §5.2's code
 generators and no heap ([`93`](93-the-native-backends-report.md), [`93`](93-the-native-backends-report.md) §93.14),
-Mode B lacks codegen for the same missing heap ([`94`](94-mode-b-report.md) §94.8), and the
+Mode B lacks codegen for the same missing heap ([`94`](94-the-client-report.md) §94.15), and the
 playground has rungs A and B and not rung C, which is Phase 4's
 ([`98`](98-playground-report.md) §98.7). Identity and the playground both finished while this was
 being written ([`96`](96-presence-report.md), [`98`](98-playground-report.md)). This bullet's

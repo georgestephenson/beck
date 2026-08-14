@@ -256,15 +256,15 @@ dependencies whose signatures didn't change.
   shared while its consumer is per session, which makes this **bullet complete**.*
 - **Mode B client**: per-component WASM (view + fold + signal kernel), optimistic application with
   `seq` reconciliation, freshness-typed pending state; size budget CI gate (< 150 KB brotli per
-  component bundle). — ***Built*** ([`94`](94-mode-b-report.md)): `@render(client)`, a bundle that
+  component bundle). — ***Built*** ([`94`](94-the-client-report.md)): `@render(client)`, a bundle that
   is the component's slice, a `wasm32` kernel, data patches instead of DOM patches, and
-  reconciliation by `seq`. Chromium runs all of it (§94.12), and a tab survives a cold start with
-  the server switched off (§94.13). An interaction is measured rather than asserted (§94.14):
+  reconciliation by `seq`. Chromium runs all of it (§94.13), and a tab survives a cold start with
+  the server switched off (§94.10). An interaction is measured rather than asserted (§94.12):
   13 ms on a thousand-card board, 97% of it `view`, and growing with the board rather than with the
   change. **Not** codegen ([`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md)) — which
-  §94.14 finds is not what the 13 ms is — not freshness-typed, and no size-budget gate; §94.8 is
+  §94.12 finds is not what the 13 ms is — not freshness-typed, and no size-budget gate; §94.15 is
   the list. ***The last two of those are built***
-  ([`102`](102-freshness-and-the-budget-report.md)): `freshness()` is §3.7's dimension as a signal
+  ([`94`](94-the-client-report.md)): `freshness()` is §3.7's dimension as a signal
   source, so a page renders "saving…" from `Confirmed | Pending(n)` and stops when the state that
   confirms it arrives — carrying the refusal that points the other way from every rule Mode B has
   had so far, since a **server** cannot answer it (`B0518`). And the budget is a gate: `beck bundle`
@@ -275,16 +275,16 @@ dependencies whose signatures didn't change.
   schedules behind a heap.
 - Client polish for both modes: router, forms, lazy routes, focus/scroll preservation, devtools
   extension showing signal graph, patch traffic and pending state. — ***Built, except lazy routes***
-  ([`100`](100-client-polish-report.md)). **A route is a field of `Session`**: `view(state, session)`
+  ([`94`](94-the-client-report.md)). **A route is a field of `Session`**: `view(state, session)`
   reads `session.path`, so there is no route table, no matcher and no route form — every route is a
   real URL the server renders directly, and a link is an ordinary `<a href>`. Forms are `on_submit`
   with a `$field:name` hole; the caret and the scroll survive a patch that rebuilds the page, at a
   cost proportional to the patch; and the panel shows all three of the things this line names,
-  served as a page rather than shipped as an extension (§100.6 says why). What putting the route on
+  served as a page rather than shipped as an extension (§94.9 says why). What putting the route on
   the session found is the report's subject: `Session` had been one word for **who** is asking and
   **where** they are, and `B0514` was refusing every routed page in Mode B for a reason that is
   about identity — so eligibility now asks which fields the view can observe, and stopped being the
-  same answer as §5.3's fanout. **Lazy routes are not built**, and §100.7 is the ordering rather than
+  same answer as §5.3's fanout. **Lazy routes are not built**, and §94.15 is the ordering rather than
   the excuse: a program has one component, so there is nothing to be lazy about until §5.1's
   per-component boundary exists in the language.
 - **`test` blocks and inferred mocks** ([`21`](21-tests-in-beck-and-proof.md) §21.2–§21.3) —
@@ -481,10 +481,10 @@ answered while another call is in flight (§93.14); Mode B has the mode, the bun
 the data patch, the reconciliation, a browser that runs it and an offline queue, without codegen —
 which waits on the half of that heap that is not built — and it is the **collection** half rather
 than the text half, since a page is a tree of children
-([`94`](94-mode-b-report.md) §94.8, [`93`](93-the-native-backends-report.md) §93.6); and the
+([`94`](94-the-client-report.md) §94.15, [`93`](93-the-native-backends-report.md) §93.6); and the
 playground has rungs A and B and not rung C, which is Phase 4's
 ([`98`](98-playground-report.md) §98.7). **Client polish is built too**
-([`100`](100-client-polish-report.md)) except for lazy routes, which wait on the same
+([`94`](94-the-client-report.md)) except for lazy routes, which wait on the same
 per-component boundary Mode B does, so **nothing on the list is untouched**. The criterion is not a
 count of those, though — it is a
 claim about a *person*, and the honest way to say how close it is is by the questions such a
@@ -510,7 +510,7 @@ cover. Every other row above is a prerequisite for a tutorial being worth writin
 against the design" — is the practice this phase has least honoured. The apologies it would
 currently need are shorter than they were and still enumerable — and the list this paragraph carried
 has been overtaken twice. ~~No OIDC~~ ([`95`](95-oidc-relying-party-report.md)), ~~no Mode B~~
-([`94`](94-mode-b-report.md)), ~~no installation story~~
+([`94`](94-the-client-report.md)), ~~no installation story~~
 ([`104`](104-the-release-and-the-installer-report.md)), **no released binary** — which is now one
 `git tag` rather than a piece of missing work, because the pipeline that would build it exists and
 has never run ([`104`](104-the-release-and-the-installer-report.md) §104.7). What is left to
@@ -953,10 +953,10 @@ already uses — a weight-balanced tree in the arena, five words a node, sharing
 not touch. **1,137** definitions compile where 895 did, refusals go 523 → 281, and a fold that keeps
 a `Map` is `Θ(n log n)`. What is left of Lane E is the effects with a second direction
 ([`93`](93-the-native-backends-report.md) §93.7), which is still Phase 4's Lane E and still the prerequisite Mode B codegen is behind
-([`94`](94-mode-b-report.md) §94.8) — and §93.6's correction about which row `Html` belongs to is
+([`94`](94-the-client-report.md) §94.15) — and §93.6's correction about which row `Html` belongs to is
 itself corrected by §93.14: a view follows neither the collection row nor the text one, being the
 first thing in this arena whose contents are a call. Mode B and
-~~client polish~~ — **built** ([`100`](100-client-polish-report.md)), and it was not a Lane B item
+~~client polish~~ — **built** ([`94`](94-the-client-report.md)), and it was not a Lane B item
 either: a route is a field of `Session`, so the engine, the splitter and the plan are untouched and
 the work is at the edges; ~~the LSP~~ — **built** ([`65`](65-lsp-report.md)) and **finished**
 ([`110`](110-the-editor-edits-report.md)); ~~SQL read models, pgwire~~ — **built**
@@ -1039,7 +1039,7 @@ Recommended pairings, in order:
 | ~~**Then**~~ | ~~Lane A: the rest of Wave 2 — `Set`, dates~~ | ~~Lane B: the shared dataflow's three loose ends~~ | **Half done.** `Set` and dates landed ([`50`](50-collections-and-dates-report.md)) and were not Lane A at all: two files in `compiler/lib/`, no primitive, and the only Rust touched was one diagnostic's label. Lane B is untouched, so the pairing was never tested — the prediction it made cannot be claimed to have held |
 | ~~**Then**~~ | ~~Lane A: bignums, coercion, `@derive`~~ | ~~Lane B: the shared dataflow's three loose ends~~ | **Half done, and the other half.** Lane B was taken at last, after being the recommended Branch 2 for three consecutive rewrites: two of the three loose ends are closed ([`23`](23-incremental-views-report.md)) and the third — the render lock — is deliberately left. The prediction held exactly: `engine.rs`, `beck-rt/` and one test suite, and nothing in `check/`, `ty.rs` or `core.rs`. Lane A is untouched, so this pairing was again never actually run as a pair |
 | ~~**Then**~~ | ~~Lane A: bignums, coercion, `@derive`~~ | ~~Lane B: SQL read models and pgwire~~ | **Half done, and the other half again.** Lane B was taken ([`23`](23-incremental-views-report.md)) and the prediction held: `beck-core/src/read.rs`, `beck-rt/src/pgwire.rs`, one reader type on `engine.rs`, and nothing in `check/`, `ty.rs` or `core.rs`. Lane A is untouched, so this pairing was never run as a pair either — the fourth consecutive rewrite in which it was not |
-| ~~**Then**~~ | Lane A: ~~the pattern-matching completion the error-rows bullet still names~~ — **built**, with nesting, guards and alternatives ([`90`](90-nested-patterns-report.md), [`91`](91-guards-and-alternatives-report.md)); what is left in this lane is `Ord` as a trait, which [`54`](54-ordering.md) writes out and explicitly does *not* recommend | Lane B: ~~query fusion on symbolic plans~~ — **built** ([`23`](23-incremental-views-report.md)); ~~Mode B's server half~~ — **built** ([`94`](94-mode-b-report.md)), and it is one branch in `session.rs`; what is left in this lane is the render lock ([`23`](23-incremental-views-report.md) §23.19), which survives into the row below still unowned | `beck-rt` and `engine.rs` are untouched by anything in `check/` |
+| ~~**Then**~~ | Lane A: ~~the pattern-matching completion the error-rows bullet still names~~ — **built**, with nesting, guards and alternatives ([`90`](90-nested-patterns-report.md), [`91`](91-guards-and-alternatives-report.md)); what is left in this lane is `Ord` as a trait, which [`54`](54-ordering.md) writes out and explicitly does *not* recommend | Lane B: ~~query fusion on symbolic plans~~ — **built** ([`23`](23-incremental-views-report.md)); ~~Mode B's server half~~ — **built** ([`94`](94-the-client-report.md)), and it is one branch in `session.rs`; what is left in this lane is the render lock ([`23`](23-incremental-views-report.md) §23.19), which survives into the row below still unowned | `beck-rt` and `engine.rs` are untouched by anything in `check/` |
 | ~~**Then**~~ | ~~Lane A, continued~~ | ~~Lane E: the LLVM backend~~ | **Half done, and the other half.** Lane E was taken ([`93`](93-the-native-backends-report.md)) and the prediction held to the letter: a new crate, one new CLI command, and one defect fixed in `beck-eval` — and nothing in `beck-rt`, `engine.rs`, `check/`, `ty.rs` or `core.rs`. Lane A is untouched, so the pairing was again not run as a pair |
 | ~~**Then**~~ | ~~Lane A, continued~~ | ~~Lane D: the release pipeline and the installer~~ | **Half done, and the other half — for the sixth consecutive rewrite.** Lane D was taken ([`104`](104-the-release-and-the-installer-report.md)) and its "collides with nothing in code" held for the pipeline and failed for the *release*: a version number that means something is `compiler/Cargo.toml`, a `build.rs` and one line of `main.rs`. Lane A is untouched, so this pairing was not run as a pair |
 | ~~**Then**~~ | ~~Lane A, continued~~ | ~~Lane E: a heap for the native backends~~ | **Half done, and the other half — again.** Lane E was taken ([`93`](93-the-native-backends-report.md)): the *algebraic* half of the heap is built, so a record, a union and a newtype compile. Lane A is untouched, which makes seven consecutive rewrites in which the recommended pair was not run as a pair — the prediction that Lane E collides with nothing keeps holding, and the one about Lane A keeps not being tested |
@@ -1051,7 +1051,7 @@ Recommended pairings, in order:
 | ~~**Then**~~ | ~~Lane A: `Ord` as a trait~~ | ~~Lane E: growing a map~~ | **Half done, and the other half — for the twelfth time.** Lane E was taken ([`93`](93-the-native-backends-report.md)): `beck-llvm`, `beck-clif`, their two suites and the refusal lists, and nothing in `beck-rt`, `check/`, `ty.rs` or `core.rs`. The forecast in [`93`](93-the-native-backends-report.md) §93.13 held — it wanted a tree, not a layout. Lane A is untouched |
 | ~~**Then**~~ | ~~Lane A: `Ord` as a trait~~ | ~~Lane E: text's last refusals, and generics~~ | **Half done, and the other half — for the thirteenth time.** Lane E was taken: `str_trim`, `str_split` and `str_chars` compiled once their stated reasons were checked and found false, and [`93`](93-the-native-backends-report.md) monomorphised. The last of those is the first item in this lane that touched neither emitter's code generation — a new module both are handed a program by — and it still held the prediction: nothing in `beck-rt`, `check/`, `ty.rs` or `core.rs`. Lane A is untouched |
 | ~~**Then**~~ | ~~Lane A: `Ord` as a trait~~ | ~~Lane E: the effects that call *back* into the host~~ | **Half done, and the other half — for the fourteenth time.** Lane E was taken ([`93`](93-the-native-backends-report.md)) and the prediction held once more: `beck-llvm`, `beck-clif`, their two suites — and, for the first time in this lane, two files that are not a backend's, because the four host atoms had to stop being the *evaluator's* trait before three backends could ask one question. Nothing in `beck-rt`, `check/`, `ty.rs` or `core.rs`. Lane A is untouched |
-| **Now** | Lane A: `Ord` as a trait, which [`54`](54-ordering.md) writes out and does *not* recommend — so realistically nothing | **Lane E has no class left, and a measured list of names.** [`93`](93-the-native-backends-report.md) took list patterns off it and the corpus now stands at **905 compiled against 173 refused**, whose largest remaining class is a **function value at a boundary** — every `parameter f is a function value`, and every `Seq[T]` in SICP chapter 3, whose `Cons(head, rest: () -> Seq[T])` puts a closure in a field. `Heap::crossing` refuses those truly rather than stalely, and what would move them is compiling definitions that are called only by *other compiled definitions*, which never marshal a closure at all. Behind that: three named items ([`93`](93-the-native-backends-report.md) §93.14): the signal vocabulary, which the splitter reads rather than a body calling it; a **bounded** definition, which is [`93`](93-the-native-backends-report.md)'s closure boundary; and a worker that can answer two calls at once, which [`93`](93-the-native-backends-report.md) §93.14 has named as the first thing a second version would change since there was a first version. **Mode B's codegen** is the item with a user in front of it, and it is that plus a wasm emitter ([`94`](94-mode-b-report.md) §94.8). ~~The lane's other live item is **cancellation** for a `parallel:` scope~~ — **built** ([`118`](118-a-scope-stops-its-children-report.md)). What is left in `beck-eval` is stopping a child that is *blocked in the host*, which is a deadline on the [`net`](../compiler/crates/beck-core/src/net.rs) seam rather than a change to the scope | Lane B's render lock is still open and still has no owner — it is a third branch rather than a reason to hold anything. Lane D's remaining item is **trusted publishing**, which is an account setting rather than a branch |
+| **Now** | Lane A: `Ord` as a trait, which [`54`](54-ordering.md) writes out and does *not* recommend — so realistically nothing | **Lane E has no class left, and a measured list of names.** [`93`](93-the-native-backends-report.md) took list patterns off it and the corpus now stands at **905 compiled against 173 refused**, whose largest remaining class is a **function value at a boundary** — every `parameter f is a function value`, and every `Seq[T]` in SICP chapter 3, whose `Cons(head, rest: () -> Seq[T])` puts a closure in a field. `Heap::crossing` refuses those truly rather than stalely, and what would move them is compiling definitions that are called only by *other compiled definitions*, which never marshal a closure at all. Behind that: three named items ([`93`](93-the-native-backends-report.md) §93.14): the signal vocabulary, which the splitter reads rather than a body calling it; a **bounded** definition, which is [`93`](93-the-native-backends-report.md)'s closure boundary; and a worker that can answer two calls at once, which [`93`](93-the-native-backends-report.md) §93.14 has named as the first thing a second version would change since there was a first version. **Mode B's codegen** is the item with a user in front of it, and it is that plus a wasm emitter ([`94`](94-the-client-report.md) §94.15). ~~The lane's other live item is **cancellation** for a `parallel:` scope~~ — **built** ([`118`](118-a-scope-stops-its-children-report.md)). What is left in `beck-eval` is stopping a child that is *blocked in the host*, which is a deadline on the [`net`](../compiler/crates/beck-core/src/net.rs) seam rather than a change to the scope | Lane B's render lock is still open and still has no owner — it is a third branch rather than a reason to hold anything. Lane D's remaining item is **trusted publishing**, which is an account setting rather than a branch |
 | **Any time** | — | Lane F; ~~Lane C's LSP~~ — **built** ([`110`](110-the-editor-edits-report.md)), which empties Lane C; more of SICP | No predecessors, no collisions |
 
 A third branch is viable whenever E or F is staffed. The ceiling is four, because of these:
@@ -1061,7 +1061,7 @@ saying so. §8.5.1's classification says to take the fan-out item first; the alg
 ([`93`](93-the-native-backends-report.md)) was taken and it moved two rows of the exit paragraph at once.
 What is behind the rest of it — growing a collection, the effects that call back into the host — is
 the same set it always was, four items and a half shorter: native codegen for anything a program actually manipulates, and Mode B's codegen, which
-is that plus a wasm emitter ([`94`](94-mode-b-report.md) §94.8). It sits in Lane E, which collides
+is that plus a wasm emitter ([`94`](94-the-client-report.md) §94.15). It sits in Lane E, which collides
 with nothing.
 
 **The four shared artefacts that serialise otherwise-independent branches.** Each has a cheap

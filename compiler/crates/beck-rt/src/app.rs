@@ -158,7 +158,7 @@ pub struct App {
     /// `http::serve` stops accepting on shutdown, but a websocket that was already accepted is a
     /// task of its own and went on living for as long as the process did. A client whose server
     /// has drained should find out and reconnect — which, for a Mode B client, is also the moment
-    /// its offline queue matters (`docs/94` §94.13).
+    /// its offline queue matters (`docs/94` §94.10).
     draining: watch::Sender<bool>,
 }
 
@@ -442,7 +442,7 @@ async fn sequencer(app: Arc<App>, mut rx: mpsc::Receiver<Proposal>, config: AppC
     // only safe if the answer to the second attempt is the answer to the first. Remembering the id
     // alone let this reply "duplicate" — a *rejection* — to a command that had been accepted, so a
     // client replaying its offline queue was told its work had been refused and took it back off
-    // the page (`docs/94` §94.13).
+    // the page (`docs/94` §94.10).
     let mut seen = Seen::new(config.dedup_capacity);
     let mut since_snapshot = 0u64;
     let mut batch: Vec<Proposal> = Vec::with_capacity(config.max_batch);
