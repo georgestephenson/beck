@@ -4,7 +4,7 @@
 diagnostics as you type, hover, go-to-definition and document symbols, over the Language Server
 Protocol, from the same front end `beck check` runs.
 
-One of the nine Phase 3 bullets [`26`](26-arrangement-sharing-report.md) §26.9 lists as untouched.
+One of the nine Phase 3 bullets [`23`](23-incremental-views-report.md) §23.19 lists as untouched.
 It is here now because [`64`](64-compile-speed-report.md) made the case for the design: §64.6
 measured the front end's parse-expand-check prefix at 4.7 ms on the largest file in the tree, which
 is what decides whether a language server needs incremental analysis or can re-check the buffer.
@@ -116,7 +116,7 @@ rather than 13,000.
 
 ## 65.6 What this corrects
 
-- **[`26`](26-arrangement-sharing-report.md) §26.9's "no LSP" is no longer true.** That sentence
+- **[`23`](23-incremental-views-report.md) §23.19's "no LSP" is no longer true.** That sentence
   named nine untouched bullets in one breath; `Result`/error rows went in
   [`27`](27-the-walls-come-down-report.md) and the standard library across
   [`46`](46-standard-library-report.md)–[`56`](56-decimal-report.md), and this is the third of them
@@ -135,4 +135,4 @@ diagnostics and shows Beck's inferred signatures is part of what "from documenta
 and §65.5's list is what stands between this and an editor somebody would choose to use.
 
 Six bullets of the fourteen remain untouched, identity has its seam and not its relying party, and
-[`26`](26-arrangement-sharing-report.md) §26.9 still names them one at a time.
+[`23`](23-incremental-views-report.md) §23.19 still names them one at a time.

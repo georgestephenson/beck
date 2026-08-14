@@ -127,7 +127,7 @@ The controls a reader would reasonably assume exist, that do not:
   with `403`. What is *still* absent here is a cross-origin allowlist: a deployment whose client is
   served from another host has nothing to configure, because a Beck app serves its own page and
   same-origin is a description of that rather than a policy chosen over alternatives.
-- **Authentication on the read-model port.** [`88`](88-read-models-and-pgwire-report.md) built
+- **Authentication on the read-model port.** [`23`](23-incremental-views-report.md) built
   `beck run --pgwire`, which serves a program's read models on the PostgreSQL wire protocol. It
   answers `AuthenticationOk` to everyone and speaks plaintext, so it is **off by default** and
   **refuses to bind to anything but loopback** — the compensating control is reachability rather

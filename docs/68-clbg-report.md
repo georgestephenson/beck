@@ -272,5 +272,5 @@ Unchanged from [`64`](64-compile-speed-report.md) §64.9. The exit criterion —
 building a non-trivial app from documentation alone — is not met and is not closer; §68.4 is a
 small argument that it is further away than it looked, since the standard library a documented
 program would import cannot be imported. Seven bullets of the fourteen remain untouched, identity
-has its seam and not its relying party, and [`26`](26-arrangement-sharing-report.md) §26.9 still
+has its seam and not its relying party, and [`23`](23-incremental-views-report.md) §23.19 still
 names them one at a time.

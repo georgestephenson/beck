@@ -580,7 +580,7 @@ Newest first.
   occurrence. Caught by the differential's pairs (§93.8).
 - **An unreachable refusal reason deleted.** The higher-order collection primitives are refused a
   line earlier by their own argument, so the table's entry for them could never be produced
-  ([`docs/89`](docs/89-query-fusion-report.md) §89.5's pattern).
+  ([`docs/23`](docs/23-incremental-views-report.md) §23.16's pattern).
 - **`measure_native.rs` asserted a ratio that depends on the build profile** — that text's
   accumulator is slower than the tree-walker, which is true in release and false in debug. The
   assertion is gone and the claim is gated with no clock in it instead:
@@ -632,7 +632,7 @@ Newest first.
   with the `links` job in [`docs.yml`](.github/workflows/docs.yml) keeping its own copy the way it
   already does for the link rule. Checked by putting the defect back: both go red and name all
   twelve lines. A heading opening with `§` cites a section rather than declaring one and is skipped
-  — [`26`](docs/26-arrangement-sharing-report.md) has the only one.
+  — [`docs/23`](docs/23-incremental-views-report.md) has the only one.
 - **Thirty-one citations named roadmap sections that have never existed.** `§8.6` (Phase 3's bullet
   list), `§8.7` and `§8.19` (Lane E) are cited by nine documents and four Rust doc comments, and
   `git log -S"## 8.6" -- docs/08-roadmap.md` returns nothing: the phase headings have carried names

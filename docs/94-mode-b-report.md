@@ -78,7 +78,7 @@ error[B0514]: `page` renders differently for each session, so it cannot render o
 ```
 
 The fact it turns on is `Roles::view_is_per_session`, which the slicer already computed for
-[`26`](26-arrangement-sharing-report.md)'s fanout analysis — "where a program reads the session is
+[`23`](23-incremental-views-report.md)'s fanout analysis — "where a program reads the session is
 what decides its fanout cost" — so a program cannot be per-session for the sharing analysis and not
 for this one. It is a placement rule rather than a lint, checked in `split` and refused before the
 program compiles.
@@ -362,7 +362,7 @@ which is the snapshot §94.7 ends on.
   implementing from it.
 - [`08`](08-roadmap.md) Phase 3's Mode B bullet is built except for the pieces §94.8 names; the client
   polish bullet is untouched.
-- [`24`](24-incremental-views-report.md) §24.9 item 2 — "the plan is where the client work attaches.
+- [`23`](23-incremental-views-report.md) §23.17 item 2 — "the plan is where the client work attaches.
   Mode B needs a per-component kernel" — is answered, and the answer is that the kernel needed the
   *slice* rather than the plan: the dataflow plan is a Mode A object, and a Mode B client evaluates
   the view directly.
@@ -568,7 +568,7 @@ The first is the compiler's own account of the program. `beck explain incrementa
 examples/board.beck` prints:
 
 > 1 of this view's 18 operators update from the change itself, 17 are recomputed when an input
-> moves, and the page's children are still assembled in full every time (docs/24 §24.6).
+> moves, and the page's children are still assembled in full every time (docs/24 §23.8).
 
 The second is measuring the incremental engine against the same interaction. §5.3's `Engine` — the
 thing the *server* renders Mode A through — takes 15.0 ms cold and **22.2 ms warm** on the
@@ -579,7 +579,7 @@ not discarding an advantage the server has.
 So the shape is `view` being a pure function of the whole state, and both backends have it. A code
 generator would divide the constant — perhaps by a lot, 13.7 µs per card is not a tight number — and
 leave the growth exactly where it is. That does not make it worthless; it makes it the wrong thing
-to reach for first, and it makes docs/24 §24.6's open problem — children assembled in full — the
+to reach for first, and it makes docs/24 §23.8's open problem — children assembled in full — the
 thing Mode B most needs and the thing it cannot fix from inside Mode B.
 
 ### One thing here *was* Mode B's, and it was half the cost

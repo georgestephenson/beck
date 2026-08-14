@@ -1,7 +1,7 @@
 //! Query fusion: the rewritten plan against the plan it was rewritten from.
 //!
 //! [`docs/05-tier-lowering.md`](../../../../docs/05-tier-lowering.md) §5.3 asks for the pass and
-//! [`docs/89-query-fusion-report.md`](../../../../docs/89-query-fusion-report.md) is what building
+//! [`docs/23-incremental-views-report.md`](../../../../docs/23-incremental-views-report.md) is what building
 //! it found. `incremental_engine.rs` already compares the maintained view with the recomputed one,
 //! and since [`beck_core::plan::Plan::compile`] fuses, that harness covers this pass — which is
 //! exactly why this file exists separately. Three things it cannot say:

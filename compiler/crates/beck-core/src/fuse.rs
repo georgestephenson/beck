@@ -25,14 +25,14 @@
 //! equality saturation earns its keep when rewrites conflict and the phase order would decide the
 //! answer. None of these conflict — every one *removes* an operator and none adds one — so the
 //! extraction that an e-graph would do by cost is done here by applying rules to a fixed point.
-//! §89.6 names what would need one.
+//! §23.19 names what would need one.
 //!
 //! # The three conditions, and the second is the interesting one
 //!
 //! A producer may be fused into its consumer only when:
 //!
 //! 1. **nothing else reads it** — `consumers == 1`. An arrangement read twice is
-//!    [`26`](../../../../../docs/26-arrangement-sharing-report.md)'s shared prefix, and fusing it
+//!    [`docs/23`](../../../../../docs/23-incremental-views-report.md)'s shared prefix, and fusing it
 //!    into one consumer computes it twice;
 //! 2. **the fusion does not cross §5.3's session cut.** A shared operator fused into a per-session
 //!    one stops being shared: its work moves from *once per event* to *once per event per
@@ -40,7 +40,7 @@
 //!    than saved. A local rewrite that is an improvement everywhere else is a pessimisation here,
 //!    and nothing but the cut can tell;
 //! 3. **no name points at it.** A declared signal is projected as a read-model table
-//!    ([`88`](../../../../../docs/88-read-models-and-pgwire-report.md)), so an operator a developer
+//!    ([`docs/23`](../../../../../docs/23-incremental-views-report.md)), so an operator a developer
 //!    named is observable to a SQL client even when the page does not read it.
 
 use std::collections::BTreeMap;
@@ -617,7 +617,7 @@ pub fn report(f: &Fusions) -> String {
     let _ = writeln!(
         out,
         "\n  {} operators before, {} after; {} arrangements before, {} after. An arrangement is \n  \
-         memory per subscriber as well as work per event (docs/26 §26.7), which is why the second \n  \
+         memory per subscriber as well as work per event (docs/26 §23.14), which is why the second \n  \
          pair is the one to read.",
         f.operators.0, f.operators.1, f.arrangements.0, f.arrangements.1
     );

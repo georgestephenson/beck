@@ -8,7 +8,7 @@
 //!
 //! Sending the accumulator on every event would make each event cost the size of the *state*
 //! rather than the size of the *change*, which is the asymptote
-//! [`docs/24-incremental-views-report.md`](../../../../../docs/24-incremental-views-report.md)
+//! [`docs/23-incremental-views-report.md`](../../../../../docs/23-incremental-views-report.md)
 //! spent a whole report removing from the view path. A card moved on a thousand-card board is one
 //! [`Op::Put`], and it stays one as the board grows: cost per event is a function of the change,
 //! not of the collection.

@@ -477,7 +477,7 @@ fn accumulating_inside_a_fold_costs_the_same_per_element_however_long_it_gets() 
 /// **Keeping a read model fresh costs the change, not the collection** — and costs nothing at all
 /// until somebody asks.
 ///
-/// [`docs/88-read-models-and-pgwire-report.md`](../../../../docs/88-read-models-and-pgwire-report.md)
+/// [`docs/23-incremental-views-report.md`](../../../../docs/23-incremental-views-report.md)
 /// claims two things about what a read model costs, and both are shapes rather than rates, so both
 /// are counted rather than timed:
 ///

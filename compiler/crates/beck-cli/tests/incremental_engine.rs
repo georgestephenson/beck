@@ -209,7 +209,7 @@ fn the_maintained_view_is_the_recomputed_view_for_every_corpus_program() {
             folded += 1;
         }
     }
-    // Printed so that docs/24 §24.4's count is reproducible rather than remembered.
+    // Printed so that docs/24 §23.7's count is reproducible rather than remembered.
     println!("{folded} events folded, {compared} pages compared");
     assert!(folded > 500, "only {folded} events were compared");
 }

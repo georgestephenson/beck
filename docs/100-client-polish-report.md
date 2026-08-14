@@ -45,7 +45,7 @@ The incremental engine already recomputes what is downstream of `Op::Session` wh
 changes — a comment in `plan.rs` had called the session "constant for the life of one subscription",
 which stopped being true and cost nothing, because `Op::Session` has compared the value it was handed
 against the one it held since it existed, and `Cell::rebuilt` has been contagious downstream since
-[`26`](26-arrangement-sharing-report.md) §26.6 for exactly the case of a subscriber whose session
+[`23`](23-incremental-views-report.md) §23.16 for exactly the case of a subscriber whose session
 moved. Not one line of the engine, the splitter, the plan or the fold changed.
 
 What did have to exist is the edge: something has to *tell* the program where the browser is.
@@ -240,7 +240,7 @@ The three things:
   sent a program. `/beck-signals.json` is the running program's own graph with
   [`beck_core::incremental`]'s verdicts, which is what `beck explain incremental` prints, plus the
   plan's operator counts. Built once per process, for [`67`](67-sqlite-report.md)-adjacent reasons
-  that are really [`88`](88-read-models-and-pgwire-report.md)'s: a view of a thing is cheapest to
+  that are really [`23`](23-incremental-views-report.md)'s: a view of a thing is cheapest to
   keep right by being the thing.
 
 What the endpoint deliberately does **not** carry is the accumulator. A Mode A page is precisely the

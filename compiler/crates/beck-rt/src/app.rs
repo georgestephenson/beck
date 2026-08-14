@@ -43,8 +43,8 @@ pub struct AppConfig {
     /// On by default, because it is what §3.8 asks for and it is ~5× faster per event. It is a
     /// *switch* rather than a fact because it is also a memory-for-time trade — about 4× the bytes
     /// a subscription already held for its page
-    /// ([`docs/24-incremental-views-report.md`](../../../../../docs/24-incremental-views-report.md)
-    /// §24.6) — and an operator running a fanout of a hundred thousand idle sessions over a large
+    /// ([`docs/23-incremental-views-report.md`](../../../../../docs/23-incremental-views-report.md)
+    /// §23.8) — and an operator running a fanout of a hundred thousand idle sessions over a large
     /// accumulator should be able to decide that differently without recompiling.
     pub maintain_views: bool,
     /// Whether the operators that do not read the session are held **once** for every subscriber
@@ -55,7 +55,7 @@ pub struct AppConfig {
     /// are the same computation for all of them. How much that is depends entirely on the program:
     /// a view that filters by the session immediately below the fold shares almost nothing, and one
     /// that sorts a public feed and personalises only the greeting shares almost everything
-    /// ([`docs/26-arrangement-sharing-report.md`](../../../../../docs/26-arrangement-sharing-report.md)).
+    /// ([`docs/23-incremental-views-report.md`](../../../../../docs/23-incremental-views-report.md)).
     ///
     /// Ignored when `maintain_views` is off: there are no arrangements to share.
     pub share_arrangements: bool,
@@ -66,8 +66,8 @@ pub struct AppConfig {
     /// connected subscriber's lag, so both numbers are ceilings rather than costs. A deployment
     /// whose clients reconnect constantly wants `release_when_idle` off, and one with slow clients
     /// and fast events wants a deeper history; neither should have to recompile for it
-    /// ([`docs/26-arrangement-sharing-report.md`](../../../../../docs/26-arrangement-sharing-report.md)
-    /// §26.9 asked for exactly this).
+    /// ([`docs/23-incremental-views-report.md`](../../../../../docs/23-incremental-views-report.md)
+    /// §23.19 asked for exactly this).
     ///
     /// Ignored when `share_arrangements` is off: there is no shared dataflow to retain anything.
     pub retention: beck_core::engine::Retention,
@@ -272,7 +272,7 @@ impl App {
     ///
     /// With sharing on it owns only the per-session operators; the rest arrive from the one shared
     /// dataflow. With it off it owns the whole plan, which is what every subscription did before
-    /// `docs/26-arrangement-sharing-report.md`.
+    /// `docs/23-incremental-views-report.md`.
     pub fn view_engine(&self) -> Result<beck_core::engine::Engine> {
         if self.config.share_arrangements {
             Ok(self.shared.subscriber())

@@ -122,13 +122,13 @@ because a role the runtime calls has one arity and two shapes would be two place
 
 **Everything downstream of the roster runs per subscriber**, and the reason is a *clock* rather
 than a privacy rule. §5.3's shared dataflow is versioned by the log's `seq`
-([`26`](26-arrangement-sharing-report.md), [`51`](51-arrangement-lifecycle-report.md)): a
+([`23`](23-incremental-views-report.md), [`23`](23-incremental-views-report.md)): a
 subscriber renders at a version, and two subscribers at the same version must be handed the same
 input. The roster moves when `seq` does not, so there is no version at which the shared side could
 hold it. Sharing it needs a second clock, and §96.8 is that item, unbuilt and named.
 
 The cost of that is real and is a property of the program rather than of the feature — which is
-[`26`](26-arrangement-sharing-report.md)'s own finding, arriving from the other direction. On
+[`23`](23-incremental-views-report.md)'s own finding, arriving from the other direction. On
 `corpus/32-here.beck`, `beck explain incremental` says:
 
 ```text

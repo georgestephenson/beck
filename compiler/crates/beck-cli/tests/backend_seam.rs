@@ -74,7 +74,7 @@ async fn the_runtime_drives_a_backend_it_has_never_heard_of() {
     // Everything the runtime will ever call is prepared once, at startup: the three roles, plus
     // every operator of the view's dataflow plan (§5.3). A backend that compiles depends on this,
     // and so does the fanout — preparing the plan per *subscription* cost about 90 KB each until
-    // `Prepared` was split out of `Engine` (docs/24 §24.6).
+    // `Prepared` was split out of `Engine` (docs/24 §23.8).
     let plan = runtime.plan();
     let operators = plan
         .nodes

@@ -114,7 +114,7 @@ a failed guard, and it is the honest cost: the alternative is undoing a write to
 
 There is **no decision tree**. A `match` still tries its arms in order, testing each pattern in
 full — which is what it did before either feature and what
-[`24`](24-incremental-views-report.md)'s plan already treats as opaque. Column-based compilation
+[`23`](23-incremental-views-report.md)'s plan already treats as opaque. Column-based compilation
 (Maranget's other paper, and the one this project has now half-implemented for exhaustiveness) would
 test each scrutinee field once instead of once per arm. Nothing has measured that it matters here,
 and §91.6 is where it would go.
@@ -166,9 +166,9 @@ supply-chain tooling**; and identity's OIDC relying party, `managed()` provision
 mapping and presence ([`48`](48-identity-report.md) §48.5).
 
 Unchanged: the page is still assembled and diffed rather than streamed as deltas
-([`24`](24-incremental-views-report.md) §24.6); `parallel:` still has no backend that runs two
+([`23`](23-incremental-views-report.md) §23.8); `parallel:` still has no backend that runs two
 children at once ([`80`](80-a-scope-owns-its-children-report.md) §80.5); the render lock is still
-there ([`51`](51-arrangement-lifecycle-report.md) §51.7).
+there ([`23`](23-incremental-views-report.md) §23.19).
 
 The exit criterion is a claim about a person, and no outside developer has read the guide
-[`88`](88-read-models-and-pgwire-report.md) published.
+[`23`](23-incremental-views-report.md) published.

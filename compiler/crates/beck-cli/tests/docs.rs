@@ -664,7 +664,7 @@ fn the_published_guide_is_the_checked_guide() {
 /// contains a space has to be quoted. Unquoted, `RUSTDOCFLAGS=-D warnings cargo doc …` is the
 /// assignment `RUSTDOCFLAGS=-D` followed by the command `warnings`, which fails with "command not
 /// found" — so the instruction reads as a verification step and performs none. That is worse than a
-/// missing step, because whoever follows it believes the check ran (`docs/88` §88.8).
+/// missing step, because whoever follows it believes the check ran (`docs/23` §23.17).
 ///
 /// Deliberately narrow. This does not run the commands — several take minutes and one needs a
 /// cluster — and it has no view on whether they are the right commands. It asserts the one thing a
@@ -793,7 +793,7 @@ fn a_documents_sections_are_numbered_for_the_document_they_are_in() {
             };
             let rest = rest.trim_start_matches('#').trim_start();
             // A heading opening with `§` is *citing* a section rather than declaring one —
-            // `### §24.6's O(n), paid once instead of removed` is a subheading about another
+            // `### §23.8's O(n), paid once instead of removed` is a subheading about another
             // document, and the sign is what says so: nothing in `docs/` declares a section with it.
             if rest.starts_with('§') {
                 continue;

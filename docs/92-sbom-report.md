@@ -24,7 +24,7 @@ An image assembled by a build that executes nothing and copies nothing from the 
 component list already**. There is no `RUN` line to inspect, no layer to scan, no package manager
 resolving something at build time: what is in the image is what the graph put there. So the bill of
 materials is a projection of the object graph, in the same sense that
-[`88`](88-read-models-and-pgwire-report.md)'s read models are a projection of the arrangement —
+[`23`](23-incremental-views-report.md)'s read models are a projection of the arrangement —
 and, like those, it cannot lag, because there is no second copy to fall behind.
 
 That is the whole argument, and it is worth being precise about its limit: it makes the SBOM right
@@ -101,7 +101,7 @@ to whoever made it, and these mean "the digest of this document".
 
 **Nothing consumes it.** The document is written and no tool in this repository reads it; the tests
 assert its shape and its agreement with the image config, not that `grype` or `trivy` accept it.
-That is the same honesty [`88`](88-read-models-and-pgwire-report.md) §88.7 applied to the read-model
+That is the same honesty [`23`](23-incremental-views-report.md) §23.19 applied to the read-model
 port — "nothing has been tried against a BI tool" — and the fix is the same shape: run somebody
 else's client against it.
 
@@ -133,4 +133,4 @@ claims mapping and presence ([`48`](48-identity-report.md) §48.5). The supply-c
 of its four pieces.
 
 The exit criterion is a claim about a person, and no outside developer has read the guide
-[`88`](88-read-models-and-pgwire-report.md) published.
+[`23`](23-incremental-views-report.md) published.

@@ -683,7 +683,7 @@ The argument that decided it is not aesthetics but *what else the decision costs
   block macro somebody writes, with no change to the parser. That is [`01`](01-vision-and-premise.md)
   §1.1's claim about Lisp's means of abstraction cashed on the surface Beck actually presents.
 - **The compiler reads its structure.** The incremental engine re-renders one row of a `for` inside
-  a `ui:` block rather than the page ([`24`](24-incremental-views-report.md)) because the block is a
+  a `ui:` block rather than the page ([`23`](23-incremental-views-report.md)) because the block is a
   tree of `Node`s the analysis walks. A literal syntax could have been given the same treatment;
   the point is that this one needed no special case to receive it.
 - **It costs nothing when unused.** Two chapters of SICP run as libraries with no `ui:` anywhere
@@ -830,7 +830,7 @@ same values the page is rendered from.
 **Why not the durable projection §5.3 describes.** Three reasons, in the order they bite.
 
 1. **It puts view maintenance on the write path**, which is exactly the choice
-   [`26`](26-arrangement-sharing-report.md) §26.2 argued *out* of the design for subscribers: the
+   [`23`](23-incremental-views-report.md) §23.9 argued *out* of the design for subscribers: the
    sequencer would pay, per event, for a projection nobody may read. The read model's own case is
    weaker still than the page's, because a BI tool connects twice a day.
 2. **It is a second code path over the same events**, and a second code path can drift. The
@@ -848,7 +848,7 @@ this port, that transaction is what it is built on, and this record is what it s
 **What decides which signals are tables.** The same cut §5.3 draws for arrangement sharing: a table
 is a view that does not depend on *who is asking*. A `per_session` signal is not a table, because a
 SQL client has no session and inventing one would answer a question nobody asked.
-[`88`](88-read-models-and-pgwire-report.md) is the build report and
+[`23`](23-incremental-views-report.md) is the build report and
 [`adr/0020`](adr/0020-the-read-model-speaks-pgwire-by-hand.md) the engineering record of the wire.
 
 ## Still open (minor, non-blocking)

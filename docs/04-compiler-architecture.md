@@ -97,7 +97,7 @@ Given placed `Core`, stage 8 does five things:
 
    *Built* — `beck-core/src/{signal,split}.rs`, and "every … edge" is literal: the crossings are
    enumerated with a content-derived id each, which `beck explain flow` prints
-   ([`23`](23-general-slicer-report.md) §23.3). The todo sketch has three, and both earlier reports
+   ([`23`](23-incremental-views-report.md) §23.2). The todo sketch has three, and both earlier reports
    said it had one.
 4. **Emit state artefacts.** Log-store DDL, read-model DDL, snapshot schedules, and — when
    accumulator or event types changed against the previously deployed signature — the demand for
@@ -204,8 +204,8 @@ Also ship `beck explain wire <op>`, `beck explain query <fn>`, `beck explain dep
 
 *Built*: `place`, `flow`, `wire`, `deploy`, and — with the general slicer, which gave it a plan to
 read — `beck explain incremental <view>`, which [`03`](03-type-and-effect-system.md) §3.8 asks for
-([`23`](23-general-slicer-report.md) §23.8). **`query` and `cost` are built too**
-([`89`](89-query-fusion-report.md)) — `query` prints the view's dataflow plan, what orders each
+([`23`](23-incremental-views-report.md) §23.15). **`query` and `cost` are built too**
+([`23`](23-incremental-views-report.md)) — `query` prints the view's dataflow plan, what orders each
 arrangement, which side of §5.3's session cut each operator is on, and what fusion made of it;
 `cost` prints what one event costs that plan, operator by operator, in the units the engine counts.
 Both take a *file* rather than a `<fn>`: a plan is a property of the program's page, and a program

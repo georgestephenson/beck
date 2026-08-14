@@ -127,7 +127,7 @@ closes were paragraphs *and* tests, and the tests are what brought anybody back 
 |---|---|
 | The other two §42.6 bullets | **not built.** Identity still defaults to believing the client (`DevIdentity`, deliberately — [`48`](48-identity-report.md)), and there is still no per-actor quota, no connection quota and no bounded deploy buffer. Their `pending_security` tests are still green, which is to say still red-in-spirit |
 | A cross-origin allowlist | **not built** (§83.3), and recorded in [`43`](43-threat-model.md) §43.4 as the part of this that remains absent |
-| A measurement of the read buffer | **not done.** §83.2's memory figures are the library's documented per-connection allocation times a connection count, not an RSS anybody observed. The measurement wants the fanout harness [`26`](26-arrangement-sharing-report.md) built, pointed at real sockets rather than in-memory duplexes — which is a bigger change than this one and would be the second test of this edge |
+| A measurement of the read buffer | **not done.** §83.2's memory figures are the library's documented per-connection allocation times a connection count, not an RSS anybody observed. The measurement wants the fanout harness [`23`](23-incremental-views-report.md) built, pointed at real sockets rather than in-memory duplexes — which is a bigger change than this one and would be the second test of this edge |
 | Anything about what happens *after* the handshake | **unchanged.** A client that passes the origin check and stays under the size limits can still open unlimited subscriptions (F15) and write to the log without a quota (F3) |
 
 ## 83.7 What this establishes

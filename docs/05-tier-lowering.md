@@ -197,7 +197,7 @@ functions. The lowering question is substrates. **We do not write a storage engi
 |---|---|---|
 | The log | **PostgreSQL** (append-only table per app; `seq` from a sequence; logical decoding for tailing) | Boring, transactional, operable everywhere, PITR for free; licence-clean. A dedicated log store (e.g. NATS JetStream, Apache-2.0) is a post-1.0 option when fan-out demands it — Kafka's JVM weight is unnecessary; Redpanda is BSL, excluded |
 | Snapshots | object storage (S3-compatible) or Postgres large objects | Cheap, versioned, feeds `beck fork` |
-| Read models | ~~generated tables in the same Postgres~~ — **the arrangement itself** ([`88`](88-read-models-and-pgwire-report.md), [`10`](10-decisions.md) D26) | One-shot queries and **pgwire access for the outside world**: `psql`, BI tools, DBeaver see materialized views as ordinary tables — the single cheapest trust-builder for adopting teams. Built, and the first half of this row is what changed: a read model is not a second copy written on the append path, it is the collection the fold holds and the arrangement the view engine maintains, projected. Nothing is written per event, and nothing can drift from the page |
+| Read models | ~~generated tables in the same Postgres~~ — **the arrangement itself** ([`23`](23-incremental-views-report.md), [`10`](10-decisions.md) D26) | One-shot queries and **pgwire access for the outside world**: `psql`, BI tools, DBeaver see materialized views as ordinary tables — the single cheapest trust-builder for adopting teams. Built, and the first half of this row is what changed: a read model is not a second copy written on the append path, it is the collection the fold holds and the arrangement the view engine maintains, projected. Nothing is written per event, and nothing can drift from the page |
 | Dev (rung 0) | in-memory folds + embedded append-only log (**redb**, MIT/Apache) | `beck run` needs no server; the log file is still replayable |
 | Analytical stores | **Apache DataFusion** over Arrow/Parquet (log archives Parquet-partitioned) | Fastest single-node Parquet engine (ClickBench); designed to be embedded/extended — the right shape for our plans, where DuckDB is a complete system designed to be used as-is |
 
@@ -216,17 +216,17 @@ functions. The lowering question is substrates. **We do not write a storage engi
   this is where a naive implementation quietly becomes Meteor-at-scale.
 
   *Both halves exist.* The signal graph is a graph and a computation read by two consumers is
-  identified as one ([`23`](23-general-slicer-report.md) §23.5), which is what an arrangement needs
+  identified as one ([`23`](23-incremental-views-report.md) §23.3), which is what an arrangement needs
   to be shareable; the dataflow engine that shares it is built
-  ([`24`](24-incremental-views-report.md), [`26`](26-arrangement-sharing-report.md)), and the
+  ([`23`](23-incremental-views-report.md), [`23`](23-incremental-views-report.md)), and the
   operators above the session cut are held once for the whole fanout rather than once per
   subscriber. What that is worth is a property of the program: 55× less work per event on a public
   feed, 1.3× on the todo sketch, because where a program reads the session decides its fanout cost.
-  Per-session memory is exported ([`26`](26-arrangement-sharing-report.md) §26.7). **The read
-  models and the pgwire exposure below are built too** ([`88`](88-read-models-and-pgwire-report.md)),
+  Per-session memory is exported ([`23`](23-incremental-views-report.md) §23.14). **The read
+  models and the pgwire exposure below are built too** ([`23`](23-incremental-views-report.md)),
   and on the same cut: a table is a view that does not depend on who is asking, which is the
   `per_session` boundary this paragraph draws, used a second time. **Query fusion is built too**
-  ([`89`](89-query-fusion-report.md)), and the condition that turned out to matter is this
+  ([`23`](23-incremental-views-report.md)), and the condition that turned out to matter is this
   paragraph's: a rewrite may not fuse a shared operator into a per-session one, because the smaller
   plan is the slower program.
 
@@ -244,7 +244,7 @@ functions. The lowering question is substrates. **We do not write a storage engi
 - Query fusion still matters (a `for` over a view of a view should become one plan, not N+1
   lookups); it is a plan-rewrite on symbolic `Query` nodes, kept symbolic in `Core` precisely for
   this ([`04`](04-compiler-architecture.md) §4.2).
-  *Built* ([`89`](89-query-fusion-report.md)), and on the **dataflow** plan rather than on the
+  *Built* ([`23`](23-incremental-views-report.md)), and on the **dataflow** plan rather than on the
   `Query` sub-language this line names: `for t in todos:` decomposes to a `map_list` under a
   `flatten` and fuses to one operator, so the arrangement between them is never built. Five local
   rewrites, each sound against the change semantics; a rewrite is refused when the operator it would

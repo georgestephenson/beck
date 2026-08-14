@@ -15,8 +15,8 @@
 //! *projected*. Three consequences, and they are the argument for it:
 //!
 //! * **A read model costs nothing per event.** Nothing is written, nothing is projected, and the
-//!   sequencer is untouched — which is [`26`](../../../../../docs/26-arrangement-sharing-report.md)
-//!   §26.2's rule ("who advances it: not the sequencer") applied to a second kind of reader rather
+//!   sequencer is untouched — which is [`docs/23`](../../../../../docs/23-incremental-views-report.md)
+//!   §23.9's rule ("who advances it: not the sequencer") applied to a second kind of reader rather
 //!   than argued with.
 //! * **It cannot disagree with the page.** A durable projection is a second code path, and a second
 //!   code path over the same events is a thing that can drift. These rows are read from the same
@@ -27,7 +27,7 @@
 //!
 //! What that costs is the one-transaction property [`67`](../../../../../docs/67-sqlite-report.md)
 //! §67.1 held open: an append and its projection are still not one transaction, because there is
-//! still no projection. §88.6 is the row-by-row list.
+//! still no projection. §23.19 is the row-by-row list.
 //!
 //! # Where the tables come from
 //!

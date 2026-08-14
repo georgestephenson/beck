@@ -95,7 +95,7 @@ differential and replay harnesses green; `beck replay` reproduces state from a r
 > yet**: Mode B does not exist, so the cost model is ready for the Mode A/B choice and does not make
 > it ([`20`](20-phase-2-report.md) §20.4 item 1). §20.5 has the rest.
 >
-> *The slicer was built in Phase 3 — [`23`](23-general-slicer-report.md). The parenthesis above is
+> *The slicer was built in Phase 3 — [`23`](23-incremental-views-report.md). The parenthesis above is
 > also corrected there: it did **not** refuse everything it could not slice. A program with two
 > `durable` folds was accepted and sliced with both folds reading one accumulator (§23.2).*
 
@@ -128,8 +128,8 @@ dependencies whose signatures didn't change.
 > are untouched.
 >
 > *That paragraph is the count as those three reports were written. The incremental-views bullet is
-> now complete ([`88`](88-read-models-and-pgwire-report.md),
-> [`89`](89-query-fusion-report.md)), and the reports since
+> now complete ([`23`](23-incremental-views-report.md),
+> [`23`](23-incremental-views-report.md)), and the reports since
 > have moved several others; the bullet list below carries the current status of each and this
 > paragraph carries the arithmetic of the day it was written, which is what a report does.*
 >
@@ -140,8 +140,8 @@ dependencies whose signatures didn't change.
 > and the two syntax decisions [`09`](09-risks-and-open-questions.md) §9.6 had been holding since
 > the design documents were written.
 >
-> *Twelve was the count when [`22`](22-phase-3-report.md), [`23`](23-general-slicer-report.md) and
-> [`24`](24-incremental-views-report.md) were written, and all three count against it. It is
+> *Twelve was the count when [`22`](22-phase-3-report.md), [`23`](23-incremental-views-report.md) and
+> [`23`](23-incremental-views-report.md) were written, and all three count against it. It is
 > **fourteen** now: D18 adds the expressiveness suite, and
 > [`25`](25-benchmarks-and-expressiveness.md) §25.6 found that the language's own means of
 > abstraction — recursive types, user-written polymorphism, tail calls — had never been exercised
@@ -154,7 +154,7 @@ dependencies whose signatures didn't change.
 > is stubbed by default, and the default says what it did" is built, and so is the one type-directed
 > generator that stubs and `property` blocks share.
 >
-> **The general slicer**, with [`23`](23-general-slicer-report.md) as its evidence — the debt
+> **The general slicer**, with [`23`](23-incremental-views-report.md) as its evidence — the debt
 > [`19`](19-phase-1-report.md) §19.9 assigned to Phase 2 and [`20`](20-phase-2-report.md) §20.5
 > recorded as undelivered. The signal graph is now built as a graph rather than recognised as a
 > shape: any number of `durable` folds (fused into one accumulator, because §3.7 fixes one log per
@@ -163,13 +163,13 @@ dependencies whose signatures didn't change.
 > for the incremental-views bullet below, not a down payment on it: views are still full recompute
 > per event. What it did make possible immediately is `beck explain incremental` — the analysis
 > §3.8 names, which says which views a plan could maintain and why the rest could not, over a
-> program none of whose views are maintained (§23.8).
+> program none of whose views are maintained (§23.15).
 >
 > Building it falsified the sentence both earlier reports used to justify the narrowness. The old
 > splitter did not refuse what it could not slice: two `durable` folds compiled, and both were
-> lowered to the same accumulator ([`23`](23-general-slicer-report.md) §23.2).
+> lowered to the same accumulator ([`23`](23-incremental-views-report.md) §23.2).
 >
-> **The incremental view engine**, with [`24`](24-incremental-views-report.md) as its evidence — the
+> **The incremental view engine**, with [`23`](23-incremental-views-report.md) as its evidence — the
 > bullet the slicer unblocked. A view is compiled into a dataflow of operators and maintained from
 > the change rather than recomputed: `remaining` updates by ±1 per event over a collection of any
 > size, the `for` loop of a `ui:` block re-renders one row rather than all of them, and everything
@@ -183,9 +183,9 @@ dependencies whose signatures didn't change.
 > factor rather than a change of asymptote; and a maintained subscription costs about four times the
 > memory it already held for its page.
 >
-> **The shared dataflow**, with [`26`](26-arrangement-sharing-report.md) as its evidence — §5.3's
+> **The shared dataflow**, with [`23`](23-incremental-views-report.md) as its evidence — §5.3's
 > "a thousand connected users … must compile to *one* shared dataflow", which
-> [`24`](24-incremental-views-report.md) §24.7 identified per operator and held once per subscriber.
+> [`23`](23-incremental-views-report.md) §23.14 identified per operator and held once per subscriber.
 > The operators that do not read the session now live in one dataflow the application holds,
 > advanced by the first subscriber to render at a new version rather than by the sequencer, with a
 > bounded history of what moved so a subscriber woken late updates by delta and one woken very late
@@ -201,12 +201,12 @@ dependencies whose signatures didn't change.
 > the bullet below are still untouched.
 >
 > *All three are built: the read models and pgwire in
-> [`88`](88-read-models-and-pgwire-report.md), on the same cut this paragraph is about — a table is
+> [`23`](23-incremental-views-report.md), on the same cut this paragraph is about — a table is
 > a view that does not depend on who is asking — and query fusion in
-> [`89`](89-query-fusion-report.md), where that same cut turned out to be what **refuses** a
+> [`23`](23-incremental-views-report.md), where that same cut turned out to be what **refuses** a
 > rewrite rather than what enables one.*
 >
-> The nine other bullets are **untouched**, and [`26`](26-arrangement-sharing-report.md) §26.9 names
+> The nine other bullets are **untouched**, and [`23`](23-incremental-views-report.md) §23.19 names
 > them one at a time rather than by omission. Of the two added since (§8.4), the
 > means-of-abstraction bullet is **done** — all six walls
 > ([`27`](27-the-walls-come-down-report.md), [`27`](27-the-walls-come-down-report.md),
@@ -243,14 +243,14 @@ dependencies whose signatures didn't change.
 - **Incremental views**: compile subscribed/materialized views to differential-dataflow plans with
   arrangement sharing (per-session fanout, §5.3); recompute stays as the CI oracle; SQL read models
   + pgwire exposure; query fusion on symbolic plans. *The plans and the oracle are **built**
-  ([`24`](24-incremental-views-report.md)); so is arrangement sharing between subscribers
-  ([`26`](26-arrangement-sharing-report.md)) and its lifecycle
-  ([`51`](51-arrangement-lifecycle-report.md)). **The read models and pgwire are built too**
-  ([`88`](88-read-models-and-pgwire-report.md)) — and not as this line assumed: a read model is the
+  ([`23`](23-incremental-views-report.md)); so is arrangement sharing between subscribers
+  ([`23`](23-incremental-views-report.md)) and its lifecycle
+  ([`23`](23-incremental-views-report.md)). **The read models and pgwire are built too**
+  ([`23`](23-incremental-views-report.md)) — and not as this line assumed: a read model is the
   arrangement projected as relations rather than a second copy written into Postgres
   ([`10`](10-decisions.md) D26), because a durable projection puts view maintenance back on the
-  write path §26.2 argued it off. What decides which signals are tables is the same `per_session`
-  cut the fanout uses. **Query fusion is built too** ([`89`](89-query-fusion-report.md)), with
+  write path §23.9 argued it off. What decides which signals are tables is the same `per_session`
+  cut the fanout uses. **Query fusion is built too** ([`23`](23-incremental-views-report.md)), with
   `beck explain query` and `beck explain cost` behind it — five local rewrites on the dataflow
   plan, refused where the operator they would absorb is read twice, is named by a signal, or is
   shared while its consumer is per session, which makes this **bullet complete**.*
@@ -448,7 +448,7 @@ team a question. Track this literally as the acceptance test.
 substrate, the standard library, the language's own means of abstraction, the LSP, the
 expressiveness suite (three chapters of SICP and the Felleisen table, with chapters 4–5 belonging
 to Phase 5), incremental views, whose last part is
-[`89`](89-query-fusion-report.md)'s fusion, **identity**, whose last part is
+[`23`](23-incremental-views-report.md)'s fusion, **identity**, whose last part is
 [`96`](96-presence-report.md)'s presence, and the supply-chain tooling
 ([`92`](92-sbom-report.md), [`99`](99-supply-chain-report.md)) — whose remainder was a release
 pipeline rather than a piece of the bullet, and **that pipeline is now built**
@@ -493,13 +493,13 @@ developer would ask in order:
 | Their question | The answer today |
 |---|---|
 | "How do I test this?" | A command, since [`22`](22-phase-3-report.md) |
-| "Will this recount a million rows every time somebody clicks?" | A command *and* a number ([`24`](24-incremental-views-report.md), [`26`](26-arrangement-sharing-report.md)) |
+| "Will this recount a million rows every time somebody clicks?" | A command *and* a number ([`23`](23-incremental-views-report.md), [`23`](23-incremental-views-report.md)) |
 | "Can I write my own abstractions, or only the ones the todo sketch needed?" | Ten walls down and an empty `sicp/refusals/` |
 | "How do I say something failed?" | `raise` and `try:`, and the signature says so whether or not I wrote it down ([`27`](27-the-walls-come-down-report.md)) |
 | "Is there a string library? A JSON parser?" | Yes, and `compiler/lib/` shows how to write the next one ([`46`](46-standard-library-report.md)) |
 | "Can I trust the actor in my ownership check?" | With a verifying provider, yes ([`48`](48-identity-report.md)); against a real identity provider, yes ([`95`](95-oidc-relying-party-report.md)) — and `session.claims` says what they may do. The default still believes the client, and says so |
-| "Can my DBA see the data?" | `psql` against the read models ([`88`](88-read-models-and-pgwire-report.md)) — one table per collection, derived, no annotation |
-| "Where's the tutorial?" | [`86`](86-getting-started.md), published on the site since [`88`](88-read-models-and-pgwire-report.md) §88.8, and every program in it compiled and run by a test |
+| "Can my DBA see the data?" | `psql` against the read models ([`23`](23-incremental-views-report.md)) — one table per collection, derived, no annotation |
+| "Where's the tutorial?" | [`86`](86-getting-started.md), published on the site since [`23`](23-incremental-views-report.md) §23.17, and every program in it compiled and run by a test |
 | "How do I get the compiler?" | One command, since [`104`](104-the-release-and-the-installer-report.md) — and it has nothing to download until a tag is pushed, so today the answer is still "build it", which §86.1 now says in that order |
 
 **That last row has moved, and the criterion has not.** It measures a *person* — an outside
@@ -960,16 +960,16 @@ first thing in this arena whose contents are a call. Mode B and
 either: a route is a field of `Session`, so the engine, the splitter and the plan are untouched and
 the work is at the edges; ~~the LSP~~ — **built** ([`65`](65-lsp-report.md)) and **finished**
 ([`110`](110-the-editor-edits-report.md)); ~~SQL read models, pgwire~~ — **built**
-([`88`](88-read-models-and-pgwire-report.md)), and they were not a Lane B item in the shape this
+([`23`](23-incremental-views-report.md)), and they were not a Lane B item in the shape this
 list assumed: the schema derivation is a pass over the plan, the wire is `beck-rt`, and neither
 touched `engine.rs` beyond one reader type; ~~query fusion~~ — **built**
-([`89`](89-query-fusion-report.md)), and it is a pass over the plan that added one operator to the
+([`23`](23-incremental-views-report.md)), and it is a pass over the plan that added one operator to the
 engine and no scheduling to it; `test --update`; the SQLite substrate; ~~the shared dataflow's three unfinished properties
-([`26`](26-arrangement-sharing-report.md) §26.9)~~ — **two of the three built**
-([`51`](51-arrangement-lifecycle-report.md)): the arrangements are released when the last subscriber
+([`23`](23-incremental-views-report.md) §23.19)~~ — **two of the three built**
+([`23`](23-incremental-views-report.md)): the arrangements are released when the last subscriber
 goes and the change history is compacted to the oldest reader's frontier, both as one reader-set
-rule rather than as the two items §26.9 listed. The third, the render lock, is still here and
-§51.7 records that this change made it a *harder* item rather than an unchanged one, because
+rule rather than as the two items §23.19 listed. The third, the render lock, is still here and
+§23.19 records that this change made it a *harder* item rather than an unchanged one, because
 compaction is now safe partly because the lock is held the way it is; ~~structured concurrency,
 which Wave 1 left behind and which has no predecessor~~ — **built**
 ([`80`](80-a-scope-owns-its-children-report.md)), and it acquired one on the way out: running two
@@ -1037,9 +1037,9 @@ Recommended pairings, in order:
 | ~~**Then**~~ | ~~Lane A: `Result` and error rows~~ | ~~Lane D, plus Lane C's half of Wave 0~~ | **Done.** Both branches landed together, and the prediction held: the error rows touched `check/`, `ty.rs`, `row.rs` and `core.rs`, and Wave 0 touched `beck-diag`, `beck-syntax`, `beck-rt` and `docs/`. The one collision was the one the table names below — `beck-diag/src/index.rs`, four new codes — and it was trivial because the numbers were far apart |
 | ~~**Then**~~ | ~~Lane A: the standard library, on the error shape Wave 1 settled~~ | ~~Lane B: the shared dataflow's three loose ends~~ | **Half done.** The library's first half landed ([`46`](46-standard-library-report.md)), then the wall it wrote ([`27`](27-the-walls-come-down-report.md)), then the HTTP client ([`49`](49-http-client-report.md)) — which was Lane A *and* Lane B, because the seam is in `beck-core` and the implementation is in `beck-rt`. The prediction held anyway: nothing in `engine.rs` was touched |
 | ~~**Then**~~ | ~~Lane A: the rest of Wave 2 — `Set`, dates~~ | ~~Lane B: the shared dataflow's three loose ends~~ | **Half done.** `Set` and dates landed ([`50`](50-collections-and-dates-report.md)) and were not Lane A at all: two files in `compiler/lib/`, no primitive, and the only Rust touched was one diagnostic's label. Lane B is untouched, so the pairing was never tested — the prediction it made cannot be claimed to have held |
-| ~~**Then**~~ | ~~Lane A: bignums, coercion, `@derive`~~ | ~~Lane B: the shared dataflow's three loose ends~~ | **Half done, and the other half.** Lane B was taken at last, after being the recommended Branch 2 for three consecutive rewrites: two of the three loose ends are closed ([`51`](51-arrangement-lifecycle-report.md)) and the third — the render lock — is deliberately left. The prediction held exactly: `engine.rs`, `beck-rt/` and one test suite, and nothing in `check/`, `ty.rs` or `core.rs`. Lane A is untouched, so this pairing was again never actually run as a pair |
-| ~~**Then**~~ | ~~Lane A: bignums, coercion, `@derive`~~ | ~~Lane B: SQL read models and pgwire~~ | **Half done, and the other half again.** Lane B was taken ([`88`](88-read-models-and-pgwire-report.md)) and the prediction held: `beck-core/src/read.rs`, `beck-rt/src/pgwire.rs`, one reader type on `engine.rs`, and nothing in `check/`, `ty.rs` or `core.rs`. Lane A is untouched, so this pairing was never run as a pair either — the fourth consecutive rewrite in which it was not |
-| ~~**Then**~~ | Lane A: ~~the pattern-matching completion the error-rows bullet still names~~ — **built**, with nesting, guards and alternatives ([`90`](90-nested-patterns-report.md), [`91`](91-guards-and-alternatives-report.md)); what is left in this lane is `Ord` as a trait, which [`54`](54-ordering.md) writes out and explicitly does *not* recommend | Lane B: ~~query fusion on symbolic plans~~ — **built** ([`89`](89-query-fusion-report.md)); ~~Mode B's server half~~ — **built** ([`94`](94-mode-b-report.md)), and it is one branch in `session.rs`; what is left in this lane is the render lock ([`51`](51-arrangement-lifecycle-report.md) §51.7), which survives into the row below still unowned | `beck-rt` and `engine.rs` are untouched by anything in `check/` |
+| ~~**Then**~~ | ~~Lane A: bignums, coercion, `@derive`~~ | ~~Lane B: the shared dataflow's three loose ends~~ | **Half done, and the other half.** Lane B was taken at last, after being the recommended Branch 2 for three consecutive rewrites: two of the three loose ends are closed ([`23`](23-incremental-views-report.md)) and the third — the render lock — is deliberately left. The prediction held exactly: `engine.rs`, `beck-rt/` and one test suite, and nothing in `check/`, `ty.rs` or `core.rs`. Lane A is untouched, so this pairing was again never actually run as a pair |
+| ~~**Then**~~ | ~~Lane A: bignums, coercion, `@derive`~~ | ~~Lane B: SQL read models and pgwire~~ | **Half done, and the other half again.** Lane B was taken ([`23`](23-incremental-views-report.md)) and the prediction held: `beck-core/src/read.rs`, `beck-rt/src/pgwire.rs`, one reader type on `engine.rs`, and nothing in `check/`, `ty.rs` or `core.rs`. Lane A is untouched, so this pairing was never run as a pair either — the fourth consecutive rewrite in which it was not |
+| ~~**Then**~~ | Lane A: ~~the pattern-matching completion the error-rows bullet still names~~ — **built**, with nesting, guards and alternatives ([`90`](90-nested-patterns-report.md), [`91`](91-guards-and-alternatives-report.md)); what is left in this lane is `Ord` as a trait, which [`54`](54-ordering.md) writes out and explicitly does *not* recommend | Lane B: ~~query fusion on symbolic plans~~ — **built** ([`23`](23-incremental-views-report.md)); ~~Mode B's server half~~ — **built** ([`94`](94-mode-b-report.md)), and it is one branch in `session.rs`; what is left in this lane is the render lock ([`23`](23-incremental-views-report.md) §23.19), which survives into the row below still unowned | `beck-rt` and `engine.rs` are untouched by anything in `check/` |
 | ~~**Then**~~ | ~~Lane A, continued~~ | ~~Lane E: the LLVM backend~~ | **Half done, and the other half.** Lane E was taken ([`93`](93-the-native-backends-report.md)) and the prediction held to the letter: a new crate, one new CLI command, and one defect fixed in `beck-eval` — and nothing in `beck-rt`, `engine.rs`, `check/`, `ty.rs` or `core.rs`. Lane A is untouched, so the pairing was again not run as a pair |
 | ~~**Then**~~ | ~~Lane A, continued~~ | ~~Lane D: the release pipeline and the installer~~ | **Half done, and the other half — for the sixth consecutive rewrite.** Lane D was taken ([`104`](104-the-release-and-the-installer-report.md)) and its "collides with nothing in code" held for the pipeline and failed for the *release*: a version number that means something is `compiler/Cargo.toml`, a `build.rs` and one line of `main.rs`. Lane A is untouched, so this pairing was not run as a pair |
 | ~~**Then**~~ | ~~Lane A, continued~~ | ~~Lane E: a heap for the native backends~~ | **Half done, and the other half — again.** Lane E was taken ([`93`](93-the-native-backends-report.md)): the *algebraic* half of the heap is built, so a record, a union and a newtype compile. Lane A is untouched, which makes seven consecutive rewrites in which the recommended pair was not run as a pair — the prediction that Lane E collides with nothing keeps holding, and the one about Lane A keeps not being tested |

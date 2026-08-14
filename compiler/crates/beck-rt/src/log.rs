@@ -942,7 +942,7 @@ mod tests {
     /// offer: **an append and a projection in one transaction**.
     ///
     /// Postgres has it in production. This is the claim that a laptop now has the same shape — not
-    /// that the read models are built (they are not, `docs/26` §26.9), but that the substrate
+    /// that the read models are built (they are not, `docs/23` §23.19), but that the substrate
     /// underneath them admits the property. A `LogStore` cannot express it, so the test reaches
     /// past the trait to the connection, which is the only honest way to assert it today.
     #[tokio::test]

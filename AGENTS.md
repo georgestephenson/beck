@@ -212,7 +212,7 @@ the thing you are guarding against would make it so.
   `RUSTDOCFLAGS=-D` and then takes the next word — `warnings` — as the command to run. It fails
   with "command not found", `cargo` never runs, and the step reads as a verification that performed
   none. That is worse than a missing step, because whoever followed it believes the check ran
-  (`docs/88` §88.8). `docs.rs::every_shell_command_in_the_instructions_runs` is the gate.
+  (`docs/23` §23.17). `docs.rs::every_shell_command_in_the_instructions_runs` is the gate.
 - **Environment-dependent suites degrade by skipping, and a skip prints itself** — read the output
   for it:
   - Kubernetes conformance (`beck-infra/tests/conformance.rs`): skips without a cluster;

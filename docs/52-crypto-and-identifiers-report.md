@@ -228,11 +228,11 @@ program using it is secure: this is a MAC, so it is only as good as the key, the
 
 ## 52.8 What Phase 3 is still not
 
-Unchanged from [`51`](51-arrangement-lifecycle-report.md) §51.7 except where this touches it. The
+Unchanged from [`23`](23-incremental-views-report.md) §23.19 except where this touches it. The
 standard-library bullet is now most of the way rather than "everything but crypto, UUID parsing and
 the bignums"; the exit criterion — an outside developer building a non-trivial app from
 documentation alone — is not met and is not closer, because none of this is documentation an outside
 developer would build from.
 
 Seven bullets of the fourteen remain untouched, identity has its seam and not its relying party, and
-[`26`](26-arrangement-sharing-report.md) §26.9 still names them one at a time.
+[`23`](23-incremental-views-report.md) §23.19 still names them one at a time.

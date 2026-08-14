@@ -383,7 +383,7 @@ what a quadratic looks like at two sizes. §93.7 is the argument.
 **A page is not a win, and the report of it says so before anything else.** A compiled `view` builds
 the *call* and the host bakes the tree, so the rendering is the same `Value::display` either way and
 the pipe is additional. What is compiled is the program's own logic — the loops, the conditionals,
-the field reads — which on these pages is not where the time goes. [`94`](94-the-client-report.md)
+the field reads — which on these pages is not where the time goes. [`94`](94-mode-b-report.md)
 §94.14 measured the same thing from the other end: 97% of an interaction is `view`, and what grows is
 `view` being a pure function of the whole state.
 
@@ -1010,7 +1010,7 @@ anything but a benchmark uses this backend, and it is the first thing a second v
 code, which is the opposite direction from the WebAssembly a browser needs — Wasmtime uses Cranelift to
 compile wasm, not to produce it. A Mode B code generator is a **third** emitter against a wasm target
 ([`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md)), and
-[`94`](94-the-client-report.md) §94.14's measurement says what it would buy: a code generator divides the
+[`94`](94-mode-b-report.md) §94.14's measurement says what it would buy: a code generator divides the
 constant and leaves the growth.
 
 **`beck dev`**, which is what a fast code generator is *for* — there is no watch loop, no hot reload and no

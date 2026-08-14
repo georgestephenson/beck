@@ -174,4 +174,4 @@ distinction.
 Unchanged from [`62`](62-fuel-report.md) §62.8 otherwise. The exit criterion — an outside developer
 building a non-trivial app from documentation alone — is not met and is not closer. Seven bullets of
 the fourteen remain untouched, identity has its seam and not its relying party, and
-[`26`](26-arrangement-sharing-report.md) §26.9 still names them one at a time.
+[`23`](23-incremental-views-report.md) §23.19 still names them one at a time.

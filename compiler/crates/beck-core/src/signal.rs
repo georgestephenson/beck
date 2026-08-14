@@ -12,7 +12,7 @@
 //! shape — and it was named as debt by two phases running. It also had a hole neither report knew
 //! about: a program with *two* durable folds matched the shape, was accepted, and was sliced with
 //! both folds reading the same accumulator. See
-//! [`docs/23-general-slicer-report.md`](../../../../../docs/23-general-slicer-report.md) §23.2.
+//! [`docs/23-incremental-views-report.md`](../../../../../docs/23-incremental-views-report.md) §23.2.
 //!
 //! This module is the replacement. It does not recognise a shape. It builds the graph the program
 //! wrote — one vertex per signal operation, including the ones nested inside a declaration —

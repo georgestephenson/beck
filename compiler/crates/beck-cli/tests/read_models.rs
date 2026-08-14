@@ -9,7 +9,7 @@
 //!   tests agreement with itself, which is what `docs/84` §84.5 found four gates doing; this one
 //!   is held to a driver that has never heard of Beck.
 //!
-//! `docs/88-read-models-and-pgwire-report.md` is the report.
+//! `docs/23-incremental-views-report.md` is the report.
 
 use std::sync::Arc;
 

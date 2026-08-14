@@ -290,7 +290,7 @@ off it: `durable(retain=90.days, snapshot=hourly)` — defaults sane, overridabl
 A program may declare **several** `durable` folds, and that is not several logs. The rule above is
 one totally-ordered log per application, so several folds are several *projections* of it: the
 compiler fuses them into one accumulator with a field per fold, and the runtime persists and
-snapshots exactly what it did before ([`23`](23-general-slicer-report.md) §23.4). A fold may also
+snapshots exactly what it did before ([`23`](23-incremental-views-report.md) §23.3). A fold may also
 read a slice of the log rather than all of it, by naming a `filter_map` between the chokepoint and
 itself; the filter is compiled into the step, because replay has to stay a function of the log.
 
@@ -373,7 +373,7 @@ keeping them incremental:
 
   *The command is built* — `beck-core/src/incremental.rs`, and it is the **analysis only**: it says
   which views a plan could maintain and which the rules cannot reach, over a program whose views
-  are all still full recompute per event ([`23`](23-general-slicer-report.md) §23.8).
+  are all still full recompute per event ([`23`](23-incremental-views-report.md) §23.15).
 - **Invalidation does not exist as a concept.** There are no caches to invalidate — only views
   downstream of the log. What ships to a subscribed client is the patch stream of its view
   ([`05`](05-tier-lowering.md) §5.1). This subsumes the entire cache-key/TTL discipline of
@@ -433,11 +433,11 @@ State schema evolution is a *language* concern, not an ops concern (Lamdera's pr
    does is charge a crossing the *smaller* of its two ends, which is that choice expressed as a cost
    and ready for the second lowering ([`20`](20-phase-2-report.md) §20.4 item 1).
 5. Incremental view compilation (differential lineage); materialized read models; pgwire exposure.
-   — **all three are Phase 3** ([`24`](24-incremental-views-report.md),
-   [`26`](26-arrangement-sharing-report.md), [`88`](88-read-models-and-pgwire-report.md)). The read
+   — **all three are Phase 3** ([`23`](23-incremental-views-report.md),
+   [`23`](23-incremental-views-report.md), [`23`](23-incremental-views-report.md)). The read
    models are not *materialized* in the sense this line assumed: they are the arrangements, served
    as relations rather than projected into tables ([`10`](10-decisions.md) D26). **Query fusion is
-   built too** ([`89`](89-query-fusion-report.md)), on the dataflow plan rather than on §4.2's
+   built too** ([`23`](23-incremental-views-report.md)), on the dataflow plan rather than on §4.2's
    `Query` sub-language, which is still symbolic and still unwritten — so this item is complete.
 6. Migrations/upcasters + operator choreography; replay/fork tooling.
 

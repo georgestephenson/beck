@@ -2,7 +2,7 @@
 
 **Built.** `expect page matches snapshot`, and the flag that records one. The last open question in
 [`21`](21-tests-in-beck-and-proof.md) §21.2, and the last of the small items on
-[`26`](26-arrangement-sharing-report.md) §26.9's list.
+[`23`](23-incremental-views-report.md) §23.19's list.
 
 [`22`](22-phase-3-report.md) §22.6 named it precisely and left it:
 
@@ -121,8 +121,8 @@ would assert the writing and not the policy.
   "Golden/snapshot assertions … **Still open — not built**" — is answered, with the update flow it
   named and not the library it named.
 - **[`22`](22-phase-3-report.md) §22.6's item is built**, and with it
-  [`23`](23-general-slicer-report.md), [`24`](24-incremental-views-report.md) and
-  [`26`](26-arrangement-sharing-report.md)'s repeated "no `test --update`".
+  [`23`](23-incremental-views-report.md), [`23`](23-incremental-views-report.md) and
+  [`23`](23-incremental-views-report.md)'s repeated "no `test --update`".
 - **The sketch asserts its whole page.** `examples/todo.beck` had five page assertions and all of
   them were `contains`; there is now one that would notice a change to any part of it.
 
@@ -133,4 +133,4 @@ bullet, so the count is unchanged from [`65`](65-lsp-report.md) §65.7: **six of
 untouched** — Mode B, client polish, structured concurrency, the SQLite substrate, the playground
 and supply-chain tooling — with no LLVM backend, identity holding its seam and not its relying
 party, and the incremental-views bullet still without read models, pgwire or fusion.
-[`26`](26-arrangement-sharing-report.md) §26.9 still names them one at a time.
+[`23`](23-incremental-views-report.md) §23.19 still names them one at a time.

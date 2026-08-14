@@ -59,7 +59,7 @@ is therefore a change to what the system *means*, not a tuning knob — so it is
 ## What would reverse it
 
 - **A read model actually being built on it.** Nothing in Beck projects into SQL yet
-  ([`26`](../26-arrangement-sharing-report.md) §26.9), so the property this dependency was taken for
+  ([`23`](../23-incremental-views-report.md) §23.19), so the property this dependency was taken for
   is *available* and unused. If the read-model work lands on something else, this becomes a third
   substrate justified only by taste.
 - **`libsqlite3-sys` requiring a toolchain we do not pin.** It already does at 0.38.

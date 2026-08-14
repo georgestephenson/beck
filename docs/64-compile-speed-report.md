@@ -167,7 +167,7 @@ and the examples.
 Those are not thresholds and are not compared to any other compiler. They are here because §13.7
 lists keystroke→diagnostic latency as a budget and nothing had ever measured it, and because the
 worst number in the tree being under 5 ms is the fact that decides whether the LSP
-([`26`](26-arrangement-sharing-report.md) §26.9) needs an incremental front end or can re-check the
+([`23`](23-incremental-views-report.md) §23.19) needs an incremental front end or can re-check the
 file. On this evidence it can re-check the file.
 
 ## 64.7 What is **not** built
@@ -225,4 +225,4 @@ awkward one.
 Unchanged from [`63`](63-felleisen-report.md) §63.9. The exit criterion — an outside developer
 building a non-trivial app from documentation alone — is not met and is not closer. Seven bullets of
 the fourteen remain untouched, identity has its seam and not its relying party, and
-[`26`](26-arrangement-sharing-report.md) §26.9 still names them one at a time.
+[`23`](23-incremental-views-report.md) §23.19 still names them one at a time.

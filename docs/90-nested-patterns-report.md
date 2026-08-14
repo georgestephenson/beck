@@ -219,9 +219,9 @@ a named remainder except that one.**
 Unchanged: **no LLVM backend and no native codegen**; **no Mode B and no client polish**; **no
 playground**; **no supply-chain tooling**; the OIDC relying party, `managed()` provisioning, the
 claims mapping and presence ([`48`](48-identity-report.md) §48.5); the page is still assembled and
-diffed rather than streamed as deltas ([`24`](24-incremental-views-report.md) §24.6); `parallel:`
+diffed rather than streamed as deltas ([`23`](23-incremental-views-report.md) §23.8); `parallel:`
 still has no backend that runs two children at once
 ([`80`](80-a-scope-owns-its-children-report.md) §80.5).
 
 The exit criterion is a claim about a person, and no outside developer has read the guide
-[`88`](88-read-models-and-pgwire-report.md) published.
+[`23`](23-incremental-views-report.md) published.

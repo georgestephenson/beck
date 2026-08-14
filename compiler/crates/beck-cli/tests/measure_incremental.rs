@@ -1,5 +1,5 @@
-//! Measurements quoted in `docs/24-incremental-views-report.md`, `docs/26`, `docs/51` and
-//! `docs/89-query-fusion-report.md`.
+//! Measurements quoted in `docs/23-incremental-views-report.md`, `docs/23`, `docs/23` and
+//! `docs/23-incremental-views-report.md`.
 //!
 //! Run with `cargo test --release --test measure_incremental -- --nocapture`. Printed, never
 //! thresholded: §13.7's rule that a shared CI runner cannot hold a timing gate honestly. The claims
@@ -262,7 +262,7 @@ fn how_much_of_each_corpus_program_is_maintained() {
     );
 }
 
-/// The measurement `docs/89-query-fusion-report.md` quotes: what the rewrite is worth.
+/// The measurement `docs/23-incremental-views-report.md` quotes: what the rewrite is worth.
 ///
 /// Two tables, and the first is the honest one. Counts — operators, arrangements, entries held,
 /// work per event — are properties of the plan and of the engine's own counters, so they are the
@@ -376,7 +376,7 @@ fn what_query_fusion_is_worth() {
     );
 }
 
-/// The measurement `docs/26-arrangement-sharing-report.md` quotes: what a fanout costs with §5.3's
+/// The measurement `docs/23-incremental-views-report.md` quotes: what a fanout costs with §5.3's
 /// shared dataflow and what it cost without one.
 ///
 /// Two programs, because the answer is entirely a property of the program and quoting one number
@@ -541,8 +541,8 @@ fn what_one_event_costs_a_connected_fanout() {
 
 /// What a process holds when nobody is looking, and how much change history a fanout pins.
 ///
-/// [`docs/26-arrangement-sharing-report.md`](../../../../docs/26-arrangement-sharing-report.md)
-/// §26.9 left two numbers unmeasured: what the shared dataflow retains for a fanout that has gone
+/// [`docs/23-incremental-views-report.md`](../../../../docs/23-incremental-views-report.md)
+/// §23.19 left two numbers unmeasured: what the shared dataflow retains for a fanout that has gone
 /// away, and where the change history's knee actually is. Both are now a function of the reader
 /// set rather than of a constant, and this is the table that says by how much.
 ///

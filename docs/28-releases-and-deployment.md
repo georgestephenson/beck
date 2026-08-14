@@ -131,10 +131,10 @@ Gates deliberately not added yet, and when each becomes due — so absence stays
 | Compile-speed budgets (§13.7, rustc-perf model) | Phase 3, per §8.4 | Needs the harness; timings stay reported-only on shared runners, so any gate is on counts (the firewall number `beck-db` already asserts) |
 | A browser job driving the compiled sketch | Phase 3, with client polish | phase0 holds this gate; add for the compiler when client work makes it more than a re-test of phase0's DOM |
 | Image size / cold start (§8.3 item 4) | ~~With §28.2's release workflow~~ — **due now**: CI builds an image ([`99`](99-supply-chain-report.md)), and §28.2's release workflow exists ([`104`](104-the-release-and-the-installer-report.md)) | Both deferrals are spent and the row still waits on the *right* binary: the image ships whichever `beck` built it, and the release builds glibc-linked binaries rather than the static musl one §28.2 item 1 describes (§104.10). A size number today would be about the wrong artefact (§99.8) |
-| A size budget on the release binary | With the musl build, or with a defended number | §104.3 measures it — 20.1 MiB, 8.14 MiB compressed — and declines to gate it, on [`26`](26-arrangement-sharing-report.md) §26.10's rule: the value that should fail a build has to be defended, not guessed |
+| A size budget on the release binary | With the musl build, or with a defended number | §104.3 measures it — 20.1 MiB, 8.14 MiB compressed — and declines to gate it, on [`23`](23-incremental-views-report.md) §23.10's rule: the value that should fail a build has to be defended, not guessed |
 | Mutation testing ≥85% on checker/solver/splitter (§13.8) | Phase 3 tail, nightly lane | Too slow for PRs |
 | Docs-as-tests: Beck blocks in docs checked (§13.6) | With the tutorial | Today's doc snippets are design sketches, deliberately ahead of the language |
-| Per-session memory / arrangement-entry gates | Needs an owner | [`26`](26-arrangement-sharing-report.md) §26.10: exported, ungated, deferred by four reports; the value that should fail a build has to be defended, not guessed |
+| Per-session memory / arrangement-entry gates | Needs an owner | [`23`](23-incremental-views-report.md) §23.10: exported, ungated, deferred by four reports; the value that should fail a build has to be defended, not guessed |
 
 ## 28.6 The review's ledger
 

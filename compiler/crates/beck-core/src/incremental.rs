@@ -563,7 +563,7 @@ fn headline(maintained: usize, recomputed: usize) -> String {
         "Views are **maintained by delta** as far as the plan can decompose them: {maintained} of\n\
          this view's {} operators update from the change itself, {recomputed} are recomputed when\n\
          an input moves, and the page's children are still assembled in full every time\n\
-         (docs/24 §24.6).",
+         (docs/24 §23.8).",
         maintained + recomputed
     )
 }

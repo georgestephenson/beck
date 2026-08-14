@@ -69,7 +69,7 @@ so.
 
 | Standard | Where |
 |---|---|
-| **PostgreSQL wire protocol (pgwire)** | Beck read models are browsable by any Postgres client. **Partly conformed to** ([`88`](88-read-models-and-pgwire-report.md)): the startup exchange, the simple query and the parameterless extended query in both text and binary format, verified in CI against `tokio-postgres` — a real driver, not a client written beside the server. `psql`'s backslash commands are **not** supported, because they query `pg_catalog` and this SQL has no joins; JDBC and BI drivers are untried. §88.6 is the row-by-row list |
+| **PostgreSQL wire protocol (pgwire)** | Beck read models are browsable by any Postgres client. **Partly conformed to** ([`23`](23-incremental-views-report.md)): the startup exchange, the simple query and the parameterless extended query in both text and binary format, verified in CI against `tokio-postgres` — a real driver, not a client written beside the server. `psql`'s backslash commands are **not** supported, because they query `pg_catalog` and this SQL has no joins; JDBC and BI drivers are untried. §23.19 is the row-by-row list |
 | **Apache Arrow + Parquet** | columnar interchange and log archives; verified with official interop test files |
 | **SQL** (PostgreSQL dialect, documented subset) | all generated SQL runs against pinned Postgres majors in CI — we conform to Postgres-as-spec rather than abstract SQL:2023, and say so honestly |
 
