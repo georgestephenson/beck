@@ -728,6 +728,116 @@ impl<'h> Interp<'h> {
         Ok(Frame { interp: self })
     }
 
+    /// Run a `parallel:` scope's children — **at the same time**, on a thread each.
+    ///
+    /// # What makes this sound, and why it is three sentences rather than an analysis
+    ///
+    /// [`docs/80`](../../../../../docs/80-a-scope-owns-its-children-report.md) settled the hard
+    /// half in the *checker*: the children are independent by construction, because none of them
+    /// can name another, and no child may perform an effect another could observe. So the scope's
+    /// answer does not depend on the order they ran in, and running them together is a correct
+    /// implementation of the form rather than a reinterpretation of it. Nothing here re-derives
+    /// that; it is a property of the program the checker already proved.
+    ///
+    /// # What each child gets, and what it shares
+    ///
+    /// | | |
+    /// |---|---|
+    /// | the host | **shared**, which is why [`beck_core::host::Atoms`] is `Send + Sync` |
+    /// | a stack | **its own**, [`crate::STACK_BYTES`] of it, because a tree-walker nests frames |
+    /// | the depth ceiling | **its own count** against the same ceiling — one per stack, which is what the ceiling was always about |
+    /// | the globals cache | **its own**, rebuilt: sharing it wants a lock on the path a call takes, and `docs/70` §70.9 is what that path costs |
+    /// | fuel | **a share of what is left**, and the paragraph below is why |
+    ///
+    /// # Fuel is split, not shared
+    ///
+    /// A shared budget is one atomic read-modify-write per evaluation step — on the hot path
+    /// [`docs/70`](../../../../../docs/70-the-evaluator-gets-fast-report.md) spent a chapter on —
+    /// and it makes *which* child runs out a race, so two runs of one program could differ in which
+    /// error they report. Splitting is neither: each child gets an equal share of what remains, and
+    /// what the scope charges the parent afterwards is the sum of what the children actually spent,
+    /// so the **total** is what a serial run would have spent.
+    ///
+    /// What it costs is stated rather than hidden: a child that would have used more than its share
+    /// runs out where a serial run would have let it continue. Fuel is a runaway-program backstop
+    /// and not a performance knob ([`DEFAULT_FUEL`]), so dividing a backstop is a smaller change
+    /// than it reads as — but it is a change, and `docs/117` §117.4 is where it is written down.
+    ///
+    /// # Failure
+    ///
+    /// The **first child in source order** that failed is the failure, whichever finished first, so
+    /// the error a scope reports is a function of the program and not of the scheduler. Nothing is
+    /// cancelled: §80.5's table says a backend that starts children together needs a cancellation
+    /// signal and that nothing designs one, and this does not design one either — the siblings of a
+    /// failed child run to completion and their answers are dropped.
+    fn children(&self, thunks: &[Value], span: Span) -> Result<Vec<Value>, EvalError> {
+        // One child is a scope somebody wrote for its shape rather than for its concurrency, and a
+        // thread for it would be pure cost. This is the only case decided here rather than by
+        // measurement, because it is not a threshold: there is nothing to overlap with.
+        //
+        // **`wasm32` has no threads**, and this crate is compiled to it twice — `beck-wasm` for a
+        // Mode B client and `beck-play` for the playground, which runs a whole application in a
+        // tab. A client cannot reach a scope at all (`spawn` is `Tier::Server`'s alone, and
+        // `B0401` refuses a scope pinned to the browser), but the playground's server *half* can,
+        // so this is reachable rather than theoretical. Running the children in order there is a
+        // correct implementation of the form for §80's own reason — the order is unobservable, and
+        // one order is an order — so what the playground loses is the overlap and never an answer.
+        #[cfg(target_arch = "wasm32")]
+        let alone = true;
+        #[cfg(not(target_arch = "wasm32"))]
+        let alone = thunks.len() < 2;
+        if alone {
+            let mut out = Vec::with_capacity(thunks.len());
+            for thunk in thunks {
+                out.push(self.apply(thunk, Vec::new(), span)?);
+            }
+            return Ok(out);
+        }
+
+        let each = self.fuel.get() / thunks.len() as u64;
+        // The three things a child needs, taken out of `self` **before** the scope: an `Interp` is
+        // deliberately not `Sync` — its fuel, its depth and its cache are `Cell`s on the hot path,
+        // which is what `docs/70` bought — so what crosses to a thread is the host it borrows and
+        // two numbers, and never the interpreter that is running here.
+        let (host, max_depth) = (self.host, self.max_depth);
+        let mut answers: Vec<(EvalResult, u64)> = std::thread::scope(|scope| {
+            let mut running = Vec::with_capacity(thunks.len());
+            for thunk in thunks {
+                let handle = std::thread::Builder::new()
+                    .stack_size(crate::STACK_BYTES)
+                    .name("beck-parallel".into())
+                    .spawn_scoped(scope, move || {
+                        let child = Interp::with_fuel(host, each).with_max_depth(max_depth);
+                        let answer = child.apply(thunk, Vec::new(), span);
+                        // Saturating rather than plain: `Interp::reset_fuel` is a
+                        // public method, and a child whose budget went *up* should
+                        // charge the parent nothing rather than panic.
+                        (answer, each.saturating_sub(child.fuel.get()))
+                    })
+                    .expect("a thread for a parallel child");
+                running.push(handle);
+            }
+            running
+                .into_iter()
+                // A panic in a child is the evaluator's own bug and not the program's — programs
+                // get an `EvalError` — so it is put back on this thread rather than turned into
+                // one, exactly as `on_the_evaluator_stack` does for the single-threaded case.
+                .map(|h| h.join().unwrap_or_else(|p| std::panic::resume_unwind(p)))
+                .collect()
+        });
+
+        // Charged before anything is answered, so a scope whose children failed still costs what
+        // they spent — otherwise the cheapest way to run forever would be to fail.
+        let spent: u64 = answers.iter().map(|(_, spent)| *spent).sum();
+        self.fuel.set(self.fuel.get().saturating_sub(spent));
+
+        let mut out = Vec::with_capacity(answers.len());
+        for (answer, _) in answers.drain(..) {
+            out.push(answer?);
+        }
+        Ok(out)
+    }
+
     /// Apply a callable value to arguments — the entry point the runtime uses for `validate`,
     /// `apply_event` and `view`.
     pub fn apply(&self, f: &Value, args: Vec<Value>, span: Span) -> EvalResult {
@@ -1235,10 +1345,7 @@ impl<'h> Interp<'h> {
                     ));
                 }
                 let k = args.pop().expect("length checked");
-                let mut results = Vec::with_capacity(args.len());
-                for thunk in &args {
-                    results.push(self.apply(thunk, Vec::new(), span)?);
-                }
+                let results = self.children(&args, span)?;
                 self.apply(&k, results, span)
             }
             Prim::Add => {

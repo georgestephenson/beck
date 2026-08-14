@@ -301,7 +301,11 @@ dependencies whose signatures didn't change.
   `.becki` and `--wire-compat` all applied to failure unchanged. Structured concurrency is
   **built** ([`80`](80-a-scope-owns-its-children-report.md)): `parallel:` is a scope whose
   bindings are its children, and what it lacks is a backend that runs two of them at once
-  (§80.5). `match` exhaustiveness is built for unions ([`27`](27-the-walls-come-down-report.md)
+  (§80.5). ***It has one*** ([`117`](117-a-scope-runs-its-children-report.md)): a thread per child,
+  1.99× on two children that wait and the same on two that compute once each is worth a thread. The
+  soundness was already in the checker, and one of the three things §80.5 said stood in the way was
+  removed by [`116`](116-the-host-answers-back-report.md) for a reason that had nothing to do with
+  concurrency. `match` exhaustiveness is built for unions ([`27`](27-the-walls-come-down-report.md)
   added lists). **Pattern matching nests** ([`90`](90-nested-patterns-report.md)):
   `case Some(Circle(r))`, a literal or a constructor wherever a binder goes, through a type
   parameter and inside a list — and the exhaustiveness check was rebuilt for it, because a set of
@@ -310,8 +314,11 @@ dependencies whose signatures didn't change.
   ([`91`](91-guards-and-alternatives-report.md)) — `case Circle(r) | Square(r):` and
   `case x if x < 0:`, neither of which needed a new algorithm, because an or-pattern is several
   rows of the same matrix and a guarded arm is no row — and `@` bindings with them. Pattern
-  matching is **done**; what is left of this bullet is **structured concurrency's missing backend**
-  ([`80`](80-a-scope-owns-its-children-report.md) §80.5), and §91.5 lists what is not there.*
+  matching is **done**, and so is the backend
+  ([`117`](117-a-scope-runs-its-children-report.md)) that was the last thing left here — so **this
+  bullet has no remainder**. What §91.5 and [`117`](117-a-scope-runs-its-children-report.md) §117.7
+  list are new items rather than the rest of this one, and the largest of them is **cancellation**:
+  a scope whose first child fails still waits for its siblings.*
 - **SQLite as a durable substrate** ([`07`](07-dependencies.md) §7.8.1): a `LogStore`
   implementation beside redb and Postgres. The reason is not speed — the measurements say the
   durable substrates are within ~16% of each other — it is that SQLite is *also* the read-model
@@ -449,9 +456,12 @@ over the release *listing*: `beck sign`'s subject is an image manifest, and a re
 tarballs (§104.6).
 **No bullet has a named remainder**: the concurrency-and-errors bullet has `Result`, error rows,
 `parallel:` and pattern matching with nesting, guards and alternatives
-([`90`](90-nested-patterns-report.md), [`91`](91-guards-and-alternatives-report.md)); what
-`parallel:` lacks is a backend that runs two children at once, which is
-[`80`](80-a-scope-owns-its-children-report.md) §80.5's item rather than this bullet's. **Three
+([`90`](90-nested-patterns-report.md), [`91`](91-guards-and-alternatives-report.md)) — and
+`parallel:` now has the backend that runs two children at once
+([`117`](117-a-scope-runs-its-children-report.md)), which was
+[`80`](80-a-scope-owns-its-children-report.md) §80.5's item and is closed rather than reassigned.
+What is left of *it* is **cancellation**: a scope whose first child fails waits for its siblings,
+and §80.5 forecast that a backend starting them together would need a signal nobody has designed. **Three
 half-built**: the codegen bullet has **both** of §5.2's code generators
 ([`93`](93-llvm-backend-report.md), [`97`](97-cranelift-report.md)) and a heap that is now whole:
 the *algebraic* half ([`101`](101-the-heap-report.md)), **text**
@@ -1038,7 +1048,7 @@ Recommended pairings, in order:
 | ~~**Then**~~ | ~~Lane A: `Ord` as a trait~~ | ~~Lane E: growing a map~~ | **Half done, and the other half — for the twelfth time.** Lane E was taken ([`114`](114-a-map-grows-report.md)): `beck-llvm`, `beck-clif`, their two suites and the refusal lists, and nothing in `beck-rt`, `check/`, `ty.rs` or `core.rs`. The forecast in [`113`](113-a-list-grows-report.md) §111.7 held — it wanted a tree, not a layout. Lane A is untouched |
 | ~~**Then**~~ | ~~Lane A: `Ord` as a trait~~ | ~~Lane E: text's last refusals, and generics~~ | **Half done, and the other half — for the thirteenth time.** Lane E was taken: `str_trim`, `str_split` and `str_chars` compiled once their stated reasons were checked and found false, and [`115`](115-monomorphisation-report.md) monomorphised. The last of those is the first item in this lane that touched neither emitter's code generation — a new module both are handed a program by — and it still held the prediction: nothing in `beck-rt`, `check/`, `ty.rs` or `core.rs`. Lane A is untouched |
 | ~~**Then**~~ | ~~Lane A: `Ord` as a trait~~ | ~~Lane E: the effects that call *back* into the host~~ | **Half done, and the other half — for the fourteenth time.** Lane E was taken ([`116`](116-the-host-answers-back-report.md)) and the prediction held once more: `beck-llvm`, `beck-clif`, their two suites — and, for the first time in this lane, two files that are not a backend's, because the four host atoms had to stop being the *evaluator's* trait before three backends could ask one question. Nothing in `beck-rt`, `check/`, `ty.rs` or `core.rs`. Lane A is untouched |
-| **Now** | Lane A: `Ord` as a trait, which [`54`](54-ordering.md) writes out and does *not* recommend — so realistically nothing | **Lane E is empty.** What is left of the native backends is not a class any more but three named items ([`116`](116-the-host-answers-back-report.md) §116.10): the signal vocabulary, which the splitter reads rather than a body calling it; a **bounded** definition, which is [`108`](108-closures-arrive-report.md)'s closure boundary; and a worker that can answer two calls at once, which [`93`](93-llvm-backend-report.md) §93.7 has named as the first thing a second version would change since there was a first version. **Mode B's codegen** is the item with a user in front of it, and it is that plus a wasm emitter ([`94`](94-mode-b-report.md) §94.8) | Lane B's render lock is still open and still has no owner — it is a third branch rather than a reason to hold anything. Lane D's remaining item is **trusted publishing**, which is an account setting rather than a branch |
+| **Now** | Lane A: `Ord` as a trait, which [`54`](54-ordering.md) writes out and does *not* recommend — so realistically nothing | **Lane E is empty.** What is left of the native backends is not a class any more but three named items ([`116`](116-the-host-answers-back-report.md) §116.10): the signal vocabulary, which the splitter reads rather than a body calling it; a **bounded** definition, which is [`108`](108-closures-arrive-report.md)'s closure boundary; and a worker that can answer two calls at once, which [`93`](93-llvm-backend-report.md) §93.7 has named as the first thing a second version would change since there was a first version. **Mode B's codegen** is the item with a user in front of it, and it is that plus a wasm emitter ([`94`](94-mode-b-report.md) §94.8). The lane's other live item is **cancellation** for a `parallel:` scope ([`117`](117-a-scope-runs-its-children-report.md) §117.7), which is `beck-eval`'s and collides with nothing | Lane B's render lock is still open and still has no owner — it is a third branch rather than a reason to hold anything. Lane D's remaining item is **trusted publishing**, which is an account setting rather than a branch |
 | **Any time** | — | Lane F; ~~Lane C's LSP~~ — **built** ([`110`](110-the-editor-edits-report.md)), which empties Lane C; more of SICP | No predecessors, no collisions |
 
 A third branch is viable whenever E or F is staffed. The ceiling is four, because of these:

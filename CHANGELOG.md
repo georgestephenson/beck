@@ -12,6 +12,44 @@ Newest first.
 
 ## Unreleased
 
+### Concurrency
+
+- **`parallel:` runs its children at the same time**, on a thread each
+  ([`docs/117`](docs/117-a-scope-runs-its-children-report.md)). This closes
+  [`docs/80`](docs/80-a-scope-owns-its-children-report.md) §80.5's first sentence and the last named
+  remainder of [`docs/08`](docs/08-roadmap.md)'s structured-concurrency bullet.
+  - **The soundness is not in this change.** §80.5 put it in the checker: no child may name another
+    (`B0398`) and none may perform an effect another could observe (`B0399`), so the scope's answer
+    does not depend on the order. This adds no analysis and no scheduler — it starts two threads,
+    because the program has already been proved not to care.
+  - **One of the three blockers §80.5 named was removed by accident.** The `Host` trait became
+    thread-safe in [`docs/116`](docs/116-the-host-answers-back-report.md), which wanted it so three
+    backends could ask one question. Recorded because the lane table predicts file collisions and
+    has nothing to say about a branch that removes another's blocker.
+  - **Fuel is split, not shared** (§117.4). Sharing it is an atomic read-modify-write on every step
+    of every program — the hot path [`docs/70`](docs/70-the-evaluator-gets-fast-report.md) is about
+    — and it makes *which* child runs out a race. Each child gets an equal share of what remains and
+    the scope charges the parent what they actually spent, so the total matches a serial run. The
+    cost is that a child which would have used more than its share now runs out where a serial run
+    would have let it continue; `spawn` is discharged by `Tier::Server` alone, so none of this can
+    reach a replay.
+  - **Nothing is cancelled.** A scope whose first child fails still waits for its siblings. §80.5
+    forecast that a backend starting children together would need a cancellation signal; that
+    backend exists now and the signal still does not.
+  - **What it is worth**, from `measure_concurrency.rs` (release, medians): two children that each
+    wait 200 ms take **201.1 ms** against **400.7 ms** in order — **1.99×**, and 2× is the ceiling
+    for two children. Children that compute get the same once each is worth a thread, and the
+    crossover is measured rather than guessed: **0.34×** at a child of ~170 µs, **1.30×** at
+    ~580 µs, **1.85×** at 7.9 ms.
+  - **Where the per-child cost goes** is not where the question expects: a bare thread is 94.4 µs on
+    this machine and the 256 MiB stack reservation adds 29.3 µs, so the reservation is the *smaller*
+    half. Neither is a knob — the reservation is what the depth ceiling needs
+    ([`adr/0007`](docs/adr/0007-evaluator-stack-is-declared-not-discovered.md)) and the thread is
+    what running two things at once is.
+  - **The gate is a deadlock-or-pass, not a clock**: `concurrency.rs::two_children_actually_overlap`
+    uses a host that will not answer until every child has arrived, so a serial evaluator cannot
+    pass it at any speed. Checked by forcing it back to an ordered join and watching it go red.
+
 ### The native backends
 
 - **The four primitives that ask the host compile** — `now()`, `uuid()`, `secret_env` and

@@ -8,8 +8,15 @@
 //!
 //! Two rules hold it up and each is a diagnostic rather than a convention — no child can name
 //! another (`B0398`), and no child may perform an effect another child could observe (`B0399`).
-//! The tests below are about answers and refusals, not about speed: nothing here runs two children
-//! at the same time, and `docs/80` §80.5 says what would have to change for something to.
+//! Most of the tests below are about answers and refusals rather than about speed, because that is
+//! what the claim is about.
+//!
+//! **The children do now run at the same time** (`docs/117`), which §80.5 said would need the
+//! `Host` trait to become thread-safe — it did, for an unrelated reason, when
+//! [`docs/116`](../../../../docs/116-the-host-answers-back-report.md) gave the four host atoms one
+//! description that three backends could ask. `two_children_actually_overlap` is the gate, and it
+//! is not a timing test: it deadlocks-or-passes, because each child waits for the other to arrive
+//! before either may finish.
 
 use beck_rt::testing::{Options, Outcome};
 
@@ -532,4 +539,157 @@ test \"a test may call a definition that spawns\":
     assert!(!beck_core::testing::is_stubbable(
         &beck_core::row::Effect::Spawn
     ));
+}
+
+// -------------------------------------------------------------------------------------------
+// …and they run at the same time
+// -------------------------------------------------------------------------------------------
+
+/// A host whose `fetch` will not answer until **every** child has reached it.
+///
+/// This is what makes the test below a proof rather than a measurement. A serial evaluator cannot
+/// pass it at any speed: the first child blocks inside `fetch` waiting for a second arrival that
+/// cannot happen until the first returns. A concurrent one passes immediately. There is no
+/// threshold to tune and nothing to flake — the deadline exists only so that a regression is a
+/// failed assertion instead of a hung suite.
+#[derive(Debug)]
+struct Rendezvous {
+    arrived: std::sync::Mutex<usize>,
+    opened: std::sync::Condvar,
+    want: usize,
+    /// Set when a child gave up waiting, which is the only way this host answers without having
+    /// seen every child.
+    alone: std::sync::atomic::AtomicBool,
+}
+
+impl Rendezvous {
+    fn of(want: usize) -> std::sync::Arc<Rendezvous> {
+        std::sync::Arc::new(Rendezvous {
+            arrived: std::sync::Mutex::new(0),
+            opened: std::sync::Condvar::new(),
+            want,
+            alone: std::sync::atomic::AtomicBool::new(false),
+        })
+    }
+
+    fn overlapped(&self) -> bool {
+        !self.alone.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+impl beck_core::host::Atoms for Rendezvous {
+    fn fetch(
+        &self,
+        request: &beck_core::net::Request,
+    ) -> Result<beck_core::net::Reply, beck_core::net::Failure> {
+        let mut arrived = self.arrived.lock().expect("not poisoned");
+        *arrived += 1;
+        if *arrived >= self.want {
+            self.opened.notify_all();
+        } else {
+            // Generous on purpose: this is the difference between a red test and a hung suite, not
+            // a measurement of anything. A serial evaluator spends all of it; a concurrent one
+            // never reaches the timeout at all.
+            let (guard, timed_out) = self
+                .opened
+                .wait_timeout_while(arrived, std::time::Duration::from_secs(10), |n| {
+                    *n < self.want
+                })
+                .expect("not poisoned");
+            arrived = guard;
+            if timed_out.timed_out() {
+                self.alone.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+        drop(arrived);
+        Ok(beck_core::net::Reply {
+            status: 200,
+            headers: Vec::new(),
+            body: std::sync::Arc::from(&*request.path),
+        })
+    }
+}
+
+/// The children of a scope run **at the same time**, and the proof is that neither can finish
+/// alone.
+///
+/// `docs/80` §80.5 recorded this as not built and named what stood in the way: two interpreters and
+/// a shared budget, and a `Host` trait that would have to become thread-safe. The trait became
+/// thread-safe in `docs/116` for a different reason entirely, and the budget is split rather than
+/// shared (`docs/117` §117.4) — so what is left is the two interpreters, which is a thread each.
+#[test]
+fn two_children_actually_overlap() {
+    let src = "\
+def left(x: Str) -> Str uses net.out(a.example.com), raises(HttpError):
+    return http_fetch(\"a.example.com\", HttpRequest(method=\"GET\", path=x, headers={}, body=\"\", port=80, tls=False, secrets={})).body
+
+def right(x: Str) -> Str uses net.out(b.example.com), raises(HttpError):
+    return http_fetch(\"b.example.com\", HttpRequest(method=\"GET\", path=x, headers={}, body=\"\", port=80, tls=False, secrets={})).body
+
+def both(x: Str) -> Str uses net.out(a.example.com), net.out(b.example.com), spawn, raises(HttpError):
+    return parallel:
+        a = left(x)
+        b = right(x)
+        a + b
+";
+    let placed = compile(src);
+    let program = std::sync::Arc::new(placed.program.clone());
+    let host = Rendezvous::of(2);
+    let backend = beck_eval::Evaluator::new(program.clone()).answering(host.clone());
+
+    let answer = beck_eval::on_the_evaluator_stack(|| {
+        use beck_core::backend::Backend;
+        let f = backend
+            .function(&program.defs["both"].body)
+            .expect("prepares");
+        f(vec![beck_core::Value::str_("/x")])
+    })
+    .expect("both children answer");
+
+    assert!(
+        host.overlapped(),
+        "a child waited ten seconds for its sibling and gave up, which is what a serial evaluator \
+         does — the two are not running at the same time"
+    );
+    assert_eq!(answer, beck_core::Value::str_("/x/x"));
+}
+
+/// One child is run **here**, without a thread.
+///
+/// A scope of one is not something the surface can express — `a_scope_needs_at_least_two_children`
+/// is the diagnostic — so this is about the `Core` form rather than about a program somebody would
+/// write, and it is the one case decided by argument instead of by measurement: a thread that
+/// overlaps with nothing is pure cost.
+#[test]
+fn a_lone_child_is_not_worth_a_thread() {
+    let src = "\
+def left(x: Str) -> Str uses net.out(a.example.com), raises(HttpError):
+    return http_fetch(\"a.example.com\", HttpRequest(method=\"GET\", path=x, headers={}, body=\"\", port=80, tls=False, secrets={})).body
+
+def right(x: Str) -> Str uses net.out(b.example.com), raises(HttpError):
+    return http_fetch(\"b.example.com\", HttpRequest(method=\"GET\", path=x, headers={}, body=\"\", port=80, tls=False, secrets={})).body
+
+def both(x: Str) -> Str uses net.out(a.example.com), net.out(b.example.com), spawn, raises(HttpError):
+    return parallel:
+        a = left(x)
+        b = right(x)
+        a + b
+";
+    // A rendezvous of one opens on the first arrival, so this asserts the answer rather than the
+    // overlap: what it is here to catch is a scope that stopped answering correctly when it
+    // stopped spawning.
+    let placed = compile(src);
+    let program = std::sync::Arc::new(placed.program.clone());
+    let host = Rendezvous::of(1);
+    let backend = beck_eval::Evaluator::new(program.clone()).answering(host.clone());
+    let answer = beck_eval::on_the_evaluator_stack(|| {
+        use beck_core::backend::Backend;
+        let f = backend
+            .function(&program.defs["both"].body)
+            .expect("prepares");
+        f(vec![beck_core::Value::str_("/y")])
+    })
+    .expect("answers");
+    assert_eq!(answer, beck_core::Value::str_("/y/y"));
+    assert!(host.overlapped());
 }
