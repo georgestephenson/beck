@@ -100,3 +100,16 @@ reason that named a **class** — and a class is exactly what a report retires.
   `Heap::crossing`, it is a true refusal rather than a stale one, and what would move it is
   compiling definitions that are called only by other compiled definitions — which need never
   marshal a closure at all.
+
+## 119.6 What this corrects
+
+- **The refusal itself**, in both emitters: *"a collection is not on this heap yet"*, false since
+  [`106`](106-lists-arrive-read-only-report.md).
+- **`beck_llvm::heap`'s pool walk** carried a comment reading *"a list pattern is refused by both
+  emitters, and is walked anyway"*. The second half is still the reason; the first half is not.
+- [`05`](05-tier-lowering.md) §5.2's running correction said what is still the tree-walker's is
+  *"every effect and every operation that grows a collection"*. Neither has been true since
+  [`113`](113-a-list-grows-report.md), [`114`](114-a-map-grows-report.md) and
+  [`116`](116-the-host-answers-back-report.md), and that section is a **design document** rather
+  than a report — so it is corrected in place, in the appended-quote form it already uses, rather
+  than here. This bullet says so because a correction nobody can find is not one.

@@ -2076,8 +2076,9 @@ fn pattern(p: &beck_core::core::Pattern, heap: &mut Heap) {
                 pattern(sub, heap);
             }
         }
-        // A list pattern is refused by both emitters, and is walked anyway: what decides the pool
-        // is the program, not what turned out to compile.
+        // Walked for the same reason every other pattern is: what decides the pool is the
+        // program, not what turned out to compile. It said "refused by both emitters" until
+        // `docs/119` compiled one.
         Pattern::List { items, .. } => {
             for sub in items {
                 pattern(sub, heap);
