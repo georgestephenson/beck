@@ -43,6 +43,7 @@ use support::clofix::{self, CLOSURES};
 use support::failfix;
 use support::genfix::{self, GENERIC};
 use support::heapfix::{self, RECORDS, STILL_REFUSED, UNIONS};
+use support::hostfix::{self, Stated, EFFECTS};
 use support::listfix::{self, LISTS};
 use support::mapfix::{self, MAPS};
 use support::scalar::{
@@ -113,6 +114,9 @@ struct Both {
     program: Arc<Program>,
     native: Artifact,
     evaluator: Arc<dyn Backend>,
+    /// The stated host, when this program has effects. Rewound before each backend is driven, so
+    /// that the *n*th question of a call gets the same answer whichever backend asked it.
+    stated: Option<Arc<Stated>>,
 }
 
 impl Both {
@@ -122,6 +126,28 @@ impl Both {
             native: artifact(&program),
             evaluator: beck_eval::backend_for(program.clone()),
             program,
+            stated: None,
+        }
+    }
+
+    /// The same, with both backends answering their host effects from one stated host.
+    ///
+    /// This is what makes a differential over `now()` mean anything: the two are asked the same
+    /// question and told the same answer, so what is left to compare is what the *backends* did
+    /// with it.
+    fn answering(name: &str, src: &str, atoms: Arc<Stated>) -> Both {
+        let program = compile(name, src);
+        let toolchain = beck_llvm::Toolchain::find().expect("checked by the caller");
+        let native = Artifact::build_bounded(&program, toolchain, None, Some(LIMIT))
+            .expect("clang accepts the module")
+            .answering(atoms.clone());
+        let evaluator: Arc<dyn Backend> =
+            Arc::new(beck_eval::Evaluator::new(program.clone()).answering(atoms.clone()));
+        Both {
+            native,
+            evaluator,
+            program,
+            stated: Some(atoms),
         }
     }
 
@@ -152,10 +178,16 @@ impl Both {
             .unwrap_or_else(|| panic!("no definition `{name}`"));
         // The tree-walker spends host frames on recursion that is not in tail position, and says
         // how much stack that needs. Every entry point in the workspace honours it; so does this.
+        if let Some(stated) = &self.stated {
+            stated.rewind();
+        }
         let evaluated = beck_eval::on_the_evaluator_stack(|| {
             let f = self.evaluator.function(&def.body).expect("prepares");
             outcome(f(args.to_vec()))
         });
+        if let Some(stated) = &self.stated {
+            stated.rewind();
+        }
         (evaluated, outcome(self.native.call(name, args)))
     }
 
@@ -1943,10 +1975,6 @@ fn what_cannot_be_compiled_is_refused_by_name_and_with_a_reason() {
         ("grows_a_list", "`list_flat_map` answers a list"),
         ("renders_a_real", "`str` of Float"),
         ("is_generic", "generic over T"),
-        (
-            "reads_the_clock",
-            "`now` is not one of the scalar primitives",
-        ),
         ("calls_something_refused", "calls `grows_a_list`"),
     ] {
         let reason = both
@@ -1960,7 +1988,14 @@ fn what_cannot_be_compiled_is_refused_by_name_and_with_a_reason() {
 
     // …and the definition that has nothing wrong with it still compiles, so this program did not
     // pass by refusing everything.
-    assert_eq!(both.compiled(), vec!["scalar_and_fine".to_string()]);
+    // `reads_the_clock` is here rather than above because the protocol grew a second direction:
+    // it is compiled and not compared, since two backends reading the *process* clock one after
+    // the other are not in the same millisecond — `the_two_backends_agree_on_the_host_effects` is
+    // where they are asked the same question.
+    assert_eq!(
+        both.compiled(),
+        vec!["reads_the_clock".to_string(), "scalar_and_fine".to_string()]
+    );
     both.agree("scalar_and_fine", &singles(&ints(0x5eed_0007, 20)));
 
     // A refusal is not a silent fallback either: asking the artefact for a refused definition is
@@ -1978,10 +2013,11 @@ fn what_cannot_be_compiled_is_refused_by_name_and_with_a_reason() {
 /// list in prose goes stale where a list with a test attached cannot (`docs/83` §83.7). Each of
 /// these goes red the day its row starts compiling, which is the day the row should be deleted.
 ///
-/// Five rows were deleted that way: `docs/105` gave a `Str` a layout, `docs/106` gave a `list` one,
-/// `docs/108` compiled the higher-order primitives, and `str_trim` and `str_split` moved across when
+/// Six rows were deleted that way: `docs/105` gave a `Str` a layout, `docs/106` gave a `list` one,
+/// `docs/108` compiled the higher-order primitives, `str_trim` and `str_split` moved across when
 /// their stated reasons — a Unicode table, and "two loops rather than one" — turned out to be false
-/// of them. Each time, the row moved from this list to the control below it in the same commit.
+/// of them, and the **host effects** moved when the worker's protocol grew a second direction.
+/// Each time, the row moved from this list to the control below it in the same commit.
 /// What is left is the primitives that really do read a table, the ones that render a real, and a
 /// definition generic over a type.
 #[test]
@@ -1993,10 +2029,6 @@ fn what_the_heap_does_not_reach_is_refused_by_name() {
         ("upcases", "`str_upper` is Unicode case mapping"),
         ("grows", "`list_flat_map` answers a list"),
         ("is_generic", "generic over T"),
-        (
-            "reads_the_clock",
-            "`now` is not one of the scalar primitives",
-        ),
         ("calls_something_refused", "which does not compile"),
     ] {
         let reason = module
@@ -2026,6 +2058,7 @@ fn what_the_heap_does_not_reach_is_refused_by_name() {
             "double_it".to_string(),
             "names_it".to_string(),
             "reads_a_list".to_string(),
+            "reads_the_clock".to_string(),
             "scalar_and_fine".to_string()
         ]
     );
@@ -2498,7 +2531,9 @@ fn corpus(toolchain: beck_llvm::Toolchain) {
     assert!(files.len() > 40, "only found {} programs", files.len());
 
     let mut compiled = 0;
+    let mut refused = 0;
     let mut assembled = 0;
+    let mut blames: Vec<(String, String)> = Vec::new();
     for path in &files {
         let name = path
             .strip_prefix(&root)
@@ -2515,14 +2550,45 @@ fn corpus(toolchain: beck_llvm::Toolchain) {
         let program = placed.program;
         let module = beck_llvm::module(&program);
         compiled += module.functions.len();
+        refused += module.refusals.len();
+        blames.extend(
+            module
+                .refusals
+                .iter()
+                .map(|r| (format!("{name}::{}", r.name), r.reason.clone())),
+        );
         assembled += 1;
         // Assembled, not merely emitted: `-c` stops before the link, because what is being checked
         // is that LLVM accepts the IR and not that a program with no `main`-worthy content links.
         Artifact::build_bounded(&program, toolchain.clone(), None, Some(LIMIT))
             .unwrap_or_else(|e| panic!("{name}: {e}"));
     }
-    println!("{assembled} programs assembled, {compiled} definitions compiled to native code");
+    // Both halves printed, because a report that quotes "so many more compile" needs the
+    // denominator: each file is compiled **alone**, so a library's generic definitions have no
+    // caller and stay refused (`docs/115` §115.6), and the count only means something beside the
+    // one before it.
+    println!(
+        "{assembled} programs assembled, {compiled} definitions compiled to native code, \
+         {refused} left to the evaluator"
+    );
     assert!(compiled > 100, "only {compiled} definitions compiled");
+    // A primitive that compiles cannot be the reason for a refusal, and the claim a report makes
+    // is over the *whole tree* rather than over a fixture. Each of these was a refusal reason
+    // until the release that took it off the list, so this is the sentence "it no longer appears
+    // anywhere" with a test attached rather than a grep somebody ran once.
+    let blamed: Vec<String> = blames
+        .into_iter()
+        .filter(|(_, reason)| {
+            ["`now`", "`uuid`", "`secret_env`", "`http_fetch`", "`raise`"]
+                .iter()
+                .any(|p| reason.starts_with(p))
+        })
+        .map(|(name, reason)| format!("{name}: {reason}"))
+        .collect();
+    assert!(
+        blamed.is_empty(),
+        "these primitives compile, so nothing may be refused because of one: {blamed:#?}"
+    );
 }
 
 /// The same module, twice, byte for byte.
@@ -2553,12 +2619,12 @@ fn the_generated_module_is_a_function_of_the_program() {
 fn the_subset_is_decided_without_a_toolchain() {
     let program = compile("refused.beck", REFUSED);
     let module = beck_llvm::module(&program);
-    assert_eq!(module.functions.len(), 1);
-    assert_eq!(&*module.functions[0].name, "scalar_and_fine");
-    assert_eq!(module.functions[0].params, vec![Repr::Int]);
-    assert_eq!(module.functions[0].ret, Repr::Int);
-    assert_eq!(module.functions[0].index, 0);
-    assert!(module.refusals.len() >= 5, "{:?}", module.refusals);
+    assert_eq!(module.functions.len(), 2);
+    assert_eq!(&*module.functions[1].name, "scalar_and_fine");
+    assert_eq!(module.functions[1].params, vec![Repr::Int]);
+    assert_eq!(module.functions[1].ret, Repr::Int);
+    assert_eq!(module.functions[1].index, 1);
+    assert!(module.refusals.len() >= 4, "{:?}", module.refusals);
     for refusal in &module.refusals {
         assert!(
             !refusal.reason.is_empty(),
@@ -3021,5 +3087,107 @@ fn a_fold_over_a_map_is_not_quadratic() {
     println!(
         "grown({}) left {} bytes and grown({}) left {} — {growth:.1}× for {steps:.0}× the entries",
         small.0, small.1, big.0, big.1
+    );
+}
+
+/// The four primitives that ask the host, over both backends and one stated host.
+///
+/// What this is actually asserting is that a **question is answered the same way twice**: the
+/// evaluator calls `Atoms` directly and the compiled program asks across a pipe, and the whole
+/// point of `beck_llvm::service` is that the second one arrives at the first. A test that let the
+/// two read the process clock would compare two instants and pass on a backend that answered the
+/// wrong question.
+#[test]
+fn the_two_backends_agree_on_the_host_effects() {
+    let _ = toolchain!();
+    let atoms = Stated::new();
+    let both = Both::answering("effects.beck", EFFECTS, atoms.clone());
+    let mut compared = 0;
+    for (name, args) in hostfix::calls() {
+        compared += both.agree(name, std::slice::from_ref(&args));
+    }
+    // Both backends made every outbound call, rather than one of them being the evaluator twice:
+    // five of the cases reach `http_fetch` once each, and the count is per backend.
+    assert_eq!(
+        atoms.asked(),
+        10,
+        "every `http_fetch` case has to have been asked by both backends"
+    );
+    // The set has to *contain* the failure, or this passed by never carrying a raise across the
+    // boundary.
+    let (walked, compiled) = both.call("unreachable", &[]);
+    assert_eq!(walked, compiled);
+    assert!(
+        walked
+            .expect_err("nowhere.invalid is unreachable")
+            .contains("HttpUnreachable"),
+        "an uncaught raise carries the value, not the fact of one"
+    );
+    println!("{compared} host-effect calls compared, and both backends agreed on every one");
+}
+
+/// What a question **carries**, counted rather than timed.
+///
+/// The protocol has one decision in it a reader would want checked rather than believed: a
+/// question sends the live arena when — and only when — an argument could point into it. `now()`
+/// takes nothing, so its question is 32 bytes and some words however much the program has
+/// allocated; `secret_env` is handed text the program built, so the host cannot read it without
+/// the bytes.
+///
+/// Two sizes, because one measurement cannot tell a constant from a slope (`AGENTS.md`), and no
+/// clock, because this is a claim about what crosses the pipe rather than about how fast it does —
+/// `docs/64` §64.1's pattern, and the kind of gate that does not flake on a shared runner.
+#[test]
+fn what_a_question_carries_is_a_decision_and_not_an_accident() {
+    let _ = toolchain!();
+    let atoms = Stated::new();
+    let both = Both::answering("carried.beck", EFFECTS, atoms);
+
+    // A question with no arguments: nothing of the arena travels, at either size.
+    let mut clock = Vec::new();
+    for n in [16, 4096] {
+        both.native
+            .call("clock_after", &[Value::Int(n)])
+            .expect("the clock is answered");
+        let (questions, carried) = both.native.questions();
+        assert_eq!(questions, 1, "`now()` is one question");
+        assert_eq!(
+            carried, 0,
+            "`now()` cannot point into the heap, so none of it travels — and {n} elements are live"
+        );
+        clock.push(carried);
+    }
+
+    // A question whose argument is text: the arena travels, and grows with what is live. This is
+    // asserted as *growing* rather than smoothed away, because it is the cost of the decision and
+    // a reader deciding whether to call `secret_env` in a loop needs to know it.
+    let mut carried_by_size = Vec::new();
+    for n in [16, 4096] {
+        both.native
+            .call("secret_after", &[Value::Int(n)])
+            .expect("the secret is answered");
+        let (questions, carried) = both.native.questions();
+        assert_eq!(questions, 1, "`secret_env` is one question");
+        carried_by_size.push(carried);
+    }
+    let [small, large] = carried_by_size[..] else {
+        unreachable!("two sizes")
+    };
+    assert!(
+        large > small * 8,
+        "a question that can point into the arena carries it: {small} bytes at 16 elements and \
+         {large} at 4,096"
+    );
+
+    // And the count is per *call of the primitive*, not per call of the definition: a loop that
+    // mints four ids asks four times.
+    both.native
+        .call("several", &[Value::Int(4)])
+        .expect("four ids");
+    assert_eq!(both.native.questions().0, 4, "one question per iteration");
+    println!(
+        "a question with no arguments carries {} bytes at both sizes; one with text carries \
+         {small} bytes over 16 elements and {large} over 4,096",
+        clock[0]
     );
 }

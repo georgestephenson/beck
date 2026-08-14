@@ -12,6 +12,49 @@ Newest first.
 
 ## Unreleased
 
+### The native backends
+
+- **The four primitives that ask the host compile** — `now()`, `uuid()`, `secret_env` and
+  `http_fetch`, to both code generators ([`docs/116`](docs/116-the-host-answers-back-report.md)).
+  The worker's protocol has a **second direction**: a compiled call may stop mid-flight, write a
+  question frame and block until the host answers. This empties
+  [`docs/08`](docs/08-roadmap.md) §8.5.5's **Lane E**, whose last row said this was the one item in
+  the lane that is not a missing emitter.
+  - **What a question carries is a shape and a word per argument**, so the host decodes and encodes
+    through `beck_llvm::heap` without a second table of what each primitive's types are — the trick
+    [`docs/111`](docs/111-a-view-arrives-as-a-recipe-report.md)'s deferred leaves play, one
+    subsystem over. The answer is a **tail appended at the arena's high-water mark**, never a whole
+    arena, so nothing a live value points at can be rewritten by an answer.
+  - **The blocker for two of the four was a type, not the protocol.** `secret[T]` had no machine
+    representation, so `secret_env` could not answer with one and `HttpRequest` — whose `secrets`
+    field holds them — had no layout at all. It is laid out as the one-field object it already is at
+    run time; unwrapping would make a secret and its `Str` indistinguishable in compiled code, which
+    is the one thing §3.5 claims they are not.
+  - **A failed `http_fetch` needed nothing new.** The host answers with `Trap::Raised` and the same
+    two-word pair a compiled `raise` builds
+    ([`docs/112`](docs/112-a-raise-arrives-report.md)), so the program's own `try:` catches it
+    without knowing an upcall happened.
+  - **The host is one description now**: `beck_core::host::Atoms`, which the evaluator's `Host`
+    extends and both compiled backends ask. That is what makes a differential over `now()` a
+    comparison of the program rather than of two clocks —
+    `native.rs::the_two_backends_agree_on_the_host_effects` and its Cranelift twin drive all three
+    backends from one stated host over 16 calls, and assert the outbound count so a silent fallback
+    cannot pass.
+  - **870 → 889 definitions compile across the tree and refusals go 208 → 189**, over 64 programs
+    each compiled alone. None of the four appears in a refusal anywhere, and
+    `every_corpus_program_produces_a_module_llvm_accepts` is the gate that says so rather than a
+    grep somebody ran once.
+  - **Cost**, from `measure_native.rs::what_asking_the_host_costs` (release, median of nine): a
+    question that cannot point into the heap is a flat round trip — **24.5 µs** at 16 live elements
+    and **29.0 µs** at 4,096 — and one that can carries the live arena, **26.8 µs** and
+    **162.7 µs** for 664 and 163,864 bytes. The shape is gated without a clock by
+    `native.rs::what_a_question_carries_is_a_decision_and_not_an_accident`, which counts the bytes
+    at the same two sizes.
+  - **A limit on compiled time is not a limit on a call** (§116.8). The worker's wall-clock bound
+    exists because there is no fuel in compiled code; it was killing an `http_fetch` that was
+    waiting on a peer. The deadline is now stood down while the host works and re-armed as a fresh
+    one, so it still covers every instruction the worker executes and nothing the host does.
+
 ### The editor
 
 - **`beck lsp` edits: references, document highlight, prepare-rename, rename and inlay hints**

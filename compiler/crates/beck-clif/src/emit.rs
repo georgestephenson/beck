@@ -3,11 +3,12 @@
 //! # The same subset, a second time
 //!
 //! This compiles exactly what [`beck_llvm::emit`] compiles: a definition whose parameters and
-//! result each have a [`beck_llvm::heap::Repr`] — `Int`, `Float`, `Bool`, or a `model`, `union` or
-//! `newtype` — and whose body is built from constants, variables, `let`, `if`, `match`, direct
-//! calls, record and variant construction, field reads, `with`, and the arithmetic, comparison and
-//! logical primitives. Text, a collection, a closure and every effect are refused by name, with a
-//! reason, exactly as they are there.
+//! result each have a [`beck_llvm::heap::Repr`] — `Int`, `Float`, `Bool`, a `Str`, a `list`, a
+//! `Map`, an `Html`, or a `model`, `union` or `newtype` — and whose body is built from constants,
+//! variables, `let`, `if`, `match`, direct calls, record and variant construction, field reads,
+//! `with`, lambdas and applications, and the arithmetic, comparison, logical, text, collection and
+//! view primitives. It asks the host the same four questions through the same frame
+//! ([`beck_llvm::Upcall`]), and refuses what is refused there by name, with a reason.
 //!
 //! Writing the selection a second time rather than importing it is deliberate. The two emitters
 //! are held to *agreeing* — `cranelift.rs` asserts that they accept and refuse the same
@@ -55,7 +56,7 @@ use beck_core::check::{Def, Program};
 use beck_core::core::{Arm, Const, Core, CoreKind, Pattern, Prim, VarId};
 use beck_diag::Span;
 use beck_llvm::heap::{self, Heap, Repr};
-use beck_llvm::{Refusal, Scalar, Signature, Trap, MAX_PARAMS};
+use beck_llvm::{Refusal, Scalar, Signature, Trap, Upcall, MAX_PARAMS};
 
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::{
@@ -264,12 +265,20 @@ fn build(
         }
         None => None,
     };
+    // A question needs the arena, because an answer is written into it — and it has one, because
+    // asking interns the shape of what it answers with and a module with an interned shape is not
+    // an empty heap.
+    let host = match (arena, asks_the_host(program, eligible)) {
+        (Some(_), true) => Some(Host::declare(&mut object, ptr).map_err(Failure::Fatal)?),
+        _ => None,
+    };
     let runtime = Runtime {
         arena,
         text,
         lists,
         maps,
         builds,
+        host,
     };
 
     // Every compiled definition, declared before any is defined: a body may call one declared
@@ -422,6 +431,10 @@ fn build(
         arena
             .define(&mut object, &mut ctx, &mut fctx, ptr)
             .map_err(Failure::Fatal)?;
+        if let Some(host) = host {
+            host.define(arena, &mut object, &mut ctx, &mut fctx, ptr)
+                .map_err(Failure::Fatal)?;
+        }
         if let Some(text) = text {
             text.define(arena, &mut object, &mut ctx, &mut fctx, ptr)
                 .map_err(Failure::Fatal)?;
@@ -622,6 +635,8 @@ struct Runtime {
     lists: Option<Lists>,
     maps: Option<Maps>,
     builds: Option<Builds>,
+    /// The second direction of the protocol, when this program asks the host anything.
+    host: Option<Host>,
 }
 
 /// The four list functions that do not care what an element *is*.
@@ -5712,6 +5727,113 @@ impl<'a> Body<'a> {
         b.ins().load(types::I64, MemFlagsData::trusted(), at, 0)
     }
 
+    /// Ask the host one of the four questions compiled code cannot answer.
+    ///
+    /// The LLVM emitter's `upcall`, written again — and what is *not* written again is what goes
+    /// on the wire: a shape and a word per argument, so the host decodes and encodes through
+    /// [`beck_llvm::heap`] rather than through a second table of what each primitive's types are.
+    ///
+    /// The buffer is a **stack slot**, which is a function-level entity in Cranelift and therefore
+    /// hoisted by construction: the other emitter writes text and has to insert its `alloca` at
+    /// the top of the entry block by hand, or a `now()` inside a loop would grow the stack once an
+    /// iteration.
+    fn upcall(
+        &mut self,
+        op: Upcall,
+        vals: &[Val],
+        ty: &beck_core::ty::Ty,
+        span: Span,
+        b: &mut FunctionBuilder<'_>,
+        m: &mut ObjectModule,
+    ) -> Result<Val, String> {
+        let Some(host) = self.runtime.host else {
+            return Err(format!(
+                "`{}` reaches the host, and this module has no way to ask it",
+                op.name()
+            ));
+        };
+        if vals.len() != op.arity() {
+            return Err(format!(
+                "`{}` is applied to {} arguments here",
+                op.name(),
+                vals.len()
+            ));
+        }
+        let ret = self
+            .repr(ty)
+            .map_err(|why| format!("`{}` answers {why}", op.name()))?;
+        let ret_shape = self.heap.word_of(ret);
+        let (raises, named) = match op.raises() {
+            Some(name) => {
+                let repr = self
+                    .repr(&beck_core::ty::Ty::con(name))
+                    .map_err(|why| format!("`{}` raises {why}", op.name()))?;
+                (self.heap.word_of(repr), self.literal(name))
+            }
+            None => (0, 0),
+        };
+        let idx = self.span(span);
+        let ptr = m.target_config().pointer_type();
+        let slot = b.create_sized_stack_slot(StackSlotData::new(
+            StackSlotKind::ExplicitSlot,
+            QUESTION_WORDS * heap::WORD as u32,
+            3,
+        ));
+        let buf = b.ins().stack_addr(ptr, slot, 0);
+        let flags = MemFlagsData::trusted();
+        let mut words = vec![
+            b.ins().iconst(types::I64, i64::from(ret_shape)),
+            b.ins().iconst(types::I64, i64::from(raises)),
+        ];
+        for v in vals {
+            let shape = self.heap.word_of(v.ty);
+            words.push(b.ins().iconst(types::I64, i64::from(shape)));
+            words.push(self.widen(v, b));
+        }
+        for (i, word) in words.iter().enumerate() {
+            b.ins()
+                .store(flags, *word, buf, (i as u64 * heap::WORD) as i32);
+        }
+
+        let f = m.declare_func_in_func(host.call, b.func);
+        let code = b.ins().iconst(types::I32, i64::from(op.code()));
+        let at = b.ins().iconst(types::I32, i64::from(idx));
+        let name = b.ins().iconst(types::I64, named as i64);
+        let count = b.ins().iconst(types::I64, words.len() as i64);
+        let copy = b
+            .ins()
+            .iconst(types::I64, i64::from(u32::from(op.carries_arena())));
+        let err = self.err();
+        let call = b.ins().call(f, &[code, at, name, count, buf, copy, err]);
+        let got = b.inst_results(call)[0];
+        self.check_call(b);
+        Ok(Val {
+            v: self.narrow(got, ret, b),
+            ty: ret,
+        })
+    }
+
+    /// The eight bytes the protocol carries, as the value its [`Repr`] says it is.
+    fn narrow(&mut self, word: IrValue, ty: Repr, b: &mut FunctionBuilder<'_>) -> IrValue {
+        match ty {
+            Repr::Float => b.ins().bitcast(types::F64, MemFlagsData::new(), word),
+            // An `I8` holding 0 or 1, which is what every comparison here produces and what
+            // `band`/`bor` rely on.
+            Repr::Bool => {
+                let set = b.ins().icmp_imm_s(IntCC::NotEqual, word, 0);
+                b.ins().uextend(types::I8, set)
+            }
+            Repr::Int
+            | Repr::Str
+            | Repr::List(_)
+            | Repr::Map(_)
+            | Repr::Obj(_)
+            | Repr::Fn(_)
+            | Repr::Html
+            | Repr::Attr => word,
+        }
+    }
+
     fn store_word(
         &mut self,
         off: IrValue,
@@ -6218,6 +6340,11 @@ impl<'a> Body<'a> {
         let mut vals = Vec::with_capacity(args.len());
         for a in args {
             vals.push(self.value(a, b, m)?);
+        }
+        // The four that are questions rather than computations. Before the rest, because what
+        // separates them is not what they do with their arguments.
+        if let Some(ask) = Upcall::of(op) {
+            return self.upcall(ask, &vals, ty, span, b, m);
         }
         let arity = |n: usize, vals: &[Val]| -> Result<(), String> {
             if vals.len() == n {
@@ -7990,6 +8117,255 @@ fn refusal(op: Prim) -> String {
         _ => return format!("`{}` is not one of the scalar primitives", op.name()),
     };
     format!("`{}` {why}", op.name())
+}
+
+// -------------------------------------------------------------------------------------------
+// Asking the host
+// -------------------------------------------------------------------------------------------
+
+/// `beck.host`: write a question, block, and take the answer back.
+///
+/// The second direction of [`beck_llvm::Worker`]'s protocol, written a second time for this
+/// module's stated reason — the two emitters are held to agreeing, and one implementation shared
+/// between them would make the agreement true by construction. What is *not* written twice is the
+/// frame: [`beck_llvm::Upcall`] is the codes and the field order, because that is a contract with
+/// the host as much as with the other backend.
+///
+/// The signature is `(op, span, name, words, buf, copy, err) -> i64`, and the three that are not
+/// obvious:
+///
+/// * `name` is the literal-pool offset of the error type a failed answer raises, written into the
+///   cell by *this* function rather than by the host — a `try:` compares an interned offset, and
+///   only the module knows which one.
+/// * `words` is how many words of `buf` to send: the shapes and the argument words the caller has
+///   already stored.
+/// * `copy` says whether the arena travels, which it does exactly when an argument can point into
+///   it.
+#[derive(Clone, Copy, Debug)]
+struct Host {
+    call: FuncId,
+}
+
+impl Host {
+    fn declare(m: &mut ObjectModule, ptr: Type) -> Result<Host, String> {
+        let conv = CallConv::triple_default(m.isa().triple());
+        let mut sig = cranelift_codegen::ir::Signature::new(conv);
+        for p in [types::I32, types::I32] {
+            sig.params.push(AbiParam::new(p));
+        }
+        sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(ptr));
+        sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(ptr));
+        sig.returns.push(AbiParam::new(types::I64));
+        let call = m
+            .declare_function("beck.host", Linkage::Local, &sig)
+            .map_err(|e| format!("declaring the host call: {e}"))?;
+        Ok(Host { call })
+    }
+
+    /// The pipe's two movers and `exit`, declared with the signatures [`driver`] gives them.
+    ///
+    /// Declared twice on purpose: `cranelift_module` answers with the same [`FuncId`] for a second
+    /// declaration of one name at one signature, so this and the driver name the same functions
+    /// without either having to be built first.
+    fn pipe(m: &mut ObjectModule, ptr: Type) -> Result<(FuncId, FuncId, FuncId), String> {
+        let conv = CallConv::triple_default(m.isa().triple());
+        let mut movesig = cranelift_codegen::ir::Signature::new(conv);
+        movesig.params.push(AbiParam::new(ptr));
+        movesig.params.push(AbiParam::new(types::I64));
+        movesig.returns.push(AbiParam::new(types::I64));
+        let read = m
+            .declare_function("beck.read_exact", Linkage::Local, &movesig)
+            .map_err(|e| format!("declaring the reader: {e}"))?;
+        let write = m
+            .declare_function("beck.write_all", Linkage::Local, &movesig)
+            .map_err(|e| format!("declaring the writer: {e}"))?;
+        let mut exitsig = cranelift_codegen::ir::Signature::new(conv);
+        exitsig.params.push(AbiParam::new(types::I32));
+        let exit = m
+            .declare_function("exit", Linkage::Import, &exitsig)
+            .map_err(|e| format!("declaring `exit`: {e}"))?;
+        Ok((read, write, exit))
+    }
+
+    fn define(
+        self,
+        arena: Arena,
+        m: &mut ObjectModule,
+        ctx: &mut cranelift_codegen::Context,
+        fctx: &mut FunctionBuilderContext,
+        ptr: Type,
+    ) -> Result<(), String> {
+        let (read, write, exit) = Host::pipe(m, ptr)?;
+        let conv = CallConv::triple_default(m.isa().triple());
+        let mut sig = cranelift_codegen::ir::Signature::new(conv);
+        for p in [types::I32, types::I32] {
+            sig.params.push(AbiParam::new(p));
+        }
+        sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(ptr));
+        sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(ptr));
+        sig.returns.push(AbiParam::new(types::I64));
+
+        ctx.func = Function::with_name_signature(UserFuncName::user(9, 0), sig);
+        {
+            let mut b = FunctionBuilder::new(&mut ctx.func, fctx);
+            let entry = b.create_block();
+            b.append_block_params_for_function_params(entry);
+            b.switch_to_block(entry);
+            b.seal_block(entry);
+            let flags = MemFlagsData::trusted();
+            let op = b.block_params(entry)[0];
+            let span = b.block_params(entry)[1];
+            let name = b.block_params(entry)[2];
+            let words = b.block_params(entry)[3];
+            let buf = b.block_params(entry)[4];
+            let copy = b.block_params(entry)[5];
+            let err = b.block_params(entry)[6];
+
+            let frame = b.create_sized_stack_slot(StackSlotData::new(
+                StackSlotKind::ExplicitSlot,
+                FRAME_BYTES,
+                3,
+            ));
+            let frame = b.ins().stack_addr(ptr, frame, 0);
+            let base = arena.base(&mut b, m);
+            let next_at = arena.addr(arena.next, &mut b, m);
+            let used = b.ins().load(types::I64, flags, next_at, 0);
+
+            let marker = b.ins().iconst(types::I32, i64::from(Upcall::MARKER));
+            b.ins().store(flags, marker, frame, 0);
+            b.ins().store(flags, span, frame, CELL_SPAN);
+            let wide = b.ins().uextend(types::I64, op);
+            b.ins().store(flags, wide, frame, CELL_PAYLOAD);
+            b.ins().store(flags, used, frame, FRAME_VALUE);
+            let sends = b.ins().icmp_imm_s(IntCC::NotEqual, copy, 0);
+            let none = b.ins().iconst(types::I64, 0);
+            let blen = b.ins().select(sends, used, none);
+            b.ins().store(flags, blen, frame, FRAME_BYTES_AT);
+
+            let writer = m.declare_func_in_func(write, b.func);
+            let reader = m.declare_func_in_func(read, b.func);
+            let thirty_two = b.ins().iconst(types::I64, i64::from(FRAME_BYTES));
+            b.ins().call(writer, &[frame, thirty_two]);
+            let wbytes = b.ins().imul_imm_s(words, heap::WORD as i64);
+            b.ins().call(writer, &[buf, wbytes]);
+            b.ins().call(writer, &[base, blen]);
+
+            // The answer, into the same frame. A short read is the host gone: nothing to compute
+            // and nothing to reply to, so the worker stops and the host's own next read is what
+            // reports it.
+            let call = b.ins().call(reader, &[frame, thirty_two]);
+            let got = b.inst_results(call)[0];
+            let heard = b.ins().icmp(IntCC::Equal, got, thirty_two);
+            let (gone, answered) = (b.create_block(), b.create_block());
+            b.ins().brif(heard, answered, &[], gone, &[]);
+
+            b.switch_to_block(gone);
+            let quit = m.declare_func_in_func(exit, b.func);
+            let one = b.ins().iconst(types::I32, 1);
+            b.ins().call(quit, &[one]);
+            b.ins()
+                .trap(cranelift_codegen::ir::TrapCode::unwrap_user(1));
+
+            b.switch_to_block(answered);
+            b.seal_block(answered);
+            let code = b.ins().load(types::I32, flags, frame, 0);
+            let tail = b.ins().load(types::I64, flags, frame, FRAME_BYTES_AT);
+            let end = b.ins().iadd(used, tail);
+            let limit_at = arena.addr(arena.limit, &mut b, m);
+            let limit = b.ins().load(types::I64, flags, limit_at, 0);
+            let over = b.ins().icmp(IntCC::UnsignedGreaterThan, end, limit);
+            let (full, room) = (b.create_block(), b.create_block());
+            b.ins().brif(over, full, &[], room, &[]);
+
+            // An answer that does not fit is the arena being full, which is the allocator's own
+            // trap rather than a new one.
+            b.switch_to_block(full);
+            b.seal_block(full);
+            let exhausted = b
+                .ins()
+                .iconst(types::I32, i64::from(Trap::HeapExhausted.code()));
+            b.ins().store(flags, exhausted, err, 0);
+            b.ins().store(flags, span, err, CELL_SPAN);
+            let z = b.ins().iconst(types::I64, 0);
+            b.ins().store(flags, z, err, CELL_PAYLOAD);
+            b.ins().return_(&[z]);
+
+            b.switch_to_block(room);
+            b.seal_block(room);
+            let at = b.ins().iadd(base, used);
+            let call = b.ins().call(reader, &[at, tail]);
+            let read_back = b.inst_results(call)[0];
+            let whole = b.ins().icmp(IntCC::Equal, read_back, tail);
+            let kept = b.create_block();
+            b.ins().brif(whole, kept, &[], gone, &[]);
+            b.seal_block(gone);
+
+            b.switch_to_block(kept);
+            b.seal_block(kept);
+            b.ins().store(flags, end, next_at, 0);
+            let fine = b.ins().icmp_imm_s(IntCC::Equal, code, 0);
+            let (value, failed) = (b.create_block(), b.create_block());
+            b.ins().brif(fine, value, &[], failed, &[]);
+
+            b.switch_to_block(failed);
+            b.seal_block(failed);
+            b.ins().store(flags, code, err, 0);
+            b.ins().store(flags, span, err, CELL_SPAN);
+            let payload = b.ins().load(types::I64, flags, frame, CELL_PAYLOAD);
+            b.ins().store(flags, payload, err, CELL_PAYLOAD);
+            b.ins().store(flags, name, err, CELL_RAISED);
+            let z = b.ins().iconst(types::I64, 0);
+            b.ins().return_(&[z]);
+
+            b.switch_to_block(value);
+            b.seal_block(value);
+            let answer = b.ins().load(types::I64, flags, frame, FRAME_VALUE);
+            b.ins().return_(&[answer]);
+            b.finalize(m.target_config());
+        }
+        m.define_function(self.call, ctx)
+            .map_err(|e| format!("defining the host call: {e}"))?;
+        m.clear_context(ctx);
+        Ok(())
+    }
+}
+
+/// A protocol frame: five fields in 32 bytes, in either direction.
+const FRAME_BYTES: u32 = 32;
+/// The fourth field — the answer's word going one way, the arena's mark going the other.
+const FRAME_VALUE: i32 = 16;
+/// The fifth — how many bytes of heap follow.
+const FRAME_BYTES_AT: i32 = 24;
+
+/// How many words a question's buffer holds, which is [`beck_llvm::emit`]'s `QUESTION_WORDS`.
+const QUESTION_WORDS: u32 = 8;
+
+/// Whether any definition of this program reaches one of the four host primitives.
+///
+/// Asked before anything is declared, because this backend declares its runtime up front and a
+/// `beck.host` nothing calls would be a function in every object file with a heap in it. The walk
+/// is [`beck_core::core::children`]'s rather than a hand-written match over `CoreKind`, for the
+/// reason that function exists: a variant that gains a child would make a hand-written one
+/// silently incomplete.
+fn asks_the_host(program: &Program, eligible: &BTreeSet<Arc<str>>) -> bool {
+    fn asks(c: &Core) -> bool {
+        if let CoreKind::Prim { op, .. } = &c.kind {
+            if Upcall::of(*op).is_some() {
+                return true;
+            }
+        }
+        beck_core::core::children(c).into_iter().any(asks)
+    }
+    eligible
+        .iter()
+        .filter_map(|name| program.defs.get(name))
+        .any(|def| asks(&def.body))
 }
 
 // -------------------------------------------------------------------------------------------

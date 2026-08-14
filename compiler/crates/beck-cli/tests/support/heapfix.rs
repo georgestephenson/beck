@@ -425,9 +425,6 @@ def double_it(n: Int) -> Int:
 def is_generic[T](x: T) -> T:
     return x
 
-def reads_the_clock() -> Int:
-    return now()
-
 def calls_something_refused(n: Int) -> list[Int]:
     return grows([[n]])
 
@@ -436,6 +433,9 @@ def names_it(label: Str) -> Named:
 
 def reads_a_list(xs: list[Int]) -> Int:
     return list_len(xs)
+
+def reads_the_clock() -> Int:
+    return now()
 
 def scalar_and_fine(n: Int) -> Int:
     return n * 2

@@ -7,7 +7,7 @@
 //! * **Replay purity.** Nothing here reads a clock, a random source, or a socket *of its own*.
 //!   `uuid()` is a primitive the *checker* refuses inside a fold (§3.7), and even outside one it
 //!   is supplied by the host rather than taken from the ambient environment; `http_fetch` goes to
-//!   [`Host::fetch`] for the same reason. A replay is reproducible because every reading of the
+//!   [`beck_core::host::Atoms::fetch`] for the same reason. A replay is reproducible because every reading of the
 //!   outside world enters through the host, where a replay can decide what it says.
 //! * **Total order everywhere.** Maps are `BTreeMap`s and `sort_by` is stable, so two runs over
 //!   the same log render identically — Phase 0 §18.5 item 4 learned this the hard way.
@@ -32,129 +32,7 @@ use beck_core::core::{
     Closure, Const, Core, CoreKind, Env, Fields, Pattern, Prim, Record, Value, VarId,
 };
 use beck_core::digest;
-use beck_core::net::{Failure as NetFailure, Reply, Request};
 use beck_core::PMap;
-
-/// `HttpRequest` — a Beck record — as the seam's [`Request`].
-///
-/// Every field is read by name and defaulted, because a record the checker approved has them all
-/// and a record built by a test may not. The port defaults to 80 rather than 0: a request with no
-/// port is an HTTP request, and making a caller state the obvious is how a library acquires
-/// ceremony.
-fn outbound_request(host: &str, v: &Value, span: Span) -> Result<Request, EvalError> {
-    let field = |name: &str| v.field(name).cloned().unwrap_or(Value::Unit);
-    let text = |name: &str| -> Arc<str> {
-        match field(name) {
-            Value::Str(s) => Arc::from(s.as_str()),
-            _ => Arc::from(""),
-        }
-    };
-    let port = match field("port") {
-        Value::Int(p) if (1..=65_535).contains(&p) => p as u16,
-        Value::Int(0) | Value::Unit => 80,
-        Value::Int(p) => {
-            return Err(EvalError::new(
-                format!("`{p}` is not a port an outbound call can use"),
-                span,
-            ))
-        }
-        _ => 80,
-    };
-    let mut headers: Vec<(Arc<str>, Arc<str>)> = match field("headers") {
-        Value::Map(m) => m
-            .iter()
-            .filter_map(|(k, val)| match (k, val) {
-                (Value::Str(k), Value::Str(v)) => {
-                    Some((Arc::from(k.as_str()), Arc::from(v.as_str())))
-                }
-                _ => None,
-            })
-            .collect(),
-        _ => Vec::new(),
-    };
-    // The secret half, unwrapped here and nowhere else. §3.5 gives a program no way to read a
-    // `secret[Str]`; this is the edge, past every tier the checker places, so the credential
-    // becomes bytes exactly where it becomes a request and never becomes a value the program
-    // could have put somewhere else.
-    if let Value::Map(m) = field("secrets") {
-        for (k, val) in m.iter() {
-            if let (Value::Str(name), Some(Value::Str(secret))) = (k, val.field("value")) {
-                headers.push((Arc::from(name.as_str()), Arc::from(secret.as_str())));
-            }
-        }
-    }
-    let method = text("method");
-    Ok(Request {
-        host: Arc::from(host),
-        port,
-        // Plaintext unless the program said otherwise, which is the same default `lib/http.beck`
-        // writes: `over_tls` is a call somebody makes, so a request that crosses the internet
-        // without one is a thing in the source rather than a thing in the runtime.
-        tls: field("tls").as_bool().unwrap_or(false),
-        method: if method.is_empty() {
-            Arc::from("GET")
-        } else {
-            method
-        },
-        path: {
-            let p = text("path");
-            if p.is_empty() {
-                Arc::from("/")
-            } else {
-                p
-            }
-        },
-        headers,
-        body: text("body"),
-    })
-}
-
-fn reply_value(reply: &Reply) -> Value {
-    let headers = reply.headers.iter().fold(PMap::new(), |m, (k, v)| {
-        m.insert(Value::str_(k), Value::str_(v))
-    });
-    Value::data(
-        Arc::from("HttpResponse"),
-        None,
-        Fields::from_iter([
-            (Arc::from("status"), Value::Int(reply.status)),
-            (Arc::from("headers"), Value::Map(headers)),
-            (Arc::from("body"), Value::str_(&reply.body)),
-        ]),
-    )
-}
-
-/// The seam's [`NetFailure`] as the `HttpError` the call raises.
-///
-/// The host is put back in here rather than carried through the failure, because the seam's
-/// implementation was told which host it was calling and there is no case where the two differ.
-fn failure_value(host: &str, f: &NetFailure) -> Value {
-    let (variant, fields): (&str, Vec<(Arc<str>, Value)>) = match f {
-        NetFailure::Unreachable(why) => (
-            "HttpUnreachable",
-            vec![
-                (Arc::from("host"), Value::str_(host)),
-                (Arc::from("why"), Value::str_(why)),
-            ],
-        ),
-        NetFailure::TimedOut(ms) => (
-            "HttpTimedOut",
-            vec![
-                (Arc::from("host"), Value::str_(host)),
-                (Arc::from("millis"), Value::Int(*ms)),
-            ],
-        ),
-        NetFailure::BadResponse(why) => (
-            "HttpBadResponse",
-            vec![(Arc::from("why"), Value::str_(why))],
-        ),
-    };
-    Value::data(
-        Arc::from("HttpError"),
-        Some(Arc::from(variant)),
-        fields.into_iter().collect(),
-    )
-}
 
 /// The three "this primitive wanted a `T`" conversions, so twenty-odd library primitives do not
 /// each spell out the same `ok_or_else`. The message names the primitive, because "expects a Str"
@@ -497,38 +375,15 @@ impl std::error::Error for EvalError {}
 
 pub type EvalResult = Result<Value, EvalError>;
 
-/// What the evaluator needs from outside itself: the top-level definitions, and the impure
-/// capabilities that the host supplies rather than the program taking.
+/// What the evaluator needs from outside itself: the top-level definitions, the stub seam, and —
+/// through [`beck_core::host::Atoms`] — the impure capabilities a host supplies rather than the
+/// program taking.
 ///
-/// Each of these is exactly one effect atom made concrete — `nondet` for the first two, `env` for
-/// the third — so a host that refuses one is refusing an effect, not disabling a feature.
-pub trait Host {
+/// The four atoms are on that trait rather than on this one because the native backends ask the
+/// same four questions, and two descriptions of one host would make the differential between the
+/// backends a comparison of the descriptions rather than of the program.
+pub trait Host: beck_core::host::Atoms {
     fn global(&self, name: &str) -> Option<&Core>;
-    /// Mint an id. Called only where the checker has proved we are not inside a fold.
-    fn new_uuid(&self) -> Arc<str>;
-    /// Read the wall clock. `nondet`, and forbidden inside a fold for the same reason `uuid` is:
-    /// time is data on the envelope.
-    ///
-    /// Defaulted to the host's clock through the seam rather than to `SystemTime::now()` directly
-    /// (`beck_core::clock`), so a host that wants a stated instant overrides one method and a host
-    /// that does not still never names the standard library's clock.
-    fn now_millis(&self) -> i64 {
-        beck_core::clock::process_clock().now_millis()
-    }
-    /// Read a secret from the process environment — `env`, which no client tier discharges.
-    fn secret(&self, name: &str) -> Arc<str> {
-        std::env::var(name).unwrap_or_default().into()
-    }
-
-    /// Make an outbound request — the runtime half of `net.out(host)`.
-    ///
-    /// Defaulted through the process seam rather than to a client of its own
-    /// ([`beck_core::net`]), for the same reason [`Host::now_millis`] is defaulted through the
-    /// clock: a host that wants to answer differently overrides one method, and a host that does
-    /// not still never names a network stack.
-    fn fetch(&self, request: &beck_core::net::Request) -> Result<Reply, NetFailure> {
-        beck_core::net::process_outbound().fetch(request)
-    }
 
     /// Answer a call to a top-level definition without running its body.
     ///
@@ -1916,12 +1771,13 @@ impl<'h> Interp<'h> {
                 let request = args.pop().expect("arity checked");
                 let host = args.pop().expect("arity checked");
                 let host = as_str(&host, "http_fetch", span)?;
-                let request = outbound_request(host, &request, span)?;
+                let request = beck_core::host::request_of(host, &request)
+                    .map_err(|why| EvalError::new(why, span))?;
                 match self.host.fetch(&request) {
-                    Ok(reply) => Ok(reply_value(&reply)),
+                    Ok(reply) => Ok(beck_core::host::reply_value(&reply)),
                     Err(f) => Err(EvalError::raise(
                         Arc::from("HttpError"),
-                        failure_value(host, &f),
+                        beck_core::host::failure_value(host, &f),
                         span,
                     )),
                 }
@@ -2305,6 +2161,8 @@ mod tests {
         fn global(&self, _: &str) -> Option<&Core> {
             None
         }
+    }
+    impl beck_core::host::Atoms for NoHost {
         fn new_uuid(&self) -> Arc<str> {
             Arc::from("fixed-uuid")
         }
@@ -2446,16 +2304,22 @@ mod tests {
     /// primitive that calls back out to the host from wherever evaluation happens to be.
     struct Probe {
         f: Core,
-        deepest: std::cell::Cell<usize>,
+        deepest: std::sync::atomic::AtomicUsize,
     }
 
     impl Host for Probe {
         fn global(&self, name: &str) -> Option<&Core> {
             (name == "f").then_some(&self.f)
         }
+    }
+
+    impl beck_core::host::Atoms for Probe {
         fn new_uuid(&self) -> Arc<str> {
             let here = 0u8;
-            self.deepest.set(std::ptr::addr_of!(here) as usize);
+            self.deepest.store(
+                std::ptr::addr_of!(here) as usize,
+                std::sync::atomic::Ordering::Relaxed,
+            );
             Arc::from("bottom")
         }
     }
@@ -2528,7 +2392,7 @@ mod tests {
     fn stack_spent(f: Core, depth: i64) -> usize {
         let host = Probe {
             f,
-            deepest: std::cell::Cell::new(0),
+            deepest: std::sync::atomic::AtomicUsize::new(0),
         };
         let top = 0u8;
         let top = std::ptr::addr_of!(top) as usize;
@@ -2540,7 +2404,7 @@ mod tests {
         interp
             .eval(&call, &mut Env::new())
             .expect("the probe recursion evaluates");
-        let deepest = host.deepest.get();
+        let deepest = host.deepest.load(std::sync::atomic::Ordering::Relaxed);
         assert!(
             deepest < top,
             "the host stack is expected to grow downwards"
@@ -2613,7 +2477,7 @@ mod tests {
         crate::on_the_evaluator_stack(|| {
             let host = Probe {
                 f: tail_recursion(),
-                deepest: std::cell::Cell::new(0),
+                deepest: std::sync::atomic::AtomicUsize::new(0),
             };
             let interp = Interp::new(&host);
             let call = core(CoreKind::App {
@@ -2634,7 +2498,7 @@ mod tests {
     fn the_depth_ceiling_can_be_lowered_and_not_raised() {
         let host = Probe {
             f: non_tail_recursion(),
-            deepest: std::cell::Cell::new(0),
+            deepest: std::sync::atomic::AtomicUsize::new(0),
         };
         let call = |n: i64| {
             core(CoreKind::App {
@@ -2656,7 +2520,7 @@ mod tests {
         crate::on_the_evaluator_stack(|| {
             let host = Probe {
                 f: non_tail_recursion(),
-                deepest: std::cell::Cell::new(0),
+                deepest: std::sync::atomic::AtomicUsize::new(0),
             };
             let greedy = Interp::new(&host).with_max_depth(u32::MAX);
             let deep = core(CoreKind::App {
@@ -2675,7 +2539,7 @@ mod tests {
         crate::on_the_evaluator_stack(|| {
             let host = Probe {
                 f: non_tail_recursion(),
-                deepest: std::cell::Cell::new(0),
+                deepest: std::sync::atomic::AtomicUsize::new(0),
             };
             let interp = Interp::new(&host);
             let call = core(CoreKind::App {

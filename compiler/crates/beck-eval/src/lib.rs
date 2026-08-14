@@ -98,6 +98,11 @@ pub struct Evaluator {
     /// The one impure capability the program may reach. Injected, so a test can make ids
     /// deterministic and a replay can refuse to mint them at all.
     uuid: Arc<dyn Fn() -> Arc<str> + Send + Sync>,
+    /// The other three — the clock, the environment and the network.
+    ///
+    /// Separate from `uuid` because that one predates the trait and has callers of its own; both
+    /// reach the same place by default, which is the process.
+    atoms: Arc<dyn beck_core::host::Atoms>,
     /// Installed by `beck test` (§21.3). `None` in every other run, and the branch that consults it
     /// is one `Option` check per call of a named definition.
     interceptor: Option<Arc<dyn Interceptor>>,
@@ -143,7 +148,8 @@ impl Evaluator {
     fn over(defs: Defs) -> Evaluator {
         Evaluator {
             defs,
-            uuid: Arc::new(|| Arc::from(uuid_v7())),
+            uuid: Arc::new(|| Arc::from(beck_core::host::uuid_v7())),
+            atoms: Arc::new(beck_core::host::ProcessAtoms),
             interceptor: None,
             fuel: interp::DEFAULT_FUEL,
         }
@@ -166,21 +172,52 @@ impl Evaluator {
         self.uuid = Arc::new(f);
         self
     }
+
+    /// Answer every host effect from `atoms` rather than from the process.
+    ///
+    /// The clock, the environment and the network are already seams a process installs once
+    /// ([`beck_core::clock`], [`beck_core::net`]); this is the *per-backend* way to say it, and it
+    /// exists because a differential needs both backends asked the same question to get the same
+    /// answer without a process-wide setting either of them could have missed. It replaces the id
+    /// source too, since [`beck_core::host::Atoms`] has one — a caller that wants a different one
+    /// calls [`Evaluator::with_uuid`] afterwards.
+    pub fn answering(mut self, atoms: Arc<dyn beck_core::host::Atoms>) -> Evaluator {
+        let source = atoms.clone();
+        self.uuid = Arc::new(move || source.new_uuid());
+        self.atoms = atoms;
+        self
+    }
 }
 
 /// Bound to the program and the id source for one call.
 struct Globals {
     defs: Defs,
     uuid: Arc<dyn Fn() -> Arc<str> + Send + Sync>,
+    atoms: Arc<dyn beck_core::host::Atoms>,
     interceptor: Option<Arc<dyn Interceptor>>,
+}
+
+impl beck_core::host::Atoms for Globals {
+    fn new_uuid(&self) -> Arc<str> {
+        (self.uuid)()
+    }
+    fn now_millis(&self) -> i64 {
+        self.atoms.now_millis()
+    }
+    fn secret(&self, name: &str) -> Arc<str> {
+        self.atoms.secret(name)
+    }
+    fn fetch(
+        &self,
+        request: &beck_core::net::Request,
+    ) -> Result<beck_core::net::Reply, beck_core::net::Failure> {
+        self.atoms.fetch(request)
+    }
 }
 
 impl Host for Globals {
     fn global(&self, name: &str) -> Option<&Core> {
         self.defs.global(name)
-    }
-    fn new_uuid(&self) -> Arc<str> {
-        (self.uuid)()
     }
     fn intercept(&self, name: &str, args: &[Value]) -> Option<Value> {
         self.interceptor.as_ref()?.intercept(name, args)
@@ -205,6 +242,7 @@ impl Backend for Evaluator {
         let host = Globals {
             defs: self.defs.clone(),
             uuid: self.uuid.clone(),
+            atoms: self.atoms.clone(),
             interceptor: self.interceptor.clone(),
         };
         Interp::with_fuel(&host, self.fuel)
@@ -216,6 +254,7 @@ impl Backend for Evaluator {
         Some(Arc::new(Evaluator {
             defs: self.defs.clone(),
             uuid: self.uuid.clone(),
+            atoms: self.atoms.clone(),
             interceptor: Some(by),
             fuel: self.fuel,
         }))
@@ -228,12 +267,14 @@ impl Backend for Evaluator {
         let closure = self.constant(code)?;
         let defs = self.defs.clone();
         let uuid = self.uuid.clone();
+        let atoms = self.atoms.clone();
         let interceptor = self.interceptor.clone();
         let fuel = self.fuel;
         Ok(Arc::new(move |args: Vec<Value>| {
             let host = Globals {
                 defs: defs.clone(),
                 uuid: uuid.clone(),
+                atoms: atoms.clone(),
                 interceptor: interceptor.clone(),
             };
             Interp::with_fuel(&host, fuel)
@@ -270,38 +311,6 @@ pub fn backend_with_fuel(placed: &beck_core::Placed, fuel: u64) -> Arc<dyn Backe
 
 fn into_exec(e: EvalError) -> ExecError {
     ExecError::new(e.message, e.span)
-}
-
-/// A time-ordered id, without pulling a uuid crate into this crate's dependency tree for one call.
-///
-/// UUIDv7 layout: 48 bits of Unix milliseconds, then version and variant bits, then randomness.
-/// The randomness here comes from the system, via `getrandom` through the standard library's hash
-/// seed — good enough for an id at the edge, and never reached inside a fold, which is where
-/// determinism actually matters (§3.7).
-fn uuid_v7() -> String {
-    use std::collections::hash_map::RandomState;
-    use std::hash::{BuildHasher, Hasher};
-
-    let ms = (beck_core::clock::process_clock().now_millis().max(0) as u64) & 0x0000_FFFF_FFFF_FFFF;
-    let rand = || RandomState::new().build_hasher().finish();
-    let (a, b) = (rand(), rand());
-
-    let mut bytes = [0u8; 16];
-    bytes[..6].copy_from_slice(&ms.to_be_bytes()[2..]);
-    bytes[6..12].copy_from_slice(&a.to_be_bytes()[..6]);
-    bytes[12..].copy_from_slice(&b.to_be_bytes()[..4]);
-    bytes[6] = (bytes[6] & 0x0F) | 0x70; // version 7
-    bytes[8] = (bytes[8] & 0x3F) | 0x80; // variant 10
-
-    let h: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
-    format!(
-        "{}-{}-{}-{}-{}",
-        &h[0..8],
-        &h[8..12],
-        &h[12..16],
-        &h[16..20],
-        &h[20..32]
-    )
 }
 
 #[cfg(test)]
@@ -385,18 +394,5 @@ page: Signal[Html] = per_session(st, view)
         let double = backend.function(&p.defs["double"].body).unwrap();
         let err = double(vec![]).expect_err("arity is checked");
         assert!(err.to_string().contains("argument"), "{err}");
-    }
-
-    #[test]
-    fn minted_ids_are_v7_shaped_and_distinct() {
-        let a = uuid_v7();
-        let b = uuid_v7();
-        assert_ne!(a, b);
-        assert_eq!(a.len(), 36);
-        assert_eq!(a.as_bytes()[14], b'7', "version nibble: {a}");
-        assert!(
-            matches!(a.as_bytes()[19], b'8' | b'9' | b'a' | b'b'),
-            "variant: {a}"
-        );
     }
 }

@@ -5,6 +5,7 @@ pub mod clofix;
 pub mod failfix;
 pub mod genfix;
 pub mod heapfix;
+pub mod hostfix;
 pub mod listfix;
 pub mod lsp;
 pub mod mapfix;

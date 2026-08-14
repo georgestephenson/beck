@@ -45,6 +45,20 @@
 //! carries back however much of the arena the call used. [`crate::heap`] is the shape of what is
 //! in there, and both directions are empty for a call whose arguments and answer are all scalars —
 //! which is every call a program of arithmetic makes.
+//!
+//! # The second direction
+//!
+//! A call is not always one message each way. Four primitives are questions rather than
+//! computations — `uuid()`, `now()`, `secret_env` and `http_fetch` — and a worker that reaches one
+//! writes a **question** frame and blocks until the host answers, any number of times, before the
+//! reply. [`crate::Upcall`] is that frame; [`Worker::call`] is the loop that services it, and it
+//! services it by calling back into whatever the caller handed it, because this module knows the
+//! wire and nothing about what a `Value` is.
+//!
+//! A question is told from a reply by its first word: [`crate::Upcall::MARKER`], which is no
+//! [`crate::Trap`] code and not zero. A host that never asked for the second direction therefore
+//! cannot see one — a module with none of those four primitives in it emits no question, and a
+//! module with them emits one only where the program wrote the call.
 
 use std::io::{Read, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
@@ -55,6 +69,49 @@ use std::time::{Duration, Instant};
 /// How often the watchdog looks at the clock. Coarse on purpose: it is the resolution of a limit
 /// measured in seconds, and a thread that wakes ten times a second costs nothing.
 const TICK: Duration = Duration::from_millis(100);
+
+/// One question the compiled program asked in the middle of a call.
+///
+/// The arena travels only for a question whose arguments can point into it
+/// ([`crate::Upcall::carries_arena`]); for the other two `arena` is empty and `used` is still the
+/// mark, because the answer's own offsets are measured from it.
+#[derive(Clone, Debug)]
+pub struct Question<'a> {
+    pub op: crate::Upcall,
+    /// Which span asked, as an index into [`crate::Module::spans`].
+    pub span: u32,
+    /// The worker's arena high-water mark: where an answer's bytes will be appended.
+    pub used: u64,
+    /// The [`crate::heap::Heap`] shape the answer is expected to have.
+    pub ret: u32,
+    /// The shape a **failure** would carry, for a question that can fail.
+    ///
+    /// Sent by the worker rather than found by the host, for [`crate::Upcall::raises`]'s reason:
+    /// which type this primitive fails with is a fact about the program, and the host holding a
+    /// second opinion about it is the drift this crate's wire exists to prevent. Meaningless — and
+    /// zero — for a question that cannot fail.
+    pub raises: u32,
+    /// A shape and a word per argument, in the order the program wrote them.
+    pub args: &'a [(u32, u64)],
+    /// The live arena, or empty when this question's arguments cannot point into it.
+    pub arena: &'a [u8],
+}
+
+/// What the host answered.
+///
+/// `code` is `0` for a value and a [`crate::Trap`] code otherwise — including
+/// [`crate::Trap::Raised`], which is how `http_fetch`'s failure becomes a raise the compiled
+/// program's own `try:` can catch.
+#[derive(Clone, Debug, Default)]
+pub struct Answer {
+    pub code: u32,
+    pub payload: i64,
+    pub value: u64,
+    /// Bytes to append at [`Question::used`] — never a whole arena. The host may add to what the
+    /// worker allocated and may not rewrite it, which is what makes an answer safe to `memcpy`
+    /// into a live heap.
+    pub tail: Vec<u8>,
+}
 
 /// What one call answered.
 #[derive(Clone, Debug, Default)]
@@ -177,7 +234,18 @@ impl Worker {
 
     /// Call function `index` with `args`, already widened to eight bytes each, and `heap` — the
     /// object graph those cells point into, or empty when none of them do.
-    pub fn call(&self, index: u32, args: &[u64], heap: &[u8]) -> Result<Reply, String> {
+    ///
+    /// A module with none of the four host primitives in it never asks anything, and `answer` is
+    /// never called; [`Worker::call`] with a closure that panics would be a correct way to run
+    /// one. [`crate::Artifact::call`] passes the real thing either way, because whether a
+    /// *particular call* reaches such a primitive is not a property of the module.
+    pub fn call(
+        &self,
+        index: u32,
+        args: &[u64],
+        heap: &[u8],
+        answer: &dyn Fn(Question) -> Answer,
+    ) -> Result<Reply, String> {
         let mut pipe = self
             .pipe
             .lock()
@@ -188,7 +256,7 @@ impl Worker {
                 .deadline
                 .store(at.as_millis() as u64, Ordering::Relaxed);
         }
-        let answer = self.exchange(&mut pipe, index, args, heap);
+        let answer = self.exchange(&mut pipe, index, args, heap, answer);
         if let Some(guard) = &self.guard {
             guard.deadline.store(0, Ordering::Relaxed);
             if guard.fired.load(Ordering::SeqCst) {
@@ -234,6 +302,7 @@ impl Worker {
         index: u32,
         args: &[u64],
         heap: &[u8],
+        answer: &dyn Fn(Question) -> Answer,
     ) -> Result<Reply, String> {
         let mut request = Vec::with_capacity(16 + args.len() * 8 + heap.len());
         request.extend_from_slice(&index.to_ne_bytes());
@@ -250,30 +319,115 @@ impl Worker {
             .flush()
             .map_err(|e| format!("the worker stopped reading: {e}"))?;
 
-        let mut reply = [0u8; 32];
-        pipe.stdout
-            .read_exact(&mut reply)
-            .map_err(|e| format!("the worker stopped answering: {e}"))?;
-        let carried = u64::from_ne_bytes(reply[24..32].try_into().expect("eight bytes"));
-        // A length the worker could not have meant is the pipe out of step rather than a big
-        // answer, and reading it would be this process allocating whatever the bytes said.
-        if carried > crate::heap::ARENA_BYTES {
-            return Err(format!(
-                "the compiled program said its answer carries {carried} bytes of heap, and its                  arena is {} bytes",
-                crate::heap::ARENA_BYTES
-            ));
+        loop {
+            let mut reply = [0u8; 32];
+            pipe.stdout
+                .read_exact(&mut reply)
+                .map_err(|e| format!("the worker stopped answering: {e}"))?;
+            let carried = u64::from_ne_bytes(reply[24..32].try_into().expect("eight bytes"));
+            // A length the worker could not have meant is the pipe out of step rather than a big
+            // answer, and reading it would be this process allocating whatever the bytes said.
+            if carried > crate::heap::ARENA_BYTES {
+                return Err(format!(
+                    "the compiled program said its answer carries {carried} bytes of heap, and its                  arena is {} bytes",
+                    crate::heap::ARENA_BYTES
+                ));
+            }
+            let code = u32::from_ne_bytes(reply[0..4].try_into().expect("four bytes"));
+            if code == crate::Upcall::MARKER {
+                self.serve(pipe, &reply, carried, answer)?;
+                continue;
+            }
+            let mut carried_heap = vec![0u8; carried as usize];
+            pipe.stdout
+                .read_exact(&mut carried_heap)
+                .map_err(|e| format!("the worker stopped answering: {e}"))?;
+            return Ok(Reply {
+                code,
+                span: u32::from_ne_bytes(reply[4..8].try_into().expect("four bytes")),
+                payload: i64::from_ne_bytes(reply[8..16].try_into().expect("eight bytes")),
+                value: u64::from_ne_bytes(reply[16..24].try_into().expect("eight bytes")),
+                heap: carried_heap,
+            });
         }
-        let mut carried_heap = vec![0u8; carried as usize];
+    }
+
+    /// Read the rest of a question, answer it, and write the answer back.
+    ///
+    /// **The watchdog is stood down while the host works.** [`Worker::start_with`]'s limit bounds
+    /// how long *compiled code* may run without answering; an `http_fetch` that waits thirty
+    /// seconds for a peer is not a compiled loop that will not stop, and killing the worker for it
+    /// would make the limit a network timeout it was never measured as. The deadline is restored
+    /// before the worker is let go again, so the bound still covers the compiled half of the call.
+    fn serve(
+        &self,
+        pipe: &mut Pipe,
+        header: &[u8; 32],
+        carried: u64,
+        answer: &dyn Fn(Question) -> Answer,
+    ) -> Result<(), String> {
+        let span = u32::from_ne_bytes(header[4..8].try_into().expect("four bytes"));
+        let code = i64::from_ne_bytes(header[8..16].try_into().expect("eight bytes"));
+        let used = u64::from_ne_bytes(header[16..24].try_into().expect("eight bytes"));
+        let op = u32::try_from(code)
+            .ok()
+            .and_then(crate::Upcall::from_code)
+            .ok_or_else(|| format!("the compiled program asked for host effect {code}, which this compiler does not have"))?;
+
+        let mut words = vec![0u8; (2 + 2 * op.arity()) * 8];
         pipe.stdout
-            .read_exact(&mut carried_heap)
+            .read_exact(&mut words)
             .map_err(|e| format!("the worker stopped answering: {e}"))?;
-        Ok(Reply {
-            code: u32::from_ne_bytes(reply[0..4].try_into().expect("four bytes")),
-            span: u32::from_ne_bytes(reply[4..8].try_into().expect("four bytes")),
-            payload: i64::from_ne_bytes(reply[8..16].try_into().expect("eight bytes")),
-            value: u64::from_ne_bytes(reply[16..24].try_into().expect("eight bytes")),
-            heap: carried_heap,
-        })
+        let word =
+            |i: usize| u64::from_ne_bytes(words[i * 8..i * 8 + 8].try_into().expect("eight"));
+        let (ret, raises) = (word(0) as u32, word(1) as u32);
+        let args: Vec<(u32, u64)> = (0..op.arity())
+            .map(|i| (word(2 + 2 * i) as u32, word(3 + 2 * i)))
+            .collect();
+
+        let mut arena = vec![0u8; carried as usize];
+        pipe.stdout
+            .read_exact(&mut arena)
+            .map_err(|e| format!("the worker stopped answering: {e}"))?;
+
+        let held = self.guard.as_ref().map(|guard| {
+            let was = guard.deadline.swap(0, Ordering::Relaxed);
+            (guard, was)
+        });
+        let out = answer(Question {
+            op,
+            span,
+            used,
+            ret,
+            raises,
+            args: &args,
+            arena: &arena,
+        });
+        if let Some((guard, was)) = held {
+            // Restored as a *fresh* deadline rather than the old one: the compiled half of this
+            // call is starting again from here, and charging it for the time the host spent is
+            // exactly the conflation the paragraph above refuses.
+            let at = if was == 0 {
+                0
+            } else {
+                (guard.started.elapsed() + guard.limit).as_millis() as u64
+            };
+            guard.deadline.store(at, Ordering::Relaxed);
+        }
+
+        let mut frame = Vec::with_capacity(32 + out.tail.len());
+        frame.extend_from_slice(&out.code.to_ne_bytes());
+        frame.extend_from_slice(&0u32.to_ne_bytes());
+        frame.extend_from_slice(&out.payload.to_ne_bytes());
+        frame.extend_from_slice(&out.value.to_ne_bytes());
+        frame.extend_from_slice(&(out.tail.len() as u64).to_ne_bytes());
+        frame.extend_from_slice(&out.tail);
+        pipe.stdin
+            .write_all(&frame)
+            .map_err(|e| format!("the worker stopped reading: {e}"))?;
+        pipe.stdin
+            .flush()
+            .map_err(|e| format!("the worker stopped reading: {e}"))
     }
 }
 

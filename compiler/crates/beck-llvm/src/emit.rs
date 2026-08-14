@@ -19,11 +19,14 @@
 //! field reads, `with`, lambdas and applications, and the arithmetic, comparison, logical, text,
 //! collection and view primitives.
 //!
-//! Every effect that has to reach the **host**, and growing a **map**, are refused — by name, with
-//! the reason, in [`crate::Report`]. Failure is not among them: `raise` and `try:` compile, on the
-//! error cell that was already an unwinder. Nor is growing a *list*, since `docs/113` separated the
-//! count from the elements. Nothing is silently approximated: a definition either compiles
-//! to machine code that agrees with the evaluator on every input, or it does not compile.
+//! What is refused is refused **by name, with the reason**, in [`crate::Report`]: the signal
+//! vocabulary, a bounded definition, and the handful of primitives that read a Unicode table or
+//! grow a collection whose size needs a counting pass. Nothing else on this list is still here —
+//! failure compiles on the error cell that was already an unwinder (`docs/112`), growing a list and
+//! a map compile (`docs/113`, `docs/114`), and the four primitives that have to **ask the host**
+//! compile by asking it ([`Upcall`], `docs/116`). Nothing is silently approximated: a definition
+//! either compiles to machine code that agrees with the evaluator on every input, or it does not
+//! compile.
 //!
 //! # Agreeing with the evaluator exactly
 //!
@@ -166,6 +169,14 @@ pub enum Trap {
     /// the host does with it is build the evaluator's own message out of the decoded value; what a
     /// compiled `try:` does with it is compare the type name in the error cell's third word.
     Raised,
+    /// The host could not answer a question the program asked ([`Upcall`]).
+    ///
+    /// Not a failure of the program and not one of the machine: it is this compiler failing to
+    /// turn the arena's bytes into a value, or the value back into bytes. The payload says
+    /// nothing, because the *reason* is a sentence and a trap carries a number —
+    /// [`crate::Artifact`] keeps the sentence beside the call and substitutes it for this trap's
+    /// message, which is why the message below reads like a placeholder.
+    HostFailed,
 }
 
 impl Trap {
@@ -190,11 +201,12 @@ impl Trap {
             Trap::HeapExhausted => 12,
             Trap::NoSuchLambda => 13,
             Trap::Raised => 14,
+            Trap::HostFailed => 15,
         }
     }
 
     pub fn from_code(code: u32) -> Option<Trap> {
-        const ALL: [Trap; 14] = [
+        const ALL: [Trap; 15] = [
             Trap::AddOverflow,
             Trap::SubOverflow,
             Trap::MulOverflow,
@@ -209,6 +221,7 @@ impl Trap {
             Trap::HeapExhausted,
             Trap::NoSuchLambda,
             Trap::Raised,
+            Trap::HostFailed,
         ];
         ALL.into_iter().find(|t| t.code() == code)
     }
@@ -253,6 +266,131 @@ impl Trap {
                 "a raised value at offset {payload}, which the host did not \
                                      decode"
             ),
+            Trap::HostFailed => "the host could not answer a call the program made".into(),
+        }
+    }
+}
+
+/// A question the compiled program cannot answer, asked of the host in the middle of a call.
+///
+/// # Why the protocol needs a second direction at all
+///
+/// Everything else this backend compiles is a computation: the host asks, the worker answers, and
+/// the pipe carries one message each way. These four are not computations. `uuid()` and `now()`
+/// are `nondet`, `secret_env` is `env`, `http_fetch` is `net.out(host)` — each is a question whose
+/// answer is outside the program, and no amount of machine code produces one.
+///
+/// So the worker asks back. Between reading a call and answering it, it may write a **question**
+/// frame and block until the answer arrives, any number of times. The host services each against
+/// [`beck_core::host::Atoms`] — the same trait the tree-walker's `Host` extends, so the two
+/// backends cannot disagree about what the host said.
+///
+/// # The frame
+///
+/// A question is told from an answer by its first word, which is [`Upcall::MARKER`] and is not any
+/// [`Trap::code`]. The rest of the 32-byte header is the same five fields the reply header has,
+/// carrying different things:
+///
+/// | Bytes | In a question | In the host's answer |
+/// |---|---|---|
+/// | 0..4 | [`Upcall::MARKER`] | `0` for a value, else a [`Trap`] code |
+/// | 4..8 | the span index that asked | unused |
+/// | 8..16 | [`Upcall::code`] | the trap payload, or a raise's pair offset |
+/// | 16..24 | the arena's high-water mark | the answer's word |
+/// | 24..32 | how many arena bytes follow | how many bytes follow, to append at the mark |
+///
+/// After a question's header come `1 + 2 × arity` words: the [`crate::Heap`] shape the answer is
+/// expected to have, and then a shape and a word for each argument. The shapes are what let the
+/// host decode and encode without a second table of what each primitive's types are — the same
+/// trick [`crate::heap::Heap`] plays for a view's deferred leaves.
+///
+/// The answer's bytes are a **tail**, appended at the mark, never a whole arena: the host may add
+/// to what the worker allocated and may not rewrite it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Upcall {
+    Now,
+    NewUuid,
+    SecretEnv,
+    HttpFetch,
+}
+
+impl Upcall {
+    /// The frame code that says "this is a question, not an answer".
+    ///
+    /// `u32::MAX` rather than the next number after [`Trap::Raised`], so that a host reading a
+    /// frame from a worker built before this existed — or from one whose error cell held a code
+    /// this version does not know — cannot mistake a trap for a question.
+    pub const MARKER: u32 = u32::MAX;
+
+    /// The primitive this is, or `None` for one that is computed rather than asked.
+    pub fn of(op: Prim) -> Option<Upcall> {
+        match op {
+            Prim::Now => Some(Upcall::Now),
+            Prim::NewUuid => Some(Upcall::NewUuid),
+            Prim::SecretEnv => Some(Upcall::SecretEnv),
+            Prim::HttpFetch => Some(Upcall::HttpFetch),
+            _ => None,
+        }
+    }
+
+    pub fn code(self) -> u32 {
+        match self {
+            Upcall::Now => 1,
+            Upcall::NewUuid => 2,
+            Upcall::SecretEnv => 3,
+            Upcall::HttpFetch => 4,
+        }
+    }
+
+    pub fn from_code(code: u32) -> Option<Upcall> {
+        const ALL: [Upcall; 4] = [
+            Upcall::Now,
+            Upcall::NewUuid,
+            Upcall::SecretEnv,
+            Upcall::HttpFetch,
+        ];
+        ALL.into_iter().find(|u| u.code() == code)
+    }
+
+    /// How many arguments the frame carries, which is how the host knows where the words end.
+    ///
+    /// A property of the primitive rather than a field of the frame: an arity the host read out of
+    /// the frame would be an arity the host could not check.
+    pub fn arity(self) -> usize {
+        match self {
+            Upcall::Now | Upcall::NewUuid => 0,
+            Upcall::SecretEnv => 1,
+            Upcall::HttpFetch => 2,
+        }
+    }
+
+    /// Whether an argument can point into the arena, and the arena therefore has to travel.
+    ///
+    /// The two `nondet` atoms take nothing, so their question is 32 bytes and a word however much
+    /// the program has allocated. The other two are handed text and a record, and the host cannot
+    /// read either without the bytes they point into.
+    pub fn carries_arena(self) -> bool {
+        self.arity() > 0
+    }
+
+    /// The error type a failed answer raises, for the handler in the compiled code to match on.
+    ///
+    /// The **worker** supplies this rather than the host, because which type a primitive can raise
+    /// is a fact about the program and the name has to be the one `try:` compares against — an
+    /// interned literal's offset, not a string the host wrote into the arena.
+    pub fn raises(self) -> Option<&'static str> {
+        match self {
+            Upcall::HttpFetch => Some("HttpError"),
+            _ => None,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Upcall::Now => "now",
+            Upcall::NewUuid => "uuid",
+            Upcall::SecretEnv => "secret_env",
+            Upcall::HttpFetch => "http_fetch",
         }
     }
 }
@@ -357,6 +495,7 @@ pub fn module(program: &Program) -> Module {
     let mut lambdas: BTreeMap<u32, String> = BTreeMap::new();
     let mut applied: BTreeSet<u32> = BTreeSet::new();
     let mut loops: BTreeSet<(Loop, u32)> = BTreeSet::new();
+    let mut asks = false;
     for name in &order {
         let def = &program.defs[name];
         let mut fun = Function::new(&indexed, &eligible, program, &mut heap);
@@ -371,6 +510,7 @@ pub fn module(program: &Program) -> Module {
         applied.append(&mut fun.applied);
         loops.append(&mut fun.loops);
         compared_fns |= fun.compared_fns;
+        asks |= fun.asks;
         for (rank, lam) in std::mem::take(&mut fun.lambdas) {
             lambdas.entry(rank).or_insert(lam);
         }
@@ -393,6 +533,7 @@ pub fn module(program: &Program) -> Module {
         &layouts,
         &elements,
         &entries,
+        asks,
         &Closures {
             applied: &applied,
             emitted: &lambdas.keys().copied().collect(),
@@ -576,6 +717,12 @@ struct Function<'a> {
     loops: BTreeSet<(Loop, u32)>,
     /// Whether this body reaches the arena, and therefore needs its base in a register.
     uses_heap: bool,
+    /// Whether this body asks the host anything, and therefore needs a question buffer.
+    ///
+    /// One buffer per *function* rather than one per call: a question is answered before the next
+    /// one is asked, and an `alloca` at the call site would grow the stack once per iteration of a
+    /// loop that calls `now()`.
+    asks: bool,
     /// Where a failure inside the block being emitted goes, innermost last.
     ///
     /// Empty means the function's own trap exit. A `try:` pushes a label while its block is
@@ -614,6 +761,7 @@ impl<'a> Function<'a> {
             applied: BTreeSet::new(),
             loops: BTreeSet::new(),
             uses_heap: false,
+            asks: false,
             handlers: Vec::new(),
         }
     }
@@ -668,6 +816,11 @@ impl<'a> Function<'a> {
             let at = self.out.find('\n').map_or(0, |i| i + 1);
             self.out
                 .insert_str(at, "  %hp = load ptr, ptr @\"beck.heap\"\n");
+        }
+        if self.asks {
+            let at = self.out.find('\n').map_or(0, |i| i + 1);
+            self.out
+                .insert_str(at, &format!("  %q = alloca [{QUESTION_WORDS} x i64]\n"));
         }
         text.push_str(&self.out);
         if self.trapped {
@@ -1193,6 +1346,93 @@ impl<'a> Function<'a> {
         }
     }
 
+    /// Ask the host one of the four questions compiled code cannot answer.
+    ///
+    /// The shapes are the point. What goes on the wire is a word per argument and a word saying
+    /// what each word *is*, so the host decodes and encodes through [`crate::heap::Heap`] without a
+    /// second table of what `secret_env` takes and what `http_fetch` answers — the same trick a
+    /// view's deferred leaves play, one subsystem over.
+    ///
+    /// The name of the error type is written here rather than by the host, for
+    /// [`Upcall::raises`]'s reason: a `try:` compares an interned literal's offset, and only this
+    /// module knows which offset that is.
+    fn upcall(&mut self, op: Upcall, vals: &[Val], ty: &Ty, span: Span) -> Result<Val, String> {
+        if vals.len() != op.arity() {
+            return Err(format!(
+                "`{}` is applied to {} arguments here",
+                op.name(),
+                vals.len()
+            ));
+        }
+        let ret = self
+            .repr(ty)
+            .map_err(|why| format!("`{}` answers {why}", op.name()))?;
+        let ret_shape = self.heap.word_of(ret);
+        let (raises, named) = match op.raises() {
+            Some(name) => {
+                let repr = self
+                    .repr(&Ty::con(name))
+                    .map_err(|why| format!("`{}` raises {why}", op.name()))?;
+                (self.heap.word_of(repr), self.literal(name))
+            }
+            None => (0, 0),
+        };
+        self.asks = true;
+        let idx = self.span(span);
+
+        let mut words = vec![
+            u64::from(ret_shape).to_string(),
+            u64::from(raises).to_string(),
+        ];
+        for v in vals {
+            let shape = self.heap.word_of(v.ty);
+            words.push(u64::from(shape).to_string());
+            words.push(self.widen(v));
+        }
+        for (i, word) in words.iter().enumerate() {
+            let p = self.fresh();
+            self.line(format!(
+                "{p} = getelementptr inbounds i8, ptr %q, i64 {}",
+                i as u64 * heap::WORD
+            ));
+            self.line(format!("store i64 {word}, ptr {p}"));
+        }
+        let got = self.fresh();
+        self.line(format!(
+            "{got} = call i64 @\"beck.host\"(i32 {}, i32 {idx}, i64 {named}, i64 {}, ptr %q, i64 {}, ptr %err)",
+            op.code(),
+            words.len(),
+            u32::from(op.carries_arena()),
+        ));
+        self.check_call();
+        Ok(self.narrow(&got, ret))
+    }
+
+    /// The eight bytes the protocol carries, as the value its [`Repr`] says it is.
+    fn narrow(&mut self, word: &str, ty: Repr) -> Val {
+        let text = match ty {
+            Repr::Float => {
+                let r = self.fresh();
+                self.line(format!("{r} = bitcast i64 {word} to double"));
+                r
+            }
+            Repr::Bool => {
+                let r = self.fresh();
+                self.line(format!("{r} = icmp ne i64 {word}, 0"));
+                r
+            }
+            Repr::Int
+            | Repr::Str
+            | Repr::List(_)
+            | Repr::Map(_)
+            | Repr::Obj(_)
+            | Repr::Fn(_)
+            | Repr::Html
+            | Repr::Attr => word.to_string(),
+        };
+        Val { text, ty }
+    }
+
     /// Reserve `bytes` in the arena and answer the offset, or trap if there is no room.
     fn alloc(&mut self, bytes: u64, span: Span) -> String {
         self.uses_heap = true;
@@ -1522,6 +1762,11 @@ impl<'a> Function<'a> {
             self.out
                 .insert_str(at, "  %hp = load ptr, ptr @\"beck.heap\"\n");
         }
+        if self.asks {
+            let at = self.out.find('\n').map_or(0, |i| i + 1);
+            self.out
+                .insert_str(at, &format!("  %q = alloca [{QUESTION_WORDS} x i64]\n"));
+        }
         text.push_str(&self.out);
         if self.trapped {
             let _ = write!(
@@ -1718,6 +1963,12 @@ impl<'a> Function<'a> {
                 Err(format!("`{}` mixes two scalar types", op.name()))
             }
         };
+
+        // The four that are questions rather than computations. Before the rest, because what
+        // separates them is not what they do with their arguments.
+        if let Some(ask) = Upcall::of(op) {
+            return self.upcall(ask, &vals, ty, span);
+        }
 
         match op {
             Prim::Add | Prim::Sub | Prim::Mul => {
@@ -3785,6 +4036,9 @@ struct Closures<'a> {
     loops: &'a BTreeSet<(Loop, u32)>,
 }
 
+// One argument per table the module has to write, and they are seven different tables. Grouping
+// them into a struct would name a thing that does not exist.
+#[allow(clippy::too_many_arguments)]
 fn assemble(
     bodies: &str,
     functions: &[Signature],
@@ -3792,6 +4046,7 @@ fn assemble(
     compared: &BTreeSet<u32>,
     lists: &BTreeSet<u32>,
     maps: &BTreeSet<u32>,
+    asks: bool,
     closures: &Closures<'_>,
 ) -> String {
     let arena = !heap.is_empty();
@@ -3799,6 +4054,13 @@ fn assemble(
     m.push_str(HEADER);
     if arena {
         let _ = write!(m, "{}", arena_prelude());
+    }
+    // A question needs the arena, because an answer is written into it — and it has one, because
+    // asking interns the shape of what it answers with and a module with an interned shape is not
+    // an empty heap. `debug_assert` rather than a branch: the two facts are one fact.
+    debug_assert!(arena || !asks, "a module that asks the host has an arena");
+    if asks {
+        m.push_str(&host_call());
     }
     // The two C library functions both runtimes reach for, declared once: `LISTS` copies words and
     // `TEXT` copies and compares bytes, and a second `declare` of either would be a redefinition.
@@ -3943,6 +4205,112 @@ fn assemble(
     m.push_str(PIPE);
     m.push_str(&main_loop(arena));
     m
+}
+
+/// How many words a question's buffer holds.
+///
+/// A bound rather than a judgement: the widest question is `http_fetch`, at two words of header
+/// and two per argument, and [`Upcall`] has no way to grow past this without a new primitive.
+const QUESTION_WORDS: usize = 8;
+
+/// `beck.host`: write a question, block, and take the answer back.
+///
+/// The whole of the second direction on the worker's side, in one function that knows nothing
+/// about which primitive it is asking for — the caller has already put the shapes and the words in
+/// the buffer, and what comes back is eight bytes and, when the answer is an object, some bytes to
+/// append.
+///
+/// Three things are worth reading twice:
+///
+/// * **The answer is appended, never assigned.** The host is told the arena's high-water mark and
+///   sends bytes to put at it, so nothing a compiled value already points at can be rewritten by
+///   an answer. That is what makes servicing a question safe while the arena is live, and it is
+///   why the reply carries a tail rather than a heap.
+/// * **The room is checked before the bytes are read**, against the same limit `beck.alloc` uses
+///   and with the same trap, because an answer that does not fit is the arena being full and not
+///   the host being wrong.
+/// * **A host that stops answering ends the process.** There is nothing to compute and nothing to
+///   reply to: the caller's next read fails and [`crate::Worker`] says the program stopped, which
+///   is the message that path already had. Storing a trap instead would mean writing a reply to a
+///   pipe nobody is reading.
+fn host_call() -> String {
+    format!(
+        r#"declare void @exit(i32)
+
+define internal i64 @"beck.host"(i32 %op, i32 %span, i64 %name, i64 %words, ptr %buf, i64 %copy, ptr noalias %err) {{
+entry:
+  %hdr = alloca [4 x i64]
+  %hp = load ptr, ptr @"beck.heap"
+  %used = load i64, ptr @"beck.next"
+  store i32 {marker}, ptr %hdr
+  %sp = getelementptr inbounds i8, ptr %hdr, i64 4
+  store i32 %span, ptr %sp
+  %opp = getelementptr inbounds i8, ptr %hdr, i64 8
+  %opw = zext i32 %op to i64
+  store i64 %opw, ptr %opp
+  %up = getelementptr inbounds i8, ptr %hdr, i64 16
+  store i64 %used, ptr %up
+  %sends = icmp ne i64 %copy, 0
+  %blen = select i1 %sends, i64 %used, i64 0
+  %bp = getelementptr inbounds i8, ptr %hdr, i64 24
+  store i64 %blen, ptr %bp
+  %w1 = call i64 @"beck.write_all"(ptr %hdr, i64 32)
+  %wbytes = mul i64 %words, 8
+  %w2 = call i64 @"beck.write_all"(ptr %buf, i64 %wbytes)
+  %w3 = call i64 @"beck.write_all"(ptr %hp, i64 %blen)
+  %r1 = call i64 @"beck.read_exact"(ptr %hdr, i64 32)
+  %heard = icmp eq i64 %r1, 32
+  br i1 %heard, label %answered, label %gone
+gone:
+  call void @exit(i32 1)
+  unreachable
+answered:
+  %code = load i32, ptr %hdr
+  %tp = getelementptr inbounds i8, ptr %hdr, i64 24
+  %tail = load i64, ptr %tp
+  %end = add i64 %used, %tail
+  %lim = load i64, ptr @"beck.limit"
+  %over = icmp ugt i64 %end, %lim
+  br i1 %over, label %full, label %room
+full:
+  store i32 {exhausted}, ptr %err
+  %fs = getelementptr inbounds i8, ptr %err, i64 4
+  store i32 %span, ptr %fs
+  %fp = getelementptr inbounds i8, ptr %err, i64 8
+  store i64 0, ptr %fp
+  ret i64 0
+room:
+  %at = getelementptr inbounds i8, ptr %hp, i64 %used
+  %r2 = call i64 @"beck.read_exact"(ptr %at, i64 %tail)
+  %whole = icmp eq i64 %r2, %tail
+  br i1 %whole, label %kept, label %gone
+kept:
+  store i64 %end, ptr @"beck.next"
+  %fine = icmp eq i32 %code, 0
+  br i1 %fine, label %value, label %failed
+failed:
+  store i32 %code, ptr %err
+  %es = getelementptr inbounds i8, ptr %err, i64 4
+  store i32 %span, ptr %es
+  %pp = getelementptr inbounds i8, ptr %hdr, i64 8
+  %pl = load i64, ptr %pp
+  %ep = getelementptr inbounds i8, ptr %err, i64 8
+  store i64 %pl, ptr %ep
+  ; The type name a `try:` compares against, written by this module because only this module knows
+  ; which literal's offset it is.
+  %en = getelementptr inbounds i8, ptr %err, i64 16
+  store i64 %name, ptr %en
+  ret i64 0
+value:
+  %vp = getelementptr inbounds i8, ptr %hdr, i64 16
+  %v = load i64, ptr %vp
+  ret i64 %v
+}}
+
+"#,
+        marker = Upcall::MARKER as i32,
+        exhausted = Trap::HeapExhausted.code(),
+    )
 }
 
 /// The arena: two globals, a pointer, and the only allocator this backend has.
