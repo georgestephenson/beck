@@ -15,7 +15,7 @@
 //!
 //! # There is no fuel in compiled code
 //!
-//! `beck-eval` bounds a run by steps ([`docs/62`](../../../../../docs/62-fuel-report.md)); machine
+//! `beck-eval` bounds a run by steps ([`docs/53`](../../../../../docs/53-are-we-fast-yet-report.md)); machine
 //! code has no step to count without paying for the counter on every one of them. What is here
 //! instead is coarser and honest about being coarser: an optional **wall-clock limit**, after
 //! which the worker is killed and the call is an error naming the limit. It bounds a run that will

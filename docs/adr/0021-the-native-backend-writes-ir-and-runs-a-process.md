@@ -72,7 +72,7 @@ What that buys, beyond the property:
   ([`93`](../93-the-native-backends-report.md) §93.5). That is fine for `beck build` and it is exactly the
   cost §5.2 buys Cranelift to avoid for `beck dev`, so this ADR does not settle the dual-codegen
   question — it builds one half of it and measures the reason the other half exists.
-- **No fuel, and no depth ceiling.** [`62`](../62-fuel-report.md)'s step budget and
+- **No fuel, and no depth ceiling.** [`53`](../53-are-we-fast-yet-report.md)'s step budget and
   [`0007`](0007-evaluator-stack-is-declared-not-discovered.md)'s counted recursion depth are both
   properties of walking a tree, and neither survives compilation. What replaces them is coarser: a
   wall-clock limit on one call, and a message when the worker dies. §93.14 is the honest list.

@@ -188,7 +188,7 @@ captured `self` does not compile, which is how the first version of this was fou
 
 ## 80.6 Fuel is split, not shared
 
-Fuel bounds a run that will not stop ([`62`](62-fuel-report.md)). One budget, N children, three ways
+Fuel bounds a run that will not stop ([`53`](53-are-we-fast-yet-report.md)). One budget, N children, three ways
 to spend it:
 
 - **Share it atomically.** Exact, and it puts a read-modify-write on every evaluation step of every

@@ -172,7 +172,7 @@ so. It is cited from five other reports for that reason.
   build, so the release ceiling was a fiction.
   [`adr/0007`](adr/0007-evaluator-stack-is-declared-not-discovered.md)'s property holds in both
   profiles now.
-- [`62`](62-fuel-report.md)'s budget means something different and the number is the same: it counts
+- [`53`](53-are-we-fast-yet-report.md)'s budget means something different and the number is the same: it counts
   work rather than nodes.
 - **Every wall-clock number in reports 69 through 78 is superseded by the one after it**, which is
   the strongest argument for this document existing: ten reports each correcting the previous one's

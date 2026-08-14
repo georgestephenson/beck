@@ -40,10 +40,10 @@ established a property somebody will later depend on, or that changed a claim a 
 makes. If you cannot name the design document your work changes, or the reader who would go looking
 for it, write the changelog entry instead.
 
-This rule exists because the alternative was tried. One report per change produced **75 of them,
-199,566 words — 2.7× the design documents and half the size of the compiler** — and an index nobody
-could read. Ten reports on the evaluator's constants are one chapter
-([`docs/70`](docs/70-the-evaluator-gets-fast-report.md)); six on porting one benchmark suite are one
+This rule exists because the alternative was tried. One report per change produced **105 of them,
+2.4 MB — several times the design documents** — and an index nobody could read. Ten reports on the
+evaluator's constants are one chapter
+([`docs/70`](docs/70-the-evaluator-gets-fast-report.md)); seven on one benchmark suite are one
 chapter ([`docs/53`](docs/53-are-we-fast-yet-report.md)); **fourteen on the native backends are one
 chapter** ([`docs/93`](docs/93-the-native-backends-report.md)), and every one of them had the same
 shape — a thing gets a layout, both emitters learn it, here is the differential, here is what it

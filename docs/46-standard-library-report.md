@@ -735,7 +735,7 @@ and how both SICP chapters do. **Every one of them is `O(n²)` in time.**
 **The two halves of that table are the finding.** Time approaches 4× per doubling — quadratic — and
 the step count is exactly 2× per doubling — linear, flat at 14 steps an element. So the cost is real
 and **the evaluator's own budget cannot see it**: a step is a node evaluated, and a primitive that
-copies ten thousand values is one step. [`62`](62-fuel-report.md) built `--fuel` as the backstop that
+copies ten thousand values is one step. [`53`](53-are-we-fast-yet-report.md) built `--fuel` as the backstop that
 "bounds one evaluation"; it bounds one evaluation's *nodes*, and a program can do unbounded work
 inside a bounded number of them. That is a second finding, and it is about the backstop rather than
 about lists.

@@ -126,7 +126,7 @@ const SUPPORT: [&str; 0] = [];
 ///
 /// **On the default fuel budget**, `pidigits` included, which is worth a line because it was not.
 /// The Game publishes one expected output for that benchmark and it is at `N = 30`, so unlike
-/// `awfy/`'s three (`docs/62` §62.3) there is no reduced configuration to gate at — it needed
+/// `awfy/`'s three (`docs/53` §53.8) there is no reduced configuration to gate at — it needed
 /// `--fuel` or nothing. It needed 100,000,000 steps because `lib/bignum.beck` searched every long
 /// division's trial digit over the whole limb range; bracketing that search (`docs/46` §46.15) took
 /// it to under 16,000,000, which is inside the default. A budget table here would have hidden the

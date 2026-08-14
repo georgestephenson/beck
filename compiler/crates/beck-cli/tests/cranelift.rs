@@ -366,7 +366,7 @@ fn a_tail_call_costs_nothing_and_has_no_ceiling() {
     linker!();
     let all = All::over("rec.beck", RECURSION);
     // Sixty million tail calls, which is a stack overflow in any implementation that spends a
-    // frame on one. The evaluator is not asked: `docs/62`'s fuel budget is what bounds it, and
+    // frame on one. The evaluator is not asked: `docs/53`'s fuel budget is what bounds it, and
     // this is a claim about compiled code.
     let deep = all
         .clif

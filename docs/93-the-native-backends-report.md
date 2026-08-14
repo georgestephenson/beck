@@ -1031,7 +1031,7 @@ without a second key. `sort_by` is the next one to build, not one that cannot be
 
 ### Open
 
-**There is no fuel in compiled code.** [`62`](62-fuel-report.md)'s per-call step budget is a property of
+**There is no fuel in compiled code.** [`53`](53-are-we-fast-yet-report.md)'s per-call step budget is a property of
 walking a tree; machine code has no step to count without paying for the counter on every one. What is here
 instead is coarser and says so: an optional **wall-clock limit** on one call, after which the worker is
 killed and the call is an error naming the limit. It bounds a program that will not stop; it does not bound
