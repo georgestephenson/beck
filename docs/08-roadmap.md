@@ -212,7 +212,7 @@ production hardening.
   Mode B exists ([`94`](94-the-client-report.md)) and [`cost.rs`](../compiler/crates/beck-core/src/cost.rs)
   has charged a crossing the *minimum* of its two ends since Phase 2 while commenting that "the
   minimum is a prediction rather than a choice" — this is the choice. Legal above the session cut
-  only, for §94.2's reason. **P4–P7 are post-1.0** and §100.9 says why each waits.
+  only, for §94.2's reason. **P4–P7 are post-1.0** and §100.11 says why each waits.
 - Editor support beyond VS Code; debugger integration (DAP) with cross-tier stepping.
 - Package ecosystem seeding; documentation, book, tutorials, and 5–10 non-trivial example apps.
 - **The registry in production, on Beck, serving real packages** — the D15 exit criterion: the

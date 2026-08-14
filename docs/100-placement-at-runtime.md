@@ -243,13 +243,184 @@ the business history depend on the RTT of a browser in 2027, which is precisely 
 the business history is a function of its log alone, and the operational history is a function of
 its own.
 
-**What P7 is not.** It is not a claim that the controller is easy, and three things about it are
-genuinely open: the policy language a `decide` function needs is unspecified; a fold over a
-measurement stream is continuous work whose cost is unbudgeted (§100.10); and a controller with a
-bug is a controller that moves code, so the shadow-verification of P5 is a **prerequisite** for P7
-rather than a lower rung it supersedes. The order in §100.9 reflects that.
+**What P7 is not.** It is not a claim that the controller is easy. Two of the three things that
+looked open when this level was first written are now specified — **§100.7 is the policy language**,
+and **§100.8 is the cost, budgeted and expressed as a gate** — and the third is not a gap but an
+ordering constraint: a controller with a bug is a controller that moves code, so P5's shadow
+verification is a **prerequisite** for P7 rather than a lower rung it supersedes. §100.11 sequences
+it that way.
 
-## 100.7 What it costs: least privilege, which is the non-obvious price
+**And it is worth being exact about what a shadow finds**, because the obvious reading is wrong.
+Determinism means two placements of the same code *cannot* disagree about the answer, so shadowing
+does not check the placement. It checks two other things, and both are real:
+
+- **that the other tier's compilation agrees** — which is not free, and is precisely why the
+  three-way differential between the evaluator and the two native backends exists
+  ([`04`](04-compiler-architecture.md) §4.8). A shadow is that harness moved into production, so what
+  it catches is a **compiler** bug rather than a policy one;
+- **that the prediction was right** — the controller expected the move to be cheaper, and `Work`
+  says whether it was. A policy that is wrong about cost is the failure mode P5 exists to catch, and
+  it is invisible to any amount of type-checking.
+
+## 100.7 The policy language, and the type that makes a wrong answer inexpressible
+
+`decide` is a fold step, so [`03`](03-type-and-effect-system.md) §3.7's rule applies unchanged and
+needs no new machinery: its effect row must be ⊆ {}, and it is replay-pure or it is not a fold.
+
+```python
+def decide(p: Placement, env: Envelope[Measurement]) -> Placement
+```
+
+**The entire design is in the type of `Placement`, and that type is generated.**
+
+The obvious signature returns a `Tier`, and it is wrong. A policy that can *name* a tier can name an
+illegal one, which means §3.5 would be enforced by a runtime check — and a check is a thing that can
+be absent, wrong, or bypassed. The type should have no illegal inhabitant at all.
+
+Nothing new has to be computed to build it. [`place.rs`](../compiler/crates/beck-core/src/place.rs)
+already filters the nodes that are `pinned.is_none() && candidates.len() > 1` — unpinned, and
+genuinely open — because that is the set the solver enumerates over. That set is exactly what a
+controller may move. Emit it as a record with one field per free node, each field's type a union
+over *that node's* candidates:
+
+```python
+# generated: one field per node the solver found genuinely open
+model Placement:
+    todos: WhereTodos
+    render_feed: WhereRenderFeed
+
+union WhereTodos: AtData | AtServer          # `durable`, so `AtClient` does not exist
+union WhereRenderFeed: AtServer | AtClient   # Mode A or Mode B, above the session cut
+```
+
+Five consequences, and the first is the point:
+
+- **§3.5 holds by typing rather than by checking.** No value of `Placement` puts a secret on the
+  client, so no policy can produce one — including a wrong policy, a malicious one, or one written
+  by somebody who has never read §3.5. The proof moves from the runtime into the type, which is
+  where this project puts proofs.
+- **The type *is* the ceiling, and it is legible.** `Placement`'s fields are precisely what may move;
+  a node with no field cannot move at all. Printing this type is a better account of a deployment's
+  dynamic surface than any prose, and `beck explain place` is where it belongs.
+- **`@on(...)` removes a node from the policy's reach with no new mechanism** — an annotated node is
+  `pinned`, so it has no field, so the language's existing opt-out is also the opt-out here (§100.4
+  rule 3, now enforced structurally rather than promised).
+- **A one-candidate node is absent rather than trivial.** If the solver left it no choice, the policy
+  is not offered one, and the generated type shrinks to nothing for a program with nothing to decide
+  — which is the honest representation of `dynamism = "static"`.
+- Everything else falls out of it being an ordinary Beck model: `Sendable`, a wire encoding, `Repr`,
+  a `.becki` entry, and the type-directed generator behind `property` can already produce values of
+  it ([`22`](22-phase-3-report.md)).
+
+### What a `Measurement` is
+
+A **window summary**, never a raw sample — which is §100.8's budget as much as it is a type:
+
+```python
+model Measurement:
+    window_ms: Int
+    subscribers: Int
+    rtt_p50_us: Int          # per-subscriber at P3, per-deployment at P2
+    rtt_p95_us: Int
+    fold_p95_us: Int         # beck_rt::telemetry already records each of these
+    view_p95_us: Int
+    diff_p95_us: Int
+    work: Work               # applications, touched, materialised, recomputed
+    entries: Int             # the arrangements' own sizes — exact, per §99.8
+```
+
+Every field above is something [`telemetry.rs`](../compiler/crates/beck-rt/src/telemetry.rs) or
+[`engine.rs`](../compiler/crates/beck-core/src/engine.rs) already computes. The controller consumes
+what exists rather than adding instrumentation.
+
+### Where hysteresis lives, and it is deliberately not here
+
+`decide` says what it **wants** given the evidence. It does not implement dwell, rate limiting or the
+shadow gate. If every policy author had to remember to damp their controller, some would not, and a
+thrashing placement is the failure mode this whole level is judged on. So the harness applies, in
+order:
+
+1. a **minimum dwell** per node — a node that moved may not move again for *d*;
+2. a **ceiling on moves per window**, across all nodes, so a policy cannot rearrange everything at
+   once;
+3. **P5's shadow**, where enabled, before a want becomes a move.
+
+This is the split the runtime already makes between `validate` — what may happen — and the sequencer,
+which decides when it does.
+
+### What is worth asserting, once safety is typed
+
+Because an illegal placement is inexpressible, the tests are about **stability and intent**, which is
+a much better use of them:
+
+```python
+property "no measurement sequence rearranges the deployment"(ms: list[Measurement]):
+    expect moves(fold(decide, initial, ms)) <= 4
+
+test "a slow link keeps the view on the server":
+    given [sample(rtt_p95_us=400_000, subscribers=1_000)]
+    expect placement.render_feed == AtServer
+```
+
+The first is the property a controller actually has to have and the one no amount of code review
+establishes; the second reads as a specification of the policy and is the kind of sentence an
+operator would want to find when asking why a page is being rendered where it is.
+
+## 100.8 What the controller costs, and the budget it is held to
+
+Three costs. Two of them are already paid, and the third is bounded by a rate this design chooses
+rather than by anything it has to hope about.
+
+**Producing the measurements: no marginal cost.** `beck_rt::telemetry` already records `fold`,
+`view`, `diff`, `append`, `snapshot` and `replay` as histograms, plus a dozen counters, through a
+global accessor with no configuration flag — it is unconditional and already on the paths a
+controller cares about. A `Measurement` is a read of counters that were incremented anyway.
+
+**Folding them: four to five orders of magnitude below the application.** The rule that makes this
+true is a design decision rather than an accident, and it is the one to hold on to: **measurements
+are aggregated before they enter the log, never logged raw.** Per-subscriber RTT at ten thousand
+subscribers is ten thousand samples a second; a `Histogram` summarised once a second is **one
+event**. So the controller's fold rate is the *window* rate — one per second, or one per ten — where
+[`15`](15-scale-and-distribution.md) §15.2 puts rung 1's application throughput at 10⁴–10⁵ events/s.
+
+**Retaining them — and this is a second, stronger reason the log must be separate.**
+[`03`](03-type-and-effect-system.md) §3.7 makes the application's log the only description of its
+history, so it is permanent by construction. An operational log has no such duty: placement history
+older than the window anybody will investigate is genuinely disposable, and truncating it destroys
+nothing the semantics depend on. The two logs differ in **retention policy**, not only in content —
+which is a sharper argument for separating them than §100.6's, and one that survives even if
+somebody decides the nondeterminism argument is tolerable.
+
+**Sized against a measured number rather than a notional one.** An application fold step costs
+**2,730 ns at 500 events and 4,444 ns at 4,000** — `examples/todo.beck`'s `apply_event`, release
+profile, on a shared runner:
+
+```console
+$ cargo test --release --test scaling -- --nocapture folding_a_log_is_not_quadratic
+fold cost per event: 500 events → 2730 ns, 4000 events → 4444 ns (1.63× over a 8× longer log)
+```
+
+Take the pessimistic end. At rung 1's 10⁴ events/s an application spends **~44 ms of every second**
+folding. One percent of that is **~440 µs per second** — and at a 1 Hz window the controller gets all
+of it for a *single* step, which is room for about **a hundred application fold steps**. A `decide`
+that reads a dozen integers off a `Measurement` and compares them is one such step, so the design
+sits two orders of magnitude inside its budget, and the budget is what catches the version that grows
+a loop over subscribers.
+
+**The gate, because [`08`](08-roadmap.md) §8.3 item 4 says budgets are CI gates and not
+aspirations:**
+
+> The controller's fold cost must stay under **1%** of the application's, at two window sizes so the
+> shape is visible rather than one point, and asserted in `Work` rather than in nanoseconds.
+
+The unit matters: `Work { applications, touched, materialised, recomputed }` is an integer the engine
+already counts, so the ratio is deterministic and reproducible on any machine, where a wall-clock
+assertion on a shared runner is the flaky gate [`13`](13-testing.md) §13.7 warns against. The
+nanoseconds above size the budget; they are not the thing asserted — the same division of labour
+[`99`](99-the-data-tier-means-of-combination.md) §99.8 makes between a number that ranks candidates
+and a number that decides between them.
+
+## 100.9 What it costs: least privilege, which is the non-obvious price
 
 [`06`](06-kubernetes-and-packaging.md) §6.5 derives NetworkPolicy, RBAC and Postgres grants **from
 placement** — "the part no existing tool can do", and the feature the platform-team pitch leads with.
@@ -264,7 +435,7 @@ set**. Dynamism is therefore paid for in exactly the currency §6.5 sells. Three
 - **The default ceiling should be low**, and the cost is the argument for it — not caution in the
   abstract.
 
-## 100.8 What must not change
+## 100.10 What must not change
 
 **Placement stays semantically invisible.** §3.7 makes the backend a deterministic function of the
 log and §1.1's third move admits nondeterminism only at declared merge points. So:
@@ -281,7 +452,7 @@ minimum dwell**, because any feedback controller can thrash; and **`Method`-styl
 placement solver already reports `Exhaustive` versus `Sweep` rather than implying optimality, and a
 runtime controller should report what it moved, why, and on what evidence, in the same spirit.
 
-## 100.9 Where this goes on the roadmap
+## 100.11 Where this goes on the roadmap
 
 | level | phase | with |
 |---|---|---|
@@ -289,24 +460,32 @@ runtime controller should report what it moved, why, and on what evidence, in th
 | **the decision record** (§100.5) | **4** | built as a facility, not for placement — fusion and the plan solver are already making unrecorded choices |
 | **the fusion off switch** (§100.5) | **4** | closing the configurability hole the audit found; small |
 | **P2, P3** — per process, per subscriber | **5** | Mode B exists; the cost model already predicts the choice |
-| **P4–P6** — per call site, continuous, topology | **post-1.0** | P6 needs [`15`](15-scale-and-distribution.md) §15.2's rung 3, which is post-1.0 already |
-| **P7** — the controller as a fold | **post-1.0**, and it is the end state rather than an increment | needs its own log (§100.6) and the package/dogfood discipline of D15 |
+| **P4–P6** — per call site, continuous, topology | **post-1.0** | P6 needs [`15`](15-scale-and-distribution.md) §15.2's rung 3, which is post-1.0 already. **P5 before P7**, per §100.6 |
+| **§100.8's budget, as a gate** | **with P7's first line of code, not after it** | the ceiling is derived rather than observed, so the gate is what stops it being taken on trust — the same ordering [`99`](99-the-data-tier-means-of-combination.md) §99.9 puts its own first item in, and for the same reason |
+| **P7** — the controller as a fold | **post-1.0**, and it is the end state rather than an increment | the generated `Placement` type (§100.7), its own log (§100.6, §100.8), P5's shadow as a prerequisite, and the package/dogfood discipline of D15 |
 
-## 100.10 What this does not claim
+## 100.12 What this does not claim
 
 - **Nothing is built**, and P4–P7 should not be built soon. The value of writing them down now is the
   ceiling and the two invariants, not the schedule.
 - **The survey in §100.2 is checked but not exhaustive.** Each system named there was read back to
   its paper; "the conjunction appears to have no occupant" is a claim about an absence, which is the
   kind no search establishes. It is stated so that it can be falsified by one citation.
-- **No number here is measured.** Whether P3 is worth anything on a real connection is unknown; the
-  cost model *predicts* it, which is what §99.8's ladder exists to replace with evidence.
-- **The controller's own cost is unbudgeted.** A fold over a measurement stream is work, and P7 pays
-  it continuously.
+- **Whether P3 is worth anything on a real connection is unknown.** The cost model *predicts* it,
+  which is what [`99`](99-the-data-tier-means-of-combination.md) §99.8's ladder exists to replace
+  with evidence, and no measurement of a moved component against an unmoved one exists.
+- **§100.8's budget is a budget, not a measurement.** The 1% ceiling is derived from a rate this
+  design chooses and a fold cost the runtime already reports; what has not happened is a controller
+  running against it. The gate is the thing to build first, per §100.11, precisely so the number is
+  never taken on trust.
+- **The generated `Placement` type is designed and not built**, and one thing about it is open: a
+  program whose free-node set changes between two compilations gets a *different* `Placement` type,
+  so a policy is versioned against the program the way a `.becki` is, and `--wire-compat` is the
+  machinery that would have to cover it. Named here because it is the first thing that will bite.
 - **It does not reopen the §3.5 proof, or ask to.** §100.1's line is the reason this is a design and
   not a hazard.
 
-## 100.11 What this corrects, elsewhere
+## 100.13 What this corrects, elsewhere
 
 | Document | Correction |
 |---|---|
