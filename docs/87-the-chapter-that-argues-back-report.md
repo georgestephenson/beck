@@ -122,7 +122,7 @@ builtin type constructors. The two that *were* refused, `Option` and `Result`, w
 accident: they are prelude **declarations**, so they sit in the checker's type table and a second
 declaration hit B0302's "declared twice".
 
-The shape is [`85`](85-what-the-generator-found-report.md) §85.7's, one report later and from the
+The shape is [`82`](82-the-edge-report.md) §82.10's, one report later and from the
 other direction. The rule exists in the compiler already: `B0314` refuses a **type parameter** that
 shadows an existing type, with a message explaining exactly why —
 
@@ -136,7 +136,7 @@ stay about the module.
 
 The test enumerates all sixteen names and both declaration forms rather than picking one, because a
 test that named one would be testing the shape of the gap rather than the shape of the fix — which is
-[`84`](84-a-quota-is-only-as-good-as-its-actor-report.md) §84.5's pattern, and the reason this one is
+[`82`](82-the-edge-report.md) §82.10's pattern, and the reason this one is
 written the way it is.
 
 `ch3.beck` calls the book's stream `Seq[T]` and says why in the file.

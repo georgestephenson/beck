@@ -119,7 +119,7 @@ fn the_corpus_is_nowhere_near_the_ceiling() {
 /// it. The front end still recurses once per binding — a block is a chain in `Core`, whatever it
 /// looks like in source.
 ///
-/// Until `docs/85` what bounded this axis was the **declared stack**, which is the property
+/// Until `docs/82` what bounded this axis was the **declared stack**, which is the property
 /// [`adr/0007`](../../../../docs/adr/0007-evaluator-stack-is-declared-not-discovered.md) says a
 /// ceiling must not have: `docs/64` §64.4 measured a debug build aborting at 12,000 bindings and a
 /// release build at 100,000, with no diagnostic, so *which programs compile depended on how the

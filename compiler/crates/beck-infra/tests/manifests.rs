@@ -223,7 +223,7 @@ fn removing_an_effect_removes_the_object_and_the_manifest_with_it() {
 /// This is the assertion the golden file cannot make, because a golden file records one program.
 /// The claim is that the flag *moves*: the same derivation with `fs.write` in the row emits a
 /// writable root filesystem and without it emits a read-only one. It could not be made at all until
-/// `docs/81` split `fs` into a read and a write — one atom naming a path cannot say whether the
+/// `docs/80` split `fs` into a read and a write — one atom naming a path cannot say whether the
 /// program writes — and `fs.read` deliberately does **not** move it, which is the second assertion.
 #[test]
 fn the_root_filesystem_is_read_only_unless_the_program_says_it_writes() {
@@ -268,7 +268,7 @@ fn the_root_filesystem_is_read_only_unless_the_program_says_it_writes() {
 /// They cost a third-party image nothing — nothing Beck deploys needs a Linux capability, needs to
 /// gain privileges, or needs a syscall outside the runtime default. `readOnlyRootFilesystem` is the
 /// one that is not universal, and its absence from the substrate's container is asserted here so
-/// the asymmetry is a decision rather than an oversight (`docs/82` §82.3).
+/// the asymmetry is a decision rather than an oversight (`docs/82` §82.9).
 #[test]
 fn every_container_drops_its_capabilities_and_refuses_privilege_escalation() {
     let mut containers = 0;

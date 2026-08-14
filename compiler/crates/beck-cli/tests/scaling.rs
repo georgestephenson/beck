@@ -27,7 +27,7 @@ use support::{command, todo_runtime};
 /// The default configuration with F3's per-actor write quota switched off.
 ///
 /// Every measurement here proposes more events from one actor than any person could, which is the
-/// definition of what the quota refuses. `docs/84` §84.5 is the sharper version of the same point:
+/// definition of what the quota refuses. `docs/82` §82.10 is the sharper version of the same point:
 /// a limit calibrated against human behaviour is tripped by a benchmark before it is tripped by an
 /// attacker, and a harness has to say which it is.
 fn unthrottled() -> AppConfig {
@@ -42,7 +42,7 @@ async fn fold_cost_ns_per_event(n: usize) -> (u64, f64) {
     let store = Arc::new(MemoryLog::new());
     // F3's write quota is on by default and this harness is exactly what it exists to refuse: one
     // actor appending thousands of events as fast as a machine can. Off here, because what is being
-    // measured is the *shape* of a fold and the quota is not the thing under test (`docs/84` §84.3).
+    // measured is the *shape* of a fold and the quota is not the thing under test (`docs/82` §82.4).
     let app = App::start(todo_runtime(), store.clone(), unthrottled())
         .await
         .expect("app starts");

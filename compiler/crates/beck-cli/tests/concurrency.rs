@@ -315,7 +315,7 @@ def f(s: Signal[Int]) -> Int:
     assert!(codes(src).contains(&"B0399".into()), "{:?}", codes(src));
 }
 
-/// …and a *read* of the same kind of thing is not, which is what `docs/81` split `fs` for.
+/// …and a *read* of the same kind of thing is not, which is what `docs/80` split `fs` for.
 ///
 /// `docs/80` §80.2 had to refuse `fs(path)` whole, because one atom naming a resource cannot say
 /// what is being done to it. Two children reading two files was a thing the form should allow and
@@ -352,7 +352,7 @@ def both(p: Str) -> Int:
 
 /// The spelling that used to work says which of the two to write.
 ///
-/// `fs(path)` was one atom until `docs/81`, so it is the spelling a reader arrives with — from §3.2
+/// `fs(path)` was one atom until `docs/80`, so it is the spelling a reader arrives with — from §3.2
 /// as it stood, or from habit. `B0305`'s bare "neither an effect nor a row" is true and useless.
 #[test]
 fn the_old_spelling_of_the_filesystem_atom_says_what_to_write_instead() {

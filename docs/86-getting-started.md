@@ -343,7 +343,7 @@ and this document cannot make it true on its own.
   not, because no tag has been cut. **So the command above will not work until one is**, and
   building from source is what this guide can promise today.
 * **The deployment stops at `beck build`.** `beck up` and `beck deploy` exist;
-  [`82`](82-the-defaults-that-should-be-unavoidable-report.md) §82.4 is honest that nothing in this
+  [`82`](82-the-edge-report.md) §82.8 is honest that nothing in this
   repository has applied a generated manifest to a real cluster, so this guide does not tell anybody
   to.
 

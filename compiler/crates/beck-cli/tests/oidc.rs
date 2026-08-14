@@ -3,7 +3,7 @@
 //! [`docs/48`](../../../../docs/48-identity-report.md) §48.13 lists "OIDC relying party" as **not
 //! built**, and [`docs/43`](../../../../docs/43-threat-model.md) §43.4 carries the absence. This
 //! file is the evidence for the claim that replaces it, and its shape is
-//! [`docs/84`](../../../../docs/84-a-quota-is-only-as-good-as-its-actor-report.md) §84.5's lesson:
+//! [`docs/82`](../../../../docs/82-the-edge-report.md) §82.10's lesson:
 //! a relying party checked against a token this file *made up* would be a test of agreement with
 //! itself, so the tokens here are signed by a **key pair generated for the test**, through the same
 //! `aws-lc-rs` primitives an issuer uses, and the relying party is given nothing but the public

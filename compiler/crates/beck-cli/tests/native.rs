@@ -2010,7 +2010,7 @@ fn what_cannot_be_compiled_is_refused_by_name_and_with_a_reason() {
 /// What the heap does **not** reach, asserted as an absence.
 ///
 /// `docs/93` §93.14 lists what is not built — collections, closures and every effect — and a
-/// list in prose goes stale where a list with a test attached cannot (`docs/83` §83.7). Each of
+/// list in prose goes stale where a list with a test attached cannot (`docs/82` §82.10). Each of
 /// these goes red the day its row starts compiling, which is the day the row should be deleted.
 ///
 /// Six rows were deleted that way: `docs/93` gave a `Str` a layout, `docs/93` gave a `list` one,
@@ -2071,7 +2071,7 @@ fn what_the_heap_does_not_reach_is_refused_by_name() {
 /// That sentence was false: the prelude's `Option` has had a layout since
 /// [`docs/93`](../docs/93-the-native-backends-report.md), and `maybe(n) -> Option[Int]` compiled in
 /// the very fixture beside it. Every gate around the refusal was green, because each asserted that
-/// the refusal *said* something and none asked whether what it said was *so* — `docs/84` §84.5's
+/// the refusal *said* something and none asked whether what it said was *so* — `docs/82` §82.10's
 /// pattern, in the one place this project had not looked for it.
 ///
 /// So: every type a refusal blames for having no layout is asked whether it has one, and the

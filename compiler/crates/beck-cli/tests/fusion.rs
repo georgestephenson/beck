@@ -15,8 +15,8 @@
 //!   *pessimisations* rather than errors when they are dropped, so no differential can see them.
 //!   They are asserted on programs built to make each one bite.
 //!
-//! That last group is [`84`](../../../../docs/84-a-quota-is-only-as-good-as-its-actor-report.md)
-//! §84.5's rule applied while the answer is still fresh: what would have to be true for this file
+//! That last group is [`docs/82`](../../../../docs/82-the-edge-report.md)
+//! §82.10's rule applied while the answer is still fresh: what would have to be true for this file
 //! to go red? Delete the `consumers > 1` check and `an_arrangement_two_operators_read_is_not_fused`
 //! fails; delete the session-cut check and `fusion_does_not_move_shared_work_per_subscriber` fails;
 //! get the keys wrong in any rule and the differential fails on the first program that renders a

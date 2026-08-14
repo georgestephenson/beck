@@ -154,12 +154,12 @@ Non-obvious defaults that should be *unavoidable*, because they are what separat
 throttling pathologies); `revisionHistoryLimit`; anti-affinity across zones; `preStop` sleep for
 connection draining; probes wired to the generated readiness endpoints.
 
-*Built, less two* ([`82`](82-the-defaults-that-should-be-unavoidable-report.md)): the four security
+*Built, less two* ([`82`](82-the-edge-report.md)): the four security
 defaults, `revisionHistoryLimit`, the `preStop` sleep and the probes are emitted, and
 `readOnlyRootFilesystem` is **derived** — true unless the program's row carries `fs.write`, which is
-a distinction one `fs(path)` atom could not make until [`81`](81-fs-is-two-atoms-report.md) split it.
+a distinction one `fs(path)` atom could not make until [`80`](80-structured-concurrency-report.md) split it.
 Resource requests are not emitted, for the reason the next paragraph gives. Anti-affinity is not
-either: `replicas` is 1, so a spread constraint would be a field with no effect. §82.4 is what none
+either: `replicas` is 1, so a spread constraint would be a field with no effect. §82.8 is what none
 of it has been checked against — there is no cluster in CI, so `conformance.rs` skips.
 
 **Resource requests** are a genuinely hard inference problem. Plan: v1 uses a per-language-construct

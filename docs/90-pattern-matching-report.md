@@ -218,7 +218,7 @@ arm. **Nothing has measured that it matters here.**
 ## 90.7 A pattern is an expression, so nesting one is a new way to recurse
 
 [`44`](44-wave-0-report.md) bounded the front end's recursion as a count, and
-[`85`](85-what-the-generator-found-report.md) then found **three** productions that reached past the
+[`82`](82-the-edge-report.md) then found **three** productions that reached past the
 bound. Its lesson is the advisory [`42`](42-security-assurance.md) §42.2 quotes: *a limit added at the
 one production somebody thought of is bypassed through a different one.*
 
@@ -242,7 +242,7 @@ loop, **and the test that says so is a program rather than an argument.**
 | A pattern in the **tail** of a list — `[a, *[b, c]]` | **Refused**, and `B0345` says so rather than saying "Phase 1". It is `[a, b, c]` written twice over: a second spelling, not a shape |
 | Exhaustiveness over `Int`, `Str`, `Float` literals | **Not built and not buildable** without a range analysis (§90.3) |
 | Compiling a `match` to a decision tree | **Not built** (§90.6), and nothing has measured that it would matter |
-| **The checker's pattern counter cannot be made to fire, and it is still right to have** | A pattern reaches the checker only through the parser, both count to the same ceiling, and a pattern cannot be built by the loop [`85`](85-what-the-generator-found-report.md) found — `case 1 + 1` is not a pattern at all. **So the guard is unreachable today**, and every one of that report's three findings was a place somebody had concluded exactly that |
+| **The checker's pattern counter cannot be made to fire, and it is still right to have** | A pattern reaches the checker only through the parser, both count to the same ceiling, and a pattern cannot be built by the loop [`82`](82-the-edge-report.md) found — `case 1 + 1` is not a pattern at all. **So the guard is unreachable today**, and every one of that report's three findings was a place somebody had concluded exactly that |
 | **An unreachable arm is a warning, and warnings are not gated** | Nothing in CI fails on one. The `pending_security.rs` pattern — asserting an absence so that building the control turns a test red — has no equivalent for "a warning nobody reads", and the honest position is that **this diagnostic is worth what its reader makes of it** |
 | A guarded arm's condition is not checked for purity | A guard is an ordinary expression, so its row is inferred and inherited exactly as an `if`'s would be — which means a guard *may* perform an effect, and a `match` inside a `durable` fold with an effectful guard is refused by the fold's own row rather than by anything here. **That is the right layering and it is untested**: no program has an effectful guard |
 | The copy on a failed guard is unmeasured | §90.6 states the cost and does not put a number on it. The program that would show it is a `match` whose first arms are guarded and whose guards usually fail, over a pattern binding several large values, and **there is no such program in the tree** |

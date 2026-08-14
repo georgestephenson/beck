@@ -78,7 +78,7 @@ So there are four things that must agree about one image, and each has a gate th
 
 Reading the rendering rather than calling the function twice is the point. A test that called
 `packages` on both sides would agree with itself no matter what the config said, which is
-[`84`](84-a-quota-is-only-as-good-as-its-actor-report.md) §84.5's pattern: **a proxy for a control is
+[`82`](82-the-edge-report.md) §82.10's pattern: **a proxy for a control is
 defeated by naming.**
 
 The account row is the one that had a real defect waiting in it. Four artefacts named `65532`, three
@@ -412,7 +412,7 @@ why no image-size number appears here: **the artefact to measure is not the one 
 
 ## 92.14 The gates, and what makes each go red
 
-[`84`](84-a-quota-is-only-as-good-as-its-actor-report.md) §84.5's pattern: write the gate against the
+[`82`](82-the-edge-report.md) §82.10's pattern: write the gate against the
 shape of the gap, then check that the gap would make it fire. Each mutation below was applied, run,
 and reverted.
 
@@ -429,7 +429,7 @@ and reverted.
 attest-step assertion sliced the step's text from `uses:` to the next `- name:` and looked for a
 condition — and a condition written *above* `uses:`, which is where a person would naturally put it,
 was outside the slice. **The gate passed on the mutation it existed for.** It now slices the step the
-way YAML delimits one. That is [`85`](85-what-the-generator-found-report.md) §85.1's lesson arriving
+way YAML delimits one. That is [`82`](82-the-edge-report.md) §82.7's lesson arriving
 in a much smaller place: **a gate calibrated against the shape you happened to write tests that you
 wrote it, not that the property holds.**
 

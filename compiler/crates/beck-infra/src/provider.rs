@@ -20,8 +20,8 @@
 //! Not a claim that the pod starts. `beck-infra/tests/conformance.rs` skips without a cluster and
 //! there is none here, so this module and its emitter establish "the object graph contains these
 //! objects, wired to each other" — which is a different and smaller claim than "you can log in",
-//! exactly as [`docs/82`](../../../../../docs/82-the-defaults-that-should-be-unavoidable-report.md)
-//! §82.4 says of the pod defaults.
+//! exactly as [`docs/82`](../../../../../docs/82-the-edge-report.md)
+//! §82.8 says of the pod defaults.
 
 /// A concrete identity provider behind `identity = managed()`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

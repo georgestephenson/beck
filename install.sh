@@ -10,7 +10,7 @@
 # The checksum step is the reason this file exists rather than a paragraph telling somebody to
 # download a tarball. `compiler/crates/beck-cli/tests/release.rs` corrupts an archive and asserts
 # that this script exits non-zero and installs nothing — the gate is about the gap, not about the
-# code that closed it (`docs/84-a-quota-is-only-as-good-as-its-actor-report.md` §84.5).
+# code that closed it (`docs/82-the-edge-report.md` §82.10).
 #
 # The checksum on its own is *not* a chain of trust. A checksum published beside the artefact it
 # describes proves the download was not corrupted in transit; it proves nothing about the release

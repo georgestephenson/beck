@@ -820,7 +820,7 @@ mod tests {
 
     /// The numbers, asserted so that changing one is a decision rather than an edit.
     ///
-    /// `docs/83` §83.2 is the argument for each; this is what stops the file drifting back to
+    /// `docs/82` §82.3 is the argument for each; this is what stops the file drifting back to
     /// somebody else's defaults without the argument moving too.
     #[test]
     fn the_socket_limits_are_the_numbers_this_project_chose() {

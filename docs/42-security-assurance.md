@@ -52,10 +52,10 @@ Taken from the tree, not from the design documents. Each row says what kind of c
 | Licence and advisory policy | tested | `deny.toml` with an **empty** `advisories.ignore` (advisories are fixed at the root, and the comment says so), `yanked = "deny"`, `wildcards = "deny"`, `allow-git = []`; gated in CI ([`adr/0004`](adr/0004-full-cargo-deny-gate.md)) |
 | Warnings are errors | tested | `RUSTFLAGS: -D warnings` with `cargo clippy --workspace --all-targets --all-features` |
 | Escaping, text vs attribute | tested | `beck-core/src/html.rs` separates the two contexts; `a_todo_whose_text_is_a_script_tag_renders_as_text` is the negative test |
-| Front-end recursion bound | **tested** | §42.2 was the finding; [`adr/0012`](adr/0012-the-front-end-counts-its-own-recursion.md) is the bound and [`44`](44-wave-0-report.md) built it, measured at 18 KiB per level and gated both ways. [`85`](85-what-the-generator-found-report.md) then found three productions it did not cover |
+| Front-end recursion bound | **tested** | §42.2 was the finding; [`adr/0012`](adr/0012-the-front-end-counts-its-own-recursion.md) is the bound and [`44`](44-wave-0-report.md) built it, measured at 18 KiB per level and gated both ways. [`82`](82-the-edge-report.md) then found three productions it did not cover |
 | Authentication | **tested** | §42.6 was the finding, and [`48`](48-identity-report.md) closed it: an `Actor` is minted by an `Identity` implementation, there is an OIDC relying party, and claims reach `validate`. **The default provider still believes the client and says so**, which is a deployment's choice rather than a property of the protocol |
-| Request/connection limits | **tested** | [`83`](83-the-runtime-edge-report.md): the socket's limits are numbers this project argues for, and `Origin` is checked; `runtime_edge.rs` |
-| Per-actor write quotas | **tested** | [`84`](84-a-quota-is-only-as-good-as-its-actor-report.md): 600 events a minute, on by default; `runtime_edge.rs` asserts on the log's head. **Subscription quotas (F15) are still absent** |
+| Request/connection limits | **tested** | [`82`](82-the-edge-report.md): the socket's limits are numbers this project argues for, and `Origin` is checked; `runtime_edge.rs` |
+| Per-actor write quotas | **tested** | [`82`](82-the-edge-report.md): 600 events a minute, on by default; `runtime_edge.rs` asserts on the log's head. **Subscription quotas (F15) are still absent** |
 | Macro expansion fuel | **absent** | F17, unbuilt: nothing in `beck-macro` bounds expansion |
 | A written threat model | **tested** | [`43`](43-threat-model.md), with `pending_security.rs` asserting each absence it names so a closed one turns a test red |
 | A disclosure policy | **built** | `SECURITY.md` ([`44`](44-wave-0-report.md)) |
@@ -77,7 +77,7 @@ reasons. It says something real about the lexer and the resolver, which is where
 layout algorithm would be expected to break first. And it is the reason §42.2 exists: random
 mutation cannot *generate structure*, so the one crash class the front end actually has is
 precisely the one this method is blind to. §42.11's grammar-aware fuzzing row is the version of
-this that counts — and [`85`](85-what-the-generator-found-report.md) is it, built: a structure-aware
+this that counts — and [`82`](82-the-edge-report.md) is it, built: a structure-aware
 generator found **three** productions the recursion ceiling did not cover, plus the flat-block axis
 [`64`](64-compile-speed-report.md) §64.4 had recorded and not fixed. This paragraph's caution was
 right, and understated: byte mutation was not merely blind to the class, the class was populated.
@@ -246,20 +246,20 @@ What an untrusted client can do to a running Beck app today:
   in every corpus program is therefore enforced against a value the caller chooses. This is honestly
   documented and correctly sequenced — it is Phase 3's work, not a defect — but it is *absent*, and
   §42.1 records it that way.
-- ~~**Send a 64 MiB message.**~~ **Closed** ([`83`](83-the-runtime-edge-report.md)). The handshake
+- ~~**Send a 64 MiB message.**~~ **Closed** ([`82`](82-the-edge-report.md)). The handshake
   passed `None`, so the limits were tungstenite's — 64 MiB a message, 16 MiB a frame. They are now
   256 KiB a message and a frame, 8 KiB of eagerly-allocated read buffer per connection rather than
-  128 KiB, and a bounded write buffer; §83.2 is the argument for each number, and a unit test holds
+  128 KiB, and a bounded write buffer; §82.3 is the argument for each number, and a unit test holds
   the file to them so a drift back to somebody else's defaults is a decision.
-- ~~**Open a socket from any origin.**~~ **Closed** ([`83`](83-the-runtime-edge-report.md)). The
+- ~~**Open a socket from any origin.**~~ **Closed** ([`82`](82-the-edge-report.md)). The
   upgrade compares `Origin`'s authority against `Host` and answers `403` when they differ. An absent
   `Origin` is allowed, because the attack needs a browser and every browser sends one; the scheme is
-  not compared, because §6.5's gateway terminates TLS in front of a plaintext hop. §83.3 is why each
+  not compared, because §6.5's gateway terminates TLS in front of a plaintext hop. §82.2 is why each
   went that way.
-- ~~**Spend the log.**~~ **Closed for F3** ([`84`](84-a-quota-is-only-as-good-as-its-actor-report.md)):
+- ~~**Spend the log.**~~ **Closed for F3** ([`82`](82-the-edge-report.md)):
   600 events a minute per actor, on by default, charged before the ingress queue and counted as
   `throttled` apart from the other two ways a proposal can fail. F15's connection quotas and F12's
-  bounded deploy buffer are still unbuilt. §84.4 is what the F3 bound is worth in practice — a
+  bounded deploy buffer are still unbuilt. §82.5 is what the F3 bound is worth in practice — a
   per-actor limit composes with whichever identity provider is configured, so under `DevIdentity` an
   attacker who rotates names is bounded by the *table* rather than by the limit.
 
@@ -268,24 +268,24 @@ today. What it should do is stop being invisible: these are four F-numbers whose
 [`14`](14-review-findings.md) is a word, and whose status in the code is silence. §42.11's
 `pending_security` row makes the silence audible.
 
-*Three of the four are closed*, and the mechanism worked for two of them: [`83`](83-the-runtime-edge-report.md)'s
+*Three of the four are closed*, and the mechanism worked for two of them: [`82`](82-the-edge-report.md)'s
 pair were bullets whose gap was a **failing test**, so building them turned that test red and the
 person who built them had to come back to this paragraph.
 
 *It did not work for the third.* Both tests guarding F3 stayed **green** through the change that
 closed it — one grepped for identifiers the implementation did not happen to use, and the other
 proposed 200 events against a limit that turned out to be 600.
-[`84`](84-a-quota-is-only-as-good-as-its-actor-report.md) §84.5 is the post-mortem, and the caveat it
+[`82`](82-the-edge-report.md) §82.10 is the post-mortem, and the caveat it
 leaves belongs to every grep-shaped test in `pending_security.rs`: a proxy for a control is defeated
 by naming, and a behavioural test for an absence cannot be calibrated against a limit that does not
 exist yet.
 
 ~~One smaller item, recorded so it does not rot: `dash.html`'s `esc` escapes `&<>` only, and the
 graph renderer interpolates `class="${n.tier}"` into an attribute without it.~~ **Already fixed when
-[`83`](83-the-runtime-edge-report.md) went looking**, and this paragraph is the correction. `esc`
+[`82`](82-the-edge-report.md) went looking**, and this paragraph is the correction. `esc`
 escapes `&<>"'` and says in a comment why quotes are in the set — "half the interpolations below are
 into attributes" — and the graph renderer writes `class="${esc(n.tier)}"`. Every other interpolation
-in the file is escaped, a number computed by the layout, or a literal chosen by a ternary; §83.5
+in the file is escaped, a number computed by the layout, or a literal chosen by a ternary; §82.12
 records the audit. The item rotted in the *other* direction: it was fixed and the record was not, so
 this document has been describing a defect that stopped existing. That is the failure mode a
 `pending_security` test does not have, and it is the argument for turning a paragraph into one.
@@ -366,7 +366,7 @@ which §42.7 is already about, and **A10 Mishandling of Exceptional Conditions**
 
 | Area | Adopt | Borrow | Watch (trigger) | Decline |
 |---|---|---|---|---|
-| Front end (§42.2) | Counted recursion bound in parser, checker and lowering, with a diagnostic and a stack-fits-ceiling test, per ADR 0007's argument | Scriban's incomplete-fix lesson: bound the recursion site, not one grammar rule — **and the tree contained three violations of it**, found by the row to the right ([`85`](85-what-the-generator-found-report.md)) | ~~Grammar-aware fuzzing (trigger: the bound lands)~~ — **built** ([`85`](85-what-the-generator-found-report.md)); what is still watched is *coverage-guided* fuzzing, trigger: a nightly toolchain is taken for another reason | — |
+| Front end (§42.2) | Counted recursion bound in parser, checker and lowering, with a diagnostic and a stack-fits-ceiling test, per ADR 0007's argument | Scriban's incomplete-fix lesson: bound the recursion site, not one grammar rule — **and the tree contained three violations of it**, found by the row to the right ([`82`](82-the-edge-report.md)) | ~~Grammar-aware fuzzing (trigger: the bound lands)~~ — **built** ([`82`](82-the-edge-report.md)); what is still watched is *coverage-guided* fuzzing, trigger: a nightly toolchain is taken for another reason | — |
 | Memory safety (§42.3) | A written memory-safety roadmap paragraph, in CISA's terms | verify-rust-std's null result as the stated reason for aiming verification elsewhere | — | Miri as routine CI (no yield against `forbid(unsafe)`); Kani *for memory safety* |
 | Verification (§42.3, §42.5) | Kani on the solver's security invariants — no `secret[T]` into a client partition, `durable`/`ingress` never client-side | Non-interference as the name of the §3.5 claim; the OOPSLA 2025 and graded-coeffect lineage | Mechanised non-interference over the core calculus (trigger: Phase 5's spec) | — |
 | Concurrency (§42.4) | Injected clock on the seam, now, so DST is never a retrofit | TigerBeetle/WarpStream/S2 as evidence DST is ordinary practice | `loom` (trigger: first hand-rolled synchronisation); DST proper (trigger: second runtime substrate) | — |

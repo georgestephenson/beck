@@ -591,7 +591,7 @@ intrinsics, so `sin` and `cos` are calls into the same `libm` `clang` lowers `ll
 key the same way; what the new one got wrong was the comparison *of* the key, which maps every real onto
 the **unsigned** order and this compared signed. It is worth being precise about what caught it: not the
 676-pair float sweep, which had not been written, but five lines and one call. That is
-[`85`](85-what-the-generator-found-report.md) §85.1's lesson in the ordinary direction — the cheap test
+[`82`](82-the-edge-report.md) §82.7's lesson in the ordinary direction — the cheap test
 that runs first finds the bug that is *everywhere*, and the expensive one earns its keep on the bug in
 one corner.
 
@@ -662,7 +662,7 @@ the fixture *beside* the refusal while that sentence was being written.
 `the_two_emitters_accept_and_refuse_the_same_definitions` asserted both emitters said something;
 `what_cannot_be_compiled_is_refused_by_name_and_with_a_reason` asserted the reason was non-empty. All
 three assert that a refusal **said** something and none asks whether what it said is **so** — which is
-[`84`](84-a-quota-is-only-as-good-as-its-actor-report.md) §84.5's pattern in the one place this project
+[`82`](82-the-edge-report.md) §82.10's pattern in the one place this project
 had not looked for it: a proxy for a control is defeated by naming, and a reason is a proxy for a fact.
 
 So: `a_refusal_that_blames_a_type_is_asked_whether_that_type_has_one`. It takes every type a refusal
@@ -704,7 +704,7 @@ cannot**: `beck_llvm`'s own module documentation was stale three separate times 
 closure, `Html` and `Unit` are refused" after two of the five had layouts, "text, collections, closures
 and every effect are still the tree-walker's" after text arrived, and "growing a **map** is refused"
 after it stopped being. Each was caught by a reader rather than by a gate, which is
-[`83`](83-the-runtime-edge-report.md) §83.7's point about prose lists.
+[`82`](82-the-edge-report.md) §82.10's point about prose lists.
 
 **And the ceiling that was not reachable.** `Heap::decode` walked a reply by recursing, and
 `MAX_DEPTH = 2048` bounded that recursion. Adding a `list` arm made the frame bigger and a `cargo test`

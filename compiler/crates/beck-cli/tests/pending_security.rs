@@ -97,7 +97,7 @@ fn identity_defaults_to_believing_the_client() {
 // what replaces them is `beck-cli/tests/oidc.rs` — where the tokens are signed by a key pair
 // generated for the test and the relying party is given nothing but the public half.
 //
-// The first of the two is worth a note beside `docs/84` §84.5's list. It was a **name grep**, for
+// The first of the two is worth a note beside `docs/82` §82.10's list. It was a **name grep**, for
 // `jwks`, `id_token`, `issuer` and `RS256`, and it would have fired on this change — all four
 // appear. But it would equally have fired on a module that fetched a JWKS and checked nothing, and
 // on a comment. A grep proves a subject was touched; it cannot prove a control works, and it is
@@ -118,14 +118,14 @@ fn identity_defaults_to_believing_the_client() {
 // That test is also the one this file's own rules were hardest on. Its first version searched the
 // rendered YAML for `keycloak`, `ory` and `Kratos`, and went red on **`revisionHistoryLimit`**; the
 // second counted `Workload` nodes. Both were asserting an absence by looking at the shape of the
-// fix rather than the shape of the gap, which is `docs/84` §84.5's pattern from the other side.
+// fix rather than the shape of the gap, which is `docs/82` §82.10's pattern from the other side.
 //
 // **Nothing about identity is asserted as absent here now.** Presence — D6's "who is connected now,
 // as a first-class non-durable Signal" — is the last unbuilt row of that bullet, and it is a
 // language feature rather than a control, so it belongs in `docs/08`'s list and not in this file.
 
 // ---------------------------------------------------------------------------------------------
-// F3 — per-actor quotas: BUILT (`docs/84`), and the two tests that were here did not notice
+// F3 — per-actor quotas: BUILT (`docs/82`), and the two tests that were here did not notice
 // ---------------------------------------------------------------------------------------------
 //
 // They are gone, and how they failed is worth more than they were.
@@ -146,7 +146,7 @@ fn identity_defaults_to_believing_the_client() {
 // than on identifiers: five events allowed out of fifty proposed, and the head stops at five.
 //
 // The rest of this file still uses the grep, because for a control that does not exist there is
-// often nothing else to look at. `docs/84` §84.5 is the caveat that now belongs to every one of
+// often nothing else to look at. `docs/82` §82.10 is the caveat that now belongs to every one of
 // them.
 
 // ---------------------------------------------------------------------------------------------
@@ -187,7 +187,7 @@ fn the_quiesce_buffer_has_no_declared_budget() {
 // ---------------------------------------------------------------------------------------------
 
 // §42.6's second and third bullets were here — the websocket's limits were tungstenite's and
-// nothing inspected `Origin`. Both are built (`docs/83`), so both tests are gone, which is what
+// nothing inspected `Origin`. Both are built (`docs/82`), so both tests are gone, which is what
 // this file's own rule asks for: "the day somebody builds one of these, its test goes red, and the
 // person who built it has to come here and to the documents and say so." What replaces them is
 // `beck-cli/tests/runtime_edge.rs`, which asserts the behaviour over a real socket, and the unit
@@ -205,7 +205,7 @@ fn the_quiesce_buffer_has_no_declared_budget() {
 
 /// The read-model port has no authentication, and the loopback bound is what stands in for one.
 ///
-/// Behaviour rather than a grep, which is the second rule above and `docs/84` §84.5's lesson: a
+/// Behaviour rather than a grep, which is the second rule above and `docs/82` §82.10's lesson: a
 /// password is a thing a client either has to send or does not, so the honest test connects without
 /// one. Two halves, and they fail on different days — the first when authentication is built, the
 /// second if the bound is ever lifted without one.

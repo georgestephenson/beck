@@ -39,7 +39,7 @@ check ownership against `actor`. **Language design consequence**: `insert`-shape
 get first-writer semantics as the primitive, and the `requires owns(ref)` capability pattern is the
 documented default for mutating commands — so the secure form is the path of least resistance.
 
-### F3 — Events-forever default turns attacker traffic into permanent storage — `FIXED` + quotas **`BUILT`** ([`84`](84-a-quota-is-only-as-good-as-its-actor-report.md))
+### F3 — Events-forever default turns attacker traffic into permanent storage — `FIXED` + quotas **`BUILT`** ([`82`](82-the-edge-report.md))
 
 With D3's `retain=forever`, anything that becomes an event is immortal. Two channels: (a) rejected
 garbage — closed by the rule, now explicit in [`03`](03-type-and-effect-system.md) §3.7, that **only
@@ -49,12 +49,12 @@ design. Remediation for (b): per-actor rate/volume quotas enforced at `validate`
 combinator, on by default with generous limits), and per-actor crypto-shredding as the abuse
 cleanup path. **Decided**: quotas are **on by default** with generous limits, overridable per command type.
 
-**Built** ([`84`](84-a-quota-is-only-as-good-as-its-actor-report.md)): 600 events a minute per
+**Built** ([`82`](82-the-edge-report.md)): 600 events a minute per
 actor, on by default, charged at the merge point from the same instant that goes on the envelope.
 The counters are sharded into a fixed table so the quota is not itself unbounded memory keyed by a
-name the client chooses. Two clauses of the decision are **not** built and §84.6 says so: "overridable
+name the client chooses. Two clauses of the decision are **not** built and §82.11 says so: "overridable
 per command type" (which is language surface rather than a config field) and crypto-shredding. And
-§84.4 is the part neither this finding nor [`48`](48-identity-report.md) said: a per-actor bound is
+§82.5 is the part neither this finding nor [`48`](48-identity-report.md) said: a per-actor bound is
 worth what the *actor* is worth, so under `DevIdentity` — where the client names itself — rotating
 names spreads across the table rather than being stopped, and the bound is `buckets × limit` rather
 than `limit`.
@@ -169,7 +169,7 @@ the gateway, metrics exported — folded into R5's mitigation set.
   is the half that had a live attack surface — [`42`](42-security-assurance.md) §42.2's playground
   compiles a stranger's source in their own tab. The depth counters that already existed bounded how
   *deep* expansion goes and a doubling macro is shallow, which is
-  [`85`](85-what-the-generator-found-report.md) §85.7's pattern a fourth time. Typed-literal parsers
+  [`82`](82-the-edge-report.md) §82.10's pattern a fourth time. Typed-literal parsers
   have no compile-time work to bound yet, so that half stays open by not existing.
 - **F18** NATS/Synadia governance dispute (2025): the "verify licence at adoption" note applies to
   NATS JetStream specifically; it is post-1.0 and optional either way.

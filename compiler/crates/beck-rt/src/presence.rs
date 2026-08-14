@@ -22,7 +22,7 @@
 //!
 //! The obvious implementation is a map from actor to a count, and that map is **unbounded memory
 //! keyed by a string the client chooses** — which is
-//! [`docs/84`](../../../../../docs/84-a-quota-is-only-as-good-as-its-actor-report.md) §84.4's finding
+//! [`docs/82`](../../../../../docs/82-the-edge-report.md) §82.5's finding
 //! exactly, one subsystem over. Under [`crate::identity::DevIdentity`] the actor is whatever the
 //! connection said it was, so a client opening sockets under fresh names would grow this table
 //! until the process died.
@@ -246,7 +246,7 @@ mod tests {
         assert_eq!(roster(&r), Vec::new());
     }
 
-    /// §84.4's finding, one subsystem over: the table is keyed by a string the client chooses, so
+    /// §82.5's finding, one subsystem over: the table is keyed by a string the client chooses, so
     /// what stops it is a capacity rather than a hope.
     #[test]
     fn the_capacity_refuses_rather_than_growing() {

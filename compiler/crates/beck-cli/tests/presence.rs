@@ -5,7 +5,7 @@
 //! nothing else, so what has to be tested is (1) that a page can read it, (2) that a page which
 //! reads it is woken when it changes, (3) that nothing else can read it, and (4) that the roster
 //! is bounded — because it is keyed by a name the client chooses, which is
-//! [`docs/84`](../../../../docs/84-a-quota-is-only-as-good-as-its-actor-report.md) §84.4 one
+//! [`docs/82`](../../../../docs/82-the-edge-report.md) §82.5 one
 //! subsystem over.
 //!
 //! Where a refusal is asserted, the program asserting it is written to make *that* condition bite
@@ -521,7 +521,7 @@ async fn a_program_that_never_asks_is_not_woken_by_a_connection() {
 
 /// The roster is keyed by a string the client chooses, so what stops it is a capacity.
 ///
-/// §84.4's finding is that a per-actor structure is worth what the actor is worth: under
+/// §82.5's finding is that a per-actor structure is worth what the actor is worth: under
 /// `DevIdentity` the actor is whatever the connection said, so this is the same denial of service
 /// the quota exists to prevent, one subsystem over. The bound makes presence *under-report* rather
 /// than grow, and this asserts both halves of that — the ceiling, and the count of what it refused.

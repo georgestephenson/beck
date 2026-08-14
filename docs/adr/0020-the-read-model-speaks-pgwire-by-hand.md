@@ -44,7 +44,7 @@ independent branches.
 client. `beck-cli/tests/read_models.rs` drives the server with `tokio-postgres` — already a
 dependency, for the Postgres log store — over both the simple and the extended protocol, in binary
 format. A protocol server tested by a client written beside it tests agreement with itself, which
-is [`84`](../84-a-quota-is-only-as-good-as-its-actor-report.md) §84.5's finding about four gates
+is [`82`](../82-the-edge-report.md) §82.10's finding about four gates
 that could not fail.
 
 ## Why there is no authentication, and why that is a bound rather than a gap

@@ -29,7 +29,7 @@
 //! what makes the second link real, and its own tests are where a handshake is actually performed:
 //! this module is tested against a scripted [`beck_core::net::Outbound`], because a relying party
 //! tested against a server written beside it tests agreement with itself
-//! ([`docs/84`](../../../../../docs/84-a-quota-is-only-as-good-as-its-actor-report.md) §84.5).
+//! ([`docs/82`](../../../../../docs/82-the-edge-report.md) §82.10).
 //!
 //! # What is deliberately not here
 //!

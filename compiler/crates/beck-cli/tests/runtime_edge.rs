@@ -3,7 +3,7 @@
 //! `docs/42` §42.6 lists what "an untrusted client can do to a running Beck app today", and two of
 //! its bullets were about the websocket upgrade: the limits were tungstenite's defaults because the
 //! handshake passed `None`, and nothing inspected `Origin`, so a page on any host could open a
-//! socket. `docs/83` is both, closed.
+//! socket. `docs/82` is both, closed.
 //!
 //! This is the **first test in the project to drive `beck-rt`'s HTTP edge**. Every other harness
 //! that touches a session goes through `beck_rt::session::run` over an in-memory duplex — which is

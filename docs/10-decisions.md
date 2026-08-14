@@ -783,7 +783,7 @@ decide it.
 
 ## D25 — `fs` is two atoms, `fs.read(path)` and `fs.write(path)` — **DECIDED**
 
-D24 left this open, and [`81`](81-fs-is-two-atoms-report.md) is it taken and built.
+D24 left this open, and [`80`](80-structured-concurrency-report.md) is it taken and built.
 
 **An effect atom that names a resource has to say what is being done to it.** `fs(path)` was the
 only atom in §3.2's list that did not. It was not wrong for three phases because nothing had asked
@@ -808,12 +808,12 @@ it does not make filesystem access available.
 **What it enables and does not do.** [`06`](06-kubernetes-and-packaging.md) §6.5's derived
 least-privilege manifests can now distinguish a `readOnly: true` mount from a writable one. They do
 not yet: `beck-infra` derives from `ingress`, `durable` and `net.out` and has never read this atom.
-[`81`](81-fs-is-two-atoms-report.md) §81.5 is the correction to
+[`80`](80-structured-concurrency-report.md) §80.13 is the correction to
 [`80`](80-structured-concurrency-report.md) §80.12, which said otherwise.
 
 **What would reopen this.** A file operation whose interference is finer than the path — a
 lock, an append, an atomic rename. The scope rule refuses two writers to *any* paths rather than
-comparing them (§81.3), and a real filesystem library is where that becomes worth revisiting.
+comparing them (§80.13), and a real filesystem library is where that becomes worth revisiting.
 
 ## D26 — A read model is the arrangement, not a second copy of it — **DECIDED**
 

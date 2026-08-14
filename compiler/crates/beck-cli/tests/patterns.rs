@@ -17,7 +17,7 @@
 //!    **wrongly refused**;
 //! 3. **the ceiling**, because a pattern is an ordinary expression and nesting one is a second way
 //!    to recurse in the front end — which is
-//!    [`docs/85`](../../../../docs/85-what-the-generator-found-report.md)'s finding three times
+//!    [`docs/82`](../../../../docs/82-the-edge-report.md)'s finding three times
 //!    over.
 
 use std::process::Command;
@@ -344,7 +344,7 @@ def area(f: Found) -> Int:
 
 #[test]
 fn a_pattern_that_nests_too_deep_is_a_diagnostic_rather_than_a_crash() {
-    // `docs/44` bounded the front end's recursion as a *count*, and `docs/85` found three
+    // `docs/44` bounded the front end's recursion as a *count*, and `docs/82` found three
     // productions that got past it. A nested pattern is a new recursion in the checker, so this is
     // the same question asked of the new one: a pattern deeper than the ceiling must produce a
     // diagnostic with a span, in every build profile, rather than abort the process.

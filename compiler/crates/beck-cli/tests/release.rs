@@ -16,7 +16,7 @@
 //!    an edge is checkable.
 //! 3. **The installer refuses an archive whose checksum is wrong**, tested by corrupting one. That
 //!    is the gap this script exists to close, so it is the gap the gate is written against
-//!    (`docs/84-a-quota-is-only-as-good-as-its-actor-report.md` §84.5), rather than the presence of
+//!    (`docs/82-the-edge-report.md` §82.10), rather than the presence of
 //!    a `sha256sum` call somewhere in the file.
 //! 4. **The installer refuses an archive whose provenance does not verify**, and refuses to
 //!    pretend it verified one when the tool that would is missing

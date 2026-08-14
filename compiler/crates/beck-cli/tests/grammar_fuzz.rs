@@ -35,7 +35,7 @@
 //! decision than this test. `proptest` is already a dev-dependency, already used by
 //! `manifest_properties.rs`, shrinks failures to a minimal case, and — the part that matters — the
 //! *generator* is the contribution here rather than the driver. Coverage-guided feedback is what
-//! `cargo-fuzz` would add over this, and `docs/85` §85.6 records it as owed.
+//! `cargo-fuzz` would add over this, and `docs/82` §82.11 records it as owed.
 
 use proptest::prelude::*;
 
@@ -194,7 +194,7 @@ proptest! {
     ///
     /// `MAX_NESTING` is 256 and `MAX_BLOCK` is 2,048; the aborts the counters replaced were at
     /// 3,785 nested parens (`docs/42` §42.2), 12,000 flat bindings (`docs/64` §64.4) and 300,000
-    /// chained operators (`docs/85`), all in a debug build. The range has to cover the second
+    /// chained operators (`docs/82`), all in a debug build. The range has to cover the second
     /// numbers, not the first — `size_for` is what keeps that affordable.
     #[test]
     fn the_front_end_answers_for_any_shape_at_any_size(shape in shapes(), raw in 0usize..40_000) {

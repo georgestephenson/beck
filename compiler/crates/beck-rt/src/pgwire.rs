@@ -50,7 +50,7 @@ const CANCEL_REQUEST: i32 = 80_877_102;
 ///
 /// A startup packet says how long it is and then sends that many bytes; believing an unbounded
 /// length is how a listener becomes a memory allocator for whoever connects
-/// ([`83`](../../../../../docs/83-the-runtime-edge-report.md) made the same argument about the
+/// ([`docs/82`](../../../../../docs/82-the-edge-report.md) made the same argument about the
 /// websocket edge). A query long enough to reach this is a query this SQL cannot parse anyway.
 const MAX_MESSAGE: usize = 1 << 20;
 

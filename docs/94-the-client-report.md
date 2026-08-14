@@ -149,7 +149,7 @@ answered the second wrongly for a whole class of page.
 **Nothing verifies a route, and nothing should.** `session.path` is the client's own statement about
 itself and it reaches `validate` exactly as the actor does — but the actor is what a provider minted
 and the route is what a browser typed. A program that used it for authority would be making
-[`84`](84-a-quota-is-only-as-good-as-its-actor-report.md) §84.4's mistake in a new place. What the
+[`82`](82-the-edge-report.md) §82.5's mistake in a new place. What the
 architecture guarantees instead is narrower and worth stating: **the route cannot reach a fold**,
 because an `Envelope` carries the actor's name and nothing else — so no replay can depend on where
 anybody was browsing.
@@ -489,7 +489,7 @@ make the size the empty string and the comparison a shell error rather than a bu
 failure paths were run by hand rather than trusted.
 
 **But a bundle is 1.1% of its budget, and a threshold with ninety times its headroom is a gate that
-cannot go red.** §84.5's question — *what would have to be true for this to fail?* — has an
+cannot go red.** §82.10's question — *what would have to be true for this to fail?* — has an
 uncomfortable answer: a program ninety times the size of the board. Which is the wrong question,
 because the budget is **per component**, and what makes it hold for a large application is not that
 applications are small. It is that **a bundle is a function of the component's slice**. So that
@@ -646,8 +646,8 @@ straight off `location` would put that on the `hello` frame, no program would ev
 than reading the location themselves, and the router installs no listeners at all where there is no
 address bar to move.
 
-The pattern across the browser findings is [`84`](84-a-quota-is-only-as-good-as-its-actor-report.md)
-§84.5's: none could have been caught by a test that does not execute the residue, and all had been
+The pattern across the browser findings is [`82`](82-the-edge-report.md)
+§82.10's: none could have been caught by a test that does not execute the residue, and all had been
 shipped for as long as the residue has existed.
 
 ## 94.14 The gates

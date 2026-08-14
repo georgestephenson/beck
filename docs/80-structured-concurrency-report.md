@@ -21,6 +21,11 @@ primitive and one evaluator case; everything that makes it *mean* something was 
 measure of how well the literature's advice was followed is that **the longest section of the first
 report about it was about a printer.**
 
+§80.13 is the one thing the rules asked for and could not have: `fs(path)` did not distinguish a
+read from a write, so a scope that should have allowed two children reading two files refused them.
+Splitting the atom took a day and one line of the checker, and it is what
+[`82`](82-the-edge-report.md) §82.8 later derived a read-only root filesystem from.
+
 ---
 
 ## 80.1 The shape, taken rather than invented
@@ -89,7 +94,7 @@ write state the program or its own substrate holds:
 | `ingress` | §3.7: "there is exactly one of these" |
 | `dom` | two writers to one document |
 | `external.write(store)` | somebody else's database, but one this program is ordering |
-| `fs(path)` | see below |
+| `fs.write(path)` | two children writing one filesystem; see below |
 
 **What is absent is as much of the argument as what is present.** `net.out(host)` is not on the list,
 deliberately: a remote host's state was never Beck's to order, and two outbound calls are the case
@@ -98,15 +103,15 @@ the whole form exists for — **a rule that refused them would leave it with not
 two children reading the clock do not interfere. `raises(E)` and `partial` are control flow, ordered
 by the join. `cap.*` is an authority the caller holds, not state a child writes.
 
-`fs(path)` is on the list for a reason worth recording rather than assuming, and it is a **finding**:
-**the atom does not distinguish a read from a write.** Refusing concurrent writes therefore means
-refusing the pair, so two children reading two files is something this form should allow and cannot.
-That is a fact about the effect vocabulary rather than about concurrency — `fs(path)` is the only
-atom in §3.2's list that names a resource without saying what is being done to it, and this is the
-first thing that has needed the distinction. The shape of the answer is already in the list: §3.8's
-escape hatches are `external.read(store)` and `external.write(store)`, two atoms for one resource,
-split for exactly this reason. Doing it to `fs` is [`10`](10-decisions.md)'s to take rather than a
-feature's, because §6.5 derives a volume's mount options from the same atom.
+The filesystem row is a **finding**, and it is why that row names `fs.write` rather than `fs`. The
+atom was `fs(path)` when this rule was written and it did not distinguish a read from a write, so
+refusing concurrent writes meant refusing the pair: two children reading two files was something
+this form should allow and could not. That is a fact about the effect vocabulary rather than about
+concurrency — `fs(path)` was the only atom in §3.2's list that named a resource without saying what
+was being done to it, and this is the first thing that needed the distinction. The shape of the
+answer was already in the list: §3.8's escape hatches are `external.read(store)` and
+`external.write(store)`, two atoms for one resource, split for exactly this reason. **§80.13 took
+the same split for `fs`**, and this row is what it bought.
 
 **Together those two rules are exactly the precondition for running the children together**, and they
 were tested from the day the form landed. §80.5 adds no analysis: it starts two threads.
@@ -416,7 +421,7 @@ to know.**
 | The compiled backends | **Further from concurrency than the tree-walker now is.** [`93`](93-the-native-backends-report.md) §93.14 says a worker holds its pipe for a whole call, so two children that both reach compiled code serialise behind one lock. That report's "the first thing a second version would change" has been the same sentence for several reports and is now blocking something real |
 | Threads in a browser | **Not available** (§80.9), and the playground's ordered fallback is correct rather than degraded |
 | `spawn` reaching the data tier | **Not built and not wanted.** `Tier::Data` does not discharge it, so a fold cannot spawn — and `Effect::breaks_replay` still says `spawn` breaks replay, which is now unreachable rather than wrong. Left alone: an ordered join is replay-safe, but nothing can observe that, and **a claim nothing can test is not worth the edit** |
-| **`fs(path)` is one atom for a read and a write** | §80.2. Splitting it would let a scope read two files, and it would make §6.5's derived least-privilege policy finer at the same time — a volume mounted read-only is a different manifest from one mounted read-write. That is a [`10`](10-decisions.md) decision with consequences past this form, and it is **named rather than taken** |
+| **`fs(path)` is one atom for a read and a write** | **Taken** — §80.13, the day after it was named here |
 
 ### What this establishes
 
@@ -434,3 +439,99 @@ program does not care.
 the printer's opening paragraph since Phase 1, naming the file that would assert it. Ten of the
 tree's programs violated it, four of them in the standard library, **and the way it was found was
 writing a new form and wondering whether it printed.**
+
+## 80.13 `fs` is two atoms
+
+**Built**, the day after §80.12 named it. `fs(path)` is now `fs.read(path)` and `fs.write(path)`, so
+a `parallel:` scope may have children that read files and still refuses children that write them.
+
+§80.2 gave a scope one rule about effects: no child may perform one another child could observe.
+Deriving that list meant asking, atom by atom, "could a second child tell this one had run?" — and
+every atom answered except one. `fs(path)` named a resource without saying what was being done to
+it. A child *writing* a file is exactly the interference the rule exists to refuse; a child
+*reading* one is not. With one atom there was no way to say the first without saying the second, so
+the rule refused the pair. It is the only atom in §3.2's list with that shape: `net.out` and
+`net.in` are two, `external.read` and `external.write` are two, `durable` names an operation rather
+than a resource, and `cap.X` is an authority. §3.8's escape hatches had already been split, for the
+same reason and without anybody writing down that it was a reason.
+
+One variant becomes two, and everything that reads it was two lines:
+
+* **`Tier::discharges`** needed no change at all. `server` discharges everything but `dom`, `client`
+  discharges a closed list neither is on, `data` discharges a closed list neither is on. The table
+  was never about the operation.
+* **`Effect::breaks_replay`** needed none either, and both atoms still break it. A fold that reads a
+  file is not a function of the log any more than one that writes it — the file can change between
+  replays, which is §3.7's rule and is about *reading* in the first place.
+* **`is_auto_stubbable`** takes both. §21.3's "genuinely external" is a statement about the
+  boundary, and both cross it.
+* **`observable_order`** — the checker's `parallel:` rule — takes only `FsWrite`. **That one line is
+  what the split was for.**
+
+The atom's *spelling* follows §3.8's, so a reader who has seen one has seen the other:
+`fs.read(/var/lib/beck)`, `external.read(legacy)`. Nothing new had to be taught to the parser, whose
+effect-atom reader has reassembled dotted heads generically since Phase 2. What it buys:
+
+```beck
+def both(p: Str) -> Int:
+    return parallel:
+        a = load_profile(p)      # uses fs.read(profiles)
+        b = load_settings(p)     # uses fs.read(settings)
+        a + b
+```
+
+compiles, and publishes
+`def both(p: Str) -> Int uses fs.read(profiles), fs.read(settings), spawn`. Change either child to
+`fs.write` and it is `B0399` again. Both directions are asserted, because the whole value of the
+split is that the two answers now differ
+(`concurrency.rs::two_children_may_read_files_and_may_not_write_them`).
+
+The refusal is still coarse in one way worth naming: two children writing **different** paths are
+refused as surely as two writing the same one. The atom carries a path, so the checker could compare
+them — and deliberately does not, because two paths that differ as strings can be the same file, and
+a rule that is right about `/a` versus `/b` and wrong about `/a` versus `/a/../a` is worse than one
+that is simply conservative. A scope that genuinely needs two writers can do them in the tail.
+
+`fs(path)` is not accepted, and it is the spelling a reader arrives with — from §3.2 as it stood
+until this change, or from habit. `B0305`'s ordinary message is "`fs(profiles)` is neither an effect
+nor a row", which is true and useless, so the atom gets a note of its own:
+
+```text
+error[B0305]: `fs(profiles)` is neither an effect nor a row
+  = note: `fs` is two atoms: write `fs.read(profiles)` or `fs.write(profiles)`. One name for both
+          could not say whether a mount needs to be writable, or whether two children of a
+          `parallel:` scope may touch it at once
+```
+
+Nothing in the tree had to change to accommodate it: no `.beck` or `.becki` file in this repository
+writes `fs(…)`, so the split broke no program. It changed exactly one test constant — the row the
+placement-property suite fuzzes over, which now carries both.
+
+**§80.12 said §6.5 derives a volume's mount options from this atom. It did not**, and this is the
+correction. That was written from [`06`](06-kubernetes-and-packaging.md) §6.5's worked example — "No
+filesystem mounts beyond the volume, `readOnlyRootFilesystem: true`" — which is a *design* for what
+the derivation will say, and it was read as though it were built. `beck-infra`'s derivation read
+three atoms: `ingress`, `durable` and `net.out`. Nothing there had ever looked at `fs`. That does
+not change the conclusion — a resource atom that cannot say read from write is wrong for §6.5
+whenever §6.5 gets there, and it was already wrong for `parallel:` — but the report claimed a built
+derivation that did not exist, and "built" and "designed" are different claims.
+
+Two things remain not built. **No primitive touches a file**, which is the honest limit of the
+change: nothing in the prelude reads or writes a path, so `fs.read` and `fs.write` reach a row only
+through a `uses` clause a program declares. That was equally true of `fs(path)` before the split, so
+this is a vocabulary that is now correct rather than a capability that is now available. And **the
+mount is still not derived** — [`82`](82-the-edge-report.md) §82.8 took the *flag*
+(`readOnlyRootFilesystem` is a function of `fs.write`) and left the volume, which needs a source the
+atom does not name.
+
+**What the split establishes is that a vocabulary is worth auditing against a question rather than
+against a list.** `fs` had been one atom for three phases and nothing was wrong with it, because
+nothing had asked it a question it could not answer. The question was not "is this list complete" —
+it was "could a second child tell this one had run", asked of each atom in turn, and it took one
+afternoon to find the one atom that could not answer. §80.2's table is that audit, and this is what
+it was worth. **And a report can be wrong in the direction of generosity**: §80.12's justification
+for deferring the split cited a derivation that did not exist, so the argument held for one reason
+rather than two, and the second was read out of a design document as though it were a measurement.
+[`67`](67-sqlite-report.md) §67.3 is the same failure with a number in it — a 26× that turned out to
+be a durability setting rather than an engine — and the check that catches both is to go and look at
+what the code does rather than at what the document says it will.

@@ -38,7 +38,7 @@
 //! rotates names spreads across buckets rather than being stopped — the *total* is still bounded by
 //! [`BUCKETS`] × the limit, which is a bound rather than the bound anybody wanted.
 //! [`docs/48`](../../../../../docs/48-identity-report.md) is the seam that fixes this, and
-//! [`docs/84`](../../../../../docs/84-a-quota-is-only-as-good-as-its-actor-report.md) §84.4 is the
+//! [`docs/82`](../../../../../docs/82-the-edge-report.md) §82.5 is the
 //! composition written out rather than left to be inferred.
 
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -212,7 +212,7 @@ mod tests {
 
     /// Rotating names is not free, even though it is not stopped.
     ///
-    /// `docs/84` §84.4: under `DevIdentity` an attacker chooses the actor, so a fresh name per
+    /// `docs/82` §82.5: under `DevIdentity` an attacker chooses the actor, so a fresh name per
     /// proposal spreads across buckets rather than exhausting one. The total is still bounded —
     /// `BUCKETS × limit` per window — and this test is what says that bound is real rather than
     /// asserted.

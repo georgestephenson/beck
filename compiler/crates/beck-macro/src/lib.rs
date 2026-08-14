@@ -63,7 +63,7 @@ const MAX_DEPTH: u32 = 64;
 /// So the meter is what expansion **produces**, charged per node and shared by the whole module —
 /// per module because that is what a compile is, and because a per-call budget would let a program
 /// spend it as many times as it has calls
-/// ([`84`](../../../../docs/84-a-quota-is-only-as-good-as-its-actor-report.md) §84.4 is the same
+/// ([`docs/82`](../../../../docs/82-the-edge-report.md) §82.5 is the same
 /// arithmetic one subsystem over).
 ///
 /// The number is measured rather than declared. Across every program in this repository — the

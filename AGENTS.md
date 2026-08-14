@@ -169,7 +169,7 @@ suites, plus the nine
 release-only measurement suites. **Keep them green.**
 
 Four gates in this project's history could not have failed
-([`docs/84`](docs/84-a-quota-is-only-as-good-as-its-actor-report.md) §84.5 has the pattern): each
+([`docs/82`](docs/82-the-edge-report.md) §82.10 has the pattern): each
 was written by the person who knew the gap and tested the *shape of the gap* rather than the shape
 of the fix. When you write a gate, ask what would have to be true for it to go red, and check that
 the thing you are guarding against would make it so.

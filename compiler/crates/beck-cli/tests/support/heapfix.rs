@@ -391,7 +391,7 @@ def or_else(o: Option[Int], fallback: Int) -> Int:
 ///
 /// The list is what `docs/93` §93.14 said is not built, less the row `docs/93` removed, in the
 /// form that goes red the day one of them starts compiling — which is the point: an absence
-/// asserted as a test is an absence that cannot go stale (`docs/83` §83.7).
+/// asserted as a test is an absence that cannot go stale (`docs/82` §82.10).
 ///
 /// Text is no longer on it, and neither is *reading* a list. `names_it` and `reads_a_list` are here
 /// instead, on the *other* side of the list — so a removal is a thing this fixture asserts rather

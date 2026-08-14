@@ -114,15 +114,15 @@ The controls a reader would reasonably assume exist, that do not:
 - **Transport security on the way *in*.** `beck run` serves plaintext HTTP and §6.5's gateway
   terminates TLS in front of it. That is why the session cookie is not marked `Secure`
   ([`48`](48-identity-report.md) §48.13) and why the `Origin` check does not compare
-  schemes ([`83`](83-the-runtime-edge-report.md) §83.3): a deployment that terminates TLS inside the
+  schemes ([`82`](82-the-edge-report.md) §82.2): a deployment that terminates TLS inside the
   pod is not the one this project generates, and would want both.
-- ~~**Per-actor quotas** (F3)~~ — **built** ([`84`](84-a-quota-is-only-as-good-as-its-actor-report.md)),
-  on by default at 600 events a minute. What remains absent is what §84.4 measures rather than
+- ~~**Per-actor quotas** (F3)~~ — **built** ([`82`](82-the-edge-report.md)),
+  on by default at 600 events a minute. What remains absent is what §82.5 measures rather than
   claims: the bound is per *actor*, so under the default `DevIdentity` a client that rotates names
   is bounded by the table (1,024 buckets) rather than by the limit. **Subscription and connection
   quotas** (F15) and **the deploy choreography's bounded buffer** (F12) are still unbuilt.
 - ~~**Message size limits and origin checks** on the websocket~~ — **built**
-  ([`83`](83-the-runtime-edge-report.md)). The limits are numbers this project chose and a unit test
+  ([`82`](82-the-edge-report.md)). The limits are numbers this project chose and a unit test
   holds it to them; the upgrade compares `Origin`'s authority against `Host` and refuses a mismatch
   with `403`. What is *still* absent here is a cross-origin allowlist: a deployment whose client is
   served from another host has nothing to configure, because a Beck app serves its own page and
@@ -206,8 +206,8 @@ Five crossings, and what each one is:
    macro work.
 2. **The wire into the sequencer** — the boundary A2 attacks. Typed and decoded before anything
    else happens. ~~Unauthenticated, unquota'd~~: quota'd since
-   [`84`](84-a-quota-is-only-as-good-as-its-actor-report.md), and authenticated when a provider was
-   chosen — the default is still `DevIdentity`, and §84.4's arithmetic (the bound is worth what the
+   [`82`](82-the-edge-report.md), and authenticated when a provider was
+   chosen — the default is still `DevIdentity`, and §82.5's arithmetic (the bound is worth what the
    actor is worth) is why those two facts belong in one sentence.
 3. **The fold into a view, and a view into a patch** — where §3.5's placement properties do their
    work, and the crossing this project has the most evidence about.
@@ -228,7 +228,7 @@ named so the edit is not left to somebody noticing:
 | Event | What has to change here |
 |---|---|
 | ~~Identity lands~~ | **Done, except for the default** ([`48`](48-identity-report.md), [`48`](48-identity-report.md)): §43.2 has three rows, and §43.4's remaining gap is that `DevIdentity` is what a deployment gets when it chooses nothing. A2 splits into authenticated and anonymous when a *verifying* provider becomes the default, which is still not yet |
-| TLS on the way *in* | §43.4 loses its third bullet, the session cookie gains `Secure`, and [`83`](83-the-runtime-edge-report.md) §83.3's decision not to compare `Origin`'s scheme is re-argued |
+| TLS on the way *in* | §43.4 loses its third bullet, the session cookie gains `Secure`, and [`82`](82-the-edge-report.md) §82.2's decision not to compare `Origin`'s scheme is re-argued |
 | ~~`identity = external(…)` becomes a declaration~~ | **Done** ([`48`](48-identity-report.md) §48.7): §6.5's derivation is total again, and what `pending_security.rs` asserts is now the *provisioning* half |
 | ~~`identity = managed()` is built~~ | **Done** ([`48`](48-identity-report.md) §48.8). An identity provider is now a workload this project's manifests start — and it starts in `start-dev`, which §48.8 records as the limit it is |
 | A managed provider is deployed for real | `start-dev` becomes `start`, which needs a database and TLS material this derivation does not emit — and the plaintext hop §48.8 argues for stops being the only thing between the application and its key set |

@@ -937,7 +937,7 @@ against, and dropped only when the pair they name actually fuses.
 - **`differential.rs`**, the project's conscience, drives the shared path: the edit was two lines,
   because the *application* decides which engine a subscriber gets.
 
-[`84`](84-a-quota-is-only-as-good-as-its-actor-report.md) §84.5 asks what would have to be true for a
+[`82`](82-the-edge-report.md) §82.10 asks what would have to be true for a
 gate to go red, and to check rather than assume. Four mutations were applied to the shipped fusion
 pass and reverted:
 

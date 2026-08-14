@@ -165,7 +165,7 @@ worse than no check.**
 
 **The authorization-code flow with PKCE.** The state, the nonce and the PKCE verifier travel in a
 **sealed cookie** rather than in a table this process keeps: **a login is then not a way to make a
-Beck app allocate**, which is [`84`](84-a-quota-is-only-as-good-as-its-actor-report.md)'s lesson
+Beck app allocate**, which is [`82`](82-the-edge-report.md)'s lesson
 applied before rather than after. The seal is a keyed BLAKE3 under a key generated at startup —
 §48.2's format doing a job it *is* suited for, since the process verifies what the same process
 minted ten seconds ago.
@@ -343,7 +343,7 @@ history.** The fix the diagnostic suggests is the one `corpus/15-presence.beck` 
 record the fact, and decide from the state that fold produces. The check is **reachability in the
 graph**, not the shape of an argument — a `signal_map` between the roster and the chokepoint is still
 the roster, and writing it the other way would have been
-[`85`](85-what-the-generator-found-report.md) §85.7's pattern, a limit at the one production somebody
+[`82`](82-the-edge-report.md) §82.10's pattern, a limit at the one production somebody
 thought of.
 
 **Mode B may not read it** (`B0516`), for the same reason it may not read the session: the roster is
@@ -364,7 +364,7 @@ needs a second clock, and that is §48.13's first unbuilt item.
 The obvious implementation is a map from actor to a count, and **that map is unbounded memory keyed
 by a string the client chooses.** Under `DevIdentity` the actor is whatever the connection said it
 was, so a client opening sockets under fresh names would grow the table until the process died. That
-is [`84`](84-a-quota-is-only-as-good-as-its-actor-report.md) §84.4's finding exactly, in a second
+is [`82`](82-the-edge-report.md) §82.5's finding exactly, in a second
 place, **and finding it here rather than in a later hardening pass is the only thing that report's
 existence is worth.**
 
@@ -430,7 +430,7 @@ claim map allocates nothing.
 `pending_security.rs` lost three tests to this work. One of them, `nothing_here_speaks_oidc`,
 searched every source file for `jwks`, `id_token`, `issuer` and `RS256`. It *would* have gone red on
 this change — all four appear — so it is not a fifth entry in
-[`84`](84-a-quota-is-only-as-good-as-its-actor-report.md) §84.5's list of gates that could not fail.
+[`82`](82-the-edge-report.md) §82.10's list of gates that could not fail.
 
 **It is still the weaker of the two kinds, and the reason is worth writing down beside that list.** A
 name grep fires when a **subject** is touched. It would have fired equally on a module that fetched a
@@ -468,7 +468,7 @@ was a first page that said `0 here` while somebody was looking at it.
 checked by putting `send` back — and **the one test that stays green is the *watcher* test, the only
 one that holds a receiver, which is the whole shape of the defect in one line.** A registry exercised
 only by a harness that subscribes first would have passed everything, and nobody writing that harness
-would have thought about the order twice. [`83`](83-the-runtime-edge-report.md) §83.4 is the same
+would have thought about the order twice. [`82`](82-the-edge-report.md) §82.2 is the same
 shape a suite earlier: a refusal tested only as a pure function is one refactor away from never being
 called.
 
@@ -482,7 +482,7 @@ called.
 | The first paint can say `0 here` | The document is rendered before its own socket exists, and the connection joins the roster a moment later. A first frame replaces the whole root so the correction is immediate; it is written down because it is visible and because the fix is a different shape |
 | Nothing is resumable about the roster | A reconnecting client is served the difference from its last `seq`, and the roster is not a function of `seq`; the page it is sent reflects the roster *now*, which is the only thing "now" can mean |
 | No presence metric is exported | The counters exist and are read by tests; §5.3's gauges are exported and these are not, which is a line somebody should write the day an operator asks |
-| **No `Secure` on the cookie** | §6.5's gateway terminates TLS in front of a plaintext hop, so setting it would make the cookie unusable in the deployment this project generates — the same reason [`83`](83-the-runtime-edge-report.md) §83.3 does not compare schemes in the `Origin` check. A deployment that terminates TLS *in* the pod has a cookie it would rather mark |
+| **No `Secure` on the cookie** | §6.5's gateway terminates TLS in front of a plaintext hop, so setting it would make the cookie unusable in the deployment this project generates — the same reason [`82`](82-the-edge-report.md) §82.2 does not compare schemes in the `Origin` check. A deployment that terminates TLS *in* the pod has a cookie it would rather mark |
 | **No refresh, because there is no session to refresh** | The cookie is the ID token, so a session lasts exactly as long as the issuer said and then the browser is sent back to login. The alternative — a Beck-minted session cookie over a verified login — decouples the two and costs a second credential format, a second secret and a second thing that can be stale; **the trade is stated rather than taken quietly** |
 | Logout is local | It clears this app's cookie and does not call the issuer's end-session endpoint |
 | One host per issuer | Every discovered endpoint must be on the issuer's host. An issuer that splits them is not usable here |

@@ -229,14 +229,14 @@ Newest first.
   twice over and in **work** not at all, and a macro that doubles its output is shallow: eight
   nestings of a two-line macro is 256 copies of its argument, twenty-four is sixteen million, and
   every one of those programs is six lines long and satisfies every other limit the front end has.
-  That is [`docs/85`](docs/85-what-the-generator-found-report.md) §85.7's pattern a fourth time — a
+  That is [`docs/82`](docs/82-the-edge-report.md) §82.10's pattern a fourth time — a
   limit added at the one production somebody thought of, bypassed through a different one — and it
   matters here rather than in the abstract because [`docs/42`](docs/42-security-assurance.md) §42.2's
   playground compiles a stranger's source in their own browser tab.
   - The expander charges what each expansion **produces**, per node, against **100,000 nodes for the
     whole module** — per module because that is what a compile is, and because a per-call budget
     would let a program spend it once per call
-    ([`docs/84`](docs/84-a-quota-is-only-as-good-as-its-actor-report.md) §84.4's arithmetic one
+    ([`docs/82`](docs/82-the-edge-report.md) §82.5's arithmetic one
     subsystem over).
   - **The number is measured, not declared.** Across the corpus, both benchmark suites, both SICP
     chapters, the examples and the standard library, the largest total expansion is **138 nodes**

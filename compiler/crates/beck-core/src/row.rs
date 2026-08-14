@@ -60,7 +60,7 @@ pub enum Effect {
     NetIn,
     /// `fs.read(path)` and `fs.write(path)` — two atoms for one resource.
     ///
-    /// §3.2 listed a single `fs(path)` until [`docs/81`](../../../../../docs/81-fs-is-two-atoms-report.md).
+    /// §3.2 listed a single `fs(path)` until [`docs/80`](../../../../../docs/80-structured-concurrency-report.md).
     /// One atom naming a resource without saying what is done to it cannot answer the two questions
     /// that are actually asked of it: whether two things may happen at once
     /// ([`crate::check`]'s `parallel:` rule) and whether a mount needs to be writable

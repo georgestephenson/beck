@@ -144,7 +144,7 @@ fn the_front_end_cost_per_declaration_does_not_grow_with_a_module() {
     // sixteen times as many is the measurement whatever the absolute numbers are (docs/64 §64.7).
     //
     // `depth` runs smaller than the other two for a reason that is not about speed. A flat body is
-    // bounded at `beck_diag::depth::MAX_BLOCK` statements (`docs/85`), because the checker recurses
+    // bounded at `beck_diag::depth::MAX_BLOCK` statements (`docs/82`), because the checker recurses
     // once per statement and an unbounded body aborted the process — so 6,400 bindings in one
     // function is now a program the front end refuses, and a gate that measured it would be
     // measuring error recovery. The ceiling is a safety property and cannot move to suit a
