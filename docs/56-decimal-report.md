@@ -180,13 +180,3 @@ iface` were right; `beck doc` was wrong three ways, and one Beck file in `lib/` 
   uses `pow10` rather than `big_pow` because `big_pow` raises `BigError`, a `try:` catches one error
   type, and a test block's own row must be empty — so a test reaching for it could not say which
   failure it was asking about. The diagnostic (`B0393`) said exactly that.
-
-## 56.8 What Phase 3 is still not
-
-Unchanged from [`55`](55-bignums-report.md) §55.8 except where this touches it. **The standard
-library bullet's library half is done** — Wave 2 has no items left — and what remains on that bullet
-is the benchmark harness, which is nine-fourteenths of one suite. The exit criterion — an outside
-developer building a non-trivial app from documentation alone — is not met and is not closer.
-
-Seven bullets of the fourteen remain untouched, identity has its seam and not its relying party, and
-[`23`](23-incremental-views-report.md) §23.19 still names them one at a time.

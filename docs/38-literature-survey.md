@@ -3,6 +3,15 @@
 > **The question**: what does the academic literature — the classics Beck already stands on, and
 > the 2023–2026 work published since the design documents were written — say about what this
 > project needs next?
+>
+> **This is a dated survey, and it keeps its date.** Its verdicts are cashed elsewhere — §38.2's
+> reader-frontier discipline in [`23`](23-incremental-views-report.md) §23.11, §38.4's error rows
+> and scope-as-handler in [`27`](27-the-walls-come-down-report.md) and
+> [`80`](80-structured-concurrency-report.md), §38.1's dictionaries-are-the-semantics in
+> [`93`](93-the-native-backends-report.md) §93.10 — and each of those chapters says which half of the
+> forecast held. Folding the surviving verdicts in here and deleting this would keep the conclusions
+> and lose the reading that produced them.
+
 
 This is a survey, not a charter change, in the sense [`35`](35-standards-landscape.md) established:
 nothing below is adopted by being written here. Where [`35`](35-standards-landscape.md) surveyed

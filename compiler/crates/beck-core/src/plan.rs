@@ -545,7 +545,7 @@ pub fn query_report(plan: &Plan) -> String {
 fn op_cost(plan: &Plan, i: OpId) -> String {
     let node = &plan.nodes[i];
     // A pointwise operator forces every arrangement it reads into a `Value::List`, which copies
-    // that arrangement's entries: docs/24 §23.8's "the page's children are still assembled in
+    // that arrangement's entries: docs/23 §23.8's "the page's children are still assembled in
     // full", located at the operator that does it.
     let forced: Vec<OpId> = node
         .inputs
@@ -640,7 +640,7 @@ pub fn cost_report(plan: &Plan) -> String {
             out,
             "  {} of {} operators cost O(n) per event, and all of them for the same reason: a\n\
              \x20 recompute needs a `list`, and an arrangement is a keyed collection. That is\n\
-             \x20 docs/24 §23.8's remaining constant factor, at {}.",
+             \x20 docs/23 §23.8's remaining constant factor, at {}.",
             linear.len(),
             plan.nodes.len(),
             linear

@@ -578,7 +578,7 @@ fn a_client_adopts_the_page_it_was_rendered_and_rebuilds_any_other() {
     assert!(shown(&mut client).contains("landed first"));
 }
 
-// --------------------------------------------------------------- 4. freshness (§3.7, docs/101)
+// --------------------------------------------------------------- 4. freshness (§3.7, docs/93)
 
 /// The page says whether what it is showing is a fact, and stops saying it when it becomes one.
 ///

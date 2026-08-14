@@ -64,7 +64,7 @@ async fn drain(rx: &mut UnboundedReceiver<Message>) -> Vec<serde_json::Value> {
 #[tokio::test]
 async fn what_the_views_cost_is_exported_while_the_process_is_running() {
     // §5.3 names per-session memory as one of three metrics to export. `Engine::footprint` computed
-    // one and nothing exported it (docs/24 §23.19), which meant the number existed in a report and
+    // one and nothing exported it (docs/23 §23.19), which meant the number existed in a report and
     // not on a dashboard. What is exported is arrangement *entries* — the unit that scales, and
     // cheap enough to read on every render — split into the part paid once and the part paid per
     // connection, because that split is the operational question.

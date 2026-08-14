@@ -209,7 +209,7 @@ fn the_maintained_view_is_the_recomputed_view_for_every_corpus_program() {
             folded += 1;
         }
     }
-    // Printed so that docs/24 §23.7's count is reproducible rather than remembered.
+    // Printed so that docs/23 §23.7's count is reproducible rather than remembered.
     println!("{folded} events folded, {compared} pages compared");
     assert!(folded > 500, "only {folded} events were compared");
 }
@@ -294,7 +294,7 @@ fn the_sketch_decomposes_into_the_operators_section_3_8_names() {
         );
     }
     // What the engine runs is the *fused* plan, where that pair is one operator and the
-    // arrangement between them is never built (docs/89). `fusion.rs` is the gate on the rewrite;
+    // arrangement between them is never built (docs/23). `fusion.rs` is the gate on the rewrite;
     // this is the gate on the sketch still decomposing.
     let plan = Plan::compile(&placed);
     let ops = names(&plan);
@@ -333,7 +333,7 @@ fn a_count_over_a_maintained_collection_does_not_visit_the_collection() {
     //
     // Counted, not timed. The number that must not grow with `n` is the work the *maintained*
     // operators do; the page's `html_el` still assembles `n` children, and that is stated in
-    // docs/24 rather than hidden here.
+    // docs/23 rather than hidden here.
     let placed = support::todo_program();
     let backend = beck_eval::backend(&placed);
     let prepared = Arc::new(Prepared::compile(&placed, backend.as_ref()).expect("prepares"));

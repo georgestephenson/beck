@@ -381,7 +381,7 @@ fn every_operator_the_engine_implements_is_exercised() {
 fn an_arrangement_two_operators_read_is_not_fused() {
     // `corpus/24-feed.beck` sorts once and reads the result three times — the loop, the count and
     // the emptiness check. Fusing the sort into the count would sort again for every reader, which
-    // is docs/26's shared prefix undone, and the plan would still render the right page. Only a
+    // is docs/23's shared prefix undone, and the plan would still render the right page. Only a
     // test that looks at the plan can say so.
     let src = std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/24-feed.beck"),

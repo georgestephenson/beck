@@ -164,14 +164,3 @@ recovered, and the code is longer.
   compile-speed budgets; Are We Fast Yet and CLBG harnesses" — the first is done, the second is this
   report, Are We Fast Yet is complete ([`53`](53-are-we-fast-yet-report.md)), and two remain.
 - **The checker gains a function type it did not have**, per §63.3, and a test that keeps it.
-
-## 63.9 What Phase 3 is still not
-
-The expressiveness suite now runs two chapters of SICP and answers the Felleisen question; it does
-not express SICP. `sicp/refusals/` stays empty and `refusals/README.md` still holds that
-distinction.
-
-Unchanged from [`62`](62-fuel-report.md) §62.8 otherwise. The exit criterion — an outside developer
-building a non-trivial app from documentation alone — is not met and is not closer. Seven bullets of
-the fourteen remain untouched, identity has its seam and not its relying party, and
-[`23`](23-incremental-views-report.md) §23.19 still names them one at a time.

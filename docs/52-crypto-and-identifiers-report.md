@@ -225,14 +225,3 @@ program using it is secure: this is a MAC, so it is only as good as the key, the
 - **[`adr/0007`](adr/0007-evaluator-stack-is-declared-not-discovered.md) gains a second
   illustration.** The evaluator's declared stack is a budget shared with the width of its primitive
   `match`, and §52.5 is what spending it looks like from the other end.
-
-## 52.8 What Phase 3 is still not
-
-Unchanged from [`23`](23-incremental-views-report.md) §23.19 except where this touches it. The
-standard-library bullet is now most of the way rather than "everything but crypto, UUID parsing and
-the bignums"; the exit criterion — an outside developer building a non-trivial app from
-documentation alone — is not met and is not closer, because none of this is documentation an outside
-developer would build from.
-
-Seven bullets of the fourteen remain untouched, identity has its seam and not its relying party, and
-[`23`](23-incremental-views-report.md) §23.19 still names them one at a time.

@@ -201,7 +201,7 @@ fn capabilities() -> Value {
             // explicitly and answers on the word being typed.
             "completionProvider": { "resolveProvider": false },
             // The legend is `beck_core::editor`'s, so the categories an editor colours are the
-            // categories the playground colours (docs/103).
+            // categories the playground colours (docs/98).
             "semanticTokensProvider": {
                 "legend": { "tokenTypes": TokenKind::legend(), "tokenModifiers": [] },
                 "full": true,

@@ -855,7 +855,7 @@ mod tests {
                 }
             }
         }
-        // Printed so that docs/24 §23.5's number is reproducible rather than remembered.
+        // Printed so that docs/23 §23.5's number is reproducible rather than remembered.
         println!("diffing an 8,192-entry map after one insert looked at {visited} entries");
         assert!(
             visited < 64,

@@ -83,11 +83,14 @@ unit. §25.5 sets that protocol out, because the SICP suite is where LOC does th
 
 It would mean almost nothing, and that is worth stating precisely rather than discovering later.
 
-[`19`](19-phase-1-report.md) records that native codegen was not built and that a `Core` evaluator
-stands in for Cranelift behind the `Backend` seam; [`20`](20-phase-2-report.md) §20.5 and
-[`22`](22-phase-3-report.md) §22.6 both record it as still unbuilt. Every execution number Beck can
-produce today is therefore a number about a tree-walking interpreter that is a placeholder by
-design. To put a size on it — `fib(30)`, naive, as a `test` block:
+*This section is kept as the argument it was, and its premise has half moved. Both code generators
+are built ([`93`](93-the-native-backends-report.md)) and a **definition** compiles — but a whole Beck
+program is a fold, a `validate` and a view, which are signal nodes the splitter reads rather than
+definitions a body calls, so a program run end to end still walks. Every number a benchmark suite
+that runs whole programs can produce is therefore still a number about the tree-walker, which is
+what this section says and why §25.9's rule 2 was right about the sequencing.*
+
+To put a size on the tree-walker — `fib(30)`, naive, as a `test` block:
 
 ```console
 $ beck test fib.beck          # best of three, this 4-core container

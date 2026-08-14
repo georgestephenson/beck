@@ -3,6 +3,14 @@
 > **The question**: are Beck's security, thread-safety and memory-safety claims backed by
 > evidence today — and what would have to be built before "watertight" is a word this project is
 > entitled to use?
+>
+> **This is a dated survey, and it keeps its date — with one exception.** The outward-looking halves
+> are claims about the world in August 2026 and are left as they were written. §42.1's table is not:
+> it is a claim about *this repository*, so it is corrected in place as rows move, and four of them
+> have. **The current absences live in [`43`](43-threat-model.md) §43.4 and in
+> `pending_security.rs`**, which asserts each one so that closing it turns a test red; where this
+> document and that one disagree, that one is right.
+
 
 This is a survey and an assessment, in the sense [`35`](35-standards-landscape.md) established and
 [`38`](38-literature-survey.md) reused: nothing below is adopted by being written here, and the
@@ -44,13 +52,13 @@ Taken from the tree, not from the design documents. Each row says what kind of c
 | Licence and advisory policy | tested | `deny.toml` with an **empty** `advisories.ignore` (advisories are fixed at the root, and the comment says so), `yanked = "deny"`, `wildcards = "deny"`, `allow-git = []`; gated in CI ([`adr/0004`](adr/0004-full-cargo-deny-gate.md)) |
 | Warnings are errors | tested | `RUSTFLAGS: -D warnings` with `cargo clippy --workspace --all-targets --all-features` |
 | Escaping, text vs attribute | tested | `beck-core/src/html.rs` separates the two contexts; `a_todo_whose_text_is_a_script_tag_renders_as_text` is the negative test |
-| Front-end recursion bound | **absent** | §42.2 |
-| Authentication | **absent** | §42.6 |
+| Front-end recursion bound | **tested** | §42.2 was the finding; [`adr/0012`](adr/0012-the-front-end-counts-its-own-recursion.md) is the bound and [`44`](44-wave-0-report.md) built it, measured at 18 KiB per level and gated both ways. [`85`](85-what-the-generator-found-report.md) then found three productions it did not cover |
+| Authentication | **tested** | §42.6 was the finding, and [`48`](48-identity-report.md) closed it: an `Actor` is minted by an `Identity` implementation, there is an OIDC relying party, and claims reach `validate`. **The default provider still believes the client and says so**, which is a deployment's choice rather than a property of the protocol |
 | Request/connection limits | **tested** | [`83`](83-the-runtime-edge-report.md): the socket's limits are numbers this project argues for, and `Origin` is checked; `runtime_edge.rs` |
 | Per-actor write quotas | **tested** | [`84`](84-a-quota-is-only-as-good-as-its-actor-report.md): 600 events a minute, on by default; `runtime_edge.rs` asserts on the log's head. **Subscription quotas (F15) are still absent** |
 | Macro expansion fuel | **absent** | F17, unbuilt: nothing in `beck-macro` bounds expansion |
-| A written threat model | **absent** | §42.8 |
-| A disclosure policy | **absent** | no `SECURITY.md`, no contact, no policy |
+| A written threat model | **tested** | [`43`](43-threat-model.md), with `pending_security.rs` asserting each absence it names so a closed one turns a test red |
+| A disclosure policy | **built** | `SECURITY.md` ([`44`](44-wave-0-report.md)) |
 
 Two things this table is careful about. Everything marked *structural* is worth more than
 everything marked *tested*, and the project has more structural rows than most language

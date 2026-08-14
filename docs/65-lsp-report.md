@@ -126,13 +126,3 @@ rather than 13,000.
   drift" now has a harness that would fail if one appeared.
 - **`iface::render_item` is public.** It was an implementation detail of `beck iface` and is now the
   published signature renderer, which is what §4.6 requires of it.
-
-## 65.7 What Phase 3 is still not
-
-The exit criterion — an outside developer building a non-trivial app from documentation alone — is
-not met. It is, for the first time in several reports, *closer*: an editor that reports Beck's
-diagnostics and shows Beck's inferred signatures is part of what "from documentation alone" needs,
-and §65.5's list is what stands between this and an editor somebody would choose to use.
-
-Six bullets of the fourteen remain untouched, identity has its seam and not its relying party, and
-[`23`](23-incremental-views-report.md) §23.19 still names them one at a time.

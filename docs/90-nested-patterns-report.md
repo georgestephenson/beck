@@ -209,19 +209,3 @@ happened, after [`27`](27-the-walls-come-down-report.md) lifted the test-checkin
 | [`27`](27-the-walls-come-down-report.md) §27.9, [`27`](27-the-walls-come-down-report.md) §27.1, [`27`](27-the-walls-come-down-report.md) §27.1, [`27`](27-the-walls-come-down-report.md) §27.1 | Four closing lists carry "patterns are still one level deep". They are history and keep their sentences; this is where the change is recorded |
 | `B0345` | Its message was "nested patterns are not available in Phase 1" and it now refuses one thing rather than a feature: a pattern in a list's tail |
 | The error index | `B0355` is new — the first **warning** in the `B03xx` range |
-
-## 90.9 What Phase 3 is still not
-
-The concurrency-and-errors bullet has `Result`, error rows, `parallel:` and pattern matching that
-nests; what it does not have is guards and or-patterns (§90.6). **No bullet of the fourteen now has
-a named remainder except that one.**
-
-Unchanged: **no LLVM backend and no native codegen**; **no Mode B and no client polish**; **no
-playground**; **no supply-chain tooling**; the OIDC relying party, `managed()` provisioning, the
-claims mapping and presence ([`48`](48-identity-report.md) §48.13); the page is still assembled and
-diffed rather than streamed as deltas ([`23`](23-incremental-views-report.md) §23.8); `parallel:`
-still has no backend that runs two children at once
-([`80`](80-structured-concurrency-report.md) §80.12).
-
-The exit criterion is a claim about a person, and no outside developer has read the guide
-[`23`](23-incremental-views-report.md) published.

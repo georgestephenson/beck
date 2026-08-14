@@ -178,13 +178,3 @@ signature cannot.
   recommendation rather than the trait: expose an ordering function, and say why in the code.
 - **The prelude's comment on string positions was wrong**, per §55.5. Corrected in
   `prelude.rs`; the behaviour it describes never changed.
-
-## 55.8 What Phase 3 is still not
-
-Unchanged from [`53`](53-are-we-fast-yet-report.md) §53.7 except where this touches it. The
-standard-library bullet is now everything *except* arbitrary-precision decimal, plus a benchmark
-harness that is nine-fourteenths of one suite. The exit criterion — an outside developer building a
-non-trivial app from documentation alone — is not met and is not closer.
-
-Seven bullets of the fourteen remain untouched, identity has its seam and not its relying party, and
-[`23`](23-incremental-views-report.md) §23.19 still names them one at a time.

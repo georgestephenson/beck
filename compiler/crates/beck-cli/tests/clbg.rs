@@ -178,7 +178,7 @@ fn the_ported_suite_is_eight_of_the_games_ten() {
     for (name, _) in NOT_PORTED {
         assert!(
             !found.contains(&name.to_string()),
-            "{name} is ported now — move it to PORTED and correct docs/68 §46.14"
+            "{name} is ported now — move it to PORTED and correct docs/46 §46.14"
         );
     }
     // `expected/` holds one file per oracle a port is checked against, plus the two inputs the
@@ -351,13 +351,13 @@ fn the_two_unported_benchmarks_are_still_out_of_reach() {
     // regexredux: the suite requires its nine patterns, and there is nothing to run them with.
     assert!(
         !prims.contains("\"regex_match\"") && !prims.contains("\"regex_replace\""),
-        "there is a regex primitive now — port regexredux and correct docs/68 §46.14"
+        "there is a regex primitive now — port regexredux and correct docs/46 §46.14"
     );
 
     // mandelbrot: the output is packed bits with NUL bytes in it, and `Str` is UTF-8.
     assert!(
         !prims.contains("\"bytes_of\"") && !prims.contains("Ty::BYTES"),
-        "there is a byte string now — port mandelbrot and correct docs/68 §46.14"
+        "there is a byte string now — port mandelbrot and correct docs/46 §46.14"
     );
 }
 

@@ -970,7 +970,7 @@ struct Playing {
 impl Playing {
     async fn start() -> Option<Playing> {
         // Both modules, because a `@render(client)` program in the tab runs in Mode B's kernel and
-        // the playground serves it on the same reserved name a deployment does (docs/103).
+        // the playground serves it on the same reserved name a deployment does (docs/98).
         if !point_at_the_kernel() {
             eprintln!("skipped: no Mode B kernel to serve beside the playground.");
             assert!(
@@ -1561,7 +1561,7 @@ async fn the_playground_runs_a_mode_b_program_in_the_tab() {
 }
 }
 
-// --------------------------------------------------------------- client polish (docs/100)
+// --------------------------------------------------------------- client polish (docs/94)
 
 browser_test! {
 /// A link, in Mode A: the address bar moves, the server re-renders for the new session, and what

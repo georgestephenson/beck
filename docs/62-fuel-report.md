@@ -112,14 +112,3 @@ where the smallest benchmark that would demonstrate the same thing takes ninety.
   test`" was true when written and is the thing this change removes. The size is reachable; the
   gate still does not run it, and §62.3 says why that is now a different decision.
 - **The generated CLI reference gains a flag**, regenerated and checked in.
-
-## 62.8 What Phase 3 is still not
-
-Unchanged from [`53`](53-are-we-fast-yet-report.md) §53.7. The standard-library bullet is done, Are We
-Fast Yet is complete, and CLBG, the compile-speed budgets and the Felleisen table are outstanding
-under [`25`](25-benchmarks-and-expressiveness.md) §25.9.
-
-The exit criterion — an outside developer building a non-trivial app from documentation alone — is
-not met and is not closer. Seven bullets of the fourteen remain untouched, identity has its seam and
-not its relying party, and [`23`](23-incremental-views-report.md) §23.19 still names them one at a
-time.

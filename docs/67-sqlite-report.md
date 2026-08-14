@@ -122,13 +122,3 @@ and SQLite itself public domain.
 - **`beck bench log`'s table gains two rows and a wider first column**, and the wider column is not
   cosmetic: `sqlite-relaxed` did not fit, and a substrate whose name is truncated is a number
   attributed to the wrong thing.
-
-## 67.7 What Phase 3 is still not
-
-The exit criterion is not met. **Five of the fourteen bullets remain untouched** — Mode B, client
-polish, structured concurrency, the playground, supply-chain tooling — with no LLVM backend,
-identity holding its seam and not its relying party, and the incremental-views bullet still without
-read models, pgwire or fusion.
-
-That last one is now the interesting gap rather than one of a list: the substrate a SQL read model
-would be built on exists, is tested, and is used for nothing.

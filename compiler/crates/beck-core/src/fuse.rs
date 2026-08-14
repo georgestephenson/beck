@@ -312,21 +312,21 @@ fn refuses(plan: &Plan, i: OpId, p: OpId, rule: &Rule) -> Option<String> {
     if plan.nodes[p].consumers > 1 {
         return Some(format!(
             "#{p} is read by {} operators, and fusing it into one of them would compute it {} \
-             times (docs/26)",
+             times (docs/23)",
             plan.nodes[p].consumers, plan.nodes[p].consumers
         ));
     }
     let names = plan.names_of(p);
     if !names.is_empty() {
         return Some(format!(
-            "`{}` is a declared signal, so the read model projects it as a table (docs/88)",
+            "`{}` is a declared signal, so the read model projects it as a table (docs/23)",
             names.join("`, `")
         ));
     }
     if rule.carries_work && !plan.nodes[p].per_session && plan.nodes[i].per_session {
         return Some(format!(
             "#{p} is shared and #{i} is per session, so fusing would move work the process does \
-             once per event to work it does once per event per subscriber (docs/26 §5.3)"
+             once per event to work it does once per event per subscriber (docs/23 §5.3)"
         ));
     }
     None
@@ -617,7 +617,7 @@ pub fn report(f: &Fusions) -> String {
     let _ = writeln!(
         out,
         "\n  {} operators before, {} after; {} arrangements before, {} after. An arrangement is \n  \
-         memory per subscriber as well as work per event (docs/26 §23.14), which is why the second \n  \
+         memory per subscriber as well as work per event (docs/23 §23.14), which is why the second \n  \
          pair is the one to read.",
         f.operators.0, f.operators.1, f.arrangements.0, f.arrangements.1
     );

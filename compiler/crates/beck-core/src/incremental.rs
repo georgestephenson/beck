@@ -387,7 +387,7 @@ pub fn report(placed: &Placed, only: Option<&str>) -> String {
 
     // The first line is what is true of this program *now*, because that is the thing a reader
     // most needs and least expects. It was "every view is a full recompute" until the engine
-    // existed; it says what the engine does because the engine does it (docs/24).
+    // existed; it says what the engine does because the engine does it (docs/23).
     let plan = Plan::compile(placed);
     let (maintained, recomputed) = plan.counts();
     let _ = writeln!(out, "{}\n", headline(maintained, recomputed));
@@ -512,7 +512,7 @@ pub fn report(placed: &Placed, only: Option<&str>) -> String {
             "  in the plan:        {shared_ops} of {} operators read neither the session nor who \n\
              \x20                     is connected, and the runtime holds those once for every \n\
              \x20                     subscriber — one shared dataflow, advanced per event rather \n\
-             \x20                     than per connection (docs/26). The other {} run per \n\
+             \x20                     than per connection (docs/23). The other {} run per \n\
              \x20                     subscriber.",
             plan.nodes.len(),
             plan.nodes.len() - shared_ops,
@@ -563,7 +563,7 @@ fn headline(maintained: usize, recomputed: usize) -> String {
         "Views are **maintained by delta** as far as the plan can decompose them: {maintained} of\n\
          this view's {} operators update from the change itself, {recomputed} are recomputed when\n\
          an input moves, and the page's children are still assembled in full every time\n\
-         (docs/24 §23.8).",
+         (docs/23 §23.8).",
         maintained + recomputed
     )
 }

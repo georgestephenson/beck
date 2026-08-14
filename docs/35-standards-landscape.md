@@ -3,6 +3,14 @@
 > **The question**: beyond what [`12`](12-standards-and-conformance.md) already adopts, are there
 > ISO/IEC, IEEE, Ecma, Open Group or consortium standards Beck should use — and should Beck
 > publish its own?
+>
+> **This is a dated survey, and it keeps its date.** A survey's value is the evidence for a verdict
+> rather than the verdict, so folding the surviving verdicts into the design documents and deleting
+> this would keep the conclusion and throw away the argument — and the next person would re-survey
+> from scratch. What is *adopted* lives in [`12`](12-standards-and-conformance.md) and
+> [`10`](10-decisions.md); what is *scheduled* lives in [`08`](08-roadmap.md) §8.5. Nothing here is
+> either by being written here.
+
 
 This is a survey, not a charter change. [`12`](12-standards-and-conformance.md) §12.1's rule
 governs: a standard enters the project only as an executable conformance artefact wired into CI.
@@ -180,7 +188,7 @@ its artefact exists, not before.
 | **WebAssembly 3.0** ([completed September 2025](https://webassembly.org/news/2025-09-17-wasm-3.0/)) | The live W3C standard; GC, 64-bit memories, exception handling, and **guaranteed tail calls** | The charter's "W3C WebAssembly core" now has a version worth naming. Proper tail calls became a language guarantee in [`27`](27-the-walls-come-down-report.md) and are already load-bearing (`fixed_point` iterates to convergence, [`27`](27-the-walls-come-down-report.md) §27.2) — so every future backend inherits the obligation, and 3.0's guaranteed `return_call` is what lets a WASM tier honour it without a trampoline. A compiling backend also recovers the 13% the evaluator paid for it. WASI: pin the 0.2.x line; 0.3's native async is in progress, not shipped | Pin the charter row to 3.0; when the WASM backend exists, its tail-call lowering tests cite the 3.0 spec suite | **adopt the pin** |
 | **Unicode 17.0 + UTS #39** | 17.0 current (2025); UAX #31 script classifications moved under it | §35.1 — identifier security for a macro language | Pinned Unicode version per release; confusables/mixed-script vectors in the conformance suite | **adopt** with the identifier rules |
 | **SPDX 3.0** (SPDX 2.2.1 is [ISO/IEC 5962:2021](https://www.iso.org/standard/81870.html)) | 3.0 published 2024; 2.x remains the ISO-anchored, tooling-dominant line | The charter pins SPDX 2.3 — correctly, today: apko and `cargo-about` emit it | Keep 2.3; the 3.0 switch is an ADR when the toolchain moves | **watch** |
-| **SLSA v1.1** | Clarifying revision of v1.0 (2025) | The charter targets "v1.0 Build L3"; same levels, tightened wording | Update the reference when the supply-chain bullets are built — they are untouched ([`22`](22-phase-3-report.md) §22.9) | **watch** |
+| **SLSA v1.1** | Clarifying revision of v1.0 (2025) | The charter targets "v1.0 Build L3"; same levels, tightened wording | Update the reference when the supply-chain bullets are built — **they are, since this survey was written** ([`92`](92-supply-chain-and-release-report.md)), and the reference is still v1.0 | **watch** |
 | **EU Cyber Resilience Act** (Regulation 2024/2847) | In force; vulnerability-reporting obligations began phasing in from September 2026, full obligations December 2027; CEN/CENELEC harmonised standards in drafting | Not a standard — the *reason* standards will be demanded of anything Beck-built sold in the EU. Beck's chartered posture (SBOM, signing, reproducibility, coordinated disclosure) is the evidence shape the CRA asks manufacturers for | None yet; revisit when harmonised standards publish | **watch** |
 | **ISO/IEC 10967** (Language-Independent Arithmetic, parts 1–3) | Dormant but not withdrawn | The only ISO vocabulary for specifying how a numeric tower's integers, floats and conversions relate. The reals floor is built ([`27`](27-the-walls-come-down-report.md)); read this once when the rationals/bignums floors are attempted (`rational.beck` is that wall), then set down | None — read at spec-writing time | **borrow** |
 

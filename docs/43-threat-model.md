@@ -177,13 +177,13 @@ day it is written and quietly wrong six months later.
 
 ```text
    A1 source ─────────▶│ beck check / build │─────▶ artefacts ─────▶│ registry │──▶ A3
-                       │  ← bounded (0012)  │      (signing, SBOM: unbuilt — 28)
+                       │  ← bounded (0012)  │      (signing, SBOM, provenance: 92)
                        └────────────────────┘
    A2 client ──socket──▶│ ingress │──▶ validate ──▶ log ──▶ fold ──▶ view ──▶ patch ──▶ A2
                         └─ actor is self-asserted under the default provider (§43.4); a decision
                            of the runtime under a verifying one, and the issuer's under
-                           `identity = external(issuer=…)` (95). Claims reach `validate` and
-                           stop at the log, which carries the actor's name only (95 §48.6).
+                           `identity = external(issuer=…)` (48). Claims reach `validate` and
+                           stop at the log, which carries the actor's name only (48 §48.6).
                            A Mode B document carries them so the browser's own `validate`
                            decides as the server's does — escaped, and still only advice
                                    └─ the only writer; the only place time enters (§3.7)

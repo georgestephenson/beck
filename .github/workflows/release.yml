@@ -133,7 +133,7 @@ jobs:
       # The provenance step's two. `id-token` mints the OIDC token Sigstore exchanges for a
       # short-lived signing certificate; `attestations` persists the bundle. Neither is needed by
       # anything else in this job, and no other job asks for either — a token that can sign as this
-      # repository is worth granting to one step of one job (docs/109 §109.4).
+      # repository is worth granting to one step of one job (docs/92 §109.4).
       id-token: write
       attestations: write
     env:

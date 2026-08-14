@@ -219,10 +219,3 @@ awkward one.
   30 corpus files, 14 benchmarks and two SICP chapters all ran through it without the shape being
   visible, because every one of them is small enough that a quadratic and a linear cost the same.
 - **[`42`](42-security-assurance.md) §42.11's gate covers one axis of two**, per §64.4.
-
-## 64.9 What Phase 3 is still not
-
-Unchanged from [`63`](63-felleisen-report.md) §63.9. The exit criterion — an outside developer
-building a non-trivial app from documentation alone — is not met and is not closer. Seven bullets of
-the fourteen remain untouched, identity has its seam and not its relying party, and
-[`23`](23-incremental-views-report.md) §23.19 still names them one at a time.

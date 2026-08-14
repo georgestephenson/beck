@@ -125,12 +125,3 @@ would assert the writing and not the policy.
   [`23`](23-incremental-views-report.md)'s repeated "no `test --update`".
 - **The sketch asserts its whole page.** `examples/todo.beck` had five page assertions and all of
   them were `contains`; there is now one that would notice a change to any part of it.
-
-## 66.7 What Phase 3 is still not
-
-The exit criterion is not met. This closes a sub-item of the test-construct bullet rather than a
-bullet, so the count is unchanged from [`65`](65-lsp-report.md) §65.7: **six of the fourteen remain
-untouched** — Mode B, client polish, structured concurrency, the SQLite substrate, the playground
-and supply-chain tooling — with no LLVM backend, identity holding its seam and not its relying
-party, and the incremental-views bullet still without read models, pgwire or fusion.
-[`23`](23-incremental-views-report.md) §23.19 still names them one at a time.
