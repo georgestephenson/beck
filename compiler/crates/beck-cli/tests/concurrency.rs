@@ -693,3 +693,113 @@ def both(x: Str) -> Str uses net.out(a.example.com), net.out(b.example.com), spa
     assert_eq!(answer, beck_core::Value::str_("/y/y"));
     assert!(host.overlapped());
 }
+
+/// A host that counts how far each child got, by the peer it was calling.
+///
+/// Per-host rather than one counter, because the gate has to say two things about the sibling: that
+/// it **started** and that it **stopped**. One number cannot distinguish "cancelled at once" from
+/// "never ran", and a test that cannot tell those apart is not testing cancellation.
+#[derive(Debug, Default)]
+struct Counting {
+    failing: std::sync::atomic::AtomicUsize,
+    sibling: std::sync::atomic::AtomicUsize,
+}
+
+impl Counting {
+    fn sibling_reached(&self) -> usize {
+        self.sibling.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+impl beck_core::host::Atoms for Counting {
+    fn fetch(
+        &self,
+        request: &beck_core::net::Request,
+    ) -> Result<beck_core::net::Reply, beck_core::net::Failure> {
+        let which = if &*request.host == "a.example.com" {
+            &self.failing
+        } else {
+            &self.sibling
+        };
+        which.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        // Slow enough that the failure lands while the sibling is still going, which is the
+        // situation cancellation is *for*. Without it the loop could finish before the raise ever
+        // happened and the test would pass without testing anything.
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        Ok(beck_core::net::Reply {
+            status: 200,
+            headers: Vec::new(),
+            body: std::sync::Arc::from(&*request.path),
+        })
+    }
+}
+
+const CANCELLING: &str = "\
+union Refusal:
+    No
+
+## Works for a while, then fails — so the sibling has provably started by the time it does.
+def failing(n: Int) -> Int uses net.out(a.example.com), raises(Refusal), raises(HttpError):
+    if n <= 0:
+        raise No
+    r = http_fetch(\"a.example.com\", HttpRequest(method=\"GET\", path=\"/a\", headers={}, body=\"\", port=80, tls=False, secrets={}))
+    return failing(n - 1)
+
+def looping(n: Int, acc: Int) -> Int uses net.out(b.example.com), raises(HttpError):
+    if n <= 0:
+        return acc
+    r = http_fetch(\"b.example.com\", HttpRequest(method=\"GET\", path=\"/b\", headers={}, body=\"\", port=80, tls=False, secrets={}))
+    return looping(n - 1, acc + str_len(r.body))
+
+def both(n: Int) -> Int uses net.out(a.example.com), net.out(b.example.com), spawn, raises(Refusal), raises(HttpError):
+    return parallel:
+        a = failing(5)
+        b = looping(n, 0)
+        a + b
+";
+
+/// A child that fails **stops its siblings**, and the sibling notices while it is still running.
+///
+/// `docs/80` §80.5 forecast that a backend which starts children together would need a
+/// cancellation signal, and [`docs/117`](../../../../docs/117-a-scope-runs-its-children-report.md)
+/// §117.3 recorded that it still did not have one. This is that signal.
+///
+/// The assertion is a **count, not a clock**, and it is two-sided. The sibling would call its peer
+/// 400 times if nothing stopped it; what is asserted is that it called it **more than zero** times
+/// — so it was running, and this is cancellation rather than a child that never started — and
+/// **far fewer than 400** — so it was stopped. A signal that did not work fails the second half; a
+/// scope that never ran the sibling at all fails the first.
+#[test]
+fn a_failing_child_stops_its_siblings() {
+    let placed = compile(CANCELLING);
+    let program = std::sync::Arc::new(placed.program.clone());
+    let host = std::sync::Arc::new(Counting::default());
+    let backend = beck_eval::Evaluator::new(program.clone()).answering(host.clone());
+
+    let outcome = beck_eval::on_the_evaluator_stack(|| {
+        use beck_core::backend::Backend;
+        let f = backend
+            .function(&program.defs["both"].body)
+            .expect("prepares");
+        f(vec![beck_core::Value::Int(400)])
+    });
+
+    // The scope reports the child that failed **for a reason of its own**, never the one that was
+    // stopped. A cancelled sibling did not fail; it was not allowed to finish.
+    let err = outcome.expect_err("the first child raises");
+    assert!(
+        err.message.contains("raised"),
+        "the scope must answer with the raise and not with the cancellation: {}",
+        err.message
+    );
+    let reached = host.sibling_reached();
+    assert!(
+        reached > 0,
+        "the sibling never reached its peer at all, so this proves nothing about cancelling it"
+    );
+    assert!(
+        reached < 200,
+        "the sibling reached its peer {reached} times out of 400, so it was not stopped"
+    );
+    println!("the stopped sibling reached its peer {reached} times out of the 400 it would have");
+}

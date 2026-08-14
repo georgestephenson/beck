@@ -266,3 +266,39 @@ fn where_a_childs_fixed_cost_goes() {
          what the depth ceiling needs, and the thread is what running two things at once is."
     );
 }
+
+/// What the cancellation check costs a program that never writes `parallel:`.
+///
+/// Cancellation rides the **step counter** — `Interp::burn`, the one path every evaluation step
+/// passes through, and the path [`docs/70`](../../../../docs/70-the-evaluator-gets-fast-report.md)
+/// spent a chapter on. `AGENTS.md` says a cost is part of a change's correctness rather than a
+/// follow-up to it, so this is that cost, on the program that pays it for nothing: no scope, no
+/// child, `cancel` is `None`, and the check is a branch on a discriminant.
+///
+/// Nothing is asserted — a timing gate on a shared runner cannot be held honestly
+/// ([`docs/13`](../../../../docs/13-testing.md) §13.7) — and the shape claim is the one worth
+/// reading: the branch is **loop-invariant**, so what would show here is a constant per step and
+/// not a slope. Two sizes are what say which it is.
+#[test]
+fn what_the_cancellation_check_costs_a_program_without_a_scope() {
+    let program = compile(COMPUTING);
+    let atoms: Arc<dyn beck_core::host::Atoms> = Arc::new(beck_core::host::ProcessAtoms);
+    println!(
+        "\n{:<14} {:>14} {:>18}",
+        "iterations", "in order", "per iteration"
+    );
+    for n in [20_000i64, 200_000] {
+        let took = median(9, || {
+            call(&program, atoms.clone(), "in_order", Value::Int(n));
+        });
+        // Two children of `n` each. Per *iteration* and not per evaluation step: an iteration
+        // is an `if`, a comparison, two calls and an add, and this suite does not count nodes.
+        let per = took.as_secs_f64() / (2.0 * n as f64) * 1e9;
+        println!("{:<14} {:>14} {:>15.1} ns", 2 * n, format!("{took:?}"), per);
+    }
+    println!(
+        "\nA cost per iteration that grew with the number of iterations would be a check that is\n\
+         not loop-invariant. `docs/118` §118.4 reads these against the same two numbers taken with\n\
+         the check removed."
+    );
+}

@@ -344,6 +344,14 @@ pub struct EvalError {
     /// second error type, because everything between the raise and its handler has to pass both
     /// along unchanged and neither of them is the ordinary path. `Prim::Try` is the only reader.
     pub raised: Option<Box<(Arc<str>, Value)>>,
+    /// Whether this is a `parallel:` child that was **stopped because a sibling failed**, rather
+    /// than a failure of its own.
+    ///
+    /// It is a flag rather than a message because the scope has to *discard* it: the answer a
+    /// scope gives is the earliest child in source order that failed for a reason of its own, and
+    /// a child that was cancelled did not fail — it was not allowed to finish. Nothing outside
+    /// a `parallel:` scope reads this, and nothing outside one can produce it.
+    pub cancelled: bool,
 }
 
 impl EvalError {
@@ -352,6 +360,7 @@ impl EvalError {
             message: message.into(),
             span,
             raised: None,
+            cancelled: false,
         }
     }
 
@@ -361,6 +370,17 @@ impl EvalError {
             message: format!("raised `{}`", value.display()),
             span,
             raised: Some(Box::new((ty, value))),
+            cancelled: false,
+        }
+    }
+
+    /// A child that was stopped because a sibling failed.
+    fn cancelled(span: Span) -> EvalError {
+        EvalError {
+            message: "a sibling in this `parallel:` scope failed, so this child was stopped".into(),
+            span,
+            raised: None,
+            cancelled: true,
         }
     }
 }
@@ -403,6 +423,65 @@ pub trait Host: beck_core::host::Atoms {
     }
 }
 
+/// The signal that stops a `parallel:` scope's children when one of them fails.
+///
+/// # It stops the children *after* the failure, and only those
+///
+/// The obvious signal — a flag any failing child sets, which stops every sibling — is **wrong**,
+/// and wrong in the one way that matters: it makes the scope's answer depend on which thread won.
+/// Two children that both raise are a race, and whichever got there first would cancel the other
+/// before it could raise, so a scope over `bad(2)` and `bad(1)` would report `Second` or `First`
+/// depending on the scheduler. That is exactly the property
+/// [`docs/117`](../../../../../docs/117-a-scope-runs-its-children-report.md) §117.3 exists to keep,
+/// and `a_childs_failure_joins_at_the_scope_and_the_earliest_child_wins` caught it — eight failures
+/// in forty runs of the suite, and none when run alone.
+///
+/// So what is stored is not "somebody failed" but **the lowest index that has failed**, and a child
+/// is stopped only when a child *before* it has. That set is precisely the one an ordered join
+/// would never have reached: under one, a failure at child `i` means children after `i` never ran,
+/// and children before `i` had already finished. Cancelling exactly the former preserves the
+/// ordered semantics bit for bit, and this is a change in *when* work stops rather than in what the
+/// scope answers.
+///
+/// # Why it is a chain
+///
+/// A scope may nest inside a scope, and a grandchild has to stop when an enclosing scope's earlier
+/// child fails. One link cannot say that, so each scope keeps the scope it is inside **and this
+/// scope's own index within it**, and asking walks the chain. It is as deep as the scopes are
+/// nested, which `a_scope_nests_inside_a_scope` puts at two.
+#[derive(Debug)]
+pub struct Cancel {
+    /// The lowest child index that has failed for a reason of its own, or [`usize::MAX`].
+    first_failed: std::sync::atomic::AtomicUsize,
+    outer: Option<(Arc<Cancel>, usize)>,
+}
+
+impl Cancel {
+    fn under(outer: Option<(Arc<Cancel>, usize)>) -> Arc<Cancel> {
+        Arc::new(Cancel {
+            first_failed: std::sync::atomic::AtomicUsize::new(usize::MAX),
+            outer,
+        })
+    }
+
+    /// Record that child `index` failed. `fetch_min`, so two failures leave the earlier one.
+    fn failed(&self, index: usize) {
+        self.first_failed
+            .fetch_min(index, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Whether the child at `mine` should stop: a child before it failed, or an enclosing scope
+    /// says so.
+    fn asked(&self, mine: usize) -> bool {
+        if self.first_failed.load(std::sync::atomic::Ordering::Relaxed) < mine {
+            return true;
+        }
+        self.outer
+            .as_ref()
+            .is_some_and(|(outer, ours)| outer.asked(*ours))
+    }
+}
+
 pub struct Interp<'h> {
     pub host: &'h dyn Host,
     /// Bounded so that a non-terminating program in a request handler cannot wedge the server.
@@ -425,6 +504,16 @@ pub struct Interp<'h> {
     /// Only a `Closure` is cached. Nothing else a global can evaluate to is guaranteed to be the
     /// same value twice, and the cache is not the place to decide that.
     globals: std::cell::RefCell<std::collections::HashMap<Arc<str>, Value, BuildNameHasher>>,
+    /// The scope this interpreter is a child of, if it is one.
+    ///
+    /// `None` for everything that is not a `parallel:` child, which is every interpreter the
+    /// runtime, the LSP and `beck test` build — so the check in [`Interp::burn`] is a branch on a
+    /// discriminant that is `None` for the whole of a program that never writes `parallel:`, and
+    /// is loop-invariant where it is not. `docs/118` §118.4 is what that costs, measured.
+    ///
+    /// The index is this child's own place among its siblings, which is what makes the question
+    /// "did a child *before* me fail" answerable — see [`Cancel`].
+    cancel: Option<(Arc<Cancel>, usize)>,
 }
 
 /// A hash for definition names, on the path a call takes.
@@ -664,7 +753,15 @@ impl<'h> Interp<'h> {
             depth: std::cell::Cell::new(0),
             max_depth: DEFAULT_MAX_DEPTH,
             globals: std::cell::RefCell::new(std::collections::HashMap::default()),
+            cancel: None,
         }
+    }
+
+    /// The same, as child `index` of `cancel` — which stops it when an *earlier* child fails.
+    fn under(host: &'h dyn Host, fuel: u64, cancel: Arc<Cancel>, index: usize) -> Interp<'h> {
+        let mut interp = Interp::with_fuel(host, fuel);
+        interp.cancel = Some((cancel, index));
+        interp
     }
 
     /// Lower the depth ceiling. Only the harnesses use it: raising it is not offered, because the
@@ -682,6 +779,15 @@ impl<'h> Interp<'h> {
         let left = self.fuel.get();
         if left == 0 {
             return Err(EvalError::new("evaluation ran out of fuel", span));
+        }
+        // Cancellation rides the step counter rather than getting a checkpoint of its own: this is
+        // already the one place every evaluation step passes through, and "the program is making
+        // progress" is exactly when stopping it is both possible and worth doing. A tail loop
+        // spends fuel like anything else, so a child in one notices.
+        if let Some((cancel, mine)) = &self.cancel {
+            if cancel.asked(*mine) {
+                return Err(EvalError::cancelled(span));
+            }
         }
         self.fuel.set(left - 1);
         Ok(())
@@ -797,18 +903,30 @@ impl<'h> Interp<'h> {
         let each = self.fuel.get() / thunks.len() as u64;
         // The three things a child needs, taken out of `self` **before** the scope: an `Interp` is
         // deliberately not `Sync` — its fuel, its depth and its cache are `Cell`s on the hot path,
-        // which is what `docs/70` bought — so what crosses to a thread is the host it borrows and
-        // two numbers, and never the interpreter that is running here.
+        // which is what `docs/70` bought — so what crosses to a thread is the host it borrows, two
+        // numbers and the cancellation link, and never the interpreter that is running here.
         let (host, max_depth) = (self.host, self.max_depth);
+        // Under the scope this one is inside, if any, so a grandchild stops when an outer scope
+        // does. `Cancel::asked` is what walks it.
+        let cancel = Cancel::under(self.cancel.clone());
         let mut answers: Vec<(EvalResult, u64)> = std::thread::scope(|scope| {
             let mut running = Vec::with_capacity(thunks.len());
-            for thunk in thunks {
+            for (index, thunk) in thunks.iter().enumerate() {
+                let cancel = cancel.clone();
                 let handle = std::thread::Builder::new()
                     .stack_size(crate::STACK_BYTES)
                     .name("beck-parallel".into())
                     .spawn_scoped(scope, move || {
-                        let child = Interp::with_fuel(host, each).with_max_depth(max_depth);
+                        let child = Interp::under(host, each, cancel.clone(), index)
+                            .with_max_depth(max_depth);
                         let answer = child.apply(thunk, Vec::new(), span);
+                        // A child that failed for a reason of its own stops the children *after*
+                        // it — here, as soon as it knows, rather than after the join, because a
+                        // signal that waited for every child to finish would not be cancelling
+                        // anything. `Cancel` is why it is "after" and not "every".
+                        if answer.as_ref().is_err_and(|e| !e.cancelled) {
+                            cancel.failed(index);
+                        }
                         // Saturating rather than plain: `Interp::reset_fuel` is a
                         // public method, and a child whose budget went *up* should
                         // charge the parent nothing rather than panic.
@@ -831,6 +949,16 @@ impl<'h> Interp<'h> {
         let spent: u64 = answers.iter().map(|(_, spent)| *spent).sum();
         self.fuel.set(self.fuel.get().saturating_sub(spent));
 
+        // The earliest child in source order that failed **for a reason of its own**. A stopped
+        // child did not fail, so its error is not an answer — and it cannot be the earliest one
+        // either, since `Cancel` only ever stops children *after* the failure. Both halves are what
+        // keep the scope's answer a function of the program rather than of the scheduler.
+        if let Some((failed, _)) = answers
+            .iter()
+            .find(|(a, _)| a.as_ref().is_err_and(|e| !e.cancelled))
+        {
+            return Err(failed.as_ref().expect_err("just matched an error").clone());
+        }
         let mut out = Vec::with_capacity(answers.len());
         for (answer, _) in answers.drain(..) {
             out.push(answer?);

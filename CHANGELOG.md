@@ -14,6 +14,46 @@ Newest first.
 
 ### Concurrency
 
+- **A `parallel:` child that fails stops its siblings**
+  ([`docs/118`](docs/118-a-scope-stops-its-children-report.md)) — the signal
+  [`docs/80`](docs/80-a-scope-owns-its-children-report.md) §80.5 forecast and
+  [`docs/117`](docs/117-a-scope-runs-its-children-report.md) §117.7 left open.
+  - **It stops the children *after* the failure, and that qualifier cost a defect to learn.** The
+    obvious signal — any failing child stops every sibling — passed its own new gate and broke
+    `a_childs_failure_joins_at_the_scope_and_the_earliest_child_wins`, green since
+    [`docs/80`](docs/80-a-scope-owns-its-children-report.md): two children that both raise became a
+    race over which error the scope reports. **Eight failures in forty runs of the whole suite, and
+    none when run alone.** Cancelling only the children an ordered join would never have reached
+    makes this a change in when work stops rather than in what a scope answers; the check that the
+    race is gone is 0/40 against 8/40.
+  - **It rides `Interp::burn`**, the step counter. A checkpoint at call boundaries would miss an
+    iterative loop, because a tail call does not nest; "the program is spending steps" is exactly
+    when stopping it is possible and worth doing.
+  - **A stopped child's error is discarded rather than raced.** The scope answers with the earliest
+    child in source order that failed for a reason of its own — otherwise the answer would depend on
+    which thread lost. The flag is a chain, because a scope may nest inside a scope.
+  - **Cost to a program with no scope in it**, from
+    `measure_concurrency.rs::what_the_cancellation_check_costs_a_program_without_a_scope` (release,
+    median of nine): **388.3 / 380.1 ns per iteration with the check, 385.0 / 374.7 without** — about
+    1%, and §118.4 declines to call it free, since an earlier run of the same build differed by more
+    than the two columns do. Flat across a 10× size change, which is what a loop-invariant branch
+    predicts.
+  - **Gated by a count, not a clock**: `concurrency.rs::a_failing_child_stops_its_siblings` asserts
+    the stopped sibling reached its peer *more than zero* times (so it was running) and *far fewer
+    than 400* (so it was stopped) — it reaches 4 or 5. Checked by disabling the signal and watching
+    it hit 400/400, and the ordering gate beside it was run forty times rather than once.
+- **Which wasm can have threads** (§118.5), which corrects a flat "no" this work first wrote down.
+  `wasm32-wasip1-threads` is a **stable** target and really spawns — its module imports
+  `thread-spawn` where `wasm32-unknown-unknown` compiles the same call to "operation not supported
+  on this platform". But that is WASI, and the two places this repo emits wasm are *browser*
+  targets: there threads need the `atomics` feature `rustc` reports as unstable on the pinned
+  channel, a `std` rebuilt with it (`-Z build-std`, nightly), and cross-origin isolation plus a
+  worker per thread in the page. `wasm32` is the only bitness on stable — there is no `wasm64`
+  target. Where the threading target *will* matter is the server-side WASM tier
+  [`docs/05`](docs/05-tier-lowering.md) §5.4 names and nothing emits yet. The playground's children
+  run in order, which is *correct* for the same reason an ordered join always was — it loses the
+  overlap, never an answer.
+
 - **`parallel:` runs its children at the same time**, on a thread each
   ([`docs/117`](docs/117-a-scope-runs-its-children-report.md)). This closes
   [`docs/80`](docs/80-a-scope-owns-its-children-report.md) §80.5's first sentence and the last named
