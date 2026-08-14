@@ -1010,7 +1010,7 @@ fn chapter_three_ends_where_beck_begins() {
     let report = beck_rt::testing::run(&placed, backend, &Options::default());
     assert!(
         report.cases.len() >= 25,
-        "chapter 3 is the evidence for docs/87 and has to carry the exercises it claims"
+        "chapter 3 is the evidence for docs/63 and has to carry the exercises it claims"
     );
     assert_eq!(
         report.failed(),

@@ -245,7 +245,7 @@ ui!(
 
 // `expect page …` now has two continuations, so the refusal has to name both — a message that
 // still said "expected `contains` and a string" would send a reader looking for a syntax error in
-// the thing they wrote correctly (docs/66 §22.10).
+// the thing they wrote correctly (docs/22 §22.10).
 ui!(
     a_page_expectation_that_is_neither_contains_nor_a_snapshot,
     &format!(

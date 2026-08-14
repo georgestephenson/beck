@@ -331,7 +331,7 @@
   // bundle in Mode B. A deployment fetches them from the origin it was served from, on the two
   // reserved routes `beck_rt::http` answers; the playground has no server behind the frame, so it
   // hands over the bundle its worker derived and reads the kernel from the directory the page was
-  // deployed to (docs/103).
+  // deployed to (docs/98).
   //
   // The contract: `asset(name)` returns a promise of a `Response`, because that is what
   // `WebAssembly.instantiateStreaming` takes and a synthetic one is a constructor call.

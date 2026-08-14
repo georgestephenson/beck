@@ -13,7 +13,7 @@
  *   both   — norm and key together, which is the same thing plus the comparison.
  *
  * If `key` lands on Beck's number, the code generation is at parity with clang and what is left is
- * the price of docs/32 §32.2's structural equality on reals.  */
+ * the price of docs/54 §54.1's structural order on reals.  */
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>

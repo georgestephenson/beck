@@ -19,7 +19,7 @@ const CACHE = "beck-shell-%WIRE%";
 // Everything a Mode B tab needs before it can render anything at all. The document is `/` — and it
 // is the document for **every** route, not only that one: a Mode B client renders from the state it
 // holds and reads its route off `location`, so the shell it hydrates into is the same shell
-// whatever the address bar says (`docs/100` §100.1). Caching one document per route would be caching
+// whatever the address bar says (`docs/94` §94.3). Caching one document per route would be caching
 // the same file under different names, and would still miss the route nobody had visited.
 // The bundle and the kernel are the component and its backend.
 const SHELL = [
@@ -78,7 +78,7 @@ self.addEventListener("fetch", (event) => {
         // Mode B the route is the *client's* to render — it reads `location` and renders from the
         // state it holds — so one cached document serves every route. Without this, a tab that had
         // navigated and then reloaded with no network got an error page for a route it could have
-        // rendered (`docs/100` §100.1).
+        // rendered (`docs/94` §94.3).
         if (event.request.mode === "navigate") {
           const shell = await caches.match("/", { ignoreSearch: true });
           if (shell) return shell;

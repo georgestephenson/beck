@@ -4,5 +4,5 @@
 site/
 
 # `release/build.sh`'s output: a tarball and its checksum, per target. Built by the release
-# workflow and uploaded to the release; never checked in (docs/101 §101.3).
+# workflow and uploaded to the release; never checked in (docs/92 §92.8).
 dist/

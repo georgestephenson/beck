@@ -436,7 +436,7 @@ pub const INDEX: &[CodeEntry] = &[
          `Envelope`, `secret` and `internal` are the language's own type names, and a `model`, \
          `union`, `newtype` or `type` may not take one. B0314 has refused the same shadowing for a \
          type *parameter* since docs/27; a declaration was the production it did not cover, so the \
-         name meant the builtin in one signature and the declaration in the next (docs/87 §63.10).",
+         name meant the builtin in one signature and the declaration in the next (docs/63 §63.10).",
     ),
     e(
         "B0320",
