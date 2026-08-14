@@ -518,7 +518,7 @@ no regression-detecting power, which is the only thing a benchmark is for.
 > original suite's own constants, with wall-clock printed and no comparative claim, which is this
 > table's "Published" column kept and §25.3 item 1's "adopt now, publish now, make them
 > unflattering" kept at the same time. **The Felleisen table below is built**
-> ([`63`](63-felleisen-report.md)): six of the seven forms recovered, `amb` conceded, which is the
+> ([`63`](63-expressiveness-report.md)): six of the seven forms recovered, `amb` conceded, which is the
 > shape the forecast predicted. **The compile-speed budgets are built too**
 > ([`64`](64-compile-speed-report.md)) — as a *shape* gate rather than a rate, for
 > [`13`](13-testing.md) §13.7's reason, and they found a quadratic in placement on their first run.
@@ -564,7 +564,7 @@ it is visible:
 One row expected to be conceded out of seven is a result worth publishing. Seven out of seven
 recovered would be a result worth double-checking.
 
-> **Built, and the forecasts above are left as written.** [`63`](63-felleisen-report.md) is the
+> **Built, and the forecasts above are left as written.** [`63`](63-expressiveness-report.md) is the
 > result, [`sicp/felleisen.beck`](../compiler/sicp/felleisen.beck) is the evidence, and the count
 > came out where this table put it: six recovered, `amb` conceded. One forecast was wrong in the
 > generous direction — `quote` was "blocked, not global" and the block came down in

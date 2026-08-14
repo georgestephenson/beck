@@ -1326,7 +1326,7 @@ impl<'h> Interp<'h> {
             // accumulator idiom written with `with` at the `O(n²)` `docs/70` and `docs/70` removed
             // from every other spelling of it. The fields about to be replaced arrive empty
             // instead, which is one pass rather than the one the clone was already making
-            // (`docs/87` §87.5).
+            // (`docs/63` §63.11).
             Err(shared) => Record {
                 ty: shared.ty.clone(),
                 variant: shared.variant.clone(),

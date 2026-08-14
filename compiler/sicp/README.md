@@ -15,8 +15,8 @@ verbose for it. §25.5 sets out the protocol; nothing here is a comparison yet.
 |---|---|
 | [`ch1.beck`](ch1.beck) | Chapter 1: §1.1.7, §1.2 and §1.3. Twenty-one `test` blocks, all but one asserting an answer the book states — four of them a printed double, digit for digit. The exception asserts the *property* §1.2.1 states instead: that an iterative process runs in constant space |
 | [`ch2.beck`](ch2.beck) | Chapter 2's §2.1.1 and §2.2 — exact rationals, with `+` reaching a user's type through the prelude's `Num` and the book's printed `5/6`, `1/6` and `2/3` as the oracle; and the sequence abstractions the reader is asked to build (`map`, `filter`, `accumulate`, `append`, `length`, `reverse`), the closure property at the book's own generality (`Tree[T]`, used at three element types including `Tree[Tree[Int]]`), and §2.2.3's conventional interfaces |
-| [`ch3.beck`](ch3.beck) | Chapter 3, "Modularity, Objects, and State" — the chapter the language disagrees with, and then agrees with. §3.1's objects with the state they hide written down, §3.3.2's queue, §3.3.3's tables, §3.3.4's digital-circuit simulator at the times the book prints (`sum 8`, `carry 11`, `sum 16`), §3.5's streams with three tables of doubles digit for digit, and §3.5.5's account with no assignment — which the file asserts agrees with §3.1.1's fold, because that is [`docs/01`](../../docs/01-vision-and-premise.md) §1.1's premise in the book's own words. Twenty-six `test` blocks and a `property` ([`docs/87`](../../docs/87-the-chapter-that-argues-back-report.md)) |
-| [`felleisen.beck`](felleisen.beck) | §25.9's formal half: one section per special form SICP introduces, each carrying the code that recovers it or the reorganisation that concedes it ([`docs/63`](../../docs/63-felleisen-report.md)) |
+| [`ch3.beck`](ch3.beck) | Chapter 3, "Modularity, Objects, and State" — the chapter the language disagrees with, and then agrees with. §3.1's objects with the state they hide written down, §3.3.2's queue, §3.3.3's tables, §3.3.4's digital-circuit simulator at the times the book prints (`sum 8`, `carry 11`, `sum 16`), §3.5's streams with three tables of doubles digit for digit, and §3.5.5's account with no assignment — which the file asserts agrees with §3.1.1's fold, because that is [`docs/01`](../../docs/01-vision-and-premise.md) §1.1's premise in the book's own words. Twenty-six `test` blocks and a `property` ([`docs/63`](../../docs/63-expressiveness-report.md)) |
+| [`felleisen.beck`](felleisen.beck) | §25.9's formal half: one section per special form SICP introduces, each carrying the code that recovers it or the reorganisation that concedes it ([`docs/63`](../../docs/63-expressiveness-report.md)) |
 | [`refusals/`](refusals/) | One file per wall still standing between here and the rest of the book. **Empty**, and its README says what that means and what would put a file back |
 
 The harness is [`../crates/beck-cli/tests/sicp.rs`](../crates/beck-cli/tests/sicp.rs). It runs all
@@ -53,7 +53,7 @@ rationals — which needed `+` to reach a type the compiler does not know about,
 
 So [`refusals/`](refusals/) is **empty**, and its own README says what that does and does not claim:
 every wall this project has *found* has been removed, which is not the same as expressing all of
-SICP. Chapter 3 has been attempted since ([`docs/87`](../../docs/87-the-chapter-that-argues-back-report.md))
+SICP. Chapter 3 has been attempted since ([`docs/63`](../../docs/63-expressiveness-report.md))
 and produced no wall of that kind: every section of it is expressible, and the reorganisation is one
 rule applied twelve times. What it produced instead was a **cost** the book names explicitly — §3.5.1
 says `delay` should memoise and implements that with two `set!`s, so §3.5.3's tableau is ×5.2 per term

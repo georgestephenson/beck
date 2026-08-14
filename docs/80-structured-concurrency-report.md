@@ -393,7 +393,7 @@ programs failed it, in three ways:**
 - **A conditional expression printed without parentheses.** `a + (b if c else d)` came back as
   `(a + b) if c else d` — **a different program that still parses, which is the worse kind of the
   two.**
-- **`() -> T` printed as `fn-type[T]`.** [`63`](63-felleisen-report.md) §63.3 found this exact
+- **`() -> T` printed as `fn-type[T]`.** [`63`](63-expressiveness-report.md) §63.3 found this exact
   off-by-one in the parser and the checker, because such a node is its parameters followed by its
   result and a function taking none has *one* argument. The printer counted the same wrong way and
   **leaked its internal head into a file it had just written.**

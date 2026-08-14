@@ -599,7 +599,7 @@ been composing a page that way since [`27`](27-the-walls-come-down-report.md), a
 wrong in the same way with nothing asserting otherwise. The defect was found by measuring a *cost*,
 not by testing a behaviour — no assertion in the tree looked at enough of the page to see it, and
 `expect page contains "…"` passes happily on escaped markup. The gate that stops it coming back is a
-snapshot, which is [`66`](66-page-snapshots-report.md)'s argument arriving on time.
+snapshot, which is [`22`](22-phase-3-report.md)'s argument arriving on time.
 
 **The served page had never contained the element its JavaScript looks for.** Both clients open with
 `const root = document.getElementById("b-root"); if (!root) return;` — and `beck run`'s document put

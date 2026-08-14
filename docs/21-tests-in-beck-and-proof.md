@@ -186,7 +186,7 @@ to be than "retry it three times".
 * **Golden/snapshot assertions** for pages (`expect page matches snapshot`) need an update flow
   (`beck test --update`). The compiler's own suite uses `insta` for exactly this and it works;
   the risk is snapshot rot, and the mitigation is the same one — review the diff.
-  **Built** ([`66`](66-page-snapshots-report.md)): `expect page matches snapshot`, and
+  **Built** ([`22`](22-phase-3-report.md)): `expect page matches snapshot`, and
   `beck test --update` to record one. Not with `insta`, which snapshots a Rust value from a Rust
   test — this is a Beck page from a Beck test, keyed by that test's name. The mitigation above is
   the design: a missing snapshot **fails** rather than writing itself, writing is only ever the
@@ -511,7 +511,7 @@ A proof is about a specification. Three things here have no specification we own
 
 | | status |
 |---|---|
-| §21.2 `test` blocks in Beck | **built** ([`22`](22-phase-3-report.md)): `beck test` runs a program's own `test` and `property` blocks — and `beck test --update` with it ([`66`](66-page-snapshots-report.md)), so nothing in §21.2 is outstanding |
+| §21.2 `test` blocks in Beck | **built** ([`22`](22-phase-3-report.md)): `beck test` runs a program's own `test` and `property` blocks — and `beck test --update` with it ([`22`](22-phase-3-report.md)), so nothing in §21.2 is outstanding |
 | §21.3 inferred mocks | **built** ([`22`](22-phase-3-report.md)): a stub is a value for an effect atom, defaulted from the atom's return type by the one type-directed generator `property` blocks share |
 | §21.4 rung 1 — typed objects | built (`beck-infra/src/k8s.rs`) |
 | §21.4 rung 2 — YAML round-trip | built (`beck-infra/tests/invariants`, read back with `serde_norway`) |

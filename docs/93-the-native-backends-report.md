@@ -876,7 +876,7 @@ at the larger size while their controls hold theirs: what grows is the reply.
 
 **`with` always builds a fresh object.** [`70`](70-the-evaluator-gets-fast-report.md)'s analysis lets the
 tree-walker rebuild a record in place when the base is a last use, and
-[`87`](87-the-chapter-that-argues-back-report.md) §87.5 made that hold for `x.with(f = g(x.f))` too.
+[`63`](63-expressiveness-report.md) §63.11 made that hold for `x.with(f = g(x.f))` too.
 Neither is available here, and the answers are identical — a cost, not a divergence.
 
 **The literal pool is on the wire on every call.** `examples/todo.beck` has 22 literals and pays 560

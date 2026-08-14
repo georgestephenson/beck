@@ -28,7 +28,7 @@ fn run(placed: &Placed) -> beck_rt::testing::Report {
 /// `base_dir` is where `snapshots/` and a `wire_compatible_with` path are resolved from, so a
 /// harness running the sketch's own tests in-process has to say where the sketch is. `Default`
 /// leaves it empty, which resolves against the *harness's* working directory — fine for a program
-/// built from a string, wrong for one read off disk (`docs/66` §66.3).
+/// built from a string, wrong for one read off disk (`docs/22` §22.10).
 fn examples_options() -> Options {
     Options {
         base_dir: std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples")),

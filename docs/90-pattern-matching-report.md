@@ -44,7 +44,7 @@ match found:
 
 The second is the one the book, the tutorial and every other language write. **Nothing about the
 first is *wrong*** — and that is the point of saying so rather than asserting that one is better:
-this is a notation, and by [`63`](63-felleisen-report.md)'s criterion the rewrite is local, so
+this is a notation, and by [`63`](63-expressiveness-report.md)'s criterion the rewrite is local, so
 nothing was inexpressible. **What is recovered is the reading.**
 
 ## 90.2 Why exhaustiveness had to be rebuilt rather than extended

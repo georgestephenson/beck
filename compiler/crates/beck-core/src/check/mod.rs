@@ -700,7 +700,7 @@ impl<'a> Checker<'a> {
     /// registers, so a `model Int` was accepted and the name then meant the record in one
     /// definition and the builtin in the next. [`Checker::bind_decl_typarams`] has refused the same
     /// shadowing for a *type parameter* since `docs/27`; this is that rule at the production it was
-    /// missing (`docs/87` §87.4).
+    /// missing (`docs/63` §63.10).
     ///
     /// Returns whether the name was refused, so the caller can skip registering it: leaving the
     /// builtin in place is what keeps the rest of the module's errors about the module.
@@ -4543,7 +4543,7 @@ def b() -> Tag[Str]:
     }
 
     /// The same rule at the production it was missing — a *declaration* rather than a type
-    /// parameter (`docs/87` §87.4).
+    /// parameter (`docs/63` §63.10).
     ///
     /// Every builtin constructor, because the point of the finding is that the check existed for
     /// two of them (`Option` and `Result`, which are prelude declarations and so were covered by
