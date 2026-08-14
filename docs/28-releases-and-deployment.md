@@ -18,7 +18,10 @@ pipeline downstream of it, with no tag pushed through it yet. Four workflows:
 - **`compiler.yml`** — format, clippy, the full suite (differential and replay harnesses
   included), the sketch compiled/served/replayed, `beck test` over sketch + corpus + SICP with a
   deliberately-failing negative control, the slicer and incremental-analysis assertions,
-  annotation-free placement, wire-compat, the object graph, a k3d admission job, a compose
+  annotation-free placement, wire-compat, the object graph, a k3d admission job, an
+  ecosystem-oracles job (four pinned manifest scanners — `kubeconform`, kube-score, Polaris,
+  Checkov — over `beck build`'s output, [`21`](21-tests-in-beck-and-proof.md) §21.4 rung 6, every
+  suppression named as refusal or debt), a compose
   parity job, the thin-client size budget, the full `cargo-deny` check ([ADR-0004](adr/0004-full-cargo-deny-gate.md)), a Postgres
   service behind the log-contract test, an image built from the real package repository and signed
   and verified ([`92`](92-supply-chain-and-release-report.md)), and a release-profile measurements lane ([ADR-0006](adr/0006-ci-measurements-lane.md)).
@@ -103,9 +106,13 @@ digest-pinned. Missing is the pipeline around it:
 
 1. **`beck init ci`** — **built** ([`92`](92-supply-chain-and-release-report.md)) — emits a workflow mirroring
    our discipline:
-   `beck check`, `beck test`, `beck check --wire-compat` against the deployed interface, then
-   `beck build` and an image push on merge. Wire-compat is the load-bearing step — the §3.6/§4.3
-   firewall placed where it stops a bad deploy rather than reporting one.
+   `beck check --locked`, `beck test`, `beck check --wire-compat` against the released interface,
+   `beck build`, `beck up --dry-run`, then on the default branch an image built twice (the digests
+   diffed — reproducibility as a gate) and signed. Wire-compat is the load-bearing step — the
+   §3.6/§4.3 firewall placed where it stops a bad deploy rather than reporting one. The workflow
+   does **not** push the image, because nothing can yet (item 4), and it builds the toolchain from
+   a checkout because there is no release to install (item 5). GitHub Actions only; the GitLab
+   emitter §6.8 names is not written.
 2. **GitOps is the default contract**: `beck build --out` writes manifests-only directories (a
    CI gate asserts it), so a controller pointed at the directory is already a deployment
    pipeline. `beck deploy` stays the imperative form for rungs 0–2 of §6.6's ladder.
@@ -113,6 +120,22 @@ digest-pinned. Missing is the pipeline around it:
    `migrate`/`upcast` → resume (§6.4); canaries via Gateway API + Argo Rollouts. The pipeline
    ends at "the desired state names a new digest and a migration"; the operator owns the stream
    surviving the transition. Until then, deploys are rolling-update only, and docs say so.
+4. **`beck image --push`** — not built. `beck image` writes an OCI layout and deliberately does
+   not upload it, so the registry push (ECR, GHCR, Harbor) is the one imperative step the
+   generated pipeline cannot finish without, and today it is a `crane`/`skopeo` step the user
+   writes themself. The client that fixes this is the client §6.7's ORAS package distribution
+   needs anyway — one code path, twice the reason.
+5. **The first published release is a pipeline feature.** Until a tag goes through
+   `release.yml`, every repository that runs `beck init ci` compiles the whole toolchain from
+   source as its first CI step. Cutting the release is the single highest-leverage act for the
+   generated pipeline's speed, and nothing about the emitted file changes when it lands — the
+   step swaps, the comment above it already says so.
+6. **The managed-cloud rungs** (rungs 4–5 of §6.6, [`08`](08-roadmap.md) Phase 4 has the landing
+   order): the Crossplane emitter turns `durable` into a managed-Postgres claim the way it
+   already turns it into a PVC; `beck deploy --to` is then executed against a real EKS cluster
+   before any document claims the rung. A static-host target (GitHub Pages, Cloudflare Pages) for
+   programs whose effect row a CDN can satisfy, and an ECS/Fargate `Platform`, are the same
+   roadmap block.
 
 ## 28.4 The project's own deployments
 

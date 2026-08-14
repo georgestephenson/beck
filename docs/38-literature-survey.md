@@ -358,8 +358,9 @@ and lens round-trip laws (Boomerang, POPL 2008; edit lenses, POPL 2012) as *prop
 migration/downgrade pairs (**borrow**). No verified-migration system was found: Beck
 property-testing migrations over generated old-states would exceed the published record.
 
-Infrastructure: the six-rung ladder ([`21`](21-tests-in-beck-and-proof.md) §21.4) has no
-published equivalent — IaC correctness work is policy scanning — but the literature supplies
+Infrastructure: the seven-rung ladder ([`21`](21-tests-in-beck-and-proof.md) §21.4) has no
+published equivalent — IaC correctness work is policy scanning, which the ladder adopts as one
+rung (§21.4 rung 6) rather than as the whole story — but the literature supplies
 three rungs ready-made: Acto's state-oracle testing (SOSP 2023), Sieve's
 perturb-the-controller's-view differential (OSDI 2022), and Anvil's "eventually stable
 reconciliation" (OSDI 2024, best paper) as the correct top-rung *specification* for what derived

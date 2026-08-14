@@ -159,8 +159,14 @@ defaults, `revisionHistoryLimit`, the `preStop` sleep and the probes are emitted
 `readOnlyRootFilesystem` is **derived** — true unless the program's row carries `fs.write`, which is
 a distinction one `fs(path)` atom could not make until [`80`](80-structured-concurrency-report.md) split it.
 Resource requests are not emitted, for the reason the next paragraph gives. Anti-affinity is not
-either: `replicas` is 1, so a spread constraint would be a field with no effect. §82.8 is what none
-of it has been checked against — there is no cluster in CI, so `conformance.rs` skips.
+either: `replicas` is 1, so a spread constraint would be a field with no effect. §82.8's gap has
+since half-closed: `compiler.yml` runs a k3d cluster and `conformance.rs` submits the objects
+through the full admission chain (`BECK_REQUIRE_CLUSTER=1`, so the skip is forbidden there). What
+admission decides is that the fields are *admissible*, not that they are *best practice* — the
+third-party scanner gate (`compiler.yml`'s `ecosystem-oracles` job,
+[`21`](21-tests-in-beck-and-proof.md) §21.4 rung 6) holds exactly that, with checkers this project
+does not maintain, and its suppression list is the named ledger of what is refused and what is
+debt.
 
 **Resource requests** are a genuinely hard inference problem. Plan: v1 uses a per-language-construct
 heuristic plus explicit override; v1.x records actual usage via the operator and OpenTelemetry and

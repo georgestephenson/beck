@@ -12,6 +12,43 @@ Newest first.
 
 ## Unreleased
 
+### The deployment plan
+
+- **The managed-cloud path is a landing order rather than a paragraph**
+  ([`docs/08`](docs/08-roadmap.md) Phase 4, [`docs/28`](docs/28-releases-and-deployment.md) §28.3):
+  publish the first release (it converts `beck init ci`'s build-from-checkout step into an
+  install), `beck image --push` (the one imperative step the generated pipeline cannot finish
+  without — §28.3 also stops describing a push the workflow does not do), the Crossplane emitter
+  (`durable` ⇒ a managed-Postgres claim the way it already ⇒ a PVC), then `beck deploy --to`
+  executed against a real EKS cluster. A static-host `Platform` (GitHub Pages, Cloudflare Pages —
+  admissible exactly when the effect row says a CDN is a sufficient computer) and an ECS/Fargate
+  `Platform` (a market-scope decision, priced by the Compose implementation) join the roadmap.
+- **Third-party manifest scanners are a CI gate** (`compiler.yml`'s `ecosystem-oracles` job):
+  `kubeconform` (strict, CRD schemas), kube-score, Polaris and Checkov, version-pinned, over
+  `beck build`'s output for the two conformance programs — the manifest ladder's first
+  *best-practice* oracle this project does not maintain, added to
+  [`docs/21`](docs/21-tests-in-beck-and-proof.md) §21.4 as rung 6 (proof moves to 7). Every
+  suppression in the job is named as a *refusal* (CPU limits, pull-policy-Always, the >10 000 UID
+  opinion) or a *debt*, and the first run yielded the debt list nobody's invariant had stated:
+  the provisioned log store has no NetworkPolicy targeting it, no probes, and no hardening
+  ([`docs/82`](docs/82-the-edge-report.md) §82.11). Each scanner was run without its suppressions
+  and observed red, so the gate can fail; every step was run by hand before the workflow carried
+  it.
+- **The ≥1% rule** ([`docs/08`](docs/08-roadmap.md) §8.6): a deployment reality that ≥1% of
+  developers report using earns an explicit verdict — adopt, supported, watch, or decline with the
+  reason — unless it is a fad, incompatible, or a competitor Beck dissolves. Applied to the Stack
+  Overflow 2025 infrastructure list: most rows cost nothing because the emission is vendor-neutral
+  (OCI, standard manifests, OTLP); the named work is AWS's managed-cloud path, the static hosts,
+  and Terraform-as-target-not-dependency. §8.6.1 answers the platform question in one sentence —
+  meet the PaaS bar with Beck's own ladder, rent nothing for the server tier, and be the best
+  static-half citizen a CDN ever hosted.
+- **Two stale claims corrected in place**: [`docs/06`](docs/06-kubernetes-and-packaging.md) §6.3
+  and [`docs/82`](docs/82-the-edge-report.md) §82.8/§82.11 said no
+  cluster checks the hardening defaults; `compiler.yml`'s conformance job (k3d,
+  `BECK_REQUIRE_CLUSTER=1`) has held admissibility on every merge since it landed. What remains
+  unestablished is behaviour — dry-run schedules nothing — and best practice, which the scanner
+  gate is for.
+
 ### The native backends
 
 - **Fifteen primitives that are a table, a grammar or somebody else's parser compile**, to both
