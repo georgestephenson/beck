@@ -213,7 +213,15 @@ functions. The lowering question is substrates. **We do not write a storage engi
 - Subscribed/materialized views compile to **differential-dataflow-style incremental plans**
   (timely/differential are MIT-licensed Rust; DBSP/Feldera is the maintained modern embodiment —
   [`07`](07-dependencies.md) §7.4). `remaining` updates by ±1 per event; a joined read model
-  updates by delta, not by re-join. Materialize itself validates the approach commercially but is
+  updates by delta, not by re-join — *except that **there is no join to update by delta***, because
+  the view algebra's combining forms are all unary: every operator takes one collection, and
+  `concat_lists`, the one that takes several, unions same-typed streams rather than relating them
+  ([`99`](99-the-data-tier-means-of-combination.md) §99.4). A program that relates two collections
+  says so with a `map_get` inside a loop, which compiles to a per-element function that captured the
+  accumulator, so the whole collection is reapplied on every event —
+  [`23`](23-incremental-views-report.md) §23.13's rebuild rule working exactly as designed on a shape
+  nobody had asked it about. [`99`](99-the-data-tier-means-of-combination.md) is the design that
+  closes it. Materialize itself validates the approach commercially but is
   BUSL — excluded as a dependency by the open-source constraint.
 - **Per-session fanout is the scaling problem to design for** ([`03`](03-type-and-effect-system.md)
   §3.8): a thousand connected users of `todos.map(filter_by(session.user))` must compile to *one*

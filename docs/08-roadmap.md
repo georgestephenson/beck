@@ -160,6 +160,26 @@ read it.**
   of the same idea is `beck init ci` emitting the scanner step into a *user's* workflow, with the
   suppression list the emitter already knows it deserves.
 - OpenTelemetry cross-tier tracing on by default; `beck tune` right-sizing.
+- **The data tier's means of combination** ([`99`](99-the-data-tier-means-of-combination.md)):
+  `join`, `group by` and the aggregates, which the view algebra has never had — every operator it
+  implements takes one collection, so a program relating two of them escapes the algebra into a
+  per-element function that captured the accumulator and is reapplied on every event. The order is
+  §99.9's and its **first item is a gate that goes red today**, not an operator. This is what §8.4's
+  Phase 5 TPC-H row has always been conditioned on, and it had never been assigned.
+- **The decision record** ([`100`](100-placement-at-runtime.md) §100.5): a queryable account of what
+  the compiler and runtime *chose* and why, projected as a read model so `psql` and any BI tool
+  already read it. A facility rather than a feature of one caller — fusion, the plan solver
+  (§99.8) and placement each make choices nothing records. Telemetry reports **quantities**; nothing
+  reports a **decision**, and `beck explain` answers *why is this here* only about source. This is
+  its run-time half.
+- **Query fusion gets an off switch**, the one hole in a principle the rest of the runtime keeps:
+  `AppConfig` turns off the incremental view engine and the shared dataflow without a recompile,
+  while `Plan::compile` always fuses and `Plan::unfused` is reachable only from
+  `beck explain query --unfused` and the test harness ([`100`](100-placement-at-runtime.md) §100.5).
+- **Placement proposals from measurement** — [`100`](100-placement-at-runtime.md)'s level P1, the
+  only level that changes no runtime behaviour: the deployment measures, and a placement change
+  arrives as a `beck.lock` diff a human accepts. `beck tune` pointed at placement, riding the replay
+  tooling above.
 - Multi-arch images; air-gapped install; OCI package registry via ORAS (§6.7).
 - **FFI**: C ABI both directions; JS interop for the client tier; a Python bridge (§9.2) — the
   ecosystem-access question is existential, so give it real headcount.
@@ -183,6 +203,16 @@ production hardening.
   application's single writer is not the bottleneck until §15's partitioning is real, and because
   its costs — chunking above 100 KB values, a 5 s transaction bound, an operationally heavy
   cluster — buy nothing until then.
+- **Placement chosen at run time, within the set the compiler proved legal** —
+  [`100`](100-placement-at-runtime.md)'s levels P2 and P3: one choice per process, then one per
+  subscriber, so a browser on a slow link and one on a fast link render the same component in
+  different modes at the same moment. The artefact ships the **candidate set** rather than the chosen
+  tier, so no runtime decision can widen what §3.5 proved; the ceiling defaults to `static` and a
+  gate gives that default a byte-for-byte meaning; every move lands in the decision record above.
+  Mode B exists ([`94`](94-the-client-report.md)) and [`cost.rs`](../compiler/crates/beck-core/src/cost.rs)
+  has charged a crossing the *minimum* of its two ends since Phase 2 while commenting that "the
+  minimum is a prediction rather than a choice" — this is the choice. Legal above the session cut
+  only, for §94.2's reason. **P4–P7 are post-1.0** and §100.9 says why each waits.
 - Editor support beyond VS Code; debugger integration (DAP) with cross-tier stepping.
 - Package ecosystem seeding; documentation, book, tutorials, and 5–10 non-trivial example apps.
 - **The registry in production, on Beck, serving real packages** — the D15 exit criterion: the
@@ -246,6 +276,25 @@ This graph is between phases. The ordering *within* the current phase is §8.5.
    Beck — the registry's domain is a homomorphism of the semantics (immutable versions = events
    forever; transparency log = the log; yank = an event), so building it tests exactly the backend
    and data tier claims, in production, in public.
+8. **Anything the compiler or runtime decides for you can be switched off, and the off switch is
+   proved rather than promised.** A language whose selling point is that it makes choices on your
+   behalf owes you the ability to stop it — otherwise a wrong choice is unworkaroundable and the
+   whole proposition inverts. `AppConfig` is the standard: the incremental view engine and the
+   shared dataflow can each be turned off at run time, without recompiling, and the doc comments say
+   *why* the switch exists rather than merely that it does — "a *switch* rather than a fact because
+   it is also a memory-for-time trade". The proof half matters as much as the switch, since a
+   default nobody has run is a claim, so `off` paths belong in the gates beside the fast ones.
+   **Currently strong with one hole**: query fusion cannot be turned off outside the test harness
+   ([`100`](100-placement-at-runtime.md) §100.5), which is scheduled in Phase 4.
+9. **Anything decided for you is auditable after the fact, in production.** `beck explain` is this
+   project's best habit — `place`, `flow`, `wire`, `query`, `cost`, `incremental`, `sql`, `render`,
+   `deploy`, `error` — and it has **one half**: it answers *why is this here* about source. The
+   other half, *why did it do that*, has no answer anywhere. Telemetry reports quantities; no
+   facility records a **decision** — what was chosen, when, from what alternatives, on what
+   evidence. Every choice the system makes unbidden is one somebody will eventually have to debug,
+   and the cost of retrofitting an audit trail is paid during the incident. Phase 4's decision
+   record is the general answer; new work that decides should feed it rather than print its own
+   format.
 
 ## 8.4 Benchmarks and expressiveness, by phase
 
