@@ -40,7 +40,14 @@ WASM, no size crisis, trivially good Lighthouse scores) — with Mode B in Phase
 > a component whose view reads the session cannot render on the client, since Mode B hands the
 > browser the state a per-session view was filtering (§94.2). *That refusal is narrower than it was
 > written: it is about **who** is asking, and reading `session.path` — where the browser is, which
-> the browser chose — is allowed ([`94`](94-the-client-report.md) §94.3).* The kernel interprets rather than
+> the browser chose — is allowed ([`94`](94-the-client-report.md) §94.3).* **"Inferred from those
+> requirements" is not permanently wrong, and [`100`](100-placement-at-runtime.md) §100.3 states the
+> conditions under which it becomes legal again**: inference is safe exactly where §94.2's refusal
+> does not bite — above the session cut — and only when it is *measured* rather than guessed, per
+> subscriber, and reversible. That is its level P3, and it is the level the cost model was written
+> for: [`cost.rs`](../compiler/crates/beck-core/src/cost.rs) has charged a crossing the minimum of
+> its two ends since Phase 2 while saying in a comment that "the minimum is a prediction rather than
+> a choice". The kernel interprets rather than
 > compiles ([`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md)), which is what the size
 > budget below has to be read against: 179,195 bytes brotli once per application, 1,753 per
 > component.
