@@ -553,6 +553,116 @@ jobs:
         if: always()
         run: k3d cluster delete beck-conformance || true
 
+  ecosystem-oracles:
+    # Rung 6 of the ladder in docs/21 §21.4: *best practice*, decided by checkers this project does
+    # not maintain. Rungs 1–5 end at admissibility — the only third-party deciders below this line
+    # are a YAML parser and the API server, and both check validity — so docs/06 §6.3's hardening
+    # defaults were otherwise held by our own invariants alone, which is an emitter agreeing with
+    # itself. Four scanners over the emitted directory are somebody else's verdict, renewed on
+    # every merge — the same discipline as clbg/ reading the Game's own published constants.
+    #
+    # Every suppression in the steps below is one of two things, and each says which:
+    #   refused — the design disagrees with the rule, and docs/06 §6.3 has the argument;
+    #   debt    — a real finding from this gate's first run (docs/82 §82.11): the provisioned log
+    #             store has no NetworkPolicy targeting it, no probes, and no hardening. Suppressed
+    #             until the emitter change that pays it, and removing the suppression is part of
+    #             that change.
+    # Versions are pinned so a scanner release that adds checks arrives as a reviewed diff here,
+    # not as a surprise red on somebody's unrelated PR.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      KUBECONFORM_VERSION: v0.8.0
+      KUBE_SCORE_VERSION: 1.20.0
+      POLARIS_VERSION: 9.6.3
+      CHECKOV_VERSION: 3.3.11
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: compiler
+
+      - name: build
+        run: cargo build --release
+
+      - name: the manifests under audit
+        # The same two programs conformance submits: the canonical one, and the one whose row
+        # carries `net.out` so the egress derivation is in the audited set.
+        run: |
+          ./target/release/beck build examples/todo.beck --out /tmp/scan/todo
+          ./target/release/beck build corpus/20-moderation.beck --out /tmp/scan/moderation
+
+      - name: the four scanners, pinned
+        run: |
+          mkdir -p /tmp/scanners && cd /tmp/scanners
+          curl -sSL "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" | tar xz kubeconform
+          curl -sSL -o kube-score "https://github.com/zegl/kube-score/releases/download/v${KUBE_SCORE_VERSION}/kube-score_${KUBE_SCORE_VERSION}_linux_amd64"
+          chmod +x kube-score
+          curl -sSL "https://github.com/FairwindsOps/polaris/releases/download/${POLARIS_VERSION}/polaris_linux_amd64.tar.gz" | tar xz polaris
+          pipx install "checkov==${CHECKOV_VERSION}"
+
+      - name: kubeconform — every object against its published schema, strictly
+        # -strict refuses unknown fields, and the CRDs-catalog location is what covers HTTPRoute,
+        # the one object k8s-openapi has no type for. No suppressions: this scanner has none to
+        # need.
+        run: |
+          /tmp/scanners/kubeconform -summary -strict \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            /tmp/scan/todo/k8s /tmp/scan/moderation/k8s
+
+      - name: kube-score — the workload objects, scored
+        # refused: container-resources and container-ephemeral-storage-request-and-limit — CPU
+        #          limits are refused outright (throttling pathologies, docs/06 §6.3) and requests
+        #          are `beck tune`'s problem: emitting a guessed number would be worse than none.
+        # refused: container-image-pull-policy — the image is addressed by digest; "Always" is the
+        #          remedy for mutable tags.
+        # refused: container-security-context-user-group-id — the app runs as 65532, the
+        #          distroless convention; "above 10 000" is a numeric opinion about the same
+        #          property.
+        # debt:    pod-networkpolicy, pod-probes, container-security-context-readonlyrootfilesystem
+        #          — the log store's three gaps (docs/82 §82.11). The tool's ignore is global, so
+        #          it also blinds these tests for the app pod, which does satisfy them; the
+        #          un-ignore is part of paying the debt.
+        run: |
+          /tmp/scanners/kube-score score \
+            --ignore-test container-resources,container-ephemeral-storage-request-and-limit,container-image-pull-policy,container-security-context-user-group-id,pod-networkpolicy,pod-probes,container-security-context-readonlyrootfilesystem \
+            /tmp/scan/todo/k8s/*.yaml /tmp/scan/moderation/k8s/*.yaml
+
+      - name: polaris — the danger threshold
+        # The config is the tool's own default for its pinned version — fetched rather than
+        # committed, so the only diff this repository carries is the exemption list. debt: the log
+        # store may run as root (docs/82 §82.11); the exemption names the two controllers and no
+        # rule besides.
+        run: |
+          curl -sSL -o /tmp/scanners/polaris.yaml \
+            "https://raw.githubusercontent.com/FairwindsOps/polaris/${POLARIS_VERSION}/pkg/config/default.yaml"
+          cat >> /tmp/scanners/polaris.yaml <<'EOF'
+          exemptions:
+            - controllerNames: ["todo-log", "m20-moderation-log"]
+              rules: ["runAsRootAllowed"]
+          EOF
+          /tmp/scanners/polaris audit --audit-path /tmp/scan/todo/k8s \
+            --config /tmp/scanners/polaris.yaml --set-exit-code-on-danger \
+            --only-show-failed-tests --format pretty
+          /tmp/scanners/polaris audit --audit-path /tmp/scan/moderation/k8s \
+            --config /tmp/scanners/polaris.yaml --set-exit-code-on-danger \
+            --only-show-failed-tests --format pretty
+
+      - name: checkov — the policy set
+        # refused: CKV_K8S_11 (CPU limits, docs/06 §6.3), CKV_K8S_15 (pull policy Always — digest
+        #          addressing), CKV_K8S_43 (image digest — the dev emission names the tag the image
+        #          build pins).
+        # debt:    CKV_K8S_10/12/13 (requests and memory limits — `beck tune`), CKV_K8S_8/9 (log-
+        #          store probes), CKV_K8S_22/23/29/40 (log-store hardening), CKV2_K8S_6 (log-store
+        #          NetworkPolicy), CKV_K8S_35 (credentials as env rather than a file), CKV_K8S_38
+        #          (service-account token automounted beside an empty Role). All docs/82 §82.11.
+        run: |
+          checkov -d /tmp/scan/todo/k8s -d /tmp/scan/moderation/k8s \
+            --framework kubernetes --quiet --compact \
+            --skip-check CKV_K8S_8,CKV_K8S_9,CKV_K8S_10,CKV_K8S_11,CKV_K8S_12,CKV_K8S_13,CKV_K8S_15,CKV_K8S_22,CKV_K8S_23,CKV_K8S_29,CKV_K8S_35,CKV_K8S_38,CKV_K8S_40,CKV_K8S_43,CKV2_K8S_6
+
   the-second-platform:
     # A `Platform` trait with one implementation is a claim; the seam is only load-bearing if the
     # other target is exercised too. This job is rung 2 of §6.6's parity ladder — one host, real

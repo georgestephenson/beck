@@ -163,8 +163,10 @@ either: `replicas` is 1, so a spread constraint would be a field with no effect.
 since half-closed: `compiler.yml` runs a k3d cluster and `conformance.rs` submits the objects
 through the full admission chain (`BECK_REQUIRE_CLUSTER=1`, so the skip is forbidden there). What
 admission decides is that the fields are *admissible*, not that they are *best practice* — the
-third-party scanner gate ([`28`](28-releases-and-deployment.md) §28.5) is scheduled to hold exactly
-that, with checkers this project does not maintain.
+third-party scanner gate (`compiler.yml`'s `ecosystem-oracles` job,
+[`21`](21-tests-in-beck-and-proof.md) §21.4 rung 6) holds exactly that, with checkers this project
+does not maintain, and its suppression list is the named ledger of what is refused and what is
+debt.
 
 **Resource requests** are a genuinely hard inference problem. Plan: v1 uses a per-language-construct
 heuristic plus explicit override; v1.x records actual usage via the operator and OpenTelemetry and

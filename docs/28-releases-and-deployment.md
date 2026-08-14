@@ -18,7 +18,10 @@ pipeline downstream of it, with no tag pushed through it yet. Four workflows:
 - **`compiler.yml`** — format, clippy, the full suite (differential and replay harnesses
   included), the sketch compiled/served/replayed, `beck test` over sketch + corpus + SICP with a
   deliberately-failing negative control, the slicer and incremental-analysis assertions,
-  annotation-free placement, wire-compat, the object graph, a k3d admission job, a compose
+  annotation-free placement, wire-compat, the object graph, a k3d admission job, an
+  ecosystem-oracles job (four pinned manifest scanners — `kubeconform`, kube-score, Polaris,
+  Checkov — over `beck build`'s output, [`21`](21-tests-in-beck-and-proof.md) §21.4 rung 6, every
+  suppression named as refusal or debt), a compose
   parity job, the thin-client size budget, the full `cargo-deny` check ([ADR-0004](adr/0004-full-cargo-deny-gate.md)), a Postgres
   service behind the log-contract test, an image built from the real package repository and signed
   and verified ([`92`](92-supply-chain-and-release-report.md)), and a release-profile measurements lane ([ADR-0006](adr/0006-ci-measurements-lane.md)).
@@ -155,7 +158,6 @@ Gates deliberately not added yet, and when each becomes due — so absence stays
 | Mutation testing ≥85% on checker/solver/splitter (§13.8) | Phase 3 tail, nightly lane | Too slow for PRs |
 | Docs-as-tests: Beck blocks in docs checked (§13.6) | With the tutorial | Today's doc snippets are design sketches, deliberately ahead of the language |
 | Per-session memory / arrangement-entry gates | Needs an owner | [`23`](23-incremental-views-report.md) §23.10: exported, ungated, deferred by four reports; the value that should fail a build has to be defended, not guessed |
-| Third-party manifest scanners over `beck build` output — `kubeconform`, kube-score, Polaris, Checkov | **Due now** — the next change to `compiler.yml` | Not a deferral, a schedule: [`21`](21-tests-in-beck-and-proof.md) §21.4's ladder tops out at admissibility, and its only third-party deciders are a YAML parser and the API server, which check *validity*. §6.3's hardening defaults are held by our own invariants alone. The scanners are the oracle this project does not maintain — the same discipline as `clbg/` reading the Game's own constants — and they turn "production-grade generated YAML" into somebody else's verdict, renewed on every merge. Run them over the emitted directory; a finding fails the build; a rule we deliberately break (CPU limits, §6.3) is suppressed by name, in the workflow, where the suppression is a reviewable diff |
 
 ## 28.6 The review's ledger
 

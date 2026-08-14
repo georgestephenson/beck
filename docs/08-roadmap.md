@@ -154,9 +154,11 @@ read it.**
   the Compose implementation priced a new platform at one file and one flag
   ([`07`](07-dependencies.md) §7.8), and much of "everyone uses AWS" is teams that run no
   Kubernetes at all. After the Crossplane emitter, if adoption says so.
-- `beck init ci` grows the GitLab CI emitter §6.8 already names beside the GitHub Actions one,
-  and the third-party manifest-scanner gate lands in this project's own CI first
-  ([`28`](28-releases-and-deployment.md) §28.5).
+- `beck init ci` grows the GitLab CI emitter §6.8 already names beside the GitHub Actions one.
+  The third-party manifest-scanner gate landed in this project's own CI first (`compiler.yml`'s
+  `ecosystem-oracles` job, [`21`](21-tests-in-beck-and-proof.md) §21.4 rung 6); the Phase 4 form
+  of the same idea is `beck init ci` emitting the scanner step into a *user's* workflow, with the
+  suppression list the emitter already knows it deserves.
 - OpenTelemetry cross-tier tracing on by default; `beck tune` right-sizing.
 - Multi-arch images; air-gapped install; OCI package registry via ORAS (§6.7).
 - **FFI**: C ABI both directions; JS interop for the client tier; a Python bridge (§9.2) — the
@@ -423,3 +425,61 @@ discipline that avoids the collision.
    is first-come. *Claim the number in a stub row early, or expect to renumber.*
 4. **`Cargo.lock`** — any new dependency. *A and B should not both add dependencies in the same
    week; if they must, take the lock from `main` and re-resolve rather than merging it.*
+
+## 8.6 The ≥1% rule: which deployment realities earn support
+
+A technology that ≥1% of developers report using in a major annual survey is a **reality**, not a
+preference, and earns an explicit verdict here rather than silence — unless it is a passing fad
+(the survey two years running is the test), incompatible with Beck's semantics, or a competitor
+whose problem Beck dissolves. The verdicts reuse [`35`](35-standards-landscape.md)'s vocabulary —
+**adopt** (named roadmap work), **supported** (works today, or falls out of vendor-neutral
+emission with no specific work), **watch** (a dated pin with a named trigger), **decline** (with
+the reason stated).
+
+The list below is the Stack Overflow 2025 developer survey's cloud/infrastructure section
+(percentage of all respondents; a dated claim, re-read it when the survey is), filtered to what
+touches deployment. The pattern worth stating once: **most rows cost nothing because the emission
+is vendor-neutral** — a standard OCI image, standard Kubernetes objects, OTLP telemetry — and the
+rule's real work is naming the few places where neutrality is not enough.
+
+| Reality (usage) | Verdict |
+|---|---|
+| Docker (71.1%) | supported — load-bearing: the image is an OCI layout, the Compose `Platform` is rung 2 |
+| AWS (43.3%) | **adopt** — Phase 4's managed-cloud path: EKS first, the Crossplane emitter for RDS/buckets/DNS, ECS/Fargate as the named market-scope decision |
+| Kubernetes (28.5%) | supported — the backend ([`06`](06-kubernetes-and-packaging.md)). The 71.1 − 28.5 gap is the ECS/Fargate argument in one subtraction: most teams that containerise never run a cluster |
+| Azure (26.3%), Google Cloud (24.6%) | supported through neutrality — AKS/GKE take today's manifests unchanged, and the Crossplane emitter must stay provider-neutral (a managed-Postgres claim, not an RDS claim) so these two come for free. No provider-specific work until demand names some |
+| Cloudflare (20.1%) | **adopt** for the static half — Pages is a static-host `Platform` target (Phase 4). *Watch* Workers for the server tier: its compute model may suit a stateless slice, and the trigger is the static rung existing |
+| Terraform (17.8%) | supported as a *target*, excluded as a *dependency* — the licence verdict ([`07`](07-dependencies.md)) is about what Beck links, not what estates speak: the OpenTofu-compatible emitter is how a Terraform shop consumes Beck's infra without Beck depending on BUSL code |
+| Firebase (13.1%) | decline as a platform — the event log, derived sync and generated auth are the parts of Firebase Beck exists to dissolve. Interop stands where it already does: `identity = external(issuer=…)` accepts any OIDC issuer |
+| Prometheus (11.8%), Datadog (8.9%), Splunk (4.5%), New Relic (3.8%) | supported through OTLP — D17's telemetry speaks the one vendor-neutral wire format all four ingest; no per-vendor work, ever |
+| Ansible (11.7%) | decline — VM configuration management is a layer Beck's artefacts do not have; GitOps over emitted manifests is the replacement, not a port |
+| Podman (11.1%) | supported nearly for free — the image is daemonless OCI already; the cheap follow-through is rung 2 accepting a Podman socket where it finds one |
+| DigitalOcean (10.7%) | supported through neutrality (DOKS + any managed Postgres); watch for a Crossplane provider gap |
+| Vercel (10.6%), Netlify (5.9%) | **adopt** for the static half, decline for the server tier — §8.6.1 |
+| Supabase (5.4%) | decline as a platform (same dissolution as Firebase); noted that its hosted Postgres is wire-compatible with the substrate, which costs nothing and is not work |
+| Heroku (5.4%), Railway (1.5%) | watch — both run OCI containers, so the image likely deploys today; the trigger for saying so in docs is somebody executing it, per the rule that an artefact nobody has run is a design document |
+| IBM Cloud (1.2%) | supported through neutrality; no named work |
+
+### 8.6.1 Meet the bar, don't rent the platform
+
+The strategic question under the Vercel row deserves its answer stated once: **how much of Beck is
+"deploys fast to Vercel", and how much is "you don't need Vercel"?**
+
+The premise decides it. Vercel's value is a developer-experience bar — `git push`, site is live,
+previews per branch — and a compute model: stateless functions plus a CDN. Beck's semantics
+*contradict* the compute model (a `durable` fold and `merge_clients()` need a long-lived server
+that owns state) and *must meet* the DX bar with its own ladder: rung 0 boots in under a second,
+`/_beck` is the dashboard no AppHost had to declare ([`10`](10-decisions.md) D17), `beck init ci`
+plus GitOps is `git push`-to-deploy on infrastructure the team already owns. So the split is:
+
+- **the static half is a supported target** — where the effect row says a CDN is a sufficient
+  computer, emit for Pages/Netlify/Vercel and be the best citizen there is;
+- **the server tier is not for rent** — its home is the generated, self-owned stack, and making
+  that stack match a PaaS for time-to-first-deploy is roadmap work (the first release, the
+  registry push, the Crossplane emitter — Phase 4), not a reason to bend the semantics to a
+  function runtime.
+
+Preview environments per branch — the one Vercel feature the ladder does not yet name — are
+`beck up` pointed at a namespace with a TTL, which is the playground's rung C machinery
+([`17`](17-playground.md) §17.3) wearing a different hat. Named here so the gap is a row on a
+list rather than a surprise.
