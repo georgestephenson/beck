@@ -43,7 +43,7 @@ use support::failfix;
 use support::genfix::{self, GENERIC};
 use support::heapfix::{self, RECORDS, STILL_REFUSED, UNIONS};
 use support::hostfix::{self, Stated, EFFECTS};
-use support::listfix::{self, LISTS};
+use support::listfix::{self, LISTS, PATTERNS};
 use support::mapfix::{self, MAPS};
 use support::scalar::{
     float_pairs, floats, ints, pairs, render, singles, ARITHMETIC, CONTROL, REALS, RECURSION,
@@ -1456,4 +1456,29 @@ fn the_three_backends_agree_on_the_host_effects() {
         compared += all.agree(name, std::slice::from_ref(&args));
     }
     println!("{compared} host-effect calls compared across every backend on this machine");
+}
+
+/// A list, taken apart by a **pattern**, over every backend this machine can offer.
+///
+/// `native.rs`'s twin, and it exists separately for this file's stated reason: the two emitters are
+/// two independent readings of one language, and a length test written with the wrong comparison —
+/// `>=` where the pattern has no tail binder — shows here and nowhere else.
+#[test]
+fn the_three_backends_agree_on_list_patterns() {
+    linker!();
+    let all = All::over("patterns.beck", PATTERNS);
+    let xs = listfix::lists();
+    let mut n = 0;
+    for name in [
+        "described",
+        "tail",
+        "after_two",
+        "leading_one",
+        "exactly_two",
+    ] {
+        n += all.agree(name, &listfix::singles(&xs));
+    }
+    n += all.agree("inner_first", &listfix::singles(&listfix::nested()));
+    n += all.agree("joined", &listfix::singles(&listfix::texts()));
+    println!("{n} list-pattern calls compared across every backend on this machine");
 }

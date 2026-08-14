@@ -5669,10 +5669,83 @@ impl<'a> Body<'a> {
                 }
                 Ok(())
             }
-            Pattern::List { .. } => {
-                Err("matches a list pattern, and a collection is not on this heap yet".into())
+            // `[]`, `[a, b]`, `[first, *rest]`. The length is tested before any element is read,
+            // so nothing here can load past the end of the block — the other emitter's arm has the
+            // same order for the same reason, and this is written again rather than shared because
+            // the two are held to *agreeing* (`docs/97` §97.3).
+            Pattern::List { items, rest } => {
+                let Repr::List(at) = v.ty else {
+                    return Err(format!(
+                        "matches a list pattern against {}",
+                        self.heap.show(v.ty)
+                    ));
+                };
+                let element = self.heap.element(at);
+                let lists = self.lists();
+                let arena = self.arena();
+                let n = lists.count(arena, v.v, b, m);
+                // No tail binder means an exact length; a tail binder means "at least this many".
+                let want = items.len() as i64;
+                let long = if rest.is_some() {
+                    b.ins().icmp_imm_s(IntCC::SignedGreaterThanOrEqual, n, want)
+                } else {
+                    b.ins().icmp_imm_s(IntCC::Equal, n, want)
+                };
+                self.branch(long, fail, b);
+
+                if !items.is_empty() {
+                    let data = lists.data(arena, v.v, b, m);
+                    for (i, sub) in items.iter().enumerate() {
+                        let p = b.ins().iadd_imm_s(data, (i as u64 * heap::WORD) as i64);
+                        let x = self.load_at(p, element, b);
+                        self.probe(sub, &x, fail, undo, b, m)?;
+                    }
+                }
+
+                // A fresh list, copied — which is what the evaluator does with the same `O(n)`
+                // (`docs/27` §27.3), so neither backend is quietly quadratic against the other.
+                if let Some(Some(var)) = rest {
+                    let start = b.ins().iconst(types::I64, want);
+                    let left = b.ins().iadd_imm_s(n, -want);
+                    let idx = self.span(Span::NONE);
+                    let at_span = b.ins().iconst(types::I32, i64::from(idx));
+                    let err = self.err();
+                    let f = m.declare_func_in_func(lists.copy, b.func);
+                    let call = b.ins().call(f, &[err, v.v, start, left, at_span]);
+                    let tail = b.inst_results(call)[0];
+                    self.check_call(b);
+                    let tail = Val { v: tail, ty: v.ty };
+                    undo.push((*var, self.env.insert(*var, tail)));
+                }
+                Ok(())
             }
         }
+    }
+
+    /// A word at an address, as the value its [`Repr`] says it is.
+    ///
+    /// [`Body::load_field`]'s twin for something that is already a pointer — a list's element,
+    /// where that one starts from an object's offset and a slot.
+    fn load_at(&mut self, p: IrValue, repr: Repr, b: &mut FunctionBuilder<'_>) -> Val {
+        let flags = MemFlagsData::trusted();
+        let v = match repr {
+            Repr::Float => b.ins().load(types::F64, flags, p, 0),
+            // An `I8` holding 0 or 1, which is the invariant every comparison here keeps.
+            Repr::Bool => {
+                let w = b.ins().load(types::I64, flags, p, 0);
+                let set = b.ins().icmp_imm_s(IntCC::NotEqual, w, 0);
+                b.ins().uextend(types::I8, set)
+            }
+            Repr::Int
+            | Repr::Str
+            | Repr::List(_)
+            | Repr::Map(_)
+            | Repr::Obj(_)
+            | Repr::Fn(_)
+            | Repr::Html
+            | Repr::Attr => b.ins().load(types::I64, flags, p, 0),
+        };
+        Val { v, ty: repr }
     }
 
     /// Carry on if `cond`, and go to `fail` if not.

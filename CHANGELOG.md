@@ -12,6 +12,29 @@ Newest first.
 
 ## Unreleased
 
+### The native backends
+
+- **`case [first, *rest]` compiles**, to both code generators
+  ([`docs/119`](docs/119-a-list-comes-apart-report.md)) — the last pattern form they refused. The
+  length is tested before any element is read, so nothing can load past the end of a short list;
+  everything inside a pattern is [`docs/90`](docs/90-nested-patterns-report.md)'s recursion,
+  unchanged.
+  - **The refusal it replaces had been false for three reports.** It read "a collection is not on
+    this heap yet", and a collection has been on this heap since
+    [`docs/106`](docs/106-lists-arrive-read-only-report.md).
+    `a_refusal_that_blames_a_type_is_asked_whether_that_type_has_one` exists to catch exactly this
+    and could not: it resolves the **type** a reason blames, and this sentence names no type. The
+    corpus pass now also holds every refusal against a list of sentences this backend may no longer
+    say about itself — checked by putting the old refusal back and watching it name its six
+    definitions.
+  - **The tail is copied, not borrowed.** A suffix header offset into the element run would have an
+    element read as the data block's `used`, which is the word
+    [`docs/113`](docs/113-a-list-grows-report.md)'s append writes at. The evaluator copies too
+    (`Arc<Vec<_>>` cannot share a suffix), so neither backend is quietly quadratic against the
+    other.
+  - **889 → 905 definitions compile and refusals go 189 → 173**: six list patterns, and ten
+    definitions that were only waiting on them.
+
 ### Concurrency
 
 - **A `parallel:` child that fails stops its siblings**

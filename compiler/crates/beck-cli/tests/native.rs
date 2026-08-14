@@ -44,7 +44,7 @@ use support::failfix;
 use support::genfix::{self, GENERIC};
 use support::heapfix::{self, RECORDS, STILL_REFUSED, UNIONS};
 use support::hostfix::{self, Stated, EFFECTS};
-use support::listfix::{self, LISTS};
+use support::listfix::{self, LISTS, PATTERNS};
 use support::mapfix::{self, MAPS};
 use support::scalar::{
     float_pairs, floats, ints, pairs, render, singles, ARITHMETIC, CONTROL, REALS, RECURSION,
@@ -2576,8 +2576,9 @@ fn corpus(toolchain: beck_llvm::Toolchain) {
     // is over the *whole tree* rather than over a fixture. Each of these was a refusal reason
     // until the release that took it off the list, so this is the sentence "it no longer appears
     // anywhere" with a test attached rather than a grep somebody ran once.
-    let blamed: Vec<String> = blames
-        .into_iter()
+    let refusal_reasons = blames;
+    let blamed: Vec<String> = refusal_reasons
+        .iter()
         .filter(|(_, reason)| {
             ["`now`", "`uuid`", "`secret_env`", "`http_fetch`", "`raise`"]
                 .iter()
@@ -2588,6 +2589,27 @@ fn corpus(toolchain: beck_llvm::Toolchain) {
     assert!(
         blamed.is_empty(),
         "these primitives compile, so nothing may be refused because of one: {blamed:#?}"
+    );
+    // …and the same question about the *prose*, which is the half that got away.
+    //
+    // `a_refusal_that_blames_a_type_is_asked_whether_that_type_has_one` catches a reason that
+    // names a **type** with a layout. It could not catch "a collection is not on this heap yet",
+    // which named no type at all and stayed true-sounding for three reports after `docs/106` made
+    // it false. So these are the sentences this backend may no longer say about itself, and the
+    // list grows whenever a report retires a class rather than a name.
+    let stale: Vec<String> = refusal_reasons
+        .iter()
+        .filter(|(_, reason)| {
+            ["not on this heap", "no collection", "text is not"]
+                .iter()
+                .any(|dead| reason.contains(dead))
+        })
+        .map(|(name, reason)| format!("{name}: {reason}"))
+        .collect();
+    assert!(
+        stale.is_empty(),
+        "a heap that holds text, lists and maps may not refuse anything by saying it does not: \
+         {stale:#?}"
     );
 }
 
@@ -3190,4 +3212,41 @@ fn what_a_question_carries_is_a_decision_and_not_an_accident() {
          {small} bytes over 16 elements and {large} over 4,096",
         clock[0]
     );
+}
+
+/// A list, taken apart by a **pattern** — the length test, the elements and the tail.
+///
+/// `docs/119` is what this is the differential for. The refusal it replaces said "a collection is
+/// not on this heap yet", which stopped being true at [`docs/106`](../../../../docs/106-lists-arrive-read-only-report.md)
+/// and nothing noticed — the third time a refusal's *stated reason* has outlived the thing it
+/// stated ([`docs/105`](../../../../docs/105-text-on-the-heap-report.md) §105.4).
+#[test]
+fn the_two_backends_agree_on_list_patterns() {
+    let _ = toolchain!();
+    let both = Both::over("patterns.beck", PATTERNS);
+    let xs = listfix::lists();
+    let mut compared = 0;
+    for name in [
+        "described",
+        "tail",
+        "after_two",
+        "leading_one",
+        "exactly_two",
+    ] {
+        compared += both.agree(name, &listfix::singles(&xs));
+    }
+    compared += both.agree("inner_first", &listfix::singles(&listfix::nested()));
+    compared += both.agree("joined", &listfix::singles(&listfix::texts()));
+    // The set has to *contain* the boundaries, or this passed without reaching one.
+    for (name, arg, want) in [
+        ("described", vec![], "none"),
+        ("described", vec![9], "one:9"),
+        ("described", vec![1, 2, 3], "many:1:2"),
+    ] {
+        let list = Value::List(Arc::new(arg.into_iter().map(Value::Int).collect()));
+        let (walked, compiled) = both.call(name, &[list]);
+        assert_eq!(walked, compiled);
+        assert_eq!(walked.expect("answers"), Value::str_(want));
+    }
+    println!("{compared} list-pattern calls compared, and both backends agreed on every one");
 }

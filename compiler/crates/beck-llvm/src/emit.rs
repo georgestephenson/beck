@@ -1227,10 +1227,83 @@ impl<'a> Function<'a> {
                 }
                 Ok(())
             }
-            Pattern::List { .. } => {
-                Err("matches a list pattern, and a collection is not on this heap yet".into())
+            // `[]`, `[a, b]`, `[first, *rest]` — the length, then the fixed elements, then the
+            // tail. The order matters: an element is read only after the length test has proved it
+            // is there, so nothing here can load past the end of the block.
+            Pattern::List { items, rest } => {
+                let Repr::List(at) = v.ty else {
+                    return Err(format!(
+                        "matches a list pattern against {}",
+                        self.heap.show(v.ty)
+                    ));
+                };
+                let element = self.heap.element(at);
+                let n = self.list_len(v);
+                // No tail binder means an exact length; a tail binder means "at least this many",
+                // which is the evaluator's own rule.
+                let long = self.fresh();
+                let test = if rest.is_some() { "sge" } else { "eq" };
+                self.line(format!("{long} = icmp {test} i64 {n}, {}", items.len()));
+                self.branch(&long, fail);
+
+                for (i, sub) in items.iter().enumerate() {
+                    let addr = self.element_addr(v, &i.to_string());
+                    let x = self.load_at(&addr, element);
+                    self.probe(sub, &x, fail, undo)?;
+                }
+
+                // The tail is a **fresh list**, copied, which is what the evaluator does — an
+                // `Arc<Vec<_>>` cannot share a suffix either (`docs/27` §27.3), so this is `O(n)`
+                // per step on both backends rather than one being quietly quadratic against the
+                // other. A borrowed suffix would also be unsound here for a reason the evaluator
+                // does not have: a list's header points at a data block whose own header carries
+                // `used`, and an offset header would read an element as that count.
+                if let Some(Some(var)) = rest {
+                    let left = self.fresh();
+                    self.line(format!("{left} = sub i64 {n}, {}", items.len()));
+                    self.uses_heap = true;
+                    let idx = self.span(Span::NONE);
+                    let tail = self.fresh();
+                    self.line(format!(
+                        "{tail} = call i64 @\"beck.list.copy\"(ptr %err, i64 {}, i64 {}, i64 {left}, i32 {idx})",
+                        v.text,
+                        items.len()
+                    ));
+                    self.check_call();
+                    let tail = Val {
+                        text: tail,
+                        ty: v.ty,
+                    };
+                    undo.push((*var, self.env.insert(*var, tail)));
+                }
+                Ok(())
             }
         }
+    }
+
+    /// A word at an address, as the value its [`Repr`] says it is.
+    ///
+    /// [`Function::load_field`]'s twin for something that is already a pointer — a list's element,
+    /// where that one starts from an object's offset and a slot.
+    fn load_at(&mut self, p: &str, repr: Repr) -> Val {
+        let r = self.fresh();
+        match repr {
+            Repr::Float => self.line(format!("{r} = load double, ptr {p}")),
+            Repr::Bool => {
+                let raw = self.fresh();
+                self.line(format!("{raw} = load i64, ptr {p}"));
+                self.line(format!("{r} = icmp ne i64 {raw}, 0"));
+            }
+            Repr::Int
+            | Repr::Str
+            | Repr::List(_)
+            | Repr::Map(_)
+            | Repr::Obj(_)
+            | Repr::Fn(_)
+            | Repr::Html
+            | Repr::Attr => self.line(format!("{r} = load i64, ptr {p}")),
+        }
+        Val { text: r, ty: repr }
     }
 
     /// Carry on if `cond`, and go to `fail` if not.
