@@ -332,3 +332,90 @@ fn how_each_phase_scales_in_width_and_in_depth() {
         }
     }
 }
+
+/// What the two answers that *change the file* cost, at two sizes.
+///
+/// Both are `O(file)` and neither is on the keystroke path: hints are asked for once per viewport
+/// and a rename once per rename. What is worth measuring is the **constant**, because a rename
+/// re-analyses the text it proposes to write — [`Editor::rename`](beck_core::editor::Editor::rename)
+/// declines an edit that would not compile, and that promise costs one more analysis of the file.
+///
+/// Two sizes rather than one, per [`AGENTS.md`](../../../../AGENTS.md): one measurement cannot tell
+/// a linear cost from a quadratic one. Median of five, like every other number in this file, and on
+/// a stack big enough for the front end — a cold first call parses the standard library too, and
+/// reporting that as the cost of a keystroke would overstate it by an order of magnitude.
+#[test]
+fn what_an_inlay_hint_and_a_rename_cost() {
+    use beck_core::editor::Editor;
+
+    let root = root();
+    println!();
+    println!("the editor's two editing answers, in-process, median of five");
+    for path in [
+        root.join("corpus/01-counter.beck"),
+        root.join("awfy/cd.beck"),
+    ] {
+        let src = std::fs::read_to_string(&path).expect("readable");
+        let name = path.display().to_string();
+        let lines = src.lines().count();
+
+        let median = |mut runs: Vec<Duration>| {
+            runs.sort();
+            runs[runs.len() / 2]
+        };
+        let timed = |f: &dyn Fn()| {
+            median(
+                (0..5)
+                    .map(|_| {
+                        let started = Instant::now();
+                        f();
+                        started.elapsed()
+                    })
+                    .collect(),
+            )
+        };
+
+        beck_diag::depth::on_the_front_end_stack(|| {
+            // Once before anything is timed: the first analysis in a process parses the standard
+            // library, and that cost is not part of any of the three questions below.
+            let editor = Editor::of(&name, &src);
+            let analysis = timed(&|| {
+                Editor::of(&name, &src);
+            });
+            let hints = editor.hints().len();
+            let hinting = timed(&|| {
+                editor.hints();
+            });
+
+            // The first name that renames, so the number is a rename that happened rather than a
+            // refusal that returned early.
+            let names: Vec<String> = editor.symbols().map(|(n, _)| n.to_string()).collect();
+            let mut renaming = Duration::default();
+            let mut renamed = "none";
+            for symbol in &names {
+                let (start, end) = editor.symbol(symbol).and_then(|s| s.span).expect("a span");
+                let caret = start
+                    + src[start as usize..end as usize]
+                        .find(symbol.as_str())
+                        .expect("a declaration writes its own name") as u32;
+                if editor.rename(caret, "renamed_by_the_measurement").is_err() {
+                    continue;
+                }
+                renaming = timed(&|| {
+                    editor.rename(caret, "renamed_by_the_measurement").ok();
+                });
+                renamed = symbol;
+                break;
+            }
+
+            println!(
+                "  {:<20} {lines:>4} lines  analyse {:>6.2} ms  hints {:>6.3} ms ({hints})  \
+                 rename {:>6.2} ms (`{renamed}`)",
+                path.file_name().expect("a file").to_string_lossy(),
+                ms(analysis),
+                ms(hinting),
+                ms(renaming),
+            );
+        });
+    }
+}

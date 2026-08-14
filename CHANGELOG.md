@@ -12,6 +12,54 @@ Newest first.
 
 ## Unreleased
 
+### The editor
+
+- **`beck lsp` edits: references, document highlight, prepare-rename, rename and inlay hints**
+  ([`docs/110`](docs/110-the-editor-edits-report.md)). Every answer is in `beck_core::editor`, so a
+  browser tab can ask for them too; the server translates JSON-RPC and nothing else (§4.6). This
+  empties [`docs/08`](docs/08-roadmap.md) §8.5.5's **Lane C** and closes the two rows
+  [`docs/65`](docs/65-lsp-report.md) §65.5 called its largest gaps.
+  - **A rename is the claim that a set of byte ranges is every place a name is written**, and it is
+    made only when the file's two accounts of the name agree: the lexical one, which misses nothing
+    and knows nothing, and the checked program's, which knows what each reference means and is not
+    complete. Where they disagree the rename declines. The edits are the *lexical* ranges, because a
+    `Global` node that is called carries the span of the **call** — editing that span would replace
+    a call with a name.
+  - **Then the edit is made and re-analysed.** A rename whose result does not compile is not
+    offered, and neither is one that still compiles as a *library* rather than as the application it
+    was. That costs a second compile of one file and is what makes the paragraph above a fact about
+    the text rather than an argument about the IR.
+  - **316 of the corpus's 325 names rename** — verified compiling *and* publishing the same
+    interface with one name substituted. Eight decline because a signal's name is also a model
+    field; one declines because the edit was made and the file no longer type-checked, and that one
+    is asserted to keep happening, because a corpus that stopped triggering the net would stop
+    testing it. Gated by `lsp.rs::renaming_every_name_in_the_corpus_either_works_or_says_why`.
+  - **`page` is a keyword** — `expect page contains "…"` reads it as syntax — *and* the name of a
+    signal in nearly every corpus program. Counting only identifier tokens meant the most common
+    name in the language had no occurrences at all, so the lexical account counts a keyword run too,
+    and a test block's clauses are treated as the grammar they are.
+  - **Inlay hints are the two inferred halves of a signature and nothing else**: the tier §3.4 solves
+    for and the row §3.6 infers, each labelled with the text an author could paste in at that
+    offset — asserted by pasting it and re-analysing. `@on(any)` is never hinted, because §3.3's
+    unplaced tier is the absence of a placement rather than one.
+  - **`Def::tier_is_annotated` does not mean somebody wrote it.** `project::link` sets it on every
+    definition it links, so in the linked program an editor holds it is true of everything, and
+    every definition was hinted with the annotation it already had. The checker's own answer is kept
+    beside it as `tier_is_written`, set once and never overwritten. Placement is unchanged: the
+    solver reads the original flag.
+  - **`Expectation::Place` kept no span for the name it names**, so `expect place(page) == client`
+    could not be edited or pointed at. It has one.
+  - **`beck fmt` is still not wired to `textDocument/formatting`**, and now for a reason rather than
+    by omission: the lexer skips ordinary comments, so a format-on-save would delete every `#` line
+    in the file. The missing piece is comment-preserving printing.
+  - **Cost**, from `measure_compile.rs::what_an_inlay_hint_and_a_rename_cost` (release, median of
+    five): a 59-line file analyses in 1.02 ms, hints in 0.056 ms and renames in 1.12 ms; the largest
+    real file in the tree, 914 lines, in 16.84 ms, 2.10 ms and 19.03 ms. A rename is **one more
+    analysis**, which is the verification pass priced. Hinting was `definitions × tokens` when it
+    was first written — [`docs/64`](docs/64-compile-speed-report.md) §64.2's defect in a new file —
+    and is now gated at ×1.42 per definition across 16× as many, inside
+    `compile_speed.rs::the_front_end_cost_per_declaration_does_not_grow_with_a_module`.
+
 ### The release
 
 - **The release attests build provenance, and the installer can check it** —

@@ -179,4 +179,78 @@ fn the_front_end_cost_per_declaration_does_not_grow_with_a_module() {
              is an exponent rather than a constant factor: {note}"
         );
     }
+
+    // Last, and that is not arbitrary either. Anything that runs *before* the three axes warms the
+    // allocator, and a warmed `small` measurement against a cold `large` one is a ratio that has
+    // moved without the compiler changing: this measured ×4.36 against a bound of 4.0 when it ran
+    // first, and ×2.73 — the residual the module docs record — when it does not run at all.
+    hints_do_not_grow_per_definition();
+}
+
+/// A module of `n` definitions that each perform something and each need placing.
+///
+/// `wide` is the wrong shape for the editor's question: its definitions are pure, so they are
+/// unplaced and their rows are empty, and an inlay hint has nothing to say about any of them. Each
+/// of these reads the process environment, so every one carries an inferred row *and* a tier the
+/// solver had to choose — which is a hint apiece, and the work this gate is about.
+fn hinted(n: usize) -> String {
+    (0..n)
+        .map(|i| format!("def h{i}() -> secret[Str]:\n    return secret_env(\"K{i}\")\n"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Inlay hints cost the same per definition however many there are.
+///
+/// The shape this guards is the one the first version of
+/// [`Editor::hints`](beck_core::editor::Editor::hints) had and
+/// [`docs/110`](../../../../docs/110-the-editor-edits-report.md) §110.5 records: finding the colon
+/// that ends a signature by filtering the file's whole token stream, once per definition, which is
+/// `definitions × tokens` and reads as a small constant at the sizes anybody tests by hand. It is
+/// the same defect [`docs/64`](../../../../docs/64-compile-speed-report.md) §64.2 found in
+/// placement, in a different file and for the same reason: a per-item pass that walks the module.
+///
+/// A function rather than a second `#[test]`, for this file's own reason: the two would run
+/// concurrently and measure the contention. Written as one first, it pushed the axis above from
+/// ×2.73 to ×4.18 and failed a gate it has nothing to do with — which is the flake §13.7 warns
+/// about, caught the same way the first draft of that test caught it.
+fn hints_do_not_grow_per_definition() {
+    let per = |n: usize| {
+        let src = hinted(n);
+        beck_diag::depth::on_the_front_end_stack(|| {
+            let editor = beck_core::editor::Editor::of("hints.beck", &src);
+            assert!(
+                !editor.diagnostics().has_errors(),
+                "the generated program has to compile, or this measures error recovery"
+            );
+            let hints = (0..5)
+                .map(|_| {
+                    let started = Instant::now();
+                    let count = editor.hints().len();
+                    (started.elapsed(), count)
+                })
+                .min()
+                .expect("five runs");
+            assert_eq!(
+                hints.1,
+                2 * n,
+                "every definition should carry both hints, or this measures the wrong thing"
+            );
+            hints.0.as_secs_f64() / n as f64
+        })
+    };
+
+    let (small, large) = (200usize, 3_200usize);
+    let (a, b) = (per(small), per(large));
+    let ratio = b / a;
+    println!(
+        "inlay hints: {small} → {large} definitions, {:.2} → {:.2} µs each — ×{ratio:.2}",
+        a * 1e6,
+        b * 1e6
+    );
+    assert!(
+        ratio < MAX_GROWTH,
+        "sixteen times the definitions cost ×{ratio:.2} more to hint *each* — hinting is walking \
+         the module once per definition again"
+    );
 }

@@ -381,12 +381,15 @@ dependencies whose signatures didn't change.
   language surface is built as written, both forms —
   `identity = external(issuer=…)` is a declaration, so §6.5's egress rule covers the issuer like any
   other peer (§95.7).*
-- LSP: completion, hover with *inferred placement*, go-to-def, rename, inline diagnostics.
-  *All but **rename** are built: hover, go-to-def and inline diagnostics by
-  [`65`](65-lsp-report.md), completion and semantic-token highlighting by
-  [`103`](103-playground-phase-3-report.md) §103.1 — which also moved every one of those answers
-  into `beck_core::editor`, so the playground's editor and an editor's are the same answers rather
-  than two implementations of them.*
+- ~~LSP: completion, hover with *inferred placement*, go-to-def, rename, inline diagnostics.~~
+  ***Built, every entry.*** Hover, go-to-def and inline diagnostics by [`65`](65-lsp-report.md);
+  completion and semantic-token highlighting by [`103`](103-playground-phase-3-report.md) §103.1 —
+  which also moved every one of those answers into `beck_core::editor`, so the playground's editor
+  and an editor's are the same answers rather than two implementations of them; **rename**, with
+  references, document highlight and inlay hints, by
+  [`110`](110-the-editor-edits-report.md). Placement is shown twice over: on hover as `@on(tier)`,
+  and as an inlay hint carrying the annotation the source did *not* write, which is §3.4's solved
+  constraint made visible where it would be written down.
 - **The playground** ([`17`](17-playground.md)) — highest-leverage adoption artefact: rung A
   (compile-time, static) and rung B (the whole app in the tab — the worker-server is the rung-0
   platform compiled to WASM, riding Mode B's kernel work; `seq` scrubber and two-client demos).
@@ -904,7 +907,8 @@ bullet is the effects, `Html` and growing a collection
 `Html` is a tree of children, so it follows the **collection** row rather than the text one. Mode B and
 ~~client polish~~ — **built** ([`100`](100-client-polish-report.md)), and it was not a Lane B item
 either: a route is a field of `Session`, so the engine, the splitter and the plan are untouched and
-the work is at the edges; the LSP; ~~SQL read models, pgwire~~ — **built**
+the work is at the edges; ~~the LSP~~ — **built** ([`65`](65-lsp-report.md)) and **finished**
+([`110`](110-the-editor-edits-report.md)); ~~SQL read models, pgwire~~ — **built**
 ([`88`](88-read-models-and-pgwire-report.md)), and they were not a Lane B item in the shape this
 list assumed: the schema derivation is a pass over the plan, the wire is `beck-rt`, and neither
 touched `engine.rs` beyond one reader type; ~~query fusion~~ — **built**
@@ -961,7 +965,7 @@ boundaries are real directories.
 |---|---|---|---|
 | **A — type system** | `beck-core/src/check/`, `ty.rs`, `core.rs`, `prelude.rs`, `iface.rs` | Error rows and handlers; `@derive`; bignums and coercion | **Itself, completely** — see below |
 | **B — runtime and views** | `beck-rt/`, `beck-core/src/{engine,plan,incremental,pmap,signal}.rs` | Clock injection; the shared dataflow's release policy, history constant and render lock; SQL read models, pgwire, query fusion; Mode B's server half | Nothing in A, C, E or F |
-| **C — front end and tooling** | `beck-syntax/`, `beck-cli/`, `beck-diag/` | The recursion bound; the two syntax decisions; Unicode and UTS #39; LSP; `test --update`; fuzzing | A, if a syntax decision changes what the checker sees |
+| **C — front end and tooling** | `beck-syntax/`, `beck-cli/`, `beck-diag/` | ~~The recursion bound~~ ([`44`](44-wave-0-report.md)); ~~the two syntax decisions~~ ([`10`](10-decisions.md) D21, D22); ~~Unicode and UTS #39~~ ([`44`](44-wave-0-report.md) §44.5); ~~LSP~~ — **built** ([`65`](65-lsp-report.md)) and **finished** ([`110`](110-the-editor-edits-report.md)): references, highlight, rename and inlay hints, so §8.5.2's list of what an LSP is for has no unbuilt entry; ~~`test --update`~~ ([`66`](66-page-snapshots-report.md)); ~~fuzzing~~ ([`85`](85-what-the-generator-found-report.md)). **This lane is empty.** What a *new* Lane C item looks like is in [`110`](110-the-editor-edits-report.md) §110.7: comment-preserving printing, which `textDocument/formatting` waits on, and code actions | A, if a syntax decision changes what the checker sees |
 | **D — process and supply chain** | `docs/`, `.github/`, `deny.toml`, `SECURITY.md`, `release/`, `install.sh` | Threat model, disclosure policy, memory-safety roadmap, `pending_security`, the four retargeted §12 rows, ~~SLSA~~ ([`109`](109-provenance-report.md))/SBOM/trusted publishing, ~~the release pipeline and the installer~~ ([`104`](104-the-release-and-the-installer-report.md)) | Nothing in code — **except that the release lands in `Cargo.toml`, a `build.rs` and `--version`**, which §104.4 is about and which this cell had assumed away. The provenance held the cell's original claim: the only executable artefacts it changed were `install.sh` and `.github/workflows/release.yml`, and inside `compiler/` it touched three test files and nothing else |
 | **E — backends** | `beck-eval/`, `beck-llvm/`, `beck-clif/`, `beck-core/src/backend.rs`, any new codegen crate | ~~LLVM backend, native codegen, the differential suite~~ — **built** ([`93`](93-llvm-backend-report.md)), ~~and Cranelift~~ — **built** ([`97`](97-cranelift-report.md)), ~~and a heap~~ — **half built** ([`101`](101-the-heap-report.md)): records, unions and newtypes, ~~and text~~ — **built** ([`105`](105-text-on-the-heap-report.md)), ~~and reading a collection~~ — **built** ([`106`](106-lists-arrive-read-only-report.md), [`107`](107-a-map-arrives-read-only-report.md)), lists and maps alike, ~~and closures~~ — **built** ([`108`](108-closures-arrive-report.md)): a rank and its captures, an application as a switch, and every list primitive that takes a function except `list_flat_map` — `sort_by` and `concat_lists` included, the second because its refusal was false. What is left is the effects, `Html` and *growing* a collection | Nothing — the seam is why ([`19`](19-phase-1-report.md) §19.9), and [`93`](93-llvm-backend-report.md) is the first thing to test that claim: not one line of `beck-rt` changed |
 | **F — infrastructure** | `beck-infra/` | Effect-derived NetworkPolicy/RBAC/grants; Crossplane emitter; conformance rungs | Nothing |
@@ -991,7 +995,7 @@ Recommended pairings, in order:
 | ~~**Then**~~ | ~~Lane A: `Ord` as a trait~~ | ~~Lane E: the rest of the heap — text, collections, closures, the effects~~ | **Three quarters done, and the other half again.** Lane E was taken four times running ([`105`](105-text-on-the-heap-report.md), [`106`](106-lists-arrive-read-only-report.md), [`107`](107-a-map-arrives-read-only-report.md), [`108`](108-closures-arrive-report.md)) and the prediction held every time: `beck-llvm`, `beck-clif`, their two suites, and one public function moved in `beck-core` for [`108`](108-closures-arrive-report.md)'s closures. Lane A is untouched, which makes eight consecutive rewrites in which the recommended pair was not run as a pair |
 | ~~**Then**~~ | ~~Lane A: `Ord` as a trait~~ | ~~Lane E: what is left of the heap~~, ~~plus Lane D as a third branch~~ | **A third of it done, and the third branch.** Lane D was taken ([`109`](109-provenance-report.md)) and the prediction in its own row held rather than the one that keeps failing: `install.sh`, one workflow, three test files, and nothing in `check/`, `ty.rs`, `core.rs`, `engine.rs` or any backend, so it could have run beside either of the other two. It did not, because neither of the other two was staffed — which is the ninth consecutive rewrite in which the recommended pair was not run as a pair, and the first in which the *third* branch is the one that moved |
 | **Now** | Lane A: `Ord` as a trait, which [`54`](54-ordering.md) writes out and does *not* recommend — so realistically nothing | Lane E: **what is left of the heap** — `Html`, growing a collection, the effects ([`107`](107-a-map-arrives-read-only-report.md) §107.4, [`108`](108-closures-arrive-report.md) §108.8) — which is what Mode B's codegen and every benchmark number wait on | The backend seam exists so these do not interact, and it has now been tested three times. Lane B's render lock is still open and still has no owner — it is a third branch rather than a reason to hold either of these. Lane D's remaining item is **trusted publishing**, which is an account setting rather than a branch |
-| **Any time** | — | Lane F; Lane C's LSP; more of SICP | No predecessors, no collisions |
+| **Any time** | — | Lane F; ~~Lane C's LSP~~ — **built** ([`110`](110-the-editor-edits-report.md)), which empties Lane C; more of SICP | No predecessors, no collisions |
 
 A third branch is viable whenever E or F is staffed. The ceiling is four, because of these:
 

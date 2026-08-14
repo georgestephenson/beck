@@ -47,6 +47,42 @@ impl TestDef {
         !self.params.is_empty()
     }
 
+    /// Every expression this test evaluates, to be read rather than rewritten.
+    ///
+    /// [`Editor::references`](crate::editor::Editor::references) is what wants them: a name used
+    /// only inside a `test` block is used, and an editor that did not look here would report it as
+    /// unreferenced and rename it into a program that no longer compiles.
+    ///
+    /// This and [`cores_mut`](TestDef::cores_mut) have to stay the same list — the failure this
+    /// file has already had once is a pass that walked `Program::defs` and missed every expression
+    /// in a `test` block — so `tests::the_two_walks_agree` counts them
+    /// against each other.
+    pub fn cores(&self) -> Vec<&Core> {
+        let mut out = Vec::new();
+        for clause in &self.clauses {
+            match clause {
+                Clause::Given { events, .. } => out.push(events),
+                Clause::When { commands, .. } => out.extend(commands.iter()),
+                Clause::Stub { value, .. } => out.push(value),
+                Clause::Expect { what, .. } => match what {
+                    Expectation::Holds(c) => out.push(c),
+                    Expectation::PageContains { needle, .. } => out.push(needle),
+                    Expectation::FoldEquals { events, .. } => out.push(events),
+                    Expectation::Performed {
+                        how: Count::With(c),
+                        ..
+                    } => out.push(c),
+                    Expectation::PageMatchesSnapshot { .. }
+                    | Expectation::Place { .. }
+                    | Expectation::Flow { .. }
+                    | Expectation::WireCompatible { .. }
+                    | Expectation::Performed { .. } => {}
+                },
+            }
+        }
+        out
+    }
+
     /// Every expression this test evaluates, to be annotated in place.
     ///
     /// A `test` block's expressions are *code*, and the three passes that annotate a finished
@@ -83,6 +119,11 @@ impl TestDef {
         out
     }
 
+    /// Every clause's span, so a caller can ask what part of the file a clause covers.
+    pub fn clause_spans(&self) -> impl Iterator<Item = Span> + '_ {
+        self.clauses.iter().map(|c| c.span())
+    }
+
     /// Every assertion that needs no execution — placement, flow, wire compatibility.
     ///
     /// §21.2: "These are compile-time queries, not runtime assertions — `beck test` answers them
@@ -103,6 +144,18 @@ pub struct Bindings {
     pub state: VarId,
     pub events: VarId,
     pub result: VarId,
+}
+
+impl Clause {
+    /// The part of the source this clause covers.
+    pub fn span(&self) -> Span {
+        match self {
+            Clause::Given { span, .. }
+            | Clause::When { span, .. }
+            | Clause::Stub { span, .. }
+            | Clause::Expect { span, .. } => *span,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -164,7 +217,15 @@ pub enum Expectation {
         actor: Option<Arc<str>>,
     },
     /// `expect place(charge) == server`.
-    Place { what: Arc<str>, tier: Tier },
+    Place {
+        what: Arc<str>,
+        /// Where `charge` is written. The name is a **reference** to a definition, resolved
+        /// against the placement table rather than evaluated, so there is no `Core` node carrying
+        /// its position — and an editor renaming that definition has to edit this too
+        /// ([`crate::editor::Editor::occurrences`]).
+        what_span: Span,
+        tier: Tier,
+    },
     /// `expect flow(ApiKey) reaches nothing on client`.
     Flow { ty: Arc<str>, tier: Tier },
     /// `expect wire_compatible_with "orders.v1.becki"`.
@@ -418,6 +479,26 @@ mod tests {
         assert!(!d.has_errors(), "{}", d.render(&m));
         assert!(p.tests[0].is_property());
         assert_eq!(p.tests[0].params.len(), 1);
+    }
+
+    #[test]
+    fn the_two_walks_agree() {
+        // `cores` and `cores_mut` are the same list written twice, and a clause added to one and
+        // not the other is invisible until something downstream skips an expression. The fixture
+        // carries one of every clause that holds an expression, so a new variant that only reaches
+        // the mutable walk changes these counts.
+        let (mut p, d, m) = with(
+            "test \"every clause that carries an expression\":\n    \
+             given []\n    \
+             when Add(id=Id(\"1\"), text=\"milk\")\n    \
+             expect map_len(state.todos) == 1\n    \
+             expect state == fold_of []\n",
+        );
+        assert!(!d.has_errors(), "{}", d.render(&m));
+        let test = &mut p.tests[0];
+        let read = test.cores().len();
+        assert!(read >= 4, "the fixture exercises four clauses, got {read}");
+        assert_eq!(read, test.cores_mut().len());
     }
 
     #[test]
