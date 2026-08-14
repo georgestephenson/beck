@@ -42,7 +42,7 @@ What that buys, beyond the property:
 - **No new dependency.** `beck-llvm` depends on `beck-core` and `beck-diag` and nothing else.
   [`07`](../07-dependencies.md) §7.9 pins everything; the thing it cannot pin is a native library
   the host installed, and this crate does not have one. The SBOM
-  ([`92`](../92-sbom-report.md)) is unchanged by the whole backend.
+  ([`92`](../92-supply-chain-and-release-report.md)) is unchanged by the whole backend.
 - **A machine without LLVM still builds the compiler and passes every other test.** The toolchain
   is discovered at run time, and its absence is a printed skip rather than a build failure. A
   linked `libLLVM` would make the whole workspace unbuildable on a machine that lacked it.

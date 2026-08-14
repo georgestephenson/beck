@@ -207,7 +207,7 @@ Newest first.
 ### The release
 
 - **The release attests build provenance, and the installer can check it** —
-  [`docs/109`](docs/109-provenance-report.md),
+  [`docs/92`](docs/92-supply-chain-and-release-report.md),
   [`adr/0028`](docs/adr/0028-a-release-carries-provenance-and-still-no-signature.md), which
   supersedes [`0027`](docs/adr/0027-a-release-publishes-a-checksum-and-not-a-signature.md) by taking
   the one route that record named as right and deferred. `actions/attest` over
@@ -218,7 +218,7 @@ Newest first.
   default install that checks a checksum and nothing else — in `pending_security.rs`.
   **Nothing has been attested yet**: no tag has been pushed, so the step is written and not
   executed, which is why it is deliberately unconditional and a `workflow_dispatch` dry run
-  exercises it. §109.5 records seven mutations, one gate each, and the one that did not fire until
+  exercises it. §92.14 records seven mutations, one gate each, and the one that did not fire until
   it was rewritten.
 
 ### The front end
@@ -613,7 +613,7 @@ Newest first.
 ### Docs
 
 - **A report was carrying another report's number, and every reference to it named nothing.**
-  [`docs/104`](docs/104-the-release-and-the-installer-report.md) was renumbered on merge — the
+  [`docs/92`](docs/92-supply-chain-and-release-report.md) was renumbered on merge — the
   filename and the prose inside it moved to `104`, the title and eleven headings stayed at `101`,
   which another document already had. So one `§101.x` named a section in each
   of two documents, and the 29 references to `§104.x` from `README.md`, `AGENTS.md`, this file,
@@ -672,14 +672,14 @@ Newest first.
 ### Releases
 
 - **The release pipeline and the installer**
-  ([`docs/104`](docs/104-the-release-and-the-installer-report.md)) — the two items on
+  ([`docs/92`](docs/92-supply-chain-and-release-report.md)) — the two items on
   [`docs/08`](docs/08-roadmap.md) §8.5.4's apology list that were on nobody's bullet.
   `.github/workflows/release.yml` turns a tag into four native builds, one `SHA256SUMS` and a
   GitHub Release; it *calls* `compiler.yml` rather than restating a gate, so §28.2's "a release is
   a tag on a commit that passed the whole matrix" is a `needs:` edge. `install.sh` verifies what it
   downloaded and refuses to install on a mismatch. Everything executable is outside the YAML —
   a tag-triggered workflow is the one artefact that cannot be run before it is used — and
-  §104.7 splits what was executed from what was only written: no tag has been pushed.
+  §92.13 splits what was executed from what was only written: no tag has been pushed.
   Gated by `release.rs` (nine tests; the one that matters corrupts an archive and asserts the
   installer exits non-zero *and* installs nothing, checked by breaking the comparison).
 - **The version means something.** `0.1.0` on fourteen unpublished crates became **0.3.0**, read

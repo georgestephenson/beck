@@ -1,7 +1,7 @@
 //! The bill of materials, against the thing it describes.
 //!
 //! [`docs/08-roadmap.md`](../../../../docs/08-roadmap.md) lists an SBOM among the supply-chain
-//! tooling, and [`docs/92`](../../../../docs/92-sbom-report.md) is what building one found. An
+//! tooling, and [`docs/92`](../../../../docs/92-supply-chain-and-release-report.md) is what building one found. An
 //! inventory is a document that claims something about an artefact, so what these tests are for is
 //! the claim rather than the format: **is it right about the image?**
 //!

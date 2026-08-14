@@ -137,12 +137,12 @@ The controls a reader would reasonably assume exist, that do not:
   has to change before the bound does. The absence is asserted by connecting without a password and
   expecting it to work, which goes red the day one is required.
 - **Verification of the compiler you downloaded, unless you ask for it.** Narrowed once.
-  [`104`](104-the-release-and-the-installer-report.md) built the release pipeline and
+  [`92`](92-supply-chain-and-release-report.md) built the release pipeline and
   [`install.sh`](../install.sh), which verifies the tarball against the release's `SHA256SUMS` and
   refuses to install on a mismatch — a **checksum, not a chain of trust**, establishing that the
   download was not corrupted in transit and nothing at all about the page it came from.
   ~~A provenance attestation and a transparency log are absent~~ — **the release attests SLSA build
-  provenance** ([`109`](109-provenance-report.md), [`adr/0028`](adr/0028-a-release-carries-provenance-and-still-no-signature.md)):
+  provenance** ([`92`](92-supply-chain-and-release-report.md), [`adr/0028`](adr/0028-a-release-carries-provenance-and-still-no-signature.md)):
   every artefact listed in `SHA256SUMS` is a subject of an in-toto statement signed by a short-lived
   Sigstore certificate whose identity is this repository's release workflow, recorded in the
   public-good transparency log, and `BECK_VERIFY_PROVENANCE=1` makes the installer check it with
@@ -152,9 +152,9 @@ The controls a reader would reasonably assume exist, that do not:
   default install with a verifier that refuses everything succeeds, and never consults it. Absent
   too, and separately: **a signature over the release page**. `SHA256SUMS` carries none, so a
   reader who checks the sums and stops has checked one file on the page against another file on the
-  page. This project *has* signing machinery ([`99`](99-supply-chain-report.md) §99.5) and it still
+  page. This project *has* signing machinery ([`92`](92-supply-chain-and-release-report.md) §92.6) and it still
   cannot take this subject — `beck sign` signs an OCI manifest digest and a compiler release is a
-  tarball (§104.6) — which is §99.7's row, unchanged.
+  tarball (§92.11) — which is §92.15's row, unchanged.
 - ~~**Macro fuel** (F17)~~ — **built.** Expansion was bounded in *depth* twice over — since
   [`adr/0012`](adr/0012-the-front-end-counts-its-own-recursion.md) separated the two counters that
   had been one — and in *work* not at all, which is the gap a doubling macro walked through: eight

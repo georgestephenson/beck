@@ -12,7 +12,7 @@
 //! Because of the property §6.2 chose apko *for*: an image assembled by a build that executes
 //! nothing and copies nothing arbitrary has contents that are already a list. So the whole build is
 //! `packages + two files → one tar → three JSON documents`, with no daemon, no root, no shell and
-//! no clock. [`docs/92`](../../../../../docs/92-sbom-report.md) §92.1 made the same observation
+//! no clock. [`docs/92`](../../../../../docs/92-supply-chain-and-release-report.md) §92.1 made the same observation
 //! about the bill of materials; an SBOM was the projection that needed no pipeline, and this is the
 //! artefact the projection describes.
 //!

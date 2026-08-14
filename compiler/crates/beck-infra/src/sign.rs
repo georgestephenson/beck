@@ -13,7 +13,7 @@
 //! type string. Signing it says "the holder of this key asserts that this digest is that image".
 //! Nothing more — in particular it says nothing about *how* the image was built, which is what a
 //! SLSA provenance attestation says and which needs a builder identity this repository does not
-//! have ([`docs/92`](../../../../../docs/92-sbom-report.md) §92.5, and unchanged).
+//! have ([`docs/92`](../../../../../docs/92-supply-chain-and-release-report.md) §92.15, and unchanged).
 //!
 //! # Why keyed, and not keyless
 //!

@@ -110,7 +110,7 @@ pub const NONROOT: Account = Account {
 /// modes. The apko route does it by way of a melange package ([`k8s::melange`]); the in-process
 /// route ([`oci::build`]) writes them into the layer. `supply_chain.rs` reads the *rendered*
 /// melange YAML back and asserts the install targets are this list, which is
-/// [`docs/92`](../../../../docs/92-sbom-report.md) §92.2's rule applied to paths rather than to
+/// [`docs/92`](../../../../docs/92-supply-chain-and-release-report.md) §92.2's rule applied to paths rather than to
 /// package names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Installed {

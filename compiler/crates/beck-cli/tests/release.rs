@@ -20,7 +20,7 @@
 //!    a `sha256sum` call somewhere in the file.
 //! 4. **The installer refuses an archive whose provenance does not verify**, and refuses to
 //!    pretend it verified one when the tool that would is missing
-//!    (`docs/109-provenance-report.md`). Tested the same way: a verifier that says no, and a
+//!    (`docs/92-supply-chain-and-release-report.md`). Tested the same way: a verifier that says no, and a
 //!    verifier that is not there.
 //!
 //! The last two need `sh`, `tar` and a SHA-256 tool, so they **skip loudly** when one is missing;

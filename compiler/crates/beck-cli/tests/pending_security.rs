@@ -255,7 +255,7 @@ async fn the_read_model_port_authenticates_nobody_and_answers_only_to_localhost(
 /// The `curl … | sh` a reader will actually run checks a checksum and stops there.
 ///
 /// This entry has been **narrowed once**. It used to say a release carried no signature at all;
-/// [`docs/109`](../../../../docs/109-provenance-report.md) attached SLSA build provenance to every
+/// [`docs/92`](../../../../docs/92-supply-chain-and-release-report.md) attached SLSA build provenance to every
 /// artefact and taught the installer to check it, so what a determined reader can establish is now
 /// a great deal more than a checksum. What is absent is that they have to ask:
 /// `BECK_VERIFY_PROVENANCE` is off by default ([`adr/0028`](../../../../docs/adr/0028-a-release-carries-provenance-and-still-no-signature.md)),
@@ -297,8 +297,8 @@ fn the_default_install_checks_a_checksum_and_not_the_provenance() {
 /// The provenance covers each artefact's digest, which is the thing worth covering. What it does
 /// not cover is the listing: `SHA256SUMS` itself carries no signature, so a reader who checks the
 /// sums and stops has checked one file against another file from the same page. The signing
-/// machinery `docs/99` §99.5 built still cannot take this subject — it signs an OCI manifest digest
-/// — which is [`104`](../../../../docs/104-the-release-and-the-installer-report.md) §104.6's
+/// machinery `docs/92` §92.6 built still cannot take this subject — it signs an OCI manifest digest
+/// — which is [`docs/92`](../../../../docs/92-supply-chain-and-release-report.md) §92.11's
 /// finding, unchanged by the provenance work.
 #[test]
 fn the_release_page_itself_carries_no_signature() {

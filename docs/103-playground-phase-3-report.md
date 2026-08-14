@@ -341,8 +341,8 @@ for Mode B, so neither can skip there.
 
 Unchanged except that the playground is now a place a person can be sent: a link opens the program,
 the editor colours it and completes it, the log survives the reload, and both rendering modes run.
-What is still missing is three of the supply-chain bullet's four pieces ([`92`](92-sbom-report.md)
-§92.5) and, on the codegen bullet, the half of the heap [`93`](93-the-native-backends-report.md) landed while
+What is still missing is three of the supply-chain bullet's four pieces ([`92`](92-supply-chain-and-release-report.md)
+§92.15) and, on the codegen bullet, the half of the heap [`93`](93-the-native-backends-report.md) landed while
 this was being written: a record, a union and a newtype compile natively now, and text and
 collections do not — so Mode B's kernel is no closer to generated code than
 [`93`](93-the-native-backends-report.md) §93.14 left it, and the tab runs the evaluator for the same reason a

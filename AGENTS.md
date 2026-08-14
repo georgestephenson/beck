@@ -27,7 +27,7 @@ holds the *rules*; that file holds the *state*, and it is the one that stays cur
 | [`compiler/awfy/`](compiler/awfy/README.md), [`compiler/clbg/`](compiler/clbg/README.md) | The performance benchmarks — somebody else's programs, verified against somebody else's constants |
 | [`compiler/xlang/`](compiler/xlang/README.md) | One program in six languages — the only place a Beck number sits beside another language's ([`docs/93`](docs/93-the-native-backends-report.md) §93.5) |
 | [`phase0/`](phase0/) | **History.** The output the compiler now generates, hand-written in Rust once so the architecture could be measured. Do not edit it to track the compiler |
-| [`release/`](release/README.md), [`install.sh`](install.sh) | The parts of a release a person can execute, kept out of `.github/workflows/release.yml` on purpose — a tag-triggered workflow is the one artefact that cannot be run before it is used ([`docs/104`](docs/104-the-release-and-the-installer-report.md) §104.2) |
+| [`release/`](release/README.md), [`install.sh`](install.sh) | The parts of a release a person can execute, kept out of `.github/workflows/release.yml` on purpose — a tag-triggered workflow is the one artefact that cannot be run before it is used ([`docs/92`](docs/92-supply-chain-and-release-report.md) §92.8) |
 
 ### Most work is a changelog entry; a report is for a phase or a subsystem
 

@@ -50,7 +50,7 @@ SNI override, no additional trust anchor, and no `--insecure`: a way to reach a 
 the deployment was not told about would undo `adr/0013` from the other end. The trust anchors are
 Mozilla's, compiled in as data rather than read from the container's filesystem, because §6.2's
 images execute nothing at build time and a `ca-certificates` package is a version the bill of
-materials cannot state ([`92`](92-sbom-report.md) §92.5).
+materials cannot state ([`92`](92-supply-chain-and-release-report.md) §92.15).
 
 The gate is a **real handshake**: `beck-rt/src/outbound.rs` makes a certificate authority a moment
 before it uses it, issues a certificate for `127.0.0.1`, and connects. Then it does the same with a

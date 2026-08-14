@@ -1257,7 +1257,7 @@ fn every_corpus_program_produces_an_object_a_linker_accepts() {
 
 /// The object is a function of the program: the same source twice produces the same bytes.
 ///
-/// [`92`](../../../../docs/92-sbom-report.md) §92.4 makes reproducibility a property this project
+/// [`docs/92`](../../../../docs/92-supply-chain-and-release-report.md) §92.3 makes reproducibility a property this project
 /// checks by building twice and comparing, and a code generator that embedded a timestamp or a
 /// path would defeat it one layer down.
 #[test]

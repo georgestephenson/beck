@@ -18,7 +18,7 @@
 ## 86.1 Install the compiler
 
 > **No release has been cut yet.** The installer and the pipeline that feeds it are built and
-> [`104`](104-the-release-and-the-installer-report.md) §104.7 says which parts of them have been
+> [`92`](92-supply-chain-and-release-report.md) §92.13 says which parts of them have been
 > executed — but until a tag is pushed there is nothing on the releases page, and the command below
 > will tell you it could not resolve a version. **Build from source** until then; it is the second
 > half of this section and it is the same binary.
@@ -40,7 +40,7 @@ on Linux and macOS; there is no Windows build.
 
 A checksum is not a signature: it says the download was not corrupted, and nothing about the page it
 came from. What does say something about the page is the **build provenance** the release attests
-over every artefact it publishes ([`109`](109-provenance-report.md)) — check it by asking, which
+over every artefact it publishes ([`92`](92-supply-chain-and-release-report.md)) — check it by asking, which
 needs the [GitHub CLI](https://cli.github.com):
 
 ```text
@@ -53,7 +53,7 @@ naming this repository's release workflow as its builder. It is off by default b
 tool this script can assume you have; with it set and no `gh`, the install fails rather than
 quietly skipping the check. What is still unsigned is the release *listing* itself —
 [`adr/0028`](adr/0028-a-release-carries-provenance-and-still-no-signature.md) is exact about the
-line between those two, and [`99`](99-supply-chain-report.md) §99.7 is where a signature a
+line between those two, and [`92`](92-supply-chain-and-release-report.md) §92.15 is where a signature a
 `cosign` user could check sits unbuilt.
 
 **Or build it from source**, which is the same binary and needs a C compiler and CMake. The
@@ -337,8 +337,8 @@ and this document cannot make it true on its own.
   folds, a module boundary, a trait, an outbound call, a macro or a `parallel:` scope, all of which
   exist and are documented in the reports rather than here.
 * ~~**There is no installation story.**~~ There is one — §86.1 — and it is
-  [`104`](104-the-release-and-the-installer-report.md)'s work: an installer that verifies what it
-  downloaded, and a tag-triggered pipeline that builds what it installs. §104.7 is careful about
+  [`92`](92-supply-chain-and-release-report.md)'s work: an installer that verifies what it
+  downloaded, and a tag-triggered pipeline that builds what it installs. §92.13 is careful about
   which half of that has been executed: the installer has, against a real artefact; the workflow has
   not, because no tag has been cut. **So the command above will not work until one is**, and
   building from source is what this guide can promise today.

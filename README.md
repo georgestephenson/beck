@@ -52,7 +52,7 @@ $ beck --help
 
 [`install.sh`](install.sh) downloads the tarball for your platform, checks it against the release's
 `SHA256SUMS`, and puts `beck` in `~/.beck/bin`. **No release has been cut yet**
-([`104`](docs/104-the-release-and-the-installer-report.md) §104.7), so until a tag is pushed, build
+([`docs/92`](docs/92-supply-chain-and-release-report.md) §92.13), so until a tag is pushed, build
 it from source — the same binary, and it needs a C compiler and CMake:
 
 ```console
@@ -113,7 +113,7 @@ error rows, nested patterns with guards, and `parallel:` scopes; the standard li
 collections, JSON, time, HTTP, crypto, bignums and decimal. There is an LSP, a SQLite substrate, an
 OIDC relying party with presence, a client-side WASM mode, a playground that runs the whole
 application in a tab, two native code generators behind one seam, an OCI image builder that needs no
-daemon, and — since [`docs/104`](docs/104-the-release-and-the-installer-report.md) — a release
+daemon, and — since [`docs/92`](docs/92-supply-chain-and-release-report.md) — a release
 pipeline and an installer.
 
 **What is not built is named rather than implied.** Both code generators share one bound, and it is

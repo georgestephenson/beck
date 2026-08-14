@@ -710,7 +710,7 @@ fn every_shell_command_in_the_instructions_runs() {
     );
 }
 
-/// The leading number of `104-the-release-and-the-installer-report.md`, or of `104 — the release`.
+/// The leading number of `92-supply-chain-and-release-report.md`, or of `104 — the release`.
 ///
 /// `None` where the text does not begin with a number: `README.md` is an index rather than a
 /// numbered document, and two reports open with prose instead of their number.
@@ -722,14 +722,14 @@ fn leading_number(text: &str) -> Option<u32> {
 /// A document's sections are numbered for the document they are in.
 ///
 /// `docs/` numbers a document by its filename and its sections `§N.1`, `§N.2` … of that same
-/// number. That is what makes `§104.7` a reference a reader can follow — and, because every
+/// number. That is what makes `§92.13` a reference a reader can follow — and, because every
 /// document's headings carry its own filename's number, what makes a section number unique across
 /// the directory without anything having to check for a collision.
 ///
 /// The gap this is the shape of is the one `AGENTS.md` tells you to expect: the counter collides
 /// whenever two branches write a report, so a document gets **renumbered on merge** — and a rename
 /// moves the filename while leaving the headings where they were.
-/// `104-the-release-and-the-installer-report.md` landed carrying the number `101`, which another
+/// `92-supply-chain-and-release-report.md` landed carrying the number `101`, which another
 /// document already had. So one `§101.x` named a section in each of two documents, and the
 /// twenty-nine references to `§104.x` written in `README.md`, `AGENTS.md`, `CHANGELOG.md`,
 /// `release/README.md` and six other documents named a heading that did not exist. The prose inside

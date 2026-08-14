@@ -335,7 +335,7 @@ existed for Mode B, so neither can skip there.
 
 Unchanged except for this bullet: **the playground exists**, for the two rungs that need no cloud.
 What is still missing is three of the supply-chain bullet's four pieces
-([`92`](92-sbom-report.md) §92.5), client polish, and the heap both code generators and Mode B's
+([`92`](92-supply-chain-and-release-report.md) §92.15), client polish, and the heap both code generators and Mode B's
 kernel wait on ([`94`](94-the-client-report.md) §94.15, [`93`](93-the-native-backends-report.md) §93.14). Identity's
 last row closed while this was being written ([`96`](96-presence-report.md)).
 
