@@ -14,7 +14,7 @@
 # expose, no GC to leave in its default configuration, and nothing this file can say about how the
 # evaluator represents a `Node`. What it can honour is the *work*: `bottom_up_tree` builds every
 # node the Java builds, `item_check` visits every one of them, and the counts below are the counts
-# the suite publishes. `docs/68` §68.3 records that this benchmark measures less here than it does
+# the suite publishes. `docs/46` §46.13 records that this benchmark measures less here than it does
 # elsewhere, which is a thing to know before reading a number off it and not a reason to leave it
 # out.
 #

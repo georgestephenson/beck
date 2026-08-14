@@ -23,7 +23,7 @@
 #   * **refused** — Beck cannot, and the report says whether that is a gap or a decision.
 #
 # What is *not* here: §3.2 (the environment model — see §3.1.3 below, which is why), §3.3.1's
-# `set-car!`/`set-cdr!` surgery, §3.3.5's constraint propagator, and §3.4's serializers. docs/87
+# `set-car!`/`set-cdr!` surgery, §3.3.5's constraint propagator, and §3.4's serializers. docs/63
 # §63.14 is the list with a reason against each.
 
 # ---------------------------------------------------------------------------------------------
@@ -265,7 +265,7 @@ test "3.4 — the eighth consecutive wrong password calls the cops, and a right 
 # and it estimates π at 2.718 — because modulo 2^31 the low bit alternates, so consecutive draws
 # have opposite parity far more often than chance and Cesàro's test sees the wrong distribution.
 # That is a deterministic failure of a fixed input, found by a test. Hidden behind `set!` it would
-# have been a flaky one. docs/87 §63.9.
+# have been a flaky one. docs/63 §63.9.
 # ---------------------------------------------------------------------------------------------
 
 ## Lehmer's "minimal standard": a multiplicative generator modulo a *prime*, so no bit of the state
@@ -730,7 +730,7 @@ test "3.3.4 — and it adds: sum is exclusive-or and carry is conjunction":
 # Beck is SICP's three moves made into a language.
 #
 # They cannot share a name here, so the book's is `Seq[T]` below. Writing that sentence is what
-# found the defect docs/87 §63.10 reports: at the time this file was written, declaring
+# found the defect docs/63 §63.10 reports: at the time this file was written, declaring
 # `model Stream[T]` in a program was **accepted silently**, and `Stream` then meant two different
 # types in the same module — the prelude's in one definition and the program's in the next. The
 # same checker refuses a *type parameter* that shadows a builtin (`B0314`) with a message
@@ -983,7 +983,7 @@ def first_of(s: Seq[Float]) -> Float:
 ## tableau row needs elements *j*, *j+1* and *j+2* of the row before it. Measured with
 ## `beck test --fuel`, the stream tableau costs 148,391 steps for four terms, 814,819 for five,
 ## 4,284,667 for six and 21,777,343 for seven — **×5.2 per term**, so nine is past the evaluator's
-## whole 50,000,000-step budget and ten is out of reach at any budget worth spending. docs/87 §63.11.
+## whole 50,000,000-step budget and ten is out of reach at any budget worth spending. docs/63 §63.11.
 test "3.5.3 — the tableau as the book writes it, as far as an unmemoised promise reaches":
     expect printed(accelerated(pi_seq()), 6) == [
         "4",

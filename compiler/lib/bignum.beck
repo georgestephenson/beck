@@ -14,7 +14,7 @@
 #
 # What that costs is stated rather than hidden: this is **schoolbook**, so multiplication is
 # quadratic and division is quadratic with a fourteen-step search inside it. There is no Karatsuba,
-# no Toom-Cook and no Barrett reduction, and `docs/55` §55.6 says so with the sizes that makes
+# no Toom-Cook and no Barrett reduction, and `docs/46` §46.8 says so with the sizes that makes
 # reasonable. It is an exact integer of any size, not a competitive one.
 #
 # The representation is a **sign and a list of base-10,000 limbs, least significant first**. Base
@@ -191,7 +191,7 @@ def leading_pair(carried: list[Int], n: Int) -> Int:
 
 ## A digit the trial quotient cannot be below, from the leading limbs alone.
 ##
-## [`docs/55`](../../docs/55-bignums-report.md) §55.6 named the binary search over the whole limb
+## [`docs/46`](../../docs/46-standard-library-report.md) §46.8 named the binary search over the whole limb
 ## range as "the thing to replace first if any of it is ever a bottleneck", and
 ## [`clbg/pidigits.beck`](../clbg/README.md) made it one: a search over `0..9999` costs fourteen
 ## multiplications of the *whole divisor* per quotient limb, and most quotient limbs are small or
@@ -258,7 +258,7 @@ def abs_big(b: Big) -> Big:
 ##
 ## Written rather than left to `<`, because `<` on a record compares field by field and `Big`'s
 ## first field is the *sign flag* — so `-5 < 3` would be decided by `false < true` and come out
-## backwards. `docs/50` §50.5 found the same edge from the other side, and `docs/54` is the
+## backwards. `docs/46` §46.6 found the same edge from the other side, and `docs/54` is the
 ## write-up; here it is a reason to expose an ordering function and say why.
 def compare_big(a: Big, b: Big) -> Int:
     if a.negative != b.negative:
@@ -468,7 +468,7 @@ def group_from(
     start = at - limb_digits() if at > limb_digits() else 0
     # `str_slice`'s third argument is a **count**, not an end index. Every other call site in the
     # tree passes a start of zero or a count that clamps, so the two readings agree there and this
-    # is the first caller where they do not — `docs/55` §55.5.
+    # is the first caller where they do not — `docs/46` §46.8.
     group = str_slice(digits, start, at - start)
     match str_to_int(group):
         case None:

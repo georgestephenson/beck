@@ -13,7 +13,7 @@
 # one — `awfy/README.md` says so — but the two suites verify different things: Are We Fast Yet
 # checks an `f64` against seventeen significant figures after one advance, and this checks two
 # lines of text against a published file after a thousand. A port that satisfied one would not have
-# been checked against the other, and `docs/68` §68.3 records what having both is worth: the same
+# been checked against the other, and `docs/46` §46.13 records what having both is worth: the same
 # physics, held to a bit-level constant by one suite and to a printed decimal by the other.
 #
 # Verified against `expected/nbody-output.txt`, the suite's own published output for `N = 1000`.

@@ -20,7 +20,7 @@
 <pre><code>union DecimalError</code></pre>
 <table><tr><th>Variant</th><th></th></tr>
 <tr><td><code>NotADecimal(text: Str)</code></td><td><p>Text that is not an optionally-signed decimal numeral.</p></td></tr><tr><td><code>QuotientDoesNotTerminate(dividend: Str, divisor: Str)</code></td><td><p>A quotient with no terminating decimal expansion — a third, a seventh — or one longer than
-`max_scale()`. §56.3 is why this is a raise rather than a rounded answer.</p></td></tr><tr><td><code>DivisionByZero</code></td><td><p>Division by zero.</p></td></tr><tr><td><code>NotAWholeNumber(value: Str)</code></td><td><p>`to_big` of a value that is not a whole number.</p></td></tr></table>
+`max_scale()`. §46.8 is why this is a raise rather than a rounded answer.</p></td></tr><tr><td><code>DivisionByZero</code></td><td><p>Division by zero.</p></td></tr><tr><td><code>NotAWholeNumber(value: Str)</code></td><td><p>`to_big` of a value that is not a whole number.</p></td></tr></table>
 <h3 id="rounding">Rounding</h3>
 <pre><code>union Rounding</code></pre>
 <p>How a digit that has to be dropped is accounted for.</p>
@@ -62,11 +62,11 @@ rather than a trait.</p>
 <p>The only constructor. Strips trailing zeros, and multiplies out a negative scale.</p>
 <p>`divide_small` rather than `/` is what keeps this **pure**: dividing by a literal ten cannot fail,
 and `bignum`'s `/` says it can, so a normaliser written with the operator would make every
-addition in this file fallible on paper. `docs/55` §55.7 is where that helper came from.</p>
+addition in this file fallible on paper. `docs/46` §46.8 is where that helper came from.</p>
 <h3 id="decimal_of_str">decimal_of_str</h3>
 <pre><code>decimal_of_str(text: Str) -&gt; Decimal</code></pre>
 <p><span class="tag">def</span><span class="tag">on any</span><span class="tag">raises(DecimalError)</span></p>
-<p>Read `&quot;1.25&quot;`, `&quot;-0.5&quot;`, `&quot;42&quot;`. No exponent, and §56.6 says so.</p>
+<p>Read `&quot;1.25&quot;`, `&quot;-0.5&quot;`, `&quot;42&quot;`. No exponent, and §46.16 says so.</p>
 <h3 id="decimal_zero">decimal_zero</h3>
 <pre><code>decimal_zero() -&gt; Decimal</code></pre>
 <p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
@@ -93,7 +93,7 @@ and what to do with the one after them. `exact_quotient` is the one that refuses
 <p><span class="tag">def</span><span class="tag">on any</span><span class="tag">raises(DecimalError)</span></p>
 <p>`a / b`, exactly, or a refusal.</p>
 <p>The digits are produced one at a time and the loop stops when the remainder reaches zero. A
-quotient that never gets there — a third — raises rather than rounding, and §56.3 is the argument:
+quotient that never gets there — a third — raises rather than rounding, and §46.8 is the argument:
 a `/` that silently picked a scale and a rounding rule would be *guessing*, and this library set
 already refuses to guess in the two places it costs the most (`money.beck`'s `split`,
 `docs/46` §46.2's parsers).</p>
@@ -128,7 +128,7 @@ one whose caller should be choosing a scale and a rule.</p>
 <p>It is also what keeps a **refusal** cheap, and that is worth saying rather than hiding: the
 expansion costs one long division per digit, so the bound is the work done before `/` gives up.
 At a hundred it was twenty-five seconds on the divisor below, which is a gate nobody would keep.
-§56.6 records what the bound gets wrong: an exact quotient needing more than forty places.</p>
+§46.16 records what the bound gets wrong: an exact quotient needing more than forty places.</p>
 <h3 id="negate_decimal">negate_decimal</h3>
 <pre><code>negate_decimal(d: Decimal) -&gt; Decimal</code></pre>
 <p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>

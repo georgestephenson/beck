@@ -110,7 +110,7 @@ a rule of Beck's on top of the format's own.</p>
 <p>`-1`, `0` or `1`, by value.</p>
 <p>Written rather than left to `&lt;`, because `&lt;` on a record compares field by field and `Big`'s
 first field is the *sign flag* — so `-5 &lt; 3` would be decided by `false &lt; true` and come out
-backwards. `docs/50` §50.5 found the same edge from the other side, and `docs/54` is the
+backwards. `docs/46` §46.6 found the same edge from the other side, and `docs/54` is the
 write-up; here it is a reason to expose an ordering function and say why.</p>
 <h3 id="digit_high">digit_high</h3>
 <pre><code>digit_high(b: list[Int], carried: list[Int]) -&gt; Int</code></pre>
@@ -123,7 +123,7 @@ produces the answer this function produced before it had bounds, rather than a d
 <pre><code>digit_low(b: list[Int], carried: list[Int]) -&gt; Int</code></pre>
 <p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
 <p>A digit the trial quotient cannot be below, from the leading limbs alone.</p>
-<p>[`docs/55`](../../docs/55-bignums-report.md) §55.6 named the binary search over the whole limb
+<p>[`docs/46`](../../docs/46-standard-library-report.md) §46.8 named the binary search over the whole limb
 range as &quot;the thing to replace first if any of it is ever a bottleneck&quot;, and
 [`clbg/pidigits.beck`](../clbg/README.md) made it one: a search over `0..9999` costs fourteen
 multiplications of the *whole divisor* per quotient limb, and most quotient limbs are small or

@@ -14,7 +14,7 @@
 # asserts that rather than trusting it, and Beck has no stdin to redirect. Only sequence THREE is
 # read, which is what the Java's `read` does when it skips to `>THREE`.
 #
-# Two things the Java does that this does not, both recorded in `docs/68` §68.3:
+# Two things the Java does that this does not, both recorded in `docs/46` §46.13:
 #
 # - **It is parallel and this is not.** The fragment tasks are split across a thread pool by
 #   reading-frame offset — `createFragmentMap(sequence, offset, length)` steps by `length` from
@@ -38,7 +38,7 @@ model Entry:
 
 ## A sort key: by count descending, then by fragment.
 ##
-## **The field names are the sort order**, not the order they are declared in — `docs/50` §50.5
+## **The field names are the sort order**, not the order they are declared in — `docs/46` §46.6
 ## measured that and `lib/collections.beck` carries the note. `left` sorts before `right`, so the
 ## negated count decides and the fragment breaks the tie.
 ##

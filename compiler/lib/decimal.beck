@@ -1,9 +1,9 @@
 # Arbitrary-precision decimal, written in Beck on top of `bignum.beck`.
 #
 # The last item of `docs/08` §8.5.4's Wave 2. `docs/46` §46.6 recorded what `money.beck` is and is
-# not — "money, not decimal. Fixed at two minor digits … no arbitrary precision" — and `docs/55`
-# §55.6 named this as the thing the bignums made possible and did not contain, with its one real
-# design question: **what `/` does when the quotient does not terminate.** §56.3 is that decision.
+# not — "money, not decimal. Fixed at two minor digits … no arbitrary precision" — and `docs/46`
+# §46.8 named this as the thing the bignums made possible and did not contain, with its one real
+# design question: **what `/` does when the quotient does not terminate.** §46.8 is that decision.
 #
 # A `Decimal` is an exact rational whose denominator is a power of ten: `units` scaled by
 # `10^-scale`. That is not the same thing as a real — `docs/27`'s `Float` is IEEE 754 and 0.1 is not
@@ -31,7 +31,7 @@ union DecimalError:
     ## Text that is not an optionally-signed decimal numeral.
     NotADecimal(text: Str)
     ## A quotient with no terminating decimal expansion — a third, a seventh — or one longer than
-    ## `max_scale()`. §56.3 is why this is a raise rather than a rounded answer.
+    ## `max_scale()`. §46.8 is why this is a raise rather than a rounded answer.
     QuotientDoesNotTerminate(dividend: Str, divisor: Str)
     ## Division by zero.
     DivisionByZero
@@ -60,7 +60,7 @@ union Rounding:
 ## It is also what keeps a **refusal** cheap, and that is worth saying rather than hiding: the
 ## expansion costs one long division per digit, so the bound is the work done before `/` gives up.
 ## At a hundred it was twenty-five seconds on the divisor below, which is a gate nobody would keep.
-## §56.6 records what the bound gets wrong: an exact quotient needing more than forty places.
+## §46.16 records what the bound gets wrong: an exact quotient needing more than forty places.
 def max_scale() -> Int:
     return 40
 
@@ -72,7 +72,7 @@ def max_scale() -> Int:
 ##
 ## `divide_small` rather than `/` is what keeps this **pure**: dividing by a literal ten cannot fail,
 ## and `bignum`'s `/` says it can, so a normaliser written with the operator would make every
-## addition in this file fallible on paper. `docs/55` §55.7 is where that helper came from.
+## addition in this file fallible on paper. `docs/46` §46.8 is where that helper came from.
 def decimal(units: Big, scale: Int) -> Decimal:
     if scale < 0:
         return Decimal(units=units * pow10(negate(scale)), scale=0)
@@ -158,7 +158,7 @@ def abs_decimal(d: Decimal) -> Decimal:
 #
 # Addition and multiplication are **exact and total**: the scale of a sum is the wider of the two,
 # and the scale of a product is their sum, so nothing is ever dropped. Division is the one that can
-# fail, and §56.3 is the decision behind it.
+# fail, and §46.8 is the decision behind it.
 impl Num for Decimal:
     def add(self, other):
         common = wider(self, other)
@@ -177,7 +177,7 @@ impl Num for Decimal:
 ## `a / b`, exactly, or a refusal.
 ##
 ## The digits are produced one at a time and the loop stops when the remainder reaches zero. A
-## quotient that never gets there — a third — raises rather than rounding, and §56.3 is the argument:
+## quotient that never gets there — a third — raises rather than rounding, and §46.8 is the argument:
 ## a `/` that silently picked a scale and a rounding rule would be *guessing*, and this library set
 ## already refuses to guess in the two places it costs the most (`money.beck`'s `split`,
 ## `docs/46` §46.2's parsers).
@@ -312,7 +312,7 @@ def render_at(d: Decimal, scale: Int, rule: Rounding) -> Str uses raises(Decimal
         + str_slice(padded, point, scale)
     )
 
-## Read `"1.25"`, `"-0.5"`, `"42"`. No exponent, and §56.6 says so.
+## Read `"1.25"`, `"-0.5"`, `"42"`. No exponent, and §46.16 says so.
 def decimal_of_str(text: Str) -> Decimal uses raises(DecimalError):
     parts = str_split(text, ".")
     if list_len(parts) == 1:
@@ -414,7 +414,7 @@ test "division is exact, or it refuses":
 ## The rounded division goes through the canonical constructor like everything else. It did not,
 ## once: `1 / 2` at four places came back as `5000 × 10^-4`, which is the same number as `0.5` and
 ## was not the same *value* — so `==` said no and it would have been a second `Map` key for one
-## amount. §56.5 is the record.
+## amount. §46.8 is the record.
 test "a rounded division is canonical, like every other way to build one":
     expect (try: divide_to(of_int(1), of_int(2), 4, HalfEven)) == Ok(value=of_units(5, 1))
     expect (try: divide_to(of_int(1), of_int(2), 4, HalfEven)) == Ok(value=of_units(50, 2))
@@ -457,7 +457,7 @@ test "the coercions answer or refuse, and never quietly drop a half":
 
 ## A hundred and one places is past `max_scale()`, so an exactly-representable quotient is refused.
 ## `1 / 10^101` is the simplest number that shows it: its expansion is a hundred and one digits and
-## every one of them is known. §56.6 records this as the case the bound gets wrong, and this is it
+## every one of them is known. §46.16 records this as the case the bound gets wrong, and this is it
 ## pinned rather than left to be discovered.
 ##
 ## The divisor is `pow10` rather than `big_pow` for a reason the diagnostic gave: `big_pow` raises
