@@ -106,6 +106,11 @@ impl Module {
 /// like a missing `clang` — and never because of the program: a program with nothing scalar in it
 /// yields a module with no functions and a refusal per definition.
 pub fn module(program: &Program) -> Result<Module, String> {
+    // Specialised first, so everything below sees one definition per instantiation and never a type
+    // parameter. Shared with the other emitter — [`beck_llvm::mono`] is a pass over the *program*
+    // and not a code generator, so writing it twice would mean two different subsets compile.
+    let mono = beck_llvm::mono::specialise(program);
+    let program = &mono.program;
     let isa = host_isa()?;
     let mut refusals: Vec<Refusal> = Vec::new();
     let mut sigs: BTreeMap<Arc<str>, Signature> = BTreeMap::new();

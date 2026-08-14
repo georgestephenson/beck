@@ -40,6 +40,7 @@ use beck_llvm::{Artifact as LlvmArtifact, Repr};
 mod support;
 use support::clofix::{self, CLOSURES};
 use support::failfix;
+use support::genfix::{self, GENERIC};
 use support::heapfix::{self, RECORDS, STILL_REFUSED, UNIONS};
 use support::listfix::{self, LISTS};
 use support::mapfix::{self, MAPS};
@@ -840,6 +841,41 @@ fn the_three_backends_agree_on_maps() {
     compared += all.agree("held_size", &mapfix::singles(&hs));
 
     println!("{compared} map calls compared, and every backend agreed on every one");
+}
+
+/// Generic definitions, over every backend this machine has.
+///
+/// The two-backend twin in `native.rs` says what these programs are for. The reason this one is
+/// worth having separately is that **monomorphisation is upstream of both emitters** — one pass
+/// over the program, shared the way `beck_llvm::heap` is — so this is where a specialisation the
+/// two emitters read differently would show. They are given the same `Program` and are still two
+/// independent readings of it.
+#[test]
+fn the_three_backends_agree_on_generics() {
+    linker!();
+    let all = All::over("generic.beck", GENERIC);
+    let mut compared = 0;
+    compared += all.agree("of_ints", &genfix::ints());
+    compared += all.agree("of_bools", &genfix::bools());
+    compared += all.agree("of_texts", &genfix::texts());
+    compared += all.agree("of_records", &genfix::records());
+    compared += all.agree("of_unions", &genfix::unions());
+    compared += all.agree("of_lists", &genfix::lists());
+    compared += all.agree("of_lists_of_lists", &genfix::nested());
+    compared += all.agree("second_int", &genfix::ints());
+    compared += all.agree("second_text", &genfix::texts());
+    compared += all.agree("count_ints", &genfix::ints());
+    compared += all.agree("count_texts", &genfix::texts());
+    compared += all.agree("int_then_text", &genfix::int_and_text());
+    compared += all.agree("text_then_int", &genfix::text_and_int());
+    compared += all.agree("ints_agree", &genfix::int_pairs());
+    compared += all.agree("texts_agree", &genfix::text_pairs());
+    compared += all.agree("no_ints", &[vec![]]);
+    compared += all.agree("no_texts", &[vec![]]);
+    compared += all.agree("three_ints", &genfix::scalars());
+    compared += all.agree("three_texts", &genfix::singles());
+    compared += all.agree("bound", &genfix::scalars());
+    println!("{compared} generic calls compared across every backend on this machine");
 }
 
 /// Closures, over all three backends.

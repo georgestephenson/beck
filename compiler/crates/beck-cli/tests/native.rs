@@ -41,6 +41,7 @@ use beck_llvm::{Artifact, Native, Repr};
 mod support;
 use support::clofix::{self, CLOSURES};
 use support::failfix;
+use support::genfix::{self, GENERIC};
 use support::heapfix::{self, RECORDS, STILL_REFUSED, UNIONS};
 use support::listfix::{self, LISTS};
 use support::mapfix::{self, MAPS};
@@ -886,6 +887,183 @@ fn the_two_backends_agree_on_maps() {
     compared += both.agree("held_size", &mapfix::singles(&hs));
 
     println!("{compared} map calls compared, and every backend agreed on every one");
+}
+
+/// Generic definitions, on both backends — which is **monomorphisation**, differentially.
+///
+/// A generic definition compiles by being specialised, so the divergence to look for is not "does
+/// this work" but *which instantiation a site got*. `beck_llvm::mono` recovers a call's type
+/// arguments by matching the `Global` node's solved type against the definition's declared one, and
+/// each way of picking the wrong one is a program in `genfix`: two parameters read in the wrong
+/// order, an instantiation keyed on a machine representation so that `Int` and `Bool` merge, a type
+/// argument that is itself a list, a parameter that appears only in the result.
+///
+/// The evaluator is the control and it does none of this: it runs the generic definition once,
+/// uniformly, which is exactly what makes it the right thing to disagree with.
+#[test]
+fn the_two_backends_agree_on_generics() {
+    let _ = toolchain!();
+    let both = Both::over("generic.beck", GENERIC);
+    let mut compared = 0;
+    compared += both.agree("of_ints", &genfix::ints());
+    compared += both.agree("of_bools", &genfix::bools());
+    compared += both.agree("of_texts", &genfix::texts());
+    compared += both.agree("of_records", &genfix::records());
+    compared += both.agree("of_unions", &genfix::unions());
+    compared += both.agree("of_lists", &genfix::lists());
+    compared += both.agree("of_lists_of_lists", &genfix::nested());
+    compared += both.agree("second_int", &genfix::ints());
+    compared += both.agree("second_text", &genfix::texts());
+    compared += both.agree("count_ints", &genfix::ints());
+    compared += both.agree("count_texts", &genfix::texts());
+    compared += both.agree("int_then_text", &genfix::int_and_text());
+    compared += both.agree("text_then_int", &genfix::text_and_int());
+    compared += both.agree("ints_agree", &genfix::int_pairs());
+    compared += both.agree("texts_agree", &genfix::text_pairs());
+    compared += both.agree("no_ints", &[vec![]]);
+    compared += both.agree("no_texts", &[vec![]]);
+    compared += both.agree("of_lists", &genfix::lists());
+    compared += both.agree("three_ints", &genfix::scalars());
+    compared += both.agree("three_texts", &genfix::singles());
+    compared += both.agree("bound", &genfix::scalars());
+
+    // …and the control: every one of those definitions compiled, so this is not passing because
+    // the pair agreed on falling back. The instantiations are here by name, because a run that
+    // built `firstly` once and called it three times would answer correctly and be wrong.
+    let compiled: Vec<String> = both
+        .native
+        .module()
+        .functions
+        .iter()
+        .map(|f| f.name.to_string())
+        .collect();
+    for wanted in [
+        "firstly@Int",
+        "firstly@Bool",
+        "firstly@Str",
+        "firstly@Named",
+        "firstly@Tagged",
+        "firstly@list[Int]",
+        "firstly@list[list[Int]]",
+        // One `paired`, not two. `swapped[Str, Int]` calls `paired(b, a)`, so its `paired` is
+        // `paired[Int, Str]` — the same instantiation `int_then_text` asks for directly. That
+        // sharing is the assertion: a recovery that read the arguments off in *declaration* order
+        // rather than in use order would mint a second, differently-named function here.
+        "paired@Int,Str",
+        "swapped@Str,Int",
+        "empty_of@Int",
+        "empty_of@Str",
+        "same_twice@Int",
+        "same_twice@Str",
+        "second@Int",
+        "second@Str",
+        "counted@Int",
+        "counted@Str",
+        "repeated@Int",
+        "repeated@Str",
+    ] {
+        assert!(
+            compiled.iter().any(|f| f == wanted),
+            "`{wanted}` should be one of the compiled functions, and they are {compiled:?}"
+        );
+    }
+    // And no template survives: a specialised generic is not a definition this backend has.
+    for template in [
+        "firstly",
+        "paired",
+        "swapped",
+        "empty_of",
+        "same_twice",
+        "second",
+        "counted",
+        "repeated",
+    ] {
+        assert!(
+            !compiled.iter().any(|f| f == template),
+            "`{template}` is a template and should be gone once every site was specialised: \
+             {compiled:?}"
+        );
+    }
+    assert!(
+        !compiled.iter().any(|f| f == "paired@Str,Int"),
+        "`paired` should have one instantiation and not two: {compiled:?}"
+    );
+    println!("{compared} generic calls compared over {} compiled instantiations, and both backends agreed on every one", compiled.len());
+}
+
+/// A **polymorphically recursive** definition is refused by name, once, rather than compiled until
+/// the machine stops.
+///
+/// `def growing[T](x: T, …)` calling `growing([x], …)` asks for `growing@Int`, which asks for
+/// `growing@list[Int]`, which asks for `growing@list[list[Int]]`. The program is finite and the set
+/// of instantiations is not, which is the one thing monomorphisation cannot do and the reason
+/// `mono::MAX_INSTANTIATIONS` is a number rather than a hope.
+///
+/// Two assertions, and the second is the one worth having: the definition is refused, **and it is
+/// refused once**. The first version of this pass gave up part way through and left sixty-four
+/// instantiations behind, each refusing because it called the next — sixty-four refusals that were
+/// all one refusal, and a reader who could not see which definition to fix.
+#[test]
+fn a_polymorphically_recursive_definition_is_refused_rather_than_compiled_forever() {
+    let program = compile("growing.beck", genfix::RECURSIVE);
+    let module = beck_llvm::module(&program);
+    let names: Vec<String> = module.refusals.iter().map(|r| r.name.to_string()).collect();
+    assert_eq!(
+        names,
+        vec!["asks_for_it".to_string(), "growing".to_string()],
+        "the template and its caller are what should be refused, and nothing else"
+    );
+    assert!(
+        module.functions.is_empty(),
+        "no instantiation of a definition this could not finish should survive: {:?}",
+        module
+            .functions
+            .iter()
+            .map(|f| f.name.to_string())
+            .collect::<Vec<_>>()
+    );
+    // The reason a reader is given names the definition and says what is wrong with it, which is
+    // `docs/106` §106.7's rule about a refusal being a claim.
+    let why = beck_llvm::mono::specialise(&program).kept;
+    assert!(
+        why.get("growing")
+            .is_some_and(|r| r.contains("instantiations")),
+        "the reason should say what could not be finished: {why:?}"
+    );
+}
+
+/// A generic called where **nothing decides** what its type parameter is is refused, not guessed.
+///
+/// `list_len(anything())` pins `T` against `list_len`'s own parameter and no further, so inference
+/// finishes with a variable rather than a type. The program is legal and the evaluator runs it
+/// happily — it has one uniform definition and an empty list is empty whatever it holds — and this
+/// backend has no layout to pick.
+///
+/// The assertion that matters is the second one. Minting an instantiation named after a *variable*
+/// would compile: the name would be stable within one run and would depend on an inference
+/// counter rather than on the program, so two compiles of the same source could disagree about a
+/// symbol. That is a determinism defect wearing a feature's clothes, and it is what
+/// `the_module_is_a_function_of_the_program` exists to catch — this refuses before it gets there.
+#[test]
+fn a_generic_whose_type_nothing_decides_is_refused_rather_than_guessed() {
+    let program = compile("undecided.beck", genfix::UNDECIDED);
+    let module = beck_llvm::module(&program);
+    let names: Vec<String> = module.refusals.iter().map(|r| r.name.to_string()).collect();
+    assert_eq!(
+        names,
+        vec!["anything".to_string(), "how_many".to_string()],
+        "the template and its caller are what should be refused, and nothing else"
+    );
+    let why = beck_llvm::mono::specialise(&program).kept;
+    assert!(
+        why.get("anything")
+            .is_some_and(|r| r.contains("not yet decided")),
+        "the reason should say the type parameters were not decided: {why:?}"
+    );
+    assert!(
+        !module.ir.contains('?'),
+        "no symbol should be named after an inference variable"
+    );
 }
 
 /// Closures, over every backend this machine has.

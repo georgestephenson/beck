@@ -76,6 +76,7 @@ Newest first.
   executed, which is why it is deliberately unconditional and a `workflow_dispatch` dry run
   exercises it. §109.5 records seven mutations, one gate each, and the one that did not fire until
   it was rewritten.
+
 ### The front end
 
 - **Macro expansion is bounded by what it produces** (`B0214`), which is
@@ -108,6 +109,48 @@ Newest first.
     deleted, which is what that file's own rule asks for.
 
 ### The native backends
+
+- **A generic definition compiles, once per type it is used at**
+  ([`docs/115`](docs/115-monomorphisation-report.md)): monomorphisation, on both code generators.
+  It was the largest single refusal class left, and the mechanism is a **pass over the program**
+  rather than anything in either emitter. **850 → 870 definitions** compile across the tree,
+  refusals go 223 → 208, and the ones blaming a type parameter go **63 → 38** — §115.6 is honest
+  about the 38.
+  - **The type arguments were already recorded and nobody had read them.** There is no
+    type-argument list in `Core` and no instantiation table on `Program`, and neither is needed:
+    every `Core` node carries its solved type, so a call's `Global` node holds the *instantiated*
+    function type while the definition's own `params` and `ret` still name the rigid `Con("T", [])`.
+    Matching the two, positionally, recovers `T := Int` in thirty lines.
+  - **A backend pass, which [`docs/38`](docs/38-literature-survey.md) §38.1 had already decided**:
+    dictionaries are the semantics and monomorphisation is a backend choice, because whole-program
+    specialisation fights incrementality. So `beck-core`, the checker and the evaluator are
+    unchanged and cannot tell it happened. Shared between the emitters for the reason the heap is —
+    it is the program both are handed, not a code generator.
+  - **Keyed on the whole type and not on a head constructor or a representation.** `Int` and `Bool`
+    are both one immediate word; merging them would answer `1` where the evaluator answers `true`.
+    Two parameters are read off in **use** order, so `swapped[Str, Int]` calls `paired@Int,Str` —
+    the same instantiation `int_then_text` asks for, and the differential asserts that sharing.
+  - **Refused, with reasons that are each real:** polymorphic recursion (`MAX_INSTANTIATIONS` is
+    64 against a measured maximum of **three**, over 65 templates and 28 instantiations); a call
+    where nothing decides the type, because minting `anything@?3` would make a symbol a function of
+    an inference counter rather than of the program; and a **bounded** definition, which is
+    [`docs/108`](docs/108-closures-arrive-report.md)'s closure boundary and not this.
+  - **The finding is that a partial answer was worse than none** (§115.5). The first version gave up
+    part way through and left sixty-four instantiations behind, each refusing because it called the
+    next — sixty-four true refusals that together said nothing, none of them naming a definition the
+    reader had written. A round that keeps a template it had been specialising is now thrown away
+    and re-run with that template forbidden, leaving one refusal naming one definition.
+  - Gated by `the_two_backends_agree_on_generics` / `the_three_backends_agree_on_generics` (103 and
+    100 calls over `genfix`, written around the ways of picking the **wrong instantiation**),
+    with a control **by name** — fourteen instantiations asserted present, every template asserted
+    gone, and `paired` asserted to have one instantiation and not two, because a run that compiled
+    `firstly` once and called it three times would answer correctly and be wrong. Plus
+    `a_polymorphically_recursive_definition_is_refused_rather_than_compiled_forever` and
+    `a_generic_whose_type_nothing_decides_is_refused_rather_than_guessed`, which asserts that no
+    symbol is named after an inference variable.
+  - **Corrects [`docs/93`](docs/93-llvm-backend-report.md)** §93.6, whose table has generic and
+    bounded definitions as one row. They were never one item: a generic definition needs no
+    dictionary at all.
 
 - **`str_split` and `str_chars` compile, and "two loops" was never a cost.** On both code
   generators. The reason on record was *"answers with a list whose elements it also allocates,

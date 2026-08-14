@@ -17,10 +17,11 @@
 //! # What this is not
 //!
 //! Not a general backend. Every effect that has to **reach the host** — `io`, `log`, `net.out`, a
-//! clock — is still the tree-walker's, and so is a **generic definition**, which is one name over
-//! layouts this backend fixes at emit time. Text, collections, closures, a view, **failure** —
-//! `raise` and `try:` — and growing a **list** or a **map** do compile; `beck run` and `beck up` are
-//! unchanged.
+//! clock — is still the tree-walker's, and so is a **bounded** definition, whose dictionary
+//! parameter is a function value. Text, collections, closures, a view, **failure** — `raise` and
+//! `try:` — growing a **list** or a **map**, and a **generic** definition do compile; the last of
+//! those by being specialised per instantiation ([`mono`]), which refuses polymorphic recursion and
+//! a call where nothing decides the type. `beck run` and `beck up` are unchanged.
 //! There is no collector either — the arena is reset per call
 //! ([`adr/0026`](../../../../docs/adr/0026-the-native-heap-is-an-arena-of-offsets.md)).
 //!
@@ -43,6 +44,7 @@
 
 pub mod emit;
 pub mod heap;
+pub mod mono;
 pub mod toolchain;
 pub mod worker;
 

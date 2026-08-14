@@ -284,6 +284,11 @@ impl Module {
 /// refusal per definition. Whether that is worth running is the caller's decision, and
 /// [`Module::functions`] is how it takes it.
 pub fn module(program: &Program) -> Module {
+    // Specialised first, so everything below sees one definition per instantiation and never a type
+    // parameter. [`crate::mono`] is why this is a backend pass and what it refuses; a program with
+    // no generic definition in it comes back as itself.
+    let mono = crate::mono::specialise(program);
+    let program = &mono.program;
     let mut refusals: Vec<Refusal> = Vec::new();
     let mut sigs: BTreeMap<Arc<str>, Signature> = BTreeMap::new();
     let mut heap = Heap::new();
