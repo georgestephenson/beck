@@ -113,8 +113,8 @@ which is the good case and worth saying next to [`84`](84-a-quota-is-only-as-goo
 **And the ceiling's own tests needed the declared stack, which CI found and this machine did not.**
 `MAX_BLOCK` is sized against `beck_diag::depth::STACK_BYTES` — 64 MiB — and a default test thread has
 2 MiB, so the first version of `a_block_past_the_ceiling_is_refused_with_a_diagnostic` called the
-checker directly and aborted the test binary. It is the same lesson [`80`](80-a-scope-owns-its-children-report.md)
-§80.6 recorded when `roundtrip.rs` overflowed on `awfy/havlak.beck`: **a harness is a caller of the
+checker directly and aborted the test binary. It is the same lesson [`80`](80-structured-concurrency-report.md)
+§80.11 recorded when `roundtrip.rs` overflowed on `awfy/havlak.beck`: **a harness is a caller of the
 front end, and a caller has to honour the declaration.** That is now three harnesses that have had
 to learn it separately, which is an argument for the entry point making it hard to get wrong rather
 than for remembering.

@@ -11,7 +11,7 @@
 //! Most of the tests below are about answers and refusals rather than about speed, because that is
 //! what the claim is about.
 //!
-//! **The children do now run at the same time** (`docs/117`), which §80.5 said would need the
+//! **The children do now run at the same time** (`docs/80`), which §80.12 said would need the
 //! `Host` trait to become thread-safe — it did, for an unrelated reason, when
 //! [`docs/93`](../docs/93-the-native-backends-report.md) gave the four host atoms one
 //! description that three backends could ask. `two_children_actually_overlap` is the gate, and it
@@ -613,10 +613,10 @@ impl beck_core::host::Atoms for Rendezvous {
 /// The children of a scope run **at the same time**, and the proof is that neither can finish
 /// alone.
 ///
-/// `docs/80` §80.5 recorded this as not built and named what stood in the way: two interpreters and
+/// `docs/80` §80.12 recorded this as not built and named what stood in the way: two interpreters and
 /// a shared budget, and a `Host` trait that would have to become thread-safe. The trait became
 /// thread-safe in `docs/93` for a different reason entirely, and the budget is split rather than
-/// shared (`docs/117` §117.4) — so what is left is the two interpreters, which is a thread each.
+/// shared (`docs/80` §80.6) — so what is left is the two interpreters, which is a thread each.
 #[test]
 fn two_children_actually_overlap() {
     let src = "\
@@ -760,9 +760,9 @@ def both(n: Int) -> Int uses net.out(a.example.com), net.out(b.example.com), spa
 
 /// A child that fails **stops its siblings**, and the sibling notices while it is still running.
 ///
-/// `docs/80` §80.5 forecast that a backend which starts children together would need a
-/// cancellation signal, and [`docs/117`](../../../../docs/117-a-scope-runs-its-children-report.md)
-/// §117.3 recorded that it still did not have one. This is that signal.
+/// `docs/80` §80.12 forecast that a backend which starts children together would need a
+/// cancellation signal, and [`docs/80`](../../../../docs/80-structured-concurrency-report.md)
+/// §80.3 recorded that it still did not have one. This is that signal.
 ///
 /// The assertion is a **count, not a clock**, and it is two-sided. The sibling would call its peer
 /// 400 times if nothing stopped it; what is asserted is that it called it **more than zero** times

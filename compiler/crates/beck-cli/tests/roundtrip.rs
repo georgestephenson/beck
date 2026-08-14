@@ -10,7 +10,7 @@
 //! that is not surface syntax without anything noticing — which is exactly what had happened:
 //! `decoded = try: base64_decode(…)` printed as `decoded = try(base64_decode(…))`, in a checked-in
 //! standard-library file, so `beck fmt lib/crypto.beck` emitted a program that does not compile
-//! (`docs/80` §80.6).
+//! (`docs/80` §80.11).
 //!
 //! So the corpus this asserts over is not the corpus but **the tree**: every `.beck` file under
 //! `compiler/`, plus the examples. A form that cannot print itself is now a failing test the day

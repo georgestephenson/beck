@@ -136,7 +136,7 @@ pub enum Verdict {
     /// that would cost a recount. It is its own verdict because saying "incremental" about it
     /// produced a row with an empty explanation, which is what
     /// `incremental.rs`'s "none of them is a mystery" gate exists to catch — and did, the first
-    /// time a program in the corpus applied nothing (`docs/96` §96.5).
+    /// time a program in the corpus applied nothing (`docs/48` §48.9).
     Trivial,
     /// Pure, but something in it has no delta rule. The reason names the first blocker found, in
     /// source order, because the first is the one to fix.

@@ -1,6 +1,6 @@
 //! Who is connected now — D6's non-durable signal, and the rules that keep it out of the log.
 //!
-//! [`docs/96-presence-report.md`](../../../../docs/96-presence-report.md) is what this gates. The
+//! [`docs/48-identity-report.md`](../../../../docs/48-identity-report.md) is what this gates. The
 //! shape of the suite follows the shape of the claim: presence is an input to a *view* and to
 //! nothing else, so what has to be tested is (1) that a page can read it, (2) that a page which
 //! reads it is woken when it changes, (3) that nothing else can read it, and (4) that the roster

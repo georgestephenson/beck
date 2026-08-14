@@ -95,7 +95,7 @@ pub enum Op {
     /// everybody, and the reason is a clock rather than a privacy rule: the shared dataflow is
     /// versioned by the log's `seq` ([`crate::engine::SharedDataflow`]), and presence moves when
     /// the log does not. Sharing it would need a second version, which is
-    /// [`docs/96`](../../../../../docs/96-presence-report.md) §96.8's first unbuilt item.
+    /// [`docs/48`](../../../../../docs/48-identity-report.md) §48.13's first unbuilt item.
     Presence,
     /// A closed expression, evaluated once when the plan is prepared.
     Const,

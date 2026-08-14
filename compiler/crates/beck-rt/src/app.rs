@@ -123,7 +123,7 @@ struct Proposal {
     at: Instant,
     /// The whole viewer rather than its name: `validate` is handed a `Session`, and D6's claims →
     /// capability mapping is the chokepoint's to use. Only the **name** goes on the envelope
-    /// (`docs/95` §95.4), so what is durable is unchanged.
+    /// (`docs/48` §48.6), so what is durable is unchanged.
     actor: crate::identity::Actor,
     command: Value,
     reply: oneshot::Sender<Result<Seq, String>>,
@@ -327,7 +327,7 @@ impl App {
     /// Public because both edges — the socket and the document handler — have to ask the same
     /// question, and because the dashboard and the startup line have to be able to *say* which
     /// provider is in force. An operator who cannot tell from the logs whether authentication is
-    /// on does not have authentication (`docs/48` §48.3).
+    /// on does not have authentication (`docs/48` §48.2).
     pub fn identity(&self) -> &Arc<dyn crate::identity::Identity> {
         &self.config.identity
     }

@@ -214,7 +214,7 @@ program using it is secure: this is a MAC, so it is only as good as the key, the
 - **[`46`](46-standard-library-report.md) §46.14's table moves two rows.** UUID goes from "`uuid()`
   has existed since Phase 1; nothing parses or formats one" to built; crypto goes from "untouched"
   to the digest half built and the asymmetric half named in §52.6.
-- **[`48`](48-identity-report.md) §48.5's list is unchanged and one of its predecessors is closer.**
+- **[`48`](48-identity-report.md) §48.13's list is unchanged and one of its predecessors is closer.**
   `SignedIdentity`'s construction is now expressible in Beck, so a program can issue and check its
   own tokens; the OIDC relying party still needs asymmetric verification and TLS, which
   [`adr/0015`](adr/0015-blake3-for-the-standard-librarys-digests.md) explicitly does not decide.

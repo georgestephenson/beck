@@ -234,7 +234,7 @@ fn cookie(headers: &hyper::HeaderMap, name: &str) -> Option<String> {
 /// `/auth/callback` and `Strict` would withhold the transaction cookie on exactly that navigation.
 /// `Secure` is **not** set: §6.5's gateway terminates TLS in front of a plaintext hop, so setting
 /// it would make the cookie unusable in the deployment this project generates — the same reason
-/// `same_origin` does not compare schemes, and it is recorded in `docs/95` §95.6 rather than left
+/// `same_origin` does not compare schemes, and it is recorded in `docs/48` §48.13 rather than left
 /// to be discovered.
 fn set_cookie(name: &str, value: &str, max_age: i64) -> String {
     format!("{name}={value}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age}")
@@ -340,7 +340,7 @@ async fn callback(app: Arc<App>, req: &Request<Incoming>) -> Result<Response<Ful
 ///
 /// Local only: it clears this app's cookie and does not call the issuer's end-session endpoint, so
 /// the browser is still signed in to the identity provider and `/auth/login` will complete without
-/// another password. That is the ordinary meaning of "log out of this app" and `docs/95` §95.6 says
+/// another password. That is the ordinary meaning of "log out of this app" and `docs/48` §48.13 says
 /// so rather than leaving somebody to find out.
 fn logout() -> Response<Full<Bytes>> {
     redirect(
@@ -550,7 +550,7 @@ fn socket_limits() -> WebSocketConfig {
 
 fn upgrade(app: Arc<App>, mut req: Request<Incoming>) -> Result<Response<Full<Bytes>>> {
     if !same_origin(req.headers()) {
-        // Coarse to the caller on purpose, and the same shape `docs/48` §48.3 chose for a refused
+        // Coarse to the caller on purpose, and the same shape `docs/48` §48.2 chose for a refused
         // identity: a cross-origin page learns that it was refused and nothing about why.
         return Ok(Response::builder()
             .status(StatusCode::FORBIDDEN)

@@ -11,7 +11,7 @@
 //!
 //! Not from here. [`beck_core::editor`] holds the indexing, the positions, the word-under-the-caret
 //! rule, the token classification and the completion list, because a browser tab wants every one of
-//! them too ([`docs/103`](../../../../../docs/103-playground-phase-3-report.md)) and a second copy
+//! them too ([`docs/98`](../../../../../docs/98-playground-report.md)) and a second copy
 //! is a second thing to be wrong. What this file does is translate: JSON-RPC in, LSP shapes out.
 //!
 //! # Why the whole file, every time

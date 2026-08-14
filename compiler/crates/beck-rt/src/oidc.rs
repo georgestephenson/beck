@@ -1,5 +1,5 @@
 //! An OpenID Connect **relying party** — the half of [`docs/10`](../../../../../docs/10-decisions.md)
-//! D6 that [`48`](../../../../../docs/48-identity-report.md) §48.5 named as unbuilt.
+//! D6 that [`48`](../../../../../docs/48-identity-report.md) §48.13 named as unbuilt.
 //!
 //! [`crate::identity`] made an actor a decision of the runtime and offered two providers, both of
 //! which the process can also *mint* for: `DevIdentity` believes a claim and `SignedIdentity`
@@ -36,11 +36,11 @@
 //! No **session of Beck's own**: the cookie the flow sets *is* the ID token, so a session lasts as
 //! long as the issuer said it should and no longer. That makes token refresh unnecessary rather
 //! than missing — there is no local session to keep alive — and it makes logout the deletion of one
-//! cookie. §95.6 of the report says what it costs: a user is sent back to the issuer when the token
+//! cookie. §48.13 of the report says what it costs: a user is sent back to the issuer when the token
 //! expires, and an issuer that mints five-minute tokens will do that every five minutes.
 //!
 //! No **UserInfo request**: the claims are the ID token's. `identity = managed()` is built and is
-//! `beck-infra`'s (§95.10) — what reaches here from it is one thing, [`Config::in_cluster`], and its
+//! `beck-infra`'s (§48.8) — what reaches here from it is one thing, [`Config::in_cluster`], and its
 //! field says what it costs.
 
 use std::collections::BTreeMap;
@@ -121,10 +121,10 @@ pub struct Config {
     /// is a `Service` §6.5 emitted, in the application's own namespace, reachable only through a
     /// NetworkPolicy §6.5 wrote — so what protects the key set there is the policy, and §6.5's
     /// gateway is where TLS is terminated for everything that crosses a network anybody else is on
-    /// ([`docs/95`](../../../../../docs/95-oidc-relying-party-report.md) §95.10).
+    /// ([`docs/48`](../../../../../docs/48-identity-report.md) §48.8).
     ///
     /// Private, and set by [`Config::in_cluster`] rather than assignable: a `pub` bool here would
-    /// be the flag §95.2 says does not exist.
+    /// be the flag §48.4 says does not exist.
     in_cluster: bool,
 }
 
@@ -176,7 +176,7 @@ pub struct Provider {
 /// Why a token was refused, in the operator's words.
 ///
 /// [`Rejected`] is what the *client* gets and has three values on purpose ([`docs/48`](../../../../../docs/48-identity-report.md)
-/// §48.3). This is the other half of that decision: an operator debugging a login needs to know
+/// §48.2). This is the other half of that decision: an operator debugging a login needs to know
 /// that the audience was wrong, and telling the client would be telling an attacker which of a
 /// dozen checks to work on next.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -327,7 +327,7 @@ impl RelyingParty {
         // Every endpoint on the issuer's own host, which narrows the egress rule to one name and
         // stops a discovery document moving the token exchange — and the client secret with it —
         // somewhere else. An issuer that splits its endpoints across hosts is not usable here, and
-        // that is a limit rather than an oversight (§95.6).
+        // that is a limit rather than an oversight (§48.13).
         let host = url_host(&self.config.issuer, self.config.in_cluster)?;
         for (name, endpoint) in [
             ("authorization_endpoint", &provider.authorization_endpoint),
@@ -752,7 +752,7 @@ impl Identity for RelyingParty {
         match self.verify_id_token(claim, None) {
             Ok(v) => Ok(Actor::verified(&v.subject, v.claims)),
             Err(refusal) => {
-                // Specific to the operator, coarse to the client (`docs/48` §48.3). This is the
+                // Specific to the operator, coarse to the client (`docs/48` §48.2). This is the
                 // only place the distinction between a dozen checks survives.
                 tracing::warn!(why = %refusal.why, "an id token did not verify");
                 Err(refusal.client)

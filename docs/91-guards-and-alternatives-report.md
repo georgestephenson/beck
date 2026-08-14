@@ -163,11 +163,11 @@ treats as a bug report. It is listed rather than claimed.
 **No bullet of the fourteen has a named remainder.** What is left is whole bullets: **no LLVM
 backend and no native codegen**; **no Mode B and no client polish**; **no playground**; **no
 supply-chain tooling**; and identity's OIDC relying party, `managed()` provisioning, the claims
-mapping and presence ([`48`](48-identity-report.md) §48.5).
+mapping and presence ([`48`](48-identity-report.md) §48.13).
 
 Unchanged: the page is still assembled and diffed rather than streamed as deltas
 ([`23`](23-incremental-views-report.md) §23.8); `parallel:` still has no backend that runs two
-children at once ([`80`](80-a-scope-owns-its-children-report.md) §80.5); the render lock is still
+children at once ([`80`](80-structured-concurrency-report.md) §80.12); the render lock is still
 there ([`23`](23-incremental-views-report.md) §23.19).
 
 The exit criterion is a claim about a person, and no outside developer has read the guide

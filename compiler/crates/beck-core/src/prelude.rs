@@ -1204,7 +1204,7 @@ pub fn types() -> BTreeMap<Arc<str>, TyDecl> {
     //
     // It does not reach the log: an `Envelope` carries `actor` and nothing else, because a fold
     // whose replay depended on what the issuer was saying at the time would not be a fold
-    // (`docs/95` §95.4).
+    // (`docs/48` §48.6).
     //
     // `path` is the third thing a page may be a function of, and it is a different *kind* of thing
     // from the other two: `actor` and `claims` say who is asking and are what a provider verified,

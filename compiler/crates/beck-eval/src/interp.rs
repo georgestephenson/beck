@@ -432,7 +432,7 @@ pub trait Host: beck_core::host::Atoms {
 /// Two children that both raise are a race, and whichever got there first would cancel the other
 /// before it could raise, so a scope over `bad(2)` and `bad(1)` would report `Second` or `First`
 /// depending on the scheduler. That is exactly the property
-/// [`docs/117`](../../../../../docs/117-a-scope-runs-its-children-report.md) §117.3 exists to keep,
+/// [`docs/80`](../../../../../docs/80-structured-concurrency-report.md) §80.3 exists to keep,
 /// and `a_childs_failure_joins_at_the_scope_and_the_earliest_child_wins` caught it — eight failures
 /// in forty runs of the suite, and none when run alone.
 ///
@@ -509,7 +509,7 @@ pub struct Interp<'h> {
     /// `None` for everything that is not a `parallel:` child, which is every interpreter the
     /// runtime, the LSP and `beck test` build — so the check in [`Interp::burn`] is a branch on a
     /// discriminant that is `None` for the whole of a program that never writes `parallel:`, and
-    /// is loop-invariant where it is not. `docs/118` §118.4 is what that costs, measured.
+    /// is loop-invariant where it is not. `docs/80` §80.8 is what that costs, measured.
     ///
     /// The index is this child's own place among its siblings, which is what makes the question
     /// "did a child *before* me fail" answerable — see [`Cancel`].
@@ -838,7 +838,7 @@ impl<'h> Interp<'h> {
     ///
     /// # What makes this sound, and why it is three sentences rather than an analysis
     ///
-    /// [`docs/80`](../../../../../docs/80-a-scope-owns-its-children-report.md) settled the hard
+    /// [`docs/80`](../../../../../docs/80-structured-concurrency-report.md) settled the hard
     /// half in the *checker*: the children are independent by construction, because none of them
     /// can name another, and no child may perform an effect another could observe. So the scope's
     /// answer does not depend on the order they ran in, and running them together is a correct
@@ -867,13 +867,13 @@ impl<'h> Interp<'h> {
     /// What it costs is stated rather than hidden: a child that would have used more than its share
     /// runs out where a serial run would have let it continue. Fuel is a runaway-program backstop
     /// and not a performance knob ([`DEFAULT_FUEL`]), so dividing a backstop is a smaller change
-    /// than it reads as — but it is a change, and `docs/117` §117.4 is where it is written down.
+    /// than it reads as — but it is a change, and `docs/80` §80.6 is where it is written down.
     ///
     /// # Failure
     ///
     /// The **first child in source order** that failed is the failure, whichever finished first, so
     /// the error a scope reports is a function of the program and not of the scheduler. Nothing is
-    /// cancelled: §80.5's table says a backend that starts children together needs a cancellation
+    /// cancelled: §80.12's table says a backend that starts children together needs a cancellation
     /// signal and that nothing designs one, and this does not design one either — the siblings of a
     /// failed child run to completion and their answers are dropped.
     fn children(&self, thunks: &[Value], span: Span) -> Result<Vec<Value>, EvalError> {
@@ -1459,7 +1459,7 @@ impl<'h> Interp<'h> {
             // child can observe another (`check::observable_order`) and that none can name another,
             // so the scope's answer is the same whichever order they ran in — running them in one
             // is a correct implementation of a form whose meaning is that the order is nobody's
-            // business. Nothing here runs them at the same time, and `docs/80` §80.5 says what
+            // business. Nothing here runs them at the same time, and `docs/80` §80.12 says what
             // would have to change for something to.
             //
             // A child that raises stops the scope at that child. With an ordered join that is the

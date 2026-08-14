@@ -299,11 +299,11 @@ dependencies whose signatures didn't change.
   `raises(E)`, `try:` is the handler that reifies it, and row aliases arrived with them. Nothing was
   added to the effect system to make that work, which is the point — inference, the `uses` bound,
   `.becki` and `--wire-compat` all applied to failure unchanged. Structured concurrency is
-  **built** ([`80`](80-a-scope-owns-its-children-report.md)): `parallel:` is a scope whose
+  **built** ([`80`](80-structured-concurrency-report.md)): `parallel:` is a scope whose
   bindings are its children, and what it lacks is a backend that runs two of them at once
-  (§80.5). ***It has one*** ([`117`](117-a-scope-runs-its-children-report.md)): a thread per child,
+  (§80.12). ***It has one*** ([`80`](80-structured-concurrency-report.md)): a thread per child,
   1.99× on two children that wait and the same on two that compute once each is worth a thread. The
-  soundness was already in the checker, and one of the three things §80.5 said stood in the way was
+  soundness was already in the checker, and one of the three things §80.12 said stood in the way was
   removed by [`93`](93-the-native-backends-report.md) for a reason that had nothing to do with
   concurrency. `match` exhaustiveness is built for unions ([`27`](27-the-walls-come-down-report.md)
   added lists). **Pattern matching nests** ([`90`](90-nested-patterns-report.md)):
@@ -315,10 +315,10 @@ dependencies whose signatures didn't change.
   `case x if x < 0:`, neither of which needed a new algorithm, because an or-pattern is several
   rows of the same matrix and a guarded arm is no row — and `@` bindings with them. Pattern
   matching is **done**, and so is the backend
-  ([`117`](117-a-scope-runs-its-children-report.md)) that was the last thing left here — so **this
-  bullet has no remainder**. What §91.5 and [`117`](117-a-scope-runs-its-children-report.md) §117.7
+  ([`80`](80-structured-concurrency-report.md)) that was the last thing left here — so **this
+  bullet has no remainder**. What §91.5 and [`80`](80-structured-concurrency-report.md) §80.12
   list are new items rather than the rest of this one, and the largest of them —
-  **cancellation** — is built too ([`118`](118-a-scope-stops-its-children-report.md)): a child that
+  **cancellation** — is built too ([`80`](80-structured-concurrency-report.md)): a child that
   fails stops its siblings, read on the step counter, at about 1% on a program that never writes a
   scope. What is left is stopping a child that is *blocked in the host* rather than spending steps,
   which is a property of the [`net`](../compiler/crates/beck-core/src/net.rs) seam.*
@@ -388,17 +388,17 @@ dependencies whose signatures didn't change.
   dev-mode identity is named rather than implied, a verifying provider exists, and both edges
   refuse before rendering — so an ownership check compares against something the caller did not
   choose. The **relying party** and the **claims mapping** are built too
-  ([`95`](95-oidc-relying-party-report.md)): discovery, a cached JWKS, RS/PS/ES signatures, every
+  ([`48`](48-identity-report.md)): discovery, a cached JWKS, RS/PS/ES signatures, every
   claim check, the authorization-code flow with PKCE, and `Session.claims`. What is left of this
-  bullet was presence, and it is **built** too ([`96`](96-presence-report.md)): a source in the
+  bullet was presence, and it is **built** too ([`48`](48-identity-report.md)): a source in the
   signal graph performing `cap.presence`, refused to the chokepoint and to a Mode B page, and
   bounded because it is keyed by a name the client chooses. D6's
   language surface is built as written, both forms —
   `identity = external(issuer=…)` is a declaration, so §6.5's egress rule covers the issuer like any
-  other peer (§95.7).*
+  other peer (§48.7).*
 - ~~LSP: completion, hover with *inferred placement*, go-to-def, rename, inline diagnostics.~~
   ***Built, every entry.*** Hover, go-to-def and inline diagnostics by [`65`](65-lsp-report.md);
-  completion and semantic-token highlighting by [`103`](103-playground-phase-3-report.md) §103.1 —
+  completion and semantic-token highlighting by [`98`](98-playground-report.md) §98.4 —
   which also moved every one of those answers into `beck_core::editor`, so the playground's editor
   and an editor's are the same answers rather than two implementations of them; **rename**, with
   references, document highlight and inlay hints, by
@@ -414,12 +414,12 @@ dependencies whose signatures didn't change.
   would ride Mode B's kernel work is the one thing it got wrong (§98.9): a tab server is a
   sequencer, a log and a differ, and none of those are in `beck-wasm`. What it rode was a division
   of the runtime — `beck-host`, the half of `beck-rt` that is program-shaped rather than
-  machine-shaped. Rung C is Phase 4's, and §98.7's four remaining lacks — no IndexedDB, no
+  machine-shaped. Rung C is Phase 4's, and §98.9's four remaining lacks — no IndexedDB, no
   content-addressed sharing, no Mode B in the tab, and a `<textarea>` where the LSP already exists —
-  are **built** by [`103`](103-playground-phase-3-report.md): the log survives a reload as the
+  are **built** by [`98`](98-playground-report.md): the log survives a reload as the
   records a durable store writes, a share link is a fragment that carries the program and names its
   digest, a `@render(client)` program runs in the client iframe in Mode B's kernel, and the editor
-  highlights, completes and squiggles from the same module `beck lsp` answers from. What §103.6
+  highlights, completes and squiggles from the same module `beck lsp` answers from. What §98.9
   still says is not built is rung C, the playground being written in Beck, and a link short enough
   to need a registry.*
 - `beck init ci`, apko image build in-process, cosign signing, SBOM. *All four are built. The
@@ -449,7 +449,7 @@ substrate, the standard library, the language's own means of abstraction, the LS
 expressiveness suite (three chapters of SICP and the Felleisen table, with chapters 4–5 belonging
 to Phase 5), incremental views, whose last part is
 [`23`](23-incremental-views-report.md)'s fusion, **identity**, whose last part is
-[`96`](96-presence-report.md)'s presence, and the supply-chain tooling
+[`48`](48-identity-report.md)'s presence, and the supply-chain tooling
 ([`92`](92-supply-chain-and-release-report.md), [`92`](92-supply-chain-and-release-report.md)) — whose remainder was a release
 pipeline rather than a piece of the bullet, and **that pipeline is now built**
 ([`92`](92-supply-chain-and-release-report.md)), with an installer in front of it and no tag
@@ -461,10 +461,10 @@ tarballs (§92.11).
 `parallel:` and pattern matching with nesting, guards and alternatives
 ([`90`](90-nested-patterns-report.md), [`91`](91-guards-and-alternatives-report.md)) — and
 `parallel:` now has the backend that runs two children at once
-([`117`](117-a-scope-runs-its-children-report.md)), which was
-[`80`](80-a-scope-owns-its-children-report.md) §80.5's item and is closed rather than reassigned.
+([`80`](80-structured-concurrency-report.md)), which was
+[`80`](80-structured-concurrency-report.md) §80.12's item and is closed rather than reassigned.
 What is left of *it* is **cancellation**: a scope whose first child fails waits for its siblings,
-and §80.5 forecast that a backend starting them together would need a signal nobody has designed. **Three
+and §80.12 forecast that a backend starting them together would need a signal nobody has designed. **Three
 half-built**: the codegen bullet has **both** of §5.2's code generators
 ([`93`](93-the-native-backends-report.md), [`93`](93-the-native-backends-report.md)) and a heap that is now whole:
 the *algebraic* half ([`93`](93-the-native-backends-report.md)), **text**
@@ -483,7 +483,7 @@ which waits on the half of that heap that is not built — and it is the **colle
 than the text half, since a page is a tree of children
 ([`94`](94-the-client-report.md) §94.15, [`93`](93-the-native-backends-report.md) §93.6); and the
 playground has rungs A and B and not rung C, which is Phase 4's
-([`98`](98-playground-report.md) §98.7). **Client polish is built too**
+([`98`](98-playground-report.md) §98.9). **Client polish is built too**
 ([`94`](94-the-client-report.md)) except for lazy routes, which wait on the same
 per-component boundary Mode B does, so **nothing on the list is untouched**. The criterion is not a
 count of those, though — it is a
@@ -497,7 +497,7 @@ developer would ask in order:
 | "Can I write my own abstractions, or only the ones the todo sketch needed?" | Ten walls down and an empty `sicp/refusals/` |
 | "How do I say something failed?" | `raise` and `try:`, and the signature says so whether or not I wrote it down ([`27`](27-the-walls-come-down-report.md)) |
 | "Is there a string library? A JSON parser?" | Yes, and `compiler/lib/` shows how to write the next one ([`46`](46-standard-library-report.md)) |
-| "Can I trust the actor in my ownership check?" | With a verifying provider, yes ([`48`](48-identity-report.md)); against a real identity provider, yes ([`95`](95-oidc-relying-party-report.md)) — and `session.claims` says what they may do. The default still believes the client, and says so |
+| "Can I trust the actor in my ownership check?" | With a verifying provider, yes ([`48`](48-identity-report.md)); against a real identity provider, yes ([`48`](48-identity-report.md)) — and `session.claims` says what they may do. The default still believes the client, and says so |
 | "Can my DBA see the data?" | `psql` against the read models ([`23`](23-incremental-views-report.md)) — one table per collection, derived, no annotation |
 | "Where's the tutorial?" | [`86`](86-getting-started.md), published on the site since [`23`](23-incremental-views-report.md) §23.17, and every program in it compiled and run by a test |
 | "How do I get the compiler?" | One command, since [`92`](92-supply-chain-and-release-report.md) — and it has nothing to download until a tag is pushed, so today the answer is still "build it", which §86.1 now says in that order |
@@ -509,7 +509,7 @@ cover. Every other row above is a prerequisite for a tutorial being worth writin
 — "write the tutorial as you build, and treat any sentence that requires an apology as a bug report
 against the design" — is the practice this phase has least honoured. The apologies it would
 currently need are shorter than they were and still enumerable — and the list this paragraph carried
-has been overtaken twice. ~~No OIDC~~ ([`95`](95-oidc-relying-party-report.md)), ~~no Mode B~~
+has been overtaken twice. ~~No OIDC~~ ([`48`](48-identity-report.md)), ~~no Mode B~~
 ([`94`](94-the-client-report.md)), ~~no installation story~~
 ([`92`](92-supply-chain-and-release-report.md)), **no released binary** — which is now one
 `git tag` rather than a piece of missing work, because the pipeline that would build it exists and
@@ -765,7 +765,7 @@ list:
 7. ~~Retarget [`12`](12-standards-and-conformance.md)'s four moved rows~~ *(S)*
 
 **Wave 1 — weeks. `Result` and error rows. ✅ Built, in two halves**
-([`27`](27-the-walls-come-down-report.md), [`80`](80-a-scope-owns-its-children-report.md)).
+([`27`](27-the-walls-come-down-report.md), [`80`](80-structured-concurrency-report.md)).
 Errors as a row label with `Result` reified, and row aliases: **built**. Lexical handlers: built in
 the narrow sense that `try:` is a form and therefore lexical by construction, and unbuilt in the
 general sense — there is no `handle … with`, no resumption, no user-defined effect. **Structured
@@ -776,7 +776,7 @@ change. `parallel:` is a scope whose bindings are its children — §38.4's shap
 `await` *not* separately reachable, so a child cannot outlive its scope by construction. Its claim
 is that the answer does not depend on which child ran first, and two compile errors hold it up:
 no child may name another, and no child may perform an effect another child could observe. What is
-**not** built is any backend that runs two children at once (§80.5).
+**not** built is any backend that runs two children at once (§80.12).
 
 **Wave 2 — weeks to months. The standard library. ✅ Most of it built**
 ([`46`](46-standard-library-report.md)). Strings, list and map collections, JSON and time are
@@ -855,40 +855,40 @@ and it catches the failure its signature names while the others travel, instead 
 that can fail two ways.*
 
 **Wave 3 — months. ✅ Built** ([`48`](48-identity-report.md),
-[`95`](95-oidc-relying-party-report.md), [`96`](96-presence-report.md)). Identity is a **seam**:
+[`48`](48-identity-report.md), [`48`](48-identity-report.md)). Identity is a **seam**:
 an `Actor` only a provider can mint, `DevIdentity` as the named default, and a `SignedIdentity`
 that verifies a keyed-BLAKE3 credential — so an ownership check compares against something the
 caller did not choose. And there is a third provider: an **OIDC relying party**, with discovery, a
 cached JWKS, RS/PS/ES signatures, issuer, audience, authorized-party, expiry, not-before and nonce
 checks, and the authorization-code flow with PKCE, so a browser can obtain a token rather than being
-handed one. The **claims → `Session` mapping** is built with it, and §95.4 draws the line it stops
+handed one. The **claims → `Session` mapping** is built with it, and §48.6 draws the line it stops
 at: `validate` may read a claim, and a fold has nothing to read, because an envelope carries the
 actor's name and nothing else.
 
 D6's **language surface** is built as written: `identity = external(issuer="https://…")` is a
 declaration, not a flag, so the compiler knows the issuer and §6.5's egress rule covers it like any
-other peer (§95.7). That was the one thing this work found that was *worse* than unbuilt — a runtime
+other peer (§48.7). That was the one thing this work found that was *worse* than unbuilt — a runtime
 with a peer the compiler had never heard of — and it is closed rather than recorded.
 
-`identity = managed()` is built too (§95.10): the object graph gains a provider, its Service, its
+`identity = managed()` is built too (§48.8): the object graph gains a provider, its Service, its
 volume, its credentials and a **realm wired to this application's own route**, and the application's
 egress to it is a `Peer` — a rule Kubernetes enforces, which the DNS-name rule an external issuer
 gets is not. It is the one place in the project where a plaintext issuer is admissible, and the
 argument is written out rather than left in a URL.
 
 ~~**Unbuilt**: presence — "who is connected now, as a first-class non-durable `Signal`" — which is
-the last row of this bullet.~~ **Built** ([`96`](96-presence-report.md)): `presence()` is a source
+the last row of this bullet.~~ **Built** ([`48`](48-identity-report.md)): `presence()` is a source
 in the signal graph performing `cap.presence`, which is [`14`](14-review-findings.md) F16's "gate
 behind a capability" taken literally — and is what places it on the server, keeps it out of a fold
 and publishes it in the row. The chokepoint may not read it (`B0515`, checked by reachability
 rather than by an argument's shape) and a Mode B page may not either (`B0516`). It is **per
 subscriber** rather than shared, and the reason is a clock: §5.3's shared dataflow is versioned by
-the log's `seq` and this is the one input that moves when `seq` does not — §96.8's first unbuilt
+the log's `seq` and this is the one input that moves when `seq` does not — §48.13's first unbuilt
 item. The roster is **bounded**, because it is keyed by a name the client chooses
 ([`84`](84-a-quota-is-only-as-good-as-its-actor-report.md) §84.4 one subsystem over), and a page
 that never asks who is connected is not re-rendered when somebody connects.
 
-*Both of that row's predecessors are gone.* §48.5 said the relying party "needs an HTTP client and a
+*Both of that row's predecessors are gone.* §48.13 said the relying party "needs an HTTP client and a
 signature library, so it is an ADR rather than a line in a module". The HTTP client was built
 ([`46`](46-standard-library-report.md)); the signature library and TLS were **one decision**, taken in
 [`adr/0023`](adr/0023-tls-and-the-signature-it-brings.md) — because rustls's cryptography provider
@@ -972,7 +972,7 @@ rule rather than as the two items §23.19 listed. The third, the render lock, is
 §23.19 records that this change made it a *harder* item rather than an unchanged one, because
 compaction is now safe partly because the lock is held the way it is; ~~structured concurrency,
 which Wave 1 left behind and which has no predecessor~~ — **built**
-([`80`](80-a-scope-owns-its-children-report.md)), and it acquired one on the way out: running two
+([`80`](80-structured-concurrency-report.md)), and it acquired one on the way out: running two
 children at the same time needs a `Sync` `Host`, which is a change to the execution half of
 [`19`](19-phase-1-report.md) §19.9's seam and wants its own measurement; ~~more of SICP, chapter 3
 being the part closest to what Beck is for~~ — **built**
@@ -1051,7 +1051,7 @@ Recommended pairings, in order:
 | ~~**Then**~~ | ~~Lane A: `Ord` as a trait~~ | ~~Lane E: growing a map~~ | **Half done, and the other half — for the twelfth time.** Lane E was taken ([`93`](93-the-native-backends-report.md)): `beck-llvm`, `beck-clif`, their two suites and the refusal lists, and nothing in `beck-rt`, `check/`, `ty.rs` or `core.rs`. The forecast in [`93`](93-the-native-backends-report.md) §93.13 held — it wanted a tree, not a layout. Lane A is untouched |
 | ~~**Then**~~ | ~~Lane A: `Ord` as a trait~~ | ~~Lane E: text's last refusals, and generics~~ | **Half done, and the other half — for the thirteenth time.** Lane E was taken: `str_trim`, `str_split` and `str_chars` compiled once their stated reasons were checked and found false, and [`93`](93-the-native-backends-report.md) monomorphised. The last of those is the first item in this lane that touched neither emitter's code generation — a new module both are handed a program by — and it still held the prediction: nothing in `beck-rt`, `check/`, `ty.rs` or `core.rs`. Lane A is untouched |
 | ~~**Then**~~ | ~~Lane A: `Ord` as a trait~~ | ~~Lane E: the effects that call *back* into the host~~ | **Half done, and the other half — for the fourteenth time.** Lane E was taken ([`93`](93-the-native-backends-report.md)) and the prediction held once more: `beck-llvm`, `beck-clif`, their two suites — and, for the first time in this lane, two files that are not a backend's, because the four host atoms had to stop being the *evaluator's* trait before three backends could ask one question. Nothing in `beck-rt`, `check/`, `ty.rs` or `core.rs`. Lane A is untouched |
-| **Now** | Lane A: `Ord` as a trait, which [`54`](54-ordering.md) writes out and does *not* recommend — so realistically nothing | **Lane E has no class left, and a measured list of names.** [`93`](93-the-native-backends-report.md) took list patterns off it and the corpus now stands at **905 compiled against 173 refused**, whose largest remaining class is a **function value at a boundary** — every `parameter f is a function value`, and every `Seq[T]` in SICP chapter 3, whose `Cons(head, rest: () -> Seq[T])` puts a closure in a field. `Heap::crossing` refuses those truly rather than stalely, and what would move them is compiling definitions that are called only by *other compiled definitions*, which never marshal a closure at all. Behind that: three named items ([`93`](93-the-native-backends-report.md) §93.14): the signal vocabulary, which the splitter reads rather than a body calling it; a **bounded** definition, which is [`93`](93-the-native-backends-report.md)'s closure boundary; and a worker that can answer two calls at once, which [`93`](93-the-native-backends-report.md) §93.14 has named as the first thing a second version would change since there was a first version. **Mode B's codegen** is the item with a user in front of it, and it is that plus a wasm emitter ([`94`](94-the-client-report.md) §94.15). ~~The lane's other live item is **cancellation** for a `parallel:` scope~~ — **built** ([`118`](118-a-scope-stops-its-children-report.md)). What is left in `beck-eval` is stopping a child that is *blocked in the host*, which is a deadline on the [`net`](../compiler/crates/beck-core/src/net.rs) seam rather than a change to the scope | Lane B's render lock is still open and still has no owner — it is a third branch rather than a reason to hold anything. Lane D's remaining item is **trusted publishing**, which is an account setting rather than a branch |
+| **Now** | Lane A: `Ord` as a trait, which [`54`](54-ordering.md) writes out and does *not* recommend — so realistically nothing | **Lane E has no class left, and a measured list of names.** [`93`](93-the-native-backends-report.md) took list patterns off it and the corpus now stands at **905 compiled against 173 refused**, whose largest remaining class is a **function value at a boundary** — every `parameter f is a function value`, and every `Seq[T]` in SICP chapter 3, whose `Cons(head, rest: () -> Seq[T])` puts a closure in a field. `Heap::crossing` refuses those truly rather than stalely, and what would move them is compiling definitions that are called only by *other compiled definitions*, which never marshal a closure at all. Behind that: three named items ([`93`](93-the-native-backends-report.md) §93.14): the signal vocabulary, which the splitter reads rather than a body calling it; a **bounded** definition, which is [`93`](93-the-native-backends-report.md)'s closure boundary; and a worker that can answer two calls at once, which [`93`](93-the-native-backends-report.md) §93.14 has named as the first thing a second version would change since there was a first version. **Mode B's codegen** is the item with a user in front of it, and it is that plus a wasm emitter ([`94`](94-the-client-report.md) §94.15). ~~The lane's other live item is **cancellation** for a `parallel:` scope~~ — **built** ([`80`](80-structured-concurrency-report.md)). What is left in `beck-eval` is stopping a child that is *blocked in the host*, which is a deadline on the [`net`](../compiler/crates/beck-core/src/net.rs) seam rather than a change to the scope | Lane B's render lock is still open and still has no owner — it is a third branch rather than a reason to hold anything. Lane D's remaining item is **trusted publishing**, which is an account setting rather than a branch |
 | **Any time** | — | Lane F; ~~Lane C's LSP~~ — **built** ([`110`](110-the-editor-edits-report.md)), which empties Lane C; more of SICP | No predecessors, no collisions |
 
 A third branch is viable whenever E or F is staffed. The ceiling is four, because of these:

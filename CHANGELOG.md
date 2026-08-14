@@ -38,13 +38,13 @@ Newest first.
 ### Concurrency
 
 - **A `parallel:` child that fails stops its siblings**
-  ([`docs/118`](docs/118-a-scope-stops-its-children-report.md)) — the signal
-  [`docs/80`](docs/80-a-scope-owns-its-children-report.md) §80.5 forecast and
-  [`docs/117`](docs/117-a-scope-runs-its-children-report.md) §117.7 left open.
+  ([`docs/80`](docs/80-structured-concurrency-report.md)) — the signal
+  [`docs/80`](docs/80-structured-concurrency-report.md) §80.12 forecast and
+  [`docs/80`](docs/80-structured-concurrency-report.md) §80.12 left open.
   - **It stops the children *after* the failure, and that qualifier cost a defect to learn.** The
     obvious signal — any failing child stops every sibling — passed its own new gate and broke
     `a_childs_failure_joins_at_the_scope_and_the_earliest_child_wins`, green since
-    [`docs/80`](docs/80-a-scope-owns-its-children-report.md): two children that both raise became a
+    [`docs/80`](docs/80-structured-concurrency-report.md): two children that both raise became a
     race over which error the scope reports. **Eight failures in forty runs of the whole suite, and
     none when run alone.** Cancelling only the children an ordered join would never have reached
     makes this a change in when work stops rather than in what a scope answers; the check that the
@@ -58,14 +58,14 @@ Newest first.
   - **Cost to a program with no scope in it**, from
     `measure_concurrency.rs::what_the_cancellation_check_costs_a_program_without_a_scope` (release,
     median of nine): **388.3 / 380.1 ns per iteration with the check, 385.0 / 374.7 without** — about
-    1%, and §118.4 declines to call it free, since an earlier run of the same build differed by more
+    1%, and §80.8 declines to call it free, since an earlier run of the same build differed by more
     than the two columns do. Flat across a 10× size change, which is what a loop-invariant branch
     predicts.
   - **Gated by a count, not a clock**: `concurrency.rs::a_failing_child_stops_its_siblings` asserts
     the stopped sibling reached its peer *more than zero* times (so it was running) and *far fewer
     than 400* (so it was stopped) — it reaches 4 or 5. Checked by disabling the signal and watching
     it hit 400/400, and the ordering gate beside it was run forty times rather than once.
-- **Which wasm can have threads** (§118.5), which corrects a flat "no" this work first wrote down.
+- **Which wasm can have threads** (§80.9), which corrects a flat "no" this work first wrote down.
   `wasm32-wasip1-threads` is a **stable** target and really spawns — its module imports
   `thread-spawn` where `wasm32-unknown-unknown` compiles the same call to "operation not supported
   on this platform". But that is WASI, and the two places this repo emits wasm are *browser*
@@ -78,25 +78,25 @@ Newest first.
   overlap, never an answer.
 
 - **`parallel:` runs its children at the same time**, on a thread each
-  ([`docs/117`](docs/117-a-scope-runs-its-children-report.md)). This closes
-  [`docs/80`](docs/80-a-scope-owns-its-children-report.md) §80.5's first sentence and the last named
+  ([`docs/80`](docs/80-structured-concurrency-report.md)). This closes
+  [`docs/80`](docs/80-structured-concurrency-report.md) §80.12's first sentence and the last named
   remainder of [`docs/08`](docs/08-roadmap.md)'s structured-concurrency bullet.
-  - **The soundness is not in this change.** §80.5 put it in the checker: no child may name another
+  - **The soundness is not in this change.** §80.12 put it in the checker: no child may name another
     (`B0398`) and none may perform an effect another could observe (`B0399`), so the scope's answer
     does not depend on the order. This adds no analysis and no scheduler — it starts two threads,
     because the program has already been proved not to care.
-  - **One of the three blockers §80.5 named was removed by accident.** The `Host` trait became
+  - **One of the three blockers §80.12 named was removed by accident.** The `Host` trait became
     thread-safe in [`docs/93`](docs/93-the-native-backends-report.md), which wanted it so three
     backends could ask one question. Recorded because the lane table predicts file collisions and
     has nothing to say about a branch that removes another's blocker.
-  - **Fuel is split, not shared** (§117.4). Sharing it is an atomic read-modify-write on every step
+  - **Fuel is split, not shared** (§80.6). Sharing it is an atomic read-modify-write on every step
     of every program — the hot path [`docs/70`](docs/70-the-evaluator-gets-fast-report.md) is about
     — and it makes *which* child runs out a race. Each child gets an equal share of what remains and
     the scope charges the parent what they actually spent, so the total matches a serial run. The
     cost is that a child which would have used more than its share now runs out where a serial run
     would have let it continue; `spawn` is discharged by `Tier::Server` alone, so none of this can
     reach a replay.
-  - **Nothing is cancelled.** A scope whose first child fails still waits for its siblings. §80.5
+  - **Nothing is cancelled.** A scope whose first child fails still waits for its siblings. §80.12
     forecast that a backend starting children together would need a cancellation signal; that
     backend exists now and the signal still does not.
   - **What it is worth**, from `measure_concurrency.rs` (release, medians): two children that each
@@ -638,7 +638,7 @@ Newest first.
   `git log -S"## 8.6" -- docs/08-roadmap.md` returns nothing: the phase headings have carried names
   rather than numbers since the file's first commit. So this was never a rename — the numbers were
   invented at the citing end, and inconsistently enough that `§8.7` means Phase 4 in
-  [`98`](docs/98-playground-report.md) and [`103`](docs/103-playground-phase-3-report.md) and the
+  [`98`](docs/98-playground-report.md) and [`docs/98`](docs/98-playground-report.md) and the
   **lane table** in the backend reports. Each is repointed at what it claims:
   Phase 3 and Phase 4 by the names the roadmap gives them, and Lane E to
   [`08`](docs/08-roadmap.md) §8.5.5 — which is what the backend reports already called it. No claim, measurement or refusal
@@ -697,7 +697,7 @@ Newest first.
 
 ### The playground
 
-- **Four refusals closed** ([`docs/103`](docs/103-playground-phase-3-report.md)): the editor's
+- **Four refusals closed** ([`docs/98`](docs/98-playground-report.md)): the editor's
   answers moved to `beck_core::editor` so the page and `beck lsp` share them, the tab's log survives
   a reload in IndexedDB, a share link carries the program and names its digest, and a
   `@render(client)` program runs in the client iframe. Gated by

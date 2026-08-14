@@ -982,7 +982,7 @@ pub const INDEX: &[CodeEntry] = &[
         "reads `presence`, so it cannot render on the client",
         "`@render(client)` sends the browser the accumulator, and who is connected is in neither \
          the accumulator nor the log — it is a fact the server holds about its own sockets \
-         (docs/96 §96.4).",
+         (docs/96 §48.9).",
     ),
     e(
         "B0517",

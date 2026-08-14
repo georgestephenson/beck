@@ -3,14 +3,14 @@
 **Built.** `fs(path)` is now `fs.read(path)` and `fs.write(path)`, so a `parallel:` scope may have
 children that read files and still refuses children that write them.
 
-This is [`80`](80-a-scope-owns-its-children-report.md) §80.7's first open item, taken the day after
+This is [`80`](80-structured-concurrency-report.md) §80.12's first open item, taken the day after
 it was named. [`27`](27-the-walls-come-down-report.md) is the precedent for the shape of this
 report — a wall written by one change and closed by the next, recorded when it is found rather than
 at the end of whatever finds it.
 
 ## 81.1 The finding, restated
 
-[`80`](80-a-scope-owns-its-children-report.md) §80.2 gave a `parallel:` scope one rule about
+[`80`](80-structured-concurrency-report.md) §80.2 gave a `parallel:` scope one rule about
 effects: no child may perform one another child could observe. Deriving that list meant asking, atom
 by atom, "could a second child tell this one had run?" — and every atom answered except one.
 
@@ -91,7 +91,7 @@ placement-property suite fuzzes over, which now carries both.
 
 ## 81.5 What this corrects
 
-**[`80`](80-a-scope-owns-its-children-report.md) §80.7 said §6.5 derives a volume's mount options
+**[`80`](80-structured-concurrency-report.md) §80.12 said §6.5 derives a volume's mount options
 from this atom. It does not.** That was written from
 [`06`](06-kubernetes-and-packaging.md) §6.5's worked example — "No filesystem mounts beyond the
 volume, `readOnlyRootFilesystem: true`" — which is a *design* for what the derivation will say, and
@@ -117,10 +117,10 @@ are different claims. §81.6 is the corrected version.
 atom for three phases and nothing was wrong with it, because nothing had asked it a question it
 could not answer. The question was not "is this list complete" — it was "could a second child tell
 this one had run", asked of each atom in turn, and it took one afternoon to find the one atom that
-could not answer. [`80`](80-a-scope-owns-its-children-report.md) §80.2's table is that audit, and
+could not answer. [`80`](80-structured-concurrency-report.md) §80.2's table is that audit, and
 this is what it was worth.
 
-**And that a report can be wrong in the direction of generosity.** §80.7's justification for
+**And that a report can be wrong in the direction of generosity.** §80.12's justification for
 deferring the split cited a derivation that does not exist. The split was still right and the
 argument for it still holds — but it held for one reason rather than two, and the second was read
 out of a design document as though it were a measurement. [`67`](67-sqlite-report.md) §67.3 is the

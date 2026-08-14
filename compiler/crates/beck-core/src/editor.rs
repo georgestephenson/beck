@@ -5,7 +5,7 @@
 //! and `beck explain`; there is no separate language server implementation to drift."* Until now
 //! that was true of the *compiler* and not of the editor: `beck lsp` held the indexing, the
 //! positions and the word-under-the-caret rule, and anything else wanting them — a playground with
-//! a `<textarea>` in it ([`docs/98`](../../../../../docs/98-playground-report.md) §98.7) — had to
+//! a `<textarea>` in it ([`docs/98`](../../../../../docs/98-playground-report.md) §98.9) — had to
 //! write them a second time.
 //!
 //! So the answers live here, where `beck-cli` and a `wasm32-unknown-unknown` module can both reach

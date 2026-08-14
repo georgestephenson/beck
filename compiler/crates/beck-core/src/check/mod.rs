@@ -3950,7 +3950,7 @@ fn error_ty_name(t: &Ty) -> Option<Arc<str>> {
 ///   orders it (see [`Checker::parallel_expr`]).
 /// * **`cap.*`** — an authority the caller holds, not state a child writes.
 /// * **`fs.read(path)`** — a read of a file no child of this scope writes, since `fs.write` is
-///   refused. [`docs/80`](../../../../../docs/80-a-scope-owns-its-children-report.md) §80.2 had to
+///   refused. [`docs/80`](../../../../../docs/80-structured-concurrency-report.md) §80.2 had to
 ///   refuse the pair because `fs(path)` was one atom;
 ///   [`docs/81`](../../../../../docs/81-fs-is-two-atoms-report.md) split it, and this line is what
 ///   the split was for.

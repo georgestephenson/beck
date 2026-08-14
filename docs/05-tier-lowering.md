@@ -231,10 +231,10 @@ functions. The lowering question is substrates. **We do not write a storage engi
   plan is the slower program.
 
   *The cut has a second thing on the per-subscriber side of it, and it is not the session.*
-  `presence()` ([`96`](96-presence-report.md)) is the same value for everybody and still runs per
+  `presence()` ([`48`](48-identity-report.md)) is the same value for everybody and still runs per
   subscriber, because the shared dataflow is versioned by the log's `seq` and the roster moves when
   `seq` does not: two subscribers at one version must be handed one input, and there is no version
-  at which they can be. Sharing it needs a second clock, which is §96.8's first unbuilt item.
+  at which they can be. Sharing it needs a second clock, which is §48.13's first unbuilt item.
 - v0.1 does **not** need the dataflow engine: full recompute per event on in-memory folds is
   semantically identical and fine at todo-app scale; the incremental plan is an optimisation with
   an exact correctness oracle (recompute) to test against — a luxurious position for CI

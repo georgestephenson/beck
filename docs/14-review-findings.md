@@ -160,7 +160,7 @@ the gateway, metrics exported — folded into R5's mitigation set.
 ## Low / notes
 
 - **F16** Presence signals (D6) leak who-is-online; gate behind a capability like any other view.
-  **`BUILT`** ([`96`](96-presence-report.md)): `presence()` performs `cap.presence` — no new atom —
+  **`BUILT`** ([`48`](48-identity-report.md)): `presence()` performs `cap.presence` — no new atom —
   which is what places it on the server, keeps it out of a fold and puts it in the published row.
 - **F17** Compile-time macro fuel: typed-literal parsers and macro expansion get bounded
   fuel/timeouts so a malicious dependency cannot DoS the compiler (macro sandbox already blocks

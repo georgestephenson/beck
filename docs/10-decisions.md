@@ -169,7 +169,7 @@ identity = external(issuer="https://login.acme.com")  # Beck is a relying party 
 - Rung 0 (`beck run`) uses a dev-mode identity: auto-login as declared test users, zero setup.
 - **Presence** (who is connected now) ships v1 as a first-class non-durable `Signal` — it is both
   the natural demo of per-session fanout and its permanent stress test. **Built**
-  ([`96`](96-presence-report.md)): `presence() : Signal[Map[Str, Int]] ! {cap.presence}`, refused to
+  ([`48`](48-identity-report.md)): `presence() : Signal[Map[Str, Int]] ! {cap.presence}`, refused to
   the chokepoint (`B0515`) and to a Mode B page (`B0516`), and per subscriber rather than shared
   because the shared dataflow is versioned by the log and this is the one input that is not.
 
@@ -770,7 +770,7 @@ scope.
 able to perform one — now decides a placement for real: a scope lands on the server off §3.3's
 table, `client` refuses it (`B0401`), and a function that starts spawning is a breaking change in
 the sentence §4.3 wrote for `net.out`.
-[`80`](80-a-scope-owns-its-children-report.md) is the build report.
+[`80`](80-structured-concurrency-report.md) is the build report.
 
 **What this reopened, and D25 closes.** `fs(path)` was one atom for a read and a write, so refusing
 concurrent writes meant refusing the pair, and two children reading two files was a thing this form
@@ -809,7 +809,7 @@ it does not make filesystem access available.
 least-privilege manifests can now distinguish a `readOnly: true` mount from a writable one. They do
 not yet: `beck-infra` derives from `ingress`, `durable` and `net.out` and has never read this atom.
 [`81`](81-fs-is-two-atoms-report.md) §81.5 is the correction to
-[`80`](80-a-scope-owns-its-children-report.md) §80.7, which said otherwise.
+[`80`](80-structured-concurrency-report.md) §80.12, which said otherwise.
 
 **What would reopen this.** A file operation whose interference is finer than the path — a
 lock, an append, an atomic rename. The scope rule refuses two writers to *any* paths rather than

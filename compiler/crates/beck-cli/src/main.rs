@@ -1719,7 +1719,7 @@ fn identity(
 
     // Two constructors, and which one is chosen is decided by the *declaration* rather than by the
     // URL's scheme: a provider this deployment provisioned is reached inside one namespace, and one
-    // it did not must be reached over TLS (`docs/95` §95.10).
+    // it did not must be reached over TLS (`docs/48` §48.8).
     let mut config = match declared {
         beck_core::check::IdentityDecl::Managed { .. } => {
             beck_rt::oidc::Config::in_cluster(&issuer, client_id, &redirect)
@@ -1797,7 +1797,7 @@ async fn serve(
 
     // The key set is fetched again on a timer and whenever a token named a key it does not carry.
     // A task rather than a fetch on the connection path: verifying an ID token must not be a way
-    // for an anonymous client to make this process call its identity provider (§95.3).
+    // for an anonymous client to make this process call its identity provider (§48.5).
     if let Some(party) = relying_party.clone() {
         tokio::spawn(async move {
             loop {
@@ -1824,7 +1824,7 @@ async fn serve(
         let _ = tx.send(true);
     });
 
-    // Which provider is in force, on the line an operator reads first. `docs/48` §48.3: an
+    // Which provider is in force, on the line an operator reads first. `docs/48` §48.2: an
     // operator who cannot tell from the logs whether authentication is on does not have
     // authentication.
     let entry = match &relying_party {

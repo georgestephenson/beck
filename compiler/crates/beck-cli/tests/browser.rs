@@ -1206,7 +1206,7 @@ async fn the_playground_runs_the_application_and_two_clients_of_it() {
 browser_test! {
 /// The editor, in a browser: colours, a squiggle, and a completion accepted with the keyboard.
 ///
-/// `docs/98` §98.7's last-but-one refusal was "a `<textarea>`, with no highlighting, no completion
+/// `docs/98` §98.9's last-but-one refusal was "a `<textarea>`, with no highlighting, no completion
 /// and no inline diagnostics". Nothing about that was made true in JavaScript: the spans below are
 /// painted from `beck_core::editor::tokens` and the squiggle from the diagnostics `beck check`
 /// reports, and `playground.rs` is what says those are the language server's answers. What this
@@ -1314,7 +1314,7 @@ async fn the_playground_highlights_and_completes_in_the_browser() {
 browser_test! {
 /// The log survives a reload, because the tab kept it.
 ///
-/// §17.2's log-storage row says IndexedDB and `docs/98` §98.7 said the tab's log was an array, so a
+/// §17.2's log-storage row says IndexedDB and `docs/98` §98.9 said the tab's log was an array, so a
 /// reload started from `init`. What is asserted here is the whole of the difference: two clicks, a
 /// reload, and the application comes back **at 2** — folded from records the page stored and the
 /// tab read back, not from a number it remembered.
@@ -1489,7 +1489,7 @@ async fn a_share_link_opens_the_program_it_carries() {
 browser_test! {
 /// A `@render(client)` program runs in the tab — in Mode B's kernel, in the client iframe.
 ///
-/// `docs/98` §98.7 called this "a second module in a second frame and is a piece of work rather
+/// `docs/98` §98.9 called this "a second module in a second frame and is a piece of work rather
 /// than a flag", and that is what it was: the kernel beside the compiler, the bundle over the port,
 /// and a subscription that carries the state instead of the page. What says it worked is
 /// `data-b-ready === 'b'` — set by `beck-mode-b.js` once the kernel holds the bundle — and then a

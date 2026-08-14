@@ -10,7 +10,7 @@ placement*, go-to-def, rename, inline diagnostics" — now has no unbuilt entry.
 
 Every answer is in [`beck_core::editor`](../compiler/crates/beck-core/src/editor.rs) rather than in
 the server, for [`04`](04-compiler-architecture.md) §4.6's reason and
-[`103`](103-playground-phase-3-report.md)'s: a browser tab asks the same questions, and a second
+[`98`](98-playground-report.md)'s: a browser tab asks the same questions, and a second
 implementation is a second thing to be wrong. `beck lsp` translates JSON-RPC and nothing else.
 
 The feature that took the work is **rename**, and none of it was the editing. A rename is an
@@ -214,7 +214,7 @@ already recorded that trap, from the first draft of the test it happened to.
 
 - **[`65`](65-lsp-report.md) §65.5's "rename, references … not built" and "semantic tokens, inlay
   hints: not built" are both out of date.** Semantic tokens arrived with
-  [`103`](103-playground-phase-3-report.md); references, highlight, rename and inlay hints are this
+  [`98`](98-playground-report.md); references, highlight, rename and inlay hints are this
   report. Formatting and code actions from that row are still not built — §110.7.
 - **[`08`](08-roadmap.md) §8.5.5's Lane C row is empty.** Its items were the recursion bound
   ([`44`](44-wave-0-report.md)), the two syntax decisions ([`10`](10-decisions.md) D21/D22), Unicode
@@ -235,5 +235,5 @@ already recorded that trap, from the first draft of the test it happened to.
 | Renaming across modules | **not built.** An editor here analyses one file, so a name *declared* elsewhere is refused by name (`Refusal::Imported`) and a name *used* elsewhere is not seen. Cross-module analysis is [`65`](65-lsp-report.md) §65.5's row and is still that row |
 | Formatting | **not built, and now with a reason rather than a gap.** `beck fmt` exists and wiring it to `textDocument/formatting` would be four lines — but the lexer *skips* ordinary comments, so a formatted file loses every `#` line in it ([`syntax::print`](../compiler/crates/beck-syntax/src/print.rs) says so). A formatter an editor runs on save must not delete what somebody wrote; the missing piece is comment-preserving printing, not the wiring |
 | Code actions | **not built**, and the first one is obvious now: a hint from §110.3 is an edit somebody would accept, and `textDocument/codeAction` is how it would be offered |
-| The playground | **not wired.** These answers are in `beck_core::editor` where [`103`](103-playground-phase-3-report.md)'s module can reach them, and it does not ask for them yet |
+| The playground | **not wired.** These answers are in `beck_core::editor` where [`98`](98-playground-report.md)'s module can reach them, and it does not ask for them yet |
 | Incremental analysis | **not built**, per [`65`](65-lsp-report.md) §65.4. A rename now costs two whole-file analyses rather than one, which moves that ceiling nearer without changing where it is |

@@ -401,12 +401,12 @@ pub fn graph(placed: &Placed) -> InfraGraph {
     // peer enters it as. Nothing below this line knows the difference between a host the program
     // calls with `http_fetch` and the one the runtime fetches a key set from, which is the point:
     // §6.5's egress rule is "the hosts this program named", and an issuer is one of them
-    // ([`docs/95`](../../../../docs/95-oidc-relying-party-report.md) §95.7).
+    // ([`docs/48`](../../../../docs/48-identity-report.md) §48.7).
     //
     // `managed()` deliberately does **not**: its issuer is a `Service` this same derivation is
     // about to emit, so it is a peer *inside* the cluster and a `net.out` host is the wrong
     // vocabulary for it — `derive` gets the declaration instead, and the difference between the two
-    // shows up as the difference between a rule Kubernetes enforces and one it cannot (§95.10).
+    // shows up as the difference between a rule Kubernetes enforces and one it cannot (§48.8).
     if let Some(beck_core::check::IdentityDecl::External { host, .. }) = &placed.program.identity {
         effects.push((Effect::NetOut(host.clone()), "identity".to_string()));
     }
@@ -441,7 +441,7 @@ pub fn derive(app: &str, effects: &[(Effect, String)], serves_ui: bool) -> Infra
 ///
 /// A separate entry point rather than a fourth argument on [`derive()`], because every existing
 /// caller is asserting something about the effect row and `managed()` is not in one: it is a
-/// declaration, and the two arrive by different routes on purpose (§95.10).
+/// declaration, and the two arrive by different routes on purpose (§48.8).
 pub fn derive_with(
     app: &str,
     effects: &[(Effect, String)],
@@ -644,7 +644,7 @@ pub fn derive_with(
     }
     // A **peer**, not a host: a managed issuer is a pod in this namespace, so the egress rule is
     // one Kubernetes can actually enforce — which the `allow_egress_hosts` list for an external
-    // issuer is not (see [`Node::Policy`]). §95.10 is why that asymmetry is worth stating.
+    // issuer is not (see [`Node::Policy`]). §48.8 is why that asymmetry is worth stating.
     if managed_identity {
         egress.push(Peer {
             app: format!("{app}-identity"),

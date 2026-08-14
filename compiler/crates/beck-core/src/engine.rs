@@ -1288,7 +1288,7 @@ impl Default for Retention {
 /// the operators that are a function of the accumulator alone, so everything downstream of
 /// [`crate::plan::Op::Presence`] is excluded too. The reason is this type's `version` — it is the
 /// log's `seq`, and a roster moves when `seq` does not
-/// ([`docs/96`](../../../../../docs/96-presence-report.md) §96.5).
+/// ([`docs/48`](../../../../../docs/48-identity-report.md) §48.9).
 ///
 /// [`docs/05-tier-lowering.md`](../../../../../docs/05-tier-lowering.md) §5.3:
 ///

@@ -68,7 +68,7 @@ and `ch3.beck` carries the property that stands in its place instead.
 ending up wrong; §3.4.2 is the serializers that stop it. `ch3.beck` cannot contain the first, because
 a chapter file has to compile, so `sicp.rs` holds it: the `parallel:` scope whose two children both
 touch a `durable` fold is `B0399`, and the version where one child names another is `B0398`
-([`80`](80-a-scope-owns-its-children-report.md)). Thirteen pages of the book are two compile errors —
+([`80`](80-structured-concurrency-report.md)). Thirteen pages of the book are two compile errors —
 which is a claim about the *problem* being absent, not about Beck having a better lock. What Beck has
 instead of §3.4.2's answer to the question serializers are actually for is the merge point (§3.7),
 one place rather than a lock per object, and a library file has no way to demonstrate it.

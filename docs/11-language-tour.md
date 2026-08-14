@@ -68,7 +68,7 @@ scope's answer does not depend on which ran first, and both halves of that are c
 than conventions. The scope performs `spawn`, which §3.3's table places on the server and which the
 published signature carries; a failure in a child crosses the scope, and the ordered join makes
 *which* failure a function of the program rather than of a scheduler.
-[`80`](80-a-scope-owns-its-children-report.md) is the build report, including what it deliberately
+[`80`](80-structured-concurrency-report.md) is the build report, including what it deliberately
 does not do.
 
 ## 11.3 Traits and derivation

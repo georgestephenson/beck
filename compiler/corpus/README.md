@@ -38,16 +38,16 @@ of one shape would prove that the shape works, which Phase 1 already did. What v
 - **the shape of the control flow**: a `try:` at the boundary rather than a `Result` threaded by
   hand (program 29, [`docs/27`](../../docs/27-the-walls-come-down-report.md)), and two outbound calls in one
   `parallel:` scope that do not wait for each other (program 30,
-  [`docs/80`](../../docs/80-a-scope-owns-its-children-report.md)) — where what is being checked is
+  [`docs/80`](../../docs/80-structured-concurrency-report.md)) — where what is being checked is
   that the scope's `spawn` reaches the published signature and the placement without anybody
   writing either down;
 - **who is asking**: a program that declares `identity = external(issuer=…)` and whose `validate`
   refuses a command unless the *issuer* said which tenant is asking (program 31,
-  [`docs/95`](../../docs/95-oidc-relying-party-report.md)). It is the only file here with a
+  [`docs/48`](../../docs/48-identity-report.md)). It is the only file here with a
   top-level form that is neither a definition nor a signal, so it is what holds the printer, the
   round-trip property and the placement property to it;
 - **what is not in the log**: a program whose page reads `presence()` — who is connected now —
-  beside the accumulator (program 32, [`docs/96`](../../docs/96-presence-report.md)). It is the only
+  beside the accumulator (program 32, [`docs/48`](../../docs/48-identity-report.md)). It is the only
   file here with an input that a replay does not reproduce, so it is where the rule that keeps that
   input away from the chokepoint has something to be about.
 

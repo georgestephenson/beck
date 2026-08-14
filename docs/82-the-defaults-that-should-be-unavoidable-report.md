@@ -137,7 +137,7 @@ for as long as it has produced objects. Nothing was wrong with the *derivation* 
 `tests/manifests.rs` was built to check, and it checks it well — and the gap was in a list of fields
 that no test asked for, because no test asks for a field nobody has written.
 
-That is the same shape as [`80`](80-a-scope-owns-its-children-report.md) §80.6's round-trip harness
+That is the same shape as [`80`](80-structured-concurrency-report.md) §80.11's round-trip harness
 and [`70`](70-the-evaluator-gets-fast-report.md) §70.7's gate that could not fail, and it is the
 third instance in three reports: **a claim in a design document is not a claim anything checks.** The
 difference this time is that the claim was checkable all along and one quarter of it was not
@@ -147,7 +147,7 @@ the same absence seen from two ends.
 ## 82.7 What this establishes
 
 **That splitting the atom paid twice, and the second payment is the one that was doubted.**
-[`81`](81-fs-is-two-atoms-report.md) §81.5 had to correct [`80`](80-a-scope-owns-its-children-report.md)
+[`81`](81-fs-is-two-atoms-report.md) §81.5 had to correct [`80`](80-structured-concurrency-report.md)
 for claiming §6.5 already derived a mount from `fs` — it did not — and the honest version of the
 argument was that the split was worth taking for one reason (a `parallel:` scope may read files) with
 the second available rather than banked. It is banked now, and it took one field and one boolean,

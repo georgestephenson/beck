@@ -248,7 +248,7 @@ model Envelope[T]:
 ```
 
 *There is one other source, and it is a `Signal` rather than a `Stream`.* `presence()` is who is
-connected now ([`10`](10-decisions.md) D6, built in [`96`](96-presence-report.md)) — the only input
+connected now ([`10`](10-decisions.md) D6, built in [`48`](48-identity-report.md)) — the only input
 to a view that **moves without an event**. It performs `cap.presence`, which is what places it on
 the server; the chokepoint may not read it, because an event whose existence depended on who
 happened to be connected would not survive a replay.

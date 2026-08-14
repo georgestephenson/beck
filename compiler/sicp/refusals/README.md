@@ -22,7 +22,7 @@ and finding the next one needs somebody to write more of the book. Chapter 3 has
 ([`87`](../../../docs/87-the-chapter-that-argues-back-report.md)) and put no file here: every
 section of it is expressible. Two of its refusals are *decisions* rather than walls and live in
 `sicp.rs` — §3.4's interleaving is `B0399` and exercise 3.8's is `B0398`
-([`80`](../../../docs/80-a-scope-owns-its-children-report.md)) — and the one thing it genuinely
+([`docs/80`](../../../docs/80-structured-concurrency-report.md)) — and the one thing it genuinely
 cannot express, §3.5.1's **memoised** `delay`, is the rule at the bottom of this page working: it
 compiles and it is slow, so it is a cost rather than a refusal (§87.7). Chapters 4 and 5 are still
 unattempted, and §2.3.4's Huffman decoder wants a pattern more than one level deep
