@@ -577,6 +577,23 @@ fn the_three_backends_agree_on_text() {
         .collect();
     compared += all.agree("untag", &textfix::singles(&tagged));
 
+    // The trim, over the strings written for it: every shape a run of whitespace can have, one of
+    // each **kind** of whitespace character the encoding has, and `U+200B` as the control, since it
+    // is in the space block and is not `White_Space`.
+    let sp = textfix::spaced();
+    for name in ["trimmed", "trimmed_len", "blank"] {
+        compared += all.agree(name, &textfix::singles(&sp));
+    }
+    compared += all.agree("trimmed_up", &textfix::repeats(&sp));
+
+    // …and then every code point Rust calls whitespace, four ways each, plus the four that look
+    // like whitespace and are not. The list is `char::is_whitespace` itself, so this asks about a
+    // new one the day Rust learns about it.
+    let ws = textfix::every_whitespace();
+    for name in ["trimmed", "trimmed_len", "blank"] {
+        compared += all.agree(name, &ws);
+    }
+
     println!("{compared} text calls compared across every backend on this machine");
 }
 

@@ -945,7 +945,7 @@ fn the_two_code_generators_against_each_other() {
 /// about.
 ///
 /// A compiled `view` does not render anything: what it builds is the *call*, and the host bakes the
-/// tree out of it on the way back (`docs/109`). So the work is divided rather than removed — the
+/// tree out of it on the way back (`docs/111`). So the work is divided rather than removed — the
 /// program's own logic is compiled and every leaf's rendering is still `Value::display` in the
 /// host, plus a pipe in the middle that the evaluator does not have. The two sizes are what
 /// separate a constant from a growth (`AGENTS.md`), and nothing here is asserted to be **faster**:
@@ -1157,7 +1157,7 @@ def down(n: Int) -> Int:
 ///
 /// `docs/69` §69.7 measured this loop as **quadratic in time** on the evaluator before
 /// `docs/70` gave it last-use moves, and `docs/106` §106.5 refused to compile it rather than ship
-/// the quadratic back. `docs/111` is the layout that removed the choice, and this is the row that
+/// the quadratic back. `docs/113` is the layout that removed the choice, and this is the row that
 /// says so: the ratio has to **hold its shape** over four times the elements, because a copying
 /// append would lose a factor of four between the two rows.
 ///

@@ -21,7 +21,7 @@
 //!
 //! Every effect that has to reach the **host**, and growing a **map**, are refused — by name, with
 //! the reason, in [`crate::Report`]. Failure is not among them: `raise` and `try:` compile, on the
-//! error cell that was already an unwinder. Nor is growing a *list*, since `docs/111` separated the
+//! error cell that was already an unwinder. Nor is growing a *list*, since `docs/113` separated the
 //! count from the elements. Nothing is silently approximated: a definition either compiles
 //! to machine code that agrees with the evaluator on every input, or it does not compile.
 //!
@@ -1964,6 +1964,11 @@ impl<'a> Function<'a> {
                 }
                 Ok(self.text_call("slice", &[&vals[0], &vals[1], &vals[2]], Repr::Str, span))
             }
+            Prim::StrTrim => {
+                arity(1)?;
+                self.text_arg(&vals[0], op)?;
+                Ok(self.text_call("trim", &[&vals[0]], Repr::Str, span))
+            }
             Prim::StrContains | Prim::StrStartsWith | Prim::StrEndsWith => {
                 arity(2)?;
                 self.text_arg(&vals[0], op)?;
@@ -1978,7 +1983,7 @@ impl<'a> Function<'a> {
             }
             // `list_append` — a new header, and a slot in the block when there is one.
             //
-            // Refused until `docs/111` for a reason that was true of the *layout* rather than of the
+            // Refused until `docs/113` for a reason that was true of the *layout* rather than of the
             // operation: with the count in front of the elements, an append could copy or it could
             // overwrite what other holders see. Separating the two made a third answer available.
             Prim::ListAppend => {
@@ -2192,7 +2197,7 @@ impl<'a> Function<'a> {
                 }
                 self.map_get(ty, &vals[0], &found, self.heap.element(v), span)
             }
-            // The three that grow a map. Refused until `docs/112` because a sorted run has to be
+            // The three that grow a map. Refused until `docs/114` because a sorted run has to be
             // copied whole; a tree rebuilds the path and shares the rest, which is
             // `beck_core::pmap`'s own cost.
             Prim::MapInsert | Prim::MapRemove => {
@@ -3608,9 +3613,6 @@ fn refusal(op: Prim) -> String {
              half-answer that folded ASCII only would disagree with the evaluator on the first \
              letter that is not"
         }
-        Prim::StrTrim => {
-            "trims Unicode whitespace, which is a table for the same reason case mapping is"
-        }
         Prim::StrReplace => {
             "builds text whose size is the number of occurrences of one string in another, which \
              needs a pass to count before there is anything to allocate"
@@ -3633,7 +3635,7 @@ fn refusal(op: Prim) -> String {
 /// module generates for itself is `beck.<something>` — `beck.dispatch`, `beck.alloc`, `beck.map.*`
 /// — so a definition *called* `dispatch` used to take the dispatcher's own symbol, and the
 /// assembler answered "invalid redefinition" for a program that had done nothing wrong.
-/// `awfy/richards.beck` has one, and it was invisible until `docs/112` made that definition
+/// `awfy/richards.beck` has one, and it was invisible until `docs/114` made that definition
 /// compile: a collision needs both halves to exist, and one of them never had.
 fn mangle(name: &str) -> String {
     let mut out = String::from("\"beck.def.");
@@ -4870,6 +4872,15 @@ declare i64 @write(i32, ptr, i64)
 /// | `beck.str.byteof` | which byte character `i` begins at, clamped to the end |
 /// | `beck.str.slice` | `str_slice`, in characters and clamped, exactly as the evaluator clamps |
 /// | `beck.str.find` | the byte offset of a substring, or `-1` |
+/// | `beck.str.ws` | the byte width of the whitespace character at `i`, or `0` if there is not one |
+/// | `beck.str.trim` | `str_trim` — `str::trim`, which is `char::is_whitespace` at both ends |
+///
+/// `beck.str.ws` is the one that is a **closed set rather than a table**, which is why `str_trim`
+/// compiles where `str_upper` does not. `White_Space` is 25 code points, none of them four bytes
+/// long, so the test is a switch over five lead bytes; case mapping is some fourteen hundred
+/// mappings and a handful that change a string's length. That is why the two are not one refusal,
+/// and `native.rs::the_whitespace_this_backend_knows_is_every_one_rust_does` is what holds the
+/// difference: it walks all of Unicode and fails the day the set is not this one.
 ///
 /// `beck.str.byteof` is the one with a cost worth naming: it is constant time when the text is
 /// ASCII — every character one byte, which is what the two equal counts say — and a walk otherwise,
@@ -5099,6 +5110,187 @@ copy:
   %at = getelementptr inbounds i8, ptr %ps, i64 %a
   %ignored = call ptr @memcpy(ptr %pr, ptr %at, i64 %bytes)
   br label %out
+out:
+  ret i64 %r
+}
+
+; The byte width of the whitespace character beginning at %i, or 0 if the character there is not
+; whitespace. Every one of `White_Space`'s 25 code points is one, two or three bytes, and no
+; continuation byte can be 0xC2, 0xE1, 0xE2 or 0xE3 — continuations are 0x80..0xBF — so this may be
+; asked at *any* byte of well-formed UTF-8 and never answers inside a character. That is what lets
+; `beck.str.trim` walk a byte at a time without decoding what it is skipping over.
+define internal i64 @"beck.str.ws"(ptr %p, i64 %i, i64 %len) {
+entry:
+  %b0p = getelementptr inbounds i8, ptr %p, i64 %i
+  %b0 = load i8, ptr %b0p
+  %b0z = zext i8 %b0 to i32
+  switch i32 %b0z, label %no [ i32 9, label %yes1
+                               i32 10, label %yes1
+                               i32 11, label %yes1
+                               i32 12, label %yes1
+                               i32 13, label %yes1
+                               i32 32, label %yes1
+                               i32 194, label %two
+                               i32 225, label %e1
+                               i32 226, label %e2
+                               i32 227, label %e3 ]
+two:
+  ; U+0085 NEL and U+00A0 NBSP.
+  %room2 = add i64 %i, 1
+  %fits2 = icmp ult i64 %room2, %len
+  br i1 %fits2, label %read2, label %no
+read2:
+  %b1p = getelementptr inbounds i8, ptr %p, i64 %room2
+  %b1 = load i8, ptr %b1p
+  %nel = icmp eq i8 %b1, -123
+  %nbsp = icmp eq i8 %b1, -96
+  %ws2 = or i1 %nel, %nbsp
+  br i1 %ws2, label %yes2, label %no
+e1:
+  ; U+1680 OGHAM SPACE MARK.
+  %room3a = add i64 %i, 2
+  %fits3a = icmp ult i64 %room3a, %len
+  br i1 %fits3a, label %read3a, label %no
+read3a:
+  %a1p = getelementptr inbounds i8, ptr %p, i64 %room3a
+  %a1 = load i8, ptr %a1p
+  %a0i = add i64 %i, 1
+  %a0q = getelementptr inbounds i8, ptr %p, i64 %a0i
+  %a0 = load i8, ptr %a0q
+  %oga = icmp eq i8 %a0, -102
+  %ogb = icmp eq i8 %a1, -128
+  %ogham = and i1 %oga, %ogb
+  br i1 %ogham, label %yes3, label %no
+e2:
+  ; U+2000..U+200A, U+2028, U+2029, U+202F — all `E2 80 xx` — and U+205F, which is `E2 81 9F`.
+  %room3b = add i64 %i, 2
+  %fits3b = icmp ult i64 %room3b, %len
+  br i1 %fits3b, label %read3b, label %no
+read3b:
+  %c1i = add i64 %i, 1
+  %c1p = getelementptr inbounds i8, ptr %p, i64 %c1i
+  %c1 = load i8, ptr %c1p
+  %c2p = getelementptr inbounds i8, ptr %p, i64 %room3b
+  %c2 = load i8, ptr %c2p
+  %c2z = zext i8 %c2 to i32
+  %is80 = icmp eq i8 %c1, -128
+  br i1 %is80, label %tail80, label %maybe81
+tail80:
+  switch i32 %c2z, label %no [ i32 128, label %yes3
+                               i32 129, label %yes3
+                               i32 130, label %yes3
+                               i32 131, label %yes3
+                               i32 132, label %yes3
+                               i32 133, label %yes3
+                               i32 134, label %yes3
+                               i32 135, label %yes3
+                               i32 136, label %yes3
+                               i32 137, label %yes3
+                               i32 138, label %yes3
+                               i32 168, label %yes3
+                               i32 169, label %yes3
+                               i32 175, label %yes3 ]
+maybe81:
+  %is81 = icmp eq i8 %c1, -127
+  %mmsp = icmp eq i8 %c2, -97
+  %ws81 = and i1 %is81, %mmsp
+  br i1 %ws81, label %yes3, label %no
+e3:
+  ; U+3000 IDEOGRAPHIC SPACE.
+  %room3c = add i64 %i, 2
+  %fits3c = icmp ult i64 %room3c, %len
+  br i1 %fits3c, label %read3c, label %no
+read3c:
+  %d1i = add i64 %i, 1
+  %d1p = getelementptr inbounds i8, ptr %p, i64 %d1i
+  %d1 = load i8, ptr %d1p
+  %d2p = getelementptr inbounds i8, ptr %p, i64 %room3c
+  %d2 = load i8, ptr %d2p
+  %ida = icmp eq i8 %d1, -128
+  %idb = icmp eq i8 %d2, -128
+  %ideo = and i1 %ida, %idb
+  br i1 %ideo, label %yes3, label %no
+yes1:
+  ret i64 1
+yes2:
+  ret i64 2
+yes3:
+  ret i64 3
+no:
+  ret i64 0
+}
+
+; `str_trim`, in one pass. The leading run is skipped whole; then every byte is either the start of
+; a whitespace character — skipped, and *not* recorded — or one byte of something else, which moves
+; the end. So %end finishes one past the last byte of the last non-whitespace character, which is
+; what `str::trim` answers, and the character count is the bytes in `[%start, %end)` that are not
+; continuations.
+define internal i64 @"beck.str.trim"(ptr noalias %err, i64 %s, i32 %span) {
+entry:
+  %len = call i64 @"beck.str.bytes"(i64 %s)
+  %p = call ptr @"beck.str.data"(i64 %s)
+  br label %lead
+lead:
+  %l = phi i64 [ 0, %entry ], [ %lnext, %skipping ]
+  %ldone = icmp uge i64 %l, %len
+  br i1 %ldone, label %empty, label %ltest
+ltest:
+  %lw = call i64 @"beck.str.ws"(ptr %p, i64 %l, i64 %len)
+  %lws = icmp sgt i64 %lw, 0
+  br i1 %lws, label %skipping, label %body
+skipping:
+  %lnext = add i64 %l, %lw
+  br label %lead
+body:
+  %start = phi i64 [ %l, %ltest ]
+  br label %scan
+scan:
+  %i = phi i64 [ %start, %body ], [ %inext, %spaced ], [ %knext, %kept ]
+  %end = phi i64 [ %start, %body ], [ %end, %spaced ], [ %knext, %kept ]
+  %over = icmp uge i64 %i, %len
+  br i1 %over, label %cut, label %test
+test:
+  %w = call i64 @"beck.str.ws"(ptr %p, i64 %i, i64 %len)
+  %isws = icmp sgt i64 %w, 0
+  br i1 %isws, label %spaced, label %kept
+spaced:
+  %inext = add i64 %i, %w
+  br label %scan
+kept:
+  %knext = add i64 %i, 1
+  br label %scan
+cut:
+  %bytes = sub i64 %end, %start
+  br label %count
+count:
+  %k = phi i64 [ %start, %cut ], [ %k1, %counted ]
+  %chars = phi i64 [ 0, %cut ], [ %chars1, %counted ]
+  %cdone = icmp uge i64 %k, %end
+  br i1 %cdone, label %make, label %counted
+counted:
+  %cbp = getelementptr inbounds i8, ptr %p, i64 %k
+  %cb = load i8, ptr %cbp
+  %ctop = and i8 %cb, -64
+  %ccont = icmp eq i8 %ctop, -128
+  %one = select i1 %ccont, i64 0, i64 1
+  %chars1 = add i64 %chars, %one
+  %k1 = add i64 %k, 1
+  br label %count
+make:
+  %r = call i64 @"beck.str.alloc"(ptr %err, i64 %bytes, i64 %chars, i32 %span)
+  %failed = icmp eq i64 %r, 0
+  br i1 %failed, label %out, label %copy
+copy:
+  ; The source pointer is taken again: `beck.str.alloc` can move the arena, and `%p` was read
+  ; before it ran.
+  %pr = call ptr @"beck.str.data"(i64 %r)
+  %ps = call ptr @"beck.str.data"(i64 %s)
+  %at = getelementptr inbounds i8, ptr %ps, i64 %start
+  %ignored = call ptr @memcpy(ptr %pr, ptr %at, i64 %bytes)
+  br label %out
+empty:
+  %e = call i64 @"beck.str.alloc"(ptr %err, i64 0, i64 0, i32 %span)
+  ret i64 %e
 out:
   ret i64 %r
 }

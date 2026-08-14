@@ -210,7 +210,7 @@ pub fn str_bytes(n: u64) -> u64 {
 /// What it costs is one load: [`docs/106`](../../../../../docs/106-lists-arrive-read-only-report.md)
 /// reached an element with an add, and this reaches the block first. That is paid **once per
 /// operation** rather than once per element — every generated loop takes the data pointer before it
-/// starts — and `docs/111` measures what is left.
+/// starts — and `docs/113` measures what is left.
 pub const LIST_HEADER: u64 = 2 * WORD;
 
 /// The two header words of a list's data block: how many elements it can hold, and how many have
@@ -290,7 +290,7 @@ pub const MAP_HEADER: u64 = WORD;
 /// it for that reason: *this backend does not ship an operation whose asymptote is worse than the
 /// evaluator's*.
 ///
-/// [`docs/111`](../../../../../docs/113-a-list-grows-report.md) removed the same refusal for a list
+/// [`docs/113`](../../../../../docs/113-a-list-grows-report.md) removed the same refusal for a list
 /// by separating the count from the elements, and §113.7 said in advance that the map's would
 /// **survive** that trick — a sorted run has to shift however its header is arranged. What removes
 /// it is the structure the evaluator already uses: a **weight-balanced tree**, whose insert rebuilds

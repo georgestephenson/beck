@@ -1252,6 +1252,10 @@ struct Text {
     slice: FuncId,
     /// The byte offset of a substring, or `-1`.
     find: FuncId,
+    /// The byte width of the whitespace character at `i`, or `0` if the character there is not one.
+    ws: FuncId,
+    /// `str_trim` — `str::trim`, which is `char::is_whitespace` at both ends.
+    trim: FuncId,
     /// How many characters begin before a byte offset — [`Text::byteof`]'s inverse, and what turns
     /// a search's answer into an index the language can use.
     charat: FuncId,
@@ -1263,6 +1267,7 @@ struct Text {
 enum Which {
     Concat,
     Slice,
+    Trim,
 }
 
 impl Text {
@@ -1296,6 +1301,8 @@ impl Text {
         )?;
         let find = one("beck.str.find", &[types::I64, types::I64], types::I64)?;
         let charat = one("beck.str.charat", &[types::I64, types::I64], types::I64)?;
+        let ws = one("beck.str.ws", &[ptr, types::I64, types::I64], types::I64)?;
+        let trim = one("beck.str.trim", &[ptr, types::I64, types::I32], types::I64)?;
 
         let mut sig = cranelift_codegen::ir::Signature::new(conv);
         sig.params.push(AbiParam::new(ptr));
@@ -1314,6 +1321,8 @@ impl Text {
             slice,
             find,
             charat,
+            ws,
+            trim,
             memcmp,
         })
     }
@@ -1322,6 +1331,7 @@ impl Text {
         match which {
             Which::Concat => self.concat,
             Which::Slice => self.slice,
+            Which::Trim => self.trim,
         }
     }
 
@@ -1368,6 +1378,8 @@ impl Text {
         self.define_slice(arena, m, ctx, fctx, ptr)?;
         self.define_find(arena, m, ctx, fctx)?;
         self.define_charat(arena, m, ctx, fctx)?;
+        self.define_ws(m, ctx, fctx, ptr)?;
+        self.define_trim(arena, m, ctx, fctx, ptr)?;
         Ok(())
     }
 
@@ -1651,6 +1663,293 @@ impl Text {
 
             b.switch_to_block(here);
             let answer = b.use_var(at);
+            b.ins().return_(&[answer]);
+        })
+    }
+
+    /// The byte width of the whitespace character beginning at `i`, or `0` if the character there
+    /// is not whitespace.
+    ///
+    /// `White_Space` is **25 code points**, none of them four bytes long, so this is a switch over
+    /// five lead bytes rather than a table — which is the whole of why `str_trim` compiles here and
+    /// `str_upper` does not. No continuation byte can be `0xC2`, `0xE1`, `0xE2`
+    /// or `0xE3` — continuations are `0x80..=0xBF` — so this may be asked at *any* byte of
+    /// well-formed UTF-8 and never answers inside a character, which is what lets
+    /// [`Text::define_trim`] walk a byte at a time without decoding what it skips.
+    fn define_ws(
+        self,
+        m: &mut ObjectModule,
+        ctx: &mut cranelift_codegen::Context,
+        fctx: &mut FunctionBuilderContext,
+        ptr: Type,
+    ) -> Result<(), String> {
+        let sig = Text::signature(m, &[ptr, types::I64, types::I64], types::I64);
+        Text::wrote(self.ws, sig, 8, m, ctx, fctx, |b, _m| {
+            let entry = b.current_block().expect("an entry block");
+            let p = b.block_params(entry)[0];
+            let i = b.block_params(entry)[1];
+            let len = b.block_params(entry)[2];
+
+            let byte = |b: &mut FunctionBuilder<'_>, at: IrValue| {
+                let q = b.ins().iadd(p, at);
+                let raw = b.ins().load(types::I8, MemFlagsData::trusted(), q, 0);
+                b.ins().uextend(types::I64, raw)
+            };
+            let is = |b: &mut FunctionBuilder<'_>, v: IrValue, n: i64| {
+                b.ins().icmp_imm_u(IntCC::Equal, v, n)
+            };
+
+            let out = b.create_block();
+            b.append_block_param(out, types::I64);
+            let zero = b.ins().iconst(types::I64, 0);
+
+            // The six one-byte ones: TAB..CR and SPACE.
+            let b0 = byte(b, i);
+            let space = is(b, b0, 0x20);
+            let ge9 = b
+                .ins()
+                .icmp_imm_u(IntCC::UnsignedGreaterThanOrEqual, b0, 0x09);
+            let led = b.ins().icmp_imm_u(IntCC::UnsignedLessThanOrEqual, b0, 0x0d);
+            let control = b.ins().band(ge9, led);
+            let one = b.ins().bor(space, control);
+            let chk1 = b.create_block();
+            let w1 = b.ins().iconst(types::I64, 1);
+            b.ins().brif(one, out, &[w1.into()], chk1, &[]);
+
+            // Two bytes: U+0085 NEL and U+00A0 NBSP, both behind `0xC2`.
+            b.switch_to_block(chk1);
+            let ld1 = b.create_block();
+            let i1 = b.ins().iadd_imm_s(i, 1);
+            let has1 = b.ins().icmp(IntCC::UnsignedLessThan, i1, len);
+            b.ins().brif(has1, ld1, &[], out, &[zero.into()]);
+
+            b.switch_to_block(ld1);
+            let b1 = byte(b, i1);
+            let c2 = is(b, b0, 0xc2);
+            let nel = is(b, b1, 0x85);
+            let nbsp = is(b, b1, 0xa0);
+            let after = b.ins().bor(nel, nbsp);
+            let two = b.ins().band(c2, after);
+            let chk2 = b.create_block();
+            let w2 = b.ins().iconst(types::I64, 2);
+            b.ins().brif(two, out, &[w2.into()], chk2, &[]);
+
+            b.switch_to_block(chk2);
+            let ld2 = b.create_block();
+            let i2 = b.ins().iadd_imm_s(i, 2);
+            let has2 = b.ins().icmp(IntCC::UnsignedLessThan, i2, len);
+            b.ins().brif(has2, ld2, &[], out, &[zero.into()]);
+
+            // Three bytes, in the four families the encoding groups them into: U+1680 alone,
+            // `E2 80 xx` (U+2000..U+200A, U+2028, U+2029, U+202F), U+205F, and U+3000.
+            b.switch_to_block(ld2);
+            let b2 = byte(b, i2);
+            let e1 = is(b, b0, 0xe1);
+            let x9a = is(b, b1, 0x9a);
+            let x80 = is(b, b2, 0x80);
+            let ogham = {
+                let t = b.ins().band(e1, x9a);
+                b.ins().band(t, x80)
+            };
+            let e2 = is(b, b0, 0xe2);
+            let lead80 = is(b, b1, 0x80);
+            let quads = {
+                let ge = b
+                    .ins()
+                    .icmp_imm_u(IntCC::UnsignedGreaterThanOrEqual, b2, 0x80);
+                let le = b.ins().icmp_imm_u(IntCC::UnsignedLessThanOrEqual, b2, 0x8a);
+                b.ins().band(ge, le)
+            };
+            let sep = {
+                let a = is(b, b2, 0xa8);
+                let c = is(b, b2, 0xa9);
+                b.ins().bor(a, c)
+            };
+            let narrow = is(b, b2, 0xaf);
+            let general = {
+                let t = b.ins().bor(quads, sep);
+                let t = b.ins().bor(t, narrow);
+                let u = b.ins().band(e2, lead80);
+                b.ins().band(u, t)
+            };
+            let lead81 = is(b, b1, 0x81);
+            let mmsp = {
+                let x9f = is(b, b2, 0x9f);
+                let t = b.ins().band(e2, lead81);
+                b.ins().band(t, x9f)
+            };
+            let e3 = is(b, b0, 0xe3);
+            let ideographic = {
+                let t = b.ins().band(e3, lead80);
+                b.ins().band(t, x80)
+            };
+            let three = {
+                let t = b.ins().bor(ogham, general);
+                let t = b.ins().bor(t, mmsp);
+                b.ins().bor(t, ideographic)
+            };
+            let w3 = b.ins().iconst(types::I64, 3);
+            b.ins().brif(three, out, &[w3.into()], out, &[zero.into()]);
+
+            b.switch_to_block(out);
+            let w = b.block_params(out)[0];
+            b.ins().return_(&[w]);
+        })
+    }
+
+    /// `str_trim`, in one pass.
+    ///
+    /// The leading run is skipped whole; then every byte is either the start of a whitespace
+    /// character — skipped, and *not* recorded — or one byte of something else, which moves the
+    /// end. So `end` finishes one past the last byte of the last non-whitespace character, which is
+    /// what `str::trim` answers, and the character count is the bytes in `[start, end)` that are
+    /// not continuations.
+    fn define_trim(
+        self,
+        arena: Arena,
+        m: &mut ObjectModule,
+        ctx: &mut cranelift_codegen::Context,
+        fctx: &mut FunctionBuilderContext,
+        ptr: Type,
+    ) -> Result<(), String> {
+        let sig = Text::signature(m, &[ptr, types::I64, types::I32], types::I64);
+        Text::wrote(self.trim, sig, 9, m, ctx, fctx, |b, m| {
+            let entry = b.current_block().expect("an entry block");
+            let err = b.block_params(entry)[0];
+            let s = b.block_params(entry)[1];
+            let span = b.block_params(entry)[2];
+
+            let len = self.header(arena, s, 0, b, m);
+            let p = self.data(arena, s, b, m);
+            let ws = m.declare_func_in_func(self.ws, b.func);
+
+            let cursor = b.declare_var(types::I64);
+            let start = b.declare_var(types::I64);
+            let end = b.declare_var(types::I64);
+            let zero = b.ins().iconst(types::I64, 0);
+            b.def_var(cursor, zero);
+
+            let lead = b.create_block();
+            let empty = b.create_block();
+            let ltest = b.create_block();
+            b.ins().jump(lead, &[]);
+
+            b.switch_to_block(lead);
+            let l = b.use_var(cursor);
+            let over = b.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, l, len);
+            b.ins().brif(over, empty, &[], ltest, &[]);
+
+            b.switch_to_block(ltest);
+            let call = b.ins().call(ws, &[p, l, len]);
+            let lw = b.inst_results(call)[0];
+            let skipping = b.create_block();
+            let body = b.create_block();
+            let blank = b.ins().icmp_imm_s(IntCC::SignedGreaterThan, lw, 0);
+            b.ins().brif(blank, skipping, &[], body, &[]);
+
+            b.switch_to_block(skipping);
+            let next = b.ins().iadd(l, lw);
+            b.def_var(cursor, next);
+            b.ins().jump(lead, &[]);
+
+            b.switch_to_block(body);
+            let from = b.use_var(cursor);
+            b.def_var(start, from);
+            b.def_var(end, from);
+            let scan = b.create_block();
+            b.ins().jump(scan, &[]);
+
+            b.switch_to_block(scan);
+            let cut = b.create_block();
+            let test = b.create_block();
+            let i = b.use_var(cursor);
+            let done = b.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, i, len);
+            b.ins().brif(done, cut, &[], test, &[]);
+
+            b.switch_to_block(test);
+            let call = b.ins().call(ws, &[p, i, len]);
+            let w = b.inst_results(call)[0];
+            let spaced = b.create_block();
+            let kept = b.create_block();
+            let isws = b.ins().icmp_imm_s(IntCC::SignedGreaterThan, w, 0);
+            b.ins().brif(isws, spaced, &[], kept, &[]);
+
+            b.switch_to_block(spaced);
+            let past = b.ins().iadd(i, w);
+            b.def_var(cursor, past);
+            b.ins().jump(scan, &[]);
+
+            b.switch_to_block(kept);
+            let on = b.ins().iadd_imm_s(i, 1);
+            b.def_var(cursor, on);
+            b.def_var(end, on);
+            b.ins().jump(scan, &[]);
+
+            // The character count, over the bytes that survived: one per byte that is not a
+            // continuation, which is the same test `beck.str.byteof` walks with.
+            b.switch_to_block(cut);
+            let head = b.use_var(start);
+            let tail = b.use_var(end);
+            let bytes = b.ins().isub(tail, head);
+            let at = b.declare_var(types::I64);
+            let chars = b.declare_var(types::I64);
+            b.def_var(at, head);
+            b.def_var(chars, zero);
+            let count = b.create_block();
+            b.ins().jump(count, &[]);
+
+            b.switch_to_block(count);
+            let make = b.create_block();
+            let counted = b.create_block();
+            let k = b.use_var(at);
+            let ran = b.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, k, tail);
+            b.ins().brif(ran, make, &[], counted, &[]);
+
+            b.switch_to_block(counted);
+            let cp = b.ins().iadd(p, k);
+            let cb = b.ins().load(types::I8, MemFlagsData::trusted(), cp, 0);
+            let top = b.ins().band_imm_u(cb, 0xc0);
+            let cont = b.ins().icmp_imm_u(IntCC::Equal, top, 0x80);
+            let seen = b.use_var(chars);
+            let more = b.ins().iadd_imm_s(seen, 1);
+            let held = b.ins().select(cont, seen, more);
+            b.def_var(chars, held);
+            let k1 = b.ins().iadd_imm_s(k, 1);
+            b.def_var(at, k1);
+            b.ins().jump(count, &[]);
+
+            b.switch_to_block(make);
+            let total = b.use_var(chars);
+            let f = m.declare_func_in_func(self.alloc, b.func);
+            let call = b.ins().call(f, &[err, bytes, total, span]);
+            let r = b.inst_results(call)[0];
+            let copy = b.create_block();
+            let out = b.create_block();
+            b.append_block_param(out, types::I64);
+            let failed = b.ins().icmp_imm_s(IntCC::Equal, r, 0);
+            b.ins().brif(failed, out, &[r.into()], copy, &[]);
+
+            b.switch_to_block(copy);
+            // Both pointers are taken again: `beck.str.alloc` can move the arena, and the ones
+            // above were read before it ran.
+            let pr = self.data(arena, r, b, m);
+            let ps = self.data(arena, s, b, m);
+            let src = b.ins().iadd(ps, head);
+            let config = m.target_config();
+            b.call_memcpy(config, pr, src, bytes);
+            b.ins().jump(out, &[r.into()]);
+
+            // All whitespace, or empty to begin with: the answer is a fresh empty `Str` rather than
+            // the argument, because the evaluator's is one too and `docs/105`'s layout has no
+            // interning in it.
+            b.switch_to_block(empty);
+            let f = m.declare_func_in_func(self.alloc, b.func);
+            let call = b.ins().call(f, &[err, zero, zero, span]);
+            let e = b.inst_results(call)[0];
+            b.ins().jump(out, &[e.into()]);
+
+            b.switch_to_block(out);
+            let answer = b.block_params(out)[0];
             b.ins().return_(&[answer]);
         })
     }
@@ -5820,6 +6119,11 @@ impl<'a> Body<'a> {
                     m,
                 ))
             }
+            Prim::StrTrim => {
+                arity(1, &vals)?;
+                self.text_arg(&vals[0], op)?;
+                Ok(self.text_call(Which::Trim, &[vals[0].v], Repr::Str, span, b, m))
+            }
             Prim::StrContains | Prim::StrStartsWith | Prim::StrEndsWith => {
                 arity(2, &vals)?;
                 self.text_arg(&vals[0], op)?;
@@ -6031,7 +6335,7 @@ impl<'a> Body<'a> {
                 }
                 self.map_get(ty, &vals[0], found, span, b, m)
             }
-            // The three that grow a map: a path rebuild over `docs/112`'s tree. See the LLVM
+            // The three that grow a map: a path rebuild over `docs/114`'s tree. See the LLVM
             // emitter's arms.
             Prim::MapInsert | Prim::MapRemove | Prim::MapMerge => {
                 arity(
@@ -7327,9 +7631,6 @@ fn refusal(op: Prim) -> String {
             "is Unicode case mapping, which is a table rather than an operation — and a compiled \
              half-answer that folded ASCII only would disagree with the evaluator on the first \
              letter that is not"
-        }
-        Prim::StrTrim => {
-            "trims Unicode whitespace, which is a table for the same reason case mapping is"
         }
         Prim::StrReplace => {
             "builds text whose size is the number of occurrences of one string in another, which \

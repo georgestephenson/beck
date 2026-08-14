@@ -567,7 +567,80 @@ fn the_two_backends_agree_on_text() {
         .collect();
     compared += both.agree("untag", &textfix::singles(&tagged));
 
+    // The trim, over the strings written for it: every shape a run of whitespace can have, one of
+    // each **kind** of whitespace character the encoding has, and `U+200B` as the control, since it
+    // is in the space block and is not `White_Space`.
+    let sp = textfix::spaced();
+    for name in ["trimmed", "trimmed_len", "blank"] {
+        compared += both.agree(name, &textfix::singles(&sp));
+    }
+    compared += both.agree("trimmed_up", &textfix::repeats(&sp));
+
+    // …and then every code point Rust calls whitespace, four ways each, plus the four that look
+    // like whitespace and are not. The list is `char::is_whitespace` itself, so this asks about a
+    // new one the day Rust learns about it.
+    let ws = textfix::every_whitespace();
+    for name in ["trimmed", "trimmed_len", "blank"] {
+        compared += both.agree(name, &ws);
+    }
+
     println!("{compared} text calls compared, and both backends agreed on every one");
+}
+
+/// `White_Space` is a **closed set**, and this is the assertion that says so with a number.
+///
+/// `str_trim` is not the table `str_upper` is, and the argument rests on two facts about the host's
+/// Unicode data rather than on anything either emitter does: the set
+/// is **25 code points**, and **none of them is four bytes long**. Both emitters are written from
+/// those facts — a switch over five lead bytes, with no four-byte arm at all — so this is where a
+/// Rust upgrade that changed either one goes red, and it goes red *here* rather than as a
+/// divergence in a differential that would say only that the two disagreed.
+///
+/// It runs on any machine, because it compiles nothing: the emitters' correctness against this set
+/// is `the_two_backends_agree_on_text`'s, over `textfix::every_whitespace`, which enumerates the
+/// same property from the same function.
+#[test]
+fn the_whitespace_this_backend_knows_is_every_one_rust_does() {
+    let space: Vec<char> = (0u32..0x11_0000)
+        .filter_map(char::from_u32)
+        .filter(|c| c.is_whitespace())
+        .collect();
+    assert_eq!(
+        space.len(),
+        25,
+        "`White_Space` is 25 code points and both emitters switch over the five lead bytes those \
+         need; it is now {}, so `beck.str.ws` has an arm to add or drop: {:?}",
+        space.len(),
+        space.iter().map(|c| *c as u32).collect::<Vec<_>>()
+    );
+    let widest = space
+        .iter()
+        .map(|c| c.len_utf8())
+        .max()
+        .expect("25 of them");
+    assert_eq!(
+        widest, 3,
+        "no whitespace character is four bytes long, which is why `beck.str.ws` has no four-byte \
+         arm — one is now {widest} bytes"
+    );
+    // And the lead bytes themselves, because that is the shape of the switch rather than a
+    // consequence of the two numbers above: a new whitespace character three bytes long behind a
+    // sixth lead byte would satisfy both assertions and still be missed.
+    let mut leads: Vec<u8> = space
+        .iter()
+        .map(|c| {
+            let mut b = [0u8; 4];
+            c.encode_utf8(&mut b).as_bytes()[0]
+        })
+        .filter(|b| *b >= 0x80)
+        .collect();
+    leads.sort_unstable();
+    leads.dedup();
+    assert_eq!(
+        leads,
+        vec![0xc2, 0xe1, 0xe2, 0xe3],
+        "the non-ASCII whitespace lead bytes are the four both emitters switch on"
+    );
 }
 
 /// Lists, over every backend this machine has.
@@ -1429,7 +1502,7 @@ fn a_slice_costs_its_answer_and_not_the_string_it_came_from() {
 ///
 /// `apply_event` is a `durable` fold's step function — `(State, Envelope[Event]) -> State` — and
 /// until `docs/107` its state was a `Map` and so it could not. `view` is `(State, Session) -> Html`
-/// and until `docs/109` a page had no shape at all; this test asserted it was refused, and that row
+/// and until `docs/111` a page had no shape at all; this test asserted it was refused, and that row
 /// moved here rather than being deleted, which is what the refusal lists in this file are for.
 ///
 /// Both sets are floors rather than equalities. A corpus program acquiring one should not turn this
@@ -1466,15 +1539,17 @@ fn a_corpus_fold_compiles() {
     );
     assert!(
         viewed.len() >= 21,
-        "twenty-one corpus pages compiled when `docs/109` was written, and {} do now: {viewed:?}",
+        "twenty-one corpus pages compiled when `docs/111` was written, and {} do now: {viewed:?}",
         viewed.len()
     );
     // The other side, so this is not passing because everything compiles. What is still refused
-    // across the corpus is a Unicode table — `docs/112` compiled the last collection that grows,
-    // and this line has been rewritten once per report that removed the previous answer.
+    // across the corpus is a definition **generic over a type** — `docs/114` compiled the last
+    // collection that grows and `str_trim` took the last Unicode row that was not one, so a type
+    // parameter is what is left. This line has been rewritten once per change that removed the
+    // previous answer, which is what it is for.
     assert!(
-        refused.iter().any(|r| r.contains("Unicode whitespace")),
-        "no corpus definition was refused for a Unicode table, and this test would then be \
+        refused.iter().any(|r| r.contains("generic over T")),
+        "no corpus definition was refused for a type parameter, and this test would then be \
          asserting that everything compiles: {refused:?}"
     );
     println!(
@@ -1605,7 +1680,7 @@ fn an_accumulator_costs_the_square_of_what_it_builds() {
 /// `n` steps are `40n` bytes, and a `list_slice` that copied what it was taken *from* would be
 /// `O(n²)` with no clock in the measurement.
 ///
-/// The constant went 16 → 40 at `docs/111`, which is that report's cost stated in a gate: a list is
+/// The constant went 16 → 40 at `docs/113`, which is that report's cost stated in a gate: a list is
 /// two objects now, so the *smallest* one is five words rather than two. What this test is about is
 /// unchanged, because what it asserts is that the number does not grow with `n`.
 #[test]
@@ -1712,10 +1787,11 @@ fn what_cannot_be_compiled_is_refused_by_name_and_with_a_reason() {
 /// list in prose goes stale where a list with a test attached cannot (`docs/83` §83.7). Each of
 /// these goes red the day its row starts compiling, which is the day the row should be deleted.
 ///
-/// Three rows were deleted that way: `docs/105` gave a `Str` a layout, `docs/106` gave a `list` one,
-/// and `docs/108` compiled the higher-order primitives — so `mapped` moved from this list to the
-/// control below it in the same commit. What is left is the primitives that read a Unicode table or
-/// render a real, and the collections that **grow**.
+/// Four rows were deleted that way: `docs/105` gave a `Str` a layout, `docs/106` gave a `list` one,
+/// `docs/108` compiled the higher-order primitives, and `str_trim` moved across when its stated
+/// reason — a Unicode table — turned out to be false of it. Each time, the row moved from this list
+/// to the control below it in the same commit. What is left is the primitives that really do read a
+/// table, the ones that render a real, and a definition generic over a type.
 #[test]
 fn what_the_heap_does_not_reach_is_refused_by_name() {
     let program = compile("still-refused.beck", STILL_REFUSED);
@@ -1724,7 +1800,6 @@ fn what_the_heap_does_not_reach_is_refused_by_name() {
         ("renders_a_real", "`str` of Float"),
         ("splits_a_string", "`str_split` answers with a list"),
         ("upcases", "`str_upper` is Unicode case mapping"),
-        ("trims", "`str_trim` trims Unicode whitespace"),
         ("grows", "`list_flat_map` answers a list"),
         ("is_generic", "generic over T"),
         (
@@ -1754,6 +1829,7 @@ fn what_the_heap_does_not_reach_is_refused_by_name() {
             .map(|f| f.name.to_string())
             .collect::<Vec<_>>(),
         vec![
+            "trims".to_string(),
             "mapped".to_string(),
             "double_it".to_string(),
             "names_it".to_string(),
@@ -2302,7 +2378,7 @@ fn the_subset_is_decided_without_a_toolchain() {
 
 /// A page, compiled — and the tree it bakes into is the tree the evaluator built.
 ///
-/// This is the differential over `docs/109`'s recipe. What crosses the pipe is the *call* rather
+/// This is the differential over `docs/111`'s recipe. What crosses the pipe is the *call* rather
 /// than the tree, so the assertion that matters is not that the bytes arrived: it is that
 /// `beck_core::html::element` and `Value`'s equality — which includes every structural hash — say
 /// the two trees are one. A recipe that dropped an attribute in the wrong place, kept a key as an
@@ -2469,7 +2545,7 @@ fn a_view_has_no_order_and_the_refusal_says_why() {
 /// The constant is written down rather than derived, because deriving it here would be the layout
 /// spelled a second time (`beck_llvm::heap`'s own argument): a row is an `li` (four words), its
 /// empty attribute list (four), its child list (five), its text node (four) and the word it occupies
-/// in the page's own child list — eighteen words, 144 bytes. It was twelve words until `docs/111`
+/// in the page's own child list — eighteen words, 144 bytes. It was twelve words until `docs/113`
 /// made a list two objects. What is left over is the page itself and
 /// the literal pool, and *that* number has to be the same at both sizes too, which is the half of
 /// this test a per-row division would hide.
@@ -2605,7 +2681,7 @@ fn unwinding_costs_nothing_per_frame() {
 
 /// An accumulator built with `list_append` is **linear**, and the gate has no clock in it.
 ///
-/// This is `docs/111`'s claim and the reason the operation could be compiled at all. The idiom is
+/// This is `docs/113`'s claim and the reason the operation could be compiled at all. The idiom is
 /// the one every loop in the language is written as — `f(…, list_append(acc, x))` in tail position —
 /// and it was refused rather than shipped because with the count in front of the elements an append
 /// can only copy, which is `Θ(n²)` where `beck-eval` is `Θ(n)` (`docs/69` §69.7).
@@ -2648,7 +2724,7 @@ fn an_appended_accumulator_is_linear() {
     assert!(
         growth < steps * 2.0,
         "four times the elements left {growth:.1}× the arena, and an append that copies leaves \
-         about {:.0}× — this is the quadratic `docs/111` exists to remove",
+         about {:.0}× — this is the quadratic `docs/113` exists to remove",
         steps * steps
     );
     println!(
@@ -2660,7 +2736,7 @@ fn an_appended_accumulator_is_linear() {
 
 /// A fold that keeps a `Map` is **not quadratic**, and the gate has no clock in it.
 ///
-/// This is `docs/112`'s claim and the reason the operation could be compiled at all. `map_insert`
+/// This is `docs/114`'s claim and the reason the operation could be compiled at all. `map_insert`
 /// over a sorted run copies the whole run, so `n` inserts cost `Θ(n²)` — where `beck_core::pmap` is
 /// `Θ(n log n)` because it rebuilds one path and shares the rest. `docs/107` §107.4 refused to ship
 /// the first, and this asserts the second.
@@ -2691,7 +2767,7 @@ fn a_fold_over_a_map_is_not_quadratic() {
     assert!(
         growth < steps * 2.0,
         "four times the entries left {growth:.1}× the arena, and an insert that copies the run \
-         leaves about {:.0}× — this is the quadratic `docs/112` exists to remove",
+         leaves about {:.0}× — this is the quadratic `docs/114` exists to remove",
         steps * steps
     );
     println!(

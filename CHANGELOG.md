@@ -109,6 +109,34 @@ Newest first.
 
 ### The native backends
 
+- **`str_trim` compiles, and its refusal was a claim about the wrong set.** On both code
+  generators. The reason on record was *"trims Unicode whitespace, which is a table for the same
+  reason case mapping is"*, and the two are not the same reason at all: `White_Space` is **25 code
+  points**, none of them four bytes long, where case mapping is some fourteen hundred mappings and a
+  handful that change a string's length. So a trim is a switch over five lead bytes, and
+  `str_upper` stays refused for a reason that is true of it.
+  - **`examples/todo.beck` compiles all nine of its definitions** — the first program in this tree
+    to compile whole, and the row [`docs/114`](docs/114-a-map-grows-report.md) left at eight.
+    Across the corpus, both benchmark suites, both SICP chapters, the examples and the standard
+    library, **812 → 837 definitions** compile and refusals go 261 → 236.
+  - One pass, and it allocates once: the leading run is skipped whole, then every byte is either the
+    start of a whitespace character — skipped, and not recorded — or one byte of something else,
+    which moves the end. `beck.str.ws` may be asked at **any** byte of well-formed UTF-8 and never
+    answers inside a character, because no continuation byte can be `0xC2`, `0xE1`, `0xE2` or
+    `0xE3`, so the scan needs no decoder for what it is skipping over.
+  - **Gated in two halves, and neither restates the other.**
+    `native.rs::the_whitespace_this_backend_knows_is_every_one_rust_does` walks all of Unicode and
+    asserts the three facts the emitters were written from — 25 code points, none four bytes long,
+    four non-ASCII lead bytes — so a Rust upgrade that changed the set goes red *there*, at the
+    place that names what to edit. The differentials then run every code point
+    `char::is_whitespace` answers for, four ways each, **derived from that function rather than
+    written out**, plus the four near misses (`U+200B`, `U+180E`, `U+FEFF`, `U+2060`) that look like
+    whitespace and are not. 3,564 → **3,912 text calls** compared, all three backends agreeing.
+    Checked by making it red: dropping the `0xE3` arm from one emitter fails on `U+3000`.
+  - `trims` moved from `what_the_heap_does_not_reach_is_refused_by_name`'s refusal list to its
+    control list — the fourth row to cross that line — and `a_corpus_fold_compiles`'s "what is still
+    refused" control now names a **type parameter**, which is what is left.
+
 - **A map grows, as the tree it always was**
   ([`docs/114`](docs/114-a-map-grows-report.md)): `map_insert`, `map_remove` and `map_merge` compile
   to both code generators, and a fold that keeps a `Map` is `Θ(n log n)` rather than `Θ(n²)`.

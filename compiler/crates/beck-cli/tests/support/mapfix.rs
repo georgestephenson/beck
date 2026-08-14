@@ -135,7 +135,7 @@ def lookup_or(m: Map[Str, Int], k: Str) -> Int:
 def holds(m: Map[Str, Int], k: Str) -> Bool:
     return map_contains(m, k)
 
-# The three that grow one. `docs/112` is the tree that made them compilable, and what these are
+# The three that grow one. `docs/114` is the tree that made them compilable, and what these are
 # chosen to catch is the *sharing*: an insert rebuilds the path and leaves every other subtree
 # alone, so a program that reads the map it inserted into is the one that would show a rotation
 # writing through a node somebody else holds.

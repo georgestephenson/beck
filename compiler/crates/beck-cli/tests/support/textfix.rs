@@ -51,6 +51,80 @@ pub fn strings() -> Vec<Value> {
     .collect()
 }
 
+/// The strings a trim is asked about: every shape the leading and trailing runs can have, and one
+/// of each of the four **kinds** of whitespace character the encoding has —  one byte, two bytes,
+/// and the two three-byte families (`E2 80 xx` and the singletons).
+///
+/// The last two are the ones that separate this from an ASCII trim: `"\u{2003}x\u{2003}"` is
+/// trimmed by the evaluator and would not be by a backend that only knew `' '`, and
+/// `"\u{2000}"` alone trims to the empty string. `"\u{200B}"` is the control — ZERO WIDTH SPACE is
+/// *not* `White_Space`, so a backend that trimmed "anything in the space block" would answer
+/// `""` where the evaluator answers the character back.
+pub fn spaced() -> Vec<Value> {
+    [
+        "",
+        " ",
+        "  ",
+        "a",
+        " a",
+        "a ",
+        " a ",
+        "  a  ",
+        " a b ",
+        "\t\n\r\x0b\x0c a \t\n\r",
+        "\u{85}a\u{a0}",
+        "\u{a0}\u{85}",
+        "\u{1680}a\u{1680}",
+        "\u{2000}",
+        "\u{2003}x\u{2003}",
+        "\u{200a}\u{2028}\u{2029}\u{202f}y\u{205f}",
+        "\u{3000}\u{3000}z",
+        "\u{200b}",
+        " \u{200b} ",
+        "héllo ",
+        " 日本語",
+        " 🎈x ",
+        "a\0b ",
+        " the seventeen ok ",
+        "   ",
+        "\u{2003}\u{3000}\u{a0}",
+    ]
+    .iter()
+    .map(Value::str_)
+    .collect()
+}
+
+/// **Every** code point Rust calls whitespace, four ways each — alone, leading, trailing and both.
+///
+/// Derived from `char::is_whitespace` rather than written out, so this list *is* the enumeration
+/// and cannot drift from it: if a Rust upgrade adds a `White_Space` code point, the differential
+/// starts asking about it on the next run, and the emitters answer wrongly until they are told.
+/// `native.rs::the_whitespace_this_backend_knows_is_every_one_rust_does` is the other half — it
+/// says how many there are and how long they are, which is what the emitters were written from.
+///
+/// The four at the end are the **near misses**, and they are why this is not simply "the space
+/// block": ZERO WIDTH SPACE, MONGOLIAN VOWEL SEPARATOR, ZERO WIDTH NO-BREAK SPACE and WORD JOINER
+/// all look like whitespace, are named like whitespace, and are not `White_Space` — so a backend
+/// that trimmed a *range* rather than a set answers `""` where the evaluator answers them back.
+pub fn every_whitespace() -> Vec<Vec<Value>> {
+    let mut out = Vec::new();
+    let space = (0u32..0x11_0000)
+        .filter_map(char::from_u32)
+        .filter(|c| c.is_whitespace());
+    let near = ['\u{200b}', '\u{180e}', '\u{feff}', '\u{2060}'].into_iter();
+    for c in space.chain(near) {
+        for shape in [
+            format!("{c}"),
+            format!("{c}x"),
+            format!("x{c}"),
+            format!("{c}x{c}"),
+        ] {
+            out.push(vec![Value::str_(&shape)]);
+        }
+    }
+    out
+}
+
 /// The same, as one-argument calls.
 pub fn singles(xs: &[Value]) -> Vec<Vec<Value>> {
     xs.iter().map(|x| vec![x.clone()]).collect()
@@ -332,6 +406,25 @@ def walked(s: Str, i: Int, acc: Str) -> Str:
     if i >= str_len(s):
         return acc
     return walked(s, i + 1, str_slice(s, i, 1))
+
+## Trims. Two shapes, because what a trim answers is read two ways: as text, and as the length that
+## says the answer has the right *characters* rather than the right bytes.
+def trimmed(s: Str) -> Str:
+    return str_trim(s)
+
+def trimmed_len(s: Str) -> Int:
+    return str_len(str_trim(s))
+
+## A trim in the middle of an expression, so the answer is a fresh object something else then reads.
+def blank(s: Str) -> Bool:
+    return str_is_empty(str_trim(s))
+
+## The accumulator, trimming each step: what this is for is the arena, since a trim allocates and a
+## loop that trims once per step is where a copy nobody asked for would show as a shape.
+def trimmed_up(s: Str, n: Int, acc: Str) -> Str:
+    if n <= 0:
+        return acc
+    return trimmed_up(s, n - 1, acc + str_trim(s))
 
 ## Walks a string by character index, which is the loop `docs/70` made linear and the one that
 ## would be quadratic here if `str_len` counted or `str_slice` skipped.
