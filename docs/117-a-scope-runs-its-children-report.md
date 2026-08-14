@@ -78,8 +78,10 @@ the answer is the order the children are *written* in and not the order they fin
 > has not started when an earlier one raises, so there is nothing to cancel *yet*. A backend that
 > starts them together needs a cancellation signal, and nothing designs one.
 
-That backend now exists and the signal still does not. The siblings of a failed child run to
-completion and their answers are dropped. This is a real cost — a scope whose first child fails at
+That backend now exists and **so does the signal** ([`118`](118-a-scope-stops-its-children-report.md)):
+a failing child stops the children after it in source order, which is exactly the set an ordered
+join would never have reached. What follows described the gap before that, and is kept because the
+reasoning about *why* siblings could not simply all be stopped is what §118.3 turned out to need. This is a real cost — a scope whose first child fails at
 once still waits for a sibling's outbound call to come back or give up, and how long that is belongs
 to the [`net`](../compiler/crates/beck-core/src/net.rs) implementation rather than to the scope — and
 it is the largest single item §117.7 leaves open.
@@ -173,8 +175,10 @@ change with a different question in front of it (how many, and owned by whom), a
 
 ## 117.7 What this does not establish
 
-- **Nothing about cancellation.** §117.3. A scope whose first child fails still waits for its
-  siblings, and designing a signal is the next item rather than a detail of this one.
+- ~~**Nothing about cancellation.**~~ **Built** ([`118`](118-a-scope-stops-its-children-report.md)).
+  What remains open is narrower: a child *blocked in the host* rather than spending steps is stopped
+  only when the call returns, so a scope whose first child fails still waits for a sibling's
+  outbound call. That is a deadline on the [`net`](../compiler/crates/beck-core/src/net.rs) seam.
 - **Nothing about a scope over a collection.** `parallel for x in xs` is still a different form with
   a different rule about what its children may perform (§80.5), and the children here are still
   written out.
