@@ -158,6 +158,45 @@ def nth_or(xs: list[Int], i: Int) -> Int:
 def has(xs: list[Int], n: Int) -> Bool:
     return list_contains(xs, n)
 
+# Growing one. `appended` is the operation; the three below it are what a shared data block does,
+# and they are the whole reason `docs/113`'s layout is two objects rather than one.
+def appended(xs: list[Int], n: Int) -> list[Int]:
+    return list_append(xs, n)
+
+# Two lists grown from **one**: the first extends the block it stands at the end of and the second
+# finds the slot taken and copies. Both answers, and the original, have to be what they were.
+def forked(xs: list[Int], n: Int) -> Int:
+    ys = list_append(xs, n)
+    zs = list_append(xs, 0 - n)
+    return (list_len(xs) * 100) + (sum_of(ys) * 10) + sum_of(zs)
+
+# The accumulator every loop in the language is written as. Quadratic before `docs/113`, and the
+# reason `list_append` was refused rather than shipped.
+def doubled_up(xs: list[Int]) -> list[Int]:
+    return push_from(xs, 0, [])
+
+def push_from(xs: list[Int], i: Int, acc: list[Int]) -> list[Int]:
+    if i >= list_len(xs):
+        return acc
+    match list_get(xs, i):
+        case Some(value):
+            return push_from(xs, i + 1, list_append(acc, value * 2))
+        case None():
+            return acc
+
+def sum_of(xs: list[Int]) -> Int:
+    return list_fold(xs, 0, lambda acc, x: acc + x)
+
+# Appending something that is an offset rather than a number, since an element's *word* is what the
+# block holds and a `Str` is one.
+def named(xs: list[Str], s: Str) -> list[Str]:
+    return list_append(xs, s)
+
+# Appending to a list that came out of a record, which is where a header the emitter did not
+# allocate crosses into the operation.
+def grown_bag(b: Bag, n: Int) -> list[Int]:
+    return list_append(b.items, n)
+
 def at_of(xs: list[Int], n: Int) -> Option[Int]:
     return list_index_of(xs, n)
 

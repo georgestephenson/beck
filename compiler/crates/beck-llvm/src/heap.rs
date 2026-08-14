@@ -84,14 +84,46 @@
 //! back into a [`beck_core::Value::Closure`] — a body, an environment and a frame size. So there is
 //! no closure to marshal, and nothing in the two halves below knows closures exist.
 //!
+//! # A view is the call that builds it
+//!
+//! An `Html` is an object too, and it is the one whose contents are not a value: what a compiled
+//! `view` puts in the arena is the **call** `html_el(tag, attrs, children)` would have been given,
+//! and the host builds the tree out of it with [`beck_core::html::element`] — the same function the
+//! evaluator has always built one with.
+//!
+//! | Word | `Html` element | `Html` text | `Attr` plain | `Attr` handler | `Attr` key |
+//! |---|---|---|---|---|---|
+//! | 0 | tag `0` | tag `1` | tag `0` | tag `1` | tag `2` |
+//! | 1 | the tag name, a `Str` | — | the name, a `Str` | the event, a `Str` | — |
+//! | 2 | the attributes, a `list[Attr]` | the shape of the value | the shape of the value | the shape of the command | the shape of the key |
+//! | 3 | the children, a `list[Html]` | the value | the value | the command | the key |
+//!
+//! The reason is what a page's leaves are made of. `html_text(x)` is `x`'s **rendering**, an
+//! attribute's value is a rendering, and a handler's command is *JSON* — so a compiled `view` that
+//! built the tree would need `Value::display` and `Value::to_json` generated per repr, which is a
+//! second spelling of two functions the host already has and which a differential could only find
+//! one shape at a time. Deferring them costs the two words in rows 2 and 3: the **shape** of the
+//! value, as its index in the word table, and the value's own word. That index is the only place in
+//! this backend where a repr is a datum rather than a fact fixed when the module was emitted, and
+//! it is what lets `html_text(x)` compile for every `x` that has a shape at all.
+//!
+//! What it also means is that **an `Html` here is not a tree**: two nodes that render the same page
+//! can be different objects, so [`Repr::order`] answers [`Order::Absent`] for one and a program that
+//! compares two views is refused rather than answered from the recipe.
+//!
+//! Going the other way — a baked tree crossing *into* a compiled call — [`Heap::encode`] writes the
+//! recipe back, and every leaf of it is text, because that is what a built tree holds. Replaying the
+//! builder over the same strings in the same order is what makes the round trip exact, hashes
+//! included.
+//!
 //! # What has a layout, and what does not
 //!
 //! `Int`, `Float` and `Bool` are [`Repr`]'s scalars and live in registers as they always have. A
 //! `model`, a `union` and a `newtype` — including a recursive one, and including one that takes a
-//! type parameter — have a layout; a `Str`, a `list` and a `Map` have the ones above; and a closure
-//! has the one above that, inside a call. What is left has none, and [`Heap::repr`] says which by
-//! name: `Html` and `Unit` are refused, and a definition that mentions one is left to the evaluator
-//! exactly as it was before there was a heap at all.
+//! type parameter — have a layout; a `Str`, a `list`, a `Map`, an `Html` and an `Attr` have the ones
+//! above; and a closure has the one above that, inside a call. What is left is `Unit`, and
+//! [`Heap::repr`] says so by name: a definition that mentions one is left to the evaluator exactly
+//! as it was before there was a heap at all.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -152,12 +184,48 @@ pub fn str_bytes(n: u64) -> u64 {
     STR_HEADER + n.next_multiple_of(WORD)
 }
 
-/// The one header word of a `list`: how many elements it has.
-pub const LIST_HEADER: u64 = WORD;
+/// The two header words of a `list`: how many elements it has, and where they are.
+///
+/// # Why a list is an indirection
+///
+/// It was one word and the elements after it, which is the shape every read wants and the one shape
+/// an **append** cannot have. A list is immutable, so `list_append` must answer a list of `n + 1`
+/// where the old one still says `n` — and with the count sitting in front of the elements, the only
+/// ways to do that are to copy the elements (`O(n)`, which is
+/// [`docs/69`](../../../../../docs/69-standard-library-imports-report.md) §69.7's quadratic
+/// accumulator) or to overwrite the count (which every other holder of that list can see).
+///
+/// So the count and the elements are separated. A **header** is two words and is written once,
+/// never touched again; a **data block** is `[cap, used, …]` and is shared by every list that was
+/// built from it. Appending writes at index `used` — a slot no header covers, because every header's
+/// count is at most `used` — and answers a *new* header. Nothing a reader can see is ever rewritten,
+/// so this needs no ownership analysis and no reference count: it is sound by the shape of the
+/// writes rather than by an argument about who holds what.
+///
+/// | | word 0 | word 1 | word 2.. |
+/// |---|---|---|---|
+/// | header | how many elements | the data block's offset | — |
+/// | data | how many the block holds (`cap`) | how many are written (`used`) | the elements |
+///
+/// What it costs is one load: [`docs/106`](../../../../../docs/106-lists-arrive-read-only-report.md)
+/// reached an element with an add, and this reaches the block first. That is paid **once per
+/// operation** rather than once per element — every generated loop takes the data pointer before it
+/// starts — and `docs/113` measures what is left.
+pub const LIST_HEADER: u64 = 2 * WORD;
 
-/// How many bytes a `list` of `n` elements occupies.
+/// The two header words of a list's data block: how many elements it can hold, and how many have
+/// been written.
+pub const DATA_HEADER: u64 = 2 * WORD;
+
+/// How many bytes a `list` of `n` elements occupies: the header, and a data block sized exactly `n`.
+///
+/// Exactly `n` and not a doubled capacity, because this is what an allocation of a *known* list
+/// costs — a literal, a slice, a map's keys, the answer of a loop. Only an **append** reserves more,
+/// and the doubling that makes the idiom linear is written in each emitter's `beck.list.append`
+/// rather than here: nothing outside generated code needs to know it, and a constant in this file
+/// that neither emitter read would be a third place for it to be wrong.
 pub fn list_bytes(n: u64) -> u64 {
-    LIST_HEADER + n * WORD
+    LIST_HEADER + DATA_HEADER + n * WORD
 }
 
 /// The one header word of a closure: which `lam` it came from.
@@ -175,16 +243,97 @@ pub fn closure_bytes(n: u64) -> u64 {
     CLOSURE_HEADER + n * WORD
 }
 
+/// How many words a view node or an attribute occupies: a tag and three.
+///
+/// One size for every variant of either, rather than a variant's own — the two shapes are this
+/// module's rather than a program's, they differ by one word at most, and a fixed size is what lets
+/// the deferred value below sit at the same pair of slots whichever variant is around it.
+pub const NODE_WORDS: u64 = 4;
+
+/// `Html`'s tag for an element: a tag name, its attributes and its children.
+pub const HTML_ELEMENT: u64 = 0;
+/// `Html`'s tag for a text node, whose one field is a deferred value.
+pub const HTML_TEXT: u64 = 1;
+/// `Attr`'s tag for `html_attr` — a name and a deferred value.
+pub const ATTR_PLAIN: u64 = 0;
+/// `Attr`'s tag for `html_on` — an event name and the command, deferred.
+pub const ATTR_ON: u64 = 1;
+/// `Attr`'s tag for `html_key` — a deferred value and nothing else.
+pub const ATTR_KEY: u64 = 2;
+
+/// How many words a raised value occupies: its shape and its word.
+///
+/// The same pair a view node defers with ([`DEFERRED`]), in the one other place this backend has to
+/// hand the host a value whose type is not on the signature — a `raise` may carry any declared type
+/// and the definition that raised it answers with something else entirely, so the reply's own repr
+/// says nothing about it.
+pub const RAISED_WORDS: u64 = 2;
+
+/// Which word of a view node or an attribute holds the first half of its deferred value.
+///
+/// The same slot in all five variants, which is the reason [`NODE_WORDS`] is one number: a `Text`
+/// and an `Attr::Key` have nothing in slot 1 and pay a word for it, and in exchange the host reads
+/// a deferred value out of one place rather than out of five.
+pub const DEFERRED: usize = 2;
+
 /// The one header word of a `Map`: how many entries it has.
 pub const MAP_HEADER: u64 = WORD;
 
-/// How many bytes a `Map` of `n` entries occupies: the count, `n` keys, then `n` values.
+/// A `Map`'s node: its subtree's size, the key, the value, and the two children.
 ///
-/// The keys and the values are two runs rather than interleaved pairs, so `map_keys` and
-/// `map_values` are each one `memcpy` into a fresh list — and because the keys being contiguous is
-/// what makes the search a binary one with a stride of one.
+/// # Why a map is a tree
+///
+/// It was a sorted run — a count and then every key followed by every value — which makes a lookup
+/// a binary search over contiguous words and makes an **insert** a copy of the whole run. That is
+/// `O(n)` where [`beck_core::pmap`] is `O(log n)`, and
+/// [`docs/107`](../../../../../docs/107-a-map-arrives-read-only-report.md) §107.4 refused to ship
+/// it for that reason: *this backend does not ship an operation whose asymptote is worse than the
+/// evaluator's*.
+///
+/// [`docs/113`](../../../../../docs/113-a-list-grows-report.md) removed the same refusal for a list
+/// by separating the count from the elements, and §113.7 said in advance that the map's would
+/// **survive** that trick — a sorted run has to shift however its header is arranged. What removes
+/// it is the structure the evaluator already uses: a **weight-balanced tree**, whose insert rebuilds
+/// the path and shares every subtree it did not touch. `beck_core::pmap`'s own module documentation
+/// is the argument for that choice; this is the same tree with the same `DELTA` and `RATIO`, in an
+/// arena.
+///
+/// | word | what |
+/// |---|---|
+/// | 0 | how many entries this subtree holds |
+/// | 1 | the key |
+/// | 2 | the value |
+/// | 3 | the left child, or `0` |
+/// | 4 | the right child, or `0` |
+///
+/// An empty map is the offset `0`, which is the one offset [`FIRST`] reserves so that no live object
+/// has it. A node is never mutated after it is written, so an insert's answer and the map it was
+/// given share every node off the path — which is what makes the fold that keeps a `Map` linear in
+/// the events rather than quadratic.
+pub const MAP_NODE: u64 = 5 * WORD;
+
+/// Where a node's fields are, in words.
+pub const NODE_KEY: usize = 1;
+pub const NODE_VALUE: usize = 2;
+pub const NODE_LEFT: usize = 3;
+pub const NODE_RIGHT: usize = 4;
+
+/// The weight-balanced tree's two constants, which are [`beck_core::pmap`]'s.
+///
+/// Written here as well as there because the rebalancing is generated code and a tree built with
+/// one pair of constants and rebalanced with another is a tree with no invariant at all. They are
+/// Adams's, by way of Haskell's `Data.Map`: a subtree may be up to `DELTA` times its sibling, and
+/// the choice between a single and a double rotation is `RATIO`.
+pub const DELTA: u64 = 3;
+pub const RATIO: u64 = 2;
+
+/// How many bytes a `Map` of `n` entries occupies: one node each.
+///
+/// A *fresh* map, which is what the host writes and what a literal builds. An insert allocates the
+/// path it rebuilt — `O(log n)` nodes — and shares the rest, so what a fold leaves behind is not
+/// this number times the events.
 pub fn map_bytes(n: u64) -> u64 {
-    MAP_HEADER + 2 * n * WORD
+    n * MAP_NODE
 }
 
 /// What one value is, at the machine.
@@ -209,6 +358,12 @@ pub enum Repr {
     /// shape is one family, because what an application needs to know is the *signature* it is
     /// calling through and not which lambda is at the other end.
     Fn(u32),
+    /// A view node, carried as its offset. One shape for every `Html`, so there is no index — and
+    /// what is in it is the *call* that would build the tree rather than the tree.
+    Html,
+    /// One attribute of a view node, carried as its offset. One shape for all three of the things
+    /// `html_attr`, `html_on` and `html_key` answer.
+    Attr,
 }
 
 impl Repr {
@@ -217,9 +372,14 @@ impl Repr {
         match self {
             Repr::Float => Scalar::Float,
             Repr::Bool => Scalar::Bool,
-            Repr::Int | Repr::Str | Repr::List(_) | Repr::Map(_) | Repr::Obj(_) | Repr::Fn(_) => {
-                Scalar::Int
-            }
+            Repr::Int
+            | Repr::Str
+            | Repr::List(_)
+            | Repr::Map(_)
+            | Repr::Obj(_)
+            | Repr::Fn(_)
+            | Repr::Html
+            | Repr::Attr => Scalar::Int,
         }
     }
 
@@ -237,7 +397,13 @@ impl Repr {
     pub fn is_ref(self) -> bool {
         matches!(
             self,
-            Repr::Obj(_) | Repr::Str | Repr::List(_) | Repr::Map(_) | Repr::Fn(_)
+            Repr::Obj(_)
+                | Repr::Str
+                | Repr::List(_)
+                | Repr::Map(_)
+                | Repr::Fn(_)
+                | Repr::Html
+                | Repr::Attr
         )
     }
 
@@ -276,6 +442,16 @@ impl Repr {
             // ([`survey`]), so comparing two ranks is comparing two code positions and the tag
             // word answers all six operators.
             Repr::Fn(_) => Order::Call("beck.fn.cmp".into()),
+            // The one repr with no order, and the reason is what a view node *is* here: an
+            // `Html` in the arena is the call that would build the tree, so two nodes that
+            // produce the same page — `html_text(3)` and `html_text("3")` — are different
+            // objects, and `beck_core::Html`'s derived `Ord` compares the pages. A comparison
+            // that answered from the recipe would disagree with the evaluator on exactly the
+            // programs nobody writes, which is worse than refusing.
+            Repr::Html | Repr::Attr => Order::Absent(
+                "a view node, which is carried as the call that builds it rather than as the tree \
+                 — so two of them can be ordered by what they render and not by what they are",
+            ),
         }
     }
 }
@@ -289,6 +465,14 @@ pub enum Order {
     Key,
     /// A three-way comparison function, by symbol: `-1`, `0` or `1`.
     Call(String),
+    /// No order at all, and the reason — a value this backend can build and hand back but cannot
+    /// put in sequence.
+    ///
+    /// [`Heap::ordered`] is what keeps this out of a generated function: every demand for a
+    /// comparison asks it first, and it walks a record's fields and a list's elements, so a module
+    /// is never assembled with a comparison it would have to leave undefined. An emitter reaching
+    /// this arm is therefore writing a function nothing calls, and both of them write nothing.
+    Absent(&'static str),
 }
 
 /// One variant of a layout — or the only one, for a record.
@@ -435,6 +619,12 @@ pub struct Heap {
     /// must keep getting the module `docs/93` §93.5 measured — no `malloc`, no globals, no blob on
     /// the wire. What sets this is a `lam` under something, or a definition named as a value.
     closures: bool,
+    /// The `list[Attr]` and `list[Html]` reprs, once anything in this module mentions `Html`.
+    ///
+    /// Both an "is there a view here" flag and the two indices the host decodes an element's
+    /// collections with. Separate from [`Heap::slots`] for the reason text is: neither `Html` nor
+    /// `Attr` has a [`Layout`] — their shape is this module's rather than a program's.
+    html: Option<(u32, u32)>,
 }
 
 impl Heap {
@@ -454,6 +644,7 @@ impl Heap {
     pub fn is_empty(&self) -> bool {
         !self.text
             && !self.closures
+            && self.html.is_none()
             && self.elements.is_empty()
             && self.entries.is_empty()
             && !self.slots.iter().any(|s| matches!(s, Slot::Done(_)))
@@ -522,6 +713,122 @@ impl Heap {
         }
     }
 
+    /// The reason a value of this repr may not be handed *in* to a compiled call, when there is
+    /// one.
+    ///
+    /// The one **directional** rule on this boundary, and it exists because one encoding is lossy in
+    /// one direction. An `Attr` in the arena keeps a handler's command as a value; the host cannot
+    /// name a repr for a [`Value`] it was handed, so [`Heap::encode`] writes a handler as the plain
+    /// attribute it would become — which is exact for a *tree*, where that is what the attribute
+    /// already is, and lossy for a bare `Attr`, where the evaluator would still be holding an
+    /// `AttrValue::On`. So a definition may answer with one and may not take one.
+    ///
+    /// Recursive for the reason [`Heap::ordered`] is: a `list[Attr]` parameter is the same problem
+    /// one collection out, and so is a record with an `Attr` field.
+    pub fn inbound(&self, r: Repr) -> Result<(), String> {
+        let mut seen = Vec::new();
+        self.inbound_from(r, &mut seen)
+    }
+
+    fn inbound_from(&self, r: Repr, seen: &mut Vec<u32>) -> Result<(), String> {
+        match r {
+            Repr::Attr => Err(
+                "an `Attr`, which a compiled definition may answer with and may not \
+                               take: a handler's command is a value in the arena, and the host \
+                               writing one back would have to name a shape for a value it was \
+                               handed"
+                    .into(),
+            ),
+            Repr::Obj(at) => {
+                if seen.contains(&at) {
+                    return Ok(());
+                }
+                seen.push(at);
+                if let Slot::Done(layout) = &self.slots[at as usize] {
+                    for v in &layout.variants {
+                        for (name, f) in &v.fields {
+                            self.inbound_from(*f, seen).map_err(|why| {
+                                format!("`{}`'s field `{name}` is {why}", layout.shown)
+                            })?;
+                        }
+                    }
+                }
+                Ok(())
+            }
+            Repr::List(at) => self
+                .inbound_from(self.element(at), seen)
+                .map_err(|why| format!("a list whose element is {why}")),
+            Repr::Map(at) => {
+                let (k, v) = self.entry(at);
+                self.inbound_from(self.element(k), seen)
+                    .map_err(|why| format!("a map whose key is {why}"))?;
+                self.inbound_from(self.element(v), seen)
+                    .map_err(|why| format!("a map whose value is {why}"))
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// The reason two values of this repr cannot be put in order, when there is one.
+    ///
+    /// Asked at the **demand** — an `==`, a search, a sort key, a map's key — rather than where a
+    /// comparison is written, and it recurses because a record is compared field by field and a
+    /// list element by element: a `model Card { body: Html }` has no order for the same reason its
+    /// field has none, and finding that out when the module is being assembled would be a link
+    /// error rather than a refusal with a definition's name on it.
+    pub fn ordered(&self, r: Repr) -> Result<(), String> {
+        let mut seen = Vec::new();
+        self.ordered_from(r, &mut seen)
+    }
+
+    fn ordered_from(&self, r: Repr, seen: &mut Vec<u32>) -> Result<(), String> {
+        match r.order() {
+            Order::Absent(why) => return Err(why.to_string()),
+            Order::Words { .. } | Order::Key | Order::Call(_) => {}
+        }
+        match r {
+            Repr::Obj(at) => {
+                // A recursive type's back edge: a `Tree[Int]` whose field is a `Tree[Int]` is one
+                // question, and asking it twice would not terminate.
+                if seen.contains(&at) {
+                    return Ok(());
+                }
+                seen.push(at);
+                if let Slot::Done(layout) = &self.slots[at as usize] {
+                    for v in &layout.variants {
+                        for (name, f) in &v.fields {
+                            self.ordered_from(*f, seen).map_err(|why| {
+                                format!("`{}`'s field `{name}` is {why}", layout.shown)
+                            })?;
+                        }
+                    }
+                }
+                Ok(())
+            }
+            Repr::List(at) => self
+                .ordered_from(self.element(at), seen)
+                .map_err(|why| format!("a list whose element is {why}")),
+            Repr::Map(at) => {
+                let (k, v) = self.entry(at);
+                self.ordered_from(self.element(k), seen)
+                    .map_err(|why| format!("a map whose key is {why}"))?;
+                self.ordered_from(self.element(v), seen)
+                    .map_err(|why| format!("a map whose value is {why}"))
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// The `list[Attr]` and `list[Html]` reprs, which every view node's two collections are.
+    ///
+    /// Interned when `Html` is first resolved rather than when a program writes one down, because
+    /// the host reads an element's attributes and children out of the arena and needs the same two
+    /// indices the emitters stored — and a program can build a node without ever naming either
+    /// list type.
+    pub fn html_lists(&self) -> Option<(u32, u32)> {
+        self.html
+    }
+
     /// The family for a shape, interned.
     fn family_of(&mut self, params: Vec<Repr>, ret: Repr, shown: &str) -> u32 {
         let key = (params.clone(), ret);
@@ -582,6 +889,22 @@ impl Heap {
     /// emitting. A `Str` has no [`Layout`], so [`Heap::layouts`] cannot answer this.
     pub fn uses_text(&self) -> bool {
         self.text
+    }
+
+    /// Reserve what a view node needs: text for a tag name, and the two lists an element holds.
+    ///
+    /// Idempotent, and it is the *only* way `Repr::Html` is handed out — so a module that has one
+    /// has both list reprs, whether or not the program ever writes `list[Html]` down.
+    fn intern_html(&mut self) {
+        if self.html.is_none() {
+            self.text = true;
+            // Interned so that a deferred value that is text has an index to name, which is the
+            // one the host writes when a baked tree crosses *into* a call.
+            self.word_of(Repr::Str);
+            let attrs = self.list_of(Repr::Attr);
+            let children = self.list_of(Repr::Html);
+            self.html = Some((attrs, children));
+        }
     }
 
     /// Where `inner` already is in the word-comparison table, if anything has interned it.
@@ -696,6 +1019,8 @@ impl Heap {
             Repr::Float => "Float".into(),
             Repr::Bool => "Bool".into(),
             Repr::Str => "Str".into(),
+            Repr::Html => "Html".into(),
+            Repr::Attr => "Attr".into(),
             Repr::List(i) => format!("list[{}]", self.show(self.element(i))),
             Repr::Map(i) => {
                 let (k, v) = self.entry(i);
@@ -769,17 +1094,14 @@ impl Heap {
                 return Ok(Repr::Map(self.map_of(k, v)));
             }
             Ty::UNIT => return Err("the unit value, which has no machine representation".into()),
-            // Named rather than left to fall through to "not a type this module declares", which
-            // is where they landed and is a true sentence about the wrong thing: `Html` is a
-            // builtin, and what it lacks is a layout. `docs/107` §107.7 is the correction.
             Ty::HTML => {
-                return Err(
-                    "`Html`, which is a tree of children and follows the collections rather than \
-                     text"
-                        .into(),
-                )
+                self.intern_html();
+                return Ok(Repr::Html);
             }
-            Ty::ATTR => return Err("an `Attr`, which follows `Html`".into()),
+            Ty::ATTR => {
+                self.intern_html();
+                return Ok(Repr::Attr);
+            }
             _ => {}
         }
 
@@ -943,45 +1265,165 @@ impl Heap {
             // before the word that holds it is written.
             (Value::List(xs), Repr::List(at)) => {
                 let element = self.element(at);
-                let mut words = Vec::with_capacity(xs.len() + 1);
+                let mut words = Vec::with_capacity(xs.len() + 2);
+                // The data block: what it can hold, what is written, then the elements. Exactly the
+                // length, because a list the host writes is one nothing has appended to yet.
+                words.push(xs.len() as u64);
                 words.push(xs.len() as u64);
                 for x in xs.iter() {
                     words.push(self.encode(x, element, blob)?);
                 }
-                let offset = blob.len() as u64;
-                for w in words {
-                    blob.extend_from_slice(&w.to_ne_bytes());
-                }
-                Ok(offset)
+                let data = self.write_words(words, blob);
+                Ok(self.write_words(vec![xs.len() as u64, data], blob))
             }
             // The keys in key order and then the values in the same order, which is what a `PMap`
             // iterates and therefore what a binary search here can rely on.
             (Value::Map(m), Repr::Map(at)) => {
                 let (k, v) = self.entry(at);
                 let (key, value) = (self.element(k), self.element(v));
-                let mut words = Vec::with_capacity(2 * m.len() + 1);
-                words.push(m.len() as u64);
-                for (k, _) in m.iter() {
-                    words.push(self.encode(k, key, blob)?);
+                let mut pairs = Vec::with_capacity(m.len());
+                for (k, v) in m.iter() {
+                    pairs.push((self.encode(k, key, blob)?, self.encode(v, value, blob)?));
                 }
-                let mut values = Vec::with_capacity(m.len());
-                for (_, v) in m.iter() {
-                    values.push(self.encode(v, value, blob)?);
-                }
-                words.extend(values);
-                let offset = blob.len() as u64;
-                for w in words {
-                    blob.extend_from_slice(&w.to_ne_bytes());
-                }
-                Ok(offset)
+                Ok(self.encode_tree(&pairs, blob))
             }
             (Value::Data(record), Repr::Obj(at)) => self.encode_object(record, at, blob),
+            (Value::Html(h), Repr::Html) => self.encode_html(h, blob),
+            (Value::Attr(a), Repr::Attr) => self.encode_attr(a, blob),
             _ => Err(format!(
                 "a {} where the signature says {}",
                 kind_of(v),
                 self.show(r)
             )),
         }
+    }
+
+    /// A tree, back into the call that would have built it.
+    ///
+    /// The direction nothing in a program needs and the boundary needs anyway: a compiled
+    /// definition may *take* an `Html`, and what the host holds by then is a baked
+    /// [`beck_core::html::Html`] with its hashes computed. Every leaf of the recipe it becomes is
+    /// text — a text node's rendering, an attribute's value, a key — so the deferred value here is
+    /// always a `Str`, and decoding it replays the same builder over the same strings in the same
+    /// order. That is what makes the round trip exact rather than approximate: `attrs` keeps its
+    /// order, a key is written *after* the attributes and sets the node's key rather than an
+    /// attribute of it, and both are what [`beck_core::html::element`] does with them.
+    fn encode_html(&self, node: &beck_core::html::Html, blob: &mut Vec<u8>) -> Result<u64, String> {
+        use beck_core::html::Html;
+        let words = match node {
+            Html::Text { text, .. } => {
+                let at = self.text_word(text, blob)?;
+                vec![HTML_TEXT, 0, at.0, at.1]
+            }
+            Html::Element {
+                tag,
+                attrs,
+                key,
+                children,
+                ..
+            } => {
+                let tag = self.encode(&Value::str_(tag.as_str()), Repr::Str, blob)?;
+                let mut items: Vec<u64> = Vec::with_capacity(attrs.len() + 1);
+                for (k, v) in attrs {
+                    items.push(self.encode_attr(
+                        &beck_core::core::AttrValue::Plain(Arc::from(&**k), Arc::from(&**v)),
+                        blob,
+                    )?);
+                }
+                if let Some(k) = key {
+                    items.push(
+                        self.encode_attr(&beck_core::core::AttrValue::Key(Arc::from(&**k)), blob)?,
+                    );
+                }
+                let attrs = self.encode_words(items, blob);
+                let mut kids = Vec::with_capacity(children.len());
+                for c in children {
+                    kids.push(self.encode_html(c, blob)?);
+                }
+                let children = self.encode_words(kids, blob);
+                vec![HTML_ELEMENT, tag, attrs, children]
+            }
+        };
+        Ok(self.write_words(words, blob))
+    }
+
+    /// One attribute, in the shape the three `html_*` primitives build.
+    ///
+    /// A handler is encoded as the **plain attribute it would become** — `data-b-<event>` carrying
+    /// the command's JSON — rather than as an `Attr::On`, because an `On` in the arena holds the
+    /// command as a value and the host cannot name a repr for a [`Value`] it was handed. What that
+    /// costs is nothing: `beck_core::html::element` turns an `On` into exactly that pair, so the
+    /// tree the recipe bakes into is the one it came from.
+    fn encode_attr(
+        &self,
+        attr: &beck_core::core::AttrValue,
+        blob: &mut Vec<u8>,
+    ) -> Result<u64, String> {
+        use beck_core::core::AttrValue;
+        let words = match attr {
+            AttrValue::Plain(name, value) => {
+                let name = self.encode(&Value::str_(&**name), Repr::Str, blob)?;
+                let (repr, word) = self.text_word(value, blob)?;
+                vec![ATTR_PLAIN, name, repr, word]
+            }
+            AttrValue::On(event, cmd) => {
+                let name = self.encode(&Value::str_(format!("data-b-{event}")), Repr::Str, blob)?;
+                let (repr, word) = self.text_word(&cmd.to_json().to_string(), blob)?;
+                vec![ATTR_PLAIN, name, repr, word]
+            }
+            AttrValue::Key(k) => {
+                let (repr, word) = self.text_word(k, blob)?;
+                vec![ATTR_KEY, 0, repr, word]
+            }
+        };
+        Ok(self.write_words(words, blob))
+    }
+
+    /// A deferred value that is text: the repr index the host will read it back with, and the
+    /// offset it was written at.
+    fn text_word(&self, s: &str, blob: &mut Vec<u8>) -> Result<(u64, u64), String> {
+        let at = self.word_at(Repr::Str).ok_or_else(|| {
+            "a view crossed into a call in a module whose heap has no text in it".to_string()
+        })?;
+        let offset = self.encode(&Value::str_(s), Repr::Str, blob)?;
+        Ok((u64::from(at), offset))
+    }
+
+    /// A list of words already encoded, as a list: a data block and a header over it.
+    fn encode_words(&self, items: Vec<u64>, blob: &mut Vec<u8>) -> u64 {
+        let n = items.len() as u64;
+        let mut words = Vec::with_capacity(items.len() + 2);
+        words.push(n);
+        words.push(n);
+        words.extend(items);
+        let data = self.write_words(words, blob);
+        self.write_words(vec![n, data], blob)
+    }
+
+    fn write_words(&self, words: Vec<u64>, blob: &mut Vec<u8>) -> u64 {
+        let offset = blob.len() as u64;
+        for w in words {
+            blob.extend_from_slice(&w.to_ne_bytes());
+        }
+        offset
+    }
+
+    /// A sorted run of entries as a **perfectly balanced** tree.
+    ///
+    /// The middle entry is the root and each half is built the same way, so the two subtrees differ
+    /// in size by at most one — which satisfies `DELTA` with room to spare, and is what lets the
+    /// compiled code insert into a map the host wrote without rebalancing it first. Recursive over
+    /// `log n` frames, on a run the host already holds.
+    fn encode_tree(&self, pairs: &[(u64, u64)], blob: &mut Vec<u8>) -> u64 {
+        if pairs.is_empty() {
+            // The one offset `FIRST` reserves, which is what an empty map is.
+            return 0;
+        }
+        let mid = pairs.len() / 2;
+        let left = self.encode_tree(&pairs[..mid], blob);
+        let right = self.encode_tree(&pairs[mid + 1..], blob);
+        let (key, value) = pairs[mid];
+        self.write_words(vec![pairs.len() as u64, key, value, left, right], blob)
     }
 
     fn encode_object(&self, record: &Record, at: u32, blob: &mut Vec<u8>) -> Result<u64, String> {
@@ -1069,7 +1511,7 @@ impl Heap {
                 Some(child) => next = Some(child),
                 None => {
                     let frame = stack.pop().expect("just looked at it");
-                    done = Some(frame.finish());
+                    done = Some(frame.finish()?);
                 }
             }
         }
@@ -1087,43 +1529,48 @@ impl Heap {
             Repr::Str => self.decode_text(cell, blob).map(Begun::Leaf),
             Repr::Map(at) => {
                 let (k, v) = self.entry(at);
-                let count = word(blob, cell)?;
-                // Checked against the arena before it is trusted as a capacity, for the reason a
-                // list's count is: it came from another process.
-                let bytes = count
-                    .checked_mul(2 * WORD)
-                    .and_then(|b| b.checked_add(WORD));
-                if bytes.is_none_or(|b| cell + b > blob.len() as u64) {
-                    return Err(format!(
-                        "the compiled program answered with a map of {count} at offset {cell}, \
-                         and its heap is {} bytes",
-                        blob.len()
-                    ));
-                }
+                // The nodes in key order, worked out before any of them is decoded — the walk is
+                // the only place the *shape* of the tree matters, and doing it here keeps the frame
+                // below a flat list of cells exactly as a list's is.
+                let nodes = self.in_order(cell, blob)?;
                 Ok(Begun::Nested(Frame::Map {
-                    cell,
                     key: self.element(k),
                     value: self.element(v),
-                    count,
-                    done: Vec::with_capacity(2 * count as usize),
+                    count: nodes.len() as u64,
+                    nodes,
+                    done: Vec::new(),
                 }))
             }
             Repr::List(at) => {
                 let element = self.element(at);
                 let count = word(blob, cell)?;
+                // The header says where the elements are; the block in front of them says how many
+                // it holds. See [`LIST_HEADER`] for why a list is two objects.
+                let data = word(blob, cell + WORD)?;
                 // Checked against the arena before it is trusted as a capacity: the count comes
                 // from another process, and `Vec::with_capacity` of whatever the bytes said is the
                 // one place a wrong word becomes an allocation rather than an error.
-                let bytes = count.checked_mul(WORD).and_then(|b| b.checked_add(WORD));
-                if bytes.is_none_or(|b| cell + b > blob.len() as u64) {
+                let bytes = count
+                    .checked_mul(WORD)
+                    .and_then(|b| b.checked_add(DATA_HEADER));
+                if bytes.is_none_or(|b| data + b > blob.len() as u64) {
                     return Err(format!(
                         "the compiled program answered with a list of {count} at offset {cell}, \
                          and its heap is {} bytes",
                         blob.len()
                     ));
                 }
+                // A header that claims more than its block holds is a compiler bug reported as one
+                // rather than a read of whatever follows the block.
+                let used = word(blob, data + WORD)?;
+                if count > used {
+                    return Err(format!(
+                        "the compiled program answered with a list of {count} over a block holding \
+                         {used}"
+                    ));
+                }
                 Ok(Begun::Nested(Frame::List {
-                    cell,
+                    cell: data + DATA_HEADER,
                     element,
                     count,
                     done: Vec::with_capacity(count as usize),
@@ -1147,6 +1594,59 @@ impl Heap {
                     done: Vec::with_capacity(variant.fields.len()),
                 }))
             }
+            // A view node and an attribute are the two reprs whose *shape* decides what to read
+            // next, because what is in the arena is the call rather than the tree: an element has
+            // three arguments and a text node has one, and which is which is the tag.
+            Repr::Html => {
+                let tag = word(blob, cell)?;
+                let slots = match tag {
+                    HTML_ELEMENT => {
+                        let (attrs, children) = self.html.ok_or_else(|| {
+                            "the compiled program answered with an element in a module whose heap \
+                             has no view in it"
+                                .to_string()
+                        })?;
+                        vec![
+                            (word(blob, cell + WORD)?, Repr::Str),
+                            (word(blob, cell + 2 * WORD)?, Repr::List(attrs)),
+                            (word(blob, cell + 3 * WORD)?, Repr::List(children)),
+                        ]
+                    }
+                    HTML_TEXT => vec![self.deferred(cell, blob)?],
+                    other => {
+                        return Err(format!(
+                            "the compiled program answered with tag {other} for a view node, \
+                             which is an element or a text node"
+                        ))
+                    }
+                };
+                Ok(Begun::Nested(Frame::Node {
+                    tag,
+                    done: Vec::with_capacity(slots.len()),
+                    slots,
+                }))
+            }
+            Repr::Attr => {
+                let tag = word(blob, cell)?;
+                let deferred = self.deferred(cell, blob)?;
+                let slots = match tag {
+                    ATTR_PLAIN | ATTR_ON => {
+                        vec![(word(blob, cell + WORD)?, Repr::Str), deferred]
+                    }
+                    ATTR_KEY => vec![deferred],
+                    other => {
+                        return Err(format!(
+                            "the compiled program answered with tag {other} for an attribute, \
+                             which is a name, a handler or a key"
+                        ))
+                    }
+                };
+                Ok(Begun::Nested(Frame::Attr {
+                    tag,
+                    done: Vec::with_capacity(slots.len()),
+                    slots,
+                }))
+            }
             // Unreachable rather than unwritten, and it is [`Heap::crossing`] that makes it so: a
             // closure is refused in every position the host reads — a result, a field, an element,
             // a map's key or value — so no reply can contain one to decode. Written as the reason
@@ -1157,6 +1657,81 @@ impl Heap {
                 self.family(at).shown
             )),
         }
+    }
+
+    /// Every node of a map, in key order.
+    ///
+    /// **Iterative, with its own stack**, for the reason [`Heap::decode`] is: the tree came from
+    /// another process, and a recursive walk would make [`MAX_DEPTH`] a claim about the host's stack
+    /// rather than about the value. A weight-balanced tree of `n` entries is about `2.4 log n` deep,
+    /// so the ceiling is reached by a tree nothing could have built — which is exactly when it
+    /// should be.
+    fn in_order(&self, root: u64, blob: &[u8]) -> Result<Vec<u64>, String> {
+        let mut out = Vec::new();
+        let mut stack = Vec::new();
+        let mut node = root;
+        loop {
+            while node != 0 {
+                if stack.len() >= MAX_DEPTH {
+                    return Err(format!(
+                        "the compiled program answered with a map nested more than {MAX_DEPTH} deep"
+                    ));
+                }
+                stack.push(node);
+                node = word(blob, node + NODE_LEFT as u64 * WORD)?;
+            }
+            let Some(seen) = stack.pop() else {
+                return Ok(out);
+            };
+            // A size word that disagrees with the walk is a compiler bug reported as one rather
+            // than a decoder that runs until the arena ends.
+            if out.len() as u64 >= word(blob, root)? {
+                return Err(format!(
+                    "the compiled program answered with a map whose root says {} entries and whose \
+                     walk found more",
+                    word(blob, root)?
+                ));
+            }
+            out.push(seen);
+            node = word(blob, seen + NODE_RIGHT as u64 * WORD)?;
+        }
+    }
+
+    /// The value a `raise` carried, out of the pair the compiled code left in the arena.
+    ///
+    /// [`crate::Trap::Raised`]'s payload is that pair's offset, and the arena travels with the
+    /// reply for this one failure — so the message the host builds is the evaluator's own, made out
+    /// of the value rather than out of the fact that there was one.
+    pub fn raised(&self, cell: u64, blob: &[u8]) -> Result<Value, String> {
+        let at = word(blob, cell)?;
+        let repr = self.elements.get(at as usize).copied().ok_or_else(|| {
+            format!(
+                "the compiled program raised a value of shape {at}, and this \
+                                    module has {}",
+                self.elements.len()
+            )
+        })?;
+        self.decode(word(blob, cell + WORD)?, repr, blob)
+    }
+
+    /// The word a view node or an attribute deferred, and what to read it as.
+    ///
+    /// The one place in this backend where a repr is a **datum** rather than a fact fixed when the
+    /// module was emitted. It is what lets `html_text(x)` compile for every `x` that has a shape at
+    /// all: the compiled code stores the index of `x`'s repr beside `x`'s word and renders nothing,
+    /// and the host — which holds `Value::display` and `Value::to_json`, the two functions a page's
+    /// leaves are made with — reads it back and renders it. A generated renderer would be a second
+    /// spelling of both.
+    fn deferred(&self, cell: u64, blob: &[u8]) -> Result<(u64, Repr), String> {
+        let at = word(blob, cell + DEFERRED as u64 * WORD)?;
+        let repr = self.elements.get(at as usize).copied().ok_or_else(|| {
+            format!(
+                "the compiled program deferred a value of shape {at}, and \
+                                    this module has {}",
+                self.elements.len()
+            )
+        })?;
+        Ok((word(blob, cell + (DEFERRED as u64 + 1) * WORD)?, repr))
     }
 
     /// Text, which reaches nothing and is therefore always a leaf.
@@ -1217,12 +1792,31 @@ enum Frame {
         fields: Vec<(Arc<str>, Repr)>,
         done: Vec<(Arc<str>, Value)>,
     },
-    /// Every key, then every value: the order the words are laid out in, so the walk is one pass.
+    /// A key and then its value, entry by entry in key order.
+    ///
+    /// `nodes` is the tree's in-order walk, done once in [`Heap::begin`] — so this frame is a flat
+    /// list of cells exactly as a list's is, and the *shape* of the tree is not something the
+    /// decoder's stack has to carry.
     Map {
-        cell: u64,
+        nodes: Vec<u64>,
         key: Repr,
         value: Repr,
         count: u64,
+        done: Vec<Value>,
+    },
+    /// A view node, and an attribute of one.
+    ///
+    /// Both carry their words as a list worked out in [`Heap::begin`] rather than as a layout,
+    /// because which words there are is decided by the tag — and because one of them is a deferred
+    /// value whose repr was read out of the arena rather than known when the module was emitted.
+    Node {
+        tag: u64,
+        slots: Vec<(u64, Repr)>,
+        done: Vec<Value>,
+    },
+    Attr {
+        tag: u64,
+        slots: Vec<(u64, Repr)>,
         done: Vec<Value>,
     },
 }
@@ -1231,7 +1825,10 @@ impl Frame {
     /// Take the child that was just finished.
     fn absorb(&mut self, v: Value) {
         match self {
-            Frame::List { done, .. } | Frame::Map { done, .. } => done.push(v),
+            Frame::List { done, .. }
+            | Frame::Map { done, .. }
+            | Frame::Node { done, .. }
+            | Frame::Attr { done, .. } => done.push(v),
             Frame::Obj { fields, done, .. } => {
                 let name = fields[done.len()].0.clone();
                 done.push((name, v));
@@ -1242,6 +1839,8 @@ impl Frame {
     /// The next child to decode, or `None` when every one is in.
     fn next_child(&self, blob: &[u8]) -> Result<Option<(u64, Repr)>, String> {
         match self {
+            // `cell` is the first *element*, not the header: a list's elements live in a block of
+            // their own, and `begin` resolved it.
             Frame::List {
                 cell,
                 element,
@@ -1251,11 +1850,11 @@ impl Frame {
                 if done.len() as u64 == *count {
                     return Ok(None);
                 }
-                let w = word(blob, cell + (done.len() as u64 + 1) * WORD)?;
+                let w = word(blob, cell + done.len() as u64 * WORD)?;
                 Ok(Some((w, *element)))
             }
             Frame::Map {
-                cell,
+                nodes,
                 key,
                 value,
                 count,
@@ -1265,8 +1864,14 @@ impl Frame {
                 if i == 2 * count {
                     return Ok(None);
                 }
-                let w = word(blob, cell + (i + 1) * WORD)?;
-                Ok(Some((w, if i < *count { *key } else { *value })))
+                // A key and then its value, so the two reprs alternate.
+                let node = nodes[(i / 2) as usize];
+                let (slot, repr) = if i.is_multiple_of(2) {
+                    (NODE_KEY, *key)
+                } else {
+                    (NODE_VALUE, *value)
+                };
+                Ok(Some((word(blob, node + slot as u64 * WORD)?, repr)))
             }
             Frame::Obj {
                 cell, fields, done, ..
@@ -1277,18 +1882,66 @@ impl Frame {
                 let w = word(blob, cell + (done.len() as u64 + 1) * WORD)?;
                 Ok(Some((w, *repr)))
             }
+            // Already read, because the tag decided them: see [`Frame::Node`].
+            Frame::Node { slots, done, .. } | Frame::Attr { slots, done, .. } => {
+                Ok(slots.get(done.len()).copied())
+            }
         }
     }
 
-    fn finish(self) -> Value {
-        match self {
-            Frame::List { done, .. } => Value::List(Arc::new(done)),
-            Frame::Map {
-                count, mut done, ..
-            } => {
-                let values = done.split_off(count as usize);
-                Value::Map(done.into_iter().zip(values).collect())
+    /// The value this frame's children add up to.
+    ///
+    /// Fallible for one of the five: an element is finished by handing its three arguments to
+    /// [`beck_core::html::element`], which is the evaluator's own `html_el` and refuses an
+    /// attribute list holding something that is not an attribute. Nothing a compiled program can
+    /// build reaches that refusal — the types were checked before a word was emitted — but the
+    /// bytes came from another process, and this is the one frame whose contents are interpreted
+    /// rather than copied.
+    fn finish(self) -> Result<Value, String> {
+        let v = match self {
+            Frame::Node { tag, mut done, .. } => {
+                return match tag {
+                    HTML_TEXT => Ok(Value::Html(Arc::new(beck_core::html::text_of(
+                        done.first().unwrap_or(&Value::Unit),
+                    )))),
+                    _ => {
+                        let empty: &[Value] = &[];
+                        let (tag, attrs, children) = (
+                            done.first().cloned().unwrap_or(Value::Unit),
+                            done.get(1).cloned().unwrap_or(Value::Unit),
+                            done.pop().unwrap_or(Value::Unit),
+                        );
+                        beck_core::html::element(
+                            &tag,
+                            attrs.as_list().map(|v| v.as_slice()).unwrap_or(empty),
+                            children.as_list().map(|v| v.as_slice()).unwrap_or(empty),
+                        )
+                        .map(|h| Value::Html(Arc::new(h)))
+                    }
+                }
             }
+            // `display` and not the bytes: `html_attr` renders its arguments and `html_key`
+            // renders its one, so what the evaluator puts in an `AttrValue` is a rendering. A
+            // handler's command is the exception and is kept whole, because what turns it into
+            // JSON is `beck_core::html::element` and it is the same function either way.
+            Frame::Attr { tag, done, .. } => {
+                use beck_core::core::AttrValue;
+                let at = |i: usize| done.get(i).cloned().unwrap_or(Value::Unit);
+                Value::Attr(Arc::new(match tag {
+                    ATTR_PLAIN => {
+                        AttrValue::Plain(Arc::from(at(0).display()), Arc::from(at(1).display()))
+                    }
+                    ATTR_ON => AttrValue::On(Arc::from(at(0).display()), at(1)),
+                    _ => AttrValue::Key(Arc::from(at(0).display())),
+                }))
+            }
+            Frame::List { done, .. } => Value::List(Arc::new(done)),
+            // Pairs, in the order they were asked for.
+            Frame::Map { done, .. } => Value::Map(
+                done.chunks_exact(2)
+                    .map(|kv| (kv[0].clone(), kv[1].clone()))
+                    .collect(),
+            ),
             Frame::Obj {
                 ty, variant, done, ..
             } => Value::Data(Arc::new(Record {
@@ -1296,7 +1949,8 @@ impl Frame {
                 variant,
                 fields: Fields::from_sorted(done),
             })),
-        }
+        };
+        Ok(v)
     }
 }
 

@@ -413,8 +413,8 @@ def trims(s: Str) -> Str:
 def upcases(s: Str) -> Str:
     return str_upper(s)
 
-def grows(xs: list[Int], n: Int) -> list[Int]:
-    return list_append(xs, n)
+def grows(xs: list[list[Int]]) -> list[Int]:
+    return list_flat_map(xs, lambda ys: ys)
 
 def mapped(xs: list[Int]) -> list[Int]:
     return map_list(xs, double_it)
@@ -429,7 +429,7 @@ def reads_the_clock() -> Int:
     return now()
 
 def calls_something_refused(n: Int) -> list[Int]:
-    return grows([n], n)
+    return grows([[n]])
 
 def names_it(label: Str) -> Named:
     return Named(label = label)

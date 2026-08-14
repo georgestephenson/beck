@@ -32,7 +32,6 @@ use beck_core::core::{
     Closure, Const, Core, CoreKind, Env, Fields, Pattern, Prim, Record, Value, VarId,
 };
 use beck_core::digest;
-use beck_core::html::Html;
 use beck_core::net::{Failure as NetFailure, Reply, Request};
 use beck_core::PMap;
 
@@ -2094,7 +2093,7 @@ impl<'h> Interp<'h> {
                     // rendering `render_comment(r)` as its own markup, escaped, is the one reading
                     // of "or Html" that makes a view uncomposable out of functions.
                     Value::Html(h) => Ok(Value::Html(h)),
-                    other => Ok(Value::Html(Arc::new(Html::text(other.display())))),
+                    other => Ok(Value::Html(Arc::new(beck_core::html::text_of(&other)))),
                 }
             }
             Prim::HtmlAttr => {
@@ -2127,41 +2126,15 @@ impl<'h> Interp<'h> {
                 let children = args.pop().expect("arity checked");
                 let attrs = args.pop().expect("arity checked");
                 let tag = args.pop().expect("arity checked");
-                let mut el = Html::el(tag.display());
-                for a in attrs.as_list().map(|v| v.as_slice()).unwrap_or(&[]) {
-                    match a {
-                        Value::Attr(at) => match &**at {
-                            beck_core::core::AttrValue::Plain(k, v) => {
-                                // An empty attribute value is dropped rather than emitted, so the
-                                // differ has nothing to churn on — Phase 0's `attr_if`.
-                                if !v.is_empty() {
-                                    el = el.attr(k.to_string(), v.to_string());
-                                }
-                            }
-                            beck_core::core::AttrValue::On(ev, cmd) => {
-                                el = el.on(ev, cmd.to_json());
-                            }
-                            beck_core::core::AttrValue::Key(k) => el = el.key(k.to_string()),
-                        },
-                        other => {
-                            return Err(EvalError::new(
-                                format!("not an attribute: {}", other.display()),
-                                span,
-                            ))
-                        }
-                    }
-                }
-                for ch in children.as_list().map(|v| v.as_slice()).unwrap_or(&[]) {
-                    match ch.as_html() {
-                        Some(h) => el = el.child(h.clone()),
-                        None => {
-                            return Err(EvalError::new(
-                                format!("not an Html child: {}", ch.display()),
-                                span,
-                            ))
-                        }
-                    }
-                }
+                // `beck_core::html::element` and not a loop here: a compiled `view` answers with
+                // these same three arguments and the host builds the tree out of them, so the
+                // rules about a dropped attribute, a handler's JSON and a key are written once.
+                let el = beck_core::html::element(
+                    &tag,
+                    attrs.as_list().map(|v| v.as_slice()).unwrap_or(&[]),
+                    children.as_list().map(|v| v.as_slice()).unwrap_or(&[]),
+                )
+                .map_err(|why| EvalError::new(why, span))?;
                 Ok(Value::Html(Arc::new(el)))
             }
             Prim::NewUuid => {

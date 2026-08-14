@@ -13,14 +13,17 @@
 //! # What is compiled, and what is refused
 //!
 //! A definition whose parameters and result each have a [`crate::heap::Repr`] — `Int`, `Float`,
-//! `Bool`, or a `model`, `union` or `newtype` that [`crate::heap`] can lay out — and whose body is
-//! built from constants, variables, `let`, `if`, `match`, direct calls to other compiled
-//! definitions, record and variant construction, field reads, `with`, and the arithmetic,
-//! comparison and logical primitives.
+//! `Bool`, a `Str`, a `list`, a `Map`, an `Html`, an `Attr`, or a `model`, `union` or `newtype`
+//! that [`crate::heap`] can lay out — and whose body is built from constants, variables, `let`,
+//! `if`, `match`, direct calls to other compiled definitions, record and variant construction,
+//! field reads, `with`, lambdas and applications, and the arithmetic, comparison, logical, text,
+//! collection and view primitives.
 //!
-//! A list, a string, a map, a closure and every effect are **refused** — by name, with the reason,
-//! in [`crate::Report`]. Nothing is silently approximated: a definition either compiles to machine
-//! code that agrees with the evaluator on every input, or it does not compile.
+//! Every effect that has to reach the **host**, and growing a **map**, are refused — by name, with
+//! the reason, in [`crate::Report`]. Failure is not among them: `raise` and `try:` compile, on the
+//! error cell that was already an unwinder. Nor is growing a *list*, since `docs/113` separated the
+//! count from the elements. Nothing is silently approximated: a definition either compiles
+//! to machine code that agrees with the evaluator on every input, or it does not compile.
 //!
 //! # Agreeing with the evaluator exactly
 //!
@@ -154,6 +157,15 @@ pub enum Trap {
     /// `unreachable` because a wrong rank should be a message naming this trap and not an
     /// optimiser's licence to delete the path that produced it.
     NoSuchLambda,
+    /// A `raise` nothing caught. **The one code that is not a fault**: it is the program failing
+    /// the way its own type says it can, and the value it failed with travels with it.
+    ///
+    /// The payload is the offset of a two-word pair — the raised value's shape and its word, which
+    /// is [`crate::heap::Repr::Html`]'s deferred value one subsystem over — and the arena travels
+    /// with the reply, which is the one place the protocol treats a failure like an answer. What
+    /// the host does with it is build the evaluator's own message out of the decoded value; what a
+    /// compiled `try:` does with it is compare the type name in the error cell's third word.
+    Raised,
 }
 
 impl Trap {
@@ -177,11 +189,12 @@ impl Trap {
             Trap::NoMatchData => 11,
             Trap::HeapExhausted => 12,
             Trap::NoSuchLambda => 13,
+            Trap::Raised => 14,
         }
     }
 
     pub fn from_code(code: u32) -> Option<Trap> {
-        const ALL: [Trap; 13] = [
+        const ALL: [Trap; 14] = [
             Trap::AddOverflow,
             Trap::SubOverflow,
             Trap::MulOverflow,
@@ -195,6 +208,7 @@ impl Trap {
             Trap::NoMatchData,
             Trap::HeapExhausted,
             Trap::NoSuchLambda,
+            Trap::Raised,
         ];
         ALL.into_iter().find(|t| t.code() == code)
     }
@@ -232,6 +246,13 @@ impl Trap {
                 crate::heap::ARENA_BYTES >> 20
             ),
             Trap::NoSuchLambda => format!("no lambda of this module has rank {payload}"),
+            // Never seen by a reader: `Native::exchange` decodes the raised value and builds the
+            // evaluator's own `raised \`…\`` out of it, because a message about a failure the
+            // program declared should say what was raised rather than that something was.
+            Trap::Raised => format!(
+                "a raised value at offset {payload}, which the host did not \
+                                     decode"
+            ),
         }
     }
 }
@@ -263,6 +284,11 @@ impl Module {
 /// refusal per definition. Whether that is worth running is the caller's decision, and
 /// [`Module::functions`] is how it takes it.
 pub fn module(program: &Program) -> Module {
+    // Specialised first, so everything below sees one definition per instantiation and never a type
+    // parameter. [`crate::mono`] is why this is a backend pass and what it refuses; a program with
+    // no generic definition in it comes back as itself.
+    let mono = crate::mono::specialise(program);
+    let program = &mono.program;
     let mut refusals: Vec<Refusal> = Vec::new();
     let mut sigs: BTreeMap<Arc<str>, Signature> = BTreeMap::new();
     let mut heap = Heap::new();
@@ -466,6 +492,8 @@ fn signature_of(def: &Def, heap: &mut Heap, program: &Program) -> Result<Signatu
         match heap.repr(ty, program) {
             Ok(r) => {
                 Heap::crossing(r).map_err(|why| format!("parameter `{name}` is {why}"))?;
+                heap.inbound(r)
+                    .map_err(|why| format!("parameter `{name}` is {why}"))?;
                 params.push(r);
             }
             Err(why) => return Err(format!("parameter `{name}` is {why}")),
@@ -548,6 +576,14 @@ struct Function<'a> {
     loops: BTreeSet<(Loop, u32)>,
     /// Whether this body reaches the arena, and therefore needs its base in a register.
     uses_heap: bool,
+    /// Where a failure inside the block being emitted goes, innermost last.
+    ///
+    /// Empty means the function's own trap exit. A `try:` pushes a label while its block is
+    /// emitted, so every check a call makes and every trap a primitive stores lands in the handler
+    /// rather than leaving the function — which is the whole of what makes a handler lexical
+    /// ([`docs/38`](../../../../../docs/38-literature-survey.md) §38.4): there is no dynamic search
+    /// for who handles what, because the label is decided where the block is written.
+    handlers: Vec<String>,
 }
 
 impl<'a> Function<'a> {
@@ -578,6 +614,7 @@ impl<'a> Function<'a> {
             applied: BTreeSet::new(),
             loops: BTreeSet::new(),
             uses_heap: false,
+            handlers: Vec::new(),
         }
     }
 
@@ -681,6 +718,21 @@ impl<'a> Function<'a> {
         self.spans.len() - 1
     }
 
+    /// Where a failure goes from here: the innermost `try:`'s handler, or the function's exit.
+    ///
+    /// One method rather than the literal `trap` at three sites, because a handler that only some
+    /// of them honoured would catch a raise and miss an overflow — or worse, leave a function
+    /// through a block a `try:` had already decided to protect.
+    fn escape(&mut self) -> String {
+        match self.handlers.last() {
+            Some(label) => label.clone(),
+            None => {
+                self.trapped = true;
+                "trap".to_string()
+            }
+        }
+    }
+
     /// Store the trap and leave for the exit block. The caller carries on in `cont`.
     fn trap(&mut self, trap: Trap, span: Span, payload: &str, cond: &str) {
         let idx = self.span(span);
@@ -696,8 +748,8 @@ impl<'a> Function<'a> {
         let pl = self.fresh();
         self.line(format!("{pl} = getelementptr inbounds i8, ptr %err, i64 8"));
         self.line(format!("store i64 {payload}, ptr {pl}"));
-        self.terminate("br label %trap");
-        self.trapped = true;
+        let out = self.escape();
+        self.terminate(format!("br label %{out}"));
 
         self.start(cont);
     }
@@ -709,8 +761,8 @@ impl<'a> Function<'a> {
         let ok = self.fresh();
         self.line(format!("{ok} = icmp eq i32 {code}, 0"));
         let cont = self.label("call.ok");
-        self.terminate(format!("br i1 {ok}, label %{cont}, label %trap"));
-        self.trapped = true;
+        let out = self.escape();
+        self.terminate(format!("br i1 {ok}, label %{cont}, label %{out}"));
         self.start(cont);
     }
 
@@ -900,14 +952,20 @@ impl<'a> Function<'a> {
             Repr::Int => Trap::NoMatchInt,
             Repr::Float => Trap::NoMatchFloat,
             Repr::Bool => Trap::NoMatchBool,
-            Repr::Str | Repr::List(_) | Repr::Map(_) | Repr::Obj(_) | Repr::Fn(_) => {
-                Trap::NoMatchData
-            }
+            Repr::Str
+            | Repr::List(_)
+            | Repr::Map(_)
+            | Repr::Obj(_)
+            | Repr::Fn(_)
+            | Repr::Html
+            | Repr::Attr => Trap::NoMatchData,
         };
         let payload = self.widen(&v);
         self.trap(trap, span, &payload, "true");
-        self.terminate("br label %trap");
-        self.trapped = true;
+        // `trap` with a constant condition already left for the handler; this terminates the block
+        // it carried on into, which nothing can reach.
+        let out = self.escape();
+        self.terminate(format!("br label %{out}"));
 
         if dest == Dest::Return {
             return Ok(None);
@@ -954,7 +1012,7 @@ impl<'a> Function<'a> {
                 if want.ty != v.ty {
                     return Err("a match arm compares against a constant of another type".into());
                 }
-                let cond = self.equals(v, &want);
+                let cond = self.equals(v, &want)?;
                 self.branch(&cond, fail);
                 Ok(())
             }
@@ -972,7 +1030,7 @@ impl<'a> Function<'a> {
                             "a match arm compares against a constant of another type".into()
                         );
                     }
-                    let t = self.equals(v, &want);
+                    let t = self.equals(v, &want)?;
                     acc = Some(match acc {
                         None => t,
                         Some(prev) => {
@@ -1092,9 +1150,14 @@ impl<'a> Function<'a> {
                 self.line(format!("{raw} = load i64, ptr {p}"));
                 self.line(format!("{r} = icmp ne i64 {raw}, 0"));
             }
-            Repr::Int | Repr::Str | Repr::List(_) | Repr::Map(_) | Repr::Obj(_) | Repr::Fn(_) => {
-                self.line(format!("{r} = load i64, ptr {p}"))
-            }
+            Repr::Int
+            | Repr::Str
+            | Repr::List(_)
+            | Repr::Map(_)
+            | Repr::Obj(_)
+            | Repr::Fn(_)
+            | Repr::Html
+            | Repr::Attr => self.line(format!("{r} = load i64, ptr {p}")),
         }
         Val { text: r, ty: repr }
     }
@@ -1119,9 +1182,14 @@ impl<'a> Function<'a> {
                 self.line(format!("{w} = zext i1 {} to i64", v.text));
                 self.line(format!("store i64 {w}, ptr {p}"));
             }
-            Repr::Int | Repr::Str | Repr::List(_) | Repr::Map(_) | Repr::Obj(_) | Repr::Fn(_) => {
-                self.line(format!("store i64 {}, ptr {p}", v.text))
-            }
+            Repr::Int
+            | Repr::Str
+            | Repr::List(_)
+            | Repr::Map(_)
+            | Repr::Obj(_)
+            | Repr::Fn(_)
+            | Repr::Html
+            | Repr::Attr => self.line(format!("store i64 {}, ptr {p}", v.text)),
         }
     }
 
@@ -1623,6 +1691,11 @@ impl<'a> Function<'a> {
     // -- primitives -------------------------------------------------------------------------
 
     fn prim(&mut self, op: Prim, args: &[Core], ty: &Ty, span: Span) -> Result<Val, String> {
+        // Before the arguments, because this one's first argument is a *block* and evaluating it
+        // here would run it outside the protection it exists to have.
+        if op == Prim::Try {
+            return self.try_(args, ty, span);
+        }
         let mut vals = Vec::with_capacity(args.len());
         for a in args {
             vals.push(self.value(a)?);
@@ -1685,9 +1758,9 @@ impl<'a> Function<'a> {
                     | Repr::List(_)
                     | Repr::Map(_)
                     | Repr::Obj(_)
-                    | Repr::Fn(_) => {
-                        Err(format!("`{}` on a value that is not a number", op.name()))
-                    }
+                    | Repr::Fn(_)
+                    | Repr::Html
+                    | Repr::Attr => Err(format!("`{}` on a value that is not a number", op.name())),
                 }
             }
             Prim::Div | Prim::Rem => {
@@ -1755,7 +1828,9 @@ impl<'a> Function<'a> {
                     | Repr::List(_)
                     | Repr::Map(_)
                     | Repr::Obj(_)
-                    | Repr::Fn(_) => Err("`negate` on a value that is not a number".into()),
+                    | Repr::Fn(_)
+                    | Repr::Html
+                    | Repr::Attr => Err("`negate` on a value that is not a number".into()),
                 }
             }
             Prim::Abs => {
@@ -1791,7 +1866,9 @@ impl<'a> Function<'a> {
                     | Repr::List(_)
                     | Repr::Map(_)
                     | Repr::Obj(_)
-                    | Repr::Fn(_) => Err("`abs` on a value that is not a number".into()),
+                    | Repr::Fn(_)
+                    | Repr::Html
+                    | Repr::Attr => Err("`abs` on a value that is not a number".into()),
                 }
             }
             Prim::Sqrt | Prim::Sin | Prim::Cos => {
@@ -1840,7 +1917,7 @@ impl<'a> Function<'a> {
             Prim::Eq | Prim::Ne | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge => {
                 arity(2)?;
                 same(&vals)?;
-                Ok(self.compare(op, &vals[0], &vals[1]))
+                self.compare(op, &vals[0], &vals[1])
             }
             Prim::And | Prim::Or | Prim::Not => {
                 let want = if op == Prim::Not { 1 } else { 2 };
@@ -1892,6 +1969,35 @@ impl<'a> Function<'a> {
                 }
                 Ok(self.text_call("slice", &[&vals[0], &vals[1], &vals[2]], Repr::Str, span))
             }
+            Prim::StrTrim => {
+                arity(1)?;
+                self.text_arg(&vals[0], op)?;
+                Ok(self.text_call("trim", &[&vals[0]], Repr::Str, span))
+            }
+            Prim::StrSplit | Prim::StrChars => {
+                // One function, because the evaluator answers characters for an empty separator —
+                // so `str_chars(s)` *is* `str_split(s, "")`, and the two share a body as well as a
+                // fixture.
+                let sep = if op == Prim::StrChars {
+                    arity(1)?;
+                    self.text_arg(&vals[0], op)?;
+                    // The offset `0`, which is never a live object — so `str_chars` needs no
+                    // literal, and the pool stays a function of the program's own text.
+                    Val {
+                        text: "0".to_string(),
+                        ty: Repr::Str,
+                    }
+                } else {
+                    arity(2)?;
+                    self.text_arg(&vals[0], op)?;
+                    self.text_arg(&vals[1], op)?;
+                    vals[1].clone()
+                };
+                // Interning the element is what puts the list runtime in the module: the answer is
+                // a `list[Str]` no program in the module need have written down.
+                let at = self.heap.word_of(Repr::Str);
+                Ok(self.text_call("split", &[&vals[0], &sep], Repr::List(at), span))
+            }
             Prim::StrContains | Prim::StrStartsWith | Prim::StrEndsWith => {
                 arity(2)?;
                 self.text_arg(&vals[0], op)?;
@@ -1903,6 +2009,31 @@ impl<'a> Function<'a> {
                 self.text_arg(&vals[0], op)?;
                 self.text_arg(&vals[1], op)?;
                 self.index_of(ty, &vals[0], &vals[1], span)
+            }
+            // `list_append` — a new header, and a slot in the block when there is one.
+            //
+            // Refused until `docs/113` for a reason that was true of the *layout* rather than of the
+            // operation: with the count in front of the elements, an append could copy or it could
+            // overwrite what other holders see. Separating the two made a third answer available.
+            Prim::ListAppend => {
+                arity(2)?;
+                let at = self.list_arg(&vals[0], op)?;
+                let element = self.heap.element(at);
+                if vals[1].ty != element {
+                    return Err("`list_append` of an element of another type".into());
+                }
+                let word = self.widen(&vals[1].clone());
+                let idx = self.span(span);
+                let r = self.fresh();
+                self.line(format!(
+                    "{r} = call i64 @\"beck.list.append\"(ptr %err, i64 {}, i64 {word}, i32 {idx})",
+                    vals[0].text
+                ));
+                self.check_call();
+                Ok(Val {
+                    text: r,
+                    ty: vals[0].ty,
+                })
             }
             Prim::ListLen | Prim::ListIsEmpty => {
                 arity(1)?;
@@ -1945,7 +2076,8 @@ impl<'a> Function<'a> {
                     "{found} = call i64 @\"beck.list.find.{at}\"(i64 {}, i64 {word})",
                     vals[0].text
                 ));
-                self.wants(Repr::List(at));
+                self.wants(Repr::List(at))
+                    .map_err(|why| format!("`{}` over {why}", op.name()))?;
                 if op == Prim::ListContains {
                     let r = self.fresh();
                     self.line(format!("{r} = icmp sge i64 {found}, 0"));
@@ -2076,7 +2208,8 @@ impl<'a> Function<'a> {
                 if vals[1].ty != key {
                     return Err(format!("`{}` with a key of another type", op.name()));
                 }
-                self.wants(Repr::Map(at));
+                self.wants(Repr::Map(at))
+                    .map_err(|why| format!("`{}` over {why}", op.name()))?;
                 let word = self.widen(&vals[1]);
                 let found = self.fresh();
                 self.line(format!(
@@ -2085,13 +2218,72 @@ impl<'a> Function<'a> {
                 ));
                 if op == Prim::MapContains {
                     let r = self.fresh();
-                    self.line(format!("{r} = icmp sge i64 {found}, 0"));
+                    self.line(format!("{r} = icmp ne i64 {found}, 0"));
                     return Ok(Val {
                         text: r,
                         ty: Repr::Bool,
                     });
                 }
                 self.map_get(ty, &vals[0], &found, self.heap.element(v), span)
+            }
+            // The three that grow a map. Refused until `docs/114` because a sorted run has to be
+            // copied whole; a tree rebuilds the path and shares the rest, which is
+            // `beck_core::pmap`'s own cost.
+            Prim::MapInsert | Prim::MapRemove => {
+                arity(if op == Prim::MapInsert { 3 } else { 2 })?;
+                let at = self.map_arg(&vals[0], op)?;
+                let (k, v) = self.heap.entry(at);
+                let key = self.heap.element(k);
+                if vals[1].ty != key {
+                    return Err(format!("`{}` with a key of another type", op.name()));
+                }
+                self.wants(Repr::Map(at))
+                    .map_err(|why| format!("`{}` over {why}", op.name()))?;
+                let kw = self.widen(&vals[1].clone());
+                let idx = self.span(span);
+                let r = self.fresh();
+                if op == Prim::MapInsert {
+                    if vals[2].ty != self.heap.element(v) {
+                        return Err("`map_insert` with a value of another type".into());
+                    }
+                    let vw = self.widen(&vals[2].clone());
+                    self.line(format!(
+                        "{r} = call i64 @\"beck.map.ins.{at}\"(ptr %err, i64 {}, i64 {kw}, i64 \
+                         {vw}, i32 {idx})",
+                        vals[0].text
+                    ));
+                } else {
+                    self.line(format!(
+                        "{r} = call i64 @\"beck.map.del.{at}\"(ptr %err, i64 {}, i64 {kw}, i32 \
+                         {idx})",
+                        vals[0].text
+                    ));
+                }
+                self.check_call();
+                Ok(Val {
+                    text: r,
+                    ty: vals[0].ty,
+                })
+            }
+            Prim::MapMerge => {
+                arity(2)?;
+                let at = self.map_arg(&vals[0], op)?;
+                if vals[1].ty != vals[0].ty {
+                    return Err("`map_merge` of two maps of different types".into());
+                }
+                self.wants(Repr::Map(at))
+                    .map_err(|why| format!("`{}` over {why}", op.name()))?;
+                let idx = self.span(span);
+                let r = self.fresh();
+                self.line(format!(
+                    "{r} = call i64 @\"beck.map.merge.{at}\"(ptr %err, i64 {}, i64 {}, i32 {idx})",
+                    vals[0].text, vals[1].text
+                ));
+                self.check_call();
+                Ok(Val {
+                    text: r,
+                    ty: vals[0].ty,
+                })
             }
             Prim::MapKeys | Prim::MapValues => {
                 arity(1)?;
@@ -2213,7 +2405,8 @@ impl<'a> Function<'a> {
                 // wrote, so nothing else would have asked for their comparison — and recording the
                 // index is what makes the module generate it.
                 let at = self.heap.word_of(key);
-                self.list_compared.insert(at);
+                self.wants(Repr::List(at))
+                    .map_err(|why| format!("`{}` by a key that is {why}", op.name()))?;
                 let r = self.list_loop(
                     Loop::Sort,
                     fam,
@@ -2249,8 +2442,165 @@ impl<'a> Function<'a> {
                     ty: Repr::Bool,
                 })
             }
+            // `raise e` — the one failure that is not a fault, so it carries a value.
+            //
+            // Two words in the arena — the value's shape and its word, which is a view node's
+            // deferred value one subsystem over — and the error cell's third word holds the type
+            // *name*, as the offset of that name in the literal pool. A name and not the shape,
+            // because two instantiations of one generic type are two layouts and one name, and it
+            // is the name `try:` compares (`beck_core`'s own rule: the atom is `raises(T)`).
+            Prim::Raise => {
+                arity(1)?;
+                let Repr::Obj(at) = vals[0].ty else {
+                    return Err(format!(
+                        "raises {}, and a raised value must have a declared type",
+                        self.heap.show(vals[0].ty)
+                    ));
+                };
+                let name = self.heap.layout(at).name.to_string();
+                let shape = self.heap.word_of(vals[0].ty);
+                let pair = self.alloc(heap::RAISED_WORDS * heap::WORD, span);
+                self.store_word(&pair, 0, &shape.to_string());
+                let v = vals[0].clone();
+                self.store_field(&pair, 1, &v);
+                let named = self.literal(&name);
+                let slot = self.fresh();
+                self.line(format!(
+                    "{slot} = getelementptr inbounds i8, ptr %err, i64 16"
+                ));
+                self.line(format!("store i64 {named}, ptr {slot}"));
+                self.trap(Trap::Raised, span, &pair, "true");
+                // Unreachable: the trap above left for the handler with a constant condition. The
+                // block it carried on into still needs a terminator, and the value this answers
+                // with is never read — `raise` has no type of its own, so the checker gave the
+                // expression whatever the context wanted.
+                let out = self.escape();
+                self.terminate(format!("br label %{out}"));
+                let gone = self.label("raise.gone");
+                self.start(gone);
+                let want = self.repr(ty).unwrap_or(Repr::Int);
+                Ok(Val {
+                    text: want.machine().zero().to_string(),
+                    ty: want,
+                })
+            }
+            // The five that build a page. Every one of them is an allocation and some stores:
+            // nothing is rendered, nothing is hashed, and no attribute is dropped, because what
+            // goes in the arena is the *call* rather than the tree it makes — see
+            // [`heap::Repr::Html`] and `beck_core::html::element`, which is where the host bakes
+            // it and where the evaluator has always baked it.
+            Prim::HtmlEl => {
+                arity(3)?;
+                let (attrs, children) = self.view_lists()?;
+                if vals[0].ty != Repr::Str {
+                    return Err("`html_el` with a tag that is not text".into());
+                }
+                if vals[1].ty != Repr::List(attrs) {
+                    return Err("`html_el` with attributes that are not a `list[Attr]`".into());
+                }
+                if vals[2].ty != Repr::List(children) {
+                    return Err("`html_el` with children that are not a `list[Html]`".into());
+                }
+                let off = self.alloc(heap::NODE_WORDS * heap::WORD, span);
+                self.store_word(&off, 0, &heap::HTML_ELEMENT.to_string());
+                for (slot, v) in vals.iter().enumerate() {
+                    self.store_field(&off, slot + 1, v);
+                }
+                Ok(Val {
+                    text: off,
+                    ty: Repr::Html,
+                })
+            }
+            Prim::HtmlText => {
+                arity(1)?;
+                // A child that is already a tree is spliced rather than rendered, which is the
+                // evaluator's own arm — and here it needs no node at all, because the value it
+                // would defer is the answer.
+                if vals[0].ty == Repr::Html {
+                    return Ok(vals[0].clone());
+                }
+                self.node(
+                    Repr::Html,
+                    heap::HTML_TEXT,
+                    None,
+                    Some(&vals[0].clone()),
+                    span,
+                )
+            }
+            Prim::HtmlAttr | Prim::HtmlOn => {
+                arity(2)?;
+                if vals[0].ty != Repr::Str {
+                    return Err(format!("`{}` with a name that is not text", op.name()));
+                }
+                let tag = if op == Prim::HtmlAttr {
+                    heap::ATTR_PLAIN
+                } else {
+                    heap::ATTR_ON
+                };
+                let (name, value) = (vals[0].clone(), vals[1].clone());
+                self.node(Repr::Attr, tag, Some(&name), Some(&value), span)
+            }
+            Prim::HtmlKey => {
+                arity(1)?;
+                self.node(
+                    Repr::Attr,
+                    heap::ATTR_KEY,
+                    None,
+                    Some(&vals[0].clone()),
+                    span,
+                )
+            }
             other => Err(refusal(other)),
         }
+    }
+
+    /// The `list[Attr]` and `list[Html]` reprs, resolving `Html` first if nothing has.
+    fn view_lists(&mut self) -> Result<(u32, u32), String> {
+        self.repr(&Ty::html())?;
+        self.heap
+            .html_lists()
+            .ok_or_else(|| "a view node in a module with no view in it".to_string())
+    }
+
+    /// One view node or attribute: four words, a tag, a name for the two shapes that have one, and
+    /// a deferred value for the four that have one.
+    ///
+    /// The unused words are **written**, not left as they were found: the whole used arena goes
+    /// back down the pipe with the reply, and a word nobody reads is still a byte that would differ
+    /// between two runs of the same program.
+    fn node(
+        &mut self,
+        ty: Repr,
+        tag: u64,
+        name: Option<&Val>,
+        deferred: Option<&Val>,
+        span: Span,
+    ) -> Result<Val, String> {
+        if let Some(v) = deferred {
+            // The host reads this word back as a `Value`, so what a closure gets everywhere else it
+            // gets here: a shape with no form the host can read is not one to defer.
+            heap::Heap::crossing(v.ty)
+                .map_err(|why| format!("puts {why} in a page, and a page is read by the host"))?;
+        }
+        self.view_lists()?;
+        let off = self.alloc(heap::NODE_WORDS * heap::WORD, span);
+        self.store_word(&off, 0, &tag.to_string());
+        match name {
+            Some(v) => self.store_field(&off, 1, v),
+            None => self.store_word(&off, 1, "0"),
+        }
+        match deferred {
+            Some(v) => {
+                let at = self.heap.word_of(v.ty);
+                self.store_word(&off, heap::DEFERRED, &at.to_string());
+                self.store_field(&off, heap::DEFERRED + 1, v);
+            }
+            None => {
+                self.store_word(&off, heap::DEFERRED, "0");
+                self.store_word(&off, heap::DEFERRED + 1, "0");
+            }
+        }
+        Ok(Val { text: off, ty })
     }
 
     /// Insist an argument is a closure of the shape this primitive applies it at.
@@ -2370,11 +2720,18 @@ impl<'a> Function<'a> {
             }
             vals.push(v);
         }
-        let off = self.alloc(heap::list_bytes(xs.len() as u64), span);
-        self.store_word(&off, 0, &xs.len().to_string());
+        // The block and then the header, in that order, because the header holds the block's
+        // offset — the same depth-first rule a record's fields follow.
+        let n = xs.len() as u64;
+        let data = self.alloc(heap::DATA_HEADER + n * heap::WORD, span);
+        self.store_word(&data, 0, &n.to_string());
+        self.store_word(&data, 1, &n.to_string());
         for (i, v) in vals.iter().enumerate() {
-            self.store_field(&off, i + 1, v);
+            self.store_field(&data, i + 2, v);
         }
+        let off = self.alloc(heap::LIST_HEADER, span);
+        self.store_word(&off, 0, &n.to_string());
+        self.store_word(&off, 1, &data);
         Ok(Val {
             text: off,
             ty: repr,
@@ -2383,14 +2740,12 @@ impl<'a> Function<'a> {
 
     /// The address of element `i` of `xs`, where `i` is a value rather than a constant.
     fn element_addr(&mut self, xs: &Val, index: &str) -> String {
-        let base = self.base();
-        let p = self.fresh();
+        // Through the block, which is the one load `heap::LIST_HEADER`'s indirection costs.
+        let q = self.fresh();
         self.line(format!(
-            "{p} = getelementptr inbounds i8, ptr {base}, i64 {}",
+            "{q} = call ptr @\"beck.list.data\"(i64 {})",
             xs.text
         ));
-        let q = self.fresh();
-        self.line(format!("{q} = getelementptr inbounds i8, ptr {p}, i64 8"));
         let r = self.fresh();
         self.line(format!(
             "{r} = getelementptr inbounds i64, ptr {q}, i64 {index}"
@@ -2473,6 +2828,142 @@ impl<'a> Function<'a> {
         Ok((repr, some, none, slot, bytes))
     }
 
+    /// `try: block` — run the block under a handler, and reify one failure as a `Result[T, E]`.
+    ///
+    /// The block is emitted **inline**, not as a closure applied. The checker wraps it in a `lam`
+    /// of no parameters so that the evaluator can delay it; here there is nothing to delay, and
+    /// inlining is what puts the block's own calls under the handler — a `beck.lam.N` called
+    /// through an application would check the cell inside *its* frame and leave through its own
+    /// exit.
+    ///
+    /// Emitting it for a **value** is load-bearing and not a style: a call in tail position is a
+    /// `musttail` that does not check the error cell (there is no frame left to check in), which is
+    /// correct at the top of a function and would walk straight through a handler. `Dest::Value`
+    /// is what guarantees no such call is emitted inside one.
+    ///
+    /// What the handler does is the evaluator's `Prim::Try`, word for word: a raise of the caught
+    /// type becomes `Err(value)`, and **everything else keeps travelling** — a fault is not a
+    /// failure, and a different error type belongs to a handler further out.
+    fn try_(&mut self, args: &[Core], ty: &Ty, span: Span) -> Result<Val, String> {
+        let [block, caught] = args else {
+            return Err("`try` takes a block and the name of what it catches".into());
+        };
+        let CoreKind::Lam { params, body } = &block.kind else {
+            return Err("`try` over something that is not a block".into());
+        };
+        if !params.is_empty() {
+            return Err("`try` over a block that takes arguments".into());
+        }
+        let CoreKind::Const(Const::Str(name)) = &caught.kind else {
+            return Err("`try` whose caught type is not written down".into());
+        };
+        // `Result[T, E]`, from the type the checker gave this expression: `E` is what the raised
+        // value is read back as and `T` is what the block answers.
+        let repr = self
+            .repr(ty)
+            .map_err(|why| format!("catches into a value that is {why}"))?;
+        let Repr::Obj(at) = repr else {
+            return Err(format!("catches into `{ty}`, which is not an object"));
+        };
+        let (ok, err, layout) = {
+            let l = self.heap.layout(at);
+            let ok = l
+                .tag_of(Some("Ok"))
+                .ok_or_else(|| format!("`{}` has no `Ok`", l.shown))?;
+            let err = l
+                .tag_of(Some("Err"))
+                .ok_or_else(|| format!("`{}` has no `Err`", l.shown))?;
+            (ok, err, l.clone())
+        };
+        let (ok_slot, ok_ty) = layout.variants[ok as usize]
+            .slot("value")
+            .ok_or_else(|| format!("`{}`'s `Ok` has no `value`", layout.shown))?;
+        let (err_slot, err_ty) = layout.variants[err as usize]
+            .slot("error")
+            .ok_or_else(|| format!("`{}`'s `Err` has no `error`", layout.shown))?;
+        let bytes = layout
+            .variants
+            .iter()
+            .map(super::heap::Variant::bytes)
+            .max()
+            .unwrap_or(heap::WORD);
+
+        let handler = self.label("try.handler");
+        let join = self.label("try.join");
+        self.handlers.push(handler.clone());
+        let value = self.expr(body, Dest::Value);
+        self.handlers.pop();
+        let value = value?.expect("a block emitted for a value produces one");
+        if value.ty != ok_ty {
+            return Err(format!(
+                "`try` over a block answering {} where `{}` carries {}",
+                self.heap.show(value.ty),
+                layout.shown,
+                self.heap.show(ok_ty)
+            ));
+        }
+        let good = self.alloc(bytes, span);
+        self.store_word(&good, 0, &ok.to_string());
+        self.store_field(&good, ok_slot, &value);
+        let from_ok = self.label.clone();
+        self.terminate(format!("br label %{join}"));
+
+        // The handler. Two tests and no search: is this failure a raise at all, and is it the one
+        // this `try:` names. Anything else leaves for the *enclosing* handler with the cell
+        // untouched, which is what "a different error type belongs to a handler further out" is.
+        self.start(handler);
+        let out = self.escape();
+        let code = self.fresh();
+        self.line(format!("{code} = load i32, ptr %err"));
+        let raised = self.fresh();
+        self.line(format!(
+            "{raised} = icmp eq i32 {code}, {}",
+            Trap::Raised.code()
+        ));
+        let named = self.label("try.named");
+        self.terminate(format!("br i1 {raised}, label %{named}, label %{out}"));
+
+        self.start(named);
+        let slot = self.fresh();
+        self.line(format!(
+            "{slot} = getelementptr inbounds i8, ptr %err, i64 16"
+        ));
+        let got = self.fresh();
+        self.line(format!("{got} = load i64, ptr {slot}"));
+        let want = self.literal(name);
+        let mine = self.fresh();
+        self.line(format!("{mine} = icmp eq i64 {got}, {want}"));
+        let caught = self.label("try.caught");
+        self.terminate(format!("br i1 {mine}, label %{caught}, label %{out}"));
+
+        self.start(caught);
+        // Handled: the cell is cleared, because the failure stops here and whatever this function
+        // does next must not look like it is still failing.
+        //
+        // The **whole word**, which is the code and the span together. Clearing the code alone
+        // leaves the raise's span behind, and the worker's loop reads that word as one `i64` to
+        // decide whether the call answered — so a caught failure would come back with a stale span
+        // in the high half and be treated as a trap by everything downstream.
+        self.line("store i64 0, ptr %err");
+        let pl = self.fresh();
+        self.line(format!("{pl} = getelementptr inbounds i8, ptr %err, i64 8"));
+        let pair = self.fresh();
+        self.line(format!("{pair} = load i64, ptr {pl}"));
+        let held = self.load_field(&pair, 1, err_ty);
+        let bad = self.alloc(bytes, span);
+        self.store_word(&bad, 0, &err.to_string());
+        self.store_field(&bad, err_slot, &held);
+        let from_err = self.label.clone();
+        self.terminate(format!("br label %{join}"));
+
+        self.start(join);
+        let r = self.fresh();
+        self.line(format!(
+            "{r} = phi i64 [ {good}, %{from_ok} ], [ {bad}, %{from_err} ]"
+        ));
+        Ok(Val { text: r, ty: repr })
+    }
+
     /// `Some(value = i)` when `found` is not `-1`, and `None()` when it is.
     ///
     /// The shape both searches answer with, and the reason neither needs a branch: see
@@ -2514,10 +3005,11 @@ impl<'a> Function<'a> {
                     .into(),
             );
         }
-        let off = self.alloc(heap::map_bytes(0), span);
-        self.store_word(&off, 0, "0");
+        // An empty map is the offset `0`, which is the one offset no live object has — so `{}`
+        // allocates nothing at all.
+        let _ = span;
         Ok(Val {
-            text: off,
+            text: "0".to_string(),
             ty: repr,
         })
     }
@@ -2574,25 +3066,19 @@ impl<'a> Function<'a> {
         }
     }
 
-    /// How many entries, which is the header word.
+    /// How many entries, which is the root's size word — or zero, for the empty map.
     fn map_len(&mut self, m: &Val) -> String {
         self.uses_heap = true;
-        let base = self.base();
-        let p = self.fresh();
-        self.line(format!(
-            "{p} = getelementptr inbounds i8, ptr {base}, i64 {}",
-            m.text
-        ));
         let r = self.fresh();
-        self.line(format!("{r} = load i64, ptr {p}"));
+        self.line(format!("{r} = call i64 @\"beck.map.size\"(i64 {})", m.text));
         r
     }
 
-    /// `map_get` — an `Option[V]` from the index a search answered, and **no branch**.
+    /// `map_get` — an `Option[V]` from the node a search answered, and **no branch**.
     ///
-    /// [`Function::list_get`]'s trick, with the value's address rather than the element's: the
-    /// values start `n` words after the keys, so entry `i`'s value is word `1 + n + i`. A miss
-    /// loads the header instead, which is always there, and the `None` tag means nobody reads it.
+    /// [`Function::list_get`]'s trick, one type over: the search answers a node or `0`, and reading
+    /// the value word of node `0` reads the arena's first bytes rather than past its end. The `None`
+    /// tag means nobody looks at what that was.
     fn map_get(
         &mut self,
         ty: &Ty,
@@ -2602,31 +3088,11 @@ impl<'a> Function<'a> {
         span: Span,
     ) -> Result<Val, String> {
         let (option, some, none, slot, bytes) = self.option_of(ty, value)?;
-        let n = self.map_len(m);
+        let _ = m;
         let inside = self.fresh();
-        self.line(format!("{inside} = icmp sge i64 {found}, 0"));
-        let safe = self.fresh();
-        self.line(format!("{safe} = select i1 {inside}, i64 {found}, i64 0"));
-        let at = self.fresh();
-        self.line(format!("{at} = add i64 {safe}, {n}"));
-        let base = self.base();
-        let p = self.fresh();
-        self.line(format!(
-            "{p} = getelementptr inbounds i8, ptr {base}, i64 {}",
-            m.text
-        ));
-        let data = self.fresh();
-        self.line(format!(
-            "{data} = getelementptr inbounds i8, ptr {p}, i64 8"
-        ));
-        let cell = self.fresh();
-        self.line(format!(
-            "{cell} = getelementptr inbounds i64, ptr {data}, i64 {at}"
-        ));
-        let addr = self.fresh();
-        self.line(format!("{addr} = select i1 {inside}, ptr {cell}, ptr {p}"));
+        self.line(format!("{inside} = icmp ne i64 {found}, 0"));
         let w = self.fresh();
-        self.line(format!("{w} = load i64, ptr {addr}"));
+        self.line(format!("{w} = call i64 @\"beck.map.value\"(i64 {found})"));
 
         let off = self.alloc(bytes, span);
         let tag = self.fresh();
@@ -2652,17 +3118,18 @@ impl<'a> Function<'a> {
                 op.name()
             ));
         }
-        let n = self.map_len(m);
-        let from = if op == Prim::MapKeys {
-            "0".to_string()
+        // Which word of a node to take: the key or the value, which is the only thing the two
+        // walks differ by.
+        let slot = if op == Prim::MapKeys {
+            heap::NODE_KEY
         } else {
-            n.clone()
+            heap::NODE_VALUE
         };
         self.uses_heap = true;
         let idx = self.span(span);
         let r = self.fresh();
         self.line(format!(
-            "{r} = call i64 @\"beck.map.run\"(ptr %err, i64 {}, i64 {from}, i64 {n}, i32 {idx})",
+            "{r} = call i64 @\"beck.map.run\"(ptr %err, i64 {}, i64 {slot}, i32 {idx})",
             m.text
         ));
         self.check_call();
@@ -3038,16 +3505,20 @@ impl<'a> Function<'a> {
         key
     }
 
-    fn equals(&mut self, a: &Val, b: &Val) -> String {
-        let cmp = self.compare(Prim::Eq, a, b);
-        cmp.text
+    fn equals(&mut self, a: &Val, b: &Val) -> Result<String, String> {
+        Ok(self.compare(Prim::Eq, a, b)?.text)
     }
 
-    /// Record that this repr's comparison has to exist.
+    /// Record that this repr's comparison has to exist, or refuse because it cannot.
     ///
     /// One method rather than three call sites, so that adding a reference kind means teaching
     /// [`heap::Repr::order`] and this — and `reachable` closes over whatever they name.
-    fn wants(&mut self, r: Repr) {
+    ///
+    /// It asks [`heap::Heap::ordered`] first, which is what keeps a repr with no order out of a
+    /// generated comparison: the refusal names the definition that wanted one, where the same
+    /// question asked while the module was being assembled would name nothing.
+    fn wants(&mut self, r: Repr) -> Result<(), String> {
+        self.heap.ordered(r)?;
         match r {
             Repr::Obj(at) => {
                 self.compared.insert(at);
@@ -3058,14 +3529,15 @@ impl<'a> Function<'a> {
             Repr::Map(at) => {
                 self.map_compared.insert(at);
             }
-            Repr::Int | Repr::Float | Repr::Bool | Repr::Str => {}
+            Repr::Int | Repr::Float | Repr::Bool | Repr::Str | Repr::Html | Repr::Attr => {}
             // A closure's comparison is one word — `beck.fn.cmp` is written once for the module
             // rather than per family, because every closure's rank is in the same table.
             Repr::Fn(_) => self.compared_fns = true,
         }
+        Ok(())
     }
 
-    fn compare(&mut self, op: Prim, a: &Val, b: &Val) -> Val {
+    fn compare(&mut self, op: Prim, a: &Val, b: &Val) -> Result<Val, String> {
         // Reals compare through the order key and Bools compare unsigned, so `false < true`. Both
         // are the ordering `Value`'s derived `Ord` gives, which is the one the evaluator uses.
         // An object compares through the function `compare_functions` emitted for its layout,
@@ -3073,10 +3545,16 @@ impl<'a> Function<'a> {
         let (lhs, rhs, signed) = match a.ty.order() {
             heap::Order::Key => (self.order_key(a), self.order_key(b), false),
             heap::Order::Words { signed } => (a.text.clone(), b.text.clone(), signed),
+            // Nothing to compare with: `Repr::order` names the reason and this is where a program
+            // that asked hears it.
+            heap::Order::Absent(why) => {
+                return Err(format!("compares {}, which is {why}", self.heap.show(a.ty)))
+            }
             // A reference decides through the three-way comparison for whatever it refers to. The
             // symbol is `Repr::order`'s, which is the only place that names one.
             heap::Order::Call(symbol) => {
-                self.wants(a.ty);
+                self.wants(a.ty)
+                    .map_err(|why| format!("compares {}, which is {why}", self.heap.show(a.ty)))?;
                 let r = self.fresh();
                 self.line(format!(
                     "{r} = call i64 @\"{symbol}\"(i64 {}, i64 {})",
@@ -3100,10 +3578,10 @@ impl<'a> Function<'a> {
         };
         let r = self.fresh();
         self.line(format!("{r} = icmp {pred} {width} {lhs}, {rhs}"));
-        Val {
+        Ok(Val {
             text: r,
             ty: Repr::Bool,
-        }
+        })
     }
 
     /// The value as an `i64`, which is how it crosses the worker's protocol and how a trap carries
@@ -3128,7 +3606,13 @@ impl<'a> Function<'a> {
             // Its offset, which is what an object *is* here. Only a trap payload reads this, and
             // the one trap that can carry an object says nothing about the value it carries —
             // `Trap::NoMatchData` is the message, and this is what makes it honest.
-            Repr::Str | Repr::List(_) | Repr::Map(_) | Repr::Obj(_) | Repr::Fn(_) => v.text.clone(),
+            Repr::Str
+            | Repr::List(_)
+            | Repr::Map(_)
+            | Repr::Obj(_)
+            | Repr::Fn(_)
+            | Repr::Html
+            | Repr::Attr => v.text.clone(),
         }
     }
 }
@@ -3141,27 +3625,7 @@ impl<'a> Function<'a> {
 /// which is the difference between a refusal a reader can act on and one they can only observe.
 fn refusal(op: Prim) -> String {
     let why = match op {
-        Prim::StrSplit | Prim::StrChars => {
-            "answers with a list whose elements it also allocates, which is two loops rather than \
-             the one every list this backend builds has"
-        }
-        // The one that is a decision rather than a gap. `docs/69` §69.7 and `docs/101` §101.5 both
-        // name shipping this as the mistake: the tree-walker pushes in place when `liveness` proves
-        // the accumulator is a last use, and an arena with no ownership in it cannot, so every loop
-        // in the language would be quadratic here and linear there.
-        Prim::ListAppend => {
-            "grows a list, and this arena cannot prove nobody else holds the one it would push \
-             into — so the accumulator every loop is written as would be quadratic here and linear \
-             in the evaluator"
-        }
         Prim::ListZip => "answers with a list of pairs, and there is no pair type to lay out",
-        // The same rule `list_append` gets, one type over: the evaluator's `PMap` shares everything
-        // it did not touch and rebuilds one path, and a sorted run in an arena has to copy all of
-        // it. `docs/107` §107.4 is the argument.
-        Prim::MapInsert | Prim::MapRemove | Prim::MapMerge => {
-            "grows a map, and a sorted run in an arena has to be copied whole where the \
-             evaluator's tree rebuilds one path"
-        }
         // The higher-order half compiles — `map_list`, `filter_list`, `list_fold`, `list_all`,
         // `list_any` and `sort_by` — so what is left of it is the one that grows a list.
         Prim::ListFlatMap => {
@@ -3173,9 +3637,6 @@ fn refusal(op: Prim) -> String {
             "is Unicode case mapping, which is a table rather than an operation — and a compiled \
              half-answer that folded ASCII only would disagree with the evaluator on the first \
              letter that is not"
-        }
-        Prim::StrTrim => {
-            "trims Unicode whitespace, which is a table for the same reason case mapping is"
         }
         Prim::StrReplace => {
             "builds text whose size is the number of occurrences of one string in another, which \
@@ -3194,8 +3655,15 @@ fn refusal(op: Prim) -> String {
 ///
 /// Quoted and escaped rather than transliterated: identifiers are Unicode (`docs/44` §44.4), and a
 /// scheme that dropped or folded characters could give two definitions one symbol.
+///
+/// **`beck.def.` and not `beck.`**, which is a namespace rather than a prefix. Everything this
+/// module generates for itself is `beck.<something>` — `beck.dispatch`, `beck.alloc`, `beck.map.*`
+/// — so a definition *called* `dispatch` used to take the dispatcher's own symbol, and the
+/// assembler answered "invalid redefinition" for a program that had done nothing wrong.
+/// `awfy/richards.beck` has one, and it was invisible until `docs/114` made that definition
+/// compile: a collision needs both halves to exist, and one of them never had.
 fn mangle(name: &str) -> String {
-    let mut out = String::from("\"beck.");
+    let mut out = String::from("\"beck.def.");
     for b in name.bytes() {
         match b {
             b'"' | b'\\' => {
@@ -4094,6 +4562,13 @@ fn compare_function(at: u32, heap: &Heap) -> String {
                     b.line(format!("ret i64 {r}"));
                     b.block(&next);
                 }
+                // A field with no order at all. Unreachable, and the reason is a rule rather than
+                // an argument: `Function::wants` asks `Heap::ordered` before it records a demand,
+                // and that walks a record's fields — so a layout holding one of these is never in
+                // the set this function is generated for. Answering "equal" is what the tag arm
+                // above answers for the case that cannot happen, and for the same reason: it is
+                // the one answer that cannot make a comparison asymmetric.
+                heap::Order::Absent(_) => {}
                 order => {
                     // A real compares through its order key, and both are already normalised —
                     // `Function::store_field` is where that is paid for.
@@ -4339,11 +4814,17 @@ run:
 "#,
     );
     if arena {
-        m.push_str(
+        let _ = write!(
+            m,
             r#"  %ok = icmp eq i64 %cell, 0
   %wants = load i64, ptr @"beck.reply"
   %onheap = icmp ne i64 %wants, 0
-  %both = and i1 %ok, %onheap
+  %answered = and i1 %ok, %onheap
+  ; A raise is the one failure whose arena travels: the value it carried is in there, and the host
+  ; builds the evaluator's own message out of it rather than out of the fact that there was one.
+  %what = trunc i64 %cell to i32
+  %raised = icmp eq i32 %what, {raised}
+  %both = or i1 %answered, %raised
   %used = load i64, ptr @"beck.next"
   %send = select i1 %both, i64 %used, i64 0
   store i64 %send, ptr %rb
@@ -4356,6 +4837,7 @@ blob:
   %stalled = icmp ne i64 %pushed, %send
   br i1 %stalled, label %done, label %loop
 "#,
+            raised = Trap::Raised.code()
         );
     } else {
         m.push_str(
@@ -4415,6 +4897,15 @@ declare i64 @write(i32, ptr, i64)
 /// | `beck.str.byteof` | which byte character `i` begins at, clamped to the end |
 /// | `beck.str.slice` | `str_slice`, in characters and clamped, exactly as the evaluator clamps |
 /// | `beck.str.find` | the byte offset of a substring, or `-1` |
+/// | `beck.str.ws` | the byte width of the whitespace character at `i`, or `0` if there is not one |
+/// | `beck.str.trim` | `str_trim` — `str::trim`, which is `char::is_whitespace` at both ends |
+///
+/// `beck.str.ws` is the one that is a **closed set rather than a table**, which is why `str_trim`
+/// compiles where `str_upper` does not. `White_Space` is 25 code points, none of them four bytes
+/// long, so the test is a switch over five lead bytes; case mapping is some fourteen hundred
+/// mappings and a handful that change a string's length. That is why the two are not one refusal,
+/// and `native.rs::the_whitespace_this_backend_knows_is_every_one_rust_does` is what holds the
+/// difference: it walks all of Unicode and fails the day the set is not this one.
 ///
 /// `beck.str.byteof` is the one with a cost worth naming: it is constant time when the text is
 /// ASCII — every character one byte, which is what the two equal counts say — and a walk otherwise,
@@ -4648,6 +5139,230 @@ out:
   ret i64 %r
 }
 
+; The byte width of the whitespace character beginning at %i, or 0 if the character there is not
+; whitespace. Every one of `White_Space`'s 25 code points is one, two or three bytes, and no
+; continuation byte can be 0xC2, 0xE1, 0xE2 or 0xE3 — continuations are 0x80..0xBF — so this may be
+; asked at *any* byte of well-formed UTF-8 and never answers inside a character. That is what lets
+; `beck.str.trim` walk a byte at a time without decoding what it is skipping over.
+define internal i64 @"beck.str.ws"(ptr %p, i64 %i, i64 %len) {
+entry:
+  %b0p = getelementptr inbounds i8, ptr %p, i64 %i
+  %b0 = load i8, ptr %b0p
+  %b0z = zext i8 %b0 to i32
+  switch i32 %b0z, label %no [ i32 9, label %yes1
+                               i32 10, label %yes1
+                               i32 11, label %yes1
+                               i32 12, label %yes1
+                               i32 13, label %yes1
+                               i32 32, label %yes1
+                               i32 194, label %two
+                               i32 225, label %e1
+                               i32 226, label %e2
+                               i32 227, label %e3 ]
+two:
+  ; U+0085 NEL and U+00A0 NBSP.
+  %room2 = add i64 %i, 1
+  %fits2 = icmp ult i64 %room2, %len
+  br i1 %fits2, label %read2, label %no
+read2:
+  %b1p = getelementptr inbounds i8, ptr %p, i64 %room2
+  %b1 = load i8, ptr %b1p
+  %nel = icmp eq i8 %b1, -123
+  %nbsp = icmp eq i8 %b1, -96
+  %ws2 = or i1 %nel, %nbsp
+  br i1 %ws2, label %yes2, label %no
+e1:
+  ; U+1680 OGHAM SPACE MARK.
+  %room3a = add i64 %i, 2
+  %fits3a = icmp ult i64 %room3a, %len
+  br i1 %fits3a, label %read3a, label %no
+read3a:
+  %a1p = getelementptr inbounds i8, ptr %p, i64 %room3a
+  %a1 = load i8, ptr %a1p
+  %a0i = add i64 %i, 1
+  %a0q = getelementptr inbounds i8, ptr %p, i64 %a0i
+  %a0 = load i8, ptr %a0q
+  %oga = icmp eq i8 %a0, -102
+  %ogb = icmp eq i8 %a1, -128
+  %ogham = and i1 %oga, %ogb
+  br i1 %ogham, label %yes3, label %no
+e2:
+  ; U+2000..U+200A, U+2028, U+2029, U+202F — all `E2 80 xx` — and U+205F, which is `E2 81 9F`.
+  %room3b = add i64 %i, 2
+  %fits3b = icmp ult i64 %room3b, %len
+  br i1 %fits3b, label %read3b, label %no
+read3b:
+  %c1i = add i64 %i, 1
+  %c1p = getelementptr inbounds i8, ptr %p, i64 %c1i
+  %c1 = load i8, ptr %c1p
+  %c2p = getelementptr inbounds i8, ptr %p, i64 %room3b
+  %c2 = load i8, ptr %c2p
+  %c2z = zext i8 %c2 to i32
+  %is80 = icmp eq i8 %c1, -128
+  br i1 %is80, label %tail80, label %maybe81
+tail80:
+  switch i32 %c2z, label %no [ i32 128, label %yes3
+                               i32 129, label %yes3
+                               i32 130, label %yes3
+                               i32 131, label %yes3
+                               i32 132, label %yes3
+                               i32 133, label %yes3
+                               i32 134, label %yes3
+                               i32 135, label %yes3
+                               i32 136, label %yes3
+                               i32 137, label %yes3
+                               i32 138, label %yes3
+                               i32 168, label %yes3
+                               i32 169, label %yes3
+                               i32 175, label %yes3 ]
+maybe81:
+  %is81 = icmp eq i8 %c1, -127
+  %mmsp = icmp eq i8 %c2, -97
+  %ws81 = and i1 %is81, %mmsp
+  br i1 %ws81, label %yes3, label %no
+e3:
+  ; U+3000 IDEOGRAPHIC SPACE.
+  %room3c = add i64 %i, 2
+  %fits3c = icmp ult i64 %room3c, %len
+  br i1 %fits3c, label %read3c, label %no
+read3c:
+  %d1i = add i64 %i, 1
+  %d1p = getelementptr inbounds i8, ptr %p, i64 %d1i
+  %d1 = load i8, ptr %d1p
+  %d2p = getelementptr inbounds i8, ptr %p, i64 %room3c
+  %d2 = load i8, ptr %d2p
+  %ida = icmp eq i8 %d1, -128
+  %idb = icmp eq i8 %d2, -128
+  %ideo = and i1 %ida, %idb
+  br i1 %ideo, label %yes3, label %no
+yes1:
+  ret i64 1
+yes2:
+  ret i64 2
+yes3:
+  ret i64 3
+no:
+  ret i64 0
+}
+
+; `str_trim`, in one pass. The leading run is skipped whole; then every byte is either the start of
+; a whitespace character — skipped, and *not* recorded — or one byte of something else, which moves
+; the end. So %end finishes one past the last byte of the last non-whitespace character, which is
+; what `str::trim` answers, and the character count is the bytes in `[%start, %end)` that are not
+; continuations.
+define internal i64 @"beck.str.trim"(ptr noalias %err, i64 %s, i32 %span) {
+entry:
+  %len = call i64 @"beck.str.bytes"(i64 %s)
+  %p = call ptr @"beck.str.data"(i64 %s)
+  br label %lead
+lead:
+  %l = phi i64 [ 0, %entry ], [ %lnext, %skipping ]
+  %ldone = icmp uge i64 %l, %len
+  br i1 %ldone, label %empty, label %ltest
+ltest:
+  %lw = call i64 @"beck.str.ws"(ptr %p, i64 %l, i64 %len)
+  %lws = icmp sgt i64 %lw, 0
+  br i1 %lws, label %skipping, label %body
+skipping:
+  %lnext = add i64 %l, %lw
+  br label %lead
+body:
+  %start = phi i64 [ %l, %ltest ]
+  br label %scan
+scan:
+  %i = phi i64 [ %start, %body ], [ %inext, %spaced ], [ %knext, %kept ]
+  %end = phi i64 [ %start, %body ], [ %end, %spaced ], [ %knext, %kept ]
+  %over = icmp uge i64 %i, %len
+  br i1 %over, label %cut, label %test
+test:
+  %w = call i64 @"beck.str.ws"(ptr %p, i64 %i, i64 %len)
+  %isws = icmp sgt i64 %w, 0
+  br i1 %isws, label %spaced, label %kept
+spaced:
+  %inext = add i64 %i, %w
+  br label %scan
+kept:
+  %knext = add i64 %i, 1
+  br label %scan
+cut:
+  %r = call i64 @"beck.str.piece"(ptr %err, i64 %s, i64 %start, i64 %end, i32 %span)
+  ret i64 %r
+empty:
+  %e = call i64 @"beck.str.alloc"(ptr %err, i64 0, i64 0, i32 %span)
+  ret i64 %e
+}
+
+; The bytes of %s in `[%from, %to)`, as a `Str` of its own.
+;
+; The character count is the bytes in the range that are not continuations, which is the same test
+; `beck.str.byteof` walks with — and the range is always a whole number of characters, because every
+; caller cuts at a boundary a scan stopped on.
+define internal i64 @"beck.str.piece"(ptr noalias %err, i64 %s, i64 %from, i64 %to, i32 %span) {
+entry:
+  %bytes = sub i64 %to, %from
+  %p = call ptr @"beck.str.data"(i64 %s)
+  br label %count
+count:
+  %k = phi i64 [ %from, %entry ], [ %k1, %counted ]
+  %chars = phi i64 [ 0, %entry ], [ %chars1, %counted ]
+  %cdone = icmp uge i64 %k, %to
+  br i1 %cdone, label %make, label %counted
+counted:
+  %cbp = getelementptr inbounds i8, ptr %p, i64 %k
+  %cb = load i8, ptr %cbp
+  %ctop = and i8 %cb, -64
+  %ccont = icmp eq i8 %ctop, -128
+  %one = select i1 %ccont, i64 0, i64 1
+  %chars1 = add i64 %chars, %one
+  %k1 = add i64 %k, 1
+  br label %count
+make:
+  %r = call i64 @"beck.str.alloc"(ptr %err, i64 %bytes, i64 %chars, i32 %span)
+  %failed = icmp eq i64 %r, 0
+  br i1 %failed, label %out, label %copy
+copy:
+  ; Both pointers are taken again: `beck.str.alloc` can move the arena, and `%p` was read before it
+  ; ran.
+  %pr = call ptr @"beck.str.data"(i64 %r)
+  %ps = call ptr @"beck.str.data"(i64 %s)
+  %at = getelementptr inbounds i8, ptr %ps, i64 %from
+  %ignored = call ptr @memcpy(ptr %pr, ptr %at, i64 %bytes)
+  br label %out
+out:
+  ret i64 %r
+}
+
+; `beck.str.find`, starting at a byte offset rather than at zero — what a repeated search needs and
+; the only thing `str_split` asks that `beck.str.find` does not answer.
+define internal i64 @"beck.str.findat"(i64 %h, i64 %n, i64 %from) {
+entry:
+  %lh = call i64 @"beck.str.bytes"(i64 %h)
+  %ln = call i64 @"beck.str.bytes"(i64 %n)
+  %room = sub i64 %lh, %ln
+  %too = icmp slt i64 %room, 0
+  br i1 %too, label %missing, label %search
+search:
+  %ph = call ptr @"beck.str.data"(i64 %h)
+  %pn = call ptr @"beck.str.data"(i64 %n)
+  br label %loop
+loop:
+  %i = phi i64 [ %from, %search ], [ %j, %next ]
+  %over = icmp sgt i64 %i, %room
+  br i1 %over, label %missing, label %try
+try:
+  %at = getelementptr inbounds i8, ptr %ph, i64 %i
+  %c = call i32 @memcmp(ptr %at, ptr %pn, i64 %ln)
+  %hit = icmp eq i32 %c, 0
+  br i1 %hit, label %found, label %next
+next:
+  %j = add i64 %i, 1
+  br label %loop
+found:
+  ret i64 %i
+missing:
+  ret i64 -1
+}
+
 define internal i64 @"beck.str.find"(i64 %h, i64 %n) {
 entry:
   %lh = call i64 @"beck.str.bytes"(i64 %h)
@@ -4690,69 +5405,195 @@ fn map_functions(at: u32, heap: &Heap) -> String {
     let (key, value) = heap.entry(at);
     format!(
         r#"; {shown}
+; The search: down the tree, comparing keys. Answers the *node*, or 0 — a lookup and a containment
+; test are the same walk, and so is the value, which is a word off the node it found.
 define internal i64 @"beck.map.find.{at}"(i64 %m, i64 %k) {{
 entry:
-  %n = call i64 @"beck.map.len"(i64 %m)
-  %p = call ptr @"beck.map.data"(i64 %m)
   br label %loop
 loop:
-  ; The half-open window `[lo, hi)`. Unsigned throughout, because both ends are counts.
-  %lo = phi i64 [ 0, %entry ], [ %lo1, %again ]
-  %hi = phi i64 [ %n, %entry ], [ %hi1, %again ]
-  %done = icmp uge i64 %lo, %hi
-  br i1 %done, label %missing, label %probe
+  %n = phi i64 [ %m, %entry ], [ %next, %step ]
+  %empty = icmp eq i64 %n, 0
+  br i1 %empty, label %missing, label %probe
 probe:
-  %span = sub i64 %hi, %lo
-  %half = lshr i64 %span, 1
-  %mid = add i64 %lo, %half
-  %at = getelementptr inbounds i64, ptr %p, i64 %mid
-  %w = load i64, ptr %at
-  %c = call i64 @"beck.elem.cmp.{key}"(i64 %w, i64 %k)
+  %nk = call i64 @"beck.map.key"(i64 %n)
+  %c = call i64 @"beck.elem.cmp.{key}"(i64 %k, i64 %nk)
   %hit = icmp eq i64 %c, 0
-  br i1 %hit, label %found, label %again
-again:
-  %less = icmp slt i64 %c, 0
-  %mid1 = add i64 %mid, 1
-  %lo1 = select i1 %less, i64 %mid1, i64 %lo
-  %hi1 = select i1 %less, i64 %hi, i64 %mid
+  br i1 %hit, label %found, label %step
+step:
+  %down = icmp slt i64 %c, 0
+  %l = call i64 @"beck.map.left"(i64 %n)
+  %r = call i64 @"beck.map.right"(i64 %n)
+  %next = select i1 %down, i64 %l, i64 %r
   br label %loop
 found:
-  ret i64 %mid
+  ret i64 %n
 missing:
-  ret i64 -1
+  ret i64 0
 }}
 
+; `map_insert`: rebuild the path, share everything off it, rebalance on the way out. `O(log n)`
+; fresh nodes, which is `beck_core::pmap`'s own cost and the reason this can be compiled at all.
+define internal i64 @"beck.map.ins.{at}"(ptr noalias %err, i64 %m, i64 %k, i64 %v, i32 %span) {{
+entry:
+  %empty = icmp eq i64 %m, 0
+  br i1 %empty, label %fresh, label %walk
+fresh:
+  %leaf = call i64 @"beck.map.node"(ptr %err, i64 %k, i64 %v, i64 0, i64 0, i32 %span)
+  ret i64 %leaf
+walk:
+  %mk = call i64 @"beck.map.key"(i64 %m)
+  %mv = call i64 @"beck.map.value"(i64 %m)
+  %ml = call i64 @"beck.map.left"(i64 %m)
+  %mr = call i64 @"beck.map.right"(i64 %m)
+  %c = call i64 @"beck.elem.cmp.{key}"(i64 %k, i64 %mk)
+  %lt = icmp slt i64 %c, 0
+  br i1 %lt, label %go.left, label %not.less
+go.left:
+  %nl = call i64 @"beck.map.ins.{at}"(ptr %err, i64 %ml, i64 %k, i64 %v, i32 %span)
+  %bl = call i64 @"beck.map.balance"(ptr %err, i64 %mk, i64 %mv, i64 %nl, i64 %mr, i32 %span)
+  ret i64 %bl
+not.less:
+  %gt = icmp sgt i64 %c, 0
+  br i1 %gt, label %go.right, label %replace
+go.right:
+  %nr = call i64 @"beck.map.ins.{at}"(ptr %err, i64 %mr, i64 %k, i64 %v, i32 %span)
+  %br = call i64 @"beck.map.balance"(ptr %err, i64 %mk, i64 %mv, i64 %ml, i64 %nr, i32 %span)
+  ret i64 %br
+replace:
+  ; The *new* key as well as the new value, which is what the evaluator's `Ordering::Equal` arm
+  ; does — two keys that compare equal need not be the same value.
+  %same = call i64 @"beck.map.node"(ptr %err, i64 %k, i64 %v, i64 %ml, i64 %mr, i32 %span)
+  ret i64 %same
+}}
+
+; The smallest node of a subtree, and the subtree with it taken out. `map_remove` needs both, and
+; a weight-balanced tree needs the rebalance on the way out of each.
+define internal i64 @"beck.map.min.{at}"(i64 %m) {{
+entry:
+  br label %loop
+loop:
+  %n = phi i64 [ %m, %entry ], [ %l, %down ]
+  %l = call i64 @"beck.map.left"(i64 %n)
+  %none = icmp eq i64 %l, 0
+  br i1 %none, label %found, label %down
+down:
+  br label %loop
+found:
+  ret i64 %n
+}}
+
+define internal i64 @"beck.map.pop.{at}"(ptr noalias %err, i64 %m, i32 %span) {{
+entry:
+  %l = call i64 @"beck.map.left"(i64 %m)
+  %none = icmp eq i64 %l, 0
+  br i1 %none, label %gone, label %deeper
+gone:
+  %r = call i64 @"beck.map.right"(i64 %m)
+  ret i64 %r
+deeper:
+  %nl = call i64 @"beck.map.pop.{at}"(ptr %err, i64 %l, i32 %span)
+  %k = call i64 @"beck.map.key"(i64 %m)
+  %v = call i64 @"beck.map.value"(i64 %m)
+  %rr = call i64 @"beck.map.right"(i64 %m)
+  %b = call i64 @"beck.map.balance"(ptr %err, i64 %k, i64 %v, i64 %nl, i64 %rr, i32 %span)
+  ret i64 %b
+}}
+
+; `map_remove`: the same path rebuild as an insert. A node with two children is replaced by the
+; smallest of its right subtree, which is that subtree's leftmost — the textbook deletion, with the
+; rebalance the weights need.
+define internal i64 @"beck.map.del.{at}"(ptr noalias %err, i64 %m, i64 %k, i32 %span) {{
+entry:
+  %empty = icmp eq i64 %m, 0
+  br i1 %empty, label %absent, label %walk
+absent:
+  ret i64 0
+walk:
+  %mk = call i64 @"beck.map.key"(i64 %m)
+  %mv = call i64 @"beck.map.value"(i64 %m)
+  %ml = call i64 @"beck.map.left"(i64 %m)
+  %mr = call i64 @"beck.map.right"(i64 %m)
+  %c = call i64 @"beck.elem.cmp.{key}"(i64 %k, i64 %mk)
+  %lt = icmp slt i64 %c, 0
+  br i1 %lt, label %go.left, label %not.less
+go.left:
+  %nl = call i64 @"beck.map.del.{at}"(ptr %err, i64 %ml, i64 %k, i32 %span)
+  %bl = call i64 @"beck.map.balance"(ptr %err, i64 %mk, i64 %mv, i64 %nl, i64 %mr, i32 %span)
+  ret i64 %bl
+not.less:
+  %gt = icmp sgt i64 %c, 0
+  br i1 %gt, label %go.right, label %here
+go.right:
+  %nr = call i64 @"beck.map.del.{at}"(ptr %err, i64 %mr, i64 %k, i32 %span)
+  %br = call i64 @"beck.map.balance"(ptr %err, i64 %mk, i64 %mv, i64 %ml, i64 %nr, i32 %span)
+  ret i64 %br
+here:
+  %no.left = icmp eq i64 %ml, 0
+  br i1 %no.left, label %lift.right, label %maybe
+lift.right:
+  ret i64 %mr
+maybe:
+  %no.right = icmp eq i64 %mr, 0
+  br i1 %no.right, label %lift.left, label %join
+lift.left:
+  ret i64 %ml
+join:
+  %least = call i64 @"beck.map.min.{at}"(i64 %mr)
+  %lk = call i64 @"beck.map.key"(i64 %least)
+  %lv = call i64 @"beck.map.value"(i64 %least)
+  %rest = call i64 @"beck.map.pop.{at}"(ptr %err, i64 %mr, i32 %span)
+  %joined = call i64 @"beck.map.balance"(ptr %err, i64 %lk, i64 %lv, i64 %ml, i64 %rest, i32 %span)
+  ret i64 %joined
+}}
+
+; `map_merge`: every entry of the second map inserted into the first, in key order, so the later
+; map wins — which is what the evaluator's own merge does.
+define internal i64 @"beck.map.merge.{at}"(ptr noalias %err, i64 %a, i64 %b, i32 %span) {{
+entry:
+  %n = call i64 @"beck.map.size"(i64 %b)
+  br label %loop
+loop:
+  %i = phi i64 [ 0, %entry ], [ %j, %step ]
+  %acc = phi i64 [ %a, %entry ], [ %next, %step ]
+  %past = icmp uge i64 %i, %n
+  br i1 %past, label %done, label %step
+step:
+  %node = call i64 @"beck.map.nth"(i64 %b, i64 %i)
+  %k = call i64 @"beck.map.key"(i64 %node)
+  %v = call i64 @"beck.map.value"(i64 %node)
+  %next = call i64 @"beck.map.ins.{at}"(ptr %err, i64 %acc, i64 %k, i64 %v, i32 %span)
+  %j = add i64 %i, 1
+  br label %loop
+done:
+  ret i64 %acc
+}}
+
+; Two maps in key order: the keys, then the values, entry by entry, then the sizes. The order is
+; `beck_core`'s own — what a `PMap` iterates is what this walks.
 define internal i64 @"beck.map.cmp.{at}"(i64 %a, i64 %b) {{
 entry:
-  %la = call i64 @"beck.map.len"(i64 %a)
-  %lb = call i64 @"beck.map.len"(i64 %b)
+  %la = call i64 @"beck.map.size"(i64 %a)
+  %lb = call i64 @"beck.map.size"(i64 %b)
   %shorter = icmp ult i64 %la, %lb
   %n = select i1 %shorter, i64 %la, i64 %lb
-  %pa = call ptr @"beck.map.data"(i64 %a)
-  %pb = call ptr @"beck.map.data"(i64 %b)
   br label %loop
 loop:
   %i = phi i64 [ 0, %entry ], [ %j, %next ]
   %past = icmp uge i64 %i, %n
   br i1 %past, label %lengths, label %keys
 keys:
-  %ka = getelementptr inbounds i64, ptr %pa, i64 %i
-  %kb = getelementptr inbounds i64, ptr %pb, i64 %i
-  %wka = load i64, ptr %ka
-  %wkb = load i64, ptr %kb
+  %na = call i64 @"beck.map.nth"(i64 %a, i64 %i)
+  %nb = call i64 @"beck.map.nth"(i64 %b, i64 %i)
+  %wka = call i64 @"beck.map.key"(i64 %na)
+  %wkb = call i64 @"beck.map.key"(i64 %nb)
   %ck = call i64 @"beck.elem.cmp.{key}"(i64 %wka, i64 %wkb)
   %kdecided = icmp ne i64 %ck, 0
   br i1 %kdecided, label %answerk, label %values
 answerk:
   ret i64 %ck
 values:
-  ; The values start `la` words after the keys in `a` and `lb` words after them in `b`.
-  %ia = add i64 %i, %la
-  %ib = add i64 %i, %lb
-  %va = getelementptr inbounds i64, ptr %pa, i64 %ia
-  %vb = getelementptr inbounds i64, ptr %pb, i64 %ib
-  %wva = load i64, ptr %va
-  %wvb = load i64, ptr %vb
+  %wva = call i64 @"beck.map.value"(i64 %na)
+  %wvb = call i64 @"beck.map.value"(i64 %nb)
   %cv = call i64 @"beck.elem.cmp.{value}"(i64 %wva, i64 %wvb)
   %vdecided = icmp ne i64 %cv, 0
   br i1 %vdecided, label %answerv, label %next
@@ -4797,6 +5638,12 @@ fn element_functions(at: u32, heap: &Heap) -> String {
         heap.show(Repr::List(at))
     );
     match element.order() {
+        // An element with no order at all: the three functions below are a comparison, a
+        // lexicographic one and a search, and every one of them is that element's comparison in a
+        // loop. Nothing is emitted rather than something that compares offsets — `Function::wants`
+        // refuses the demand before this is reached, and a bug in that rule is then a missing
+        // symbol at link time rather than a list of views that sorts by where they were allocated.
+        heap::Order::Absent(_) => return String::new(),
         // Whatever this element is, its comparison is `Repr::order`'s — one call and no case
         // analysis, which is the whole point of that accessor.
         heap::Order::Call(symbol) => {
@@ -4913,20 +5760,51 @@ declare ptr @memcpy(ptr, ptr, i64)
 /// `beck.list.copy` is `list_slice`, `list_take` and `list_drop` at once, because all three are "a
 /// range of the elements, clamped" and the clamping is arithmetic the caller does. It costs the
 /// **answer** rather than the list, which is `docs/105` §105.7's rule applied one type over.
-const LISTS: &str = r#"define internal i64 @"beck.list.alloc"(ptr noalias %err, i64 %n, i32 %span) {
+const LISTS: &str = r#"define internal i64 @"beck.list.block"(ptr noalias %err, i64 %cap, i64 %used, i32 %span) {
 entry:
-  %body = mul i64 %n, 8
-  %total = add i64 %body, 8
+  %body = mul i64 %cap, 8
+  %total = add i64 %body, 16
   %off = call i64 @"beck.alloc"(ptr %err, i64 %total, i32 %span)
   %failed = icmp eq i64 %off, 0
   br i1 %failed, label %out, label %fill
 fill:
   %hp = load ptr, ptr @"beck.heap"
   %p = getelementptr inbounds i8, ptr %hp, i64 %off
-  store i64 %n, ptr %p
+  store i64 %cap, ptr %p
+  %pu = getelementptr inbounds i8, ptr %p, i64 8
+  store i64 %used, ptr %pu
   br label %out
 out:
   ret i64 %off
+}
+
+define internal i64 @"beck.list.head"(ptr noalias %err, i64 %n, i64 %data, i32 %span) {
+entry:
+  %off = call i64 @"beck.alloc"(ptr %err, i64 16, i32 %span)
+  %failed = icmp eq i64 %off, 0
+  br i1 %failed, label %out, label %fill
+fill:
+  %hp = load ptr, ptr @"beck.heap"
+  %p = getelementptr inbounds i8, ptr %hp, i64 %off
+  store i64 %n, ptr %p
+  %pd = getelementptr inbounds i8, ptr %p, i64 8
+  store i64 %data, ptr %pd
+  br label %out
+out:
+  ret i64 %off
+}
+
+define internal i64 @"beck.list.alloc"(ptr noalias %err, i64 %n, i32 %span) {
+entry:
+  %d = call i64 @"beck.list.block"(ptr %err, i64 %n, i64 %n, i32 %span)
+  %failed = icmp eq i64 %d, 0
+  br i1 %failed, label %out, label %top
+top:
+  %h = call i64 @"beck.list.head"(ptr %err, i64 %n, i64 %d, i32 %span)
+  br label %out
+out:
+  %r = phi i64 [ 0, %entry ], [ %h, %top ]
+  ret i64 %r
 }
 
 define internal i64 @"beck.list.len"(i64 %xs) {
@@ -4940,9 +5818,70 @@ entry:
 define internal ptr @"beck.list.data"(i64 %xs) {
 entry:
   %hp = load ptr, ptr @"beck.heap"
-  %at = add i64 %xs, 8
+  %ph = getelementptr inbounds i8, ptr %hp, i64 %xs
+  %pd = getelementptr inbounds i8, ptr %ph, i64 8
+  %d = load i64, ptr %pd
+  %at = add i64 %d, 16
   %p = getelementptr inbounds i8, ptr %hp, i64 %at
   ret ptr %p
+}
+
+; `list_append` — a new header over the same block when the block has room and this list is the one
+; standing at its end, and a doubled copy otherwise.
+;
+; The test is `count == used`, and it is the whole of what makes this sound: every header over a
+; block has a count of at most `used`, so the slot at `used` is one no reader can see. Writing it
+; and answering a *new* header leaves every existing list exactly as it was — no ownership analysis,
+; no reference count, and no way for two holders to disagree about what a list contains.
+define internal i64 @"beck.list.append"(ptr noalias %err, i64 %xs, i64 %w, i32 %span) {
+entry:
+  %hp = load ptr, ptr @"beck.heap"
+  %ph = getelementptr inbounds i8, ptr %hp, i64 %xs
+  %n = load i64, ptr %ph
+  %pd = getelementptr inbounds i8, ptr %ph, i64 8
+  %d = load i64, ptr %pd
+  %pb = getelementptr inbounds i8, ptr %hp, i64 %d
+  %cap = load i64, ptr %pb
+  %pu = getelementptr inbounds i8, ptr %pb, i64 8
+  %used = load i64, ptr %pu
+  %at.end = icmp eq i64 %n, %used
+  %room = icmp ult i64 %used, %cap
+  %fits = and i1 %at.end, %room
+  br i1 %fits, label %push, label %grow
+push:
+  %pe = getelementptr inbounds i8, ptr %pb, i64 16
+  %slot = getelementptr inbounds i64, ptr %pe, i64 %n
+  store i64 %w, ptr %slot
+  %n1 = add i64 %n, 1
+  store i64 %n1, ptr %pu
+  br label %done
+grow:
+  ; Doubled, so the copies over a whole accumulator sum to a constant per element.
+  %want = add i64 %n, 1
+  %twice = mul i64 %want, 2
+  %big = icmp ult i64 %twice, 4
+  %cap2 = select i1 %big, i64 4, i64 %twice
+  %d2 = call i64 @"beck.list.block"(ptr %err, i64 %cap2, i64 %want, i32 %span)
+  %failed = icmp eq i64 %d2, 0
+  br i1 %failed, label %out, label %move
+move:
+  %hp2 = load ptr, ptr @"beck.heap"
+  %pb2 = getelementptr inbounds i8, ptr %hp2, i64 %d2
+  %pe2 = getelementptr inbounds i8, ptr %pb2, i64 16
+  %from = call ptr @"beck.list.data"(i64 %xs)
+  %bytes = mul i64 %n, 8
+  %ignored = call ptr @memcpy(ptr %pe2, ptr %from, i64 %bytes)
+  %slot2 = getelementptr inbounds i64, ptr %pe2, i64 %n
+  store i64 %w, ptr %slot2
+  br label %done
+done:
+  %block = phi i64 [ %d, %push ], [ %d2, %move ]
+  %len = phi i64 [ %n1, %push ], [ %want, %move ]
+  %h = call i64 @"beck.list.head"(ptr %err, i64 %len, i64 %block, i32 %span)
+  br label %out
+out:
+  %r = phi i64 [ 0, %grow ], [ %h, %done ]
+  ret i64 %r
 }
 
 define internal i64 @"beck.list.copy"(ptr noalias %err, i64 %xs, i64 %from, i64 %count, i32 %span) {
@@ -5133,9 +6072,120 @@ out:
 
 "#;
 
-/// `str_join`, which is the one of the three that reads a **list** — so it is emitted only when
-/// that runtime is there too.
-const JOINS: &str = r#"define internal i64 @"beck.str.join"(ptr noalias %err, i64 %xs, i64 %sep, i32 %span) {
+/// The two text functions that also touch a **list** — so they are emitted only when that runtime is
+/// there too: `str_join`, which reads one, and `str_split`, which writes one.
+const JOINS: &str = r#"; `str_split`, and `str_chars` with it — the evaluator answers characters for an empty separator,
+; so the two primitives are one function with two ways of cutting.
+;
+; Two passes, and the first one exists so the second allocates nothing it has to grow: count the
+; pieces, take the list, then fill it. The list's block is at a fixed **offset**, so a piece moving
+; the arena costs a reload of the data pointer per element and nothing else — which is `adr/0026`'s
+; value-is-an-offset paying for itself.
+define internal i64 @"beck.str.split"(ptr noalias %err, i64 %s, i64 %sep, i32 %span) {
+entry:
+  %len = call i64 @"beck.str.bytes"(i64 %s)
+  ; `str_chars` passes the offset **0**, which is never a live object — `beck.alloc` answers it only
+  ; on a full arena — so it costs no literal, and a program that writes `str_split(s, "")` reaches
+  ; the same path through the length test below.
+  %none = icmp eq i64 %sep, 0
+  br i1 %none, label %chars, label %measure
+measure:
+  %seplen = call i64 @"beck.str.bytes"(i64 %sep)
+  %bychar = icmp eq i64 %seplen, 0
+  br i1 %bychar, label %chars, label %pieces
+chars:
+  ; Every character is a piece, and the header already knows how many there are.
+  %n = call i64 @"beck.str.chars"(i64 %s)
+  br label %take
+pieces:
+  ; One more piece than there are occurrences, which is what `str::split` answers — including for
+  ; the empty string, where nothing is found and the one piece is the string itself.
+  br label %tally
+tally:
+  %at = phi i64 [ 0, %pieces ], [ %past, %again ]
+  %seen = phi i64 [ 0, %pieces ], [ %more, %again ]
+  %hit = call i64 @"beck.str.findat"(i64 %s, i64 %sep, i64 %at)
+  %gone = icmp slt i64 %hit, 0
+  br i1 %gone, label %counted, label %again
+again:
+  %past = add i64 %hit, %seplen
+  %more = add i64 %seen, 1
+  br label %tally
+counted:
+  %parts = add i64 %seen, 1
+  br label %take
+take:
+  %count = phi i64 [ %n, %chars ], [ %parts, %counted ]
+  %onechar = phi i1 [ true, %chars ], [ false, %counted ]
+  ; `%seplen` is measured on one of the two paths in, and the cutting loop below is reachable from
+  ; both — so it travels as a phi rather than on a dominance that is not there.
+  %width = phi i64 [ 0, %chars ], [ %seplen, %counted ]
+  %xs = call i64 @"beck.list.alloc"(ptr %err, i64 %count, i32 %span)
+  %nolist = icmp eq i64 %xs, 0
+  br i1 %nolist, label %out, label %which
+which:
+  br i1 %onechar, label %walk, label %cutting
+walk:
+  ; A character is its lead byte and every continuation after it. Nothing here decodes: a piece is
+  ; the byte range between two lead bytes.
+  %ci = phi i64 [ 0, %which ], [ %cj, %wrote ]
+  %cslot = phi i64 [ 0, %which ], [ %cnext, %wrote ]
+  %cdone = icmp uge i64 %ci, %len
+  br i1 %cdone, label %out, label %stretch
+stretch:
+  %cp = call ptr @"beck.str.data"(i64 %s)
+  %c1 = add i64 %ci, 1
+  br label %reach
+reach:
+  %ck = phi i64 [ %c1, %stretch ], [ %ck1, %continues ]
+  %cover = icmp uge i64 %ck, %len
+  br i1 %cover, label %cend, label %clook
+clook:
+  %cbp = getelementptr inbounds i8, ptr %cp, i64 %ck
+  %cb = load i8, ptr %cbp
+  %ctop = and i8 %cb, -64
+  %ccont = icmp eq i8 %ctop, -128
+  br i1 %ccont, label %continues, label %cend
+continues:
+  %ck1 = add i64 %ck, 1
+  br label %reach
+cend:
+  %cj = phi i64 [ %ck, %reach ], [ %ck, %clook ]
+  %cpiece = call i64 @"beck.str.piece"(ptr %err, i64 %s, i64 %ci, i64 %cj, i32 %span)
+  %cbad = icmp eq i64 %cpiece, 0
+  br i1 %cbad, label %out, label %wrote
+wrote:
+  ; The data pointer is taken here rather than before the loop: a piece allocates, and an allocation
+  ; can move the arena under a pointer read before it.
+  %cdata = call ptr @"beck.list.data"(i64 %xs)
+  %cwp = getelementptr inbounds i64, ptr %cdata, i64 %cslot
+  store i64 %cpiece, ptr %cwp
+  %cnext = add i64 %cslot, 1
+  br label %walk
+cutting:
+  %lo = phi i64 [ 0, %which ], [ %after, %stored ]
+  %slot = phi i64 [ 0, %which ], [ %onwards, %stored ]
+  %found = call i64 @"beck.str.findat"(i64 %s, i64 %sep, i64 %lo)
+  %last = icmp slt i64 %found, 0
+  %upto = select i1 %last, i64 %len, i64 %found
+  %piece = call i64 @"beck.str.piece"(ptr %err, i64 %s, i64 %lo, i64 %upto, i32 %span)
+  %bad = icmp eq i64 %piece, 0
+  br i1 %bad, label %out, label %store
+store:
+  %data = call ptr @"beck.list.data"(i64 %xs)
+  %wp = getelementptr inbounds i64, ptr %data, i64 %slot
+  store i64 %piece, ptr %wp
+  br i1 %last, label %out, label %stored
+stored:
+  %after = add i64 %found, %width
+  %onwards = add i64 %slot, 1
+  br label %cutting
+out:
+  %r = phi i64 [ 0, %take ], [ %xs, %walk ], [ %xs, %store ], [ 0, %cend ], [ 0, %cutting ]
+  ret i64 %r
+}
+
+define internal i64 @"beck.str.join"(ptr noalias %err, i64 %xs, i64 %sep, i32 %span) {
 entry:
   %n = call i64 @"beck.list.len"(i64 %xs)
   %p = call ptr @"beck.list.data"(i64 %xs)
@@ -5215,57 +6265,225 @@ out:
 ///
 /// What has to know what a word means is generated per map repr by [`map_functions`]: the binary
 /// search, and the lexicographic order over two maps.
-const MAPS: &str = r#"define internal i64 @"beck.map.alloc"(ptr noalias %err, i64 %n, i32 %span) {
+const MAPS: &str = r#"; A `Map` is a weight-balanced tree; see `beck_llvm::heap::MAP_NODE` for the shape and for why.
+; An empty map is the offset 0, which is the one offset no live object has.
+;
+; Everything here is one function for the whole module: rebalancing moves *words* — sizes, keys,
+; values and two children — and never looks at what a key is. Only the three functions that compare
+; are generated per map repr.
+define internal i64 @"beck.map.size"(i64 %n) {
 entry:
-  %pairs = mul i64 %n, 16
-  %total = add i64 %pairs, 8
-  %off = call i64 @"beck.alloc"(ptr %err, i64 %total, i32 %span)
+  %empty = icmp eq i64 %n, 0
+  br i1 %empty, label %none, label %some
+none:
+  ret i64 0
+some:
+  %hp = load ptr, ptr @"beck.heap"
+  %p = getelementptr inbounds i8, ptr %hp, i64 %n
+  %s = load i64, ptr %p
+  ret i64 %s
+}
+
+define internal i64 @"beck.map.node"(ptr noalias %err, i64 %k, i64 %v, i64 %l, i64 %r, i32 %span) {
+entry:
+  %ls = call i64 @"beck.map.size"(i64 %l)
+  %rs = call i64 @"beck.map.size"(i64 %r)
+  %sub = add i64 %ls, %rs
+  %s = add i64 %sub, 1
+  %off = call i64 @"beck.alloc"(ptr %err, i64 40, i32 %span)
   %failed = icmp eq i64 %off, 0
   br i1 %failed, label %out, label %fill
 fill:
   %hp = load ptr, ptr @"beck.heap"
   %p = getelementptr inbounds i8, ptr %hp, i64 %off
-  store i64 %n, ptr %p
+  store i64 %s, ptr %p
+  %pk = getelementptr inbounds i8, ptr %p, i64 8
+  store i64 %k, ptr %pk
+  %pv = getelementptr inbounds i8, ptr %p, i64 16
+  store i64 %v, ptr %pv
+  %pl = getelementptr inbounds i8, ptr %p, i64 24
+  store i64 %l, ptr %pl
+  %pr = getelementptr inbounds i8, ptr %p, i64 32
+  store i64 %r, ptr %pr
   br label %out
 out:
   ret i64 %off
 }
 
-define internal i64 @"beck.map.len"(i64 %m) {
+; The four fields, so the rotations below read like the algorithm rather than like arithmetic.
+define internal i64 @"beck.map.key"(i64 %n) {
 entry:
   %hp = load ptr, ptr @"beck.heap"
-  %p = getelementptr inbounds i8, ptr %hp, i64 %m
-  %n = load i64, ptr %p
+  %p = getelementptr inbounds i8, ptr %hp, i64 %n
+  %q = getelementptr inbounds i8, ptr %p, i64 8
+  %w = load i64, ptr %q
+  ret i64 %w
+}
+
+define internal i64 @"beck.map.value"(i64 %n) {
+entry:
+  %hp = load ptr, ptr @"beck.heap"
+  %p = getelementptr inbounds i8, ptr %hp, i64 %n
+  %q = getelementptr inbounds i8, ptr %p, i64 16
+  %w = load i64, ptr %q
+  ret i64 %w
+}
+
+define internal i64 @"beck.map.left"(i64 %n) {
+entry:
+  %hp = load ptr, ptr @"beck.heap"
+  %p = getelementptr inbounds i8, ptr %hp, i64 %n
+  %q = getelementptr inbounds i8, ptr %p, i64 24
+  %w = load i64, ptr %q
+  ret i64 %w
+}
+
+define internal i64 @"beck.map.right"(i64 %n) {
+entry:
+  %hp = load ptr, ptr @"beck.heap"
+  %p = getelementptr inbounds i8, ptr %hp, i64 %n
+  %q = getelementptr inbounds i8, ptr %p, i64 32
+  %w = load i64, ptr %q
+  ret i64 %w
+}
+
+; Adams's rebalance, with `beck_core::pmap`'s own DELTA = 3 and RATIO = 2. Four cases and no loop:
+; a subtree that grew by one is at most one rotation away from balanced.
+define internal i64 @"beck.map.balance"(ptr noalias %err, i64 %k, i64 %v, i64 %l, i64 %r, i32 %span) {
+entry:
+  %ls = call i64 @"beck.map.size"(i64 %l)
+  %rs = call i64 @"beck.map.size"(i64 %r)
+  %tot = add i64 %ls, %rs
+  %tiny = icmp ule i64 %tot, 1
+  br i1 %tiny, label %plain, label %ask.right
+plain:
+  %flat = call i64 @"beck.map.node"(ptr %err, i64 %k, i64 %v, i64 %l, i64 %r, i32 %span)
+  ret i64 %flat
+ask.right:
+  %ld = mul i64 %ls, 3
+  %heavy.r = icmp ugt i64 %rs, %ld
+  br i1 %heavy.r, label %left.rot, label %ask.left
+left.rot:
+  %rk = call i64 @"beck.map.key"(i64 %r)
+  %rv = call i64 @"beck.map.value"(i64 %r)
+  %rl = call i64 @"beck.map.left"(i64 %r)
+  %rr = call i64 @"beck.map.right"(i64 %r)
+  %rls = call i64 @"beck.map.size"(i64 %rl)
+  %rrs = call i64 @"beck.map.size"(i64 %rr)
+  %rrx = mul i64 %rrs, 2
+  %single.l = icmp ult i64 %rls, %rrx
+  br i1 %single.l, label %single.left, label %double.left
+single.left:
+  %sl.inner = call i64 @"beck.map.node"(ptr %err, i64 %k, i64 %v, i64 %l, i64 %rl, i32 %span)
+  %sl.out = call i64 @"beck.map.node"(ptr %err, i64 %rk, i64 %rv, i64 %sl.inner, i64 %rr, i32 %span)
+  ret i64 %sl.out
+double.left:
+  %rlk = call i64 @"beck.map.key"(i64 %rl)
+  %rlv = call i64 @"beck.map.value"(i64 %rl)
+  %rll = call i64 @"beck.map.left"(i64 %rl)
+  %rlr = call i64 @"beck.map.right"(i64 %rl)
+  %dl.a = call i64 @"beck.map.node"(ptr %err, i64 %k, i64 %v, i64 %l, i64 %rll, i32 %span)
+  %dl.b = call i64 @"beck.map.node"(ptr %err, i64 %rk, i64 %rv, i64 %rlr, i64 %rr, i32 %span)
+  %dl.out = call i64 @"beck.map.node"(ptr %err, i64 %rlk, i64 %rlv, i64 %dl.a, i64 %dl.b, i32 %span)
+  ret i64 %dl.out
+ask.left:
+  %rd = mul i64 %rs, 3
+  %heavy.l = icmp ugt i64 %ls, %rd
+  br i1 %heavy.l, label %right.rot, label %settled
+settled:
+  %same = call i64 @"beck.map.node"(ptr %err, i64 %k, i64 %v, i64 %l, i64 %r, i32 %span)
+  ret i64 %same
+right.rot:
+  %lk = call i64 @"beck.map.key"(i64 %l)
+  %lv = call i64 @"beck.map.value"(i64 %l)
+  %ll = call i64 @"beck.map.left"(i64 %l)
+  %lr = call i64 @"beck.map.right"(i64 %l)
+  %lls = call i64 @"beck.map.size"(i64 %ll)
+  %lrs = call i64 @"beck.map.size"(i64 %lr)
+  %llx = mul i64 %lls, 2
+  %single.r = icmp ult i64 %lrs, %llx
+  br i1 %single.r, label %single.right, label %double.right
+single.right:
+  %sr.inner = call i64 @"beck.map.node"(ptr %err, i64 %k, i64 %v, i64 %lr, i64 %r, i32 %span)
+  %sr.out = call i64 @"beck.map.node"(ptr %err, i64 %lk, i64 %lv, i64 %ll, i64 %sr.inner, i32 %span)
+  ret i64 %sr.out
+double.right:
+  %lrk = call i64 @"beck.map.key"(i64 %lr)
+  %lrv = call i64 @"beck.map.value"(i64 %lr)
+  %lrl = call i64 @"beck.map.left"(i64 %lr)
+  %lrr = call i64 @"beck.map.right"(i64 %lr)
+  %dr.a = call i64 @"beck.map.node"(ptr %err, i64 %lk, i64 %lv, i64 %ll, i64 %lrl, i32 %span)
+  %dr.b = call i64 @"beck.map.node"(ptr %err, i64 %k, i64 %v, i64 %lrr, i64 %r, i32 %span)
+  %dr.out = call i64 @"beck.map.node"(ptr %err, i64 %lrk, i64 %lrv, i64 %dr.a, i64 %dr.b, i32 %span)
+  ret i64 %dr.out
+}
+
+; The `i`th entry in key order, by subtree size. `map_keys`, `map_values` and the comparison all
+; walk in order; only the comparison needs to do it by index, and this is how.
+define internal i64 @"beck.map.nth"(i64 %m, i64 %i) {
+entry:
+  br label %loop
+loop:
+  %n = phi i64 [ %m, %entry ], [ %next, %step ]
+  %want = phi i64 [ %i, %entry ], [ %want1, %step ]
+  %empty = icmp eq i64 %n, 0
+  br i1 %empty, label %missing, label %probe
+probe:
+  %l = call i64 @"beck.map.left"(i64 %n)
+  %ls = call i64 @"beck.map.size"(i64 %l)
+  %here = icmp eq i64 %want, %ls
+  br i1 %here, label %found, label %step
+step:
+  %down = icmp ult i64 %want, %ls
+  %r = call i64 @"beck.map.right"(i64 %n)
+  %next = select i1 %down, i64 %l, i64 %r
+  %past = add i64 %ls, 1
+  %rest = sub i64 %want, %past
+  %want1 = select i1 %down, i64 %want, i64 %rest
+  br label %loop
+found:
   ret i64 %n
+missing:
+  ret i64 0
 }
 
-define internal ptr @"beck.map.data"(i64 %m) {
+; The in-order walk that fills a list. One function for keys and values, told which word to take —
+; the two differ by eight bytes and nothing else.
+define internal i64 @"beck.map.into"(i64 %n, ptr %dst, i64 %i, i64 %slot) {
 entry:
+  %empty = icmp eq i64 %n, 0
+  br i1 %empty, label %done, label %walk
+walk:
+  %l = call i64 @"beck.map.left"(i64 %n)
+  %i1 = call i64 @"beck.map.into"(i64 %l, ptr %dst, i64 %i, i64 %slot)
   %hp = load ptr, ptr @"beck.heap"
-  %at = add i64 %m, 8
-  %p = getelementptr inbounds i8, ptr %hp, i64 %at
-  ret ptr %p
+  %p = getelementptr inbounds i8, ptr %hp, i64 %n
+  %q = getelementptr inbounds i64, ptr %p, i64 %slot
+  %w = load i64, ptr %q
+  %at = getelementptr inbounds i64, ptr %dst, i64 %i1
+  store i64 %w, ptr %at
+  %i2 = add i64 %i1, 1
+  %r = call i64 @"beck.map.right"(i64 %n)
+  %i3 = call i64 @"beck.map.into"(i64 %r, ptr %dst, i64 %i2, i64 %slot)
+  ret i64 %i3
+done:
+  ret i64 %i
 }
 
-; `map_keys` and `map_values`: a run of `count` words starting at word `from` of the data area,
-; copied into a fresh list. The one place a map turns into a list.
-define internal i64 @"beck.map.run"(ptr noalias %err, i64 %m, i64 %from, i64 %count, i32 %span) {
+; `map_keys` and `map_values`: a fresh list of the map's size, filled by the walk above.
+define internal i64 @"beck.map.run"(ptr noalias %err, i64 %m, i64 %slot, i32 %span) {
 entry:
-  %r = call i64 @"beck.list.alloc"(ptr %err, i64 %count, i32 %span)
+  %n = call i64 @"beck.map.size"(i64 %m)
+  %r = call i64 @"beck.list.alloc"(ptr %err, i64 %n, i32 %span)
   %failed = icmp eq i64 %r, 0
-  br i1 %failed, label %out, label %move
-move:
-  %pr = call ptr @"beck.list.data"(i64 %r)
-  %pm = call ptr @"beck.map.data"(i64 %m)
-  %skip = mul i64 %from, 8
-  %at = getelementptr inbounds i8, ptr %pm, i64 %skip
-  %bytes = mul i64 %count, 8
-  %ignored = call ptr @memcpy(ptr %pr, ptr %at, i64 %bytes)
+  br i1 %failed, label %out, label %fill
+fill:
+  %dst = call ptr @"beck.list.data"(i64 %r)
+  %ignored = call i64 @"beck.map.into"(i64 %m, ptr %dst, i64 0, i64 %slot)
   br label %out
 out:
   ret i64 %r
 }
-
 "#;
 
 /// Moving bytes to and from the host, in whatever pieces the pipe hands over.

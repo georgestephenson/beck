@@ -51,6 +51,33 @@ pub use ui::expand_ui;
 /// The structural walk is bounded by [`Nesting`] against the ceiling the whole front end shares.
 const MAX_DEPTH: u32 = 64;
 
+/// How many nodes a module's macros may **produce**, in total.
+///
+/// `MAX_DEPTH` and [`Nesting`] bound how deep expansion goes and neither bounds how much it makes,
+/// which is [`14`](../../../../docs/14-review-findings.md)'s F17: *a macro that doubles its output
+/// at each of a few levels is shallow, terminating, and enormous*. Eight nestings of a two-line
+/// macro is 256 copies of its argument; sixty nestings is 10^18 of them, which is more nodes than a
+/// machine has bytes — and every one of those programs is six lines long and passes every other
+/// limit the front end has.
+///
+/// So the meter is what expansion **produces**, charged per node and shared by the whole module —
+/// per module because that is what a compile is, and because a per-call budget would let a program
+/// spend it as many times as it has calls
+/// ([`84`](../../../../docs/84-a-quota-is-only-as-good-as-its-actor-report.md) §84.4 is the same
+/// arithmetic one subsystem over).
+///
+/// The number is measured rather than declared. Across every program in this repository — the
+/// corpus, both benchmark suites, both SICP chapters, the examples and the standard library — the
+/// **largest total expansion is 138 nodes** (`sicp/ch3.beck`; `examples/todo.beck`'s page is 94), so
+/// a hundred thousand is about 725× the biggest real one. It is also about seventeen nestings of a
+/// doubling macro, which is a few dozen characters more source than a program that compiles — and
+/// that is the room a limit wants when what it separates is *legitimate* from *absurd* rather than
+/// big from small.
+///
+/// `macro_bomb.rs` is the gate, in both directions: the tree still compiles, and a doubling macro is
+/// refused.
+pub const MAX_EXPANSION: u64 = 100_000;
+
 #[derive(Clone, Debug)]
 struct MacroDef {
     name: Arc<str>,
@@ -63,6 +90,11 @@ struct MacroDef {
 pub struct Expander<'a> {
     macros: HashMap<Arc<str>, MacroDef>,
     next_scope: u32,
+    /// What is left of [`MAX_EXPANSION`], in nodes, for the whole module.
+    fuel: u64,
+    /// Whether the budget ran out, so the diagnostic is reported once rather than at every call
+    /// that would have expanded afterwards.
+    spent: bool,
     /// How deep into the tree this walk is. Separate from the expansion depth above, because they
     /// bound different things and only one of them means a macro is misbehaving.
     nesting: Nesting,
@@ -74,6 +106,8 @@ pub fn expand_module(module: &Node, diags: &mut Diagnostics) -> Node {
     let mut ex = Expander {
         macros: HashMap::new(),
         next_scope: 1,
+        fuel: MAX_EXPANSION,
+        spent: false,
         nesting: Nesting::new(),
         diags,
     };
@@ -144,8 +178,47 @@ impl<'a> Expander<'a> {
         s
     }
 
+    /// Charge what one expansion produced against the module's budget.
+    ///
+    /// **Iterative**, with its own stack, for the reason the walk counts at all: the tree being
+    /// measured is one a macro just built, so a recursive count would be a claim about the host's
+    /// stack rather than about the program
+    /// ([`106`](../../../../docs/106-lists-arrive-read-only-report.md) §106.6 is the same defect one
+    /// subsystem over). It also stops the moment the budget does, so the *accounting* is bounded by
+    /// the budget it is accounting for — a macro that produced a billion nodes is refused after a
+    /// hundred thousand of them have been counted, not after a billion.
+    fn charge(&mut self, out: &Node, span: Span) -> bool {
+        let mut stack = vec![out];
+        while let Some(node) = stack.pop() {
+            if self.fuel == 0 {
+                if !self.spent {
+                    self.spent = true;
+                    self.diags.push(
+                        Diagnostic::error("B0214", "macro expansion produced too much", span)
+                            .with_primary_label("the expander stopped here")
+                            .with_note(format!(
+                                "the budget is {MAX_EXPANSION} nodes for the whole module, and \
+                                 expansion is bounded by what it *produces* rather than by how \
+                                 deep it goes: a macro that doubles its output is shallow, \
+                                 terminates, and is enormous"
+                            )),
+                    );
+                }
+                return false;
+            }
+            self.fuel -= 1;
+            stack.extend(node.args.iter());
+        }
+        true
+    }
+
     /// Expand a node bottom-up, then re-expand if the node itself was a macro call.
     fn expand(&mut self, n: &Node, depth: u32) -> Node {
+        // Once the budget is gone nothing else is expanded: the module is not going to compile, and
+        // carrying on would be spending the rest of the compile on a program already refused.
+        if self.spent {
+            return n.clone();
+        }
         if depth > MAX_DEPTH {
             self.diags.push(
                 Diagnostic::error("B0201", "macro expansion did not terminate", n.span())
@@ -190,6 +263,9 @@ impl<'a> Expander<'a> {
             // inside a `for` would stop referring to the `todos` the caller wrote.
             let s = self.fresh_scope();
             let out = ui::expand_ui(&here.add_scope(s), self.diags);
+            if !self.charge(&out, here.span()) {
+                return here;
+            }
             return self.expand(&out.flip_scope(s), depth + 1);
         }
 
@@ -204,8 +280,8 @@ impl<'a> Expander<'a> {
         };
 
         match self.apply_macro(&def, &here) {
-            Some(out) => self.expand(&out, depth + 1),
-            None => here,
+            Some(out) if self.charge(&out, here.span()) => self.expand(&out, depth + 1),
+            _ => here,
         }
     }
 

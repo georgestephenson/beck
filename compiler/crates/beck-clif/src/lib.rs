@@ -246,6 +246,16 @@ impl Artifact {
                 .get(reply.span as usize)
                 .copied()
                 .unwrap_or(Span::NONE);
+            // The one failure that carries a value; see `beck_llvm::Artifact`'s own arm, which this
+            // is the second half of one protocol rather than a second opinion about it.
+            if Trap::from_code(reply.code) == Some(Trap::Raised) {
+                let message = self
+                    .module
+                    .heap
+                    .raised(reply.payload as u64, &reply.heap)
+                    .map_or_else(|why| why, |v| format!("raised `{}`", v.display()));
+                return Err(ExecError::new(message, span));
+            }
             let message = match Trap::from_code(reply.code) {
                 Some(trap) => trap.message(reply.payload),
                 None => format!("the compiled program reported trap {}", reply.code),

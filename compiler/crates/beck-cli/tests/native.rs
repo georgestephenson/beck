@@ -40,6 +40,8 @@ use beck_llvm::{Artifact, Native, Repr};
 
 mod support;
 use support::clofix::{self, CLOSURES};
+use support::failfix;
+use support::genfix::{self, GENERIC};
 use support::heapfix::{self, RECORDS, STILL_REFUSED, UNIONS};
 use support::listfix::{self, LISTS};
 use support::mapfix::{self, MAPS};
@@ -48,6 +50,7 @@ use support::scalar::{
     REFUSED,
 };
 use support::textfix::{self, TEXT};
+use support::viewfix;
 
 /// One call may not take longer than this. Nothing here should come close; it is the difference
 /// between a red test and a hung suite.
@@ -154,6 +157,15 @@ impl Both {
             outcome(f(args.to_vec()))
         });
         (evaluated, outcome(self.native.call(name, args)))
+    }
+
+    /// What the *evaluator* answers, for a test that needs a value only it can build.
+    ///
+    /// The one caller is the view differential, which hands a compiled definition a tree the
+    /// tree-walker made: an argument this backend cannot construct is exactly the argument worth
+    /// passing, because the encoder is the half of the boundary nothing else exercises.
+    fn evaluated(&self, name: &str, args: &[Value]) -> Result<Value, String> {
+        self.call(name, args).0
     }
 
     /// Assert the two agree on every tuple, and answer how many were compared.
@@ -556,7 +568,93 @@ fn the_two_backends_agree_on_text() {
         .collect();
     compared += both.agree("untag", &textfix::singles(&tagged));
 
+    // The trim, over the strings written for it: every shape a run of whitespace can have, one of
+    // each **kind** of whitespace character the encoding has, and `U+200B` as the control, since it
+    // is in the space block and is not `White_Space`.
+    let sp = textfix::spaced();
+    for name in ["trimmed", "trimmed_len", "blank"] {
+        compared += both.agree(name, &textfix::singles(&sp));
+    }
+    compared += both.agree("trimmed_up", &textfix::repeats(&sp));
+
+    // …and then every code point Rust calls whitespace, four ways each, plus the four that look
+    // like whitespace and are not. The list is `char::is_whitespace` itself, so this asks about a
+    // new one the day Rust learns about it.
+    let ws = textfix::every_whitespace();
+    for name in ["trimmed", "trimmed_len", "blank"] {
+        compared += both.agree(name, &ws);
+    }
+
+    // Splitting, which answers with a **list** — so the differential reads the length *and* an
+    // element, because a backend that counted the pieces correctly and allocated them wrongly
+    // passes the first and fails the second.
+    let cuts = textfix::separators(&ss);
+    for name in ["parts", "split_len", "rejoined"] {
+        compared += both.agree(name, &cuts);
+    }
+    compared += both.agree("split_at", &textfix::indexed(&cuts));
+    for name in ["letters", "letter_count"] {
+        compared += both.agree(name, &textfix::singles(&ss));
+    }
+    compared += both.agree("letter_at", &textfix::indexed(&textfix::singles(&ss)));
+
     println!("{compared} text calls compared, and both backends agreed on every one");
+}
+
+/// `White_Space` is a **closed set**, and this is the assertion that says so with a number.
+///
+/// `str_trim` is not the table `str_upper` is, and the argument rests on two facts about the host's
+/// Unicode data rather than on anything either emitter does: the set
+/// is **25 code points**, and **none of them is four bytes long**. Both emitters are written from
+/// those facts — a switch over five lead bytes, with no four-byte arm at all — so this is where a
+/// Rust upgrade that changed either one goes red, and it goes red *here* rather than as a
+/// divergence in a differential that would say only that the two disagreed.
+///
+/// It runs on any machine, because it compiles nothing: the emitters' correctness against this set
+/// is `the_two_backends_agree_on_text`'s, over `textfix::every_whitespace`, which enumerates the
+/// same property from the same function.
+#[test]
+fn the_whitespace_this_backend_knows_is_every_one_rust_does() {
+    let space: Vec<char> = (0u32..0x11_0000)
+        .filter_map(char::from_u32)
+        .filter(|c| c.is_whitespace())
+        .collect();
+    assert_eq!(
+        space.len(),
+        25,
+        "`White_Space` is 25 code points and both emitters switch over the five lead bytes those \
+         need; it is now {}, so `beck.str.ws` has an arm to add or drop: {:?}",
+        space.len(),
+        space.iter().map(|c| *c as u32).collect::<Vec<_>>()
+    );
+    let widest = space
+        .iter()
+        .map(|c| c.len_utf8())
+        .max()
+        .expect("25 of them");
+    assert_eq!(
+        widest, 3,
+        "no whitespace character is four bytes long, which is why `beck.str.ws` has no four-byte \
+         arm — one is now {widest} bytes"
+    );
+    // And the lead bytes themselves, because that is the shape of the switch rather than a
+    // consequence of the two numbers above: a new whitespace character three bytes long behind a
+    // sixth lead byte would satisfy both assertions and still be missed.
+    let mut leads: Vec<u8> = space
+        .iter()
+        .map(|c| {
+            let mut b = [0u8; 4];
+            c.encode_utf8(&mut b).as_bytes()[0]
+        })
+        .filter(|b| *b >= 0x80)
+        .collect();
+    leads.sort_unstable();
+    leads.dedup();
+    assert_eq!(
+        leads,
+        vec![0xc2, 0xe1, 0xe2, 0xe3],
+        "the non-ASCII whitespace lead bytes are the four both emitters switch on"
+    );
 }
 
 /// Lists, over every backend this machine has.
@@ -597,6 +695,35 @@ fn the_two_backends_agree_on_lists() {
     }
     compared += both.agree("three", &[vec![]]);
     compared += both.agree("none_at_all", &[vec![]]);
+    // Growing one: the operation, the fork onto a shared block, and the accumulator.
+    for name in ["appended", "forked"] {
+        compared += both.agree(name, &listfix::searched(&xs));
+    }
+    for name in ["doubled_up", "sum_of"] {
+        compared += both.agree(name, &listfix::singles(&xs));
+    }
+    compared += both.agree(
+        "named",
+        &listfix::texts()
+            .iter()
+            .flat_map(|v| {
+                ["", "z", "aa"]
+                    .iter()
+                    .map(move |s| vec![v.clone(), Value::str_(s)])
+            })
+            .collect::<Vec<_>>(),
+    );
+    compared += both.agree(
+        "grown_bag",
+        &xs.iter()
+            .map(|v| {
+                vec![
+                    Value::record("Bag", None, [("items", v.clone()), ("rank", Value::Int(1))]),
+                    Value::Int(9),
+                ]
+            })
+            .collect::<Vec<_>>(),
+    );
     compared += both.agree("doubled", &singles(&ints(0x5eed_0031, 12)));
     compared += both.agree(
         "total",
@@ -688,6 +815,31 @@ fn the_two_backends_agree_on_maps() {
     for name in ["lookup", "lookup_or", "holds"] {
         compared += both.agree(name, &mapfix::keyed(&ms));
     }
+    // Growing one: the three operations, the fork onto a shared tree, and the fold.
+    for name in ["put", "branched"] {
+        compared += both.agree(
+            name,
+            &mapfix::keyed(&ms)
+                .iter()
+                .map(|args| {
+                    let mut args = args.clone();
+                    args.push(Value::Int(7));
+                    args
+                })
+                .collect::<Vec<_>>(),
+        );
+    }
+    compared += both.agree("dropped", &mapfix::keyed(&ms));
+    compared += both.agree("joined", &mapfix::pairs(&ms));
+    for name in ["grown", "descending"] {
+        compared += both.agree(
+            name,
+            &[0i64, 1, 2, 3, 7, 16, 33]
+                .iter()
+                .map(|n| vec![Value::Int(*n)])
+                .collect::<Vec<_>>(),
+        );
+    }
     compared += both.agree("nothing", &[vec![]]);
     compared += both.agree(
         "total",
@@ -735,6 +887,183 @@ fn the_two_backends_agree_on_maps() {
     compared += both.agree("held_size", &mapfix::singles(&hs));
 
     println!("{compared} map calls compared, and every backend agreed on every one");
+}
+
+/// Generic definitions, on both backends — which is **monomorphisation**, differentially.
+///
+/// A generic definition compiles by being specialised, so the divergence to look for is not "does
+/// this work" but *which instantiation a site got*. `beck_llvm::mono` recovers a call's type
+/// arguments by matching the `Global` node's solved type against the definition's declared one, and
+/// each way of picking the wrong one is a program in `genfix`: two parameters read in the wrong
+/// order, an instantiation keyed on a machine representation so that `Int` and `Bool` merge, a type
+/// argument that is itself a list, a parameter that appears only in the result.
+///
+/// The evaluator is the control and it does none of this: it runs the generic definition once,
+/// uniformly, which is exactly what makes it the right thing to disagree with.
+#[test]
+fn the_two_backends_agree_on_generics() {
+    let _ = toolchain!();
+    let both = Both::over("generic.beck", GENERIC);
+    let mut compared = 0;
+    compared += both.agree("of_ints", &genfix::ints());
+    compared += both.agree("of_bools", &genfix::bools());
+    compared += both.agree("of_texts", &genfix::texts());
+    compared += both.agree("of_records", &genfix::records());
+    compared += both.agree("of_unions", &genfix::unions());
+    compared += both.agree("of_lists", &genfix::lists());
+    compared += both.agree("of_lists_of_lists", &genfix::nested());
+    compared += both.agree("second_int", &genfix::ints());
+    compared += both.agree("second_text", &genfix::texts());
+    compared += both.agree("count_ints", &genfix::ints());
+    compared += both.agree("count_texts", &genfix::texts());
+    compared += both.agree("int_then_text", &genfix::int_and_text());
+    compared += both.agree("text_then_int", &genfix::text_and_int());
+    compared += both.agree("ints_agree", &genfix::int_pairs());
+    compared += both.agree("texts_agree", &genfix::text_pairs());
+    compared += both.agree("no_ints", &[vec![]]);
+    compared += both.agree("no_texts", &[vec![]]);
+    compared += both.agree("of_lists", &genfix::lists());
+    compared += both.agree("three_ints", &genfix::scalars());
+    compared += both.agree("three_texts", &genfix::singles());
+    compared += both.agree("bound", &genfix::scalars());
+
+    // …and the control: every one of those definitions compiled, so this is not passing because
+    // the pair agreed on falling back. The instantiations are here by name, because a run that
+    // built `firstly` once and called it three times would answer correctly and be wrong.
+    let compiled: Vec<String> = both
+        .native
+        .module()
+        .functions
+        .iter()
+        .map(|f| f.name.to_string())
+        .collect();
+    for wanted in [
+        "firstly@Int",
+        "firstly@Bool",
+        "firstly@Str",
+        "firstly@Named",
+        "firstly@Tagged",
+        "firstly@list[Int]",
+        "firstly@list[list[Int]]",
+        // One `paired`, not two. `swapped[Str, Int]` calls `paired(b, a)`, so its `paired` is
+        // `paired[Int, Str]` — the same instantiation `int_then_text` asks for directly. That
+        // sharing is the assertion: a recovery that read the arguments off in *declaration* order
+        // rather than in use order would mint a second, differently-named function here.
+        "paired@Int,Str",
+        "swapped@Str,Int",
+        "empty_of@Int",
+        "empty_of@Str",
+        "same_twice@Int",
+        "same_twice@Str",
+        "second@Int",
+        "second@Str",
+        "counted@Int",
+        "counted@Str",
+        "repeated@Int",
+        "repeated@Str",
+    ] {
+        assert!(
+            compiled.iter().any(|f| f == wanted),
+            "`{wanted}` should be one of the compiled functions, and they are {compiled:?}"
+        );
+    }
+    // And no template survives: a specialised generic is not a definition this backend has.
+    for template in [
+        "firstly",
+        "paired",
+        "swapped",
+        "empty_of",
+        "same_twice",
+        "second",
+        "counted",
+        "repeated",
+    ] {
+        assert!(
+            !compiled.iter().any(|f| f == template),
+            "`{template}` is a template and should be gone once every site was specialised: \
+             {compiled:?}"
+        );
+    }
+    assert!(
+        !compiled.iter().any(|f| f == "paired@Str,Int"),
+        "`paired` should have one instantiation and not two: {compiled:?}"
+    );
+    println!("{compared} generic calls compared over {} compiled instantiations, and both backends agreed on every one", compiled.len());
+}
+
+/// A **polymorphically recursive** definition is refused by name, once, rather than compiled until
+/// the machine stops.
+///
+/// `def growing[T](x: T, …)` calling `growing([x], …)` asks for `growing@Int`, which asks for
+/// `growing@list[Int]`, which asks for `growing@list[list[Int]]`. The program is finite and the set
+/// of instantiations is not, which is the one thing monomorphisation cannot do and the reason
+/// `mono::MAX_INSTANTIATIONS` is a number rather than a hope.
+///
+/// Two assertions, and the second is the one worth having: the definition is refused, **and it is
+/// refused once**. The first version of this pass gave up part way through and left sixty-four
+/// instantiations behind, each refusing because it called the next — sixty-four refusals that were
+/// all one refusal, and a reader who could not see which definition to fix.
+#[test]
+fn a_polymorphically_recursive_definition_is_refused_rather_than_compiled_forever() {
+    let program = compile("growing.beck", genfix::RECURSIVE);
+    let module = beck_llvm::module(&program);
+    let names: Vec<String> = module.refusals.iter().map(|r| r.name.to_string()).collect();
+    assert_eq!(
+        names,
+        vec!["asks_for_it".to_string(), "growing".to_string()],
+        "the template and its caller are what should be refused, and nothing else"
+    );
+    assert!(
+        module.functions.is_empty(),
+        "no instantiation of a definition this could not finish should survive: {:?}",
+        module
+            .functions
+            .iter()
+            .map(|f| f.name.to_string())
+            .collect::<Vec<_>>()
+    );
+    // The reason a reader is given names the definition and says what is wrong with it, which is
+    // `docs/106` §106.7's rule about a refusal being a claim.
+    let why = beck_llvm::mono::specialise(&program).kept;
+    assert!(
+        why.get("growing")
+            .is_some_and(|r| r.contains("instantiations")),
+        "the reason should say what could not be finished: {why:?}"
+    );
+}
+
+/// A generic called where **nothing decides** what its type parameter is is refused, not guessed.
+///
+/// `list_len(anything())` pins `T` against `list_len`'s own parameter and no further, so inference
+/// finishes with a variable rather than a type. The program is legal and the evaluator runs it
+/// happily — it has one uniform definition and an empty list is empty whatever it holds — and this
+/// backend has no layout to pick.
+///
+/// The assertion that matters is the second one. Minting an instantiation named after a *variable*
+/// would compile: the name would be stable within one run and would depend on an inference
+/// counter rather than on the program, so two compiles of the same source could disagree about a
+/// symbol. That is a determinism defect wearing a feature's clothes, and it is what
+/// `the_module_is_a_function_of_the_program` exists to catch — this refuses before it gets there.
+#[test]
+fn a_generic_whose_type_nothing_decides_is_refused_rather_than_guessed() {
+    let program = compile("undecided.beck", genfix::UNDECIDED);
+    let module = beck_llvm::module(&program);
+    let names: Vec<String> = module.refusals.iter().map(|r| r.name.to_string()).collect();
+    assert_eq!(
+        names,
+        vec!["anything".to_string(), "how_many".to_string()],
+        "the template and its caller are what should be refused, and nothing else"
+    );
+    let why = beck_llvm::mono::specialise(&program).kept;
+    assert!(
+        why.get("anything")
+            .is_some_and(|r| r.contains("not yet decided")),
+        "the reason should say the type parameters were not decided: {why:?}"
+    );
+    assert!(
+        !module.ir.contains('?'),
+        "no symbol should be named after an inference variable"
+    );
 }
 
 /// Closures, over every backend this machine has.
@@ -1360,19 +1689,21 @@ fn a_slice_costs_its_answer_and_not_the_string_it_came_from() {
     assert_eq!(one[0], PER_CHARACTER);
 }
 
-/// A corpus program's **fold** compiles, which is what the collections were for.
+/// A corpus program's **fold** and its **page** compile, by name and over the whole corpus.
 ///
 /// `apply_event` is a `durable` fold's step function — `(State, Envelope[Event]) -> State` — and
-/// until `docs/107` its state was a `Map` and so it could not. This asserts it by name over the
-/// whole corpus rather than as a count in a report, and asserts the other side too: `view` is still
-/// refused, because a page is `Html`.
+/// until `docs/107` its state was a `Map` and so it could not. `view` is `(State, Session) -> Html`
+/// and until `docs/111` a page had no shape at all; this test asserted it was refused, and that row
+/// moved here rather than being deleted, which is what the refusal lists in this file are for.
 ///
-/// The set is a floor rather than an equality. A corpus program acquiring a fold that compiles
-/// should not turn this red; a corpus program *losing* one should.
+/// Both sets are floors rather than equalities. A corpus program acquiring one should not turn this
+/// red; a corpus program *losing* one should. The other side is below: something in the corpus is
+/// still refused, so this cannot pass by everything compiling.
 #[test]
 fn a_corpus_fold_compiles() {
     let mut folded: Vec<String> = Vec::new();
     let mut viewed: Vec<String> = Vec::new();
+    let mut refused: Vec<String> = Vec::new();
     for path in corpus_programs() {
         let src = std::fs::read_to_string(&path).expect("a corpus program");
         let name = path
@@ -1390,19 +1721,33 @@ fn a_corpus_fold_compiles() {
         if module.signature("view").is_some() {
             viewed.push(name);
         }
+        refused.extend(module.refusals.iter().map(|r| r.reason.clone()));
     }
     assert!(
         folded.len() >= 9,
         "at least nine corpus folds compiled when `docs/107` was written, and {} do now: {folded:?}",
         folded.len()
     );
-    // The other side, so this is not passing because everything compiles: a page is `Html`, which
-    // follows the collections and is not on this heap.
     assert!(
-        viewed.is_empty(),
-        "a corpus `view` compiled, and `Html` has no layout: {viewed:?}"
+        viewed.len() >= 21,
+        "twenty-one corpus pages compiled when `docs/111` was written, and {} do now: {viewed:?}",
+        viewed.len()
     );
-    println!("{} corpus folds compile natively: {folded:?}", folded.len());
+    // The other side, so this is not passing because everything compiles. What is still refused
+    // across the corpus is a definition **generic over a type** — `docs/114` compiled the last
+    // collection that grows and `str_trim` took the last Unicode row that was not one, so a type
+    // parameter is what is left. This line has been rewritten once per change that removed the
+    // previous answer, which is what it is for.
+    assert!(
+        refused.iter().any(|r| r.contains("generic over T")),
+        "no corpus definition was refused for a type parameter, and this test would then be \
+         asserting that everything compiles: {refused:?}"
+    );
+    println!(
+        "{} corpus folds and {} corpus pages compile natively: {folded:?} / {viewed:?}",
+        folded.len(),
+        viewed.len()
+    );
 }
 
 /// A lookup costs the same whatever the map holds, and the gate has no clock in it.
@@ -1471,9 +1816,9 @@ fn a_lookup_costs_the_same_whatever_the_map_holds() {
     // Two words: `Some`'s tag and its payload.
     assert_eq!(looked[0], 16);
 
-    // …and `map_keys` costs its answer: a header and one word per key.
-    assert_eq!(keyed[0], 8 + 200 * 8);
-    assert_eq!(keyed[1], 8 + 1600 * 8);
+    // …and `map_keys` costs its answer: a list's two headers and one word per key.
+    assert_eq!(keyed[0], 32 + 200 * 8);
+    assert_eq!(keyed[1], 32 + 1600 * 8);
     println!(
         "a lookup left {} bytes at both sizes, and `map_keys` left {} then {}",
         looked[0], keyed[0], keyed[1]
@@ -1522,15 +1867,19 @@ fn an_accumulator_costs_the_square_of_what_it_builds() {
 ///
 /// `a_slice_costs_its_answer_and_not_the_string_it_came_from` one type over, and for the same
 /// reason: `docs/69` §69.7 found the quadratic in a list and `docs/70` §70.2 found it in text, so
-/// the shape gate belongs on both. One element sliced out is two words — a header and the element —
-/// so `n` steps are `16n` bytes, and a `list_slice` that copied what it was taken *from* would be
+/// the shape gate belongs on both. One element sliced out is a header, a block and the element — so
+/// `n` steps are `40n` bytes, and a `list_slice` that copied what it was taken *from* would be
 /// `O(n²)` with no clock in the measurement.
+///
+/// The constant went 16 → 40 at `docs/113`, which is that report's cost stated in a gate: a list is
+/// two objects now, so the *smallest* one is five words rather than two. What this test is about is
+/// unchanged, because what it asserts is that the number does not grow with `n`.
 #[test]
 fn a_list_slice_costs_its_answer_and_not_the_list_it_came_from() {
     let _ = toolchain!();
     let both = Both::over("lists.beck", LISTS);
-    // A header word and one element.
-    const PER_ELEMENT: usize = 16;
+    // A two-word header, a two-word block header, and one element.
+    const PER_ELEMENT: usize = 40;
     let mut sizes = Vec::new();
     for n in [200usize, 1600] {
         let xs = Value::List(std::sync::Arc::new(
@@ -1591,7 +1940,7 @@ fn what_cannot_be_compiled_is_refused_by_name_and_with_a_reason() {
     let both = Both::over("refused.beck", REFUSED);
 
     for (name, expect) in [
-        ("grows_a_list", "`list_append` grows a list"),
+        ("grows_a_list", "`list_flat_map` answers a list"),
         ("renders_a_real", "`str` of Float"),
         ("is_generic", "generic over T"),
         (
@@ -1629,20 +1978,20 @@ fn what_cannot_be_compiled_is_refused_by_name_and_with_a_reason() {
 /// list in prose goes stale where a list with a test attached cannot (`docs/83` §83.7). Each of
 /// these goes red the day its row starts compiling, which is the day the row should be deleted.
 ///
-/// Three rows were deleted that way: `docs/105` gave a `Str` a layout, `docs/106` gave a `list` one,
-/// and `docs/108` compiled the higher-order primitives — so `mapped` moved from this list to the
-/// control below it in the same commit. What is left is the primitives that read a Unicode table or
-/// render a real, and the collections that **grow**.
+/// Five rows were deleted that way: `docs/105` gave a `Str` a layout, `docs/106` gave a `list` one,
+/// `docs/108` compiled the higher-order primitives, and `str_trim` and `str_split` moved across when
+/// their stated reasons — a Unicode table, and "two loops rather than one" — turned out to be false
+/// of them. Each time, the row moved from this list to the control below it in the same commit.
+/// What is left is the primitives that really do read a table, the ones that render a real, and a
+/// definition generic over a type.
 #[test]
 fn what_the_heap_does_not_reach_is_refused_by_name() {
     let program = compile("still-refused.beck", STILL_REFUSED);
     let module = beck_llvm::module(&program);
     for (name, expect) in [
         ("renders_a_real", "`str` of Float"),
-        ("splits_a_string", "`str_split` answers with a list"),
         ("upcases", "`str_upper` is Unicode case mapping"),
-        ("trims", "`str_trim` trims Unicode whitespace"),
-        ("grows", "`list_append` grows a list"),
+        ("grows", "`list_flat_map` answers a list"),
         ("is_generic", "generic over T"),
         (
             "reads_the_clock",
@@ -1671,6 +2020,8 @@ fn what_the_heap_does_not_reach_is_refused_by_name() {
             .map(|f| f.name.to_string())
             .collect::<Vec<_>>(),
         vec![
+            "splits_a_string".to_string(),
+            "trims".to_string(),
             "mapped".to_string(),
             "double_it".to_string(),
             "names_it".to_string(),
@@ -1986,10 +2337,11 @@ fn what_is_not_compiled_falls_back_and_says_so() {
     assert!(!native.compiled(refused));
 
     let f = beck_eval::on_the_evaluator_stack(|| native.function(refused).expect("prepares"));
-    let xs = Value::List(Arc::new(vec![Value::Int(2), Value::Int(3)]));
-    let got = beck_eval::on_the_evaluator_stack(|| {
-        f(vec![xs, Value::Int(4)]).expect("the fallback answers")
-    });
+    let xss = Value::List(Arc::new(vec![
+        Value::List(Arc::new(vec![Value::Int(2), Value::Int(3)])),
+        Value::List(Arc::new(vec![Value::Int(4)])),
+    ]));
+    let got = beck_eval::on_the_evaluator_stack(|| f(vec![xss]).expect("the fallback answers"));
     assert_eq!(
         got,
         Value::List(Arc::new(vec![Value::Int(2), Value::Int(3), Value::Int(4)]))
@@ -2214,4 +2566,460 @@ fn the_subset_is_decided_without_a_toolchain() {
             refusal.name
         );
     }
+}
+
+/// A page, compiled — and the tree it bakes into is the tree the evaluator built.
+///
+/// This is the differential over `docs/111`'s recipe. What crosses the pipe is the *call* rather
+/// than the tree, so the assertion that matters is not that the bytes arrived: it is that
+/// `beck_core::html::element` and `Value`'s equality — which includes every structural hash — say
+/// the two trees are one. A recipe that dropped an attribute in the wrong place, kept a key as an
+/// attribute, or folded two attributes in the other order renders identically and fails here.
+#[test]
+fn the_two_backends_agree_on_views() {
+    let _ = toolchain!();
+    let both = Both::over("views.beck", viewfix::VIEWS);
+    let cards = viewfix::cards();
+    let lists = viewfix::lists();
+    let mut compared = 0;
+
+    // A text node of every shape a value has here: the repr is a *datum* in this one place, and a
+    // wrong index reads the right word as the wrong thing.
+    compared += both.agree("just_text", &viewfix::singles(&textfix::strings()));
+    compared += both.agree("a_number", &singles(&[0, 1, -1, i64::MAX, i64::MIN]));
+    compared += both.agree(
+        "a_flag",
+        &[vec![Value::Bool(true)], vec![Value::Bool(false)]],
+    );
+    compared += both.agree(
+        "a_real",
+        &[0.0, -0.0, 1.5, f64::INFINITY, f64::NAN]
+            .iter()
+            .map(|f| vec![Value::float(*f)])
+            .collect::<Vec<_>>(),
+    );
+    compared += both.agree("a_record", &viewfix::singles(&cards));
+    compared += both.agree("a_list", &viewfix::singles(&lists));
+
+    // The elements, the attributes and the two rules that make a recipe and a tree differ.
+    for name in [
+        "titled",
+        "maybe_done",
+        "ordered",
+        "keyed",
+        "keyed_number",
+        "handled",
+        "handled_nullary",
+        "wrapped",
+        "nested",
+        "one_attr",
+        "one_key",
+        "one_handler",
+        "panelled",
+    ] {
+        compared += both.agree(name, &viewfix::singles(&cards));
+    }
+    compared += both.agree("blank", &[vec![]]);
+    for name in ["rows", "attrs_from"] {
+        compared += both.agree(name, &viewfix::singles(&lists));
+    }
+    compared += both.agree("whole", &viewfix::with(&cards, &lists));
+
+    // The direction nothing in a program needs: a baked tree back *in*, which the host has to
+    // write as a recipe whose leaves are text. Every argument here is a tree the evaluator built.
+    let mut trees: Vec<Value> = Vec::new();
+    for name in ["titled", "keyed", "handled", "nested"] {
+        for c in &cards {
+            trees.push(
+                both.evaluated(name, std::slice::from_ref(c))
+                    .expect("the evaluator builds it"),
+            );
+        }
+    }
+    trees.push(
+        both.evaluated("just_text", &[Value::str_("hello")])
+            .expect("the evaluator builds it"),
+    );
+    compared += both.agree("again", &viewfix::singles(&trees));
+    compared += both.agree("beside", &viewfix::with(&trees, &cards));
+
+    println!("{compared} view calls compared, LLVM against the tree-walker");
+    assert!(compared >= 200, "only {compared} calls compared");
+}
+
+/// The same page written with `ui:`, which is what a program actually contains.
+///
+/// `views.beck` exercises the five primitives; this exercises what the macro lowers to — a keyed
+/// list built by a loop, a conditional class that is empty on one branch, two handlers carrying
+/// records, and text built by `+` — and it is `examples/todo.beck`'s own `render` with the types
+/// inlined.
+#[test]
+fn a_ui_block_compiles_and_agrees() {
+    let _ = toolchain!();
+    let both = Both::over("page.beck", viewfix::PAGE);
+    let lefts = [0i64, 1, 7];
+    let tuples: Vec<Vec<Value>> = viewfix::todos()
+        .iter()
+        .flat_map(|ts| lefts.iter().map(move |n| vec![ts.clone(), Value::Int(*n)]))
+        .collect();
+    let compared = both.agree("page", &tuples);
+    println!("{compared} `ui:` pages compared, LLVM against the tree-walker");
+}
+
+/// What a view still cannot do, each with the reason a reader is given.
+///
+/// Every row is an **ordering**, and the reason is one sentence in `Repr::order`: a node in the
+/// arena is the call that builds a tree, so two of them can be ordered by what they render and not
+/// by what they are. The rows are three because the demand can arrive three ways — a search over a
+/// list of them, a record that holds one being compared, and `==` between two directly — and
+/// `Heap::ordered` is what has to walk to each.
+#[test]
+fn a_view_has_no_order_and_the_refusal_says_why() {
+    let program = compile("refused-views.beck", viewfix::REFUSED);
+    let module = beck_llvm::module(&program);
+    for name in ["sorted_views", "same_panel", "same_view"] {
+        let reason = module
+            .refusals
+            .iter()
+            .find(|r| &*r.name == name)
+            .unwrap_or_else(|| panic!("`{name}` compiled, and a view has no order"))
+            .reason
+            .clone();
+        assert!(
+            reason.contains("carried as the call that builds it"),
+            "the reason for refusing `{name}` should be the one `Repr::order` gives, and is \
+             {reason:?}"
+        );
+    }
+    // A record *holding* a view is refused only when it is compared: building one is fine, and a
+    // rule that refused the type outright would take a page's own model with it.
+    assert!(
+        module.signature("same_panel").is_none(),
+        "comparing a record with a view in it has no answer"
+    );
+
+    // …and the boundary's one directional rule, which is §111.3's and not §111.4's: an `Attr` may
+    // be answered with and may not be taken, because the host writes a handler back as the plain
+    // attribute it would become and a bare one has not become it yet.
+    for name in ["takes_an_attr", "takes_a_list_of_attrs"] {
+        let reason = module
+            .refusals
+            .iter()
+            .find(|r| &*r.name == name)
+            .unwrap_or_else(|| panic!("`{name}` compiled, and an `Attr` may not be taken"))
+            .reason
+            .clone();
+        assert!(
+            reason.contains("may answer with and may not take"),
+            "the reason for refusing `{name}` should be the directional one, and is {reason:?}"
+        );
+    }
+    // The other side of *that* rule, so it is not refusing the type outright: answering with one
+    // compiles, and so does taking a whole tree.
+    let built = compile("views.beck", viewfix::VIEWS);
+    let views = beck_llvm::module(&built);
+    for name in ["one_attr", "one_key", "one_handler", "again", "beside"] {
+        assert!(
+            views.signature(name).is_some(),
+            "`{name}` should compile: an `Attr` crosses outward and an `Html` crosses both ways"
+        );
+    }
+}
+
+/// What a page costs is a function of the page, and the gate has **no clock in it**.
+///
+/// `AGENTS.md`'s shape gate, for the one thing a recipe could most plausibly get wrong: a node
+/// holds two lists, so a builder that reallocated a list per child — or that copied the children
+/// built so far on every step — would be `O(n²)` in the arena and would still answer correctly at
+/// every size anybody would run in a test. The per-row cost is the whole assertion, and it must be
+/// the same number at 100 rows and at 800.
+///
+/// The constant is written down rather than derived, because deriving it here would be the layout
+/// spelled a second time (`beck_llvm::heap`'s own argument): a row is an `li` (four words), its
+/// empty attribute list (four), its child list (five), its text node (four) and the word it occupies
+/// in the page's own child list — eighteen words, 144 bytes. It was twelve words until `docs/113`
+/// made a list two objects. What is left over is the page itself and
+/// the literal pool, and *that* number has to be the same at both sizes too, which is the half of
+/// this test a per-row division would hide.
+#[test]
+fn a_page_costs_its_own_nodes_and_nothing_per_page() {
+    let _ = toolchain!();
+    let both = Both::over("views.beck", viewfix::VIEWS);
+    const PER_ROW: usize = 144;
+    let mut sizes = Vec::new();
+    for n in [100usize, 800] {
+        let xs = viewfix::ints(&(0..n as i64).collect::<Vec<_>>());
+        let (_, bytes) = both.native.call_sized("rows", &[xs]).expect("runs");
+        // The argument list is in the arena too — a header and one word an element — and it is the
+        // page that is being measured.
+        sizes.push((n, bytes - heap_bytes(n + 1)));
+    }
+    let (small, big) = (sizes[0], sizes[1]);
+    let per = (big.1 - small.1) / (big.0 - small.0);
+    assert_eq!(
+        per, PER_ROW,
+        "a row costs {per} bytes and the layout says {PER_ROW}"
+    );
+    assert_eq!(
+        small.1 - PER_ROW * small.0,
+        big.1 - PER_ROW * big.0,
+        "the page itself should cost the same whatever is in it: {small:?} against {big:?}"
+    );
+    println!(
+        "a page of {} rows costs {} bytes of arena and a page of {} costs {} — {PER_ROW} bytes a \
+         row and {} bytes a page at both sizes",
+        small.0,
+        small.1,
+        big.0,
+        big.1,
+        small.1 - PER_ROW * small.0
+    );
+}
+
+/// A `raise` and a `try:`, compiled — and the three things that have to agree.
+///
+/// The value a caught failure becomes, the `Result` it is wrapped in, and the **message** when
+/// nothing catches it: `beck-eval` renders a raise as ``raised `TooBig{n: 101}` ``, so the arena
+/// travels with that one failure and the host builds the same sentence out of the same value. A
+/// backend that reported "something was raised" would pass a test that only compared the fact of a
+/// failure, and fails this one.
+///
+/// The cases that matter most are the ones where a handler must **not** fire — a fault inside a
+/// `try:`, and a different error type raised inside it — because a handler that caught by trap code
+/// rather than by type name would answer an `Err` where the evaluator fails.
+#[test]
+fn the_two_backends_agree_on_failure() {
+    let _ = toolchain!();
+    let both = Both::over("failure.beck", failfix::FAILURE);
+    let ns = failfix::ints(&failfix::numbers());
+    let mut compared = 0;
+    for name in [
+        "checked",
+        "uncaught",
+        "caught",
+        "described",
+        "overflows",
+        "wrong_type",
+        "nested",
+    ] {
+        compared += both.agree(name, &ns);
+    }
+    compared += both.agree("named", &failfix::texts());
+    compared += both.agree("several", &failfix::lists());
+    compared += both.agree("all_checked", &failfix::lists());
+    println!("{compared} fallible calls compared, LLVM against the tree-walker");
+    assert!(compared >= 80, "only {compared} calls compared");
+}
+
+/// The message a raise crosses the boundary with is the evaluator's, value and all.
+///
+/// Asserted directly as well as differentially, because the differential compares the two backends
+/// against each other and this says what the string *is*: a reader of a failing call sees which
+/// value was raised, and a regression to "the compiled program failed" would still agree with
+/// itself.
+#[test]
+fn an_uncaught_raise_names_the_value_it_carried() {
+    let _ = toolchain!();
+    let both = Both::over("failure.beck", failfix::FAILURE);
+    for (n, want) in [(101, "raised `TooBig{n: 101}`"), (0, "raised `Blank`")] {
+        let (walked, compiled) = both.call("uncaught", &[Value::Int(n)]);
+        assert_eq!(compiled, Err(want.to_string()), "`uncaught({n})`");
+        assert_eq!(walked, compiled);
+    }
+    // The control: the same definition, on an argument that does not raise.
+    let (walked, compiled) = both.call("uncaught", &[Value::Int(2)]);
+    assert_eq!(compiled, Ok(Value::Int(5)));
+    assert_eq!(walked, compiled);
+}
+
+/// Unwinding costs nothing per frame, and the gate has **no clock in it**.
+///
+/// `AGENTS.md`'s shape gate for the one thing an error mechanism most easily gets wrong. A raise is
+/// two words of arena for the pair and however many the value takes — a constant — and that has to
+/// be true whether it was raised one frame down or two hundred. A scheme that allocated per frame
+/// on the way out (a trace, a boxed error per level, a copy of the value at each check) would be
+/// linear in the depth and would still answer correctly at every size.
+///
+/// `deeply` is deliberately **not** tail-recursive: every frame on the way out reads the error cell
+/// and returns, which is the path being measured. The two depths are eight times apart.
+#[test]
+fn unwinding_costs_nothing_per_frame() {
+    let _ = toolchain!();
+    let both = Both::over("failure.beck", failfix::FAILURE);
+    let mut sizes = Vec::new();
+    for n in [25i64, 200] {
+        let (answer, bytes) = both
+            .native
+            .call_sized("deeply_caught", &[Value::Int(n)])
+            .expect("runs");
+        assert_eq!(
+            answer.variant(),
+            Some("Err"),
+            "`deeply_caught({n})` should have caught the raise at the bottom"
+        );
+        sizes.push((n, bytes));
+    }
+    assert_eq!(
+        sizes[0].1, sizes[1].1,
+        "a raise from {} frames down cost {} bytes of arena and one from {} cost {} — unwinding \
+         is allocating per frame",
+        sizes[0].0, sizes[0].1, sizes[1].0, sizes[1].1
+    );
+    println!(
+        "a raise caught {} frames up and one caught {} frames up both leave {} bytes of arena",
+        sizes[0].0, sizes[1].0, sizes[0].1
+    );
+}
+
+/// An accumulator built with `list_append` is **linear**, and the gate has no clock in it.
+///
+/// This is `docs/113`'s claim and the reason the operation could be compiled at all. The idiom is
+/// the one every loop in the language is written as — `f(…, list_append(acc, x))` in tail position —
+/// and it was refused rather than shipped because with the count in front of the elements an append
+/// can only copy, which is `Θ(n²)` where `beck-eval` is `Θ(n)` (`docs/69` §69.7).
+///
+/// Four times the elements must cost about four times the arena. A copying append leaves about
+/// sixteen, which is what the text accumulator beside this still does — `docs/105` §105.6, and the
+/// two tests are worth reading together: one asserts a quadratic and one asserts a linear, on the
+/// same shape, in the same backend, because only one of the two layouts was separated.
+#[test]
+fn an_appended_accumulator_is_linear() {
+    let _ = toolchain!();
+    let both = Both::over("lists.beck", LISTS);
+    let mut sizes = Vec::new();
+    for n in [500usize, 2000] {
+        let xs = Value::List(std::sync::Arc::new(
+            (0..n as i64).map(Value::Int).collect::<Vec<_>>(),
+        ));
+        let arguments = both
+            .native
+            .module()
+            .heap
+            .encode_args(
+                std::slice::from_ref(&xs),
+                &both.native.module().signature("doubled_up").unwrap().params,
+            )
+            .expect("encodes")
+            .1
+            .len();
+        let (answer, bytes) = both.native.call_sized("doubled_up", &[xs]).expect("runs");
+        assert_eq!(
+            answer.as_list().map(|xs| xs.len()),
+            Some(n),
+            "`doubled_up({n})` should answer with {n} elements"
+        );
+        sizes.push((n, bytes - arguments));
+    }
+    let (small, big) = (sizes[0], sizes[1]);
+    let growth = big.1 as f64 / small.1 as f64;
+    let steps = (big.0 / small.0) as f64;
+    assert!(
+        growth < steps * 2.0,
+        "four times the elements left {growth:.1}× the arena, and an append that copies leaves \
+         about {:.0}× — this is the quadratic `docs/113` exists to remove",
+        steps * steps
+    );
+    println!(
+        "doubled_up({}) left {} bytes and doubled_up({}) left {} — {growth:.1}× for {steps:.0}× \
+         the elements",
+        small.0, small.1, big.0, big.1
+    );
+}
+
+/// A split costs **its answer**, and the gate has no clock in it.
+///
+/// The refusal on record said `str_split` "answers with a list whose elements it also allocates,
+/// which is two loops rather than the one every list this backend builds has". Two loops is a
+/// description of the code, not a cost: the first counts the pieces and the second fills them, so
+/// the answer is allocated once and never grown. That is the claim, and this is where it is held.
+///
+/// Four times the separators must cost about four times the arena. What it would look like to be
+/// wrong is a split that appended piece by piece, doubling a block it had already filled — which
+/// is linear in the *pieces* and quadratic in the bytes it copies.
+#[test]
+fn a_split_costs_its_answer_and_nothing_per_call() {
+    let _ = toolchain!();
+    let both = Both::over("text.beck", TEXT);
+    let mut sizes = Vec::new();
+    for n in [500usize, 2000] {
+        // `n` separators between `n + 1` one-character pieces, so the answer's size is the input's.
+        // The definition answers the **list**, because a scalar reply ships no arena — and the
+        // arena is where a split that had grown its answer would have left the blocks it abandoned.
+        let args = vec![Value::str_(vec!["x"; n + 1].join(",")), Value::str_(",")];
+        let arguments = both
+            .native
+            .module()
+            .heap
+            .encode_args(
+                &args,
+                &both.native.module().signature("parts").unwrap().params,
+            )
+            .expect("encodes")
+            .1
+            .len();
+        let (answer, bytes) = both.native.call_sized("parts", &args).expect("runs");
+        assert_eq!(
+            answer.as_list().map(|xs| xs.len()),
+            Some(n + 1),
+            "splitting on {n} separators should answer {} pieces",
+            n + 1
+        );
+        sizes.push((n, bytes - arguments));
+    }
+    let (small, big) = (sizes[0], sizes[1]);
+    let growth = big.1 as f64 / small.1 as f64;
+    let steps = (big.0 / small.0) as f64;
+    assert!(
+        growth < steps * 2.0,
+        "four times the separators left {growth:.1}× the arena, and a split that grew its answer \
+         piece by piece would leave about {:.0}×",
+        steps * steps
+    );
+    println!(
+        "parts on {} separators left {} bytes and on {} left {} — {growth:.1}× for {steps:.0}× \
+         the separators",
+        small.0, small.1, big.0, big.1
+    );
+}
+
+/// A fold that keeps a `Map` is **not quadratic**, and the gate has no clock in it.
+///
+/// This is `docs/114`'s claim and the reason the operation could be compiled at all. `map_insert`
+/// over a sorted run copies the whole run, so `n` inserts cost `Θ(n²)` — where `beck_core::pmap` is
+/// `Θ(n log n)` because it rebuilds one path and shares the rest. `docs/107` §107.4 refused to ship
+/// the first, and this asserts the second.
+///
+/// Four times the entries costs about *five* times the arena — `n log n` — where a copying insert
+/// costs sixteen. The bound is generous on purpose: what separates the two is a factor of three, and
+/// a gate that split them at 5.1 would be measuring the balance constants rather than the asymptote.
+#[test]
+fn a_fold_over_a_map_is_not_quadratic() {
+    let _ = toolchain!();
+    let both = Both::over("maps.beck", MAPS);
+    let mut sizes = Vec::new();
+    for n in [500i64, 2000] {
+        let (answer, bytes) = both
+            .native
+            .call_sized("grown", &[Value::Int(n)])
+            .expect("runs");
+        assert_eq!(
+            answer.as_map().map(beck_core::PMap::len),
+            Some(n as usize),
+            "`grown({n})` should answer with {n} entries"
+        );
+        sizes.push((n, bytes));
+    }
+    let (small, big) = (sizes[0], sizes[1]);
+    let growth = big.1 as f64 / small.1 as f64;
+    let steps = (big.0 / small.0) as f64;
+    assert!(
+        growth < steps * 2.0,
+        "four times the entries left {growth:.1}× the arena, and an insert that copies the run \
+         leaves about {:.0}× — this is the quadratic `docs/114` exists to remove",
+        steps * steps
+    );
+    println!(
+        "grown({}) left {} bytes and grown({}) left {} — {growth:.1}× for {steps:.0}× the entries",
+        small.0, small.1, big.0, big.1
+    );
 }

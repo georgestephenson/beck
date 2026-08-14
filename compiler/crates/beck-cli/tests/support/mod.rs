@@ -2,6 +2,8 @@
 
 pub mod browser;
 pub mod clofix;
+pub mod failfix;
+pub mod genfix;
 pub mod heapfix;
 pub mod listfix;
 pub mod lsp;
@@ -10,6 +12,7 @@ pub mod relfix;
 pub mod scalar;
 pub mod socket;
 pub mod textfix;
+pub mod viewfix;
 
 use std::sync::Arc;
 

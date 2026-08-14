@@ -4,7 +4,7 @@
 
 Every diagnostic the compiler can raise carries a stable code. `beck explain error B0341` prints one of these entries at the terminal.
 
-The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans every non-test source file for a `"Bnnnn"` literal and fails if the set differs from this table in either direction. **131 codes.**
+The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans every non-test source file for a `"Bnnnn"` literal and fails if the set differs from this table in either direction. **132 codes.**
 
 
 ## Reading the source — `B0100–B0122`
@@ -26,7 +26,7 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0121` | error | **nesting is too deep to read** — The source nests deeper than the front end follows — `beck_diag::depth::MAX_NESTING` levels of brackets, indentation or S-expression lists. The bound is a fixed count rather than a reading of the stack, so the same file is accepted or refused identically in every build; without it, deep enough input aborted the process with no span at all. |
 | `B0122` | error | **an expression chains more operators than the reader will follow** — A left-associative chain — `1 + 1 + 1 + …` — is flat in source and builds a left-leaning tree of the same depth, one level per operator. The Pratt loop that reads it does not recurse, so none of the parser's recursion counters sees the depth, and a long enough chain reached the end of the host stack in whatever walked the tree afterwards. The bound is `beck_diag::depth::MAX_BLOCK` — the same ceiling a block of sequential bindings takes, because it is the same axis: a flat run of things that costs one tree level each. |
 
-## Macro expansion — `B0200–B0213`
+## Macro expansion — `B0200–B0214`
 
 | Code | | Meaning |
 |---|---|---|
@@ -41,6 +41,7 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0211` | error | **`ui` block is empty** — A view must produce exactly one root element. |
 | `B0212` | error | **`ui` block has more than one root** — An `Html` value is a single tree. Wrap the elements in one — a `div:` or `main:` block. |
 | `B0213` | error | **the form nests too deep to expand** — The expander walks a form's arguments as deeply as they nest, and stops at the count the reader stops at. This is not `B0201`: nothing here says a macro failed to terminate — the two were one counter until they were separated, and a deep expression with no macros in it reported the wrong one. |
+| `B0214` | error | **macro expansion produced too much** — `B0201` and `B0213` bound how *deep* expansion goes; this bounds how much it makes. A macro that doubles its output at each of a few levels is shallow, terminates, and is enormous — eight nestings of a two-line macro is 256 copies of its argument — so the expander charges what it produces against a budget for the whole module. Reaching it means a macro is generating far more than any program in this repository does, and the fix is almost never a bigger budget. |
 
 ## Names, types and effects — `B0300–B0399`
 

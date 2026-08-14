@@ -77,7 +77,221 @@ Newest first.
   exercises it. §109.5 records seven mutations, one gate each, and the one that did not fire until
   it was rewritten.
 
+### The front end
+
+- **Macro expansion is bounded by what it produces** (`B0214`), which is
+  [`docs/14`](docs/14-review-findings.md)'s **F17** — open since the review — and a row of
+  [`docs/43`](docs/43-threat-model.md) §43.4 that now says *built*. Expansion was bounded in **depth**
+  twice over and in **work** not at all, and a macro that doubles its output is shallow: eight
+  nestings of a two-line macro is 256 copies of its argument, twenty-four is sixteen million, and
+  every one of those programs is six lines long and satisfies every other limit the front end has.
+  That is [`docs/85`](docs/85-what-the-generator-found-report.md) §85.7's pattern a fourth time — a
+  limit added at the one production somebody thought of, bypassed through a different one — and it
+  matters here rather than in the abstract because [`docs/42`](docs/42-security-assurance.md) §42.2's
+  playground compiles a stranger's source in their own browser tab.
+  - The expander charges what each expansion **produces**, per node, against **100,000 nodes for the
+    whole module** — per module because that is what a compile is, and because a per-call budget
+    would let a program spend it once per call
+    ([`docs/84`](docs/84-a-quota-is-only-as-good-as-its-actor-report.md) §84.4's arithmetic one
+    subsystem over).
+  - **The number is measured, not declared.** Across the corpus, both benchmark suites, both SICP
+    chapters, the examples and the standard library, the largest total expansion is **138 nodes**
+    (`sicp/ch3.beck`; `examples/todo.beck`'s page is 94), so the budget is about 725× the biggest
+    real one and about seventeen nestings of a doubling macro.
+  - The count is **iterative and self-bounding**: it walks with its own stack, because the tree being
+    measured is one a macro just built and a recursive count would be a claim about the *host's*
+    stack ([`docs/106`](docs/106-lists-arrive-read-only-report.md) §106.6 one subsystem over) — and
+    it stops when the budget does, so a macro that would produce a billion nodes is refused after a
+    hundred thousand have been counted.
+  - Gated by `macro_bomb.rs` in **both** directions and with the control a refusal needs: a doubling
+    macro 24 deep is refused *by the budget* and not by either depth counter, the same macro 8 deep
+    still compiles, and every program in the tree still expands. `pending_security.rs`'s F17 test is
+    deleted, which is what that file's own rule asks for.
+
 ### The native backends
+
+- **A generic definition compiles, once per type it is used at**
+  ([`docs/115`](docs/115-monomorphisation-report.md)): monomorphisation, on both code generators.
+  It was the largest single refusal class left, and the mechanism is a **pass over the program**
+  rather than anything in either emitter. **850 → 870 definitions** compile across the tree,
+  refusals go 223 → 208, and the ones blaming a type parameter go **63 → 38** — §115.6 is honest
+  about the 38.
+  - **The type arguments were already recorded and nobody had read them.** There is no
+    type-argument list in `Core` and no instantiation table on `Program`, and neither is needed:
+    every `Core` node carries its solved type, so a call's `Global` node holds the *instantiated*
+    function type while the definition's own `params` and `ret` still name the rigid `Con("T", [])`.
+    Matching the two, positionally, recovers `T := Int` in thirty lines.
+  - **A backend pass, which [`docs/38`](docs/38-literature-survey.md) §38.1 had already decided**:
+    dictionaries are the semantics and monomorphisation is a backend choice, because whole-program
+    specialisation fights incrementality. So `beck-core`, the checker and the evaluator are
+    unchanged and cannot tell it happened. Shared between the emitters for the reason the heap is —
+    it is the program both are handed, not a code generator.
+  - **Keyed on the whole type and not on a head constructor or a representation.** `Int` and `Bool`
+    are both one immediate word; merging them would answer `1` where the evaluator answers `true`.
+    Two parameters are read off in **use** order, so `swapped[Str, Int]` calls `paired@Int,Str` —
+    the same instantiation `int_then_text` asks for, and the differential asserts that sharing.
+  - **Refused, with reasons that are each real:** polymorphic recursion (`MAX_INSTANTIATIONS` is
+    64 against a measured maximum of **three**, over 65 templates and 28 instantiations); a call
+    where nothing decides the type, because minting `anything@?3` would make a symbol a function of
+    an inference counter rather than of the program; and a **bounded** definition, which is
+    [`docs/108`](docs/108-closures-arrive-report.md)'s closure boundary and not this.
+  - **The finding is that a partial answer was worse than none** (§115.5). The first version gave up
+    part way through and left sixty-four instantiations behind, each refusing because it called the
+    next — sixty-four true refusals that together said nothing, none of them naming a definition the
+    reader had written. A round that keeps a template it had been specialising is now thrown away
+    and re-run with that template forbidden, leaving one refusal naming one definition.
+  - Gated by `the_two_backends_agree_on_generics` / `the_three_backends_agree_on_generics` (103 and
+    100 calls over `genfix`, written around the ways of picking the **wrong instantiation**),
+    with a control **by name** — fourteen instantiations asserted present, every template asserted
+    gone, and `paired` asserted to have one instantiation and not two, because a run that compiled
+    `firstly` once and called it three times would answer correctly and be wrong. Plus
+    `a_polymorphically_recursive_definition_is_refused_rather_than_compiled_forever` and
+    `a_generic_whose_type_nothing_decides_is_refused_rather_than_guessed`, which asserts that no
+    symbol is named after an inference variable.
+  - **Corrects [`docs/93`](docs/93-llvm-backend-report.md)** §93.6, whose table has generic and
+    bounded definitions as one row. They were never one item: a generic definition needs no
+    dictionary at all.
+
+- **`str_split` and `str_chars` compile, and "two loops" was never a cost.** On both code
+  generators. The reason on record was *"answers with a list whose elements it also allocates,
+  which is two loops rather than the one every list this backend builds has"* — a description of
+  the **code**, not of what it costs. Two loops is what makes it cheap: the first counts the
+  pieces and the second fills them, so the answer is allocated once and never grown.
+  **837 → 850 definitions** compile across the tree and refusals go 236 → 223.
+  - **One function, because the evaluator makes them one**: `str_split` on an empty separator
+    answers characters, so `str_chars(s)` *is* `str_split(s, "")` and the two share a body. The
+    empty separator arrives as the offset **`0`** rather than a pooled `""` — `0` is never a live
+    object, so `str_chars` costs no literal. That correction came from a gate:
+    `the_literal_pool_is_a_function_of_the_program` went red on the version that interned one,
+    because emitting had discovered a literal the survey never saw.
+  - `beck.str.piece` — the bytes of a `Str` in a byte range, with its character count — is factored
+    out of `str_trim`'s tail and shared, so the one place that decides what a substring's header
+    says is the one place both primitives use.
+  - Gated by `a_split_costs_its_answer_and_nothing_per_call`: **4.0× the arena for 4× the
+    separators**, with no clock in it, read off the whole reply arena so a split that had grown its
+    answer would be caught by the blocks it abandoned. The differentials run every string against
+    eight separators — including the empty one, one that is the whole string, one that **overlaps
+    itself** (`"aaa"` on `"aa"` is `["", "a"]`), and one longer than the string — reading the
+    length *and* an element at six indices, because counting the pieces correctly and allocating
+    them wrongly passes the first test and fails the second. 3,912 → **4,872 text calls** compared,
+    all three backends agreeing.
+
+- **`str_trim` compiles, and its refusal was a claim about the wrong set.** On both code
+  generators. The reason on record was *"trims Unicode whitespace, which is a table for the same
+  reason case mapping is"*, and the two are not the same reason at all: `White_Space` is **25 code
+  points**, none of them four bytes long, where case mapping is some fourteen hundred mappings and a
+  handful that change a string's length. So a trim is a switch over five lead bytes, and
+  `str_upper` stays refused for a reason that is true of it.
+  - **`examples/todo.beck` compiles all nine of its definitions** — the first program in this tree
+    to compile whole, and the row [`docs/114`](docs/114-a-map-grows-report.md) left at eight.
+    Across the corpus, both benchmark suites, both SICP chapters, the examples and the standard
+    library, **812 → 837 definitions** compile and refusals go 261 → 236.
+  - One pass, and it allocates once: the leading run is skipped whole, then every byte is either the
+    start of a whitespace character — skipped, and not recorded — or one byte of something else,
+    which moves the end. `beck.str.ws` may be asked at **any** byte of well-formed UTF-8 and never
+    answers inside a character, because no continuation byte can be `0xC2`, `0xE1`, `0xE2` or
+    `0xE3`, so the scan needs no decoder for what it is skipping over.
+  - **Gated in two halves, and neither restates the other.**
+    `native.rs::the_whitespace_this_backend_knows_is_every_one_rust_does` walks all of Unicode and
+    asserts the three facts the emitters were written from — 25 code points, none four bytes long,
+    four non-ASCII lead bytes — so a Rust upgrade that changed the set goes red *there*, at the
+    place that names what to edit. The differentials then run every code point
+    `char::is_whitespace` answers for, four ways each, **derived from that function rather than
+    written out**, plus the four near misses (`U+200B`, `U+180E`, `U+FEFF`, `U+2060`) that look like
+    whitespace and are not. 3,564 → **3,912 text calls** compared, all three backends agreeing.
+    Checked by making it red: dropping the `0xE3` arm from one emitter fails on `U+3000`.
+  - `trims` moved from `what_the_heap_does_not_reach_is_refused_by_name`'s refusal list to its
+    control list — the fourth row to cross that line — and `a_corpus_fold_compiles`'s "what is still
+    refused" control now names a **type parameter**, which is what is left.
+
+- **A map grows, as the tree it always was**
+  ([`docs/114`](docs/114-a-map-grows-report.md)): `map_insert`, `map_remove` and `map_merge` compile
+  to both code generators, and a fold that keeps a `Map` is `Θ(n log n)` rather than `Θ(n²)`.
+  **895 → 1,137 definitions** compile across the tree and refusals go 523 → 281.
+  `examples/todo.beck` compiles **eight of its nine definitions**; the one left needs a Unicode
+  table.
+  - [`docs/113`](docs/113-a-list-grows-report.md) §113.7 forecast that a list's answer would not work
+    here, and it was right: a list's refusal was about a *layout* and a map's is about a *structure*.
+    An insert lands in the middle of a sorted run and every entry after it shifts, however the header
+    is arranged. What removes it is the structure `beck_core::pmap` already uses — a
+    **weight-balanced tree**, whose insert rebuilds the path and shares every subtree it did not
+    touch. Five words a node (subtree size, key, value, two children), the same `DELTA` and `RATIO`
+    the evaluator's module argues for, and an empty map is the offset `0`.
+  - **Sound for free**: a node is never written after it is built, so the map an insert was given is
+    exactly what it was — [`docs/113`](docs/113-a-list-grows-report.md) §113.2's argument again,
+    arriving here as a property of the structure rather than as a design.
+  - **Everything that moves nodes is one function for the whole module.** Rebalancing shuffles
+    *words* and never asks what a key is, so `size`, `node`, `balance`, `nth` and the in-order walk
+    are written once; only `find`, `insert`, `remove`, `merge` and the two-map order are generated
+    per repr, because those are the ones that compare.
+  - Gated by `a_fold_over_a_map_is_not_quadratic` (**4.9× the arena for 4× the entries**, no clock in
+    it) and by the differential's `branched` — two maps grown from one, answering with the original's
+    length and both lookups, so a rotation that wrote through a shared node fails on the first case —
+    and `descending`, the insertion order a tree that did not rebalance degenerates on and a sorted
+    run handled by accident.
+  - **The finding is a name collision** (§114.5): `awfy/richards.beck` has a definition called
+    `dispatch`, every user definition was mangled to `beck.<name>`, and the module's own dispatcher
+    is `beck.dispatch` — so a program that had done nothing wrong got *"invalid redefinition of
+    function"*. Latent since [`docs/93`](docs/93-llvm-backend-report.md), and it surfaced here
+    because a collision needs both halves to exist: `dispatch` had never compiled before. A user
+    definition is `beck.def.<name>` now, in both emitters.
+
+- **A list grows, and the refusal was about a layout**
+  ([`docs/113`](docs/113-a-list-grows-report.md)): `list_append` compiles to both code generators and
+  the accumulator every loop is written as is **linear**. **711 → 895 definitions** compile across
+  the tree and refusals go 707 → 523 — the largest jump any of these rounds has produced, because
+  `list_append` appears in 65 definitions and the other 119 had inherited the refusal from a callee.
+  - **The reason on record was true and the conclusion did not follow.** It was *ownership*: the
+    tree-walker pushes in place when last-use analysis proves the accumulator is nobody else's, and
+    an arena cannot prove that. Every sentence of that holds. What forced the copy was the **layout**
+    — a count sitting in front of the elements, so an append could copy them or overwrite what other
+    holders see. A list is two objects now: an immutable **header** `[count, block]` and a shared
+    **data block** `[cap, used, elements…]`.
+  - **Sound by the shape of the writes, not by an argument about who holds what.** Every header over
+    a block has a count of at most `used`, so the slot at `used` is one no reader can see: an append
+    writes it, bumps `used`, and answers a *new* header. A second list grown from the same one finds
+    the slot taken and copies. No ownership analysis, no reference count, no last-use flag.
+  - **Costs one load, once per operation** — every generated loop takes the data pointer before it
+    starts — and 24 bytes per list, which three arena-shape gates now carry as moved constants (16 →
+    40 bytes for a one-element slice, 96 → 144 for a row of the todo page). What those gates assert
+    is unchanged: the number does not grow with `n`.
+  - Gated by `an_appended_accumulator_is_linear` (**4.0× the arena for 4× the elements**, no clock in
+    it) and by `forked` in the differential — two lists grown from one, so the soundness argument is
+    a program rather than a paragraph. Measured at **11.4× the tree-walker at 2,000 elements and
+    7.0× at 8,000**, against a control that holds 80× flat: the arena is linear and what grows is the
+    reply, which is [`docs/93`](docs/93-llvm-backend-report.md) §93.1's round trip again.
+
+- **A raise arrives, and a handler catches it**
+  ([`docs/112`](docs/112-a-raise-arrives-report.md)): `raise` and `try:` compile to both code
+  generators. The mechanism was already there — every compiled function takes an error cell, stores
+  into it and returns, and every caller checks it — so this adds a fourteenth trap code, two words of
+  arena for the raised value, and a **handler**: a label the checks branch to instead of the
+  function's exit. **688 → 711 definitions** compile across the tree, refusals go 730 → 707, and the
+  38 refusals that blamed `raise` are **none** (18 compile, 20 inherit a deeper reason). A caught
+  raise from 3,000 frames is **17.0×** the tree-walker against **20.0×** for the same recursion that
+  does not fail. Gated by `the_two_backends_agree_on_failure` /
+  `the_three_backends_agree_on_failure` (84 calls each, including a fault inside a `try:` and a
+  different error type inside one — both of which must **not** be caught),
+  `an_uncaught_raise_names_the_value_it_carried`, and `unwinding_costs_nothing_per_frame` — the same
+  168 bytes of arena whether the raise was 25 frames down or 200.
+  - **The finding is about the protocol, not the feature** (§112.8): the handler cleared the trap
+    code with `store i32 0`, and the cell's first word is a code *and* a span while the worker's loop
+    reads it as one `i64` to decide whether the call answered. So a caught failure came back with a
+    stale span in the high half, looking like a trap with an empty arena. Two pieces of one program
+    disagreeing about what "cleared" means, which is
+    [`docs/107`](docs/107-a-map-arrives-read-only-report.md) §107.5's class of defect one level down.
+
+- **A view arrives, as a recipe** ([`docs/111`](docs/111-a-view-arrives-as-a-recipe-report.md)): a
+  definition that returns `Html` compiles to both code generators. What goes in the arena is the
+  **call** `html_el(tag, attrs, children)` would have been given rather than the tree, and the host
+  bakes it with `beck_core::html::element` — the evaluator's own `html_el`, lifted out and called
+  from both. **650 → 688 definitions** compile across the tree, refusals go 768 → 730, and **21 of
+  the 32 corpus programs have a `view` that compiles**, `examples/todo.beck`'s among them. Gated by
+  `native.rs::the_two_backends_agree_on_views` (253 calls),
+  `cranelift.rs::the_three_backends_agree_on_views` (127), the `ui:` block's own pair, and
+  `a_page_costs_its_own_nodes_and_nothing_per_page` — 96 bytes a row and 504 a page at 100 rows and
+  at 800, a shape gate with no clock in it. **Not faster**: 0.80×–1.33× the tree-walker at two
+  sizes, and §111.6 says why that is the design rather than a constant to tune.
 
 - **The last two list primitives, and one of them was refused for a reason that is false.**
   `concat_lists` and `sort_by` compile on both backends, so **every** higher-order list primitive

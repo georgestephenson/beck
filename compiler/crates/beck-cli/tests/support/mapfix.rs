@@ -135,6 +135,44 @@ def lookup_or(m: Map[Str, Int], k: Str) -> Int:
 def holds(m: Map[Str, Int], k: Str) -> Bool:
     return map_contains(m, k)
 
+# The three that grow one. `docs/114` is the tree that made them compilable, and what these are
+# chosen to catch is the *sharing*: an insert rebuilds the path and leaves every other subtree
+# alone, so a program that reads the map it inserted into is the one that would show a rotation
+# writing through a node somebody else holds.
+def put(m: Map[Str, Int], k: Str, n: Int) -> Map[Str, Int]:
+    return map_insert(m, k, n)
+
+def dropped(m: Map[Str, Int], k: Str) -> Map[Str, Int]:
+    return map_remove(m, k)
+
+def joined(a: Map[Str, Int], b: Map[Str, Int]) -> Map[Str, Int]:
+    return map_merge(a, b)
+
+# Two maps grown from one, and the original read afterwards — the map's `forked`.
+def branched(m: Map[Str, Int], k: Str, n: Int) -> Int:
+    a = map_insert(m, k, n)
+    b = map_insert(m, k, 0 - n)
+    return (map_len(m) * 100) + (lookup_or(a, k) * 10) + lookup_or(b, k)
+
+# The fold every `durable` state is: `n` inserts, which is what was quadratic before the tree.
+def grown(n: Int) -> Map[Str, Int]:
+    return count_from(0, n, {})
+
+def count_from(i: Int, n: Int, m: Map[Str, Int]) -> Map[Str, Int]:
+    if i >= n:
+        return m
+    return count_from(i + 1, n, map_insert(m, "k" + str(i), i * 3))
+
+# Inserting in *descending* key order, which is the case a tree that did not rebalance would
+# degenerate on — and the one a sorted run handled by accident.
+def down_from(i: Int, m: Map[Str, Int]) -> Map[Str, Int]:
+    if i <= 0:
+        return m
+    return down_from(i - 1, map_insert(m, "k" + str(i), i))
+
+def descending(n: Int) -> list[Str]:
+    return map_keys(down_from(n, {}))
+
 def names(m: Map[Str, Int]) -> list[Str]:
     return map_keys(m)
 

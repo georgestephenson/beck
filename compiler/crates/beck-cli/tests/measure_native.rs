@@ -940,3 +940,312 @@ fn the_two_code_generators_against_each_other() {
          for. Neither is asserted (docs/13 §13.7)."
     );
 }
+
+/// What a page costs against the tree-walker, and it is the row this feature has to be honest
+/// about.
+///
+/// A compiled `view` does not render anything: what it builds is the *call*, and the host bakes the
+/// tree out of it on the way back (`docs/111`). So the work is divided rather than removed — the
+/// program's own logic is compiled and every leaf's rendering is still `Value::display` in the
+/// host, plus a pipe in the middle that the evaluator does not have. The two sizes are what
+/// separate a constant from a growth (`AGENTS.md`), and nothing here is asserted to be **faster**:
+/// what is asserted is that the ratio does not *collapse* with size, which is what a recipe that
+/// copied the children built so far would do.
+#[test]
+fn what_a_page_costs_against_the_tree_walker() {
+    const SRC: &str = r#"
+model Row:
+    id: Str
+    text: Str
+    done: Bool
+
+union Command:
+    Toggle(id: Str)
+
+## The `ui:` block `examples/todo.beck` has, at whatever size it is given.
+def page(rows: list[Row]) -> Html:
+    return ui:
+        ul:
+            for r in rows:
+                li(key=r.id, class=done_class(r)):
+                    span(on_click=Toggle(id=r.id)): r.text
+
+def done_class(r: Row) -> Str:
+    return "done" if r.done else ""
+
+## The same page with nothing deferred but text, so the row above can be read against one where no
+## handler has to become JSON.
+def plain(rows: list[Row]) -> Html:
+    return ui:
+        ul:
+            for r in rows:
+                li: r.text
+"#;
+    let program = compile("page.beck", SRC);
+    let Some(artifact) = Artifact::build_within(&program, Duration::from_secs(300))
+        .expect("clang accepts the module")
+    else {
+        assert!(
+            !require_llvm(),
+            "BECK_REQUIRE_LLVM=1 and there is no `clang` on the path"
+        );
+        println!("skipped: no LLVM toolchain. Set BECK_REQUIRE_LLVM=1 to make this a failure.");
+        return;
+    };
+    let evaluator = beck_eval::backend_for(program.clone());
+    println!("{}\n", artifact.toolchain().version);
+    println!(
+        "{:<14} {:>10} {:>14} {:>14} {:>9}",
+        "page", "rows", "evaluator", "native", "ratio"
+    );
+
+    let rows = |n: usize| {
+        Value::List(Arc::new(
+            (0..n)
+                .map(|i| {
+                    Value::record(
+                        "Row",
+                        None,
+                        [
+                            ("id", Value::str_(format!("r{i}"))),
+                            ("text", Value::str_("something to do")),
+                            ("done", Value::Bool(i % 2 == 0)),
+                        ],
+                    )
+                })
+                .collect::<Vec<_>>(),
+        ))
+    };
+    let mut seen: Vec<(&str, f64, f64)> = Vec::new();
+    for name in ["page", "plain"] {
+        let mut ratios = [0.0f64; 2];
+        for (i, size) in [200usize, 1_600].iter().enumerate() {
+            let args = vec![rows(*size)];
+            let runs = if i == 0 { 7 } else { 3 };
+            let walked = beck_eval::on_the_evaluator_stack(|| {
+                let f = evaluator
+                    .function(&program.defs[name].body)
+                    .expect("prepares");
+                median(runs, || {
+                    f(args.clone()).expect("the evaluator answers");
+                })
+            });
+            let compiled = median(runs, || {
+                artifact
+                    .call(name, &args)
+                    .expect("the native backend answers");
+            });
+            ratios[i] = walked.as_secs_f64() / compiled.as_secs_f64();
+            println!(
+                "{:<14} {:>10} {:>14} {:>14} {:>8.2}×",
+                if i == 0 { name } else { "" },
+                size,
+                format!("{walked:?}"),
+                format!("{compiled:?}"),
+                ratios[i]
+            );
+        }
+        seen.push((name, ratios[0], ratios[1]));
+    }
+    println!(
+        "\n  Neither row is asserted to be faster. A compiled `view` builds the call and the host\n  \
+         bakes the tree, so the rendering is the same `Value::display` either way and the pipe is\n  \
+         additional — `docs/111` §111.6. What is asserted is that the ratio holds its shape over\n  \
+         eight times the rows, because a page that copied what it had built would lose it."
+    );
+    for (name, small, large) in &seen {
+        assert!(
+            large / small > 0.5,
+            "`{name}` was {small:.2}× at 200 rows and {large:.2}× at 1,600 — the ratio collapsed, \
+             which is what a page whose cost is quadratic in its rows looks like"
+        );
+    }
+}
+
+/// What a raise costs against the tree-walker, at two depths.
+///
+/// The evaluator unwinds by returning a Rust `Err` through its own frames; this returns through
+/// compiled frames, each of which loads four bytes and branches. The row that says whether the
+/// design is right is the **ratio's shape over depth**, not its value: a mechanism that cost
+/// something per frame — a trace, a copy, an allocation — would lose ground as the stack got
+/// deeper, and this is where that would show.
+#[test]
+fn what_a_raise_costs_against_the_tree_walker() {
+    const SRC: &str = r#"
+union Bad:
+    Blank
+
+## Raised at the bottom of `n` frames and caught at the top, with the recursion **not** in tail
+## position so that every frame on the way out checks the cell.
+def deeply(n: Int) -> Int uses raises(Bad):
+    if n <= 0:
+        raise Blank
+    return deeply(n - 1) + 1
+
+def caught(n: Int) -> Result[Int, Bad]:
+    return try:
+        deeply(n)
+
+## The same recursion that does not fail, so the row above can be read against the cost of the
+## frames themselves.
+def down(n: Int) -> Int:
+    if n <= 0:
+        return 0
+    return down(n - 1) + 1
+"#;
+    let program = compile("raise.beck", SRC);
+    let Some(artifact) = Artifact::build_within(&program, Duration::from_secs(300))
+        .expect("clang accepts the module")
+    else {
+        assert!(
+            !require_llvm(),
+            "BECK_REQUIRE_LLVM=1 and there is no `clang` on the path"
+        );
+        println!("skipped: no LLVM toolchain. Set BECK_REQUIRE_LLVM=1 to make this a failure.");
+        return;
+    };
+    let evaluator = beck_eval::backend_for(program.clone());
+    println!("{}\n", artifact.toolchain().version);
+    println!(
+        "{:<14} {:>10} {:>14} {:>14} {:>9}",
+        "benchmark", "frames", "evaluator", "native", "ratio"
+    );
+    let mut seen: Vec<(&str, f64, f64)> = Vec::new();
+    for name in ["caught", "down"] {
+        let mut ratios = [0.0f64; 2];
+        // 3,000 rather than 4,000: `adr/0007` gives the evaluator a declared nesting ceiling and
+        // this recursion is not in tail position, so the *evaluator* is what bounds the larger
+        // size — which is itself a difference worth knowing about and is why the sizes are six
+        // times apart rather than eight.
+        for (i, depth) in [500i64, 3_000].iter().enumerate() {
+            let args = vec![Value::Int(*depth)];
+            let runs = if i == 0 { 7 } else { 3 };
+            let walked = beck_eval::on_the_evaluator_stack(|| {
+                let f = evaluator
+                    .function(&program.defs[name].body)
+                    .expect("prepares");
+                median(runs, || {
+                    f(args.clone()).expect("the evaluator answers");
+                })
+            });
+            let compiled = median(runs, || {
+                artifact
+                    .call(name, &args)
+                    .expect("the native backend answers");
+            });
+            ratios[i] = walked.as_secs_f64() / compiled.as_secs_f64();
+            println!(
+                "{:<14} {:>10} {:>14} {:>14} {:>8.2}×",
+                if i == 0 { name } else { "" },
+                depth,
+                format!("{walked:?}"),
+                format!("{compiled:?}"),
+                ratios[i]
+            );
+        }
+        seen.push((name, ratios[0], ratios[1]));
+    }
+    for (name, small, large) in &seen {
+        assert!(
+            *small > 1.0 && *large > 1.0,
+            "`{name}` was {small:.2}× at the small depth and {large:.2}× at the large one"
+        );
+    }
+}
+
+/// What an appended accumulator costs against the tree-walker, at two sizes.
+///
+/// `docs/69` §69.7 measured this loop as **quadratic in time** on the evaluator before
+/// `docs/70` gave it last-use moves, and `docs/106` §106.5 refused to compile it rather than ship
+/// the quadratic back. `docs/113` is the layout that removed the choice, and this is the row that
+/// says so: the ratio has to **hold its shape** over four times the elements, because a copying
+/// append would lose a factor of four between the two rows.
+///
+/// The second pair is the control from the other direction — the same loop reading rather than
+/// growing — so a reader can tell a linear append from a fast one.
+#[test]
+fn what_an_appended_accumulator_costs_against_the_tree_walker() {
+    const SRC: &str = r#"
+## The idiom: a tail-recursive accumulator, appended to once per element.
+def doubled(xs: list[Int]) -> list[Int]:
+    return push_from(xs, 0, [])
+
+def push_from(xs: list[Int], i: Int, acc: list[Int]) -> list[Int]:
+    if i >= list_len(xs):
+        return acc
+    match list_get(xs, i):
+        case Some(value):
+            return push_from(xs, i + 1, list_append(acc, value * 2))
+        case None():
+            return acc
+
+## The same walk with nothing built, so the append is what the difference is.
+def summed(xs: list[Int]) -> Int:
+    return add_from(xs, 0, 0)
+
+def add_from(xs: list[Int], i: Int, acc: Int) -> Int:
+    if i >= list_len(xs):
+        return acc
+    match list_get(xs, i):
+        case Some(value):
+            return add_from(xs, i + 1, acc + value)
+        case None():
+            return acc
+"#;
+    let program = compile("append.beck", SRC);
+    let Some(artifact) = Artifact::build_within(&program, Duration::from_secs(300))
+        .expect("clang accepts the module")
+    else {
+        assert!(
+            !require_llvm(),
+            "BECK_REQUIRE_LLVM=1 and there is no `clang` on the path"
+        );
+        println!("skipped: no LLVM toolchain. Set BECK_REQUIRE_LLVM=1 to make this a failure.");
+        return;
+    };
+    let evaluator = beck_eval::backend_for(program.clone());
+    println!("{}\n", artifact.toolchain().version);
+    println!(
+        "{:<14} {:>10} {:>14} {:>14} {:>9}",
+        "benchmark", "elements", "evaluator", "native", "ratio"
+    );
+    let long = |n: usize| Value::List(Arc::new((0..n as i64).map(Value::Int).collect::<Vec<_>>()));
+    let mut seen: Vec<(&str, f64, f64)> = Vec::new();
+    for name in ["doubled", "summed"] {
+        let mut ratios = [0.0f64; 2];
+        for (i, size) in [2_000usize, 8_000].iter().enumerate() {
+            let args = vec![long(*size)];
+            let runs = if i == 0 { 7 } else { 3 };
+            let walked = beck_eval::on_the_evaluator_stack(|| {
+                let f = evaluator
+                    .function(&program.defs[name].body)
+                    .expect("prepares");
+                median(runs, || {
+                    f(args.clone()).expect("the evaluator answers");
+                })
+            });
+            let compiled = median(runs, || {
+                artifact
+                    .call(name, &args)
+                    .expect("the native backend answers");
+            });
+            ratios[i] = walked.as_secs_f64() / compiled.as_secs_f64();
+            println!(
+                "{:<14} {:>10} {:>14} {:>14} {:>8.2}×",
+                if i == 0 { name } else { "" },
+                size,
+                format!("{walked:?}"),
+                format!("{compiled:?}"),
+                ratios[i]
+            );
+        }
+        seen.push((name, ratios[0], ratios[1]));
+    }
+    for (name, small, large) in &seen {
+        assert!(
+            large / small > 0.5,
+            "`{name}` was {small:.2}× at 2,000 elements and {large:.2}× at 8,000 — the ratio \
+             collapsed, which is what an append that copies looks like"
+        );
+    }
+}
