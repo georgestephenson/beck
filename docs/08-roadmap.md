@@ -392,11 +392,29 @@ the one that has a predecessor is never the one that says so.
 
 ### 8.5.4 What is left, by class
 
-Everything Phase 3 listed has been taken. What remains is a short list, and none of it is **R** or
-**G**:
+Everything Phase 3 listed has been taken. What remains follows — ordered, because this section is
+the one place in `docs/` that holds an order. The list stopped being all-**S** when
+[`12`](12-standards-and-conformance.md) was audited against the tree: the audit surfaced one **F**
+item larger than anything else here, one **G**, and a ledger of small artefacts behind chartered
+rows.
 
+- **The macro interpreter** (F, and **first**): macro bodies running Beck at compile time in the
+  capability-restricted environment [`02`](02-syntax.md) §2.4 designs. Today a macro body is
+  `let`s and a final `return quote:` — anything more raises `B0205` — and code-as-data stops at
+  templates: a `quote` that survives expansion is `B0332`, and no program can construct or
+  evaluate a `Node`. That is the unbacked half of the premise —
+  [`12`](12-standards-and-conformance.md) §12.10 records it against D9 — and the largest fan-out
+  left anywhere in the plan: it unblocks `derive` and `.as_model()`, typed macros,
+  `inject`/`unsafe_macro`, §2.5's typed literal macros (`sql"…"`, `html"…"`, `regex"…"` — the DSL
+  escape hatch, and the mechanism the security suite already points at for SQL and HTML), and it
+  retires the compiler-provided `ui:` special case standing in for it (D22). Its G-class
+  companion lands **with** it, not after: the macro sandbox's refused-program tests, because
+  compile-time evaluation is what turns the sandbox from a property satisfied by construction
+  into a claim needing a gate ([`12`](12-standards-and-conformance.md) §12.7). Files:
+  `beck-macro` plus an evaluator reachable at compile time — serial with Lane A's hands.
 - **Mode B's codegen** (S, and the item with a user in front of it): a wasm emitter plus what
-  [`94`](94-the-client-report.md) §94.8 names.
+  [`94`](94-the-client-report.md) §94.8 names. The WebAssembly spec-suite obligation
+  [`12`](12-standards-and-conformance.md) §12.3 pins to core 3.0 lands here.
 - **The three named backend items** (S): the signal vocabulary compiled rather than read by the
   splitter, a **bounded** definition — a dictionary is a function value — and a worker that can
   answer two calls at once. [`93`](93-the-native-backends-report.md) §93.15 is the list, and the
@@ -416,9 +434,30 @@ Everything Phase 3 listed has been taken. What remains is a short list, and none
 - **Grammar-aware fuzzing and Kani proofs of the solver's invariants** (S, due rather than
   pending): [`42`](42-security-assurance.md) §42.9 pinned the first with the trigger "the bound
   lands", and the bound has landed. The second still wants a solver that has stopped moving.
+- **The standards ledger** (S — small artefacts, each a day rather than a phase, from
+  [`12`](12-standards-and-conformance.md)'s audit; each closes a chartered row, and the row names
+  it back). Free now: a JSONTestSuite-class vector run for the JSON library; an Autobahn-class
+  vector run for the WebSocket channel; a test that a TLS-1.2-only peer is refused; **the
+  vulnerability matrix** — ISO/IEC 24772-1's catalogue and the CWE claims in one artefact, each
+  entry naming the negative test that backs it, with a gate that every named test exists
+  ([`35`](35-standards-landscape.md) §35.2); the first three `ui:` accessibility checks (alt
+  text, accessible name, input label — [`12`](12-standards-and-conformance.md) §12.4); a
+  Prometheus exposition endpoint beside the JSON dashboard; a Scorecard workflow and REUSE
+  per-file metadata; the CLI exit-status table; a semantic-conventions check over the attributes
+  telemetry actually emits. Blocked, and recorded as blocked rather than listed as free:
+  OpenAPI 3.1 + JSON Schema 2020-12 + RFC 9457 (on the `@public(rest)` emitter, Phase 4); the OCI
+  distribution conformance suite (on a registry push — the managed-cloud path's item 2); the
+  OpenID Foundation suite (pre-1.0 trigger); the two-independent-runner reproducible release
+  build and SBOM signing (on the first tag); the SIGTERM-begins-drain contract (on the
+  choreography defining what drain is).
+- **TLA+ specifications, model-checked in CI** (G): the deploy choreography and the
+  subscription-resume protocol, written and checked **immediately before the operator is built**,
+  never after — [`12`](12-standards-and-conformance.md) §12.9 stated this as present for as long
+  as the document existed, and no `.tla` file has ever existed. G-class means it now sits directly
+  in front of the Phase 4 operator work.
 
 Behind those, the Phase 4 gates arranged before Phase 4 rather than during it: **DST proper** on the
-seams §8.5.2 names, then the operator, the replay tooling and the choreography.
+seams §8.5.2 names, then the TLA+ gate above, the operator, the replay tooling and the choreography.
 
 ### 8.5.5 Parallel workstreams
 
@@ -429,9 +468,9 @@ directories.
 
 | Lane | Owns | What is left in it | Collides with |
 |---|---|---|---|
-| **A — type system** | `beck-core/src/check/`, `ty.rs`, `core.rs`, `prelude.rs`, `iface.rs` | `Ord` as a trait, which [`54`](54-ordering.md) does not recommend — so realistically nothing | **Itself, completely** — see below |
+| **A — type system** | `beck-core/src/check/`, `ty.rs`, `core.rs`, `prelude.rs`, `iface.rs` | **The macro interpreter** (§8.5.4's first item — it lives in `beck-macro` and an evaluator, but it changes what reaches the checker, so it occupies this lane's hands); `Ord` as a trait, which [`54`](54-ordering.md) does not recommend | **Itself, completely** — see below |
 | **B — runtime and views** | `beck-rt/`, `beck-core/src/{engine,plan,incremental,pmap,signal}.rs` | The render lock, unowned | Nothing in A, C, E or F |
-| **C — front end and tooling** | `beck-syntax/`, `beck-cli/`, `beck-diag/` | **Empty.** What a new item looks like: comment-preserving printing, which `textDocument/formatting` waits on, and code actions ([`65`](65-the-editor-report.md) §65.8) | A, if a syntax decision changes what the checker sees |
+| **C — front end and tooling** | `beck-syntax/`, `beck-cli/`, `beck-diag/` | Comment-preserving printing — `textDocument/formatting` waits on it, and `beck fmt` deleting `#` comments is why it is due rather than nice; code actions ([`65`](65-the-editor-report.md) §65.8); the standards ledger's front-end vectors (§8.5.4) | A, if a syntax decision changes what the checker sees |
 | **D — process and supply chain** | `docs/`, `.github/`, `deny.toml`, `SECURITY.md`, `release/`, `install.sh` | Trusted publishing; a registry to push to; a subject `beck sign` can take over a release *listing* ([`adr/0028`](adr/0028-a-release-carries-provenance-and-still-no-signature.md)) | Nothing in code — **except that a release lands in `Cargo.toml`, a `build.rs` and `--version`** |
 | **E — backends** | `beck-eval/`, `beck-llvm/`, `beck-clif/`, `beck-core/src/backend.rs`, any new codegen crate | Mode B's codegen; the three items of [`93`](93-the-native-backends-report.md) §93.15; cancelling a child blocked in the host | Nothing — the seam is why ([`19`](19-phase-1-report.md) §19.9), and sixteen consecutive Lane E changes have held that prediction, several without touching one line of `beck-rt` |
 | **F — infrastructure** | `beck-infra/` | Effect-derived NetworkPolicy/RBAC/grants; Crossplane emitter; conformance rungs | Nothing |

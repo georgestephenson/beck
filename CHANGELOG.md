@@ -12,6 +12,35 @@ Newest first.
 
 ## Unreleased
 
+### The standards charter states its evidence
+
+- **`docs/12` was audited against the tree and corrected in place.** Every row now carries
+  **verified** (the gate is named), **partial** (the unbacked half is named), or **chartered**
+  (nothing built, with a position in `docs/08` §8.5 or a named blocker) — the document stated
+  targets in present tense, which is the failure its own §12.1 exists to prevent. Corrected to
+  what the code does: Unicode pinned at 17.0 with UTS #39 ASCII-Only (`beck_syntax::security`,
+  `identifiers.rs`), not "15+"/NFC/UAX #29/#31; `beck sbom` emits CycloneDX 1.6, not 1.7/SPDX;
+  one pinned Postgres major, not "majors"; a same-runner image rebuild-and-diff, not two runners;
+  no `beck check --api`, no bundled IdP (the WebAuthn and NIST 800-63B claims are withdrawn), no
+  TLA+ file, no OpenAPI/gRPC/CloudEvents/Arrow code, no compile-time accessibility check.
+  Built artefacts that had no row are cited: the `deny.toml` licence gate (`adr/0004`), toolchain
+  pinning, the workflow cross-check (`adr/0005`), `pending_security.rs`, `clock.rs`. The
+  WebAssembly row is pinned to core 3.0 per `docs/35` §35.3, and `docs/35`'s two cells that
+  misstated the charter are corrected. Gates: `docs.yml`'s link and numbering jobs; the rows now
+  name the tests that hold them.
+- **The macro interpreter is first in the plan** (`docs/08` §8.5.4, class F): macro bodies are
+  templates only (`B0205`) and a `quote` past expansion is `B0332`, so code-as-data stops at the
+  type checker — `docs/12` §12.10 now records that as the unbacked half of D9's "Lisp power"
+  claim. Building it unblocks `derive`, typed macros and `docs/02` §2.5's typed literal macros,
+  retires the compiler-provided `ui:` stand-in, and carries its own G-class companion: the macro
+  sandbox's refused-program tests, which are vacuous until macros can compute. `docs/02` §2.4–2.5
+  now say which half is built instead of reading as description, and `docs/08` §8.5.4 gains the
+  standards ledger — the small artefacts the audit chartered — and the TLA+ gate placed in front
+  of the operator.
+- **D27** (`docs/10`) records real identity as chosen rather than archaeological: one NaN,
+  no `-0.0`, a canonicalised total order; arithmetic stays IEEE 754-2019 clause 5. `docs/35`
+  §35.5 asked for the D-number; the code and gates already held the behaviour.
+
 ### The deployment plan
 
 - **The managed-cloud path is a landing order rather than a paragraph**

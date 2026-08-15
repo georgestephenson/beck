@@ -851,6 +851,25 @@ SQL client has no session and inventing one would answer a question nobody asked
 [`23`](23-incremental-views-report.md) is the build report and
 [`adr/0020`](adr/0020-the-read-model-speaks-pgwire-by-hand.md) the engineering record of the wire.
 
+## D27 — Real identity is canonical: one NaN, no `-0.0`, a total order — **DECIDED** (built; recorded from [`27`](27-the-walls-come-down-report.md) §27.8 per [`35`](35-standards-landscape.md) §35.5)
+
+Arithmetic on reals is IEEE 754-2019 binary64, clause 5 — what the hardware does, held
+digit-for-digit against SICP's printed answers. **Identity and ordering deviate from §5.11,
+deliberately**: on the way into a `Value`, `-0.0` is canonicalised to `0.0` and every NaN to one
+NaN, and comparison uses the monotone transform in the shape of §5.10's `totalOrder`. So Beck's
+`==` on reals is structural — `NaN == NaN` is true — and every real is ordered.
+
+Why deviate: a `Value` is a `Map` key, an arrangement's collation, a state digest and a patch
+stream a replay must reproduce bit-for-bit. An element unequal to itself, or two zeros that compare
+equal but hash apart, breaks each of those in turn. The deviation is the price of determinism, and
+this record is what makes it read as chosen rather than archaeological — [`35`](35-standards-landscape.md)
+§35.1 found it stated only in a report, and reports are history. A porter must know it; the Phase 5
+spec states it as current state (arithmetic per clause 5, identity and order per the canonicalised
+total order), citing ISO/IEC 60559:2020 alongside IEEE 754-2019 when it cites either.
+
+Where it is held: canonicalisation at `Value` construction in `beck-core`, the printed-digit
+equalities in `beck-cli/tests/sicp.rs`, and the backends' agreement in `beck-cli/tests/native.rs`.
+
 ## Still open (minor, non-blocking)
 
 - Security-headline vs productivity-headline positioning ([`09`](09-risks-and-open-questions.md)

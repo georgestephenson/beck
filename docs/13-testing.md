@@ -82,7 +82,9 @@ This is where most frameworks under-test and where Beck's determinism pays out h
   concurrency: deploy choreography (quiesce→drain→snapshot→migrate→resume; safety: never two
   writers; liveness: always completes or rolls back), subscription resume, and optimism
   reconciliation. Why: these are small, subtle, and catastrophic to get wrong — exactly TLA+'s
-  sweet spot, and cheap at this size.
+  sweet spot, and cheap at this size. **No `.tla` file exists yet**: this is a G-class gate placed
+  immediately in front of the Phase 4 operator work ([`08`](08-roadmap.md) §8.5.4), written before
+  the choreography it models, never after.
 - **Small-step semantics in the spec** for the core calculus, with the reference interpreter
   written *from* it — making the interpreter-vs-backend differential (§13.1) a spec-conformance
   test, the WASM-spec-suite trick.
@@ -95,7 +97,8 @@ This is where most frameworks under-test and where Beck's determinism pays out h
   browsers against `beck up` clusters — including reconnect-after-deploy and offline/reconnect
   (Mode B) scripts.
 - **Accessibility**: axe-core against every example app page state, *plus* the compile-time WCAG
-  checks' own negative test corpus ([`12`](12-standards-and-conformance.md) §12.4).
+  checks' own negative test corpus — all chartered, nothing built:
+  [`12`](12-standards-and-conformance.md) §12.4 holds the honest status and the positions.
 - **Visual regression**: patch-protocol changes can subtly break rendering; screenshot-diff the
   example apps per release.
 - **Upgrade tests**: real `beck deploy` from release N-1 to N with live traffic and open

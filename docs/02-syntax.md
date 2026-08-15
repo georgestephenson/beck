@@ -48,8 +48,12 @@ model Node:
 
 Everything else is derived. Consequences:
 
-- `beck fmt --sexpr orders.beck` emits the canonical Lisp form. `beck fmt --py orders.sx` emits the
-  Python form. Round-trip is lossless **modulo formatting** (comments and spans ride in `meta`).
+- `beck fmt --surface sexpr orders.beck` emits the canonical Lisp form; `beck fmt --surface python
+  orders.sx` emits the Python form; `beck ast` dumps the tree itself. Round-trip is lossless
+  **modulo formatting** for the program and its `##` doc comments, which ride in `meta` — but
+  ordinary `#` comments do not survive: the lexer discards them, so `beck fmt` deletes them, which
+  is why the LSP deliberately does not offer `textDocument/formatting`. Comment-preserving
+  printing is the named front-end item in [`08`](08-roadmap.md) §8.5.5's Lane C.
 - The reference manual can present semantics in S-expressions — where they are unambiguous and where
   your idea reads best — while the tutorial presents Python. Same language, no dialect split.
 - Macros always manipulate `Node`, never text. So indentation-sensitivity is a *printing* concern,
@@ -168,6 +172,19 @@ Design decisions:
 - **Expansion is incremental and cached.** Keyed by the macro's own content hash plus input `Node`
   hash, memoised in Salsa (§4.6). Macro-heavy code must not destroy IDE latency.
 
+**Status, said plainly — this section is half description and half design, and the halves are
+these.** Built: template macros — a body of `let`s and a final `return quote:` with `$x` unquotes
+and `$*xs` splices, expanded to a fixpoint — with hygiene by sets of scopes from the first commit,
+three independent resource bounds (`B0201` expansion depth, `B0213` nesting, `B0214` production
+budget), and real users: `compiler/sicp/felleisen.beck` defines `delay`, `cons_stream` and the
+derived booleans exactly this way. Not built: **everything above that computes** — the compile-time
+interpreter, `derive` and `.as_model()`, typed macros, `inject`/`unsafe_macro`, Salsa-memoised
+expansion, nested quoting's `(quote depth node)`. A body that tries raises `B0205`, which says so;
+the `ui:` block is a compiler-provided macro standing in for exactly this gap (D22); and a `quote`
+that survives expansion is `B0332` — code-as-data currently stops at templates. The interpreter is
+the **first item** in [`08`](08-roadmap.md) §8.5.4, and [`12`](12-standards-and-conformance.md)
+§12.10 records what building it cashes.
+
 ## 2.5 Typed literal macros (the DSL escape hatch)
 
 Lisp reader macros let you change tokenisation arbitrarily. We deliberately do **not** allow that
@@ -185,6 +202,11 @@ Each is a compile-time macro that parses its own body, reports errors *at the ri
 inside the literal*, and returns typed `Node`s. `sql"..."` returns a `Query[Order]` whose columns are
 checked against the `store` declarations, so a typo is a compile error and interpolation is
 parameter-bound (injection is unrepresentable, as in Ur/Web).
+
+**Status: none of these exist** — not in the lexer, not in the expander. A typed literal macro is
+a compile-time macro that parses its own body, so the whole section arrives with §2.4's
+interpreter ([`08`](08-roadmap.md) §8.5.4's first item); the `sql`/`html` rows are the mechanism
+the security suite already points at for injection and XSS.
 
 ## 2.6 Other surface decisions, and their reasons
 
@@ -236,7 +258,8 @@ convenience. There is no expressible Lisp program shape that becomes inexpressib
 - **A separate [`tree-sitter`](https://tree-sitter.github.io/) grammar** for editors — deliberately
   duplicated, since editor grammars want error tolerance and speed rather than exactness. Keep them
   honest with a shared corpus test (`tests/corpus/*.beck` parsed by both, ASTs compared modulo
-  fidelity).
+  fidelity). **Not built**: `beck lsp`'s semantic tokens serve editors today, and the grammar
+  remains wanted for the editors LSP does not reach.
 - **The S-expression reader is ~300 lines** and should exist from week one: it lets you write compiler
   tests against canonical ASTs without depending on the Python surface being finished, and it is how
   you'll dump intermediate state for the rest of the project's life.
