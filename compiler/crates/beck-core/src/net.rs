@@ -56,7 +56,9 @@ pub struct Reply {
 
 /// Why no reply came back.
 ///
-/// Three cases, because three are distinguishable by an implementation. A fourth that said
+/// Three of these are the peer's doing and one is the caller's, which is the distinction worth
+/// keeping: a program that asked and did not get an answer has a failure to handle, and a program
+/// whose *scope* stopped wanting the answer has nothing to handle at all. A fifth that said
 /// "something went wrong" would be a `Str` with extra steps.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Failure {
@@ -66,11 +68,84 @@ pub enum Failure {
     TimedOut(i64),
     /// Bytes arrived and were not an HTTP response.
     BadResponse(String),
+    /// The caller stopped wanting the reply — [`Stop::asked`] became true while the exchange was
+    /// in flight.
+    ///
+    /// Not a failure of the request, and a caller that installed a [`Stop`] is expected to notice
+    /// this before it renders anything: `beck-eval` turns it back into the cancellation it came
+    /// from. `crate::host::failure_value` renders it as `HttpUnreachable` if one ever reaches a
+    /// program, because `HttpError` is a *published* union and a fourth variant would be a wire
+    /// change made for a case no program can observe.
+    Stopped,
+}
+
+/// Whether the caller still wants the reply.
+///
+/// [`docs/80`](../../../../../docs/80-structured-concurrency-report.md) §80.12 named the gap this
+/// closes: cancellation rides the evaluator's step counter, so a `parallel:` child blocked *inside*
+/// an outbound call was stopped only when the call came back — a scope whose first child failed
+/// still waited out a sibling's ten-second timeout. §80.12 also says where the fix belongs: "a
+/// **deadline on the [`net`](crate::net) seam** rather than a change to the scope", because the
+/// scope is already right about *when* to stop a child and the thing it cannot reach is a socket.
+///
+/// A predicate rather than a token or a channel, for the reason the rest of this seam is what it
+/// is: the caller already knows the answer — `beck-eval` has the chain of enclosing scopes and
+/// their first-failed indices — and anything richer would be a second copy of that state, kept in
+/// step by hand.
+#[derive(Clone)]
+pub struct Stop(Option<Arc<dyn Fn() -> bool + Send + Sync>>);
+
+impl Stop {
+    /// Nobody is going to stop this call, so an implementation need not watch for it.
+    ///
+    /// [`Stop::watched`] is false for this one, which is what lets a client take the path with no
+    /// timer in it — the ordinary case, since only a child of a `parallel:` can be cancelled.
+    pub fn never() -> Stop {
+        Stop(None)
+    }
+
+    pub fn when(f: impl Fn() -> bool + Send + Sync + 'static) -> Stop {
+        Stop(Some(Arc::new(f)))
+    }
+
+    /// Whether the caller has stopped wanting the reply. Called repeatedly, so it is cheap.
+    pub fn asked(&self) -> bool {
+        self.0.as_ref().is_some_and(|f| f())
+    }
+
+    /// Whether anybody could ever ask.
+    pub fn watched(&self) -> bool {
+        self.0.is_some()
+    }
+}
+
+impl fmt::Debug for Stop {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(if self.watched() {
+            "Stop(watched)"
+        } else {
+            "Stop(never)"
+        })
+    }
+}
+
+impl Default for Stop {
+    fn default() -> Stop {
+        Stop::never()
+    }
 }
 
 /// Somewhere for an outbound request to go.
 pub trait Outbound: Send + Sync + fmt::Debug {
-    fn fetch(&self, request: &Request) -> Result<Reply, Failure>;
+    /// Make the exchange, watching `stop` while it is in flight.
+    ///
+    /// `stop` is a parameter rather than a default-implemented second method on purpose: an
+    /// implementation that ignores it is one a `parallel:` cannot cancel, and a seam whose
+    /// implementations can opt out of a property by not mentioning it is
+    /// [`docs/82`](../../../../../docs/82-the-edge-report.md) §82.10's gate that cannot fail. Every
+    /// implementation has to say what it does about this, even if what it does is nothing because
+    /// it never blocks.
+    fn fetch(&self, request: &Request, stop: &Stop) -> Result<Reply, Failure>;
 }
 
 /// The default: every request fails, and says why in a sentence a program can print.
@@ -82,7 +157,8 @@ pub trait Outbound: Send + Sync + fmt::Debug {
 pub struct Refusing;
 
 impl Outbound for Refusing {
-    fn fetch(&self, request: &Request) -> Result<Reply, Failure> {
+    /// Nothing to watch: this answers before it returns.
+    fn fetch(&self, request: &Request, _stop: &Stop) -> Result<Reply, Failure> {
         Err(Failure::Unreachable(format!(
             "no outbound HTTP client is installed in this process, so `{}` was not called",
             request.host
@@ -125,7 +201,8 @@ impl Canned {
 }
 
 impl Outbound for Canned {
-    fn fetch(&self, request: &Request) -> Result<Reply, Failure> {
+    /// Nothing to watch: a canned reply is already in hand.
+    fn fetch(&self, request: &Request, _stop: &Stop) -> Result<Reply, Failure> {
         self.sent
             .lock()
             .expect("not poisoned")
@@ -191,7 +268,7 @@ mod tests {
             headers: Vec::new(),
             body: Arc::from(""),
         };
-        match Refusing.fetch(&r) {
+        match Refusing.fetch(&r, &Stop::never()) {
             Err(Failure::Unreachable(why)) => assert!(why.contains("api.example.com"), "{why}"),
             other => panic!("expected a refusal, got {other:?}"),
         }
@@ -216,9 +293,18 @@ mod tests {
             headers: Vec::new(),
             body: Arc::from(""),
         };
-        assert_eq!(c.fetch(&req("/a")).map(|r| r.status), Ok(204));
-        assert_eq!(c.fetch(&req("/b")), Err(Failure::TimedOut(1_000)));
-        assert!(matches!(c.fetch(&req("/c")), Err(Failure::Unreachable(_))));
+        assert_eq!(
+            c.fetch(&req("/a"), &Stop::never()).map(|r| r.status),
+            Ok(204)
+        );
+        assert_eq!(
+            c.fetch(&req("/b"), &Stop::never()),
+            Err(Failure::TimedOut(1_000))
+        );
+        assert!(matches!(
+            c.fetch(&req("/c"), &Stop::never()),
+            Err(Failure::Unreachable(_))
+        ));
         let sent: Vec<Arc<str>> = c.sent().into_iter().map(|r| r.path).collect();
         assert_eq!(
             sent,

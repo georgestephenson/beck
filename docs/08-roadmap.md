@@ -71,7 +71,7 @@ about a person rather than a count of bullets — see the end of this section.
 | **Mode B client**: per-component WASM, optimistic application, freshness-typed pending state, size budget | **Built except codegen** ([`94`](94-the-client-report.md)). The mode, the bundle, the data patch, reconciliation by `seq`, a browser that runs it, an offline queue, `freshness()` and the 150 KB brotli gate. Codegen waits on a wasm emitter |
 | **Client polish**: router, forms, focus/scroll preservation, devtools | **Built except lazy routes** ([`94`](94-the-client-report.md)). A route is a field of `Session`, so there is no route table and every route is a real URL. Lazy routes wait on §5.1's per-component boundary |
 | **`test` blocks and inferred mocks** | **Built** ([`22`](22-phase-3-report.md)), with page snapshots and `beck test --update` ([`22`](22-phase-3-report.md)) |
-| **Structured concurrency, `Result`/error rows, pattern matching** | **Built** ([`27`](27-the-walls-come-down-report.md), [`80`](80-structured-concurrency-report.md), [`90`](90-pattern-matching-report.md), [`90`](90-pattern-matching-report.md)). `parallel:` runs its children on a thread each and stops them when one fails. What is left is stopping a child **blocked in the host**, which is a deadline on the [`net`](../compiler/crates/beck-core/src/net.rs) seam |
+| **Structured concurrency, `Result`/error rows, pattern matching** | **Built** ([`27`](27-the-walls-come-down-report.md), [`80`](80-structured-concurrency-report.md), [`90`](90-pattern-matching-report.md), [`90`](90-pattern-matching-report.md)). `parallel:` runs its children on a thread each and stops them when one fails — including a child **blocked in the host**, which is a `Stop` predicate on the [`net`](../compiler/crates/beck-core/src/net.rs) seam rather than a change to the scope ([`80`](80-structured-concurrency-report.md) §80.14). What is left is the compiled half: a worker holds its pipe for a whole call ([`93`](93-the-native-backends-report.md) §93.15) |
 | **SQLite as a durable substrate** | **Built** ([`67`](67-sqlite-report.md)). At equal durability SQLite and redb are within noise, so rung 0's default is unchanged — the reason §7.8.1 gave (the transaction, not the speed) survives the measurement and is the only reason |
 | **Standard library v1** | **Built** ([`46`](46-standard-library-report.md)): strings, collections, JSON, time, HTTP, digests, encodings, identifiers, bignums, coercion and arbitrary-precision decimal, importable from anywhere. §46.16 has what a library still lacks |
 | **The language's own means of abstraction** | **Done** ([`27`](27-the-walls-come-down-report.md)). Every wall this project has *found* is down and `sicp/refusals/` is empty — which is not the claim that Beck expresses SICP; `sicp/refusals/README.md` is where the difference is written down |
@@ -450,9 +450,13 @@ rows.
   answer two calls at once. [`93`](93-the-native-backends-report.md) §93.15 is the list, and the
   largest refusal class behind it is a **function value at a boundary**, which is moved by compiling
   definitions called only by *other compiled definitions*.
-- **Cancelling a child blocked in the host** (S): a deadline on the
-  [`net`](../compiler/crates/beck-core/src/net.rs) seam rather than a change to the scope
-  ([`80`](80-structured-concurrency-report.md)).
+- **A worker that can answer two calls at once** (S, and it is what is left of cancelling a child
+  blocked in the host): the tree-walker stops a child inside an outbound call now
+  ([`80`](80-structured-concurrency-report.md) §80.14), and `beck-llvm` passes `Stop::never()`
+  because a worker holds its pipe for a whole call — so two children that both reach compiled code
+  serialise before cancellation is even the question. Named already in
+  [`93`](93-the-native-backends-report.md) §93.15's list above; recorded here because it is now
+  the only thing between `parallel:` and the native backends.
 - **The render lock** (S): the third of the shared dataflow's loose ends, deliberately left, and
   [`23`](23-incremental-views-report.md) §23.19 records that closing the other two made it *harder*
   rather than unchanged.
@@ -518,7 +522,7 @@ directories.
 | **B — runtime and views** | `beck-rt/`, `beck-core/src/{engine,plan,incremental,pmap,signal}.rs` | The render lock, unowned | Nothing in A, C, E or F |
 | **C — front end and tooling** | `beck-syntax/`, `beck-cli/`, `beck-diag/` | Comment-preserving printing — `textDocument/formatting` waits on it, and `beck fmt` deleting `#` comments is why it is due rather than nice; code actions ([`65`](65-the-editor-report.md) §65.8); the standards ledger's front-end vectors (§8.5.4) | A, if a syntax decision changes what the checker sees |
 | **D — process and supply chain** | `docs/`, `.github/`, `deny.toml`, `SECURITY.md`, `release/`, `install.sh` | Trusted publishing; a registry to push to; a subject `beck sign` can take over a release *listing* ([`adr/0028`](adr/0028-a-release-carries-provenance-and-still-no-signature.md)) | Nothing in code — **except that a release lands in `Cargo.toml`, a `build.rs` and `--version`** |
-| **E — backends** | `beck-eval/`, `beck-llvm/`, `beck-clif/`, `beck-core/src/backend.rs`, any new codegen crate | Mode B's codegen; the three items of [`93`](93-the-native-backends-report.md) §93.15; cancelling a child blocked in the host | Nothing — the seam is why ([`19`](19-phase-1-report.md) §19.9), and sixteen consecutive Lane E changes have held that prediction, several without touching one line of `beck-rt` |
+| **E — backends** | `beck-eval/`, `beck-llvm/`, `beck-clif/`, `beck-core/src/backend.rs`, any new codegen crate | Mode B's codegen; the three items of [`93`](93-the-native-backends-report.md) §93.15, of which the two-calls-at-once worker is now what blocks cancelling a compiled child | Nothing — the seam is why ([`19`](19-phase-1-report.md) §19.9), and sixteen consecutive Lane E changes have held that prediction, several without touching one line of `beck-rt` |
 | **F — infrastructure** | `beck-infra/` | Effect-derived NetworkPolicy/RBAC/grants; Crossplane emitter; conformance rungs | Nothing |
 
 **Lane A is strictly serial, and that is the real staffing constraint.** It is tempting to run two

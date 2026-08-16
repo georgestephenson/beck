@@ -581,6 +581,7 @@ impl beck_core::host::Atoms for Rendezvous {
     fn fetch(
         &self,
         request: &beck_core::net::Request,
+        _stop: &beck_core::net::Stop,
     ) -> Result<beck_core::net::Reply, beck_core::net::Failure> {
         let mut arrived = self.arrived.lock().expect("not poisoned");
         *arrived += 1;
@@ -715,6 +716,7 @@ impl beck_core::host::Atoms for Counting {
     fn fetch(
         &self,
         request: &beck_core::net::Request,
+        _stop: &beck_core::net::Stop,
     ) -> Result<beck_core::net::Reply, beck_core::net::Failure> {
         let which = if &*request.host == "a.example.com" {
             &self.failing
@@ -802,4 +804,180 @@ fn a_failing_child_stops_its_siblings() {
         "the sibling reached its peer {reached} times out of 400, so it was not stopped"
     );
     println!("the stopped sibling reached its peer {reached} times out of the 400 it would have");
+}
+
+// ---------------------------------------------------------------------------------------------
+// A child blocked in the host
+// ---------------------------------------------------------------------------------------------
+
+/// A peer that never answers, and says how it stopped waiting.
+///
+/// The gap `docs/80` §80.12 named is a sibling blocked **inside** one call rather than between
+/// calls: the test above cancels a loop of four hundred fetches, and a loop spends fuel between
+/// them, so the step counter is enough. One call that never comes back takes no steps at all.
+///
+/// This host distinguishes the two ways it can stop waiting, because that distinction is the whole
+/// test: `Stopped` means the scope reached it, and reaching the backstop means nothing did. The
+/// backstop is not a threshold anybody is measuring against — it is the difference between a red
+/// test and a hung suite, which is the same reason `Rendezvous` above has one
+/// ([`docs/13`](../../../../docs/13-testing.md) §13.7: nothing here gates on a clock).
+#[derive(Debug, Default)]
+struct NeverAnswers {
+    entered: std::sync::atomic::AtomicUsize,
+    stopped: std::sync::atomic::AtomicUsize,
+    gave_up: std::sync::atomic::AtomicUsize,
+}
+
+impl beck_core::host::Atoms for NeverAnswers {
+    fn fetch(
+        &self,
+        request: &beck_core::net::Request,
+        stop: &beck_core::net::Stop,
+    ) -> Result<beck_core::net::Reply, beck_core::net::Failure> {
+        if &*request.host == "a.example.com" {
+            // The failing child's peer answers at once: its business is to get to its `raise`.
+            return Ok(beck_core::net::Reply {
+                status: 200,
+                headers: Vec::new(),
+                body: std::sync::Arc::from(&*request.path),
+            });
+        }
+        self.entered
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while std::time::Instant::now() < deadline {
+            if stop.asked() {
+                self.stopped
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                return Err(beck_core::net::Failure::Stopped);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        self.gave_up
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Err(beck_core::net::Failure::TimedOut(10_000))
+    }
+}
+
+const BLOCKED: &str = "\
+union Refusal:
+    No
+
+## Works for a while, then fails — so the sibling is provably inside its call by the time it does.
+def failing(n: Int) -> Int uses net.out(a.example.com), raises(Refusal), raises(HttpError):
+    if n <= 0:
+        raise No
+    r = http_fetch(\"a.example.com\", HttpRequest(method=\"GET\", path=\"/a\", headers={}, body=\"\", port=80, tls=False, secrets={}))
+    return failing(n - 1)
+
+## One call, which never comes back on its own.
+def waiting() -> Int uses net.out(b.example.com), raises(HttpError):
+    r = http_fetch(\"b.example.com\", HttpRequest(method=\"GET\", path=\"/b\", headers={}, body=\"\", port=80, tls=False, secrets={}))
+    return str_len(r.body)
+
+def both() -> Int uses net.out(a.example.com), net.out(b.example.com), spawn, raises(Refusal), raises(HttpError):
+    return parallel:
+        a = failing(20)
+        b = waiting()
+        a + b
+";
+
+/// A sibling **blocked in the host** is stopped, which the step counter could never do.
+///
+/// `docs/80` §80.12: "cancellation rides the step counter, so a child blocked in `http_fetch` is
+/// stopped only when the call returns — a scope whose first child fails still waits for a
+/// sibling's outbound call to come back or give up. That is a **deadline on the `net` seam** rather
+/// than a change to the scope." This is that deadline, asserted where it is visible: the host says
+/// which way it stopped waiting.
+///
+/// No clock in the assertion. The host either saw the stop or saw its own backstop, and those are
+/// different counters.
+#[test]
+fn a_sibling_blocked_in_an_outbound_call_is_stopped_in_the_call() {
+    let placed = compile(BLOCKED);
+    let program = std::sync::Arc::new(placed.program.clone());
+    let host = std::sync::Arc::new(NeverAnswers::default());
+    let backend = beck_eval::Evaluator::new(program.clone()).answering(host.clone());
+
+    let outcome = beck_eval::on_the_evaluator_stack(|| {
+        use beck_core::backend::Backend;
+        let f = backend
+            .function(&program.defs["both"].body)
+            .expect("prepares");
+        f(vec![])
+    });
+
+    let err = outcome.expect_err("the first child raises");
+    assert!(
+        err.message.contains("raised"),
+        "the scope must answer with the raise and not with the cancellation: {}",
+        err.message
+    );
+
+    let order = std::sync::atomic::Ordering::SeqCst;
+    assert_eq!(
+        host.entered.load(order),
+        1,
+        "the sibling never entered its call, so this proves nothing about stopping it there"
+    );
+    assert_eq!(
+        host.gave_up.load(order),
+        0,
+        "the sibling waited out its own backstop, so nothing reached it inside the call"
+    );
+    assert_eq!(
+        host.stopped.load(order),
+        1,
+        "the sibling should have been told to stop while it was inside the call"
+    );
+}
+
+/// …and a call nobody can cancel is not watched at all.
+///
+/// The control for the paragraph above: `Stop::never()` is what a request from outside a
+/// `parallel:` carries, and it is what lets the real client take the path with no timer in it. A
+/// seam where every caller looked cancellable would make that path unreachable and nothing would
+/// notice.
+#[test]
+fn an_ordinary_call_carries_a_stop_nobody_watches() {
+    #[derive(Debug, Default)]
+    struct Watching(std::sync::atomic::AtomicBool);
+
+    impl beck_core::host::Atoms for Watching {
+        fn fetch(
+            &self,
+            request: &beck_core::net::Request,
+            stop: &beck_core::net::Stop,
+        ) -> Result<beck_core::net::Reply, beck_core::net::Failure> {
+            self.0
+                .store(stop.watched(), std::sync::atomic::Ordering::SeqCst);
+            Ok(beck_core::net::Reply {
+                status: 200,
+                headers: Vec::new(),
+                body: std::sync::Arc::from(&*request.path),
+            })
+        }
+    }
+
+    let src = "\
+def alone() -> Int uses net.out(b.example.com), raises(HttpError):
+    r = http_fetch(\"b.example.com\", HttpRequest(method=\"GET\", path=\"/b\", headers={}, body=\"\", port=80, tls=False, secrets={}))
+    return str_len(r.body)
+";
+    let placed = compile(src);
+    let program = std::sync::Arc::new(placed.program.clone());
+    let host = std::sync::Arc::new(Watching::default());
+    let backend = beck_eval::Evaluator::new(program.clone()).answering(host.clone());
+    let outcome = beck_eval::on_the_evaluator_stack(|| {
+        use beck_core::backend::Backend;
+        let f = backend
+            .function(&program.defs["alone"].body)
+            .expect("prepares");
+        f(vec![])
+    });
+    assert!(outcome.is_ok(), "{outcome:?}");
+    assert!(
+        !host.0.load(std::sync::atomic::Ordering::SeqCst),
+        "a call outside a `parallel:` has nobody to stop it, and should say so"
+    );
 }

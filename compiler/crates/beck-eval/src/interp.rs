@@ -703,6 +703,21 @@ impl<'h> Interp<'h> {
         self.fuel.set(DEFAULT_FUEL);
     }
 
+    /// This interpreter's cancellation, as a question a host can ask while it is blocked.
+    ///
+    /// [`beck_core::net::Stop::never`] when there is no enclosing scope, which is the ordinary
+    /// case and the one that lets a client skip the timer it would otherwise need: only a child of
+    /// a `parallel:` can be cancelled at all.
+    fn stop(&self) -> beck_core::net::Stop {
+        match &self.cancel {
+            Some((cancel, mine)) => {
+                let (cancel, mine) = (Arc::clone(cancel), *mine);
+                beck_core::net::Stop::when(move || cancel.asked(mine))
+            }
+            None => beck_core::net::Stop::never(),
+        }
+    }
+
     fn burn(&self, span: Span) -> Result<(), EvalError> {
         let left = self.fuel.get();
         if left == 0 {
@@ -1931,8 +1946,17 @@ impl<'h> Interp<'h> {
                 let host = as_str(&host, "http_fetch", span)?;
                 let request = beck_core::host::request_of(host, &request)
                     .map_err(|why| EvalError::new(why, span))?;
-                match self.host.fetch(&request) {
+                // The one place cancellation does *not* ride the step counter: a child blocked in
+                // the socket takes no steps. `docs/80` §80.12 said this belongs on the seam rather
+                // than in the scope, so what crosses is the same question `burn` asks — has a
+                // child before me failed — as a predicate the client can poll.
+                match self.host.fetch(&request, &self.stop()) {
                     Ok(reply) => Ok(beck_core::host::reply_value(&reply)),
+                    // A stopped fetch is this scope's own doing, so it becomes the cancellation it
+                    // came from rather than an `HttpError` the program would see. Re-asked rather
+                    // than assumed: a client is free to answer normally and the scope may have
+                    // been cancelled a moment later, and the next `burn` would catch that anyway.
+                    Err(beck_core::net::Failure::Stopped) => Err(EvalError::cancelled(span)),
                     Err(f) => Err(EvalError::raise(
                         Arc::from("HttpError"),
                         beck_core::host::failure_value(host, &f),
