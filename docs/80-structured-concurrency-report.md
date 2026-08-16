@@ -589,7 +589,20 @@ gates keep ([`13`](13-testing.md) §13.7). The host in
 `concurrency.rs::a_sibling_blocked_in_an_outbound_call_is_stopped_in_the_call` accepts one call that
 never answers and records *which way* it stopped waiting — the scope reached it, or it hit its own
 backstop — and the test asserts the first and that the second never happened. Backwards, with the
-signal removed, it fails on the second counter rather than by hanging. Beside it,
+signal removed, it fails on the second counter rather than by hanging.
+
+**The sibling is put inside its call by a latch, and that is part of the gate rather than
+scaffolding.** The property is about a child blocked *in the host*, so the sibling has to be
+blocked before the other one raises, and the first version of this test arranged it by doing work
+first — twenty fast calls, on the reasoning that they took long enough. They do not: cancellation
+rides the step counter, so a sibling still short of its call is stopped *between steps* and never
+blocks at all, and the test then fails on its own guard with cancellation working perfectly. The
+host now holds the failing child's first call until the sibling is blocked, and the sibling has
+four thousand steps to take before its fetch — so the hazard is exercised on every run rather than
+on a busy machine, and removing the latch reddens the test every time rather than one run in
+several. It is §80.7's lesson a second time, in the same file: **"after it" is the whole of
+cancellation**, and a test about ordering that establishes its ordering by timing is testing the
+scheduler. Beside it,
 `outbound.rs::a_watched_request_is_given_up_when_the_caller_stops_wanting_it` does the same over a
 **real socket** that accepts and then says nothing, because the property is `Stop` reaching into an
 await rather than a check made before or after one.
