@@ -121,8 +121,10 @@ contents run outside Beck's guarantees and its effect signature says so (`extern
 visibly. *Tarns extend the language; bridges rent from neighbours.*
 
 **That sentence is right and it is two categories short**, which mattered because the missing two
-are where most of the answer lives ([`102`](102-the-ecosystem-answer.md)). Measured against the
-most-downloaded packages of four ecosystems, the largest categories are neither extended nor rented:
+are where most of the answer lives ([`102`](102-the-ecosystem-answer.md)). The four, and the reason
+the split is not a matter of taste: a library that *expands what a language is for* is almost always
+a **notation** — a way of saying things that composes with your own code — and a notation cannot be
+rented, because an RPC hop destroys the composition that was its value (§102.5):
 
 | | |
 |---|---|

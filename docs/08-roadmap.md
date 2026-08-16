@@ -464,7 +464,7 @@ rows.
   the plan that does not contend for Lane A's files, so the two large F items can run concurrently.
   §99.8's convergence rungs interleave with it rather than following it.
 - **A columnar value, and Arrow** (F, after the aggregates): the second representation
-  [`102`](102-the-ecosystem-answer.md) §102.8 argues for — `Value::List(Arc<Vec<Value>>)` is 16
+  [`102`](102-the-ecosystem-answer.md) §102.10 argues for — `Value::List(Arc<Vec<Value>>)` is 16
   boxed bytes an element, which is right for a keyed arrangement and wrong for a million doubles.
   One change discharges four commitments: [`07`](07-dependencies.md) §7.4's DataFusion choice,
   §8.5.4's own Parquet-archival G item below (Parquet is Arrow written down), the numeric-interop
@@ -473,7 +473,7 @@ rows.
   start without it.
 - **Charting, as an `svg:` vocabulary** (S, small, and the item in this list with the most users in
   front of it): every dashboard has a chart and `docs/` has never mentioned one
-  ([`102`](102-the-ecosystem-answer.md) §102.7). The element vocabulary is already open — `html.rs`
+  ([`102`](102-the-ecosystem-answer.md) §102.9). The element vocabulary is already open — `html.rs`
   validates no tag list — so the blocker is one call: `beck-patch.js:10` creates every node with
   `createElement`, which puts an `<svg>` subtree in the HTML namespace where it parses and does not
   draw. `createElementNS` under a tag-derived namespace is the fix, and above it a chart is an
@@ -718,3 +718,27 @@ Preview environments per branch — the one Vercel feature the ladder does not y
 `beck up` pointed at a namespace with a TTL, which is the playground's rung C machinery
 ([`17`](17-playground.md) §17.3) wearing a different hat. Named here so the gap is a row on a
 list rather than a surprise.
+
+### 8.6.2 The same rule, applied to libraries
+
+§8.6 has always been scoped to the survey's cloud and infrastructure section, and the scoping was
+never argued — it is simply where the question came up. The rule itself says nothing about
+infrastructure: *a technology ≥1% of developers report using earns an explicit verdict rather than
+silence*. Applied to the same survey's **Other frameworks and libraries** section
+([`102`](102-the-ecosystem-answer.md) §102.4), it convicts this document of exactly the silence it
+was written to prevent.
+
+| Reality (usage, [SO 2024](https://survey.stackoverflow.co/2024/technology)) | Verdict |
+|---|---|
+| **NumPy (21.2%)** — second among all libraries, all languages | **adopt**, split in two: the *notation* (broadcasting, slicing) is a language feature behind the macro interpreter; the *kernels* are linked, never reimplemented ([`102`](102-the-ecosystem-answer.md) §102.8). Nothing is built |
+| **pandas (20.7%)** — third | **adopt** — and it is not a library here at all but [`99`](99-the-data-tier-means-of-combination.md)'s missing algebra, §8.5.4's Lane B item. The dozen verbs pandas, polars and LINQ independently converged on are the ones the view algebra lacks |
+| **Charting** — matplotlib, Chart.js, D3; absent from the survey's list, universal in practice | **adopt** — an `svg:` vocabulary, §8.5.4, blocked on one `createElement` call ([`102`](102-the-ecosystem-answer.md) §102.9) |
+| .NET (25.2%), .NET Framework (16.4%), Spring (11.1%) | decline as *frameworks* — these are the application frameworks Beck replaces rather than interoperates with. Their **runtimes** are a different question and are `@public` surface work (Phase 4) |
+| Torch/PyTorch (10.6%), scikit-learn (10.6%), TensorFlow (10.1%), Hugging Face (4.5%), CUDA (5.8%) | **supported through the bridge**, at merge points only — the capability half, and the concession [`01`](01-vision-and-premise.md) §1.7 actually made ([`102`](102-the-ecosystem-answer.md) §102.5) |
+| Apache Kafka (9.4%), RabbitMQ (10.9%) | **adopt** as an *ingress and egress* target — [`101`](101-the-public-surface.md) §101.6's `@public(events)` and [`30`](30-bounded-contexts-and-microservices.md) §30.4's `ingest`, Phase 5. A merge point is what a broker subscription is |
+| OpenCV (8.6%), Qt (7.3%), Electron (6.5%), Flutter (9.4%), React Native (8.4%) | decline — desktop and native-mobile UI, and computer vision, are not territories this language claims ([`01`](01-vision-and-premise.md) §1.7) |
+| Apache Spark (4.4%), Hadoop (2.3%) | decline as a *substrate*; the analytical half is DataFusion over Parquet (§8.5.4's G item), which is the single-node answer this project sized for ([`07`](07-dependencies.md) §7.4) |
+
+The first three rows had **no verdict anywhere in `docs/` before
+[`102`](102-the-ecosystem-answer.md)**, which is the failure this rule exists to catch, occurring in
+the document that states the rule. §8.5.4 now carries all three.

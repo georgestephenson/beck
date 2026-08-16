@@ -18,19 +18,24 @@ carry the order, so leave them where they land.
 ## Unreleased
 
 - **2026-08-16 — The ecosystem question gets a per-library answer, and the roadmap gets a sweep.**
-  [`docs/102`](docs/102-the-ecosystem-answer.md) answers "what about NumPy and pandas" from the
-  constraint that decides it: a bridged call carries an effect and `place.rs:760` makes a fold
-  replay-pure, so the [`09`](docs/09-risks-and-open-questions.md) §9.2 sidecar serves merge points
-  and cannot serve the data tier. Measured against the most-downloaded packages of PyPI, npm, NuGet
-  and crates.io (fetched, commands quoted in §102.4), NumPy is PyPI #19 and pandas is outside the
-  top 20 — pandas is [`99`](docs/99-the-data-tier-means-of-combination.md)'s missing algebra, NumPy
-  is a link, and charting is undesigned anywhere and blocked on `beck-patch.js`'s `createElement`.
-  A doc-versus-code sweep ([`08`](docs/08-roadmap.md) §8.5.6) then found one document behind the
-  code — [`42`](docs/42-security-assurance.md) called macro expansion fuel "absent" when
-  `MAX_EXPANSION`, `B0214` and `macro_bomb.rs` have bounded it all along — and seven items no
-  ordered list held, including deterministic `sin`/`cos`, which resolve to the host libm in all
-  three backends and so make a fold replay differently on musl than on glibc. All eight now have a
-  position in §8.5.4. Documents only; nothing built.
+  [`docs/102`](docs/102-the-ecosystem-answer.md) answers "what about NumPy and pandas" from two
+  independent constraints: a bridged call carries an effect and `place.rs:760` makes a fold
+  replay-pure, so the [`09`](docs/09-risks-and-open-questions.md) §9.2 sidecar cannot reach the data
+  tier; and the libraries that most expand a language's utility are **notations**, which cannot be
+  bridged at all because an RPC hop destroys the composition that was their value. §102.4 discards
+  download rank as an instrument — it measures fan-in, and `requests` is outranked by three of its
+  own dependencies — for the Stack Overflow survey [`08`](docs/08-roadmap.md) §8.6's ≥1% rule
+  already runs on, which puts NumPy at 21.2% and pandas at 20.7%, second and third among all
+  libraries in all languages. §8.6.2 applies that rule to libraries for the first time and records
+  verdicts for NumPy, pandas and charting, none of which had one anywhere. So pandas is
+  [`99`](docs/99-the-data-tier-means-of-combination.md)'s missing algebra, NumPy is a notation over
+  a linked kernel, and charting is blocked on `beck-patch.js`'s `createElement`. A doc-versus-code
+  sweep (§8.5.6) then found one document behind the code —
+  [`42`](docs/42-security-assurance.md) called macro expansion fuel "absent" when `MAX_EXPANSION`,
+  `B0214` and `macro_bomb.rs` have bounded it all along — and seven items no ordered list held,
+  including deterministic `sin`/`cos`, which resolve to the host libm in all three backends, so two
+  machines can fold one log to two states. All now have a position in §8.5.4. Documents only;
+  nothing built.
 
 - **2026-08-16 · #63 — The page's flaky timing gate is replaced by one with no clock in it.**
   `measure_native.rs::what_a_page_costs_against_the_tree_walker` asserted a ratio of ratios over
