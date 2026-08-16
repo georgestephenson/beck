@@ -431,9 +431,45 @@ incrementally-maintained views are the cache ([`15`](15-scale-and-distribution.m
 sentence names the right problem and the wrong mechanism, and the correction is that **ephemerality
 comes from the stream and the audience, never from the absence of a `durable` wrapper**.
 
-#### What the fourth home costs to build, which is why this needs a D-number
+#### What awareness would be, and the half of it that is buildable today
 
-D1's non-durable fold, in either its server or its client form, is not blocked on plumbing.
+Scoped against the tree rather than sketched, because the scoping moved it.
+
+**The construct.** Awareness is a signal operation and not a command: nothing about a cursor is
+proposed, validated or recorded. The shape that fits Beck is
+
+```python
+here: Signal[Map[ActorId, T]] = awareness(f)
+```
+
+where `f` produces this client's contribution and the roster is everybody's latest. It inherits
+`presence()`'s three rules unchanged, which is the argument for building it there: it is a non-log
+input to a view, it is capacity-bounded (§82.5's table-bounds-the-attacker finding applies verbatim,
+since the key is again a name the client chooses), and it **may not reach the chokepoint** — an
+event whose existence depended on where somebody's cursor was would not survive a replay, which is
+`B0515`'s reasoning with one noun changed.
+
+**And it splits in two, which is the finding.** What `f` may read decides how much of it can be
+built:
+
+- **`f : Session -> T` is buildable now, and needs no wire change at all.** The server already holds
+  every subscriber's `Session` — the route arrives on `hello` and on every `Nav` — so it can compute
+  each client's contribution itself and never ask. *Who is looking at what* is the most-wanted
+  awareness feature after presence itself, and it costs a source, a role and an aggregation.
+- **`f` over a client-local value — a cursor, a selection — is not**, and not for a protocol reason:
+  the client has nothing to derive one *from*. `beck-patch.js` listens for five events and
+  `mousemove` is not among them (§104.8's Wall 2), so there is no client-local value in the language
+  to publish. Arbitrary awareness therefore has the **same prerequisite as the fifth home**, and the
+  two are one piece of work rather than two.
+
+So the order is: the session-derived half first, because it is independent and immediately useful;
+the client-local value next, which lets `awareness` take a client-placed signal and gives the full
+[Yjs](https://docs.yjs.dev/getting-started/adding-awareness) shape; and the fifth home falls out of
+the same work.
+
+#### What the fifth home costs to build, which is why this needs a D-number
+
+D1's non-durable fold is not blocked on plumbing.
 `DEFECTS.md::non-durable-fold` has the finding: an accumulator outside the log is **not a function
 of the log**, `beck-cli/tests/replay.rs` asserts `digest(replayed) == digest(live)`, and
 [`10`](10-decisions.md) D3 rests on that digest. So the construct needs an answer to *what the state
