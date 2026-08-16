@@ -1,0 +1,7 @@
+# CHANGELOG.md is the one file every branch touches, always at the same place — the top of the
+# list under "## Unreleased" — so two branches merged in parallel conflicted there every time.
+# Union merge keeps both sides' bullets instead of conflicting. The file is a flat bullet list
+# with no topic headings precisely so this is safe: there is no shared header line for two
+# branches to both add, and a bullet that lands out of date order is left where it lands —
+# the date and PR number on each entry carry the order.
+CHANGELOG.md merge=union
