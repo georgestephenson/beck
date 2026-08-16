@@ -1075,8 +1075,11 @@ rather than values is that a comparison is the only place two equal things can b
 Beyond the differential, three kinds of gate matter more than a timing one:
 
 - **Shape gates with no clock in them.** `chain(100)` and `chain(800)` leave 40 bytes an element at both
-  sizes; a slice costs its answer and not what it was taken from, at 200 and 1,600; a page costs 96 bytes
-  a row and 504 a page, at 100 rows and 800; a fold that builds nothing costs one closure and its answer
+  sizes; a slice costs its answer and not what it was taken from, at 200 and 1,600; a page of text costs
+  144 bytes a row and 576 a page, at 100 rows and 800, and a page with a key, a conditional class and a
+  handler on every row costs the **same bytes for equal steps of rows** — 145,600 for each 200 — at 200,
+  400 and 600, which is three sizes because two points always fit a line; a fold that builds nothing
+  costs one closure and its answer
   at both sizes; an appended accumulator is 4.0× for 4× the elements and a map fold 4.9×; a raise caught
   25 frames up and one caught 200 frames up leave the **same 168 bytes**; and 800 more `digest` calls
   cost 800 answers and nothing else, which is the deterministic form of §93.12's claim that a call

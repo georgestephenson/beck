@@ -12,6 +12,31 @@ Newest first.
 
 ## Unreleased
 
+### A flaky gate replaced by one with no clock in it
+
+- **`measure_native.rs::what_a_page_costs_against_the_tree_walker` stopped gating its ratio**, and
+  the reason is the one [`AGENTS.md`](AGENTS.md) gives: a gate that flakes gets deleted. It asserted
+  that the evaluator-over-native ratio at 1,600 rows was at least half the ratio at 200 — a
+  ratio-of-ratios over four wall-clock medians, two of them medians of three. The other rows in that
+  file sit at 20× and upwards, where halving is far away; a page sits near 0.8×, because a compiled
+  `view` divides the work rather than removing it, and at 0.8× the number is mostly the pipe round
+  trip and the host's own baking — the *runner*, not the backend. Reproduced on a loaded four-core
+  box: **2 of 20 runs red on an unchanged binary**, on `plain` as readily as on `page`, with ratios
+  moving by a factor of three between consecutive runs. The `main`-only appearance was luck, not
+  meaning — both pipelines run the same job.
+- **The claim it stood for is now gated with no clock in it at all**, which is the move
+  `what_text_costs_against_the_tree_walker` already makes for `grown`:
+  `native.rs::a_page_of_keys_and_handlers_costs_equal_bytes_for_equal_rows` measures
+  [`viewfix::PAGE`](compiler/crates/beck-cli/tests/support/viewfix.rs) — a key, a conditional class
+  and a handler on every row, which is this benchmark's shape and which the existing page gate's
+  bare `ul` of text did not cover. **Three sizes and no division**: 200, 400 and 600 rows, and equal
+  steps must cost equal bytes of arena — 145,600 for each 200, exactly, at both steps. Two points
+  always fit a line, so the neighbouring two-size gate's teeth are its written-down constant; equal
+  increments over equal steps need no constant to keep current as the layout moves. Checked against
+  a known quadratic (`repeat`, [`docs/93`](docs/93-the-native-backends-report.md) §93.7) before
+  being trusted: 484,000 bytes for the first step and 804,000 for the second, so the gate can fail.
+  0 of 20 red under the load that reddened the old one.
+
 ### The log's lifecycle gets a position in the order
 
 - **Segment archival, retention and the analytical substrate are scheduled** (`docs/08` Phase 4

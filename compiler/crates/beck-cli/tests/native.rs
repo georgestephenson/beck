@@ -3057,6 +3057,60 @@ fn a_page_costs_its_own_nodes_and_nothing_per_page() {
     );
 }
 
+/// The same claim for the page a program actually writes, and the gate is **three sizes**.
+///
+/// The test above measures `rows`, which is a `ul` of text: no key, no conditional class, no
+/// handler. The page in `viewfix::PAGE` has all three per row, and a handler's command is a
+/// record — the one deferred value that is an object rather than text. That is more per-row
+/// machinery than a bare list has, and until this it was the wall clock in
+/// `measure_native.rs::what_a_page_costs_against_the_tree_walker` that stood behind it. A wall
+/// clock cannot hold that claim on a shared runner and this can, so this is where it is held.
+///
+/// **Three sizes, and no division.** Two points always fit a line, so a per-row cost derived from
+/// two sizes is a definition rather than a measurement — the neighbouring test's teeth are its
+/// written-down constant, not its second point. Equal steps of rows must cost equal bytes: a
+/// builder that reallocated a list per child, or that copied the children built so far on every
+/// step, makes the second step cost more than the first, and that comparison is two subtractions
+/// with nothing rounded and no constant to keep up to date as the layout moves.
+///
+/// The rows alternate `done` because `html_el` drops an empty attribute, so an undone row is one
+/// attribute shorter than a done one — each step covers exactly 100 of each, which is what makes
+/// the steps comparable. The identifiers are a fixed four digits for the same reason: a row whose
+/// text grew with its index would cost more per row at the far end for a reason that is not the
+/// page's shape.
+#[test]
+fn a_page_of_keys_and_handlers_costs_equal_bytes_for_equal_rows() {
+    let _ = toolchain!();
+    let both = Both::over("page.beck", viewfix::PAGE);
+    let mut sizes = Vec::new();
+    for n in [200usize, 400, 600] {
+        let todos = Value::List(Arc::new(
+            (0..n)
+                .map(|i| viewfix::todo(&format!("{i:04}"), "something to do", i % 2 == 0))
+                .collect(),
+        ));
+        let (_, bytes) = both
+            .native
+            .call_sized("page", &[todos, Value::Int(0)])
+            .expect("runs");
+        sizes.push((n, bytes));
+    }
+    let first = sizes[1].1 - sizes[0].1;
+    let second = sizes[2].1 - sizes[1].1;
+    assert_eq!(
+        first, second,
+        "200 rows cost {first} bytes going from {} to {} and {second} going from {} to {} — a row \
+         that costs more the further down the page it is, which is what a page that copied what it \
+         had built looks like",
+        sizes[0].0, sizes[1].0, sizes[1].0, sizes[2].0
+    );
+    println!(
+        "a page of keys and handlers: {} rows cost {} bytes of arena, {} cost {} and {} cost {} — \
+         {first} bytes for every 200 rows, at both steps",
+        sizes[0].0, sizes[0].1, sizes[1].0, sizes[1].1, sizes[2].0, sizes[2].1
+    );
+}
+
 /// A `raise` and a `try:`, compiled — and the three things that have to agree.
 ///
 /// The value a caught failure becomes, the `Result` it is wrapped in, and the **message** when
