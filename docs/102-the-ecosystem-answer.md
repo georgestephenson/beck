@@ -145,15 +145,42 @@ survey's **Other frameworks and libraries** section, all respondents:
 | TensorFlow | 10.1% | Apache Spark | 4.4% |
 
 Source: [Stack Overflow Developer Survey 2024, Technology](https://survey.stackoverflow.co/2024/technology).
-**Two caveats, both checkable.** The 2025 survey
+This is the whole section rather than an excerpt — every entry it lists appears above or in
+[`08`](08-roadmap.md) §8.6.2, because all 39 of them clear §8.6's 1% bar and the rule admits no
+shortlist. **One caveat, checkable.** The 2025 survey
 ([Technology](https://survey.stackoverflow.co/2025/technology)) **dropped this section** — its
 technology page carries languages, databases, cloud, web frameworks, IDEs, tags, community, LLMs and
 collaboration tools, and no general library section — so 2024 is the most recent reading and it is a
-year stale. And GitHub stars, the obvious "highest rated" cross-check, could not be gathered here:
-this session's GitHub access is scoped to its own repository, so no star count is quoted rather than
-a weaker source substituted.
+year stale.
 
-**This is the number that matters, and it says the opposite of the download ranks.** NumPy and pandas
+### The third instrument, tested and discarded: GitHub stars
+
+Stars are the obvious "highest rated" cross-check, so they were gathered rather than assumed.
+Fetched from each repository's page on **2026-08-16**, beside the survey's usage figure:
+
+| Repository | Stars | Survey use | |
+|---|---|---|---|
+| tensorflow/tensorflow | 197.1k | 10.1% | |
+| pytorch/pytorch | 102.4k | 10.6% | more used than TensorFlow, **half the stars** |
+| pandas-dev/pandas | 49.5k | 20.7% | |
+| numpy/numpy | 32.5k | **21.2%** | **most-used library in the survey, 6× fewer stars than TensorFlow** |
+| matplotlib/matplotlib | 23.1k | — | |
+| serde-rs/serde | 10.8k | — | |
+
+**Stars rank TensorFlow six times above NumPy and measure it at half NumPy's use.** They disagree
+with the survey by an order of magnitude, and the direction of the error is diagnostic: a star is a
+one-time vote that never decays, cast at the moment of maximum enthusiasm. TensorFlow collected its
+during the deep-learning boom and has kept every one of them while PyTorch overtook it in actual
+use — visible in the same table, where the more-used framework has half the stars. Stars record a
+library's most exciting year; the survey records this one.
+
+So of three available instruments, **two measure something other than use** — downloads measure
+fan-in, stars measure accumulated novelty — and one asks the question directly. The rest of this
+document uses the third.
+
+### What the survey says
+
+**NumPy and pandas** are
 are the **second and third most-used libraries among all developers, in every language and every
 domain** — ahead of the Spring Framework, ahead of every ML framework, ahead of Kafka, at roughly one
 developer in five. They are not a scientific-computing speciality that a general-purpose language may
@@ -426,11 +453,13 @@ diagnostic naming the merge point as the alternative.
   longer carries a general library section, so 2024 is the latest reading available and the figures
   should be re-read against whatever replaces it. A one-year-stale 21.2% does not become 1%, so the
   §8.6 finding survives the staleness even though the exact numbers may not.
-- **No "highest rated" or "most discussed" metric is quoted.** GitHub stars were unobtainable in the
-  environment this was written in, and stars measure accumulated enthusiasm that never decays, which
-  is a worse instrument than the survey rather than a missing second opinion. The 2025 survey's tag
-  section measures *emerging* technology (Gemini 29.2%, Pydantic 10.1%, `uv` 9.5%) and answers a
-  different question than this document asks.
+- **Stars are quoted only to discard them.** §102.4's star table is evidence about the instrument,
+  not about the libraries: no verdict anywhere rests on a star count. The six repositories were
+  chosen to test the instrument against the survey, not sampled to represent anything.
+- **No "most discussed" metric is used.** The 2025 survey's tag section measures *emerging*
+  technology (Gemini 29.2%, Pydantic 10.1%, `uv` 9.5%) and answers a different question than this
+  document asks; Stack Overflow question volume now moves with LLM adoption rather than with library
+  use, which makes it unusable for this purpose in exactly the years it would matter.
 - **The notation/capability split is a design heuristic, not a taxonomy.** Real libraries are both:
   `requests` is a capability with a pleasant notation, and PyTorch is a capability whose autograd
   tape is a notation. The split is applied to the part that carries the value, and where a library

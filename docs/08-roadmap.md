@@ -728,17 +728,36 @@ silence*. Applied to the same survey's **Other frameworks and libraries** sectio
 ([`102`](102-the-ecosystem-answer.md) §102.4), it convicts this document of exactly the silence it
 was written to prevent.
 
+**Every entry in that section, in its order.** All 39 clear 1%, so the rule admits no shortlist —
+picking the interesting ones is how the silence happens.
+
 | Reality (usage, [SO 2024](https://survey.stackoverflow.co/2024/technology)) | Verdict |
 |---|---|
-| **NumPy (21.2%)** — second among all libraries, all languages | **adopt**, split in two: the *notation* (broadcasting, slicing) is a language feature behind the macro interpreter; the *kernels* are linked, never reimplemented ([`102`](102-the-ecosystem-answer.md) §102.8). Nothing is built |
-| **pandas (20.7%)** — third | **adopt** — and it is not a library here at all but [`99`](99-the-data-tier-means-of-combination.md)'s missing algebra, §8.5.4's Lane B item. The dozen verbs pandas, polars and LINQ independently converged on are the ones the view algebra lacks |
-| **Charting** — matplotlib, Chart.js, D3; absent from the survey's list, universal in practice | **adopt** — an `svg:` vocabulary, §8.5.4, blocked on one `createElement` call ([`102`](102-the-ecosystem-answer.md) §102.9) |
-| .NET (25.2%), .NET Framework (16.4%), Spring (11.1%) | decline as *frameworks* — these are the application frameworks Beck replaces rather than interoperates with. Their **runtimes** are a different question and are `@public` surface work (Phase 4) |
-| Torch/PyTorch (10.6%), scikit-learn (10.6%), TensorFlow (10.1%), Hugging Face (4.5%), CUDA (5.8%) | **supported through the bridge**, at merge points only — the capability half, and the concession [`01`](01-vision-and-premise.md) §1.7 actually made ([`102`](102-the-ecosystem-answer.md) §102.5) |
-| Apache Kafka (9.4%), RabbitMQ (10.9%) | **adopt** as an *ingress and egress* target — [`101`](101-the-public-surface.md) §101.6's `@public(events)` and [`30`](30-bounded-contexts-and-microservices.md) §30.4's `ingest`, Phase 5. A merge point is what a broker subscription is |
-| OpenCV (8.6%), Qt (7.3%), Electron (6.5%), Flutter (9.4%), React Native (8.4%) | decline — desktop and native-mobile UI, and computer vision, are not territories this language claims ([`01`](01-vision-and-premise.md) §1.7) |
-| Apache Spark (4.4%), Hadoop (2.3%) | decline as a *substrate*; the analytical half is DataFusion over Parquet (§8.5.4's G item), which is the single-node answer this project sized for ([`07`](07-dependencies.md) §7.4) |
+| .NET (25.2%), .NET Framework (16.4%) | decline as a *framework* — this is the application framework Beck replaces rather than interoperates with. Reaching its **libraries** is the C ABI FFI bullet; being consumed *by* a .NET estate is `@public(rest)`/`@public(grpc)` |
+| **NumPy (21.2%)** — most-used library in the survey | **adopt**, split in two: the *notation* (broadcasting, slicing) is a language feature and queues behind the macro interpreter; the *kernels* are linked and never reimplemented ([`102`](102-the-ecosystem-answer.md) §102.8). Nothing is built |
+| **pandas (20.7%)** | **adopt** — not a library here at all but [`99`](99-the-data-tier-means-of-combination.md)'s missing algebra, §8.5.4's Lane B item |
+| Spring Framework (11.1%) | decline — DI, ORM and web framework, all three dissolved ([`102`](102-the-ecosystem-answer.md) §102.6) |
+| RabbitMQ (10.9%), Apache Kafka (9.4%) | **adopt** as *ingress and egress* — [`101`](101-the-public-surface.md) §101.6's `@public(events)` and [`30`](30-bounded-contexts-and-microservices.md) §30.4's `ingest`, Phase 5. A broker subscription is a merge point, which is a thing this language already has a word for |
+| scikit-learn (10.6%), Torch/PyTorch (10.6%), TensorFlow (10.1%), Keras (4.3%), Hugging Face (4.5%), JAX (1.0%), mlflow (1.2%) | **supported through the bridge**, merge points only — the capability half, and the concession [`01`](01-vision-and-premise.md) §1.7 actually made |
+| Flutter (9.4%), React Native (8.4%), SwiftUI (4.3%), .NET MAUI (3.1%), Xamarin (2.9%) | decline — native mobile UI. The offline-capable web client is the answer this project has ([`94`](94-the-client-report.md); `beck-sw.js` is the service worker), and it is a different product |
+| OpenCV (8.6%) | decline — computer vision is a capability, bridgeable if anyone asks, and no territory of ours |
+| Qt (7.3%), GTK (2.6%), MFC (1.0%) | decline — native desktop UI |
+| OpenGL (6.8%), DirectX (1.9%), CUDA (5.8%), OpenCL (1.7%) | decline as *targets*; CUDA and OpenCL are reachable through the bridge as capabilities. GPU rendering is not a tier this language has |
+| **Electron (6.5%), Ionic (2.5%), Tauri (2.4%), Capacitor (1.8%), Cordova (2.2%)** — **15.4% together** | **watch, and the shape is closer than it looks.** These wrap a web UI as an installable app; Beck emits a web client *and* a statically linked native binary, which is Tauri's architecture with the parts already built. Nothing is claimed and nothing is scheduled — the trigger is somebody executing it, per the rule that an artefact nobody has run is a design document. Recorded because it was invisible |
+| Apache Spark (4.4%), Hadoop (2.3%) | decline as a *substrate* — the analytical half is DataFusion over Parquet (§8.5.4's G item), the single-node answer [`07`](07-dependencies.md) §7.4 sized for |
+| **Ruff (3.0%)** | **dissolved** — the formatter and the linter are the compiler (`beck fmt`, the LSP, [`65`](65-the-editor-report.md)). Worth a second look rather than a tick: Ruff's adoption is developers switching formatter for *speed alone*, which is the clearest external evidence that [`64`](64-compile-speed-report.md)'s budgets are a product feature and not hygiene |
+| **Tidyverse (1.7%)** | **adopt** — the same verdict as pandas, and the reason it is listed separately: R's `dplyr` is a **fourth** independent convergence on the same dozen verbs (with pandas, polars and LINQ), which is what makes [`99`](99-the-data-tier-means-of-combination.md)'s gap a missing algebra rather than one library's taste |
+| Roslyn (1.7%) | **dissolved into tooling** — compiler-as-a-service is the LSP plus `beck explain` ([`65`](65-the-editor-report.md)), and the half that is genuinely missing is compile-time evaluation, which is §8.5.4's macro interpreter |
+| Quarkus (1.3%), Ktor (1.2%) | decline — JVM/Kotlin service frameworks, replaced rather than interoperated with |
+| **Charting** — matplotlib, Chart.js, D3. *Not in the survey's list*, and universal in practice | **adopt** — an `svg:` vocabulary, §8.5.4, blocked on one `createElement` call ([`102`](102-the-ecosystem-answer.md) §102.9). Listed here because the rule's failure mode is silence, and a category the survey happens not to itemise is the easiest silence of all |
 
-The first three rows had **no verdict anywhere in `docs/` before
-[`102`](102-the-ecosystem-answer.md)**, which is the failure this rule exists to catch, occurring in
-the document that states the rule. §8.5.4 now carries all three.
+**Four rows had no verdict anywhere in `docs/` before
+[`102`](102-the-ecosystem-answer.md)** — NumPy, pandas, charting and the Electron/Tauri adjacency —
+which is the failure this rule exists to catch, occurring in the document that states the rule.
+§8.5.4 now carries the first three; the fourth is deliberately unscheduled and says so.
+
+The largest declined block is worth stating rather than leaving as a pattern in the table: native
+desktop and mobile UI, plus GPU rendering and computer vision, is roughly **half the section by
+cumulative percentage**, and all of it is declined on the same [`01`](01-vision-and-premise.md) §1.7
+scope. That is an honest statement of how much of the developer population this language is not
+for, and it belongs in the open rather than in the gaps between rows.

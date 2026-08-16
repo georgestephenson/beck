@@ -26,8 +26,12 @@ carry the order, so leave them where they land.
   download rank as an instrument — it measures fan-in, and `requests` is outranked by three of its
   own dependencies — for the Stack Overflow survey [`08`](docs/08-roadmap.md) §8.6's ≥1% rule
   already runs on, which puts NumPy at 21.2% and pandas at 20.7%, second and third among all
-  libraries in all languages. §8.6.2 applies that rule to libraries for the first time and records
-  verdicts for NumPy, pandas and charting, none of which had one anywhere. So pandas is
+  libraries in all languages. GitHub stars were tested as a third instrument and discarded with
+  evidence: they rank TensorFlow 6× above NumPy and measure it at half NumPy's use, because a star
+  is a one-time vote that never decays. §8.6.2 applies the ≥1% rule to libraries for the first time
+  and gives **all 39 entries** of the survey's section a verdict — four had none anywhere, including
+  the Electron/Tauri adjacency (15.4% together, and Beck already emits both halves), which is
+  recorded as watch rather than scheduled. So pandas is
   [`99`](docs/99-the-data-tier-means-of-combination.md)'s missing algebra, NumPy is a notation over
   a linked kernel, and charting is blocked on `beck-patch.js`'s `createElement`. A doc-versus-code
   sweep (§8.5.6) then found one document behind the code —
