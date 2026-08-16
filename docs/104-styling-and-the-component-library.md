@@ -402,14 +402,34 @@ the answer takes. **This is a recommendation and not a decision**: adopting it w
 2. **The URL**, for anything that deserves a bookmark — a table's sort, a filter, a selected tab.
    [`94`](94-the-client-report.md) §94.3 already makes a route a field of `Session` rather than a
    router, so this home exists today and is unused for anything but routing.
-3. **A client-placed non-durable fold**, for what is left: a combobox's highlighted option, a
-   tooltip's target. It needs a client-local stream, which does not exist — the only stream is
-   `merge_clients()` and it is server-placed by §3.5.
-4. **The durable log**, only for what a second person or a later day should see. Which is where all
-   of it goes today.
+3. **Awareness**, for ephemera a *second person* must see: a cursor, a selection, a typing
+   indicator. This is the home a search for counter-examples turned up, and it is not a fold —
+   [Yjs](https://docs.yjs.dev/getting-started/adding-awareness), the canonical collaborative stack,
+   keeps it in a protocol of its own precisely because "awareness information isn't stored in the
+   Yjs document, as it doesn't need to be persisted across sessions", and its shape is a
+   `Map<client, state>` that is broadcast, dropped after thirty seconds of silence and deleted on
+   disconnect. **Beck has nine-tenths of this already**: `presence()` is that map with no payload —
+   a non-log input to a view, per-connection, capacity-bounded (§82.5), and forbidden from reaching
+   the chokepoint (`B0515`). Giving it a payload is an extension of built machinery rather than a
+   new construct, and it is what D1's "cursors" always wanted.
+4. **A client-placed non-durable fold**, for what is left after those three: ephemera that *nobody
+   else* sees — a combobox's highlighted option, a tooltip's target. It needs a client-local stream,
+   which does not exist; the only stream is `merge_clients()` and it is server-placed by §3.5.
+5. **The durable log**, only for what a second person *and* a later day should see. Which is where
+   all of it goes today.
 
 The order is the recommendation. Its value is that the first two are **free** — one is markup and
-the other is a field that already exists — so the expensive home is needed for less than it looks.
+the other is a field that already exists — and the third is nine-tenths built, so the expensive home
+is needed for far less than it looks.
+
+**The fifth home is the only one that is a fold, and nothing found needs a server-side one.** A
+search for counter-examples returned exactly one server-side ephemeral need — awareness, above — and
+its shape is a keyed map of each client's latest value, not an accumulation over occurrences. The
+other candidates were already answered: rate counters are §82.5's deliberately *sharded* table,
+sessions and presence are connections, and a cache "does not exist as a concept" because the
+incrementally-maintained views are the cache ([`15`](15-scale-and-distribution.md)). So D1's
+sentence names the right problem and the wrong mechanism, and the correction is that **ephemerality
+comes from the stream and the audience, never from the absence of a `durable` wrapper**.
 
 #### What the fourth home costs to build, which is why this needs a D-number
 
