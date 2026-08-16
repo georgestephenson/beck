@@ -96,6 +96,7 @@ ask in order:
 | "Is there a string library? A JSON parser?" | Yes, and `compiler/lib/` shows how to write the next one ([`46`](46-standard-library-report.md)) |
 | "Can I trust the actor in my ownership check?" | Against a real identity provider, yes ([`48`](48-identity-report.md)), and `session.claims` says what they may do. The default still believes the client, and says so |
 | "Can my DBA see the data?" | `psql` against the read models ([`23`](23-incremental-views-report.md)) — one table per collection, derived, no annotation |
+| "How do I make it look like anything?" | **Badly, and this is the newest row.** The stylesheet a running application serves is eight rules hard-coded in `beck-rt/src/css.rs`; `css:` appears in the tour and has no parser. Tailwind styles a Beck page with no configuration today, and its scanner cannot survive a package manager ([`104`](104-styling-and-the-component-library.md) §104.3), so the answer until §8.5.4's styling cluster lands is "bring npm" — which for a project whose product is one static binary is the wrong answer, not a smaller one |
 | "Where's the tutorial?" | [`86`](86-getting-started.md), published on the site, with every program in it compiled and run by a test |
 | "How do I get the compiler?" | One command ([`92`](92-supply-chain-and-release-report.md)) — and it has nothing to download until a tag is pushed, so today the answer is still "build it", which §86.1 says in that order |
 
@@ -439,7 +440,7 @@ rows.
   correctly-rounded implementation behind the three `Prim`s, and the gate is the one that would have
   caught it: the three-way differential run on **two different libms**, which is a CI matrix row
   rather than a new harness. Small, overdue, and cheap only until something depends on the current
-  answers.
+  answers. `DEFECTS.md::libm-determinism` is the entry, with the gate a fix owes.
 - **The data tier's means of combination** (F, and now the **largest item left**, since the macro
   interpreter below has landed — [`99`](99-the-data-tier-means-of-combination.md) §99.7 lists five
   already-written-down items it closes): `arrange_by`, `join`, the loop-plus-lookup recognition,
@@ -458,14 +459,6 @@ rows.
   gap, and the aggregates' own representation. It is listed **after** the aggregates because an
   aggregate is what makes a column worth having, and **before** the G item because that item cannot
   start without it.
-- **Charting, as an `svg:` vocabulary** (S, small, and the item in this list with the most users in
-  front of it): every dashboard has a chart and `docs/` has never mentioned one
-  ([`105`](105-the-ecosystem-answer.md) §105.9). The element vocabulary is already open — `html.rs`
-  validates no tag list — so the blocker is one call: `beck-patch.js:10` creates every node with
-  `createElement`, which puts an `<svg>` subtree in the HTML namespace where it parses and does not
-  draw. `createElementNS` under a tag-derived namespace is the fix, and above it a chart is an
-  ordinary `component` returning a pure function of a view — incrementally maintained, WCAG-checked
-  and delta-patched, which no other ecosystem's chart is.
 - **What the macro interpreter unblocked** (F — the interpreter itself is **built**,
   [`102`](102-the-macro-interpreter-report.md), with its G-class sandbox gate beside it). A macro
   body is ordinary Beck now, so the successors this item existed to free are the item:
@@ -522,8 +515,9 @@ rows.
   a diagnostic rather than a surprise until this exists.
 - **Comment-preserving printing** (S, due rather than nice): ordinary `#` comments are dropped by the
   lexer, so `beck fmt` deletes them — a formatter that eats comments is one nobody runs twice, and
-  `textDocument/formatting` waits on it. It has been in §8.5.5's Lane C cell since that table was
-  written, and **a lane is a collision map rather than an order**, which is how it stayed unpositioned.
+  `textDocument/formatting` waits on it (`DEFECTS.md::fmt-comments`). It has been in §8.5.5's Lane C
+  cell since that table was written, and **a lane is a collision map rather than an order**, which is
+  how it stayed unpositioned.
 - **Chapters 4 and 5 of SICP** (S): no predecessors, and they never acquire any.
 - **Trusted publishing** (R, above): an account setting rather than a branch.
 - **Grammar-aware fuzzing and Kani proofs of the solver's invariants** (S, due rather than
@@ -553,6 +547,50 @@ rows.
   posture — each close a `pending_security.rs` absence and correct [`43`](43-threat-model.md) §43.4
   in the same change, and shipping a public form over an unquotaed socket is the dishonest ordering
   G-class exists to prevent. Then the `@public` boundary itself, then `@public(rest)`.
+- **Styling and the component library** ([`104`](104-styling-and-the-component-library.md), D29) —
+  eight items, in this order, and the first two are defects rather than features
+  ([`DEFECTS.md`](../DEFECTS.md)). They are grouped here because they share a lane and a document,
+  not because they are one item; the first four are each smaller than the paragraph describing
+  them.
+  1. **The SVG namespace** (S, and **first** because it is the cheapest thing on this list that
+     unblocks a whole component class): `beck-patch.js` builds patched-in subtrees with
+     `document.createElement`, so a chart paints once and does not render after the patch that
+     changes it. Gated by a browser test asserting a patched `rect` has a non-zero box
+     (`DEFECTS.md::svg-namespace`). Lane B.
+  2. **A vocabulary for `ui:`** (G): known events, known attributes, a diagnostic with a suggestion
+     and an escape hatch for a genuine custom attribute. **G** because §12.4's three accessibility
+     checks — alt text, accessible name, input label — are already scheduled in the standards
+     ledger below over the same typed tree, and a tree that accepts `on_keydown` and `cls=` in
+     silence cannot honestly carry an accessibility claim; the two are one artefact and should be
+     one change. `DEFECTS.md::ui-vocabulary`. Lane C, with a `beck-macro` half — and the vocabulary
+     is a **table**, not expander code, because typed macros above retire the compiler-provided
+     `ui:` special case (D22) and a user-written `ui:` has to be held to the same names.
+  3. **`class=` takes a list, and `Class` is a type** (F): the prerequisite for everything else in
+     the styling half, and what makes the editor's existing completion, hover and rename answer for
+     utilities without an extension ([`65`](65-the-editor-report.md)). Lane A.
+  4. **The utility table and the sheet emitter** (S): exact extraction over the typed tree,
+     `beck build` writing the stylesheet, `styles = none` turning all of it off, and the
+     differential gate that holds the accepted table against Tailwind's own compiler
+     ([`104`](104-styling-and-the-component-library.md) §104.4). This is what retires
+     `beck-rt/src/css.rs`. **Both paths gated**, per §8.3 — the switched-off program is compiled and
+     run beside the switched-on one, because a default nobody has run is a claim. Lane B, with the
+     table generated into Lane A's tables.
+  5. **The theme as a Beck value**, and a styled `beck new` (S): tokens as a record generating both
+     the theme block and the accepted names, so renaming a brand colour is a rename. Lane B.
+  6. **Where interface state lives** (F, and a **decision before an implementation**): a modal's
+     open flag, a combobox's highlighted option and a table's sort column have nowhere to live but
+     the durable log, and §104.8's three candidate answers — a client-placed non-durable fold, the
+     URL, or the document itself — are not equivalent. This wants a D-number of its own before code,
+     and it is what the last two items wait on. `DEFECTS.md::non-durable-fold` is the separable
+     defect underneath it: D1's construct is decided and silently unbuilt. Lane A.
+  7. **Focus as a function of state** (S): an attribute the view writes and the client reconciles,
+     never a `focus()` effect — the page stays a pure function of state, which is the property the
+     design is for. Every APG pattern worth having moves focus, so this and item 6 are what the
+     combobox, the menu and a custom date picker are actually blocked on. Lanes A and B.
+  8. **The kit** (S, and **last**): table, chart, dialog, accordion, tabs, each shipping the
+     WAI-ARIA Authoring Practices keyboard table as its own test. Whether it is a `lib/` directory
+     or a tarn is a decision to take *after* items 3–5 land rather than in advance
+     ([`104`](104-styling-and-the-component-library.md) §104.10).
 - **TLA+ specifications, model-checked in CI** (G): the deploy choreography and the
   subscription-resume protocol, written and checked **immediately before the operator is built**,
   never after — [`12`](12-standards-and-conformance.md) §12.9 stated this as present for as long
@@ -589,9 +627,9 @@ directories.
 
 | Lane | Owns | What is left in it | Collides with |
 |---|---|---|---|
-| **A — type system** | `beck-core/src/check/`, `ty.rs`, `core.rs`, `prelude.rs`, `iface.rs` | **Typed macros and `derive`** (§8.5.4's first item — a macro body that receives inferred types is a checker change, whatever crate the body runs in); `Ord` as a trait, which [`54`](54-ordering.md) does not recommend | **Itself, completely** — see below |
-| **B — runtime and views** | `beck-rt/`, `beck-core/src/{engine,plan,incremental,pmap,signal}.rs` | The render lock, unowned | Nothing in A, C, E or F |
-| **C — front end and tooling** | `beck-syntax/`, `beck-cli/`, `beck-diag/` | Comment-preserving printing — `textDocument/formatting` waits on it, and `beck fmt` deleting `#` comments is why it is due rather than nice; code actions ([`65`](65-the-editor-report.md) §65.8); the standards ledger's front-end vectors (§8.5.4) | A, if a syntax decision changes what the checker sees |
+| **A — type system** | `beck-core/src/check/`, `ty.rs`, `core.rs`, `prelude.rs`, `iface.rs` | **Typed macros and `derive`** (§8.5.4's first item — a macro body that receives inferred types is a checker change, whatever crate the body runs in); `Ord` as a trait, which [`54`](54-ordering.md) does not recommend; the styling cluster's items 3, 6 and 7 (§8.5.4) — `Class` as a type, where interface state lives, and focus as an attribute | **Itself, completely** — see below |
+| **B — runtime and views** | `beck-rt/`, `beck-core/src/{engine,plan,incremental,pmap,signal}.rs` | The render lock, unowned; the styling cluster's items 1, 4 and 5 (§8.5.4) — the SVG namespace in `client/beck-patch.js`, the sheet emitter that retires `css.rs`, and the theme | Nothing in A, C, E or F |
+| **C — front end and tooling** | `beck-syntax/`, `beck-cli/`, `beck-diag/` | Comment-preserving printing — `textDocument/formatting` waits on it, and `beck fmt` deleting `#` comments is why it is due rather than nice (`fmt-comments` in [`DEFECTS.md`](../DEFECTS.md)); code actions ([`65`](65-the-editor-report.md) §65.8); the standards ledger's front-end vectors (§8.5.4); the `ui:` vocabulary (§8.5.4's styling item 2), whose diagnostics are here and whose macro half is `beck-macro` | A, if a syntax decision changes what the checker sees |
 | **D — process and supply chain** | `docs/`, `.github/`, `deny.toml`, `SECURITY.md`, `release/`, `install.sh` | Trusted publishing; a registry to push to; a subject `beck sign` can take over a release *listing* ([`adr/0028`](adr/0028-a-release-carries-provenance-and-still-no-signature.md)) | Nothing in code — **except that a release lands in `Cargo.toml`, a `build.rs` and `--version`** |
 | **E — backends** | `beck-eval/`, `beck-llvm/`, `beck-clif/`, `beck-wasmgen/`, `beck-core/src/backend.rs`, any new codegen crate | Mode B's codegen; the three items of [`93`](93-the-native-backends-report.md) §93.15, of which the two-calls-at-once worker is now what blocks cancelling a compiled child | Nothing — the seam is why ([`19`](19-phase-1-report.md) §19.9), and sixteen consecutive Lane E changes have held that prediction, several without touching one line of `beck-rt` |
 | **F — infrastructure** | `beck-infra/` | Effect-derived NetworkPolicy/RBAC/grants; Crossplane emitter; conformance rungs | Nothing |
@@ -667,12 +705,12 @@ be stale), and **look for it in §8.5.4** (a phase bullet is not a position, and
 | Found | Direction | Outcome |
 |---|---|---|
 | Macro expansion fuel (F17) | Document behind code | [`42`](42-security-assurance.md) §42.4 said "absent — nothing in `beck-macro` bounds expansion". `MAX_EXPANSION` is 100,000 nodes, `B0214` refuses, `macro_bomb.rs` gates it both ways, and `pending_security.rs` had already deleted its own test saying so. **Corrected in place** |
-| Deterministic transcendentals (F9) | Unscheduled | §8.5.2 said "owed rather than pending" for three phases. Now §8.5.4's first item, with the evidence measured rather than asserted |
-| The data tier's algebra | Unscheduled in *this* list | A Phase 4 bullet, never in the order. Now placed, in Lane B, parallel to the macro interpreter |
-| Charting | Unscheduled **and undesigned** | Not in `docs/` at all until [`105`](105-the-ecosystem-answer.md). Now placed |
+| Deterministic transcendentals (F9) | Unscheduled | §8.5.2 said "owed rather than pending" for three phases. Now §8.5.4's first item, and `DEFECTS.md::libm-determinism` — it is a **defect** rather than an absence, because the replay-determinism claim it falsifies is one this project ships |
+| The data tier's algebra | Unscheduled in *this* list | A Phase 4 bullet, never in the order. Now placed, in Lane B, and the largest item left now that the macro interpreter has landed. Its instrument is `DEFECTS.md::cost-report-undercount` |
+| Charting | Unscheduled **and undesigned** | Not in `docs/` at all until [`105`](105-the-ecosystem-answer.md), which ranked it, and [`104`](104-styling-and-the-component-library.md), which found the same defect from the UI side and owns the fix. Now the styling cluster's item 1 and `DEFECTS.md::svg-namespace`. **Two independent sweeps reached one line of JavaScript from opposite directions**, which is the strongest evidence in this section that the procedure works |
 | A columnar value / Arrow | Unscheduled | Committed in five documents as a *dependency choice*; nothing ever built the value it would apply to. Now placed, as the log-lifecycle G item's named predecessor |
 | The presence second clock | Unscheduled | [`48`](48-identity-report.md) §48.13's first row, in no phase, with a successor in [`99`](99-the-data-tier-means-of-combination.md) decision 3. Now placed |
-| Comment-preserving printing | In a lane, not in the order | §8.5.5's Lane C cell since that table existed. Now placed |
+| Comment-preserving printing | In a lane, not in the order | §8.5.5's Lane C cell since that table existed. Now placed, and `DEFECTS.md::fmt-comments` |
 | The `@public` surface | Unscheduled in this list | A Phase 4 bullet with its own internal order (§101.10) and no position here. Now placed, G-first |
 
 **The gate this wants.** Everything above is a procedure a person has to remember, which is the

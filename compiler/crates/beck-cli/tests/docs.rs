@@ -828,3 +828,94 @@ fn a_documents_sections_are_numbered_for_the_document_they_are_in() {
         bad.join("\n  ")
     );
 }
+
+/// An ADR is numbered for the file it is in, and the index names it.
+///
+/// [`docs/adr/`](../../../../docs/adr/README.md) numbers its records on its own scheme — `0001`
+/// onward, four digits, one file each — which is why
+/// [`a_documents_sections_are_numbered_for_the_document_they_are_in`] skips the directory: those
+/// numbers are *record identities* rather than section numbers, and nothing in an ADR is cited as
+/// `§N.M`. Skipping it left the identity itself unchecked, and the identity is the half that is
+/// cited: `adr/0007` and `adr/0012` are named from
+/// [`front_end_bound.rs`](front_end_bound.rs), `adr/0018` from `lib/README.md`, and eleven more
+/// from `AGENTS.md` and the design documents.
+///
+/// The gap this is the shape of is the one that has already happened twice in this repository. A
+/// document lands carrying a number a rename was supposed to change and the *headings* keep the
+/// old one, so a reference resolves to the wrong record or to nothing, and reading the file does
+/// not show the fault because the half a reader sees is right.
+/// `0023-tls-and-the-signature-it-brings.md` was titled `ADR 0022` from the day it was written —
+/// which is a real record's number — so a reader following a citation to 0022 found a page about
+/// the wrong decision, and no gate could say so.
+///
+/// Three properties, because a number is only an identity if all three hold: the title agrees with
+/// the filename, no two files claim one number, and the index names every record. The title's
+/// `ADR ` prefix is optional on purpose — the first fifteen records were written without it and
+/// the rest with it, and normalising thirty files to satisfy a test would be the test choosing the
+/// documents' prose. What the number means is what is checked.
+#[test]
+fn an_adr_is_numbered_for_the_file_it_is_in_and_is_listed() {
+    let dir = repo_root().join("docs/adr");
+    let index = std::fs::read_to_string(dir.join("README.md")).expect("the index is checked in");
+
+    let mut records: Vec<(u32, String)> = Vec::new();
+    let mut bad = Vec::new();
+    for entry in std::fs::read_dir(&dir).expect("the directory is readable") {
+        let path = entry.expect("a directory entry").path();
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .expect("a file has a name")
+            .to_string();
+        if !name.ends_with(".md") || name == "README.md" {
+            continue;
+        }
+        let Some(number) = leading_number(&name) else {
+            bad.push(format!("{name}: an ADR's filename begins with its number"));
+            continue;
+        };
+        let text = std::fs::read_to_string(&path).expect("a tracked file is readable");
+        let title = text
+            .lines()
+            .next()
+            .and_then(|line| line.strip_prefix("# "))
+            .expect("an ADR opens with its title")
+            .trim_start()
+            .to_string();
+        // `# 0002 — …` and `# ADR 0016 — …` are both in the directory; the number is what matters.
+        let stated = leading_number(title.strip_prefix("ADR ").unwrap_or(&title).trim_start());
+        match stated {
+            Some(stated) if stated != number => bad.push(format!(
+                "{name}: the title is numbered {stated} and the file is {number} — `{title}`"
+            )),
+            None => bad.push(format!("{name}: the title states no number — `{title}`")),
+            _ => {}
+        }
+        if !index.contains(&name) {
+            bad.push(format!("{name}: the index does not name this record"));
+        }
+        records.push((number, name));
+    }
+
+    assert!(
+        records.len() > 20,
+        "only {} records were read — the listing is wrong, not the directory",
+        records.len()
+    );
+    records.sort();
+    for pair in records.windows(2) {
+        if pair[0].0 == pair[1].0 {
+            bad.push(format!(
+                "{} and {} both claim number {}",
+                pair[0].1, pair[1].1, pair[0].0
+            ));
+        }
+    }
+
+    assert!(
+        bad.is_empty(),
+        "{} record(s) carry an identity a citation cannot follow:\n  {}",
+        bad.len(),
+        bad.join("\n  ")
+    );
+}

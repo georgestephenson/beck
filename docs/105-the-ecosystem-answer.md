@@ -13,7 +13,7 @@
 > among all libraries in every language. §105.5 supplies the test that explains why: **does the
 > package change what the language is used for?** NumPy and pandas pass it harder than almost
 > anything, which is the opposite of a reason to wave them through — §105.5 argues they are the
-> *hardest* category to answer, and §105.7–102.8 answer them.
+> *hardest* category to answer, and §105.7–105.8 answer them.
 
 ## 105.1 The premise, taken seriously
 
@@ -287,8 +287,11 @@ The consequence for Beck is the one the roadmap has to absorb:
 > in the language. So the ecosystem question is mostly not an interop question — it is a question
 > about how good Beck's own means of combination are.**
 
-Which is [`99`](99-the-data-tier-means-of-combination.md)'s subject, and [`02`](02-syntax.md) §2.4's,
-and the reason §8.5.4's first two large items are the macro interpreter and the view algebra.
+Which is [`99`](99-the-data-tier-means-of-combination.md)'s subject, and [`02`](02-syntax.md) §2.4's.
+It also says which half of that is now the constraint: **the machinery for building notations is
+built** — a macro body runs Beck at compile time ([`102`](102-the-macro-interpreter-report.md)) — and
+the notations themselves are not. The view algebra is the largest of them and §8.5.4's largest
+remaining item.
 
 ## 105.6 The verdict, against the packages that pass the test
 
@@ -386,38 +389,31 @@ kernel, which pays a bit transform per operation.
 
 That is not a defect to fix in `Value`. It is a second representation to add, and §105.10 is it.
 
-## 105.9 Charting, and the one line that blocks it
+## 105.9 Charting: why it belongs here, and where it is answered
 
-Charting is the gap this document was most surprised to find, because it has a real user in front of
-it and no design anywhere in `docs/`. It passes the utility test cleanly: matplotlib is a large part
-of why analysis happens in Python at all, and every dashboard, admin page and report has a chart in
-it. A framework that renders HTML and cannot draw a line chart sends its users to a JS library —
-which for Mode A means a merge point and a client that is no longer a patch interpreter. That is
-squarely a "week two wall" ([`09`](09-risks-and-open-questions.md) §9.3) and it is not on the list of
-four.
+**The mechanism and the schedule are [`104`](104-styling-and-the-component-library.md)'s**, which
+audited the component library independently and found the same defect from the other side: the patch
+applier builds subtrees with `document.createElement` and no namespace, so a patched-in `rect`
+renders at width 0 against server-side rendering's 50 — a chart paints once and vanishes when its
+data changes. It is `DEFECTS.md::svg-namespace`, it is item 1 of [`08`](08-roadmap.md) §8.5.4's
+styling cluster, and §104.10 owns the question of what a chart component library is. Nothing here
+duplicates that.
 
-The answer is small and native, and the blocker is precise. Beck's element vocabulary is **open** —
-`Html::Element { tag: String, .. }` ([`html.rs`](../compiler/crates/beck-core/src/html.rs)) validates
-no tag list — so `svg:` elements already survive the compiler and SSR. What stops them is one call in
-the patch interpreter:
+What this document adds is the **reason it ranks**, which an audit of the UI could not supply.
+Charting is the one row in §105.6 that no ecosystem in the survey does without and that Beck had no
+verdict for anywhere — and it passes §105.5's utility test cleanly: matplotlib is a large part of why
+analysis happens in Python at all, and every dashboard, admin page and report has a chart in it. A
+framework that renders HTML and cannot draw a line chart sends its users to a JS library, which for
+Mode A means a merge point and a client that is no longer a patch interpreter. That is squarely a
+"week two wall" ([`09`](09-risks-and-open-questions.md) §9.3) and it was not on the list of four.
 
-```
-compiler/crates/beck-rt/client/beck-patch.js:10
-    const el = document.createElement(h[0]);
-```
-
-`createElement` puts every node in the HTML namespace. An `<svg>` subtree built that way parses and
-does not draw. The fix is `createElementNS` under a tag-derived namespace — a few lines, in a file
-that is already the thin client's core.
-
-Above it, a chart is an ordinary `component` returning `svg:` elements from a pure function of a
-view. Which means charts are **incrementally maintained**, WCAG-checkable by
+It also belongs in *this* document rather than only in an accessibility one, because of what the
+answer is worth once it works. A chart is an ordinary `component` returning `svg:` elements from a
+pure function of a view, so charts are **incrementally maintained**, WCAG-checkable by
 [`12`](12-standards-and-conformance.md) §12.4's machinery like any other component, server-rendered,
 and patched by delta rather than redrawn. No other ecosystem's chart gets that, because no other
-ecosystem's chart is a pure function of an incrementally maintained collection.
-
-**Verdict: build, in the language, small.** The highest ratio of user-visible value to effort
-anywhere in this document.
+ecosystem's chart is a pure function of an incrementally maintained collection. That is the same
+argument §105.7 makes for the dataframe verbs, one tier up.
 
 ## 105.10 Arrow is the boundary, and it discharges four commitments at once
 
@@ -458,14 +454,14 @@ everything in this section is at zero.
 
 | Gap | Class | Position |
 |---|---|---|
-| **Charting / `svg:`** (§105.9) | **S**, small, most users per unit of effort | [`08`](08-roadmap.md) §8.5.4. The `createElementNS` fix is a day; the component vocabulary above it is a week |
-| **The data tier's algebra** (§105.7) | **F** — §99.7 lists five written-down items it closes | §8.5.4, in Lane B, **parallel to the macro interpreter** — the largest item that does not contend for Lane A's files |
+| **Charting / `svg:`** (§105.9) | **S**, small, most users per unit of effort | **Scheduled** — [`08`](08-roadmap.md) §8.5.4's styling cluster item 1, and `DEFECTS.md::svg-namespace`. [`104`](104-styling-and-the-component-library.md) owns it; this document supplied the ranking, not the fix |
+| **The data tier's algebra** (§105.7) | **F** — §99.7 lists five written-down items it closes | §8.5.4, in Lane B, and now the **largest item left** — it contends with nothing in Lane A, so it runs beside the macro interpreter's successors |
 | **A columnar value and Arrow** (§105.10) | **F** | §8.5.4, after the algebra — an aggregate is what makes a column worth having |
-| **The array notation and BLAS** (§105.8) | **S** for the kernels, **Lane A** for the notation | Phase 4, after Arrow. The notation half wants the macro interpreter, so it queues behind §8.5.4's first item rather than beside it |
+| **The array notation and BLAS** (§105.8) | **S** for the kernels, **Lane A** for the notation | Phase 4, after Arrow. **The prerequisite has landed**: the macro interpreter is built ([`102`](102-the-macro-interpreter-report.md)), so the notation half is unblocked rather than queued — though a *typed* macro, which is what an array notation wants, is itself the first of §8.5.4's successor list |
 | **Cloud SDKs** (boto3, and the same shape in three other ecosystems) | **S** | Phase 4, beside the managed-cloud path. `external store` and `net.out` already type it; what is missing is that nobody wants to hand-write S3's signature algorithm |
 | **Image handling** (Pillow, sharp, ImageSharp) | **S** | Phase 4. A capability, so linking is the whole answer |
 | **The Python sidecar** ([`09`](09-risks-and-open-questions.md) §9.2) | **S** | Phase 4, unchanged — with §105.2's placement restriction as a **diagnostic** rather than a discovery |
-| **Regex** (`regex"…"`) | **S** | Waits on the macro interpreter, already §8.5.4's first item |
+| **Regex** (`regex"…"`) | **S** | **Unblocked** — §2.5's typed literal macros are named in §8.5.4's successor list, and §104 confirms that half is free of Lane A |
 
 The sidecar's diagnostic is worth naming as its own obligation. A `python_service` call inside a fold
 is refused today by `place.rs:760`'s replay-purity check, with a message about fold purity that does
@@ -519,12 +515,13 @@ diagnostic naming the merge point as the alternative.
   tape is a notation. The split is applied to the part that carries the value, and where a library
   is genuinely both, the notation half is the half that constrains the answer.
 - **It does not price the sidecar.** No one has built one, so nothing here says what a call costs.
-- **It does not settle charting's vocabulary.** §105.9 establishes that the blocker is one call and
-  the shape is a component; which SVG elements, and what a `chart:` abstraction over them looks
-  like, is undesigned.
-- **It does not design the array notation.** §105.8 says broadcasting has to be in the language and
-  that the macro interpreter is its prerequisite. What the surface syntax is, and whether
-  broadcasting is a trait or a macro, is not decided here.
+- **It does not own charting.** §105.9 supplies the ranking;
+  [`104`](104-styling-and-the-component-library.md) owns the defect, the fix and the component
+  question, and found the same `createElement` hole independently from the UI side.
+- **It does not design the array notation.** §105.8 says broadcasting has to be in the language.
+  What the surface syntax is, and whether broadcasting is a trait or a macro, is not decided here —
+  and now that the macro interpreter is built, that is the only thing standing between the argument
+  and an implementation.
 
 ## 105.14 What this corrects, elsewhere
 
@@ -534,4 +531,5 @@ diagnostic naming the merge point as the alternative.
 | [`16`](16-packages-and-ecosystem.md) §16.8 | "Tarns extend the language; bridges rent from neighbours" is right and incomplete — the two largest categories are neither extended nor rented but **dissolved** or **absorbed into the language**. §16.8 now names four |
 | [`01`](01-vision-and-premise.md) §1.5 item 7 | "Interop or die" is a true instinct pointed at the wrong noun. The libraries that most expand a language's utility are **notations**, and a notation cannot be called across a boundary at all — so most of the ecosystem question is about Beck's own means of combination rather than about interop |
 | [`01`](01-vision-and-premise.md) §1.7 | The ML/numeric concession is sound for SciPy and PyTorch and has been read to cover arrays and dataframes, which are ordinary application vocabulary rather than a scientific speciality. §1.7 now says which is conceded |
-| [`08`](08-roadmap.md) §8.5.4 | Four items acquire a position: charting, the data tier's algebra (a Phase 4 bullet never in the ordered list), the columnar value, and the array notation behind the macro interpreter |
+| [`08`](08-roadmap.md) §8.5.4 | Three items acquire a position: the data tier's algebra (a Phase 4 bullet never in the ordered list), the columnar value, and the array notation. Charting acquired one too and then acquired a better one — [`104`](104-styling-and-the-component-library.md)'s styling cluster owns it, with the `DEFECTS.md` entry this document did not write |
+| [`08`](08-roadmap.md) §8.6 | The ≥1% rule had always been scoped to cloud and infrastructure and the scoping was never argued. §8.6.2 applies it to libraries and gives all 39 entries of the survey's section a verdict |
