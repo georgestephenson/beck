@@ -210,8 +210,13 @@ model makes it a function of the clock *signal* — legal, and visibly time-vary
    server, extended by Crossplane. We write neither a storage engine nor a Terraform.
 6. **Escape hatches at every layer, typed.** External relational stores, raw SQL, raw HTML, raw k8s
    patches, FFI — available, type-checked at the boundary, never required.
-7. **Interop or die.** A language that cannot call the Python and npm ecosystems is a research
-   artefact ([`09`](09-risks-and-open-questions.md) §9.2).
+7. **Interop or die** — pointed at the right noun. A language that cannot call the Python and npm
+   ecosystems is a research artefact ([`09`](09-risks-and-open-questions.md) §9.2), and the
+   instinct is right about the stakes and wrong about the target: measured, the top of every
+   package index is HTTP, serialisation, build plumbing and terminal colour rather than the
+   numerics the slogan implies, and most of it is dissolved or absorbed rather than called
+   ([`102`](102-the-ecosystem-answer.md)). What must genuinely be *callable* is narrower than the
+   slogan and still existential.
 8. **Errors and explanations are the product.** `beck explain` answers "why did this land there /
    re-render / re-provision" in prose, with a trace ([`04`](04-compiler-architecture.md) §4.7).
 
