@@ -17,6 +17,41 @@ carry the order, so leave them where they land.
 
 ## Unreleased
 
+- **2026-08-16 — `beck explain cost` counts what it prints, and says how often a capture moves.**
+  The summary collected operators whose cost mentions `n entries copied` and the capture line was
+  written after the count, so `corpus/27-review.beck` — the one program in the corpus that contains
+  a join — was told **1 of 29** operators cost `O(n)` per event when two do, wrong in the
+  reassuring direction. The tally is now derived from the same per-operator record the body is
+  printed from, so the two cannot disagree, and it reports **2 of 29** with the two reasons named
+  apart: an arrangement forced into a list is `docs/23` §23.8's constant factor, a per-element
+  function that captured the state is a program that left the view algebra. The capture line also
+  carries the **cadence** of what it captured — never, per subscription, or per event — traced back
+  to a source in one pass over the plan's dependency order, so a captured `const`, a captured
+  `session` and a captured *state* print three different sentences instead of one; §99.3's sweep
+  found 18 capture sites of which only 3 are the expensive kind, and one of those is two hops from
+  `#0`. Gated by `incremental.rs::the_tally_counts_every_line_the_report_prints`, which reads both
+  numbers out of the printed text rather than recomputing either, and
+  `a_capture_says_how_often_what_it_captured_moves`, which builds one program per cadence; both go
+  red on the previous behaviour. Deletes `DEFECTS.md::cost-report-undercount`; item 2 of
+  [`docs/99`](docs/99-the-data-tier-means-of-combination.md) §99.9, the instrument every item below
+  it is read through.
+
+- **2026-08-16 — A patched-in chart is a chart: the client builds SVG in the right namespace.**
+  `beck-patch.js` built every subtree with `document.createElement`, which only ever guesses HTML,
+  while server-side rendering goes through the browser's own parser and gets it right. An `svg`
+  built that way is not an `SVGElement`, so it lays out as nothing: a chart painted on first load
+  and vanished the first time its data changed, which is the only reason to have drawn it. The
+  client now uses `createElementNS`, taking the namespace **from the tag** where the tag opens one
+  and **from the destination** otherwise, with `foreignObject` handing it back to HTML — and the
+  second half is where the difficulty is, because a patch that adds a bar to an existing chart
+  carries no `svg` tag of its own. Gated by
+  `browser.rs::a_patched_in_chart_is_still_a_chart` over the new `examples/chart.beck`, the first
+  program in the tree whose page is an SVG: two patches, and the assertion is the **laid-out width**
+  of every `rect` rather than its namespace. Checked against three wrong versions — the original
+  measures 0 on the first patch, a tag-only fix measures 0 too, and a fix with subtree inheritance
+  but no destination measures `30,0` on the second. Deletes `DEFECTS.md::svg-namespace`; item 1 of
+  [`docs/104`](docs/104-styling-and-the-component-library.md) §104.11's cluster.
+
 - **2026-08-16 — A cancellation gate stops betting on the scheduler.**
   `concurrency.rs::a_sibling_blocked_in_an_outbound_call_is_stopped_in_the_call` asserts that a
   scope reaches a child *blocked in the host*, and what put the sibling inside its call was

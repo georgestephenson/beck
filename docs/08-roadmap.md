@@ -554,11 +554,13 @@ rows.
   ([`DEFECTS.md`](../DEFECTS.md)). They are grouped here because they share a lane and a document,
   not because they are one item; the first four are each smaller than the paragraph describing
   them.
-  1. **The SVG namespace** (S, and **first** because it is the cheapest thing on this list that
-     unblocks a whole component class): `beck-patch.js` builds patched-in subtrees with
-     `document.createElement`, so a chart paints once and does not render after the patch that
-     changes it. Gated by a browser test asserting a patched `rect` has a non-zero box
-     (`DEFECTS.md::svg-namespace`). Lane B.
+  1. **The SVG namespace** (S, and it was **first** because it was the cheapest thing on this list
+     that unblocks a whole component class). **Done.** `beck-patch.js` built patched-in subtrees
+     with `document.createElement`, so a chart painted once and did not render after the patch that
+     changed it; it now takes the namespace from the tag where the tag opens one and from the
+     destination otherwise. Gated by `browser.rs::a_patched_in_chart_is_still_a_chart`, which
+     asserts the **laid-out width** of a patched `rect` in two positions — a fix that reads only the
+     tag fails the second ([`104`](104-styling-and-the-component-library.md) §104.9). Lane B.
   2. **A vocabulary for `ui:`** (G): known events, known attributes, a diagnostic with a suggestion
      and an escape hatch for a genuine custom attribute. **G** because §12.4's three accessibility
      checks — alt text, accessible name, input label — are already scheduled in the standards

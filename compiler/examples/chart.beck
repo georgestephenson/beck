@@ -1,0 +1,126 @@
+# A bar chart, which is the smallest program whose page is an SVG that changes.
+#
+# It exists for a property rather than for a demonstration: a chart is only worth drawing because
+# its data moves, so the interesting frame is not the first one but the patch after it. Two patches,
+# in fact, and they are different jobs for the client — the first bar makes the whole `svg` appear
+# where a paragraph was, and the second one arrives *inside* an `svg` that is already there. An
+# element's namespace comes from its tag in the first case and from its destination in the second.
+# `browser.rs::a_patched_in_chart_is_still_a_chart` is the gate, and this file is what it runs.
+
+type Name = newtype[Str]
+
+model State:
+    counts: Map[Name, Int]
+
+model Bar:
+    name: Name
+    x: Int
+    height: Int
+
+union Command:
+    Bump(name: Name)
+
+union Event:
+    Bumped(name: Name)
+
+union Rejection:
+    NoSuchBar
+
+# ---------- The fold ----------
+
+def apply_event(s: State, env: Envelope[Event]) -> State:
+    match env.body:
+        case Bumped(name):
+            return s.with(counts=map_insert(s.counts, name, count(s, name) + 1))
+
+def count(s: State, name: Name) -> Int:
+    match map_get(s.counts, name):
+        case Some(value):
+            return value
+        case None:
+            return 0
+
+def validate(s: State, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Bump(name):
+            if not list_contains(names(), name):
+                return Err(error=NoSuchBar)
+            return Ok(value=[Bumped(name=name)])
+
+# ---------- The bars ----------
+#
+# Three of them at fixed positions, and a bar appears only once it has something to show. That is
+# what makes the second bump an *insertion* into a chart rather than another attribute on it.
+
+def names() -> list[Name]:
+    return [Name(value="a"), Name(value="b"), Name(value="c")]
+
+def bars(s: State) -> list[Bar]:
+    return filter_list(every_bar(s), lambda b: b.height > 0)
+
+def every_bar(s: State) -> list[Bar]:
+    return [
+        Bar(name=Name(value="a"), x=10, height=count(s, Name(value="a")) * 20),
+        Bar(name=Name(value="b"), x=50, height=count(s, Name(value="b")) * 20),
+        Bar(name=Name(value="c"), x=90, height=count(s, Name(value="c")) * 20),
+    ]
+
+# ---------- The page ----------
+
+def view(s: State, session: Session) -> Html:
+    return render(bars(s))
+
+def render(bs: list[Bar]) -> Html:
+    return ui:
+        main:
+            h1: "chart"
+            chart_of(bs)
+            div(class="controls"):
+                for n in names():
+                    button(key=n, on_click=Bump(name=n)): n.value
+
+## No axis and no empty frame: with nothing to draw there is nothing that is a chart.
+def chart_of(bs: list[Bar]) -> Html:
+    if list_is_empty(bs):
+        return ui:
+            p(class="empty"): "no data yet"
+    return ui:
+        svg(width="130", height="110"):
+            for b in bs:
+                rect(key=b.name, x=str(b.x), y=str(110 - b.height),
+                     width="30", height=str(b.height), fill="#4051b5")
+
+# ---------- The wiring ----------
+
+@on(server)
+proposals: Stream[Proposal] = merge_clients()
+
+@on(server)
+events: Stream[Event] = decide(proposals, counts, validate)
+
+@on(data)
+counts: Signal[State] = durable(fold(apply_event, State(counts={}), events))
+
+@on(client)
+page: Signal[Html] = per_session(counts, view)
+
+# ---------- Tests ----------
+
+test "a bar that is not one of the three is refused":
+    given []
+    when Bump(name=Name(value="d"))
+    expect Err(error=NoSuchBar)
+
+test "with nothing recorded there is no chart":
+    given []
+    expect page contains "no data yet"
+
+test "one bump draws one bar":
+    given [Bumped(name=Name(value="a"))]
+    expect page contains "<svg"
+    expect page contains "height=\"20\""
+
+test "a second name is a second bar in the same chart":
+    given [Bumped(name=Name(value="a")), Bumped(name=Name(value="b"))]
+    expect page contains "x=\"10\""
+    expect page contains "x=\"50\""

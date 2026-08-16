@@ -474,20 +474,26 @@ be absent elsewhere, and [`94`](94-the-client-report.md) §94.15 already lists "
 Chromium" as not built. A component library that leans on the platform needs a support matrix and a
 degradation story per row, and neither exists.
 
-**And one defect blocks the chart of §104.7 outright.** `beck-patch.js:10` builds patched-in
-subtrees with `document.createElement(tag)` — no namespace. Measured in the same Chromium, on the
-same tree the patch carries:
+**One defect blocked the chart of §104.7 outright, and is now fixed.** `beck-patch.js` built
+patched-in subtrees with `document.createElement(tag)` — no namespace. Measured in the same
+Chromium, on the same tree the patch carries:
 
 | path | namespace | `instanceof SVGElement` | rendered width of a `rect` |
 |---|---|---|---|
 | server-side render (the HTML parser) | `…/2000/svg` | true | **50** |
 | a patch (`createElement`) | `…/1999/xhtml` | false | **0** |
 
-So an SVG chart paints on first load and **vanishes the first time it changes** — which is every
-time the data it is a function of changes, which is the only reason to have drawn it. The fix is
-`createElementNS` with a namespace inherited from the ancestor, and the gate is a browser test that
-asserts a patched `rect` has a non-zero box. It is not fixed here, because a client change wants its
-own change and its own browser gate; it is item 1 of §104.11 for the same reason.
+So an SVG chart painted on first load and **vanished the first time it changed** — which is every
+time the data it is a function of changes, which is the only reason to have drawn it. The client
+now builds with `createElementNS`, taking the namespace from the tag when the tag opens one
+(`svg`) and from **the destination** otherwise, with `foreignObject` handing it back to HTML.
+
+The second half of that sentence is the whole of the fix's difficulty, and the gate is built around
+it: `browser.rs::a_patched_in_chart_is_still_a_chart` drives two patches — one that replaces a
+paragraph with the whole `svg`, and one that adds a bar to a chart already in the document — and
+asserts the **laid-out width** of every `rect` rather than its namespace. A fix that reads the tag
+and ignores the destination passes the first and measures `30,0` on the second. `examples/chart.beck`
+is what it runs, and it is the first program in the tree whose page is an SVG.
 
 ## 104.10 Which components Beck should own, and why some of them it should own better
 
@@ -525,10 +531,11 @@ The list is not repeated here, because two documents holding one order is how an
 followed. What this section owes it is the *reason for the order*, which is not visible from a
 schedule:
 
-- **The first two are defects, not features** — the SVG namespace and the `ui:` vocabulary — and
-  they are in [`DEFECTS.md`](../DEFECTS.md) with the gate each fix owes. They come first because
-  each makes something already claimed untrue rather than something desired absent, and because
-  neither is expensive.
+- **The first two are defects, not features** — the SVG namespace and the `ui:` vocabulary. They
+  come first because each makes something already claimed untrue rather than something desired
+  absent, and because neither is expensive. The first is **done**: §104.9 has the fix and its gate,
+  and it cost eleven lines of the patch client and one example program. The second is still in
+  [`DEFECTS.md`](../DEFECTS.md) with the gate its fix owes.
 - **The vocabulary is a `G`** in §8.5.4's classification: §12.4's three accessibility checks are
   already scheduled over the same typed tree, and a tree that swallows `on_keydown` and `cls=` in
   silence cannot honestly carry an accessibility claim. The two are one artefact and should be one

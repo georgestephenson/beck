@@ -57,31 +57,6 @@ scheduled over the same tree and are dishonest until this exists.
 
 ---
 
-## `svg-namespace` — a patched-in SVG subtree is built in the wrong namespace
-
-**What is wrong.** `beck-rt/client/beck-patch.js:10` builds patched-in subtrees with
-`document.createElement(tag)` and no namespace. Server-side rendering goes through the browser's
-HTML parser and is therefore correct; the patch path is not. So an SVG chart paints on first load
-and **does not render after the first patch that changes it** — which is every time the data it is a
-function of changes.
-
-**Measured.** In Chromium 141.0.7390.37, on the tree shape the patch carries:
-
-| path | namespace | `instanceof SVGElement` | rendered width of a `rect` |
-|---|---|---|---|
-| server-side render | `…/2000/svg` | true | **50** |
-| a patch (`createElement`) | `…/1999/xhtml` | false | **0** |
-
-**The gate a fix owes.** A browser test (`beck-cli/tests/browser.rs`) that patches an `svg` into a
-page and asserts the `rect`'s bounding box is non-zero. Asserting the namespace alone is weaker and
-would pass on a fix that got the namespace right and the inheritance wrong; assert the box.
-
-**Where it is argued.** [`docs/104`](docs/104-styling-and-the-component-library.md) §104.9. It blocks
-charts outright, which is why it is first in [`docs/08`](docs/08-roadmap.md) §8.5.4's styling and
-components cluster.
-
----
-
 ## `non-durable-fold` — a decided construct is unbuilt, and the failure is silent
 
 **What is wrong.** [`docs/10`](docs/10-decisions.md) D1 provides for non-durable folds — "high-churn
@@ -126,33 +101,3 @@ after `beck fmt`, and the LSP formatting request enabled in the same change so t
 
 **Where it is argued.** [`docs/65`](docs/65-the-editor-report.md), and it is Lane C's in
 [`docs/08`](docs/08-roadmap.md) §8.5.5.
-
----
-
-## `cost-report-undercount` — `beck explain cost` prints an `O(n)` operator and excludes it from its own tally
-
-**What is wrong.** `cost_report`'s summary counts operators whose cost string contains
-`n entries copied`, and the capture line — the one that says a per-element function captured a plan
-node — is emitted *after* the count. So a program whose loop body captured the accumulator is told
-"1 of 29 operators cost `O(n)` per event" when two do. The headline number is wrong on exactly the
-programs where the cost matters most, and it is wrong in the reassuring direction.
-
-The capture line also names the node it captured rather than what *moves* that node, so a captured
-`const` (never moves), a captured `session` (per route change) and a captured **state** (every event)
-are printed identically. Telling them apart means tracing inputs transitively back to the
-accumulator, which the line does not do and a reader has no reason to do by hand — and one of the
-three real cases in the corpus is two hops from `#0`.
-
-**Measured.** `beck explain cost corpus/27-review.beck` reports `1 of 29 operators`, quoted in full
-in [`docs/99`](docs/99-the-data-tier-means-of-combination.md) §99.3, which also sweeps the corpus for
-the pattern: **18 capture sites in 10 programs**, of which 3 capture the state.
-
-**The gate a fix owes.** A test that the tally equals the number of `O(n)`-per-event operators the
-report itself prints, on a program that captures the accumulator — so the count and the body cannot
-disagree again — plus a classification test that a captured `const`, a captured `session` and a
-captured state print differently, since the fix is worthless if the reader still cannot tell which
-one they have.
-
-**Where it is argued.** [`docs/99`](docs/99-the-data-tier-means-of-combination.md) §99.3, and it is
-item 2 of §99.9's order of work — deliberately before any operator, because it is the instrument
-every later item is read through.

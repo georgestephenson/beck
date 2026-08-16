@@ -86,12 +86,16 @@ $ beck explain cost corpus/27-review.beck
   #14  map_values     δ touched  —  O(δ log n), the persistent map's own diff
   #15  sort_by        δ applications, at most 2δ touched — a move is a remove and an insert
   #16  flat_map       δ applications, then the entries of each changed element's list
-                      n applications whenever #0 moves — its function captured it
+                      n applications on every event — its function captured #0, which is
+                      downstream of the state
   #17  recompute      1 recompute + n entries copied, forcing #16
 
-  1 of 29 operators cost O(n) per event, and all of them for the same reason: a
-  recompute needs a `list`, and an arrangement is a keyed collection. That is
-  docs/24 §23.8's remaining constant factor, at #17.
+  2 of 29 operators cost O(n) per event, for two reasons:
+    #17  a recompute needs a `list` and an arrangement is a keyed collection —
+         docs/23 §23.8's remaining constant factor.
+    #16  a per-element function captured the state, so the whole collection is
+         reconsidered on every event — docs/99 §99.3, and the algebra has no
+         operator for what this program is doing.
 ```
 
 `#0` is the state (`beck explain query` names it: `#0 state shared `queue``). **The state moves on
@@ -100,17 +104,25 @@ definition of a nested-loop join with no index and no incremental maintenance.
 
 Three things about that transcript are the actual finding.
 
-**The compiler prints the defect and does not count it.** The summary says "1 of 29 operators cost
-`O(n)` per event" and names `#17`. `#16` is also `O(n)` per event, for an unrelated reason, and it is
-excluded — [`plan.rs`](../compiler/crates/beck-core/src/plan.rs)'s tally collects operators whose
-cost string contains `n entries copied`, and the capture line is emitted separately, after the
-count. The headline number is wrong on the one program in the corpus where it matters most.
+**The compiler printed the defect and did not count it.** The summary said "1 of 29 operators cost
+`O(n)` per event" and named `#17`. `#16` is also `O(n)` per event, for an unrelated reason, and it
+was excluded — [`plan.rs`](../compiler/crates/beck-core/src/plan.rs)'s tally collected operators
+whose cost string contained `n entries copied`, and the capture line was written separately, after
+the count. The headline number was wrong on the one program in the corpus where it matters most,
+and wrong in the reassuring direction. **Fixed**, and the transcript above is the fixed one: the
+summary is now derived from the same per-operator record the body is printed from, so the two
+cannot disagree again, and `incremental.rs::the_tally_counts_every_line_the_report_prints` reads
+both numbers *out of the printed text* rather than recomputing either from the plan.
 
-**The capture line was written for a different case and silently covers this one.** Its own comment
-says so: *"It is not per event — a session is constant for a subscription — but it is the one place
+**The capture line was written for a different case and silently covered this one.** Its own comment
+said so: *"It is not per event — a session is constant for a subscription — but it is the one place
 δ stops bounding the work."* That is true of a captured **session** and false of a captured
-**state**, and the line distinguishes neither — it names the node it captured, not what moves that
-node. Sweeping `beck explain cost` for `whenever #k moves` across the corpus and the examples and
+**state**, and the line distinguished neither — it named the node it captured, not what moves that
+node. **Fixed**: every operator now carries the cadence of what it captured, computed by tracing
+inputs back to a source in one pass over the plan's dependency order, and the three cases print
+three different sentences —
+`incremental.rs::a_capture_says_how_often_what_it_captured_moves` builds one program per cadence and
+asserts they differ from each other as well as from what each should say. Sweeping `beck explain cost` for `whenever #k moves` across the corpus and the examples and
 resolving each `#k` in `beck explain query` gives **18 capture sites in 10 programs**:
 
 | what the captured node is | sites | programs | when it moves |
@@ -397,12 +409,12 @@ every item below needs it as the oracle. Note what today's suite does *not* cove
 nothing about maintenance, and [`23`](23-incremental-views-report.md)'s "same work at 200 rows
 and at 1,600" was measured on programs whose loops capture nothing.
 
-**2. Make the report count what it prints.** `cost_report`'s tally excludes the capture line
-(§99.3), and the line names the captured node rather than what moves it — so telling a captured
-`const` (never moves) from a captured `session` (per route change) from a captured *state* (every
-event) takes tracing inputs back to the accumulator by hand, and one of the three real cases in the
-tree is two hops from `#0`. The plan already holds every edge needed to do it. Small, and it is the
-instrument every item below is read through.
+**2. Make the report count what it prints.** **Done.** The tally is derived from the same
+per-operator record the body is printed from, so the count and the lines cannot disagree; and every
+capture now names the *cadence* of what it captured — never, per subscription, or per event —
+computed by tracing inputs back to a source, which is what tells a captured `const` from a captured
+`session` from a captured **state** without a reader following edges by hand. `27-review` reports
+**2 of 29** where it reported 1. §99.3 has the transcript and the two gates.
 
 **3. `arrange_by`** — a second index over an existing collection, shared by the mechanism
 [`23`](23-incremental-views-report.md) already has.
