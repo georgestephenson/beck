@@ -2,7 +2,7 @@
 
 George's answers to [`09`](09-risks-and-open-questions.md) §9.5, recorded with the reasoning spelled
 out. Decisions marked **DECIDED** are settled and the other documents assume them. All decisions
-D1–D26 are settled. A decision that revises an earlier one says so in both directions rather than
+D1–D29 are settled. A decision that revises an earlier one says so in both directions rather than
 quietly diverging (D20 revises D2).
 
 ---
@@ -907,6 +907,57 @@ outbox pattern has nothing to patch; the dedupe key and resume cursor are given 
 seq)`) and which are imported. The trust corollary — maximalist telemetry derived from the log by
 replay rather than paid for in the serving path — is §101.8, and it is a consequence of D17 rather
 than a revision of it.
+
+## D29 — Beck absorbs Tailwind's design system and not its delivery, on by default with a switch — **DECIDED** (design settled; build staged per [`102`](102-styling-and-the-component-library.md) §102.11)
+
+The question was whether CSS is really absorbed, given that the stylesheet a running application
+serves is eight rules hard-coded in Rust and `css:` has never had a parser. Answer: **take the
+design system, refuse the delivery mechanism, and default it on.**
+
+- **The vocabulary is Tailwind's.** The spacing scale, the colour ramps, the type scale, the variant
+  grammar and above all the *names*. They are MIT-licensed, they are a decade of taste, and every
+  web developer — and every model a developer asks for help — already knows them. A Beck-invented
+  vocabulary would be strictly worse at the one thing a vocabulary does, so nothing is renamed for
+  the pleasure of owning it.
+- **The extraction is the compiler's.** No scanner, no safelist, no `@source`, and no `npm install`
+  on the path to a styled page. Tailwind finds class names by regular expression over source text
+  because it cannot resolve an import; Beck can, so `beck build` collects the class strings that
+  reach a `class=` from the typed tree and emits exactly those.
+  [`102`](102-styling-and-the-component-library.md) §102.3 is the measurement that decides this and
+  not the aesthetics of it: 71 Beck files that style nothing emit 15 rules extracted from English
+  prose in comments, a misspelled utility and a computed class name both vanish at exit 0, and an
+  application whose components are an imported module yields 1 utility of 12 — which is fatal
+  rather than untidy, because a Beck package is a content-addressed OCI artefact with no source
+  tree for a scanner to read.
+- **A name Beck does not know is a diagnostic**, with a suggestion. That is the whole difference
+  between using a tool and absorbing one, and it is why the accepted table is gated against
+  Tailwind's own compiler rather than typed in: a candidate Tailwind emits a rule for is one Beck
+  must accept, and one it emits nothing for is one Beck must refuse
+  ([`92`](92-supply-chain-and-release-report.md) §92.2's rule that a gate reads a rendering, and
+  [`clbg/`](../compiler/clbg/README.md)'s that the constants come from somebody else's artefact).
+- **On by default, and switchable** — §8.3's standard applied to a choice the system makes for you.
+  A new program is styled, `beck new` produces something that looks deliberate, and the sheet is
+  emitted with no configuration. **`styles = none` turns the whole of it off**: no sheet emitted, no
+  class checking, `class=` an unexamined `Str` again, and a program free to link its own stylesheet
+  or ship a foreign design system. The switch exists because a default nobody can leave is not a
+  default but a requirement, and because a team arriving with an existing design system must not
+  have to argue with the compiler about it. The switched-off path belongs in a gate beside the
+  switched-on one, per §8.3 — a default nobody has run is a claim.
+- **The npm package stays available and stays optional.** For the full utility surface, plugins, or
+  an existing Tailwind configuration, the same exact extraction feeds the real thing: `beck build`
+  emits the class list as an artefact the scanner reads instead of guessing at source, which is
+  strictly better input than it gets from any other language. What is refused is *depending* on it —
+  24 packages, 20 MB and three prebuilt native binaries at install time, against a project whose
+  absence checklist names "no Dockerfile" and whose package system exists partly because npm's
+  install-time code execution is ([`16`](16-packages-and-ecosystem.md) §16.4) "its worst security
+  legacy".
+
+The corollary for components is the same shape and is not a separate decision: a Beck component
+library is **markup and utilities**, not a port of a JavaScript kit, because porting one would port
+its workarounds for state it could not place and positioning the platform could not do. What is
+worth taking from that ecosystem is its specification work — the WAI-ARIA Authoring Practices
+keyboard tables as each component's oracle ([`102`](102-styling-and-the-component-library.md)
+§102.10).
 
 ## Still open (minor, non-blocking)
 

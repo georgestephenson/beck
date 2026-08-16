@@ -1,8 +1,12 @@
 # 102 — Styling, and the components everybody rebuilds
 
 > **Design, with measurements. Nothing here is built.** Every number below was produced by a command
-> this document quotes, against the tree at the time of writing. The recommendations are
-> recommendations; what is established is the *state*, which was worse than any document said.
+> this document quotes, against the tree at the time of writing. The styling half is **decided** —
+> [`10`](10-decisions.md) D29 — and the work is scheduled in [`08`](08-roadmap.md) §8.5.4; the
+> component half is measured and open, and §102.8's Wall 1 is explicitly not settled here. Three of
+> the four things this audit found wrong are **defects** and are registered in
+> [`DEFECTS.md`](../DEFECTS.md) with the gate each fix owes; the fourth — focus cannot be placed by a
+> view — is an *absence* rather than a defect, so it is a scheduled item and not a register entry.
 
 Two questions, and they turn out to be one:
 
@@ -156,9 +160,10 @@ the entire subject of the second half of this document.
 The diagnosis is not that Tailwind is badly built. It is that a scanner is what you write when you
 cannot resolve an import, and Beck resolves imports.
 
-## 102.4 The proposal: the design system is Tailwind's, the extraction is the compiler's
+## 102.4 The design system is Tailwind's, the extraction is the compiler's
 
-Split Tailwind in two and take one half.
+Split Tailwind in two and take one half. This is [`10`](10-decisions.md) **D29**, and the rest of
+this section is its argument.
 
 **Take the design system.** The scale of spacing, the colour ramps, the type scale, the variant
 grammar (`hover:`, `dark:`, `md:`, `supports-[…]:`), and above all **the names**. These are a decade
@@ -222,19 +227,29 @@ code execution "its worst security legacy" and makes its absence a design proper
 this project builds itself.
 
 **A Beck application whose styling requires `npm install` has lost the argument that the tarball is
-the product.** So the recommendation is a distinction rather than a yes or no:
+the product.** [`10`](10-decisions.md) **D29** settles the distinction that follows:
 
-- **On by default in appearance.** The examples, the tutorial, `beck init` and the playground ship
-  *styled*, using Tailwind's names, with the sheet emitted by `beck build` from the compiler's own
-  table. A user who types `beck new` gets something that looks deliberate, with no Node anywhere.
-- **Off by default as a dependency.** Tailwind-the-npm-package stays a supported, documented,
-  one-command upgrade for anyone who wants the complete utility surface, arbitrary plugins, or an
-  existing design system — and the same exact extraction feeds it, since `beck build` can emit the
-  class list as an artefact the scanner reads instead of guessing at source.
+- **On by default, and it is a default rather than a requirement.** The examples, the tutorial,
+  `beck init` and the playground ship *styled*, using Tailwind's names, with the sheet emitted by
+  `beck build` from the compiler's own table. A user who types `beck new` gets something that looks
+  deliberate, with no Node anywhere.
+- **`styles = none` turns all of it off.** No sheet emitted, no class checking, `class=` an
+  unexamined `Str` again, and the program free to link its own stylesheet or carry a foreign design
+  system. [`08`](08-roadmap.md) §8.3's rule is what makes this load-bearing rather than polite: a
+  choice the system makes for you owes an off switch **proved rather than promised**, so the
+  switched-off program is compiled and run by the same gate as the switched-on one. The switch is
+  owed to two people in particular — the team arriving with a design system they are not going to
+  abandon, and whoever finds a defect in the emitter at four in the morning.
+- **Off by default as a dependency, and never unavailable.** Tailwind-the-npm-package stays a
+  supported, documented, one-command upgrade for anyone who wants the complete utility surface or
+  arbitrary plugins — and the same exact extraction feeds it, since `beck build` can emit the class
+  list as an artefact the scanner reads instead of guessing at source. That is strictly better input
+  than Tailwind gets from any other language, which is a pleasant way for the two positions to
+  agree.
 
 The cost of that position is honest and should be stated: the compiler carries a **subset** table,
 it will lag upstream, and the gap has to be visible (`beck explain style` printing "this name is
-Tailwind's and not in Beck's table" rather than a bare refusal). The two rungs below are how the
+Tailwind's and not in Beck's table" rather than a bare refusal). The paragraph below is how the
 subset stops being a permanent apology.
 
 **And the port is smaller than it sounds.** Of the three native binaries above, two are Rust already:
@@ -504,28 +519,33 @@ mechanism Wall 2 needs, over the same typed tree, and would be built once.
 
 ## 102.11 What to build, in order
 
-Nothing below is scheduled; [`08`](08-roadmap.md) §8.5 is the only place in `docs/` that holds an
-order, and these are candidates for it. Cheapest first, and the first three are each smaller than
-the paragraph describing them.
+**These eight are scheduled**, in [`08`](08-roadmap.md) §8.5.4, which is the only place in `docs/`
+that holds an order — with a class and a lane each, and each named there rather than gestured at.
+The list is not repeated here, because two documents holding one order is how an order stops being
+followed. What this section owes it is the *reason for the order*, which is not visible from a
+schedule:
 
-1. **`createElementNS` in the patch applier**, with a browser gate asserting a patched `rect` has a
-   non-zero box (§102.9). Without it there are no charts, and charts are the highest-value thing on
-   this list that needs nothing else.
-2. **A vocabulary for `ui:`** — known events, known attributes, a diagnostic with a suggestion, an
-   escape hatch (§102.8, Wall 2). This is the gate that would have caught `cls=` in the canonical
-   sketch, and it carries §12.4's first three accessibility checks along with it.
-3. **`class=` accepts a list**, and `Class` becomes a type (§102.4, §102.6). One macro change, and
-   it is the prerequisite for everything in the styling half.
-4. **The utility table and the sheet emitter** — exact extraction over the typed tree,
-   `beck build` writing `/beck.css`, and the differential gate against Tailwind (§102.4). This is
-   what retires `beck-rt/src/css.rs`.
-5. **The theme as a Beck value**, and `beck new` producing something styled (§102.5).
-6. **A decision on Wall 1** — client-local ephemeral state — which is a language decision and wants
-   a D-number, not an implementation (§102.8).
-7. **Focus as an attribute** (§102.8, Wall 3), after 6.
-8. **The kit**: table, chart, dialog, accordion, tabs, each with the APG's own keyboard table as
-   its test (§102.10). It is a `lib/` directory or a tarn depending on how 3–5 land, and that choice
-   should be made *after* them rather than in advance.
+- **The first two are defects, not features** — the SVG namespace and the `ui:` vocabulary — and
+  they are in [`DEFECTS.md`](../DEFECTS.md) with the gate each fix owes. They come first because
+  each makes something already claimed untrue rather than something desired absent, and because
+  neither is expensive.
+- **The vocabulary is a `G`** in §8.5.4's classification: §12.4's three accessibility checks are
+  already scheduled over the same typed tree, and a tree that swallows `on_keydown` and `cls=` in
+  silence cannot honestly carry an accessibility claim. The two are one artefact and should be one
+  change.
+- **`class=` as a list is the `F`.** Everything in the styling half is behind it, and so is the
+  editor affordance that costs nothing once it exists.
+- **The last three are behind a decision, not behind effort.** Where interface state lives (Wall 1)
+  determines what a combobox, a menu and a custom date picker even look like, so building the kit
+  before that decision would be building the part of it that does not depend on the answer and
+  discovering which part that was afterwards.
+
+Two things are deliberately *not* on the list. **Whether the kit is a `lib/` directory or a tarn**
+is a decision to take after items 3–5, because the argument for either is mostly about how the
+utility table ships. And **`css:`** — the macro for keyframes, `@container` and complex selectors —
+stays behind the macro interpreter ([`08`](08-roadmap.md) §8.5.4's first item), because nothing in
+the styling half needs it and unblocking it early would be paying the largest fan-out item's cost
+for the smallest of its successors.
 
 ## 102.12 What this does not establish
 

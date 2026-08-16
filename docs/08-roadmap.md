@@ -96,6 +96,7 @@ ask in order:
 | "Is there a string library? A JSON parser?" | Yes, and `compiler/lib/` shows how to write the next one ([`46`](46-standard-library-report.md)) |
 | "Can I trust the actor in my ownership check?" | Against a real identity provider, yes ([`48`](48-identity-report.md)), and `session.claims` says what they may do. The default still believes the client, and says so |
 | "Can my DBA see the data?" | `psql` against the read models ([`23`](23-incremental-views-report.md)) — one table per collection, derived, no annotation |
+| "How do I make it look like anything?" | **Badly, and this is the newest row.** The stylesheet a running application serves is eight rules hard-coded in `beck-rt/src/css.rs`; `css:` appears in the tour and has no parser. Tailwind styles a Beck page with no configuration today, and its scanner cannot survive a package manager ([`102`](102-styling-and-the-component-library.md) §102.3), so the answer until §8.5.4's styling cluster lands is "bring npm" — which for a project whose product is one static binary is the wrong answer, not a smaller one |
 | "Where's the tutorial?" | [`86`](86-getting-started.md), published on the site, with every program in it compiled and run by a test |
 | "How do I get the compiler?" | One command ([`92`](92-supply-chain-and-release-report.md)) — and it has nothing to download until a tag is pushed, so today the answer is still "build it", which §86.1 says in that order |
 
@@ -476,6 +477,48 @@ rows.
   OpenID Foundation suite (pre-1.0 trigger); the two-independent-runner reproducible release
   build and SBOM signing (on the first tag); the SIGTERM-begins-drain contract (on the
   choreography defining what drain is).
+- **Styling and the component library** ([`102`](102-styling-and-the-component-library.md), D29) —
+  eight items, in this order, and the first two are defects rather than features
+  ([`DEFECTS.md`](../DEFECTS.md)). They are grouped here because they share a lane and a document,
+  not because they are one item; the first four are each smaller than the paragraph describing
+  them.
+  1. **The SVG namespace** (S, and **first** because it is the cheapest thing on this list that
+     unblocks a whole component class): `beck-patch.js` builds patched-in subtrees with
+     `document.createElement`, so a chart paints once and does not render after the patch that
+     changes it. Gated by a browser test asserting a patched `rect` has a non-zero box
+     (`DEFECTS.md::svg-namespace`). Lane B.
+  2. **A vocabulary for `ui:`** (G): known events, known attributes, a diagnostic with a suggestion
+     and an escape hatch for a genuine custom attribute. **G** because §12.4's three accessibility
+     checks — alt text, accessible name, input label — are already scheduled in the standards
+     ledger below over the same typed tree, and a tree that accepts `on_keydown` and `cls=` in
+     silence cannot honestly carry an accessibility claim; the two are one artefact and should be
+     one change. `DEFECTS.md::ui-vocabulary`. Lane C, with a `beck-macro` half.
+  3. **`class=` takes a list, and `Class` is a type** (F): the prerequisite for everything else in
+     the styling half, and what makes the editor's existing completion, hover and rename answer for
+     utilities without an extension ([`65`](65-the-editor-report.md)). Lane A.
+  4. **The utility table and the sheet emitter** (S): exact extraction over the typed tree,
+     `beck build` writing the stylesheet, `styles = none` turning all of it off, and the
+     differential gate that holds the accepted table against Tailwind's own compiler
+     ([`102`](102-styling-and-the-component-library.md) §102.4). This is what retires
+     `beck-rt/src/css.rs`. **Both paths gated**, per §8.3 — the switched-off program is compiled and
+     run beside the switched-on one, because a default nobody has run is a claim. Lane B, with the
+     table generated into Lane A's tables.
+  5. **The theme as a Beck value**, and a styled `beck new` (S): tokens as a record generating both
+     the theme block and the accepted names, so renaming a brand colour is a rename. Lane B.
+  6. **Where interface state lives** (F, and a **decision before an implementation**): a modal's
+     open flag, a combobox's highlighted option and a table's sort column have nowhere to live but
+     the durable log, and §102.8's three candidate answers — a client-placed non-durable fold, the
+     URL, or the document itself — are not equivalent. This wants a D-number of its own before code,
+     and it is what the last two items wait on. `DEFECTS.md::non-durable-fold` is the separable
+     defect underneath it: D1's construct is decided and silently unbuilt. Lane A.
+  7. **Focus as a function of state** (S): an attribute the view writes and the client reconciles,
+     never a `focus()` effect — the page stays a pure function of state, which is the property the
+     design is for. Every APG pattern worth having moves focus, so this and item 6 are what the
+     combobox, the menu and a custom date picker are actually blocked on. Lanes A and B.
+  8. **The kit** (S, and **last**): table, chart, dialog, accordion, tabs, each shipping the
+     WAI-ARIA Authoring Practices keyboard table as its own test. Whether it is a `lib/` directory
+     or a tarn is a decision to take *after* items 3–5 land rather than in advance
+     ([`102`](102-styling-and-the-component-library.md) §102.10).
 - **TLA+ specifications, model-checked in CI** (G): the deploy choreography and the
   subscription-resume protocol, written and checked **immediately before the operator is built**,
   never after — [`12`](12-standards-and-conformance.md) §12.9 stated this as present for as long
@@ -511,8 +554,8 @@ directories.
 | Lane | Owns | What is left in it | Collides with |
 |---|---|---|---|
 | **A — type system** | `beck-core/src/check/`, `ty.rs`, `core.rs`, `prelude.rs`, `iface.rs` | **The macro interpreter** (§8.5.4's first item — it lives in `beck-macro` and an evaluator, but it changes what reaches the checker, so it occupies this lane's hands); `Ord` as a trait, which [`54`](54-ordering.md) does not recommend | **Itself, completely** — see below |
-| **B — runtime and views** | `beck-rt/`, `beck-core/src/{engine,plan,incremental,pmap,signal}.rs` | The render lock, unowned | Nothing in A, C, E or F |
-| **C — front end and tooling** | `beck-syntax/`, `beck-cli/`, `beck-diag/` | Comment-preserving printing — `textDocument/formatting` waits on it, and `beck fmt` deleting `#` comments is why it is due rather than nice; code actions ([`65`](65-the-editor-report.md) §65.8); the standards ledger's front-end vectors (§8.5.4) | A, if a syntax decision changes what the checker sees |
+| **B — runtime and views** | `beck-rt/`, `beck-core/src/{engine,plan,incremental,pmap,signal}.rs` | The render lock, unowned; the styling cluster's items 1, 4 and 5 (§8.5.4) — the SVG namespace in `client/beck-patch.js`, the sheet emitter that retires `css.rs`, and the theme | Nothing in A, C, E or F |
+| **C — front end and tooling** | `beck-syntax/`, `beck-cli/`, `beck-diag/` | Comment-preserving printing — `textDocument/formatting` waits on it, and `beck fmt` deleting `#` comments is why it is due rather than nice (`fmt-comments` in [`DEFECTS.md`](../DEFECTS.md)); code actions ([`65`](65-the-editor-report.md) §65.8); the standards ledger's front-end vectors (§8.5.4); the `ui:` vocabulary (§8.5.4's styling item 2), whose diagnostics are here and whose macro half is `beck-macro` | A, if a syntax decision changes what the checker sees |
 | **D — process and supply chain** | `docs/`, `.github/`, `deny.toml`, `SECURITY.md`, `release/`, `install.sh` | Trusted publishing; a registry to push to; a subject `beck sign` can take over a release *listing* ([`adr/0028`](adr/0028-a-release-carries-provenance-and-still-no-signature.md)) | Nothing in code — **except that a release lands in `Cargo.toml`, a `build.rs` and `--version`** |
 | **E — backends** | `beck-eval/`, `beck-llvm/`, `beck-clif/`, `beck-core/src/backend.rs`, any new codegen crate | Mode B's codegen; the three items of [`93`](93-the-native-backends-report.md) §93.15; cancelling a child blocked in the host | Nothing — the seam is why ([`19`](19-phase-1-report.md) §19.9), and sixteen consecutive Lane E changes have held that prediction, several without touching one line of `beck-rt` |
 | **F — infrastructure** | `beck-infra/` | Effect-derived NetworkPolicy/RBAC/grants; Crossplane emitter; conformance rungs | Nothing |

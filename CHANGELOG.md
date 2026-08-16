@@ -17,22 +17,25 @@ carry the order, so leave them where they land.
 
 ## Unreleased
 
-- **2026-08-16 · #66 — Styling and the component library are designed, and the audit found four
-  defects.** [`docs/102`](docs/102-styling-and-the-component-library.md): the stylesheet a running
-  application serves is eight rules hard-coded in `beck-rt/src/css.rs` and `css:` has no parser, so
-  three documents claiming otherwise are corrected in place. Tailwind styles a Beck page with no
-  configuration and no language change (63 ms, 35 utilities, 7,047 bytes), and its *scanner* cannot
-  be adopted: 71 Beck files that style nothing emit 15 rules costing more bytes than the real ones,
-  a typo and a computed class vanish at exit 0, and an application whose components are an imported
-  module yields 1 utility of 12. Nothing is built. Four defects are recorded and none is fixed here
-  — `ui:` accepts any attribute or event name, so `on_keydown` and `cls=` ship dead to the browser
-  with `beck check`, `beck test` and the page snapshot all green (§102.8); the patch applier's
-  `document.createElement` gives a patched-in `rect` a rendered width of 0 against SSR's 50, which
-  blocks charts outright (§102.9); D1's non-durable fold does not make a runnable program, so
-  interface state has no home but the durable log (§102.8); and focus cannot be placed by a view.
-  [`docs/09`](docs/09-risks-and-open-questions.md) §9.6 item 8's open question is answered — a
-  visualization vocabulary is a library, because `ui:` already emits SVG with `viewBox` and
-  `aria-label` intact.
+- **2026-08-16 · #66 — Styling is decided, scheduled, and defects get a register.**
+  [`docs/102`](docs/102-styling-and-the-component-library.md) measures the position: the stylesheet a
+  running application serves is eight rules hard-coded in `beck-rt/src/css.rs` and `css:` has no
+  parser, so three documents claiming otherwise are corrected in place. Tailwind styles a Beck page
+  with no configuration and no language change (63 ms, 35 utilities, 7,047 bytes) and its *scanner*
+  cannot be adopted — 71 Beck files that style nothing emit 15 rules extracted from English prose in
+  comments, a typo and a computed class vanish at exit 0, and an application whose components are an
+  imported module yields 1 utility of 12, which is fatal because a Beck package has no source tree
+  to scan. [`docs/10`](docs/10-decisions.md) **D29** settles it: take the design system, refuse the
+  delivery, a name Beck does not know is a diagnostic, and **on by default with `styles = none` to
+  turn all of it off**, the switched-off path gated beside the switched-on one per §8.3. The eight
+  items are scheduled in [`docs/08`](docs/08-roadmap.md) §8.5.4 with a class and a lane each, and
+  Phase 3's exit table gains the question a developer actually asks. The component half needs no
+  language feature — components compose as functions, may be generic over the application's own
+  command, and `ui:` already emits SVG with `viewBox` and `aria-label` intact, which answers
+  [`docs/09`](docs/09-risks-and-open-questions.md) §9.6 item 8 in favour of a library. Nothing is
+  built. New file [`DEFECTS.md`](DEFECTS.md) — what is wrong right now, every entry naming the gate
+  its fix owes, deleted by the change that fixes it, union-merged like this file — seeded with the
+  three defects this audit found and one older one, that `beck fmt` deletes `#` comments.
 
 - **2026-08-16 · #63 — The page's flaky timing gate is replaced by one with no clock in it.**
   `measure_native.rs::what_a_page_costs_against_the_tree_walker` asserted a ratio of ratios over
