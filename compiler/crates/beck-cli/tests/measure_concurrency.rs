@@ -72,6 +72,7 @@ impl beck_core::host::Atoms for Slow {
     fn fetch(
         &self,
         request: &beck_core::net::Request,
+        _stop: &beck_core::net::Stop,
     ) -> Result<beck_core::net::Reply, beck_core::net::Failure> {
         std::thread::sleep(self.0);
         Ok(beck_core::net::Reply {

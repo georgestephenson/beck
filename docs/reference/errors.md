@@ -4,7 +4,7 @@
 
 Every diagnostic the compiler can raise carries a stable code. `beck explain error B0341` prints one of these entries at the terminal.
 
-The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans every non-test source file for a `"Bnnnn"` literal and fails if the set differs from this table in either direction. **132 codes.**
+The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans every non-test source file for a `"Bnnnn"` literal and fails if the set differs from this table in either direction. **137 codes.**
 
 
 ## Reading the source — `B0100–B0122`
@@ -26,7 +26,7 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0121` | error | **nesting is too deep to read** — The source nests deeper than the front end follows — `beck_diag::depth::MAX_NESTING` levels of brackets, indentation or S-expression lists. The bound is a fixed count rather than a reading of the stack, so the same file is accepted or refused identically in every build; without it, deep enough input aborted the process with no span at all. |
 | `B0122` | error | **an expression chains more operators than the reader will follow** — A left-associative chain — `1 + 1 + 1 + …` — is flat in source and builds a left-leaning tree of the same depth, one level per operator. The Pratt loop that reads it does not recurse, so none of the parser's recursion counters sees the depth, and a long enough chain reached the end of the host stack in whatever walked the tree afterwards. The bound is `beck_diag::depth::MAX_BLOCK` — the same ceiling a block of sequential bindings takes, because it is the same axis: a flat run of things that costs one tree level each. |
 
-## Macro expansion — `B0200–B0214`
+## Macro expansion — `B0200–B0216`
 
 | Code | | Meaning |
 |---|---|---|
@@ -35,13 +35,18 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0202` | error | **macro expects an argument** — A parameter of the macro received nothing at this call site. The macro's definition is reported as a secondary span. |
 | `B0203` | error | **too many arguments for macro** — More arguments than the macro declares parameters. |
 | `B0204` | error | **macro returns nothing** — A macro body ends without `return quote: …`, so there is no template to instantiate. |
-| `B0205` | error | **unsupported statement in a macro body** — Phase 1 macro bodies are `let` bindings and a final `return quote: …`. Arbitrary compile-time computation arrives with the macro interpreter, which is not built. |
-| `B0206` | error | **unquoting an unbound name** — `$x` inside a template names something that is not a parameter of this macro. |
+| `B0205` | error | **a form is not available in a macro body** — A macro body is pure compile-time computation — bindings, `if`, `for`, `while`, lambdas, calls and `quote:`. `match`, `try:`, `raise`, `parallel:` and declarations belong to the program the macro expands to, not to the expander. |
+| `B0206` | error | **unquoting an unbound name** — `$x` inside a template names something that is bound nowhere in this macro — usually a parameter that was renamed. `$e` evaluates `e` in the macro body's own environment, so anything the body bound is fair game. |
+| `B0207` | error | **a primitive may not be called while expanding a macro** — Macro expansion is capability-restricted (`docs/02` §2.4): it is pure computation over the module's own definitions, so that what a compile produces depends on the source and on nothing else. The primitive named performs an effect — reading the clock, the environment, the network — and is refused *by name* so that reaching for one is a diagnostic rather than a spelling mistake. |
+| `B0208` | error | **cannot find a name at compile time** — The macro interpreter's environment is a whitelist: locals, this module's own `def`s, and the pure builtins. There is no name in it for a file, a socket or a process, which is the sandbox rather than an omission. |
+| `B0209` | error | **a macro body computed the wrong kind of value** — A compile-time computation applied an operation to something it does not apply to — adding a Str to an Int, indexing past the end of a list, calling a value that is not a function. Macro bodies are evaluated before the checker runs, so these are caught by running rather than by typing. |
 | `B0210` | error | **`ui` needs an indented block** — Write `ui:` followed by an indented element. |
 | `B0211` | error | **`ui` block is empty** — A view must produce exactly one root element. |
 | `B0212` | error | **`ui` block has more than one root** — An `Html` value is a single tree. Wrap the elements in one — a `div:` or `main:` block. |
 | `B0213` | error | **the form nests too deep to expand** — The expander walks a form's arguments as deeply as they nest, and stops at the count the reader stops at. This is not `B0201`: nothing here says a macro failed to terminate — the two were one counter until they were separated, and a deep expression with no macros in it reported the wrong one. |
 | `B0214` | error | **macro expansion produced too much** — `B0201` and `B0213` bound how *deep* expansion goes; this bounds how much it makes. A macro that doubles its output at each of a few levels is shallow, terminates, and is enormous — eight nestings of a two-line macro is 256 copies of its argument — so the expander charges what it produces against a budget for the whole module. Reaching it means a macro is generating far more than any program in this repository does, and the fix is almost never a bigger budget. |
+| `B0215` | error | **a macro body ran too long** — `B0214` bounds what expansion *produces*; this bounds what it *does*. A macro body is a Beck program running at compile time, so `while true:` in one is a compiler that does not finish — the budget is a bound on how long a compile takes, shared by the whole module because that is what a compile is. |
+| `B0216` | error | **a macro body recursed too deep** — A compile-time call chain — usually a `def` that calls itself with no base case — went past the front end's nesting ceiling. A fixed count rather than a reading of the stack, for `adr/0012`'s reason: a diagnostic that depends on the build profile is not a diagnostic. |
 
 ## Names, types and effects — `B0300–B0399`
 

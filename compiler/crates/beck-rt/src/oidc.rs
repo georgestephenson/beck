@@ -348,15 +348,18 @@ impl RelyingParty {
         let target = Target::parse(url, self.config.in_cluster)?;
         let reply = self
             .http
-            .fetch(&Request {
-                host: Arc::from(target.host.as_str()),
-                port: target.port,
-                tls: target.tls,
-                method: Arc::from("GET"),
-                path: Arc::from(target.path.as_str()),
-                headers: vec![(Arc::from("accept"), Arc::from("application/json"))],
-                body: Arc::from(""),
-            })
+            .fetch(
+                &Request {
+                    host: Arc::from(target.host.as_str()),
+                    port: target.port,
+                    tls: target.tls,
+                    method: Arc::from("GET"),
+                    path: Arc::from(target.path.as_str()),
+                    headers: vec![(Arc::from("accept"), Arc::from("application/json"))],
+                    body: Arc::from(""),
+                },
+                &beck_core::net::Stop::never(),
+            )
             .map_err(|e| format!("`{url}` was not reached: {e:?}"))?;
         if reply.status != 200 {
             return Err(format!("`{url}` answered {}", reply.status));
@@ -633,15 +636,18 @@ impl RelyingParty {
 
         let reply = self
             .http
-            .fetch(&Request {
-                host: Arc::from(target.host.as_str()),
-                port: target.port,
-                tls: target.tls,
-                method: Arc::from("POST"),
-                path: Arc::from(target.path.as_str()),
-                headers,
-                body: Arc::from(body.as_str()),
-            })
+            .fetch(
+                &Request {
+                    host: Arc::from(target.host.as_str()),
+                    port: target.port,
+                    tls: target.tls,
+                    method: Arc::from("POST"),
+                    path: Arc::from(target.path.as_str()),
+                    headers,
+                    body: Arc::from(body.as_str()),
+                },
+                &beck_core::net::Stop::never(),
+            )
             .map_err(|e| format!("the token endpoint was not reached: {e:?}"))?;
         if reply.status != 200 {
             // The body of a failed token exchange names the client and sometimes the code; the

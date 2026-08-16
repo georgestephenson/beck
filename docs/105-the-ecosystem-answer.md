@@ -1,4 +1,4 @@
-# 102 — The ecosystem answer
+# 105 — The ecosystem answer
 
 > **Design, not a report. Nothing here is built.** [`09`](09-risks-and-open-questions.md) §9.2 calls
 > ecosystem access "the strategically important one" and [`01`](01-vision-and-premise.md) §1.5 item 7
@@ -7,15 +7,15 @@
 > a developer actually asks, which is not "can you call Python" but **"what do I do about NumPy"**.
 >
 > This document answers it per library, because the answers differ and averaging them is how the
-> question stayed open. §102.4 weighs two instruments and discards one: download rank measures
+> question stayed open. §105.4 weighs two instruments and discards one: download rank measures
 > **fan-in**, and the Stack Overflow survey — the source [`08`](08-roadmap.md) §8.6's ≥1% rule
 > already runs on — measures **use**, putting NumPy at 21.2% and pandas at 20.7%, second and third
-> among all libraries in every language. §102.5 supplies the test that explains why: **does the
+> among all libraries in every language. §105.5 supplies the test that explains why: **does the
 > package change what the language is used for?** NumPy and pandas pass it harder than almost
-> anything, which is the opposite of a reason to wave them through — §102.5 argues they are the
-> *hardest* category to answer, and §102.7–102.8 answer them.
+> anything, which is the opposite of a reason to wave them through — §105.5 argues they are the
+> *hardest* category to answer, and §105.7–102.8 answer them.
 
-## 102.1 The premise, taken seriously
+## 105.1 The premise, taken seriously
 
 The premise is that people choose Python because `import numpy` is one line, and that a new language
 starts at zero against twenty years of accumulated libraries. Both halves are true. The second is
@@ -24,7 +24,7 @@ board — so it is a reason to choose the territory deliberately, not a reason t
 
 The bar this document holds Beck to is narrower and harsher: **a language that has no answer for the
 functionality its target users need every day is unusable regardless of its guarantees.** Not "has
-fewer libraries" — has *no answer*. §102.11 is where Beck fails to clear it, in four places.
+fewer libraries" — has *no answer*. §105.11 is where Beck fails to clear it, in four places.
 
 [`01`](01-vision-and-premise.md) §1.7 conceded the scientific-computing territory explicitly:
 "ML/numeric work, systems programming, and ecosystem breadth are conceded and bridged (FFI,
@@ -33,9 +33,9 @@ over-applied.** Conceding *SciPy and PyTorch* — GPU kernels, solvers, a decade
 methods — is sound. Conceding *arrays and dataframes* is not the same concession, because those are
 not a scientific-computing speciality; they are how ordinary application code expresses aggregation
 over collections, which is [`99`](99-the-data-tier-means-of-combination.md)'s territory and Beck's
-own. §102.7 separates them.
+own. §105.7 separates them.
 
-## 102.2 The constraint that decides every case
+## 105.2 The constraint that decides every case
 
 Every answer below is forced by one property, so it is stated once rather than argued four times.
 
@@ -60,17 +60,17 @@ the place anybody means when they say "I use pandas", which is *inside a view*.
 > **A compatibility layer and a library are not two ways to get the same functionality. They land in
 > different tiers, and the tier is decided by the effect row rather than by preference.**
 
-§102.5 reaches the same conclusion by a completely different route, which is why this document
+§105.5 reaches the same conclusion by a completely different route, which is why this document
 treats it as settled rather than as a recommendation.
 
-## 102.3 Four answers, and the rule that picks one
+## 105.3 Four answers, and the rule that picks one
 
 | Answer | When | Cost | Where it lands |
 |---|---|---|---|
 | **Dissolve** | The library exists to patch a problem Beck's semantics do not have | Zero, plus a sentence saying so | Nowhere — the need is gone |
 | **In the language** | The functionality is a means of combination or a notation, not a bag of functions | A language feature; expensive and compounding | Any tier, including folds and views |
 | **Link** | Somebody's C or Rust artefact is the state of the art and always will be | A primitive in `prelude.rs` plus a dependency | Any tier — a linked primitive is pure if the function is |
-| **Bridge** | Genuinely foreign, genuinely large, genuinely somebody else's | The sidecar ([`09`](09-risks-and-open-questions.md) §9.2), and an effect row that says so | **Merge points only** — §102.2 |
+| **Bridge** | Genuinely foreign, genuinely large, genuinely somebody else's | The sidecar ([`09`](09-risks-and-open-questions.md) §9.2), and an effect row that says so | **Merge points only** — §105.2 |
 
 The rule that picks between **link** and **bridge** is the one [`AGENTS.md`](../AGENTS.md) already
 states for performance: *ask what the operation should cost*. If the answer is "what a hand-tuned
@@ -81,9 +81,9 @@ The rule that picks **dissolve** is [`29`](29-domain-driven-design.md) §29.1's,
 the four DDD patterns it marks dissolved: ask what problem the library patches, and check whether
 the problem exists here.
 
-The rule that picks **in the language** is §102.5's, and it is the one that matters most.
+The rule that picks **in the language** is §105.5's, and it is the one that matters most.
 
-## 102.4 Two instruments, and the one to trust
+## 105.4 Two instruments, and the one to trust
 
 There are two kinds of evidence about what a package is worth, and they disagree. Both were gathered
 **2026-08-16**.
@@ -120,7 +120,7 @@ inversely related to how much it changes what you can do: the most-depended-upon
 that does the least. A data file of CA certificates outranks the library that made HTTP pleasant.
 
 **So a rank is not evidence about a library.** For the record, NumPy is PyPI **#19**, pandas **#38**,
-SciPy **#89**, Pillow **#68** and — a datum §102.10 uses — **PyArrow is #96**. Those numbers say
+SciPy **#89**, Pillow **#68** and — a datum §105.10 uses — **PyArrow is #96**. Those numbers say
 these are chosen directly rather than dragged in transitively, which if anything is the harder
 achievement. They are not the argument and nothing below rests on them.
 
@@ -189,13 +189,13 @@ numerical library.
 
 Two consequences follow, and the second is a roadmap defect:
 
-1. **The utility test (§102.5) and the survey agree**, where the survey and the download ranks do
+1. **The utility test (§105.5) and the survey agree**, where the survey and the download ranks do
    not. That is the reason this document is organised around the former.
 2. **§8.6's ≥1% rule is scoped to cloud and infrastructure only, and nothing applies it to
    libraries.** Applied here it is unambiguous: at 21.2% and 20.7%, NumPy and pandas clear a bar set
    at 1% by twentyfold, and neither has ever had a verdict recorded anywhere in `docs/`. Charting is
    the same story one level down — matplotlib is absent from the survey's list, but the *category*
-   is not optional for any of the three ecosystems §102.6 surveys. That gap is now
+   is not optional for any of the three ecosystems §105.6 surveys. That gap is now
    [`08`](08-roadmap.md) §8.6's, and the rule's own words are what convicts it: silence is not a
    verdict.
 
@@ -210,13 +210,13 @@ PyArrow-backed strings the **default** dtype where PyArrow is installed
 ([PDEP-10](https://pandas.pydata.org/pdeps/0010-required-pyarrow-dependency.html); the *hard*
 dependency was postponed after feedback, the default was not). It shows in the download data:
 PyArrow is PyPI **#95** at 433M, against pandas' 769M — the interchange format is being pulled in by
-more than half of pandas' own installs. §102.10 argued Arrow is the boundary worth building; the
+more than half of pandas' own installs. §105.10 argued Arrow is the boundary worth building; the
 ecosystem has since argued the same thing with its defaults, which is stronger corroboration than
 agreement would have been.
 
 **2. Polars is real and is not displacing pandas — and it makes the algebra argument harder to
 dodge.** By downloads, polars is **#466 at 71M against pandas' 769M**, roughly one to eleven. What
-matters for §102.7 is not the share but that Polars is a **fifth** independent implementation of the
+matters for §105.7 is not the share but that Polars is a **fifth** independent implementation of the
 same dozen verbs (with pandas, LINQ, `dplyr` and SQL), written in Rust, whose whole pitch is that the
 verbs are worth keeping and the engine underneath them is worth replacing. That is
 [`10`](10-decisions.md) D9's "our own front door onto the best engines in the world" arrived at
@@ -233,7 +233,7 @@ evidence for it.
 above `pip` itself at #51** — with `openai` at #107, `langchain` at #133 and `huggingface-hub` at
 #94. Nothing in the 2024 survey's list covers this. It is worth a verdict rather than a shrug, and
 Beck's is unusually good: **an LLM call is nondeterministic, so it cannot live in a fold or a view**
-(§102.2) and must arrive at a merge point as a command whose *response becomes an event*. That is
+(§105.2) and must arrive at a merge point as a command whose *response becomes an event*. That is
 the shape LLM applications need anyway and mostly do not get — the prompt, the response and the
 model version land in the log, so a session replays exactly ([`03`](03-type-and-effect-system.md)
 §3.7) without re-calling the model. The architecture forces the discipline that these applications
@@ -252,13 +252,13 @@ the sidecar; the row is added to [`08`](08-roadmap.md) §8.6.2.
 > [`AGENTS.md`](../AGENTS.md)'s rule that a claim must name the command that produces it is the
 > defence.
 
-## 102.5 The test that matters, and why notations cannot be bridged
+## 105.5 The test that matters, and why notations cannot be bridged
 
 The right question is the one rank cannot answer: **did the package change what the language is used
 for?** Python was a scripting language and NumPy made it the language of scientific computing;
 pandas made it the language of data analysis. Rust was a systems language and `serde` made it a
 data-interchange language; `tokio` made async Rust exist. That is a category no download count
-distinguishes — and §102.4's survey ranks its members at the top, which is the corroboration that
+distinguishes — and §105.4's survey ranks its members at the top, which is the corroboration that
 makes this a test rather than a preference.
 
 Applying it sorts the passes into exactly two kinds, and the split turns out to decide Beck's answer:
@@ -276,9 +276,9 @@ composition is what you lose: each call is a round trip, intermediate results mu
 and shipped, and the fluent chain that *was* the value becomes a batch job. A sidecar can host
 PyTorch perfectly well. It cannot host pandas in any sense a pandas user would recognise.
 
-Two independent arguments therefore reach the same conclusion — §102.2 from the effect row and
-determinism, §102.5 from composition — and they are worth keeping separate, because §102.2's is
-about *legality* and §102.5's is about *value*. Even if folds were impure tomorrow, bridging a
+Two independent arguments therefore reach the same conclusion — §105.2 from the effect row and
+determinism, §105.5 from composition — and they are worth keeping separate, because §105.2's is
+about *legality* and §105.5's is about *value*. Even if folds were impure tomorrow, bridging a
 notation would still be the wrong shape.
 
 The consequence for Beck is the one the roadmap has to absorb:
@@ -290,18 +290,18 @@ The consequence for Beck is the one the roadmap has to absorb:
 Which is [`99`](99-the-data-tier-means-of-combination.md)'s subject, and [`02`](02-syntax.md) §2.4's,
 and the reason §8.5.4's first two large items are the macro interpreter and the view algebra.
 
-## 102.6 The verdict, against the packages that pass the test
+## 105.6 The verdict, against the packages that pass the test
 
 Not a ranking, and not derived from one. This is the subjective list — the packages a working
 developer in each ecosystem would refuse a job without — with Beck's answer and its honest status.
-Where §102.4's survey covers a row it agrees, which is the only external check available; the rows
-it does not cover (charting, ORMs, testing) are judgement and are marked as such in §102.13.
+Where §105.4's survey covers a row it agrees, which is the only external check available; the rows
+it does not cover (charting, ORMs, testing) are judgement and are marked as such in §105.13.
 
 | What it does | Python | JS/TS | .NET | Rust | Beck's answer | Status |
 |---|---|---|---|---|---|---|
-| **Arrays and numerics** | numpy | — | — | ndarray | **Notation in the language, kernels linked** — §102.8 | **Nothing** |
-| **DataFrames / tabular algebra** | pandas | — | LINQ | polars | **In the language** — it is [`99`](99-the-data-tier-means-of-combination.md)'s algebra, §102.7 | Designed, unbuilt |
-| **Charting** | matplotlib | Chart.js, D3, Recharts | — | — | **In the language** as an `svg:` vocabulary — §102.9 | **Nothing, and one line blocks it** |
+| **Arrays and numerics** | numpy | — | — | ndarray | **Notation in the language, kernels linked** — §105.8 | **Nothing** |
+| **DataFrames / tabular algebra** | pandas | — | LINQ | polars | **In the language** — it is [`99`](99-the-data-tier-means-of-combination.md)'s algebra, §105.7 | Designed, unbuilt |
+| **Charting** | matplotlib | Chart.js, D3, Recharts | — | — | **In the language** as an `svg:` vocabulary — §105.9 | **Nothing, and one line blocks it** |
 | **Web framework** | django, fastapi | express, next | ASP.NET Core | axum | **Dissolve** — the language *is* the server; a route is a field of `Session` ([`94`](94-the-client-report.md)) | **Built** |
 | **ORM / data access** | sqlalchemy | prisma | EF Core, Dapper | sqlx, diesel | **Dissolve** — [`29`](29-domain-driven-design.md) §29.1: state is a fold, "there is nothing to load, save, or mock" | **Built** |
 | **Serialisation** | pydantic | zod | System.Text.Json | **serde** | **Dissolve into the type system** — the wire format is derived from types, and effect-typed at the boundary ([`04`](04-compiler-architecture.md) §4.4) | **Built** |
@@ -315,20 +315,20 @@ it does not cover (charting, ORMs, testing) are judgement and are marked as such
 | **Cloud SDK** | **boto3** | aws-sdk | AWSSDK | aws-sdk | **Link or generate** — capability, not notation | **Nothing** |
 | **Image handling** | pillow | sharp | ImageSharp | image | **Link** — capability | **Nothing** |
 | **ML / inference** | torch, transformers | — | — | candle | **Bridge**, at a merge point — capability, and the concession §1.7 actually made | Designed, unbuilt |
-| **LLM clients** | litellm, openai | ai-sdk | Semantic Kernel | async-openai | **Bridge**, at a merge point — and the response becomes an event, so replay is exact (§102.4) | Designed, unbuilt |
+| **LLM clients** | litellm, openai | ai-sdk | Semantic Kernel | async-openai | **Bridge**, at a merge point — and the response becomes an event, so replay is exact (§105.4) | Designed, unbuilt |
 | **Scientific methods** | scipy | — | — | — | **Bridge** — capability | Designed, unbuilt |
-| **Columnar interchange** | **pyarrow** | — | — | arrow-rs | **In the language** — §102.10 | **Nothing** |
+| **Columnar interchange** | **pyarrow** | — | — | arrow-rs | **In the language** — §105.10 | **Nothing** |
 
 Read down the "status" column: Beck's answers are strong precisely where the *dissolve* verdict
 applies, which is most of web application development, and that is the territory
 [`01`](01-vision-and-premise.md) §1.9 aims at. They are absent in five places, four of which are the
 same place — arrays, dataframes, charts and columnar interchange are one gap seen from four angles,
-and §102.10 is the change that closes them together.
+and §105.10 is the change that closes them together.
 
-## 102.7 pandas is an algebra, not a library
+## 105.7 pandas is an algebra, not a library
 
 The pandas answer is the one the utility test makes urgent rather than optional, because pandas
-passes that test about as hard as any library in the survey — and it is a **notation**, so §102.5
+passes that test about as hard as any library in the survey — and it is a **notation**, so §105.5
 says it cannot be rented.
 
 [`99`](99-the-data-tier-means-of-combination.md) establishes that Beck's view algebra has **unary
@@ -364,14 +364,14 @@ counting it.
 
 **Verdict: build, as the missing half of the language, in §99.9's order.**
 
-## 102.8 NumPy is a notation over a link
+## 105.8 NumPy is a notation over a link
 
 NumPy is two things wearing one name, and the answers differ:
 
 | Half | What it is | Answer |
 |---|---|---|
 | **The kernels** — BLAS, LAPACK, FFT | Decades of hand-tuned per-microarchitecture assembly | **Link.** `AGENTS.md`'s rule settles it before any measurement: a `dgemm` should cost what a tuned `dgemm` costs, so a Beck reimplementation is a design error rather than a slow right answer |
-| **The notation** — broadcasting, slicing, `a[mask] * 2`, ufuncs | A way of saying "elementwise over this whole thing" without writing the loop | **In the language**, per §102.5 — and it is the half that made Python scientific, not the BLAS binding |
+| **The notation** — broadcasting, slicing, `a[mask] * 2`, ufuncs | A way of saying "elementwise over this whole thing" without writing the loop | **In the language**, per §105.5 — and it is the half that made Python scientific, not the BLAS binding |
 
 Splitting them this way is what stops the answer being either "rewrite NumPy" (absurd) or "concede
 numerics" (over-broad). What has to be Beck's is the notation; what must never be Beck's is the
@@ -384,9 +384,9 @@ rather than as `f64` bits, which is exactly right for the reason its doc comment
 and the state digest need a total order agreeing with arithmetic — and exactly wrong for a dense
 kernel, which pays a bit transform per operation.
 
-That is not a defect to fix in `Value`. It is a second representation to add, and §102.10 is it.
+That is not a defect to fix in `Value`. It is a second representation to add, and §105.10 is it.
 
-## 102.9 Charting, and the one line that blocks it
+## 105.9 Charting, and the one line that blocks it
 
 Charting is the gap this document was most surprised to find, because it has a real user in front of
 it and no design anywhere in `docs/`. It passes the utility test cleanly: matplotlib is a large part
@@ -419,9 +419,9 @@ ecosystem's chart is a pure function of an incrementally maintained collection.
 **Verdict: build, in the language, small.** The highest ratio of user-visible value to effort
 anywhere in this document.
 
-## 102.10 Arrow is the boundary, and it discharges four commitments at once
+## 105.10 Arrow is the boundary, and it discharges four commitments at once
 
-§102.8 needs a dense typed column. §102.7's aggregates want one. The archive needs Parquet. And the
+§105.8 needs a dense typed column. §105.7's aggregates want one. The archive needs Parquet. And the
 numeric ecosystem has already standardised on the answer: **PyArrow is PyPI #96**, and NumPy, pandas,
 Polars, DuckDB, Spark and R all speak Arrow natively. The interchange problem is solved and the
 solution is not ours to design.
@@ -440,8 +440,8 @@ One columnar value type discharges all of it:
 |---|---|
 | [`07`](07-dependencies.md) §7.4's DataFusion choice | It is an Arrow engine; without Arrow values there is nothing to give it |
 | [`08`](08-roadmap.md) §8.5.4's G item — Parquet archival | Parquet is Arrow written down |
-| §102.8's kernel half | A dense typed column is what BLAS takes, and is zero-copy to NumPy, Polars, DuckDB and R |
-| §102.7's aggregates | An arrangement over columns is what a maintained aggregate wants anyway |
+| §105.8's kernel half | A dense typed column is what BLAS takes, and is zero-copy to NumPy, Polars, DuckDB and R |
+| §105.7's aggregates | An arrangement over columns is what a maintained aggregate wants anyway |
 
 So the sentence that replaces "we don't have NumPy" is:
 
@@ -451,20 +451,20 @@ So the sentence that replaces "we don't have NumPy" is:
 That is [`10`](10-decisions.md) D9's own framing — "our own front door onto the best engines in the
 world" — applied to the ecosystem question instead of to the runtime.
 
-## 102.11 What has no answer, and what this schedules
+## 105.11 What has no answer, and what this schedules
 
 Per [`AGENTS.md`](../AGENTS.md): **"built", "runs" and "measured" are three different claims**, and
 everything in this section is at zero.
 
 | Gap | Class | Position |
 |---|---|---|
-| **Charting / `svg:`** (§102.9) | **S**, small, most users per unit of effort | [`08`](08-roadmap.md) §8.5.4. The `createElementNS` fix is a day; the component vocabulary above it is a week |
-| **The data tier's algebra** (§102.7) | **F** — §99.7 lists five written-down items it closes | §8.5.4, in Lane B, **parallel to the macro interpreter** — the largest item that does not contend for Lane A's files |
-| **A columnar value and Arrow** (§102.10) | **F** | §8.5.4, after the algebra — an aggregate is what makes a column worth having |
-| **The array notation and BLAS** (§102.8) | **S** for the kernels, **Lane A** for the notation | Phase 4, after Arrow. The notation half wants the macro interpreter, so it queues behind §8.5.4's first item rather than beside it |
+| **Charting / `svg:`** (§105.9) | **S**, small, most users per unit of effort | [`08`](08-roadmap.md) §8.5.4. The `createElementNS` fix is a day; the component vocabulary above it is a week |
+| **The data tier's algebra** (§105.7) | **F** — §99.7 lists five written-down items it closes | §8.5.4, in Lane B, **parallel to the macro interpreter** — the largest item that does not contend for Lane A's files |
+| **A columnar value and Arrow** (§105.10) | **F** | §8.5.4, after the algebra — an aggregate is what makes a column worth having |
+| **The array notation and BLAS** (§105.8) | **S** for the kernels, **Lane A** for the notation | Phase 4, after Arrow. The notation half wants the macro interpreter, so it queues behind §8.5.4's first item rather than beside it |
 | **Cloud SDKs** (boto3, and the same shape in three other ecosystems) | **S** | Phase 4, beside the managed-cloud path. `external store` and `net.out` already type it; what is missing is that nobody wants to hand-write S3's signature algorithm |
 | **Image handling** (Pillow, sharp, ImageSharp) | **S** | Phase 4. A capability, so linking is the whole answer |
-| **The Python sidecar** ([`09`](09-risks-and-open-questions.md) §9.2) | **S** | Phase 4, unchanged — with §102.2's placement restriction as a **diagnostic** rather than a discovery |
+| **The Python sidecar** ([`09`](09-risks-and-open-questions.md) §9.2) | **S** | Phase 4, unchanged — with §105.2's placement restriction as a **diagnostic** rather than a discovery |
 | **Regex** (`regex"…"`) | **S** | Waits on the macro interpreter, already §8.5.4's first item |
 
 The sidecar's diagnostic is worth naming as its own obligation. A `python_service` call inside a fold
@@ -474,15 +474,15 @@ there and *where* it can. Per [`82`](82-the-edge-report.md) §82.10 the gate is 
 shape of the gap: a program that calls a bridged service from inside a `durable` fold, refused with a
 diagnostic naming the merge point as the alternative.
 
-## 102.12 What this refuses
+## 105.12 What this refuses
 
 - **In-process CPython.** The GIL, plus a Python runtime inside images whose bit-for-bit
   reproducibility is the security story ([`06`](06-kubernetes-and-packaging.md) §6.2). Already
   refused in [`09`](09-risks-and-open-questions.md) §9.2; refused again with a second reason.
 - **Compiling a Python subset.** §9.2 calls it a tar pit. Unchanged.
-- **A pandas-shaped Beck package.** §102.7 — batch semantics on an incremental engine, and it would
+- **A pandas-shaped Beck package.** §105.7 — batch semantics on an incremental engine, and it would
   make a language problem look like a library problem.
-- **Bridging a notation.** §102.5. A sidecar can host PyTorch; it cannot host pandas in any sense a
+- **Bridging a notation.** §105.5. A sidecar can host PyTorch; it cannot host pandas in any sense a
   pandas user would recognise, and shipping one that claims to would be the over-promise
   [`09`](09-risks-and-open-questions.md) §9.2 warns burns the audience it courts.
 - **`pip install` compatibility as a goal.** [`01`](01-vision-and-premise.md) §1.7's "no `pip
@@ -490,24 +490,24 @@ diagnostic naming the merge point as the alternative.
   ABI-stable interpreter — not a property of Python the language, and not one a new language
   acquires by wanting to.
 - **Competing with SciPy and PyTorch.** §1.7 conceded these deliberately and the concession is
-  sound. §102.1 is the correction to how widely it has been read.
+  sound. §105.1 is the correction to how widely it has been read.
 
-## 102.13 What this document does not claim
+## 105.13 What this document does not claim
 
 - **Nothing here is built.** Not the algebra, not a column, not a chart, not the sidecar. The four
   code facts asserted — `place.rs:760`, `core.rs:790`, `html.rs`'s open vocabulary,
   `beck-patch.js:10` — were read from the tree on 2026-08-16 and are the only claims about the
   implementation this document makes.
-- **§102.6 is a judgement, not a measurement**, and is labelled as one. §102.4's survey corroborates
+- **§105.6 is a judgement, not a measurement**, and is labelled as one. §105.4's survey corroborates
   the rows it happens to cover; it does not cover charting, ORMs, testing, validation or CLI
   parsing, and those rows are argument alone.
-- **The download data measures downloads**, and §102.4 argues it measures fan-in more than value. It
-  is quoted to make that argument and is not evidence for any verdict in §102.6.
+- **The download data measures downloads**, and §105.4 argues it measures fan-in more than value. It
+  is quoted to make that argument and is not evidence for any verdict in §105.6.
 - **The survey is a year old and its section is gone.** The Stack Overflow 2025 technology page no
   longer carries a general library section, so 2024 is the latest reading available and the figures
   should be re-read against whatever replaces it. A one-year-stale 21.2% does not become 1%, so the
   §8.6 finding survives the staleness even though the exact numbers may not.
-- **Stars are quoted only to discard them.** §102.4's star table is evidence about the instrument,
+- **Stars are quoted only to discard them.** §105.4's star table is evidence about the instrument,
   not about the libraries: no verdict anywhere rests on a star count. The six repositories were
   chosen to test the instrument against the survey, not sampled to represent anything.
 - **No "most discussed" metric is used.** The 2025 survey's tag section measures *emerging*
@@ -519,14 +519,14 @@ diagnostic naming the merge point as the alternative.
   tape is a notation. The split is applied to the part that carries the value, and where a library
   is genuinely both, the notation half is the half that constrains the answer.
 - **It does not price the sidecar.** No one has built one, so nothing here says what a call costs.
-- **It does not settle charting's vocabulary.** §102.9 establishes that the blocker is one call and
+- **It does not settle charting's vocabulary.** §105.9 establishes that the blocker is one call and
   the shape is a component; which SVG elements, and what a `chart:` abstraction over them looks
   like, is undesigned.
-- **It does not design the array notation.** §102.8 says broadcasting has to be in the language and
+- **It does not design the array notation.** §105.8 says broadcasting has to be in the language and
   that the macro interpreter is its prerequisite. What the surface syntax is, and whether
   broadcasting is a trait or a macro, is not decided here.
 
-## 102.14 What this corrects, elsewhere
+## 105.14 What this corrects, elsewhere
 
 | Document | Correction |
 |---|---|

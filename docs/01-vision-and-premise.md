@@ -215,7 +215,7 @@ model makes it a function of the clock *signal* — legal, and visibly time-vary
    §9.2). But the libraries that most expand a language's utility — NumPy, pandas, `serde`, LINQ —
    are **notations**, and a notation cannot be called across a boundary at all: its whole value is
    that it composes with the code around it, which is exactly what an RPC hop destroys
-   ([`102`](102-the-ecosystem-answer.md) §102.5). So most of the ecosystem question is not an
+   ([`105`](105-the-ecosystem-answer.md) §102.5). So most of the ecosystem question is not an
    interop question but a question about Beck's own means of combination. What must genuinely be
    *callable* is the capability half — GPUs, codecs, cloud APIs — and it is narrower than the
    slogan and still existential.
@@ -305,7 +305,7 @@ ML/numeric work, systems programming, and ecosystem breadth are conceded and bri
 not contested.
 
 **That concession is narrower than it has been read**, and the distinction is
-[`102`](102-the-ecosystem-answer.md) §102.1's. Conceding *solvers, GPU kernels and numerical
+[`105`](105-the-ecosystem-answer.md) §102.1's. Conceding *solvers, GPU kernels and numerical
 methods* — SciPy, PyTorch, CUDA — is sound and stands. Conceding *arrays and dataframes* is a
 different and much larger concession that was never argued: the Stack Overflow survey puts NumPy at
 21.2% and pandas at 20.7% of **all** developers in **all** languages, second and third among every

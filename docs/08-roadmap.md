@@ -68,10 +68,10 @@ about a person rather than a count of bullets — see the end of this section.
 |---|---|
 | **Native codegen**: LLVM and Cranelift, differential against the evaluator | **Built** ([`93`](93-the-native-backends-report.md)). `beck native --backend cranelift\|llvm`; the differential is three-way. The heap is whole — records, text, collections, closures, views, failure, generics and the four host-calling primitives — and the fifteen that are a table or somebody else's parser are **linked** rather than emitted (§93.12), so the corpus stands at **941 definitions compiled against 137 refused**. §93.15 names what is left |
 | **Incremental views**: dataflow plans, arrangement sharing, SQL read models, pgwire, query fusion | **Complete** ([`23`](23-incremental-views-report.md)) |
-| **Mode B client**: per-component WASM, optimistic application, freshness-typed pending state, size budget | **Built except codegen** ([`94`](94-the-client-report.md)). The mode, the bundle, the data patch, reconciliation by `seq`, a browser that runs it, an offline queue, `freshness()` and the 150 KB brotli gate. Codegen waits on a wasm emitter |
+| **Mode B client**: per-component WASM, optimistic application, freshness-typed pending state, size budget | **Built except codegen** ([`94`](94-the-client-report.md)). The mode, the bundle, the data patch, reconciliation by `seq`, a browser that runs it, an offline queue, `freshness()` and the 150 KB brotli gate. The wasm emitter exists and compiles the **scalar subset** ([`103`](103-the-wasm-emitter-report.md)); a `view` is nothing but heap, so it compiles **0 of the corpus** and the kernel still interprets |
 | **Client polish**: router, forms, focus/scroll preservation, devtools | **Built except lazy routes** ([`94`](94-the-client-report.md)). A route is a field of `Session`, so there is no route table and every route is a real URL. Lazy routes wait on §5.1's per-component boundary |
 | **`test` blocks and inferred mocks** | **Built** ([`22`](22-phase-3-report.md)), with page snapshots and `beck test --update` ([`22`](22-phase-3-report.md)) |
-| **Structured concurrency, `Result`/error rows, pattern matching** | **Built** ([`27`](27-the-walls-come-down-report.md), [`80`](80-structured-concurrency-report.md), [`90`](90-pattern-matching-report.md), [`90`](90-pattern-matching-report.md)). `parallel:` runs its children on a thread each and stops them when one fails. What is left is stopping a child **blocked in the host**, which is a deadline on the [`net`](../compiler/crates/beck-core/src/net.rs) seam |
+| **Structured concurrency, `Result`/error rows, pattern matching** | **Built** ([`27`](27-the-walls-come-down-report.md), [`80`](80-structured-concurrency-report.md), [`90`](90-pattern-matching-report.md), [`90`](90-pattern-matching-report.md)). `parallel:` runs its children on a thread each and stops them when one fails — including a child **blocked in the host**, which is a `Stop` predicate on the [`net`](../compiler/crates/beck-core/src/net.rs) seam rather than a change to the scope ([`80`](80-structured-concurrency-report.md) §80.14). What is left is the compiled half: a worker holds its pipe for a whole call ([`93`](93-the-native-backends-report.md) §93.15) |
 | **SQLite as a durable substrate** | **Built** ([`67`](67-sqlite-report.md)). At equal durability SQLite and redb are within noise, so rung 0's default is unchanged — the reason §7.8.1 gave (the transaction, not the speed) survives the measurement and is the only reason |
 | **Standard library v1** | **Built** ([`46`](46-standard-library-report.md)): strings, collections, JSON, time, HTTP, digests, encodings, identifiers, bignums, coercion and arbitrary-precision decimal, importable from anywhere. §46.16 has what a library still lacks |
 | **The language's own means of abstraction** | **Done** ([`27`](27-the-walls-come-down-report.md)). Every wall this project has *found* is down and `sicp/refusals/` is empty — which is not the claim that Beck expresses SICP; `sicp/refusals/README.md` is where the difference is written down |
@@ -200,9 +200,9 @@ read it.**
   arrives as a `beck.lock` diff a human accepts. `beck tune` pointed at placement, riding the replay
   tooling above.
 - Multi-arch images; air-gapped install; OCI package registry via ORAS (§6.7).
-- **FFI and the ecosystem answer** ([`102`](102-the-ecosystem-answer.md)): C ABI both directions; JS
+- **FFI and the ecosystem answer** ([`105`](105-the-ecosystem-answer.md)): C ABI both directions; JS
   interop for the client tier; a Python bridge (§9.2) — the ecosystem-access question is
-  existential, so give it real headcount. What [`102`](102-the-ecosystem-answer.md) changes is
+  existential, so give it real headcount. What [`105`](105-the-ecosystem-answer.md) changes is
   *where the headcount goes*: measured against four ecosystems' most-downloaded packages, the
   bridge is the answer for the smallest of the four categories, and the sidecar structurally cannot
   serve the data tier at all (a bridged call carries an effect; §3.7 makes folds and views pure).
@@ -440,31 +440,18 @@ rows.
   caught it: the three-way differential run on **two different libms**, which is a CI matrix row
   rather than a new harness. Small, overdue, and cheap only until something depends on the current
   answers.
-- **The macro interpreter** (F, and first of the large items): macro bodies running Beck at compile time in the
-  capability-restricted environment [`02`](02-syntax.md) §2.4 designs. Today a macro body is
-  `let`s and a final `return quote:` — anything more raises `B0205` — and code-as-data stops at
-  templates: a `quote` that survives expansion is `B0332`, and no program can construct or
-  evaluate a `Node`. That is the unbacked half of the premise —
-  [`12`](12-standards-and-conformance.md) §12.10 records it against D9 — and the largest fan-out
-  left anywhere in the plan: it unblocks `derive` and `.as_model()`, typed macros,
-  `inject`/`unsafe_macro`, §2.5's typed literal macros (`sql"…"`, `html"…"`, `regex"…"` — the DSL
-  escape hatch, and the mechanism the security suite already points at for SQL and HTML), and it
-  retires the compiler-provided `ui:` special case standing in for it (D22). Its G-class
-  companion lands **with** it, not after: the macro sandbox's refused-program tests, because
-  compile-time evaluation is what turns the sandbox from a property satisfied by construction
-  into a claim needing a gate ([`12`](12-standards-and-conformance.md) §12.7). Files:
-  `beck-macro` plus an evaluator reachable at compile time — serial with Lane A's hands.
-- **The data tier's means of combination** (F — [`99`](99-the-data-tier-means-of-combination.md)
-  §99.7 lists five already-written-down items it closes): `arrange_by`, `join`, the loop-plus-lookup
-  recognition, then `group by` and the aggregates, in §99.9's order, whose **first item is a gate
-  that goes red today**. This was a Phase 4 bullet from the day [`99`](99-the-data-tier-means-of-combination.md)
-  was written and was never in *this* list, which is the same defect §8.5 opens by describing one
-  level down — a phase is not a position. It belongs beside the macro interpreter rather than behind
-  it: it lives in **Lane B** (`engine.rs`, `plan.rs`, `incremental.rs`) and is the largest item in
-  the plan that does not contend for Lane A's files, so the two large F items can run concurrently.
-  §99.8's convergence rungs interleave with it rather than following it.
+- **The data tier's means of combination** (F, and now the **largest item left**, since the macro
+  interpreter below has landed — [`99`](99-the-data-tier-means-of-combination.md) §99.7 lists five
+  already-written-down items it closes): `arrange_by`, `join`, the loop-plus-lookup recognition,
+  then `group by` and the aggregates, in §99.9's order, whose **first item is a gate that goes red
+  today**. This was a Phase 4 bullet from the day
+  [`99`](99-the-data-tier-means-of-combination.md) was written and was never in *this* list, which
+  is the same defect §8.5 opens by describing one level down — a phase is not a position. It lives
+  in **Lane B** (`engine.rs`, `plan.rs`, `incremental.rs`) and contends with nothing in Lane A, so
+  it runs beside the macro interpreter's successors rather than behind them. §99.8's convergence
+  rungs interleave with it rather than following it.
 - **A columnar value, and Arrow** (F, after the aggregates): the second representation
-  [`102`](102-the-ecosystem-answer.md) §102.10 argues for — `Value::List(Arc<Vec<Value>>)` is 16
+  [`105`](105-the-ecosystem-answer.md) §105.10 argues for — `Value::List(Arc<Vec<Value>>)` is 16
   boxed bytes an element, which is right for a keyed arrangement and wrong for a million doubles.
   One change discharges four commitments: [`07`](07-dependencies.md) §7.4's DataFusion choice,
   §8.5.4's own Parquet-archival G item below (Parquet is Arrow written down), the numeric-interop
@@ -473,23 +460,53 @@ rows.
   start without it.
 - **Charting, as an `svg:` vocabulary** (S, small, and the item in this list with the most users in
   front of it): every dashboard has a chart and `docs/` has never mentioned one
-  ([`102`](102-the-ecosystem-answer.md) §102.9). The element vocabulary is already open — `html.rs`
+  ([`105`](105-the-ecosystem-answer.md) §105.9). The element vocabulary is already open — `html.rs`
   validates no tag list — so the blocker is one call: `beck-patch.js:10` creates every node with
   `createElement`, which puts an `<svg>` subtree in the HTML namespace where it parses and does not
   draw. `createElementNS` under a tag-derived namespace is the fix, and above it a chart is an
   ordinary `component` returning a pure function of a view — incrementally maintained, WCAG-checked
   and delta-patched, which no other ecosystem's chart is.
-- **Mode B's codegen** (S, and the item with a user in front of it): a wasm emitter plus what
-  [`94`](94-the-client-report.md) §94.8 names. The WebAssembly spec-suite obligation
-  [`12`](12-standards-and-conformance.md) §12.3 pins to core 3.0 lands here.
+- **What the macro interpreter unblocked** (F — the interpreter itself is **built**,
+  [`102`](102-the-macro-interpreter-report.md), with its G-class sandbox gate beside it). A macro
+  body is ordinary Beck now, so the successors this item existed to free are the item:
+  - **`derive` and `.as_model()`** (Lane A, and the largest): a `typed macro` receives the AST
+    *with inferred types attached* ([`02`](02-syntax.md) §2.4), which the untyped interpreter runs
+    before. This is the piece that needs the checker's answers to reach a macro body, and it is
+    what retires the compiler-provided `ui:` special case standing in for a user-written macro
+    (D22).
+  - **§2.5's typed literal macros** (`sql"…"`, `html"…"`, `regex"…"`) — the DSL escape hatch, and
+    the mechanism the security suite already points at for SQL and HTML. Sugar over a macro call
+    (§2.3's table) plus a parse at compile time, so this one is free of Lane A.
+  - **`inject`/`unsafe_macro`**, the deliberate-capture escape, and **nested quoting's
+    `(quote depth node)`**.
+  - **A `Node` a *running* program can hold**: a `quote` that survives expansion is still `B0332`,
+    so code-as-data is compile-time only. [`12`](12-standards-and-conformance.md) §12.10 records
+    which half of D9 that leaves open.
+  - **Salsa-memoised expansion**, §2.4's "macro-heavy code must not destroy IDE latency" — which
+    now has something to memoise.
+- **Mode B's codegen: the heap on a wasm target** (S, and the item with a user in front of it).
+  The emitter is written and the scalar subset compiles, in a real engine, against the
+  tree-walker ([`103`](103-the-wasm-emitter-report.md)) — and it compiles **0 of the corpus's 195
+  definitions**, because an application is records, lists and a page. What is left is therefore one
+  thing and it is the big one: a value representation in linear memory, string and collection
+  primitives, closures through an indirect call table, and §5.1's unanswered choice between the GC
+  proposal and a refcounting discipline. Behind it, in order: the four host effects as imports,
+  bundle format 2 with the type table
+  ([`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md) anticipated both), and the kernel
+  loading a compiled component instead of interpreting one. The WebAssembly spec-suite obligation
+  [`12`](12-standards-and-conformance.md) §12.3 pins to core 3.0 lands with it.
 - **The three named backend items** (S): the signal vocabulary compiled rather than read by the
   splitter, a **bounded** definition — a dictionary is a function value — and a worker that can
   answer two calls at once. [`93`](93-the-native-backends-report.md) §93.15 is the list, and the
   largest refusal class behind it is a **function value at a boundary**, which is moved by compiling
   definitions called only by *other compiled definitions*.
-- **Cancelling a child blocked in the host** (S): a deadline on the
-  [`net`](../compiler/crates/beck-core/src/net.rs) seam rather than a change to the scope
-  ([`80`](80-structured-concurrency-report.md)).
+- **A worker that can answer two calls at once** (S, and it is what is left of cancelling a child
+  blocked in the host): the tree-walker stops a child inside an outbound call now
+  ([`80`](80-structured-concurrency-report.md) §80.14), and `beck-llvm` passes `Stop::never()`
+  because a worker holds its pipe for a whole call — so two children that both reach compiled code
+  serialise before cancellation is even the question. Named already in
+  [`93`](93-the-native-backends-report.md) §93.15's list above; recorded here because it is now
+  the only thing between `parallel:` and the native backends.
 - **The render lock** (S): the third of the shared dataflow's loose ends, deliberately left, and
   [`23`](23-incremental-views-report.md) §23.19 records that closing the other two made it *harder*
   rather than unchanged.
@@ -572,11 +589,11 @@ directories.
 
 | Lane | Owns | What is left in it | Collides with |
 |---|---|---|---|
-| **A — type system** | `beck-core/src/check/`, `ty.rs`, `core.rs`, `prelude.rs`, `iface.rs` | **The macro interpreter** (§8.5.4's first item — it lives in `beck-macro` and an evaluator, but it changes what reaches the checker, so it occupies this lane's hands); `Ord` as a trait, which [`54`](54-ordering.md) does not recommend | **Itself, completely** — see below |
+| **A — type system** | `beck-core/src/check/`, `ty.rs`, `core.rs`, `prelude.rs`, `iface.rs` | **Typed macros and `derive`** (§8.5.4's first item — a macro body that receives inferred types is a checker change, whatever crate the body runs in); `Ord` as a trait, which [`54`](54-ordering.md) does not recommend | **Itself, completely** — see below |
 | **B — runtime and views** | `beck-rt/`, `beck-core/src/{engine,plan,incremental,pmap,signal}.rs` | The render lock, unowned | Nothing in A, C, E or F |
 | **C — front end and tooling** | `beck-syntax/`, `beck-cli/`, `beck-diag/` | Comment-preserving printing — `textDocument/formatting` waits on it, and `beck fmt` deleting `#` comments is why it is due rather than nice; code actions ([`65`](65-the-editor-report.md) §65.8); the standards ledger's front-end vectors (§8.5.4) | A, if a syntax decision changes what the checker sees |
 | **D — process and supply chain** | `docs/`, `.github/`, `deny.toml`, `SECURITY.md`, `release/`, `install.sh` | Trusted publishing; a registry to push to; a subject `beck sign` can take over a release *listing* ([`adr/0028`](adr/0028-a-release-carries-provenance-and-still-no-signature.md)) | Nothing in code — **except that a release lands in `Cargo.toml`, a `build.rs` and `--version`** |
-| **E — backends** | `beck-eval/`, `beck-llvm/`, `beck-clif/`, `beck-core/src/backend.rs`, any new codegen crate | Mode B's codegen; the three items of [`93`](93-the-native-backends-report.md) §93.15; cancelling a child blocked in the host | Nothing — the seam is why ([`19`](19-phase-1-report.md) §19.9), and sixteen consecutive Lane E changes have held that prediction, several without touching one line of `beck-rt` |
+| **E — backends** | `beck-eval/`, `beck-llvm/`, `beck-clif/`, `beck-wasmgen/`, `beck-core/src/backend.rs`, any new codegen crate | Mode B's codegen; the three items of [`93`](93-the-native-backends-report.md) §93.15, of which the two-calls-at-once worker is now what blocks cancelling a compiled child | Nothing — the seam is why ([`19`](19-phase-1-report.md) §19.9), and sixteen consecutive Lane E changes have held that prediction, several without touching one line of `beck-rt` |
 | **F — infrastructure** | `beck-infra/` | Effect-derived NetworkPolicy/RBAC/grants; Crossplane emitter; conformance rungs | Nothing |
 
 **Lane A is strictly serial, and that is the real staffing constraint.** It is tempting to run two
@@ -598,10 +615,14 @@ they are what the next ordering should assume:
   been answered as two by four phases of implementation; errors and structured concurrency were one
   row with different successors. The classification is about *cost over time*, and it is silent
   about whether an item is one item.
-- **A wave item can be in the wrong lane.** `Set` and dates were filed under Lane A on the
-  assumption that a standard-library item is a language item. They turned out to be two files of
-  Beck and no compiler change at all, so they could have run beside a Lane A branch rather than
-  behind one. Ask which files an item touches before assigning it a lane.
+- **A wave item can be in the wrong lane**, and it has now happened twice. `Set` and dates were
+  filed under Lane A on the assumption that a standard-library item is a language item; they
+  turned out to be two files of Beck and no compiler change at all. **The macro interpreter** was
+  filed there too, on the stronger-sounding reasoning that it "changes what reaches the checker" —
+  and it touched `beck-macro/`, one table in `beck-diag/`, and two new test suites, with **not one
+  line of `check/` or `ty.rs`**. What reaches the checker is a `Node` either way; the lane rule is
+  about *files*, and a plausible argument about consequences is not one. Ask which files an item
+  touches before assigning it a lane.
 
 **The four shared artefacts that serialise otherwise-independent branches.** Each has a cheap
 discipline that avoids the collision.
@@ -648,7 +669,7 @@ be stale), and **look for it in §8.5.4** (a phase bullet is not a position, and
 | Macro expansion fuel (F17) | Document behind code | [`42`](42-security-assurance.md) §42.4 said "absent — nothing in `beck-macro` bounds expansion". `MAX_EXPANSION` is 100,000 nodes, `B0214` refuses, `macro_bomb.rs` gates it both ways, and `pending_security.rs` had already deleted its own test saying so. **Corrected in place** |
 | Deterministic transcendentals (F9) | Unscheduled | §8.5.2 said "owed rather than pending" for three phases. Now §8.5.4's first item, with the evidence measured rather than asserted |
 | The data tier's algebra | Unscheduled in *this* list | A Phase 4 bullet, never in the order. Now placed, in Lane B, parallel to the macro interpreter |
-| Charting | Unscheduled **and undesigned** | Not in `docs/` at all until [`102`](102-the-ecosystem-answer.md). Now placed |
+| Charting | Unscheduled **and undesigned** | Not in `docs/` at all until [`105`](105-the-ecosystem-answer.md). Now placed |
 | A columnar value / Arrow | Unscheduled | Committed in five documents as a *dependency choice*; nothing ever built the value it would apply to. Now placed, as the log-lifecycle G item's named predecessor |
 | The presence second clock | Unscheduled | [`48`](48-identity-report.md) §48.13's first row, in no phase, with a successor in [`99`](99-the-data-tier-means-of-combination.md) decision 3. Now placed |
 | Comment-preserving printing | In a lane, not in the order | §8.5.5's Lane C cell since that table existed. Now placed |
@@ -725,7 +746,7 @@ list rather than a surprise.
 never argued — it is simply where the question came up. The rule itself says nothing about
 infrastructure: *a technology ≥1% of developers report using earns an explicit verdict rather than
 silence*. Applied to the same survey's **Other frameworks and libraries** section
-([`102`](102-the-ecosystem-answer.md) §102.4), it convicts this document of exactly the silence it
+([`105`](105-the-ecosystem-answer.md) §102.4), it convicts this document of exactly the silence it
 was written to prevent.
 
 **Every entry in that section, in its order.** All 39 clear 1%, so the rule admits no shortlist —
@@ -734,9 +755,9 @@ picking the interesting ones is how the silence happens.
 | Reality (usage, [SO 2024](https://survey.stackoverflow.co/2024/technology)) | Verdict |
 |---|---|
 | .NET (25.2%), .NET Framework (16.4%) | decline as a *framework* — this is the application framework Beck replaces rather than interoperates with. Reaching its **libraries** is the C ABI FFI bullet; being consumed *by* a .NET estate is `@public(rest)`/`@public(grpc)` |
-| **NumPy (21.2%)** — most-used library in the survey | **adopt**, split in two: the *notation* (broadcasting, slicing) is a language feature and queues behind the macro interpreter; the *kernels* are linked and never reimplemented ([`102`](102-the-ecosystem-answer.md) §102.8). Nothing is built |
+| **NumPy (21.2%)** — most-used library in the survey | **adopt**, split in two: the *notation* (broadcasting, slicing) is a language feature and queues behind the macro interpreter; the *kernels* are linked and never reimplemented ([`105`](105-the-ecosystem-answer.md) §102.8). Nothing is built |
 | **pandas (20.7%)** | **adopt** — not a library here at all but [`99`](99-the-data-tier-means-of-combination.md)'s missing algebra, §8.5.4's Lane B item |
-| Spring Framework (11.1%) | decline — DI, ORM and web framework, all three dissolved ([`102`](102-the-ecosystem-answer.md) §102.6) |
+| Spring Framework (11.1%) | decline — DI, ORM and web framework, all three dissolved ([`105`](105-the-ecosystem-answer.md) §102.6) |
 | RabbitMQ (10.9%), Apache Kafka (9.4%) | **adopt** as *ingress and egress* — [`101`](101-the-public-surface.md) §101.6's `@public(events)` and [`30`](30-bounded-contexts-and-microservices.md) §30.4's `ingest`, Phase 5. A broker subscription is a merge point, which is a thing this language already has a word for |
 | scikit-learn (10.6%), Torch/PyTorch (10.6%), TensorFlow (10.1%), Keras (4.3%), Hugging Face (4.5%), JAX (1.0%), mlflow (1.2%) | **supported through the bridge**, merge points only — the capability half, and the concession [`01`](01-vision-and-premise.md) §1.7 actually made |
 | Flutter (9.4%), React Native (8.4%), SwiftUI (4.3%), .NET MAUI (3.1%), Xamarin (2.9%) | decline — native mobile UI. The offline-capable web client is the answer this project has ([`94`](94-the-client-report.md); `beck-sw.js` is the service worker), and it is a different product |
@@ -749,12 +770,12 @@ picking the interesting ones is how the silence happens.
 | **Tidyverse (1.7%)** | **adopt** — the same verdict as pandas, and the reason it is listed separately: R's `dplyr` is a **fourth** independent convergence on the same dozen verbs (with pandas, polars and LINQ), which is what makes [`99`](99-the-data-tier-means-of-combination.md)'s gap a missing algebra rather than one library's taste |
 | Roslyn (1.7%) | **dissolved into tooling** — compiler-as-a-service is the LSP plus `beck explain` ([`65`](65-the-editor-report.md)), and the half that is genuinely missing is compile-time evaluation, which is §8.5.4's macro interpreter |
 | Quarkus (1.3%), Ktor (1.2%) | decline — JVM/Kotlin service frameworks, replaced rather than interoperated with |
-| **Charting** — matplotlib, Chart.js, D3. *Not in the survey's list*, and universal in practice | **adopt** — an `svg:` vocabulary, §8.5.4, blocked on one `createElement` call ([`102`](102-the-ecosystem-answer.md) §102.9). Listed here because the rule's failure mode is silence, and a category the survey happens not to itemise is the easiest silence of all |
-| **LLM clients** — litellm, openai, langchain. *Post-dates the survey entirely*; litellm is PyPI #46, above `pip` | **supported through the bridge**, and the fit is better than "supported" suggests: an LLM call is nondeterministic, so §3.7 forbids it in a fold or a view and forces it to arrive at a merge point as a command whose response becomes an **event**. Prompt, response and model version land in the log, so the session replays exactly without re-calling the model — the discipline these applications need and usually have to remember. No new work beyond the sidecar ([`102`](102-the-ecosystem-answer.md) §102.4) |
+| **Charting** — matplotlib, Chart.js, D3. *Not in the survey's list*, and universal in practice | **adopt** — an `svg:` vocabulary, §8.5.4, blocked on one `createElement` call ([`105`](105-the-ecosystem-answer.md) §102.9). Listed here because the rule's failure mode is silence, and a category the survey happens not to itemise is the easiest silence of all |
+| **LLM clients** — litellm, openai, langchain. *Post-dates the survey entirely*; litellm is PyPI #46, above `pip` | **supported through the bridge**, and the fit is better than "supported" suggests: an LLM call is nondeterministic, so §3.7 forbids it in a fold or a view and forces it to arrive at a merge point as a command whose response becomes an **event**. Prompt, response and model version land in the log, so the session replays exactly without re-calling the model — the discipline these applications need and usually have to remember. No new work beyond the sidecar ([`105`](105-the-ecosystem-answer.md) §102.4) |
 | **Polars (rising), `uv`/Ruff (rising)** — post-date the survey | Polars is a *fifth* convergence on the dataframe verbs and strengthens the pandas row rather than competing with it. `uv` at 2.2× Poetry's downloads and Ruff at #132 are external evidence for [`64`](64-compile-speed-report.md)'s premise that tooling speed is a product feature; no work is owed, and the row exists so the evidence is not lost |
 
 **Four rows had no verdict anywhere in `docs/` before
-[`102`](102-the-ecosystem-answer.md)** — NumPy, pandas, charting and the Electron/Tauri adjacency —
+[`105`](105-the-ecosystem-answer.md)** — NumPy, pandas, charting and the Electron/Tauri adjacency —
 which is the failure this rule exists to catch, occurring in the document that states the rule.
 §8.5.4 now carries the first three; the fourth is deliberately unscheduled and says so.
 

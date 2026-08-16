@@ -250,12 +250,12 @@ Compile what can be compiled to native code, and say what could not (§5.2).
 
 §5.2's dual codegen, over the scalar subset of the language: a definition whose parameters and result are `Int`, `Float` or `Bool` and whose body is arithmetic, comparison, `if`, `match` and direct calls. Everything else — anything that needs a heap, and every effect — stays with the evaluator, and this prints which went which way.
 
-`--backend llvm` (the default) needs `clang` on the path, or `BECK_CLANG` pointing at one. `--backend cranelift` needs only a linker, because Cranelift is a crate.
+`--backend llvm` (the default) needs `clang` on the path, or `BECK_CLANG` pointing at one. `--backend cranelift` needs only a linker, because Cranelift is a crate. `--backend wasm` needs nothing at all and produces nothing this command can run: a WebAssembly module is loaded by whoever is going to call it, which for Mode B is a browser, so it writes the module and its listing and stops.
 
 | Argument | | |
 |---|---|---|
 | `<FILE>` | FILE |  |
-| `--backend` | BACKEND | Which code generator: `llvm` for release code, `cranelift` for a fast build (§7.3) |
+| `--backend` | BACKEND | Which code generator: `llvm` for release code, `cranelift` for a fast build (§7.3), `wasm` for the tier a person is sitting in front of (§5.1) |
 | `--out` | OUT | Keep the generated IR and the executable here instead of in a temporary directory |
 | `--call` | CALL | Call a compiled definition and print what it answered.  `beck native fib.beck --call fib --arg 30`. An argument is read as an `Int` if it looks like one and a `Float` otherwise; `true` and `false` are `Bool`s. |
 | `--arg` | ARGS |  |

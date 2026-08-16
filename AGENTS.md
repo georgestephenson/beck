@@ -180,7 +180,7 @@ fusion,
 shared-arrangement, subscription, view-metrics, read-model, SICP, Are We Fast Yet, Benchmarks Game,
 tests-in-Beck, UI, workflow-cross-check, documentation, getting-started, outbound, compile-speed,
 concurrency, round-trip, runtime-edge, grammar-fuzz, supply-chain, image, init-ci, native-backend,
-mode-B, browser, client, playground, identity, OIDC, presence, cranelift, release and
+mode-B, browser, client, playground, identity, OIDC, presence, cranelift, wasm-backend, release and
 diagnostic-snapshot
 suites, plus the nine
 release-only measurement suites. **Keep them green.**
@@ -244,6 +244,11 @@ the thing you are guarding against would make it so.
   - Mode B's kernel (`beck-cli/tests/mode_b.rs`) and the playground's module
     (`beck-cli/tests/playground.rs`) need the `wasm32-unknown-unknown` target; both skip without
     one, and `BECK_REQUIRE_WASM=1` forbids the skip.
+  - The WebAssembly emitter's differential (`beck-cli/tests/wasm_backend.rs`) needs a **JavaScript
+    engine** to load what it emits — `node`, or one named by `BECK_JS` — because nothing in this
+    workspace runs WebAssembly ([`adr/0030`](docs/adr/0030-the-webassembly-emitter-writes-its-own-bytes.md)).
+    It skips without one and `BECK_REQUIRE_WASM_RUN=1` forbids the skip. A skip means nothing
+    executed the module.
   - The browser suite (`beck-cli/tests/browser.rs`) needs a Chromium; it looks under
     `PLAYWRIGHT_BROWSERS_PATH` and on the path, `BECK_CHROME` names one, and
     `BECK_REQUIRE_BROWSER=1` forbids the skip. Without it, nothing in this workspace executes the

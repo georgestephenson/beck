@@ -269,15 +269,45 @@ pub const INDEX: &[CodeEntry] = &[
     e(
         "B0205",
         Stage::Macros,
-        "unsupported statement in a macro body",
-        "Phase 1 macro bodies are `let` bindings and a final `return quote: …`. Arbitrary \
-         compile-time computation arrives with the macro interpreter, which is not built.",
+        "a form is not available in a macro body",
+        "A macro body is pure compile-time computation — bindings, `if`, `for`, `while`, lambdas, \
+         calls and `quote:`. `match`, `try:`, `raise`, `parallel:` and declarations belong to the \
+         program the macro expands to, not to the expander.",
     ),
     e(
         "B0206",
         Stage::Macros,
         "unquoting an unbound name",
-        "`$x` inside a template names something that is not a parameter of this macro.",
+        "`$x` inside a template names something that is bound nowhere in this macro — usually a \
+         parameter that was renamed. `$e` evaluates `e` in the macro body's own environment, so \
+         anything the body bound is fair game.",
+    ),
+    e(
+        "B0207",
+        Stage::Macros,
+        "a primitive may not be called while expanding a macro",
+        "Macro expansion is capability-restricted (`docs/02` §2.4): it is pure computation over \
+         the module's own definitions, so that what a compile produces depends on the source and \
+         on nothing else. The primitive named performs an effect — reading the clock, the \
+         environment, the network — and is refused *by name* so that reaching for one is a \
+         diagnostic rather than a spelling mistake.",
+    ),
+    e(
+        "B0208",
+        Stage::Macros,
+        "cannot find a name at compile time",
+        "The macro interpreter's environment is a whitelist: locals, this module's own `def`s, \
+         and the pure builtins. There is no name in it for a file, a socket or a process, which \
+         is the sandbox rather than an omission.",
+    ),
+    e(
+        "B0209",
+        Stage::Macros,
+        "a macro body computed the wrong kind of value",
+        "A compile-time computation applied an operation to something it does not apply to — \
+         adding a Str to an Int, indexing past the end of a list, calling a value that is not a \
+         function. Macro bodies are evaluated before the checker runs, so these are caught by \
+         running rather than by typing.",
     ),
     e(
         "B0210",
@@ -316,6 +346,24 @@ pub const INDEX: &[CodeEntry] = &[
          expander charges what it produces against a budget for the whole module. Reaching it means \
          a macro is generating far more than any program in this repository does, and the fix is \
          almost never a bigger budget.",
+    ),
+    e(
+        "B0215",
+        Stage::Macros,
+        "a macro body ran too long",
+        "`B0214` bounds what expansion *produces*; this bounds what it *does*. A macro body is a \
+         Beck program running at compile time, so `while true:` in one is a compiler that does \
+         not finish — the budget is a bound on how long a compile takes, shared by the whole \
+         module because that is what a compile is.",
+    ),
+    e(
+        "B0216",
+        Stage::Macros,
+        "a macro body recursed too deep",
+        "A compile-time call chain — usually a `def` that calls itself with no base case — went \
+         past the front end's nesting ceiling. A fixed count rather than a reading of the stack, \
+         for `adr/0012`'s reason: a diagnostic that depends on the build profile is not a \
+         diagnostic.",
     ),
     // ------------------------------------------------------- B03xx: names, types and effects
     e(

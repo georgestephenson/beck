@@ -21,7 +21,7 @@ use std::sync::{Arc, Mutex};
 
 use aws_lc_rs::signature::KeyPair;
 use beck_core::clock::ManualClock;
-use beck_core::net::{Failure, Outbound, Reply, Request};
+use beck_core::net::{Failure, Outbound, Reply, Request, Stop};
 use beck_rt::identity::Identity;
 use beck_rt::oidc::{Config, RelyingParty};
 
@@ -138,7 +138,8 @@ fn b64(bytes: &[u8]) -> String {
 struct Network(Arc<Issuer>);
 
 impl Outbound for Network {
-    fn fetch(&self, request: &Request) -> Result<Reply, Failure> {
+    /// Nothing to watch: the issuer answers out of memory.
+    fn fetch(&self, request: &Request, _stop: &Stop) -> Result<Reply, Failure> {
         assert!(
             request.tls,
             "the relying party made a plaintext request to its issuer: {request:?}"

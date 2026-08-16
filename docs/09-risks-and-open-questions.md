@@ -138,7 +138,7 @@ call carries `net.out` or `external.*`; §3.7 requires a fold's function to be r
 serves **merge points** — command → ingress → call → event, which is the right shape for inference,
 scoring and report generation — and it structurally cannot serve the place someone means when they
 say "I use pandas", which is inside a view. The ecosystem question therefore splits in two and only
-one half is a bridge at all: [`102`](102-the-ecosystem-answer.md) is the per-library answer, and
+one half is a bridge at all: [`105`](105-the-ecosystem-answer.md) is the per-library answer, and
 [`99`](99-the-data-tier-means-of-combination.md) is the other half.
 
 Say plainly: Beck is Python-*shaped*, not Python-compatible. Over-promising here burns exactly the
