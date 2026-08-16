@@ -166,14 +166,14 @@ our terms; conformance means restating them in the auditor's terms and testing t
   IdP" that is not provisioned: `identity = managed()` is a declaration, and D6's Keycloak
   provisioning is still InfraGraph design. Until it lands, authenticator requirements belong to
   the deployment's issuer.
-- **The macro sandbox — Verified today, vacuously, and the vacuity is the point to watch.**
-  Expansion is substitution over a template, so there is no name a macro body could use to reach
-  the host — `security.rs::a_macro_cannot_reach_the_host_because_expansion_has_nothing_to_reach_it_with`
-  is the test. The macro interpreter ([`08`](08-roadmap.md) §8.5.4 item 1) is what makes this
-  claim earn its keep: when macro bodies run Beck at compile time, [`02`](02-syntax.md) §2.4's
-  capability-restricted environment stops being satisfied by construction and starts needing its
-  own refused-program tests. **That gate lands with the interpreter, not after it** — it is the
-  interpreter's G-class companion.
+- **The macro sandbox — Verified, and no longer vacuously.** It was: expansion was substitution
+  over a template, so there was no name a macro body could use and nothing to check. Macro bodies
+  now run Beck at compile time ([`102`](102-the-macro-interpreter-report.md)), so
+  [`02`](02-syntax.md) §2.4's capability-restricted environment is a claim rather than a shape, and
+  `beck-cli/tests/macro_sandbox.rs` is the gate that landed **with** the interpreter rather than
+  after it: the compile-time environment is a whitelist, the prelude's effectful primitives are
+  refused by name, and an enumeration over the prelude fails when a primitive that performs an atom
+  is added without the interpreter learning about it.
 
 ## 12.8 Observability and operations
 
@@ -235,15 +235,17 @@ Two instruments, adopted as D18 — both **Verified as artefacts**:
   asserted as well as its passes**, so a wall coming down is a failing test rather than something
   somebody notices.
 
-**And one honesty the audit added, because this section is where it belongs.** The macro system
-behind both instruments is **template macros only**: hygienic, real, and enough for six of
-Felleisen's seven forms — but [`02`](02-syntax.md) §2.4's compile-time computation (`derive`, typed
-macros, the macro interpreter) is unbuilt, and code-as-data stops at the type checker: a `quote`
-that survives expansion is error `B0332`, and no Beck program can construct or evaluate a `Node`.
-So "a Python-shaped surface carries Lisp's power" is backed for the notation and the special forms,
-and **not yet for programs that compute programs** — the half of homoiconicity the premise most
-often gestures at. That gap is now the first item in [`08`](08-roadmap.md) §8.5.4, and this row is
-what closing it cashes.
+**And one honesty the audit added, because this section is where it belongs — now half
+discharged.** The macro system behind both instruments was **template macros only**: hygienic,
+real, and enough for six of Felleisen's seven forms, but with no compile-time computation at all.
+A macro body now runs Beck ([`102`](102-the-macro-interpreter-report.md)) and can construct,
+inspect and return a `Node`, so *programs that compute programs* is backed rather than gestured
+at. What is still not backed is the **run-time** half of code-as-data: a `quote` that survives
+expansion is error `B0332`, so a `Node` is a compile-time value and not yet a value a running
+program holds, and `derive`'s `.as_model()` and typed macros want the checker's answers, which
+this interpreter runs before. So "a Python-shaped surface carries Lisp's power" is backed for the
+notation, the special forms and compile-time metaprogramming, and **not for run-time reflection**.
+[`08`](08-roadmap.md) §8.5.4 carries what is left.
 
 The counting protocol (§25.5) is part of the standard, because lines of code is a real metric and
 an easy lie: a third-party Scheme baseline pinned by commit, the same algorithm on both sides or
