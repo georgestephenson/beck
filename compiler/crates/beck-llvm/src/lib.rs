@@ -252,67 +252,15 @@ impl Artifact {
     }
 
     fn exchange(&self, sig: &Signature, args: &[Value]) -> Result<(Value, usize), ExecError> {
-        if args.len() != sig.params.len() {
-            return Err(ExecError::new(
-                format!(
-                    "`{}` takes {} arguments, got {}",
-                    sig.name,
-                    sig.params.len(),
-                    args.len()
-                ),
-                Span::NONE,
-            ));
-        }
-        // The arguments become eight bytes each, plus — when any of them is an object — the flat
-        // byte string of the graph they point into. `beck_llvm::heap` is the one description of
-        // that shape, so the host writes what the compiled code reads by construction.
-        let (cells, blob) = self
-            .module
-            .heap
-            .encode_args(args, &sig.params)
-            .map_err(|why| ExecError::new(format!("`{}` was given {why}", sig.name), Span::NONE))?;
-
-        self.asking.clear();
-        let reply = self
-            .worker
-            .call(sig.index, &cells, &blob, &|q| {
-                service::answer(&self.module.heap, &*self.atoms, &self.asking, q)
-            })
-            .map_err(|e| ExecError::new(e, Span::NONE))?;
-        if reply.code != 0 {
-            let span = self
-                .module
-                .spans
-                .get(reply.span as usize)
-                .copied()
-                .unwrap_or(Span::NONE);
-            // The one failure that carries a value. `beck-eval`'s `EvalError::raise` renders the
-            // *value*, so this decodes rather than describing: a message saying a raise happened
-            // where the evaluator says which one is a divergence the differential would show.
-            if Trap::from_code(reply.code) == Some(Trap::Raised) {
-                let message = self
-                    .module
-                    .heap
-                    .raised(reply.payload as u64, &reply.heap)
-                    .map_or_else(|why| why, |v| format!("raised `{}`", v.display()));
-                return Err(ExecError::new(message, span));
-            }
-            // The sentence a `HostFailed` could not carry, if there is one: the trap's own message
-            // says only that the host could not answer, and the reason is what a reader can act
-            // on.
-            let message = match (Trap::from_code(reply.code), self.asking.take()) {
-                (Some(Trap::HostFailed), Some(why)) => why,
-                (Some(trap), _) => trap.message(reply.payload),
-                (None, _) => format!("the compiled program reported trap {}", reply.code),
-            };
-            return Err(ExecError::new(message, span));
-        }
-        let value = self
-            .module
-            .heap
-            .decode(reply.value, sig.ret, &reply.heap)
-            .map_err(|why| ExecError::new(why, Span::NONE))?;
-        Ok((value, reply.heap.len()))
+        service::exchange(
+            &self.module.heap,
+            &self.module.spans,
+            &self.worker,
+            &*self.atoms,
+            &self.asking,
+            sig,
+            args,
+        )
     }
 }
 

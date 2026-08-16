@@ -181,23 +181,6 @@ impl Html {
         }
     }
 
-    pub fn child_at(&self, i: usize) -> Option<&Html> {
-        match self {
-            Html::Element { children, .. } => children.get(i),
-            Html::Text { .. } => None,
-        }
-    }
-
-    /// Node count — the denominator of "how much of the tree did the diff actually touch".
-    pub fn node_count(&self) -> usize {
-        match self {
-            Html::Text { .. } => 1,
-            Html::Element { children, .. } => {
-                1 + children.iter().map(Html::node_count).sum::<usize>()
-            }
-        }
-    }
-
     /// The wire encoding: a text node is a JSON string, an element is `[tag, attrs, children]`.
     ///
     /// Positional and terse because it rides in every patch. §4.4 specifies a field-tagged binary

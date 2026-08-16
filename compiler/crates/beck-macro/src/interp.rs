@@ -234,11 +234,6 @@ impl<'a> Interp<'a> {
         }
     }
 
-    /// Evaluate one expression in a frame — the entry point a `let` in a macro body takes.
-    pub fn eval_in(&mut self, e: &Node, frame: &mut HashMap<Arc<str>, Val>) -> Option<Val> {
-        self.eval(e, frame).ok()
-    }
-
     // ---------------------------------------------------------------------------- the machinery
 
     fn step(&mut self, span: Span) -> Eval<()> {

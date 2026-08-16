@@ -328,46 +328,14 @@ fn outgoing(out: Vec<tab::Outgoing>) -> Value {
 #[cfg(target_arch = "wasm32")]
 mod exports {
     use std::cell::RefCell;
-    use std::collections::BTreeMap;
 
     use super::Playground;
+    // The buffer table and the frame, which `beck-wasm`'s module hands its page too.
+    use beck_frame::{error, reply, request, reserve, take};
 
     thread_local! {
-        /// Buffers this module has handed the host, by the address of each one's allocation.
-        static BUFFERS: RefCell<BTreeMap<i32, Vec<u8>>> = const { RefCell::new(BTreeMap::new()) };
         /// One playground per module instance, because one module instance is one tab.
         static STATE: RefCell<Playground> = RefCell::new(Playground::new());
-    }
-
-    fn reserve(len: usize) -> i32 {
-        let mut buffer = vec![0u8; len];
-        let ptr = buffer.as_mut_ptr() as i32;
-        BUFFERS.with(|b| b.borrow_mut().insert(ptr, buffer));
-        ptr
-    }
-
-    fn take(ptr: i32) -> Option<Vec<u8>> {
-        BUFFERS.with(|b| b.borrow_mut().remove(&ptr))
-    }
-
-    /// Hand the host a length-prefixed response and keep it alive until `beck_free`.
-    fn respond(body: Vec<u8>) -> i32 {
-        let mut framed = Vec::with_capacity(4 + body.len());
-        framed.extend_from_slice(&(body.len() as u32).to_le_bytes());
-        framed.extend_from_slice(&body);
-        let ptr = framed.as_mut_ptr() as i32;
-        BUFFERS.with(|b| b.borrow_mut().insert(ptr, framed));
-        ptr
-    }
-
-    fn reply(value: serde_json::Value) -> i32 {
-        respond(
-            serde_json::to_vec(&value).unwrap_or_else(|_| b"{\"error\":\"unencodable\"}".to_vec()),
-        )
-    }
-
-    fn error(why: impl std::fmt::Display) -> i32 {
-        reply(serde_json::json!({ "error": why.to_string() }))
     }
 
     #[allow(unsafe_code)] // the export attribute, and nothing else — see the crate docs
@@ -385,11 +353,10 @@ mod exports {
     #[allow(unsafe_code)] // the export attribute, and nothing else — see the crate docs
     #[no_mangle]
     pub extern "C" fn beck_call(ptr: i32, len: i32) -> i32 {
-        let Some(bytes) = take(ptr) else {
+        let Some(bytes) = request(ptr, len) else {
             return error("no such buffer");
         };
-        let bytes = &bytes[..(len.max(0) as usize).min(bytes.len())];
-        let request: serde_json::Value = match serde_json::from_slice(bytes) {
+        let request: serde_json::Value = match serde_json::from_slice(&bytes) {
             Ok(v) => v,
             Err(e) => return error(e),
         };

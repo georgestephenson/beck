@@ -25,6 +25,14 @@
 //! call is made and not what it means. A second copy of any of those would be two opinions about
 //! one thing.
 //!
+//! [`beck_llvm::service`] is on the shared side for a reason worth stating separately, because it
+//! is the one that was got wrong: it is **host** code, not emitted code, so the argument above
+//! does not reach it. Both directions of the protocol live there — [`beck_llvm::service::answer`]
+//! serves what a compiled program asks, and [`beck_llvm::service::exchange`] makes the call and
+//! decodes what comes back. Neither is a reading of the language a differential could compare;
+//! they are the same trap codes and the same words, and a second copy is only a second place for a
+//! new trap code to be forgotten.
+//!
 //! # Agreeing with the evaluator exactly
 //!
 //! Every decision [`docs/93`](../../../../../docs/93-the-native-backends-report.md) §93.3 records is made

@@ -2229,7 +2229,7 @@ fn what_the_heap_does_not_reach_is_refused_by_name() {
 /// `docs/93` §93.9 refused `str_index_of` on the grounds that it "answers with an `Option`,
 /// whose layout this backend resolves from a program's own types and not from the prelude's".
 /// That sentence was false: the prelude's `Option` has had a layout since
-/// [`docs/93`](../docs/93-the-native-backends-report.md), and `maybe(n) -> Option[Int]` compiled in
+/// [`docs/93`](../../../../docs/93-the-native-backends-report.md), and `maybe(n) -> Option[Int]` compiled in
 /// the very fixture beside it. Every gate around the refusal was green, because each asserted that
 /// the refusal *said* something and none asked whether what it said was *so* — `docs/82` §82.10's
 /// pattern, in the one place this project had not looked for it.
@@ -3464,9 +3464,9 @@ fn what_a_question_carries_is_a_decision_and_not_an_accident() {
 /// A list, taken apart by a **pattern** — the length test, the elements and the tail.
 ///
 /// `docs/93` is what this is the differential for. The refusal it replaces said "a collection is
-/// not on this heap yet", which stopped being true at [`docs/93`](../docs/93-the-native-backends-report.md)
+/// not on this heap yet", which stopped being true at [`docs/93`](../../../../docs/93-the-native-backends-report.md)
 /// and nothing noticed — the third time a refusal's *stated reason* has outlived the thing it
-/// stated ([`docs/93`](../docs/93-the-native-backends-report.md) §93.9).
+/// stated ([`docs/93`](../../../../docs/93-the-native-backends-report.md) §93.9).
 #[test]
 fn the_two_backends_agree_on_list_patterns() {
     let _ = toolchain!();

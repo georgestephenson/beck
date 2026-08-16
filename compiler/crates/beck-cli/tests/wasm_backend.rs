@@ -383,7 +383,7 @@ fn the_evaluator_and_webassembly_agree_on_reals() {
 /// The three places a real is normalised, each with a program that makes the difference
 /// observable.
 ///
-/// The same three [`93`](../docs/93-the-native-backends-report.md) §93.3 found the hard way, on a
+/// The same three [`93`](../../../../docs/93-the-native-backends-report.md) §93.3 found the hard way, on a
 /// third target that had to make the same decisions — and where the *obvious* instruction is wrong
 /// twice over: `f64.lt` orders the two zeros and a NaN differently from the language, and
 /// `i64.trunc_f64_s` traps where the language saturates.

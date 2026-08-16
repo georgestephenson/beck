@@ -126,7 +126,7 @@ fn the_ported_suite_is_all_fourteen_of_are_we_fast_yet() {
 /// Each file says whose benchmark it is a port of.
 ///
 /// These are derived from the SOM class library and the Computer Language Benchmarks Game, both
-/// MIT-licensed, and [`awfy/README.md`](../../../../awfy/README.md) carries the notice. A header
+/// MIT-licensed, and [`awfy/README.md`](../../../awfy/README.md) carries the notice. A header
 /// that lost the attribution would be the one defect in this directory that no amount of green
 /// tests would surface.
 #[test]

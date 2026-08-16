@@ -153,11 +153,6 @@ impl Config {
             ..Config::new(issuer, client_id, redirect_uri)
         }
     }
-
-    /// Whether this relying party's issuer is one the deployment provisioned.
-    pub fn is_in_cluster(&self) -> bool {
-        self.in_cluster
-    }
 }
 
 /// The endpoints, as the issuer published them.
