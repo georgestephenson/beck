@@ -113,7 +113,7 @@ argument is — the chapters themselves are where the detail lives.
 | | | |
 |---|---|---|
 | ref | [The language reference](reference/README.md) | **Generated** by `beck doc reference` and gated on every pull request: the error index, the command reference, the effect and tier matrix, the prelude and the forms. The design lives above; this is what a program is checked against. |
-| adr | [Decision records](adr/README.md) | Engineering decisions, one immutable record each — a dependency taken or refused, a gate's shape, an upgrade path. The why lives here so documents and comments can state current truth; design decisions keep their D-numbers in [`10`](10-decisions.md). |
+| adr | [Decision records](adr/README.md) | **A choice only the compiler lives under**, one immutable record each — a dependency taken or refused, a gate's shape, an upgrade path — against [`10`](10-decisions.md)'s D-numbers, which are rules a *Beck program* lives under. The test is whether a user could observe it without reading our source, and it replaces "design here, engineering there", which was not decidable and went both ways at least six times. The why lives here so documents and comments can state current truth. |
 | def | [Defects](../DEFECTS.md) | **What is wrong right now** — something that behaves wrongly, as against something merely absent, which is a line in [`08`](08-roadmap.md) §8.5. Every entry names the gate its fix owes, because writing down what would have to go red is a job for whoever is looking at the defect. An entry is deleted by the change that fixes it, so the file is the current list and never a history. |
 
 ## The one-paragraph version

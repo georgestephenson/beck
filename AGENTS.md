@@ -86,7 +86,10 @@ So:
 
 - **Correct in place.** A document says what is true now. Where the *reasoning* behind a change
   matters and would be lost, an ADR is where it goes ([`docs/adr/`](docs/adr/)) — those are decision
-  records and are genuinely immutable, because a decision is a thing that happened at a time.
+  records and are genuinely immutable, because a decision is a thing that happened at a time. **A
+  D-number is a rule a Beck program lives under; an ADR is a choice only the compiler lives under**,
+  and the test is whether a user could observe it without reading our source
+  ([`docs/adr/README.md`](docs/adr/README.md)).
 - **Delete what a later document replaced**, and say in the commit message what was deleted and
   where it went. Two documents that disagree are worse than either alone.
 - **Prefer editing an existing document to adding one.** The bar for a new file is that no existing

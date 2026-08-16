@@ -1,9 +1,18 @@
 # 10 — Decision log
 
-George's answers to [`09`](09-risks-and-open-questions.md) §9.5, recorded with the reasoning spelled
-out. Decisions marked **DECIDED** are settled and the other documents assume them. All decisions
-D1–D29 are settled. A decision that revises an earlier one says so in both directions rather than
-quietly diverging (D20 revises D2).
+**A D-number is a rule a Beck program lives under.** It began as George's answers to
+[`09`](09-risks-and-open-questions.md) §9.5 and has kept growing as the design settled questions
+§9.5 did not ask; what every entry has in common is not who wrote it but what it binds — a program.
+The test against the other register is one question: **could a user observe this without reading the
+compiler's source?** If no, it is a choice only the compiler lives under and it belongs in
+[`adr/`](adr/README.md), whose README argues the split and names the records that predate the rule.
+One decision can need both, and D23 is the worked example: the rule is here, the implementation and
+its refused alternatives are [`adr/0018`](adr/0018-the-standard-library-is-carried-in-the-compiler.md),
+and neither restates the other.
+
+Decisions marked **DECIDED** are settled and the other documents assume them. All decisions D1–D29
+are settled. A decision that revises an earlier one says so in both directions rather than quietly
+diverging (D20 revises D2).
 
 ---
 

@@ -1,4 +1,4 @@
-# ADR 0022 — TLS, and the signature that comes with it
+# ADR 0023 — TLS, and the signature that comes with it
 
 **Status:** accepted
 **Date:** 2026-08-09
