@@ -173,17 +173,27 @@ Design decisions:
   hash, memoised in Salsa (§4.6). Macro-heavy code must not destroy IDE latency.
 
 **Status, said plainly — this section is half description and half design, and the halves are
-these.** Built: template macros — a body of `let`s and a final `return quote:` with `$x` unquotes
-and `$*xs` splices, expanded to a fixpoint — with hygiene by sets of scopes from the first commit,
-three independent resource bounds (`B0201` expansion depth, `B0213` nesting, `B0214` production
-budget), and real users: `compiler/sicp/felleisen.beck` defines `delay`, `cons_stream` and the
-derived booleans exactly this way. Not built: **everything above that computes** — the compile-time
-interpreter, `derive` and `.as_model()`, typed macros, `inject`/`unsafe_macro`, Salsa-memoised
-expansion, nested quoting's `(quote depth node)`. A body that tries raises `B0205`, which says so;
-the `ui:` block is a compiler-provided macro standing in for exactly this gap (D22); and a `quote`
-that survives expansion is `B0332` — code-as-data currently stops at templates. The interpreter is
-the **first item** in [`08`](08-roadmap.md) §8.5.4, and [`12`](12-standards-and-conformance.md)
-§12.10 records what building it cashes.
+these.** Built: hygiene by sets of scopes from the first commit, `$x` unquotes and `$*xs` splices
+expanded to a fixpoint, four independent resource bounds (`B0201` expansion depth, `B0213`
+nesting, `B0214` production budget, `B0215` the interpreter's step budget), and **a macro body
+that is ordinary Beck, evaluated at compile time** ([`102`](102-the-macro-interpreter-report.md)):
+bindings, `if`, `for`, `while`, lambdas, calls to the module's own `def`s and to the pure part of
+the prelude, `node_*` reflection over syntax, and `splice([…])` returning several definitions where
+one was written. `$e` is an expression whose *value* is reflected into the template, so `$x` is the
+caller's code and `$(n * 2)` is a literal. The environment is capability-restricted as this section
+demands, and `macro_sandbox.rs` is what says so: a whitelist, the effectful primitives refused by
+name (`B0207`), and an enumeration over the prelude that fails when a new one appears.
+
+Not built: **the half that wants the checker's answers, and the half that wants a run time** —
+typed macros, `derive`'s `.as_model()`, `inject`/`unsafe_macro`, Salsa-memoised expansion, nested
+quoting's `(quote depth node)`, and §2.5's typed literal macros. The `derive` sketch above is also
+written with a list comprehension, which is **not in the language** — `for` inside `[…]` does not
+parse, in a macro body or anywhere else, and a `for` loop that appends is how that is written
+today. The `ui:` block is still a
+compiler-provided macro standing in for a user-written one (D22), and a `quote` that survives
+expansion is still `B0332` — a `Node` is a compile-time value, not one a running program holds.
+[`08`](08-roadmap.md) §8.5.4 carries what is left and
+[`12`](12-standards-and-conformance.md) §12.10 what the interpreter cashed.
 
 ## 2.5 Typed literal macros (the DSL escape hatch)
 

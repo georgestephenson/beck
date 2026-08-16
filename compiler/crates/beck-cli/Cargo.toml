@@ -17,6 +17,7 @@ beck-eval.workspace = true
 beck-infra = { workspace = true, features = ["image"] }
 beck-clif.workspace = true
 beck-llvm.workspace = true
+beck-wasmgen.workspace = true
 beck-macro.workspace = true
 # `beck play` serves it, and `tests/playground.rs` drives it: the crate is a `cdylib` for the
 # browser and an `rlib` here, which is what makes its behaviour gateable without one — and what

@@ -83,7 +83,7 @@ test.
 | **OAuth 2.1 / OpenID Connect Core + Discovery** | **Partial** | The relying party is built ([`48`](48-identity-report.md)) with its own adversarial vectors — `beck-cli/tests/oidc.rs`: discovery, JWKS, algorithm confusion, `aud`/`iss`/`exp`, key rotation, the PKCE code flow, a plaintext issuer refused. **The OpenID Foundation conformance suite has not been run**; chartered with a pre-1.0 trigger |
 | **WebAuthn** | **Corrected — no claim today** | The earlier row claimed inheritance "via the bundled IdP (Keycloak)". No IdP is provisioned today: [`48`](48-identity-report.md) built a dev provider, a symmetric provider and a relying party, and `identity = managed()` is a declaration whose Keycloak provisioning ([`10`](10-decisions.md) D6) is still InfraGraph design. Until that lands, authenticator requirements belong to whatever issuer a deployment names, and Beck's obligation ends at validating what that issuer signs |
 | **CloudEvents 1.0** | **Chartered** | Both halves now have a position: inbound with `ingest(source)` ([`30`](30-bounded-contexts-and-microservices.md) §30.4), outbound with `@public(events)` ([`101`](101-the-public-surface.md) §101.6, Phase 5) — events cross the boundary as CloudEvents in both directions, identity derived from `(context, seq)` |
-| **W3C WebAssembly — pinned to core 3.0** | **Partial** | The pin adopts [`35`](35-standards-landscape.md) §35.3: 3.0's guaranteed `return_call` is what lets a WASM tier honour the proper-tail-call guarantee [`27`](27-the-walls-come-down-report.md) made language-level. What exists is Mode B's kernel ([`94`](94-the-client-report.md)) — **core WebAssembly only**, a `wasm32-unknown-unknown` module with four `i32` exports, no WASI, no component model — and nothing here runs the spec suites. The spec-suite obligation lands with Mode B's codegen ([`08`](08-roadmap.md) §8.5.4); WASI pins to the 0.2.x line when a WASI target exists |
+| **W3C WebAssembly — pinned to core 3.0** | **Partial** | The pin adopts [`35`](35-standards-landscape.md) §35.3: 3.0's guaranteed `return_call` is what lets a WASM tier honour the proper-tail-call guarantee [`27`](27-the-walls-come-down-report.md) made language-level. What exists is Mode B's kernel ([`94`](94-the-client-report.md)) — **core WebAssembly only**, a `wasm32-unknown-unknown` module with four `i32` exports, no WASI, no component model — and, since [`103`](103-the-wasm-emitter-report.md), an emitter that **writes** core WebAssembly and uses 3.0's `return_call` for exactly the reason this row pins the version. Nothing here runs the spec suites: what `wasm_backend.rs` asserts is agreement with the *language's* semantics, and a real engine validating the emitted module on every run is the cheap half of conformance rather than conformance. The spec-suite obligation stays chartered against the emitter's heap half ([`08`](08-roadmap.md) §8.5.4); WASI pins to the 0.2.x line when a WASI target exists |
 
 ## 12.4 Web output: accessibility as a compile-time property
 
@@ -166,14 +166,14 @@ our terms; conformance means restating them in the auditor's terms and testing t
   IdP" that is not provisioned: `identity = managed()` is a declaration, and D6's Keycloak
   provisioning is still InfraGraph design. Until it lands, authenticator requirements belong to
   the deployment's issuer.
-- **The macro sandbox — Verified today, vacuously, and the vacuity is the point to watch.**
-  Expansion is substitution over a template, so there is no name a macro body could use to reach
-  the host — `security.rs::a_macro_cannot_reach_the_host_because_expansion_has_nothing_to_reach_it_with`
-  is the test. The macro interpreter ([`08`](08-roadmap.md) §8.5.4 item 1) is what makes this
-  claim earn its keep: when macro bodies run Beck at compile time, [`02`](02-syntax.md) §2.4's
-  capability-restricted environment stops being satisfied by construction and starts needing its
-  own refused-program tests. **That gate lands with the interpreter, not after it** — it is the
-  interpreter's G-class companion.
+- **The macro sandbox — Verified, and no longer vacuously.** It was: expansion was substitution
+  over a template, so there was no name a macro body could use and nothing to check. Macro bodies
+  now run Beck at compile time ([`102`](102-the-macro-interpreter-report.md)), so
+  [`02`](02-syntax.md) §2.4's capability-restricted environment is a claim rather than a shape, and
+  `beck-cli/tests/macro_sandbox.rs` is the gate that landed **with** the interpreter rather than
+  after it: the compile-time environment is a whitelist, the prelude's effectful primitives are
+  refused by name, and an enumeration over the prelude fails when a primitive that performs an atom
+  is added without the interpreter learning about it.
 
 ## 12.8 Observability and operations
 
@@ -235,15 +235,17 @@ Two instruments, adopted as D18 — both **Verified as artefacts**:
   asserted as well as its passes**, so a wall coming down is a failing test rather than something
   somebody notices.
 
-**And one honesty the audit added, because this section is where it belongs.** The macro system
-behind both instruments is **template macros only**: hygienic, real, and enough for six of
-Felleisen's seven forms — but [`02`](02-syntax.md) §2.4's compile-time computation (`derive`, typed
-macros, the macro interpreter) is unbuilt, and code-as-data stops at the type checker: a `quote`
-that survives expansion is error `B0332`, and no Beck program can construct or evaluate a `Node`.
-So "a Python-shaped surface carries Lisp's power" is backed for the notation and the special forms,
-and **not yet for programs that compute programs** — the half of homoiconicity the premise most
-often gestures at. That gap is now the first item in [`08`](08-roadmap.md) §8.5.4, and this row is
-what closing it cashes.
+**And one honesty the audit added, because this section is where it belongs — now half
+discharged.** The macro system behind both instruments was **template macros only**: hygienic,
+real, and enough for six of Felleisen's seven forms, but with no compile-time computation at all.
+A macro body now runs Beck ([`102`](102-the-macro-interpreter-report.md)) and can construct,
+inspect and return a `Node`, so *programs that compute programs* is backed rather than gestured
+at. What is still not backed is the **run-time** half of code-as-data: a `quote` that survives
+expansion is error `B0332`, so a `Node` is a compile-time value and not yet a value a running
+program holds, and `derive`'s `.as_model()` and typed macros want the checker's answers, which
+this interpreter runs before. So "a Python-shaped surface carries Lisp's power" is backed for the
+notation, the special forms and compile-time metaprogramming, and **not for run-time reflection**.
+[`08`](08-roadmap.md) §8.5.4 carries what is left.
 
 The counting protocol (§25.5) is part of the standard, because lines of code is a real metric and
 an easy lie: a third-party Scheme baseline pinned by commit, the same algorithm on both sides or

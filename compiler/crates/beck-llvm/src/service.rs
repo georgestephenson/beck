@@ -206,10 +206,15 @@ fn perform(atoms: &dyn Atoms, op: Upcall, args: &[Value]) -> Result<Result<Value
                 .ok_or("`http_fetch` was asked with no request")?
                 .clone();
             let request = beck_core::host::request_of(&host, &request)?;
-            Ok(match atoms.fetch(&request) {
-                Ok(reply) => Ok(beck_core::host::reply_value(&reply)),
-                Err(f) => Err(beck_core::host::failure_value(&host, &f)),
-            })
+            // `Stop::never()`: a compiled worker holds its pipe for a whole call, so there is no
+            // second child of the same scope for a cancellation to be *for* — `docs/93` §93.15 is
+            // that limit and `docs/80` §80.12 the row it blocks.
+            Ok(
+                match atoms.fetch(&request, &beck_core::net::Stop::never()) {
+                    Ok(reply) => Ok(beck_core::host::reply_value(&reply)),
+                    Err(f) => Err(beck_core::host::failure_value(&host, &f)),
+                },
+            )
         }
     }
 }

@@ -8,6 +8,13 @@ publish.workspace = true
 [dependencies]
 beck-diag.workspace = true
 beck-syntax.workspace = true
+# Case mapping and substring replacement for the macro interpreter: a macro folding a letter and
+# the program it expands to must reach one table, not two that agree so far (docs/93 §93.12).
+beck-prim.workspace = true
+
+[dev-dependencies]
+# `the_interpreters_ceiling_fits_the_declared_stack` measures what reaching the ceiling costs.
+beck-diag = { workspace = true, features = ["probe"] }
 
 [lints]
 workspace = true

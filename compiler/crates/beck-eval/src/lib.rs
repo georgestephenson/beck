@@ -210,8 +210,9 @@ impl beck_core::host::Atoms for Globals {
     fn fetch(
         &self,
         request: &beck_core::net::Request,
+        stop: &beck_core::net::Stop,
     ) -> Result<beck_core::net::Reply, beck_core::net::Failure> {
-        self.atoms.fetch(request)
+        self.atoms.fetch(request, stop)
     }
 }
 

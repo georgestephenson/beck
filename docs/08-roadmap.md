@@ -68,10 +68,10 @@ about a person rather than a count of bullets — see the end of this section.
 |---|---|
 | **Native codegen**: LLVM and Cranelift, differential against the evaluator | **Built** ([`93`](93-the-native-backends-report.md)). `beck native --backend cranelift\|llvm`; the differential is three-way. The heap is whole — records, text, collections, closures, views, failure, generics and the four host-calling primitives — and the fifteen that are a table or somebody else's parser are **linked** rather than emitted (§93.12), so the corpus stands at **941 definitions compiled against 137 refused**. §93.15 names what is left |
 | **Incremental views**: dataflow plans, arrangement sharing, SQL read models, pgwire, query fusion | **Complete** ([`23`](23-incremental-views-report.md)) |
-| **Mode B client**: per-component WASM, optimistic application, freshness-typed pending state, size budget | **Built except codegen** ([`94`](94-the-client-report.md)). The mode, the bundle, the data patch, reconciliation by `seq`, a browser that runs it, an offline queue, `freshness()` and the 150 KB brotli gate. Codegen waits on a wasm emitter |
+| **Mode B client**: per-component WASM, optimistic application, freshness-typed pending state, size budget | **Built except codegen** ([`94`](94-the-client-report.md)). The mode, the bundle, the data patch, reconciliation by `seq`, a browser that runs it, an offline queue, `freshness()` and the 150 KB brotli gate. The wasm emitter exists and compiles the **scalar subset** ([`103`](103-the-wasm-emitter-report.md)); a `view` is nothing but heap, so it compiles **0 of the corpus** and the kernel still interprets |
 | **Client polish**: router, forms, focus/scroll preservation, devtools | **Built except lazy routes** ([`94`](94-the-client-report.md)). A route is a field of `Session`, so there is no route table and every route is a real URL. Lazy routes wait on §5.1's per-component boundary |
 | **`test` blocks and inferred mocks** | **Built** ([`22`](22-phase-3-report.md)), with page snapshots and `beck test --update` ([`22`](22-phase-3-report.md)) |
-| **Structured concurrency, `Result`/error rows, pattern matching** | **Built** ([`27`](27-the-walls-come-down-report.md), [`80`](80-structured-concurrency-report.md), [`90`](90-pattern-matching-report.md), [`90`](90-pattern-matching-report.md)). `parallel:` runs its children on a thread each and stops them when one fails. What is left is stopping a child **blocked in the host**, which is a deadline on the [`net`](../compiler/crates/beck-core/src/net.rs) seam |
+| **Structured concurrency, `Result`/error rows, pattern matching** | **Built** ([`27`](27-the-walls-come-down-report.md), [`80`](80-structured-concurrency-report.md), [`90`](90-pattern-matching-report.md), [`90`](90-pattern-matching-report.md)). `parallel:` runs its children on a thread each and stops them when one fails — including a child **blocked in the host**, which is a `Stop` predicate on the [`net`](../compiler/crates/beck-core/src/net.rs) seam rather than a change to the scope ([`80`](80-structured-concurrency-report.md) §80.14). What is left is the compiled half: a worker holds its pipe for a whole call ([`93`](93-the-native-backends-report.md) §93.15) |
 | **SQLite as a durable substrate** | **Built** ([`67`](67-sqlite-report.md)). At equal durability SQLite and redb are within noise, so rung 0's default is unchanged — the reason §7.8.1 gave (the transaction, not the speed) survives the measurement and is the only reason |
 | **Standard library v1** | **Built** ([`46`](46-standard-library-report.md)): strings, collections, JSON, time, HTTP, digests, encodings, identifiers, bignums, coercion and arbitrary-precision decimal, importable from anywhere. §46.16 has what a library still lacks |
 | **The language's own means of abstraction** | **Done** ([`27`](27-the-walls-come-down-report.md)). Every wall this project has *found* is down and `sicp/refusals/` is empty — which is not the claim that Beck expresses SICP; `sicp/refusals/README.md` is where the difference is written down |
@@ -424,31 +424,47 @@ the one place in `docs/` that holds an order. The list stopped being all-**S** w
 item larger than anything else here, one **G**, and a ledger of small artefacts behind chartered
 rows.
 
-- **The macro interpreter** (F, and **first**): macro bodies running Beck at compile time in the
-  capability-restricted environment [`02`](02-syntax.md) §2.4 designs. Today a macro body is
-  `let`s and a final `return quote:` — anything more raises `B0205` — and code-as-data stops at
-  templates: a `quote` that survives expansion is `B0332`, and no program can construct or
-  evaluate a `Node`. That is the unbacked half of the premise —
-  [`12`](12-standards-and-conformance.md) §12.10 records it against D9 — and the largest fan-out
-  left anywhere in the plan: it unblocks `derive` and `.as_model()`, typed macros,
-  `inject`/`unsafe_macro`, §2.5's typed literal macros (`sql"…"`, `html"…"`, `regex"…"` — the DSL
-  escape hatch, and the mechanism the security suite already points at for SQL and HTML), and it
-  retires the compiler-provided `ui:` special case standing in for it (D22). Its G-class
-  companion lands **with** it, not after: the macro sandbox's refused-program tests, because
-  compile-time evaluation is what turns the sandbox from a property satisfied by construction
-  into a claim needing a gate ([`12`](12-standards-and-conformance.md) §12.7). Files:
-  `beck-macro` plus an evaluator reachable at compile time — serial with Lane A's hands.
-- **Mode B's codegen** (S, and the item with a user in front of it): a wasm emitter plus what
-  [`94`](94-the-client-report.md) §94.8 names. The WebAssembly spec-suite obligation
-  [`12`](12-standards-and-conformance.md) §12.3 pins to core 3.0 lands here.
+- **What the macro interpreter unblocked** (F — the interpreter itself is **built**,
+  [`102`](102-the-macro-interpreter-report.md), with its G-class sandbox gate beside it). A macro
+  body is ordinary Beck now, so the successors this item existed to free are the item:
+  - **`derive` and `.as_model()`** (Lane A, and the largest): a `typed macro` receives the AST
+    *with inferred types attached* ([`02`](02-syntax.md) §2.4), which the untyped interpreter runs
+    before. This is the piece that needs the checker's answers to reach a macro body, and it is
+    what retires the compiler-provided `ui:` special case standing in for a user-written macro
+    (D22).
+  - **§2.5's typed literal macros** (`sql"…"`, `html"…"`, `regex"…"`) — the DSL escape hatch, and
+    the mechanism the security suite already points at for SQL and HTML. Sugar over a macro call
+    (§2.3's table) plus a parse at compile time, so this one is free of Lane A.
+  - **`inject`/`unsafe_macro`**, the deliberate-capture escape, and **nested quoting's
+    `(quote depth node)`**.
+  - **A `Node` a *running* program can hold**: a `quote` that survives expansion is still `B0332`,
+    so code-as-data is compile-time only. [`12`](12-standards-and-conformance.md) §12.10 records
+    which half of D9 that leaves open.
+  - **Salsa-memoised expansion**, §2.4's "macro-heavy code must not destroy IDE latency" — which
+    now has something to memoise.
+- **Mode B's codegen: the heap on a wasm target** (S, and the item with a user in front of it).
+  The emitter is written and the scalar subset compiles, in a real engine, against the
+  tree-walker ([`103`](103-the-wasm-emitter-report.md)) — and it compiles **0 of the corpus's 195
+  definitions**, because an application is records, lists and a page. What is left is therefore one
+  thing and it is the big one: a value representation in linear memory, string and collection
+  primitives, closures through an indirect call table, and §5.1's unanswered choice between the GC
+  proposal and a refcounting discipline. Behind it, in order: the four host effects as imports,
+  bundle format 2 with the type table
+  ([`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md) anticipated both), and the kernel
+  loading a compiled component instead of interpreting one. The WebAssembly spec-suite obligation
+  [`12`](12-standards-and-conformance.md) §12.3 pins to core 3.0 lands with it.
 - **The three named backend items** (S): the signal vocabulary compiled rather than read by the
   splitter, a **bounded** definition — a dictionary is a function value — and a worker that can
   answer two calls at once. [`93`](93-the-native-backends-report.md) §93.15 is the list, and the
   largest refusal class behind it is a **function value at a boundary**, which is moved by compiling
   definitions called only by *other compiled definitions*.
-- **Cancelling a child blocked in the host** (S): a deadline on the
-  [`net`](../compiler/crates/beck-core/src/net.rs) seam rather than a change to the scope
-  ([`80`](80-structured-concurrency-report.md)).
+- **A worker that can answer two calls at once** (S, and it is what is left of cancelling a child
+  blocked in the host): the tree-walker stops a child inside an outbound call now
+  ([`80`](80-structured-concurrency-report.md) §80.14), and `beck-llvm` passes `Stop::never()`
+  because a worker holds its pipe for a whole call — so two children that both reach compiled code
+  serialise before cancellation is even the question. Named already in
+  [`93`](93-the-native-backends-report.md) §93.15's list above; recorded here because it is now
+  the only thing between `parallel:` and the native backends.
 - **The render lock** (S): the third of the shared dataflow's loose ends, deliberately left, and
   [`23`](23-incremental-views-report.md) §23.19 records that closing the other two made it *harder*
   rather than unchanged.
@@ -510,11 +526,11 @@ directories.
 
 | Lane | Owns | What is left in it | Collides with |
 |---|---|---|---|
-| **A — type system** | `beck-core/src/check/`, `ty.rs`, `core.rs`, `prelude.rs`, `iface.rs` | **The macro interpreter** (§8.5.4's first item — it lives in `beck-macro` and an evaluator, but it changes what reaches the checker, so it occupies this lane's hands); `Ord` as a trait, which [`54`](54-ordering.md) does not recommend | **Itself, completely** — see below |
+| **A — type system** | `beck-core/src/check/`, `ty.rs`, `core.rs`, `prelude.rs`, `iface.rs` | **Typed macros and `derive`** (§8.5.4's first item — a macro body that receives inferred types is a checker change, whatever crate the body runs in); `Ord` as a trait, which [`54`](54-ordering.md) does not recommend | **Itself, completely** — see below |
 | **B — runtime and views** | `beck-rt/`, `beck-core/src/{engine,plan,incremental,pmap,signal}.rs` | The render lock, unowned | Nothing in A, C, E or F |
 | **C — front end and tooling** | `beck-syntax/`, `beck-cli/`, `beck-diag/` | Comment-preserving printing — `textDocument/formatting` waits on it, and `beck fmt` deleting `#` comments is why it is due rather than nice; code actions ([`65`](65-the-editor-report.md) §65.8); the standards ledger's front-end vectors (§8.5.4) | A, if a syntax decision changes what the checker sees |
 | **D — process and supply chain** | `docs/`, `.github/`, `deny.toml`, `SECURITY.md`, `release/`, `install.sh` | Trusted publishing; a registry to push to; a subject `beck sign` can take over a release *listing* ([`adr/0028`](adr/0028-a-release-carries-provenance-and-still-no-signature.md)) | Nothing in code — **except that a release lands in `Cargo.toml`, a `build.rs` and `--version`** |
-| **E — backends** | `beck-eval/`, `beck-llvm/`, `beck-clif/`, `beck-core/src/backend.rs`, any new codegen crate | Mode B's codegen; the three items of [`93`](93-the-native-backends-report.md) §93.15; cancelling a child blocked in the host | Nothing — the seam is why ([`19`](19-phase-1-report.md) §19.9), and sixteen consecutive Lane E changes have held that prediction, several without touching one line of `beck-rt` |
+| **E — backends** | `beck-eval/`, `beck-llvm/`, `beck-clif/`, `beck-wasmgen/`, `beck-core/src/backend.rs`, any new codegen crate | Mode B's codegen; the three items of [`93`](93-the-native-backends-report.md) §93.15, of which the two-calls-at-once worker is now what blocks cancelling a compiled child | Nothing — the seam is why ([`19`](19-phase-1-report.md) §19.9), and sixteen consecutive Lane E changes have held that prediction, several without touching one line of `beck-rt` |
 | **F — infrastructure** | `beck-infra/` | Effect-derived NetworkPolicy/RBAC/grants; Crossplane emitter; conformance rungs | Nothing |
 
 **Lane A is strictly serial, and that is the real staffing constraint.** It is tempting to run two
@@ -536,10 +552,14 @@ they are what the next ordering should assume:
   been answered as two by four phases of implementation; errors and structured concurrency were one
   row with different successors. The classification is about *cost over time*, and it is silent
   about whether an item is one item.
-- **A wave item can be in the wrong lane.** `Set` and dates were filed under Lane A on the
-  assumption that a standard-library item is a language item. They turned out to be two files of
-  Beck and no compiler change at all, so they could have run beside a Lane A branch rather than
-  behind one. Ask which files an item touches before assigning it a lane.
+- **A wave item can be in the wrong lane**, and it has now happened twice. `Set` and dates were
+  filed under Lane A on the assumption that a standard-library item is a language item; they
+  turned out to be two files of Beck and no compiler change at all. **The macro interpreter** was
+  filed there too, on the stronger-sounding reasoning that it "changes what reaches the checker" —
+  and it touched `beck-macro/`, one table in `beck-diag/`, and two new test suites, with **not one
+  line of `check/` or `ty.rs`**. What reaches the checker is a `Node` either way; the lane rule is
+  about *files*, and a plausible argument about consequences is not one. Ask which files an item
+  touches before assigning it a lane.
 
 **The four shared artefacts that serialise otherwise-independent branches.** Each has a cheap
 discipline that avoids the collision.
