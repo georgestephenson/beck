@@ -286,8 +286,12 @@ testable: *replaying the log reproduces the state, bit for bit*.
 **`durable`.** `durable(fold(f, init, s))` marks the accumulator as surviving restarts: the runtime
 persists the input stream (the log) and snapshots the accumulator. `durable` is "the entire database
 administration story" — and it is an *effect*, so infrastructure derivation
-([`06`](06-kubernetes-and-packaging.md) §6.5) and RBAC can see it. Retention/snapshot policy hangs
-off it: `durable(retain=90.days, snapshot=hourly)` — defaults sane, overridable.
+([`06`](06-kubernetes-and-packaging.md) §6.5) and RBAC can see it. Retention and snapshot policy
+were designed to hang off it — `durable(retain=90.days, snapshot=hourly)`, defaults sane and
+overridable — and **do not**: `durable` takes one argument, and neither keyword parses. Snapshot
+cadence is a runtime setting (`AppConfig::snapshot_every`) and a derived `SnapshotSchedule` node
+rather than a property of the definition, and there is no retention at all — every event ever
+appended is still in the store. [`08`](08-roadmap.md) §8.5.4 is where that sits, with the archival substrate it belongs to.
 
 A program may declare **several** `durable` folds, and that is not several logs. The rule above is
 one totally-ordered log per application, so several folds are several *projections* of it: the
