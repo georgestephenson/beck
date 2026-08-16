@@ -1,9 +1,9 @@
-# 102 — Styling, and the components everybody rebuilds
+# 104 — Styling, and the components everybody rebuilds
 
 > **Design, with measurements. Nothing here is built.** Every number below was produced by a command
 > this document quotes, against the tree at the time of writing. The styling half is **decided** —
 > [`10`](10-decisions.md) D29 — and the work is scheduled in [`08`](08-roadmap.md) §8.5.4; the
-> component half is measured and open, and §102.8's Wall 1 is explicitly not settled here. Three of
+> component half is measured and open, and §104.8's Wall 1 is explicitly not settled here. Three of
 > the four things this audit found wrong are **defects** and are registered in
 > [`DEFECTS.md`](../DEFECTS.md) with the gate each fix owes; the fourth — focus cannot be placed by a
 > view — is an *absence* rather than a defect, so it is a scheduled item and not a register entry.
@@ -12,7 +12,7 @@ Two questions, and they turn out to be one:
 
 1. **Styling.** CSS is absorbed — [`00`](00-original-idea.md) makes the browser's three languages an
    *instruction set* rather than an authoring format, and `(my-javascript (my-css (my-html)))` is
-   only literal if the middle term has somewhere to live. It does not. §102.1 says what is actually
+   only literal if the middle term has somewhere to live. It does not. §104.1 says what is actually
    there, and it is eight rules hard-coded in Rust.
 2. **Components.** Date pickers, data tables, charts, carousels, modals. Every web project rebuilds
    them, which is the exact thing this language exists to stop
@@ -23,10 +23,10 @@ CSS ecosystem does not.** Every awkward part of Tailwind — the content scanner
 `@apply` that its own documentation advises against — is a workaround for not being able to see the
 program. Every awkward part of a React component library — the render props, the ref forwarding, the
 controlled/uncontrolled duality — is a workaround for not being able to see the state. Beck can see
-both. §102.4 and §102.10 are what that buys, and §102.8 is the price of admission, which is three
+both. §104.4 and §104.10 are what that buys, and §104.8 is the price of admission, which is three
 walls that are load-bearing rather than incidental.
 
-## 102.1 What exists today
+## 104.1 What exists today
 
 **The stylesheet is eight rules, hard-coded in Rust.**
 [`beck-rt/src/css.rs`](../compiler/crates/beck-rt/src/css.rs) holds `STYLES`, a `&'static [Rule]`
@@ -46,7 +46,7 @@ from.
 **`class=` is a `Str`, and no attribute name is checked.** The `ui:` macro turns any `name=value`
 into an attribute, converting `_` to `-` (so `aria_label` becomes `aria-label`, which is right) and
 `on_x=` into `data-b-x`. It has no vocabulary of its own: it does not know which attributes HTML
-has, which events the client listens for, or that `class` is special. §102.8 is what that costs.
+has, which events the client listens for, or that `class` is special. §104.8 is what that costs.
 
 **A component is a `def` returning `Html`, and `component` is not a keyword.** [`11`](11-language-tour.md)
 §11.6's `component TodoList(sess)` does not parse. [`94`](94-the-client-report.md) §94.15 states the
@@ -55,7 +55,7 @@ consequence from the other end: a program has one component, because it has one 
 So the position is not "styling is basic". It is that **nothing in the language is about styling at
 all**, and the one artefact that is, is a Rust constant.
 
-## 102.2 Tailwind in a Beck page, measured
+## 104.2 Tailwind in a Beck page, measured
 
 The measurement is Tailwind CSS 4.3.3 under Node 22.22.2. The page is
 [`examples/todo.beck`](../compiler/examples/todo.beck) with its `class=` values replaced by utilities
@@ -99,7 +99,7 @@ Done in 63ms
 with nothing built and nothing decided.** That is a real answer and it should be the starting point
 of any plan. It is also the whole of the good news.
 
-## 102.3 What a scanner cannot see, measured
+## 104.3 What a scanner cannot see, measured
 
 Tailwind does not read the program. It reads the *bytes of the files*, extracts anything that could
 be a class name, and keeps the ones its compiler recognises. Three consequences, each measured.
@@ -142,7 +142,7 @@ human. `tailwindcss canonicalize` does not help — it sorts a class list and pa
 `not-a-real-utility` straight through.
 
 **And it breaks at the library boundary, which is the one that matters here.** Take the component
-kit of §102.7 — `card`, `stack` and `action` in `kit.beck`, imported by `app.beck`. Point Tailwind
+kit of §104.7 — `card`, `stack` and `action` in `kit.beck`, imported by `app.beck`. Point Tailwind
 at the application:
 
 | Source given to the scanner | Utilities emitted |
@@ -160,7 +160,7 @@ the entire subject of the second half of this document.
 The diagnosis is not that Tailwind is badly built. It is that a scanner is what you write when you
 cannot resolve an import, and Beck resolves imports.
 
-## 102.4 The design system is Tailwind's, the extraction is the compiler's
+## 104.4 The design system is Tailwind's, the extraction is the compiler's
 
 Split Tailwind in two and take one half. This is [`10`](10-decisions.md) **D29**, and the rest of
 this section is its argument.
@@ -208,7 +208,7 @@ expectation — applied to a utility table. The gate is: for every name Beck acc
 rule; for every name Beck refuses, Tailwind emits nothing. It runs where a Node is available and
 skips loudly where one is not, like every other environment-dependent suite this repository has.
 
-## 102.5 Why Tailwind cannot be a dependency, and should still be the default look
+## 104.5 Why Tailwind cannot be a dependency, and should still be the default look
 
 The npm package is not the design system. It is:
 
@@ -255,12 +255,12 @@ subset stops being a permanent apology.
 **And the port is smaller than it sounds.** Of the three native binaries above, two are Rust already:
 Tailwind's *scanner* (Oxide) and `lightningcss`, which is on crates.io — at `1.0.0-alpha.72`, which
 [`07`](07-dependencies.md)'s standard would want an argument for. Tailwind's *utility compiler* is
-the JavaScript half (`dist/*.mjs`). Beck does not need the scanner — that is the half §102.4
+the JavaScript half (`dist/*.mjs`). Beck does not need the scanner — that is the half §104.4
 replaces — and it does not need a CSS parser to *emit* CSS, so the only thing that has to cross is
 the utility table, which is data. Generated, and held against upstream by the gate above, that is a
 wave's maintenance rather than a fork.
 
-## 102.6 Syntactic sugar, mostly refused
+## 104.6 Syntactic sugar, mostly refused
 
 The question was whether syntax can make styling joyful. The honest answer is that **the joy is in
 the diagnostics and the editor, not in the notation**, and most sugar proposed here would cost more
@@ -273,10 +273,10 @@ than it returns. Ranked, with verdicts:
 | **Conditional utilities as library functions** — `when(t.done, "line-through opacity-50")` | **Yes**, and as a library, not syntax. It wants `class=` to accept a list as well as a string, which is one line in the `ui:` macro |
 | **The theme as a Beck value** — tokens as a record, generating both the `@theme` block and the accepted table | **Yes.** Renaming a brand colour becomes a rename, checked. This is the piece that makes a *design system* rather than a stylesheet |
 | **Variants as values** — `hover(bg_rose_500)` instead of `"hover:bg-rose-500"` | **No.** Loses the transfer, gains nothing a checked string does not already have |
-| **A `css:` macro** for what utilities cannot say — keyframes, `@container`, complex selectors | **Later, and cheaply.** It is a typed literal macro ([`02`](02-syntax.md) §2.5), so it waits on the macro interpreter, which is [`08`](08-roadmap.md) §8.5.4's **first** item. Nothing here justifies unblocking it early, and §102.4 works without it |
-| **A `component` keyword** | **No.** §102.7 measures what functions already do, and the answer is everything |
+| **A `css:` macro** for what utilities cannot say — keyframes, `@container`, complex selectors | **Later, and now genuinely cheap.** It is a typed literal macro ([`02`](02-syntax.md) §2.5), which used to mean it waited on the macro interpreter; the interpreter is **built** ([`102`](102-the-macro-interpreter-report.md)) and [`08`](08-roadmap.md) §8.5.4 lists typed literal macros among what it unblocked and *free of Lane A*. So the cost argument for deferring it is gone and only the need argument is left, which still holds: nothing in the styling half wants it, and §104.4 works without it |
+| **A `component` keyword** | **No.** §104.7 measures what functions already do, and the answer is everything |
 
-## 102.7 A component library needs no language feature — measured
+## 104.7 A component library needs no language feature — measured
 
 This kit compiles today, on the tree as it stands:
 
@@ -332,9 +332,9 @@ Point 4 answers an open question. [`09`](09-risks-and-open-questions.md) §9.6 i
 visualization vocabulary is a library, an addition to the `ui:` core, or a typed literal macro. It
 is **a library**: a chart is a pure function from data to `Html`, the axis arithmetic is Beck, and
 `ui:` needs nothing added. That is the cheapest of the three answers and it was the one nobody had
-checked — and §102.9 is the defect that makes it not quite true yet.
+checked — and §104.9 is the defect that makes it not quite true yet.
 
-## 102.8 The three walls
+## 104.8 The three walls
 
 ### Wall 1 — interface state has no home, so opening a dropdown is a log entry
 
@@ -375,7 +375,7 @@ Three candidate answers, in increasing order of ambition, and this document does
 - **The URL.** State that deserves a bookmark should be in `session.path` — [`94`](94-the-client-report.md)
   §94.3 already makes a route a field of `Session` and not a router. This is the *right* answer for
   a table's sort and filter and the wrong one for a tooltip.
-- **The platform.** §102.9: for a large fraction of these components the browser will hold the state
+- **The platform.** §104.9: for a large fraction of these components the browser will hold the state
   if asked in markup, and then it is nobody's state at all.
 
 ### Wall 2 — the event vocabulary is five, and an unknown one is silent
@@ -439,7 +439,7 @@ writes and the client reconciles the way it reconciles every other attribute, re
 into an element that did not exist before the patch. That is one client-side rule and one attribute,
 and it keeps the page a pure function of state, which is the property the whole design is for.
 
-## 102.9 What the platform already owns
+## 104.9 What the platform already owns
 
 The libraries a JavaScript component kit is made of exist because the browser could not do these
 things when they were written. Measured against Chromium 141.0.7390.37 — the browser
@@ -474,7 +474,7 @@ be absent elsewhere, and [`94`](94-the-client-report.md) §94.15 already lists "
 Chromium" as not built. A component library that leans on the platform needs a support matrix and a
 degradation story per row, and neither exists.
 
-**And one defect blocks the chart of §102.7 outright.** `beck-patch.js:10` builds patched-in
+**And one defect blocks the chart of §104.7 outright.** `beck-patch.js:10` builds patched-in
 subtrees with `document.createElement(tag)` — no namespace. Measured in the same Chromium, on the
 same tree the patch carries:
 
@@ -487,17 +487,17 @@ So an SVG chart paints on first load and **vanishes the first time it changes** 
 time the data it is a function of changes, which is the only reason to have drawn it. The fix is
 `createElementNS` with a namespace inherited from the ancestor, and the gate is a browser test that
 asserts a patched `rect` has a non-zero box. It is not fixed here, because a client change wants its
-own change and its own browser gate; it is item 1 of §102.11 for the same reason.
+own change and its own browser gate; it is item 1 of §104.11 for the same reason.
 
-## 102.10 Which components Beck should own, and why some of them it should own better
+## 104.10 Which components Beck should own, and why some of them it should own better
 
 The user-facing list, with what each actually needs:
 
 | Component | Where the state is | Verdict |
 |---|---|---|
 | **Data table** — sort, filter, paginate, group | the query | **The flagship.** Sorting and filtering a table is a *view*, and keeping views incremental is what [`23`](23-incremental-views-report.md) built. Everyone else re-sorts an array in the browser on every keystroke; Beck maintains a dataflow and sends a patch. This is the component where the language wins on the merits rather than on ergonomics |
-| **Charts** | pure function of data | **Library, no walls** — proved in §102.7, blocked only by the namespace defect. Answers [`09`](09-risks-and-open-questions.md) §9.6 item 8 |
-| **Modal / dialog** | the platform | Markup. `<dialog>` + invokers, no application state (§102.9) |
+| **Charts** | pure function of data | **Library, no walls** — proved in §104.7, blocked only by the namespace defect. Answers [`09`](09-risks-and-open-questions.md) §9.6 item 8 |
+| **Modal / dialog** | the platform | Markup. `<dialog>` + invokers, no application state (§104.9) |
 | **Accordion / disclosure / tabs** | `<details name>`, or the URL | Markup, plus Wall 2's keyboard vocabulary for the ARIA-conformant tab list |
 | **Carousel** | CSS scroll position | Markup and CSS, with the support caveat |
 | **Date picker** | `<input type=date>` first | The platform control for the common case; a custom one is the hardest thing on this list and needs all three walls down |
@@ -517,7 +517,7 @@ That also gives [`12`](12-standards-and-conformance.md) §12.4 its missing artef
 accessibility checks already scheduled there — alt text, accessible name, input label — are the same
 mechanism Wall 2 needs, over the same typed tree, and would be built once.
 
-## 102.11 What to build, in order
+## 104.11 What to build, in order
 
 **These eight are scheduled**, in [`08`](08-roadmap.md) §8.5.4, which is the only place in `docs/`
 that holds an order — with a class and a lane each, and each named there rather than gestured at.
@@ -543,11 +543,15 @@ schedule:
 Two things are deliberately *not* on the list. **Whether the kit is a `lib/` directory or a tarn**
 is a decision to take after items 3–5, because the argument for either is mostly about how the
 utility table ships. And **`css:`** — the macro for keyframes, `@container` and complex selectors —
-stays behind the macro interpreter ([`08`](08-roadmap.md) §8.5.4's first item), because nothing in
-the styling half needs it and unblocking it early would be paying the largest fan-out item's cost
-for the smallest of its successors.
+which is off the list for a *changed* reason and worth saying so. It used to be behind the macro
+interpreter, and the argument was that unblocking the largest fan-out item in the plan for the
+smallest of its successors was the wrong trade. The interpreter has since been **built**
+([`102`](102-the-macro-interpreter-report.md)), and §8.5.4 lists typed literal macros among what it
+freed and outside Lane A — so that argument is spent. What is left is the weaker and sufficient one:
+nothing in items 1–8 needs `css:`, so it is a follow-on rather than a prerequisite, and it should be
+written when a program wants a keyframe rather than because it is now affordable.
 
-## 102.12 What this does not establish
+## 104.12 What this does not establish
 
 - **Nothing is built.** Every measurement is of the tree as it stands or of third-party tools run
   against it. No compiler change, no client change, no library, no gate.
@@ -567,6 +571,6 @@ for the smallest of its successors.
   measured the problem this week should not also settle it.
 - **No claim is made about performance.** Not the sheet's effect on first paint, not the cost of
   exact extraction at build time, not what a maintained data-table view costs against re-sorting in
-  the browser. §102.10 calls the data table a flagship on a *design* argument;
+  the browser. §104.10 calls the data table a flagship on a *design* argument;
   [`25`](25-benchmarks-and-expressiveness.md) §25.9's rule is what would have to be satisfied before
   anybody says it is faster than anything.

@@ -30,7 +30,7 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use beck_core::net::{Failure, Outbound, Reply, Request};
+use beck_core::net::{Failure, Outbound, Reply, Request, Stop};
 use http_body_util::{BodyExt, Full, Limited};
 use hyper::body::Bytes;
 use tokio_rustls::rustls::pki_types::ServerName;
@@ -44,6 +44,14 @@ use tokio_rustls::TlsConnector;
 /// fold. It is elapsed time, which [`beck_core::clock`] deliberately does not cover — a deadline
 /// does not enter the log and cannot change what a replay produces.
 pub const DEFAULT_TIMEOUT_MS: i64 = 10_000;
+
+/// How often a watched exchange asks whether the caller still wants the reply.
+///
+/// Only a request made by a child of a `parallel:` is watched at all, so this is not a cost every
+/// outbound call pays. The number is chosen against what cancellation is *for*: a sibling that
+/// failed should not leave a scope waiting, and the difference between 5 ms and 50 ms of extra
+/// waiting is invisible beside the ten-second timeout it replaces.
+const POLL_MS: Duration = Duration::from_millis(5);
 
 /// The most of a reply that will be read.
 ///
@@ -146,15 +154,45 @@ impl HttpOutbound {
 }
 
 impl Outbound for HttpOutbound {
-    fn fetch(&self, request: &Request) -> Result<Reply, Failure> {
+    fn fetch(&self, request: &Request, stop: &Stop) -> Result<Reply, Failure> {
         let millis = self.timeout.as_millis() as i64;
         let tls = self.tls();
         self.runtime.block_on(async {
-            match tokio::time::timeout(self.timeout, exchange(request, tls)).await {
-                Ok(result) => result,
-                Err(_) => Err(Failure::TimedOut(millis)),
+            // The ordinary case has no watcher, and pays for none: only a child of a `parallel:`
+            // can be cancelled, so a request from anywhere else takes the path this always had.
+            if !stop.watched() {
+                return match tokio::time::timeout(self.timeout, exchange(request, tls)).await {
+                    Ok(result) => result,
+                    Err(_) => Err(Failure::TimedOut(millis)),
+                };
+            }
+            tokio::select! {
+                // Biased so that a reply already in hand wins a stop that arrived in the same
+                // tick: answering is never worse than not answering, and an arbitrary choice here
+                // would make a cancelled scope's *timing* decide whether a peer was called for
+                // nothing.
+                biased;
+                result = tokio::time::timeout(self.timeout, exchange(request, tls)) => match result {
+                    Ok(result) => result,
+                    Err(_) => Err(Failure::TimedOut(millis)),
+                },
+                () = watch(stop) => Err(Failure::Stopped),
             }
         })
+    }
+}
+
+/// Resolve when the caller stops wanting the reply.
+///
+/// A poll rather than a notification, because [`Stop`] is a predicate over state the *caller*
+/// already keeps — the chain of enclosing scopes and their first-failed indices — and a
+/// notification would be a second copy of it. [`POLL_MS`] is what that costs.
+async fn watch(stop: &Stop) {
+    loop {
+        if stop.asked() {
+            return;
+        }
+        tokio::time::sleep(POLL_MS).await;
     }
 }
 
@@ -313,7 +351,7 @@ mod tests {
         let client = HttpOutbound::new().expect("a client");
         let addr = client.runtime.block_on(echo_once("seen"));
         let reply = client
-            .fetch(&request(addr.port(), "/v1/things?x=1"))
+            .fetch(&request(addr.port(), "/v1/things?x=1"), &Stop::never())
             .expect("a reply");
         assert_eq!(reply.status, 200);
         assert_eq!(
@@ -336,17 +374,64 @@ mod tests {
         let client = HttpOutbound::new().expect("a client");
         let addr = client.runtime.block_on(echo_once("no"));
         let reply = client
-            .fetch(&request(addr.port(), "/gone"))
+            .fetch(&request(addr.port(), "/gone"), &Stop::never())
             .expect("a reply");
         assert_eq!(reply.status, 503);
         assert!(reply.body.contains("/gone"), "the body survives a 503");
+    }
+
+    /// The client lets go of a peer that never answers, when the caller stops wanting the reply.
+    ///
+    /// A real socket that accepts and then says nothing, which is the shape a hung peer has: the
+    /// exchange is genuinely in flight, so this is `Stop` reaching *into* the await rather than a
+    /// check made before or after it. The alternative is the ten-second timeout, and a `parallel:`
+    /// whose first child failed spending all of it.
+    #[test]
+    fn a_watched_request_is_given_up_when_the_caller_stops_wanting_it() {
+        let client = HttpOutbound::new().expect("a client");
+        let addr = client.runtime.block_on(async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("a port");
+            let addr = listener.local_addr().expect("an address");
+            tokio::spawn(async move {
+                // Accept and hold: no bytes, no close. Dropped when the runtime is.
+                let held = listener.accept().await;
+                std::future::pending::<()>().await;
+                drop(held);
+            });
+            addr
+        });
+
+        let asked = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stop = {
+            let asked = Arc::clone(&asked);
+            Stop::when(move || asked.load(std::sync::atomic::Ordering::SeqCst))
+        };
+        // Set from another thread while the call is in flight, which is what a sibling failing in
+        // a `parallel:` looks like from here.
+        let flip = {
+            let asked = Arc::clone(&asked);
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(50));
+                asked.store(true, std::sync::atomic::Ordering::SeqCst);
+            })
+        };
+
+        let out = client.fetch(&request(addr.port(), "/hangs"), &stop);
+        flip.join().expect("the flipping thread");
+        assert!(
+            matches!(out, Err(Failure::Stopped)),
+            "the client should give up on a stopped request rather than wait out its timeout, and \
+             it answered {out:?}"
+        );
     }
 
     #[test]
     fn nothing_listening_is_unreachable_rather_than_a_panic() {
         let client = HttpOutbound::new().expect("a client");
         // Port 1 on loopback: privileged, and nothing in this process is bound to it.
-        match client.fetch(&request(1, "/")) {
+        match client.fetch(&request(1, "/"), &Stop::never()) {
             Err(Failure::Unreachable(_)) => {}
             other => panic!("expected unreachable, got {other:?}"),
         }
@@ -448,7 +533,7 @@ mod tests {
 
         let addr = client.runtime.block_on(tls_echo_once(&issuer, "127.0.0.1"));
         let reply = client
-            .fetch(&secure_request("127.0.0.1", addr.port()))
+            .fetch(&secure_request("127.0.0.1", addr.port()), &Stop::never())
             .expect("the handshake completes and the reply comes back");
         assert_eq!(reply.status, 200);
         assert_eq!(reply.body.as_ref(), "ok, privately");
@@ -459,7 +544,7 @@ mod tests {
         let addr = client
             .runtime
             .block_on(tls_echo_once(&issuer, "elsewhere.test"));
-        match client.fetch(&secure_request("127.0.0.1", addr.port())) {
+        match client.fetch(&secure_request("127.0.0.1", addr.port()), &Stop::never()) {
             Err(Failure::Unreachable(why)) => assert!(why.contains("handshake"), "{why}"),
             other => panic!("a certificate for another name was accepted: {other:?}"),
         }
@@ -471,7 +556,7 @@ mod tests {
     fn a_plaintext_peer_does_not_answer_a_request_that_asked_for_tls() {
         let client = HttpOutbound::new().expect("a client");
         let addr = client.runtime.block_on(echo_once("seen"));
-        match client.fetch(&secure_request("127.0.0.1", addr.port())) {
+        match client.fetch(&secure_request("127.0.0.1", addr.port()), &Stop::never()) {
             Err(Failure::Unreachable(why)) => assert!(why.contains("handshake"), "{why}"),
             other => panic!("a plaintext peer answered a TLS request: {other:?}"),
         }

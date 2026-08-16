@@ -210,7 +210,7 @@ awaiting George: F1 (erasure vs genesis-replay semantics), F3 (abuse-quota defau
    on the macro interpreter ([`08`](08-roadmap.md) §8.5.4). `ui:` already emits SVG with its
    attribute names intact — `viewBox` verbatim, `aria_label` hyphenated — so a chart is a pure
    function from data to `Html` and the axis arithmetic is ordinary Beck
-   ([`102`](102-styling-and-the-component-library.md) §102.7). One defect stands in front of it: the
+   ([`104`](104-styling-and-the-component-library.md) §104.7). One defect stands in front of it: the
    patch applier builds subtrees with `document.createElement` and no namespace, so a chart paints
-   on first load and does not render after the patch that changes it (§102.9). Still not scheduled:
+   on first load and does not render after the patch that changes it (§104.9). Still not scheduled:
    no phase claims a chart.

@@ -25,7 +25,7 @@ ADRs. How `+` resolves, what an identifier may be spelled, where the host of an 
 written — every program shows it, so those are D-numbers.
 
 **This replaces "design decisions there, engineering decisions here"**, which was the rule from
-[`0001`](0001-adopt-adrs.md) until [`102`](../102-styling-and-the-component-library.md)'s wave and
+[`0001`](0001-adopt-adrs.md) until [`104`](../104-styling-and-the-component-library.md)'s wave and
 which is not decidable: whether a thing is design or engineering is a judgement about intent, and
 the same judgement went both ways. At least six records here state a rule a program lives under —
 [`0010`](0010-generic-arithmetic-through-a-prelude-trait.md) (how `+` resolves),
@@ -100,3 +100,4 @@ the other. That is the shape to copy.
 | [0027](0027-a-release-publishes-a-checksum-and-not-a-signature.md) | A release publishes a checksum and not a signature — `beck sign`'s subject is an image manifest, and a compiler release is a tarball |
 | [0028](0028-a-release-carries-provenance-and-still-no-signature.md) | A release carries SLSA build provenance over `SHA256SUMS`, checkable on request and not by default — supersedes [0027](0027-a-release-publishes-a-checksum-and-not-a-signature.md) |
 | [0029](0029-the-runtime-library-is-linked-and-owns-the-arena.md) | A primitive that is somebody else's table is linked rather than emitted or asked for, and the runtime library **owns** the arena so that no pointer crosses its ABI — which is what keeps `forbid(unsafe_code)` true |
+| [0030](0030-the-webassembly-emitter-writes-its-own-bytes.md) | The WebAssembly emitter writes the binary format by hand and does not run what it emits — a module's host is whoever loads it, so a trap is an exported global and the differential drives a JavaScript engine |

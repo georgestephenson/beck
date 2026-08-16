@@ -17,7 +17,7 @@ carry the order, so leave them where they land.
 
 ## Unreleased
 
-- **2026-08-16 · #66 — The two decision registers get a decidable boundary, and ADR identities get
+- **2026-08-16 · #69 — The two decision registers get a decidable boundary, and ADR identities get
   a gate.** "Design decisions there, engineering decisions here" was a judgement about intent and
   went both ways at least six times — [`adr/0010`](docs/adr/0010-generic-arithmetic-through-a-prelude-trait.md),
   [`0011`](docs/adr/0011-identifiers-are-snake-case-in-the-python-surface.md),
@@ -38,8 +38,8 @@ carry the order, so leave them where they land.
   title agrees with filename, no two records claim one number, the index names every record — each
   proved red by perturbation before the fix went in.
 
-- **2026-08-16 · #66 — Styling is decided, scheduled, and defects get a register.**
-  [`docs/102`](docs/102-styling-and-the-component-library.md) measures the position: the stylesheet a
+- **2026-08-16 · #69 — Styling is decided, scheduled, and defects get a register.**
+  [`docs/104`](docs/104-styling-and-the-component-library.md) measures the position: the stylesheet a
   running application serves is eight rules hard-coded in `beck-rt/src/css.rs` and `css:` has no
   parser, so three documents claiming otherwise are corrected in place. Tailwind styles a Beck page
   with no configuration and no language change (63 ms, 35 utilities, 7,047 bytes) and its *scanner*
@@ -57,6 +57,46 @@ carry the order, so leave them where they land.
   built. New file [`DEFECTS.md`](DEFECTS.md) — what is wrong right now, every entry naming the gate
   its fix owes, deleted by the change that fixes it, union-merged like this file — seeded with the
   three defects this audit found and one older one, that `beck fmt` deletes `#` comments.
+- **2026-08-16 · #68 — `Core` compiles to WebAssembly, for the scalar subset.** A third emitter
+  ([`docs/103`](docs/103-the-wasm-emitter-report.md), `beck-wasmgen`), over the same layout module,
+  trap codes, monomorphiser and fixtures the two native backends use, with the binary format
+  written by hand and no runtime taken as a dependency
+  ([`adr/0030`](docs/adr/0030-the-webassembly-emitter-writes-its-own-bytes.md)). `beck native
+  --backend wasm --out <dir>` writes `module.wasm` and a readable `module.wat` rendered from the
+  same instruction list. The gate is `wasm_backend.rs`: **12,852 calls agreed with the tree-walker
+  in a real WebAssembly engine** — value or failure *and its message*, reals crossing as bit
+  patterns — plus a million-deep tail recursion proving `return_call` is a jump. It compiles **0 of
+  the corpus's 195 definitions** and 58 of `awfy/`'s, because the heap is not laid out on this
+  target, so [`adr/0022`](docs/adr/0022-mode-b-ships-the-backend-it-has.md) is **not** reversed and
+  Mode B still ships the interpreter; `docs/93` §93.15, `docs/94` §94.15, `docs/12` §12.3 and
+  `docs/08` corrected in place. The suite skips without a JavaScript engine and
+  `BECK_REQUIRE_WASM_RUN=1` forbids the skip, which CI now sets.
+
+- **2026-08-16 · #67 — A `parallel:` child blocked in an outbound call is stopped inside the
+  call.** Cancellation rode the evaluator's step counter, and a child blocked in a socket takes no
+  steps — so a scope whose first child failed waited out a sibling's ten-second timeout.
+  `beck_core::net::Stop` is the deadline [`docs/80`](docs/80-structured-concurrency-report.md)
+  §80.12 said belonged on the seam: the same question `burn` asks, as a predicate
+  `Outbound::fetch` takes as a parameter (not a defaulted second method — an implementation that
+  ignored it would be a gate that cannot fail) and the real client polls every 5 ms while an
+  exchange is watched. `Stop::never()` keeps the unwatched path, which is every call outside a
+  scope. Gated by a counter rather than a clock — the host says whether the scope reached it or it
+  hit its own backstop (`concurrency.rs`) — and over a real socket that accepts and says nothing
+  (`outbound.rs`). §80.14 is the section; the compiled half is still open, because a worker holds
+  its pipe for a whole call ([`docs/93`](docs/93-the-native-backends-report.md) §93.15).
+
+- **2026-08-16 · #66 — Macro bodies run Beck at compile time.** The template expander becomes an
+  interpreter ([`docs/102`](docs/102-the-macro-interpreter-report.md)): bindings, `if`, `for`,
+  `while`, lambdas, calls to the module's own `def`s and to the pure prelude, `node_*` reflection
+  over syntax, and `splice([…])`. A `let` computes where it used to substitute. The gate is a
+  **differential** — 24 pure expressions computed by the interpreter and by `beck-eval` and
+  compared inside the program (`macro_interp.rs`) — and the sandbox stops being satisfied by
+  construction, so `macro_sandbox.rs` enumerates the prelude and fails when an effectful primitive
+  is reachable at compile time ([`docs/12`](docs/12-standards-and-conformance.md) §12.7's G-class
+  companion). Three bounds, measured: 84 steps for the largest real macro body against a budget of
+  a million (`B0215`), 1.9 MB of the declared 64 MiB at the recursion ceiling (`B0216`), and
+  nothing at all for a module with no macros in it. `docs/02` §2.4 and `docs/12` §12.10 corrected
+  in place; `docs/08` §8.5.4's first item becomes the list of what it unblocked.
 
 - **2026-08-16 · #63 — The page's flaky timing gate is replaced by one with no clock in it.**
   `measure_native.rs::what_a_page_costs_against_the_tree_walker` asserted a ratio of ratios over

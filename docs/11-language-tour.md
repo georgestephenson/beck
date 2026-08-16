@@ -139,13 +139,13 @@ styles = css:
 privileged syntax. Interpolated HTML is escaped by type — XSS has no representation.
 
 **Three things above are designed and not built**, and
-[`102`](102-styling-and-the-component-library.md) §102.1 measures the gap. `component` is not a
+[`104`](104-styling-and-the-component-library.md) §104.1 measures the gap. `component` is not a
 keyword: a component today is a `def` returning `Html`, which composes across modules and may be
-generic over the application's command (§102.7), and a program has one `page`
+generic over the application's command (§104.7), and a program has one `page`
 ([`94`](94-the-client-report.md) §94.15). `css:` has no parser and no macro — the stylesheet a
 running application serves is a Rust constant. And the attribute is spelled `class`, not `cls`;
 `ui:` checks neither attribute nor event names, so `cls=` compiles and reaches the browser as an
-attribute nothing reads (§102.8).
+attribute nothing reads (§104.8).
 
 ## 11.7 Macros — the Lisp inheritance
 

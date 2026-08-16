@@ -68,8 +68,13 @@ WASM, no size crisis, trivially good Lighthouse scores) — with Mode B in Phase
   fine-grained signal graph, local speculative fold + `seq`-based reconciliation
   ([`03`](03-type-and-effect-system.md) §3.7). Size budgets enforced in CI: < 150 KB brotli for a
   typical Mode-B component bundle; `wasm-opt -Oz` (Binaryen) in the release path. — **Built, with
-  the first clause deferred** ([`94`](94-the-client-report.md)): the local fold and the reconciliation
-  are here, and the WASM is the *evaluator* rather than the component compiled. The budget is
+  the first clause half-taken** ([`94`](94-the-client-report.md), [`103`](103-the-wasm-emitter-report.md)):
+  the local fold and the reconciliation are here, and the WASM a browser downloads is still the
+  *evaluator* rather than the component compiled. There is a `Core` → WebAssembly emitter now, held
+  to the tree-walker in a real engine, and it compiles the **scalar subset** — no heap, so it
+  compiles none of the corpus and nothing loads its output. The parenthesis above is exactly what is
+  left: a value representation in linear memory, and the choice between the GC proposal and
+  refcounting that this sentence has always deferred. The budget is
   answered in two parts, because a shared kernel and a per-component payload are different
   questions; `wasm-opt` is not run, so the kernel's number is a ceiling. *The budget is **enforced**
   now rather than reported ([`94`](94-the-client-report.md) §94.11): `beck bundle`

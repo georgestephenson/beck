@@ -917,7 +917,7 @@ seq)`) and which are imported. The trust corollary — maximalist telemetry deri
 replay rather than paid for in the serving path — is §101.8, and it is a consequence of D17 rather
 than a revision of it.
 
-## D29 — Beck absorbs Tailwind's design system and not its delivery, on by default with a switch — **DECIDED** (design settled; build staged per [`102`](102-styling-and-the-component-library.md) §102.11)
+## D29 — Beck absorbs Tailwind's design system and not its delivery, on by default with a switch — **DECIDED** (design settled; build staged per [`104`](104-styling-and-the-component-library.md) §104.11)
 
 The question was whether CSS is really absorbed, given that the stylesheet a running application
 serves is eight rules hard-coded in Rust and `css:` has never had a parser. Answer: **take the
@@ -932,7 +932,7 @@ design system, refuse the delivery mechanism, and default it on.**
   on the path to a styled page. Tailwind finds class names by regular expression over source text
   because it cannot resolve an import; Beck can, so `beck build` collects the class strings that
   reach a `class=` from the typed tree and emits exactly those.
-  [`102`](102-styling-and-the-component-library.md) §102.3 is the measurement that decides this and
+  [`104`](104-styling-and-the-component-library.md) §104.3 is the measurement that decides this and
   not the aesthetics of it: 71 Beck files that style nothing emit 15 rules extracted from English
   prose in comments, a misspelled utility and a computed class name both vanish at exit 0, and an
   application whose components are an imported module yields 1 utility of 12 — which is fatal
@@ -965,8 +965,8 @@ The corollary for components is the same shape and is not a separate decision: a
 library is **markup and utilities**, not a port of a JavaScript kit, because porting one would port
 its workarounds for state it could not place and positioning the platform could not do. What is
 worth taking from that ecosystem is its specification work — the WAI-ARIA Authoring Practices
-keyboard tables as each component's oracle ([`102`](102-styling-and-the-component-library.md)
-§102.10).
+keyboard tables as each component's oracle ([`104`](104-styling-and-the-component-library.md)
+§104.10).
 
 ## Still open (minor, non-blocking)
 

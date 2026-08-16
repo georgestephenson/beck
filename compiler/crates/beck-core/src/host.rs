@@ -32,7 +32,7 @@
 use std::sync::Arc;
 
 use crate::core::{Fields, Value};
-use crate::net::{Failure, Reply, Request};
+use crate::net::{Failure, Reply, Request, Stop};
 use crate::pmap::PMap;
 
 /// The impure capabilities a host supplies, one method per effect atom.
@@ -58,8 +58,13 @@ pub trait Atoms: Send + Sync {
     }
 
     /// Make an outbound request — the runtime half of `net.out(host)`.
-    fn fetch(&self, request: &Request) -> Result<Reply, Failure> {
-        crate::net::process_outbound().fetch(request)
+    ///
+    /// `stop` is how a `parallel:` reaches a child that is blocked in the socket rather than in
+    /// the evaluator ([`crate::net::Stop`]). A host that answers without blocking ignores it; one
+    /// that talks to a peer watches it, and a caller that cannot be cancelled passes
+    /// [`crate::net::Stop::never`].
+    fn fetch(&self, request: &Request, stop: &Stop) -> Result<Reply, Failure> {
+        crate::net::process_outbound().fetch(request, stop)
     }
 }
 
@@ -211,6 +216,20 @@ pub fn failure_value(host: &str, f: &Failure) -> Value {
         Failure::BadResponse(why) => (
             "HttpBadResponse",
             vec![(Arc::from("why"), Value::str_(why))],
+        ),
+        // The seam's fourth case, rendered as the third. `HttpError` is a published union and a
+        // program cannot observe this one — `beck-eval` turns a stopped fetch back into the
+        // cancellation it came from — so a fourth variant would be a wire change bought for
+        // nothing (`beck check --wire-compat`).
+        Failure::Stopped => (
+            "HttpUnreachable",
+            vec![
+                (Arc::from("host"), Value::str_(host)),
+                (
+                    Arc::from("why"),
+                    Value::str_("the caller stopped waiting for this reply"),
+                ),
+            ],
         ),
     };
     Value::data(

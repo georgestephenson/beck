@@ -499,6 +499,14 @@ jobs:
           BECK_REQUIRE_BROWSER: "1"
         run: cargo test --test browser --test mode_b --test playground -- --nocapture
 
+      - name: the emitted module, in a WebAssembly engine
+        # `wasm_backend.rs` runs `beck-wasmgen`'s output against the tree-walker in a JavaScript
+        # engine (docs/103). `ubuntu-latest` ships one; BECK_REQUIRE_WASM_RUN=1 is what turns the
+        # laptop's skip into this job's gate, which is this job's whole reason for existing.
+        env:
+          BECK_REQUIRE_WASM_RUN: "1"
+        run: cargo test --test wasm_backend -- --nocapture
+
   conformance:
     # Rung 5 of the ladder in docs/21 §21.4: the API server is the only authority on whether an
     # object is admissible, and every other suite reasons about our *model* of Kubernetes. This job

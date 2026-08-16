@@ -40,7 +40,7 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use beck_core::net::{Failure, Reply, Request};
+use beck_core::net::{Failure, Reply, Request, Stop};
 use beck_core::Value;
 
 /// A host whose four answers are decided in advance.
@@ -107,7 +107,7 @@ impl beck_core::host::Atoms for Stated {
 
     /// `example.com` answers; anything else is unreachable. Both are *the same* answer however
     /// many times they are asked, because the differential asks twice.
-    fn fetch(&self, request: &Request) -> Result<Reply, Failure> {
+    fn fetch(&self, request: &Request, _stop: &Stop) -> Result<Reply, Failure> {
         self.asked.fetch_add(1, Ordering::SeqCst);
         if &*request.host != "example.com" {
             return Err(Failure::Unreachable(format!(

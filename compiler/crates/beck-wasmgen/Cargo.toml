@@ -1,0 +1,17 @@
+[package]
+name = "beck-wasmgen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+beck-core.workspace = true
+beck-diag.workspace = true
+# The third emitter is not a third backend *design*: the trap codes, the refusal discipline, the
+# monomorphiser and the heap layout are one definition, and `beck-clif` took the same dependency
+# for the same reason (docs/93 §93.8).
+beck-llvm.workspace = true
+
+[lints]
+workspace = true

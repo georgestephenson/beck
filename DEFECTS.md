@@ -19,7 +19,7 @@ its gate has not been fixed; it has been made invisible.
 **Ids are slugs, not numbers, and are never reused.** Entries are deleted, so a number would imply a
 sequence that does not survive.
 
-This register was opened alongside [`docs/102`](docs/102-styling-and-the-component-library.md) and is
+This register was opened alongside [`docs/104`](docs/104-styling-and-the-component-library.md) and is
 **seeded rather than complete**: it holds what that audit found plus one older defect already
 recorded in a report. Anything you find that meets the admission rule above belongs here, whether or
 not you are the one to fix it.
@@ -45,7 +45,12 @@ output. The same hole passes `cls="done"`, which is the spelling
 attribute name, `cls` specifically — and a test that the escape hatch for a genuine custom attribute
 still compiles. Check that each would have gone red *before* the fix.
 
-**Where it is argued.** [`docs/102`](docs/102-styling-and-the-component-library.md) §102.8, Wall 2.
+**Fix it as a table rather than as expander code.** `ui:` is a compiler-provided special case
+standing in for a user-written macro, and typed macros retire it
+([`docs/08`](docs/08-roadmap.md) §8.5.4, [`docs/10`](docs/10-decisions.md) D22) — so a vocabulary
+buried in today's expander would be written twice, and the second copy is the one that would drift.
+
+**Where it is argued.** [`docs/104`](docs/104-styling-and-the-component-library.md) §104.8, Wall 2.
 Scheduled in [`docs/08`](docs/08-roadmap.md) §8.5.4 as a **G** item, because
 [`docs/12`](docs/12-standards-and-conformance.md) §12.4's three accessibility checks are already
 scheduled over the same tree and are dishonest until this exists.
@@ -71,7 +76,7 @@ function of changes.
 page and asserts the `rect`'s bounding box is non-zero. Asserting the namespace alone is weaker and
 would pass on a fix that got the namespace right and the inheritance wrong; assert the box.
 
-**Where it is argued.** [`docs/102`](docs/102-styling-and-the-component-library.md) §102.9. It blocks
+**Where it is argued.** [`docs/104`](docs/104-styling-and-the-component-library.md) §104.9. It blocks
 charts outright, which is why it is first in [`docs/08`](docs/08-roadmap.md) §8.5.4's styling and
 components cluster.
 
@@ -96,7 +101,7 @@ non-durable fold runs and its page reflects it, **and** the fold's state does no
 after a restart. A fix that only satisfies the first has built a durable fold with a different
 spelling.
 
-**Where it is argued.** [`docs/102`](docs/102-styling-and-the-component-library.md) §102.8, Wall 1.
+**Where it is argued.** [`docs/104`](docs/104-styling-and-the-component-library.md) §104.8, Wall 1.
 The *language* question of where interface state should live is a decision rather than a defect and
 is scheduled separately in [`docs/08`](docs/08-roadmap.md) §8.5.4; this entry is only that a decided
 construct silently is not there.

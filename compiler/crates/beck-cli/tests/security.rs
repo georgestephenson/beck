@@ -684,10 +684,16 @@ fn the_database_grant_is_what_the_program_actually_does() {
 
 #[test]
 fn a_macro_cannot_reach_the_host_because_expansion_has_nothing_to_reach_it_with() {
-    // Structural again, and asserted structurally: the expander is a pure `Node -> Node` function
-    // over a template, so there is no name a macro body could use to open a file, read the
-    // environment or start a process. The test is that such a name does not resolve — a macro that
-    // tries gets "cannot find", the same as any other undefined identifier.
+    // The half of the property that is about the *program a macro produces*: code inside a
+    // `quote:` is ordinary code, so a name for the host is refused there exactly as it is anywhere
+    // else — "cannot find", like any other undefined identifier.
+    //
+    // The other half — what a macro *body* may do while it runs at compile time — used to be
+    // satisfied by construction, because the expander was a pure `Node -> Node` function over a
+    // template with no environment to reach anything from. It has an interpreter now, so the
+    // property is a claim rather than a shape, and `macro_sandbox.rs` is the gate: a whitelisted
+    // environment, the prelude's effectful names refused by name, and an enumeration that fails
+    // when a new one is added.
     let src = "\
 macro leak():
     return quote:

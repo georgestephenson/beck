@@ -414,7 +414,7 @@ to know.**
 
 | | Status |
 |---|---|
-| **Stopping a child blocked in the host** | **Not built**, and it is the largest open item. Cancellation rides the step counter, so a child blocked in `http_fetch` is stopped only when the call returns — a scope whose first child fails still waits for a sibling's outbound call to come back or give up. That is a **deadline on the [`net`](../compiler/crates/beck-core/src/net.rs) seam** rather than a change to the scope |
+| **Stopping a child blocked in the host** | **Built** — §80.14, and it was the deadline on the [`net`](../compiler/crates/beck-core/src/net.rs) seam this row forecast rather than a change to the scope. What crosses the seam is `Stop`, the same question `burn` asks — *has a child before me failed* — as a predicate a client can poll while an exchange is in flight |
 | A scope over a **collection** — `parallel for x in xs` | **Not built.** The children are written out, so their number is a property of the source. A dynamic fan-out is a different form with a different rule about what its children may perform — and the rule it needs is not this one: with `n` children written out, "no child names another" is a scope check; with a dynamic fan-out it is a property of one lambda, which is a different proof |
 | A **thread pool** | **Not built.** Every child is a fresh thread; §80.8 is what that costs and what a pool would be worth, and nothing here designs one — how many, and owned by whom, is the question in front of it |
 | More children than cores | **Unbounded.** A scope of forty on a four-core machine is forty threads. Nothing measures that and nothing bounds it |
@@ -535,3 +535,66 @@ rather than two, and the second was read out of a design document as though it w
 [`67`](67-sqlite-report.md) §67.3 is the same failure with a number in it — a 26× that turned out to
 be a durability setting rather than an engine — and the check that catches both is to go and look at
 what the code does rather than at what the document says it will.
+
+## 80.14 The deadline on the seam
+
+**Built**, and it is the item §80.12 called the largest open one. Cancellation rides the evaluator's
+step counter, which is right about *when* to stop a child — `burn` is the one place every step
+passes through — and blind to a child that is taking no steps because it is blocked in a socket. A
+scope whose first child failed still waited out a sibling's outbound call: up to ten seconds of a
+timeout the sibling's failure had already made pointless.
+
+§80.12 also said where the fix belongs, and it was right: **a deadline on the
+[`net`](../compiler/crates/beck-core/src/net.rs) seam rather than a change to the scope.** The scope
+already knows the answer. What it lacked was a way to say it to something holding a socket.
+
+So what crosses the seam is the *question*, not a token:
+
+```rust
+pub struct Stop(Option<Arc<dyn Fn() -> bool + Send + Sync>>);
+```
+
+`beck-eval` builds one from the same chain `burn` walks — this child's index and its enclosing
+scopes' first-failed indices — so there is exactly one place that knows whether a child should stop,
+and the client asks it rather than keeping a copy. `Outbound::fetch` takes it as a **parameter**
+rather than getting a second default-implemented method, because an implementation that ignores a
+default is one a `parallel:` cannot cancel and nothing would have noticed;
+[`82`](82-the-edge-report.md) §82.10's gate that cannot fail is what that would have been. Every
+implementation of the seam now says what it does about a stop, and four of the five say "nothing,
+because I answer without blocking", in one line each.
+
+Three details are decisions rather than mechanics.
+
+**`Stop::never()` is a distinct state, and the ordinary path is unwatched.** Only a child of a
+`parallel:` can be cancelled at all, so a request from anywhere else carries a stop nobody watches
+— and `HttpOutbound` takes the branch with no timer in it, which is the code it has always had.
+`concurrency.rs::an_ordinary_call_carries_a_stop_nobody_watches` is the control that keeps that
+branch reachable: a seam where every caller *looked* cancellable would make the cheap path dead code
+and nothing would say so.
+
+**A stopped fetch is not an `HttpError`.** `Failure::Stopped` is the caller's own doing, and the
+evaluator turns it back into the cancellation it came from, so a stopped child answers the way every
+other cancelled child does: it did not fail, it was not allowed to finish (§80.3). The Beck-visible
+`HttpError` union is unchanged — it is published, and a fourth variant would be a wire change bought
+for a case no program can observe — so `failure_value` renders `Stopped` as `HttpUnreachable` if one
+ever escapes, which nothing today can make happen.
+
+**The client polls rather than being notified**, every 5 ms while an exchange is watched. A
+notification would be a second copy of state the caller already keeps, kept in step by hand; the
+poll costs a timer wakeup on a path that only a cancellable child takes, and the difference between
+5 ms and 50 ms of extra waiting is invisible beside the ten seconds it replaces.
+
+**The gate is a counter, not a clock**, which is the same discipline the rest of this chapter's
+gates keep ([`13`](13-testing.md) §13.7). The host in
+`concurrency.rs::a_sibling_blocked_in_an_outbound_call_is_stopped_in_the_call` accepts one call that
+never answers and records *which way* it stopped waiting — the scope reached it, or it hit its own
+backstop — and the test asserts the first and that the second never happened. Backwards, with the
+signal removed, it fails on the second counter rather than by hanging. Beside it,
+`outbound.rs::a_watched_request_is_given_up_when_the_caller_stops_wanting_it` does the same over a
+**real socket** that accepts and then says nothing, because the property is `Stop` reaching into an
+await rather than a check made before or after one.
+
+What is still not built is the compiled half: `beck-llvm`'s service passes `Stop::never()`, because
+a worker holds its pipe for a whole call ([`93`](93-the-native-backends-report.md) §93.15), so two
+children that both reach compiled code serialise before cancellation is even the question. That row
+of §80.12 is unchanged, and it is now the only thing between `parallel:` and the native backends.
