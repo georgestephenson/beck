@@ -126,3 +126,68 @@ after `beck fmt`, and the LSP formatting request enabled in the same change so t
 
 **Where it is argued.** [`docs/65`](docs/65-the-editor-report.md), and it is Lane C's in
 [`docs/08`](docs/08-roadmap.md) §8.5.5.
+
+---
+
+## `libm-determinism` — `sin` and `cos` are the host's, so a fold replays differently on another machine
+
+**What is wrong.** [`docs/10`](docs/10-decisions.md) D3 rests the whole data tier on the log folding
+to one state, and [`docs/03`](docs/03-type-and-effect-system.md) §3.7 enforces the purity that is
+supposed to make it true. Purity is not enough for transcendentals: all three backends call out to
+whatever libm the host supplies, and **IEEE 754 does not require `sin` or `cos` to be correctly
+rounded**. Implementations differ in the last ulp between libms and between versions of one libm, so
+two machines can fold one log to two different states. `sqrt` is not affected — IEEE 754 does require
+it correctly rounded.
+
+The replay-determinism harness cannot see this, and that is the part worth stating: it replays a log
+**on one machine**, where the answer is stable. The three-way differential has the same blind spot —
+the evaluator, LLVM and Cranelift agree because all three resolve to the same host libm, not because
+they compute the same function.
+
+**Measured.** Read from the tree, not benchmarked. The evaluator calls Rust's `f64::sin`
+([`interp.rs`](compiler/crates/beck-eval/src/interp.rs), `Prim::Sin => Value::float(f.sin())`); the
+LLVM emitter emits `llvm.sin.f64` ([`emit.rs`](compiler/crates/beck-llvm/src/emit.rs)); the Cranelift
+emitter calls the extern symbol `sin`
+([`emit.rs`](compiler/crates/beck-clif/src/emit.rs)). Three paths, one host libm, no vendored
+implementation anywhere in the workspace.
+
+**The gate a fix owes.** The existing three-way differential run against **two different libms** —
+a CI matrix row rather than a new harness — over a program whose result depends on `sin` and `cos`.
+That is the gate that would have caught this, and a fix gated only by the current single-host
+differential would be [`docs/82`](docs/82-the-edge-report.md) §82.10's pattern again: a gate that
+cannot fail. A vendored correctly-rounded implementation behind the three `Prim`s is the fix that
+makes it pass.
+
+**Where it is argued.** [`docs/08`](docs/08-roadmap.md) §8.5.2 as retrofit item F9 and §8.5.4 as its
+first item. It was recorded as "owed rather than pending" for three phases with no position, which is
+the failure §8.5 opens by describing.
+
+---
+
+## `cost-report-undercount` — `beck explain cost` prints an `O(n)` operator and excludes it from its own tally
+
+**What is wrong.** `cost_report`'s summary counts operators whose cost string contains
+`n entries copied`, and the capture line — the one that says a per-element function captured a plan
+node — is emitted *after* the count. So a program whose loop body captured the accumulator is told
+"1 of 29 operators cost `O(n)` per event" when two do. The headline number is wrong on exactly the
+programs where the cost matters most, and it is wrong in the reassuring direction.
+
+The capture line also names the node it captured rather than what *moves* that node, so a captured
+`const` (never moves), a captured `session` (per route change) and a captured **state** (every event)
+are printed identically. Telling them apart means tracing inputs transitively back to the
+accumulator, which the line does not do and a reader has no reason to do by hand — and one of the
+three real cases in the corpus is two hops from `#0`.
+
+**Measured.** `beck explain cost corpus/27-review.beck` reports `1 of 29 operators`, quoted in full
+in [`docs/99`](docs/99-the-data-tier-means-of-combination.md) §99.3, which also sweeps the corpus for
+the pattern: **18 capture sites in 10 programs**, of which 3 capture the state.
+
+**The gate a fix owes.** A test that the tally equals the number of `O(n)`-per-event operators the
+report itself prints, on a program that captures the accumulator — so the count and the body cannot
+disagree again — plus a classification test that a captured `const`, a captured `session` and a
+captured state print differently, since the fix is worthless if the reader still cannot tell which
+one they have.
+
+**Where it is argued.** [`docs/99`](docs/99-the-data-tier-means-of-combination.md) §99.3, and it is
+item 2 of §99.9's order of work — deliberately before any operator, because it is the instrument
+every later item is read through.

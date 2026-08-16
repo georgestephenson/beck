@@ -210,8 +210,15 @@ model makes it a function of the clock *signal* — legal, and visibly time-vary
    server, extended by Crossplane. We write neither a storage engine nor a Terraform.
 6. **Escape hatches at every layer, typed.** External relational stores, raw SQL, raw HTML, raw k8s
    patches, FFI — available, type-checked at the boundary, never required.
-7. **Interop or die.** A language that cannot call the Python and npm ecosystems is a research
-   artefact ([`09`](09-risks-and-open-questions.md) §9.2).
+7. **Interop or die** — right about the stakes, wrong about the verb. A language that cannot reach
+   the Python and npm ecosystems is a research artefact ([`09`](09-risks-and-open-questions.md)
+   §9.2). But the libraries that most expand a language's utility — NumPy, pandas, `serde`, LINQ —
+   are **notations**, and a notation cannot be called across a boundary at all: its whole value is
+   that it composes with the code around it, which is exactly what an RPC hop destroys
+   ([`105`](105-the-ecosystem-answer.md) §102.5). So most of the ecosystem question is not an
+   interop question but a question about Beck's own means of combination. What must genuinely be
+   *callable* is the capability half — GPUs, codecs, cloud APIs — and it is narrower than the
+   slogan and still existential.
 8. **Errors and explanations are the product.** `beck explain` answers "why did this land there /
    re-render / re-provision" in prose, with a trace ([`04`](04-compiler-architecture.md) §4.7).
 
@@ -296,6 +303,16 @@ Every row exists somewhere; no system has more than two rows. Within its scope, 
 is a strict superset of every alternative. The honest boundary is that scope ([`01`](#15-non-goals)):
 ML/numeric work, systems programming, and ecosystem breadth are conceded and bridged (FFI, sidecar),
 not contested.
+
+**That concession is narrower than it has been read**, and the distinction is
+[`105`](105-the-ecosystem-answer.md) §102.1's. Conceding *solvers, GPU kernels and numerical
+methods* — SciPy, PyTorch, CUDA — is sound and stands. Conceding *arrays and dataframes* is a
+different and much larger concession that was never argued: the Stack Overflow survey puts NumPy at
+21.2% and pandas at 20.7% of **all** developers in **all** languages, second and third among every
+library it lists, which is general-purpose vocabulary rather than a numerical speciality. Aggregation
+over collections is [`99`](99-the-data-tier-means-of-combination.md)'s territory and this language's
+own, and [`08`](08-roadmap.md) §8.6.2 now records a verdict for each rather than letting one sentence
+concede both.
 
 **Performance: win where it is structural, concede where it is artisanal.**
 

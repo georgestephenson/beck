@@ -201,8 +201,15 @@ read it.**
   arrives as a `beck.lock` diff a human accepts. `beck tune` pointed at placement, riding the replay
   tooling above.
 - Multi-arch images; air-gapped install; OCI package registry via ORAS (§6.7).
-- **FFI**: C ABI both directions; JS interop for the client tier; a Python bridge (§9.2) — the
-  ecosystem-access question is existential, so give it real headcount.
+- **FFI and the ecosystem answer** ([`105`](105-the-ecosystem-answer.md)): C ABI both directions; JS
+  interop for the client tier; a Python bridge (§9.2) — the ecosystem-access question is
+  existential, so give it real headcount. What [`105`](105-the-ecosystem-answer.md) changes is
+  *where the headcount goes*: measured against four ecosystems' most-downloaded packages, the
+  bridge is the answer for the smallest of the four categories, and the sidecar structurally cannot
+  serve the data tier at all (a bridged call carries an effect; §3.7 makes folds and views pure).
+  So the bullet's own items are the **link** half — BLAS behind a primitive, a YAML reader, an S3
+  signer, since `boto3` is PyPI's single most-downloaded package — plus the diagnostic that tells
+  someone reaching for the bridge inside a view why it may not go there and where it may.
 - Security review: hygiene escapes, macro sandbox, deserialisation of untrusted wire data, generated
   SQL, the `Sendable`/`secret` proofs. Get external eyes on this.
 
@@ -397,7 +404,7 @@ and its algebraic half moved two rows of Phase 3's exit table at once
 | Virtualized **disk**, and **elapsed time** | F11; [`13`](13-testing.md) §13.4 | Now. The clock is supplied rather than ambient ([`44`](44-wave-0-report.md) §44.3) and the network is a seam with three implementations ([`46`](46-standard-library-report.md) §46.11); these two are what is left, and every Phase 4 bullet is a distributed-systems bullet whose stated test methodology is the simulator |
 | Trusted publishing on crates.io | [`42`](42-security-assurance.md) §42.7 | The **first** `cargo publish` — a long-lived token used once is a risk already taken |
 | Diverse double-compiling / bootstrappability | [`42`](42-security-assurance.md) §42.7 | The first `beck` built by `beck` (Phase 5) |
-| Deterministic libm (F9) | [`35`](35-standards-landscape.md) §35.5 item 1 | Passed: there is a transcendental and a second backend. Owed rather than pending |
+| Deterministic libm (F9) | [`35`](35-standards-landscape.md) §35.5 item 1 | **Passed, and now measured rather than asserted.** Three backends reach three different libms: the evaluator calls Rust's `f64::sin` ([`interp.rs`](../compiler/crates/beck-eval/src/interp.rs)), the LLVM emitter emits `llvm.sin.f64` and the Cranelift emitter calls the extern symbol `sin` — all of which resolve to the *host's* libm. `sqrt` is safe because IEEE 754 requires it correctly rounded; **`sin` and `cos` are not required to be**, and implementations differ in the last ulp — between libms, and between versions of one libm. So a fold that computes `sin` can replay to a different state on a different machine, which is the determinism claim [`10`](10-decisions.md) D3 rests the data tier on, and the three-way differential passes today only because all three paths resolve to one host's libm. **It now has a position** (§8.5.4) rather than a status |
 
 ### 8.5.3 The traps still live
 
@@ -425,6 +432,33 @@ the one place in `docs/` that holds an order. The list stopped being all-**S** w
 item larger than anything else here, one **G**, and a ledger of small artefacts behind chartered
 rows.
 
+- **Deterministic transcendentals** (R, and **first**, because it is the only item here that makes a
+  *shipped* claim false rather than merely unbuilt): `sin` and `cos` resolve to whatever libm the
+  host supplies, in all three backends, and IEEE 754 does not require either to be correctly
+  rounded — so two machines can fold the same log to two different states, which is the one thing
+  [`10`](10-decisions.md) D3 needs never to happen. §8.5.2 has the evidence. The fix is a vendored
+  correctly-rounded implementation behind the three `Prim`s, and the gate is the one that would have
+  caught it: the three-way differential run on **two different libms**, which is a CI matrix row
+  rather than a new harness. Small, overdue, and cheap only until something depends on the current
+  answers. `DEFECTS.md::libm-determinism` is the entry, with the gate a fix owes.
+- **The data tier's means of combination** (F, and now the **largest item left**, since the macro
+  interpreter below has landed — [`99`](99-the-data-tier-means-of-combination.md) §99.7 lists five
+  already-written-down items it closes): `arrange_by`, `join`, the loop-plus-lookup recognition,
+  then `group by` and the aggregates, in §99.9's order, whose **first item is a gate that goes red
+  today**. This was a Phase 4 bullet from the day
+  [`99`](99-the-data-tier-means-of-combination.md) was written and was never in *this* list, which
+  is the same defect §8.5 opens by describing one level down — a phase is not a position. It lives
+  in **Lane B** (`engine.rs`, `plan.rs`, `incremental.rs`) and contends with nothing in Lane A, so
+  it runs beside the macro interpreter's successors rather than behind them. §99.8's convergence
+  rungs interleave with it rather than following it.
+- **A columnar value, and Arrow** (F, after the aggregates): the second representation
+  [`105`](105-the-ecosystem-answer.md) §105.10 argues for — `Value::List(Arc<Vec<Value>>)` is 16
+  boxed bytes an element, which is right for a keyed arrangement and wrong for a million doubles.
+  One change discharges four commitments: [`07`](07-dependencies.md) §7.4's DataFusion choice,
+  §8.5.4's own Parquet-archival G item below (Parquet is Arrow written down), the numeric-interop
+  gap, and the aggregates' own representation. It is listed **after** the aggregates because an
+  aggregate is what makes a column worth having, and **before** the G item because that item cannot
+  start without it.
 - **What the macro interpreter unblocked** (F — the interpreter itself is **built**,
   [`102`](102-the-macro-interpreter-report.md), with its G-class sandbox gate beside it). A macro
   body is ordinary Beck now, so the successors this item existed to free are the item:
@@ -472,6 +506,18 @@ rows.
 - **`Ord` as a trait** (S): [`54`](54-ordering.md) writes it out and explicitly does not recommend
   it.
 - **Lazy routes** (S): waits on §5.1's per-component boundary existing in the language.
+- **The presence roster's second clock** (S, and it has a successor, which is why it is here rather
+  than in a report's tail): [`48`](48-identity-report.md) §48.13's first row — a `(seq, roster)` pair
+  or a render epoch — is what would let the shared dataflow hold the roster once instead of per
+  subscriber, and §48.13 says "one file would change". It was in no phase. Its successor is
+  [`99`](99-the-data-tier-means-of-combination.md) decision 3: presence moves when `seq` does not, so
+  a join against presence is the one case the algebra above must refuse, and it should refuse it with
+  a diagnostic rather than a surprise until this exists.
+- **Comment-preserving printing** (S, due rather than nice): ordinary `#` comments are dropped by the
+  lexer, so `beck fmt` deletes them — a formatter that eats comments is one nobody runs twice, and
+  `textDocument/formatting` waits on it (`DEFECTS.md::fmt-comments`). It has been in §8.5.5's Lane C
+  cell since that table was written, and **a lane is a collision map rather than an order**, which is
+  how it stayed unpositioned.
 - **Chapters 4 and 5 of SICP** (S): no predecessors, and they never acquire any.
 - **Trusted publishing** (R, above): an account setting rather than a branch.
 - **Grammar-aware fuzzing and Kani proofs of the solver's invariants** (S, due rather than
@@ -493,6 +539,14 @@ rows.
   OpenID Foundation suite (pre-1.0 trigger); the two-independent-runner reproducible release
   build and SBOM signing (on the first tag); the SIGTERM-begins-drain contract (on the
   choreography defining what drain is).
+- **The public surface's first form** (G then F — [`101`](101-the-public-surface.md) §101.10's
+  order): no `@public` annotation exists in the compiler and no OpenAPI, MCP, gRPC or AsyncAPI
+  artefact has ever been emitted ([`101`](101-the-public-surface.md) §101.11). It is a Phase 4
+  bullet and was not in this list. **G
+  first**: §101.7's two prerequisites — F15's connection/subscription quotas and the inbound TLS
+  posture — each close a `pending_security.rs` absence and correct [`43`](43-threat-model.md) §43.4
+  in the same change, and shipping a public form over an unquotaed socket is the dishonest ordering
+  G-class exists to prevent. Then the `@public` boundary itself, then `@public(rest)`.
 - **Styling and the component library** ([`104`](104-styling-and-the-component-library.md), D29) —
   eight items, in this order, and the first two are defects rather than features
   ([`DEFECTS.md`](../DEFECTS.md)). They are grouped here because they share a lane and a document,
@@ -555,7 +609,9 @@ rows.
   arrangement trace's rather than the log's ([`23`](23-incremental-views-report.md) §23.11). **G
   rather than S** because §8.4 already schedules ClickBench against read models for Phase 5, and
   ClickBench scans a fixed dataset that no `durable` fold holds in memory: without the archive that
-  row is unrunnable rather than merely unflattering. The **retention** half is separable and S — a
+  row is unrunnable rather than merely unflattering. **Its predecessor is now named**: the columnar
+  value above, because Parquet is Arrow written down and there is nothing to archive *from* until a
+  Beck value can be a column. The **retention** half is separable and S — a
   language surface and a store policy, with no benchmark waiting on it — and it is the half D3 makes
   optional, since `retain=forever` is the default and tiering is what keeps that affordable.
 
@@ -621,6 +677,49 @@ discipline that avoids the collision.
 4. **`Cargo.lock`** — any new dependency. *A and B should not both add dependencies in the same
    week; if they must, take the lock from `main` and re-resolve rather than merging it.*
 
+### 8.5.6 Keeping this list true, as a procedure rather than a habit
+
+§8.5 opens with the finding that a decision written down twice still never came due, because it
+never had a position in an order. The corollary is that **this list decays**, in two directions at
+once, and both are invisible from inside a document:
+
+| Direction | What it looks like | Why it survives |
+|---|---|---|
+| **A document is behind the code** | A row says "absent" about something that was built | Whoever built it corrected the report they were writing and not the four documents that mentioned it. `pending_security.rs` catches this for security controls **and nothing catches it anywhere else** |
+| **The code is behind the documents, and nothing is scheduled** | Several documents commit to a thing, all of them truthfully saying it is unbuilt, and no phase lists it | Every individual document is *correct*. The defect only exists between them, so no reader of any one document can see it |
+
+The second is the one §8.5.4's log-lifecycle item was found by — "five documents commit to this and
+not one gave it a position in an order" — and it has now been found four more times, so it is a
+pattern rather than an incident.
+
+**The sweep, run 2026-08-16.** From `docs/`, collect every claim of absence:
+
+```console
+$ grep -rniE "nothing is built|not built|does not exist|has never existed|unbuilt|still absent" docs/*.md
+```
+
+then for each candidate do two things a grep cannot: **confirm it against the tree** (the claim may
+be stale), and **look for it in §8.5.4** (a phase bullet is not a position, and neither is a cell in
+§8.5.5's lane table). What that produced:
+
+| Found | Direction | Outcome |
+|---|---|---|
+| Macro expansion fuel (F17) | Document behind code | [`42`](42-security-assurance.md) §42.4 said "absent — nothing in `beck-macro` bounds expansion". `MAX_EXPANSION` is 100,000 nodes, `B0214` refuses, `macro_bomb.rs` gates it both ways, and `pending_security.rs` had already deleted its own test saying so. **Corrected in place** |
+| Deterministic transcendentals (F9) | Unscheduled | §8.5.2 said "owed rather than pending" for three phases. Now §8.5.4's first item, and `DEFECTS.md::libm-determinism` — it is a **defect** rather than an absence, because the replay-determinism claim it falsifies is one this project ships |
+| The data tier's algebra | Unscheduled in *this* list | A Phase 4 bullet, never in the order. Now placed, in Lane B, and the largest item left now that the macro interpreter has landed. Its instrument is `DEFECTS.md::cost-report-undercount` |
+| Charting | Unscheduled **and undesigned** | Not in `docs/` at all until [`105`](105-the-ecosystem-answer.md), which ranked it, and [`104`](104-styling-and-the-component-library.md), which found the same defect from the UI side and owns the fix. Now the styling cluster's item 1 and `DEFECTS.md::svg-namespace`. **Two independent sweeps reached one line of JavaScript from opposite directions**, which is the strongest evidence in this section that the procedure works |
+| A columnar value / Arrow | Unscheduled | Committed in five documents as a *dependency choice*; nothing ever built the value it would apply to. Now placed, as the log-lifecycle G item's named predecessor |
+| The presence second clock | Unscheduled | [`48`](48-identity-report.md) §48.13's first row, in no phase, with a successor in [`99`](99-the-data-tier-means-of-combination.md) decision 3. Now placed |
+| Comment-preserving printing | In a lane, not in the order | §8.5.5's Lane C cell since that table existed. Now placed, and `DEFECTS.md::fmt-comments` |
+| The `@public` surface | Unscheduled in this list | A Phase 4 bullet with its own internal order (§101.10) and no position here. Now placed, G-first |
+
+**The gate this wants.** Everything above is a procedure a person has to remember, which is the
+category this project converts to tests. The shape is `docs.rs`'s: every `docs/` sentence claiming
+something is unbuilt names either a §8.5.4 item or an explicit `unscheduled:` marker, and the marker
+is what a reviewer argues with. That is not built, and saying so here rather than in a table of
+intentions is the point — it is **S**, small, and it is the only item in this section that would stop
+the section being needed.
+
 ## 8.6 The ≥1% rule: which deployment realities earn support
 
 A technology that ≥1% of developers report using in a major annual survey is a **reality**, not a
@@ -678,3 +777,48 @@ Preview environments per branch — the one Vercel feature the ladder does not y
 `beck up` pointed at a namespace with a TTL, which is the playground's rung C machinery
 ([`17`](17-playground.md) §17.3) wearing a different hat. Named here so the gap is a row on a
 list rather than a surprise.
+
+### 8.6.2 The same rule, applied to libraries
+
+§8.6 has always been scoped to the survey's cloud and infrastructure section, and the scoping was
+never argued — it is simply where the question came up. The rule itself says nothing about
+infrastructure: *a technology ≥1% of developers report using earns an explicit verdict rather than
+silence*. Applied to the same survey's **Other frameworks and libraries** section
+([`105`](105-the-ecosystem-answer.md) §102.4), it convicts this document of exactly the silence it
+was written to prevent.
+
+**Every entry in that section, in its order.** All 39 clear 1%, so the rule admits no shortlist —
+picking the interesting ones is how the silence happens.
+
+| Reality (usage, [SO 2024](https://survey.stackoverflow.co/2024/technology)) | Verdict |
+|---|---|
+| .NET (25.2%), .NET Framework (16.4%) | decline as a *framework* — this is the application framework Beck replaces rather than interoperates with. Reaching its **libraries** is the C ABI FFI bullet; being consumed *by* a .NET estate is `@public(rest)`/`@public(grpc)` |
+| **NumPy (21.2%)** — most-used library in the survey | **adopt**, split in two: the *notation* (broadcasting, slicing) is a language feature and queues behind the macro interpreter; the *kernels* are linked and never reimplemented ([`105`](105-the-ecosystem-answer.md) §102.8). Nothing is built |
+| **pandas (20.7%)** | **adopt** — not a library here at all but [`99`](99-the-data-tier-means-of-combination.md)'s missing algebra, §8.5.4's Lane B item |
+| Spring Framework (11.1%) | decline — DI, ORM and web framework, all three dissolved ([`105`](105-the-ecosystem-answer.md) §102.6) |
+| RabbitMQ (10.9%), Apache Kafka (9.4%) | **adopt** as *ingress and egress* — [`101`](101-the-public-surface.md) §101.6's `@public(events)` and [`30`](30-bounded-contexts-and-microservices.md) §30.4's `ingest`, Phase 5. A broker subscription is a merge point, which is a thing this language already has a word for |
+| scikit-learn (10.6%), Torch/PyTorch (10.6%), TensorFlow (10.1%), Keras (4.3%), Hugging Face (4.5%), JAX (1.0%), mlflow (1.2%) | **supported through the bridge**, merge points only — the capability half, and the concession [`01`](01-vision-and-premise.md) §1.7 actually made |
+| Flutter (9.4%), React Native (8.4%), SwiftUI (4.3%), .NET MAUI (3.1%), Xamarin (2.9%) | decline — native mobile UI. The offline-capable web client is the answer this project has ([`94`](94-the-client-report.md); `beck-sw.js` is the service worker), and it is a different product |
+| OpenCV (8.6%) | decline — computer vision is a capability, bridgeable if anyone asks, and no territory of ours |
+| Qt (7.3%), GTK (2.6%), MFC (1.0%) | decline — native desktop UI |
+| OpenGL (6.8%), DirectX (1.9%), CUDA (5.8%), OpenCL (1.7%) | decline as *targets*; CUDA and OpenCL are reachable through the bridge as capabilities. GPU rendering is not a tier this language has |
+| **Electron (6.5%), Ionic (2.5%), Tauri (2.4%), Capacitor (1.8%), Cordova (2.2%)** — **15.4% together** | **watch, and the shape is closer than it looks.** These wrap a web UI as an installable app; Beck emits a web client *and* a statically linked native binary, which is Tauri's architecture with the parts already built. Nothing is claimed and nothing is scheduled — the trigger is somebody executing it, per the rule that an artefact nobody has run is a design document. Recorded because it was invisible |
+| Apache Spark (4.4%), Hadoop (2.3%) | decline as a *substrate* — the analytical half is DataFusion over Parquet (§8.5.4's G item), the single-node answer [`07`](07-dependencies.md) §7.4 sized for |
+| **Ruff (3.0%)** | **dissolved** — the formatter and the linter are the compiler (`beck fmt`, the LSP, [`65`](65-the-editor-report.md)). Worth a second look rather than a tick: Ruff's adoption is developers switching formatter for *speed alone*, which is the clearest external evidence that [`64`](64-compile-speed-report.md)'s budgets are a product feature and not hygiene |
+| **Tidyverse (1.7%)** | **adopt** — the same verdict as pandas, and the reason it is listed separately: R's `dplyr` is a **fourth** independent convergence on the same dozen verbs (with pandas, polars and LINQ), which is what makes [`99`](99-the-data-tier-means-of-combination.md)'s gap a missing algebra rather than one library's taste |
+| Roslyn (1.7%) | **dissolved into tooling** — compiler-as-a-service is the LSP plus `beck explain` ([`65`](65-the-editor-report.md)), and the half that is genuinely missing is compile-time evaluation, which is §8.5.4's macro interpreter |
+| Quarkus (1.3%), Ktor (1.2%) | decline — JVM/Kotlin service frameworks, replaced rather than interoperated with |
+| **Charting** — matplotlib, Chart.js, D3. *Not in the survey's list*, and universal in practice | **adopt** — an `svg:` vocabulary, §8.5.4, blocked on one `createElement` call ([`105`](105-the-ecosystem-answer.md) §102.9). Listed here because the rule's failure mode is silence, and a category the survey happens not to itemise is the easiest silence of all |
+| **LLM clients** — litellm, openai, langchain. *Post-dates the survey entirely*; litellm is PyPI #46, above `pip` | **supported through the bridge**, and the fit is better than "supported" suggests: an LLM call is nondeterministic, so §3.7 forbids it in a fold or a view and forces it to arrive at a merge point as a command whose response becomes an **event**. Prompt, response and model version land in the log, so the session replays exactly without re-calling the model — the discipline these applications need and usually have to remember. No new work beyond the sidecar ([`105`](105-the-ecosystem-answer.md) §102.4) |
+| **Polars (rising), `uv`/Ruff (rising)** — post-date the survey | Polars is a *fifth* convergence on the dataframe verbs and strengthens the pandas row rather than competing with it. `uv` at 2.2× Poetry's downloads and Ruff at #132 are external evidence for [`64`](64-compile-speed-report.md)'s premise that tooling speed is a product feature; no work is owed, and the row exists so the evidence is not lost |
+
+**Four rows had no verdict anywhere in `docs/` before
+[`105`](105-the-ecosystem-answer.md)** — NumPy, pandas, charting and the Electron/Tauri adjacency —
+which is the failure this rule exists to catch, occurring in the document that states the rule.
+§8.5.4 now carries the first three; the fourth is deliberately unscheduled and says so.
+
+The largest declined block is worth stating rather than leaving as a pattern in the table: native
+desktop and mobile UI, plus GPU rendering and computer vision, is roughly **half the section by
+cumulative percentage**, and all of it is declined on the same [`01`](01-vision-and-premise.md) §1.7
+scope. That is an honest statement of how much of the developer population this language is not
+for, and it belongs in the open rather than in the gaps between rows.
