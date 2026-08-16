@@ -161,6 +161,9 @@ pub fn handshake() -> Server {
     assert_eq!(caps["hoverProvider"], json!(true));
     assert_eq!(caps["definitionProvider"], json!(true));
     assert_eq!(caps["documentSymbolProvider"], json!(true));
+    // Advertised, or no client ever asks. It is here rather than in one test because a capability
+    // that stopped being offered would make every formatting test pass by not being run.
+    assert_eq!(caps["documentFormattingProvider"], json!(true));
     server.notify("initialized", json!({}));
     server
 }

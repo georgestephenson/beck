@@ -219,6 +219,28 @@ pub struct Meta {
     /// node's identity ([`Node::structurally_eq`]), so every pass that matches on `def` or `model`
     /// keeps working and a doc-only edit is not a change of meaning.
     pub doc: Option<Arc<str>>,
+    /// The ordinary `#` comments written around this node ([`crate::doc`]).
+    ///
+    /// Boxed and absent by default, because most nodes have none and every node pays for the
+    /// field. Metadata for the same reason `doc` is: a comment is not part of a node's identity,
+    /// so adding one does not invalidate a memo or move an interface digest.
+    pub comments: Option<Box<Comments>>,
+}
+
+/// The ordinary comments attached to one node, in the three positions a comment can hold.
+///
+/// A doc comment is a single run above a declaration and is [`Meta::doc`]. These are the rest, and
+/// they are kept because `beck fmt` prints from the tree: what the tree does not carry, the
+/// formatter deletes.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Comments {
+    /// Full-line comments immediately above, in source order.
+    pub before: Vec<Arc<str>>,
+    /// A comment at the end of this node's own line.
+    pub trailing: Option<Arc<str>>,
+    /// Full-line comments below it with nothing after them in the block — the end of a body, or
+    /// the end of the file. They attach *backwards* because there is no node beneath to hold them.
+    pub after: Vec<Arc<str>>,
 }
 
 impl Meta {
@@ -227,6 +249,7 @@ impl Meta {
             span,
             expansion: Vec::new(),
             doc: None,
+            comments: None,
         }
     }
 }

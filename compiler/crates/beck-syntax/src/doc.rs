@@ -33,6 +33,28 @@
 //! doc-only edit does not change [`crate::Node::structurally_eq`], does not invalidate a memo, and
 //! does not move `beck_core::iface::Interface::digest` — documenting a function is not an API
 //! change.
+//!
+//! # Ordinary comments are collected by the same pass, for the same reason
+//!
+//! `beck fmt` prints from the tree, so a comment the tree does not carry is one the formatter
+//! deletes — and a formatter an editor runs on save must not delete what somebody wrote. That was
+//! `DEFECTS.md::fmt-comments`, and it is why `textDocument/formatting` was deliberately not
+//! offered.
+//!
+//! One pass rather than two, because **what separates the two kinds is one decision**: a line
+//! beginning `##` is documentation and a line beginning `#` is a comment. Collected apart, that
+//! rule would be written twice and the copies would disagree about `###`.
+//!
+//! Three positions, and each attaches differently:
+//!
+//! * **Above a node**, as [`crate::Comments::before`] — a run of full-line comments, claimed by
+//!   the outermost node beginning the first line beneath it.
+//! * **At the end of a node's own line**, as [`crate::Comments::trailing`]. Finding it means
+//!   skipping string literals, because `"a # b"` is not a comment.
+//! * **Below a node with nothing after it**, as [`crate::Comments::after`] — the end of a body or
+//!   of the file. These attach *backwards*, to the last node that began a line above them, because
+//!   there is nothing beneath to attach forwards to. Without this case the comment at the end of a
+//!   function would move to whatever came next and out of the block it was written in.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -55,11 +77,18 @@ pub fn marker_for(name: &str) -> &'static str {
     }
 }
 
-/// Doc-comment runs in one source file, indexed by the line they document.
+/// Every comment in one source file, indexed by the line it belongs to.
 #[derive(Clone, Debug, Default)]
 pub struct DocComments {
-    /// Line index (0-based) of the first line *below* a run → the run's text.
+    /// Line index (0-based) of the first line *below* a doc run → the run's text.
     runs: BTreeMap<usize, Arc<str>>,
+    /// Line index of the line below an ordinary run → its lines, in source order.
+    before: BTreeMap<usize, Vec<Arc<str>>>,
+    /// Line index → the comment that ends that line.
+    trailing: BTreeMap<usize, Arc<str>>,
+    /// Line index of the last line that began a node above the run → the run's lines. Where a run
+    /// has nothing beneath it in its block.
+    after: BTreeMap<usize, Vec<Arc<str>>>,
     /// Byte offset of the first character of each line, and of the first non-whitespace character.
     lines: Vec<(usize, usize)>,
 }
@@ -67,6 +96,9 @@ pub struct DocComments {
 impl DocComments {
     pub fn is_empty(&self) -> bool {
         self.runs.is_empty()
+            && self.before.is_empty()
+            && self.trailing.is_empty()
+            && self.after.is_empty()
     }
 }
 
@@ -99,15 +131,156 @@ pub fn collect(src: &str, marker: &str) -> DocComments {
         while i < text.len() && is_doc(text[i], marker) {
             i += 1;
         }
-        // `i` is now the first line that is not part of the run — the line being documented. A run
-        // with nothing beneath it (end of file) documents nothing and is dropped.
-        if i < text.len() && !text[i].is_empty() {
+        // `i` is now the first line that is not part of the run — the line being documented, once
+        // any *ordinary* comment lines between the two are stepped over. That case is rare and it
+        // used to lose the documentation outright: the run attached to a line no node begins, and
+        // nothing claimed it. A blank line still breaks the association, which is the difference
+        // between "this documents that" and "this is a note that happens to be above it".
+        let mut target = i;
+        while target < text.len() && text[target].starts_with('#') && !is_doc(text[target], marker)
+        {
+            target += 1;
+        }
+        if target < text.len() && !text[target].is_empty() {
             let body: Vec<&str> = text[start..i].iter().map(|l| strip(l, marker)).collect();
-            runs.insert(i, Arc::from(trim_blank_edges(&body).join("\n")));
+            runs.insert(target, Arc::from(trim_blank_edges(&body).join("\n")));
         }
     }
 
-    DocComments { runs, lines }
+    let indents: Vec<usize> = lines.iter().map(|(start, first)| first - start).collect();
+    let (before, trailing, after) = ordinary(&text, &indents, marker);
+    DocComments {
+        runs,
+        before,
+        trailing,
+        after,
+        lines,
+    }
+}
+
+/// Every ordinary comment, in the three positions of this module's third section.
+///
+/// `text` is the file's lines, trimmed of indentation and line endings, and `marker` is what makes
+/// a line documentation rather than a comment.
+type Ordinary = (
+    BTreeMap<usize, Vec<Arc<str>>>,
+    BTreeMap<usize, Arc<str>>,
+    BTreeMap<usize, Vec<Arc<str>>>,
+);
+
+fn ordinary(text: &[&str], indents: &[usize], marker: &str) -> Ordinary {
+    let mut before: BTreeMap<usize, Vec<Arc<str>>> = BTreeMap::new();
+    let mut trailing: BTreeMap<usize, Arc<str>> = BTreeMap::new();
+    let mut after: BTreeMap<usize, Vec<Arc<str>>> = BTreeMap::new();
+
+    let is_ordinary = |l: &str| l.starts_with('#') && !is_doc(l, marker);
+    // Every line that carried code, with its indentation. An `after` run hangs on the last one
+    // **at or above its own level**: a comment at column zero at the end of a file belongs to the
+    // declaration it follows, not to the last statement of that declaration's innermost block.
+    let mut code: Vec<(usize, usize)> = Vec::new();
+
+    let mut i = 0usize;
+    while i < text.len() {
+        let line = text[i];
+        if is_ordinary(line) {
+            let start = i;
+            // **A preamble is one block, blank lines included.** A file header, a blank line and a
+            // section rule above the first declaration are three things a reader sees as one, and
+            // collecting them as separate runs leaves the first with only a comment beneath it —
+            // nothing to attach to, so it would travel to the end of the file. Interior blanks are
+            // kept as empty entries so the block prints back with its own shape.
+            // A block continues through blank lines, but only into comments at its **own
+            // indentation**: the note at the end of a function body and the note above the next
+            // declaration are two blocks with a blank line between them, and joining them would
+            // print one of them in the other's place.
+            let mut run: Vec<Arc<str>> = Vec::new();
+            while i < text.len()
+                && (text[i].is_empty() || (is_ordinary(text[i]) && indents[i] == indents[start]))
+            {
+                run.push(Arc::from(text[i]));
+                i += 1;
+            }
+            // A block that ran on through blank lines and stopped at something else gives the
+            // blanks back, so that `i` is where the scan continues from.
+            while run.last().is_some_and(|l| l.is_empty()) {
+                run.pop();
+                i -= 1;
+            }
+            // The line the run is about: the next one that carries something. Blank lines are
+            // stepped over rather than breaking the run, because a comment separated from its
+            // declaration by a blank line is still that declaration's — and dropping it, which is
+            // what a doc run does, would delete it.
+            // The line the run is about: the next one carrying something that is not itself a
+            // comment. Blank lines are stepped over rather than breaking the run — a comment
+            // separated from its declaration by a blank line is still that declaration's, and
+            // dropping it, which is what a doc run does, would delete it. A **doc** run beneath is
+            // stepped over too: `# note` above `## documentation` above `def` is all one preamble
+            // and belongs to the same declaration.
+            let mut target = i;
+            while target < text.len() && (text[target].is_empty() || is_doc(text[target], marker)) {
+                target += 1;
+            }
+            // **Which way it attaches is decided by indentation.** A run indented further than
+            // the line beneath it is the end of the block it sits in — the comment at the bottom
+            // of a function body — and attaching it forwards would move it out of that block and
+            // print it against the next declaration. There is nothing beneath it *in its own
+            // block*, so it hangs backwards on the last line that began one.
+            let deeper = target < text.len() && indents[start] > indents[target];
+            let hangs_on = || {
+                code.iter()
+                    .rev()
+                    .find(|(indent, _)| *indent <= indents[start])
+                    .map(|(_, line)| *line)
+            };
+            match (target < text.len() && !deeper, hangs_on()) {
+                (true, _) => before.entry(target).or_default().extend(run),
+                (false, Some(line)) => {
+                    let entry = after.entry(line).or_default();
+                    // The blank line above it is part of how a tail comment reads, and there is
+                    // nothing else left to supply it: the printer's own spacing goes *between*
+                    // items, and this is inside one.
+                    if entry.is_empty() && start > 0 && text[start - 1].is_empty() {
+                        entry.push(Arc::from(""));
+                    }
+                    entry.extend(run);
+                }
+                // Nothing above it at its level and nothing below it at all — a file that is only
+                // comments. `attach` puts it on the root rather than dropping it.
+                (false, None) => {}
+            }
+            continue;
+        }
+        if line.is_empty() || is_doc(line, marker) {
+            i += 1;
+            continue;
+        }
+        if let Some(text) = comment_ending(line) {
+            trailing.insert(i, Arc::from(text));
+        }
+        code.push((indents[i], i));
+        i += 1;
+    }
+    (before, trailing, after)
+}
+
+/// The comment that ends this line, if it has one.
+///
+/// A `#` inside a string literal is not a comment, so this walks the line rather than searching
+/// it. Beck's strings cannot span lines, so no state carries between lines and the walk is exact.
+fn comment_ending(line: &str) -> Option<&str> {
+    let bytes = line.as_bytes();
+    let mut in_string = false;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' if in_string => i += 1,
+            b'"' => in_string = !in_string,
+            b'#' if !in_string => return Some(line[i..].trim_end()),
+            _ => {}
+        }
+        i += 1;
+    }
+    None
 }
 
 fn is_doc(line: &str, marker: &str) -> bool {
@@ -140,21 +313,59 @@ pub fn attach(node: &mut Node, docs: &DocComments) {
         return;
     }
     let mut claimed: Vec<usize> = Vec::new();
-    walk(node, docs, &mut claimed);
+    let mut lines: Vec<usize> = Vec::new();
+    walk(node, docs, &mut claimed, &mut lines);
+
+    // **Nothing is dropped, even when nothing wanted it.** A comment can sit on a line no node
+    // begins — a continuation inside a bracketed call, say — and the formatter prints from the
+    // tree, so a comment the tree does not carry is deleted. Anything unclaimed goes to the end of
+    // the root, which is bad placement and not a lost line;
+    // `roundtrip.rs::formatting_keeps_every_comment` is what says the difference matters.
+    let mut orphans: Vec<Arc<str>> = Vec::new();
+    for (line, run) in docs.before.iter().chain(docs.after.iter()) {
+        if !lines.contains(line) {
+            orphans.extend(run.iter().cloned());
+        }
+    }
+    for (line, text) in &docs.trailing {
+        if !lines.contains(line) {
+            orphans.push(text.clone());
+        }
+    }
+    if !orphans.is_empty() {
+        node.meta
+            .comments
+            .get_or_insert_with(Default::default)
+            .after
+            .extend(orphans);
+    }
 }
 
-fn walk(node: &mut Node, docs: &DocComments, claimed: &mut Vec<usize>) {
+fn walk(node: &mut Node, docs: &DocComments, claimed: &mut Vec<usize>, lines: &mut Vec<usize>) {
     let start = node.span().start as usize;
     if let Some(line) = line_starting_at(docs, start) {
-        if let Some(text) = docs.runs.get(&line) {
-            if !claimed.contains(&line) {
-                claimed.push(line);
+        if !claimed.contains(&line) {
+            claimed.push(line);
+            lines.push(line);
+            if let Some(text) = docs.runs.get(&line) {
                 node.meta.doc = Some(text.clone());
+            }
+            // The outermost node beginning a line takes that line's comments, for the reason it
+            // takes the doc run: a comment above `@on(client)` is about the declaration under it,
+            // not about the annotation.
+            let before = docs.before.get(&line);
+            let trailing = docs.trailing.get(&line);
+            let after = docs.after.get(&line);
+            if before.is_some() || trailing.is_some() || after.is_some() {
+                let c = node.meta.comments.get_or_insert_with(Default::default);
+                c.before = before.cloned().unwrap_or_default();
+                c.trailing = trailing.cloned();
+                c.after = after.cloned().unwrap_or_default();
             }
         }
     }
     for a in &mut node.args {
-        walk(a, docs, claimed);
+        walk(a, docs, claimed, lines);
     }
 }
 

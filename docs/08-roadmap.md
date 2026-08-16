@@ -515,11 +515,13 @@ rows.
   [`99`](99-the-data-tier-means-of-combination.md) decision 3: presence moves when `seq` does not, so
   a join against presence is the one case the algebra above must refuse, and it should refuse it with
   a diagnostic rather than a surprise until this exists.
-- **Comment-preserving printing** (S, due rather than nice): ordinary `#` comments are dropped by the
-  lexer, so `beck fmt` deletes them — a formatter that eats comments is one nobody runs twice, and
-  `textDocument/formatting` waits on it (`DEFECTS.md::fmt-comments`). It has been in §8.5.5's Lane C
-  cell since that table was written, and **a lane is a collision map rather than an order**, which is
-  how it stayed unpositioned.
+- **Comment-preserving printing** (S, due rather than nice). **Done.** Ordinary `#` comments were
+  dropped by the lexer, so `beck fmt` deleted them — a formatter that eats comments is one nobody
+  runs twice, which is why `textDocument/formatting` was withheld rather than missing. They are now
+  collected by position in the pass that already collected documentation, in the three positions a
+  comment holds, and the LSP offers formatting in the same change so the fix has a caller. It had
+  been in §8.5.5's Lane C cell since that table was written, and **a lane is a collision map rather
+  than an order**, which is how it stayed unpositioned for as long as it did.
 - **Chapters 4 and 5 of SICP** (S): no predecessors, and they never acquire any.
 - **Trusted publishing** (R, above): an account setting rather than a branch.
 - **Grammar-aware fuzzing and Kani proofs of the solver's invariants** (S, due rather than
@@ -637,7 +639,7 @@ directories.
 |---|---|---|---|
 | **A — type system** | `beck-core/src/check/`, `ty.rs`, `core.rs`, `prelude.rs`, `iface.rs` | **Typed macros and `derive`** (§8.5.4's first item — a macro body that receives inferred types is a checker change, whatever crate the body runs in); `Ord` as a trait, which [`54`](54-ordering.md) does not recommend; the styling cluster's items 3, 6 and 7 (§8.5.4) — `Class` as a type, where interface state lives, and focus as an attribute | **Itself, completely** — see below |
 | **B — runtime and views** | `beck-rt/`, `beck-core/src/{engine,plan,incremental,pmap,signal}.rs` | The render lock, unowned; the styling cluster's items 1, 4 and 5 (§8.5.4) — the SVG namespace in `client/beck-patch.js`, the sheet emitter that retires `css.rs`, and the theme | Nothing in A, C, E or F |
-| **C — front end and tooling** | `beck-syntax/`, `beck-cli/`, `beck-diag/` | Comment-preserving printing — `textDocument/formatting` waits on it, and `beck fmt` deleting `#` comments is why it is due rather than nice (`fmt-comments` in [`DEFECTS.md`](../DEFECTS.md)); code actions ([`65`](65-the-editor-report.md) §65.8); the standards ledger's front-end vectors (§8.5.4); the `ui:` vocabulary (§8.5.4's styling item 2), whose diagnostics are here and whose macro half is `beck-macro` | A, if a syntax decision changes what the checker sees |
+| **C — front end and tooling** | `beck-syntax/`, `beck-cli/`, `beck-diag/` | Code actions ([`65`](65-the-editor-report.md) §65.8); the standards ledger's front-end vectors (§8.5.4). Comment-preserving printing and the `ui:` vocabulary were this lane's and are done | A, if a syntax decision changes what the checker sees |
 | **D — process and supply chain** | `docs/`, `.github/`, `deny.toml`, `SECURITY.md`, `release/`, `install.sh` | Trusted publishing; a registry to push to; a subject `beck sign` can take over a release *listing* ([`adr/0028`](adr/0028-a-release-carries-provenance-and-still-no-signature.md)) | Nothing in code — **except that a release lands in `Cargo.toml`, a `build.rs` and `--version`** |
 | **E — backends** | `beck-eval/`, `beck-llvm/`, `beck-clif/`, `beck-wasmgen/`, `beck-core/src/backend.rs`, any new codegen crate | Mode B's codegen; the three items of [`93`](93-the-native-backends-report.md) §93.15, of which the two-calls-at-once worker is now what blocks cancelling a compiled child | Nothing — the seam is why ([`19`](19-phase-1-report.md) §19.9), and sixteen consecutive Lane E changes have held that prediction, several without touching one line of `beck-rt` |
 | **F — infrastructure** | `beck-infra/` | Effect-derived NetworkPolicy/RBAC/grants; Crossplane emitter; conformance rungs | Nothing |
@@ -718,7 +720,7 @@ be stale), and **look for it in §8.5.4** (a phase bullet is not a position, and
 | Charting | Unscheduled **and undesigned** | Not in `docs/` at all until [`105`](105-the-ecosystem-answer.md), which ranked it, and [`104`](104-styling-and-the-component-library.md), which found the same defect from the UI side and owns the fix. Now the styling cluster's item 1 and `DEFECTS.md::svg-namespace`. **Two independent sweeps reached one line of JavaScript from opposite directions**, which is the strongest evidence in this section that the procedure works |
 | A columnar value / Arrow | Unscheduled | Committed in five documents as a *dependency choice*; nothing ever built the value it would apply to. Now placed, as the log-lifecycle G item's named predecessor |
 | The presence second clock | Unscheduled | [`48`](48-identity-report.md) §48.13's first row, in no phase, with a successor in [`99`](99-the-data-tier-means-of-combination.md) decision 3. Now placed |
-| Comment-preserving printing | In a lane, not in the order | §8.5.5's Lane C cell since that table existed. Now placed, and `DEFECTS.md::fmt-comments` |
+| Comment-preserving printing | In a lane, not in the order | §8.5.5's Lane C cell since that table existed. Placed, recorded as a defect, and **built** — the second item the sweep carried from *nobody scheduled this* to *it is done* |
 | The `@public` surface | Unscheduled in this list | A Phase 4 bullet with its own internal order (§101.10) and no position here. Now placed, G-first |
 
 **The gate this wants.** Everything above is a procedure a person has to remember, which is the

@@ -20,7 +20,7 @@ pub mod print;
 pub mod security;
 pub mod sexpr;
 
-pub use node::{sym, Head, Lit, Meta, Node, Scope, ScopeSet, Symbol};
+pub use node::{sym, Comments, Head, Lit, Meta, Node, Scope, ScopeSet, Symbol};
 
 use beck_diag::{Diagnostics, FileId};
 

@@ -226,11 +226,16 @@ fn the_documented_example_documents_every_name_it_publishes() {
     );
 }
 
+/// Both kinds of comment survive `beck fmt`, and a doc comment stays a doc comment.
+///
+/// This test used to assert the opposite of half of itself: `beck fmt` prints from the AST, an
+/// ordinary comment was not on it, and the deletion was pinned here as *the distinction*. The
+/// distinction is real and it is not that one of them is disposable — a doc comment is rendered
+/// into a documentation site and an ordinary comment is not, and both are things somebody wrote.
+/// Now that ordinary comments ride in `meta` too (`beck_syntax::doc`), what this asserts is that
+/// formatting keeps both and does not turn either into the other.
 #[test]
 fn a_doc_comment_survives_beck_fmt() {
-    // `beck fmt` prints from the AST, so an ordinary comment cannot survive it. A doc comment is
-    // metadata on the node and must — otherwise formatting a documented module deletes its
-    // documentation, which is a worse failure than not having doc comments at all.
     let out = beck(&["fmt", "examples/documented.beck"]);
     assert!(
         out.status.success(),
@@ -248,10 +253,15 @@ fn a_doc_comment_survives_beck_fmt() {
             "`beck fmt` dropped a doc comment:\n  {line}\n--- formatted ---\n{formatted}"
         );
     }
-    // And the ordinary comments are gone, as they always were: the distinction is the point.
+    // And the ordinary comments are there too, with their own marker: a formatter that promoted
+    // one to documentation would put it on a published page nobody wrote it for.
     assert!(
-        !formatted.contains("# A documented library"),
-        "an ordinary comment should not survive `beck fmt`"
+        formatted.contains("# A documented library"),
+        "`beck fmt` dropped an ordinary comment:\n--- formatted ---\n{formatted}"
+    );
+    assert!(
+        !formatted.contains("## A documented library"),
+        "an ordinary comment became documentation:\n--- formatted ---\n{formatted}"
     );
 }
 

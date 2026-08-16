@@ -49,24 +49,3 @@ spelling.
 The *language* question of where interface state should live is a decision rather than a defect and
 is scheduled separately in [`docs/08`](docs/08-roadmap.md) §8.5.4; this entry is only that a decided
 construct silently is not there.
-
----
-
-## `fmt-comments` — `beck fmt` deletes `#` comments
-
-**What is wrong.** The lexer skips ordinary comments, so a formatted file loses every `#` line in it.
-A doc comment (`##`) survives and an ordinary one does not, which is a distinction the generated-docs
-feature wants and a formatter must not act on. This is why the language server deliberately does not
-offer `textDocument/formatting` ([`docs/02`](docs/02-syntax.md) §2.2,
-[`docs/65`](docs/65-the-editor-report.md)): a formatter an editor runs on save must not delete what
-somebody wrote.
-
-**Measured.** Recorded in [`docs/65`](docs/65-the-editor-report.md)'s table of what the editor does
-not do. Not re-measured for this register.
-
-**The gate a fix owes.** A round-trip test that a file with comments in every position the grammar
-allows — before a definition, at the end of a line, inside a block, between arms — is byte-identical
-after `beck fmt`, and the LSP formatting request enabled in the same change so the fix has a caller.
-
-**Where it is argued.** [`docs/65`](docs/65-the-editor-report.md), and it is Lane C's in
-[`docs/08`](docs/08-roadmap.md) §8.5.5.

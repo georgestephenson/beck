@@ -160,6 +160,9 @@ pub fn serve() -> Result<()> {
             "textDocument/inlayHint" => {
                 respond(&mut writer, id, inlay_hints(&mut docs, &params))?;
             }
+            "textDocument/formatting" => {
+                respond(&mut writer, id, formatting(&mut docs, &params))?;
+            }
             "shutdown" => {
                 shutdown_requested = true;
                 respond(&mut writer, id, Value::Null)?;
@@ -214,6 +217,11 @@ fn capabilities() -> Value {
             // makes people type into a box that was never going to accept anything.
             "renameProvider": { "prepareProvider": true },
             "inlayHintProvider": true,
+            // Offered only since `beck fmt` stopped deleting ordinary comments
+            // (`beck_syntax::doc`). A formatter an editor runs on save must not delete what
+            // somebody wrote, so this was deliberately withheld while it did — `docs/65` §65.8 and
+            // `DEFECTS.md::fmt-comments`.
+            "documentFormattingProvider": true,
         },
         "serverInfo": { "name": "beck", "version": env!("CARGO_PKG_VERSION") },
         "lspVersion": LSP_VERSION,
@@ -457,6 +465,48 @@ fn rename(docs: &mut Documents, params: &Value) -> Result<Value, String> {
         .map(|o| json!({ "range": range(text, o.start, o.end), "newText": to }))
         .collect();
     Ok(json!({ "changes": { uri: changes } }))
+}
+
+/// The whole document, formatted — `beck fmt` behind `textDocument/formatting`.
+///
+/// **One edit covering everything**, rather than a diff. The printer prints a tree; it does not
+/// know which lines it changed, and a client applies a whole-document replacement without blinking.
+/// Computing a minimal diff here would be a second implementation of the formatter's output.
+///
+/// A file that does not parse is formatted by nobody: the answer is `null`, which a client shows as
+/// "no formatting available" and leaves the buffer alone. That is the right answer rather than a
+/// missing one — a formatter that guessed at broken source is one that eats work.
+fn formatting(docs: &mut Documents, params: &Value) -> Value {
+    let Some(uri) = params["textDocument"]["uri"].as_str() else {
+        return Value::Null;
+    };
+    let Some(text) = docs.text.get(uri) else {
+        return Value::Null;
+    };
+    let name = path_of(uri).unwrap_or_else(|| uri.to_string());
+    let mut map = beck_diag::SourceMap::new();
+    let file = map.add(name.clone(), text);
+    let mut diags = beck_diag::Diagnostics::new();
+    let node = beck_syntax::parse_file(file, &name, text, &mut diags);
+    if diags.has_errors() {
+        return Value::Null;
+    }
+    let formatted = beck_syntax::print::to_python(&node);
+    if formatted == *text {
+        // Nothing to do, and saying so with an empty list is what stops an editor marking the
+        // buffer dirty every time it saves.
+        return json!([]);
+    }
+    // The end of the document, in the protocol's line/character terms. One past the last line is
+    // how LSP spells "everything", and it needs no knowledge of the last line's length.
+    let lines = text.lines().count().max(1);
+    json!([{
+        "range": {
+            "start": { "line": 0, "character": 0 },
+            "end": { "line": lines, "character": 0 },
+        },
+        "newText": formatted,
+    }])
 }
 
 /// What the compiler worked out and the source does not say, in the range the client is showing.

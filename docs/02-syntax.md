@@ -50,10 +50,11 @@ Everything else is derived. Consequences:
 
 - `beck fmt --surface sexpr orders.beck` emits the canonical Lisp form; `beck fmt --surface python
   orders.sx` emits the Python form; `beck ast` dumps the tree itself. Round-trip is lossless
-  **modulo formatting** for the program and its `##` doc comments, which ride in `meta` — but
-  ordinary `#` comments do not survive: the lexer discards them, so `beck fmt` deletes them, which
-  is why the LSP deliberately does not offer `textDocument/formatting`. Comment-preserving
-  printing is the named front-end item in [`08`](08-roadmap.md) §8.5.5's Lane C.
+  **modulo formatting** for the program, its `##` doc comments and its ordinary `#` comments — all
+  of which ride in `meta`. The lexer still discards comments; they are collected from the source
+  text by position in the same pass that collects documentation, which is what keeps a comment at
+  column zero from closing an indented block. `beck fmt` therefore keeps what somebody wrote, and
+  the LSP offers `textDocument/formatting` because of it.
 - The reference manual can present semantics in S-expressions — where they are unambiguous and where
   your idea reads best — while the tutorial presents Python. Same language, no dialect split.
 - Macros always manipulate `Node`, never text. So indentation-sensitivity is a *printing* concern,
