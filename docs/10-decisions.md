@@ -870,6 +870,44 @@ total order), citing ISO/IEC 60559:2020 alongside IEEE 754-2019 when it cites ei
 Where it is held: canonicalisation at `Value` construction in `beck-core`, the printed-digit
 equalities in `beck-cli/tests/sicp.rs`, and the backends' agreement in `beck-cli/tests/native.rs`.
 
+## D28 — The public surface is an opt-in family of derived contracts, and Beck never transports over one — **DECIDED** (design settled; build staged per [`101`](101-the-public-surface.md) §101.10)
+
+The question was how a third-party system consumes a Beck backend, and whether Beck should meet
+the industry's consensus artefacts — OpenAPI, gRPC, CloudEvents, MCP — or ask consumers to learn
+its own. Answer: **meet the consensus, by rendering, opt in.** `@public(<form>)` is a family, one
+member per consumer kind ([`101`](101-the-public-surface.md) §101.2), each member a *rendering of the
+internal contract* in somebody else's standard, gated by a reader that is not the writer
+([`92`](92-supply-chain-and-release-report.md) §92.2's pattern, extended to the API). A program
+without the annotation has no public surface at all.
+
+Three edges of the decision carry the weight:
+
+- **The consumer chooses the shape; the compiler keeps the properties** (§101.3). Naming,
+  versioning, auth scheme and error vocabulary are configurable, because a public surface serves
+  its consumers' needs rather than Beck's opinions. Schema-from-types, the `secret[.]` discipline,
+  shared `validate`, and the derived ingress are not configurable, because they are the point.
+- **Beck's own seam stays internal** (§101.4). The public contract is never the internal transport —
+  the internal seam carries placement, effect rows and `seq`-tagged patch streams that a public
+  contract cannot, and coupling internal evolution to an external deprecation clock would invert
+  the reason both derive from one set of types. Honesty between the two is shared derivation plus
+  a drift gate, not shared transport.
+- **GraphQL is declined, with the reason recorded** (§101.2): a query surface whose worst case is
+  the consumer's to choose is a cost the premise cannot carry until it has a cost model.
+- **The edge absorbs what the fold must never see** (§101.7). Auth, rate limits, idempotency,
+  response vocabulary, hostile-input bounds: every obligation a public surface imports lives at
+  the runtime edge, per surface, and a rejected request is a non-event in D17's sense — telemetry,
+  never the log. Two obligations are genuine prerequisites rather than derivations — F15's quotas
+  and the inbound TLS posture — and they land before the first form ships.
+
+`@public(sql)` — the pgwire read models, D26 — is named into the family retroactively: it was the
+first member built, and its gate (`tokio-postgres`, a foreign reader) is the shape every other
+member's gate copies. `@public(events)` is where the family meets enterprise event-driven
+architecture, and §101.6 says which of EDA's standing problems dissolve on Beck's semantics (the
+outbox pattern has nothing to patch; the dedupe key and resume cursor are given by `(context,
+seq)`) and which are imported. The trust corollary — maximalist telemetry derived from the log by
+replay rather than paid for in the serving path — is §101.8, and it is a consequence of D17 rather
+than a revision of it.
+
 ## Still open (minor, non-blocking)
 
 - Security-headline vs productivity-headline positioning ([`09`](09-risks-and-open-questions.md)

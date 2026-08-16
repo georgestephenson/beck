@@ -159,7 +159,20 @@ read it.**
   `ecosystem-oracles` job, [`21`](21-tests-in-beck-and-proof.md) §21.4 rung 6); the Phase 4 form
   of the same idea is `beck init ci` emitting the scanner step into a *user's* workflow, with the
   suppression list the emitter already knows it deserves.
-- OpenTelemetry cross-tier tracing on by default; `beck tune` right-sizing.
+- OpenTelemetry cross-tier tracing on by default; `beck tune` right-sizing. The two export gaps
+  from [`101`](101-the-public-surface.md) §101.8: a push exporter (`BECK_OTLP_ENDPOINT`, currently a
+  corrected-away claim) and OpenMetrics exposition — both export what is already recorded, neither
+  adds a measurement to the fold's path.
+- **The public surface** ([`101`](101-the-public-surface.md), D28), in §101.10's order: first the
+  `@public` boundary itself — what is exposed, versioning and auth semantics, the diagnostics for
+  what may not cross — **with §101.7's two prerequisites landed before any form ships**: F15's
+  connection/subscription quotas and the inbound TLS posture, each closing its
+  `pending_security.rs` absence and correcting [`43`](43-threat-model.md) §43.4 in the same
+  change. Then `@public(rest)` (OpenAPI 3.1 + RFC 9457, closing
+  [`35`](35-standards-landscape.md) §35.5's blocked item) and `@public(mcp)` (the command union as
+  tools, views as resources, effect rows in the tool annotations), each gated by a foreign reader
+  per §101.9, and the rest of §101.7's edge ledger — idempotency, `seq`-derived ETags, the response
+  vocabulary, deprecation headers — arriving with the forms that need them.
 - **The data tier's means of combination** ([`99`](99-the-data-tier-means-of-combination.md)):
   `join`, `group by` and the aggregates, which the view algebra has never had — every operator it
   implements takes one collection, so a program relating two of them escapes the algebra into a
@@ -214,6 +227,13 @@ production hardening.
   minimum is a prediction rather than a choice" — this is the choice. Legal above the session cut
   only, for §94.2's reason. **P4–P7 are post-1.0** and §100.11 says why each waits.
 - Editor support beyond VS Code; debugger integration (DAP) with cross-tier stepping.
+- The public surface's second wave ([`101`](101-the-public-surface.md) §101.10): `@public(events)` —
+  the publish half of the enterprise bus per §101.6 (CloudEvents identity from `(context, seq)`,
+  AsyncAPI as the registry artefact, webhooks first with the declared-subscriber-host rule,
+  delivery ledger as a fold), paired with [`30`](30-bounded-contexts-and-microservices.md) §30.4's
+  `ingest` so a context speaks the bus in both directions — then `@public(grpc)`, and
+  **`beck trace`** — replay-derived maximalist telemetry per §101.8, full-resolution OTLP spans
+  emitted from a replay rather than from the serving process.
 - Package ecosystem seeding; documentation, book, tutorials, and 5–10 non-trivial example apps.
 - **The registry in production, on Beck, serving real packages** — the D15 exit criterion: the
   flagship dogfood (event-sourced by domain, saga-driven publish pipeline, counter folds, genesis

@@ -44,8 +44,9 @@
 //! Yes, for the right column, and this module speaks it: [`Telemetry::otlp_metrics`] and
 //! [`Telemetry::otlp_logs`] produce OTLP/HTTP JSON, which is a first-class encoding in the OTLP
 //! specification — same field names and semantics as the protobuf form, with no `tonic`, no
-//! `prost`, and no code generation. `BECK_OTLP_ENDPOINT` turns on export; without it the same data
-//! is served to the dashboard from memory.
+//! `prost`, and no code generation. Export is pull-only: the dashboard serves this data from
+//! memory at `/_beck/otlp/metrics` and `/_beck/otlp/logs`, and nothing pushes to a collector
+//! (a push exporter is scheduled, not built — `docs/101` §101.8).
 //!
 //! What Beck should *not* do is adopt OTel's model as its own. Spans belong at the boundaries —
 //! ingress, validate, append, fold, view, patch — and not inside the fold, where the log is the
