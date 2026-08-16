@@ -199,6 +199,59 @@ Two consequences follow, and the second is a roadmap defect:
    [`08`](08-roadmap.md) §8.6's, and the rule's own words are what convicts it: silence is not a
    verdict.
 
+### Since the survey: four movements, and a warning about looking them up
+
+The survey is from 2024 and this is 2026, so what has moved matters. Each item below is either a
+number gathered here or a primary source; the warning at the end says why that discipline was
+necessary rather than fastidious.
+
+**1. The dataframe world has converged on Arrow, without being asked to.** pandas 3.0 makes
+PyArrow-backed strings the **default** dtype where PyArrow is installed
+([PDEP-10](https://pandas.pydata.org/pdeps/0010-required-pyarrow-dependency.html); the *hard*
+dependency was postponed after feedback, the default was not). It shows in the download data:
+PyArrow is PyPI **#95** at 433M, against pandas' 769M — the interchange format is being pulled in by
+more than half of pandas' own installs. §102.10 argued Arrow is the boundary worth building; the
+ecosystem has since argued the same thing with its defaults, which is stronger corroboration than
+agreement would have been.
+
+**2. Polars is real and is not displacing pandas — and it makes the algebra argument harder to
+dodge.** By downloads, polars is **#466 at 71M against pandas' 769M**, roughly one to eleven. What
+matters for §102.7 is not the share but that Polars is a **fifth** independent implementation of the
+same dozen verbs (with pandas, LINQ, `dplyr` and SQL), written in Rust, whose whole pitch is that the
+verbs are worth keeping and the engine underneath them is worth replacing. That is
+[`10`](10-decisions.md) D9's "our own front door onto the best engines in the world" arrived at
+independently by somebody else, and it is the closest thing to a proof that the verbs are the
+durable part.
+
+**3. Tooling speed is now an adoption driver on its own.** `uv` is PyPI **#219 at 187M against
+Poetry's #397 at 85M** — the newer tool at more than twice the incumbent's downloads — and `ruff` is
+**#132 at 316M**. Neither is faster at anything a user asked for; both are faster at things a user
+waits for. [`64`](64-compile-speed-report.md)'s budgets are the same bet and this is external
+evidence for it.
+
+**4. A library category exists that did not when the survey ran.** `litellm` is PyPI **#46 at 683M —
+above `pip` itself at #51** — with `openai` at #107, `langchain` at #133 and `huggingface-hub` at
+#94. Nothing in the 2024 survey's list covers this. It is worth a verdict rather than a shrug, and
+Beck's is unusually good: **an LLM call is nondeterministic, so it cannot live in a fold or a view**
+(§102.2) and must arrive at a merge point as a command whose *response becomes an event*. That is
+the shape LLM applications need anyway and mostly do not get — the prompt, the response and the
+model version land in the log, so a session replays exactly ([`03`](03-type-and-effect-system.md)
+§3.7) without re-calling the model. The architecture forces the discipline that these applications
+otherwise have to remember. It is a **capability** and it is bridged, so nothing new is owed beyond
+the sidecar; the row is added to [`08`](08-roadmap.md) §8.6.2.
+
+> **A warning to whoever re-runs this.** Searching for 2026 ecosystem figures returns, at the top,
+> confident posts citing "the 2026 Stack Overflow Developer Survey" for precise numbers — pandas at
+> 42% of professional Python developers, Polars at 11%, salary premiums to the dollar. **That survey
+> has not published.** It opened for responses in
+> [June 2026](https://stackoverflow.blog/2026/06/23/the-2026-developer-survey-is-now-open-for-human-developers-only/)
+> and the most recent published edition is 2025, which is the one that dropped the library section.
+> Those figures are unverifiable and are not used here; every number in this section was either
+> fetched from the download data or read from a primary source. The failure mode this document was
+> written to avoid — a confident number nobody checked — is now being mass-produced, and
+> [`AGENTS.md`](../AGENTS.md)'s rule that a claim must name the command that produces it is the
+> defence.
+
 ## 102.5 The test that matters, and why notations cannot be bridged
 
 The right question is the one rank cannot answer: **did the package change what the language is used
@@ -262,6 +315,7 @@ it does not cover (charting, ORMs, testing) are judgement and are marked as such
 | **Cloud SDK** | **boto3** | aws-sdk | AWSSDK | aws-sdk | **Link or generate** — capability, not notation | **Nothing** |
 | **Image handling** | pillow | sharp | ImageSharp | image | **Link** — capability | **Nothing** |
 | **ML / inference** | torch, transformers | — | — | candle | **Bridge**, at a merge point — capability, and the concession §1.7 actually made | Designed, unbuilt |
+| **LLM clients** | litellm, openai | ai-sdk | Semantic Kernel | async-openai | **Bridge**, at a merge point — and the response becomes an event, so replay is exact (§102.4) | Designed, unbuilt |
 | **Scientific methods** | scipy | — | — | — | **Bridge** — capability | Designed, unbuilt |
 | **Columnar interchange** | **pyarrow** | — | — | arrow-rs | **In the language** — §102.10 | **Nothing** |
 

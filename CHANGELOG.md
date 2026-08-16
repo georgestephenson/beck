@@ -31,7 +31,12 @@ carry the order, so leave them where they land.
   is a one-time vote that never decays. §8.6.2 applies the ≥1% rule to libraries for the first time
   and gives **all 39 entries** of the survey's section a verdict — four had none anywhere, including
   the Electron/Tauri adjacency (15.4% together, and Beck already emits both halves), which is
-  recorded as watch rather than scheduled. So pandas is
+  recorded as watch rather than scheduled. §102.4 also carries what has moved since the 2024 survey:
+  pandas 3.0 defaults to PyArrow-backed strings and PyArrow is PyPI #95 at 56% of pandas' own
+  downloads, so the ecosystem has corroborated the Arrow argument with its defaults; Polars is a
+  fifth convergence on the same dataframe verbs at a ninth of pandas' volume; and LLM clients are a
+  category that post-dates the survey entirely, with `litellm` at #46 above `pip` — bridged, and the
+  response becomes an event, so a session replays without re-calling the model. So pandas is
   [`99`](docs/99-the-data-tier-means-of-combination.md)'s missing algebra, NumPy is a notation over
   a linked kernel, and charting is blocked on `beck-patch.js`'s `createElement`. A doc-versus-code
   sweep (§8.5.6) then found one document behind the code —
